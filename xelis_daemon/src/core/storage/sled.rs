@@ -330,6 +330,26 @@ impl SledStorage {
         Ok(value)
     }
 
+    // Delete a cacheable data from disk and cache behind a Arc
+    pub(super) async fn delete_arc_cacheable_data<K: Eq + StdHash + Serializer + Clone, V: Serializer>(&self, tree: &Tree, cache: &Option<Mutex<LruCache<K, Arc<V>>>>, key: &K) -> Result<Arc<V>, BlockchainError> {
+        let bytes = match tree.remove(key.to_bytes())? {
+            Some(data) => data.to_vec(),
+            None => return Err(BlockchainError::NotFoundOnDisk(DiskContext::DeleteData))
+        };
+
+        if let Some(cache) = cache {
+            let mut cache = cache.lock().await;
+            if let Some(value) = cache.pop(key) {
+                return Ok(value);
+            }
+        }
+
+        let mut reader = Reader::new(&bytes);
+        let value = V::read(&mut reader)?;
+        Ok(Arc::new(value))
+    }
+
+
     pub(super) async fn delete_data<K: Eq + StdHash + Serializer + Clone, V: Serializer>(&self, tree: &Tree, cache: &Option<Mutex<LruCache<K, Arc<V>>>>, key: &K) -> Result<Arc<V>, BlockchainError> {
         let bytes = match tree.remove(key.to_bytes())? {
             Some(data) => data.to_vec(),

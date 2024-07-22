@@ -26,10 +26,9 @@ pub trait BlockExecutionOrderProvider {
 
     // Get the number of blocks executed
     async fn get_blocks_execution_count(&self) -> u64;
-}
 
-impl SledStorage {
-
+    // Swap the position of two blocks in the execution order
+    async fn swap_blocks_executions_positions(&mut self, left: &Hash, right: &Hash) -> Result<(), BlockchainError>;
 }
 
 #[async_trait]
@@ -64,5 +63,15 @@ impl BlockExecutionOrderProvider for SledStorage {
 
     async fn get_blocks_execution_count(&self) -> u64 {
         self.blocks_execution_count.load(Ordering::SeqCst)
+    }
+
+    async fn swap_blocks_executions_positions(&mut self, left: &Hash, right: &Hash) -> Result<(), BlockchainError> {
+        let left_position = self.get_block_position_in_order(left).await?;
+        let right_position = self.get_block_position_in_order(right).await?;
+
+        self.blocks_execution_order.insert(left.to_bytes(), right_position.to_bytes())?;
+        self.blocks_execution_order.insert(right.to_bytes(), left_position.to_bytes())?;
+
+        Ok(())
     }
 }

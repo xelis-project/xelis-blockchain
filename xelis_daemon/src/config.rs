@@ -1,15 +1,16 @@
 use lazy_static::lazy_static;
 use xelis_common::{
     api::daemon::{DevFeeThreshold, HardFork},
+    block::BlockVersion,
+    config::MAX_BLOCK_SIZE,
     crypto::{
         Address,
         Hash,
         PublicKey
     },
-    block::BlockVersion,
     difficulty::Difficulty,
     network::Network,
-    time::TimestampSeconds,
+    time::TimestampSeconds
 };
 
 // In case of potential forks, have a unique network id to not connect to others compatible chains
@@ -37,8 +38,6 @@ pub const MAINNET_MINIMUM_DIFFICULTY: Difficulty = Difficulty::from_u64(BLOCK_TI
 pub const OTHER_MINIMUM_DIFFICULTY: Difficulty = Difficulty::from_u64(BLOCK_TIME_MILLIS * 2);
 // This is also used as testnet and devnet minimum difficulty
 pub const GENESIS_BLOCK_DIFFICULTY: Difficulty = Difficulty::from_u64(1);
-// 1024 * 1024 + (256 * 1024) bytes = 1.25 MB maximum size per block with txs
-pub const MAX_BLOCK_SIZE: usize = (1024 * 1024) + (256 * 1024);
 // 2 seconds maximum in future (prevent any attack on reducing difficulty but keep margin for unsynced devices)
 pub const TIMESTAMP_IN_FUTURE_LIMIT: TimestampSeconds = 2 * 1000;
 

@@ -16,29 +16,32 @@ use actix_web::{
     HttpResponse
 };
 use actix_ws::{
-    Session,
-    MessageStream,
-    Message,
+    AggregatedMessage,
+    AggregatedMessageStream,
+    CloseCode,
     CloseReason,
-    CloseCode
+    Session
 };
 use async_trait::async_trait;
 use futures_util::StreamExt;
 use log::{debug, error, trace};
-use crate::tokio::{
-    select,
-    sync::{
-        mpsc::{
-            unbounded_channel,
-            UnboundedReceiver,
-            UnboundedSender
+use crate::{
+    config::MAX_BLOCK_SIZE,
+    tokio::{
+        select,
+        sync::{
+            mpsc::{
+                unbounded_channel,
+                UnboundedReceiver,
+                UnboundedSender
+            },
+            Mutex,
+            RwLock
         },
-        Mutex,
-        RwLock
-    },
-    time::{
-        error::Elapsed,
-        timeout
+        time::{
+            error::Elapsed,
+            timeout
+        }
     }
 };
 pub use self::{
@@ -63,7 +66,7 @@ pub enum WebSocketError {
     SessionClosed(#[from] actix_ws::Closed),
     #[error("this session was already closed")]
     SessionAlreadyClosed,
-    #[error("error while sending message")]
+    #[error("error while sending message, channel is closed")]
     ChannelClosed,
     #[error(transparent)]
     Elapsed(#[from] Elapsed),
@@ -266,7 +269,7 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static {
             debug!("Session #{} has been inserted into sessions: {}", id, res);
         }
 
-        actix_rt::spawn(Arc::clone(self).handle_ws_internal(session, stream, rx));
+        actix_rt::spawn(Arc::clone(self).handle_ws_internal(session, stream.max_frame_size(MAX_BLOCK_SIZE).aggregate_continuations(), rx));
         Ok(response)
     }
 
@@ -303,7 +306,7 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static {
     // Internal function to handle a WebSocket connection
     // This will send a ping every 5 seconds and close the connection if no pong is received within 30 seconds
     // It will also translate all messages to the handler
-    async fn handle_ws_internal(self: Arc<Self>, session: WebSocketSessionShared<H>, mut stream: MessageStream, mut rx: UnboundedReceiver<InnerMessage>) {
+    async fn handle_ws_internal(self: Arc<Self>, session: WebSocketSessionShared<H>, mut stream: AggregatedMessageStream, mut rx: UnboundedReceiver<InnerMessage>) {
         // call on_connection
         if let Err(e) = self.handler.on_connection(&session).await {
             debug!("Error while calling on_connection: {}", e);
@@ -367,24 +370,24 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static {
 
                     // handle message
                     match msg {
-                        Message::Text(text) => {
+                        AggregatedMessage::Text(text) => {
                             trace!("Received text message for session #{}: {}", session.id, text);
                             if let Err(e) = self.handler.on_message(&session, text.into_bytes()).await {
                                 debug!("Error while calling on_message: {}", e);
                             }
                         },
-                        Message::Close(reason) => {
+                        AggregatedMessage::Close(reason) => {
                             trace!("Received close message for session #{}: {:?}", session.id, reason);
                             break reason;
                         },
-                        Message::Ping(data) => {
+                        AggregatedMessage::Ping(data) => {
                             trace!("Received ping message with size {} bytes from session #{}", data.len(), session.id);
                             if let Err(e) = session.pong().await {
                                 debug!("Error received while sending pong response to session #{}: {}", session.id, e);
                                 break None;
                             }
                         },
-                        Message::Pong(data) => {
+                        AggregatedMessage::Pong(data) => {
                             if !data.is_empty() {
                                 debug!("Data in pong message is not empty for session #{}", session.id);
                                 break None;

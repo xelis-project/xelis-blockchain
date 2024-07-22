@@ -297,4 +297,13 @@ mod tests {
         assert_eq!(compact.as_ref(), compact2.as_ref());
         assert!(json.contains("123456"));
     }
+
+    #[test]
+    fn test_serde_deserde() {
+        let difficulty = VarUint::from(71135336520u64);
+        let bytes = difficulty.to_bytes();
+        let difficulty2 = VarUint::read(&mut Reader::new(&bytes)).unwrap();
+        assert_eq!(difficulty, difficulty2);
+        assert_eq!(difficulty.to_string(), "71135336520");
+    }
 }

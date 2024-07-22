@@ -1,5 +1,6 @@
 use crate::{
     config::{
+        get_hard_forks as get_configured_hard_forks,
         BLOCK_TIME_MILLIS,
         DEV_FEES,
         DEV_PUBLIC_KEY
@@ -120,7 +121,7 @@ pub async fn get_block_response<S: Storage>(blockchain: &Blockchain<S>, storage:
         .map(|(tx, hash)| RPCTransaction::from_tx(tx, hash, mainnet))
         .collect::<Vec<RPCTransaction<'_>>>();
 
-    let (dev_reward, miner_reward) = get_block_rewards(header.get_height(), reward).map(|(dev_reward, miner_reward)| {
+    let (dev_reward, miner_reward) = get_optional_block_rewards(header.get_height(), reward).map(|(dev_reward, miner_reward)| {
         (Some(dev_reward), Some(miner_reward))
     }).unwrap_or((None, None));
 
@@ -148,13 +149,19 @@ pub async fn get_block_response<S: Storage>(blockchain: &Blockchain<S>, storage:
     }))
 }
 
-fn get_block_rewards(height: u64, reward: Option<u64>) -> Option<(u64, u64)> {
-    if let Some(reward) = reward {
-        let dev_fee_percentage = get_block_dev_fee(height);
-        let dev_reward = reward * dev_fee_percentage / 100;
-        let miner_reward = reward - dev_reward;
+// Get block rewards based on height and reward
+fn get_block_rewards(height: u64, reward: u64) -> (u64, u64) {
+    let dev_fee_percentage = get_block_dev_fee(height);
+    let dev_reward = reward * dev_fee_percentage / 100;
+    let miner_reward = reward - dev_reward;
 
-        Some((dev_reward, miner_reward))
+    (dev_reward, miner_reward)
+}
+
+// Get optional block rewards based on height and reward
+fn get_optional_block_rewards(height: u64, reward: Option<u64>) -> Option<(u64, u64)> {
+    if let Some(reward) = reward {
+        Some(get_block_rewards(height, reward))
     } else {
         None
     }
@@ -181,7 +188,7 @@ pub async fn get_block_response_for_hash<S: Storage>(blockchain: &Blockchain<S>,
         }
 
         let mainnet = blockchain.get_network().is_mainnet();
-        let (dev_reward, miner_reward) = get_block_rewards(header.get_height(), reward).map(|(dev_reward, miner_reward)| {
+        let (dev_reward, miner_reward) = get_optional_block_rewards(header.get_height(), reward).map(|(dev_reward, miner_reward)| {
             (Some(dev_reward), Some(miner_reward))
         }).unwrap_or((None, None));
 
@@ -254,7 +261,9 @@ pub async fn get_peer_entry(peer: &Peer) -> PeerEntry {
         peers: Cow::Owned(peers),
         pruned_topoheight: peer.get_pruned_topoheight(),
         cumulative_difficulty: Cow::Owned(cumulative_difficulty),
-        connected_on: peer.get_connection().connected_on()
+        connected_on: peer.get_connection().connected_on(),
+        bytes_recv: peer.get_connection().bytes_in(),
+        bytes_sent: peer.get_connection().bytes_out(),
     }
 }
 
@@ -268,6 +277,7 @@ pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>
     handler.register_method("get_stableheight", async_handler!(get_stable_height::<S>));
     handler.register_method("get_stable_height", async_handler!(get_stable_height::<S>));
     handler.register_method("get_stable_topoheight", async_handler!(get_stable_topoheight::<S>));
+    handler.register_method("get_hard_forks", async_handler!(get_hard_forks::<S>));
 
     handler.register_method("get_block_at_topoheight", async_handler!(get_block_at_topoheight::<S>));
     handler.register_method("get_blocks_at_height", async_handler!(get_blocks_at_height::<S>));
@@ -356,6 +366,17 @@ async fn get_stable_topoheight<S: Storage>(context: &Context, body: Value) -> Re
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     Ok(json!(blockchain.get_stable_topoheight()))
 }
+
+async fn get_hard_forks<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
+    if body != Value::Null {
+        return Err(InternalRpcError::UnexpectedParams)
+    }
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    let hard_forks = get_configured_hard_forks(blockchain.get_network());
+
+    Ok(json!(hard_forks))
+}
+
 
 async fn get_block_at_topoheight<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: GetBlockAtTopoHeightParams = parse_params(body)?;
@@ -531,6 +552,7 @@ async fn get_info<S: Storage>(context: &Context, body: Value) -> Result<Value, I
     let difficulty = blockchain.get_difficulty().await;
     let block_time_target = BLOCK_TIME_MILLIS;
     let block_reward = get_block_reward(circulating_supply);
+    let (dev_reward, miner_reward) = get_block_rewards(height, block_reward);
     let mempool_size = blockchain.get_mempool_size().await;
     let version = VERSION.into();
     let network = *blockchain.get_network();
@@ -547,6 +569,8 @@ async fn get_info<S: Storage>(context: &Context, body: Value) -> Result<Value, I
         block_time_target,
         average_block_time,
         block_reward,
+        dev_reward,
+        miner_reward,
         mempool_size,
         version,
         network
@@ -1000,6 +1024,11 @@ async fn get_account_history<S: Storage>(context: &Context, body: Value) -> Resu
 
             // Reverse the order of transactions to get the latest first
             for tx_hash in block_header.get_transactions().iter().rev() {
+                // Don't show unexecuted TXs in the history
+                if !storage.is_tx_executed_in_block(tx_hash, &hash)? {
+                    continue;
+                }
+
                 trace!("Searching tx {} in block {}", tx_hash, hash);
                 let tx = storage.get_transaction(tx_hash).await.context(format!("Error while retrieving transaction {tx_hash} from block {hash}"))?;
                 let is_sender = *tx.get_source() == *key;

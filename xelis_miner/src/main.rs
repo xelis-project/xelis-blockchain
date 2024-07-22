@@ -18,13 +18,19 @@ use fern::colors::Color;
 use futures_util::{StreamExt, SinkExt};
 use serde::{Serialize, Deserialize};
 use tokio::{
+    select,
     sync::{
         broadcast,
         mpsc,
         Mutex
     },
-    select,
-    time::Instant,
+    task::JoinHandle,
+    time::Instant
+};
+#[cfg(feature = "api_stats")]
+use tokio::{
+    io::AsyncWriteExt,
+    net::TcpListener
 };
 use tokio_tungstenite::{
     connect_async,
@@ -91,6 +97,10 @@ pub struct MinerConfig {
     /// Daemon address to connect to for mining
     #[clap(long, default_value_t = String::from(DEFAULT_DAEMON_ADDRESS))]
     daemon_address: String,
+    /// Bind address for stats API
+    #[cfg(feature = "api_stats")]
+    #[clap(long)]
+    api_bind_address: Option<String>,
     /// Set log level
     #[clap(long, value_enum, default_value_t = LogLevel::Info)]
     log_level: LogLevel,
@@ -159,7 +169,10 @@ static CURRENT_TOPO_HEIGHT: AtomicU64 = AtomicU64::new(0);
 static BLOCKS_FOUND: AtomicUsize = AtomicUsize::new(0);
 static BLOCKS_REJECTED: AtomicUsize = AtomicUsize::new(0);
 static HASHRATE_COUNTER: AtomicUsize = AtomicUsize::new(0);
+#[cfg(feature = "api_stats")]
+static HASHRATE: AtomicU64 = AtomicU64::new(0);
 static JOB_ELAPSED: RwLock<Option<Instant>> = RwLock::new(None);
+
 
 lazy_static! {
     static ref HASHRATE_LAST_TIME: Mutex<Instant> = Mutex::new(Instant::now());
@@ -215,6 +228,20 @@ async fn main() -> Result<()> {
 
     // start communication task
     let task = spawn_task("communication", communication_task(config.daemon_address, sender.clone(), block_receiver, address, config.worker));
+    
+    let stats_task: Option<JoinHandle<Result<()>>>;
+    #[cfg(feature = "api_stats")]
+    {
+        // start stats task
+        stats_task = match config.api_bind_address {
+            Some(addr) => Some(spawn_task("broadcast", broadcast_stats_task(addr))),
+            None => None,
+        };
+    }
+    #[cfg(not(feature = "api_stats"))]
+    {
+        stats_task = None;
+    }
 
     if let Err(e) = run_prompt(prompt).await {
         error!("Error on running prompt: {}", e);
@@ -228,8 +255,52 @@ async fn main() -> Result<()> {
     // stop the communication task
     task.abort();
 
+    // stop the stats broadcast task
+    if let Some(stats_handle) = stats_task {
+        stats_handle.abort()
+    }
+
     Ok(())
 }
+
+// This Tokio task will runs indefinitely until the user stops the miner himself.
+// It maintains a http listener and sends stats on connection in json.
+#[cfg(feature = "api_stats")]
+async fn broadcast_stats_task(broadcast_address: String) -> Result<()> {
+    info!("Starting broadcast task");
+    loop {
+        // Start TCP listener
+        let listener = TcpListener::bind(broadcast_address).await?;
+        loop {
+            let (mut socket, _) = listener.accept().await?;
+
+            let blocks_found = BLOCKS_FOUND.load(Ordering::SeqCst);
+            let blocks_rejected = BLOCKS_REJECTED.load(Ordering::SeqCst);
+            let hashrate = HASHRATE.load(Ordering::SeqCst);
+
+            // Build JSON data
+            let data = serde_json::json!({
+                "accepted": blocks_found,
+                "rejected": blocks_rejected,
+                "hashrate": hashrate,
+                "hashrate_formatted": format_hashrate(hashrate as f64),
+            });
+
+            // Build HTTP response
+            let status_line = "HTTP/1.1 200 OK\r\n";
+            let content_type = "Content-Type: application/json\r\n";
+            let contents = data.to_string();
+            let length = contents.len();
+            let response = format!("{status_line}{content_type}Content-Length: {length}\r\n\r\n{contents}");
+
+            // Send HTTP repsonse and close socket
+            AsyncWriteExt::write_all(&mut socket, response.as_bytes())
+                .await?;
+            socket.shutdown().await?;
+        }
+    }
+}
+
 
 // Benchmark the miner with the specified number of threads and iterations
 // It will output the total time, total iterations, time per PoW and hashrate for each number of threads
@@ -504,6 +575,9 @@ async fn run_prompt(prompt: ShareablePrompt) -> Result<()> {
 
             let hashrate = 1000f64 / (last_time.elapsed().as_millis() as f64 / counter as f64);
             *last_time = Instant::now();
+
+            #[cfg(feature = "api_stats")]
+            HASHRATE.store(hashrate as u64, Ordering::SeqCst);
 
             prompt.colorize_string(Color::Green, &format!("{}", format_hashrate(hashrate)))
         };

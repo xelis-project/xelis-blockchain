@@ -217,8 +217,6 @@ async fn main() -> Result<()> {
     let command_manager = CommandManager::new(prompt.clone());
     command_manager.store_in_context(config.network)?;
 
-    command_manager.register_default_commands()?;
-
     if let Some(path) = config.wallet_path {
         // read password from option or ask him
         let password = if let Some(password) = config.password {
@@ -237,15 +235,12 @@ async fn main() -> Result<()> {
             Wallet::create(path, password, config.seed, config.network, precomputed_tables)?
         };
 
+        command_manager.register_default_commands()?;
+
         apply_config(&wallet, #[cfg(feature = "api_server")] &prompt).await;
         setup_wallet_command_manager(wallet, &command_manager).await?;
     } else {
-        command_manager.add_command(Command::new("open", "Open a wallet", CommandHandler::Async(async_handler!(open_wallet))))?;
-        command_manager.add_command(Command::new("create", "Create a new wallet", CommandHandler::Async(async_handler!(create_wallet))))?;
-        command_manager.add_command(Command::new("recover", "Recover a wallet using a seed", CommandHandler::Async(async_handler!(recover_wallet))))?;
-
-        // Display available commands
-        command_manager.display_commands()?;
+        register_default_commands(&command_manager).await?;
     }
 
     if let Err(e) = prompt.start(Duration::from_millis(1000), Box::new(async_handler!(prompt_message_builder)), Some(&command_manager)).await {
@@ -257,6 +252,18 @@ async fn main() -> Result<()> {
             wallet.close().await;
         }
     }
+
+    Ok(())
+}
+
+async fn register_default_commands(manager: &CommandManager) -> Result<(), CommandError> {
+    manager.add_command(Command::new("open", "Open a wallet", CommandHandler::Async(async_handler!(open_wallet))))?;
+    manager.add_command(Command::new("create", "Create a new wallet", CommandHandler::Async(async_handler!(create_wallet))))?;
+    manager.add_command(Command::new("recover", "Recover a wallet using a seed", CommandHandler::Async(async_handler!(recover_wallet))))?;
+
+    manager.register_default_commands()?;
+    // Display available commands
+    manager.display_commands()?;
 
     Ok(())
 }
@@ -392,13 +399,14 @@ async fn setup_wallet_command_manager(wallet: Arc<Wallet>, command_manager: &Com
     command_manager.add_command(Command::new("change_password", "Set a new password to open your wallet", CommandHandler::Async(async_handler!(change_password))))?;
     command_manager.add_command(Command::with_optional_arguments("transfer", "Send asset to a specified address", vec![Arg::new("asset", ArgType::Hash)], CommandHandler::Async(async_handler!(transfer))))?;
     command_manager.add_command(Command::with_optional_arguments("transfer_all", "Send all your asset balance to a specified address", vec![Arg::new("asset", ArgType::Hash)], CommandHandler::Async(async_handler!(transfer_all))))?;
-    command_manager.add_command(Command::with_required_arguments("burn", "Burn amount of asset", vec![Arg::new("asset", ArgType::Hash), Arg::new("amount", ArgType::Number)], CommandHandler::Async(async_handler!(burn))))?;
+    command_manager.add_command(Command::new("burn", "Burn amount of asset", CommandHandler::Async(async_handler!(burn))))?;
     command_manager.add_command(Command::new("display_address", "Show your wallet address", CommandHandler::Async(async_handler!(display_address))))?;
     command_manager.add_command(Command::with_optional_arguments("balance", "List all non-zero balances or show the selected one", vec![Arg::new("asset", ArgType::Hash)], CommandHandler::Async(async_handler!(balance))))?;
     command_manager.add_command(Command::with_optional_arguments("history", "Show all your transactions", vec![Arg::new("page", ArgType::Number)], CommandHandler::Async(async_handler!(history))))?;
     command_manager.add_command(Command::with_optional_arguments("seed", "Show seed of selected language", vec![Arg::new("language", ArgType::Number)], CommandHandler::Async(async_handler!(seed))))?;
     command_manager.add_command(Command::new("nonce", "Show current nonce", CommandHandler::Async(async_handler!(nonce))))?;
     command_manager.add_command(Command::new("set_nonce", "Set new nonce", CommandHandler::Async(async_handler!(set_nonce))))?;
+    command_manager.add_command(Command::new("logout", "Logout from existing wallet", CommandHandler::Async(async_handler!(logout))))?;
 
     #[cfg(feature = "network_handler")]
     {
@@ -697,8 +705,13 @@ async fn transfer(manager: &CommandManager, _: ArgumentManager) -> Result<(), Co
         asset,
         extra_data: None
     };
-    let tx = wallet.create_transaction(TransactionTypeBuilder::Transfers(vec![transfer]), FeeBuilder::default()).await
-        .context("Error while creating transaction")?;
+    let tx = match wallet.create_transaction(TransactionTypeBuilder::Transfers(vec![transfer]), FeeBuilder::default()).await {
+        Ok(tx) => tx,
+        Err(e) => {
+            manager.error(&format!("Error while creating transaction: {}", e));
+            return Ok(())
+        }
+    };
 
     broadcast_tx(wallet, manager, tx).await;
     Ok(())
@@ -770,23 +783,39 @@ async fn transfer_all(manager: &CommandManager, mut args: ArgumentManager) -> Re
     Ok(())
 }
 
-async fn burn(manager: &CommandManager, mut arguments: ArgumentManager) -> Result<(), CommandError> {
-    let amount = arguments.get_value("amount")?.to_number()?;
-    let asset = arguments.get_value("asset")?.to_hash()?;
+async fn burn(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
+    let prompt = manager.get_prompt();
     let context = manager.get_context().lock()?;
     let wallet: &Arc<Wallet> = context.get()?;
-    {
-        let storage = wallet.get_storage().read().await;
-        let decimals = storage.get_asset_decimals(&asset).unwrap_or(COIN_DECIMALS);
 
-        manager.message(format!("Burning {} of {}", format_coin(amount, decimals), asset));
-    }
+    let asset = prompt.read_hash(
+        prompt.colorize_str(Color::Green, "Asset (default XELIS): ")
+    ).await.ok();
+
+    let asset = asset.unwrap_or(XELIS_ASSET);
+
+    let (max_balance, decimals) = {
+        let storage = wallet.get_storage().read().await;
+        let balance = storage.get_plaintext_balance_for(&asset).await.unwrap_or(0);
+        let decimals = storage.get_asset_decimals(&asset).unwrap_or(COIN_DECIMALS);
+        (balance, decimals)
+    };
+
+    // read amount
+    let float_amount: f64 = prompt.read(
+        prompt.colorize_string(Color::Green, &format!("Amount (max: {}): ", format_coin(max_balance, decimals)))
+    ).await.context("Error while reading amount")?;
+
+    let amount = (float_amount * 10u32.pow(decimals as u32) as f64) as u64;
+    manager.message(format!("Burning {} of {}", format_coin(amount, decimals), asset));
+
     let payload = BurnPayload {
         amount,
         asset
     };
+
     let tx = wallet.create_transaction(TransactionTypeBuilder::Burn(payload), FeeBuilder::Multiplier(1f64)).await
-        .context("Error while creating transaction")?;
+        .context("Error while creating burn transaction")?;
 
     broadcast_tx(wallet, manager, tx).await;
     Ok(())
@@ -965,6 +994,22 @@ async fn set_nonce(manager: &CommandManager, _: ArgumentManager) -> Result<(), C
     storage.clear_tx_cache();
 
     manager.message(format!("New nonce is: {}", value));
+    Ok(())
+}
+
+async fn logout(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
+    {
+        let context = manager.get_context().lock()?;
+        let wallet: &Arc<Wallet> = context.get()?;
+        wallet.close().await;
+    }
+
+    manager.remove_all_commands().context("Error while removing all commands")?;
+    manager.remove_from_context::<Arc<Wallet>>()?;
+
+    register_default_commands(manager).await?;
+    manager.message("Wallet has been closed");
+
     Ok(())
 }
 

@@ -161,8 +161,14 @@ pub enum EntryData {
         reward: u64
     },
     Burn {
+        // Burned asset
         asset: Hash,
-        amount: u64
+        // Burned amount
+        amount: u64,
+        // Fee paid
+        fee: u64,
+        // Nonce used by the TX
+        nonce: u64
     },
     Incoming {
         from: PublicKey,
@@ -184,7 +190,9 @@ impl Serializer for EntryData {
             0 => Self::Coinbase { reward: reader.read_u64()? },
             1 => Self::Burn {
                 asset: reader.read_hash()?,
-                amount: reader.read_u64()?
+                amount: reader.read_u64()?,
+                fee: reader.read_u64()?,
+                nonce: reader.read_u64()?
             },
             2 => {
                 let key = PublicKey::read(reader)?;
@@ -218,10 +226,12 @@ impl Serializer for EntryData {
                 writer.write_u8(0);
                 writer.write_u64(reward);
             },
-            Self::Burn { asset, amount } => {
+            Self::Burn { asset, amount, fee, nonce } => {
                 writer.write_u8(1);
                 writer.write_hash(asset);
                 writer.write_u64(amount);
+                writer.write_u64(fee);
+                writer.write_u64(nonce);
             },
             Self::Incoming { from, transfers } => {
                 writer.write_u8(2);
@@ -246,7 +256,7 @@ impl Serializer for EntryData {
     fn size(&self) -> usize {
         1 + match &self {
             Self::Coinbase { reward } => reward.size(),
-            Self::Burn { asset, amount } => asset.size() + amount.size(),
+            Self::Burn { asset, amount, fee, nonce } => asset.size() + amount.size() + fee.size() + nonce.size(),
             Self::Incoming { from, transfers } => {
                 from.size() + 2 + transfers.iter().map(|t| t.size()).sum::<usize>()
             },
@@ -297,7 +307,7 @@ impl TransactionEntry {
             topoheight: self.topoheight,
             entry: match self.entry {
                 EntryData::Coinbase { reward } => RPCEntryType::Coinbase { reward },
-                EntryData::Burn { asset, amount } => RPCEntryType::Burn { asset, amount },
+                EntryData::Burn { asset, amount, fee, nonce } => RPCEntryType::Burn { asset, amount, fee, nonce },
                 EntryData::Incoming { from, transfers } => {
                     let transfers = transfers.into_iter().map(|t| RPCTransferIn {
                         asset: t.asset,
@@ -322,9 +332,9 @@ impl TransactionEntry {
     pub fn summary(&self, mainnet: bool, storage: &EncryptedStorage) -> Result<String> {
         let entry_str = match self.get_entry() {
             EntryData::Coinbase { reward } => format!("Coinbase {} XELIS", format_xelis(*reward)),
-            EntryData::Burn { asset, amount } => {
+            EntryData::Burn { asset, amount, fee, nonce } => {
                 let decimals = storage.get_asset_decimals(asset)?;
-                format!("Burn {} of {}", format_coin(*amount, decimals), asset)
+                format!("Fee: {}, Nonce: {} Burn {} of {}", format_xelis(*fee), nonce, format_coin(*amount, decimals), asset)
             },
             EntryData::Incoming { from, transfers } => {
                 let mut str = String::new();

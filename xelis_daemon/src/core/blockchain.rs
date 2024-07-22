@@ -27,6 +27,7 @@ use xelis_common::{
         COIN_DECIMALS,
         MAXIMUM_SUPPLY,
         MAX_TRANSACTION_SIZE,
+        MAX_BLOCK_SIZE,
         TIPS_LIMIT,
         XELIS_ASSET
     },
@@ -55,7 +56,7 @@ use crate::{
         get_genesis_block_hash, get_hex_genesis_block, get_minimum_difficulty,
         BLOCK_TIME_MILLIS, CHAIN_SYNC_RESPONSE_MAX_BLOCKS, CHAIN_SYNC_RESPONSE_MIN_BLOCKS,
         DEFAULT_CACHE_SIZE, DEFAULT_P2P_BIND_ADDRESS, DEFAULT_RPC_BIND_ADDRESS, DEV_FEES,
-        DEV_PUBLIC_KEY, EMISSION_SPEED_FACTOR, GENESIS_BLOCK_DIFFICULTY, MAX_BLOCK_SIZE,
+        DEV_PUBLIC_KEY, EMISSION_SPEED_FACTOR, GENESIS_BLOCK_DIFFICULTY,
         MILLIS_PER_SECOND, P2P_DEFAULT_MAX_PEERS, SIDE_BLOCK_REWARD_MAX_BLOCKS, PRUNE_SAFETY_LIMIT,
         SIDE_BLOCK_REWARD_PERCENT, SIDE_BLOCK_REWARD_MIN_PERCENT, STABLE_LIMIT, TIMESTAMP_IN_FUTURE_LIMIT,
         P2P_DEFAULT_CONCURRENCY_TASK_COUNT_LIMIT
@@ -198,7 +199,10 @@ pub struct Config {
     pub disable_p2p_outgoing_connections: bool,
     /// Limit of concurrent tasks accepting new incoming connections.
     #[clap(long, default_value_t = P2P_DEFAULT_CONCURRENCY_TASK_COUNT_LIMIT)]
-    pub p2p_concurrency_task_count_limit: usize
+    pub p2p_concurrency_task_count_limit: usize,
+    /// Skip the TXs verification when building a block template.
+    #[clap(long)]
+    pub skip_block_template_txs_verification: bool
 }
 
 pub struct Blockchain<S: Storage> {
@@ -226,6 +230,8 @@ pub struct Blockchain<S: Storage> {
     simulator: Option<Simulator>,
     // if we should skip PoW verification
     skip_pow_verification: bool,
+    // Should we skip block template TXs verification
+    skip_block_template_txs_verification: bool,
     // current network type on which one we're using/connected to
     network: Network,
     // this cache is used to avoid to recompute the common base for each block and is mandatory
@@ -298,7 +304,8 @@ impl<S: Storage> Blockchain<S> {
             tip_base_cache: Mutex::new(LruCache::new(NonZeroUsize::new(1024).unwrap())),
             tip_work_score_cache: Mutex::new(LruCache::new(NonZeroUsize::new(1024).unwrap())),
             full_order_cache: Mutex::new(LruCache::new(NonZeroUsize::new(1024).unwrap())),
-            auto_prune_keep_n_blocks: config.auto_prune_keep_n_blocks
+            auto_prune_keep_n_blocks: config.auto_prune_keep_n_blocks,
+            skip_block_template_txs_verification: config.skip_block_template_txs_verification
         };
 
         // include genesis block
@@ -1051,10 +1058,10 @@ impl<S: Storage> Blockchain<S> {
             return Ok(value.clone())
         }
 
-        let block = provider.get_block_header_by_hash(hash).await?;
+        let tips = provider.get_past_blocks_for_block_hash(hash).await?;
         let mut map: HashMap<Hash, CumulativeDifficulty> = HashMap::new();
         let base_topoheight = provider.get_topo_height_for_hash(base).await?;
-        for hash in block.get_tips() {
+        for hash in tips.iter() {
             if !map.contains_key(hash) {
                 let is_ordered = provider.is_block_topological_ordered(hash).await;
                 if !is_ordered || (is_ordered && provider.get_topo_height_for_hash(hash).await? >= base_topoheight) {
@@ -1526,24 +1533,28 @@ impl<S: Storage> Blockchain<S> {
                 break;
             }
 
-            // Check if the TX is valid for this potential block
-            trace!("Checking TX {} with nonce {}, {}", hash, tx.get_nonce(), tx.get_source().as_address(self.network.is_mainnet()));
-            let source = tx.get_source();
-            if failed_sources.contains(&source) {
-                debug!("Skipping TX {} because its source has failed before", hash);
-                continue;
+            if !self.skip_block_template_txs_verification {
+                // Check if the TX is valid for this potential block
+                trace!("Checking TX {} with nonce {}, {}", hash, tx.get_nonce(), tx.get_source().as_address(self.network.is_mainnet()));
+
+                let source = tx.get_source();
+                if failed_sources.contains(&source) {
+                    debug!("Skipping TX {} because its source has failed before", hash);
+                    continue;
+                }
+
+                if let Err(e) = tx.verify(&mut chain_state).await {
+                    warn!("TX {} ({}) is not valid for mining: {}", hash, source.as_address(self.network.is_mainnet()), e);
+                    failed_sources.insert(source);
+                    continue;
+                }
             }
 
-            if let Err(e) = tx.verify(&mut chain_state).await {
-                warn!("TX {} ({}) is not valid for mining: {}", hash, source.as_address(self.network.is_mainnet()), e);
-                failed_sources.insert(source);
-            } else {
-                trace!("Selected {} (nonce: {}, fees: {}) for mining", hash, tx.get_nonce(), format_xelis(tx.get_fee()));
-                // TODO no clone
-                block.txs_hashes.insert(hash.as_ref().clone());
-                block_size += HASH_SIZE; // add the hash size
-                total_txs_size += size;
-            }
+            trace!("Selected {} (nonce: {}, fees: {}) for mining", hash, tx.get_nonce(), format_xelis(tx.get_fee()));
+            // TODO no clone
+            block.txs_hashes.insert(hash.as_ref().clone());
+            block_size += HASH_SIZE; // add the hash size
+            total_txs_size += size;
         }
 
         Ok(block)
@@ -1783,9 +1794,11 @@ impl<S: Storage> Blockchain<S> {
                 batch.push(tx);
             }
 
-            debug!("proof verifications of TXs ({}) in block {}", batch.iter().map(|v| v.hash().to_string()).collect::<Vec<String>>().join(","), block_hash);
-            // Verify all valid transactions in one batch
-            Transaction::verify_batch(batch.as_slice(), &mut chain_state).await?;
+            if !batch.is_empty() {
+                debug!("proof verifications of TXs ({}) in block {}", batch.iter().map(|v| v.hash().to_string()).collect::<Vec<String>>().join(","), block_hash);
+                // Verify all valid transactions in one batch
+                Transaction::verify_batch(batch.as_slice(), &mut chain_state).await?;
+            }
         }
 
         // Save transactions & block
@@ -1801,7 +1814,9 @@ impl<S: Storage> Blockchain<S> {
             let cumulative_difficulty: CumulativeDifficulty = if tips_count == 0 {
                 GENESIS_BLOCK_DIFFICULTY.into()
             } else {
+                debug!("Computing cumulative difficulty for block {}", block_hash);
                 let (base, base_height) = self.find_common_base(storage, block.get_tips()).await?;
+                debug!("Common base found: {}, height: {}", base, base_height);
                 let (_, cumulative_difficulty) = self.find_tip_work_score::<S>(&storage, &block_hash, &base, base_height).await?;
                 cumulative_difficulty
             };
@@ -1818,6 +1833,7 @@ impl<S: Storage> Blockchain<S> {
         debug!("New tips: {}", tips.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(","));
 
         let (base_hash, base_height) = self.find_common_base(storage, &tips).await?;
+        debug!("New base hash: {}, height: {}", base_hash, base_height);
         let best_tip = self.find_best_tip(storage, &tips, &base_hash, base_height).await?;
         debug!("Best tip selected: {}", best_tip);
 

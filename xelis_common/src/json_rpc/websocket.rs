@@ -519,7 +519,7 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + 'static> WebSocketJsonRPCC
             "method": method,
             "id": id,
             "params": params
-        }))?)).await.map_err(|_| JsonRPCError::SendError)?;
+        }))?)).await.map_err(|e| JsonRPCError::SendError(e.to_string()))?;
 
         Ok(())
     }

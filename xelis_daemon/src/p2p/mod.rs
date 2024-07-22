@@ -18,7 +18,7 @@ use xelis_common::{
         NotifyEvent,
         PeerPeerDisconnectedEvent
     },
-    block::{Block, BlockHeader},
+    block::{Block, BlockHeader, BlockVersion},
     config::{TIPS_LIMIT, VERSION},
     crypto::{Hash, Hashable, PublicKey},
     difficulty::CumulativeDifficulty,
@@ -45,7 +45,8 @@ use crate::{
     core::{
         blockchain::Blockchain,
         error::BlockchainError,
-        storage::Storage
+        storage::Storage,
+        hard_fork::get_version_at_height
     },
     p2p::{
         chain_validator::ChainValidator,
@@ -1905,7 +1906,10 @@ impl<S: Storage> P2pServer<S> {
 
                 let mut swap = false;
                 if let Some(previous_hash) = response_blocks.last() {
-                    if storage.has_block_position_in_order(&hash).await? && storage.has_block_position_in_order(&previous_hash).await? {
+                    let version = get_version_at_height(self.blockchain.get_network(), height);
+                    // Due to the TX being orphaned, some TXs may be in the wrong order in V1
+                    // It has been sorted in V2 and should not happen anymore
+                    if version == BlockVersion::V0 && storage.has_block_position_in_order(&hash).await? && storage.has_block_position_in_order(&previous_hash).await? {
                         if self.blockchain.is_side_block_internal(&*storage, &hash, top_topoheight).await? {
                             let position = storage.get_block_position_in_order(&hash).await?;
                             let previous_position = storage.get_block_position_in_order(&previous_hash).await?;
@@ -2160,7 +2164,30 @@ impl<S: Storage> P2pServer<S> {
                     }
                     total_requested += 1;
                 } else {
-                    trace!("Block {} is already in chain, skipping it", hash);
+                    trace!("Block {} is already in chain, verify if its in DAG", hash);
+
+                    let block = {
+                        let mut storage = self.blockchain.get_storage().write().await;
+                        if !storage.is_block_topological_ordered(&hash).await {
+                            match storage.delete_block_with_hash(&hash).await {
+                                Ok(block) => Some(block),
+                                Err(e) => {
+                                    // This shouldn't happen, but in case
+                                    error!("Error while deleting block {} from storage to re-execute it for chain sync: {}", hash, e);
+                                    continue;
+                                }
+                            }
+                        } else {
+                            None
+                        }
+                    };
+
+                    if let Some(block) = block {
+                        warn!("Block {} is already in chain but not in DAG, re-executing it", hash);
+                        self.blockchain.add_new_block(block, false, false).await?;
+                    } else {
+                        trace!("Block {} is already in DAG, skipping it", hash);
+                    }
                 }
             }
 

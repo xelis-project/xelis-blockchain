@@ -78,9 +78,7 @@ use {
 };
 use rand::{rngs::OsRng, RngCore};
 use log::{
-    trace,
-    debug,
-    error,
+    debug, error, info, trace
 };
 
 #[cfg(feature = "api_server")]
@@ -658,14 +656,14 @@ impl Wallet {
                     } else {
                         force_stable_balance
                     };
-    
+
                     if use_stable_balance {
                         warn!("Using stable balance for TX creation");
                         let address = self.get_address();
                         for asset in &used_assets {
                             debug!("Searching stable balance for asset {}", asset);
                             let stable_point = network_handler.get_api().get_stable_balance(&address, &asset).await?;
-        
+
                             // Store the stable balance version into unconfirmed balance
                             // So it will be fetch later by state
                             let mut ciphertext = stable_point.version.take_balance();
@@ -675,7 +673,7 @@ impl Wallet {
                                 amount,
                                 ciphertext
                             };
-        
+
                             storage.set_unconfirmed_balance_for(asset.clone(), balance).await?;
                             // Build the stable reference
                             // We need to find the highest stable point
@@ -719,7 +717,8 @@ impl Wallet {
                 return Err(WalletError::BalanceNotFound(asset));
             }
 
-            let (balance, _) = storage.get_unconfirmed_balance_for(&asset).await?;
+            let (balance, unconfirmed) = storage.get_unconfirmed_balance_for(&asset).await?;
+            info!("Adding balance (unconfirmed: {}) for asset {} with amount {}, ciphertext: {}", unconfirmed, asset, balance.amount, balance.ciphertext);
             state.add_balance(asset, balance);
         }
 

@@ -250,6 +250,8 @@ pub struct GetInfoResult {
     // Average block time of last 50 blocks
     pub average_block_time: u64,
     pub block_reward: u64,
+    pub dev_reward: u64,
+    pub miner_reward: u64,
     // count how many transactions are present in mempool
     pub mempool_size: usize,
     // software version on which the daemon is running
@@ -334,7 +336,9 @@ pub struct PeerEntry<'a> {
     pub pruned_topoheight: Option<u64>,
     pub peers: Cow<'a, HashMap<SocketAddr, Direction>>,
     pub cumulative_difficulty: Cow<'a, CumulativeDifficulty>,
-    pub connected_on: TimestampSeconds
+    pub connected_on: TimestampSeconds,
+    pub bytes_sent: usize,
+    pub bytes_recv: usize,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -467,6 +471,7 @@ pub struct DevFeeThreshold {
 }
 
 // Struct to define hard fork
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct HardFork {
     // block height to start hard fork
     pub height: u64,

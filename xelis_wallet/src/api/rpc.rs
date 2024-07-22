@@ -65,6 +65,7 @@ pub fn register_methods(handler: &mut RPCHandler<Arc<Wallet>>) {
     handler.register_method("get_asset_precision", async_handler!(get_asset_precision));
     handler.register_method("get_transaction", async_handler!(get_transaction));
     handler.register_method("build_transaction", async_handler!(build_transaction));
+    handler.register_method("clear_tx_cache", async_handler!(clear_tx_cache));
     handler.register_method("list_transactions", async_handler!(list_transactions));
     handler.register_method("is_online", async_handler!(is_online));
     handler.register_method("set_online_mode", async_handler!(set_online_mode));
@@ -286,6 +287,19 @@ async fn build_transaction(context: &Context, body: Value) -> Result<Value, Inte
             data: Cow::Owned(tx)
         }
     }))
+}
+
+// Clear the transaction cache
+async fn clear_tx_cache(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
+    if body != Value::Null {
+        return Err(InternalRpcError::UnexpectedParams)
+    }
+
+    let wallet: &Arc<Wallet> = context.get()?;
+    let mut storage = wallet.get_storage().write().await;
+    storage.clear_tx_cache();
+
+    Ok(json!(true))
 }
 
 // Estimate fees for a transaction

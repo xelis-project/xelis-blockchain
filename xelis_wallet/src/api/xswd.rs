@@ -29,6 +29,7 @@ use actix_web::{
     dev::ServerHandle,
     HttpResponse
 };
+use indexmap::IndexMap;
 use serde_json::{
     Value,
     json
@@ -167,7 +168,7 @@ pub struct AppState {
     // URL of the app if exists
     url: Option<String>,
     // All permissions for each method
-    permissions: Mutex<HashMap<String, Permission>>,
+    permissions: Mutex<IndexMap<String, Permission>>,
     is_requesting: AtomicBool
 }
 
@@ -201,7 +202,7 @@ impl AppState {
         &self.url
     }
 
-    pub fn get_permissions(&self) -> &Mutex<HashMap<String, Permission>> {
+    pub fn get_permissions(&self) -> &Mutex<IndexMap<String, Permission>> {
         &self.permissions
     }
 
@@ -225,7 +226,7 @@ pub struct ApplicationData {
     // URL of the app if exists
     url: Option<String>,
     // All permissions for each method
-    permissions: HashMap<String, Permission>,
+    permissions: IndexMap<String, Permission>,
     // signature of all data
     signature: Option<Signature>,
 }
@@ -247,7 +248,7 @@ impl ApplicationData {
         &self.url
     }
 
-    pub fn get_permissions(&self) -> &HashMap<String, Permission> {
+    pub fn get_permissions(&self) -> &IndexMap<String, Permission> {
         &self.permissions
     }
 
@@ -264,7 +265,7 @@ impl Serializer for ApplicationData {
         let description = reader.read_string()?;
         let url = reader.read_optional_string()?;
         let permissions_count = reader.read_u8()?;
-        let mut permissions = HashMap::with_capacity(permissions_count as usize);
+        let mut permissions = IndexMap::with_capacity(permissions_count as usize);
         for _ in 0..permissions_count {
             permissions.insert(reader.read_string()?, Permission::from_id(reader.read_u8()?).ok_or(ReaderError::InvalidValue)?);
         }

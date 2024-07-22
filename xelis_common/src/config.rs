@@ -29,5 +29,9 @@ pub const TESTNET_PREFIX_ADDRESS: &str = "xet";
 // Max transaction size in bytes
 pub const MAX_TRANSACTION_SIZE: usize = 1024 * 1024; // 1 MB
 
+// Max block size in bytes
+// 1024 * 1024 + (256 * 1024) bytes = 1.25 MB maximum size per block with txs
+pub const MAX_BLOCK_SIZE: usize = (1024 * 1024) + (256 * 1024);
+
 // BlockDAG rules
 pub const TIPS_LIMIT: usize = 3; // maximum 3 TIPS per block
