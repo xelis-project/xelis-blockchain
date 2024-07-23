@@ -32,7 +32,6 @@ use xelis_common::{
         Address,
         Hash
     },
-    serializer::Serializer,
     transaction::Role,
     utils::sanitize_daemon_address
 };
@@ -732,7 +731,7 @@ impl NetworkHandler {
                 };
 
                 if must_update {
-                    trace!("must update balance for asset: {}, ct: {:?}", asset, ciphertext.to_bytes());
+                    debug!("must update balance for asset: {}, ct: {}", asset, ciphertext);
                     let value = if let Some(cache) = balance_cache {
                         cache
                     } else {
@@ -752,6 +751,8 @@ impl NetworkHandler {
 
                     // We should sync new blocks to get the TXs
                     should_sync_blocks = true;
+                } else {
+                    debug!("balance for asset {} is already up-to-date", asset);
                 }
             }
         }
