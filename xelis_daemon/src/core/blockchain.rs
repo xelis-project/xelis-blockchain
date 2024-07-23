@@ -1484,8 +1484,25 @@ impl<S: Storage> Blockchain<S> {
             debug!("Dropping tips {} because they are not in the first 3 heavier tips", dropped_tips.map(|h| h.to_string()).collect::<Vec<String>>().join(", "));
         }
 
+        // find the newest timestamp
+        let mut timestamp = 0;
+        for tip in sorted_tips.iter() {
+            let tip_timestamp = storage.get_timestamp_for_block_hash(tip).await?;
+            if tip_timestamp > timestamp {
+                timestamp = tip_timestamp;
+            }
+        }
+
+        // Check that our current timestamp is correct
+        let current_timestamp = get_current_time_in_millis();
+        if current_timestamp < timestamp {
+            warn!("Current timestamp is less than the newest tip timestamp, using newest timestamp from tips");
+        } else {
+            timestamp = current_timestamp;
+        }
+
         let height = blockdag::calculate_height_at_tips(storage, sorted_tips.iter()).await?;
-        let block = BlockHeader::new(get_version_at_height(self.get_network(), height), height, get_current_time_in_millis(), sorted_tips, extra_nonce, address, IndexSet::new());
+        let block = BlockHeader::new(get_version_at_height(self.get_network(), height), height, timestamp, sorted_tips, extra_nonce, address, IndexSet::new());
 
         Ok(block)
     }
