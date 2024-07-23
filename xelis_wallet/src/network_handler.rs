@@ -662,7 +662,7 @@ impl NetworkHandler {
             None
         };
 
-        let assets = if let Some(assets) = assets {
+        let assets = if let Some(assets) = assets.filter(|a| !a.is_empty()) {
             assets
         } else {
             trace!("no assets provided, fetching all assets");
