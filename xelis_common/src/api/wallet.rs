@@ -234,6 +234,12 @@ pub struct TransactionEntry {
     pub entry: EntryType,
 }
 
+impl std::hash::Hash for TransactionEntry {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.hash.hash(state);
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 pub struct EstimateExtraDataSizeParams {
     pub destinations: Vec<Address>,
