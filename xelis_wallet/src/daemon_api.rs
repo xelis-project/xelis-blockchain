@@ -153,6 +153,12 @@ impl DaemonAPI {
         Ok(receiver)
     }
 
+    pub async fn on_stable_topoheight_changed_event(&self) -> Result<EventReceiver<StableHeightChangedEvent>> {
+        trace!("on_stable_topoheight_changed_event");
+        let receiver = self.client.subscribe_event(NotifyEvent::StableTopoHeightChanged, self.capacity).await?;
+        Ok(receiver)
+    }
+
     pub async fn get_version(&self) -> Result<String> {
         trace!("get_version");
         let version = self.client.call("get_version").await?;
