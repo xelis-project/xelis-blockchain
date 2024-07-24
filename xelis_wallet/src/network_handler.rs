@@ -815,7 +815,8 @@ impl NetworkHandler {
         }
 
         // we have something that changed, sync transactions
-        if sync_new_blocks {
+        // prevent a double sync head state if history scan is disabled
+        if sync_new_blocks && self.wallet.get_history_scan() {
             debug!("Syncing new blocks");
             self.sync_new_blocks(address, wallet_topoheight, true).await?;
         }
@@ -938,26 +939,18 @@ impl NetworkHandler {
             storage.get_assets().await?
         };
         
-        // get balance and transactions for each asset
-        if self.wallet.get_history_scan() {
-            debug!("Scanning history for each asset");
-            // cache for all topoheight we already processed
-            // this will prevent us to request more than one time the same topoheight
-            let mut topoheight_processed = HashSet::new();
-            let mut highest_nonce = None;
-            for asset in assets {
-                debug!("calling get balances and transactions {}", current_topoheight);
-                if let Err(e) = self.get_balance_and_transactions(&mut topoheight_processed, &address, &asset, current_topoheight, balances, &mut highest_nonce).await {
-                    error!("Error while syncing balance for asset {}: {}", asset, e);
-                }
-            }
-        } else {
-            // We don't need to scan the history, we can just sync the head state
-            debug!("calling sync head state");
-            if let Err(e) = self.sync_head_state(&self.wallet.get_address(), Some(assets), None, true).await {
-                error!("Error while syncing head state: {}", e);
+        debug!("Scanning history for each asset");
+        // cache for all topoheight we already processed
+        // this will prevent us to request more than one time the same topoheight
+        let mut topoheight_processed = HashSet::new();
+        let mut highest_nonce = None;
+        for asset in assets {
+            debug!("calling get balances and transactions {}", current_topoheight);
+            if let Err(e) = self.get_balance_and_transactions(&mut topoheight_processed, &address, &asset, current_topoheight, balances, &mut highest_nonce).await {
+                error!("Error while syncing balance for asset {}: {}", asset, e);
             }
         }
+
         Ok(())
     }
 }
