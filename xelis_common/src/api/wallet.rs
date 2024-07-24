@@ -240,6 +240,14 @@ impl std::hash::Hash for TransactionEntry {
     }
 }
 
+impl std::cmp::PartialEq for TransactionEntry {
+    fn eq(&self, other: &Self) -> bool {
+        self.hash == other.hash
+    }
+}
+
+impl std::cmp::Eq for TransactionEntry {}
+
 #[derive(Serialize, Deserialize)]
 pub struct EstimateExtraDataSizeParams {
     pub destinations: Vec<Address>,
