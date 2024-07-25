@@ -110,6 +110,9 @@ pub struct Config {
     /// Set log level
     #[clap(long, value_enum, default_value_t = LogLevel::Info)]
     log_level: LogLevel,
+    /// Set file log level
+    #[clap(long, value_enum, default_value_t = LogLevel::Info)]
+    file_log_level: LogLevel,
     /// Disable the log file
     #[clap(long)]
     disable_file_logging: bool,
@@ -190,7 +193,7 @@ impl ecdlp::ProgressTableGenerationReportFunction for LogProgressTableGeneration
 #[tokio::main]
 async fn main() -> Result<()> {
     let config: Config = Config::parse();
-    let prompt = Prompt::new(config.log_level, &config.logs_path, &config.filename_log, config.disable_file_logging, config.disable_file_log_date_based, config.disable_log_color, !config.disable_interactive_mode, config.logs_modules)?;
+    let prompt = Prompt::new(config.log_level, &config.logs_path, &config.filename_log, config.disable_file_logging, config.disable_file_log_date_based, config.disable_log_color, !config.disable_interactive_mode, config.logs_modules, config.file_log_level)?;
 
     #[cfg(feature = "api_server")]
     {
