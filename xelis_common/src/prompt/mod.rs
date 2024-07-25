@@ -479,7 +479,8 @@ impl Prompt {
         disable_file_log_date_based: bool,
         disable_colors: bool,
         interactive: bool,
-        module_logs: Vec<ModuleConfig>
+        module_logs: Vec<ModuleConfig>,
+        file_level: LogLevel,
     ) -> Result<ShareablePrompt, PromptError> {
         let (read_input_sender, read_input_receiver) = mpsc::channel(1);
         let prompt = Self {
@@ -489,7 +490,7 @@ impl Prompt {
             read_input_sender,
             disable_colors
         };
-        prompt.setup_logger(level, dir_path, filename_log, disable_file_logging, disable_file_log_date_based, module_logs)?;
+        prompt.setup_logger(level, dir_path, filename_log, disable_file_logging, disable_file_log_date_based, module_logs, file_level)?;
 
         #[cfg(target_os = "windows")]
         {
@@ -760,7 +761,8 @@ impl Prompt {
         filename_log: &String,
         disable_file_logging: bool,
         disable_file_log_date_based: bool,
-        module_logs: Vec<ModuleConfig>
+        module_logs: Vec<ModuleConfig>,
+        file_level: LogLevel
     ) -> Result<(), fern::InitError> {
         let colors = ColoredLevelConfig::new()
             .debug(Color::Green)
@@ -820,7 +822,7 @@ impl Prompt {
             }
 
             let mut file_log = fern::Dispatch::new()
-            .level(level.into())
+            .level(file_level.into())
             .format(move |out, message, record| {
                 let pad = " ".repeat((30i16 - record.target().len() as i16).max(0) as usize);
                 let level_pad = if record.level() == Level::Error || record.level() == Level::Debug { "" } else { " " };
