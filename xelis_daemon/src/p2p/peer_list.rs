@@ -413,7 +413,7 @@ impl PeerList {
 
     // Retrieve whitelist stored peers
     pub fn get_whitelist<'a>(&'a self, stored_peers: &'a HashMap<IpAddr, StoredPeer>) -> Vec<(&'a IpAddr, &'a StoredPeer)> {
-        self.get_list_with_state(stored_peers, &StoredPeerState::Blacklist)
+        self.get_list_with_state(stored_peers, &StoredPeerState::Whitelist)
     }
 
     // blacklist a peer address
