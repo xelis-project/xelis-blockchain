@@ -104,6 +104,9 @@ pub struct MinerConfig {
     /// Set log level
     #[clap(long, value_enum, default_value_t = LogLevel::Info)]
     log_level: LogLevel,
+    /// Set file log level
+    #[clap(long, value_enum, default_value_t = LogLevel::Info)]
+    file_log_level: LogLevel,
     /// Enable the benchmark mode with the specified algorithm
     #[clap(long)]
     benchmark: Option<Algorithm>,
@@ -184,7 +187,7 @@ const UPDATE_EVERY_NONCE: u64 = 10;
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
     let config: MinerConfig = MinerConfig::parse();
-    let prompt = Prompt::new(config.log_level, &config.logs_path, &config.filename_log, config.disable_file_logging, config.disable_file_log_date_based, config.disable_log_color, !config.disable_interactive_mode, config.logs_modules)?;
+    let prompt = Prompt::new(config.log_level, &config.logs_path, &config.filename_log, config.disable_file_logging, config.disable_file_log_date_based, config.disable_log_color, !config.disable_interactive_mode, config.logs_modules, config.file_log_level)?;
 
     let detected_threads = match thread::available_parallelism() {
         Ok(value) => value.get() as u16,
