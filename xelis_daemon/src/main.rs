@@ -94,6 +94,9 @@ pub struct NodeConfig {
     /// Set log level
     #[clap(long, value_enum, default_value_t = LogLevel::Info)]
     log_level: LogLevel,
+    /// Set file log level
+    #[clap(long, value_enum, default_value_t = LogLevel::Info)]
+    file_log_level: LogLevel,
     /// Disable the log file
     #[clap(long)]
     disable_file_logging: bool,
@@ -135,7 +138,7 @@ const BLOCK_TIME: Difficulty = Difficulty::from_u64(BLOCK_TIME_MILLIS / MILLIS_P
 async fn main() -> Result<()> {
     let mut config: NodeConfig = NodeConfig::parse();
 
-    let prompt = Prompt::new(config.log_level, &config.logs_path, &config.filename_log, config.disable_file_logging, config.disable_file_log_date_based, config.disable_log_color, !config.disable_interactive_mode, config.logs_modules)?;
+    let prompt = Prompt::new(config.log_level, &config.logs_path, &config.filename_log, config.disable_file_logging, config.disable_file_log_date_based, config.disable_log_color, !config.disable_interactive_mode, config.logs_modules, config.file_log_level)?;
     info!("XELIS Blockchain running version: {}", VERSION);
     info!("----------------------------------------------");
 
