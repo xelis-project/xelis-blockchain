@@ -992,9 +992,6 @@ async fn get_account_history<S: Storage>(context: &Context, body: Value) -> Resu
             break;
         }
 
-        // Used to track if we have any new history entries
-        let previous_len = history.len();
-
         // Get the block header at topoheight
         // we will scan it below for transactions and rewards
         let (hash, block_header) = storage.get_block_header_at_topoheight(topo).await.context(format!("Error while retrieving block header at topo height {topo}"))?;
@@ -1084,11 +1081,9 @@ async fn get_account_history<S: Storage>(context: &Context, body: Value) -> Resu
             }
         }
 
-        if previous_len != history.len() {
-            history_count += 1;
-            if history_count >= MAX_HISTORY {
-                break;
-            }
+        history_count += 1;
+        if history_count >= MAX_HISTORY {
+            break;
         }
 
         if let Some(previous) = versioned_balance.get_previous_topoheight() {
