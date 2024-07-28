@@ -477,14 +477,17 @@ pub struct DevFeeThreshold {
 }
 
 // Struct to define hard fork
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct HardFork {
     // block height to start hard fork
     pub height: u64,
     // Block version to use
     pub version: BlockVersion,
     // All the changes that will be applied
-    pub changelog: &'static str
+    pub changelog: &'static str,
+    // Version requirement, example: >=1.13.0
+    // This is used for p2p protocol
+    pub version_requirement: Option<&'static str>,
 }
 
 // Struct to returns the size of the blockchain on disk
