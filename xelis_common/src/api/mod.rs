@@ -196,3 +196,14 @@ pub struct SplitAddressResult {
     // Integrated data size
     pub size: usize
 }
+
+// :(
+// We are forced to create function for the default value path requested by serde
+fn default_true_value() -> bool {
+    true
+}
+
+// same here
+fn default_false_value() -> bool {
+    false
+}

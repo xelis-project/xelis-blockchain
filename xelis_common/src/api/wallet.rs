@@ -8,6 +8,7 @@ use crate::{
     }
 };
 use super::{DataHash, DataElement, DataValue, query::Query};
+use super::{default_false_value, default_true_value};
 
 #[derive(Serialize, Deserialize)]
 pub struct BuildTransactionParams {
@@ -25,15 +26,6 @@ pub struct BuildTransactionParams {
 pub struct EstimateFeesParams {
     #[serde(flatten)]
     pub tx_type: TransactionTypeBuilder,
-}
-
-// :(
-fn default_true_value() -> bool {
-    true
-}
-
-fn default_false_value() -> bool {
-    false
 }
 
 #[derive(Serialize, Deserialize)]

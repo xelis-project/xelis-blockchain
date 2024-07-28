@@ -19,7 +19,7 @@ use crate::{
     network::Network,
     time::{TimestampMillis, TimestampSeconds}
 };
-use super::RPCTransaction;
+use super::{default_true_value, RPCTransaction};
 
 #[derive(Serialize, Deserialize, PartialEq, Eq)]
 pub enum BlockType {
@@ -395,7 +395,14 @@ pub struct GetAccountHistoryParams {
     #[serde(default = "default_xelis_asset")]
     pub asset: Hash,
     pub minimum_topoheight: Option<u64>,
-    pub maximum_topoheight: Option<u64>
+    pub maximum_topoheight: Option<u64>,
+    // Special case for dev fee, its considered as coinbase
+    #[serde(default = "default_true_value")]
+    pub accept_coinbase: bool,
+    #[serde(default = "default_true_value")]
+    pub accept_outgoing_txs: bool,
+    #[serde(default = "default_true_value")]
+    pub accept_incoming_txs: bool,
 }
 
 #[derive(Serialize, Deserialize)]
