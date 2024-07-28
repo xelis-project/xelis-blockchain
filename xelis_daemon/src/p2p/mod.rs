@@ -46,7 +46,7 @@ use crate::{
         blockchain::Blockchain,
         error::BlockchainError,
         storage::Storage,
-        hard_fork::get_version_at_height
+        hard_fork::{get_version_at_height, is_version_allowed_at_height}
     },
     p2p::{
         chain_validator::ChainValidator,
@@ -580,6 +580,11 @@ impl<S: Storage> P2pServer<S> {
                 debug!("Peer {} has a pruned topoheight {} higher than its topoheight {}", connection, pruned_topoheight, topoheight);
                 return Err(P2pError::InvalidHandshake)
             }
+        }
+
+        // check if the version of this peer is allowed
+        if !is_version_allowed_at_height(self.blockchain.get_network(), self.blockchain.get_height(), handshake.get_version()).map_err(|e| P2pError::InvalidP2pVersion(e.to_string()))? {
+            return Err(P2pError::InvalidP2pVersion(handshake.get_version().clone()));
         }
 
         Ok(())

@@ -182,11 +182,13 @@ const HARD_FORKS: [HardFork; 2] = [
         height: 0,
         version: BlockVersion::V0,
         changelog: "Initial version",
+        version_requirement: None
     },
     HardFork {
         height: 434_100, // Expected date: 10/07/2024 12am UTC
         version: BlockVersion::V1,
         changelog: "xelis-hash v2",
+        version_requirement: Some(">=1.13.0")
     }
 ];
 
@@ -196,11 +198,13 @@ const TESTNET_HARD_FORKS: [HardFork; 2] = [
         height: 0,
         version: BlockVersion::V0,
         changelog: "Initial version",
+        version_requirement: None
     },
     HardFork {
         height: 5,
         version: BlockVersion::V1,
         changelog: "xelis-hash v2",
+        version_requirement: Some(">=1.13.0")
     }
 ];
 

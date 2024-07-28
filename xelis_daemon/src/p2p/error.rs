@@ -35,6 +35,8 @@ use super::{
 
 #[derive(Error, Debug)]
 pub enum P2pError {
+    #[error("Invalid P2P version: {}", _0)]
+    InvalidP2pVersion(String),
     #[error("Invalid tag, it must be greater than 0 and maximum 16 chars")]
     InvalidTag,
     #[error("Invalid max chain response size, it must be between {} and {}", CHAIN_SYNC_RESPONSE_MIN_BLOCKS, CHAIN_SYNC_RESPONSE_MAX_BLOCKS)]
