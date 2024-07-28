@@ -1012,7 +1012,7 @@ impl<S: Storage> P2pServer<S> {
                         let addr = p.get_outgoing_address();
 
                         // Don't share local network addresses if it's external peer
-                        if is_local_address(addr) && !is_local_peer {
+                        if (is_local_address(addr) && !is_local_peer) || !is_valid_address(addr) {
                             debug!("{} is a local address but peer is external, skipping", addr);
                             continue;
                         }
@@ -1571,11 +1571,11 @@ impl<S: Storage> P2pServer<S> {
                 {
                     let is_local_peer = is_local_address(peer.get_connection().get_address());
                     for addr in ping.get_peers() {
-                        if is_local_address(addr) && !is_local_peer {
+                        if (is_local_address(addr) && !is_local_peer) || !is_valid_address(addr) {
                             error!("{} is a local address from {} but peer is external", addr, peer);
                             return Err(P2pError::InvalidPeerlist)
                         }
-    
+
                         if !self.is_connected_to_addr(addr).await && !self.peer_list.has_peer_stored(&addr.ip()).await {
                             if !self.peer_list.store_peer_address(*addr).await {
                                 debug!("{} already stored in peer list", addr);
@@ -2906,5 +2906,32 @@ pub fn is_local_address(socket_addr: &SocketAddr) -> bool {
             // https://github.com/rust-lang/rust/issues/27709
             ipv6.is_loopback() // || ipv6.is_unique_local()
         }
+    }
+}
+
+// Check if a socket address is a valid address
+// Only public and private addresses that can be used in a network are considered valid
+pub fn is_valid_address(socket_addr: &SocketAddr) -> bool {
+    match socket_addr.ip() {
+        IpAddr::V4(ipv4) => {
+            // Check if it's a valid IPv4 address
+            !ipv4.is_unspecified() && !ipv4.is_loopback() && !ipv4.is_multicast() && !ipv4.is_documentation() && !ipv4.is_link_local() && !ipv4.is_broadcast()
+        }
+        IpAddr::V6(ipv6) => {
+            // Check if it's a valid IPv6 address
+            !ipv6.is_unspecified() && !ipv6.is_loopback() && !ipv6.is_multicast() // && !ipv6.is_documentation() && !ipv6.is_unicast_link_local()
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::str::FromStr;
+    use super::*;
+
+    #[test]
+    fn test_is_local_address() {
+        assert!(is_local_address(&SocketAddr::from_str("172.20.0.1:2125").unwrap()));
+        assert!(!is_local_address(&SocketAddr::from_str("1.1.1.1:2125").unwrap()));
     }
 }
