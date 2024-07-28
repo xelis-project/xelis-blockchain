@@ -396,13 +396,12 @@ pub struct GetAccountHistoryParams {
     pub asset: Hash,
     pub minimum_topoheight: Option<u64>,
     pub maximum_topoheight: Option<u64>,
-    // Special case for dev fee, its considered as coinbase
+    // Any incoming funds tracked
     #[serde(default = "default_true_value")]
-    pub accept_coinbase: bool,
+    pub incoming_flow: bool,
+    // Any outgoing funds tracked
     #[serde(default = "default_true_value")]
-    pub accept_outgoing_txs: bool,
-    #[serde(default = "default_true_value")]
-    pub accept_incoming_txs: bool,
+    pub outgoing_flow: bool,
 }
 
 #[derive(Serialize, Deserialize)]
