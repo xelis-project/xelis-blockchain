@@ -5635,15 +5635,15 @@ NOTE: If no asset is provided, default is set to XELIS.
 ##### Method `get_account_history`
 
 ##### Parameters
-|         Name        |   Type  | Required |                         Note                         |
-|:-------------------:|:-------:|:--------:|:----------------------------------------------------:|
-|       address       | Address | Required |           Valid address registered on chain          |
-|        asset        |   Hash  | Optional |                    Asset to track                    |
-|  minimum_topoheight | Integer | Optional |            minimum topoheight for history            |
-|  maximum_topoheight | Integer | Optional |            Maximum topoheight for history            |
-|   accept_coinbase   | Boolean | Optional |     Set to true by default, filter mining rewards    |
-| accept_outgoing_txs | Boolean | Optional | Set to true by default, filter outgoing transactions |
-| accept_incoming_txs | Boolean | Optional | Set to true by default, filter incoming transactions |
+|        Name        |   Type  | Required |                               Note                              |
+|:------------------:|:-------:|:--------:|:---------------------------------------------------------------:|
+|       address      | Address | Required |                Valid address registered on chain                |
+|        asset       |   Hash  | Optional |                          Asset to track                         |
+| minimum_topoheight | Integer | Optional |                  minimum topoheight for history                 |
+| maximum_topoheight | Integer | Optional |                  Maximum topoheight for history                 |
+|    outgoing_flow   | Boolean | Optional |       Set to true by default, filter outgoing transactions      |
+|    incoming_flow   | Boolean | Optional | Set to true by default, filter incoming transactions / coinbase |
+
 ##### Request
 ```json
 {
@@ -5652,10 +5652,7 @@ NOTE: If no asset is provided, default is set to XELIS.
 	"method": "get_account_history",
 	"params": {
 		"address": "xet:6eadzwf5xdacts6fs4y3csmnsmy4mcxewqt3xyygwfx0hm0tm32sqxdy9zk",
-		"asset": "0000000000000000000000000000000000000000000000000000000000000000",
-		"accept_coinbase": true,
-		"accept_outgoing_txs": true,
-		"accept_incoming_txs": false,
+		"asset": "0000000000000000000000000000000000000000000000000000000000000000"
 	}
 }
 ```
