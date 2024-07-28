@@ -966,6 +966,10 @@ async fn get_account_history<S: Storage>(context: &Context, body: Value) -> Resu
         return Err(InternalRpcError::InvalidParamsAny(BlockchainError::InvalidNetwork.into()))
     }
 
+    if !params.accept_coinbase && !params.accept_incoming_txs && !params.accept_outgoing_txs {
+        return Err(InternalRpcError::InvalidParams("No history type was selected"));
+    }
+
     let key = params.address.get_public_key();
     let minimum_topoheight = params.minimum_topoheight.unwrap_or(0);
     let storage = blockchain.get_storage().read().await;
@@ -982,112 +986,116 @@ async fn get_account_history<S: Storage>(context: &Context, body: Value) -> Resu
     let mut history_count = 0;
     let mut history = Vec::new();
     let is_dev_address = *key == *DEV_PUBLIC_KEY;
-    loop {
-        if let Some((topo, versioned_balance)) = version.take() {
-            trace!("Searching history at topoheight {}", topo);
-            if topo < minimum_topoheight || topo < pruned_topoheight {
-                break;
-            }
+    while let Some((topo, versioned_balance)) = version.take() {
+        trace!("Searching history of {} ({}) at topoheight {}", params.address, params.asset, topo);
+        if topo < minimum_topoheight || topo < pruned_topoheight {
+            break;
+        }
 
-            let (hash, block_header) = storage.get_block_header_at_topoheight(topo).await.context(format!("Error while retrieving block header at topo height {topo}"))?;
-            // Block reward is only paid in XELIS
-            if params.asset == XELIS_ASSET {
-                let is_miner = *block_header.get_miner() == *key;
-                if is_miner || is_dev_address {
-                    let mut reward = storage.get_block_reward_at_topo_height(topo).context(format!("Error while retrieving reward at topo height {topo}"))?;
-                    // subtract dev fee if any
-                    let dev_fee_percentage = get_block_dev_fee(block_header.get_height());
-                    if dev_fee_percentage != 0 {
-                        let dev_fee = reward * dev_fee_percentage / 100;
-                        if is_dev_address {
-                            history.push(AccountHistoryEntry {
-                                topoheight: topo,
-                                hash: hash.clone(),
-                                history_type: AccountHistoryType::DevFee { reward: dev_fee },
-                                block_timestamp: block_header.get_timestamp()
-                            });
-                        }
-                        reward -= dev_fee;
-                    }
-    
-                    if is_miner {
-                        let history_type = AccountHistoryType::Mining { reward };
+        // Used to track if we have any new history entries
+        let previous_len = history.len();
+
+        // Get the block header at topoheight
+        // we will scan it below for transactions and rewards
+        let (hash, block_header) = storage.get_block_header_at_topoheight(topo).await.context(format!("Error while retrieving block header at topo height {topo}"))?;
+
+        // Block reward is only paid in XELIS
+        if params.asset == XELIS_ASSET {
+            let is_miner = *block_header.get_miner() == *key;
+            if (is_miner || is_dev_address) && params.accept_coinbase {
+                let mut reward = storage.get_block_reward_at_topo_height(topo).context(format!("Error while retrieving reward at topo height {topo}"))?;
+                // subtract dev fee if any
+                let dev_fee_percentage = get_block_dev_fee(block_header.get_height());
+                if dev_fee_percentage != 0 {
+                    let dev_fee = reward * dev_fee_percentage / 100;
+                    if is_dev_address {
                         history.push(AccountHistoryEntry {
                             topoheight: topo,
                             hash: hash.clone(),
-                            history_type,
+                            history_type: AccountHistoryType::DevFee { reward: dev_fee },
                             block_timestamp: block_header.get_timestamp()
                         });
                     }
+                    reward -= dev_fee;
+                }
+
+                if is_miner {
+                    let history_type = AccountHistoryType::Mining { reward };
+                    history.push(AccountHistoryEntry {
+                        topoheight: topo,
+                        hash: hash.clone(),
+                        history_type,
+                        block_timestamp: block_header.get_timestamp()
+                    });
                 }
             }
+        }
 
-            // Reverse the order of transactions to get the latest first
-            for tx_hash in block_header.get_transactions().iter().rev() {
-                // Don't show unexecuted TXs in the history
-                if !storage.is_tx_executed_in_block(tx_hash, &hash)? {
-                    continue;
-                }
+        // Reverse the order of transactions to get the latest first
+        for tx_hash in block_header.get_transactions().iter().rev() {
+            // Don't show unexecuted TXs in the history
+            if !storage.is_tx_executed_in_block(tx_hash, &hash)? {
+                continue;
+            }
 
-                trace!("Searching tx {} in block {}", tx_hash, hash);
-                let tx = storage.get_transaction(tx_hash).await.context(format!("Error while retrieving transaction {tx_hash} from block {hash}"))?;
-                let is_sender = *tx.get_source() == *key;
-                match tx.get_data() {
-                    TransactionType::Transfers(transfers) => {
-                        for transfer in transfers {
-                            if *transfer.get_asset() == params.asset {
-                                if *transfer.get_destination() == *key {
-                                    history.push(AccountHistoryEntry {
-                                        topoheight: topo,
-                                        hash: tx_hash.clone(),
-                                        history_type: AccountHistoryType::Incoming {
-                                            from: tx.get_source().as_address(blockchain.get_network().is_mainnet())
-                                        },
-                                        block_timestamp: block_header.get_timestamp()
-                                    });
-                                }
-
-                                if is_sender {
-                                    history.push(AccountHistoryEntry {
-                                        topoheight: topo,
-                                        hash: tx_hash.clone(),
-                                        history_type: AccountHistoryType::Outgoing {
-                                            to: transfer.get_destination().as_address(blockchain.get_network().is_mainnet())
-                                        },
-                                        block_timestamp: block_header.get_timestamp()
-                                    });
-                                }
-                            }
-                        }
-                    }
-                    TransactionType::Burn(payload) => {
-                        if payload.asset == params.asset {
-                            if is_sender {
+            trace!("Searching tx {} in block {}", tx_hash, hash);
+            let tx = storage.get_transaction(tx_hash).await.context(format!("Error while retrieving transaction {tx_hash} from block {hash}"))?;
+            let is_sender = *tx.get_source() == *key;
+            match tx.get_data() {
+                TransactionType::Transfers(transfers) => {
+                    for transfer in transfers {
+                        if *transfer.get_asset() == params.asset {
+                            if *transfer.get_destination() == *key && params.accept_incoming_txs {
                                 history.push(AccountHistoryEntry {
                                     topoheight: topo,
                                     hash: tx_hash.clone(),
-                                    history_type: AccountHistoryType::Burn { amount: payload.amount },
+                                    history_type: AccountHistoryType::Incoming {
+                                        from: tx.get_source().as_address(blockchain.get_network().is_mainnet())
+                                    },
+                                    block_timestamp: block_header.get_timestamp()
+                                });
+                            }
+
+                            if is_sender && params.accept_outgoing_txs {
+                                history.push(AccountHistoryEntry {
+                                    topoheight: topo,
+                                    hash: tx_hash.clone(),
+                                    history_type: AccountHistoryType::Outgoing {
+                                        to: transfer.get_destination().as_address(blockchain.get_network().is_mainnet())
+                                    },
                                     block_timestamp: block_header.get_timestamp()
                                 });
                             }
                         }
                     }
                 }
+                TransactionType::Burn(payload) => {
+                    if payload.asset == params.asset {
+                        if is_sender && params.accept_outgoing_txs {
+                            history.push(AccountHistoryEntry {
+                                topoheight: topo,
+                                hash: tx_hash.clone(),
+                                history_type: AccountHistoryType::Burn { amount: payload.amount },
+                                block_timestamp: block_header.get_timestamp()
+                            });
+                        }
+                    }
+                }
             }
+        }
 
+        if previous_len != history.len() {
             history_count += 1;
             if history_count >= MAX_HISTORY {
-                break;   
-            }        
-    
-            if let Some(previous) = versioned_balance.get_previous_topoheight() {
-                if previous < pruned_topoheight {
-                    break;
-                }
-                version = Some((previous, storage.get_balance_at_exact_topoheight(key, &params.asset, previous).await.context(format!("Error while retrieving previous balance at topo height {previous}"))?));
+                break;
             }
-        } else {
-            break;
+        }
+
+        if let Some(previous) = versioned_balance.get_previous_topoheight() {
+            if previous < pruned_topoheight {
+                break;
+            }
+            version = Some((previous, storage.get_balance_at_exact_topoheight(key, &params.asset, previous).await.context(format!("Error while retrieving previous balance at topo height {previous}"))?));
         }
     }
 
