@@ -12,6 +12,8 @@ pub fn get_hard_fork_at_height(network: &Network, height: u64) -> Option<&HardFo
     for conf in get_hard_forks(network) {
         if height >= conf.height {
             hardfork = Some(conf);
+        } else {
+            break;
         }
     }
 
