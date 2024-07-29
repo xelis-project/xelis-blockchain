@@ -124,7 +124,7 @@ use {
 )))]
 use xelis_common::tokio::task::spawn_blocking;
 
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Clone, Debug)]
 #[serde(untagged)]
 pub enum Event {
     // When a TX is detected from daemon and is added in wallet storage
@@ -428,6 +428,7 @@ impl Wallet {
 
     // Propagate a new event to registered listeners
     pub async fn propagate_event(&self, event: Event) {
+        trace!("Propagate event: {:?}", event);
         // Broadcast it to the API Server
         #[cfg(feature = "api_server")]
         {
