@@ -119,6 +119,9 @@ impl NetworkHandler {
         let zelf = Arc::clone(&self);
         *self.task.lock().await = Some(spawn_task("network-handler", async move {
             loop {
+                // Notify that we are online
+                zelf.wallet.propagate_event(Event::Online).await;
+
                 let res =  zelf.start_syncing().await;
                 if let Err(e) = res.as_ref() {
                     error!("Error while syncing: {}", e);
@@ -151,10 +154,6 @@ impl NetworkHandler {
                 }
             }
         }));
-
-
-        // Notify that we are online
-        self.wallet.propagate_event(Event::Online).await;
 
         Ok(())
     }
