@@ -113,7 +113,7 @@ pub struct WebSocketJsonRPCClientImpl<E: Serialize + Hash + Eq + Send + Sync + C
 
 pub const DEFAULT_AUTO_RECONNECT: Duration = Duration::from_secs(5);
 
-impl<E: Serialize + Hash + Eq + Send + Sync + Clone + 'static> WebSocketJsonRPCClientImpl<E> {
+impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static> WebSocketJsonRPCClientImpl<E> {
     async fn connect_to(target: &String) -> Result<WebSocketStream, JsonRPCError> {
         let ws = connect(target).await?;
 
@@ -210,19 +210,32 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + 'static> WebSocketJsonRPCC
     }
 
     // resubscribe to all events because of a reconnection
-    async fn resubscribe_events(&self) -> Result<(), JsonRPCError> {
+    async fn resubscribe_events(self: Arc<Self>) -> Result<(), JsonRPCError> {
         let events = {
             let events = self.events_to_id.lock().await;
             events.clone()
         };
-        for (event, id) in events {
-            // Send it to the server
-            if !self.send::<_, bool>("subscribe", Some(id), &SubscribeParams {
-                notify: Cow::Borrowed(&event),
-            }).await? {
-                error!("Error while resubscribing to event with id {}", id);
+
+        spawn_task("resubscribe-events", async move {
+            for (event, id) in events {
+                debug!("Resubscribing to event {:?} with id {}", event, id);
+
+                // Send it to the server
+                let res = match self.send::<_, bool>("subscribe", Some(id), &SubscribeParams {
+                    notify: Cow::Borrowed(&event),
+                }).await {
+                    Ok(res) => res,
+                    Err(e) => {
+                        error!("Error while resubscribing to event with id {}: {:?}", id, e);
+                        false
+                    }
+                };
+
+                if !res {
+                    error!("Error while resubscribing to event with id {}", id);
+                }
             }
-        }
+        });
         Ok(())
     }
 
@@ -284,7 +297,7 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + 'static> WebSocketJsonRPCC
         }
 
 
-        if let Err(e) = self.resubscribe_events().await {
+        if let Err(e) = Arc::clone(&self).resubscribe_events().await {
             error!("Error while resubscribing to events: {:?}", e);
         }
 
@@ -351,8 +364,8 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + 'static> WebSocketJsonRPCC
                             ws = Some(websocket);
 
                             // Register all events again
-                            if let Err(e) = zelf.resubscribe_events().await {
-                                error!("Error while resubscribing to events: {:?}", e);
+                            if let Err(e) = Arc::clone(&zelf).resubscribe_events().await {
+                                error!("Error while resubscribing to events due to reconnect: {:?}", e);
                             }
 
                             break;
