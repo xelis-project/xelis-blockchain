@@ -143,9 +143,6 @@ impl NetworkHandler {
                         if !zelf.api.reconnect().await? {
                             error!("Couldn't reconnect to server, trying again in {} seconds", AUTO_RECONNECT_INTERVAL);
                             sleep(Duration::from_secs(AUTO_RECONNECT_INTERVAL)).await;
-                        } else {
-                            // Notify that we are back online
-                            zelf.wallet.propagate_event(Event::Online).await;
                         }
                     } else {
                         warn!("Daemon is online but we couldn't sync, trying again in {} seconds", AUTO_RECONNECT_INTERVAL);
