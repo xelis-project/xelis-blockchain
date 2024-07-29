@@ -8,12 +8,14 @@ use crate::config::get_hard_forks;
 
 // Get the hard fork at a given height
 pub fn get_hard_fork_at_height(network: &Network, height: u64) -> Option<&HardFork> {
-    for hardfork in get_hard_forks(network) {
-        if height == hardfork.height {
-            return Some(hardfork);
+    let mut hardfork: Option<&HardFork> = None;
+    for conf in get_hard_forks(network) {
+        if height >= conf.height {
+            hardfork = Some(conf);
         }
     }
-    None
+
+    hardfork
 }
 
 // Get the version of the hard fork at a given height
