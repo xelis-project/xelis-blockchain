@@ -2884,7 +2884,7 @@ impl<S: Storage> P2pServer<S> {
 
         // Check that the peer followed our requirements
         if response.blocks_size() > requested_max_size {
-            return Err(P2pError::InvaliChainResponseSize(response.blocks_size(), requested_max_size).into())
+            return Err(P2pError::InvalidChainResponseSize(response.blocks_size(), requested_max_size).into())
         }
 
         // Update last chain sync time
