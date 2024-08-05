@@ -297,7 +297,7 @@ impl EncryptedStorage {
     }
 
     // Clear all entries from the custom tree
-    pub fn clear_custom_tree(&self, name: impl Into<String>) -> Result<()> {
+    pub fn clear_custom_tree(&mut self, name: impl Into<String>) -> Result<()> {
         trace!("clear custom tree");
         let tree = self.get_custom_tree(name)?;
         tree.clear()?;
