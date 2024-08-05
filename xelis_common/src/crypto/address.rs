@@ -21,8 +21,8 @@ use anyhow::Error;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AddressType {
     Normal,
-    // Data variant allow to integrate data in address for easier communication / data transfered
-    // those data are directly integrated in the data part and can be transfered in the transaction directly
+    // Data variant allows embedding data in an address for easier communication and transfer.
+    // This data is directly integrated and can be transferred within a transaction.
     Data(DataElement)
 }
 
@@ -104,8 +104,8 @@ impl Address {
         self.mainnet
     }
 
-    // Compress the address to a byte array
-    // We don't use Serializer trait to avoid storing mainnet bool
+    // Compress the address to a byte array.
+    // We don't use Serializer trait to avoid storing mainnet bool.
     fn compress(&self) -> Vec<u8> {
         let mut writer = Writer::new();
         self.key.write(&mut writer);
@@ -113,8 +113,8 @@ impl Address {
         writer.bytes()
     }
 
-    // Read the address from a byte array
-    // Hrp validity isn't checked here, it should be done before calling this function
+    // Read the address from a byte array.
+    // Hrp validity isn't checked here, it should be done before calling this function.
     fn decompress(bytes: &[u8], hrp: &str) -> Result<Self, ReaderError> {
         let mut reader = Reader::new(bytes);
         let mainnet = hrp == PREFIX_ADDRESS;
@@ -147,7 +147,7 @@ impl Address {
     // Parse an address from a string (human readable format)
     pub fn from_string(address: &String) -> Result<Self, Error> {
         let (hrp, decoded) = decode(address)?;
-        // check that hrp is valid one
+        // Check that hrp is valid one
         if hrp != PREFIX_ADDRESS && hrp != TESTNET_PREFIX_ADDRESS {
             return Err(Bech32Error::InvalidPrefix(hrp, format!("{} or {}", PREFIX_ADDRESS, TESTNET_PREFIX_ADDRESS)).into())
         }
@@ -155,7 +155,7 @@ impl Address {
         let bits = convert_bits(&decoded, 5, 8, false)?;
         let addr = Address::decompress(&bits, hrp.as_str())?;
 
-        // now check that the hrp decoded is the one for the network state
+        // Now check that the hrp decoded is the one for the network state
         if (addr.is_mainnet() && hrp != PREFIX_ADDRESS) || (!addr.is_mainnet() && hrp != TESTNET_PREFIX_ADDRESS) {
             let expected = if addr.is_mainnet() {
                 PREFIX_ADDRESS

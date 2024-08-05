@@ -22,7 +22,7 @@ pub enum DataConversionError {
     UnexpectedValue(ValueType),
 }
 
-// All types availables
+// All types available
 #[derive(Debug, Serialize, Deserialize, Eq, PartialEq, Hash, Clone, Copy)]
 pub enum ValueType {
     Bool,
@@ -189,9 +189,9 @@ impl DataElement {
 } 
 
 impl Serializer for DataElement {
-    // Don't do any pre-allocation because of infinite depth
+    // Don't do any pre-allocation because of infinite depth.
     // Otherwise an attacker could generate big depth with high size until max limit
-    // which can create OOM on low devices
+    // which can create OOM on low devices.
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
         Ok(match reader.read_u8()? {
             0 => Self::Value(DataValue::read(reader)?),
@@ -225,7 +225,7 @@ impl Serializer for DataElement {
             }
             Self::Array(values) => {
                 writer.write_u8(1);
-                writer.write_u8(values.len() as u8); // we accept up to 255 values
+                writer.write_u8(values.len() as u8); // We accept up to 255 values
                 for value in values {
                     value.write(writer);    
                 }
@@ -273,9 +273,9 @@ pub enum DataValue {
     U64(u64),
     U128(u128),
     Hash(Hash),
-    // This is a specific type for optimized size of binary data
-    // Because above variants rewrite for each element the byte of the element and of each value
-    // It supports up to 65535 bytes (u16::MAX)
+    // This is a specific type for optimized size of binary data.
+    // Because the above variants rewrite for each element the byte of the element and of each value
+    // It supports up to 65535 bytes (u16::MAX).
     Blob(Vec<u8>),
 }
 

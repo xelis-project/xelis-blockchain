@@ -74,7 +74,7 @@ pub enum GenerationError<T> {
     EncryptedExtraDataTooLarge(usize, usize),
     #[error("Address is not on the same network as us")]
     InvalidNetwork,
-    #[error("Extra data was provied with an integrated address")]
+    #[error("Extra data was provided with an integrated address")]
     ExtraDataAndIntegratedAddress,
     #[error("Proof generation error: {0}")]
     Proof(#[from] ProofGenerationError),
@@ -83,9 +83,9 @@ pub enum GenerationError<T> {
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "snake_case")]
 pub enum FeeBuilder {
-    // calculate tx fees based on its size and multiply by this value
+    // Calculate tx fees based on its size and multiply by this value
     Multiplier(f64),
-    Value(u64) // set a direct value of how much fees you want to pay
+    Value(u64) // Set a direct value of how much fees you want to pay
 }
 
 impl Default for FeeBuilder {

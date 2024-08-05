@@ -37,18 +37,18 @@ struct BlockData {
     p: VarUint
 }
 
-// Chain validator is used to validate the blocks received from the network
-// We store the blocks in topological order and we verify the proof of work validity
-// This is doing only minimal checks and valid chain order based on topoheight and difficulty
+// Chain validator is used to validate the blocks received from the network.
+// We store the blocks in topological order and we verify the proof of work validity.
+// This involves minimal checks, ensuring valid chain order based on topoheight and difficulty.
 pub struct ChainValidator<'a, S: Storage> {
-    // store all blocks data in topological order
+    // Store all blocks data in topological order
     blocks: IndexMap<Hash, BlockData>,
-    // store all blocks hashes at a specific height
+    // Store all blocks hashes at a specific height
     blocks_at_height: IndexMap<u64, IndexSet<Hash>>,
     // Blockchain reference used to verify current chain state
     blockchain: &'a Blockchain<S>,
-    // This is used to compute the expected topoheight of each new block
-    // It must be 1 topoheight above the common point
+    // This is used to compute the expected topoheight of each new block.
+    // It must be 1 topoheight above the common point.
     starting_topoheight: u64,
 }
 
@@ -63,8 +63,8 @@ impl<'a, S: Storage> ChainValidator<'a, S> {
         }
     }
 
-    // Check if the chain validator has a higher cumulative difficulty than our blockchain
-    // This is used to determine if we should switch to the new chain by popping blocks or not
+    // Check if the chain validator has a higher cumulative difficulty than our blockchain.
+    // This is used to determine if we should switch to the new chain by popping blocks or not.
     pub async fn has_higher_cumulative_difficulty(&self) -> Result<bool, BlockchainError> {
         let new_cumulative_difficulty = self.get_chain_cumulative_difficulty().ok_or(BlockchainError::NotEnoughBlocks)?;
 
@@ -78,15 +78,15 @@ impl<'a, S: Storage> ChainValidator<'a, S> {
         Ok(*new_cumulative_difficulty > current_cumulative_difficulty)
     }
 
-    // Retrieve the cumulative difficulty of the chain validator
-    // It is the cumulative difficulty of the last block added
+    // Retrieve the cumulative difficulty of the chain validator.
+    // It is the cumulative difficulty of the last block added.
     pub fn get_chain_cumulative_difficulty(&self) -> Option<&CumulativeDifficulty> {
         let (_, data) = self.blocks.last()?;
         data.cumulative_difficulty.as_ref()
     }
 
-    // validate the basic chain structure
-    // We expect that the block added is the next block ordered by topoheight
+    // Validate the basic chain structure.
+    // We expect that the block added is the next block ordered by topoheight.
     pub async fn insert_block(&mut self, hash: Hash, header: BlockHeader) -> Result<(), BlockchainError> {
         trace!("Inserting block {} into chain validator", hash);
 
@@ -117,13 +117,13 @@ impl<'a, S: Storage> ChainValidator<'a, S> {
         let tips = header.get_tips();
         let tips_count = tips.len();
 
-        // verify tips count
+        // Verify tips count
         if tips_count == 0 || tips_count > TIPS_LIMIT {
             debug!("Block {} contains {} tips while only {} is accepted", hash, tips_count, TIPS_LIMIT);
             return Err(BlockchainError::InvalidTipsCount(hash, tips_count))
         }
 
-        // verify that we have already all its tips
+        // Verify that we have already all its tips
         {
             for tip in tips {
                 trace!("Checking tip {} for block {}", tip, hash);
@@ -154,8 +154,8 @@ impl<'a, S: Storage> ChainValidator<'a, S> {
         trace!("Common base: {} at height {} and hash {}", base, base_height, hash);
 
 
-        // Store the block in both maps
-        // One is for blocks at height and the other is for the block data
+        // Store the block in both maps.
+        // One is for blocks at height and the other is for the block data.
         self.blocks_at_height.entry(header.get_height()).or_insert_with(IndexSet::new).insert(hash.clone());
         self.blocks.insert(hash.clone(), BlockData { header: Arc::new(header), difficulty, cumulative_difficulty: None, p });
 

@@ -86,13 +86,13 @@ use log::{
 // is a way to communicate with the XELIS Wallet
 // from a web browser through a secure websocket.
 // The idea is that a token is generated on websocket side
-// and send through the WS connection to the wallet.
-// The wallet then signs the token and send it back to the WS.
+// and sent through the WS connection to the wallet.
+// The wallet then signs the token and sends it back to the WS.
 // On browser side we can save it in local storage and use it
 // to communicate and request data from wallet.
 // Each action will require the validation of the user
 // based on the permission configured.
-// The token is saved also in wallet side for a reminder of
+// The token is also saved in the wallet side as a reminder of
 // all applications allowed.
 // For security reasons, in case the signed token leaks, at each connection,
 // the wallet will request the authorization of the user
@@ -165,7 +165,7 @@ pub struct AppState {
     name: String,
     // Small description of the app
     description: String,
-    // URL of the app if exists
+    // URL of the app if it exists
     url: Option<String>,
     // All permissions for each method
     permissions: Mutex<IndexMap<String, Permission>>,
@@ -223,11 +223,11 @@ pub struct ApplicationData {
     name: String,
     // Small description of the app
     description: String,
-    // URL of the app if exists
+    // URL of the app if it exists
     url: Option<String>,
     // All permissions for each method
     permissions: IndexMap<String, Permission>,
-    // signature of all data
+    // Signature of all data
     signature: Option<Signature>,
 }
 
@@ -372,7 +372,7 @@ impl Permission {
 }
 
 pub enum PermissionRequest<'a> {
-    // bool tell if it was already signed or not
+    // The boolean indicates whether it was already signed or not
     Application(bool),
     Request(&'a RpcRequest)
 }
@@ -420,19 +420,19 @@ where
         }
     }
 
-    // This method is used to get the applications HashMap
-    // be careful by using it, and if you delete a session, please disconnect it
+    // This method is used to get the applications HashMap.
+    // Be careful when using it, and if you delete a session, please disconnect it.
     pub fn get_applications(&self) -> &RwLock<HashMap<WebSocketSessionShared<Self>, AppStateShared>> {
         &self.applications
     }
 
-    // get a HashSet of all events tracked
+    // Get a HashSet of all events tracked
     pub async fn get_tracked_events(&self) -> HashSet<NotifyEvent> {
         let sessions = self.listeners.lock().await;
         HashSet::from_iter(sessions.values().map(|e| e.keys().cloned()).flatten())
     }
 
-    // verify if a event is tracked by XSWD
+    // Verify if a event is tracked by XSWD
     pub async fn is_event_tracked(&self, event: &NotifyEvent) -> bool {
         let sessions = self.listeners.lock().await;
         sessions
@@ -441,7 +441,7 @@ where
             .is_some()
     }
 
-    // notify a new event to all connected WebSocket
+    // Notify a new event to all connected WebSocket
     pub async fn notify(&self, event: &NotifyEvent, value: Value) {
         let value = json!(EventResult { event: Cow::Borrowed(event), value });
         let sessions = self.listeners.lock().await;
@@ -451,15 +451,15 @@ where
                 let session = session.clone();
                 spawn_task("xswd-notify", async move {
                     if let Err(e) = session.send_text(response.to_string()).await {
-                        debug!("Error occured while notifying a new event: {}", e);
+                        debug!("Error occurred while notifying a new event: {}", e);
                     };
                 });
             }
         }
     }
 
-    // verify the permission for a request
-    // if the permission is not set, it will request it to the user
+    // Verify the permission for a request.
+    // If the permission is not set, it will request it to the user.
     async fn verify_permission_for_request(&self, app: &AppStateShared, request: &RpcRequest) -> Result<(), RpcResponseError> {
         let _permit = self.permission_handler_semaphore.acquire().await
             .map_err(|_| RpcResponseError::new(request.id.clone(), InternalRpcError::InternalError("Permission handler semaphore error")))?;
@@ -498,8 +498,8 @@ where
         }
     }
 
-    // register a new application
-    // if the application is already registered, it will return an error
+    // Register a new application.
+    // If the application is already registered, it will return an error.
     async fn add_application(&self, session: &WebSocketSessionShared<Self>, app_data: ApplicationData) -> Result<Value, RpcResponseError> {
         // Sanity check
         {
@@ -541,7 +541,7 @@ where
             }
 
             if app_data.signature.is_some() {
-                // TODO: verify the signature
+                // TODO: Verify the signature
                 return Err(RpcResponseError::new(None, XSWDError::InvalidSignatureForApplicationData))
             }
 
@@ -554,7 +554,7 @@ where
         // Verify the signature of the app data to validate permissions previously set
         if let Some(signature) = &app_data.signature {
             let bytes = app_data.to_bytes();
-            // remove signature bytes for verification
+            // Remove signature bytes for verification
             let bytes = &bytes[0..bytes.len() - SIGNATURE_SIZE];
             let key = wallet.get_public_key().await
                 .map_err(|e| {
@@ -610,7 +610,7 @@ where
         }))
     }
 
-    // register a new event listener for the specified connection/application
+    // Register a new event listener for the specified connection/application
     async fn subscribe_session_to_event(&self, session: &WebSocketSessionShared<Self>, event: NotifyEvent, id: Option<Id>) -> Result<(), RpcResponseError> {
         let mut listeners = self.listeners.lock().await;
         let events = listeners.entry(session.clone()).or_insert_with(HashMap::new);
@@ -624,7 +624,7 @@ where
         Ok(())
     }
 
-    // unregister an event listener for the specified connection/application
+    // Unregister an event listener for the specified connection/application
     async fn unsubscribe_session_from_event(&self, session: &WebSocketSessionShared<Self>, event: NotifyEvent, id: Option<Id>) -> Result<(), RpcResponseError> {
         let mut listeners = self.listeners.lock().await;
         let events = listeners.get_mut(session).ok_or_else(|| RpcResponseError::new(id.clone(), InternalRpcError::EventNotSubscribed))?;
@@ -636,16 +636,16 @@ where
         Ok(())
     }
 
-    // Verify if an application is already registered
-    // ID must be unique and not used by another application
+    // Verify if an application is already registered.
+    // ID must be unique and not used by another application.
     async fn has_app_with_id(&self, id: &String) -> bool {
         let applications = self.applications.read().await;
         applications.values().find(|e| e.get_id() == id).is_some()
     }
 
-    // Internal method to handle the message received from the WebSocket connection
-    // This method will parse the message and call the appropriate method if app is registered
-    // Otherwise, it expects a JSON object with the application data to register it
+    // Internal method to handle the message received from the WebSocket connection.
+    // This method will parse the message and call the appropriate method if app is registered.
+    // Otherwise, it expects a JSON object with the application data to register it.
     async fn on_message_internal(&self, session: &WebSocketSessionShared<Self>, message: &[u8]) -> Result<Option<Value>, RpcResponseError> {
         let (request, is_subscribe, is_unsubscribe) = {
             let app_state = {
@@ -676,7 +676,7 @@ where
                     return Err(RpcResponseError::new(request.id, InternalRpcError::MethodNotFound(request.method)))
                 }
     
-                // let's check the permission set by user for this method
+                // Let's check the permission set by user for this method
                 app.set_requesting(true);
                 self.verify_permission_for_request(&app, &request).await?;
                 app.set_requesting(false);
@@ -708,7 +708,7 @@ where
         };
 
         if is_subscribe || is_unsubscribe {
-            // retrieve the event variant
+            // Retrieve the event variant
             let event = serde_json::from_value(
                 request.params.ok_or_else(|| RpcResponseError::new(request.id.clone(), InternalRpcError::ExpectedParams))?)
                 .map_err(|e| RpcResponseError::new(request.id.clone(), InternalRpcError::InvalidJSONParams(e))

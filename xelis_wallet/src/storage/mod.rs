@@ -50,7 +50,7 @@ use crate::{
 use self::backend::{Db, Tree};
 use log::{trace, debug, error};
 
-// keys used to retrieve from storage
+// Keys used to retrieve from storage
 const NONCE_KEY: &[u8] = b"NONCE";
 const SALT_KEY: &[u8] = b"SALT";
 // Password + salt is necessary to decrypt master key
@@ -59,10 +59,10 @@ const PASSWORD_SALT_KEY: &[u8] = b"PSALT";
 const MASTER_KEY: &[u8] = b"MKEY";
 const PRIVATE_KEY: &[u8] = b"PKEY";
 
-// const used for online mode
-// represent the daemon topoheight
+// Const used for online mode.
+// Represent the daemon topoheight.
 const TOPOHEIGHT_KEY: &[u8] = b"TOPH";
-// represent the daemon top block hash
+// Represent the daemon top block hash
 const TOP_BLOCK_HASH_KEY: &[u8] = b"TOPBH";
 const NETWORK: &[u8] = b"NET";
 // Last coinbase reward topoheight
@@ -120,35 +120,35 @@ pub struct TxCache {
 
 // Implement an encrypted storage system 
 pub struct EncryptedStorage {
-    // cipher used to encrypt/decrypt/hash data
+    // Cipher used to encrypt/decrypt/hash data
     cipher: Cipher,
     // All transactions where this wallet is part of
     transactions: Tree,
-    // balances for each asset
+    // Balances for each asset
     balances: Tree,
-    // extra data (network, topoheight, etc)
+    // Extra data (network, topoheight, etc)
     extra: Tree,
-    // all assets tracked by the wallet
+    // All assets tracked by the wallet
     assets: Tree,
-    // This tree is used to store all topoheight where a change in the wallet occured
+    // This tree is used to store all topoheight where a change in the wallet occurred
     changes_topoheight: Tree,
     // The inner storage
     inner: Storage,
     // Caches
     balances_cache: Mutex<LruCache<Hash, Balance>>,
-    // this cache is used to store unconfirmed balances
-    // it is used to store the balance before the transaction is confirmed
-    // so we can build several txs without having to wait for the confirmation
-    // We store it in a VecDeque so for each TX we have an entry and can just retrieve it
+    // This cache is used to store unconfirmed balances.
+    // It is used to store the balance before the transaction is confirmed
+    // so we can build several txs without having to wait for the confirmation.
+    // We store it in a VecDeque so for each TX we have an entry and can just retrieve it.
     unconfirmed_balances_cache: Mutex<HashMap<Hash, VecDeque<Balance>>>,
     tx_cache: Option<TxCache>,
     // Cache for the assets with their decimals
     assets_cache: Mutex<LruCache<Hash, u8>>,
     // Cache for the synced topoheight
     synced_topoheight: Option<u64>,
-    // Topoheight of the last coinbase reward
+    // Topoheight of the last coinbase reward.
     // This is used to determine if we should
-    // use a stable balance or not
+    // use a stable balance or not.
     last_coinbase_reward_topoheight: Option<u64>,
 }
 
@@ -219,7 +219,7 @@ impl EncryptedStorage {
         self.internal_load(tree, &hashed_key)
     }
 
-    // Because we can't predict the nonce used for encryption, we make it determistic
+    // Because we can't predict the nonce used for encryption, we make it deterministic
     fn create_encrypted_key(&self, key: &[u8]) -> Result<Vec<u8>> {
         trace!("create encrypted key");
         // the hashed key is salted so its unique and can't be recover/bruteforced
@@ -233,15 +233,15 @@ impl EncryptedStorage {
         Ok(key)
     }
 
-    // load from disk using an encrypted key, decrypt the value and deserialize it
+    // Load from disk using an encrypted key, decrypt the value and deserialize it
     fn load_from_disk_with_encrypted_key<V: Serializer>(&self, tree: &Tree, key: &[u8]) -> Result<V> {
         trace!("load from disk with encrypted key");
         let encrypted_key = self.create_encrypted_key(key)?;
         self.internal_load(tree, &encrypted_key)
     }
 
-    // Encrypt key, encrypt data and then save to disk
-    // We encrypt instead of hashing to be able to retrieve the key
+    // Encrypt key, encrypt data and then save to disk.
+    // We encrypt instead of hashing to be able to retrieve the key.
     fn save_to_disk_with_encrypted_key(&self, tree: &Tree, key: &[u8], value: &[u8]) -> Result<()> {
         trace!("save to disk with encrypted key");
         let encrypted_key = self.create_encrypted_key(key)?;
@@ -250,7 +250,7 @@ impl EncryptedStorage {
         Ok(())
     }
 
-    // hash key, encrypt data and then save to disk 
+    // Hash key, encrypt data and then save to disk 
     fn save_to_disk(&self, tree: &Tree, key: &[u8], value: &[u8]) -> Result<()> {
         trace!("save to disk");
         let hashed_key = self.cipher.hash_key(key);
@@ -258,7 +258,7 @@ impl EncryptedStorage {
         Ok(())
     }
 
-    // hash key, encrypt data and then save to disk 
+    // Hash key, encrypt data and then save to disk 
     fn delete_from_disk(&self, tree: &Tree, key: &[u8]) -> Result<()> {
         trace!("delete from disk");
         let hashed_key = self.cipher.hash_key(key);
@@ -266,7 +266,7 @@ impl EncryptedStorage {
         Ok(())
     }
 
-    // hash key, encrypt data and then save to disk 
+    // Hash key, encrypt data and then save to disk 
     fn delete_from_disk_with_encrypted_key(&self, tree: &Tree, key: &[u8]) -> Result<()> {
         trace!("delete from disk with encrypted key");
         let encrypted_key = self.create_encrypted_key(key)?;
@@ -326,8 +326,8 @@ impl EncryptedStorage {
         self.contains_encrypted_data(&tree, &key.to_bytes())
     }
 
-    // Search all entries with requested query_key/query_value
-    // It has to go through the whole tree elements, decrypt each key/value and verify them against the query filter set
+    // Search all entries with requested query_key/query_value.
+    // It has to go through the whole tree elements, decrypt each key/value and verify them against the query filter set.
     pub fn query_db(&self, tree: impl Into<String>, query_key: Option<Query>, query_value: Option<Query>, return_on_first: bool) -> Result<QueryResult> {
         trace!("query db");
         let tree = self.get_custom_tree(tree)?;
@@ -401,8 +401,8 @@ impl EncryptedStorage {
         Ok(keys)
     }
 
-    // Count entries from a tree
-    // A query is possible to filter on keys
+    // Count entries from a tree.
+    // A query is possible to filter on keys.
     pub fn count_custom_tree_entries(&self, tree: &String, query_key: &Option<Query>, query_value: &Option<Query>) -> Result<usize> {
         trace!("count custom tree entries");
         let tree = self.get_custom_tree(tree)?;
@@ -438,8 +438,8 @@ impl EncryptedStorage {
         Ok(count)
     }
 
-    // this function is specific because we save the key in encrypted form (and not hashed as others)
-    // returns all saved assets
+    // This function is specific because we save the key in encrypted form (and not hashed as others).
+    // Returns all saved assets.
     pub async fn get_assets(&self) -> Result<HashSet<Hash>> {
         trace!("get assets");
         let mut cache = self.assets_cache.lock().await;
@@ -510,7 +510,7 @@ impl EncryptedStorage {
         self.contains_encrypted_data(&self.assets, asset.as_bytes())
     }
 
-    // save asset with its corresponding decimals
+    // Save asset with its corresponding decimals
     pub async fn add_asset(&mut self, asset: &Hash, decimals: u8) -> Result<()> {
         trace!("add asset");
         if self.contains_asset(asset).await? {
@@ -625,11 +625,11 @@ impl EncryptedStorage {
     // Set the balance for this asset
     pub async fn set_balance_for(&mut self, asset: &Hash, mut balance: Balance) -> Result<()> {
         trace!("set balance for {}", asset);
-        // Clear the cache of all outdated balances
-        // for this, we simply go through all versions available and delete them all until we find the one we are looking for
-        // The unconfirmed balances cache may not work during front running
+        // Clear the cache of all outdated balances.
+        // For this, we simply go through all versions available and delete them all until we find the one we are looking for.
+        // The unconfirmed balances cache may not work during front running.
         // As we only scan the final balances for each asset, if we get any incoming TX, compressed balance
-        // will be different and we will not be able to find the unconfirmed balance
+        // will be different and we will not be able to find the unconfirmed balance.
         {
             let mut cache = self.unconfirmed_balances_cache.lock().await;
             let mut delete_entry = false;
@@ -674,14 +674,14 @@ impl EncryptedStorage {
         self.load_from_disk(&self.transactions, hash.as_bytes())
     }
 
-    // read whole disk and returns all transactions
+    // Read whole disk and returns all transactions
     pub fn get_transactions(&self) -> Result<Vec<TransactionEntry>> {
         trace!("get transactions");
         self.get_filtered_transactions(None, None, None, true, true, true, true, None)
     }
 
-    // delete all transactions above the specified topoheight
-    // This will go through each transaction, deserialize it, check topoheight, and delete it if required
+    // Delete all transactions above the specified topoheight.
+    // This will go through each transaction, deserialize it, check topoheight, and delete it if required.
     pub fn delete_transactions_above_topoheight(&mut self, topoheight: u64) -> Result<()> {
         trace!("delete transactions above topoheight {}", topoheight);
         for el in self.transactions.iter().values() {
@@ -695,9 +695,9 @@ impl EncryptedStorage {
         Ok(())
     }
 
-    // delete all transactions at the specified topoheight
-    // This will go through each transaction, deserialize it, check topoheight, and delete it if required
-    // Maybe we can optimize it by keeping a lookuptable of topoheight -> txs ?
+    // Delete all transactions at the specified topoheight.
+    // This will go through each transaction, deserialize it, check topoheight, and delete it if required.
+    // Maybe we can optimize it by keeping a lookup table of topoheight -> TXs?
     pub fn delete_transactions_at_topoheight(&mut self, topoheight: u64) -> Result<()> {
         trace!("delete transactions at topoheight {}", topoheight);
         for el in self.transactions.iter().values() {
@@ -812,7 +812,7 @@ impl EncryptedStorage {
         self.clear_tx_cache();
     }
 
-    // Delete tx cache
+    // Delete TX cache
     pub fn clear_tx_cache(&mut self) {
         trace!("clear tx cache");
         self.tx_cache = None;
@@ -826,9 +826,9 @@ impl EncryptedStorage {
         Ok(())
     }
 
-    // Save the transaction with its TX hash as key
-    // We hash the hash of the TX to use it as a key to not let anyone being able to see txs saved on disk
-    // with no access to the decrypted master key
+    // Save the transaction with its TX hash as key.
+    // We hash the hash of the TX to use it as a key to not let anyone being able to see TXs saved on disk
+    // without access to the decrypted master key.
     pub fn save_transaction(&mut self, hash: &Hash, transaction: &TransactionEntry) -> Result<()> {
         trace!("save transaction {}", hash);
 
@@ -852,8 +852,8 @@ impl EncryptedStorage {
         self.load_from_disk(&self.extra, NONCE_KEY)
     }
 
-    // Get the unconfirmed nonce to use to build ordered TXs
-    // It will fallback to the real nonce if not set
+    // Get the unconfirmed nonce to use to build ordered TXs.
+    // It will fallback to the real nonce if not set.
     pub fn get_unconfirmed_nonce(&self) -> u64 {
         trace!("get unconfirmed nonce");
         self.tx_cache.as_ref().map(|c| c.nonce).unwrap_or_else(|| self.get_nonce().unwrap_or(0))
@@ -871,15 +871,15 @@ impl EncryptedStorage {
         self.tx_cache.as_ref()
     }
 
-    // Set the new nonce used to create new transactions
+    // Set the new nonce used to create new transactions.
     // If the unconfirmed nonce is lower than the new nonce, we reset it
     pub fn set_nonce(&mut self, nonce: u64) -> Result<()> {
         trace!("set nonce to {}", nonce);
         self.save_to_disk(&self.extra, NONCE_KEY, &nonce.to_be_bytes())
     }
 
-    // Store the last coinbase reward topoheight
-    // This is used to determine if we should use a stable balance or not
+    // Store the last coinbase reward topoheight.
+    // This is used to determine if we should use a stable balance or not.
     pub fn set_last_coinbase_reward_topoheight(&mut self, topoheight: Option<u64>) -> Result<()> {
         trace!("set last coinbase reward topoheight to {:?}", topoheight);
         if let Some(topoheight) = topoheight {
@@ -987,7 +987,7 @@ impl EncryptedStorage {
         self.contains_data(&self.extra, NETWORK)
     }
 
-    // Add a topoheight where a change occured
+    // Add a topoheight where a change occurred
     pub fn add_topoheight_to_changes(&mut self, topoheight: u64, block_hash: &Hash) -> Result<()> {
         trace!("add topoheight to changes: {} at {}", topoheight, block_hash);
         self.save_to_disk_with_encrypted_key(&self.changes_topoheight, &topoheight.to_be_bytes(), block_hash.as_bytes())
@@ -1005,8 +1005,8 @@ impl EncryptedStorage {
         self.contains_encrypted_data(&self.changes_topoheight, &topoheight.to_be_bytes())
     }
 
-    // Delete all changes above topoheight
-    // This will returns true if a changes was deleted
+    // Delete all changes above topoheight.
+    // This will returns true if a changes was deleted.
     pub fn delete_changes_above_topoheight(&mut self, topoheight: u64) -> Result<bool> {
         trace!("delete changes above topoheight {}", topoheight);
         let mut deleted = false;
@@ -1024,8 +1024,8 @@ impl EncryptedStorage {
         Ok(deleted)
     }
 
-    // Delete changes at topoheight
-    // This will returns true if a changes was deleted
+    // Delete changes at topoheight.
+    // This will returns true if a changes was deleted.
     pub fn delete_changes_at_topoheight(&mut self, topoheight: u64) -> Result<()> {
         trace!("delete changes at topoheight {}", topoheight);
         self.delete_from_disk_with_encrypted_key(&self.changes_topoheight, &topoheight.to_be_bytes())?;
@@ -1070,15 +1070,15 @@ impl Storage {
         })
     }
 
-    // save the encrypted form of the master key
-    // it can only be decrypted using the password-based key
+    // Save the encrypted form of the master key.
+    // It can only be decrypted using the password-based key.
     pub fn set_encrypted_master_key(&mut self, encrypted_key: &[u8]) -> Result<()> {
         trace!("set encrypted master key");
         self.db.insert(MASTER_KEY, encrypted_key)?;
         Ok(())
     }
 
-    // retrieve the encrypted form of the master key
+    // Retrieve the encrypted form of the master key
     pub fn get_encrypted_master_key(&self) -> Result<Vec<u8>> {
         trace!("get encrypted master key");
         match self.db.get(MASTER_KEY)? {
@@ -1091,14 +1091,14 @@ impl Storage {
         }
     }
 
-    // set password salt used to derive the password-based key
+    // Set password salt used to derive the password-based key
     pub fn set_password_salt(&mut self, salt: &[u8]) -> Result<()> {
         trace!("set password salt");
         self.db.insert(PASSWORD_SALT_KEY, salt)?;
         Ok(())
     }
 
-    // retrieve password salt used to derive the password-based key
+    // Retrieve password salt used to derive the password-based key
     pub fn get_password_salt(&self) -> Result<[u8; SALT_SIZE]> {
         trace!("get password salt");
         let mut salt: [u8; SALT_SIZE] = [0; SALT_SIZE];
@@ -1118,7 +1118,7 @@ impl Storage {
         Ok(salt)
     }
 
-    // get the salt used for encrypted storage
+    // Get the salt used for encrypted storage
     pub fn get_encrypted_storage_salt(&self) -> Result<Vec<u8>> {
         trace!("get encrypted storage salt");
         let values = self.db.get(SALT_KEY)?.context("encrypted salt for storage was not found")?;
@@ -1128,7 +1128,7 @@ impl Storage {
         Ok(encrypted_salt)
     }
 
-    // set the salt used for encrypted storage
+    // Set the salt used for encrypted storage
     pub fn set_encrypted_storage_salt(&mut self, salt: &[u8]) -> Result<()> {
         trace!("set encrypted storage salt");
         self.db.insert(SALT_KEY, salt)?;

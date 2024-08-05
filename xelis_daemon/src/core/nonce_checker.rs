@@ -38,8 +38,8 @@ impl AccountEntry {
     }
 }
 
-// A simple cache that checks if a nonce has already been used
-// Stores the topoheight of the block that used the nonce
+// A simple cache that checks if a nonce has already been used.
+// Stores the topoheight of the block that used the nonce.
 pub struct NonceChecker {
     cache: HashMap<PublicKey, AccountEntry>,
 }
@@ -51,7 +51,7 @@ impl NonceChecker {
         }
     }
 
-    // Undo the nonce usage
+    // Undo the nonce usage.
     // We remove it from the used nonces list and revert the expected nonce to the previous nonce if present.
     pub fn undo_nonce(&mut self, key: &PublicKey, nonce: u64) {
         if let Some(entry) = self.cache.get_mut(key) {
@@ -65,8 +65,8 @@ impl NonceChecker {
         }
     }
 
-    // Key may be cloned on first entry
-    // Returns false if nonce is already used
+    // Key may be cloned on first entry.
+    // Returns false if nonce is already used.
     pub async fn use_nonce<S: Storage>(&mut self, storage: &S, key: &PublicKey, nonce: u64, topoheight: u64) -> Result<bool, BlockchainError> {
         trace!("use_nonce {} for {} at topoheight {}", nonce, key.as_address(storage.is_mainnet()), topoheight);
 

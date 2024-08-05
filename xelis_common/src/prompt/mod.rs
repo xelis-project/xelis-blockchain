@@ -48,7 +48,7 @@ use regex::Regex;
 use log::{info, error, Level, debug, LevelFilter, warn};
 use thiserror::Error;
 
-// used for launch param
+// Used for launch param
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
 pub enum LogLevel {
@@ -178,8 +178,8 @@ struct State {
 
 impl State {
     fn new(allow_interactive: bool) -> Self {
-        // enable the raw mode for terminal
-        // so we can read each event/action
+        // Enable the raw mode for terminal
+        // so we can read each event/action.
         let interactive = if allow_interactive { !crossterminal::enable_raw_mode().is_err() } else { false };
 
         Self {
@@ -223,9 +223,9 @@ impl State {
     fn ioloop(self: &Arc<Self>, sender: UnboundedSender<String>) -> Result<(), PromptError> {
         debug!("ioloop started");
 
-        // all the history of commands
+        // All the history of commands
         let mut history: VecDeque<String> = VecDeque::new();
-        // current index in history in case we use arrows to move in history
+        // Current index in history in case we use arrows to move in history
         let mut history_index = 0;
         let mut is_in_history = false;
         loop {
@@ -286,7 +286,7 @@ impl State {
                                 },
                                 KeyCode::Char(c) => {
                                     is_in_history = false;
-                                    // handle CTRL+C
+                                    // Handle CTRL+C
                                     if key.modifiers == KeyModifiers::CONTROL && c == 'c' {
                                         break;
                                     }
@@ -306,7 +306,7 @@ impl State {
                                     is_in_history = false;
                                     let mut buffer = self.user_input.lock()?;
 
-                                    // clone the buffer to send it to the command handler
+                                    // Clone the buffer to send it to the command handler
                                     let cloned_buffer = buffer.clone();
                                     buffer.clear();
                                     self.show_input(&buffer)?;
@@ -390,7 +390,7 @@ impl State {
     }
 
     fn show_with_prompt_and_input(&self, prompt: &String, input: &String) -> Result<(), PromptError> {
-        // if not interactive, we don't need to show anything
+        // If not interactive, we don't need to show anything
         if !self.is_interactive() {
             return Ok(())
         }
@@ -508,7 +508,7 @@ impl Prompt {
         if prompt.state.is_interactive() {
             let (input_sender, input_receiver) = mpsc::unbounded_channel::<String>();
             let state = Arc::clone(&prompt.state);
-            // spawn a thread to prevent IO blocking - https://github.com/tokio-rs/tokio/issues/2466
+            // Spawn a thread to prevent IO blocking - https://github.com/tokio-rs/tokio/issues/2466
             std::thread::spawn(move || {
                 if let Err(e) = state.ioloop(input_sender) {
                     error!("Error in ioloop: {}", e);
@@ -533,10 +533,10 @@ impl Prompt {
     }
 
     // Start the thread to read stdin and handle events
-    // Execute commands if a commande manager is present
+    // Execute commands if a command manager is present
     pub async fn start<'a>(&'a self, update_every: Duration, fn_message: AsyncF<'a, Self, Option<&'a CommandManager>, Result<String, PromptError>>, command_manager: Option<&'a CommandManager>) -> Result<(), PromptError>
     {
-        // setup the exit channel
+        // Setup the exit channel
         let mut exit_receiver = {
             let (sender, receiver) = oneshot::channel();
             self.state.set_exit_channel(sender)?;
@@ -578,8 +578,8 @@ impl Prompt {
                 }
                 _ = interval.tick() => {
                     {
-                        // verify that we don't have any reader
-                        // as they may have changed the prompt
+                        // Verify that we don't have any reader
+                        // as they may have changed the prompt.
                         if self.state.prompt_sender.lock()?.is_some() {
                             continue;
                         }
@@ -608,8 +608,8 @@ impl Prompt {
         Ok(())
     }
 
-    // Stop the prompt running
-    // can only be called when it was already started
+    // Stop the prompt running.
+    // Can only be called when it was already started.
     pub fn stop(&self) -> Result<(), PromptError> {
         self.state.stop()
     }
@@ -634,7 +634,7 @@ impl Prompt {
         Ok(())
     }
 
-    // get the current prompt displayed
+    // Get the current prompt displayed
     pub fn get_prompt(&self) -> Result<Option<String>, PromptError> {
         let prompt = self.state.prompt.lock()?;
         Ok(prompt.clone())
@@ -684,9 +684,9 @@ impl Prompt {
         Ok(())
     }
 
-    // read a message from the user and apply the input mask if necessary
+    // Read a message from the user and apply the input mask if necessary
     pub async fn read_input<S: ToString>(&self, prompt: S, apply_mask: bool) -> Result<String, PromptError> {
-        // This is also used as a sempahore to have only one call at a time
+        // This is also used as a semaphore to have only one call at a time
         let mut canceler = self.read_input_receiver.lock().await;
 
         // Verify that during the time it hasn't exited
@@ -694,7 +694,7 @@ impl Prompt {
             return Err(PromptError::NotRunning)
         }
 
-        // register our reader
+        // Register our reader
         let receiver = {
             let mut prompt_sender = self.state.prompt_sender.lock()?;
             let (sender, receiver) = oneshot::channel();
@@ -702,7 +702,7 @@ impl Prompt {
             receiver
         };
 
-        // keep in memory the previous prompt
+        //  Keep in memory the previous prompt
         let old_prompt = self.get_prompt()?;
         let old_user_input = {
             let mut user_input = self.state.user_input.lock()?;
@@ -715,7 +715,7 @@ impl Prompt {
             self.set_mask_input(true);
         }
 
-        // update the prompt to the requested one and keep blocking on the receiver
+        // Update the prompt to the requested one and keep blocking on the receiver
         self.update_prompt(prompt.to_string())?;
         let input = {
             let input = tokio::select! {
@@ -732,7 +732,7 @@ impl Prompt {
             self.set_mask_input(false);
         }
 
-        // set the old user input
+        // Set the old user input
         {
             let mut user_input = self.state.user_input.lock()?;
             *user_input = old_user_input;
@@ -743,17 +743,17 @@ impl Prompt {
         input
     }
 
-    // should we replace user input by * ?
+    // Should we replace user input by * ?
     pub fn should_mask_input(&self) -> bool {
         self.state.should_mask_input()
     }
 
-    // set the value to replace user input by * chars or not
+    // Set the value to replace user input by * chars or not
     pub fn set_mask_input(&self, value: bool) {
         self.state.mask_input.store(value, Ordering::SeqCst);
     }
 
-    // configure fern and print prompt message after each new output
+    // Configure fern and print prompt message after each new output
     fn setup_logger(
         &self,
         level: LogLevel,
@@ -848,7 +848,7 @@ impl Prompt {
         }
 
         // Default log level modules
-        // It can be overriden by the user below
+        // It can be overridden by the user below
         base = base.level_for("sled", log::LevelFilter::Warn)
             .level_for("actix_server", log::LevelFilter::Warn)
             .level_for("actix_web", log::LevelFilter::Off)
@@ -869,8 +869,8 @@ impl Prompt {
         Ok(())
     }
 
-    // colorize a string with a specific color
-    // if colors are disabled, the message is returned as is
+    // Colorize a string with a specific color.
+    // If colors are disabled, the message is returned as is.
     pub fn colorize_string(&self, color: Color, message: &String) -> String {
         if self.disable_colors {
             return message.to_string();
@@ -879,8 +879,8 @@ impl Prompt {
         format!("\x1B[{}m{}\x1B[0m", color.to_fg_str(), message)
     }
 
-    // colorize a string with a specific color
-    // No color is set if colors are disabled
+    // Colorize a string with a specific color.
+    // No color is set if colors are disabled.
     pub fn colorize_str(&self, color: Color, message: &str) -> String {
         if self.disable_colors {
             return message.to_string();

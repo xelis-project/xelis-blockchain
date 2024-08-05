@@ -84,7 +84,7 @@ pub enum Packet<'a> {
     // packet contains tx hash, view this packet as a "notification"
     // instead of sending the TX directly, we notify our peers
     // so the peer that already have this TX in mempool don't have to read it again
-    // imo: can be useful when the network is spammed by alot of txs
+    // imo: can be useful when the network is spammed by a lot of txs
     TransactionPropagation(PacketWrapper<'a, Hash>),
     BlockPropagation(PacketWrapper<'a, BlockHeader>),
     ChainRequest(PacketWrapper<'a, ChainRequest>),

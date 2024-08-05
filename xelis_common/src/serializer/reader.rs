@@ -24,8 +24,8 @@ pub enum ReaderError {
 // Reader help us to read safely from bytes
 // Mostly used when de-serializing an object from Serializer trait 
 pub struct Reader<'a> {
-    bytes: &'a[u8], // bytes to read
-    total: usize // total read bytes
+    bytes: &'a[u8], // Bytes to read
+    total: usize // Total read bytes
 }
 
 impl<'a> Reader<'a> {

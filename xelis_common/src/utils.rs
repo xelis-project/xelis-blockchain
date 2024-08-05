@@ -45,14 +45,14 @@ pub fn from_coin(value: impl Into<String>, coin_decimals: u8) -> Option<u64> {
     Some(value * 10u64.pow(coin_decimals as u32) + decimals_value)
 }
 
-// return the fee for a transaction based on its size in bytes
-// the fee is calculated in atomic units for XEL
-// Sending to a newly created address will increase the fee
-// Each transfers output will also increase the fee
+// Return the fee for a transaction based on its size in bytes.
+// The fee is calculated in atomic units for XEL.
+// Sending to a newly created address will increase the fee.
+// Each transfers output will also increase the fee.
 pub fn calculate_tx_fee(tx_size: usize, output_count: usize, new_addresses: usize) -> u64 {
     let mut size_in_kb = tx_size as u64 / 1024;
 
-    if tx_size % 1024 != 0 { // we consume a full kb for fee
+    if tx_size % 1024 != 0 { // We consume a full kb for fee
         size_in_kb += 1;
     }
 
@@ -98,8 +98,8 @@ pub fn format_difficulty(mut difficulty: Difficulty) -> String {
     return format!("{}{}{}", difficulty, left_str, DIFFICULTY_FORMATS[count]);
 }
 
-// Sanitize a daemon address to make sure it's a valid websocket address
-// By default, will use ws:// if no protocol is specified
+// Sanitize a daemon address to make sure it's a valid websocket address.
+// By default, will use ws:// if no protocol is specified.
 pub fn sanitize_daemon_address(target: &str) -> String {
     let mut target = target.to_lowercase();
     if target.starts_with("https://") {

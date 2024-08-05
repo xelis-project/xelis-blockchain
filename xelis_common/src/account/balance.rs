@@ -8,8 +8,8 @@ use super::CiphertextCache;
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum BalanceType {
-    // Only incoming funds were added
-    // By default, a balance is considered as input
+    // Only incoming funds were added.
+    // By default, a balance is considered as input.
     Input,
     // Only a spending was made from this
     Output,
@@ -42,17 +42,17 @@ impl Serializer for BalanceType {
 
 #[derive(Clone, Deserialize, Serialize, PartialEq, Eq, Debug)]
 pub struct VersionedBalance {
-    // Output balance is used in case of multi TXs not in same block
+    // Output balance is used in case of multi TXs not in same block.
     // If you build several TXs at same time but are not in the same block,
-    // and a incoming tx happen we need to keep track of the output balance
+    // and a incoming tx happen we need to keep track of the output balance.
     output_balance: Option<CiphertextCache>,
-    // Final user balance that contains outputs and inputs balance
-    // This is the balance shown to a user and used to build TXs
+    // Final user balance that contains outputs and inputs balance.
+    // This is the balance shown to a user and used to build TXs.
     final_balance: CiphertextCache,
     // Determine if there was any output made in this version
     balance_type: BalanceType,
-    // Topoheight of the previous versioned balance
-    // If its none, that means it's the first version available
+    // Topoheight of the previous versioned balance.
+    // If its none, that means it's the first version available.
     previous_topoheight: Option<u64>,
 }
 
@@ -211,11 +211,11 @@ impl Serializer for Balance {
 
 #[derive(Debug)]
 pub struct AccountSummary {
-    // last output balance stored on chain
+    // Last output balance stored on chain.
     // It can be None if the account has no output balance
-    // or if the output balance is already in stable_version
+    // or if the output balance is already in stable_version.
     pub output_version: Option<Balance>,
-    // last balance stored on chain below or equal to stable topoheight
+    // Last balance stored on chain below or equal to stable topoheight.
     pub stable_version: Balance 
 }
 

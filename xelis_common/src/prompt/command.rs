@@ -14,7 +14,7 @@ pub enum CommandError {
     #[error("Command was not found")]
     CommandNotFound,
     #[error("Expected required argument {}", _0)]
-    ExpectedRequiredArg(String), // arg name
+    ExpectedRequiredArg(String), // Arg name
     #[error("Too many arguments")]
     TooManyArguments,
     #[error(transparent)]
@@ -232,7 +232,7 @@ impl CommandManager {
             arguments.insert(arg.get_name().clone(), arg.get_type().to_value(arg_value)?);
         }
 
-        // include all options args available
+        // Include all options args available
         for optional_arg in command.get_optional_args() {
             if let Some(arg_value) = command_split.next() {
                 arguments.insert(optional_arg.get_name().clone(), optional_arg.get_type().to_value(arg_value)?);

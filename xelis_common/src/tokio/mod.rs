@@ -17,8 +17,8 @@ pub use tokio_with_wasm::*;
 pub use tokio::*;
 
 
-// Spawn a new task with a name
-// If the tokio_unstable feature is enabled, the task will be named
+// Spawn a new task with a name.
+// If the tokio_unstable feature is enabled, the task will be named.
 #[inline(always)]
 #[cfg(not(all(
     target_arch = "wasm32",
@@ -43,8 +43,8 @@ where
     }
 }
 
-// Spawn a new task with a name
-// Send trait is not required for wasm32
+// Spawn a new task with a name.
+// Send trait is not required for wasm32.
 #[cfg(all(
     target_arch = "wasm32",
     target_vendor = "unknown",

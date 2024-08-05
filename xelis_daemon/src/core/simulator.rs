@@ -50,8 +50,8 @@ impl Display for Simulator {
 }
 
 impl Simulator {
-    // Start the Simulator mode to generate new blocks automatically
-    // It generates random miner keys and mine blocks with them
+    // Start the Simulator mode to generate new blocks automatically.
+    // It generates random miner keys and mine blocks with them.
     pub async fn start<S: Storage>(&self, blockchain: Arc<Blockchain<S>>) {
         let millis_interval = match self {
             Self::Stress => 300,
@@ -90,7 +90,7 @@ impl Simulator {
                 }
             }
 
-            // TODO
+            // TODO:
             // let max_txs = match self {
             //     Self::Stress => 200,
             //     _ => 15
@@ -118,7 +118,7 @@ impl Simulator {
         blocks
     }
 
-    // TODO use transaction builder
+    // TODO: Use transaction builder
     // async fn generate_txs_in_mempool(&self, max_txs: usize, max_transfers: usize, max_amount: u64, rng: &mut OsRng, keys: &Vec<KeyPair>, blockchain: &Arc<Blockchain<impl Storage>>) {
     //     info!("Adding simulated TXs in mempool");
     //     let n = rng.gen_range(0..max_txs);

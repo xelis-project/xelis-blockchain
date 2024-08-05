@@ -147,7 +147,7 @@ impl DecompressedTransferCt {
 
 impl Transaction {
     /// Get the new output ciphertext
-    // This is used to substract the amount from the sender's balance
+    // This is used to subtract the amount from the sender's balance
     fn get_sender_output_ct(
         &self,
         asset: &Hash,
@@ -229,8 +229,8 @@ impl Transaction {
         }
     }
 
-    // internal, does not verify the range proof
-    // returns (transcript, commitments for range proof)
+    // Internal, does not verify the range proof
+    // returns (transcript, commitments for range proof).
     async fn pre_verify<'a, E, B: BlockchainVerificationState<'a, E>>(
         &'a self,
         state: &mut B,
@@ -282,7 +282,7 @@ impl Transaction {
                 }
             }
 
-            // TODO: this is temporary until the hardfork has passed
+            // TODO: This is temporary until the hardfork has passed
             let max_size = if state.get_block_version() == BlockVersion::V0 {
                 EXTRA_DATA_LIMIT_SIZE
             } else {
@@ -583,9 +583,9 @@ impl Transaction {
         Ok(())
     }
 
-    /// Verify only that the final sender balance is the expected one for each commitment
-    /// Then apply ciphertexts to the state
-    /// Checks done are: commitment eq proofs only
+    /// Verify only that the final sender balance is the expected one for each commitment.
+    /// Then apply ciphertexts to the state.
+    /// Checks done are: commitment eq proofs only.
     pub async fn apply_with_partial_verify<'a, E, B: BlockchainVerificationState<'a, E>>(&'a self, state: &mut B) -> Result<(), VerificationError<E>> {
         trace!("apply with partial verify");
         let mut sigma_batch_collector = BatchCollector::default();

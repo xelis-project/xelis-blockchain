@@ -21,11 +21,11 @@ pub trait AssetProvider {
     async fn get_asset(&self, hash: &Hash) -> Result<AssetData, BlockchainError>;
 
     // Get all available assets
-    // TODO: replace with impl Iterator<Item = Result<Hash, BlockchainError>> when async trait methods are stable
+    // TODO: Replace with impl Iterator<Item = Result<Hash, BlockchainError>> when async trait methods are stable
     async fn get_assets(&self) -> Result<Vec<Hash>, BlockchainError>;
 
     // Get a partial list of assets supporting pagination and filtering by topoheight
-    // TODO: replace with impl Iterator<Item = Result<Hash, BlockchainError>> when async trait methods are stable
+    // TODO: Replace with impl Iterator<Item = Result<Hash, BlockchainError>> when async trait methods are stable
     async fn get_partial_assets(&self, maximum: usize, skip: usize, minimum_topoheight: u64, maximum_topoheight: u64) -> Result<IndexSet<AssetWithData>, BlockchainError>;
 
     // Get chunked assets
@@ -55,7 +55,7 @@ impl AssetProvider for SledStorage {
         self.load_from_disk(&self.assets, asset.as_bytes(), DiskContext::Asset)
     }
 
-    // we are forced to read from disk directly because cache may don't have all assets in memory
+    // We are forced to read from disk directly because cache may not have all assets in memory
     async fn get_assets(&self) -> Result<Vec<Hash>, BlockchainError> {
         trace!("get assets");
 
@@ -71,7 +71,7 @@ impl AssetProvider for SledStorage {
         for el in self.assets.iter() {
             let (key, value) = el?;
             let data = AssetData::from_bytes(&value)?;
-            // check that we have a registered asset before the maximum topoheight
+            // Check that we have a registered asset before the maximum topoheight
             if data.get_topoheight() >= minimum_topoheight && data.get_topoheight() <= maximum_topoheight {
                 if skip_count < skip {
                     skip_count += 1;
@@ -108,7 +108,7 @@ impl AssetProvider for SledStorage {
         }).collect()
     }
 
-    // count assets in storage
+    // Dount assets in storage
     async fn count_assets(&self) -> Result<u64, BlockchainError> {
         trace!("count assets");
         Ok(self.assets_count.load(Ordering::SeqCst))

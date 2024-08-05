@@ -112,7 +112,7 @@ pub enum BlockchainError {
     #[error("Timestamp {} is less than parent", _0)]
     TimestampIsLessThanParent(TimestampMillis),
     #[error("Timestamp {} is greater than current time {}", _0, _1)]
-    TimestampIsInFuture(TimestampMillis, TimestampMillis), // left is expected, right is got
+    TimestampIsInFuture(TimestampMillis, TimestampMillis), // Left is expected, right is got
     #[error("Block height mismatch, expected {}, got {}.", _0, _1)]
     InvalidBlockHeight(u64, u64),
     #[error("Block height is zero which is not allowed")]
@@ -152,10 +152,10 @@ pub enum BlockchainError {
     #[error("Tx {} is already in block", _0)]
     TxAlreadyInBlock(Hash),
     #[error("Duplicate registration tx for address '{}' found in same block", _0)]
-    DuplicateRegistration(Address), // address
+    DuplicateRegistration(Address), // Address
     #[error("Invalid Tx fee, expected at least {}, got {}", format_xelis(*_0), format_xelis(*_1))]
     InvalidTxFee(u64, u64),
-    #[error("Fees are lower for this TX than the overrided TX, expected at least {}, got {}", format_xelis(*_0), format_xelis(*_1))]
+    #[error("Fees are lower for this TX than the overridden TX, expected at least {}, got {}", format_xelis(*_0), format_xelis(*_1))]
     FeesToLowToOverride(u64, u64),
     #[error("No account found for {}", _0)]
     AccountNotFound(Address),
@@ -237,7 +237,7 @@ pub enum BlockchainError {
     UnsupportedOperation,
     #[error("Data not found on disk: {}", _0)]
     NotFoundOnDisk(DiskContext),
-    #[error("Invalid paramater: max chain response size isn't in range")]
+    #[error("Invalid parameter: max chain response size isn't in range")]
     ConfigMaxChainResponseSize,
     #[error("Invalid config sync mode")]
     ConfigSyncMode,

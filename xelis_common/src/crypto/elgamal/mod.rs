@@ -20,7 +20,7 @@ pub use signature::*;
 pub use curve25519_dalek::constants::RISTRETTO_BASEPOINT_POINT as G;
 
 lazy_static! {
-    // base point for encoding the commitments opening
+    // Base point for encoding the commitments opening
     pub static ref H: RistrettoPoint = {
         let mut hasher = sha3::Sha3_512::default();
         hasher.update(RISTRETTO_BASEPOINT_COMPRESSED.as_bytes());

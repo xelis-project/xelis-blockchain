@@ -9,7 +9,7 @@ use log::{error, trace};
 pub type Handler = fn(&'_ Context, Value) -> Pin<Box<dyn Future<Output = Result<Value, InternalRpcError>> + Send + '_>>;
 
 pub struct RPCHandler<T: Send + Clone + 'static> {
-    methods: HashMap<String, Handler>, // all RPC methods registered
+    methods: HashMap<String, Handler>, // All RPC methods registered
     data: T
 }
 
@@ -96,7 +96,7 @@ where
         })
     }
 
-    // register a new RPC method handler
+    // Register a new RPC method handler
     pub fn register_method(&mut self, name: &str, handler: Handler) {
         if self.methods.insert(name.into(), handler).is_some() {
             error!("The method '{}' was already registered !", name);

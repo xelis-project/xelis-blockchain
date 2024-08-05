@@ -92,11 +92,11 @@ impl<S: Storage> DaemonRpcServer<S> {
             None
         };
 
-        // create the RPC Handler which will register and contains all available methods
+        // Create the RPC Handler which will register and contains all available methods
         let mut rpc_handler = RPCHandler::new(blockchain);
         rpc::register_methods(&mut rpc_handler, !disable_getwork_server);
 
-        // create the default websocket server (support event & rpc methods)
+        // Create the default websocket server (support event & rpc methods)
         let ws = WebSocketServer::new(EventWebSocketHandler::new(rpc_handler));
 
         let server = Arc::new(Self {
@@ -121,7 +121,7 @@ impl<S: Storage> DaemonRpcServer<S> {
             .bind(&bind_address)?
             .run();
 
-            { // save the server handle to be able to stop it later
+            { // Save the server handle to be able to stop it later
                 let handle = http_server.handle();
                 let mut lock = server.handle.lock().await;
                 *lock = Some(handle);
@@ -215,6 +215,6 @@ async fn getwork_endpoint<S: Storage>(server: Data<DaemonRpcServer<S>>, request:
             getwork.add_miner(addr, key, worker).await;
             Ok(response)
         },
-        None => Ok(HttpResponse::NotFound().reason("GetWork server is not enabled").finish()) // getwork server is not started
+        None => Ok(HttpResponse::NotFound().reason("GetWork server is not enabled").finish()) // Getwork server is not started
     }
 }

@@ -127,13 +127,13 @@ use xelis_common::tokio::task::spawn_blocking;
 #[derive(Serialize, Clone, Debug)]
 #[serde(untagged)]
 pub enum Event {
-    // When a TX is detected from daemon and is added in wallet storage
+    // When a TX is detected from daemon and is added in wallet storage.
     NewTransaction(TransactionEntry),
-    // When a new block is detected from daemon
+    // When a new block is detected from daemon.
     // NOTE: Same topoheight can be broadcasted several times if DAG reorg it
-    // And some topoheight can be skipped because of DAG reorg
+    // and some topoheight can be skipped because of DAG reorg.
     // Example: two blocks at same height, both got same topoheight 69, next block reorg them together
-    // and one of the block get topoheight 69, the other 70, next is 71, but 70 is skipped
+    // and one of the block get topoheight 69, the other 70, next is 71, but 70 is skipped.
     NewTopoHeight {
         topoheight: u64
     },
@@ -141,9 +141,9 @@ pub enum Event {
     BalanceChanged(BalanceChanged),
     // When a new asset is added to wallet
     NewAsset(AssetWithData),
-    // When a rescan happened (because of user request or DAG reorg/fork)
-    // Value is topoheight until it deleted transactions
-    // Next sync will restart at this topoheight
+    // When a rescan happened (because of user request or DAG reorg/fork).
+    // Value is topoheight until it deleted transactions.
+    // Next sync will restart at this topoheight.
     Rescan {
         start_topoheight: u64   
     },
@@ -172,12 +172,12 @@ pub struct Wallet {
     // Encrypted Wallet Storage
     storage: RwLock<EncryptedStorage>,
     // Inner account with keys and precomputed tables
-    // so it can be shared to another thread for decrypting ciphertexts
+    // so it can be shared to another thread for decrypting ciphertexts.
     inner: Arc<InnerAccount>,
-    // network handler for online mode to keep wallet synced
+    // Network handler for online mode to keep wallet synced
     #[cfg(feature = "network_handler")]
     network_handler: Mutex<Option<SharedNetworkHandler>>,
-    // network on which we are connected
+    // Network on which we are connected
     network: Network,
     // RPC Server
     #[cfg(feature = "api_server")]
@@ -187,10 +187,10 @@ pub struct Wallet {
     xswd_channel: RwLock<Option<UnboundedSender<XSWDEvent>>>,
     // Event broadcaster
     event_broadcaster: Mutex<Option<BroadcastSender<Event>>>,
-    // If the wallet should scan also blocks and transactions history
-    // Set to true by default
+    // If the wallet should scan also blocks and transactions history.
+    // Set to true by default.
     history_scan: AtomicBool,
-    // flag to prioritize the usage of stable balance version when its online
+    // Flag to prioritize the usage of stable balance version when its online
     force_stable_balance: AtomicBool,
 }
 
@@ -235,7 +235,7 @@ impl Wallet {
         precomputed_tables::read_or_generate_precomputed_tables(path, progress_report, PRECOMPUTED_TABLES_L1)
     }
 
-    // Create a new wallet with the specificed storage, keypair and its network
+    // Create a new wallet with the specified storage, keypair and its network
     fn new(storage: EncryptedStorage, keypair: KeyPair, network: Network, precomputed_tables: PrecomputedTablesShared) -> Arc<Self> {
         let zelf = Self {
             storage: RwLock::new(storage),
@@ -261,7 +261,7 @@ impl Wallet {
             return Err(WalletError::EmptyName.into())
         }
 
-        // generate random keypair or recover it from seed
+        // Generate random keypair or recover it from seed
         let keypair = if let Some(seed) = seed {
         debug!("Retrieving keypair from seed...");
         let words: Vec<String> = seed.split_whitespace().map(str::to_string).collect();
@@ -272,32 +272,32 @@ impl Wallet {
             KeyPair::new()
         };
 
-        // generate random salt for hashed password
+        // Generate random salt for hashed password
         let mut salt: [u8; SALT_SIZE] = [0; SALT_SIZE];
         OsRng.fill_bytes(&mut salt);
 
-        // generate hashed password which will be used as key to encrypt master_key
+        // Generate hashed password which will be used as key to encrypt master_key
         debug!("hashing provided password");
         let hashed_password = hash_password(password, &salt)?;
 
         debug!("Creating storage for {}", name);
         let mut inner = Storage::new(name)?;
 
-        // generate the Cipher
+        // Generate the Cipher
         let cipher = Cipher::new(&hashed_password, None)?;
 
-        // save the salt used for password
+        // Save the salt used for password
         debug!("Save password salt in public storage");
         inner.set_password_salt(&salt)?;
 
-        // generate the master key which is used for storage and then save it in encrypted form
+        // Generate the master key which is used for storage and then save it in encrypted form
         let mut master_key: [u8; 32] = [0; 32];
         OsRng.fill_bytes(&mut master_key);
         let encrypted_master_key = cipher.encrypt_value(&master_key)?;
         debug!("Save encrypted master key in public storage");
         inner.set_encrypted_master_key(&encrypted_master_key)?;
         
-        // generate the storage salt and save it in encrypted form
+        // Generate the storage salt and save it in encrypted form
         let mut storage_salt = [0; SALT_SIZE];
         OsRng.fill_bytes(&mut storage_salt);
         let encrypted_storage_salt = cipher.encrypt_value(&storage_salt)?;
@@ -324,17 +324,17 @@ impl Wallet {
         debug!("Creating storage for {}", name);
         let storage = Storage::new(name)?;
         
-        // get password salt for KDF
+        // Get password salt for KDF
         debug!("Retrieving password salt from public storage");
         let salt = storage.get_password_salt()?;
 
-        // retrieve encrypted master key from storage
+        // Retrieve encrypted master key from storage
         debug!("Retrieving encrypted master key from public storage");
         let encrypted_master_key = storage.get_encrypted_master_key()?;
 
         let hashed_password = hash_password(password, &salt)?;
 
-        // decrypt the encrypted master key using the hashed password (used as key)
+        // Decrypt the encrypted master key using the hashed password (used as key)
         let cipher = Cipher::new(&hashed_password, None)?;
         let master_key = cipher.decrypt_value(&encrypted_master_key).context("Invalid password provided for this wallet")?;
 
@@ -358,9 +358,9 @@ impl Wallet {
         Ok(Self::new(storage, keypair, network, precomputed_tables))
     }
 
-    // Close the wallet
-    // this will stop the network handler and the API Server if it's running
-    // Because wallet is behind Arc, we need to close differents modules that has a copy of it
+    // Close the wallet.
+    // This will stop the network handler and the API Server if it's running.
+    // Because the wallet is behind Arc, we need to close different modules that have a copy of it.
     pub async fn close(&self) {
         trace!("Closing wallet");
 
@@ -383,7 +383,7 @@ impl Wallet {
             }
         }
 
-        // Stop gracefully the network handler
+        // Stop the network handler gracefully
         #[cfg(feature = "network_handler")]
         {
             let mut lock = self.network_handler.lock().await;
@@ -394,19 +394,19 @@ impl Wallet {
             }
         }
 
-        // Stop gracefully the storage
+        // Stop the storage gracefully
         {
             let mut storage = self.storage.write().await;
             storage.stop().await;
         }
 
-        // Close the event broadcaster
-        // So all subscribers will be notified
+        // Close the event broadcaster.
+        // So all subscribers will be notified.
         self.close_events_channel().await;
     }
 
-    // Disable/enable the history scan
-    // This is used by the network handler to avoid scanning history if requested
+    // Disable/enable the history scan.
+    // This is used by the network handler to avoid scanning history if requested.
     pub fn set_history_scan(&self, value: bool) {
         self.history_scan.store(value, Ordering::SeqCst);
     }
@@ -533,40 +533,40 @@ impl Wallet {
         Ok(())
     }
 
-    // change the current password wallet to a new one
+    // Change the current password wallet to a new one
     pub async fn set_password(&self, old_password: String, password: String) -> Result<(), Error> {
         let mut encrypted_storage = self.storage.write().await;
         let storage = encrypted_storage.get_mutable_public_storage();
         let (master_key, storage_salt) = {
-            // retrieve old salt to build key from current password
+            // Retrieve old salt to build key from current password
             let salt = storage.get_password_salt()?;
             let hashed_password = hash_password(old_password, &salt)?;
 
             let encrypted_master_key = storage.get_encrypted_master_key()?;
             let encrypted_storage_salt = storage.get_encrypted_storage_salt()?;
 
-            // decrypt the encrypted master key using the provided password
+            // Decrypt the encrypted master key using the provided password
             let cipher = Cipher::new(&hashed_password, None)?;
             let master_key = cipher.decrypt_value(&encrypted_master_key).context("Invalid password provided")?;
             let storage_salt = cipher.decrypt_value(&encrypted_storage_salt)?;
             (master_key, storage_salt)
         };
 
-        // generate a new salt for password
+        // Generate a new salt for password
         let mut salt: [u8; SALT_SIZE] = [0; SALT_SIZE];
         OsRng.fill_bytes(&mut salt);
 
-        // generate the password-based derivated key to encrypt the master key
+        // Generate the password-based derived key to encrypt the master key
         let hashed_password = hash_password(password, &salt)?;
         let cipher = Cipher::new(&hashed_password, None)?;
 
-        // encrypt the master key using the new password
+        // Encrypt the master key using the new password
         let encrypted_key = cipher.encrypt_value(&master_key)?;
 
-        // encrypt the salt with the new password
+        // Encrypt the salt with the new password
         let encrypted_storage_salt = cipher.encrypt_value(&storage_salt)?;
 
-        // save on disk
+        // Save on disk
         storage.set_password_salt(&salt)?;
         storage.set_encrypted_master_key(&encrypted_key)?;
         storage.set_encrypted_storage_salt(&encrypted_storage_salt)?;
@@ -604,8 +604,8 @@ impl Wallet {
         cipher.decrypt(&self.inner.keypair.get_private_key(), handle, role).map_err(|_| WalletError::CiphertextDecode)
     }
 
-    // Create a transaction with the given transaction type and fee
-    // this will apply the changes to the storage if the transaction
+    // Create a transaction with the given transaction type and fee.
+    // This will apply the changes to the storage if the transaction.
     pub async fn create_transaction(&self, transaction_type: TransactionTypeBuilder, fee: FeeBuilder) -> Result<Transaction, WalletError> {
         trace!("create transaction");
         let mut storage = self.storage.write().await;
@@ -616,11 +616,11 @@ impl Wallet {
         Ok(transaction)
     }
 
-    // create the final transaction with calculated fees and signature
-    // also check that we have enough funds for the transaction
-    // This will returns the transaction builder state along the transaction
-    // You must handle "apply changes" to the storage
-    // Warning: this is locking the network handler to access to the daemon api
+    // Create the final transaction with calculated fees and signature.
+    // Check that we have enough funds for the transaction.
+    // Returns the transaction builder state along with the transaction.
+    // You must handle "apply changes" to the storage.
+    // Warning: this is locking the network handler to access to the daemon api.
     pub async fn create_transaction_with_storage(&self, storage: &EncryptedStorage, transaction_type: TransactionTypeBuilder, fee: FeeBuilder) -> Result<(TransactionBuilderState, Transaction), WalletError> {
         trace!("create transaction with storage");
         let nonce = storage.get_unconfirmed_nonce();
@@ -633,8 +633,8 @@ impl Wallet {
             reference = Some(cache.reference.clone());
         }
 
-        // Used to inject it in the state
-        // So once the state is applied, we verify if the last coinbase reward topoheight is still valid
+        // Used to inject it in the state.
+        // So once the state is applied, we verify if the last coinbase reward topoheight is still valid.
         #[cfg(feature = "network_handler")]
         let mut daemon_stable_topoheight = None;
         #[cfg(not(feature = "network_handler"))]
@@ -647,8 +647,8 @@ impl Wallet {
             if (reference.is_none() && used_assets.contains(&XELIS_ASSET)) || force_stable_balance {
                 // debug!("Wallet got a coinbase reward at topoheight: {}, verify that its not unstable", topoheight);
                 if let Some(network_handler) = self.network_handler.lock().await.as_ref() {
-                    // Last mining reward is above stable topoheight, this may increase orphans rate
-                    // To avoid this, we will use the last balance version in stable topoheight as reference
+                    // Last mining reward is above stable topoheight, this may increase orphans rate.
+                    // To avoid this, we will use the last balance version in stable topoheight as reference.
                     let use_stable_balance = if let Some(topoheight) = storage.get_last_coinbase_reward_topoheight() {
                         let stable_topoheight = network_handler.get_api().get_stable_topoheight().await?;
                         daemon_stable_topoheight = Some(stable_topoheight);
@@ -666,7 +666,7 @@ impl Wallet {
                             let stable_point = network_handler.get_api().get_stable_balance(&address, &asset).await?;
 
                             // Store the stable balance version into unconfirmed balance
-                            // So it will be fetch later by state
+                            // so it will be fetch later by state.
                             let mut ciphertext = stable_point.version.take_balance();
                             debug!("decrypting stable balance for asset {}", asset);
                             let amount = self.inner.decrypt_ciphertext(ciphertext.decompressed().map_err(|_| WalletError::CiphertextDecode)?)?;
@@ -676,8 +676,8 @@ impl Wallet {
                             };
 
                             storage.set_unconfirmed_balance_for(asset.clone(), balance).await?;
-                            // Build the stable reference
-                            // We need to find the highest stable point
+                            // Build the stable reference.
+                            // We need to find the highest stable point.
                             if reference.is_none() || reference.as_ref().is_some_and(|r| r.topoheight < stable_point.stable_topoheight) {
                                 reference = Some(Reference {
                                     topoheight: stable_point.stable_topoheight,
@@ -700,7 +700,7 @@ impl Wallet {
             }
         };
 
-        // state used to build the transaction
+        // State used to build the transaction
         let mut state = TransactionBuilderState::new(
             self.network.is_mainnet(),
             reference,
@@ -740,9 +740,9 @@ impl Wallet {
         Ok((state, transaction))
     }
 
-    // submit a transaction to the network through the connection to daemon
-    // It will increase the local nonce by 1 if the TX is accepted by the daemon
-    // returns error if the wallet is in offline mode or if the TX is rejected
+    // Submit a transaction to the network through the connection to daemon.
+    // It will increase the local nonce by 1 if the TX is accepted by the daemon.
+    // Returns error if the wallet is in offline mode or if the TX is rejected.
     pub async fn submit_transaction(&self, transaction: &Transaction) -> Result<(), WalletError> {
         trace!("submit transaction {}", transaction.hash());
         #[cfg(feature = "network_handler")]
@@ -792,8 +792,8 @@ impl Wallet {
         Ok(())
     }
 
-    // Estimate fees for a given transaction type
-    // Estimated fees returned are the minimum required to be valid on chain
+    // Estimate fees for a given transaction type.
+    // Estimated fees returned are the minimum required to be valid on chain.
     pub async fn estimate_fees(&self, tx_type: TransactionTypeBuilder) -> Result<u64, WalletError> {
         trace!("estimate fees");
         let mut state = EstimateFeesState::new();
@@ -808,42 +808,42 @@ impl Wallet {
         Ok(estimated_fees)
     }
 
-    // set wallet in online mode: start a communication task which will keep the wallet synced
+    // Set wallet in online mode: start a communication task which will keep the wallet synced
     #[cfg(feature = "network_handler")]
     pub async fn set_online_mode(self: &Arc<Self>, daemon_address: &String, auto_reconnect: bool) -> Result<(), WalletError> {
         trace!("Set online mode to daemon {} with auto reconnect set to {}", daemon_address, auto_reconnect);
         if self.is_online().await {
-            // user have to set in offline mode himself first
+            // User have to set in offline mode himself first
             return Err(WalletError::AlreadyOnlineMode)
         }
 
-        // create the network handler
+        // Create the network handler
         let network_handler = NetworkHandler::new(Arc::clone(&self), daemon_address).await?;
-        // start the task
+        // Start the task
         network_handler.start(auto_reconnect).await?;
         *self.network_handler.lock().await = Some(network_handler);
         Ok(())
     }
 
-    // set the wallet in online mode using a shared daemon API
-    // this allows to share the same connection/Daemon API across several wallets to save resources
+    // Set the wallet in online mode using a shared daemon API.
+    // This allows to share the same connection/Daemon API across several wallets to save resources.
     #[cfg(feature = "network_handler")]
     pub async fn set_online_mode_with_api(self: &Arc<Self>, daemon_api: Arc<DaemonAPI>, auto_reconnect: bool) -> Result<(), WalletError> {
         trace!("Set online mode with API with auto reconnect set to {}", auto_reconnect);
         if self.is_online().await {
-            // user have to set in offline mode himself first
+            // User have to set in offline mode himself first
             return Err(WalletError::AlreadyOnlineMode)
         }
 
-        // create the network handler
+        // Create the network handler
         let network_handler = NetworkHandler::with_api(Arc::clone(&self), daemon_api).await?;
-        // start the task
+        // Start the task
         network_handler.start(auto_reconnect).await?;
         *self.network_handler.lock().await = Some(network_handler);
         Ok(())
     }
 
-    // set wallet in offline mode: stop communication task if exists
+    // Set wallet in offline mode: stop communication task if exists
     #[cfg(feature = "network_handler")]
     pub async fn set_offline_mode(&self) -> Result<(), WalletError> {
         trace!("Set offline mode");
@@ -858,14 +858,14 @@ impl Wallet {
         Ok(())
     }
 
-    // rescan the wallet from the given topoheight
-    // that will delete all transactions above the given topoheight and all balances
-    // then it will re-fetch all transactions and balances from daemon
+    // Rescan the wallet from the given topoheight.
+    // This will delete all transactions above the given topoheight and all balances,
+    // then it will re-fetch all transactions and balances from daemon.
     #[cfg(feature = "network_handler")]
     pub async fn rescan(&self, topoheight: u64, auto_reconnect: bool) -> Result<(), WalletError> {
         trace!("Rescan wallet from topoheight {}", topoheight);
         if !self.is_online().await {
-            // user have to set it online
+            // User have to set it online
             return Err(WalletError::NotOnlineMode)
         }
 
@@ -882,10 +882,10 @@ impl Wallet {
                 debug!("set synced topoheight to {}", topoheight);
                 storage.set_synced_topoheight(topoheight)?;
                 storage.delete_top_block_hash()?;
-                // balances will be re-fetched from daemon
+                // Balances will be re-fetched from daemon
                 storage.delete_balances().await?;
                 storage.delete_assets().await?;
-                // unconfirmed balances are going to be outdated, we delete them
+                // Unconfirmed balances are going to be outdated, we delete them
                 storage.delete_unconfirmed_balances().await;
                 storage.clear_tx_cache();
 
@@ -919,8 +919,9 @@ impl Wallet {
         false
     }
 
-    // this function allow to user to get the network handler in case in want to stay in online mode
-    // but want to pause / resume the syncing task through start/stop functions from it
+    // This function allows the user to access the network handler.
+    // It is useful for users who want to stay in online mode but need to pause or resume the syncing task
+    // using the start/stop functions provided by the network handler.
     #[cfg(feature = "network_handler")]
     pub async fn get_network_handler(&self) -> &Mutex<Option<Arc<NetworkHandler>>> {
         &self.network_handler
@@ -973,7 +974,7 @@ impl Wallet {
 #[cfg(feature = "api_server")]
 pub enum XSWDEvent {
     RequestPermission(AppStateShared, RpcRequest, oneshot::Sender<Result<PermissionResult, Error>>),
-    // bool represents if it was signed or not
+    // Bool represents if it was signed or not
     RequestApplication(AppStateShared, bool, oneshot::Sender<Result<PermissionResult, Error>>),
     CancelRequest(AppStateShared, oneshot::Sender<Result<(), Error>>)
 }
@@ -983,9 +984,9 @@ pub enum XSWDEvent {
 impl XSWDPermissionHandler for Arc<Wallet> {
     async fn request_permission(&self, app_state: &AppStateShared, request: PermissionRequest<'_>) -> Result<PermissionResult, Error> {
         if let Some(sender) = self.xswd_channel.read().await.as_ref() {
-            // no other way ?
+            // No other way ?
             let app_state = app_state.clone();
-            // create a callback channel to receive the answer
+            // Create a callback channel to receive the answer
             let (callback, receiver) = oneshot::channel();
             let event = match request {
                 PermissionRequest::Application(signed) => XSWDEvent::RequestApplication(app_state, signed, callback),
@@ -1002,8 +1003,9 @@ impl XSWDPermissionHandler for Arc<Wallet> {
         Err(WalletError::NoHandlerAvailable.into())
     }
 
-    // there is a lock to acquire so it make it "single threaded"
-    // the one who has the lock is the one who is requesting so we don't need to check and can cancel directly
+    // The function acquires a lock to ensure single-threaded access.
+    // The holder of the lock is the requester, so no additional checks are needed,
+    // and the request can be directly canceled.
     async fn cancel_request_permission(&self, app: &AppStateShared) -> Result<(), Error> {
         if let Some(sender) = self.xswd_channel.read().await.as_ref() {
             let (callback, receiver) = oneshot::channel();

@@ -74,10 +74,10 @@ pub fn register_methods(handler: &mut RPCHandler<Arc<Wallet>>) {
     handler.register_method("estimate_fees", async_handler!(estimate_fees));
     handler.register_method("estimate_extra_data_size", async_handler!(estimate_extra_data_size));
 
-    // These functions allow to have an encrypted DB directly in the wallet storage
-    // You can retrieve keys, values, have differents trees, and store values
-    // It is restricted in XSWD context (each app access to their own trees), and open to everything in RPC
-    // Keys and values can be anything
+    // These functions allow you to have an encrypted DB directly in the wallet storage.
+    // You can retrieve keys, values, have different trees, and store values.
+    // It is restricted in XSWD context (each app access to their own trees), and open to everything in RPC.
+    // Keys and values can be anything.
     handler.register_method("get_matching_keys", async_handler!(get_matching_keys));
     handler.register_method("count_matching_entries", async_handler!(count_matching_entries));
     handler.register_method("get_value_from_key", async_handler!(get_value_from_key));
@@ -118,7 +118,7 @@ async fn get_nonce(context: &Context, body: Value) -> Result<Value, InternalRpcE
     Ok(json!(nonce))
 }
 
-// Retrieve the current topoheight until which the wallet is synced
+// Retrieve the current topoheight up to which the wallet is synced
 async fn get_topoheight(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
     if body != Value::Null {
         return Err(InternalRpcError::UnexpectedParams)
@@ -184,16 +184,16 @@ async fn rescan(context: &Context, body: Value) -> Result<Value, InternalRpcErro
     Ok(json!(true))
 }
 
-// Retrieve the balance of the wallet for a specific asset
-// By default, it will returns 0 if no balance is found on disk
+// Retrieve the balance of the wallet for a specific asset.
+// By default, it will returns 0 if no balance is found on disk.
 async fn get_balance(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: GetBalanceParams = parse_params(body)?;
     let asset = params.asset.unwrap_or(XELIS_ASSET);
     let wallet: &Arc<Wallet> = context.get()?;
     let storage = wallet.get_storage().read().await;
 
-    // If the asset is not found, it will returns 0
-    // Use has_balance below to check if the wallet has a balance for a specific asset
+    // If the asset is not found, it will returns 0.
+    // Use has_balance below to check if the wallet has a balance for a specific asset.
     let balance = storage.get_plaintext_balance_for(&asset).await.unwrap_or(0);
     Ok(json!(balance))
 }
@@ -247,7 +247,7 @@ async fn get_transaction(context: &Context, body: Value) -> Result<Value, Intern
 async fn build_transaction(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: BuildTransactionParams = parse_params(body)?;
     let wallet: &Arc<Wallet> = context.get()?;
-    // request ask to broadcast the TX but wallet is not connected to any daemon
+    // Request to broadcast the TX, but the wallet is not connected to any daemon
     if !wallet.is_online().await && params.broadcast {
         return Err(WalletError::NotOnlineMode)?
     }
@@ -256,13 +256,13 @@ async fn build_transaction(context: &Context, body: Value) -> Result<Value, Inte
         return Err(InternalRpcError::InvalidParams("Invalid params, should either be broadcasted, or returned in hex format"))
     }
 
-    // create the TX
-    // The lock is kept until the TX is applied to the storage
-    // So even if we have few requests building a TX, they wait for the previous one to be applied
+    // create the TX.
+    // The lock is kept until the TX is applied to the storage,
+    // So that even if we have few requests building a TX, they wait for the previous one to be applied.
     let mut storage = wallet.get_storage().write().await;
     let (mut state, tx) = wallet.create_transaction_with_storage(&storage, params.tx_type, params.fee.unwrap_or(FeeBuilder::Multiplier(1f64))).await?;
 
-    // if requested, broadcast the TX ourself
+    // If requested, broadcast the TX ourself
     if params.broadcast {
         if let Err(e) = wallet.submit_transaction(&tx).await {
             warn!("Clearing Tx cache & unconfirmed balances because of broadcasting error: {}", e);
@@ -275,7 +275,7 @@ async fn build_transaction(context: &Context, body: Value) -> Result<Value, Inte
     state.apply_changes(&mut storage).await
         .context("Error while applying state changes")?;
 
-    // returns the created TX and its hash
+    // Returns the created TX and its hash
     Ok(json!(TransactionResponse {
         tx_as_hex: if params.tx_as_hex {
             Some(hex::encode(tx.to_bytes()))
@@ -358,7 +358,7 @@ async fn set_online_mode(context: &Context, body: Value) -> Result<Value, Intern
     Ok(json!(true))
 }
 
-// Connect the wallet to a daemon if not already connected
+// Disconnect the wallet from a daemon if already connected
 async fn set_offline_mode(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
     if body != Value::Null {
         return Err(InternalRpcError::UnexpectedParams)
@@ -390,7 +390,7 @@ async fn get_tree_name(context: &Context, tree: String) -> Result<String, Intern
         return Ok(tree)
     }
 
-    // Retrieve the app data to get its id and to have section of trees between differents dApps
+    // Retrieve the app data to get its id and to have section of trees between different dApps
     let session: &WebSocketSessionShared<XSWDWebSocketHandler<Arc<Wallet>>> = context.get()?;
     let xswd = session.get_server().get_handler();
     let applications = xswd.get_applications().read().await;

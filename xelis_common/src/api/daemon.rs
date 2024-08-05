@@ -134,16 +134,16 @@ pub struct GetBlockTemplateResult {
 
 #[derive(Serialize, Deserialize, PartialEq)]
 pub struct GetMinerWorkResult {
-    // algorithm to use
+    // Algorithm to use
     pub algorithm: Algorithm,
-    // template is miner job in hex format
+    // Template is miner job in hex format
     pub miner_work: String,
-    // block height
+    // Block height
     pub height: u64,
-    // difficulty required for valid block POW
+    // Difficulty required for valid block POW
     pub difficulty: Difficulty,
-    // topoheight of the daemon
-    // this is for visual purposes only
+    // Topoheight of the daemon
+    // This is for visual purposes only
     pub topoheight: u64,
 }
 
@@ -252,7 +252,7 @@ pub struct GetInfoResult {
     pub block_reward: u64,
     pub dev_reward: u64,
     pub miner_reward: u64,
-    // count how many transactions are present in mempool
+    // Count how many transactions are present in mempool
     pub mempool_size: usize,
     // software version on which the daemon is running
     pub version: String,
@@ -262,7 +262,7 @@ pub struct GetInfoResult {
 
 #[derive(Serialize, Deserialize)]
 pub struct SubmitTransactionParams {
-    pub data: String // should be in hex format
+    pub data: String // Should be in hex format
 }
 
 #[derive(Serialize, Deserialize)]
@@ -371,13 +371,13 @@ pub struct GetTransactionsParams {
 
 #[derive(Serialize, Deserialize)]
 pub struct TransactionResponse<'a> {
-    // in which blocks it was included
+    // In which blocks it was included
     pub blocks: Option<HashSet<Hash>>,
-    // in which blocks it was executed
+    // In which blocks it was executed
     pub executed_in_block: Option<Hash>,
-    // if it is in mempool
+    // If it is in mempool
     pub in_mempool: bool,
-    // if its a mempool tx, we add the timestamp when it was added
+    // If its a mempool tx, we add the timestamp when it was added
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(default)]
     pub first_seen: Option<TimestampSeconds>,
@@ -470,16 +470,16 @@ pub struct IsTxExecutedInBlockParams<'a> {
 // Struct to define dev fee threshold
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct DevFeeThreshold {
-    // block height to start dev fee
+    // Block height to start dev fee
     pub height: u64,
-    // percentage of dev fee, example 10 = 10%
+    // Percentage of dev fee, example 10 = 10%
     pub fee_percentage: u64
 }
 
 // Struct to define hard fork
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct HardFork {
-    // block height to start hard fork
+    // Block height to start hard fork
     pub height: u64,
     // Block version to use
     pub version: BlockVersion,
@@ -504,11 +504,11 @@ pub struct GetMempoolCacheParams<'a> {
 
 #[derive(Serialize, Deserialize)]
 pub struct GetMempoolCacheResult {
-    // lowest nonce used
+    // Lowest nonce used
     min: u64,
-    // highest nonce used
+    // Highest nonce used
     max: u64,
-    // all txs ordered by nonce
+    // All TXs ordered by nonce
     txs: Vec<Hash>,
     // All "final" cached balances used
     balances: HashMap<Hash, CiphertextCache>
@@ -553,29 +553,29 @@ pub enum ExtractKeyFromAddressResult {
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NotifyEvent {
-    // When a new block is accepted by chain
-    // it contains NewBlockEvent as value
+    // When a new block is accepted by chain,
+    // it contains NewBlockEvent as value.
     NewBlock,
-    // When a block (already in chain or not) is ordered (new topoheight)
-    // it contains BlockOrderedEvent as value
+    // When a block (already in chain or not) is ordered (new topoheight),
+    // it contains BlockOrderedEvent as value.
     BlockOrdered,
-    // When a block that was ordered is not in the new DAG order
-    // it contains BlockOrphanedEvent that got orphaned
+    // When a block that was ordered is not in the new DAG order,
+    // it contains BlockOrphanedEvent that got orphaned.
     BlockOrphaned,
-    // When stable height has changed (different than the previous one)
-    // it contains StableHeightChangedEvent struct as value
+    // When stable height has changed (different than the previous one),
+    // it contains StableHeightChangedEvent struct as value.
     StableHeightChanged,
-    // When stable topoheight has changed (different than the previous one)
-    // it contains StableTopoHeightChangedEvent struct as value
+    // When stable topoheight has changed (different than the previous one),
+    // it contains StableTopoHeightChangedEvent struct as value.
     StableTopoHeightChanged,
-    // When a transaction that was executed in a block is not reintroduced in mempool
-    // It contains TransactionOrphanedEvent as value
+    // When a transaction that was executed in a block is not reintroduced in mempool,
+    // It contains TransactionOrphanedEvent as value.
     TransactionOrphaned,
-    // When a new transaction is added in mempool
-    // it contains TransactionAddedInMempoolEvent struct as value
+    // When a new transaction is added in mempool,
+    // it contains TransactionAddedInMempoolEvent struct as value.
     TransactionAddedInMempool,
-    // When a transaction has been included in a valid block & executed on chain
-    // it contains TransactionExecutedEvent struct as value
+    // When a transaction has been included in a valid block & executed on chain,
+    // it contains TransactionExecutedEvent struct as value.
     TransactionExecuted,
     // When a registered TX SC Call hash has been executed by chain
     // TODO: Smart Contracts
@@ -583,21 +583,21 @@ pub enum NotifyEvent {
     // When a new asset has been registered
     // TODO: Smart Contracts
     NewAsset,
-    // When a new peer has connected to us
-    // It contains PeerConnectedEvent struct as value
+    // When a new peer has connected to us,
+    // it contains PeerConnectedEvent struct as value.
     PeerConnected,
-    // When a peer has disconnected from us
-    // It contains PeerDisconnectedEvent struct as value
+    // When a peer has disconnected from us,
+    // it contains PeerDisconnectedEvent struct as value.
     PeerDisconnected,
-    // Peer peerlist updated, its all its connected peers
-    // It contains PeerPeerListUpdatedEvent as value
+    // Peer peerlist updated, its all its connected peers,
+    // it contains PeerPeerListUpdatedEvent as value.
     PeerPeerListUpdated,
-    // Peer has been updated through a ping packet
-    // Contains PeerStateUpdatedEvent as value
+    // Peer has been updated through a ping packet,
+    // contains PeerStateUpdatedEvent as value.
     PeerStateUpdated,
     // When a peer of a peer has disconnected
-    // and that he notified us
-    // It contains PeerPeerDisconnectedEvent as value
+    // and he notified us,
+    // it contains PeerPeerDisconnectedEvent as value.
     PeerPeerDisconnected,
 }
 
@@ -607,10 +607,10 @@ pub type NewBlockEvent = BlockResponse;
 // Value of NotifyEvent::BlockOrdered
 #[derive(Serialize, Deserialize)]
 pub struct BlockOrderedEvent<'a> {
-    // block hash in which this event was triggered
+    // Block hash in which this event was triggered
     pub block_hash: Cow<'a, Hash>,
     pub block_type: BlockType,
-    // the new topoheight of the block
+    // The new topoheight of the block
     pub topoheight: u64,
 }
 
@@ -618,7 +618,7 @@ pub struct BlockOrderedEvent<'a> {
 #[derive(Serialize, Deserialize)]
 pub struct BlockOrphanedEvent<'a> {
     pub block_hash: Cow<'a, Hash>,
-    // Tpoheight of the block before being orphaned
+    // Topoheight of the block before being orphaned
     pub old_topoheight: u64
 }
 

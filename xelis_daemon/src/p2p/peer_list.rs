@@ -28,19 +28,19 @@ use log::{info, debug, trace, error, warn};
 
 pub type SharedPeerList = Arc<PeerList>;
 
-// this object will be shared in Server, and each Peer
-// so when we call Peer#close it will remove it from the list too
-// using a RwLock so we can have multiple readers at the same time
+// This object is shared between the Server and each Peer.
+// When Peer#close is called, it removes the peer from the list.
+// Using a RwLock allows multiple readers simultaneously.
 pub struct PeerList {
     // Keep track of all connected peers
     peers: RwLock<HashMap<u64, Arc<Peer>>>,
     // We only keep one "peer" per address in case the peer changes multiple
-    // times its local port
+    // times its local port.
     stored_peers: RwLock<HashMap<IpAddr, StoredPeer>>,
     filename: String,
-    // used to notify the server that a peer disconnected
-    // this is done through a channel to not have to handle generic types
-    // and to be flexible in the future
+    // Used to notify the server that a peer disconnected.
+    // This is done through a channel to not have to handle generic types
+    // and to be flexible in the future.
     peer_disconnect_channel: Option<Sender<Arc<Peer>>>
 }
 
@@ -64,18 +64,18 @@ pub struct StoredPeer {
 }
 
 impl PeerList {
-    // load all the stored peers from the file
+    // Load all the stored peers from the file
     fn load_stored_peers(filename: &String) -> Result<HashMap<IpAddr, StoredPeer>, P2pError> {
-        // check that the file exists
+        // Check that the file exists
         if fs::metadata(filename).is_err() {
             info!("Peerlist file not found, creating a new one");
             let peers = HashMap::new();
-            // write empty set in file
+            // Write empty set in file
             fs::write(filename, serde_json::to_string_pretty(&peers)?)?;
             return Ok(peers);
         }
 
-        // read the whole file
+        // Read the whole file
         let content = match fs::read_to_string(filename) {
             Ok(content) => content,
             Err(e) => {
@@ -90,7 +90,7 @@ impl PeerList {
             }
         };
 
-        // deserialize the content
+        // Deserialize the content
         let mut peers: HashMap<IpAddr, StoredPeer> = match serde_json::from_str(&content) {
             Ok(peers) => peers,
             Err(e) => {
@@ -98,14 +98,14 @@ impl PeerList {
                 warn!("Removing peerlist file and creating a new empty one");
                 fs::remove_file(filename)?;
                 let peers = HashMap::new();
-                // write empty set in file
+                // Write empty set in file
                 fs::write(filename, serde_json::to_string_pretty(&peers)?)?;
 
                 peers
             }
         };
 
-        // reset the fail count of all whitelisted peers
+        // Reset the fail count of all whitelisted peers
         for stored_peer in peers.values_mut() {
             if *stored_peer.get_state() == StoredPeerState::Whitelist {
                 stored_peer.fail_count = 0;
@@ -146,8 +146,8 @@ impl PeerList {
         }
     }
 
-    // Remove a peer from the list
-    // We will notify all peers that have this peer in common
+    // Remove a peer from the list.
+    // We will notify all peers that have this peer in common.
     pub async fn remove_peer(&self, peer_id: u64, notify: bool) -> Result<(), P2pError> {
         let (peer, peers) = {
             let mut peers = self.peers.write().await;
@@ -158,7 +158,7 @@ impl PeerList {
  
         // If peer allows us to share it, we have to notify all peers that have this peer in common
         if notify && peer.sharable() {
-            // now remove this peer from all peers that tracked it
+            // Now remove this peer from all peers that tracked it
             let addr = peer.get_outgoing_address();
             let packet = Bytes::from(Packet::PeerDisconnected(PacketPeerDisconnected::new(*addr)).to_bytes());
             for peer in peers {
@@ -166,13 +166,13 @@ impl PeerList {
                 let mut shared_peers = peer.get_peers().lock().await;
                 trace!("locked shared peers for {}", peer.get_connection().get_address());
 
-                // check if it was a common peer (we sent it and we received it)
-                // Because its a common peer, we can expect that he will send us the same packet
+                // Check if the peer was common (we both sent and received it).
+                // Since it's a common peer, we expect it to send us the same packet.
                 if let Some(direction) = shared_peers.get(addr) {
                     // If its a outgoing direction, send a packet to notify that the peer disconnected
                     if *direction != Direction::In {
                         trace!("Sending PeerDisconnected packet to peer {} for {}", peer.get_outgoing_address(), addr);
-                        // we send the packet to notify the peer that we don't have it in common anymore
+                        // We send the packet to notify the peer that we don't have it in common anymore
                         if let Err(e) = peer.send_bytes(packet.clone()).await {
                             error!("Error while trying to send PeerDisconnected packet to peer {}: {}", peer.get_connection().get_address(), e);
                         }
@@ -195,8 +195,8 @@ impl PeerList {
         Ok(())
     }
 
-    // Add a new peer to the list
-    // This will returns an error if peerlist is full
+    // Add a new peer to the list.
+    // This will returns an error if peerlist is full.
     pub async fn add_peer(&self, peer: &Arc<Peer>, max_peers: usize) -> Result<(), P2pError> {
         {
             let mut peers = self.peers.write().await;
@@ -223,7 +223,7 @@ impl PeerList {
         let mut stored_peers = self.stored_peers.write().await;
         if let Some(stored_peer) = stored_peers.get_mut(&ip) {
             debug!("Updating {} in stored peerlist", peer);
-            // reset the fail count and update the last seen time
+            // Reset the fail count and update the last seen time
             stored_peer.set_fail_count(0);
             stored_peer.set_last_seen(get_current_time_in_seconds());
             stored_peer.set_local_port(peer.get_local_port());
@@ -324,10 +324,10 @@ impl PeerList {
         }
     }
 
-    // get a peer by its address
+    // Get a peer by its address
     fn internal_get_peer_by_addr<'a>(peers: &'a HashMap<u64, Arc<Peer>>, addr: &SocketAddr) -> Option<&'a Arc<Peer>> {
         peers.values().find(|peer| {
-            // check both SocketAddr (the outgoing and the incoming)
+            // Check both SocketAddr (the outgoing and the incoming)
             peer.get_connection().get_address() == addr || peer.get_outgoing_address() == addr
         })
     }
@@ -386,7 +386,7 @@ impl PeerList {
     }
 
     // Set a peer to graylist, if its local port is 0, delete it from the stored peerlist
-    // Because it was added manually and never connected to before
+    // because it was added manually and never connected to before.
     pub async fn set_graylist_for_peer(&self, ip: &IpAddr) {
         let mut stored_peers = self.stored_peers.write().await;
         let delete = if let Some(peer) = stored_peers.get_mut(ip) {
@@ -416,10 +416,10 @@ impl PeerList {
         self.get_list_with_state(stored_peers, &StoredPeerState::Whitelist)
     }
 
-    // blacklist a peer address
-    // if this peer is already known, change its state to blacklist
-    // otherwise create a new StoredPeer with state blacklist
-    // disconnect the peer if present in peerlist
+    // Blacklist a peer address.
+    // If this peer is already known, change its state to blacklist.
+    // Otherwise create a new StoredPeer with state blacklist.
+    // Disconnect the peer if present in peerlist.
     pub async fn blacklist_address(&self, ip: &IpAddr) {
         self.set_state_to_address(ip, StoredPeerState::Blacklist).await;
 
@@ -435,8 +435,8 @@ impl PeerList {
         }
     }
 
-    // temp ban a peer for a duration in seconds
-    // this will also close the peer
+    // Temp ban a peer for a duration in seconds.
+    // This will also close the peer.
     pub async fn temp_ban_peer(&self, peer: &Peer, seconds: u64) {
         self.temp_ban_address(&peer.get_connection().get_address().ip(), seconds).await;
         if let Err(e) = peer.get_connection().close().await {
@@ -448,7 +448,7 @@ impl PeerList {
         }
     }
 
-    // temp ban a peer address for a duration in seconds
+    // Temp ban a peer address for a duration in seconds
     pub async fn temp_ban_address(&self, ip: &IpAddr, seconds: u64) {
         let mut stored_peers = self.stored_peers.write().await;
         if let Some(stored_peer) = stored_peers.get_mut(ip) {
@@ -458,26 +458,26 @@ impl PeerList {
         }
     }
 
-    // whitelist a peer address
-    // if this peer is already known, change its state to whitelist
-    // otherwise create a new StoredPeer with state whitelist
+    // Whitelist a peer address.
+    // If this peer is already known, change its state to whitelist.
+    // Otherwise create a new StoredPeer with state whitelist.
     pub async fn whitelist_address(&self, ip: &IpAddr) {
         self.set_state_to_address(ip, StoredPeerState::Whitelist).await;
     }
 
     pub async fn find_peer_to_connect(&self) -> Option<SocketAddr> {
-        // remove all peers that have a high fail count
+        // Remove all peers that have a high fail count
         let peers = self.peers.read().await;
         let mut stored_peers = self.stored_peers.write().await;
         stored_peers.retain(|_, stored_peer| *stored_peer.get_state() == StoredPeerState::Whitelist || stored_peer.get_fail_count() < PEER_FAIL_LIMIT);
 
         let current_time = get_current_time_in_seconds();
-        // first lets check in whitelist
+        // First lets check in whitelist
         if let Some(addr) = self.find_peer_to_connect_to_with_state(&peers, &mut stored_peers, current_time, StoredPeerState::Whitelist) {
             return Some(addr);
         }
 
-        // then in graylist
+        // Then in graylist
         if let Some(addr) = self.find_peer_to_connect_to_with_state(&peers, &mut stored_peers, current_time, StoredPeerState::Graylist) {
             return Some(addr);
         }
@@ -485,8 +485,8 @@ impl PeerList {
         None
     }
 
-    // find among stored peers a peer to connect to with the requested StoredPeerState
-    // we check that we're not already connected to this peer and that we didn't tried to connect to it recently
+    // Find a peer among the stored peers to connect to with the requested StoredPeerState.
+    // We check that we're not already connected to this peer and that we haven't tried to connect to it recently.
     fn find_peer_to_connect_to_with_state(&self, peers: &HashMap<u64, Arc<Peer>>, stored_peers: &mut HashMap<IpAddr, StoredPeer>, current_time: TimestampSeconds, state: StoredPeerState) -> Option<SocketAddr> {
         for (ip, stored_peer) in stored_peers {
             let addr = SocketAddr::new(*ip, stored_peer.get_local_port());
@@ -499,7 +499,7 @@ impl PeerList {
         None
     }
 
-    // increase the fail count of a peer
+    // Increase the fail count of a peer
     pub async fn increase_fail_count_for_stored_peer(&self, ip: &IpAddr, temp_ban: bool) {
         trace!("increasing fail count for {}, allow temp ban: {}", ip, temp_ban);
         let mut stored_peers = self.stored_peers.write().await;
@@ -534,7 +534,7 @@ impl PeerList {
         true
     }
 
-    // serialize the stored peers to a file
+    // Serialize the stored peers to a file
     fn save_peers_to_file(&self, stored_peers: &HashMap<IpAddr, StoredPeer>) -> Result<(), P2pError> {
         trace!("saving peerlist to file");
         let content = serde_json::to_string_pretty(&stored_peers)?;

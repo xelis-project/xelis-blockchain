@@ -61,8 +61,8 @@ pub struct GetAssetPrecisionParams<'a> {
 
 #[derive(Serialize, Deserialize)]
 pub struct GetAddressParams {
-    // Data to use for creating an integrated address
-    // Returned address will contains all the data provided here
+    // Data to use for creating an integrated address.
+    // Returned address will contain all the data provided here.
     pub integrated_data: Option<DataElement>
 }
 
@@ -146,21 +146,21 @@ pub struct QueryDBParams {
 #[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NotifyEvent {
-    // When a new topoheight is detected by wallet
-    // it contains the topoheight (u64) as value
-    // It may be lower than the previous one, based on how the DAG reacts
+    // When a new topoheight is detected by the wallet,
+    // it contains the topoheight (u64) as value.
+    // It may be lower than the previous one, based on how the DAG reacts.
     NewTopoHeight,
-    // When a new asset is added to wallet
-    // Contains a Hash as value
+    // When a new asset is added to the wallet,
+    // Contains a Hash as value.
     NewAsset,
-    // When a new transaction is added to wallet
-    // Contains TransactionEntry struct as value
+    // When a new transaction is added to the wallet,
+    // Contains TransactionEntry struct as value.
     NewTransaction,
-    // When a balance is changed
-    // Contains a BalanceChanged as value
+    // When a balance is changed,
+    // Contains a BalanceChanged as value.
     BalanceChanged,
-    // When a rescan happened on the wallet
-    // Contains a topoheight as value to indicate until which topoheight transactions got deleted
+    // When a rescan happens on the wallet,
+    // Contains a topoheight as value to indicate until which topoheight transactions got deleted.
     Rescan,
     // When network state changed
     Online,
@@ -176,7 +176,7 @@ pub struct TransferOut {
     pub asset: Hash,
     // Plaintext amount
     pub amount: u64,
-    // extra data
+    // Extra data
     pub extra_data: Option<DataElement>
 }
 
@@ -186,7 +186,7 @@ pub struct TransferIn {
     pub asset: Hash,
     // Plaintext amount
     pub amount: u64,
-    // extra data
+    // Extra data
     pub extra_data: Option<DataElement>
 }
 
@@ -217,7 +217,7 @@ pub enum EntryType {
 }
 
 // This struct is used to represent a transaction entry like in wallet
-// But we replace every PublicKey to use Address instead
+// but we replace every PublicKey to use Address instead.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TransactionEntry {
     pub hash: Hash,

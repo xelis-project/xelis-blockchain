@@ -10,8 +10,8 @@ use crate::core::{
     storage::SledStorage,
 };
 
-// This struct is used to store the blocks hashes at a specific height
-// We use an IndexSet to store the hashes and maintains the order we processed them
+// This struct is used to store the blocks hashes at a specific height.
+// We use an IndexSet to store the hashes and maintains the order we processed them.
 struct OrderedHashes(IndexSet<Hash>);
 
 #[async_trait]

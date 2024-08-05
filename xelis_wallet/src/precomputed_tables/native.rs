@@ -6,8 +6,8 @@ use xelis_common::crypto::ecdlp;
 
 use super::{PrecomputedTables, PrecomputedTablesShared};
 
-// This will read from file if exists, or generate and store it in file
-// This must be call only one time, and can be cloned to be shared through differents wallets
+// This will read from file if it exists, or generate and store it in file.
+// This must be called only one time, and can be cloned to be shared through different wallets.
 pub fn read_or_generate_precomputed_tables<P: ecdlp::ProgressTableGenerationReportFunction>(path: Option<String>, progress_report: P, l1: usize) -> Result<PrecomputedTablesShared> {
     let mut precomputed_tables = PrecomputedTables::new(l1);
 

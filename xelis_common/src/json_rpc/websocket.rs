@@ -50,10 +50,10 @@ impl<T: DeserializeOwned> EventReceiver<T> {
         }
     }
 
-    // Get the next event
-    // if we lagged behind, we will catch up
+    // Get the next event.
+    // If we lagged behind, we will catch up.
     // If you don't want to miss any event, you should create a queue to store them
-    // or an unbounded channel
+    // or an unbounded channel.
     pub async fn next(&mut self) -> Result<T, Error> {
         let mut res = self.inner.recv().await;
         // If we lagged behind, we need to catch up
@@ -72,8 +72,8 @@ impl<T: DeserializeOwned> EventReceiver<T> {
     }
 }
 
-// It is around a Arc to be shareable easily
-// it has a tokio task running in background to handle all incoming messages
+// It is around an Arc to be shareable easily.
+// It has a tokio task running in background to handle all incoming messages.
 pub type WebSocketJsonRPCClient<E> = Arc<WebSocketJsonRPCClientImpl<E>>;
 
 enum InternalMessage {
@@ -81,8 +81,8 @@ enum InternalMessage {
     Close,
 }
 
-// A JSON-RPC Client over WebSocket protocol to support events
-// It can be used in multi-thread safely because each request/response are linked using the id attribute.
+// A JSON-RPC Client over WebSocket protocol to support events.
+// It can be used in multi-thread safely because each request/response are linked using the id attribute..
 pub struct WebSocketJsonRPCClientImpl<E: Serialize + Hash + Eq + Send + Sync + Clone + 'static> {
     sender: Mutex<mpsc::Sender<InternalMessage>>,
     // This is the ID for the next request
@@ -97,9 +97,9 @@ pub struct WebSocketJsonRPCClientImpl<E: Serialize + Hash + Eq + Send + Sync + C
     events_to_id: Mutex<HashMap<E, usize>>,
     // websocket server address
     target: String,
-    // delay auto reconnect duration
+    // Delay auto reconnect duration
     delay_auto_reconnect: Mutex<Option<Duration>>,
-    // is the client online
+    // Is the client online
     online: AtomicBool,
     // This channel is called when the connection is lost
     offline_channel: Mutex<Option<broadcast::Sender<()>>>,
@@ -209,7 +209,7 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
         self.online.load(Ordering::SeqCst)
     }
 
-    // resubscribe to all events because of a reconnection
+    // Resubscribe to all events because of a reconnection
     async fn resubscribe_events(self: Arc<Self>) -> Result<(), JsonRPCError> {
         let events = {
             let events = self.events_to_id.lock().await;
@@ -354,7 +354,7 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
 
                 zelf.set_online(false).await;
 
-                // retry to connect until we are online or that it got disabled
+                // Retry to connect until we are online or that it got disabled
                 while let Some(auto_reconnect) = { zelf.delay_auto_reconnect.lock().await.as_ref().cloned() } {
                     debug!("Reconnecting to the server in {} seconds...", auto_reconnect.as_secs());
                     sleep(auto_reconnect).await;
@@ -415,7 +415,7 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
                         Message::Text(text) => {
                             let response: JsonRPCResponse = serde_json::from_str(&text)?;
                             if let Some(id) = response.id {
-                                // send the response to the requester if it matches the ID
+                                // Send the response to the requester if it matches the ID
                                 {
                                     let mut requests = self.requests.lock().await;
                                     if let Some(sender) = requests.remove(&id) {
@@ -466,8 +466,8 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
         events.contains_key(&event)
     }
 
-    // Subscribe to an event
-    // Capacity represents the number of events that can be stored in the channel
+    // Subscribe to an event.
+    // Capacity represents the number of events that can be stored in the channel.
     pub async fn subscribe_event<T: DeserializeOwned>(&self, event: E, capacity: usize) -> JsonRPCResult<EventReceiver<T>> {
         // Returns a Receiver for this event if already registered
         {
@@ -515,7 +515,7 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
         // Send the unsubscribe rpc method
         self.send::<E, bool>("unsubscribe", None, event).await?;
 
-        // delete it from events list
+        // Delete it from events list
         {
             let mut handlers = self.handler_by_id.lock().await;
             handlers.remove(&id);

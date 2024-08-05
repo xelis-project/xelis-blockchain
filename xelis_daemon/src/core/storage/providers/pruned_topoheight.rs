@@ -7,10 +7,10 @@ use crate::core::{
 // This trait is used for pruning
 #[async_trait]
 pub trait PrunedTopoheightProvider {
-    // get the pruned topoheight
+    // Get the pruned topoheight
     async fn get_pruned_topoheight(&self) -> Result<Option<u64>, BlockchainError>;
 
-    // set the pruned topoheight on disk
+    // Set the pruned topoheight on disk
     async fn set_pruned_topoheight(&mut self, pruned_topoheight: u64) -> Result<(), BlockchainError>;
 }
 

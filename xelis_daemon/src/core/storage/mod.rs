@@ -24,42 +24,42 @@ pub trait Storage: BlockExecutionOrderProvider + DagOrderProvider + PrunedTopohe
     // Clear caches if exists
     async fn clear_caches(&mut self) -> Result<(), BlockchainError>;
 
-    // delete block at topoheight, and all pointers (hash_at_topo, topo_by_hash, reward, supply, diff, cumulative diff...)
+    // Delete block at topoheight, and all pointers (hash_at_topo, topo_by_hash, reward, supply, diff, cumulative diff...)
     async fn delete_block_at_topoheight(&mut self, topoheight: u64) -> Result<(Hash, Arc<BlockHeader>, Vec<(Hash, Arc<Transaction>)>), BlockchainError>;
 
-    // delete versioned balances at topoheight
+    // Delete versioned balances at topoheight
     async fn delete_versioned_balances_at_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError>;
 
-    // delete versioned nonces at topoheight
+    // Delete versioned nonces at topoheight
     async fn delete_versioned_nonces_at_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError>;
 
-    // delete versioned balances above topoheight
+    // Delete versioned balances above topoheight
     async fn delete_versioned_balances_above_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError>;
 
-    // delete versioned nonces above topoheight
+    // Delete versioned nonces above topoheight
     async fn delete_versioned_nonces_above_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError>;
 
-    // delete account registrations above topoheight
+    // Delete account registrations above topoheight
     async fn delete_registrations_above_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError>;
 
-    // delete account registrations below topoheight
+    // Delete account registrations below topoheight
     async fn delete_registrations_below_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError>;
 
-    // delete versioned balances below topoheight
+    // Delete versioned balances below topoheight
     async fn delete_versioned_balances_below_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError>;
 
-    // delete versioned nonces below topoheight
+    // Delete versioned nonces below topoheight
     async fn delete_versioned_nonces_below_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError>;
 
-    // delete all versions of balances under the specified topoheight
-    // for those who don't have more recents, set it to the topoheight
-    // for those above it, cut the chain by deleting the previous topoheight when it's going under
+    // Delete all balance versions below the specified topoheight.
+    // For entries with no more recent versions, set their height to the specified topoheight.
+    // For entries with newer versions, truncate the chain by removing older versions that fall below the topoheight.
     async fn create_snapshot_balances_at_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError>;
 
-    // same as above but for nonces
+    // Same as above but for nonces
     async fn create_snapshot_nonces_at_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError>;
 
-    // same as above but for registrations
+    // Same as above but for registrations
     async fn create_snapshot_registrations_at_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError>;
 
     // Count is the number of blocks (topoheight) to rewind

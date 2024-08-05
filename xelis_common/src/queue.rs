@@ -1,10 +1,10 @@
 use std::{hash::Hash, collections::{VecDeque, HashSet}, fmt::Debug, sync::Arc};
 
-// A queue that allows for O(1) lookup of elements
-// The queue is backed by a VecDeque and a HashSet
-// The HashSet is used to check if an element is already in the queue
-// The VecDeque is used to keep track of the order of the elements
-// This can be shared between threads
+// A queue that allows for O(1) lookup of elements.
+// The queue is backed by a VecDeque and a HashSet.
+// The HashSet is used to check if an element is already in the queue.
+// The VecDeque is used to keep track of the order of the elements.
+// This can be shared between threads.
 pub struct Queue<K: Hash + Eq + Debug, V> {
     keys: HashSet<Arc<K>>,
     order: VecDeque<(Arc<K>, V)>
@@ -18,8 +18,8 @@ impl<K: Hash + Eq + Debug, V> Queue<K, V> {
         }
     }
 
-    // Pushes a new element to the back of the queue
-    // Returns true if the element was added, false if it already exists
+    // Pushes a new element to the back of the queue.
+    // Returns true if the element was added, false if it already exists.
     pub fn push(&mut self, key: K, value: V) -> bool {
         if self.keys.contains(&key) {
             return false;

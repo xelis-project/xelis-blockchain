@@ -105,8 +105,8 @@ pub async fn get_block_response<S: Storage>(blockchain: &Blockchain<S>, storage:
     let mut total_fees = 0;
     if block_type != BlockType::Orphaned {
         for (tx, tx_hash) in block.get_transactions().iter().zip(block.get_txs_hashes()) {
-            // check that the TX was correctly executed in this block
-            // retrieve all fees for valid txs
+            // Check that the TX was correctly executed in this block.
+            // Retrieve all fees for valid txs.
             if storage.is_tx_executed_in_block(tx_hash, &hash).context("Error while checking if tx was executed")? {
                 total_fees += tx.get_fee();
             }
@@ -181,7 +181,7 @@ pub async fn get_block_response_for_hash<S: Storage>(blockchain: &Blockchain<S>,
         let (topoheight, supply, reward, block_type, cumulative_difficulty, difficulty) = get_block_data(blockchain, storage, hash).await?;
         let header = storage.get_block_header_by_hash(&hash).await.context("Error while retrieving full block")?;
 
-        // calculate total size in bytes
+        // Calculate total size in bytes
         let mut total_size_in_bytes = header.size();
         for tx_hash in header.get_txs_hashes() {
             total_size_in_bytes += storage.get_transaction_size(tx_hash).await.context(format!("Error while retrieving transaction {hash} size"))?;
@@ -232,7 +232,7 @@ pub async fn get_transaction_response<S: Storage>(storage: &S, tx: &Arc<Transact
     Ok(json!(TransactionResponse { blocks, executed_in_block, data, in_mempool, first_seen }))
 }
 
-// first check on disk, then check in mempool
+// First check on disk, then check in mempool
 pub async fn get_transaction_response_for_hash<S: Storage>(storage: &S, mempool: &Mempool, hash: &Hash) -> Result<Value, InternalRpcError> {
     match storage.get_transaction(hash).await {
         Ok(tx) => get_transaction_response(storage, &tx, hash, false, None).await,
@@ -785,10 +785,10 @@ async fn get_peers<S: Storage>(context: &Context, body: Value) -> Result<Value, 
         Some(p2p) => {
             let peer_list = p2p.get_peer_list();
             let mut peers = Vec::new();
-            let peers_availables = peer_list.get_cloned_peers().await;
-            let total_peers = peers_availables.len();
+            let peers_available = peer_list.get_cloned_peers().await;
+            let total_peers = peers_available.len();
             let mut sharable_peers = 0;
-            for p in peers_availables.iter().filter(|p| p.sharable()) {
+            for p in peers_available.iter().filter(|p| p.sharable()) {
                 peers.push(get_peer_entry(p).await);
                 sharable_peers += 1;
             }
@@ -840,8 +840,8 @@ async fn get_tips<S: Storage>(context: &Context, body: Value) -> Result<Value, I
 }
 
 const MAX_DAG_ORDER: u64 = 64;
-// get dag order based on params
-// if no params found, get order of last 64 blocks
+// Get dag order based on params.
+// If no params found, get order of last 64 blocks.
 async fn get_dag_order<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: GetTopoHeightRangeParams = parse_params(body)?;
 
@@ -878,7 +878,7 @@ fn get_range(start: Option<u64>, end: Option<u64>, maximum: u64, current: u64) -
     }
 
     let count = range_end - range_start;
-    if count > maximum { // only retrieve max 20 blocks hash per request
+    if count > maximum { // Only retrieve max 20 blocks hash per request
         debug!("get range requested count: {}", count);
         return Err(InternalRpcError::InvalidJSONRequest).context(format!("Invalid range count requested, received {} but maximum is {}", count, maximum))?
     }
@@ -886,8 +886,8 @@ fn get_range(start: Option<u64>, end: Option<u64>, maximum: u64, current: u64) -
     Ok((range_start, range_end))
 }
 
-// get blocks between range of topoheight
-// if no params found, get last 20 blocks header
+// Get blocks between range of topoheight.
+// If no params found, retrieve the headers of the last 20 blocks.
 async fn get_blocks_range_by_topoheight<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: GetTopoHeightRangeParams = parse_params(body)?;
 
@@ -906,9 +906,9 @@ async fn get_blocks_range_by_topoheight<S: Storage>(context: &Context, body: Val
     Ok(json!(blocks))
 }
 
-// get blocks between range of height
-// if no params found, get last 20 blocks header
-// you can only request 
+// Get blocks between range of topoheight.
+// If no params found, retrieve the headers of the last 20 blocks.
+// You can only request.
 async fn get_blocks_range_by_height<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: GetHeightRangeParams = parse_params(body)?;
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
@@ -929,8 +929,8 @@ async fn get_blocks_range_by_height<S: Storage>(context: &Context, body: Value) 
 }
 
 const MAX_TXS: usize = 20;
-// get up to 20 transactions at once
-// if a tx hash is not present, we keep the order and put json "null" value
+// Get up to 20 transactions at once.
+// If a TX hash is not present, we keep the order and put json "null" value.
 async fn get_transactions<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: GetTransactionsParams = parse_params(body)?;
 
@@ -958,7 +958,7 @@ async fn get_transactions<S: Storage>(context: &Context, body: Value) -> Result<
 }
 
 const MAX_HISTORY: usize = 20;
-// retrieve all history changes for an account on an asset
+// Retrieve all history changes for an account on an asset
 async fn get_account_history<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: GetAccountHistoryParams = parse_params(body)?;
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
@@ -980,8 +980,8 @@ async fn get_account_history<S: Storage>(context: &Context, body: Value) -> Resu
         }
 
 
-        // if incoming flows aren't accepted
-        // use nonce versions to determine topoheight
+        // If incoming flows aren't accepted
+        // use nonce versions to determine topoheight.
         if !params.incoming_flow {
             if let Some((topo, nonce)) = storage.get_nonce_at_maximum_topoheight(key, topo).await.context("Error while retrieving last nonce")? {
                 let version = storage.get_balance_at_exact_topoheight(key, &params.asset, topo).await.context(format!("Error while retrieving balance at nonce topo height {topo}"))?;
@@ -996,7 +996,7 @@ async fn get_account_history<S: Storage>(context: &Context, body: Value) -> Resu
         }
     } else {
         if !params.incoming_flow {
-            // don't return any error, maybe this account never spend anything
+            // Don't return any error, maybe this account never spent anything.
             // (even if we force 0 nonce at first activity)
             let (topo, nonce) = storage.get_last_nonce(key).await.context("Error while retrieving last topoheight for nonce")?;
             let version = storage.get_balance_at_exact_topoheight(key, &params.asset, topo).await.context(format!("Error while retrieving balance at topo height {topo}"))?;
@@ -1020,8 +1020,8 @@ async fn get_account_history<S: Storage>(context: &Context, body: Value) -> Resu
             break;
         }
 
-        // Get the block header at topoheight
-        // we will scan it below for transactions and rewards
+        // Get the block header at topoheight.
+        // We will scan it below for transactions and rewards.
         let (hash, block_header) = storage.get_block_header_at_topoheight(topo).await.context(format!("Error while retrieving block header at topo height {topo}"))?;
 
         // Block reward is only paid in XELIS
@@ -1029,7 +1029,7 @@ async fn get_account_history<S: Storage>(context: &Context, body: Value) -> Resu
             let is_miner = *block_header.get_miner() == *key;
             if (is_miner || is_dev_address) && params.incoming_flow {
                 let mut reward = storage.get_block_reward_at_topo_height(topo).context(format!("Error while retrieving reward at topo height {topo}"))?;
-                // subtract dev fee if any
+                // Subtract dev fee if any
                 let dev_fee_percentage = get_block_dev_fee(block_header.get_height());
                 if dev_fee_percentage != 0 {
                     let dev_fee = reward * dev_fee_percentage / 100;
@@ -1114,8 +1114,8 @@ async fn get_account_history<S: Storage>(context: &Context, body: Value) -> Resu
             break;
         }
 
-        // if incoming flows aren't accepted
-        // use nonce versions to determine topoheight
+        // If incoming flows aren't accepted
+        // use nonce versions to determine topoheight.
         if let Some(previous) = prev_nonce.filter(|_| !params.incoming_flow) {
             let nonce_version = storage.get_nonce_at_exact_topoheight(key, previous).await.context(format!("Error while retrieving nonce at topo height {previous}"))?;
             version = Some((previous, nonce_version.get_previous_topoheight(), storage.get_balance_at_exact_topoheight(key, &params.asset, previous).await.context(format!("Error while retrieving previous balance at topo height {previous}"))?));
@@ -1145,7 +1145,7 @@ async fn get_account_assets<S: Storage>(context: &Context, body: Value) -> Resul
 }
 
 const MAX_ACCOUNTS: usize = 100;
-// retrieve all available accounts (each account got at least one interaction on chain)
+// Retrieve all available accounts (each account got at least one interaction on chain)
 async fn get_accounts<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: GetAccountsParams = parse_params(body)?;
     let blockchain: &Arc<Blockchain<S>> = context.get()?;

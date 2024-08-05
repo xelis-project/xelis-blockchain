@@ -4,9 +4,9 @@ use curve25519_dalek::{traits::Identity, RistrettoPoint, Scalar};
 use serde::{Deserialize, Deserializer, Serialize};
 use super::{pedersen::{DecryptHandle, PedersenCommitment}, CompressedCiphertext, CompressedCommitment, CompressedHandle};
 
-// Represents a twisted ElGamal Ciphertext
-// One part is a Pedersen commitment to be bulletproofs compatible
-// The other part is a handle to be used for decryption
+// Represents a twisted ElGamal Ciphertext.
+// One part is a Pedersen commitment to be bulletproofs compatible.
+// The other part is a handle to be used for decryption.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Ciphertext {
     commitment: PedersenCommitment,

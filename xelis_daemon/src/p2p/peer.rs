@@ -62,8 +62,8 @@ use log::{
     warn,
 };
 
-// A RequestedObjects is a map of all objects requested from a peer
-// This is done to be awaitable with a timeout
+// A RequestedObjects is a map of all objects requested from a peer.
+// This is done to be awaitable with a timeout.
 pub type RequestedObjects = HashMap<ObjectRequest, Sender<OwnedObjectResponse>>;
 
 pub type Tx = mpsc::Sender<Bytes>;
@@ -72,75 +72,75 @@ pub type Rx = mpsc::Receiver<Bytes>;
 // Enum used to track the state of a task
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum TaskState {
-    // not started yet
+    // Not started yet
     Inactive,
-    // running
+    // Running
     Active,
-    // task has been cancelled
+    // Task has been cancelled
     Exiting,
     // Task has exited
     Finished,
     Unknown,
 }
 
-// A Peer represents a connection to another node in the network
-// It is used to propagate and receive blocks / transactions and do chain sync
-// It contains all the necessary information to manage the connection and the communication
+// A Peer represents a connection to another node in the network.
+// It is used to propagate and receive blocks / transactions and sync the chain.
+// It contains all the necessary information to manage the connection and communication.
 pub struct Peer {
     // Connection of the peer to manage read/write to TCP Stream
     connection: Connection,
-    // unique ID of the peer to recognize him
+    // Unique ID of the peer to recognize him
     id: u64,
     // Node tag if provided
     node_tag: Option<String>,
-    // port on which the node is listening on its side
+    // Port on which the node is listening on its side
     local_port: u16,
-    // daemon version
+    // Daemon version
     version: String,
-    // if this node can be trusted (seed node or added manually by user)
+    // If this node can be trusted (seed node or added manually by user)
     priority: bool,
-    // current block top hash for this peer
+    // Current block top hash for this peer
     top_hash: Mutex<Hash>,
-    // current highest topo height for this peer
+    // Current highest topo height for this peer
     topoheight: AtomicU64,
-    // current highest block height for this peer
+    // Current highest block height for this peer
     height: AtomicU64,
-    // last time we got a chain request
+    // Last time we got a chain request
     last_chain_sync: AtomicU64,
-    // last time we got a fail
+    // Last time we got a fail
     last_fail_count: AtomicU64,
-    // fail count: if greater than 20, we should close this connection
+    // Fail count: if greater than 20, we should close this connection
     fail_count: AtomicU8,
-    // shared pointer to the peer list in case of disconnection
+    // Shared pointer to the peer list in case of disconnection
     peer_list: SharedPeerList,
-    // map of requested objects from this peer
+    // Map of requested objects from this peer
     objects_requested: Mutex<RequestedObjects>,
-    // all peers sent/received
+    // All peers sent/received
     peers: Mutex<HashMap<SocketAddr, Direction>>,
-    // last time we received a peerlist from this peer
+    // Last time we received a peerlist from this peer
     last_peer_list: AtomicU64,
-    // last time we got a ping packet from this peer
+    // Last time we got a ping packet from this peer
     last_ping: AtomicU64,
-    // last time we sent a ping packet to this peer
+    // Last time we sent a ping packet to this peer
     last_ping_sent: AtomicU64,
-    // cumulative difficulty of peer chain
+    // Cumulative difficulty of peer chain
     cumulative_difficulty: Mutex<CumulativeDifficulty>,
     // All transactions propagated from/to this peer
     txs_cache: Mutex<LruCache<Hash, Direction>>,
-    // last blocks propagated to/from this peer
+    // Last blocks propagated to/from this peer
     blocks_propagation: Mutex<LruCache<Hash, Direction>>,
-    // last time we got an inventory packet from this peer
+    // Last time we got an inventory packet from this peer
     last_inventory: AtomicU64,
-    // if we requested this peer to send us an inventory notification
+    // If we requested this peer to send us an inventory notification
     requested_inventory: AtomicBool,
-    // pruned topoheight if its a pruned node
+    // Pruned topoheight if its a pruned node
     pruned_topoheight: AtomicU64,
-    // Store the pruned state of the peer
-    // cannot be set to false if its already to true (protocol rules)
+    // Store the pruned state of the peer.
+    // Cannot be set to false if its already to true (protocol rules).
     is_pruned: AtomicBool,
-    // used for await on bootstrap chain packets
+    // Used for await on bootstrap chain packets
     bootstrap_chain: Mutex<Option<Sender<StepResponse>>>,
-    // used to wait on chain response when syncing chain
+    // Used to wait on chain response when syncing chain
     sync_chain: Mutex<Option<Sender<ChainResponse>>>,
     // IP address with local port
     outgoing_address: SocketAddr,
@@ -309,8 +309,8 @@ impl Peer {
         &self.cumulative_difficulty
     }
 
-    // Store the cumulative difficulty
-    // This is updated by ping packet
+    // Store the cumulative difficulty.
+    // This is updated by ping packet.
     pub async fn set_cumulative_difficulty(&self, cumulative_difficulty: CumulativeDifficulty) {
         *self.cumulative_difficulty.lock().await = cumulative_difficulty;
     }
@@ -320,8 +320,8 @@ impl Peer {
         self.connection.is_out()
     }
 
-    // Get the priority flag of the peer
-    // If the peer is a seed node or added manually by the user, it should be trusted
+    // Get the priority flag of the peer.
+    // If the peer is a seed node or added manually by the user, it should be trusted.
     pub fn is_priority(&self) -> bool {
         self.priority
     }
@@ -346,9 +346,9 @@ impl Peer {
         self.fail_count.load(Ordering::Acquire)
     }
 
-    // Update the fail count of the peer
-    // This is used by display to have up-to-date data
-    // We don't add anything, just reset the counter if its long time we didn't get a fail
+    // Update the fail count of the peer.
+    // This is used by the display to have up-to-date data.
+    // We don't increment the counter; instead, we reset it if a long time has passed since the last failure.
     fn update_fail_count_default(&self) -> bool {
         self.update_fail_count(get_current_time_in_seconds(), 0)
     }
@@ -364,21 +364,21 @@ impl Peer {
         reset
     }
 
-    // Increment the fail count of the peer
-    // This is used to track the number of times we failed to communicate with the peer
-    // If the fail count is greater than 20, we should close the connection
+    // Increment the fail count of the peer.
+    // This is used to track the number of times we failed to communicate with the peer.
+    // If the fail count is greater than 20, we should close the connection.
     pub fn increment_fail_count(&self) {
         let current_time = get_current_time_in_seconds();
-        // if its long time we didn't get a fail, reset the fail count to 1 (because of current fail)
-        // otherwise, add 1
+        // If its long time we didn't get a fail, reset the fail count to 1 (because of current fail).
+        // Otherwise, add 1.
         if !self.update_fail_count(current_time, 1) {
             self.fail_count.fetch_add(1, Ordering::Release);
         }
         self.set_last_fail_count(current_time);
     }
 
-    // Get the last time we got a chain sync request
-    // This is used to prevent spamming the chain sync packet
+    // Get the last time we got a chain sync request.
+    // This is used to prevent spamming the chain sync packet.
     pub fn get_last_chain_sync(&self) -> TimestampSeconds {
         self.last_chain_sync.load(Ordering::Acquire)
     }
@@ -415,7 +415,7 @@ impl Peer {
             }
             self.send_packet(Packet::ObjectRequest(Cow::Borrowed(&request))).await?;
             let (sender, receiver) = tokio::sync::oneshot::channel();
-            objects.insert(request.clone(), sender); // clone is necessary in case timeout has occured
+            objects.insert(request.clone(), sender); // clone is necessary in case timeout has occurred
             receiver
         };
         let object = match timeout(Duration::from_millis(PEER_TIMEOUT_REQUEST_OBJECT), receiver).await {
@@ -452,10 +452,10 @@ impl Peer {
             *sender_lock = Some(sender);
         }
 
-        // send the packet
+        // Send the packet
         self.send_packet(Packet::BootstrapChainRequest(BootstrapChainRequest::new(step))).await?;
 
-        // wait on the response
+        // Wait on the response
         let response: StepResponse = match timeout(Duration::from_millis(PEER_TIMEOUT_BOOTSTRAP_STEP), receiver).await {
             Ok(res) => res?,
             Err(e) => {
@@ -464,7 +464,7 @@ impl Peer {
             }
         };
 
-        // check that the response is what we asked for
+        // Check that the response is what we asked for
         let response_kind = response.kind();
         if response_kind != step_kind {
             return Err(P2pError::InvalidBootstrapStep(step_kind, response_kind))
@@ -497,14 +497,14 @@ impl Peer {
         Ok(response)
     }
 
-    // Get the bootstrap chain channel
-    // Like the sync chain channel, but for bootstrap (fast sync) syncing
+    // Get the bootstrap chain channel.
+    // Like the sync chain channel, but for bootstrap (fast sync) syncing.
     pub fn get_bootstrap_chain_channel(&self) -> &Mutex<Option<Sender<StepResponse>>> {
         &self.bootstrap_chain
     }
 
-    // Get the sync chain channel
-    // This is used for chain sync requests to be fully awaited
+    // Get the sync chain channel.
+    // This is used for chain sync requests to be fully awaited.
     pub fn get_sync_chain_channel(&self) -> &Mutex<Option<Sender<ChainResponse>>> {
         &self.sync_chain
     }
@@ -519,8 +519,8 @@ impl Peer {
         self.last_peer_list.load(Ordering::Acquire)
     }
 
-    // Track the last time we got a peer list
-    // This is used to prevent spamming the peer list
+    // Track the last time we got a peer list.
+    // This is used to prevent spamming the peer list.
     pub fn set_last_peer_list(&self, value: TimestampSeconds) {
         self.last_peer_list.store(value, Ordering::Release)
     }
@@ -565,8 +565,8 @@ impl Peer {
         self.requested_inventory.store(value, Ordering::Release)
     }
 
-    // Get the outgoing address of the peer
-    // This represents the IP address of the peer and the port on which it is listening
+    // Get the outgoing address of the peer.
+    // This represents the IP address of the peer and the port on which it is listening.
     pub fn get_outgoing_address(&self) -> &SocketAddr {
         &self.outgoing_address
     }
@@ -591,8 +591,8 @@ impl Peer {
         Ok(())
     }
 
-    // Signal the exit of the peer to the tasks
-    // This is listened by write task to close the connection
+    // Signal the exit of the peer to the tasks.
+    // This is listened by write task to close the connection.
     pub async fn signal_exit(&self) -> Result<(), P2pError> {
         self.exit_channel.send(())
             .map_err(|e| P2pError::SendError(e.to_string()))?;
@@ -612,14 +612,14 @@ impl Peer {
         Ok(())
     }
 
-    // Send a packet to the peer
-    // This will transform the packet into bytes and send it to the peer
+    // Send a packet to the peer.
+    // This will transform the packet into bytes and send it to the peer.
     pub async fn send_packet(&self, packet: Packet<'_>) -> Result<(), P2pError> {
         self.send_bytes(Bytes::from(packet.to_bytes())).await
     }
 
-    // Send packet bytes to the peer
-    // This will send the bytes to the writer task through its channel
+    // Send packet bytes to the peer.
+    // This will send the bytes to the writer task through its channel.
     pub async fn send_bytes(&self, bytes: Bytes) -> Result<(), P2pError> {
         self.tx.send(bytes).await
             .map_err(|e| P2pError::SendError(e.to_string()))
@@ -644,7 +644,7 @@ impl Peer {
 
 impl Display for Peer {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::result::Result<(), Error> {
-        // update fail counter to have up-to-date data to display
+        // Update fail counter to have up-to-date data to display
         self.update_fail_count_default();
         let peers = if let Ok(peers) = self.get_peers().try_lock() {
             if log_enabled!(Level::Debug) {

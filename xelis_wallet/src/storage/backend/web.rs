@@ -118,7 +118,7 @@ pub struct Db {
 )))]
 #[derive(Debug, Error)]
 pub enum DbError {
-    #[error("An error occured on the database")]
+    #[error("An error occurred on the database")]
     Poisoned
 }
 
@@ -129,7 +129,7 @@ pub enum DbError {
 ))]
 #[derive(Debug, Error)]
 pub enum DbError {
-    #[error("An error occured on the database")]
+    #[error("An error occurred on the database")]
     Poisoned,
     #[error("Cannot access to the window object")]
     Window,
@@ -435,7 +435,7 @@ impl InnerTree {
     }
 }
 
-// TODO: rework this
+// TODO: rework this.
 // A reference to all the entries in a `Tree`.
 // So, even if it get changed while we iter, we still have a reference to the old entries.
 pub struct Iter {

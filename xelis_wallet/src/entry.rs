@@ -299,8 +299,8 @@ impl TransactionEntry {
         &mut self.entry
     }
 
-    // Convert to RPC Transaction Entry
-    // This is a necessary step to serialize correctly the public key into an address
+    // Convert to RPC Transaction Entry.
+    // This is a necessary step to serialize correctly the public key into an address.
     pub fn serializable(self, mainnet: bool) -> RPCTransactionEntry {
         RPCTransactionEntry {
             hash: self.hash,

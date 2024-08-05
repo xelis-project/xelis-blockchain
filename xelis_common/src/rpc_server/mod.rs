@@ -48,7 +48,7 @@ impl<'a> RpcResponse<'a> {
     }
 }
 
-// trait to retrieve easily a JSON RPC handler for registered route
+// Trait to retrieve easily a JSON RPC handler for registered route
 pub trait RPCServerHandler<T: Send + Clone> {
     fn get_rpc_handler(&self) -> &RPCHandler<T>;
 }
@@ -63,7 +63,7 @@ where
     Ok(HttpResponse::Ok().json(result))
 }
 
-// trait to retrieve easily a websocket handler for registered route
+// Trait to retrieve easily a websocket handler for registered route
 pub trait WebSocketServerHandler<H: WebSocketHandler> {
     fn get_websocket(&self) -> &WebSocketServerShared<H>;
 }

@@ -53,11 +53,11 @@ pub type WebSocketServerShared<H> = Arc<WebSocketServer<H>>;
 pub type WebSocketSessionShared<H> = Arc<WebSocketSession<H>>;
 
 // Constants
-// timeout in seconds for sending a message
+// Timeout in seconds for sending a message
 const MESSAGE_TIME_OUT: Duration = Duration::from_secs(1);
-// interval in seconds to send a ping message
+// Interval in seconds to send a ping message
 const KEEP_ALIVE_INTERVAL: Duration = Duration::from_secs(5);
-// timeout in seconds to receive a pong message
+// Timeout in seconds to receive a pong message
 const KEEP_ALIVE_TIME_OUT: Duration = Duration::from_secs(30);
 
 #[derive(Debug, thiserror::Error)]
@@ -98,8 +98,8 @@ where
         Ok(())
     }
 
-    // Send a ping message to the session
-    // this must be called from the task handling the session only
+    // Send a ping message to the session.
+    // This must be called from the task handling the session only.
     async fn ping(&self) -> Result<(), WebSocketError> {
         let mut inner = self.inner.lock().await;
         let session = inner.as_mut().ok_or(WebSocketError::SessionAlreadyClosed)?;
@@ -107,8 +107,8 @@ where
         Ok(())
     }
 
-    // Send a pong message to the session
-    // this must be called from the task handling the session only
+    // Send a pong message to the session.
+    // This must be called from the task handling the session only.
     async fn pong(&self) -> Result<(), WebSocketError> {
         let mut inner = self.inner.lock().await;
         let session = inner.as_mut().ok_or(WebSocketError::SessionAlreadyClosed)?;
@@ -116,7 +116,7 @@ where
         Ok(())
     }
 
-    // this must be called from the task handling the session only
+    // This must be called from the task handling the session only
     async fn send_text_internal<S: Into<String>>(&self, value: S) -> Result<(), WebSocketError> {
         let mut inner = self.inner.lock().await;
         let session = inner.as_mut().ok_or(WebSocketError::SessionAlreadyClosed)?;
@@ -132,7 +132,7 @@ where
         Ok(())
     }
 
-    // this must be called from the task handling the session only
+    // This must be called from the task handling the session only
     async fn close_internal(&self, reason: Option<CloseReason>) -> Result<(), WebSocketError> {
         let mut inner = self.inner.lock().await;
         let session = inner.take().ok_or(WebSocketError::SessionAlreadyClosed)?;
@@ -178,18 +178,18 @@ where
 
 #[async_trait]
 pub trait WebSocketHandler: Sized + Sync + Send {
-    // called when a new Session is added in websocket server
-    // if an error is returned, maintaining the session is aborted
+    // Called when a new Session is added in websocket server.
+    // If an error is returned, maintaining the session is aborted.
     async fn on_connection(&self, _: &WebSocketSessionShared<Self>) -> Result<(), anyhow::Error> {
         Ok(())
     }
 
-    // called when a new message is received
+    // Called when a new message is received
     async fn on_message(&self, _: &WebSocketSessionShared<Self>, _: Bytes) -> Result<(), anyhow::Error> {
         Ok(())
     }
 
-    // called when a Session is closed
+    // Called when a Session is closed
     async fn on_close(&self, _: &WebSocketSessionShared<Self>) -> Result<(), anyhow::Error> {
         Ok(())
     }
@@ -281,7 +281,7 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static {
     // Delete a session from the server
     pub async fn delete_session(self: &Arc<Self>, session: &WebSocketSessionShared<H>, reason: Option<CloseReason>) {
         trace!("deleting session #{}", session.id);
-        // close session
+        // Close session
         if let Err(e) = session.close_internal(reason).await {
             debug!("Error while closing session: {}", e);
         }
@@ -295,7 +295,7 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static {
 
         if deleted {
             debug!("deleted session #{}", session.id);
-            // call on_close
+            // Call on_close
             if let Err(e) = self.handler.on_close(&session).await {
                 debug!("Error while calling on_close: {}", e);
             }
@@ -303,11 +303,11 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static {
         trace!("sessions unlocked");
     }
 
-    // Internal function to handle a WebSocket connection
-    // This will send a ping every 5 seconds and close the connection if no pong is received within 30 seconds
-    // It will also translate all messages to the handler
+    // Internal function to handle a WebSocket connection.
+    // This will send a ping every 5 seconds and close the connection if no pong is received within 30 seconds.
+    // It will also translate all messages to the handler.
     async fn handle_ws_internal(self: Arc<Self>, session: WebSocketSessionShared<H>, mut stream: AggregatedMessageStream, mut rx: UnboundedReceiver<InnerMessage>) {
-        // call on_connection
+        // Call on_connection
         if let Err(e) = self.handler.on_connection(&session).await {
             debug!("Error while calling on_connection: {}", e);
             self.delete_session(&session, Some(CloseReason::from(CloseCode::Error))).await;
@@ -318,7 +318,7 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static {
         let mut last_pong_received = Instant::now();
         let reason = loop {
             select! {
-                // heartbeat
+                // Heartbeat
                 _ = interval.tick() => {
                     trace!("Sending ping to session #{}", session.id);
                     if last_pong_received.elapsed() > KEEP_ALIVE_TIME_OUT {
@@ -351,7 +351,7 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static {
                         }
                     }
                 },
-                // wait for next message
+                // Wait for next message
                 res = stream.next() => {
                     trace!("Received stream message for session #{}", session.id);
                     let msg = match res {
@@ -368,7 +368,7 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static {
                         },
                     };
 
-                    // handle message
+                    // Handle message
                     match msg {
                         AggregatedMessage::Text(text) => {
                             trace!("Received text message for session #{}: {}", session.id, text);
@@ -404,7 +404,7 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static {
         };
 
         debug!("Session #{} is closing", session.id);
-        // attempt to close connection gracefully
+        // Attempt to close connection gracefully
         self.delete_session(&session, reason).await;
         debug!("Session #{} has been closed", session.id);
     }

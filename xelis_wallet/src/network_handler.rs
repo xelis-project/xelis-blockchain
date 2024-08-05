@@ -68,19 +68,19 @@ pub enum NetworkError {
 }
 
 pub struct NetworkHandler {
-    // tokio task
+    // Tokio task
     task: Mutex<Option<JoinHandle<Result<(), Error>>>>,
-    // wallet where we can save every data from chain
+    // Wallet where we can save every data from chain
     wallet: Arc<Wallet>,
-    // api to communicate with daemon
-    // It is behind a Arc to be shared across several wallets
-    // in case someone make a custom service and don't want to create a new connection
+    // Api to communicate with daemon.
+    // It is behind an Arc to be shared across several wallets
+    // in case someone makes a custom service and doesn't want to create a new connection.
     api: Arc<DaemonAPI>
 }
 
 impl NetworkHandler {
-    // Create a new network handler with a wallet and a daemon address
-    // This will create itself a DaemonAPI and verify if connection is possible
+    // Create a new network handler with a wallet and a daemon address.
+    // This will create a DaemonAPI and verify if connection is possible.
     pub async fn new<S: ToString>(wallet: Arc<Wallet>, daemon_address: S) -> Result<SharedNetworkHandler, Error> {
         let s = daemon_address.to_string();
         let api = DaemonAPI::new(format!("{}/json_rpc", sanitize_daemon_address(s.as_str()))).await?;
@@ -89,7 +89,7 @@ impl NetworkHandler {
 
     // Create a new network handler with an already created daemon API
     pub async fn with_api(wallet: Arc<Wallet>, api: Arc<DaemonAPI>) -> Result<SharedNetworkHandler, Error> {
-        // check that we can correctly get version from daemon
+        // Check that we can correctly get version from daemon
         let version = api.get_version().await?;
         debug!("Connected to daemon running version {}", version);
 
@@ -185,7 +185,7 @@ impl NetworkHandler {
         &self.api
     }
 
-    // check if the network handler is running (that we have a task and its not finished)
+    // Check if the network handler is running (that we have a task and its not finished)
     pub async fn is_running(&self) -> bool {
         let task = self.task.lock().await;
         if let Some(handle) = task.as_ref() {
@@ -196,8 +196,8 @@ impl NetworkHandler {
     }
 
     // Process a block by checking if it contains any transaction for us
-    // Or that we mined it
-    // Returns assets that changed and returns the highest nonce if we send a transaction
+    // or that we mined it.
+    // Returns assets that changed and returns the highest nonce if we send a transaction.
     async fn process_block(&self, address: &Address, block: BlockResponse, topoheight: u64) -> Result<Option<(HashSet<Hash>, Option<u64>)>, Error> {
         let block_hash = block.hash.into_owned();
         debug!("Processing block {} at topoheight {}", block_hash, topoheight);
@@ -214,7 +214,7 @@ impl NetworkHandler {
         // Prevent storing changes multiple times
         let mut changes_stored = false;
 
-        // create Coinbase entry if its our address and we're looking for XELIS asset
+        // Create Coinbase entry if its our address and we're looking for XELIS asset
         if miner == *address.get_public_key() {
             debug!("Block {} at topoheight {} is mined by us", block_hash, topoheight);
             if let Some(reward) = block.miner_reward {
@@ -225,8 +225,8 @@ impl NetworkHandler {
                 let broadcast = {
                     let mut storage = self.wallet.get_storage().write().await;
 
-                    // Mark it as last coinbase reward topoheight
-                    // it is internally checked if its higher or not
+                    // Mark it as last coinbase reward topoheight.
+                    // It is internally checked if its higher or not.
                     debug!("Storing last coinbase reward topoheight {}", topoheight);
                     storage.set_last_coinbase_reward_topoheight(Some(topoheight))?;
 
@@ -342,11 +342,11 @@ impl NetworkHandler {
                         }
                     }
 
-                    if is_owner { // check that we are owner of this TX
+                    if is_owner { // Check that we are owner of this TX
                         Some(EntryData::Outgoing { transfers: transfers_out, fee: tx.fee, nonce: tx.nonce })
-                    } else if !transfers_in.is_empty() { // otherwise, check that we received one or few transfers from it
+                    } else if !transfers_in.is_empty() { // Otherwise, check that we received one or few transfers from it
                         Some(EntryData::Incoming { from: tx.source.to_public_key(), transfers: transfers_in })
-                    } else { // this TX has nothing to do with us, nothing to save
+                    } else { // This TX has nothing to do with us, nothing to save
                         None
                     }
                 }
@@ -366,7 +366,7 @@ impl NetworkHandler {
                             debug!("Transaction {} was executed in block {} at topoheight {}", tx.hash, executor.block_hash, executor.block_topoheight);
                         },
                         Err(e) => {
-                            // Tx is maybe not executed, this is really rare event
+                            // TX is maybe not executed, this is really rare event
                             warn!("Error while fetching topoheight execution of transaction {}: {}", tx.hash, e);
                             continue;
                         }
@@ -411,29 +411,29 @@ impl NetworkHandler {
         storage.has_transaction(hash)
     }
 
-    // Scan the chain using a specific balance asset, this helps us to get a list of version to only requests blocks where changes happened
-    // When the block is requested, we don't limit the syncing to asset in parameter
+    // Scan the chain using a specific balance asset, this helps us to get a list of versions to only request blocks where changes happened.
+    // When the block is requested, we don't limit syncing to the specified asset.
     async fn get_balance_and_transactions(&self, topoheight_processed: &mut HashSet<u64>, address: &Address, asset: &Hash, min_topoheight: u64, balances: bool, highest_nonce: &mut Option<u64>) -> Result<(), Error> {
         // Retrieve the highest version
         let (mut topoheight, mut version) = self.api.get_balance(address, asset).await.map(|res| (res.topoheight, res.version))?;
-        // don't sync already synced blocks
+        // Don't sync already synced blocks
         if min_topoheight >= topoheight {
             return Ok(())
         }
 
-        // Determine if its the highest version of balance or not
-        // This is used to save the latest balance
+        // Determine if its the highest version of balance or not.
+        // This is used to save the latest balance.
         let mut highest_version = true;
         loop {
             let (mut balance, _, _, previous_topoheight) = version.consume();
-            // add this topoheight in cache to not re-process it (blocks are independant of asset to have faster sync)
-            // if its not already processed, do it
+            // Add this topoheight in cache to not re-process it (blocks are independent of asset to have faster sync).
+            // If its not already processed, do it.
             if topoheight_processed.insert(topoheight) {
                 debug!("Processing topoheight {}", topoheight);
                 let response = self.api.get_block_with_txs_at_topoheight(topoheight).await?;
                 let changes = self.process_block(address, response, topoheight).await?;
 
-                // Check if a change occured, we are the highest version and update balances is requested
+                // Check if a change occurred, we are the highest version and update balances is requested
                 if let Some((_, nonce)) = changes.filter(|_| balances && highest_version) {
                     let mut storage = self.wallet.get_storage().write().await;
 
@@ -444,9 +444,9 @@ impl NetworkHandler {
                         *highest_nonce = Some(storage.get_nonce()?);
                     }
 
-                    // Store only the highest nonce
-                    // Because if we are building queued transactions, it may break our queue
-                    // Our we couldn't submit new txs before they get removed from mempool
+                    // Store only the highest nonce.
+                    // If we are building queued transactions, storing a lower nonce may break our queue.
+                    // We also couldn't submit new TXs before they get removed from mempool.
                     if let Some(nonce) = nonce.filter(|n| highest_nonce.as_ref().map(|h| *h < *n).unwrap_or(true)) {
                         debug!("Storing new highest nonce {}", nonce);
                         storage.set_nonce(nonce)?;
@@ -499,10 +499,10 @@ impl NetworkHandler {
         Ok(())
     }
 
-    // Locate the last topoheight valid for syncing, this support soft forks, DAG reorgs, etc...
-    // Balances and nonce may be outdated, but we will sync them later
-    // All transactions / changes above the last valid topoheight will be deleted
-    // Returns daemon topoheight along wallet stable topoheight and if back sync is needed
+    // Locate the last topoheight valid for syncing, this supports soft forks, DAG reorgs, etc...
+    // Balances and nonce may be outdated, but we will sync them later.
+    // All transactions / changes above the last valid topoheight will be deleted.
+    // Returns daemon topoheight along wallet stable topoheight and if back sync is needed.
     async fn locate_sync_topoheight_and_clean(&self) -> Result<(u64, Hash, u64), NetworkError> {
         trace!("locating sync topoheight and cleaning");
         let info = self.api.get_info().await?;
@@ -523,8 +523,8 @@ impl NetworkHandler {
         let synced_topoheight = {
             let storage = self.wallet.get_storage().read().await;
             if storage.has_top_block_hash()? {
-                // Check that the daemon topoheight is the same as our
-                // Verify also that the top block hash is same as our
+                // Check that the daemon topoheight is the same as ours
+                // Verify also that the top block hash is same as ours
                 let top_block_hash = storage.get_top_block_hash()?;
                 let synced_topoheight = storage.get_synced_topoheight()?;
 
@@ -545,7 +545,7 @@ impl NetworkHandler {
                     let header = self.api.get_block_at_topoheight(synced_topoheight).await?;
                     let block_hash = header.hash.into_owned();
                     if block_hash == top_block_hash {
-                        // topoheight and block hash are equal, we are still on right chain
+                        // Topoheight and block hash are equal, we are still on right chain
                         return Ok((daemon_topoheight, daemon_block_hash, synced_topoheight))
                     }
                 }
@@ -570,7 +570,7 @@ impl NetworkHandler {
             }
 
             // We are under the pruned topoheight,
-            // lets assume we are on the right chain under it
+            // lets assume we are on the right chain under it.
             if maximum < pruned_topoheight {
                 maximum = pruned_topoheight;
                 break None;
@@ -626,10 +626,10 @@ impl NetworkHandler {
         Ok((daemon_topoheight, daemon_block_hash, maximum))
     }
 
-    // Sync the latest version of our balances and nonces and determine if we should parse all blocks
-    // If assets are provided, we'll only sync these assets
-    // TODO: this may bug with Smart Contract integration as we could receive a new asset and not detect it
-    // If nonce is not provided, we will fetch it from the daemon
+    // Sync the latest version of our balances and nonces and determine if we should parse all blocks.
+    // If assets are provided, we'll only sync these assets.
+    // TODO: This may cause issues with Smart Contract integration as we could receive a new asset and not detect it.
+    // If nonce is not provided, we will fetch it from the daemon.
     async fn sync_head_state(&self, address: &Address, assets: Option<HashSet<Hash>>, nonce: Option<u64>, sync_nonce: bool) -> Result<bool, Error> {
         trace!("syncing head state");
         let new_nonce = if nonce.is_some() {
@@ -667,8 +667,8 @@ impl NetworkHandler {
         trace!("assets: {}", assets.len());
 
         let mut balances: HashMap<&Hash, CiphertextCache> = HashMap::new();
-        // Store newly detected assets
-        // Get the final balance of each asset
+        // Store newly detected assets.
+        // Get the final balance of each asset.
         for asset in &assets {
             trace!("asset: {}", asset);
             // check if we have this asset locally
@@ -756,8 +756,8 @@ impl NetworkHandler {
         Ok(should_sync_blocks)
     }
 
-    // Locate the highest valid topoheight we synced to, clean wallet storage
-    // then sync again the head state
+    // Locate the highest valid topoheight we synced to,
+    // clean wallet storage, then sync the head state again.
     async fn sync(&self, address: &Address, event: Option<NewBlockEvent>) -> Result<(), Error> {
         trace!("sync");
 
@@ -778,9 +778,9 @@ impl NetworkHandler {
                     debug!("We must sync head state, assets: {}, nonce: {:?}", assets.iter().map(|a| a.to_string()).collect::<Vec<String>>().join(", "), nonce);
                     {
                         let storage = self.wallet.get_storage().read().await;
-                        // Verify that its a higher nonce than our locally stored
-                        // Because if we are building queued transactions, it may break our queue
-                        // Our we couldn't submit new txs before they get removed from mempool
+                        // Verify that its a higher nonce than our locally stored.
+                        // If we are building queued TXs, it may break our queue.
+                        // Or we couldn't submit new txs before they get removed from mempool.
                         let stored_nonce = storage.get_nonce().unwrap_or(0);
                         if nonce.is_some_and(|n| n <= stored_nonce) {
                             debug!("Nonce {:?} is lower or equal to stored nonce {}, skipping it", nonce, stored_nonce);
@@ -810,8 +810,8 @@ impl NetworkHandler {
             sync_new_blocks |= self.sync_head_state(&address, None, None, true).await?;
         }
 
-        // we have something that changed, sync transactions
-        // prevent a double sync head state if history scan is disabled
+        // We have something that changed, sync transactions.
+        // Prevent a double sync head state if history scan is disabled.
         if sync_new_blocks && self.wallet.get_history_scan() {
             debug!("Syncing new blocks");
             self.sync_new_blocks(address, wallet_topoheight, true).await?;
@@ -830,9 +830,9 @@ impl NetworkHandler {
         Ok(())
     }
 
-    // Runs an infinite loop to sync on each new block added in chain
-    // Because of potential forks and DAG reorg during attacks,
-    // we verify the last valid topoheight where changes happened
+    // Runs an infinite loop to sync on each new block added in chain.
+    // Due to potential forks and DAG reorg during attacks,
+    // we verify the last valid topoheight where changes happened.
     async fn start_syncing(self: &Arc<Self>) -> Result<(), Error> {
         debug!("Starting syncing");
         // Generate only one time the address
@@ -840,15 +840,15 @@ impl NetworkHandler {
         // Do a first sync to be up-to-date with the daemon
         self.sync(&address, None).await?;
 
-        // Thanks to websocket, we can be notified when a new block is added in chain
-        // this allows us to have a instant sync of each new block instead of polling periodically
+        // Thanks to websocket, we can be notified when a new block is added in chain.
+        // This allows us to have a instant sync of each new block instead of polling periodically.
 
-        // Because DAG can reorder any blocks in stable height, its possible we missed some txs because they were not executed
-        // when the block was added. We must check on DAG reorg for each block just to be sure
+        // Because DAG can reorder any blocks in stable height, its possible we missed some TXs because they were not executed
+        // when the block was added. We must check on DAG reorg for each block just to be sure.
         let mut on_block_ordered = self.api.on_block_ordered_event().await?;
 
-        // For better security, verify that an orphaned TX isn't in our ledger
-        // This is rare event but may happen if someone try to do something shady
+        // For better security, verify that an orphaned TX isn't in our ledger.
+        // This is rare event but may happen if someone tries to do something shady.
         let mut on_transaction_orphaned = self.api.on_transaction_orphaned_event().await?;
 
         // Network events to detect if we are online or offline
@@ -859,8 +859,8 @@ impl NetworkHandler {
             select! {
                 biased;
                 // Wait on a new block, we don't parse the block directly as it may
-                // have reorg the chain
-                // Wait on a new block ordered in DAG
+                // have reorged on the chain.
+                // Wait on a new block ordered in DAG.
                 res = on_block_ordered.next() => {
                     let event = res?;
                     debug!("Block ordered event {} at {}", event.block_hash, event.topoheight);
@@ -875,8 +875,8 @@ impl NetworkHandler {
                                     debug!("Deleting all transactions due to reorg until 0");
                                     storage.delete_transactions()?;
                                 } else {
-                                    // TODO we should make a faster way to delete all TXs above this topoheight
-                                    // Otherwise in future with millions of TXs, this may take few seconds.
+                                    // TODO: We should make a faster way to delete all TXs above this topoheight
+                                    // otherwise in the future with millions of TXs, this may take few seconds.
                                     debug!("Deleting transactions above {} due to DAG reorg", topoheight);
                                     storage.delete_transactions_above_topoheight(topoheight)?;
                                 }
@@ -886,9 +886,9 @@ impl NetworkHandler {
                         }
                     }
 
-                    // TODO delete all TXs & changes at this topoheight and above
+                    // TODO: Delete all TXs & changes at this topoheight and above.
                     // We need to clean up the DB as we may have some TXs that are not executed anymore
-                    // and some others that got executed
+                    // and some others that got executed.
 
                     // Sync this block again as it may have some TXs executed
                     let block = self.api.get_block_with_txs_at_topoheight(topoheight).await?;
@@ -936,8 +936,8 @@ impl NetworkHandler {
         };
         
         debug!("Scanning history for each asset");
-        // cache for all topoheight we already processed
-        // this will prevent us to request more than one time the same topoheight
+        // Cache for all topoheight we already processed.
+        // This will prevent us to request more than one time the same topoheight.
         let mut topoheight_processed = HashSet::new();
         let mut highest_nonce = None;
         for asset in assets {

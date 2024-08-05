@@ -3,11 +3,11 @@ use log::trace;
 use xelis_common::{crypto::Hash, serializer::Serializer};
 use crate::core::{error::{BlockchainError, DiskContext}, storage::SledStorage};
 
-// Merkle Hash provider allow to give a Hash at a specific topoheight
-// The merkle hash only contains account balances
-// Because TXs and block rewards are applied on account balances
-// Balances are the only thing that needs to be proven
-// NOTE: We are based on the topoheight because of DAG reorgs as it's the main consensus
+// Merkle Hash provider gives a hash at a specific topoheight.
+// The Merkle hash includes only account balances.
+// Transactions and block rewards affect account balances.
+// Thus, balances are the primary data that needs to be proven.
+// NOTE: We use topoheight due to DAG reorgs, as it is the main consensus metric.
 #[async_trait]
 pub trait MerkleHashProvider {
     // Get the merkle hash at a specific topoheight

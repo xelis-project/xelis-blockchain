@@ -91,17 +91,17 @@ impl TMessage for Response {
 pub struct Miner {
     // Used to display correctly its address
     mainnet: bool,
-    // timestamp of first connection
+    // Timestamp of first connection
     first_seen: TimestampMillis,
-    // public key of account (address)
+    // Public key of account (address)
     key: PublicKey,
-    // worker name
+    // Worker name
     name: String,
-    // blocks accepted by us since he is connected
+    // Blocks accepted by us miner has is connected
     blocks_accepted: IndexSet<Hash>,
-    // blocks rejected since he is connected
+    // Blocks rejected since miner has connected
     blocks_rejected: usize,
-    // timestamp of the last invalid block received
+    // Timestamp of the last invalid block received
     last_invalid_block: TimestampMillis
 }
 
@@ -210,12 +210,12 @@ impl<S: Storage> Handler<Response> for GetWorkWebSocketHandler<S> {
 pub struct GetWorkServer<S: Storage> {
     miners: Mutex<HashMap<Addr<GetWorkWebSocketHandler<S>>, Miner>>,
     blockchain: Arc<Blockchain<S>>,
-    // all potential jobs sent to miners
-    // we can keep them in cache up to STABLE_LIMIT blocks
-    // so even a late miner have a chance to not be orphaned and be included in chain
+    // All potential jobs sent to miners.
+    // We can keep them in cache up to STABLE_LIMIT blocks,
+    // so even a late miner have a chance to not be orphaned and be included in chain.
     mining_jobs: Mutex<LruCache<Hash, (BlockHeader, Difficulty)>>,
     last_header_hash: Mutex<Option<Hash>>,
-    // used only when a new TX is received in mempool
+    // Used only when a new TX is received in mempool
     last_notify: AtomicU64,
     notify_rate_limit_ms: u64
 }
@@ -228,7 +228,7 @@ impl<S: Storage> GetWorkServer<S> {
             mining_jobs: Mutex::new(LruCache::new(NonZeroUsize::new(STABLE_LIMIT as usize).unwrap())),
             last_header_hash: Mutex::new(None),
             last_notify: AtomicU64::new(0),
-            notify_rate_limit_ms: 500 // maximum one time every 500ms
+            notify_rate_limit_ms: 500 // Maximum one time every 500ms
         }
     }
 
@@ -244,16 +244,16 @@ impl<S: Storage> GetWorkServer<S> {
         &self.miners
     }
 
-    // retrieve last mining job and set random extra nonce and miner public key
-    // then, send it
+    // Retrieve last mining job, set random extra nonce and miner public key, 
+    // then send it.
     async fn send_new_job(self: Arc<Self>, addr: Addr<GetWorkWebSocketHandler<S>>, key: PublicKey) -> Result<(), InternalRpcError> {
         debug!("Sending new job to miner");
         let (mut job, version, height, difficulty) = {
             let mut hash = self.last_header_hash.lock().await;
             let mut mining_jobs = self.mining_jobs.lock().await;
             let (version, job, height, difficulty);
-            // if we have a job in cache, and we are rate limited, we can send it
-            // otherwise, we generate a new job
+            // If we have a job in cache, and we are rate limited, we can send it.
+            // Otherwise, we generate a new job.
             if let Some(hash) = hash.as_ref().filter(|_| self.is_rate_limited().0) {
                 let (header, diff) = mining_jobs.peek(hash).ok_or_else(|| {
                     error!("No mining job found! How is it possible ?");
@@ -264,7 +264,7 @@ impl<S: Storage> GetWorkServer<S> {
                 version = header.get_version();
                 difficulty = *diff;
             } else {
-                // generate a mining job
+                // Generate a mining job
                 let storage = self.blockchain.get_storage().read().await;
                 let header = self.blockchain.get_block_template_for_storage(&storage, DEV_PUBLIC_KEY.clone()).await.context("Error while retrieving block template")?;
                 (difficulty, _) = self.blockchain.get_difficulty_at_tips(&*storage, header.get_tips().iter()).await.context("Error while retrieving difficulty at tips")?;
@@ -273,7 +273,7 @@ impl<S: Storage> GetWorkServer<S> {
                 height = header.get_height();
                 version = header.get_version();
 
-                // save the mining job, and set it as last job
+                // Save the mining job, and set it as last job
                 let header_work_hash = job.get_header_work_hash();
                 *hash = Some(header_work_hash.clone());
                 mining_jobs.put(header_work_hash.clone(), (header, difficulty));
@@ -282,11 +282,11 @@ impl<S: Storage> GetWorkServer<S> {
             (job, version, height, difficulty)
         };
 
-        // set miner key and random extra nonce
+        // Set miner key and random extra nonce
         job.set_miner(Cow::Owned(key));
         OsRng.fill_bytes(job.get_extra_nonce());
 
-        // get the algorithm for the current version
+        // Get the algorithm for the current version
         let algorithm = get_pow_algorithm_for_version(version);
         let topoheight = self.blockchain.get_topo_height();
         debug!("Sending job to new miner");
@@ -303,7 +303,7 @@ impl<S: Storage> GetWorkServer<S> {
             miners.insert(addr.clone(), miner);
         }
 
-        // notify the new miner so he can work ASAP
+        // Notify the new miner so he can work ASAP
         let zelf = Arc::clone(&self);
         spawn_task("getwork-new-job", async move {
             if let Err(e) = zelf.send_new_job(addr, key).await {
@@ -320,10 +320,10 @@ impl<S: Storage> GetWorkServer<S> {
         }
     }
 
-    // this function is called when a miner send a new block
-    // we retrieve the block header saved in cache using the mining job "header_work_hash"
-    // its used to check that the job come from our server
-    // when it's found, we merge the miner job inside the block header
+    // This function is called when a miner submits a new block.
+    // We retrieve the block header saved in cache using the mining job's "header_work_hash".
+    // Its used to check that the job came from our server.
+    // When it's found, we merge the miner's job inside the block header.
     async fn accept_miner_job(&self, job: MinerWork<'_>) -> Result<(Response, Hash), InternalRpcError> {
         trace!("accept miner job");
         if job.get_miner().is_none() {
@@ -334,11 +334,11 @@ impl<S: Storage> GetWorkServer<S> {
         {
             let mining_jobs = self.mining_jobs.lock().await;
             if let Some((header, _)) = mining_jobs.peek(job.get_header_work_hash()) {
-                // job is found in cache, clone it and put miner data inside
+                // Job is found in cache, clone it and put miner data inside
                 miner_header = header.clone();
                 miner_header.apply_miner_work(job);
             } else {
-                // really old job, or miner send invalid job
+                // Really old job, or miner send invalid job
                 debug!("Job {} was not found in cache", job.get_header_work_hash());
                 return Err(InternalRpcError::InvalidParams("Job was not found in cache"))
             };
@@ -355,9 +355,9 @@ impl<S: Storage> GetWorkServer<S> {
         })
     }
 
-    // handle the incoming mining job from the miner
-    // decode the block miner, and using its header work hash, retrieve the block header
-    // if its block is rejected, resend him the job
+    // Handle the incoming mining job from the miner
+    // Decode the block miner, and using its header work hash, retrieve the block header.
+    // If its block is rejected, resend the job to the miner.
     pub async fn handle_block_for(self: Arc<Self>, addr: Addr<GetWorkWebSocketHandler<S>>, submitted_work: SubmitMinerWorkParams) {
         trace!("handle block for");
         let (response, hash) = match MinerWork::from_hex(submitted_work.miner_work) {
@@ -374,7 +374,7 @@ impl<S: Storage> GetWorkServer<S> {
             }
         };
 
-        // update miner stats
+        // Update miner stats
         {
             let mut miners = self.miners.lock().await;
             if let Some(miner) = miners.get_mut(&addr) {
@@ -425,17 +425,16 @@ impl<S: Storage> GetWorkServer<S> {
         });
     }
 
-    // check if the last notify is older than the rate limit
-    // if it's the case, we can notify miners
-    // Returns a tuple with a boolean indicating if the rate limit is reached, and the current timestamp
+    // Check if the last notify is older than the rate limit.
+    // If thats the case, we can notify miners.
+    // Returns a tuple with a boolean indicating if the rate limit is reached, and the current timestamp.
     fn is_rate_limited(&self) -> (bool, TimestampMillis) {
         let now = get_current_time_in_millis();
         let last_notify = self.last_notify.load(Ordering::SeqCst);
         (now - last_notify < self.notify_rate_limit_ms, now)
     }
 
-    // notify every miners connected to the getwork server
-    // each miner have his own task so nobody wait on other
+    // If the rate limit has not yet been reached, notify the miners
     pub async fn notify_new_job_rate_limited(&self) -> Result<(), InternalRpcError> {
         let (rate_limit_reached, now) = self.is_rate_limited();
         if rate_limit_reached {
@@ -447,12 +446,12 @@ impl<S: Storage> GetWorkServer<S> {
         self.notify_new_job().await
     }
 
-    // notify every miners connected to the getwork server
-    // each miner have his own task so nobody wait on other
+    // Notify every miner connected to the getwork server.
+    // Each miner has its own task, so no miner waits for others.
     pub async fn notify_new_job(&self) -> Result<(), InternalRpcError> {
         trace!("notify new job");
-        // Check that there is at least one miner connected
-        // otherwise, no need to build a new job
+        // Check that there is at least one miner connected.
+        // Otherwise, no need to build a new job.
         {
             let miners = self.miners.lock().await;
             if miners.is_empty() {
@@ -473,7 +472,7 @@ impl<S: Storage> GetWorkServer<S> {
         let height = header.get_height();
         let version = header.get_version();
 
-        // save the header used for job in cache
+        // Save the header used for job in cache
         {
             let header_work_hash = job.get_header_work_hash();
             let mut last_header_hash = self.last_header_hash.lock().await;
@@ -482,14 +481,14 @@ impl<S: Storage> GetWorkServer<S> {
             mining_jobs.put(header_work_hash.clone(), (header, difficulty));
         }
 
-        // now let's send the job to every miner
+        // Now let's send the job to every miner
         let mut miners = self.miners.lock().await;
         miners.retain(|addr, _| addr.connected());
 
-        // get the algorithm for the current version
+        // Get the algorithm for the current version
         let algorithm = get_pow_algorithm_for_version(version);
-        // Also send the node topoheight to miners
-        // This is for visual purposes only
+        // Send the node topoheight to miners.
+        // This is for visual purposes only.
         let topoheight = self.blockchain.get_topo_height();
 
         for (addr, miner) in miners.iter() {
@@ -500,8 +499,8 @@ impl<S: Storage> GetWorkServer<S> {
             OsRng.fill_bytes(job.get_extra_nonce());
             let template = job.to_hex();
 
-            // New task for each miner in case a miner is slow
-            // we don't want to wait for him
+            // Create a new task for each miner to avoid delays.
+            // This ensures that we don't have to wait for a slow miner.
             spawn_task("getwork-notify-new-job", async move {
                 match addr.send(Response::NewJob(GetMinerWorkResult { algorithm, miner_work: template, height, topoheight, difficulty })).await {
                     Ok(request) => {

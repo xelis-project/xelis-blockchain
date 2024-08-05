@@ -116,21 +116,21 @@ impl From<RPCTransactionType<'_>> for TransactionType {
 
 // This is exactly the same as the one in xelis_common/src/transaction/mod.rs
 // We use this one for serde (de)serialization
-// So we have addresses displayed as strings and not Public Key as bytes
-// This is much more easier for developers relying on the API
+// So we have addresses displayed as strings and not Public Key as bytes.
+// This is much more easier for developers relying on the API.
 #[derive(Serialize, Deserialize, Clone)]
 pub struct RPCTransaction<'a> {
     pub hash: Cow<'a, Hash>,
     /// Version of the transaction
     pub version: TxVersion,
-    // Source of the transaction
+    /// Source of the transaction
     pub source: Address,
     /// Type of the transaction
     pub data: RPCTransactionType<'a>,
     /// Fees in XELIS
     pub fee: u64,
-    /// nonce must be equal to the one on chain account
-    /// used to prevent replay attacks and have ordered transactions
+    /// Nonce must be equal to the one on chain account
+    /// Used to prevent replay attacks and have ordered transactions
     pub nonce: u64,
     /// We have one source commitment and equality proof per asset used in the tx.
     pub source_commitments: Cow<'a, Vec<SourceCommitment>>,
@@ -178,12 +178,12 @@ impl<'a> From<RPCTransaction<'a>> for Transaction {
 }
 
 // We create a type above it so for deserialize we can use this type directly
-// and not have to specify the lifetime
+// and not have to specify the lifetime.
 pub type TransactionResponse = RPCTransaction<'static>;
 
 #[derive(Serialize, Deserialize)]
 pub struct SplitAddressParams {
-    // address which must be in integrated form
+    // Address which must be in integrated form
     pub address: Address
 }
 
@@ -203,7 +203,7 @@ fn default_true_value() -> bool {
     true
 }
 
-// same here
+// Same here
 fn default_false_value() -> bool {
     false
 }

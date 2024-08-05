@@ -74,7 +74,7 @@ impl ProtocolTranscript for Transcript {
         }
     }
 
-    // domain separators
+    // Domain separators
 
     fn new_commitment_eq_proof_domain_separator(&mut self) {
         self.append_message(b"dom-sep", b"new-commitment-proof");
