@@ -282,15 +282,8 @@ impl Transaction {
                 }
             }
 
-            // TODO: this is temporary until the hardfork has passed
-            let max_size = if state.get_block_version() == BlockVersion::V0 {
-                EXTRA_DATA_LIMIT_SIZE
-            } else {
-                EXTRA_DATA_LIMIT_SUM_SIZE
-            };
-
             // Check the sum of extra data size
-            if extra_data_size > max_size {
+            if extra_data_size > EXTRA_DATA_LIMIT_SUM_SIZE {
                 return Err(VerificationError::TransactionExtraDataSize);
             }
 
