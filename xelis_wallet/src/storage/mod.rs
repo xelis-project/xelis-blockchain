@@ -296,6 +296,14 @@ impl EncryptedStorage {
         Ok(tree)
     }
 
+    // Clear all entries from the custom tree
+    pub fn clear_custom_tree(&self, name: impl Into<String>) -> Result<()> {
+        trace!("clear custom tree");
+        let tree = self.get_custom_tree(name)?;
+        tree.clear()?;
+        Ok(())
+    }
+
     // Store a custom serializable data 
     pub fn set_custom_data(&mut self, tree: impl Into<String>, key: &DataValue, value: &DataElement) -> Result<()> {
         trace!("set custom data");
