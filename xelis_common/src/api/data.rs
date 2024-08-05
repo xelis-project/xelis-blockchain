@@ -420,6 +420,13 @@ impl DataValue {
         }
     }
 
+    pub fn as_type<T: Serializer>(&self) -> Result<T, DataConversionError> {
+        match self {
+            Self::Blob(v) => T::from_bytes(&v).map_err(|_| DataConversionError::UnexpectedValue(self.kind())),
+            _ => Err(DataConversionError::UnexpectedValue(self.kind()))
+        }
+    }
+
     fn read_with_type(reader: &mut Reader, value_type: ValueType) -> Result<Self, ReaderError> {
         Ok(match value_type {
             ValueType::Bool => Self::Bool(reader.read_bool()?),
