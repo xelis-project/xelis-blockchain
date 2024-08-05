@@ -416,8 +416,11 @@ impl NetworkHandler {
     async fn get_balance_and_transactions(&self, topoheight_processed: &mut HashSet<u64>, address: &Address, asset: &Hash, min_topoheight: u64, balances: bool, highest_nonce: &mut Option<u64>) -> Result<(), Error> {
         // Retrieve the highest version
         let (mut topoheight, mut version) = self.api.get_balance(address, asset).await.map(|res| (res.topoheight, res.version))?;
+        debug!("Starting sync from topoheight {} for asset {}", topoheight, asset);
+
         // don't sync already synced blocks
         if min_topoheight >= topoheight {
+            debug!("Reached minimum topoheight {}, topo: {}", min_topoheight, topoheight);
             return Ok(())
         }
 
