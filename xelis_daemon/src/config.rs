@@ -55,7 +55,7 @@ pub const STABLE_LIMIT: u64 = 8; // in how many height we consider the block sta
 // but due to a bug in the function to calculate the dev fee reward,
 // the actual emission was directly set to 10% per block
 // New emission rules are: 10% during 1.5 years, then 5% for the rest.
-// This is functionally the same for the project but slightly reduce the mining cost as they receive 5% more.
+// This is functionally the same for the project but is slightly better for miners as they receive 5% more.
 pub const DEV_FEES: [DevFeeThreshold; 2] = [
     // Activated for 3M blocks
     DevFeeThreshold {
