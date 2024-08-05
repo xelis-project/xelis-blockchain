@@ -137,6 +137,7 @@ mod tests {
         assert_eq!(format_xelis(FEE_PER_KB), "0.00010000");
         assert_eq!(format_xelis(FEE_PER_TRANSFER), "0.00005000");
         assert_eq!(format_xelis(COIN_VALUE), "1.00000000");
+        assert_eq!(format_xelis(1), "0.00000001");
     }
 
     #[test]
