@@ -40,7 +40,7 @@ use xelis_common::{
         XELIS_ASSET
     },
     context::Context,
-    crypto::Hash,
+    crypto::{Address, AddressType, Hash},
     difficulty::{
         CumulativeDifficulty,
         Difficulty
@@ -320,6 +320,7 @@ pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>
     handler.register_method("validate_address", async_handler!(validate_address::<S>));
     handler.register_method("split_address", async_handler!(split_address::<S>));
     handler.register_method("extract_key_from_address", async_handler!(extract_key_from_address::<S>));
+    handler.register_method("make_integrated_address", async_handler!(make_integrated_address::<S>));
 
     if allow_mining_methods {
         handler.register_method("get_block_template", async_handler!(get_block_template::<S>));
@@ -1015,7 +1016,7 @@ async fn get_account_history<S: Storage>(context: &Context, body: Value) -> Resu
 
     let is_dev_address = *key == *DEV_PUBLIC_KEY;
     while let Some((topo, prev_nonce, versioned_balance)) = version.take() {
-        trace!("Searching history of {} ({}) at topoheight {}, nonce: {:?}", params.address, params.asset, topo, prev_nonce);
+        trace!("Searching history of {} ({}) at topoheight {}, nonce: {:?}, type: {:?}", params.address, params.asset, topo, prev_nonce, versioned_balance.get_balance_type());
         if topo < minimum_topoheight || topo < pruned_topoheight {
             break;
         }
@@ -1301,8 +1302,13 @@ async fn validate_address<S: Storage>(context: &Context, body: Value) -> Result<
     }))
 }
 
-async fn extract_key_from_address<S: Storage>(_: &Context, body: Value) -> Result<Value, InternalRpcError> {
+async fn extract_key_from_address<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: ExtractKeyFromAddressParams = parse_params(body)?;
+
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    if params.address.is_mainnet() != blockchain.get_network().is_mainnet() {
+        return Err(InternalRpcError::InvalidParamsAny(BlockchainError::InvalidNetwork.into()))
+    }
 
     if params.as_hex {
         Ok(json!(ExtractKeyFromAddressResult::Hex(params.address.get_public_key().to_hex())))
@@ -1313,9 +1319,14 @@ async fn extract_key_from_address<S: Storage>(_: &Context, body: Value) -> Resul
 
 
 // Split an integrated address into its address and data
-async fn split_address<S: Storage>(_: &Context, body: Value) -> Result<Value, InternalRpcError> {
+async fn split_address<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: SplitAddressParams = parse_params(body)?;
     let address = params.address;
+
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    if address.is_mainnet() != blockchain.get_network().is_mainnet() {
+        return Err(InternalRpcError::InvalidParamsAny(BlockchainError::InvalidNetwork.into()))
+    }
 
     let (data, address) = address.extract_data();
     let integrated_data = data.ok_or(InternalRpcError::InvalidParams("Address is not an integrated address"))?;
@@ -1325,4 +1336,21 @@ async fn split_address<S: Storage>(_: &Context, body: Value) -> Result<Value, In
         integrated_data,
         size,
     }))
+}
+
+async fn make_integrated_address<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
+    let params: MakeIntegratedAddressParams = parse_params(body)?;
+
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    if params.address.is_mainnet() != blockchain.get_network().is_mainnet() {
+        return Err(InternalRpcError::InvalidParamsAny(BlockchainError::InvalidNetwork.into()))
+    }
+
+    if !params.address.is_normal() {
+        return Err(InternalRpcError::InvalidParams("Address is not a normal address"))
+    }
+
+    let address = Address::new(params.address.is_mainnet(), AddressType::Data(params.integrated_data.into_owned()), params.address.into_owned().to_public_key());
+
+    Ok(json!(address))
 }
