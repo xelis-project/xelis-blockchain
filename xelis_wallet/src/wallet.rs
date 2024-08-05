@@ -64,7 +64,6 @@ use crate::{
 };
 #[cfg(feature = "network_handler")]
 use {
-    std::collections::HashSet,
     log::warn,
     crate::{
         network_handler::{
@@ -661,7 +660,7 @@ impl Wallet {
                     if use_stable_balance {
                         warn!("Using stable balance for TX creation");
                         let address = self.get_address();
-                        for asset in &used_assets {
+                        for asset in used_assets.iter() {
                             debug!("Searching stable balance for asset {}", asset);
                             let stable_point = network_handler.get_api().get_stable_balance(&address, &asset).await?;
 
@@ -675,7 +674,7 @@ impl Wallet {
                                 ciphertext
                             };
 
-                            storage.set_unconfirmed_balance_for(asset.clone(), balance).await?;
+                            storage.set_unconfirmed_balance_for((*asset).clone(), balance).await?;
                             // Build the stable reference
                             // We need to find the highest stable point
                             if reference.is_none() || reference.as_ref().is_some_and(|r| r.topoheight < stable_point.stable_topoheight) {
@@ -715,12 +714,12 @@ impl Wallet {
         for asset in used_assets {
             trace!("Checking balance for asset {}", asset);
             if !storage.has_balance_for(&asset).await? {
-                return Err(WalletError::BalanceNotFound(asset));
+                return Err(WalletError::BalanceNotFound(asset.clone()));
             }
 
             let (balance, unconfirmed) = storage.get_unconfirmed_balance_for(&asset).await?;
             info!("Adding balance (unconfirmed: {}) for asset {} with amount {}, ciphertext: {}", unconfirmed, asset, balance.amount, balance.ciphertext);
-            state.add_balance(asset, balance);
+            state.add_balance(asset.clone(), balance);
         }
 
         #[cfg(feature = "network_handler")]
@@ -763,17 +762,12 @@ impl Wallet {
         if let FeeBuilder::Multiplier(_) = fee {
             // To pay exact fees needed, we must verify that we don't have to pay more than needed
             let used_keys = transaction_type.used_keys();
-            let mut processed_keys = HashSet::new();
             if !used_keys.is_empty() {
                 trace!("Checking if destination keys are registered");
                 if let Some(network_handler) = self.network_handler.lock().await.as_ref() {
                     if network_handler.is_running().await {
                         trace!("Network handler is running, checking if keys are registered");
                         for key in used_keys {
-                            if processed_keys.contains(&key) {
-                                continue;
-                            }
-
                             let addr = key.as_address(self.network.is_mainnet());
                             trace!("Checking if {} is registered in stable height", addr);
                             let registered = network_handler.get_api().is_account_registered(&addr, true).await?;
@@ -781,8 +775,6 @@ impl Wallet {
                             if registered {
                                 state.add_registered_key(addr.to_public_key());
                             }
-
-                            processed_keys.insert(key);
                         }
                     }
                 }
