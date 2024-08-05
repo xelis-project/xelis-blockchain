@@ -589,6 +589,49 @@ NOTE: If `as_hex` is `false`, the response result will contains a field named `b
 }
 ```
 
+#### Make Integrated Address
+Create an integrated address using a wallet address and data to include.
+
+##### Method `make_integrated_address`
+
+##### Parameters
+|   Name  |   Type  | Required |                                 Note                                 |
+|:-------:|:-------:|:--------:|:--------------------------------------------------------------------:|
+| address | Address | Required | Address to split in two parts: original address, and integrated data |
+
+##### Request
+```json
+{
+	"jsonrpc": "2.0",
+	"method": "make_integrated_address",
+	"id": 1,
+	"params": {
+		"address": "xet:6eadzwf5xdacts6fs4y3csmnsmy4mcxewqt3xyygwfx0hm0tm32sqxdy9zk",
+		"integrated_data": {
+			"hello": "world",
+			"items": {
+				"sword": 5
+			},
+			"words": [
+				"Hello",
+				"World",
+				"from",
+				"XELIS"
+			]
+		}
+	}
+}
+```
+
+##### Response
+```json
+{
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": "xel:6eadzwf5xdacts6fs4y3csmnsmy4mcxewqt3xyygwfx0hm0tm32szqsrqyzkjar9d4esyqgpq4ehwmmjvsqqypgpq45x2mrvduqqzpthdaexceqpq4mk7unywvqsgqqpq4yx2mrvduqqzp2hdaexceqqqyzxvun0d5qqzp2cg4xyj5ct5udlg"
+}
+```
+
 #### Get Block Template
 Retrieve the block template (Block Header) for PoW work.
 
