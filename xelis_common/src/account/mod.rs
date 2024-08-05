@@ -173,7 +173,7 @@ impl Display for CiphertextCache {
         write!(f, "CiphertextCache[{}]", match self {
             Self::Compressed(c) => format!("Compressed({})", hex::encode(&c.to_bytes())),
             Self::Decompressed(e) => format!("Decompressed({})", hex::encode(&e.compress().to_bytes())),
-            Self::Both(c, _, dirty) => format!("Both({}, dirty: {dirty})", hex::encode(&c.to_bytes()))
+            Self::Both(c, d, dirty) => format!("Both(c: {}, d: {}, dirty: {dirty})", hex::encode(&c.to_bytes()), hex::encode(&d.compress().to_bytes()))
         })
     }
 }
