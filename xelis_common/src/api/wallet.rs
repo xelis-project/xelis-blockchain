@@ -35,6 +35,7 @@ pub struct BuildTransactionOfflineParams {
     #[serde(flatten)]
     pub tx_type: TransactionTypeBuilder,
     // Fixed fee is required and must be checked before calling this
+    #[serde(default)]
     pub fee: FeeBuilder,
     // Returns the TX in HEX format also
     #[serde(default = "default_false_value")]
