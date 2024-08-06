@@ -725,18 +725,24 @@ impl Wallet {
         #[cfg(feature = "network_handler")]
         self.add_registered_keys_for_fees_estimation(state.as_mut(), &fee, &transaction_type).await?;
 
+        let transaction = self.create_transaction_with(&mut state, transaction_type, fee)?;
+        Ok((state, transaction))
+    }
+
+    // Create the transaction with all needed parameters
+    pub fn create_transaction_with(&self, state: &mut TransactionBuilderState, transaction_type: TransactionTypeBuilder, fee: FeeBuilder) -> Result<Transaction, WalletError> {
         // Create the transaction builder
         let builder = TransactionBuilder::new(TxVersion::V0, self.get_public_key().clone(), transaction_type, fee);
 
         // Build the final transaction
-        let transaction = builder.build(&mut state, &self.inner.keypair)
+        let transaction = builder.build(state, &self.inner.keypair)
             .map_err(|e| WalletError::Any(e.into()))?;
 
         let tx_hash = transaction.hash();
         debug!("Transaction created: {} with nonce {} and reference {}", tx_hash, transaction.get_nonce(), transaction.get_reference());
         state.set_tx_hash_built(tx_hash);
 
-        Ok((state, transaction))
+        Ok(transaction)
     }
 
     // submit a transaction to the network through the connection to daemon

@@ -4,6 +4,7 @@ use xelis_common::{
     api::{
         wallet::{
             BuildTransactionParams,
+            BuildTransactionOfflineParams,
             DeleteParams,
             EstimateFeesParams,
             GetAddressParams,
@@ -43,8 +44,10 @@ use xelis_common::{
 };
 use serde_json::{Value, json};
 use crate::{
-    wallet::Wallet,
-    error::WalletError
+    error::WalletError,
+    storage::Balance,
+    transaction_builder::TransactionBuilderState,
+    wallet::Wallet
 };
 use super::xswd::XSWDWebSocketHandler;
 use log::{info, warn};
@@ -65,6 +68,7 @@ pub fn register_methods(handler: &mut RPCHandler<Arc<Wallet>>) {
     handler.register_method("get_asset_precision", async_handler!(get_asset_precision));
     handler.register_method("get_transaction", async_handler!(get_transaction));
     handler.register_method("build_transaction", async_handler!(build_transaction));
+    handler.register_method("build_transaction_offline", async_handler!(build_transaction_offline));
     handler.register_method("clear_tx_cache", async_handler!(clear_tx_cache));
     handler.register_method("list_transactions", async_handler!(list_transactions));
     handler.register_method("is_online", async_handler!(is_online));
@@ -276,6 +280,38 @@ async fn build_transaction(context: &Context, body: Value) -> Result<Value, Inte
         .context("Error while applying state changes")?;
 
     // returns the created TX and its hash
+    Ok(json!(TransactionResponse {
+        tx_as_hex: if params.tx_as_hex {
+            Some(hex::encode(tx.to_bytes()))
+        } else {
+            None
+        },
+        inner: DataHash {
+            hash: Cow::Owned(tx.hash()),
+            data: Cow::Owned(tx)
+        }
+    }))
+}
+
+// Build a transaction by giving the encrypted balances directly
+async fn build_transaction_offline(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
+    let params: BuildTransactionOfflineParams = parse_params(body)?;
+    let wallet: &Arc<Wallet> = context.get()?;
+
+    // Create the state with the provided balances
+    let mut state = TransactionBuilderState::new(wallet.get_network().is_mainnet(), params.reference, params.nonce);
+
+    for (hash, mut ciphertext) in params.balances {
+        let compressed = ciphertext.decompressed().context(format!("Error decompressing ciphertext {}", hash))?;
+        let amount = wallet.decrypt_ciphertext(compressed.clone()).await?;
+
+        state.add_balance(hash, Balance {
+            amount,
+            ciphertext
+        });
+    }
+
+    let tx = wallet.create_transaction_with(&mut state, params.tx_type, params.fee)?;
     Ok(json!(TransactionResponse {
         tx_as_hex: if params.tx_as_hex {
             Some(hex::encode(tx.to_bytes()))
