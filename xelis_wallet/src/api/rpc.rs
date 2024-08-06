@@ -87,6 +87,7 @@ pub fn register_methods(handler: &mut RPCHandler<Arc<Wallet>>) {
     handler.register_method("get_value_from_key", async_handler!(get_value_from_key));
     handler.register_method("store", async_handler!(store));
     handler.register_method("delete", async_handler!(delete));
+    handler.register_method("delete_tree_entries", async_handler!(delete_tree_entries));
     handler.register_method("has_key", async_handler!(has_key));
     handler.register_method("query_db", async_handler!(query_db));
 }
@@ -492,6 +493,16 @@ async fn delete(context: &Context, body: Value) -> Result<Value, InternalRpcErro
     let tree = get_tree_name(&context, params.tree).await?;
     let mut storage = wallet.get_storage().write().await;
     storage.delete_custom_data(&tree, &params.key)?;
+    Ok(json!(true))
+}
+
+// Delete all entries in the requested tree
+async fn delete_tree_entries(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
+    let params: DeleteParams = parse_params(body)?;
+    let wallet: &Arc<Wallet> = context.get()?;
+    let tree = get_tree_name(&context, params.tree).await?;
+    let mut storage = wallet.get_storage().write().await;
+    storage.clear_custom_tree(&tree)?;
     Ok(json!(true))
 }
 
