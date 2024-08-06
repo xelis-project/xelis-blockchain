@@ -1,14 +1,22 @@
-use std::borrow::Cow;
+use std::{borrow::Cow, collections::HashMap};
 use serde::{Deserialize, Serialize};
 use crate::{
+    account::CiphertextCache,
     crypto::{Address, Hash},
     transaction::{
         builder::{FeeBuilder, TransactionTypeBuilder},
+        Reference,
         Transaction
     }
 };
-use super::{DataHash, DataElement, DataValue, query::Query};
-use super::{default_false_value, default_true_value};
+use super::{
+    DataHash,
+    DataElement,
+    DataValue,
+    query::Query,
+    default_false_value,
+    default_true_value
+};
 
 #[derive(Serialize, Deserialize)]
 pub struct BuildTransactionParams {
@@ -20,6 +28,25 @@ pub struct BuildTransactionParams {
     // Returns the TX in HEX format also
     #[serde(default = "default_false_value")]
     pub tx_as_hex: bool
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct BuildTransactionOfflineParams {
+    #[serde(flatten)]
+    pub tx_type: TransactionTypeBuilder,
+    // Fixed fee is required and must be checked before calling this
+    pub fee: FeeBuilder,
+    // Returns the TX in HEX format also
+    #[serde(default = "default_false_value")]
+    pub tx_as_hex: bool,
+    // Encrypted balances to use
+    // Assets spent in the transaction must be present
+    pub balances: HashMap<Hash, CiphertextCache>,
+    // Reference to use for the transaction
+    // This must point to the most up-to-date topoheight/block hash
+    pub reference: Reference,
+    // Nonce to use for the transaction
+    pub nonce: u64
 }
 
 #[derive(Serialize, Deserialize)]
