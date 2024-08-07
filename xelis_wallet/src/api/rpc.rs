@@ -40,7 +40,7 @@ use xelis_common::{
         RPCHandler
     },
     serializer::Serializer,
-    transaction::{builder::FeeBuilder, extra_data::ExtraData}
+    transaction::extra_data::ExtraData,
 };
 use serde_json::{Value, json};
 use crate::{
@@ -265,7 +265,7 @@ async fn build_transaction(context: &Context, body: Value) -> Result<Value, Inte
     // The lock is kept until the TX is applied to the storage
     // So even if we have few requests building a TX, they wait for the previous one to be applied
     let mut storage = wallet.get_storage().write().await;
-    let (mut state, tx) = wallet.create_transaction_with_storage(&storage, params.tx_type, params.fee.unwrap_or(FeeBuilder::Multiplier(1f64))).await?;
+    let (mut state, tx) = wallet.create_transaction_with_storage(&storage, params.tx_type, params.fee.unwrap_or_default(), params.nonce).await?;
 
     // if requested, broadcast the TX ourself
     if params.broadcast {
