@@ -230,7 +230,7 @@ async fn main() -> Result<()> {
 
         let precomputed_tables = Wallet::read_or_generate_precomputed_tables(config.precomputed_tables_path, LogProgressTableGenerationReportFunction)?;
         let p = Path::new(&path);
-        let wallet = if p.exists() && p.is_dir() {
+        let wallet = if p.exists() && p.is_dir() && Path::new(&format!("{}/db", path)).exists() {
             info!("Opening wallet {}", path);
             Wallet::open(path, password, config.network, precomputed_tables)?
         } else {
