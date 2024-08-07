@@ -6851,8 +6851,6 @@ It can be broadcasted or not to the network.
 |     broadcast     |     Boolean     | Optional |               Broadcast TX to daemon. By default set to true               |
 |     tx_as_hex     |     Boolean     | Optional |            Serialize TX to hexadecimal. By default set to false            |
 | transfers OR burn | TransactionType | Required |                         Transaction Type parameter                         |
-|   outgoing_flow   |     Boolean     | Optional |            Set to true by default, filter outgoing transactions            |
-|   incoming_flow   |     Boolean     | Optional |       Set to true by default, filter incoming transactions / coinbase      |
 
 Fee builder has two variants:
 - One to provide a multiplier applied on estimated fees.
