@@ -90,7 +90,7 @@ pub enum P2pError {
     #[error("Received a unrequested chain response")]
     UnrequestedChainResponse,
     #[error("Invalid chain response size, got {} blocks while maximum set was {}", _0, _1)]
-    InvaliChainResponseSize(usize, usize),
+    InvalidChainResponseSize(usize, usize),
     #[error("Received a unrequested bootstrap chain response")]
     UnrequestedBootstrapChainResponse,
     #[error("Invalid common point at topoheight {}", _0)]

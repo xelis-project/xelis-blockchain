@@ -400,7 +400,7 @@ For a much more detailed API, see the API documentation [here](API.md).
 ### WebSocket
 
 WebSocket allow JSON-RPC call and any app to be notified when a specific event happens on the daemon.
-It is running on `/ws` route on same RPC server address.
+It is running on the same route (`/json_rpc`) route / RPC server address.
 
 Example to subscribe to a registered event in the WebSocket connection:
 ```json

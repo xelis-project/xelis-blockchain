@@ -181,20 +181,20 @@ impl TransferWithCommitment {
 impl TransactionTypeBuilder {
 
     // Get the assets used in the transaction
-    pub fn used_assets(&self) -> HashSet<Hash> {
+    pub fn used_assets<'a>(&'a self) -> HashSet<&'a Hash> {
         let mut consumed = HashSet::new();
 
         // Native asset is always used. (fees)
-        consumed.insert(XELIS_ASSET);
+        consumed.insert(&XELIS_ASSET);
 
         match &self {
             TransactionTypeBuilder::Transfers(transfers) => {
                 for transfer in transfers {
-                    consumed.insert(transfer.asset.clone());
+                    consumed.insert(&transfer.asset);
                 }
             }
             TransactionTypeBuilder::Burn(payload) => {
-                consumed.insert(payload.asset.clone());
+                consumed.insert(&payload.asset);
             }
         }
 
@@ -202,13 +202,13 @@ impl TransactionTypeBuilder {
     }
 
     // Get the destination keys used in the transaction
-    pub fn used_keys(&self) -> Vec<CompressedPublicKey> {
-        let mut used_keys = Vec::new();
+    pub fn used_keys<'a>(&'a self) -> HashSet<&'a CompressedPublicKey> {
+        let mut used_keys = HashSet::new();
 
         match &self {
             TransactionTypeBuilder::Transfers(transfers) => {
                 for transfer in transfers {
-                    used_keys.push(transfer.destination.get_public_key().clone());
+                    used_keys.insert(transfer.destination.get_public_key());
                 }
             }
             TransactionTypeBuilder::Burn(_) => {}
@@ -425,8 +425,7 @@ impl TransactionBuilder {
 
         // 0.a Create the commitments
 
-        let used_assets = self.data.used_assets();
-
+        // Data is mutable only to extract extra data
         let transfers = if let TransactionTypeBuilder::Transfers(transfers) = &mut self.data {
             if transfers.len() == 0 {
                 return Err(GenerationError::EmptyTransfers);
@@ -503,6 +502,8 @@ impl TransactionBuilder {
         let reference = state.get_reference();
         let mut transcript = Transaction::prepare_transcript(self.version, &self.source, fee, nonce);
 
+        let used_assets = self.data.used_assets();
+
         let mut range_proof_openings: Vec<_> =
             iter::repeat_with(|| PedersenOpening::generate_new().as_scalar())
                 .take(used_assets.len())
@@ -562,7 +563,7 @@ impl TransactionBuilder {
                     .map_err(GenerationError::State)?;
 
                 Ok(SourceCommitment {
-                    asset,
+                    asset: asset.clone(),
                     commitment,
                     proof,
                 })

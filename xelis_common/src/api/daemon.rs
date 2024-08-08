@@ -19,7 +19,7 @@ use crate::{
     network::Network,
     time::{TimestampMillis, TimestampSeconds}
 };
-use super::{default_true_value, RPCTransaction};
+use super::{default_true_value, DataElement, RPCTransaction};
 
 #[derive(Serialize, Deserialize, PartialEq, Eq)]
 pub enum BlockType {
@@ -548,6 +548,12 @@ pub struct ExtractKeyFromAddressParams<'a> {
 pub enum ExtractKeyFromAddressResult {
     Bytes(Vec<u8>),
     Hex(String)
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct MakeIntegratedAddressParams<'a> {
+    pub address: Cow<'a, Address>,
+    pub integrated_data: Cow<'a, DataElement>
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
