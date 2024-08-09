@@ -2,11 +2,10 @@ use std::borrow::Cow;
 
 use xelis_common::{crypto::{hash, Hash, HASH_SIZE}, serializer::Serializer};
 
-// This builder is used to build a merkle tree from a list of hashes
-// It uses a bottom-up approach to build the tree
-// The tree is built by taking pairs of hashes and hashing them together
-// The resulting hash is then added to the list of hashes
-// This process is repeated until there is only one hash left
+// This builder constructs a Merkle tree from a list of hashes.
+// It uses a bottom-up approach, pairing and hashing hashes together.
+// The resulting hash from each pair is added to the list of hashes.
+// This process continues until only one hash remains.
 pub struct MerkleBuilder<'a> {
     hashes: Vec<Cow<'a, Hash>>
 }

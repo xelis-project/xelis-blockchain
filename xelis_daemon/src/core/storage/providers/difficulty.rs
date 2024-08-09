@@ -19,7 +19,7 @@ use crate::core::{
     storage::SledStorage,
 };
 
-// this trait is useful for P2p to check itself the validty of a chain
+// This trait is useful for P2p to check itself the validity of a chain
 #[async_trait]
 pub trait DifficultyProvider {
     // Get the block height using its hash
@@ -52,7 +52,7 @@ pub trait DifficultyProvider {
 
 #[async_trait]
 impl DifficultyProvider for SledStorage {
-    // TODO optimize all these functions to read only what is necessary
+    // TODO: Optimize all these functions to read only what is necessary
     async fn get_height_for_block_hash(&self, hash: &Hash) -> Result<u64, BlockchainError> {
         trace!("get height for block hash {}", hash);
         let block = self.get_block_header_by_hash(hash).await?;

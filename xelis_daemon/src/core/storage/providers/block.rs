@@ -66,7 +66,7 @@ impl BlockProvider for SledStorage {
 
         // Store transactions
         let mut txs_count = 0;
-        for (hash, tx) in block.get_transactions().iter().zip(txs) { // first save all txs, then save block
+        for (hash, tx) in block.get_transactions().iter().zip(txs) { // First save all txs, then save block
             if !self.has_transaction(hash).await? {
                 self.transactions.insert(hash.as_bytes(), tx.to_bytes())?;
                 txs_count += 1;

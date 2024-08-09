@@ -21,7 +21,7 @@ pub fn get_hard_fork_at_height(network: &Network, height: u64) -> Option<&HardFo
 }
 
 // Get the version of the hard fork at a given height
-// and returns true if there is a hard fork (version change) at that height
+// and returns true if there is a hard fork (version change) at that height.
 pub fn has_hard_fork_at_height(network: &Network, height: u64) -> (bool, BlockVersion) {
     match get_hard_fork_at_height(network, height) {
         Some(hard_fork) => (hard_fork.height == height, hard_fork.version),
@@ -42,9 +42,9 @@ pub fn get_pow_algorithm_for_version(version: BlockVersion) -> Algorithm {
     }
 }
 
-// This function checks if a version is matching the requirements
-// it split the version if it contains a `-` and only takes the first part
-// to support our git commit hash
+// This function checks if a version is matching the requirements.
+// If the version contains a `-`, split it and use only the first part,
+// which supports our git commit hash.
 fn is_version_matching_requirement(version: &str, req: &str) -> Result<bool> {
     let r = semver::VersionReq::parse(req)?;
     let str_version = match version.split_once('-') {

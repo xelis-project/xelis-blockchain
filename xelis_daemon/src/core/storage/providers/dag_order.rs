@@ -25,7 +25,7 @@ impl DagOrderProvider for SledStorage {
         self.topo_by_hash.insert(hash.as_bytes(), topoheight.to_bytes())?;
         self.hash_at_topo.insert(topoheight.to_be_bytes(), hash.as_bytes())?;
 
-        // save in cache
+        // Save in cache
         if let Some(cache) = &self.topo_by_hash_cache {
             let mut topo = cache.lock().await;
             topo.put(hash.clone(), topoheight);

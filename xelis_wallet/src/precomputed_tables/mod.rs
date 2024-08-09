@@ -31,8 +31,8 @@ use std::sync::Arc;
 use log::debug;
 use xelis_common::crypto::ecdlp;
 
-// This is a 32 bytes aligned struct
-// It is necessary for the precomputed tables points
+// This is a 32 bytes aligned struct.
+// It is necessary for the precomputed tables points.
 #[derive(bytemuck::Pod, bytemuck::Zeroable, Copy, Clone)]
 #[repr(C, align(32))]
 struct Bytes32Alignment([u8; 32]);

@@ -33,8 +33,8 @@ use zeroize::Zeroize;
 pub const BULLET_PROOF_SIZE: usize = 64;
 
 lazy_static! {
-    // Bulletproof generators: party size is max transfers * 2 + 1
-    // * 2 in case each transfer use a unique asset + 1 for xelis asset as fee and + 1 to be a power of 2
+    // Bulletproof generators: party size is max transfers * 2 + 1.
+    // * 2 in case each transfer use a unique asset + 1 for xelis asset as fee and + 1 to be a power of 2.
     pub static ref BP_GENS: BulletproofGens = BulletproofGens::new(BULLET_PROOF_SIZE, MAX_TRANSFER_COUNT * 2 + 2);
     pub static ref PC_GENS: PedersenGens = PedersenGens::default();
 }
@@ -117,7 +117,7 @@ impl BatchCollector {
 
 #[allow(non_snake_case)]
 impl CommitmentEqProof {
-    // warning: caller must make sure not to forget to hash the public key, ciphertext, commitment in the transcript as it is not done here
+    // Warning: Caller must make sure not to forget to hash the public key, ciphertext, commitment in the transcript as it is not done here
     pub fn new(
         source_keypair: &KeyPair,
         source_ciphertext: &Ciphertext,
@@ -127,7 +127,7 @@ impl CommitmentEqProof {
     ) -> Self {
         transcript.equality_proof_domain_separator();
 
-        // extract the relevant scalar and Ristretto points from the inputs
+        // Extract the relevant scalar and Ristretto points from the inputs
         let P_source = source_keypair.get_public_key().as_point();
         let D_source = source_ciphertext.handle().as_point();
 
@@ -135,7 +135,7 @@ impl CommitmentEqProof {
         let x = Scalar::from(amount);
         let r = opening.as_scalar();
 
-        // generate random masking factors that also serves as nonces
+        // Generate random masking factors that also serves as nonces
         let mut y_s = Scalar::random(&mut OsRng);
         let mut y_x = Scalar::random(&mut OsRng);
         let mut y_r = Scalar::random(&mut OsRng);
@@ -145,7 +145,7 @@ impl CommitmentEqProof {
             RistrettoPoint::multiscalar_mul(vec![&y_x, &y_s], vec![&(G), D_source]).compress();
         let Y_2 = RistrettoPoint::multiscalar_mul(vec![&y_x, &y_r], vec![&(G), &(*H)]).compress();
 
-        // record masking factors in the transcript
+        // Record masking factors in the transcript
         transcript.append_point(b"Y_0", &Y_0);
         transcript.append_point(b"Y_1", &Y_1);
         transcript.append_point(b"Y_2", &Y_2);
@@ -153,12 +153,12 @@ impl CommitmentEqProof {
         let c = transcript.challenge_scalar(b"c");
         transcript.challenge_scalar(b"w");
 
-        // compute the masked values
+        // Compute the masked values
         let z_s = &(&c * s) + &y_s;
         let z_x = &(&c * &x) + &y_x;
         let z_r = &(&c * r) + &y_r;
 
-        // zeroize random scalars
+        // Zeroize random scalars
         y_s.zeroize();
         y_x.zeroize();
         y_r.zeroize();
@@ -183,13 +183,13 @@ impl CommitmentEqProof {
     ) -> Result<(), ProofVerificationError> {
         transcript.equality_proof_domain_separator();
 
-        // extract the relevant scalar and Ristretto points from the inputs
+        // Extract the relevant scalar and Ristretto points from the inputs
         let P_source = source_pubkey.as_point();
         let C_source = source_ciphertext.commitment().as_point();
         let D_source = source_ciphertext.handle().as_point();
         let C_destination = destination_commitment.as_point();
 
-        // include Y_0, Y_1, Y_2 to transcript and extract challenges
+        // Include Y_0, Y_1, Y_2 to transcript and extract challenges
         transcript.validate_and_append_point(b"Y_0", &self.Y_0)?;
         transcript.validate_and_append_point(b"Y_1", &self.Y_1)?;
         transcript.validate_and_append_point(b"Y_2", &self.Y_2)?;
@@ -201,7 +201,7 @@ impl CommitmentEqProof {
         let w_negated = -&w;
         let ww_negated = -&ww;
 
-        // check that the required algebraic condition holds
+        // Check that the required algebraic condition holds
         let Y_0 = self
             .Y_0
             .decompress()
@@ -284,7 +284,7 @@ impl CiphertextValidityProof {
         let c = transcript.challenge_scalar(b"c");
         transcript.challenge_scalar(b"w");
 
-        // masked message and opening
+        // Masked message and opening
         let z_r = &(&c * r) + &y_r;
         let z_x = &(&c * &x) + &y_x;
 

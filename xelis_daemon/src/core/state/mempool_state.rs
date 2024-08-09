@@ -22,10 +22,10 @@ use crate::core::{
 struct Account<'a> {
     // Account nonce used to verify valid transaction
     nonce: u64,
-    // Assets ready as source for any transfer/transaction
+    // Assets ready as source for any transfer/transaction.
     // TODO: they must store also the ciphertext change
-    // It will be added by next change at each TX
-    // This is necessary to easily build the final user balance
+    // It will be added by next change at each TX.
+    // This is necessary to easily build the final user balance.
     assets: HashMap<&'a Hash, Ciphertext>
 }
 
@@ -36,8 +36,8 @@ pub struct MempoolState<'a, S: Storage> {
     storage: &'a S,
     // Receiver balances
     receiver_balances: HashMap<&'a PublicKey, HashMap<&'a Hash, Ciphertext>>,
-    // Sender accounts
-    // This is used to verify ZK Proofs and store/update nonces
+    // Sender accounts.
+    // This is used to verify ZK Proofs and store/update nonces.
     accounts: HashMap<&'a PublicKey, Account<'a>>,
     // The current stable topoheight of the chain
     stable_topoheight: u64,
@@ -66,9 +66,9 @@ impl<'a, S: Storage> MempoolState<'a, S> {
         Some(account.assets)
     }
 
-    // Retrieve the receiver balance
-    // We never store the receiver balance in mempool, only outgoing balances
-    // So we just get it from our internal cache or from storage
+    // Retrieve the receiver balance.
+    // We never store the receiver balance in mempool, only outgoing balances.
+    // So we just get it from our internal cache or from storage.
     async fn internal_get_receiver_balance<'b>(&'b mut self, account: &'a PublicKey, asset: &'a Hash) -> Result<&'b mut Ciphertext, BlockchainError> {
         match self.receiver_balances.entry(account).or_insert_with(HashMap::new).entry(asset) {
             Entry::Occupied(entry) => Ok(entry.into_mut()),
@@ -86,11 +86,11 @@ impl<'a, S: Storage> MempoolState<'a, S> {
         Ok(version.take_balance_with(output).take_ciphertext()?)
     }
 
-    // Retrieve the sender balance
+    // Retrieve the sender balance.
     // For this, we first look in our internal cache,
-    // If not found, we check in mempool cache,
-    // If still not present, we check in storage and determine using reference
-    // Which version to use
+    // if not found, we check in mempool cache,
+    // if still not present, we check in storage and determine using reference
+    // which version to use.
     async fn internal_get_sender_balance<'b>(&'b mut self, key: &'a PublicKey, asset: &'a Hash, reference: &Reference) -> Result<&'b mut Ciphertext, BlockchainError> {
         match self.accounts.entry(key) {
             Entry::Occupied(o) => {
@@ -133,8 +133,8 @@ impl<'a, S: Storage> MempoolState<'a, S> {
         }
     }
 
-    // Retrieve the account nonce
-    // Only sender accounts should be used here
+    // Retrieve the account nonce.
+    // Only sender accounts should be used here.
     async fn internal_get_account_nonce(&mut self, key: &'a PublicKey) -> Result<u64, BlockchainError> {
         match self.accounts.entry(key) {
             Entry::Occupied(o) => Ok(o.get().nonce),
@@ -155,9 +155,9 @@ impl<'a, S: Storage> MempoolState<'a, S> {
         }
     }
 
-    // Update the account nonce
-    // Only sender accounts should be used here
-    // For each TX, we must update the nonce by one
+    // Update the account nonce.
+    // Only sender accounts should be used here.
+    // For each TX, we must update the nonce by one.
     async fn internal_update_account_nonce(&mut self, account: &'a PublicKey, new_nonce: u64) -> Result<(), BlockchainError> {
         match self.accounts.entry(account) {
             Entry::Occupied(mut o) => {
@@ -207,8 +207,8 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for Mempoo
         self.internal_get_sender_balance(account, asset, reference).await
     }
 
-    /// Apply new output to a sender account
-    /// In this state, we don't need to store the output
+    /// Apply new output to a sender account.
+    /// In this state, we don't need to store the output.
     async fn add_sender_output(
         &mut self,
         _: &'a PublicKey,

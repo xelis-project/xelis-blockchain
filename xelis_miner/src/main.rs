@@ -116,15 +116,15 @@ pub struct MinerConfig {
     /// Disable the log file
     #[clap(long)]
     disable_file_logging: bool,
-    /// Disable the log filename date based
+    /// Disable the log filename date based.
     /// If disabled, the log file will be named xelis-miner.log instead of YYYY-MM-DD.xelis-miner.log
     #[clap(long)]
     disable_file_log_date_based: bool,
     /// Disable the usage of colors in log
     #[clap(long)]
     disable_log_color: bool,
-    /// Disable terminal interactive mode
-    /// You will not be able to write CLI commands in it or to have an updated prompt
+    /// Disable terminal interactive mode.
+    /// You will not be able to write CLI commands in it or to have an updated prompt.
     #[clap(long)]
     disable_interactive_mode: bool,
     /// Log filename
@@ -156,7 +156,7 @@ pub struct MinerConfig {
 enum ThreadNotification<'a> {
     NewJob(Algorithm, MinerWork<'a>, Difficulty, u64), // POW algorithm, block work, difficulty, height
     WebSocketClosed, // WebSocket connection has been closed
-    Exit // all threads must stop
+    Exit // All threads must stop
 }
 
 #[derive(Serialize, Deserialize)]
@@ -218,7 +218,7 @@ async fn main() -> Result<()> {
         warn!("Attention, the number of threads used may not be optimal, recommended is: {}", detected_threads);
     }
 
-    // broadcast channel to send new jobs / exit command to all threads
+    // Broadcast channel to send new jobs / exit command to all threads
     let (sender, _) = broadcast::channel::<ThreadNotification>(threads as usize);
     // mpsc channel to send from threads to the "communication" task.
     let (block_sender, block_receiver) = mpsc::channel::<MinerWork>(threads as usize);
@@ -229,13 +229,13 @@ async fn main() -> Result<()> {
         }
     }
 
-    // start communication task
+    // Start communication task
     let task = spawn_task("communication", communication_task(config.daemon_address, sender.clone(), block_receiver, address, config.worker));
     
     let stats_task: Option<JoinHandle<Result<()>>>;
     #[cfg(feature = "api_stats")]
     {
-        // start stats task
+        // Start stats task
         stats_task = match config.api_bind_address {
             Some(addr) => Some(spawn_task("broadcast", broadcast_stats_task(addr))),
             None => None,
@@ -250,15 +250,15 @@ async fn main() -> Result<()> {
         error!("Error on running prompt: {}", e);
     }
 
-    // send exit command to all threads to stop
+    // Send exit command to all threads to stop
     if let Err(_) = sender.send(ThreadNotification::Exit) {
         debug!("Error while sending exit message to threads");
     }
 
-    // stop the communication task
+    // Stop the communication task
     task.abort();
 
-    // stop the stats broadcast task
+    // Stop the stats broadcast task
     if let Some(stats_handle) = stats_task {
         stats_handle.abort()
     }
@@ -296,7 +296,7 @@ async fn broadcast_stats_task(broadcast_address: String) -> Result<()> {
             let length = contents.len();
             let response = format!("{status_line}{content_type}Content-Length: {length}\r\n\r\n{contents}");
 
-            // Send HTTP repsonse and close socket
+            // Send HTTP response and close socket
             AsyncWriteExt::write_all(&mut socket, response.as_bytes())
                 .await?;
             socket.shutdown().await?;
@@ -305,8 +305,8 @@ async fn broadcast_stats_task(broadcast_address: String) -> Result<()> {
 }
 
 
-// Benchmark the miner with the specified number of threads and iterations
-// It will output the total time, total iterations, time per PoW and hashrate for each number of threads
+// Benchmark the miner with the specified number of threads and iterations.
+// It will output the total time, total iterations, time per PoW and hashrate for each number of threads.
 fn benchmark(threads: usize, iterations: usize, algorithm: Algorithm) {
     info!("{0: <10} | {1: <10} | {2: <16} | {3: <13} | {4: <13}", "Threads", "Total Time", "Total Iterations", "Time/PoW (ms)", "Hashrate");
 
@@ -336,9 +336,9 @@ fn benchmark(threads: usize, iterations: usize, algorithm: Algorithm) {
     }
 }
 
-// this Tokio task will runs indefinitely until the user stop himself the miner.
+// This Tokio task will runs indefinitely until the user stops the miner himself.
 // It maintains a WebSocket connection with the daemon and notify all threads when it receive a new job.
-// Its also the task who have the job to send directly the new block found by one of the threads.
+// It is also responsible for sending the new block found by one of the threads directly to the daemon.
 // This allow mining threads to only focus on mining and receiving jobs through memory channels.
 async fn communication_task(daemon_address: String, job_sender: broadcast::Sender<ThreadNotification<'_>>, mut block_receiver: mpsc::Receiver<MinerWork<'_>>, address: Address, worker: String) {
     info!("Starting communication task");
@@ -378,7 +378,8 @@ async fn communication_task(daemon_address: String, job_sender: broadcast::Sende
         let (mut write, mut read) = client.split();
         loop {
             select! {
-                Some(message) = read.next() => { // read all messages from daemon
+                Some(message) = read.next() => {
+                    // Read all messages from daemon
                     debug!("Received message from daemon: {:?}", message);
                     match handle_websocket_message(message, &job_sender).await {
                         Ok(exit) => {
@@ -393,7 +394,8 @@ async fn communication_task(daemon_address: String, job_sender: broadcast::Sende
                         }
                     }
                 },
-                Some(work) = block_receiver.recv() => { // send all valid blocks found to the daemon
+                Some(work) = block_receiver.recv() => {
+                    // Send all valid blocks found to the daemon
                     info!("submitting new block found...");
                     let submit = serde_json::json!(SubmitMinerWorkParams { miner_work: work.to_hex() }).to_string();
                     if let Err(e) = write.send(Message::Text(submit)).await {
@@ -481,7 +483,7 @@ fn start_thread(id: u16, mut job_receiver: broadcast::Receiver<ThreadNotificatio
 
             match message {
                 ThreadNotification::WebSocketClosed => {
-                    // wait until we receive a new job, check every 100ms
+                    // Wait until we receive a new job, check every 100ms
                     while job_receiver.is_empty() {
                         thread::sleep(Duration::from_millis(100));
                     }
@@ -492,7 +494,7 @@ fn start_thread(id: u16, mut job_receiver: broadcast::Receiver<ThreadNotificatio
                 },
                 ThreadNotification::NewJob(algorithm, mut new_job, expected_difficulty, height) => {
                     debug!("Mining Thread #{} received a new job", id);
-                    // set thread id in extra nonce for more work spread between threads
+                    // Set thread id in extra nonce for more work spread between threads
                     // u16 support up to 65535 threads
                     new_job.set_thread_id_u16(id);
                     let initial_timestamp = new_job.get_timestamp();
@@ -511,7 +513,7 @@ fn start_thread(id: u16, mut job_receiver: broadcast::Receiver<ThreadNotificatio
                     let mut tries = 0;
                     while !check_difficulty_against_target(&hash, &difficulty_target) {
                         worker.increase_nonce().unwrap();
-                        // check if we have a new job pending
+                        // Check if we have a new job pending
                         // Only update every N iterations to avoid too much CPU usage
                         if tries % UPDATE_EVERY_NONCE == 0 {
                             if !job_receiver.is_empty() {
@@ -529,7 +531,7 @@ fn start_thread(id: u16, mut job_receiver: broadcast::Receiver<ThreadNotificatio
                         tries += 1;
                     }
 
-                    // compute the reference hash for easier finding of the block
+                    // Compute the reference hash for easier finding of the block
                     let block_hash = worker.get_block_hash().unwrap();
                     info!("Thread #{}: block {} found at height {} with difficulty {}", id, block_hash, height, format_difficulty(difficulty_from_hash(&hash)));
 

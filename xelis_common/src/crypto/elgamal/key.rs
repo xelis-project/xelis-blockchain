@@ -43,9 +43,9 @@ impl PublicKey {
         Self(p)
     }
 
-    // Create a new public key from a private key
-    // The public key is H^(-1) * H
-    // Private key must not be zero
+    // Create a new public key from a private key.
+    // The public key is H^(-1) * H.
+    // Private key must not be zero.
     pub fn new(secret: &PrivateKey) -> Self {
         let s = &secret.0;
         assert!(s != &Scalar::ZERO);
@@ -96,8 +96,8 @@ impl PublicKey {
 }
 
 impl PrivateKey {
-    // Create a new private key from a scalar
-    // The scalar must not be zero
+    // Create a new private key from a scalar.
+    // The scalar must not be zero.
     pub fn from_scalar(scalar: Scalar) -> Self {
         assert!(scalar != Scalar::ZERO);
 

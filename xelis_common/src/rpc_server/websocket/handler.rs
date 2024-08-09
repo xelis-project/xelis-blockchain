@@ -19,7 +19,7 @@ use crate::{
 };
 use super::{WebSocketSessionShared, WebSocketHandler};
 
-// generic websocket handler supporting event subscriptions 
+// Generic websocket handler supporting event subscriptions 
 pub struct EventWebSocketHandler<T: Sync + Send + Clone + 'static, E: Serialize + DeserializeOwned + Sync + Send + Eq + Hash + Clone + 'static> {
     events: RwLock<HashMap<WebSocketSessionShared<Self>, HashMap<E, Option<Id>>>>,
     handler: RPCHandler<T>

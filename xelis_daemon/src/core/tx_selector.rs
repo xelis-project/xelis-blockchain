@@ -16,7 +16,7 @@ use xelis_common::{
     }
 };
 
-// this struct is used to store transaction with its hash and its size in bytes
+// This struct is used to store transaction with its hash and its size in bytes
 pub struct TxSelectorEntry<'a> {
     // Hash of the transaction
     pub hash: &'a Arc<Hash>,
@@ -34,9 +34,9 @@ impl PartialEq for TxSelectorEntry<'_> {
 
 impl Eq for TxSelectorEntry<'_> {}
 
-// this struct is used to store transactions in a queue
-// and to order them by fees
-// Each Transactions is for a specific sender
+// This struct is used to store transactions in a queue
+// and to order them by fees.
+// Each Transactions is for a specific sender.
 #[derive(PartialEq, Eq)]
 struct Transactions<'a>(VecDeque<TxSelectorEntry<'a>>);
 
@@ -52,9 +52,9 @@ impl Ord for Transactions<'_> {
     }
 }
 
-// TX selector is used to select transactions from the mempool
-// It create sub groups of transactions by sender and order them by nonces
-// It joins all sub groups in a queue that is ordered by fees
+// TX selector is used to select transactions from the mempool.
+// It create sub groups of transactions by sender and order them by nonces.
+// It joins all sub groups in a queue that is ordered by fees.
 pub struct TxSelector<'a> {
     queue: BinaryHeap<Transactions<'a>>
 }
@@ -67,7 +67,7 @@ impl<'a> TxSelector<'a> {
     {
         let mut queue = BinaryHeap::new();
 
-        // push every group to the queue
+        // Push every group to the queue
         for group in groups {
             queue.push(Transactions(VecDeque::from(group)));
         }
@@ -112,12 +112,12 @@ impl<'a> TxSelector<'a> {
 
     // Get the next transaction with the highest fee
     pub fn next(&mut self) -> Option<TxSelectorEntry<'a>> {
-        // get the group with the highest fee
+        // Get the group with the highest fee
         let mut group = self.queue.pop()?;
-        // get the entry with the highest fee from this group
+        // Get the entry with the highest fee from this group
         let entry = group.0.pop_front()?;
 
-        // if its not empty, push it back to the queue
+        // If its not empty, push it back to the queue
         if !group.0.is_empty() {
             self.queue.push(group);
         }

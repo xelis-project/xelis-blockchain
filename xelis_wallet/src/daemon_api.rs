@@ -76,14 +76,14 @@ impl DaemonAPI {
         &self.client
     }
 
-    // is the websocket connection alive
+    // Is the websocket connection alive
     pub fn is_online(&self) -> bool {
         trace!("is_online");
         self.client.is_online()
     }
 
-    // Disconnect by closing the connection with node RPC
-    // This will only disconnect if there are no more references to the daemon API
+    // Disconnect by closing the connection with node RPC.
+    // This will only disconnect if there are no more references to the daemon API.
     pub async fn disconnect(self: &Arc<Self>) -> Result<bool> {
         trace!("disconnect");
         let count = Arc::strong_count(self);

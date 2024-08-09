@@ -3,7 +3,7 @@ use std::mem;
 use indexmap::IndexSet;
 
 pub struct Terminal {
-    // all commands used during its running time
+    // All commands used during its running time
     history: IndexSet<String>,
     // Index when navigating in the history
     history_index: Option<usize>,
@@ -61,7 +61,7 @@ impl Terminal {
         }
     }
 
-    // advance by one if possible the cursor
+    // Advance by one if possible the cursor
     pub fn next_cursor(&mut self) {
         let next = self.buffer.len() > self.cursor_index;
         if next {

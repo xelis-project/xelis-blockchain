@@ -7,11 +7,11 @@ use primitive_types::U256;
 use serde::{Deserialize, Serialize};
 use crate::serializer::{Reader, ReaderError, Serializer, Writer};
 
-// This is like a variable length integer but up to U256
-// It is mostly used to save difficulty and cumulative difficulty on disk
-// In memory, it keeps using U256 (32 bytes)
-// On disk it can be as small as 1 byte and as big as 33 bytes
-// First byte written is the VarUint length (1 to 32)
+// This is like a variable length integer but up to U256.
+// It is mostly used to save difficulty and cumulative difficulty on disk.
+// In memory, it keeps using U256 (32 bytes).
+// On disk it can be as small as 1 byte and as big as 33 bytes.
+// First byte written is the VarUint length (1 to 32).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub struct VarUint(U256);
 
@@ -85,7 +85,7 @@ impl Serializer for VarUint {
         Ok(Self(U256::from_big_endian(&buffer)))
     }
 
-    // no fast size impl as it's same as writing it
+    // No fast size impl as it's same as writing it
 }
 
 impl AsRef<U256> for VarUint {

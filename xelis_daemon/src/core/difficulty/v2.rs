@@ -22,8 +22,8 @@ const PROCESS_NOISE_COVAR: VarUint = VarUint::from_u64((1 << SHIFT) * SHIFT / MI
 // It is used by first blocks
 pub const P: VarUint = LEFT_SHIFT;
 
-// Calculate the required difficulty for the next block based on the solve time of the previous block
-// We are using a Kalman filter to estimate the hashrate and adjust the difficulty
+// Calculate the required difficulty for the next block based on the solve time of the previous block.
+// We are using a Kalman filter to estimate the hashrate and adjust the difficulty.
 pub fn calculate_difficulty(solve_time: TimestampMillis, previous_difficulty: Difficulty, p: VarUint, minimum_difficulty: Difficulty) -> (Difficulty, VarUint) {
     let z = previous_difficulty * MILLIS_PER_SECOND / solve_time;
     trace!("Calculating difficulty v2, solve time: {}, previous_difficulty: {}, z: {}, p: {}", format_duration(Duration::from_millis(solve_time)), format_difficulty(previous_difficulty), z, p);

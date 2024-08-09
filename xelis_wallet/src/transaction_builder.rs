@@ -7,11 +7,11 @@ use xelis_common::{
 };
 use crate::{error::WalletError, storage::{Balance, EncryptedStorage, TxCache}};
 
-// State used to estimate fees for a transaction
+// State used to estimate fees for a transaction.
 // Because fees can be higher if a destination account is not registered
-// We need to give this information during the estimation of fees
+// we need to give this information during the estimation of fees.
 pub struct EstimateFeesState {
-    // this is containing the registered keys that we are aware of
+    // This is containing the registered keys that we are aware of
     registered_keys: HashSet<PublicKey>
 }
 
@@ -39,8 +39,8 @@ impl FeeHelper for EstimateFeesState {
     }
 }
 
-// State used to build a transaction
-// It contains the balances of the wallet and the registered keys
+// State used to build a transaction.
+// It contains the balances of the wallet and the registered keys.
 pub struct TransactionBuilderState {
     inner: EstimateFeesState,
     mainnet: bool,

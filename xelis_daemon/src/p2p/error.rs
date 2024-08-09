@@ -164,7 +164,7 @@ pub enum P2pError {
     #[error("Peer sent us a peerlist faster than protocol rules, expected to wait {} seconds more", _0)]
     PeerInvalidPeerListCountdown(u64),
     #[error("Peer sent us a ping packet faster than protocol rules")]
-    PeerInvalidPingCoutdown,
+    PeerInvalidPingCountdown,
     #[error(transparent)]
     BlockchainError(#[from] Box<BlockchainError>),
     #[error("Invalid content in peerlist shared")]

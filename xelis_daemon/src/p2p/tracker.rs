@@ -236,21 +236,20 @@ impl ExpirableCache {
     }
 }
 
-// this ObjectTracker is a unique sender allows to create a queue system in one task only
-// currently used to fetch in order all txs propagated by the network
+// This ObjectTracker is a unique sender that creates a queue system within a single task.
+// Currently used to fetch all txs propagated by the network in order.
 pub struct ObjectTracker {
-    // This is used to send the request to the requester task loop
-    // it is a bounded channel, so if the queue is full, it will block the sender
+    // This is used to send the request to the requester task loop.
+    // It is a bounded channel, so if the queue is full, it will block the sender.
     request_sender: Sender<Hash>,
     // This is used to send the response to the handler task loop
     handler_sender: Sender<OwnedObjectResponse>,
-    // queue of requests with preserved order
+    // Queue of requests with preserved order
     queue: RwLock<Queue<Hash, Request>>,
-    // Group Manager for batched requests
-    // If one fail, all the group is removed
+    // Group Manager for batched requests.
+    // If one fail, all the group is removed.
     group: GroupManager,
-    // Requests that should be ignored
-    // They got canceled but already requested
+    // Requests that should be ignored as they were canceled but already requested
     cache: ExpirableCache
 }
 
@@ -276,7 +275,7 @@ impl ObjectTracker {
             cache: ExpirableCache::new()
         });
         
-        // start the requester task loop which send requests to peers
+        // Start the requester task loop which send requests to peers
         {
             let server_exit = server_exit.resubscribe();
             let zelf = zelf.clone();
@@ -285,7 +284,7 @@ impl ObjectTracker {
             });
         }
 
-        // start the handler task loop which handle the responses based on request queue order
+        // Start the handler task loop which handle the responses based on request queue order
         {
             let server_exit = server_exit.resubscribe();
             let zelf = zelf.clone();
@@ -366,7 +365,7 @@ impl ObjectTracker {
                             request.set_response(response);
                         }
                     } else {
-                        // channel closed
+                        // Channel closed
                         break;
                     }
                 },
@@ -376,9 +375,9 @@ impl ObjectTracker {
                 }
             }
     
-            // Loop through the queue in a ordered way to handle correctly the responses
-            // For this, we need to check if the first element has a response and so on
-            // If we don't have a response during too much time, we remove the request from the queue as it is probably timed out
+            // Loop through the queue in an ordered way to correctly handle the responses.
+            // For this, we need to check if the first element has a response and so on.
+            // If a response is not received within a certain time, remove the request from the queue as it has probably timed out.
             let mut queue = self.queue.write().await;
             while let Some((_, request)) = queue.peek_mut() {
                 match request.take_response() {
@@ -393,7 +392,7 @@ impl ObjectTracker {
                     },
                     None => {
                         if let Some(requested_at) = request.get_requested() {
-                            // check if the request is timed out
+                            // Check if the request is timed out
                             if requested_at.elapsed() > TIME_OUT {
                                 warn!("Request timed out for object {}", request.get_hash());
                                 let (_, request) = queue.pop().unwrap();
@@ -402,7 +401,7 @@ impl ObjectTracker {
                                 break;
                             }
                         } else {
-                            // It wasn't yet requested
+                            // The request hasn't been sent yet
                             break;
                         }
                     }
@@ -445,8 +444,8 @@ impl ObjectTracker {
         Some(request.get_response_blocker())
     }
 
-    // This function is called from P2p Server when a peer sends an object response that we requested
-    // It will pass the response to the handler task loop
+    // This function is called from P2p Server when a peer sends an object response that we requested.
+    // It will pass the response to the handler task loop.
     pub async fn handle_object_response(&self, response: OwnedObjectResponse) -> Result<(), P2pError> {
         {
             let queue = self.queue.read().await;
@@ -496,7 +495,7 @@ impl ObjectTracker {
             (listener, hash)
         };
 
-        trace!("Transfering object request {} to task", hash);
+        trace!("Transferring object request {} to task", hash);
         self.request_sender.send(hash).await?;
         Ok(listener)
     }
@@ -542,8 +541,8 @@ impl ObjectTracker {
         }
     }
 
-    // Request the object from the peer
-    // This is called from the requester task loop
+    // Request the object from the peer.
+    // This is called from the requester task loop.
     async fn request_object_from_peer_internal(&self, request_hash: Hash) {
         debug!("Requesting object with hash {}", request_hash);
         let mut queue = self.queue.write().await;
@@ -551,7 +550,7 @@ impl ObjectTracker {
         let fail = if let Some(request) = queue.get_mut(&request_hash) {
             request.set_requested();
             let packet = Bytes::from(Packet::ObjectRequest(Cow::Borrowed(request.get_object())).to_bytes());
-            // send the packet to the Peer
+            // Send the packet to the Peer
             let peer = request.get_peer();
             if peer.get_connection().is_closed() {
                 warn!("Peer {} is disconnected but still has a pending request object {}", peer, request_hash);

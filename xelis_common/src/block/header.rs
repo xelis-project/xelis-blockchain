@@ -150,9 +150,9 @@ impl BlockHeader {
         self.txs_hashes.len()
     }
 
-    // Build the header work (immutable part in mining process)
-    // This is the part that will be used to compute the header work hash
-    // See get_work_hash function and get_serialized_header for final hash computation
+    // Build the header work (immutable part in mining process).
+    // This is the part that will be used to compute the header work hash.
+    // See get_work_hash function and get_serialized_header for final hash computation.
     pub fn get_work(&self) -> Vec<u8> {
         let mut bytes: Vec<u8> = Vec::with_capacity(HEADER_WORK_SIZE);
 
@@ -166,7 +166,7 @@ impl BlockHeader {
         bytes
     }
 
-    // compute the header work hash (immutable part in mining process)
+    // Compute the header work hash (immutable part in mining process)
     pub fn get_work_hash(&self) -> Hash {
         hash(&self.get_work())
     }
@@ -185,7 +185,7 @@ impl BlockHeader {
         bytes
     }
 
-    // compute the block POW hash
+    // Compute the block POW hash
     pub fn get_pow_hash(&self, algorithm: Algorithm) -> Result<Hash, XelisHashError> {
         pow_hash(&self.get_serialized_header(), algorithm)
     }
@@ -261,7 +261,7 @@ impl Serializer for BlockHeader {
     }
 
     fn size(&self) -> usize {
-        // additional byte for tips count
+        // Additional byte for tips count
         let tips_size = 1 + self.tips.len() * HASH_SIZE;
         // 2 bytes for txs count (u16)
         let txs_size = 2 + self.txs_hashes.len() * HASH_SIZE;
@@ -277,8 +277,8 @@ impl Serializer for BlockHeader {
 }
 
 impl Hashable for BlockHeader {
-    // this function has the same behavior as the get_pow_hash function
-    // but we use a fast algorithm here
+    // This function has the same behavior as the get_pow_hash function
+    // but we use a fast algorithm here.
     fn hash(&self) -> Hash {
         hash(&self.get_serialized_header())
     }

@@ -5,17 +5,17 @@ use rand::rngs::OsRng;
 use thiserror::Error;
 use tokio::sync::Mutex;
 
-// This symetric key is used to encrypt/decrypt the data
+// This symmetric key is used to encrypt/decrypt the data
 pub type EncryptionKey = [u8; 32];
 
-// Each peer has its own key and can rotate as he want
-// The nonce is incremented by one on each encrypt/decrypt
-// This allows us to not send the generated nonce and reduce bandwidth usage
-// Using a 64 bits nonce is enough for our use case
-// We use the first 8 bytes to store the nonce and the last 4 bytes are set to 0
-// Also, we rotate the keys every 1 GB of data to avoid any potential attack
-// We would reach 1 GB much before the nonce overflow
-// This is a simple implementation and we can improve it later
+// Each peer has its own key and can rotate it as needed.
+// The nonce increments by one with each encryption/decryption.
+// This reduces bandwidth usage by eliminating the need to send the nonce.
+// A 64-bit nonce is sufficient for our use case.
+// The first 8 bytes store the nonce, and the last 4 bytes are set to 0.
+// Keys are rotated every 1 GB of data to mitigate potential attacks.
+// We will reach 1 GB well before the nonce overflows.
+// This is a basic implementation and can be improved in the future.
 
 struct CipherState {
     cipher: ChaCha20Poly1305,
@@ -80,12 +80,12 @@ impl Encryption {
         ChaCha20Poly1305::generate_key(&mut OsRng).into()
     }
 
-    // Encrypt a packet using the shared symetric key
+    // Encrypt a packet using the shared symmetric key
     pub async fn encrypt_packet(&self, input: &[u8]) -> Result<Vec<u8>, EncryptionError> {
         let mut lock = self.our_cipher.lock().await;
         let cipher_state = lock.as_mut().ok_or(EncryptionError::WriteNotReady)?;
 
-        // fill our buffer
+        // Fill our buffer
         cipher_state.nonce_buffer[0..8].copy_from_slice(&cipher_state.nonce.to_be_bytes());
 
         // Encrypt the packet
@@ -98,12 +98,12 @@ impl Encryption {
         Ok(res)
     }
 
-    // Decrypt a packet using the shared symetric key
+    // Decrypt a packet using the shared symmetric key
     pub async fn decrypt_packet(&self, buf: &[u8]) -> Result<Vec<u8>, EncryptionError> {
         let mut lock = self.peer_cipher.lock().await;
         let cipher_state = lock.as_mut().ok_or(EncryptionError::WriteNotReady)?;
 
-        // fill our buffer
+        // Fill our buffer
         cipher_state.nonce_buffer[0..8].copy_from_slice(&cipher_state.nonce.to_be_bytes());
 
         // Decrypt packet

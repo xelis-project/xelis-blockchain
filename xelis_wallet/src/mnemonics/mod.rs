@@ -57,9 +57,9 @@ pub enum MnemonicsError {
 pub struct Language<'a> {
     // Language name, like "English" or "French"
     name: &'a str,
-    // number of utf-8 chars to use for checksum
+    // Number of utf-8 chars to use for checksum
     prefix_length: usize,
-    // list of words in the language
+    // List of words in the language
     words: [&'a str; WORDS_LIST]
 }
 
@@ -93,25 +93,25 @@ fn verify_checksum(words: &Vec<String>, prefix_len: usize) -> Result<Option<bool
 // Find the indices of the words in the languages
 fn find_indices(words: &Vec<String>) -> Result<Option<(Vec<usize>, usize)>, MnemonicsError> {
     'main: for (i, language) in LANGUAGES.iter().enumerate() {
-        // this map is used to store the indices of the words in the language
+        // This map is used to store the indices of the words in the language
         let mut language_words: HashMap<&str, usize> = HashMap::with_capacity(WORDS_LIST);
-        // build the map
+        // Build the map
         for (j, word) in language.words.iter().enumerate() {
             language_words.insert(word, j);
         }
 
-        // find the indices of the words
+        // Find the indices of the words
         let mut indices = Vec::new();
         for word in words.iter() {
             if let Some(index) = language_words.get(word.as_str()) {
                 indices.push(*index);
             } else {
-                // incorrect language for this word, try the next one
+                // Incorrect language for this word, try the next one
                 continue 'main;
             }
         }
 
-        // we were able to build the indices, now verify checksum
+        // We were able to build the indices, now verify checksum
         if !verify_checksum(&words, language.prefix_length)?.unwrap_or(true) {
             return Err(MnemonicsError::InvalidChecksum);
         }
@@ -121,7 +121,7 @@ fn find_indices(words: &Vec<String>) -> Result<Option<(Vec<usize>, usize)>, Mnem
     Ok(None)
 }
 
-// convert a words list to a Private Key (32 bytes)
+// Convert a words list to a Private Key (32 bytes)
 pub fn words_to_key(words: &Vec<String>) -> Result<PrivateKey, MnemonicsError> {
     if !(words.len() == SEED_LENGTH + 1 || words.len() == SEED_LENGTH) {
         return Err(MnemonicsError::InvalidWordsCount);

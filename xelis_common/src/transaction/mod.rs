@@ -64,7 +64,7 @@ pub struct SourceCommitment {
 pub struct TransferPayload {
     asset: Hash,
     destination: CompressedPublicKey,
-    // we can put whatever we want up to EXTRA_DATA_LIMIT_SIZE bytes
+    // We can put whatever we want up to EXTRA_DATA_LIMIT_SIZE bytes
     extra_data: Option<UnknownExtraDataFormat>,
     /// Represents the ciphertext along with `sender_handle` and `receiver_handle`.
     /// The opening is reused for both of the sender and receiver commitments.
@@ -81,7 +81,7 @@ pub struct BurnPayload {
     pub amount: u64
 }
 
-// this enum represent all types of transaction available on XELIS Network
+// This enum represent all types of transaction available on XELIS Network
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "snake_case")]
 pub enum TransactionType {
@@ -100,8 +100,8 @@ pub struct Transaction {
     data: TransactionType,
     /// Fees in XELIS
     fee: u64,
-    /// nonce must be equal to the one on chain account
-    /// used to prevent replay attacks and have ordered transactions
+    /// Nonce must be equal to the one on chain account
+    /// Used to prevent replay attacks and have ordered transactions
     nonce: u64,
     /// We have one source commitment and equality proof per asset used in the tx.
     source_commitments: Vec<SourceCommitment>,

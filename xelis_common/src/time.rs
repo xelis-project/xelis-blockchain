@@ -15,7 +15,7 @@ pub fn get_current_time() -> Duration {
     time
 }
 
-// return timestamp in seconds
+// Return timestamp in seconds
 pub fn get_current_time_in_seconds() -> TimestampSeconds {
     get_current_time().as_secs()
 }

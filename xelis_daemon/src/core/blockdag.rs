@@ -13,7 +13,7 @@ use super::{
     error::BlockchainError,
 };
 
-// sort the scores by cumulative difficulty and, if equals, by hash value
+// Sort the scores by cumulative difficulty and, if equal, by hash value
 pub fn sort_descending_by_cumulative_difficulty<T>(scores: &mut Vec<(T, CumulativeDifficulty)>)
 where
     T: AsRef<Hash>,
@@ -32,7 +32,7 @@ where
     }
 }
 
-// sort the scores by cumulative difficulty and, if equals, by hash value
+// Sort the scores by cumulative difficulty and, if equal, by hash value
 pub fn sort_ascending_by_cumulative_difficulty<T>(scores: &mut Vec<(T, CumulativeDifficulty)>)
 where
     T: AsRef<Hash>,
@@ -51,9 +51,9 @@ where
     }
 }
 
-// Sort the TIPS by cumulative difficulty
-// If the cumulative difficulty is the same, the hash value is used to sort
-// Hashes are sorted in descending order
+// Sort the TIPS by cumulative difficulty.
+// If the cumulative difficulty is the same, the hash value is used to sort.
+// Hashes are sorted in descending order.
 pub async fn sort_tips<S, I>(storage: &S, tips: I) -> Result<IndexSet<Hash>, BlockchainError>
 where
     S: Storage,
@@ -77,7 +77,7 @@ where
     }
 }
 
-// determine he lowest height possible based on tips and do N+1
+// Determine the lowest height possible based on tips and do N+1
 pub async fn calculate_height_at_tips<'a, D, I>(provider: &D, tips: I) -> Result<u64, BlockchainError>
 where
     D: DifficultyProvider,
@@ -99,7 +99,7 @@ where
     Ok(height)
 }
 
-// find the best tip based on cumulative difficulty of the blocks
+// Find the best tip based on cumulative difficulty of the blocks
 pub async fn find_best_tip_by_cumulative_difficulty<'a, D, I>(provider: &D, tips: I) -> Result<&'a Hash, BlockchainError>
 where
     D: DifficultyProvider,

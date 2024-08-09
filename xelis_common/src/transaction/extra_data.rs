@@ -43,11 +43,11 @@ pub const TAG_SIZE: usize = 16;
 
 // This error is thrown when the ciphertext is not in the expected format.
 #[derive(Error, Clone, Debug, Eq, PartialEq)]
-#[error("malformated ciphertext")]
+#[error("malformatted ciphertext")]
 pub struct CipherFormatError;
 
 /// Every transfer has its associated secret key, derived from the shared secret.
-/// We never use a key twice, then. We can reuse the same nonce everytime.
+/// We never use a key twice, then. We can reuse the same nonce every time.
 const NONCE: &[u8; 12] = b"xelis-crypto";
 
 /// This is the encrypted data, which is the result of the encryption process.
@@ -77,7 +77,7 @@ pub struct UnknownExtraDataFormat(pub Vec<u8>);
 
 // New version of Extra Data due to the issue of commitment randomness reuse
 // https://gist.github.com/kayabaNerve/b754e9ed9fa4cc2c607f38a83aa3df2a
-// We create a new opening to be independant of the amount opening.
+// We create a new opening to be independent of the amount opening.
 // This is more secure and prevent bruteforce attack from the above link.
 // We need to store 64 bytes more than previous version due to the exclusive handles created.
 pub struct ExtraData {
@@ -280,7 +280,7 @@ impl PlaintextData {
     pub fn encrypt_in_place_with_aead(mut self, key: &SharedKey) -> AEADCipher {
         let c = ChaCha20Poly1305::new(&key);
         c.encrypt_in_place(NONCE.into(), &[], &mut self.0)
-            .expect("unreachable (unsufficient capacity on a vec)");
+            .expect("unreachable (insufficient capacity on a vec)");
 
         AEADCipher(self.0)
     }

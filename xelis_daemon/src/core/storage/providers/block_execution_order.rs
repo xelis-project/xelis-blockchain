@@ -9,7 +9,7 @@ use crate::core::{
 };
 
 // This provider tracks the order in which blocks are added in the chain.
-// This is independant of the DAG order and is used for debug purposes.
+// This is independent of the DAG order and is used for debug purposes.
 #[async_trait]
 pub trait BlockExecutionOrderProvider {
     // Get the blocks execution order

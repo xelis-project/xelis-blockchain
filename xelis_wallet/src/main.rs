@@ -78,19 +78,19 @@ use {
     anyhow::Error,
 };
 
-// This struct is used to configure the RPC Server
+// This struct is used to configure the RPC Server.
 // In case we want to enable it instead of starting
-// the XSWD Server
+// the XSWD Server.
 #[cfg(feature = "api_server")]
 #[derive(Debug, clap::Args)]
 pub struct RPCConfig {
     /// RPC Server bind address
     #[clap(long)]
     rpc_bind_address: Option<String>,
-    /// username for RPC authentication
+    /// Username for RPC authentication
     #[clap(long)]
     rpc_username: Option<String>,
-    /// password for RPC authentication
+    /// Password for RPC authentication
     #[clap(long)]
     rpc_password: Option<String>
 }
@@ -116,15 +116,15 @@ pub struct Config {
     /// Disable the log file
     #[clap(long)]
     disable_file_logging: bool,
-    /// Disable the log filename date based
+    /// Disable the log filename date based.
     /// If disabled, the log file will be named xelis-wallet.log instead of YYYY-MM-DD.xelis-wallet.log
     #[clap(long)]
     disable_file_log_date_based: bool,
-    /// Disable the usage of colors in log
+    /// Disable the usage of colors in log.
     #[clap(long)]
     disable_log_color: bool,
-    /// Disable terminal interactive mode
-    /// You will not be able to write CLI commands in it or to have an updated prompt
+    /// Disable terminal interactive mode.
+    /// You will not be able to write CLI commands in it or to have an updated prompt.
     #[clap(long)]
     disable_interactive_mode: bool,
     /// Log filename
@@ -146,8 +146,7 @@ pub struct Config {
     /// Set the path for wallet storage to open/create a wallet at this location
     #[clap(long)]
     wallet_path: Option<String>,
-    /// Set the path to use for precomputed tables
-    /// 
+    /// Set the path to use for precomputed tables.
     /// By default, it will be from current directory.
     #[clap(long)]
     precomputed_tables_path: Option<String>,
@@ -168,9 +167,9 @@ pub struct Config {
     #[cfg(feature = "api_server")]
     #[clap(long)]
     enable_xswd: bool,
-    /// Disable the history scan
-    /// This will prevent syncing old TXs/blocks
-    /// Only blocks / transactions caught by the network handler will be stored, not the old ones
+    /// Disable the history scan.
+    /// This will prevent syncing old TXs/blocks.
+    /// Only blocks / transactions caught by the network handler will be stored, not the old ones.
     #[clap(long)]
     disable_history_scan: bool,
     /// Force the wallet to use a stable balance only during transactions creation.
@@ -197,22 +196,21 @@ async fn main() -> Result<()> {
 
     #[cfg(feature = "api_server")]
     {
-        // Sanity check
-        // check that we don't have both server enabled
+        // Sanity check - Check that we don't have both server enabled.
         if config.enable_xswd && config.rpc.rpc_bind_address.is_some() {
             error!("Invalid parameters configuration: RPC Server and XSWD cannot be enabled at the same time");
             return Ok(()); // exit
         }
 
-        // check that username/password is not in param if bind address is not set
+        // Check that username/password is not in param if bind address is not set
         if config.rpc.rpc_bind_address.is_none() && (config.rpc.rpc_password.is_some() || config.rpc.rpc_username.is_some()) {
             error!("Invalid parameters configuration for rpc password and username: RPC Server is not enabled");
             return Ok(())
         }
 
-        // check that username/password is set together if bind address is set
+        // Check that username/password is set together if bind address is set
         if config.rpc.rpc_bind_address.is_some() && config.rpc.rpc_password.is_some() != config.rpc.rpc_username.is_some() {
-            error!("Invalid parameters configuration: usernamd AND password must be provided");
+            error!("Invalid parameters configuration: username AND password must be provided");
             return Ok(())
         }
     }
@@ -221,7 +219,7 @@ async fn main() -> Result<()> {
     command_manager.store_in_context(config.network)?;
 
     if let Some(path) = config.wallet_path {
-        // read password from option or ask him
+        // Read password from option or ask him
         let password = if let Some(password) = config.password {
             password
         } else {
@@ -305,7 +303,7 @@ async fn xswd_handler(mut receiver: UnboundedReceiver<XSWDEvent>, prompt: Sharea
 async fn xswd_handle_request_application(prompt: &ShareablePrompt, app_state: AppStateShared, signed: bool) -> Result<PermissionResult, Error> {
     let mut message = format!("XSWD: Allow application {} ({}) to access your wallet\r\n(Y/N): ", app_state.get_name(), app_state.get_id());
     if signed {
-        message = prompt.colorize_str(Color::BrightYellow, "NOTE: Application authorizaion was already approved previously.\r\n") + &message;
+        message = prompt.colorize_str(Color::BrightYellow, "NOTE: Application authorization was already approved previously.\r\n") + &message;
     }
     let accepted = prompt.read_valid_str_value(prompt.colorize_string(Color::Blue, &message), vec!["y", "n"]).await? == "y";
     if accepted {
@@ -525,7 +523,7 @@ async fn open_wallet(manager: &CommandManager, _: ArgumentManager) -> Result<(),
         Wallet::open(dir, password, *network, precomputed_tables)?
     };
 
-    manager.message("Wallet sucessfully opened");
+    manager.message("Wallet successfully opened");
     apply_config(&wallet, #[cfg(feature = "api_server")] prompt).await;
 
     setup_wallet_command_manager(wallet, manager).await?;
@@ -546,13 +544,13 @@ async fn create_wallet(manager: &CommandManager, _: ArgumentManager) -> Result<(
     }
 
     let dir = format!("{}{}", DIR_PATH, name);
-    // check if it doesn't exists yet
+    // Check if it doesn't exists yet
     if Path::new(&dir).is_dir() {
         manager.message("Wallet already exist with this name!");
         return Ok(())
     }
 
-    // ask and verify password
+    // Ask and verify password
     let password = prompt.read_input("Password: ", true)
         .await.context("Error while reading password")?;
     let confirm_password = prompt.read_input("Confirm Password: ", true)
@@ -570,7 +568,7 @@ async fn create_wallet(manager: &CommandManager, _: ArgumentManager) -> Result<(
         Wallet::create(dir, password, None, *network, precomputed_tables)?
     };
  
-    manager.message("Wallet sucessfully created");
+    manager.message("Wallet successfully created");
     apply_config(&wallet, #[cfg(feature = "api_server")] prompt).await;
 
     // Display the seed in prompt
@@ -607,13 +605,13 @@ async fn recover_wallet(manager: &CommandManager, _: ArgumentManager) -> Result<
     }
 
     let dir = format!("{}{}", DIR_PATH, name);
-    // check if it doesn't exists yet
+    // Check if it doesn't exists yet
     if Path::new(&dir).is_dir() {
         manager.message("Wallet already exist with this name!");
         return Ok(())
     }
 
-    // ask and verify password
+    // Ask and verify password
     let password = prompt.read_input("Password: ", true)
         .await.context("Error while reading password")?;
     let confirm_password = prompt.read_input("Confirm Password: ", true)
@@ -632,7 +630,7 @@ async fn recover_wallet(manager: &CommandManager, _: ArgumentManager) -> Result<
         Wallet::create(dir, password, Some(seed), *network, precomputed_tables)?
     };
 
-    manager.message("Wallet sucessfully recovered");
+    manager.message("Wallet successfully recovered");
     apply_config(&wallet, #[cfg(feature = "api_server")] prompt).await;
 
     setup_wallet_command_manager(wallet, manager).await?;
@@ -667,7 +665,7 @@ async fn transfer(manager: &CommandManager, _: ArgumentManager) -> Result<(), Co
     let context = manager.get_context().lock()?;
     let wallet: &Arc<Wallet> = context.get()?;
 
-    // read address
+    // Read address
     let str_address = prompt.read_input(
         prompt.colorize_str(Color::Green, "Address: "),
         false
@@ -687,7 +685,7 @@ async fn transfer(manager: &CommandManager, _: ArgumentManager) -> Result<(), Co
         (balance, decimals)
     };
 
-    // read amount
+    // Read amount
     let float_amount: f64 = prompt.read(
         prompt.colorize_string(Color::Green, &format!("Amount (max: {}): ", format_coin(max_balance, decimals)))
     ).await.context("Error while reading amount")?;
@@ -727,7 +725,7 @@ async fn transfer_all(manager: &CommandManager, mut args: ArgumentManager) -> Re
     let context = manager.get_context().lock()?;
     let wallet: &Arc<Wallet> = context.get()?;
 
-    // read address
+    // Read address
     let str_address = prompt.read_input(
         prompt.colorize_str(Color::Green, "Address: "),
         false
@@ -804,7 +802,7 @@ async fn burn(manager: &CommandManager, _: ArgumentManager) -> Result<(), Comman
         (balance, decimals)
     };
 
-    // read amount
+    // Read amount
     let float_amount: f64 = prompt.read(
         prompt.colorize_string(Color::Green, &format!("Amount (max: {}): ", format_coin(max_balance, decimals)))
     ).await.context("Error while reading amount")?;
@@ -873,13 +871,13 @@ async fn history(manager: &CommandManager, mut arguments: ArgumentManager) -> Re
     let storage = wallet.get_storage().read().await;
     let mut transactions = storage.get_transactions()?;
 
-    // if we don't have any txs, no need proceed further
+    // If we don't have any txs, no need proceed further
     if transactions.is_empty() {
         manager.message("No transactions available");
         return Ok(())
     }
 
-    // desc ordered
+    // Desc ordered
     transactions.sort_by(|a, b| b.get_topoheight().cmp(&a.get_topoheight()));
     let mut max_pages = transactions.len() / TXS_PER_PAGE;
     if transactions.len() % TXS_PER_PAGE != 0 {
@@ -955,7 +953,7 @@ async fn seed(manager: &CommandManager, mut arguments: ArgumentManager) -> Resul
 
     let password = prompt.read_input("Password: ", true)
         .await.context("Error while reading password")?;
-    // check if password is valid
+    // Check if password is valid
     wallet.is_valid_password(password).await?;
 
     let language = if arguments.has_argument("language") {
@@ -1059,7 +1057,7 @@ async fn start_xswd(manager: &CommandManager, _: ArgumentManager) -> Result<(), 
     Ok(())
 }
 
-// broadcast tx if possible
+// Broadcast TX if possible
 // submit_transaction increase the local nonce in storage in case of success
 async fn broadcast_tx(wallet: &Wallet, manager: &CommandManager, tx: Transaction) {
     let tx_hash = tx.hash();

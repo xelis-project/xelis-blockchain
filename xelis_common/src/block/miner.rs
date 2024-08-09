@@ -83,18 +83,18 @@ impl fmt::Display for Algorithm {
 // This structure is used by xelis-miner which allow to compute a valid block POW hash
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MinerWork<'a> {
-    header_work_hash: Hash, // include merkle tree of tips, txs, and height (immutable)
-    timestamp: TimestampMillis, // miners can update timestamp to keep it up-to-date
+    header_work_hash: Hash, // Include merkle tree of tips, txs, and height (immutable)
+    timestamp: TimestampMillis, // Miners can update timestamp to keep it up-to-date
     nonce: u64,
     miner: Option<Cow<'a, PublicKey>>,
-    // Extra nonce so miner can write anything
-    // Can also be used to spread more the work job and increase its work capacity
+    // Extra nonce so miner can write anything.
+    // Can also be used to spread more the work job and increase its work capacity.
     extra_nonce: [u8; EXTRA_NONCE_SIZE]
 }
 
-// Worker is used to store the current work and its variant
-// Based on the variant, the worker can compute the POW hash
-// It is used by the miner to efficiently switch context in case of algorithm change
+// Worker is used to store the current work and its variant.
+// Based on the variant, the worker can compute the POW hash.
+// It is used by the miner to efficiently switch context in case of algorithm change.
 pub struct Worker<'a> {
     work: Option<(MinerWork<'a>, [u8; BLOCK_WORK_SIZE])>,
     variant: WorkVariant
@@ -198,8 +198,8 @@ impl<'a> Worker<'a> {
         Ok(hash)
     }
 
-    // Compute the block hash based on the current work
-    // This is used to get the expected block hash
+    // Compute the block hash based on the current work.
+    // This is used to get the expected block hash.
     pub fn get_block_hash(&self) -> Result<Hash, WorkerError> {
         match self.work.as_ref() {
             Some((_, cache)) => Ok(hash(cache)),
@@ -332,8 +332,8 @@ impl<'a> Serializer for MinerWork<'a> {
     }
 }
 
-// no need to override hash() as its already serialized in good format
-// This is used to get the expected block hash
+// No need to override hash() as its already serialized in good format.
+// This is used to get the expected block hash.
 impl Hashable for MinerWork<'_> {}
 
 #[cfg(test)]

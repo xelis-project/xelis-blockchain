@@ -6,24 +6,24 @@ use crate::core::{error::{BlockchainError, DiskContext}, storage::SledStorage};
 
 #[async_trait]
 pub trait AccountProvider {
-    // first time we saw this account on chain
+    // First time we saw this account on chain
     async fn get_account_registration_topoheight(&self, key: &PublicKey) -> Result<u64, BlockchainError>;
 
-    // set the registration topoheight
+    // Set the registration topoheight
     async fn set_account_registration_topoheight(&mut self, key: &PublicKey, topoheight: u64) -> Result<(), BlockchainError>;
 
     // Check if account is registered
     async fn is_account_registered(&self, key: &PublicKey) -> Result<bool, BlockchainError>;
 
-    // Check if account is registered at topoheight
-    // This will check that the registration topoheight is less or equal to the given topoheight
+    // Check if account is registered at topoheight.
+    // This will check that the registration topoheight is less or equal to the given topoheight.
     async fn is_account_registered_at_topoheight(&self, key: &PublicKey, topoheight: u64) -> Result<bool, BlockchainError>;
 
     // Delete all registrations at a certain topoheight
     async fn delete_registrations_at_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError>;
 
-    // Get registered accounts supporting pagination and filtering by topoheight
-    // Returned keys must have a nonce or a balance updated in the range given
+    // Get registered accounts supporting pagination and filtering by topoheight.
+    // Returned keys must have a nonce or a balance updated in the range given.
     async fn get_registered_keys(&self, maximum: usize, skip: usize, minimum_topoheight: u64, maximum_topoheight: u64) -> Result<IndexSet<PublicKey>, BlockchainError>;
 }
 

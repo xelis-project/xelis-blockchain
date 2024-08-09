@@ -39,10 +39,10 @@ type P2pResult<T> = Result<T, P2pError>;
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum State {
-    Pending, // connection is new, no handshake received
-    KeyExchange, // start exchanging keys
-    Handshake, // handshake received, not checked
-    Success // connection is ready
+    Pending, // Connection is new, no handshake received
+    KeyExchange, // Start exchanging keys
+    Handshake, // Handshake received, not checked
+    Success // Connection is ready
 }
 
 pub struct Connection {
@@ -50,21 +50,21 @@ pub struct Connection {
     out: bool,
     // State of the connection
     state: State,
-    // write to stream
+    // Write to stream
     write: Mutex<OwnedWriteHalf>,
-    // read from stream
+    // Read from stream
     read: Mutex<OwnedReadHalf>,
     // TCP Address
     addr: SocketAddr,
-    // total bytes read
+    // Total bytes read
     bytes_in: AtomicUsize,
-    // total bytes sent
+    // Total bytes sent
     bytes_out: AtomicUsize,
-    // total bytes sent using current key
+    // Total bytes sent using current key
     bytes_out_key: AtomicUsize,
-    // when the connection was established
+    // When the connection was established
     connected_on: TimestampSeconds,
-    // if Connection#close() is called, close is set to true
+    // If Connection#close() is called, close is set to true
     closed: AtomicBool,
     // How many key rotation we got
     rotate_key_in: AtomicUsize,
@@ -97,17 +97,15 @@ impl Connection {
         }
     }
 
-    // Do a key exchange with the peer
-    // If we are the client, we send our key first in plaintext
-    // We wait for the peer to send its key
-    // If we are the server, we send back our key
-    // NOTE: This doesn't prevent any MITM at this point
-    // Because a MITM could intercept the key and send its own key to the peer
-    // and play the role as a proxy.
-    // Afaik, there is no way to have a decentralized way to prevent MITM without trusting a third party
-    // (That's what TLS/SSL does with the CA, but it's not decentralized and it's not trustless)
-    // A potential idea would be to hardcode seed nodes keys,
-    // and each nodes share the key of other along the socket address
+    // Perform a key exchange with the peer.
+    // If we're the client, we send our key in plaintext first.
+    // We then wait for the peer to send its key.
+    // If we're the server, we respond with our key.
+    // NOTE: This does not prevent MITM attacks.
+    // A MITM could intercept the key and send its own key to the peer, acting as a proxy.
+    // Currently, there is no decentralized method to prevent MITM without a third party.
+    // TLS/SSL uses CA certificates for this purpose, but it's not decentralized or trustless.
+    // One idea is to hardcode seed node keys and have nodes share keys with each other along with their socket addresses.
     pub async fn exchange_keys(&mut self, buffer: &mut [u8]) -> P2pResult<()> {
         trace!("Exchanging keys with {}", self.addr);
 
@@ -182,11 +180,11 @@ impl Connection {
         Ok(packet)
     }
 
-    // Rotate the peer symetric key
-    // We update our state
-    // Because we use TCP and packets are read/executed in sequential order,
-    // We don't need to send a ACK to the peer to confirm the key rotation
-    // as all next packets will be encrypted with the new key and we have updated it before
+    // Rotate the peer's symmetric key.
+    // Update our state accordingly.
+    // Since we're using TCP and packets are processed in sequential order,
+    // there's no need to send an ACK to the peer for the key rotation.
+    // All subsequent packets will be encrypted with the new key, which we've updated beforehand.
     pub async fn rotate_peer_key(&self, key: EncryptionKey) -> P2pResult<()> {
         trace!("Rotating encryption key of peer {}", self.get_address());
         self.encryption.rotate_key(key, false).await?;
@@ -195,9 +193,9 @@ impl Connection {
         Ok(())
     }
 
-    // This function will send the packet to the peer without flushing the stream
-    // Packet length is ALWAYS sent in raw (not encrypted)
-    // Otherwise, we can't know how much bytes to read for each ciphertext/packet
+    // This function will send the packet to the peer without flushing the stream.
+    // Packet length is ALWAYS sent in raw (not encrypted).
+    // Otherwise, we can't know how much bytes to read for each ciphertext/packet.
     async fn send_packet_bytes_internal(&self, stream: &mut OwnedWriteHalf, packet: &[u8]) -> P2pResult<()> {
         let packet_len = packet.len() as u32;
         stream.write_all(&packet_len.to_be_bytes()).await?;
@@ -224,8 +222,8 @@ impl Connection {
         }
     }
 
-    // Send bytes to the peer
-    // Encrypt must be used all time starting handshake
+    // Send bytes to the peer.
+    // Encryption must be used at all times starting from the handshake.
     async fn send_bytes_internal(&self, packet: &[u8]) -> P2pResult<()> {
         trace!("Sending {} bytes to {}", packet.len(), self.get_address());
         let mut stream = self.write.lock().await;
@@ -286,15 +284,15 @@ impl Connection {
         Ok(packet)
     }
 
-    // Read a packet and deserialize it
-    // This will read the packet size and then read the packet bytes
+    // Read a packet and deserialize it.
+    // This will read the packet size and then read the packet bytes.
     pub async fn read_packet(&self, buf: &mut [u8], max_size: u32) -> P2pResult<Packet<'static>> {
         let bytes = self.read_packet_bytes(buf, max_size).await?;
         self.read_packet_from_bytes(&bytes).await
     }
 
-    // Read the packet size, this is always sent in raw (not encrypted)
-    // And packet size must be a u32 in big endian
+    // Read the packet size, this is always sent in raw (not encrypted).
+    // Packet size must be a u32 in big endian.
     async fn read_packet_size(&self, stream: &mut OwnedReadHalf, buf: &mut [u8], max_usize: u32) -> P2pResult<u32> {
         let read = self.read_bytes_from_stream(stream, &mut buf[0..4]).await?;
         if read != 4 {
@@ -317,8 +315,8 @@ impl Connection {
         Ok(size)
     }
 
-    // Read all bytes until the the buffer is full with the requested size
-    // This support fragmented packets and encryption
+    // Read all bytes until the the buffer is full with the requested size.
+    // This support fragmented packets and encryption.
     async fn read_all_bytes(&self, stream: &mut OwnedReadHalf, buf: &mut [u8], mut left: u32) -> P2pResult<Vec<u8>> {
         let buf_size = buf.len() as u32;
         let mut bytes = Vec::new();
@@ -342,9 +340,9 @@ impl Connection {
         }
     }
 
-    // this function will wait until something is sent to the socket if it's in blocking mode
-    // this return the size of data read & set in the buffer.
-    // used to only lock one time the stream and read on it
+    // This function waits until data is sent to the socket if it's in blocking mode.
+    // It returns the size of the data read and set in the buffer.
+    // This ensures the stream is locked only once and data is read efficiently.
     async fn read_bytes_from_stream_internal(&self, stream: &mut OwnedReadHalf, buf: &mut [u8]) -> P2pResult<usize> {
         let mut read = 0;
         let buf_len = buf.len();
@@ -363,10 +361,10 @@ impl Connection {
         Ok(read)
     }
 
-    // this function will wait until something is sent to the socket if it's in blocking mode
-    // this return the size of data read & set in the buffer.
-    // used to only lock one time the stream and read on it
-    // on any error, it will considered as disconnected
+    // This function waits until something is sent to the socket if it's in blocking mode.
+    // It returns the size of the data read and set in the buffer.
+    // This ensures the stream is locked only once and data is read efficiently.
+    // Any error encountered will be treated as a disconnection.
     async fn read_bytes_from_stream(&self, stream: &mut OwnedReadHalf, buf: &mut [u8]) -> P2pResult<usize> {
         match self.read_bytes_from_stream_internal(stream, buf).await {
             Ok(read) => Ok(read),
@@ -378,8 +376,8 @@ impl Connection {
         }
     }
 
-    // Close internal close directly the stream
-    // This must be called only from the write connection task
+    // Close internal close directly the stream.
+    // This must be called only from the write connection task.
     pub async fn close(&self) -> P2pResult<()> {
         trace!("Closing internal connection with {}", self.addr);
         if self.closed.swap(true, Ordering::SeqCst) {
@@ -387,7 +385,7 @@ impl Connection {
             return Ok(());
         }
 
-        // sometimes the peer is not removed on other peer side
+        // Occasionally, the peer may not be removed on the other peer's side.
         let mut stream = self.write.lock().await;
         timeout(Duration::from_secs(PEER_TIMEOUT_DISCONNECT), stream.shutdown()).await??;
 

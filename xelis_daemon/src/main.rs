@@ -100,15 +100,15 @@ pub struct NodeConfig {
     /// Disable the log file
     #[clap(long)]
     disable_file_logging: bool,
-    /// Disable the log filename date based
+    /// Disable the log filename date based.
     /// If disabled, the log file will be named xelis-daemon.log instead of YYYY-MM-DD.xelis-daemon.log
     #[clap(long)]
     disable_file_log_date_based: bool,
     /// Disable the usage of colors in log
     #[clap(long)]
     disable_log_color: bool,
-    /// Disable terminal interactive mode
-    /// You will not be able to write CLI commands in it or to have an updated prompt
+    /// Disable terminal interactive mode.
+    /// You will not be able to write CLI commands in it or to have an updated prompt.
     #[clap(long)]
     disable_interactive_mode: bool,
     /// Log filename
@@ -208,7 +208,7 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
     command_manager.add_command(Command::new("list_unexecuted_transactions", "List all unexecuted transactions", CommandHandler::Async(async_handler!(list_unexecuted_transactions::<S>))))?;
     command_manager.add_command(Command::new("swap_blocks_executions_positions", "Swap the position of two blocks executions", CommandHandler::Async(async_handler!(swap_blocks_executions_positions::<S>))))?;
 
-    // Don't keep the lock for ever
+    // Don't keep the lock forever
     let (p2p, getwork) = {
         let p2p: Option<Arc<P2pServer<S>>> = match blockchain.get_p2p().read().await.as_ref() {
             Some(p2p) => Some(p2p.clone()),
@@ -364,8 +364,8 @@ async fn verify_chain<S: Storage>(manager: &CommandManager, mut args: ArgumentMa
             }
             block_reward
         } else {
-            // We are too near from the pruned topoheight, as we don't know previous blocks we can't verify if block was side block or not for rewards
-            // Let's trust its stored reward
+            // We are too near from the pruned topoheight, as we don't know previous blocks we can't verify if block was side block or not for rewards.
+            // Let's trust its stored reward.
             storage.get_block_reward_at_topo_height(topo).context("Error while retrieving block reward for pruned topo")?
         };
 
@@ -520,7 +520,7 @@ async fn list_assets<S: Storage>(manager: &CommandManager, _: ArgumentManager) -
 
 async fn show_balance<S: Storage>(manager: &CommandManager, mut arguments: ArgumentManager) -> Result<(), CommandError> {
     let prompt = manager.get_prompt();
-    // read address
+    // Read address
     let str_address = prompt.read_input(
         prompt.colorize_str(Color::Green, "Address: "),
         false
@@ -605,7 +605,7 @@ async fn pop_blocks<S: Storage>(manager: &CommandManager, mut arguments: Argumen
 
     info!("Trying to pop {} blocks from chain...", amount);
     let topoheight = blockchain.rewind_chain(amount, false).await.context("Error while rewinding chain")?;
-    info!("Chain as been rewinded until topoheight {}", topoheight);
+    info!("Chain as been rewound until topoheight {}", topoheight);
 
     Ok(())
 }
@@ -621,7 +621,7 @@ async fn clear_mempool<S: Storage>(manager: &CommandManager, _: ArgumentManager)
     Ok(())
 }
 
-// add manually a TX in mempool
+// Add manually a TX in mempool
 async fn add_tx<S: Storage>(manager: &CommandManager, mut arguments: ArgumentManager) -> Result<(), CommandError> {
     let hex = arguments.get_value("hex")?.to_string_value()?;
     let broadcast = if arguments.has_argument("broadcast") {
@@ -898,7 +898,7 @@ async fn mine_block<S: Storage>(manager: &CommandManager, mut arguments: Argumen
     let context = manager.get_context().lock()?;
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
 
-    // Prevent trying to mine a block on mainnet through this as it will keep busy the node for nothing
+    // Prevent attempting to mine a block on mainnet, as it will unnecessarily occupy the node
     if *blockchain.get_network() == Network::Mainnet {
         manager.error("This command is not allowed on mainnet");
         return Ok(())
