@@ -24,8 +24,8 @@ use super::{BlockHeader, BLOCK_WORK_SIZE, EXTRA_NONCE_SIZE};
 
 pub enum WorkVariant {
     Uninitialized,
-    V1(Box<v1::ScratchPad>),
-    V2(Box<v2::ScratchPad>),
+    V1(v1::ScratchPad),
+    V2(v2::ScratchPad),
 }
 
 impl WorkVariant {
@@ -131,11 +131,11 @@ impl<'a> Worker<'a> {
             match kind {
                 Algorithm::V1 => {
                     let scratch_pad = v1::ScratchPad::default();    
-                    self.variant = WorkVariant::V1(Box::new(scratch_pad));
+                    self.variant = WorkVariant::V1(scratch_pad);
                 },
                 Algorithm::V2 => {
                     let scratch_pad = v2::ScratchPad::default();
-                    self.variant = WorkVariant::V2(Box::new(scratch_pad));
+                    self.variant = WorkVariant::V2(scratch_pad);
                 }
             }
         }
