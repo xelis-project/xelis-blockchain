@@ -8236,19 +8236,23 @@ By default it accepts every TXs.
 
 For `address` param, it is compared to the sender if it's an incoming TX, and to destination address for outgoing TX.
 
+Topoheight range if specified is inclusive.
+Meaning if you set max_topoheight at 10 and you have a TX at 10 its returned.
+
 ##### Method `list_transactions`
 
 ##### Parameters
-|       Name      |   Type  | Required |              Note             |
-|:---------------:|:-------:|:--------:|:-----------------------------:|
-|  min_topoheight | Integer | Optional |    Start from specific topo   |
-|  max_topoheight | Integer | Optional |      End at specific topo     |
-|     address     |  String | Optional |      Filter with address      |
-| accept_incoming | Boolean | Optional |        Filter incoming        |
-| accept_outgoing | Boolean | Optional |        Filter outgoing        |
-| accept_coinbase | Boolean | Optional |        Filter coinbase        |
-|   accept_burn   | Boolean | Optional |          Filter burn          |
-|      query      |  Query  | Optional | Allow to filter on extra data |
+|       Name      |   Type  | Required |                              Note                             |
+|:---------------:|:-------:|:--------:|:-------------------------------------------------------------:|
+|      asset      |   Hash  | Optional | Filter on a specific asset only. By default accept all assets |
+|  min_topoheight | Integer | Optional |                    Start from specific topo                   |
+|  max_topoheight | Integer | Optional |                      End at specific topo                     |
+|     address     |  String | Optional |                      Filter with address                      |
+| accept_incoming | Boolean | Optional |                        Filter incoming                        |
+| accept_outgoing | Boolean | Optional |                        Filter outgoing                        |
+| accept_coinbase | Boolean | Optional |                        Filter coinbase                        |
+|   accept_burn   | Boolean | Optional |                          Filter burn                          |
+|      query      |  Query  | Optional |                 Allow to filter on extra data                 |
 
 ##### Request
 ```json
