@@ -63,6 +63,9 @@ pub struct EstimateFeesParams {
 
 #[derive(Serialize, Deserialize)]
 pub struct ListTransactionsParams {
+    // Filter by asset
+    pub asset: Option<Hash>,
+    // Filter by topoheight range (inclusive)
     pub min_topoheight: Option<u64>,
     pub max_topoheight: Option<u64>,
     /// Receiver address for outgoing txs, and owner/sender for incoming
