@@ -362,7 +362,7 @@ async fn list_transactions(context: &Context, body: Value) -> Result<Value, Inte
     let opt_key = params.address.map(|addr| addr.to_public_key());
     
     let mainnet = wallet.get_network().is_mainnet();
-    let txs = storage.get_filtered_transactions(opt_key.as_ref(), params.min_topoheight, params.max_topoheight, params.accept_incoming, params.accept_outgoing, params.accept_coinbase, params.accept_burn, params.query.as_ref())?
+    let txs = storage.get_filtered_transactions(opt_key.as_ref(), params.asset.as_ref(), params.min_topoheight, params.max_topoheight, params.accept_incoming, params.accept_outgoing, params.accept_coinbase, params.accept_burn, params.query.as_ref())?
         .into_iter()
         .map(|tx| tx.serializable(mainnet))
         .collect::<Vec<_>>();
