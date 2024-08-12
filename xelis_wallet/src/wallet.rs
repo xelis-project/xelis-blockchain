@@ -21,7 +21,7 @@ use xelis_common::{
     },
     asset::AssetWithData,
     crypto::{
-        ecdlp::{self, ECDLPTablesFileView},
+        ecdlp,
         elgamal::{Ciphertext, DecryptHandle},
         Address,
         Hashable,
@@ -213,7 +213,7 @@ impl InnerAccount {
 
     pub fn decrypt_ciphertext(&self, ciphertext: &Ciphertext) -> Result<u64, WalletError> {
         trace!("decrypt ciphertext");
-        let view = ECDLPTablesFileView::<PRECOMPUTED_TABLES_L1>::from_bytes(self.precomputed_tables.get());
+        let view = self.precomputed_tables.view();
         self.keypair.get_private_key()
             .decrypt(&view, &ciphertext)
             .ok_or(WalletError::CiphertextDecode)
@@ -226,12 +226,10 @@ pub fn hash_password(password: String, salt: &[u8]) -> Result<[u8; PASSWORD_HASH
     Ok(output)
 }
 
-const PRECOMPUTED_TABLES_L1: usize = 26;
-
 impl Wallet {
     // Read or generate precomputed tables based on the path and platform architecture
     pub fn read_or_generate_precomputed_tables<P: ecdlp::ProgressTableGenerationReportFunction>(path: Option<String>, progress_report: P) -> Result<PrecomputedTablesShared, Error> {
-        precomputed_tables::read_or_generate_precomputed_tables(path, progress_report, PRECOMPUTED_TABLES_L1)
+        precomputed_tables::read_or_generate_precomputed_tables(path, progress_report)
     }
 
     // Create a new wallet with the specificed storage, keypair and its network
