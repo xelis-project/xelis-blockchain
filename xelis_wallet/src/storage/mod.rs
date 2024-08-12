@@ -751,7 +751,6 @@ impl EncryptedStorage {
                     None
                 },
                 EntryData::Incoming { from, transfers } if accept_incoming => {
-
                     // Filter by address
                     if let Some(filter_key) = address {
                         if *from != *filter_key {
@@ -769,9 +768,7 @@ impl EncryptedStorage {
                 EntryData::Outgoing { transfers, .. } if accept_outgoing => {
                     // Filter by address
                     if let Some(filter_key) = address {
-                        if !transfers.iter().any(|transfer| *transfer.get_destination() == *filter_key) {
-                            continue;
-                        }
+                        transfers.retain(|transfer| *transfer.get_destination() == *filter_key);
                     }
 
                     // Filter by asset
