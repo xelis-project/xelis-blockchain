@@ -73,9 +73,7 @@ pub async fn has_precomputed_tables(_: Option<String>) -> Result<bool> {
     if let Some(file_handle) = file_handle {
         // Verify the size of the file
         let file: File = execute!(file_handle.get_file(), IntoFile)?;
-        let value: JsValue = execute!(file.array_buffer(), ArrayBuffer)?;
-        let buffer = Uint8Array::new(&value).to_vec();
-        Ok(buffer.len() == ECDLPTables::<PRECOMPUTED_TABLES_L1>::get_required_sizes().0)
+        Ok(file.size() as usize == ECDLPTables::<PRECOMPUTED_TABLES_L1>::get_required_sizes().0)
     } else {
         Ok(false)
     }
