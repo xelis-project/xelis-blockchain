@@ -14,7 +14,7 @@ use web_sys::{
 };
 use xelis_common::crypto::ecdlp::{self, ECDLPTables};
 use wasm_bindgen_futures::JsFuture;
-use log::info;
+use log::{info, warn};
 
 use super::PrecomputedTablesShared;
 
@@ -47,14 +47,14 @@ pub enum PrecomputedTablesError {
 }
 
 macro_rules! js_future {
-    ($e:expr, $err:ident) => {
-        JsFuture::from($e).await.map(|v| v.unchecked_into())
+    ($e:expr) => {
+        JsFuture::from($e).await
     };
 }
 
 macro_rules! execute {
     ($e:expr, $err:ident) => {
-        js_future!($e, $err).map_err(|_| PrecomputedTablesError::$err)
+        js_future!($e).map(|v| v.unchecked_into()).map_err(|_| PrecomputedTablesError::$err)
     };
 }
 
@@ -68,7 +68,11 @@ pub async fn has_precomputed_tables(_: Option<String>) -> Result<bool> {
     let directory: FileSystemDirectoryHandle = execute!(storage.get_directory(), Directory)?;
 
     // By default, it will not create a new file false
-    let file_handle: Option<FileSystemFileHandle> = js_future!(directory.get_file_handle(path.as_str()), File).ok();
+    // we check if the file exists
+    // and expect the file to have the same size as the precomputed tables
+    let file_handle: Option<FileSystemFileHandle> = js_future!(directory.get_file_handle(path.as_str()))
+        .ok()
+        .map(|v| v.unchecked_into());
 
     if let Some(file_handle) = file_handle {
         // Verify the size of the file
@@ -90,7 +94,11 @@ pub async fn read_or_generate_precomputed_tables<P: ecdlp::ProgressTableGenerati
     let directory: FileSystemDirectoryHandle = execute!(storage.get_directory(), Directory)?;
 
     // By default, it will not create a new file false
-    let file_handle: Option<FileSystemFileHandle> = js_future!(directory.get_file_handle(path.as_str()), File).ok();
+    let file_handle: Option<FileSystemFileHandle> = js_future!(directory.get_file_handle(path.as_str()))
+        .ok()
+        .map(|v| v.try_into().ok())
+        .flatten();
+
     let tables = match file_handle {
         Some(file_handle) => {
             info!("Loading precomputed tables from {}", path);
@@ -103,8 +111,7 @@ pub async fn read_or_generate_precomputed_tables<P: ecdlp::ProgressTableGenerati
             let buffer = Uint8Array::new(&value).to_vec();
             if buffer.len() != ECDLPTables::<PRECOMPUTED_TABLES_L1>::get_required_sizes().0 {
                 info!("File stored has an invalid size, generating precomputed tables again...");
-                let writable: FileSystemWritableFileStream = execute!(file_handle.create_writable(), WritableFile)?;
-                generate_tables(path.as_str(), writable, progress_report).await?
+                generate_tables(path.as_str(), file_handle, progress_report).await?
             } else {
                 info!("Loading {} bytes", buffer.len());
                 let tables = ecdlp::ECDLPTables::from_bytes(&buffer);
@@ -119,29 +126,38 @@ pub async fn read_or_generate_precomputed_tables<P: ecdlp::ProgressTableGenerati
             opts.set_create(true);
 
             let file_handle: FileSystemFileHandle = execute!(directory.get_file_handle_with_options(path.as_str(), &opts), File)?;
-            let writable: FileSystemWritableFileStream = execute!(file_handle.create_writable(), WritableFile)?;
-
-            generate_tables(path.as_str(), writable, progress_report).await?
+            generate_tables(path.as_str(), file_handle, progress_report).await?
         }
     };
 
     Ok(Arc::new(tables))
 }
 
-// Generate the tables and store them in a file
-async fn generate_tables<const L1: usize, P: ecdlp::ProgressTableGenerationReportFunction>(path: &str, writable: FileSystemWritableFileStream, progress_report: P) -> Result<ECDLPTables<L1>> {
+// Generate the tables and store them in a file if API is available
+async fn generate_tables<const L1: usize, P: ecdlp::ProgressTableGenerationReportFunction>(path: &str, file_handle: FileSystemFileHandle, progress_report: P) -> Result<ECDLPTables<L1>> {
     let tables = ecdlp::ECDLPTables::generate_with_progress_report(progress_report)?;
 
     let slice = tables.as_slice();
-    info!("Precomputed tables generated, storing {} bytes to {}", slice.len(), path);
-    // We are forced to copy the slice to a buffer
-    // which means we are using twice the memory
-    let buffer = Uint8Array::new_with_length(slice.len() as u32);
-    buffer.copy_from(slice);
+    info!("Precomputed tables generated");
+    
+    let res: Option<FileSystemWritableFileStream> = js_future!(file_handle.create_writable())
+        .ok()
+        .map(|v| v.try_into().ok())
+        .flatten();
 
-    let promise = writable.write_with_buffer_source(&buffer).map_err(|_| PrecomputedTablesError::Write)?;
-    let _: JsValue = execute!(promise, WriteResult)?;
-    let _: JsValue = execute!(writable.close(), WriteClose)?;
+    if let Some(writable) = res {
+        info!("Writing precomputed tables to {} with {} bytes", path, slice.len());
+        // We are forced to copy the slice to a buffer
+        // which means we are using twice the memory
+        let buffer = Uint8Array::new_with_length(slice.len() as u32);
+        buffer.copy_from(slice);
+
+        let promise = writable.write_with_buffer_source(&buffer).map_err(|_| PrecomputedTablesError::Write)?;
+        let _: JsValue = execute!(promise, WriteResult)?;
+        let _: JsValue = execute!(writable.close(), WriteClose)?;
+    } else {
+        warn!("Failed to create writable file stream");
+    }
 
     Ok(tables)
 }
