@@ -21,7 +21,6 @@ use xelis_common::{
     },
     asset::AssetWithData,
     crypto::{
-        ecdlp,
         elgamal::{Ciphertext, DecryptHandle},
         Address,
         Hashable,
@@ -52,7 +51,7 @@ use crate::{
     },
     error::WalletError,
     mnemonics,
-    precomputed_tables::{self, PrecomputedTablesShared},
+    precomputed_tables::PrecomputedTablesShared,
     storage::{
         EncryptedStorage,
         Storage
@@ -227,11 +226,6 @@ pub fn hash_password(password: String, salt: &[u8]) -> Result<[u8; PASSWORD_HASH
 }
 
 impl Wallet {
-    // Read or generate precomputed tables based on the path and platform architecture
-    pub fn read_or_generate_precomputed_tables<P: ecdlp::ProgressTableGenerationReportFunction>(path: Option<String>, progress_report: P) -> Result<PrecomputedTablesShared, Error> {
-        precomputed_tables::read_or_generate_precomputed_tables(path, progress_report)
-    }
-
     // Create a new wallet with the specificed storage, keypair and its network
     fn new(storage: EncryptedStorage, keypair: KeyPair, network: Network, precomputed_tables: PrecomputedTablesShared) -> Arc<Self> {
         let zelf = Self {

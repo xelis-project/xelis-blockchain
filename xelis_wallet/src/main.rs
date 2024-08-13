@@ -51,7 +51,8 @@ use xelis_common::{
 };
 use xelis_wallet::{
     wallet::Wallet,
-    config::DIR_PATH
+    config::DIR_PATH,
+    precomputed_tables,
 };
 
 #[cfg(feature = "network_handler")]
@@ -228,7 +229,7 @@ async fn main() -> Result<()> {
             prompt.read_input(format!("Enter Password for '{}': ", path), true).await?
         };
 
-        let precomputed_tables = Wallet::read_or_generate_precomputed_tables(config.precomputed_tables_path, LogProgressTableGenerationReportFunction)?;
+        let precomputed_tables = precomputed_tables::read_or_generate_precomputed_tables(config.precomputed_tables_path, LogProgressTableGenerationReportFunction).await?;
         let p = Path::new(&path);
         let wallet = if p.exists() && p.is_dir() && Path::new(&format!("{}/db", path)).exists() {
             info!("Opening wallet {}", path);
@@ -521,7 +522,7 @@ async fn open_wallet(manager: &CommandManager, _: ArgumentManager) -> Result<(),
     let wallet = {
         let context = manager.get_context().lock()?;
         let network = context.get::<Network>()?;
-        let precomputed_tables = Wallet::read_or_generate_precomputed_tables(None, LogProgressTableGenerationReportFunction)?;
+        let precomputed_tables = precomputed_tables::read_or_generate_precomputed_tables(None, LogProgressTableGenerationReportFunction).await?;
         Wallet::open(dir, password, *network, precomputed_tables)?
     };
 
@@ -566,7 +567,7 @@ async fn create_wallet(manager: &CommandManager, _: ArgumentManager) -> Result<(
     let wallet = {
         let context = manager.get_context().lock()?;
         let network = context.get::<Network>()?;
-        let precomputed_tables = Wallet::read_or_generate_precomputed_tables(None, LogProgressTableGenerationReportFunction)?;
+        let precomputed_tables = precomputed_tables::read_or_generate_precomputed_tables(None, LogProgressTableGenerationReportFunction).await?;
         Wallet::create(dir, password, None, *network, precomputed_tables)?
     };
  
@@ -628,7 +629,7 @@ async fn recover_wallet(manager: &CommandManager, _: ArgumentManager) -> Result<
     let wallet = {
         let context = manager.get_context().lock()?;
         let network = context.get::<Network>()?;
-        let precomputed_tables = Wallet::read_or_generate_precomputed_tables(None, LogProgressTableGenerationReportFunction)?;
+        let precomputed_tables = precomputed_tables::read_or_generate_precomputed_tables(None, LogProgressTableGenerationReportFunction).await?;
         Wallet::create(dir, password, Some(seed), *network, precomputed_tables)?
     };
 

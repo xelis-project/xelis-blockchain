@@ -14,9 +14,17 @@ use super::PrecomputedTablesShared;
 // L1 at 26 is around ~330 MB of RAM and support up to 2^48 values
 pub const PRECOMPUTED_TABLES_L1: usize = 26;
 
+// Check if the precomputed tables exists
+pub async fn has_precomputed_tables(path: Option<String>) -> Result<bool> {
+    let path = path.unwrap_or_default();
+    let full_path = format!("{path}precomputed_tables_{PRECOMPUTED_TABLES_L1}.bin");
+
+    Ok(Path::new(&full_path).exists())
+}
+
 // This will read from file if exists, or generate and store it in file
 // This must be call only one time, and can be cloned to be shared through differents wallets
-pub fn read_or_generate_precomputed_tables<P: ecdlp::ProgressTableGenerationReportFunction>(path: Option<String>, progress_report: P) -> Result<PrecomputedTablesShared> {
+pub async fn read_or_generate_precomputed_tables<P: ecdlp::ProgressTableGenerationReportFunction>(path: Option<String>, progress_report: P) -> Result<PrecomputedTablesShared> {
     if let Some(path) = path.as_ref() {
         let path = Path::new(&path);
         if !path.exists() {
