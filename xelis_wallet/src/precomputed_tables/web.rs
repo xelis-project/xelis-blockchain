@@ -24,26 +24,26 @@ pub const PRECOMPUTED_TABLES_L1: usize = 13;
 
 #[derive(Debug, Error)]
 pub enum PrecomputedTablesError {
-    #[error("window error")]
-    Window,
-    #[error("file system error")]
-    FileSystem,
-    #[error("directory error")]
-    Directory,
-    #[error("file error")]
-    File,
-    #[error("writable file error")]
-    WritableFile,
-    #[error("write error")]
-    Write,
-    #[error("write result error")]
-    WriteResult,
-    #[error("write close error")]
-    WriteClose,
-    #[error("into file error")]
-    IntoFile,
-    #[error("array buffer error")]
-    ArrayBuffer,
+    #[error("window error: {0}")]
+    Window(String),
+    #[error("file system error: {0}")]
+    FileSystem(String),
+    #[error("directory error: {0}")]
+    Directory(String),
+    #[error("file error: {0}")]
+    File(String),
+    #[error("writable file error: {0}")]
+    WritableFile(String),
+    #[error("write error: {0}")]
+    Write(String),
+    #[error("write result error: {0}")]
+    WriteResult(String),
+    #[error("write close error: {0}")]
+    WriteClose(String),
+    #[error("into file error: {0}")]
+    IntoFile(String),
+    #[error("array buffer error: {0}")]
+    ArrayBuffer(String),
 }
 
 macro_rules! js_future {
@@ -54,7 +54,7 @@ macro_rules! js_future {
 
 macro_rules! execute {
     ($e:expr, $err:ident) => {
-        js_future!($e).map(|v| v.unchecked_into()).map_err(|_| PrecomputedTablesError::$err)
+        js_future!($e).map(|v| v.unchecked_into()).map_err(|e| PrecomputedTablesError::$err(format!("{:?}", e)))
     };
 }
 
@@ -62,7 +62,7 @@ macro_rules! execute {
 pub async fn has_precomputed_tables(_: Option<String>) -> Result<bool> {
     let path = format!("precomputed_tables_{PRECOMPUTED_TABLES_L1}.bin");
 
-    let window = window().ok_or(PrecomputedTablesError::Window)?;
+    let window = window().ok_or(PrecomputedTablesError::Window("window not found in context".to_owned()))?;
     let navigator = window.navigator();
     let storage = navigator.storage();
     let directory: FileSystemDirectoryHandle = execute!(storage.get_directory(), Directory)?;
@@ -88,7 +88,7 @@ pub async fn has_precomputed_tables(_: Option<String>) -> Result<bool> {
 pub async fn read_or_generate_precomputed_tables<P: ecdlp::ProgressTableGenerationReportFunction>(_: Option<String>, progress_report: P) -> Result<PrecomputedTablesShared> {
     let path = format!("precomputed_tables_{PRECOMPUTED_TABLES_L1}.bin");
 
-    let window = window().ok_or(PrecomputedTablesError::Window)?;
+    let window = window().ok_or(PrecomputedTablesError::Window("window not found in context".to_owned()))?;
     let navigator = window.navigator();
     let storage = navigator.storage();
     let directory: FileSystemDirectoryHandle = execute!(storage.get_directory(), Directory)?;
@@ -152,7 +152,7 @@ async fn generate_tables<const L1: usize, P: ecdlp::ProgressTableGenerationRepor
         let buffer = Uint8Array::new_with_length(slice.len() as u32);
         buffer.copy_from(slice);
 
-        let promise = writable.write_with_buffer_source(&buffer).map_err(|_| PrecomputedTablesError::Write)?;
+        let promise = writable.write_with_buffer_source(&buffer).map_err(|e| PrecomputedTablesError::Write(format!("{:?}", e)))?;
         let _: JsValue = execute!(promise, WriteResult)?;
         let _: JsValue = execute!(writable.close(), WriteClose)?;
     } else {
