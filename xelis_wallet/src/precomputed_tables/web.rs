@@ -3,7 +3,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use thiserror::Error;
 use web_sys::{
-    js_sys::Uint8Array,
+    js_sys::{Reflect, Uint8Array},
     wasm_bindgen::{JsCast, JsValue},
     window,
     File,
@@ -44,6 +44,8 @@ pub enum PrecomputedTablesError {
     IntoFile(String),
     #[error("array buffer error: {0}")]
     ArrayBuffer(String),
+    #[error("reflect error: {0}")]
+    Reflect(String),
 }
 
 macro_rules! js_future {
@@ -65,6 +67,7 @@ pub async fn has_precomputed_tables(_: Option<String>) -> Result<bool> {
     let window = window().ok_or(PrecomputedTablesError::Window("window not found in context".to_owned()))?;
     let navigator = window.navigator();
     let storage = navigator.storage();
+    // On Safari, if directory is not available, it means he is in an ephemeral context (private tab), which is not supported by WebKit
     let directory: FileSystemDirectoryHandle = execute!(storage.get_directory(), Directory)?;
 
     // By default, it will not create a new file false
@@ -139,11 +142,12 @@ async fn generate_tables<const L1: usize, P: ecdlp::ProgressTableGenerationRepor
 
     let slice = tables.as_slice();
     info!("Precomputed tables generated");
-    
-    let res: Option<FileSystemWritableFileStream> = js_future!(file_handle.create_writable())
-        .ok()
-        .map(|v| v.try_into().ok())
-        .flatten();
+
+    let res: Option<FileSystemWritableFileStream> = if Reflect::has(&file_handle, &JsValue::from_str("createWritable")).map_err(|e| PrecomputedTablesError::Reflect(format!("{:?}", e)))? {
+        Some(execute!(file_handle.create_writable(), WritableFile)?)
+    } else {
+        None
+    };
 
     if let Some(writable) = res {
         info!("Writing precomputed tables to {} with {} bytes", path, slice.len());
@@ -156,7 +160,7 @@ async fn generate_tables<const L1: usize, P: ecdlp::ProgressTableGenerationRepor
         let _: JsValue = execute!(promise, WriteResult)?;
         let _: JsValue = execute!(writable.close(), WriteClose)?;
     } else {
-        warn!("Failed to create writable file stream");
+        warn!("Failed to create writable file stream, precomputed tables will not be stored");
     }
 
     Ok(tables)
