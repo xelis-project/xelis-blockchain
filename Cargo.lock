@@ -1025,7 +1025,7 @@ dependencies = [
 [[package]]
 name = "curve25519-dalek"
 version = "4.1.3"
-source = "git+https://github.com/xelis-project/curve25519-dalek?branch=main#32573c6fb0071175b6ba8e798d60d533bfd1f8f3"
+source = "git+https://github.com/xelis-project/curve25519-dalek?branch=main#450af4c329483c7289da71855e59402a75440e13"
 dependencies = [
  "bytemuck",
  "cfg-if",
@@ -1044,7 +1044,7 @@ dependencies = [
 [[package]]
 name = "curve25519-dalek-derive"
 version = "0.1.1"
-source = "git+https://github.com/xelis-project/curve25519-dalek?branch=main#32573c6fb0071175b6ba8e798d60d533bfd1f8f3"
+source = "git+https://github.com/xelis-project/curve25519-dalek?branch=main#450af4c329483c7289da71855e59402a75440e13"
 dependencies = [
  "proc-macro2",
  "quote",
