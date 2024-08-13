@@ -38,6 +38,8 @@ pub enum PrecomputedTablesError {
     Write,
     #[error("write result error")]
     WriteResult,
+    #[error("write close error")]
+    WriteClose,
     #[error("into file error")]
     IntoFile,
     #[error("array buffer error")]
@@ -89,6 +91,8 @@ pub async fn read_or_generate_precomputed_tables<P: ecdlp::ProgressTableGenerati
 
             // Read the tables
             let file: File = execute!(file.get_file(), IntoFile)?;
+            info!("File size: {}", file.size());
+
             let value: JsValue = execute!(file.array_buffer(), ArrayBuffer)?;
             let buffer = Uint8Array::new(&value).to_vec();
 
@@ -116,6 +120,7 @@ pub async fn read_or_generate_precomputed_tables<P: ecdlp::ProgressTableGenerati
 
             let promise = writable.write_with_buffer_source(&buffer).map_err(|_| PrecomputedTablesError::Write)?;
             let _: JsValue = execute!(promise, WriteResult)?;
+            let _: JsValue = execute!(writable.close(), WriteClose)?;
 
             tables
         }
