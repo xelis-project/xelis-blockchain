@@ -101,7 +101,14 @@ pub async fn read_or_generate_precomputed_tables<P: ecdlp::ProgressTableGenerati
             let writable: FileSystemWritableFileStream = execute!(file_handle.create_writable(), WritableFile)?;
 
             let tables = ecdlp::ECDLPTables::generate_with_progress_report(progress_report)?;
-            let promise = writable.write_with_u8_array(tables.as_slice()).map_err(|_| PrecomputedTablesError::Write)?;
+
+            let slice = tables.as_slice();
+            // We are forced to copy the slice to a buffer
+            // which means we are using twice the memory
+            let buffer = Uint8Array::new_with_length(slice.len() as u32);
+            buffer.copy_from(slice);
+
+            let promise = writable.write_with_buffer_source(&buffer).map_err(|_| PrecomputedTablesError::Write)?;
             let _: JsValue = execute!(promise, WriteResult)?;
 
             tables
