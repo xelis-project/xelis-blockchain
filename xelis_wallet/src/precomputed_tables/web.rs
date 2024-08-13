@@ -14,6 +14,7 @@ use web_sys::{
 };
 use xelis_common::crypto::ecdlp;
 use wasm_bindgen_futures::JsFuture;
+use log::info;
 
 use super::PrecomputedTablesShared;
 
@@ -84,15 +85,19 @@ pub async fn read_or_generate_precomputed_tables<P: ecdlp::ProgressTableGenerati
     let file_handle: Option<FileSystemFileHandle> = js_future!(directory.get_file_handle(path.as_str()), File).ok();
     let tables = match file_handle {
         Some(file) => {
+            info!("Loading precomputed tables from {}", path);
+
             // Read the tables
             let file: File = execute!(file.get_file(), IntoFile)?;
             let value: JsValue = execute!(file.array_buffer(), ArrayBuffer)?;
             let buffer = Uint8Array::new(&value).to_vec();
 
+            info!("Loading {} bytes", buffer.len());
             let tables = ecdlp::ECDLPTables::from_bytes(&buffer);
             tables
         },
         None => {
+            info!("Generating precomputed tables");
             // Generate the tables
             let opts = FileSystemGetFileOptions::new();
             opts.set_create(true);
@@ -103,6 +108,7 @@ pub async fn read_or_generate_precomputed_tables<P: ecdlp::ProgressTableGenerati
             let tables = ecdlp::ECDLPTables::generate_with_progress_report(progress_report)?;
 
             let slice = tables.as_slice();
+            info!("Precomputed tables generated, storing {} bytes to {}", slice.len(), path);
             // We are forced to copy the slice to a buffer
             // which means we are using twice the memory
             let buffer = Uint8Array::new_with_length(slice.len() as u32);
