@@ -102,7 +102,7 @@ pub async fn read_or_generate_precomputed_tables<P: ecdlp::ProgressTableGenerati
 
             let tables = ecdlp::ECDLPTables::generate_with_progress_report(progress_report)?;
             let promise = writable.write_with_u8_array(tables.as_slice()).map_err(|_| PrecomputedTablesError::Write)?;
-            let _: JsValue = execute!(promise, Write)?;
+            let _: JsValue = execute!(promise, WriteResult)?;
 
             tables
         }
