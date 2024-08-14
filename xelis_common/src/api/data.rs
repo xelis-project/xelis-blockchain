@@ -350,6 +350,20 @@ impl DataValue {
         }
     }
 
+    pub fn to_blob(self) -> Result<Vec<u8>, DataConversionError> {
+        match self {
+            Self::Blob(v) => Ok(v),
+            _ => Err(DataConversionError::UnexpectedValue(self.kind()))
+        }
+    }
+
+    pub fn to_type<T: Serializer>(self) -> Result<T, DataConversionError> {
+        match &self {
+            Self::Blob(v) => T::from_bytes(&v).map_err(|_| DataConversionError::UnexpectedValue(self.kind())),
+            _ => Err(DataConversionError::UnexpectedValue(self.kind()))
+        }
+    }
+
     pub fn as_bool(&self) -> Result<bool, DataConversionError> {
         match self {
             Self::Bool(v) => Ok(*v),
@@ -402,6 +416,13 @@ impl DataValue {
     pub fn as_hash(&self) -> Result<&Hash, DataConversionError> {
         match self {
             Self::Hash(v) => Ok(v),
+            _ => Err(DataConversionError::UnexpectedValue(self.kind()))
+        }
+    }
+
+    pub fn as_type<T: Serializer>(&self) -> Result<T, DataConversionError> {
+        match self {
+            Self::Blob(v) => T::from_bytes(&v).map_err(|_| DataConversionError::UnexpectedValue(self.kind())),
             _ => Err(DataConversionError::UnexpectedValue(self.kind()))
         }
     }
@@ -657,5 +678,76 @@ mod tests {
         let json = "[0, 55, 77, 99, 88, 777777]";
         let element: DataElement = serde_json::from_str(json).unwrap();
         assert_eq!(element.kind(), ElementType::Array);
+    }
+
+    #[test]
+    fn test_map() {
+        let json = r#"{"name": "John", "age": 25, "is_active": true}"#;
+        let element: DataElement = serde_json::from_str(json).unwrap();
+        assert_eq!(element.kind(), ElementType::Fields);
+
+        let bytes = element.to_bytes();
+        let element2 = DataElement::from_bytes(&bytes).unwrap();
+        assert_eq!(element, element2);
+    }
+
+    #[test]
+    fn test_map_array() {
+        let json = r#"{"name": "John", "age": 25, "is_active": true, "friends": [0, 1, 2, 3, 4]}"#;
+        let element: DataElement = serde_json::from_str(json).unwrap();
+        assert_eq!(element.kind(), ElementType::Fields);
+
+        let bytes = element.to_bytes();
+        let element2 = DataElement::from_bytes(&bytes).unwrap();
+        assert_eq!(element, element2);
+    }
+
+    #[test]
+    fn test_dummy_struct() {
+        #[derive(Debug, Serialize, Deserialize, Clone)]
+        struct Dummy {
+            name: String,
+            age: u8,
+            is_active: bool,
+            friends: Vec<u8>
+        }
+
+        impl Serializer for Dummy {
+            fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
+                let name = String::read(reader)?;
+                let age = u8::read(reader)?;
+                let is_active = bool::read(reader)?;
+                let friends = Vec::<u8>::read(reader)?;
+                Ok(Self {
+                    name,
+                    age,
+                    is_active,
+                    friends
+                })
+            }
+
+            fn write(&self, writer: &mut Writer) {
+                self.name.write(writer);
+                self.age.write(writer);
+                self.is_active.write(writer);
+                self.friends.write(writer);
+            }
+        }
+
+        let dummy = Dummy {
+            name: "John".to_string(),
+            age: 25,
+            is_active: true,
+            friends: vec![0, 1, 2, 3, 4]
+        };
+
+        let value = DataValue::Blob(dummy.to_bytes());
+        assert_eq!(value.kind(), ValueType::Blob);
+
+        let dummy: Dummy = value.to_type().unwrap();
+        assert_eq!(dummy.name, "John");
+        assert_eq!(dummy.age, 25);
+        assert_eq!(dummy.is_active, true);
+        assert_eq!(dummy.friends, vec![0, 1, 2, 3, 4]);
     }
 }

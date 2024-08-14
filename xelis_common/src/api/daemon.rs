@@ -19,7 +19,7 @@ use crate::{
     network::Network,
     time::{TimestampMillis, TimestampSeconds}
 };
-use super::RPCTransaction;
+use super::{default_true_value, DataElement, RPCTransaction};
 
 #[derive(Serialize, Deserialize, PartialEq, Eq)]
 pub enum BlockType {
@@ -395,7 +395,13 @@ pub struct GetAccountHistoryParams {
     #[serde(default = "default_xelis_asset")]
     pub asset: Hash,
     pub minimum_topoheight: Option<u64>,
-    pub maximum_topoheight: Option<u64>
+    pub maximum_topoheight: Option<u64>,
+    // Any incoming funds tracked
+    #[serde(default = "default_true_value")]
+    pub incoming_flow: bool,
+    // Any outgoing funds tracked
+    #[serde(default = "default_true_value")]
+    pub outgoing_flow: bool,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -471,14 +477,17 @@ pub struct DevFeeThreshold {
 }
 
 // Struct to define hard fork
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct HardFork {
     // block height to start hard fork
     pub height: u64,
     // Block version to use
     pub version: BlockVersion,
     // All the changes that will be applied
-    pub changelog: &'static str
+    pub changelog: &'static str,
+    // Version requirement, example: >=1.13.0
+    // This is used for p2p protocol
+    pub version_requirement: Option<&'static str>,
 }
 
 // Struct to returns the size of the blockchain on disk
@@ -539,6 +548,12 @@ pub struct ExtractKeyFromAddressParams<'a> {
 pub enum ExtractKeyFromAddressResult {
     Bytes(Vec<u8>),
     Hex(String)
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct MakeIntegratedAddressParams<'a> {
+    pub address: Cow<'a, Address>,
+    pub integrated_data: Cow<'a, DataElement>
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]

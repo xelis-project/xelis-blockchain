@@ -32,7 +32,6 @@ use xelis_common::{
         Address,
         Hash
     },
-    serializer::Serializer,
     transaction::Role,
     utils::sanitize_daemon_address
 };
@@ -120,6 +119,9 @@ impl NetworkHandler {
         let zelf = Arc::clone(&self);
         *self.task.lock().await = Some(spawn_task("network-handler", async move {
             loop {
+                // Notify that we are online
+                zelf.wallet.propagate_event(Event::Online).await;
+
                 let res =  zelf.start_syncing().await;
                 if let Err(e) = res.as_ref() {
                     error!("Error while syncing: {}", e);
@@ -141,9 +143,6 @@ impl NetworkHandler {
                         if !zelf.api.reconnect().await? {
                             error!("Couldn't reconnect to server, trying again in {} seconds", AUTO_RECONNECT_INTERVAL);
                             sleep(Duration::from_secs(AUTO_RECONNECT_INTERVAL)).await;
-                        } else {
-                            // Notify that we are back online
-                            zelf.wallet.propagate_event(Event::Online).await;
                         }
                     } else {
                         warn!("Daemon is online but we couldn't sync, trying again in {} seconds", AUTO_RECONNECT_INTERVAL);
@@ -152,10 +151,6 @@ impl NetworkHandler {
                 }
             }
         }));
-
-
-        // Notify that we are online
-        self.wallet.propagate_event(Event::Online).await;
 
         Ok(())
     }
@@ -421,8 +416,11 @@ impl NetworkHandler {
     async fn get_balance_and_transactions(&self, topoheight_processed: &mut HashSet<u64>, address: &Address, asset: &Hash, min_topoheight: u64, balances: bool, highest_nonce: &mut Option<u64>) -> Result<(), Error> {
         // Retrieve the highest version
         let (mut topoheight, mut version) = self.api.get_balance(address, asset).await.map(|res| (res.topoheight, res.version))?;
+        debug!("Starting sync from topoheight {} for asset {}", topoheight, asset);
+
         // don't sync already synced blocks
         if min_topoheight >= topoheight {
+            debug!("Reached minimum topoheight {}, topo: {}", min_topoheight, topoheight);
             return Ok(())
         }
 
@@ -662,7 +660,7 @@ impl NetworkHandler {
             None
         };
 
-        let assets = if let Some(assets) = assets {
+        let assets = if let Some(assets) = assets.filter(|a| !a.is_empty()) {
             assets
         } else {
             trace!("no assets provided, fetching all assets");
@@ -732,7 +730,7 @@ impl NetworkHandler {
                 };
 
                 if must_update {
-                    trace!("must update balance for asset: {}, ct: {:?}", asset, ciphertext.to_bytes());
+                    debug!("must update balance for asset: {}, ct: {}", asset, ciphertext);
                     let value = if let Some(cache) = balance_cache {
                         cache
                     } else {
@@ -752,6 +750,8 @@ impl NetworkHandler {
 
                     // We should sync new blocks to get the TXs
                     should_sync_blocks = true;
+                } else {
+                    debug!("balance for asset {} is already up-to-date", asset);
                 }
             }
         }
@@ -814,7 +814,8 @@ impl NetworkHandler {
         }
 
         // we have something that changed, sync transactions
-        if sync_new_blocks {
+        // prevent a double sync head state if history scan is disabled
+        if sync_new_blocks && self.wallet.get_history_scan() {
             debug!("Syncing new blocks");
             self.sync_new_blocks(address, wallet_topoheight, true).await?;
         }
@@ -937,26 +938,18 @@ impl NetworkHandler {
             storage.get_assets().await?
         };
         
-        // get balance and transactions for each asset
-        if self.wallet.get_history_scan() {
-            debug!("Scanning history for each asset");
-            // cache for all topoheight we already processed
-            // this will prevent us to request more than one time the same topoheight
-            let mut topoheight_processed = HashSet::new();
-            let mut highest_nonce = None;
-            for asset in assets {
-                debug!("calling get balances and transactions {}", current_topoheight);
-                if let Err(e) = self.get_balance_and_transactions(&mut topoheight_processed, &address, &asset, current_topoheight, balances, &mut highest_nonce).await {
-                    error!("Error while syncing balance for asset {}: {}", asset, e);
-                }
-            }
-        } else {
-            // We don't need to scan the history, we can just sync the head state
-            debug!("calling sync head state");
-            if let Err(e) = self.sync_head_state(&self.wallet.get_address(), Some(assets), None, true).await {
-                error!("Error while syncing head state: {}", e);
+        debug!("Scanning history for each asset");
+        // cache for all topoheight we already processed
+        // this will prevent us to request more than one time the same topoheight
+        let mut topoheight_processed = HashSet::new();
+        let mut highest_nonce = None;
+        for asset in assets {
+            debug!("calling get balances and transactions {}", current_topoheight);
+            if let Err(e) = self.get_balance_and_transactions(&mut topoheight_processed, &address, &asset, current_topoheight, balances, &mut highest_nonce).await {
+                error!("Error while syncing balance for asset {}: {}", asset, e);
             }
         }
+
         Ok(())
     }
 }

@@ -28,6 +28,7 @@ use xelis_common::{
         NewBlockEvent,
         BlockOrderedEvent,
         StableHeightChangedEvent,
+        StableTopoHeightChangedEvent,
         TransactionAddedInMempoolEvent,
         GetAccountAssetsParams,
         GetAssetParams,
@@ -150,6 +151,12 @@ impl DaemonAPI {
     pub async fn on_transaction_added_in_mempool_event(&self) -> Result<EventReceiver<TransactionAddedInMempoolEvent>> {
         trace!("on_transaction_added_in_mempool_event");
         let receiver = self.client.subscribe_event(NotifyEvent::TransactionAddedInMempool, self.capacity).await?;
+        Ok(receiver)
+    }
+
+    pub async fn on_stable_topoheight_changed_event(&self) -> Result<EventReceiver<StableTopoHeightChangedEvent>> {
+        trace!("on_stable_topoheight_changed_event");
+        let receiver = self.client.subscribe_event(NotifyEvent::StableTopoHeightChanged, self.capacity).await?;
         Ok(receiver)
     }
 

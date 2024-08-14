@@ -4,6 +4,7 @@ use xelis_common::{
     api::{
         wallet::{
             BuildTransactionParams,
+            BuildTransactionOfflineParams,
             DeleteParams,
             EstimateFeesParams,
             GetAddressParams,
@@ -39,12 +40,14 @@ use xelis_common::{
         RPCHandler
     },
     serializer::Serializer,
-    transaction::{builder::FeeBuilder, extra_data::ExtraData}
+    transaction::extra_data::ExtraData,
 };
 use serde_json::{Value, json};
 use crate::{
-    wallet::Wallet,
-    error::WalletError
+    error::WalletError,
+    storage::Balance,
+    transaction_builder::TransactionBuilderState,
+    wallet::Wallet
 };
 use super::xswd::XSWDWebSocketHandler;
 use log::{info, warn};
@@ -65,6 +68,7 @@ pub fn register_methods(handler: &mut RPCHandler<Arc<Wallet>>) {
     handler.register_method("get_asset_precision", async_handler!(get_asset_precision));
     handler.register_method("get_transaction", async_handler!(get_transaction));
     handler.register_method("build_transaction", async_handler!(build_transaction));
+    handler.register_method("build_transaction_offline", async_handler!(build_transaction_offline));
     handler.register_method("clear_tx_cache", async_handler!(clear_tx_cache));
     handler.register_method("list_transactions", async_handler!(list_transactions));
     handler.register_method("is_online", async_handler!(is_online));
@@ -83,6 +87,7 @@ pub fn register_methods(handler: &mut RPCHandler<Arc<Wallet>>) {
     handler.register_method("get_value_from_key", async_handler!(get_value_from_key));
     handler.register_method("store", async_handler!(store));
     handler.register_method("delete", async_handler!(delete));
+    handler.register_method("delete_tree_entries", async_handler!(delete_tree_entries));
     handler.register_method("has_key", async_handler!(has_key));
     handler.register_method("query_db", async_handler!(query_db));
 }
@@ -260,7 +265,7 @@ async fn build_transaction(context: &Context, body: Value) -> Result<Value, Inte
     // The lock is kept until the TX is applied to the storage
     // So even if we have few requests building a TX, they wait for the previous one to be applied
     let mut storage = wallet.get_storage().write().await;
-    let (mut state, tx) = wallet.create_transaction_with_storage(&storage, params.tx_type, params.fee.unwrap_or(FeeBuilder::Multiplier(1f64))).await?;
+    let (mut state, tx) = wallet.create_transaction_with_storage(&storage, params.tx_type, params.fee.unwrap_or_default(), params.nonce).await?;
 
     // if requested, broadcast the TX ourself
     if params.broadcast {
@@ -276,6 +281,38 @@ async fn build_transaction(context: &Context, body: Value) -> Result<Value, Inte
         .context("Error while applying state changes")?;
 
     // returns the created TX and its hash
+    Ok(json!(TransactionResponse {
+        tx_as_hex: if params.tx_as_hex {
+            Some(hex::encode(tx.to_bytes()))
+        } else {
+            None
+        },
+        inner: DataHash {
+            hash: Cow::Owned(tx.hash()),
+            data: Cow::Owned(tx)
+        }
+    }))
+}
+
+// Build a transaction by giving the encrypted balances directly
+async fn build_transaction_offline(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
+    let params: BuildTransactionOfflineParams = parse_params(body)?;
+    let wallet: &Arc<Wallet> = context.get()?;
+
+    // Create the state with the provided balances
+    let mut state = TransactionBuilderState::new(wallet.get_network().is_mainnet(), params.reference, params.nonce);
+
+    for (hash, mut ciphertext) in params.balances {
+        let compressed = ciphertext.decompressed().context(format!("Error decompressing ciphertext {}", hash))?;
+        let amount = wallet.decrypt_ciphertext(compressed.clone()).await?;
+
+        state.add_balance(hash, Balance {
+            amount,
+            ciphertext
+        });
+    }
+
+    let tx = wallet.create_transaction_with(&mut state, params.tx_type, params.fee)?;
     Ok(json!(TransactionResponse {
         tx_as_hex: if params.tx_as_hex {
             Some(hex::encode(tx.to_bytes()))
@@ -325,7 +362,7 @@ async fn list_transactions(context: &Context, body: Value) -> Result<Value, Inte
     let opt_key = params.address.map(|addr| addr.to_public_key());
     
     let mainnet = wallet.get_network().is_mainnet();
-    let txs = storage.get_filtered_transactions(opt_key.as_ref(), params.min_topoheight, params.max_topoheight, params.accept_incoming, params.accept_outgoing, params.accept_coinbase, params.accept_burn, params.query.as_ref())?
+    let txs = storage.get_filtered_transactions(opt_key.as_ref(), params.asset.as_ref(), params.min_topoheight, params.max_topoheight, params.accept_incoming, params.accept_outgoing, params.accept_coinbase, params.accept_burn, params.query.as_ref())?
         .into_iter()
         .map(|tx| tx.serializable(mainnet))
         .collect::<Vec<_>>();
@@ -456,6 +493,16 @@ async fn delete(context: &Context, body: Value) -> Result<Value, InternalRpcErro
     let tree = get_tree_name(&context, params.tree).await?;
     let mut storage = wallet.get_storage().write().await;
     storage.delete_custom_data(&tree, &params.key)?;
+    Ok(json!(true))
+}
+
+// Delete all entries in the requested tree
+async fn delete_tree_entries(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
+    let params: DeleteParams = parse_params(body)?;
+    let wallet: &Arc<Wallet> = context.get()?;
+    let tree = get_tree_name(&context, params.tree).await?;
+    let mut storage = wallet.get_storage().write().await;
+    storage.clear_custom_tree(&tree)?;
     Ok(json!(true))
 }
 

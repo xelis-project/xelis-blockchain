@@ -7,7 +7,6 @@ use std::{
 use indexmap::IndexMap;
 use lru::LruCache;
 use xelis_common::{
-    tokio::sync::Mutex,
     account::CiphertextCache,
     api::{
         query::{
@@ -17,6 +16,7 @@ use xelis_common::{
         DataElement,
         DataValue
     },
+    config::XELIS_ASSET,
     crypto::{
         elgamal::CompressedCiphertext,
         Hash,
@@ -30,6 +30,7 @@ use xelis_common::{
         Serializer,
         Writer
     },
+    tokio::sync::Mutex,
     transaction::Reference
 };
 use anyhow::{
@@ -294,6 +295,14 @@ impl EncryptedStorage {
         let hash = self.cipher.hash_key(format!("custom_{}", name.into()));
         let tree = self.inner.db.open_tree(&hash)?;
         Ok(tree)
+    }
+
+    // Clear all entries from the custom tree
+    pub fn clear_custom_tree(&mut self, name: impl Into<String>) -> Result<()> {
+        trace!("clear custom tree");
+        let tree = self.get_custom_tree(name)?;
+        tree.clear()?;
+        Ok(())
     }
 
     // Store a custom serializable data 
@@ -677,7 +686,7 @@ impl EncryptedStorage {
     // read whole disk and returns all transactions
     pub fn get_transactions(&self) -> Result<Vec<TransactionEntry>> {
         trace!("get transactions");
-        self.get_filtered_transactions(None, None, None, true, true, true, true, None)
+        self.get_filtered_transactions(None, None, None, None, true, true, true, true, None)
     }
 
     // delete all transactions above the specified topoheight
@@ -712,7 +721,7 @@ impl EncryptedStorage {
     }
 
     // Filter when the data is deserialized to not load all transactions in memory
-    pub fn get_filtered_transactions(&self, address: Option<&PublicKey>, min_topoheight: Option<u64>, max_topoheight: Option<u64>, accept_incoming: bool, accept_outgoing: bool, accept_coinbase: bool, accept_burn: bool, query: Option<&Query>) -> Result<Vec<TransactionEntry>> {
+    pub fn get_filtered_transactions(&self, address: Option<&PublicKey>, asset: Option<&Hash>, min_topoheight: Option<u64>, max_topoheight: Option<u64>, accept_incoming: bool, accept_outgoing: bool, accept_coinbase: bool, accept_burn: bool, query: Option<&Query>) -> Result<Vec<TransactionEntry>> {
         trace!("get filtered transactions");
         let mut transactions = Vec::new();
         for el in self.transactions.iter().values() {
@@ -723,59 +732,83 @@ impl EncryptedStorage {
                     continue;
                 }
             }
-    
-            if let Some(topoheight) = &max_topoheight {
-                if entry.get_topoheight() > *topoheight {
+
+            if let Some(topoheight) = max_topoheight {
+                if entry.get_topoheight() > topoheight {
                     continue;
                 }
             }
-    
-            let (save, mut transfers) = match entry.get_mut_entry() {
-                EntryData::Coinbase { .. } if accept_coinbase => (true, None),
-                EntryData::Burn { .. } if accept_burn => (true, None),
-                EntryData::Incoming { from, transfers } if accept_incoming => match address {
-                    Some(key) => (*key == *from, Some(transfers.into_iter().map(|t| Transfer::In(t)).collect::<Vec<_>>())),
-                    None => (true, None)
+
+            let mut transfers: Option<Vec<Transfer>> = match entry.get_mut_entry() {
+                EntryData::Coinbase { .. } if accept_coinbase && (asset.map(|a| *a == XELIS_ASSET).unwrap_or(true)) => None,
+                EntryData::Burn { asset: burn_asset, .. } if accept_burn => {
+                    if let Some(asset) = asset {
+                        if *asset != *burn_asset {
+                            continue;
+                        }
+                    }
+
+                    None
                 },
-                EntryData::Outgoing { transfers, .. } if accept_outgoing => match address {
-                    Some(filter_key) => (transfers.iter().find(|tx| {
-                        *tx.get_destination() == *filter_key
-                    }).is_some(), Some(transfers.into_iter().map(|t| Transfer::Out(t)).collect::<Vec<_>>())),
-                    None => (true, None),
+                EntryData::Incoming { from, transfers } if accept_incoming => {
+                    // Filter by address
+                    if let Some(filter_key) = address {
+                        if *from != *filter_key {
+                            continue;
+                        }
+                    }
+
+                    // Filter by asset
+                    if let Some(asset) = asset {
+                        transfers.retain(|transfer| *transfer.get_asset() == *asset);
+                    }
+
+                    Some(transfers.iter_mut().map(|t| Transfer::In(t)).collect())
                 },
-                _ => (false, None)
+                EntryData::Outgoing { transfers, .. } if accept_outgoing => {
+                    // Filter by address
+                    if let Some(filter_key) = address {
+                        transfers.retain(|transfer| *transfer.get_destination() == *filter_key);
+                    }
+
+                    // Filter by asset
+                    if let Some(asset) = asset {
+                        transfers.retain(|transfer| *transfer.get_asset() == *asset);
+                    }
+
+                    Some(transfers.iter_mut().map(|t| Transfer::Out(t)).collect())
+                },
+                _ => continue,
             };
 
-            if save {
-                // Check if it has requested extra data
-                if let Some(query) = query {
-                    if let Some(transfers) = transfers.as_mut() {
-                        transfers.retain(|transfer| {
-                            if let Some(element) = transfer.get_extra_data() {
-                                query.verify_element(element)
-                            } else {
-                                false
-                            }
-                        });
-                    } else {
-                        // Coinbase, burn, etc will be discarded always with such filter
-                        continue;
-                    }
+            // Check if it has requested extra data
+            if let Some(query) = query {
+                if let Some(transfers) = transfers.as_mut() {
+                    transfers.retain(|transfer| {
+                        if let Some(element) = transfer.get_extra_data() {
+                            query.verify_element(element)
+                        } else {
+                            false
+                        }
+                    });
+                } else {
+                    // Coinbase, burn, etc will be discarded always with such filter
+                    continue;
                 }
+            }
 
-                // Keep only transactions entries that have one transfer at least
-                match transfers {
-                    // Transfers which are not empty
-                    Some(transfers) if !transfers.is_empty() => {
-                        transactions.push(entry);
-                    },
-                    // Something else than outgoing/incoming txs
-                    None => {
-                        transactions.push(entry);
-                    },
-                    // All the left is discarded
-                    _ => {}
-                }
+            // Keep only transactions entries that have one transfer at least
+            match transfers {
+                // Transfers which are not empty
+                Some(transfers) if !transfers.is_empty() => {
+                    transactions.push(entry);
+                },
+                // Something else than outgoing/incoming txs
+                None => {
+                    transactions.push(entry);
+                },
+                // All the left is discarded
+                _ => {}
             }
         }
 

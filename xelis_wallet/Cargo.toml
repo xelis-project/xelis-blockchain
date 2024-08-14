@@ -1,6 +1,6 @@
 [package]
 name = "xelis_wallet"
-version = "1.13.2"
+version = "1.13.3"
 edition = "2021"
 authors = ["Slixe <slixeprivate@gmail.com>"]
 
@@ -39,8 +39,9 @@ async-trait = "0.1.64"
 
 # WASM dependencies
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-web-sys = { version = "0.3.69", features = ["Window", "Storage"] }
+web-sys = { version = "0.3.69", features = ["Window", "Storage", "File", "StorageManager", "FileSystemGetFileOptions", "Navigator", "FileSystemFileHandle", "FileSystemDirectoryHandle", "FileSystemWritableFileStream", "FileSystemSyncAccessHandle"] }
 base64 = "0.22.1"
+wasm-bindgen-futures = "0.4.43"
 
 [features]
 # Set as default dependencies until https://github.com/rust-lang/cargo/issues/4663 is resolved for binary targets

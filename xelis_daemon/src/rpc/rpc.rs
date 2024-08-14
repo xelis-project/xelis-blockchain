@@ -40,7 +40,7 @@ use xelis_common::{
         XELIS_ASSET
     },
     context::Context,
-    crypto::Hash,
+    crypto::{Address, AddressType, Hash},
     difficulty::{
         CumulativeDifficulty,
         Difficulty
@@ -320,6 +320,7 @@ pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>
     handler.register_method("validate_address", async_handler!(validate_address::<S>));
     handler.register_method("split_address", async_handler!(split_address::<S>));
     handler.register_method("extract_key_from_address", async_handler!(extract_key_from_address::<S>));
+    handler.register_method("make_integrated_address", async_handler!(make_integrated_address::<S>));
 
     if allow_mining_methods {
         handler.register_method("get_block_template", async_handler!(get_block_template::<S>));
@@ -966,128 +967,165 @@ async fn get_account_history<S: Storage>(context: &Context, body: Value) -> Resu
         return Err(InternalRpcError::InvalidParamsAny(BlockchainError::InvalidNetwork.into()))
     }
 
+    if !params.incoming_flow && !params.outgoing_flow {
+        return Err(InternalRpcError::InvalidParams("No history type was selected"));
+    }
+
     let key = params.address.get_public_key();
     let minimum_topoheight = params.minimum_topoheight.unwrap_or(0);
     let storage = blockchain.get_storage().read().await;
     let pruned_topoheight = storage.get_pruned_topoheight().await.context("Error while retrieving pruned topoheight")?.unwrap_or(0);
-    let mut version = if let Some(topo) = params.maximum_topoheight {
+    let mut version: Option<(u64, Option<u64>, _)> = if let Some(topo) = params.maximum_topoheight {
         if topo < pruned_topoheight {
             return Err(InternalRpcError::InvalidParams("Maximum topoheight is lower than pruned topoheight"));
         }
-        storage.get_balance_at_maximum_topoheight(key, &params.asset, topo).await.context(format!("Error while retrieving balance at topo height {topo}"))?
+
+
+        // if incoming flows aren't accepted
+        // use nonce versions to determine topoheight
+        if !params.incoming_flow {
+            if let Some((topo, nonce)) = storage.get_nonce_at_maximum_topoheight(key, topo).await.context("Error while retrieving last nonce")? {
+                let version = storage.get_balance_at_exact_topoheight(key, &params.asset, topo).await.context(format!("Error while retrieving balance at nonce topo height {topo}"))?;
+                Some((topo, nonce.get_previous_topoheight(), version))
+            } else {
+                None
+            }
+        } else {
+            storage.get_balance_at_maximum_topoheight(key, &params.asset, topo).await
+                .context(format!("Error while retrieving balance at topo height {topo}"))?
+                .map(|(topo, version)| (topo, None, version))
+        }
     } else {
-        Some(storage.get_last_balance(key, &params.asset).await.context("Error while retrieving last balance")?)
+        if !params.incoming_flow {
+            // don't return any error, maybe this account never spend anything
+            // (even if we force 0 nonce at first activity)
+            let (topo, nonce) = storage.get_last_nonce(key).await.context("Error while retrieving last topoheight for nonce")?;
+            let version = storage.get_balance_at_exact_topoheight(key, &params.asset, topo).await.context(format!("Error while retrieving balance at topo height {topo}"))?;
+            Some((topo, nonce.get_previous_topoheight(), version))
+        } else {
+            Some(
+                storage.get_last_balance(key, &params.asset).await
+                    .map(|(topo, version)| (topo, None, version))
+                    .context("Error while retrieving last balance")?
+            )
+        }
     };
 
     let mut history_count = 0;
     let mut history = Vec::new();
-    let is_dev_address = *key == *DEV_PUBLIC_KEY;
-    loop {
-        if let Some((topo, versioned_balance)) = version.take() {
-            trace!("Searching history at topoheight {}", topo);
-            if topo < minimum_topoheight || topo < pruned_topoheight {
-                break;
-            }
 
-            let (hash, block_header) = storage.get_block_header_at_topoheight(topo).await.context(format!("Error while retrieving block header at topo height {topo}"))?;
-            // Block reward is only paid in XELIS
-            if params.asset == XELIS_ASSET {
-                let is_miner = *block_header.get_miner() == *key;
-                if is_miner || is_dev_address {
-                    let mut reward = storage.get_block_reward_at_topo_height(topo).context(format!("Error while retrieving reward at topo height {topo}"))?;
-                    // subtract dev fee if any
-                    let dev_fee_percentage = get_block_dev_fee(block_header.get_height());
-                    if dev_fee_percentage != 0 {
-                        let dev_fee = reward * dev_fee_percentage / 100;
-                        if is_dev_address {
-                            history.push(AccountHistoryEntry {
-                                topoheight: topo,
-                                hash: hash.clone(),
-                                history_type: AccountHistoryType::DevFee { reward: dev_fee },
-                                block_timestamp: block_header.get_timestamp()
-                            });
-                        }
-                        reward -= dev_fee;
-                    }
-    
-                    if is_miner {
-                        let history_type = AccountHistoryType::Mining { reward };
+    let is_dev_address = *key == *DEV_PUBLIC_KEY;
+    while let Some((topo, prev_nonce, versioned_balance)) = version.take() {
+        trace!("Searching history of {} ({}) at topoheight {}, nonce: {:?}, type: {:?}", params.address, params.asset, topo, prev_nonce, versioned_balance.get_balance_type());
+        if topo < minimum_topoheight || topo < pruned_topoheight {
+            break;
+        }
+
+        // Get the block header at topoheight
+        // we will scan it below for transactions and rewards
+        let (hash, block_header) = storage.get_block_header_at_topoheight(topo).await.context(format!("Error while retrieving block header at topo height {topo}"))?;
+
+        // Block reward is only paid in XELIS
+        if params.asset == XELIS_ASSET {
+            let is_miner = *block_header.get_miner() == *key;
+            if (is_miner || is_dev_address) && params.incoming_flow {
+                let mut reward = storage.get_block_reward_at_topo_height(topo).context(format!("Error while retrieving reward at topo height {topo}"))?;
+                // subtract dev fee if any
+                let dev_fee_percentage = get_block_dev_fee(block_header.get_height());
+                if dev_fee_percentage != 0 {
+                    let dev_fee = reward * dev_fee_percentage / 100;
+                    if is_dev_address {
                         history.push(AccountHistoryEntry {
                             topoheight: topo,
                             hash: hash.clone(),
-                            history_type,
+                            history_type: AccountHistoryType::DevFee { reward: dev_fee },
                             block_timestamp: block_header.get_timestamp()
                         });
                     }
+                    reward -= dev_fee;
+                }
+
+                if is_miner {
+                    let history_type = AccountHistoryType::Mining { reward };
+                    history.push(AccountHistoryEntry {
+                        topoheight: topo,
+                        hash: hash.clone(),
+                        history_type,
+                        block_timestamp: block_header.get_timestamp()
+                    });
                 }
             }
+        }
 
-            // Reverse the order of transactions to get the latest first
-            for tx_hash in block_header.get_transactions().iter().rev() {
-                // Don't show unexecuted TXs in the history
-                if !storage.is_tx_executed_in_block(tx_hash, &hash)? {
-                    continue;
-                }
+        // Reverse the order of transactions to get the latest first
+        for tx_hash in block_header.get_transactions().iter().rev() {
+            // Don't show unexecuted TXs in the history
+            if !storage.is_tx_executed_in_block(tx_hash, &hash)? {
+                continue;
+            }
 
-                trace!("Searching tx {} in block {}", tx_hash, hash);
-                let tx = storage.get_transaction(tx_hash).await.context(format!("Error while retrieving transaction {tx_hash} from block {hash}"))?;
-                let is_sender = *tx.get_source() == *key;
-                match tx.get_data() {
-                    TransactionType::Transfers(transfers) => {
-                        for transfer in transfers {
-                            if *transfer.get_asset() == params.asset {
-                                if *transfer.get_destination() == *key {
-                                    history.push(AccountHistoryEntry {
-                                        topoheight: topo,
-                                        hash: tx_hash.clone(),
-                                        history_type: AccountHistoryType::Incoming {
-                                            from: tx.get_source().as_address(blockchain.get_network().is_mainnet())
-                                        },
-                                        block_timestamp: block_header.get_timestamp()
-                                    });
-                                }
-
-                                if is_sender {
-                                    history.push(AccountHistoryEntry {
-                                        topoheight: topo,
-                                        hash: tx_hash.clone(),
-                                        history_type: AccountHistoryType::Outgoing {
-                                            to: transfer.get_destination().as_address(blockchain.get_network().is_mainnet())
-                                        },
-                                        block_timestamp: block_header.get_timestamp()
-                                    });
-                                }
-                            }
-                        }
-                    }
-                    TransactionType::Burn(payload) => {
-                        if payload.asset == params.asset {
-                            if is_sender {
+            trace!("Searching tx {} in block {}", tx_hash, hash);
+            let tx = storage.get_transaction(tx_hash).await.context(format!("Error while retrieving transaction {tx_hash} from block {hash}"))?;
+            let is_sender = *tx.get_source() == *key;
+            match tx.get_data() {
+                TransactionType::Transfers(transfers) => {
+                    for transfer in transfers {
+                        if *transfer.get_asset() == params.asset {
+                            if *transfer.get_destination() == *key && params.incoming_flow {
                                 history.push(AccountHistoryEntry {
                                     topoheight: topo,
                                     hash: tx_hash.clone(),
-                                    history_type: AccountHistoryType::Burn { amount: payload.amount },
+                                    history_type: AccountHistoryType::Incoming {
+                                        from: tx.get_source().as_address(blockchain.get_network().is_mainnet())
+                                    },
+                                    block_timestamp: block_header.get_timestamp()
+                                });
+                            }
+
+                            if is_sender && params.outgoing_flow {
+                                history.push(AccountHistoryEntry {
+                                    topoheight: topo,
+                                    hash: tx_hash.clone(),
+                                    history_type: AccountHistoryType::Outgoing {
+                                        to: transfer.get_destination().as_address(blockchain.get_network().is_mainnet())
+                                    },
                                     block_timestamp: block_header.get_timestamp()
                                 });
                             }
                         }
                     }
                 }
+                TransactionType::Burn(payload) => {
+                    if payload.asset == params.asset {
+                        if is_sender && params.outgoing_flow {
+                            history.push(AccountHistoryEntry {
+                                topoheight: topo,
+                                hash: tx_hash.clone(),
+                                history_type: AccountHistoryType::Burn { amount: payload.amount },
+                                block_timestamp: block_header.get_timestamp()
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        history_count += 1;
+        if history_count >= MAX_HISTORY {
+            break;
+        }
+
+        // if incoming flows aren't accepted
+        // use nonce versions to determine topoheight
+        if let Some(previous) = prev_nonce.filter(|_| !params.incoming_flow) {
+            let nonce_version = storage.get_nonce_at_exact_topoheight(key, previous).await.context(format!("Error while retrieving nonce at topo height {previous}"))?;
+            version = Some((previous, nonce_version.get_previous_topoheight(), storage.get_balance_at_exact_topoheight(key, &params.asset, previous).await.context(format!("Error while retrieving previous balance at topo height {previous}"))?));
+        } else if let Some(previous) = versioned_balance.get_previous_topoheight().filter(|_| params.incoming_flow) {
+            if previous < pruned_topoheight {
+                break;
             }
 
-            history_count += 1;
-            if history_count >= MAX_HISTORY {
-                break;   
-            }        
-    
-            if let Some(previous) = versioned_balance.get_previous_topoheight() {
-                if previous < pruned_topoheight {
-                    break;
-                }
-                version = Some((previous, storage.get_balance_at_exact_topoheight(key, &params.asset, previous).await.context(format!("Error while retrieving previous balance at topo height {previous}"))?));
-            }
-        } else {
-            break;
+            version = Some((previous, None, storage.get_balance_at_exact_topoheight(key, &params.asset, previous).await.context(format!("Error while retrieving previous balance at topo height {previous}"))?));
         }
     }
 
@@ -1264,8 +1302,13 @@ async fn validate_address<S: Storage>(context: &Context, body: Value) -> Result<
     }))
 }
 
-async fn extract_key_from_address<S: Storage>(_: &Context, body: Value) -> Result<Value, InternalRpcError> {
+async fn extract_key_from_address<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: ExtractKeyFromAddressParams = parse_params(body)?;
+
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    if params.address.is_mainnet() != blockchain.get_network().is_mainnet() {
+        return Err(InternalRpcError::InvalidParamsAny(BlockchainError::InvalidNetwork.into()))
+    }
 
     if params.as_hex {
         Ok(json!(ExtractKeyFromAddressResult::Hex(params.address.get_public_key().to_hex())))
@@ -1276,9 +1319,14 @@ async fn extract_key_from_address<S: Storage>(_: &Context, body: Value) -> Resul
 
 
 // Split an integrated address into its address and data
-async fn split_address<S: Storage>(_: &Context, body: Value) -> Result<Value, InternalRpcError> {
+async fn split_address<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: SplitAddressParams = parse_params(body)?;
     let address = params.address;
+
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    if address.is_mainnet() != blockchain.get_network().is_mainnet() {
+        return Err(InternalRpcError::InvalidParamsAny(BlockchainError::InvalidNetwork.into()))
+    }
 
     let (data, address) = address.extract_data();
     let integrated_data = data.ok_or(InternalRpcError::InvalidParams("Address is not an integrated address"))?;
@@ -1288,4 +1336,21 @@ async fn split_address<S: Storage>(_: &Context, body: Value) -> Result<Value, In
         integrated_data,
         size,
     }))
+}
+
+async fn make_integrated_address<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
+    let params: MakeIntegratedAddressParams = parse_params(body)?;
+
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    if params.address.is_mainnet() != blockchain.get_network().is_mainnet() {
+        return Err(InternalRpcError::InvalidParamsAny(BlockchainError::InvalidNetwork.into()))
+    }
+
+    if !params.address.is_normal() {
+        return Err(InternalRpcError::InvalidParams("Address is not a normal address"))
+    }
+
+    let address = Address::new(params.address.is_mainnet(), AddressType::Data(params.integrated_data.into_owned()), params.address.into_owned().to_public_key());
+
+    Ok(json!(address))
 }

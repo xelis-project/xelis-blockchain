@@ -21,7 +21,6 @@ use xelis_common::{
     },
     asset::AssetWithData,
     crypto::{
-        ecdlp::{self, ECDLPTablesFileView},
         elgamal::{Ciphertext, DecryptHandle},
         Address,
         Hashable,
@@ -52,7 +51,7 @@ use crate::{
     },
     error::WalletError,
     mnemonics,
-    precomputed_tables::{self, PrecomputedTablesShared},
+    precomputed_tables::PrecomputedTablesShared,
     storage::{
         EncryptedStorage,
         Storage
@@ -64,7 +63,6 @@ use crate::{
 };
 #[cfg(feature = "network_handler")]
 use {
-    std::collections::HashSet,
     log::warn,
     crate::{
         network_handler::{
@@ -124,7 +122,7 @@ use {
 )))]
 use xelis_common::tokio::task::spawn_blocking;
 
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Clone, Debug)]
 #[serde(untagged)]
 pub enum Event {
     // When a TX is detected from daemon and is added in wallet storage
@@ -214,7 +212,7 @@ impl InnerAccount {
 
     pub fn decrypt_ciphertext(&self, ciphertext: &Ciphertext) -> Result<u64, WalletError> {
         trace!("decrypt ciphertext");
-        let view = ECDLPTablesFileView::<PRECOMPUTED_TABLES_L1>::from_bytes(self.precomputed_tables.get());
+        let view = self.precomputed_tables.view();
         self.keypair.get_private_key()
             .decrypt(&view, &ciphertext)
             .ok_or(WalletError::CiphertextDecode)
@@ -227,14 +225,7 @@ pub fn hash_password(password: String, salt: &[u8]) -> Result<[u8; PASSWORD_HASH
     Ok(output)
 }
 
-const PRECOMPUTED_TABLES_L1: usize = 26;
-
 impl Wallet {
-    // Read or generate precomputed tables based on the path and platform architecture
-    pub fn read_or_generate_precomputed_tables<P: ecdlp::ProgressTableGenerationReportFunction>(path: Option<String>, progress_report: P) -> Result<PrecomputedTablesShared, Error> {
-        precomputed_tables::read_or_generate_precomputed_tables(path, progress_report, PRECOMPUTED_TABLES_L1)
-    }
-
     // Create a new wallet with the specificed storage, keypair and its network
     fn new(storage: EncryptedStorage, keypair: KeyPair, network: Network, precomputed_tables: PrecomputedTablesShared) -> Arc<Self> {
         let zelf = Self {
@@ -264,7 +255,7 @@ impl Wallet {
         // generate random keypair or recover it from seed
         let keypair = if let Some(seed) = seed {
         debug!("Retrieving keypair from seed...");
-        let words: Vec<String> = seed.split_whitespace().map(str::to_string).collect();
+        let words: Vec<String> = seed.trim().split_whitespace().map(str::to_string).collect();
         let key = mnemonics::words_to_key(&words)?;
             KeyPair::from_private_key(key)
         } else {
@@ -428,6 +419,7 @@ impl Wallet {
 
     // Propagate a new event to registered listeners
     pub async fn propagate_event(&self, event: Event) {
+        trace!("Propagate event: {:?}", event);
         // Broadcast it to the API Server
         #[cfg(feature = "api_server")]
         {
@@ -608,7 +600,7 @@ impl Wallet {
     pub async fn create_transaction(&self, transaction_type: TransactionTypeBuilder, fee: FeeBuilder) -> Result<Transaction, WalletError> {
         trace!("create transaction");
         let mut storage = self.storage.write().await;
-        let (mut state, transaction) = self.create_transaction_with_storage(&storage, transaction_type, fee).await?;
+        let (mut state, transaction) = self.create_transaction_with_storage(&storage, transaction_type, fee, None).await?;
 
         state.apply_changes(&mut storage).await?;
 
@@ -620,9 +612,9 @@ impl Wallet {
     // This will returns the transaction builder state along the transaction
     // You must handle "apply changes" to the storage
     // Warning: this is locking the network handler to access to the daemon api
-    pub async fn create_transaction_with_storage(&self, storage: &EncryptedStorage, transaction_type: TransactionTypeBuilder, fee: FeeBuilder) -> Result<(TransactionBuilderState, Transaction), WalletError> {
+    pub async fn create_transaction_with_storage(&self, storage: &EncryptedStorage, transaction_type: TransactionTypeBuilder, fee: FeeBuilder, nonce: Option<u64>) -> Result<(TransactionBuilderState, Transaction), WalletError> {
         trace!("create transaction with storage");
-        let nonce = storage.get_unconfirmed_nonce();
+        let nonce = nonce.unwrap_or_else(|| storage.get_unconfirmed_nonce());
 
         // Build the state for the builder
         let used_assets = transaction_type.used_assets();
@@ -660,7 +652,7 @@ impl Wallet {
                     if use_stable_balance {
                         warn!("Using stable balance for TX creation");
                         let address = self.get_address();
-                        for asset in &used_assets {
+                        for asset in used_assets.iter() {
                             debug!("Searching stable balance for asset {}", asset);
                             let stable_point = network_handler.get_api().get_stable_balance(&address, &asset).await?;
 
@@ -674,7 +666,7 @@ impl Wallet {
                                 ciphertext
                             };
 
-                            storage.set_unconfirmed_balance_for(asset.clone(), balance).await?;
+                            storage.set_unconfirmed_balance_for((*asset).clone(), balance).await?;
                             // Build the stable reference
                             // We need to find the highest stable point
                             if reference.is_none() || reference.as_ref().is_some_and(|r| r.topoheight < stable_point.stable_topoheight) {
@@ -714,29 +706,35 @@ impl Wallet {
         for asset in used_assets {
             trace!("Checking balance for asset {}", asset);
             if !storage.has_balance_for(&asset).await? {
-                return Err(WalletError::BalanceNotFound(asset));
+                return Err(WalletError::BalanceNotFound(asset.clone()));
             }
 
             let (balance, unconfirmed) = storage.get_unconfirmed_balance_for(&asset).await?;
             info!("Adding balance (unconfirmed: {}) for asset {} with amount {}, ciphertext: {}", unconfirmed, asset, balance.amount, balance.ciphertext);
-            state.add_balance(asset, balance);
+            state.add_balance(asset.clone(), balance);
         }
 
         #[cfg(feature = "network_handler")]
         self.add_registered_keys_for_fees_estimation(state.as_mut(), &fee, &transaction_type).await?;
 
+        let transaction = self.create_transaction_with(&mut state, transaction_type, fee)?;
+        Ok((state, transaction))
+    }
+
+    // Create the transaction with all needed parameters
+    pub fn create_transaction_with(&self, state: &mut TransactionBuilderState, transaction_type: TransactionTypeBuilder, fee: FeeBuilder) -> Result<Transaction, WalletError> {
         // Create the transaction builder
         let builder = TransactionBuilder::new(TxVersion::V0, self.get_public_key().clone(), transaction_type, fee);
 
         // Build the final transaction
-        let transaction = builder.build(&mut state, &self.inner.keypair)
+        let transaction = builder.build(state, &self.inner.keypair)
             .map_err(|e| WalletError::Any(e.into()))?;
 
         let tx_hash = transaction.hash();
         debug!("Transaction created: {} with nonce {} and reference {}", tx_hash, transaction.get_nonce(), transaction.get_reference());
         state.set_tx_hash_built(tx_hash);
 
-        Ok((state, transaction))
+        Ok(transaction)
     }
 
     // submit a transaction to the network through the connection to daemon
@@ -762,17 +760,12 @@ impl Wallet {
         if let FeeBuilder::Multiplier(_) = fee {
             // To pay exact fees needed, we must verify that we don't have to pay more than needed
             let used_keys = transaction_type.used_keys();
-            let mut processed_keys = HashSet::new();
             if !used_keys.is_empty() {
                 trace!("Checking if destination keys are registered");
                 if let Some(network_handler) = self.network_handler.lock().await.as_ref() {
                     if network_handler.is_running().await {
                         trace!("Network handler is running, checking if keys are registered");
                         for key in used_keys {
-                            if processed_keys.contains(&key) {
-                                continue;
-                            }
-
                             let addr = key.as_address(self.network.is_mainnet());
                             trace!("Checking if {} is registered in stable height", addr);
                             let registered = network_handler.get_api().is_account_registered(&addr, true).await?;
@@ -780,8 +773,6 @@ impl Wallet {
                             if registered {
                                 state.add_registered_key(addr.to_public_key());
                             }
-
-                            processed_keys.insert(key);
                         }
                     }
                 }

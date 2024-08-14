@@ -1,8 +1,7 @@
 pub mod languages;
 
+use thiserror::Error;
 use std::collections::HashMap;
-use anyhow::{Result, Context, anyhow};
-use lazy_static::lazy_static;
 use log::debug;
 use xelis_common::{
     crypto::PrivateKey,
@@ -15,31 +14,59 @@ const SEED_LENGTH: usize = 24;
 const WORDS_LIST: usize = 1626;
 const WORDS_LIST_U32: u32 = WORDS_LIST as u32;
 
-lazy_static! {
-    pub static ref LANGUAGES: Vec<Language<'static>> = vec![
-        english::ENGLISH,
-        french::FRENCH,
-        italian::ITALIAN,
-        spanish::SPANISH,
-        portuguese::PORTUGUESE,
-        japanese::JAPANESE,
-        chinese_simplified::CHINESE_SIMPLIFIED,
-        russian::RUSSIAN,
-        esperanto::ESPERANTO,
-        dutch::DUTCH,
-        german::GERMAN
-    ];
+pub const LANGUAGES: [Language<'static>; 11] = [
+    english::ENGLISH,
+    french::FRENCH,
+    italian::ITALIAN,
+    spanish::SPANISH,
+    portuguese::PORTUGUESE,
+    japanese::JAPANESE,
+    chinese_simplified::CHINESE_SIMPLIFIED,
+    russian::RUSSIAN,
+    esperanto::ESPERANTO,
+    dutch::DUTCH,
+    german::GERMAN
+];
+
+#[derive(Debug, Error)]
+pub enum MnemonicsError {
+    #[error("Invalid words count")]
+    InvalidWordsCount,
+    #[error("Invalid checksum")]
+    InvalidChecksum,
+    #[error("Invalid checksum index")]
+    InvalidChecksumIndex,
+    #[error("Invalid language index")]
+    InvalidLanguageIndex,
+    #[error("Invalid language")]
+    InvalidLanguage,
+    #[error("Invalid key size")]
+    InvalidKeySize,
+    #[error("Invalid key from bytes")]
+    InvalidKeyFromBytes,
+    #[error("Invalid checksum calculation")]
+    InvalidChecksumCalculation,
+    #[error("No indices found")]
+    NoIndicesFound,
+    #[error("Word list sanity check error")]
+    WordListSanityCheckError,
+    #[error("Out of bounds")]
+    OutOfBounds
 }
 
 pub struct Language<'a> {
+    // Language name, like "English" or "French"
     name: &'a str,
-    prefix_length: usize, // number of utf-8 chars to use for checksum
+    // number of utf-8 chars to use for checksum
+    prefix_length: usize,
+    // list of words in the language
     words: [&'a str; WORDS_LIST]
 }
 
-fn calculate_checksum_index(words: &[String], prefix_len: usize) -> Result<u32> {
+// Calculate the checksum index for the seed based on the language prefix length
+fn calculate_checksum_index(words: &[String], prefix_len: usize) -> Result<u32, MnemonicsError> {
     if words.len() != SEED_LENGTH {
-        return Err(anyhow!("Invalid number of words"));
+        return Err(MnemonicsError::InvalidWordsCount);
     }
 
     let mut chars: Vec<char> = Vec::new();
@@ -56,14 +83,15 @@ fn calculate_checksum_index(words: &[String], prefix_len: usize) -> Result<u32> 
     Ok(checksum % SEED_LENGTH as u32)
 }
 
-fn verify_checksum(words: &Vec<String>, prefix_len: usize) -> Result<bool> {
+// Verify the checksum of the seed based on the language prefix length and if the seed is composed of 25 words
+fn verify_checksum(words: &Vec<String>, prefix_len: usize) -> Result<Option<bool>, MnemonicsError> {
     let checksum_index = calculate_checksum_index(&words[0..SEED_LENGTH], prefix_len)?;
-    let checksum_word = words.get(checksum_index as usize).context("Invalid checksum index")?;
-    let expected_checksum_word = words.get(SEED_LENGTH).context("Invalid checksum word")?;
-    Ok(checksum_word == expected_checksum_word)
+    let checksum_word = words.get(checksum_index as usize).ok_or(MnemonicsError::InvalidChecksumIndex)?;
+    Ok(words.get(SEED_LENGTH).map(|v| v == checksum_word))
 }
 
-fn find_indices(words: &Vec<String>) -> Result<Option<(Vec<usize>, usize)>> {
+// Find the indices of the words in the languages
+fn find_indices(words: &Vec<String>) -> Result<Option<(Vec<usize>, usize)>, MnemonicsError> {
     'main: for (i, language) in LANGUAGES.iter().enumerate() {
         // this map is used to store the indices of the words in the language
         let mut language_words: HashMap<&str, usize> = HashMap::with_capacity(WORDS_LIST);
@@ -84,8 +112,8 @@ fn find_indices(words: &Vec<String>) -> Result<Option<(Vec<usize>, usize)>> {
         }
 
         // we were able to build the indices, now verify checksum
-        if !verify_checksum(&words, language.prefix_length)? {
-            return Err(anyhow!("Invalid checksum for seed"));
+        if !verify_checksum(&words, language.prefix_length)?.unwrap_or(true) {
+            return Err(MnemonicsError::InvalidChecksum);
         }
 
         return Ok(Some((indices, i)));
@@ -94,45 +122,47 @@ fn find_indices(words: &Vec<String>) -> Result<Option<(Vec<usize>, usize)>> {
 }
 
 // convert a words list to a Private Key (32 bytes)
-pub fn words_to_key(words: &Vec<String>) -> Result<PrivateKey> {
-    if words.len() != SEED_LENGTH + 1 {
-        return Err(anyhow!("Invalid number of words"));
+pub fn words_to_key(words: &Vec<String>) -> Result<PrivateKey, MnemonicsError> {
+    if !(words.len() == SEED_LENGTH + 1 || words.len() == SEED_LENGTH) {
+        return Err(MnemonicsError::InvalidWordsCount);
     }
 
-    let (indices, language_index) = find_indices(words)?.context("No indices found")?;
+    let (indices, language_index) = find_indices(words)?.ok_or(MnemonicsError::NoIndicesFound)?;
     debug!("Language found: {}", LANGUAGES[language_index].name);
 
     let mut dest = Vec::with_capacity(KEY_SIZE);
     for i in (0..SEED_LENGTH).step_by(3) {
-        let a = indices.get(i).context("Index out of bounds")?;
-        let b = indices.get(i + 1).context("Index out of bounds")?;
-        let c = indices.get(i + 2).context("Index out of bounds")?;
+        let a = indices.get(i).ok_or(MnemonicsError::OutOfBounds)?;
+        let b = indices.get(i + 1).ok_or(MnemonicsError::OutOfBounds)?;
+        let c = indices.get(i + 2).ok_or(MnemonicsError::OutOfBounds)?;
 
         let val = a + WORDS_LIST * (((WORDS_LIST - a) + b) % WORDS_LIST) + WORDS_LIST * WORDS_LIST * (((WORDS_LIST - b) + c) % WORDS_LIST);
         if val % WORDS_LIST != *a {
-            return Err(anyhow::anyhow!("Word list sanity check error"))
+            return Err(MnemonicsError::WordListSanityCheckError);
         }
 
         let val = val as u32;
         dest.extend_from_slice(&val.to_le_bytes());
     }
 
-    Ok(PrivateKey::from_bytes(&dest)?)
+    Ok(PrivateKey::from_bytes(&dest).map_err(|_| MnemonicsError::InvalidKeyFromBytes)?)
 }
 
-pub fn key_to_words(key: &PrivateKey, language_index: usize) -> Result<Vec<String>> {
-    let language = LANGUAGES.get(language_index).context("Invalid language index")?;
+// Transform a Private Key to a list of words based on the language index
+pub fn key_to_words(key: &PrivateKey, language_index: usize) -> Result<Vec<String>, MnemonicsError> {
+    let language = LANGUAGES.get(language_index).ok_or(MnemonicsError::InvalidLanguageIndex)?;
     key_to_words_with_language(key, language)
 }
 
-pub fn key_to_words_with_language(key: &PrivateKey, language: &Language) -> Result<Vec<String>> {
+// Transform a Private Key to a list of words with a specific language
+pub fn key_to_words_with_language(key: &PrivateKey, language: &Language) -> Result<Vec<String>, MnemonicsError> {
     if language.words.len() != WORDS_LIST {
-        return Err(anyhow!("Invalid word list length"));
+        return Err(MnemonicsError::InvalidLanguage);
     }
 
     let bytes = key.to_bytes();
     if bytes.len() != KEY_SIZE {
-        return Err(anyhow!("Invalid key length"));
+        return Err(MnemonicsError::InvalidKeySize);
     }
 
     let mut words = Vec::with_capacity(SEED_LENGTH + 1);
@@ -148,7 +178,7 @@ pub fn key_to_words_with_language(key: &PrivateKey, language: &Language) -> Resu
     }
 
     let checksum = calculate_checksum_index(&words, language.prefix_length)?;
-    words.push(words.get(checksum as usize).context("error no checksum calculation")?.clone());
+    words.push(words.get(checksum as usize).ok_or(MnemonicsError::InvalidChecksumCalculation)?.clone());
 
     Ok(words)
 }
@@ -165,8 +195,15 @@ mod tests {
             let nkey = super::words_to_key(&words).unwrap();
             assert_eq!(key.as_scalar(), nkey.as_scalar());
 
-            let words2 = super::key_to_words_with_language(&nkey, language).unwrap();
+            let mut words2 = super::key_to_words_with_language(&nkey, language).unwrap();
             assert_eq!(words, words2);
+
+            // Also test with 24 words only
+            words2.pop();
+            assert_eq!(words2.len(), 24);
+
+            let nkey = super::words_to_key(&words2).unwrap();
+            assert_eq!(key.as_scalar(), nkey.as_scalar());
         }
     }
 }
