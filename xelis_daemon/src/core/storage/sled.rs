@@ -494,10 +494,13 @@ impl Storage for SledStorage {
 
         let mut txs = Vec::new();
         for tx_hash in block.get_transactions() {
+            // Should we delete the tx too or only unlink it
+            let mut should_delete = true;
             if self.has_tx_blocks(tx_hash)? {
                 let mut blocks: Tips = self.delete_cacheable_data(&self.tx_blocks, &None, tx_hash).await?;
                 let blocks_len =  blocks.len();
                 blocks.remove(&hash);
+                should_delete = blocks.is_empty();
                 self.set_blocks_for_tx(tx_hash, &blocks)?;
                 trace!("Tx was included in {}, blocks left: {}", blocks_len, blocks.into_iter().map(|b| b.to_string()).collect::<Vec<String>>().join(", "));
             }
@@ -509,7 +512,7 @@ impl Storage for SledStorage {
 
             // We have to check first as we may have already deleted it because of client protocol
             // which allow multiple time the same txs in differents blocks
-            if self.contains_data(&self.transactions, &self.transactions_cache, tx_hash).await? {
+            if should_delete && self.contains_data(&self.transactions, &self.transactions_cache, tx_hash).await? {
                 trace!("Deleting TX {} in block {}", tx_hash, hash);
                 let tx: Arc<Transaction> = self.delete_data(&self.transactions, &self.transactions_cache, tx_hash).await?;
                 txs.push((tx_hash.clone(), tx));
@@ -907,6 +910,7 @@ impl Storage for SledStorage {
 
                 // find the first version which is under topoheight
                 let pkey = PublicKey::from_bytes(&key)?;
+                trace!("Highest topoheight for {} nonce is {}, above {}", pkey.as_address(self.is_mainnet()), highest_topoheight, topoheight);
                 let mut version = self.get_nonce_at_exact_topoheight(&pkey, highest_topoheight).await
                     .context(format!("Error while retrieving nonce at exact topoheight {highest_topoheight}"))?;
 
