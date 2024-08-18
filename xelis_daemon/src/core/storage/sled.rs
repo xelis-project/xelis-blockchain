@@ -800,6 +800,23 @@ impl Storage for SledStorage {
         trace!("Lowest topoheight for rewind: {}", lowest_topo);
 
         let pruned_topoheight = self.get_pruned_topoheight().await?.unwrap_or(0);
+
+        // we must check that we are stopping a sync block
+        // easy way for this: check the block at topo is currently alone at height
+        while lowest_topo > pruned_topoheight {
+            let hash = self.get_hash_at_topo_height(lowest_topo).await?;
+            let block_height = self.get_height_for_block_hash(&hash).await?;
+            let blocks_at_height = self.get_blocks_at_height(block_height).await?;
+            info!("blocks at height: {}", blocks_at_height.len());
+            if blocks_at_height.len() == 1 {
+                info!("Sync block found at topoheight {}", lowest_topo);
+                break;
+            } else {
+                warn!("No sync block found at topoheight {} we must go lower if possible", lowest_topo);
+                lowest_topo -= 1;
+            }
+        }
+
         if pruned_topoheight != 0 {
             let safety_pruned_topoheight = pruned_topoheight + PRUNE_SAFETY_LIMIT;
             if lowest_topo <= safety_pruned_topoheight && stable_topo_height != 0 {
