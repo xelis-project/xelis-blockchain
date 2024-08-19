@@ -2,7 +2,7 @@ mod providers;
 mod sled;
 
 pub use self::{
-    sled::SledStorage,
+    sled::{SledStorage, StorageMode},
     providers::*,
 };
 

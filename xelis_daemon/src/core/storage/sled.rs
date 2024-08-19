@@ -18,8 +18,12 @@ use xelis_common::{
 use std::{
     collections::HashSet,
     hash::Hash as StdHash,
-    sync::{Arc, atomic::{AtomicU64, Ordering}},
-    num::NonZeroUsize
+    num::NonZeroUsize,
+    str::FromStr,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc
+    }
 };
 use tokio::sync::Mutex;
 use lru::LruCache;
@@ -152,9 +156,49 @@ macro_rules! init_cache {
     }};
 }
 
+#[derive(Clone, Copy, clap::ValueEnum)]
+pub enum StorageMode {
+    HighThroughput,
+    LowSpace
+}
+
+impl FromStr for StorageMode {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match s {
+            "high_throughput" => Self::HighThroughput,
+            "low_space" => Self::LowSpace,
+            _ => return Err("Invalid storage mode".into())
+        })
+    }
+}
+
+impl Into<sled::Mode> for StorageMode {
+    fn into(self) -> sled::Mode {
+        match self {
+            Self::HighThroughput => sled::Mode::HighThroughput,
+            Self::LowSpace => sled::Mode::LowSpace
+        }
+    }
+}
+
+
 impl SledStorage {
-    pub fn new(dir_path: String, cache_size: Option<usize>, network: Network) -> Result<Self, BlockchainError> {
-        let sled = sled::open(format!("{}{}", dir_path, network.to_string().to_lowercase()))?;
+    pub fn new(dir_path: String, cache_size: Option<usize>, network: Network, internal_cache_size: Option<u64>, mode: StorageMode) -> Result<Self, BlockchainError> {
+        let path = format!("{}{}", dir_path, network.to_string().to_lowercase());
+        let mut config = sled::Config::new()
+            .temporary(false)
+            .path(path)
+            .mode(mode.into());
+
+        if let Some(size) = internal_cache_size {
+            info!("Setting cache capacity to {} bytes", size);
+            config = config.cache_capacity(size as u64);
+        }
+
+        let sled = config.open()?;
+
         let mut storage = Self {
             network,
             transactions: sled.open_tree("transactions")?,

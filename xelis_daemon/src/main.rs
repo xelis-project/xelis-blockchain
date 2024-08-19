@@ -70,7 +70,8 @@ use core::{
     hard_fork::{
         get_pow_algorithm_for_version,
         get_version_at_height
-    }
+    },
+    storage::StorageMode
 };
 use std::{
     fs::File,
@@ -130,7 +131,13 @@ pub struct NodeConfig {
     logs_modules: Vec<ModuleConfig>,
     /// Network selected for chain
     #[clap(long, value_enum, default_value_t = Network::Mainnet)]
-    network: Network
+    network: Network,
+    /// DB cache size in bytes
+    #[clap(long)]
+    internal_cache_size: Option<u64>,
+    /// Internal DB mode to use
+    #[clap(long, value_enum, default_value_t = StorageMode::HighThroughput)]
+    internal_db_mode: StorageMode
 }
 
 const BLOCK_TIME: Difficulty = Difficulty::from_u64(BLOCK_TIME_MILLIS / MILLIS_PER_SECOND);
@@ -163,7 +170,7 @@ async fn main() -> Result<()> {
         };
 
         let dir_path = blockchain_config.dir_path.clone().unwrap_or_default();
-        SledStorage::new(dir_path, use_cache, config.network)?
+        SledStorage::new(dir_path, use_cache, config.network, config.internal_cache_size, config.internal_db_mode)?
     };
 
     let blockchain = Blockchain::new(blockchain_config, config.network, storage).await?;
