@@ -183,19 +183,17 @@ impl Into<sled::Mode> for StorageMode {
     }
 }
 
+// Default cache size
+const DEFAULT_DB_CACHE_CAPACITY: u64 = 16 * 1024 * 1024; // 16 MB
 
 impl SledStorage {
     pub fn new(dir_path: String, cache_size: Option<usize>, network: Network, internal_cache_size: Option<u64>, mode: StorageMode) -> Result<Self, BlockchainError> {
         let path = format!("{}{}", dir_path, network.to_string().to_lowercase());
-        let mut config = sled::Config::new()
+        let config = sled::Config::new()
             .temporary(false)
             .path(path)
+            .cache_capacity(internal_cache_size.unwrap_or(DEFAULT_DB_CACHE_CAPACITY))
             .mode(mode.into());
-
-        if let Some(size) = internal_cache_size {
-            info!("Setting cache capacity to {} bytes", size);
-            config = config.cache_capacity(size as u64);
-        }
 
         let sled = config.open()?;
 
