@@ -88,7 +88,7 @@ use anyhow::{
 use lazy_static::lazy_static;
 
 #[derive(Parser)]
-#[clap(version = VERSION, about = "XELIS: An innovate cryptocurrency with BlockDAG and Homomorphic Encryption enabling Smart Contracts")]
+#[clap(version = VERSION, about = "XELIS is an innovative cryptocurrency built from scratch with BlockDAG, Homomorphic Encryption, Zero-Knowledge Proofs, and Smart Contracts.")]
 #[command(styles = xelis_common::get_cli_styles())]
 pub struct MinerConfig {
     /// Wallet address to mine and receive block rewards on
