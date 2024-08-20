@@ -136,7 +136,7 @@ pub struct NodeConfig {
     #[clap(long)]
     internal_cache_size: Option<u64>,
     /// Internal DB mode to use
-    #[clap(long, value_enum, default_value_t = StorageMode::HighThroughput)]
+    #[clap(long, value_enum, default_value_t = StorageMode::LowSpace)]
     internal_db_mode: StorageMode
 }
 
