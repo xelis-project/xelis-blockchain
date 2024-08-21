@@ -4,6 +4,22 @@ This  file  contains  all  the  changelogs  to  ensure  that  changes  can  be  
 
 To see the full history and exact changes, please refer to the commits history directly.
 
+## v1.13.4
+
+Bug fixes for nodes with less than 2GB of ram, and for nodes having reorg issues.
+
+All:
+- Update CLI description/about text.
+
+Daemon:
+- Fix rewind / `pop_blocks` function to:
+    - not delete TXs included in more than one block.
+    - rewind on sync blocks only
+- Reduce Sled cache size from 1 GB to 16 MB to support low devices
+- use `--log-level` by default if `--file-log-level` is not provided
+- Add option `--internal-cache-size` to config (in bytes) the inner DB cache size
+- Add option `--internal-db-mode` to select the DB mode (`slow-space` or `high-throughput`)
+
 ## v1.13.3
 
 Bug fixes, add new features, new RPC methods for easier integration including documentation update.
