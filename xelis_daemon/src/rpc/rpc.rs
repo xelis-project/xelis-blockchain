@@ -184,7 +184,7 @@ pub async fn get_block_response_for_hash<S: Storage>(blockchain: &Blockchain<S>,
         // calculate total size in bytes
         let mut total_size_in_bytes = header.size();
         for tx_hash in header.get_txs_hashes() {
-            total_size_in_bytes += storage.get_transaction_size(tx_hash).await.context(format!("Error while retrieving transaction {hash} size"))?;
+            total_size_in_bytes += storage.get_transaction_size(tx_hash).await.context(format!("Error while retrieving transaction {tx_hash} size"))?;
         }
 
         let mainnet = blockchain.get_network().is_mainnet();

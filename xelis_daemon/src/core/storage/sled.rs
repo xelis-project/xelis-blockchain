@@ -18,8 +18,12 @@ use xelis_common::{
 use std::{
     collections::HashSet,
     hash::Hash as StdHash,
-    sync::{Arc, atomic::{AtomicU64, Ordering}},
-    num::NonZeroUsize
+    num::NonZeroUsize,
+    str::FromStr,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc
+    }
 };
 use tokio::sync::Mutex;
 use lru::LruCache;
@@ -152,9 +156,47 @@ macro_rules! init_cache {
     }};
 }
 
+#[derive(Clone, Copy, clap::ValueEnum)]
+pub enum StorageMode {
+    HighThroughput,
+    LowSpace
+}
+
+impl FromStr for StorageMode {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match s {
+            "high_throughput" => Self::HighThroughput,
+            "low_space" => Self::LowSpace,
+            _ => return Err("Invalid storage mode".into())
+        })
+    }
+}
+
+impl Into<sled::Mode> for StorageMode {
+    fn into(self) -> sled::Mode {
+        match self {
+            Self::HighThroughput => sled::Mode::HighThroughput,
+            Self::LowSpace => sled::Mode::LowSpace
+        }
+    }
+}
+
+// Default cache size
+const DEFAULT_DB_CACHE_CAPACITY: u64 = 16 * 1024 * 1024; // 16 MB
+
 impl SledStorage {
-    pub fn new(dir_path: String, cache_size: Option<usize>, network: Network) -> Result<Self, BlockchainError> {
-        let sled = sled::open(format!("{}{}", dir_path, network.to_string().to_lowercase()))?;
+    pub fn new(dir_path: String, cache_size: Option<usize>, network: Network, internal_cache_size: Option<u64>, mode: StorageMode) -> Result<Self, BlockchainError> {
+        let path = format!("{}{}", dir_path, network.to_string().to_lowercase());
+        let config = sled::Config::new()
+            .temporary(false)
+            .path(path)
+            .cache_capacity(internal_cache_size.unwrap_or(DEFAULT_DB_CACHE_CAPACITY))
+            .mode(mode.into());
+
+        let sled = config.open()?;
+
         let mut storage = Self {
             network,
             transactions: sled.open_tree("transactions")?,
@@ -494,10 +536,13 @@ impl Storage for SledStorage {
 
         let mut txs = Vec::new();
         for tx_hash in block.get_transactions() {
+            // Should we delete the tx too or only unlink it
+            let mut should_delete = true;
             if self.has_tx_blocks(tx_hash)? {
                 let mut blocks: Tips = self.delete_cacheable_data(&self.tx_blocks, &None, tx_hash).await?;
                 let blocks_len =  blocks.len();
                 blocks.remove(&hash);
+                should_delete = blocks.is_empty();
                 self.set_blocks_for_tx(tx_hash, &blocks)?;
                 trace!("Tx was included in {}, blocks left: {}", blocks_len, blocks.into_iter().map(|b| b.to_string()).collect::<Vec<String>>().join(", "));
             }
@@ -509,7 +554,7 @@ impl Storage for SledStorage {
 
             // We have to check first as we may have already deleted it because of client protocol
             // which allow multiple time the same txs in differents blocks
-            if self.contains_data(&self.transactions, &self.transactions_cache, tx_hash).await? {
+            if should_delete && self.contains_data(&self.transactions, &self.transactions_cache, tx_hash).await? {
                 trace!("Deleting TX {} in block {}", tx_hash, hash);
                 let tx: Arc<Transaction> = self.delete_data(&self.transactions, &self.transactions_cache, tx_hash).await?;
                 txs.push((tx_hash.clone(), tx));
@@ -797,6 +842,23 @@ impl Storage for SledStorage {
         trace!("Lowest topoheight for rewind: {}", lowest_topo);
 
         let pruned_topoheight = self.get_pruned_topoheight().await?.unwrap_or(0);
+
+        // we must check that we are stopping a sync block
+        // easy way for this: check the block at topo is currently alone at height
+        while lowest_topo > pruned_topoheight {
+            let hash = self.get_hash_at_topo_height(lowest_topo).await?;
+            let block_height = self.get_height_for_block_hash(&hash).await?;
+            let blocks_at_height = self.get_blocks_at_height(block_height).await?;
+            info!("blocks at height: {}", blocks_at_height.len());
+            if blocks_at_height.len() == 1 {
+                info!("Sync block found at topoheight {}", lowest_topo);
+                break;
+            } else {
+                warn!("No sync block found at topoheight {} we must go lower if possible", lowest_topo);
+                lowest_topo -= 1;
+            }
+        }
+
         if pruned_topoheight != 0 {
             let safety_pruned_topoheight = pruned_topoheight + PRUNE_SAFETY_LIMIT;
             if lowest_topo <= safety_pruned_topoheight && stable_topo_height != 0 {
@@ -907,6 +969,7 @@ impl Storage for SledStorage {
 
                 // find the first version which is under topoheight
                 let pkey = PublicKey::from_bytes(&key)?;
+                trace!("Highest topoheight for {} nonce is {}, above {}", pkey.as_address(self.is_mainnet()), highest_topoheight, topoheight);
                 let mut version = self.get_nonce_at_exact_topoheight(&pkey, highest_topoheight).await
                     .context(format!("Error while retrieving nonce at exact topoheight {highest_topoheight}"))?;
 
