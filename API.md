@@ -3361,12 +3361,18 @@ NOTE: If `as_hex` is `false`, the response result will contains a field named `b
 #### Make Integrated Address
 Create an integrated address using a wallet address and data to include.
 
+NOTE: Integrated data can be useful for services like Exchanges to identify a user transaction
+by integrating an ID (or anything else) in the address (like PaymentID for Monero).
+
+It is not mandatory and support any data formatted in JSON up to 1 KB in serialized format.
+
 ##### Method `make_integrated_address`
 
 ##### Parameters
-|   Name  |   Type  | Required |                                 Note                                 |
-|:-------:|:-------:|:--------:|:--------------------------------------------------------------------:|
-| address | Address | Required | Address to split in two parts: original address, and integrated data |
+|       Name      |   Type  | Required |                       Note                       |
+|:---------------:|:-------:|:--------:|:------------------------------------------------:|
+|     address     | Address | Required | Wallet address to use for the integrated address |
+| integrated_data |   JSON  | Required |           Any data type in JSON format           |
 
 ##### Request
 ```json
