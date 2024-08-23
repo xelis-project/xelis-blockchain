@@ -190,9 +190,9 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
     command_manager.register_default_commands()?;
 
     // Register all our commands
-    command_manager.add_command(Command::new("list_miners", "List all miners connected", CommandHandler::Async(async_handler!(list_miners::<S>))))?;
-    command_manager.add_command(Command::new("list_peers", "List all peers connected", CommandHandler::Async(async_handler!(list_peers::<S>))))?;
-    command_manager.add_command(Command::new("list_assets", "List all assets registered on chain", CommandHandler::Async(async_handler!(list_assets::<S>))))?;
+    command_manager.add_command(Command::with_optional_arguments("list_miners", "List all miners connected", vec![Arg::new("page", ArgType::Number)], CommandHandler::Async(async_handler!(list_miners::<S>))))?;
+    command_manager.add_command(Command::with_optional_arguments("list_peers", "List all peers connected", vec![Arg::new("page", ArgType::Number)], CommandHandler::Async(async_handler!(list_peers::<S>))))?;
+    command_manager.add_command(Command::with_optional_arguments("list_assets", "List all assets registered on chain", vec![Arg::new("page", ArgType::Number)], CommandHandler::Async(async_handler!(list_assets::<S>))))?;
     command_manager.add_command(Command::with_arguments("show_balance", "Show balance of an address", vec![], vec![Arg::new("history", ArgType::Number)], CommandHandler::Async(async_handler!(show_balance::<S>))))?;
     command_manager.add_command(Command::with_required_arguments("print_block", "Print block in json format", vec![Arg::new("hash", ArgType::Hash)], CommandHandler::Async(async_handler!(print_block::<S>))))?;
     command_manager.add_command(Command::new("top_block", "Print top block", CommandHandler::Async(async_handler!(top_block::<S>))))?;
@@ -472,15 +472,36 @@ async fn kick_peer<S: Storage>(manager: &CommandManager, mut args: ArgumentManag
     Ok(())
 }
 
-async fn list_miners<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
+const ELEMENTS_PER_PAGE: usize = 10;
+
+async fn list_miners<S: Storage>(manager: &CommandManager, mut arguments: ArgumentManager) -> Result<(), CommandError> {
+    let page = if arguments.has_argument("page") {
+        arguments.get_value("page")?.to_number()? as usize
+    } else {
+        1
+    };
+
+    if page == 0 {
+        return Err(CommandError::InvalidArgument("Page must be greater than 0".to_string()));
+    }
+
     let context = manager.get_context().lock()?;
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     match blockchain.get_rpc().read().await.as_ref() {
         Some(rpc) => match rpc.getwork_server() {
             Some(getwork) => {
                 let miners = getwork.get_miners().lock().await;
-                manager.message(format!("Miners ({}):", miners.len()));
-                for miner in miners.values() {
+                let mut max_pages = miners.len() / ELEMENTS_PER_PAGE;
+                if miners.len() % ELEMENTS_PER_PAGE != 0 {
+                    max_pages += 1;
+                }
+
+                if page > max_pages {
+                    return Err(CommandError::InvalidArgument(format!("Page must be less than maximum pages ({})", max_pages - 1)));
+                }
+
+                manager.message(format!("Miners (total {}) page {}/{}:", miners.len(), page, max_pages));
+                for miner in miners.values().skip((page - 1) * ELEMENTS_PER_PAGE).take(ELEMENTS_PER_PAGE) {
                     manager.message(format!("- {}", miner));
                 }
             },
@@ -496,16 +517,36 @@ async fn list_miners<S: Storage>(manager: &CommandManager, _: ArgumentManager) -
     Ok(())
 }
 
-async fn list_peers<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
-    let context = manager.get_context().lock()?;
+async fn list_peers<S: Storage>(manager: &CommandManager, mut arguments: ArgumentManager) -> Result<(), CommandError> {
+    let page = if arguments.has_argument("page") {
+        arguments.get_value("page")?.to_number()? as usize
+    } else {
+        1
+    };
+
+    if page == 0 {
+        return Err(CommandError::InvalidArgument("Page must be greater than 0".to_string()));
+    }
+
+    let context: std::sync::MutexGuard<Context> = manager.get_context().lock()?;
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     match blockchain.get_p2p().read().await.as_ref() {
         Some(p2p) => {
             let peer_list = p2p.get_peer_list();
-            for peer in peer_list.get_peers().read().await.values() {
+            let peers = peer_list.get_peers().read().await;
+            let mut max_pages = peers.len() / ELEMENTS_PER_PAGE;
+            if peers.len() % ELEMENTS_PER_PAGE != 0 {
+                max_pages += 1;
+            }
+
+            if page > max_pages {
+                return Err(CommandError::InvalidArgument(format!("Page must be less than maximum pages ({})", max_pages - 1)));
+            }
+
+            manager.message(format!("Peers (total {}) page {}/{}:", peers.len(), page, max_pages));
+            for peer in peers.values().skip((page - 1) * ELEMENTS_PER_PAGE).take(ELEMENTS_PER_PAGE) {
                 manager.message(format!("{}", peer));
             }
-            manager.message(format!("Total peer(s) count: {}", peer_list.size().await));
         },
         None => {
             manager.message("No P2p server running!");
@@ -514,13 +555,32 @@ async fn list_peers<S: Storage>(manager: &CommandManager, _: ArgumentManager) ->
     Ok(())
 }
 
-async fn list_assets<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
+async fn list_assets<S: Storage>(manager: &CommandManager, mut arguments: ArgumentManager) -> Result<(), CommandError> {
+    let page = if arguments.has_argument("page") {
+        arguments.get_value("page")?.to_number()? as usize
+    } else {
+        1
+    };
+
+    if page == 0 {
+        return Err(CommandError::InvalidArgument("Page must be greater than 0".to_string()));
+    }
+
     let context = manager.get_context().lock()?;
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let storage = blockchain.get_storage().read().await;
     let assets = storage.get_assets().await.context("Error while retrieving assets")?;
-    manager.message(format!("Registered assets ({}):", assets.len()));
-    for asset in assets {
+    let mut max_pages = assets.len() / ELEMENTS_PER_PAGE;
+    if assets.len() % ELEMENTS_PER_PAGE != 0 {
+        max_pages += 1;
+    }
+
+    if page > max_pages {
+        return Err(CommandError::InvalidArgument(format!("Page must be less than maximum pages ({})", max_pages - 1)));
+    }
+
+    manager.message(format!("Registered assets (total {}) page {}/{}:", assets.len(), page, max_pages));
+    for asset in assets.iter().skip((page - 1) * ELEMENTS_PER_PAGE).take(ELEMENTS_PER_PAGE) {
         manager.message(format!("- {}", asset));
     }
     Ok(())
