@@ -378,39 +378,13 @@ impl<const N: usize> Serializer for [u8; N] {
 
 impl Serializer for SocketAddr {
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let is_v6 = reader.read_bool()?;
-        let ip: IpAddr = if !is_v6 {
-            let a = reader.read_u8()?;
-            let b = reader.read_u8()?;
-            let c = reader.read_u8()?;
-            let d = reader.read_u8()?;
-            IpAddr::V4(Ipv4Addr::new(a, b, c, d))
-        } else {
-            let a = reader.read_u16()?;
-            let b = reader.read_u16()?;
-            let c = reader.read_u16()?;
-            let d = reader.read_u16()?;
-            let e = reader.read_u16()?;
-            let f = reader.read_u16()?;
-            let g = reader.read_u16()?;
-            let h = reader.read_u16()?;
-            IpAddr::V6(Ipv6Addr::new(a, b, c, d, e, f, g, h))
-        };
+        let ip = IpAddr::read(reader)?;
         let port = reader.read_u16()?;
         Ok(SocketAddr::new(ip, port))
     }
 
     fn write(&self, writer: &mut Writer) {
-        match self.ip() {
-            IpAddr::V4(addr) => {
-                writer.write_u8(0);
-                writer.write_bytes(&addr.octets());
-            },
-            IpAddr::V6(addr) => {
-                writer.write_u8(1);
-                writer.write_bytes(&addr.octets());
-            }
-        };
+        self.ip().write(writer);
         self.port().write(writer);
     }
 
@@ -422,6 +396,45 @@ impl Serializer for SocketAddr {
             IpAddr::V4(_) => 1 + 4 + 2,
             IpAddr::V6(_) => 1 + 16 + 2
         }
+    }
+}
+
+impl Serializer for IpAddr {
+    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
+        match reader.read_u8()? {
+            0 => {
+                let a = reader.read_u8()?;
+                let b = reader.read_u8()?;
+                let c = reader.read_u8()?;
+                let d = reader.read_u8()?;
+                Ok(IpAddr::V4(Ipv4Addr::new(a, b, c, d)))
+            },
+            1 => {
+                let a = reader.read_u16()?;
+                let b = reader.read_u16()?;
+                let c = reader.read_u16()?;
+                let d = reader.read_u16()?;
+                let e = reader.read_u16()?;
+                let f = reader.read_u16()?;
+                let g = reader.read_u16()?;
+                let h = reader.read_u16()?;
+                Ok(IpAddr::V6(Ipv6Addr::new(a, b, c, d, e, f, g, h)))
+            },
+            _ => Err(ReaderError::InvalidValue)
+        }
+    }
+
+    fn write(&self, writer: &mut Writer) {
+        match self {
+            IpAddr::V4(addr) => {
+                writer.write_u8(0);
+                writer.write_bytes(&addr.octets());
+            },
+            IpAddr::V6(addr) => {
+                writer.write_u8(1);
+                writer.write_bytes(&addr.octets());
+            }
+        };
     }
 }
 
