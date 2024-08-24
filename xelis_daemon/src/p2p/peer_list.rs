@@ -47,15 +47,15 @@ pub struct PeerList {
     cache: DiskCache
 }
 
-#[derive(Serialize, Deserialize, PartialEq, Eq)]
-enum StoredPeerState {
+#[derive(Serialize, Deserialize, PartialEq, Eq, Debug)]
+enum PeerListEntryState {
     Whitelist,
     Graylist,
     Blacklist,
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Eq)]
-pub struct StoredPeer {
+pub struct PeerListEntry {
     first_seen: TimestampSeconds,
     last_seen: TimestampSeconds,
     last_connection_try: TimestampSeconds,
@@ -63,7 +63,7 @@ pub struct StoredPeer {
     local_port: u16,
     // Until when the peer is banned
     temp_ban_until: Option<u64>,
-    state: StoredPeerState
+    state: PeerListEntryState
 }
 
 impl PeerList {
@@ -164,18 +164,18 @@ impl PeerList {
     async fn update_peer(&self, peer: &Peer) -> Result<(), P2pError> {
         let addr = peer.get_outgoing_address();
         let ip = addr.ip();
-        if self.cache.has_peer(&ip)? {
-            let mut stored_peer = self.cache.get_stored_peer(&ip)?;
+        if self.cache.has_peerlist_entry(&ip)? {
+            let mut entry = self.cache.get_peerlist_entry(&ip)?;
             debug!("Updating {} in stored peerlist", peer);
             // reset the fail count and update the last seen time
-            stored_peer.set_fail_count(0);
-            stored_peer.set_last_seen(get_current_time_in_seconds());
-            stored_peer.set_local_port(peer.get_local_port());
+            entry.set_fail_count(0);
+            entry.set_last_seen(get_current_time_in_seconds());
+            entry.set_local_port(peer.get_local_port());
 
-            self.cache.set_stored_peer(&ip, stored_peer)?;
+            self.cache.set_peerlist_entry(&ip, entry)?;
         } else {
             debug!("Saving {} in stored peerlist", peer);
-            self.cache.set_stored_peer(&ip, StoredPeer::new(peer.get_local_port(), StoredPeerState::Graylist))?;
+            self.cache.set_peerlist_entry(&ip, PeerListEntry::new(peer.get_local_port(), PeerListEntryState::Graylist))?;
         }
 
         Ok(())
@@ -189,7 +189,7 @@ impl PeerList {
 
     // Check if the peer is known from our peerlist
     pub async fn has_peer_stored(&self, ip: &IpAddr) -> Result<bool, P2pError> {
-        Ok(self.cache.has_peer(ip)?)
+        Ok(self.cache.has_peerlist_entry(ip)?)
     }
 
     pub fn get_peers(&self) -> &RwLock<HashMap<u64, Arc<Peer>>> {
@@ -197,8 +197,8 @@ impl PeerList {
     }
 
     // Get stored peers locked
-    pub fn get_stored_peers(&self) -> impl Iterator<Item = Result<(IpAddr, StoredPeer), DiskError>> {
-        self.cache.get_stored_peers()
+    pub fn get_peerlist_entries(&self) -> impl Iterator<Item = Result<(IpAddr, PeerListEntry), DiskError>> {
+        self.cache.get_peerlist_entries()
     }
 
     pub async fn get_cloned_peers(&self) -> HashSet<Arc<Peer>> {
@@ -290,20 +290,20 @@ impl PeerList {
 
     // Is the ip blacklisted in the stored peerlist
     pub async fn is_blacklisted(&self, ip: &IpAddr) -> Result<bool, P2pError> {
-        self.addr_has_state(ip, StoredPeerState::Blacklist).await
+        self.addr_has_state(ip, PeerListEntryState::Blacklist).await
     }
 
     // Verify that the peer is not blacklisted or temp banned
     pub async fn is_allowed(&self, ip: &IpAddr) -> Result<bool, P2pError> {
-        if !self.cache.has_peer(ip)? {
+        if !self.cache.has_peerlist_entry(ip)? {
             return Ok(true);
         }
 
-        let stored_peer = self.cache.get_stored_peer(&ip)?;
+        let entry = self.cache.get_peerlist_entry(&ip)?;
         // If peer is blacklisted, don't accept it
-        return Ok(*stored_peer.get_state() != StoredPeerState::Blacklist
+        return Ok(*entry.get_state() != PeerListEntryState::Blacklist
             // If it's still temp banned, don't accept it
-            && stored_peer.get_temp_ban_until()
+            && entry.get_temp_ban_until()
                 // Temp ban is lower than current time, he is not banned anymore
                 .map(|temp_ban_until| temp_ban_until < get_current_time_in_seconds())
                 // We don't have a temp ban, so he is not banned
@@ -313,26 +313,26 @@ impl PeerList {
 
     // Verify if the peer is whitelisted in the stored peerlist
     pub async fn is_whitelisted(&self, ip: &IpAddr) -> Result<bool, P2pError> {
-        self.addr_has_state(ip, StoredPeerState::Whitelist).await
+        self.addr_has_state(ip, PeerListEntryState::Whitelist).await
     }
 
-    async fn addr_has_state(&self, ip: &IpAddr, state: StoredPeerState) -> Result<bool, P2pError> {
-        if self.cache.has_peer(ip)? {
-            let stored_peer = self.cache.get_stored_peer(ip)?;
-            return Ok(*stored_peer.get_state() == state);
+    async fn addr_has_state(&self, ip: &IpAddr, state: PeerListEntryState) -> Result<bool, P2pError> {
+        if self.cache.has_peerlist_entry(ip)? {
+            let entry = self.cache.get_peerlist_entry(ip)?;
+            return Ok(*entry.get_state() == state);
         }
 
         Ok(false)
     }
 
     // Set the state of a peer address
-    async fn set_state_to_address(&self, addr: &IpAddr, state: StoredPeerState) -> Result<(), P2pError> {
-        if self.cache.has_peer(addr)? {
-            let mut stored_peer = self.cache.get_stored_peer(addr)?;
-            stored_peer.set_state(state);
-            self.cache.set_stored_peer(addr, stored_peer)?;
+    async fn set_state_to_address(&self, addr: &IpAddr, state: PeerListEntryState) -> Result<(), P2pError> {
+        if self.cache.has_peerlist_entry(addr)? {
+            let mut entry = self.cache.get_peerlist_entry(addr)?;
+            entry.set_state(state);
+            self.cache.set_peerlist_entry(addr, entry)?;
         } else {
-            self.cache.set_stored_peer(addr, StoredPeer::new(0, state))?;
+            self.cache.set_peerlist_entry(addr, PeerListEntry::new(0, state))?;
         }
 
         Ok(())
@@ -341,28 +341,28 @@ impl PeerList {
     // Set a peer to graylist, if its local port is 0, delete it from the stored peerlist
     // Because it was added manually and never connected to before
     pub async fn set_graylist_for_peer(&self, ip: &IpAddr) -> Result<(), P2pError> {
-        let delete = if self.cache.has_peer(ip)? {
-            let mut stored_peer = self.cache.get_stored_peer(ip)?;
-            stored_peer.set_state(StoredPeerState::Graylist);
-            stored_peer.get_local_port() == 0
+        let delete = if self.cache.has_peerlist_entry(ip)? {
+            let mut entry = self.cache.get_peerlist_entry(ip)?;
+            entry.set_state(PeerListEntryState::Graylist);
+            entry.get_local_port() == 0
         } else {
             false
         };
 
         if delete {
             info!("Deleting {} from stored peerlist", ip);
-            self.cache.remove_peer(ip)?;
+            self.cache.remove_peerlist_entry(ip)?;
         }
 
         Ok(())
     }
 
-    fn get_list_with_state(&self, state: &StoredPeerState) -> Result<Vec<(IpAddr, StoredPeer)>, P2pError> {
+    fn get_list_with_state(&self, state: &PeerListEntryState) -> Result<Vec<(IpAddr, PeerListEntry)>, P2pError> {
         let mut values = Vec::new();
-        for res in self.cache.get_stored_peers() {
-            let (ip, stored_peer) = res?;
-            if stored_peer.get_state() == state {
-                values.push((ip, stored_peer));
+        for res in self.cache.get_peerlist_entries() {
+            let (ip, entry) = res?;
+            if entry.get_state() == state {
+                values.push((ip, entry));
             }
         }
 
@@ -370,21 +370,21 @@ impl PeerList {
     }
 
     // Get all peers blacklisted from peerlist
-    pub fn get_blacklist(&self) -> Result<Vec<(IpAddr, StoredPeer)>, P2pError> {
-        self.get_list_with_state(&StoredPeerState::Blacklist)
+    pub fn get_blacklist(&self) -> Result<Vec<(IpAddr, PeerListEntry)>, P2pError> {
+        self.get_list_with_state(&PeerListEntryState::Blacklist)
     }
 
     // Retrieve whitelist stored peers
-    pub fn get_whitelist(&self) -> Result<Vec<(IpAddr, StoredPeer)>, P2pError> {
-        self.get_list_with_state(&StoredPeerState::Whitelist)
+    pub fn get_whitelist(&self) -> Result<Vec<(IpAddr, PeerListEntry)>, P2pError> {
+        self.get_list_with_state(&PeerListEntryState::Whitelist)
     }
 
     // blacklist a peer address
     // if this peer is already known, change its state to blacklist
-    // otherwise create a new StoredPeer with state blacklist
+    // otherwise create a new PeerListEntry with state blacklist
     // disconnect the peer if present in peerlist
     pub async fn blacklist_address(&self, ip: &IpAddr) -> Result<(), P2pError> {
-        self.set_state_to_address(ip, StoredPeerState::Blacklist).await?;
+        self.set_state_to_address(ip, PeerListEntryState::Blacklist).await?;
 
         let potential_peer = {
             let peers = self.peers.read().await;
@@ -400,12 +400,12 @@ impl PeerList {
 
     // temp ban a peer address for a duration in seconds
     pub async fn temp_ban_address(&self, ip: &IpAddr, seconds: u64) -> Result<(), P2pError> {
-        if self.cache.has_peer(ip)? {
-            let mut stored_peer = self.cache.get_stored_peer(ip)?;
-            stored_peer.set_temp_ban_until(Some(get_current_time_in_seconds() + seconds));
-            self.cache.set_stored_peer(ip, stored_peer)?;
+        if self.cache.has_peerlist_entry(ip)? {
+            let mut entry = self.cache.get_peerlist_entry(ip)?;
+            entry.set_temp_ban_until(Some(get_current_time_in_seconds() + seconds));
+            self.cache.set_peerlist_entry(ip, entry)?;
         } else {
-            self.cache.set_stored_peer(ip, StoredPeer::new(0, StoredPeerState::Graylist))?;
+            self.cache.set_peerlist_entry(ip, PeerListEntry::new(0, PeerListEntryState::Graylist))?;
         }
 
         Ok(())
@@ -413,9 +413,9 @@ impl PeerList {
 
     // whitelist a peer address
     // if this peer is already known, change its state to whitelist
-    // otherwise create a new StoredPeer with state whitelist
+    // otherwise create a new PeerListEntry with state whitelist
     pub async fn whitelist_address(&self, ip: &IpAddr) -> Result<(), P2pError> {
-        self.set_state_to_address(ip, StoredPeerState::Whitelist).await
+        self.set_state_to_address(ip, PeerListEntryState::Whitelist).await
     }
 
     // Find a peer to connect to from the stored peerlist
@@ -424,23 +424,23 @@ impl PeerList {
     // If a peer is found, we update its last connection try time
     pub async fn find_peer_to_connect(&self) -> Result<Option<SocketAddr>, P2pError> {
         let peers = self.peers.read().await;
-        let stored_peers = self.cache.get_stored_peers();
+        let peerlist_entries = self.cache.get_peerlist_entries();
 
         let current_time = get_current_time_in_seconds();
 
         // Search the first peer that we can connect to
         let mut potential_gray_peer = None;
-        for res in stored_peers {
-            let (ip, mut stored_peer) = res?;
-            let addr = SocketAddr::new(ip, stored_peer.get_local_port());
-            if *stored_peer.get_state() != StoredPeerState::Blacklist && stored_peer.get_last_connection_try() + (stored_peer.get_fail_count() as u64 * P2P_EXTEND_PEERLIST_DELAY) <= current_time && Self::internal_get_peer_by_addr(&peers, &addr).is_none() {
+        for res in peerlist_entries {
+            let (ip, mut entry) = res?;
+            let addr = SocketAddr::new(ip, entry.get_local_port());
+            if *entry.get_state() != PeerListEntryState::Blacklist && entry.get_last_connection_try() + (entry.get_fail_count() as u64 * P2P_EXTEND_PEERLIST_DELAY) <= current_time && Self::internal_get_peer_by_addr(&peers, &addr).is_none() {
                 // Store it if we don't have any whitelisted peer to connect to
-                if potential_gray_peer.is_none() && *stored_peer.get_state() == StoredPeerState::Graylist {
+                if potential_gray_peer.is_none() && *entry.get_state() == PeerListEntryState::Graylist {
                     potential_gray_peer = Some((ip, addr));
-                } else if *stored_peer.get_state() == StoredPeerState::Whitelist {
+                } else if *entry.get_state() == PeerListEntryState::Whitelist {
                     debug!("Found peer to connect: {}, updating last connection try", addr);
-                    stored_peer.set_last_connection_try(current_time);
-                    self.cache.set_stored_peer(&ip, stored_peer)?;
+                    entry.set_last_connection_try(current_time);
+                    self.cache.set_peerlist_entry(&ip, entry)?;
                     return Ok(Some(addr));
                 }
             }
@@ -450,9 +450,9 @@ impl PeerList {
         Ok(match potential_gray_peer {
             Some((ip, addr)) => {
                 debug!("Found gray peer to connect: {}, updating last connection try", addr);
-                let mut stored_peer = self.cache.get_stored_peer(&ip)?;
-                stored_peer.set_last_connection_try(current_time);
-                self.cache.set_stored_peer(&ip, stored_peer)?;
+                let mut entry = self.cache.get_peerlist_entry(&ip)?;
+                entry.set_last_connection_try(current_time);
+                self.cache.set_peerlist_entry(&ip, entry)?;
                 Some(addr)
             },
             None => None
@@ -461,25 +461,25 @@ impl PeerList {
 
 
     // increase the fail count of a peer
-    pub async fn increase_fail_count_for_stored_peer(&self, ip: &IpAddr, temp_ban: bool) -> Result<(), P2pError> {
+    pub async fn increase_fail_count_for_peerlist_entry(&self, ip: &IpAddr, temp_ban: bool) -> Result<(), P2pError> {
         trace!("increasing fail count for {}, allow temp ban: {}", ip, temp_ban);
-        let mut stored_peer = if self.cache.has_peer(ip)? {
-            self.cache.get_stored_peer(ip)?
+        let mut entry = if self.cache.has_peerlist_entry(ip)? {
+            self.cache.get_peerlist_entry(ip)?
         } else {
-            StoredPeer::new(0, StoredPeerState::Graylist)
+            PeerListEntry::new(0, PeerListEntryState::Graylist)
         };
 
-        let fail_count = stored_peer.get_fail_count();
-        if *stored_peer.get_state() != StoredPeerState::Whitelist {
+        let fail_count = entry.get_fail_count();
+        if *entry.get_state() != PeerListEntryState::Whitelist {
             if temp_ban && fail_count != 0 && fail_count % PEER_FAIL_TO_CONNECT_LIMIT == 0 {
                 debug!("Temp banning {} for failing too many times (count = {})", ip, fail_count);
-                stored_peer.set_temp_ban_until(Some(get_current_time_in_seconds() + PEER_TEMP_BAN_TIME_ON_CONNECT));
+                entry.set_temp_ban_until(Some(get_current_time_in_seconds() + PEER_TEMP_BAN_TIME_ON_CONNECT));
             }
 
             debug!("Increasing fail count for {}", ip);
-            stored_peer.set_fail_count(fail_count.wrapping_add(1));
+            entry.set_fail_count(fail_count.wrapping_add(1));
 
-            self.cache.set_stored_peer(ip, stored_peer)?;
+            self.cache.set_peerlist_entry(ip, entry)?;
         } else {
             debug!("{} is whitelisted, not increasing fail count", ip);
         }
@@ -490,18 +490,18 @@ impl PeerList {
     // Store a new peer address into the peerlist file
     pub async fn store_peer_address(&self, addr: SocketAddr) -> Result<bool, P2pError> {
         let ip: IpAddr = addr.ip();
-        if self.cache.has_peer(&ip)? {
+        if self.cache.has_peerlist_entry(&ip)? {
             return Ok(false);
         }
 
-        self.cache.set_stored_peer(&ip, StoredPeer::new(addr.port(), StoredPeerState::Graylist))?;
+        self.cache.set_peerlist_entry(&ip, PeerListEntry::new(addr.port(), PeerListEntryState::Graylist))?;
 
         Ok(true)
     }
 }
 
-impl StoredPeer {
-    fn new(local_port: u16, state: StoredPeerState) -> Self {
+impl PeerListEntry {
+    fn new(local_port: u16, state: PeerListEntryState) -> Self {
         let current_time = get_current_time_in_seconds();
         Self {
             first_seen: current_time,
@@ -518,7 +518,7 @@ impl StoredPeer {
         self.last_connection_try
     }
 
-    fn get_state(&self) -> &StoredPeerState {
+    fn get_state(&self) -> &PeerListEntryState {
         &self.state
     }
 
@@ -530,7 +530,7 @@ impl StoredPeer {
         self.last_connection_try = last_connection_try;
     }
 
-    fn set_state(&mut self, state: StoredPeerState) {
+    fn set_state(&mut self, state: PeerListEntryState) {
         self.state = state;
     }
 
@@ -559,14 +559,21 @@ impl StoredPeer {
     }
 }
 
-impl Display for StoredPeer {
+impl Display for PeerListEntry {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         let current_time = get_current_time_in_seconds();
-        write!(f, "StoredPeer[first seen: {} ago, last seen: {} ago]", format_duration(Duration::from_secs(current_time - self.first_seen)), format_duration(Duration::from_secs(current_time - self.last_seen)))
+        write!(
+            f,
+            "PeerListEntry[state: {:?}, first seen: {} ago, last seen: {} ago, last try: {} ago]",
+            self.state,
+            format_duration(Duration::from_secs(current_time - self.first_seen)),
+            format_duration(Duration::from_secs(current_time - self.last_seen)),
+            format_duration(Duration::from_secs(current_time - self.last_connection_try))
+        )
     }
 }
 
-impl Serializer for StoredPeerState {
+impl Serializer for PeerListEntryState {
     fn write(&self, writer: &mut Writer) {
         match self {
             Self::Whitelist => writer.write_u8(0),
@@ -585,7 +592,7 @@ impl Serializer for StoredPeerState {
     }
 }
 
-impl Serializer for StoredPeer {
+impl Serializer for PeerListEntry {
     fn write(&self, writer: &mut Writer) {
         self.first_seen.write(writer);
         self.last_seen.write(writer);
@@ -603,7 +610,7 @@ impl Serializer for StoredPeer {
         let fail_count = reader.read_u8()?;
         let local_port = reader.read_u16()?;
         let temp_ban_until = Option::read(reader)?;
-        let state = StoredPeerState::read(reader)?;
+        let state = PeerListEntryState::read(reader)?;
 
         Ok(Self {
             first_seen,

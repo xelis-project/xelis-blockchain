@@ -465,7 +465,7 @@ impl<S: Storage> P2pServer<S> {
                     debug!("Error while connecting to address {}: {}", addr, e);
 
                     if !priority {
-                        if let Err(e) = self.peer_list.increase_fail_count_for_stored_peer(&addr.ip(), false).await {
+                        if let Err(e) = self.peer_list.increase_fail_count_for_peerlist_entry(&addr.ip(), false).await {
                             error!("Error while increasing fail count for peer {} while connecting to it: {}", addr, e);
                         }
                     }
@@ -479,7 +479,7 @@ impl<S: Storage> P2pServer<S> {
                 Err(e) => {
                     debug!("Error while verifying connection to address {}: {}", addr, e);
                     if !priority {
-                        if let Err(e) = self.peer_list.increase_fail_count_for_stored_peer(&addr.ip(), false).await {
+                        if let Err(e) = self.peer_list.increase_fail_count_for_peerlist_entry(&addr.ip(), false).await {
                             error!("Error while increasing fail count for peer {} while verifying it: {}", addr, e);
                         }
                     }
@@ -530,7 +530,7 @@ impl<S: Storage> P2pServer<S> {
                 },
                 Err(e) => {
                     debug!("Error while handling incoming connection {}: {}", addr, e);
-                    if let Err(e) = zelf.peer_list.increase_fail_count_for_stored_peer(&addr.ip(), true).await {
+                    if let Err(e) = zelf.peer_list.increase_fail_count_for_peerlist_entry(&addr.ip(), true).await {
                         error!("Error while increasing fail count for incoming peer {} while verifying it: {}", addr, e);
                     }
                 }
