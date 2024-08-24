@@ -193,6 +193,7 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
     command_manager.add_command(Command::with_optional_arguments("list_miners", "List all miners connected", vec![Arg::new("page", ArgType::Number)], CommandHandler::Async(async_handler!(list_miners::<S>))))?;
     command_manager.add_command(Command::with_optional_arguments("list_peers", "List all peers connected", vec![Arg::new("page", ArgType::Number)], CommandHandler::Async(async_handler!(list_peers::<S>))))?;
     command_manager.add_command(Command::with_optional_arguments("list_assets", "List all assets registered on chain", vec![Arg::new("page", ArgType::Number)], CommandHandler::Async(async_handler!(list_assets::<S>))))?;
+    command_manager.add_command(Command::with_optional_arguments("show_stored_peerlist", "Show the stored peerlist", vec![Arg::new("page", ArgType::Number)], CommandHandler::Async(async_handler!(show_stored_peerlist::<S>))))?;
     command_manager.add_command(Command::with_arguments("show_balance", "Show balance of an address", vec![], vec![Arg::new("history", ArgType::Number)], CommandHandler::Async(async_handler!(show_balance::<S>))))?;
     command_manager.add_command(Command::with_required_arguments("print_block", "Print block in json format", vec![Arg::new("hash", ArgType::Hash)], CommandHandler::Async(async_handler!(print_block::<S>))))?;
     command_manager.add_command(Command::new("top_block", "Print top block", CommandHandler::Async(async_handler!(top_block::<S>))))?;
@@ -586,6 +587,45 @@ async fn list_assets<S: Storage>(manager: &CommandManager, mut arguments: Argume
     Ok(())
 }
 
+async fn show_stored_peerlist<S: Storage>(manager: &CommandManager, mut arguments: ArgumentManager) -> Result<(), CommandError> {
+    let page = if arguments.has_argument("page") {
+        arguments.get_value("page")?.to_number()? as usize
+    } else {
+        1
+    };
+
+    if page == 0 {
+        return Err(CommandError::InvalidArgument("Page must be greater than 0".to_string()));
+    }
+
+    let context = manager.get_context().lock()?;
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    match blockchain.get_p2p().read().await.as_ref() {
+        Some(p2p) => {
+            let peer_list = p2p.get_peer_list();
+            let peerlist: Vec<_> = peer_list.get_stored_peers().collect::<Result<Vec<_>, _>>().context("Error while retrieving stored peerlist")?;
+            let mut max_pages = peerlist.len() / ELEMENTS_PER_PAGE;
+            if peerlist.len() % ELEMENTS_PER_PAGE != 0 {
+                max_pages += 1;
+            }
+
+            if page > max_pages {
+                return Err(CommandError::InvalidArgument(format!("Page must be less than maximum pages ({})", max_pages - 1)));
+            }
+
+            manager.message(format!("Stored peerlist (total {}) page {}/{}:", peerlist.len(), page, max_pages));
+            for (ip, state) in peerlist.iter().skip((page - 1) * ELEMENTS_PER_PAGE).take(ELEMENTS_PER_PAGE) {
+                manager.message(format!("- {:15} | {}", ip, state));
+            }
+        },
+        None => {
+            manager.message("No P2p server running!");
+        }
+    };
+
+    Ok(())
+}
+
 async fn show_balance<S: Storage>(manager: &CommandManager, mut arguments: ArgumentManager) -> Result<(), CommandError> {
     let prompt = manager.get_prompt();
     // read address
@@ -822,7 +862,7 @@ async fn clear_p2p_peerlist<S: Storage>(manager: &CommandManager, _: ArgumentMan
     match blockchain.get_p2p().read().await.as_ref() {
         Some(p2p) => {
             let peerlist = p2p.get_peer_list();
-            peerlist.clear_peerlist().await;
+            peerlist.clear_peerlist().await.context("Error while clearing peerlist")?;
             manager.message("P2P peerlist cleared");
         },
         None => {
@@ -851,17 +891,16 @@ async fn blacklist<S: Storage>(manager: &CommandManager, mut arguments: Argument
             if arguments.has_argument("address") {
                 let address: IpAddr = arguments.get_value("address")?.to_string_value()?.parse().context("Error while parsing socket address")?;
                 let peer_list = p2p.get_peer_list();
-                if peer_list.is_blacklisted(&address).await {
-                    peer_list.set_graylist_for_peer(&address).await;
+                if peer_list.is_blacklisted(&address).await.context("Error while checking if peer is blacklisted")? {
+                    peer_list.set_graylist_for_peer(&address).await.context("Error while setting graylist")?;
                     manager.message(format!("Peer {} is not blacklisted anymore", address));
                 } else {
-                    peer_list.blacklist_address(&address).await;
+                    peer_list.blacklist_address(&address).await.context("Error while blacklisting peer")?;
                     manager.message(format!("Peer {} has been blacklisted", address));
                 }
             } else {
                 let peer_list = p2p.get_peer_list();
-                let stored_peers = peer_list.get_stored_peers().read().await;
-                let blacklist = peer_list.get_blacklist(&stored_peers);
+                let blacklist = peer_list.get_blacklist().context("Error while retrieving blacklist")?;
                 manager.message(format!("Current blacklist ({}):", blacklist.len()));
                 for (ip, peer) in blacklist {
                     manager.message(format!("- {}: {}", ip, peer));
@@ -884,17 +923,16 @@ async fn whitelist<S: Storage>(manager: &CommandManager, mut arguments: Argument
             if arguments.has_argument("address") {
                 let address: IpAddr = arguments.get_value("address")?.to_string_value()?.parse().context("Error while parsing socket address")?;
                 let peer_list = p2p.get_peer_list();
-                if peer_list.is_whitelisted(&address).await {
-                    peer_list.set_graylist_for_peer(&address).await;
+                if peer_list.is_whitelisted(&address).await.context("Error while checking if peer is whitelisted")? {
+                    peer_list.set_graylist_for_peer(&address).await.context("Error while setting graylist")?;
                     manager.message(format!("Peer {} is not whitelisted anymore", address));
                 } else {
-                    peer_list.whitelist_address(&address).await;
+                    peer_list.whitelist_address(&address).await.context("Error while whitelisting peer")?;
                     manager.message(format!("Peer {} has been whitelisted", address));
                 }
             } else {
                 let peer_list = p2p.get_peer_list();
-                let stored_peers = peer_list.get_stored_peers().read().await;
-                let whitelist = peer_list.get_whitelist(&stored_peers);
+                let whitelist = peer_list.get_whitelist().context("Error while retrieving whitelist")?;
                 manager.message(format!("Current whitelist ({}):", whitelist.len()));
                 for (ip, peer) in whitelist {
                     manager.message(format!("- {}: {}", ip, peer));
