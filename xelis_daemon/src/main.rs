@@ -492,6 +492,11 @@ async fn list_miners<S: Storage>(manager: &CommandManager, mut arguments: Argume
         Some(rpc) => match rpc.getwork_server() {
             Some(getwork) => {
                 let miners = getwork.get_miners().lock().await;
+                if miners.is_empty() {
+                    manager.message("No miners connected");
+                    return Ok(());
+                }
+
                 let mut max_pages = miners.len() / ELEMENTS_PER_PAGE;
                 if miners.len() % ELEMENTS_PER_PAGE != 0 {
                     max_pages += 1;
@@ -535,6 +540,11 @@ async fn list_peers<S: Storage>(manager: &CommandManager, mut arguments: Argumen
         Some(p2p) => {
             let peer_list = p2p.get_peer_list();
             let peers = peer_list.get_peers().read().await;
+            if peers.is_empty() {
+                manager.message("No peers connected");
+                return Ok(());
+            }
+
             let mut max_pages = peers.len() / ELEMENTS_PER_PAGE;
             if peers.len() % ELEMENTS_PER_PAGE != 0 {
                 max_pages += 1;
@@ -571,6 +581,11 @@ async fn list_assets<S: Storage>(manager: &CommandManager, mut arguments: Argume
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let storage = blockchain.get_storage().read().await;
     let assets = storage.get_assets().await.context("Error while retrieving assets")?;
+    if assets.is_empty() {
+        manager.message("No assets registered");
+        return Ok(());
+    }
+
     let mut max_pages = assets.len() / ELEMENTS_PER_PAGE;
     if assets.len() % ELEMENTS_PER_PAGE != 0 {
         max_pages += 1;
@@ -604,6 +619,11 @@ async fn show_stored_peerlist<S: Storage>(manager: &CommandManager, mut argument
         Some(p2p) => {
             let peer_list = p2p.get_peer_list();
             let peerlist: Vec<_> = peer_list.get_peerlist_entries().collect::<Result<Vec<_>, _>>().context("Error while retrieving stored peerlist")?;
+            if peerlist.is_empty() {
+                manager.message("No peers stored");
+                return Ok(());
+            }
+
             let mut max_pages = peerlist.len() / ELEMENTS_PER_PAGE;
             if peerlist.len() % ELEMENTS_PER_PAGE != 0 {
                 max_pages += 1;
