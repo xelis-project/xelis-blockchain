@@ -796,7 +796,7 @@ impl<S: Storage> P2pServer<S> {
     // We must determine which one has the most work done
     // if we are not in fast sync mode, we must verify its pruned topoheight to be sure
     // he have the blocks we need
-    async fn select_random_best_peer(&self, fast_sync: bool, previous_peer: Option<&(Arc<Peer>, bool)>) -> Result<Option<Arc<Peer>>, BlockchainError> {
+    async fn select_random_best_peer(&self, fast_sync: bool, previous_peer: Option<(u64, bool, bool)>) -> Result<Option<Arc<Peer>>, BlockchainError> {
         trace!("select random best peer");
         
         let our_height = self.blockchain.get_height();
@@ -859,11 +859,13 @@ impl<S: Storage> P2pServer<S> {
         }
 
         // Try to not reuse the same peer between each sync
-        if let Some((previous_peer, err)) = previous_peer {
-            if peers.len() > 1 || (*err && !previous_peer.is_priority()) {
-                debug!("removing previous peer {} from random selection, err: {}, priority: {}", previous_peer, err, previous_peer.is_priority());
+        if let Some((previous_peer, priority, err)) = previous_peer {
+            if peers.len() > 1 || (err && !priority) {
+                debug!("removing previous peer {} from random selection, err: {}, priority: {}", previous_peer, err, priority);
                 // We don't need to preserve the order
-                peers.swap_remove(previous_peer);
+                if let Some(position) = peers.iter().position(|p| p.get_id() == previous_peer) {
+                    peers.swap_remove_index(position);
+                }
             }
         }
 
@@ -908,7 +910,8 @@ impl<S: Storage> P2pServer<S> {
         let interval = Duration::from_secs(CHAIN_SYNC_DELAY);
         // Try to not reuse the same peer between each sync
         // Don't use it at all if its errored
-        let mut previous_peer: Option<(Arc<Peer>, bool)> = None;
+        // the Peer ID, peer priority flag, error state
+        let mut previous_peer: Option<(u64, bool, bool)> = None;
         loop {
             // Detect exact time needed before next chain sync
             let current = get_current_time_in_millis();
@@ -940,7 +943,7 @@ impl<S: Storage> P2pServer<S> {
                 false
             };
 
-            let peer_selected = match self.select_random_best_peer(fast_sync, previous_peer.as_ref()).await {
+            let peer_selected = match self.select_random_best_peer(fast_sync, previous_peer).await {
                 Ok(peer) => peer,
                 Err(e) => {
                     error!("Error while selecting random best peer for chain sync: {}", e);
@@ -963,7 +966,7 @@ impl<S: Storage> P2pServer<S> {
                         false
                     }
                 } else {
-                    let previous_err = previous_peer.map(|(_, err)| err).unwrap_or(false);
+                    let previous_err = previous_peer.map(|(_, _, err)| err).unwrap_or(false);
                     if let Err(e) = self.request_sync_chain_for(&peer, &mut last_chain_sync, previous_err).await {
                         warn!("Error occured on chain sync with {}: {}", peer, e);
                         true
@@ -971,7 +974,7 @@ impl<S: Storage> P2pServer<S> {
                         false
                     }
                 };
-                previous_peer = Some((peer, err));
+                previous_peer = Some((peer.get_id(), peer.is_priority(), err));
                 // We are not syncing anymore
                 self.set_chain_syncing(false);
             } else {
@@ -1350,7 +1353,7 @@ impl<S: Storage> P2pServer<S> {
                 }
 
                 peer.set_write_task_state(TaskState::Finished).await;
-                debug!("Handle connection read side task for {} has been finished", addr);
+                debug!("Handle connection write side task for {} has been finished", addr);
             })
         };
 
