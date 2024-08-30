@@ -3158,7 +3158,7 @@ No parameters
 }
 ```
 
-#### Get Topo Height
+#### Get Pruned Topo Height
 Retrieve the pruned topoheight if the node has a pruned chain.
 Otherwise, returns `null` as value.
 
