@@ -640,7 +640,7 @@ impl Wallet {
                 if let Some(network_handler) = self.network_handler.lock().await.as_ref() {
                     // Last mining reward is above stable topoheight, this may increase orphans rate
                     // To avoid this, we will use the last balance version in stable topoheight as reference
-                    let use_stable_balance = if let Some(topoheight) = storage.get_last_coinbase_reward_topoheight() {
+                    let use_stable_balance = if let Some(topoheight) = storage.get_last_coinbase_reward_topoheight().filter(|_| !force_stable_balance) {
                         let stable_topoheight = network_handler.get_api().get_stable_topoheight().await?;
                         daemon_stable_topoheight = Some(stable_topoheight);
                         debug!("stable topoheight: {}, topoheight: {}", stable_topoheight, topoheight);

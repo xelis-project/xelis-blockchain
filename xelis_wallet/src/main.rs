@@ -358,6 +358,7 @@ async fn apply_config(wallet: &Arc<Wallet>, #[cfg(feature = "api_server")] promp
     }
 
     wallet.set_history_scan(!config.disable_history_scan);
+    wallet.set_stable_balance(config.force_stable_balance);
 
     #[cfg(feature = "api_server")]
     {
