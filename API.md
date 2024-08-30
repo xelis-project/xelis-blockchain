@@ -3158,6 +3158,33 @@ No parameters
 }
 ```
 
+#### Get Topo Height
+Retrieve the pruned topoheight if the node has a pruned chain.
+Otherwise, returns `null` as value.
+
+##### Method `get_pruned_topoheight`
+
+##### Parameters
+No parameters
+
+##### Request
+```json
+{
+	"jsonrpc": "2.0",
+	"method": "get_pruned_topoheight",
+	"id": 1
+}
+```
+
+##### Response
+```json
+{
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": null
+}
+```
+
 #### Get Stable Height
 Retrieve current stable height of the chain.
 
