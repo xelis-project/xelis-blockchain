@@ -852,7 +852,7 @@ impl Wallet {
     // that will delete all transactions above the given topoheight and all balances
     // then it will re-fetch all transactions and balances from daemon
     #[cfg(feature = "network_handler")]
-    pub async fn rescan(&self, topoheight: u64, auto_reconnect: bool) -> Result<(), WalletError> {
+    pub async fn rescan(&self, mut topoheight: u64, auto_reconnect: bool) -> Result<(), WalletError> {
         trace!("Rescan wallet from topoheight {}", topoheight);
         if !self.is_online().await {
             // user have to set it online
@@ -866,6 +866,14 @@ impl Wallet {
 
         let handler = self.network_handler.lock().await;
         if let Some(network_handler) = handler.as_ref() {
+            let pruned_topoheight = network_handler.get_api().get_pruned_topoheight().await?;
+            let pruned_topo = pruned_topoheight.unwrap_or(0);
+            // Prevent people losing their history if they rescan from a pruned chain
+            if topoheight < pruned_topo {
+                warn!("Rescan topoheight is below pruned topoheight, setting it to {} to avoid losing history", pruned_topo);
+                topoheight = pruned_topo;
+            }
+
             debug!("Stopping network handler!");
             network_handler.stop().await?;
             {
