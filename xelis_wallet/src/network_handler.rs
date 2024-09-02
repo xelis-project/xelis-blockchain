@@ -459,7 +459,6 @@ impl NetworkHandler {
                     // If we have no balance in storage OR the stored ciphertext isn't the same, we should store it
                     let store = storage.get_balance_for(asset).await.map(|b| b.ciphertext != balance).unwrap_or(true);
                     if store {
-                        debug!("Storing balance for asset {}", asset);
                         let plaintext_balance = if let Some(plaintext_balance) = storage.get_unconfirmed_balance_decoded_for(&asset, &balance.compressed()).await? {
                             plaintext_balance
                         } else {
@@ -467,7 +466,8 @@ impl NetworkHandler {
                             let ciphertext = balance.decompressed()?;
                             Arc::clone(&self.wallet).decrypt_ciphertext(ciphertext.clone()).await?
                         };
-
+                        
+                        debug!("Storing balance from topoheight {} for asset {} ({}) {}", topoheight, asset, balance, plaintext_balance);
                         // Store the new balance
                         storage.set_balance_for(asset, Balance::new(plaintext_balance, balance)).await?;
 
@@ -669,7 +669,7 @@ impl NetworkHandler {
 
         trace!("assets: {}", assets.len());
 
-        let mut balances: HashMap<&Hash, CiphertextCache> = HashMap::new();
+        let mut balances: HashMap<&Hash, (CiphertextCache, u64)> = HashMap::new();
         // Store newly detected assets
         // Get the final balance of each asset
         for asset in &assets {
@@ -694,7 +694,7 @@ impl NetworkHandler {
             // get the balance for this asset
             let result = self.api.get_balance(&address, &asset).await?;
             trace!("found balance at topoheight: {}", result.topoheight);
-            balances.insert(asset, result.version.take_balance());
+            balances.insert(asset, (result.version.take_balance(), result.topoheight));
         }
 
         let mut should_sync_blocks = false;
@@ -710,7 +710,7 @@ impl NetworkHandler {
                 }
             }
 
-            for (asset, mut ciphertext) in balances {
+            for (asset, (mut ciphertext, topoheight)) in balances {
                 let (must_update, balance_cache) = {
                     let storage = self.wallet.get_storage().read().await;
                     let must_update = match storage.get_balance_for(&asset).await {
@@ -746,6 +746,7 @@ impl NetworkHandler {
 
                     // Update the balance
                     let mut storage = self.wallet.get_storage().write().await;
+                    debug!("Storing balance at topoheight {} for asset {} ({}) {}", topoheight, asset, value, ciphertext);
                     storage.set_balance_for(asset, Balance::new(value, ciphertext)).await?;
 
                     // We should sync new blocks to get the TXs

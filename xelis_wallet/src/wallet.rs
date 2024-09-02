@@ -76,7 +76,9 @@ use {
 };
 use rand::{rngs::OsRng, RngCore};
 use log::{
-    debug, error, info, trace
+    debug,
+    error,
+    trace
 };
 
 #[cfg(feature = "api_server")]
@@ -666,6 +668,7 @@ impl Wallet {
                                 ciphertext
                             };
 
+                            debug!("Setting unconfirmed balance for asset {} ({}) with amount {}", asset, balance.ciphertext, balance.amount);
                             storage.set_unconfirmed_balance_for((*asset).clone(), balance).await?;
                             // Build the stable reference
                             // We need to find the highest stable point
@@ -710,7 +713,7 @@ impl Wallet {
             }
 
             let (balance, unconfirmed) = storage.get_unconfirmed_balance_for(&asset).await?;
-            info!("Adding balance (unconfirmed: {}) for asset {} with amount {}, ciphertext: {}", unconfirmed, asset, balance.amount, balance.ciphertext);
+            debug!("Using balance (unconfirmed: {}) for asset {} with amount {}, ciphertext: {}", unconfirmed, asset, balance.amount, balance.ciphertext);
             state.add_balance(asset.clone(), balance);
         }
 
