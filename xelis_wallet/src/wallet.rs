@@ -920,7 +920,7 @@ impl Wallet {
     // this function allow to user to get the network handler in case in want to stay in online mode
     // but want to pause / resume the syncing task through start/stop functions from it
     #[cfg(feature = "network_handler")]
-    pub async fn get_network_handler(&self) -> &Mutex<Option<Arc<NetworkHandler>>> {
+    pub fn get_network_handler(&self) -> &Mutex<Option<Arc<NetworkHandler>>> {
         &self.network_handler
     }
 
