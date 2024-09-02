@@ -4,6 +4,29 @@ This file contains all the changelogs to ensure that changes can be tracked and 
 
 To see the full history and exact changes, please refer to the commits history directly.
 
+## v1.14.0
+
+Moving to 1.14.0 due to breaking changes in peerlist storage.
+
+Common:
+- add new struct for `network_info` rpc method
+- clean up in ws json rpc client
+
+Daemon:
+- add `get_pruned_topoheight` rpc method
+- P2P peerlist is now backed by a DB instead of a traditional JSON file. (Reduce memory usage, and better I/O operations)
+-  add `show_peerlist` cli command
+- paginate few CLI commands
+- don't keep Peer instance in chain sync task, but its priority flag & id only.
+
+Wallet:
+- `network_info` rpc method added
+- fix `force-stable-balance` CLI option
+- add `clear_tx_cache` cli command
+- fix blockDAG reorg resync of transactions
+- support anonymous browsing for web wallet (no access to directory feature)
+
+
 ## v1.13.4
 
 Bug fixes for nodes with less than 2GB of ram, and for nodes having reorg issues.
