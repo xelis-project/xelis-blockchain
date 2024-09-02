@@ -59,8 +59,8 @@ impl<T: DeserializeOwned> EventReceiver<T> {
         // If we lagged behind, we need to catch up
         while let Err(e) = res {
             match e {
-                broadcast::error::RecvError::Lagged(_) => {
-                    error!("EventReceiver lagged behind, catching up...");
+                broadcast::error::RecvError::Lagged(i) => {
+                    error!("EventReceiver lagged {i} behind, catching up...");
                     res = self.inner.recv().await;
                 }
                 e => return Err(e.into())
@@ -114,15 +114,11 @@ pub struct WebSocketJsonRPCClientImpl<E: Serialize + Hash + Eq + Send + Sync + C
 pub const DEFAULT_AUTO_RECONNECT: Duration = Duration::from_secs(5);
 
 impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static> WebSocketJsonRPCClientImpl<E> {
-    async fn connect_to(target: &String) -> Result<WebSocketStream, JsonRPCError> {
-        let ws = connect(target).await?;
 
-        Ok(ws)
-    }
-
+    // Create a new WebSocketJsonRPCClient with the target address
     pub async fn new(mut target: String) -> Result<WebSocketJsonRPCClient<E>, JsonRPCError> {
         target = sanitize_daemon_address(target.as_str());
-        let ws = Self::connect_to(&target).await?;
+        let ws = connect(&target).await?;
 
         let (sender, receiver) = mpsc::channel(64);
         let client = Arc::new(WebSocketJsonRPCClientImpl {
@@ -147,6 +143,11 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
         }
 
         Ok(client)
+    }
+
+    // Get the target address
+    pub fn get_target(&self) -> &str {
+        &self.target
     }
 
     // Generate a new ID for a JSON-RPC request
@@ -280,7 +281,7 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
             return Ok(false)
         }
 
-        let ws = Self::connect_to(&self.target).await?;
+        let ws = connect(&self.target).await?;
         {
             let mut lock = self.background_task.lock().await;
             if let Some(handle) = lock.take() {
@@ -359,7 +360,7 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
                     debug!("Reconnecting to the server in {} seconds...", auto_reconnect.as_secs());
                     sleep(auto_reconnect).await;
 
-                    match Self::connect_to(&zelf.target).await {
+                    match connect(&zelf.target).await {
                         Ok(websocket) => {
                             ws = Some(websocket);
 

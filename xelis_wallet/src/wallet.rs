@@ -76,7 +76,9 @@ use {
 };
 use rand::{rngs::OsRng, RngCore};
 use log::{
-    debug, error, info, trace
+    debug,
+    error,
+    trace
 };
 
 #[cfg(feature = "api_server")]
@@ -640,7 +642,7 @@ impl Wallet {
                 if let Some(network_handler) = self.network_handler.lock().await.as_ref() {
                     // Last mining reward is above stable topoheight, this may increase orphans rate
                     // To avoid this, we will use the last balance version in stable topoheight as reference
-                    let use_stable_balance = if let Some(topoheight) = storage.get_last_coinbase_reward_topoheight() {
+                    let use_stable_balance = if let Some(topoheight) = storage.get_last_coinbase_reward_topoheight().filter(|_| !force_stable_balance) {
                         let stable_topoheight = network_handler.get_api().get_stable_topoheight().await?;
                         daemon_stable_topoheight = Some(stable_topoheight);
                         debug!("stable topoheight: {}, topoheight: {}", stable_topoheight, topoheight);
@@ -666,6 +668,7 @@ impl Wallet {
                                 ciphertext
                             };
 
+                            debug!("Setting unconfirmed balance for asset {} ({}) with amount {}", asset, balance.ciphertext, balance.amount);
                             storage.set_unconfirmed_balance_for((*asset).clone(), balance).await?;
                             // Build the stable reference
                             // We need to find the highest stable point
@@ -710,7 +713,7 @@ impl Wallet {
             }
 
             let (balance, unconfirmed) = storage.get_unconfirmed_balance_for(&asset).await?;
-            info!("Adding balance (unconfirmed: {}) for asset {} with amount {}, ciphertext: {}", unconfirmed, asset, balance.amount, balance.ciphertext);
+            debug!("Using balance (unconfirmed: {}) for asset {} with amount {}, ciphertext: {}", unconfirmed, asset, balance.amount, balance.ciphertext);
             state.add_balance(asset.clone(), balance);
         }
 
@@ -852,7 +855,7 @@ impl Wallet {
     // that will delete all transactions above the given topoheight and all balances
     // then it will re-fetch all transactions and balances from daemon
     #[cfg(feature = "network_handler")]
-    pub async fn rescan(&self, topoheight: u64, auto_reconnect: bool) -> Result<(), WalletError> {
+    pub async fn rescan(&self, mut topoheight: u64, auto_reconnect: bool) -> Result<(), WalletError> {
         trace!("Rescan wallet from topoheight {}", topoheight);
         if !self.is_online().await {
             // user have to set it online
@@ -866,6 +869,14 @@ impl Wallet {
 
         let handler = self.network_handler.lock().await;
         if let Some(network_handler) = handler.as_ref() {
+            let pruned_topoheight = network_handler.get_api().get_pruned_topoheight().await?;
+            let pruned_topo = pruned_topoheight.unwrap_or(0);
+            // Prevent people losing their history if they rescan from a pruned chain
+            if topoheight < pruned_topo {
+                warn!("Rescan topoheight is below pruned topoheight, setting it to {} to avoid losing history", pruned_topo);
+                topoheight = pruned_topo;
+            }
+
             debug!("Stopping network handler!");
             network_handler.stop().await?;
             {
@@ -886,8 +897,8 @@ impl Wallet {
                     debug!("Deleting all transactions for full rescan");
                     storage.delete_transactions()?;
                 } else {
-                    debug!("Deleting transactions above {} for partial rescan", topoheight);
-                    storage.delete_transactions_above_topoheight(topoheight)?;
+                    debug!("Deleting transactions at or above {} for partial rescan", topoheight);
+                    storage.delete_transactions_at_or_above_topoheight(topoheight)?;
                 }
             }
             debug!("Starting again network handler");
@@ -912,7 +923,7 @@ impl Wallet {
     // this function allow to user to get the network handler in case in want to stay in online mode
     // but want to pause / resume the syncing task through start/stop functions from it
     #[cfg(feature = "network_handler")]
-    pub async fn get_network_handler(&self) -> &Mutex<Option<Arc<NetworkHandler>>> {
+    pub fn get_network_handler(&self) -> &Mutex<Option<Arc<NetworkHandler>>> {
         &self.network_handler
     }
 

@@ -68,7 +68,13 @@ pub async fn has_precomputed_tables(_: Option<String>) -> Result<bool> {
     let navigator = window.navigator();
     let storage = navigator.storage();
     // On Safari, if directory is not available, it means he is in an ephemeral context (private tab), which is not supported by WebKit
-    let directory: FileSystemDirectoryHandle = execute!(storage.get_directory(), Directory)?;
+    let directory: FileSystemDirectoryHandle = match execute!(storage.get_directory(), Directory) {
+        Ok(directory) => directory,
+        Err(e) => {
+            warn!("Directory not available, precomputed tables cannot be present: {}", e);
+            return Ok(false)
+        }
+    };
 
     // By default, it will not create a new file false
     // we check if the file exists
@@ -94,13 +100,22 @@ pub async fn read_or_generate_precomputed_tables<P: ecdlp::ProgressTableGenerati
     let window = window().ok_or(PrecomputedTablesError::Window("window not found in context".to_owned()))?;
     let navigator = window.navigator();
     let storage = navigator.storage();
-    let directory: FileSystemDirectoryHandle = execute!(storage.get_directory(), Directory)?;
+    let directory: Result<FileSystemDirectoryHandle, PrecomputedTablesError> = execute!(storage.get_directory(), Directory);
 
     // By default, it will not create a new file false
-    let file_handle: Option<FileSystemFileHandle> = js_future!(directory.get_file_handle(path.as_str()))
-        .ok()
-        .map(|v| v.try_into().ok())
-        .flatten();
+    let (file_handle, directory): (Option<FileSystemFileHandle>, Option<FileSystemDirectoryHandle>) = match directory {
+        Ok(directory) => (
+            js_future!(directory.get_file_handle(path.as_str()))
+            .ok()
+            .map(|v| v.try_into().ok())
+            .flatten(),
+            Some(directory)
+        ),
+        Err(e) => {
+            warn!("Directory not available: {}", e);
+            (None, None)
+        }
+    };
 
     let tables = match file_handle {
         Some(file_handle) => {
@@ -114,7 +129,7 @@ pub async fn read_or_generate_precomputed_tables<P: ecdlp::ProgressTableGenerati
             let buffer = Uint8Array::new(&value).to_vec();
             if buffer.len() != ECDLPTables::<PRECOMPUTED_TABLES_L1>::get_required_sizes().0 {
                 info!("File stored has an invalid size, generating precomputed tables again...");
-                generate_tables(path.as_str(), file_handle, progress_report).await?
+                generate_tables(path.as_str(), Some(file_handle), progress_report).await?
             } else {
                 info!("Loading {} bytes", buffer.len());
                 let tables = ecdlp::ECDLPTables::from_bytes(&buffer);
@@ -128,7 +143,10 @@ pub async fn read_or_generate_precomputed_tables<P: ecdlp::ProgressTableGenerati
             let opts = FileSystemGetFileOptions::new();
             opts.set_create(true);
 
-            let file_handle: FileSystemFileHandle = execute!(directory.get_file_handle_with_options(path.as_str(), &opts), File)?;
+            let file_handle: Option<FileSystemFileHandle> = match directory {
+                Some(directory) => Some(execute!(directory.get_file_handle_with_options(path.as_str(), &opts), File)?),
+                None => None
+            };
             generate_tables(path.as_str(), file_handle, progress_report).await?
         }
     };
@@ -137,16 +155,19 @@ pub async fn read_or_generate_precomputed_tables<P: ecdlp::ProgressTableGenerati
 }
 
 // Generate the tables and store them in a file if API is available
-async fn generate_tables<const L1: usize, P: ecdlp::ProgressTableGenerationReportFunction>(path: &str, file_handle: FileSystemFileHandle, progress_report: P) -> Result<ECDLPTables<L1>> {
+async fn generate_tables<const L1: usize, P: ecdlp::ProgressTableGenerationReportFunction>(path: &str, file_handle: Option<FileSystemFileHandle>, progress_report: P) -> Result<ECDLPTables<L1>> {
     let tables = ecdlp::ECDLPTables::generate_with_progress_report(progress_report)?;
 
     let slice = tables.as_slice();
     info!("Precomputed tables generated");
 
-    let res: Option<FileSystemWritableFileStream> = if Reflect::has(&file_handle, &JsValue::from_str("createWritable")).map_err(|e| PrecomputedTablesError::Reflect(format!("{:?}", e)))? {
-        Some(execute!(file_handle.create_writable(), WritableFile)?)
-    } else {
-        None
+    let res: Option<FileSystemWritableFileStream> = match file_handle {
+        Some(file_handle) => if Reflect::has(&file_handle, &JsValue::from_str("createWritable")).map_err(|e| PrecomputedTablesError::Reflect(format!("{:?}", e)))? {
+            Some(execute!(file_handle.create_writable(), WritableFile)?)
+        } else {
+            None
+        },
+        None => None
     };
 
     if let Some(writable) = res {

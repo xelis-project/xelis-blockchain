@@ -15,7 +15,8 @@ use super::{
     DataValue,
     query::Query,
     default_false_value,
-    default_true_value
+    default_true_value,
+    daemon
 };
 
 #[derive(Serialize, Deserialize)]
@@ -114,6 +115,13 @@ pub struct SetOnlineModeParams {
     pub daemon_address: String,
     #[serde(default = "default_false_value")]
     pub auto_reconnect: bool,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct NetworkInfoResult {
+    #[serde(flatten)]
+    pub inner: daemon::GetInfoResult,
+    pub connected_to: String,
 }
 
 #[derive(Serialize, Deserialize)]

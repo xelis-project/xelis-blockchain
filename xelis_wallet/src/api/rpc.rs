@@ -23,6 +23,7 @@ use xelis_common::{
             SetOnlineModeParams,
             EstimateExtraDataSizeParams,
             EstimateExtraDataSizeResult,
+            NetworkInfoResult
         },
         SplitAddressParams,
         SplitAddressResult,
@@ -77,6 +78,7 @@ pub fn register_methods(handler: &mut RPCHandler<Arc<Wallet>>) {
     handler.register_method("sign_data", async_handler!(sign_data));
     handler.register_method("estimate_fees", async_handler!(estimate_fees));
     handler.register_method("estimate_extra_data_size", async_handler!(estimate_extra_data_size));
+    handler.register_method("network_info", async_handler!(network_info));
 
     // These functions allow to have an encrypted DB directly in the wallet storage
     // You can retrieve keys, values, have differents trees, and store values
@@ -179,6 +181,26 @@ async fn estimate_extra_data_size(_: &Context, body: Value) -> Result<Value, Int
     Ok(json!(EstimateExtraDataSizeResult {
         size
     }))
+}
+
+// Retrieve the network info
+async fn network_info(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
+    if body != Value::Null {
+        return Err(InternalRpcError::UnexpectedParams)
+    }
+
+    let wallet: &Arc<Wallet> = context.get()?;
+    let network_handler = wallet.get_network_handler().lock().await;
+    if let Some(handler) = network_handler.as_ref() {
+        let api = handler.get_api();
+        let inner = api.get_info().await?;
+        Ok(json!(NetworkInfoResult {
+            inner,
+            connected_to: api.get_client().get_target().to_owned(),
+        }))
+    } else {
+        Err(InternalRpcError::InvalidRequestStr("Wallet is not connected to a daemon"))
+    }
 }
 
 // Rescan the wallet from the provided topoheight (or from the beginning if not provided)

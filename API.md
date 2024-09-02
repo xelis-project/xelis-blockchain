@@ -3158,6 +3158,33 @@ No parameters
 }
 ```
 
+#### Get Pruned Topo Height
+Retrieve the pruned topoheight if the node has a pruned chain.
+Otherwise, returns `null` as value.
+
+##### Method `get_pruned_topoheight`
+
+##### Parameters
+No parameters
+
+##### Request
+```json
+{
+	"jsonrpc": "2.0",
+	"method": "get_pruned_topoheight",
+	"id": 1
+}
+```
+
+##### Response
+```json
+{
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": null
+}
+```
+
 #### Get Stable Height
 Retrieve current stable height of the chain.
 
@@ -11135,7 +11162,6 @@ Returned fees are in atomic units.
 }
 ```
 
-
 #### Is Online
 Determine if the wallet is connected to a node or not (offline / online mode).
 
@@ -11159,6 +11185,50 @@ No parameter
 	"id": 1,
 	"jsonrpc": "2.0",
 	"result": true
+}
+```
+
+#### Network Info
+Fetch all information about the current node to which the wallet is connected to.
+
+##### Method `network_info`
+
+##### Parameters
+No parameter
+
+##### Request
+```json
+{
+	"jsonrpc": "2.0",
+	"method": "network_info",
+	"id": 1
+}
+```
+
+##### Response
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+        "average_block_time": 15954,
+        "block_reward": 137924147,
+        "block_time_target": 15000,
+        "circulating_supply": 104512595148870,
+        "connected_to": "ws://127.0.0.1:8080/json_rpc",
+        "dev_reward": 13792414,
+        "difficulty": "107844053400",
+        "height": 725025,
+        "maximum_supply": 1840000000000000,
+        "mempool_size": 0,
+        "miner_reward": 124131733,
+        "network": "Mainnet",
+        "pruned_topoheight": null,
+        "stableheight": 725017,
+        "top_block_hash": "1914802b64b28386adc37927081beb6ac4677b6f85ee2149f7a143339c99d309",
+        "topoheight": 761761,
+        "version": "1.13.4-d33986a"
+    }
 }
 ```
 

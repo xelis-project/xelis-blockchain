@@ -6,6 +6,7 @@ pub mod peer_list;
 pub mod chain_validator;
 mod tracker;
 mod encryption;
+mod disk_cache;
 
 pub use encryption::EncryptionKey;
 
@@ -197,8 +198,7 @@ impl<S: Storage> P2pServer<S> {
         let object_tracker = ObjectTracker::new(blockchain.clone(), exit_receiver);
 
         let (sender, event_receiver) = channel::<Arc<Peer>>(max_peers); 
-        let peer_list = PeerList::new(max_peers, format!("{}peerlist-{}.json", dir_path.unwrap_or_default(), blockchain.get_network().to_string().to_lowercase()), Some(sender));
-
+        let peer_list = PeerList::new(max_peers, format!("{}peerlist-{}", dir_path.unwrap_or_default(), blockchain.get_network().to_string().to_lowercase()), Some(sender))?;
 
         let server = Self {
             peer_id,
@@ -436,10 +436,23 @@ impl<S: Storage> P2pServer<S> {
             if !priority {
                 trace!("checking if connection can be accepted");
                 // check that this incoming peer isn't blacklisted
-                if !self.accept_new_connections().await || !self.peer_list.is_allowed(&addr.ip()).await {
-                    debug!("{} is not allowed, we can't connect to it", addr);
+                if !self.accept_new_connections().await {
+                    debug!("{} is not allowed, we don't accept any new connection", addr);
                     continue;
                 }
+
+                match self.peer_list.is_allowed(&addr.ip()).await {
+                    Ok(allowed) => {
+                        if !allowed {
+                            debug!("{} is not allowed to connect", addr);
+                            continue;
+                        }
+                    },
+                    Err(e) => {
+                        error!("Error while checking if {} is allowed: {}", addr, e);
+                        continue;
+                    }
+                };
             }
 
             if !self.is_running() {
@@ -452,7 +465,9 @@ impl<S: Storage> P2pServer<S> {
                     debug!("Error while connecting to address {}: {}", addr, e);
 
                     if !priority {
-                        self.peer_list.increase_fail_count_for_stored_peer(&addr.ip(), false).await;
+                        if let Err(e) = self.peer_list.increase_fail_count_for_peerlist_entry(&addr.ip(), false).await {
+                            error!("Error while increasing fail count for peer {} while connecting to it: {}", addr, e);
+                        }
                     }
 
                     continue;
@@ -464,7 +479,9 @@ impl<S: Storage> P2pServer<S> {
                 Err(e) => {
                     debug!("Error while verifying connection to address {}: {}", addr, e);
                     if !priority {
-                        self.peer_list.increase_fail_count_for_stored_peer(&addr.ip(), false).await;
+                        if let Err(e) = self.peer_list.increase_fail_count_for_peerlist_entry(&addr.ip(), false).await {
+                            error!("Error while increasing fail count for peer {} while verifying it: {}", addr, e);
+                        }
                     }
                     continue;
                 }
@@ -490,7 +507,7 @@ impl<S: Storage> P2pServer<S> {
         let reject = !self.is_compatible_with_exclusive_nodes(&addr)
             // check that this incoming peer isn't blacklisted
             || !self.accept_new_connections().await
-            || !self.peer_list.is_allowed(&addr.ip()).await
+            || !self.peer_list.is_allowed(&addr.ip()).await?
             || self.is_connected_to_addr(&addr).await;
 
         // Reject connection
@@ -513,7 +530,9 @@ impl<S: Storage> P2pServer<S> {
                 },
                 Err(e) => {
                     debug!("Error while handling incoming connection {}: {}", addr, e);
-                    zelf.peer_list.increase_fail_count_for_stored_peer(&addr.ip(), true).await;
+                    if let Err(e) = zelf.peer_list.increase_fail_count_for_peerlist_entry(&addr.ip(), true).await {
+                        error!("Error while increasing fail count for incoming peer {} while verifying it: {}", addr, e);
+                    }
                 }
             };
         }).await?;
@@ -717,7 +736,7 @@ impl<S: Storage> P2pServer<S> {
                 return Err(P2pError::PeerAlreadyConnected(addr));
             }
 
-            if !self.peer_list.is_allowed(&addr.ip()).await {
+            if !self.peer_list.is_allowed(&addr.ip()).await? {
                 debug!("{} is not allowed, we can't connect to it", addr);
                 return Err(P2pError::NotAllowed);
             }
@@ -777,7 +796,7 @@ impl<S: Storage> P2pServer<S> {
     // We must determine which one has the most work done
     // if we are not in fast sync mode, we must verify its pruned topoheight to be sure
     // he have the blocks we need
-    async fn select_random_best_peer(&self, fast_sync: bool, previous_peer: Option<&(Arc<Peer>, bool)>) -> Result<Option<Arc<Peer>>, BlockchainError> {
+    async fn select_random_best_peer(&self, fast_sync: bool, previous_peer: Option<(u64, bool, bool)>) -> Result<Option<Arc<Peer>>, BlockchainError> {
         trace!("select random best peer");
         
         let our_height = self.blockchain.get_height();
@@ -840,11 +859,13 @@ impl<S: Storage> P2pServer<S> {
         }
 
         // Try to not reuse the same peer between each sync
-        if let Some((previous_peer, err)) = previous_peer {
-            if peers.len() > 1 || (*err && !previous_peer.is_priority()) {
-                debug!("removing previous peer {} from random selection, err: {}, priority: {}", previous_peer, err, previous_peer.is_priority());
+        if let Some((previous_peer, priority, err)) = previous_peer {
+            if peers.len() > 1 || (err && !priority) {
+                debug!("removing previous peer {} from random selection, err: {}, priority: {}", previous_peer, err, priority);
                 // We don't need to preserve the order
-                peers.swap_remove(previous_peer);
+                if let Some(position) = peers.iter().position(|p| p.get_id() == previous_peer) {
+                    peers.swap_remove_index(position);
+                }
             }
         }
 
@@ -889,7 +910,8 @@ impl<S: Storage> P2pServer<S> {
         let interval = Duration::from_secs(CHAIN_SYNC_DELAY);
         // Try to not reuse the same peer between each sync
         // Don't use it at all if its errored
-        let mut previous_peer: Option<(Arc<Peer>, bool)> = None;
+        // the Peer ID, peer priority flag, error state
+        let mut previous_peer: Option<(u64, bool, bool)> = None;
         loop {
             // Detect exact time needed before next chain sync
             let current = get_current_time_in_millis();
@@ -921,7 +943,7 @@ impl<S: Storage> P2pServer<S> {
                 false
             };
 
-            let peer_selected = match self.select_random_best_peer(fast_sync, previous_peer.as_ref()).await {
+            let peer_selected = match self.select_random_best_peer(fast_sync, previous_peer).await {
                 Ok(peer) => peer,
                 Err(e) => {
                     error!("Error while selecting random best peer for chain sync: {}", e);
@@ -944,7 +966,7 @@ impl<S: Storage> P2pServer<S> {
                         false
                     }
                 } else {
-                    let previous_err = previous_peer.map(|(_, err)| err).unwrap_or(false);
+                    let previous_err = previous_peer.map(|(_, _, err)| err).unwrap_or(false);
                     if let Err(e) = self.request_sync_chain_for(&peer, &mut last_chain_sync, previous_err).await {
                         warn!("Error occured on chain sync with {}: {}", peer, e);
                         true
@@ -952,7 +974,7 @@ impl<S: Storage> P2pServer<S> {
                         false
                     }
                 };
-                previous_peer = Some((peer, err));
+                previous_peer = Some((peer.get_id(), peer.is_priority(), err));
                 // We are not syncing anymore
                 self.set_chain_syncing(false);
             } else {
@@ -1090,7 +1112,13 @@ impl<S: Storage> P2pServer<S> {
             if self.accept_new_connections().await {
                 let peer = {
                     trace!("Locking peer list write mode (peerlist loop)");
-                    self.peer_list.find_peer_to_connect().await
+                    match self.peer_list.find_peer_to_connect().await {
+                        Ok(peer) => peer,
+                        Err(e) => {
+                            error!("Error while finding peer to connect: {}", e);
+                            None
+                        }
+                    }
                 };
                 trace!("End locking peer list write mode (peerlist loop)");
 
@@ -1325,7 +1353,7 @@ impl<S: Storage> P2pServer<S> {
                 }
 
                 peer.set_write_task_state(TaskState::Finished).await;
-                debug!("Handle connection read side task for {} has been finished", addr);
+                debug!("Handle connection write side task for {} has been finished", addr);
             })
         };
 
@@ -1581,8 +1609,8 @@ impl<S: Storage> P2pServer<S> {
                             return Err(P2pError::InvalidPeerlist)
                         }
 
-                        if !self.is_connected_to_addr(addr).await && !self.peer_list.has_peer_stored(&addr.ip()).await {
-                            if !self.peer_list.store_peer_address(*addr).await {
+                        if !self.is_connected_to_addr(addr).await && !self.peer_list.has_peer_stored(&addr.ip()).await? {
+                            if !self.peer_list.store_peer_address(*addr).await? {
                                 debug!("{} already stored in peer list", addr);
                             }
                         }

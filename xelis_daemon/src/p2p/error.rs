@@ -26,6 +26,7 @@ use std::{
 };
 use thiserror::Error;
 use super::{
+    disk_cache::DiskError,
     encryption::EncryptionError,
     packet::{
         bootstrap_chain::StepKind,
@@ -35,6 +36,8 @@ use super::{
 
 #[derive(Error, Debug)]
 pub enum P2pError {
+    #[error("disk error: {0}")]
+    DiskError(#[from] DiskError),
     #[error("Invalid P2P version: {}", _0)]
     InvalidP2pVersion(String),
     #[error("Invalid tag, it must be greater than 0 and maximum 16 chars")]

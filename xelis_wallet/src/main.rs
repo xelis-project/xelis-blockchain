@@ -358,6 +358,7 @@ async fn apply_config(wallet: &Arc<Wallet>, #[cfg(feature = "api_server")] promp
     }
 
     wallet.set_history_scan(!config.disable_history_scan);
+    wallet.set_stable_balance(config.force_stable_balance);
 
     #[cfg(feature = "api_server")]
     {
@@ -412,6 +413,7 @@ async fn setup_wallet_command_manager(wallet: Arc<Wallet>, command_manager: &Com
     command_manager.add_command(Command::new("nonce", "Show current nonce", CommandHandler::Async(async_handler!(nonce))))?;
     command_manager.add_command(Command::new("set_nonce", "Set new nonce", CommandHandler::Async(async_handler!(set_nonce))))?;
     command_manager.add_command(Command::new("logout", "Logout from existing wallet", CommandHandler::Async(async_handler!(logout))))?;
+    command_manager.add_command(Command::new("clear_tx_cache", "Clear the current TX cache", CommandHandler::Async(async_handler!(clear_tx_cache))))?;
 
     #[cfg(feature = "network_handler")]
     {
@@ -897,6 +899,15 @@ async fn history(manager: &CommandManager, mut arguments: ArgumentManager) -> Re
         manager.message(format!("- {}", tx.summary(wallet.get_network().is_mainnet(), &*storage)?));
     }
 
+    Ok(())
+}
+
+async fn clear_tx_cache(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
+    let context = manager.get_context().lock()?;
+    let wallet: &Arc<Wallet> = context.get()?;
+    let mut storage = wallet.get_storage().write().await;
+    storage.clear_tx_cache();
+    manager.message("Transaction cache has been cleared");
     Ok(())
 }
 

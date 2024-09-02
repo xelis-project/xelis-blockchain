@@ -172,6 +172,12 @@ impl DaemonAPI {
         Ok(info)
     }
 
+    pub async fn get_pruned_topoheight(&self) -> Result<Option<u64>> {
+        trace!("get_pruned_topoheight");
+        let topoheight = self.client.call("get_pruned_topoheight").await?;
+        Ok(topoheight)
+    }
+
     pub async fn get_asset(&self, asset: &Hash) -> Result<AssetData> {
         trace!("get_asset");
         let assets = self.client.call_with("get_asset", &GetAssetParams {
