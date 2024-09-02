@@ -59,8 +59,8 @@ impl<T: DeserializeOwned> EventReceiver<T> {
         // If we lagged behind, we need to catch up
         while let Err(e) = res {
             match e {
-                broadcast::error::RecvError::Lagged(_) => {
-                    error!("EventReceiver lagged behind, catching up...");
+                broadcast::error::RecvError::Lagged(i) => {
+                    error!("EventReceiver lagged {i} behind, catching up...");
                     res = self.inner.recv().await;
                 }
                 e => return Err(e.into())
