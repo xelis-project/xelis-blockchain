@@ -882,7 +882,7 @@ impl NetworkHandler {
                                     // TODO we should make a faster way to delete all TXs above this topoheight
                                     // Otherwise in future with millions of TXs, this may take few seconds.
                                     debug!("Deleting transactions above {} due to DAG reorg", topoheight);
-                                    storage.delete_transactions_above_topoheight(topoheight)?;
+                                    storage.delete_transactions_at_or_above_topoheight(topoheight)?;
                                 }
                             }
                         } else {

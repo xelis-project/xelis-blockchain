@@ -704,6 +704,20 @@ impl EncryptedStorage {
         Ok(())
     }
 
+    // delete all transactions at or above the specified topoheight
+    pub fn delete_transactions_at_or_above_topoheight(&mut self, topoheight: u64) -> Result<()> {
+        trace!("delete transactions at or above topoheight {}", topoheight);
+        for el in self.transactions.iter().values() {
+            let value = el?;
+            let entry = TransactionEntry::from_bytes(&self.cipher.decrypt_value(&value)?)?;
+            if entry.get_topoheight() >= topoheight {
+                self.delete_transaction(entry.get_hash())?;
+            }
+        }
+
+        Ok(())
+    }
+
     // delete all transactions at the specified topoheight
     // This will go through each transaction, deserialize it, check topoheight, and delete it if required
     // Maybe we can optimize it by keeping a lookuptable of topoheight -> txs ?
