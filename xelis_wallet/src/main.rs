@@ -1,4 +1,5 @@
 use std::{
+    fs::File,
     ops::ControlFlow,
     path::Path,
     sync::Arc,
@@ -414,6 +415,7 @@ async fn setup_wallet_command_manager(wallet: Arc<Wallet>, command_manager: &Com
     command_manager.add_command(Command::new("set_nonce", "Set new nonce", CommandHandler::Async(async_handler!(set_nonce))))?;
     command_manager.add_command(Command::new("logout", "Logout from existing wallet", CommandHandler::Async(async_handler!(logout))))?;
     command_manager.add_command(Command::new("clear_tx_cache", "Clear the current TX cache", CommandHandler::Async(async_handler!(clear_tx_cache))))?;
+    command_manager.add_command(Command::with_required_arguments("export_transactions", "Export all your transactions in a CSV file", vec![Arg::new("filename", ArgType::String)], CommandHandler::Async(async_handler!(export_transactions_csv))))?;
 
     #[cfg(feature = "network_handler")]
     {
@@ -899,6 +901,21 @@ async fn history(manager: &CommandManager, mut arguments: ArgumentManager) -> Re
         manager.message(format!("- {}", tx.summary(wallet.get_network().is_mainnet(), &*storage)?));
     }
 
+    Ok(())
+}
+
+async fn export_transactions_csv(manager: &CommandManager, mut arguments: ArgumentManager) -> Result<(), CommandError> {
+    let filename = arguments.get_value("filename")?.to_string_value()?;
+    let context = manager.get_context().lock()?;
+    let wallet: &Arc<Wallet> = context.get()?;
+    let storage = wallet.get_storage().read().await;
+    let transactions = storage.get_transactions()?;
+    let mut file = File::create(&filename).context("Error while creating CSV file")?;
+
+    wallet.export_transactions_in_csv(transactions, &mut file).context("Error while exporting transactions to CSV")?;
+
+    // writer.flush().context("Error while flushing CSV file")?;
+    manager.message(format!("Transactions have been exported to {}", filename));
     Ok(())
 }
 
