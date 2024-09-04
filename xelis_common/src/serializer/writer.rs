@@ -59,14 +59,15 @@ impl Writer {
     }
 
     pub fn write_optional_non_zero_u8(&mut self, opt: Option<u8>) {
-        match opt {
-            Some(v) if v != 0 => {
-                self.bytes.push(v);
-            },
-            _ => {
-                self.bytes.push(0);
-            }
-        };
+        self.bytes.push(opt.unwrap_or(0));
+    }
+
+    pub fn write_optional_non_zero_u16(&mut self, opt: Option<u16>) {
+        self.write_u16(opt.unwrap_or(0));
+    }
+
+    pub fn write_optional_non_zero_u64(&mut self, opt: Option<u64>) {
+        self.write_u64(&opt.unwrap_or(0));
     }
 
     pub fn total_write(&self) -> usize {
