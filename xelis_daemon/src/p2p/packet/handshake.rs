@@ -90,6 +90,10 @@ impl<'a> Handshake<'a> {
         Peer::new(connection, self.get_peer_id(), self.node_tag.into_owned(), self.local_port, self.version.into_owned(), self.top_hash.into_owned(), self.topoheight, self.height, self.pruned_topoheight, priority, self.cumulative_difficulty.into_owned(), peer_list, peers, self.can_be_shared)
     }
 
+    pub fn get_local_port(&self) -> u16 {
+        self.local_port
+    }
+
     pub fn get_version(&self) -> &String {
         &self.version
     }

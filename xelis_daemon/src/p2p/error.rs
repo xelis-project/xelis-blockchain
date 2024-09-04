@@ -36,6 +36,8 @@ use super::{
 
 #[derive(Error, Debug)]
 pub enum P2pError {
+    #[error("Invalid local port, it must be greater than 0")]
+    InvalidLocalPort,
     #[error("disk error: {0}")]
     DiskError(#[from] DiskError),
     #[error("Invalid P2P version: {}", _0)]
