@@ -59,6 +59,10 @@ pub struct PeerListEntry {
     first_seen: Option<TimestampSeconds>,
     last_seen: Option<TimestampSeconds>,
     last_connection_try: Option<TimestampSeconds>,
+    // Fail count is the count of failed connection attempts
+    // Every `PEER_FAIL_TO_CONNECT_LIMIT`, we will temp ban the peer
+    // If fail count is at maximum (`u8::MAX`) we will remove the peer from the stored peerlist
+    // If the peer is whitelisted, we don't increase the fail count
     fail_count: u8,
     local_port: Option<u16>,
     // Until when the peer is banned
@@ -445,9 +449,16 @@ impl PeerList {
         let mut potential_gray_peer = None;
         for res in peerlist_entries {
             let (ip, mut entry) = res?;
+
+            // If the peer is blacklisted or temp banned, skip it
+            if *entry.get_state() == PeerListEntryState::Blacklist || entry.get_temp_ban_until().map(|temp_ban_until| temp_ban_until > current_time).unwrap_or(false) {
+                debug!("Skipping {} because it's blacklisted or temp banned ({})", ip, format_duration(Duration::from_secs(entry.get_temp_ban_until().unwrap_or(0))));
+                continue;
+            }
+
             if let Some(local_port) = entry.get_local_port() {
                 let addr = SocketAddr::new(ip, local_port);
-                if *entry.get_state() != PeerListEntryState::Blacklist && entry.get_last_connection_try().unwrap_or(0) + (entry.get_fail_count() as u64 * P2P_EXTEND_PEERLIST_DELAY) <= current_time && Self::internal_get_peer_by_addr(&peers, &addr).is_none() {
+                if entry.get_last_connection_try().unwrap_or(0) + (entry.get_fail_count() as u64 * P2P_EXTEND_PEERLIST_DELAY) <= current_time && Self::internal_get_peer_by_addr(&peers, &addr).is_none() {
                     // Store it if we don't have any whitelisted peer to connect to
                     if potential_gray_peer.is_none() && *entry.get_state() == PeerListEntryState::Graylist {
                         potential_gray_peer = Some((ip, addr));
@@ -486,15 +497,18 @@ impl PeerList {
 
         let fail_count = entry.get_fail_count();
         if *entry.get_state() != PeerListEntryState::Whitelist {
-            if temp_ban && fail_count != 0 && fail_count % PEER_FAIL_TO_CONNECT_LIMIT == 0 {
-                debug!("Temp banning {} for failing too many times (count = {})", ip, fail_count);
-                entry.set_temp_ban_until(Some(get_current_time_in_seconds() + PEER_TEMP_BAN_TIME_ON_CONNECT));
-            }
-
             debug!("Increasing fail count for {}", ip);
-            entry.set_fail_count(fail_count.wrapping_add(1));
-
-            self.cache.set_peerlist_entry(ip, entry)?;
+            if fail_count == u8::MAX {
+                debug!("Removing {} from stored peerlist because fail count is at max", ip);
+                self.cache.remove_peerlist_entry(ip)?;
+            } else {
+                if temp_ban && fail_count != 0 && fail_count % PEER_FAIL_TO_CONNECT_LIMIT == 0 {
+                    debug!("Temp banning {} for failing too many times (count = {})", ip, fail_count);
+                    entry.set_temp_ban_until(Some(get_current_time_in_seconds() + PEER_TEMP_BAN_TIME_ON_CONNECT));
+                }
+                entry.set_fail_count(fail_count.wrapping_add(1));
+                self.cache.set_peerlist_entry(ip, entry)?;
+            }
         } else {
             debug!("{} is whitelisted, not increasing fail count", ip);
         }
