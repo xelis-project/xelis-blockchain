@@ -1,8 +1,8 @@
 use crate::{
     config::{
-        P2P_EXTEND_PEERLIST_DELAY,
         PEER_FAIL_TO_CONNECT_LIMIT,
         PEER_TEMP_BAN_TIME_ON_CONNECT,
+        P2P_PEERLIST_RETRY_AFTER
     },
     p2p::packet::peer_disconnected::PacketPeerDisconnected
 };
@@ -458,7 +458,7 @@ impl PeerList {
 
             if let Some(local_port) = entry.get_local_port() {
                 let addr = SocketAddr::new(ip, local_port);
-                if entry.get_last_connection_try().unwrap_or(0) + (entry.get_fail_count() as u64 * P2P_EXTEND_PEERLIST_DELAY) <= current_time && Self::internal_get_peer_by_addr(&peers, &addr).is_none() {
+                if entry.get_last_connection_try().unwrap_or(0) + (entry.get_fail_count() as u64 * P2P_PEERLIST_RETRY_AFTER) <= current_time && Self::internal_get_peer_by_addr(&peers, &addr).is_none() {
                     // Store it if we don't have any whitelisted peer to connect to
                     if potential_gray_peer.is_none() && *entry.get_state() == PeerListEntryState::Graylist {
                         potential_gray_peer = Some((ip, addr));
@@ -487,6 +487,7 @@ impl PeerList {
 
 
     // increase the fail count of a peer
+    // If tempban is allowed, and the fail count is at the limit, temp ban the peer
     pub async fn increase_fail_count_for_peerlist_entry(&self, ip: &IpAddr, temp_ban: bool) -> Result<(), P2pError> {
         trace!("increasing fail count for {}, allow temp ban: {}", ip, temp_ban);
         let mut entry = if self.cache.has_peerlist_entry(ip)? {
@@ -495,18 +496,22 @@ impl PeerList {
             PeerListEntry::new(None, PeerListEntryState::Graylist)
         };
 
-        let fail_count = entry.get_fail_count();
         if *entry.get_state() != PeerListEntryState::Whitelist {
             debug!("Increasing fail count for {}", ip);
+            let mut fail_count = entry.get_fail_count();
             if fail_count == u8::MAX {
                 debug!("Removing {} from stored peerlist because fail count is at max", ip);
                 self.cache.remove_peerlist_entry(ip)?;
             } else {
+                // If we allow to temp ban, and the fail count is at the limit, temp ban the peer
                 if temp_ban && fail_count != 0 && fail_count % PEER_FAIL_TO_CONNECT_LIMIT == 0 {
                     debug!("Temp banning {} for failing too many times (count = {})", ip, fail_count);
                     entry.set_temp_ban_until(Some(get_current_time_in_seconds() + PEER_TEMP_BAN_TIME_ON_CONNECT));
                 }
-                entry.set_fail_count(fail_count.wrapping_add(1));
+
+                fail_count += 1;
+                debug!("Fail count is now {} for {}", fail_count, ip);
+                entry.set_fail_count(fail_count);
                 self.cache.set_peerlist_entry(ip, entry)?;
             }
         } else {

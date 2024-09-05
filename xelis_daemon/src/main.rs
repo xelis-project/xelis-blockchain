@@ -206,6 +206,7 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
     command_manager.add_command(Command::with_optional_arguments("whitelist", "View whitelist or add a peer address in it", vec![Arg::new("address", ArgType::String)], CommandHandler::Async(async_handler!(whitelist::<S>))))?;
     command_manager.add_command(Command::with_optional_arguments("verify_chain", "Check chain supply", vec![Arg::new("topoheight", ArgType::Number)], CommandHandler::Async(async_handler!(verify_chain::<S>))))?;
     command_manager.add_command(Command::with_required_arguments("kick_peer", "Kick a peer using its ip:port", vec![Arg::new("address", ArgType::String)], CommandHandler::Async(async_handler!(kick_peer::<S>))))?;
+    command_manager.add_command(Command::with_required_arguments("temp_ban_address", "Temporarily ban an address", vec![Arg::new("address", ArgType::String), Arg::new("seconds", ArgType::Number)], CommandHandler::Async(async_handler!(temp_ban_address::<S>))))?;
     command_manager.add_command(Command::new("clear_caches", "Clear storage caches", CommandHandler::Async(async_handler!(clear_caches::<S>))))?;
     command_manager.add_command(Command::new("clear_rpc_connections", "Clear all WS connections from RPC", CommandHandler::Async(async_handler!(clear_rpc_connections::<S>))))?;
     command_manager.add_command(Command::new("clear_p2p_connections", "Clear all P2P connections", CommandHandler::Async(async_handler!(clear_p2p_connections::<S>))))?;
@@ -464,6 +465,25 @@ async fn kick_peer<S: Storage>(manager: &CommandManager, mut args: ArgumentManag
             } else {
                 manager.error(format!("Peer {} not found", addr));
             }
+        },
+        None => {
+            manager.error("P2P is not enabled");
+        }
+    };
+
+    Ok(())
+}
+
+async fn temp_ban_address<S: Storage>(manager: &CommandManager, mut args: ArgumentManager) -> Result<(), CommandError> {
+    let context = manager.get_context().lock()?;
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    match blockchain.get_p2p().read().await.as_ref() {
+        Some(p2p) => {
+            let addr: IpAddr = args.get_value("address")?.to_string_value()?.parse().context("Error while parsing socket address")?;
+            let seconds = args.get_value("seconds")?.to_number()? as u64;
+            let peer_list = p2p.get_peer_list();
+
+            peer_list.temp_ban_address(&addr, seconds).await.context("Error while banning address")?;
         },
         None => {
             manager.error("P2P is not enabled");

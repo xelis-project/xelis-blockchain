@@ -127,6 +127,10 @@ pub const P2P_PING_PEER_LIST_LIMIT: usize = 16;
 pub const P2P_DEFAULT_MAX_PEERS: usize = 32;
 // time in seconds between each time we try to connect to a new peer
 pub const P2P_EXTEND_PEERLIST_DELAY: u64 = 60;
+// time in seconds between each time we try to connect to a outgoing peer
+// At least 5 minutes of countdown to retry to connect to the same peer
+// This will be multiplied by the number of fails
+pub const P2P_PEERLIST_RETRY_AFTER: u64 = 60 * 15;
 // Peer wait on error accept new p2p connections in seconds
 pub const P2P_PEER_WAIT_ON_ERROR: u64 = 15;
 // Delay in second to connect to priority nodes
@@ -147,12 +151,13 @@ pub const PEER_FAIL_TIME_RESET: u64 = 30 * 60;
 pub const PEER_FAIL_LIMIT: u8 = 50;
 // number of fail during handshake before temp ban
 pub const PEER_FAIL_TO_CONNECT_LIMIT: u8 = 3;
-// number of seconds to temp ban the peer in case of fail reached
-// Set to 15 minutes
-pub const PEER_TEMP_BAN_TIME: u64 = 15 * 60;
 // number of seconds to temp ban the peer in case of fail reached during handshake
+// It is only used for incoming connections
 // Set to 1 minute
 pub const PEER_TEMP_BAN_TIME_ON_CONNECT: u64 = 60;
+// number of seconds to temp ban the peer in case of fail count limit (`PEER_FAIL_LIMIT`) reached
+// Set to 15 minutes
+pub const PEER_TEMP_BAN_TIME: u64 = 15 * 60;
 // millis until we timeout
 pub const PEER_TIMEOUT_REQUEST_OBJECT: u64 = 15_000;
 // millis until we timeout during a bootstrap request
