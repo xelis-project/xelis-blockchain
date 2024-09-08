@@ -528,12 +528,14 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
     // Send a request to the sender channel that will be sent to the server
     async fn send_message_internal<P: Serialize>(&self, id: Option<usize>, method: &str, params: &P) -> JsonRPCResult<()> {
         let sender = self.sender.lock().await;
-        sender.send(InternalMessage::Send(serde_json::to_string(&json!({
+        let value = json!({
             "jsonrpc": JSON_RPC_VERSION,
             "method": method,
             "id": id,
             "params": params
-        }))?)).await.map_err(|e| JsonRPCError::SendError(e.to_string()))?;
+        });
+        sender.send(InternalMessage::Send(serde_json::to_string(&value)?)).await
+            .map_err(|e| JsonRPCError::SendError(value.to_string(), e.to_string()))?;
 
         Ok(())
     }
