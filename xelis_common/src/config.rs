@@ -3,6 +3,7 @@ use crate::crypto::Hash;
 pub const VERSION: &str = env!("BUILD_VERSION");
 pub const XELIS_ASSET: Hash = Hash::zero();
 
+// Lowest fee per KB possible on the network
 // 0.00010000 XEL per KB
 pub const FEE_PER_KB: u64 = 10000;
 // 0.00100000 XEL per account creation

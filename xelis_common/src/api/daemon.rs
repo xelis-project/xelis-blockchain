@@ -514,6 +514,20 @@ pub struct GetMempoolCacheResult {
     balances: HashMap<Hash, CiphertextCache>
 }
 
+// This struct is used to store the fee rate estimation for the following priority levels:
+// 1. Low
+// 2. Medium
+// 3. High
+// Each priority is in fee per KB.  It cannot be below `FEE_PER_KB` which is required by the network.
+#[derive(Serialize, Deserialize)]
+pub struct FeeRatesEstimated {
+    pub low: u64,
+    pub medium: u64,
+    pub high: u64,
+    // The minimum fee rate possible on the network
+    pub default: u64
+}
+
 #[derive(Serialize, Deserialize)]
 pub struct GetDifficultyResult {
     pub difficulty: Difficulty,
