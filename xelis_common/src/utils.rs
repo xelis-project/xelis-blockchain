@@ -4,7 +4,8 @@ use crate::{
         COIN_DECIMALS,
         FEE_PER_ACCOUNT_CREATION,
         FEE_PER_KB,
-        FEE_PER_TRANSFER
+        FEE_PER_TRANSFER,
+        BYTES_PER_KB
     },
     difficulty::Difficulty,
     varuint::VarUint
@@ -50,9 +51,10 @@ pub fn from_coin(value: impl Into<String>, coin_decimals: u8) -> Option<u64> {
 // Sending to a newly created address will increase the fee
 // Each transfers output will also increase the fee
 pub fn calculate_tx_fee(tx_size: usize, output_count: usize, new_addresses: usize) -> u64 {
-    let mut size_in_kb = tx_size as u64 / 1024;
+    let mut size_in_kb = tx_size as u64 / BYTES_PER_KB as u64;
 
-    if tx_size % 1024 != 0 { // we consume a full kb for fee
+    // we consume a full kb for fee
+    if tx_size % BYTES_PER_KB != 0 {
         size_in_kb += 1;
     }
 
