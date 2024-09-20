@@ -426,7 +426,7 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
                                         continue;
                                     }
                                 }
-        
+
                                 // Check if this ID corresponds to a event subscribed
                                 {
                                     let mut handlers = self.handler_by_id.lock().await;
@@ -442,7 +442,9 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
                         Message::Close(_) => {
                             break;
                         },
-                        _ => {}
+                        m => {
+                            debug!("Received unhandled message: {:?}", m);
+                        }
                     }
                 }
             }
