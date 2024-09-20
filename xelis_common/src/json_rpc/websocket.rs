@@ -549,6 +549,21 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
             requests.insert(id, sender);
         }
 
+        // Send the request to the server
+        // If the request fails, we remove it from the pending requests
+        match self.send_internal(method, id, params, receiver).await {
+            Ok(res) => Ok(res),
+            Err(e) => {
+                let mut requests = self.requests.lock().await;
+                debug!("Removing request with id {} from the pending requests due to its fail", id);
+                requests.remove(&id);
+                Err(e)
+            }
+        }
+    }
+
+    // Send a request to the server and wait for the response
+    async fn send_internal<P: Serialize, R: DeserializeOwned>(&self, method: &str, id: usize, params: &P, receiver: oneshot::Receiver<JsonRPCResponse>) -> JsonRPCResult<R> {
         self.send_message_internal(Some(id), method, params).await?;
 
         let response = timeout(self.timeout_after, receiver).await
