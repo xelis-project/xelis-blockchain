@@ -552,8 +552,8 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
         self.send_message_internal(Some(id), method, params).await?;
 
         let response = timeout(self.timeout_after, receiver).await
-            .or(Err(JsonRPCError::TimedOut))?
-            .or(Err(JsonRPCError::NoResponse))?;
+            .map_err(|_| JsonRPCError::TimedOut(json!(params).to_string()))?
+            .map_err(|e| JsonRPCError::NoResponse(json!(params).to_string(), e.to_string()))?;
 
         if let Some(error) = response.error {
             return Err(JsonRPCError::ServerError {
@@ -563,7 +563,7 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
             });
         }
 
-        let result = response.result.ok_or(JsonRPCError::NoResponse)?;
+        let result = response.result.ok_or(JsonRPCError::NoResult)?;
 
         Ok(serde_json::from_value(result)?)
     }
