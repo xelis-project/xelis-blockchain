@@ -973,8 +973,11 @@ async fn rescan(manager: &CommandManager, mut arguments: ArgumentManager) -> Res
         0
     };
 
-    wallet.rescan(topoheight, true).await.context("error while restarting network handler")?;
-    manager.message("Network handler has been restarted!");
+    if let Err(e) = wallet.rescan(topoheight, true).await {
+        manager.error(format!("Error while rescanning: {}", e));
+    } else {
+        manager.message("Network handler has been restarted!");
+    }
     Ok(())
 }
 

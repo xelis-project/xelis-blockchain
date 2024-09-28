@@ -941,7 +941,7 @@ impl Wallet {
                 }
             }
             debug!("Starting again network handler");
-            network_handler.start(auto_reconnect).await.context("Error while restarting network handler")?;
+            network_handler.start(auto_reconnect).await?;
         } else {
             return Err(WalletError::NotOnlineMode)
         }
