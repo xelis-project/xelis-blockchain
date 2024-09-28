@@ -580,7 +580,7 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
             });
         }
 
-        let result = response.result.ok_or(JsonRPCError::NoResult)?;
+        let result = response.result.unwrap_or(Value::Null);
 
         Ok(serde_json::from_value(result)?)
     }

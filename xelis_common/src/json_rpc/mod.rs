@@ -58,8 +58,6 @@ pub enum JsonRPCError {
     },
     #[error("Server did not respond to the request '{}': {}", _0, _1)]
     NoResponse(String, String),
-    #[error("Server returned no result")]
-    NoResult,
     #[error("No response in the given time for '{}'", _0)]
     TimedOut(String),
     #[error("Server returned a response without result")]
