@@ -1582,7 +1582,7 @@ impl<S: Storage> Blockchain<S> {
         let topoheight = self.get_topo_height();
 
         // Find all orphaned blocks that will be linked in this block
-        let orphaned_blocks = self.get_orphaned_blocks_for_tips_until_height(storage, block.get_tips().iter().cloned(), stable_height).await?;
+        let mut orphaned_blocks = None;
 
         trace!("build chain state for block template");
         let mut chain_state = ChainState::new(storage, stable_topoheight, topoheight, block.get_version());
@@ -1593,11 +1593,19 @@ impl<S: Storage> Blockchain<S> {
                 break;
             }
 
-            // We don't want to re-include a TX that is already in a TIP block, even if its not executed yet
-            for (block_hash, block) in orphaned_blocks.iter() {
-                if block.get_transactions().contains(hash.as_ref()) {
-                    warn!("Skipping TX {} because it is included in tips {}", hash, block_hash);
-                    continue;
+            if orphaned_blocks.is_none() {
+                let blocks = self.get_orphaned_blocks_for_tips_until_height(storage, block.get_tips().iter().cloned(), stable_height).await?;
+                warn!("Found {} orphaned blocks linked for block template", blocks.len());
+                orphaned_blocks = Some(blocks);
+            }
+
+            if let Some(orphaned_blocks) = orphaned_blocks.as_ref() {
+                // We don't want to re-include a TX that is already in a TIP block, even if its not executed yet
+                for (block_hash, block) in orphaned_blocks.iter() {
+                    if block.get_transactions().contains(hash.as_ref()) {
+                        warn!("Skipping TX {} because it is included in tips {}", hash, block_hash);
+                        continue;
+                    }
                 }
             }
 
