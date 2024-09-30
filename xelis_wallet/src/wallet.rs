@@ -1,4 +1,8 @@
-use std::sync::{atomic::{AtomicBool, Ordering}, Arc};
+use std::{
+    io::Write,
+    sync::{atomic::{AtomicBool, Ordering},
+    Arc}
+};
 use anyhow::{Error, Context};
 use serde::Serialize;
 use xelis_common::{
@@ -49,6 +53,7 @@ use crate::{
         PASSWORD_HASH_SIZE,
         SALT_SIZE
     },
+    entry::{EntryData, TransactionEntry as InnerTransactionEntry},
     error::WalletError,
     mnemonics,
     precomputed_tables::PrecomputedTablesShared,
@@ -801,6 +806,40 @@ impl Wallet {
         Ok(estimated_fees)
     }
 
+    // Export all transactions in CSV format to the given writer
+    // This will sort the transactions by topoheight before exporting
+    pub fn export_transactions_in_csv<W: Write>(&self, mut transactions: Vec<InnerTransactionEntry>, w: &mut W) -> Result<(), WalletError> {
+        trace!("export transactions in csv");
+
+        // Sort transactions by topoheight
+        transactions.sort_by(|a, b| a.get_topoheight().cmp(&b.get_topoheight()));
+
+        writeln!(w, "TopoHeight,Hash,Type,From/To,Asset,Amount,Fee,Nonce").context("Error while writing headers")?;
+        for tx in transactions {
+            match tx.get_entry() {
+                EntryData::Burn { asset, amount, fee, nonce } => {
+                    writeln!(w, "{},{},{},{},-,{},{},{}", tx.get_topoheight(), tx.get_hash(), "Burn", asset, amount, fee, nonce).context("Error while writing csv line")?;
+                },
+                EntryData::Coinbase { reward } => {
+                    writeln!(w, "{},{},{},{},-,{},-,-", tx.get_topoheight(), tx.get_hash(), "Coinbase", "XELIS", reward).context("Error while writing csv line")?;
+                },
+                EntryData::Incoming { from, transfers } => {
+                    for transfer in transfers {
+                        writeln!(w, "{},{},{},{},{},{},-,-", tx.get_topoheight(), tx.get_hash(), "Incoming", from.as_address(self.get_network().is_mainnet()), transfer.get_asset(), transfer.get_amount()).context("Error while writing csv line")?;
+                    }
+                },
+                EntryData::Outgoing { transfers, fee, nonce } => {
+                    for transfer in transfers {
+                        writeln!(w, "{},{},{},{},{},{},{},{}", tx.get_topoheight(), tx.get_hash(), "Outgoing", transfer.get_destination().as_address(self.get_network().is_mainnet()), transfer.get_asset(), transfer.get_amount(), fee, nonce).context("Error while writing csv line")?;
+                    }
+                }
+            }
+        }
+    
+        w.flush().context("Error while flushing CSV file")?;
+        Ok(())
+    }
+
     // set wallet in online mode: start a communication task which will keep the wallet synced
     #[cfg(feature = "network_handler")]
     pub async fn set_online_mode(self: &Arc<Self>, daemon_address: &String, auto_reconnect: bool) -> Result<(), WalletError> {
@@ -902,7 +941,7 @@ impl Wallet {
                 }
             }
             debug!("Starting again network handler");
-            network_handler.start(auto_reconnect).await.context("Error while restarting network handler")?;
+            network_handler.start(auto_reconnect).await?;
         } else {
             return Err(WalletError::NotOnlineMode)
         }

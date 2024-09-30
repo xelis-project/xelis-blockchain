@@ -303,6 +303,7 @@ pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>
     handler.register_method("p2p_status", async_handler!(p2p_status::<S>));
     handler.register_method("get_peers", async_handler!(get_peers::<S>));
     handler.register_method("get_mempool", async_handler!(get_mempool::<S>));
+    handler.register_method("get_estimated_fee_rates", async_handler!(get_estimated_fee_rates::<S>));
     handler.register_method("get_tips", async_handler!(get_tips::<S>));
     handler.register_method("get_dag_order", async_handler!(get_dag_order::<S>));
     handler.register_method("get_blocks_range_by_topoheight", async_handler!(get_blocks_range_by_topoheight::<S>));
@@ -829,6 +830,17 @@ async fn get_mempool<S: Storage>(context: &Context, body: Value) -> Result<Value
     }
 
     Ok(json!(transactions))
+}
+
+async fn get_estimated_fee_rates<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
+    if body != Value::Null {
+        return Err(InternalRpcError::UnexpectedParams)
+    }
+
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    let mempool = blockchain.get_mempool().read().await;
+    let estimated = mempool.estimate_fee_rates()?;
+    Ok(json!(estimated))
 }
 
 async fn get_blocks_at_height<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {

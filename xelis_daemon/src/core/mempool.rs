@@ -12,16 +12,18 @@ use serde::{Serialize, Deserialize};
 use indexmap::IndexSet;
 use log::{debug, info, trace, warn};
 use xelis_common::{
-    time::{TimestampSeconds, get_current_time_in_seconds},
-    network::Network,
-    serializer::Serializer,
+    config::{BYTES_PER_KB, FEE_PER_KB},
+    api::daemon::FeeRatesEstimated,
+    block::BlockVersion,
     crypto::{
         elgamal::Ciphertext,
         Hash,
         PublicKey
     },
-    transaction::Transaction,
-    block::BlockVersion
+    network::Network,
+    serializer::Serializer,
+    time::{get_current_time_in_seconds, TimestampSeconds},
+    transaction::Transaction
 };
 
 // Wrap a TX with its hash and size in bytes for faster access
@@ -51,6 +53,10 @@ pub struct AccountCache {
     balances: HashMap<Hash, Ciphertext>
 }
 
+// Mempool is used to store all TXs waiting to be included in a block
+// All TXs must be verified before adding them to the mempool
+// Caches are used to store the nonce/order cache for each sender and their encrypted balances
+// This is necessary to be fast enough to verify the TXs at each chain state change.
 pub struct Mempool {
     // Used for log purpose
     mainnet: bool,
@@ -68,6 +74,55 @@ impl Mempool {
             txs: HashMap::new(),
             caches: HashMap::new()
         }
+    }
+
+    fn internal_estimate_fee_rates(mut fee_rates: Vec<u64>) -> FeeRatesEstimated {
+        let len = fee_rates.len();
+        // Top 30%
+        let high_priority_count = len * 30 / 100;
+        // Next 40%
+        let normal_priority_count = len * 40 / 100;
+
+        if len == 0 || high_priority_count == 0 || normal_priority_count == 0 {
+            return FeeRatesEstimated {
+                high: FEE_PER_KB,
+                medium: FEE_PER_KB,
+                low: FEE_PER_KB,
+                default: FEE_PER_KB
+            };
+        }
+
+        // Sort descending by fee rate
+        fee_rates.sort_by(|a, b| b.cmp(a));
+
+        let high: u64 = fee_rates[..high_priority_count]
+            .iter()
+            .sum::<u64>() / high_priority_count as u64;
+
+        let medium: u64 = fee_rates[high_priority_count..(high_priority_count + normal_priority_count)]
+            .iter()
+            .sum::<u64>() / normal_priority_count as u64;
+
+        let low: u64 = fee_rates[(high_priority_count + normal_priority_count)..]
+            .iter()
+            .sum::<u64>() / (len - high_priority_count - normal_priority_count) as u64;
+
+        FeeRatesEstimated {
+            high,
+            medium,
+            low,
+            default: FEE_PER_KB
+        }
+    }
+
+    // Find the fee per kB rate estimation for the priority levels
+    // For this, we need to get the median fee rate for each priority level
+    pub fn estimate_fee_rates(&self) -> Result<FeeRatesEstimated, BlockchainError> { 
+        let fee_rates: Vec<_> = self.txs.values()
+            .map(SortedTx::get_fee_rate_per_kb)
+            .collect();
+
+        Ok(Self::internal_estimate_fee_rates(fee_rates))
     }
 
     // All checks are made in Blockchain before calling this function
@@ -468,22 +523,32 @@ impl Mempool {
 }
 
 impl SortedTx {
+    // Get the inner TX
     pub fn get_tx(&self) -> &Arc<Transaction> {
         &self.tx
     }
 
+    // Get the fee for this TX
     pub fn get_fee(&self) -> u64 {
         self.tx.get_fee()
     }
 
+    // Get the fee rate per kB for this TX
+    pub fn get_fee_rate_per_kb(&self) -> u64 {
+        self.get_fee() / (self.size as u64 / BYTES_PER_KB as u64)
+    }
+
+    // Get the stored size of this TX
     pub fn get_size(&self) -> usize {
         self.size
     }
 
+    // Get the timestamp when this TX was added to mempool
     pub fn get_first_seen(&self) -> TimestampSeconds {
         self.first_seen
     }
 
+    // Consume the TX and return it
     pub fn consume(self) -> Arc<Transaction> {
         self.tx
     }
@@ -549,5 +614,48 @@ impl AccountCache {
         trace!("has tx with same nonce: {}, max: {}, min: {}, size: {}", nonce, self.max, self.min, self.txs.len());
         let index = ((nonce - self.min) % (self.max + 1 - self.min)) as usize;
         self.txs.get_index(index)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_estimated_fee_rates() {
+        // Let say we have the following TXs:
+        // 0.0001 XEL per KB, 0.0002 XEL per KB, 0.0003 XEL per KB, 0.0004 XEL per KB, 0.0005 XEL per KB
+        let fee_rates = vec![10000, 20000, 30000, 40000, 50000];
+        let estimated = super::Mempool::internal_estimate_fee_rates(fee_rates);
+        assert_eq!(estimated.high, 50000);
+        assert_eq!(estimated.medium, 35000);
+        assert_eq!(estimated.low, 15000);
+        assert_eq!(estimated.default, FEE_PER_KB);
+    }
+
+    #[test]
+    fn test_estimated_fee_rates_no_tx() {
+        let estimated = super::Mempool::internal_estimate_fee_rates(Vec::new());
+        assert_eq!(estimated.high, FEE_PER_KB);
+        assert_eq!(estimated.medium, FEE_PER_KB);
+        assert_eq!(estimated.low, FEE_PER_KB);
+        assert_eq!(estimated.default, FEE_PER_KB);
+    }
+
+    #[test]
+    fn test_estimated_fee_rates_expensive_tx() {
+        let fee_rates = vec![FEE_PER_KB * 1000];
+        let estimated = super::Mempool::internal_estimate_fee_rates(fee_rates);
+        assert_eq!(estimated.high, FEE_PER_KB);
+        assert_eq!(estimated.medium, FEE_PER_KB);
+        assert_eq!(estimated.low, FEE_PER_KB);
+        assert_eq!(estimated.default, FEE_PER_KB);
+
+        let fee_rates = vec![FEE_PER_KB * 2, FEE_PER_KB * 2, FEE_PER_KB * 3, FEE_PER_KB * 2, FEE_PER_KB * 1000];
+        let estimated = super::Mempool::internal_estimate_fee_rates(fee_rates);
+        assert_eq!(estimated.high, FEE_PER_KB * 1000);
+        assert_eq!(estimated.medium, (FEE_PER_KB as f64 * 2.5) as u64);
+        assert_eq!(estimated.low, FEE_PER_KB * 2);
+        assert_eq!(estimated.default, FEE_PER_KB);
     }
 }

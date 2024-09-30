@@ -56,10 +56,10 @@ pub enum JsonRPCError {
         message: String,
         data: Option<String>,
     },
-    #[error("Server did not respond to the request")]
-    NoResponse,
-    #[error("No response in the given time")]
-    TimedOut,
+    #[error("Server did not respond to the request '{}': {}", _0, _1)]
+    NoResponse(String, String),
+    #[error("No response in the given time for '{}'", _0)]
+    TimedOut(String),
     #[error("Server returned a response without result")]
     MissingResult,
     #[error("Error while (de)serializing JSON data: {}", _0)]
@@ -74,6 +74,6 @@ pub enum JsonRPCError {
     SocketError(#[from] TungsteniteError),
     #[error(transparent)]
     Any(#[from] anyhow::Error),
-    #[error("Error while sending message: {}", _0)]
-    SendError(String)
+    #[error("Error while sending message '{}': {}", _0, _1)]
+    SendError(String, String)
 }

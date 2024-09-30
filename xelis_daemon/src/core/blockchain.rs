@@ -1507,6 +1507,40 @@ impl<S: Storage> Blockchain<S> {
         Ok(block)
     }
 
+    // Retrieve every orphaned blocks until a given height from the tips
+    async fn get_orphaned_blocks_for_tips_until_height<P: DifficultyProvider + DagOrderProvider>(&self, provider: &P, tips: impl Iterator<Item = Hash>, height: u64) -> Result<Vec<(Hash, Arc<BlockHeader>)>, BlockchainError> {
+        // Current queue of blocks to process
+        let mut queue: IndexSet<Hash> = IndexSet::new();
+        queue.extend(tips);
+
+        let mut processed = HashSet::new();
+        let mut orphaned_blocks = Vec::new();
+
+        while let Some(hash) = queue.pop() {
+            // if we already processed this block, skip it
+            if !processed.insert(hash.clone()) {
+                debug!("Skipping block {} because it was already processed", hash);
+                continue;
+            }
+
+            // if the block is not orphaned, we add its tips to the queue
+            let block = provider.get_block_header_by_hash(&hash).await?;
+            if block.get_height() <= height {
+                debug!("Block {} is not orphaned, skipping it", hash);
+                continue;
+            }
+
+            // if the block is orphaned, we add it to the list and we check its tips
+            if self.is_block_orphaned_for_storage(provider, &hash).await {
+                debug!("Block {} is orphaned, adding it to the list", hash);
+                orphaned_blocks.push((hash.clone(), block.clone()));
+                queue.extend(block.get_tips().clone());
+            }
+        }
+
+        Ok(orphaned_blocks)
+    }
+
     // Get the mining block template for miners
     // This function is called when a miner request a new block template
     // We create a block candidate with selected TXs from mempool
@@ -1540,7 +1574,12 @@ impl<S: Storage> Blockchain<S> {
 
         // data used to verify txs
         let stable_topoheight = self.get_stable_topoheight();
+        let stable_height = self.get_stable_height();
         let topoheight = self.get_topo_height();
+
+        // Find all orphaned blocks that will be linked in this block
+        let mut orphaned_blocks = None;
+
         trace!("build chain state for block template");
         let mut chain_state = ChainState::new(storage, stable_topoheight, topoheight, block.get_version());
 
@@ -1548,6 +1587,22 @@ impl<S: Storage> Blockchain<S> {
         while let Some(TxSelectorEntry { size, hash, tx }) = tx_selector.next() {
             if block_size + total_txs_size + size >= MAX_BLOCK_SIZE {
                 break;
+            }
+
+            if orphaned_blocks.is_none() {
+                let blocks = self.get_orphaned_blocks_for_tips_until_height(storage, block.get_tips().iter().cloned(), stable_height).await?;
+                warn!("Found {} orphaned blocks linked for block template", blocks.len());
+                orphaned_blocks = Some(blocks);
+            }
+
+            if let Some(orphaned_blocks) = orphaned_blocks.as_ref() {
+                // We don't want to re-include a TX that is already in a TIP block, even if its not executed yet
+                for (block_hash, block) in orphaned_blocks.iter() {
+                    if block.get_transactions().contains(hash.as_ref()) {
+                        warn!("Skipping TX {} because it is included in tips {}", hash, block_hash);
+                        continue;
+                    }
+                }
             }
 
             if !self.skip_block_template_txs_verification {
@@ -2346,15 +2401,15 @@ impl<S: Storage> Blockchain<S> {
 
     // Get the block reward for a block
     // This will search all blocks at same height and verify which one are side blocks
-    pub async fn get_block_reward(&self, storage: &S, hash: &Hash, past_supply: u64, current_topoheight: u64) -> Result<u64, BlockchainError> {
-        let is_side_block = self.is_side_block(storage, hash).await?;
+    pub async fn get_block_reward<P: DifficultyProvider + DagOrderProvider + BlocksAtHeightProvider>(&self, provider: &P, hash: &Hash, past_supply: u64, current_topoheight: u64) -> Result<u64, BlockchainError> {
+        let is_side_block = self.is_side_block(provider, hash).await?;
         let mut side_blocks_count = 0;
         if is_side_block {
             // get the block height for this hash
-            let height = storage.get_height_for_block_hash(hash).await?;
-            let blocks_at_height = storage.get_blocks_at_height(height).await?;
+            let height = provider.get_height_for_block_hash(hash).await?;
+            let blocks_at_height = provider.get_blocks_at_height(height).await?;
             for block in blocks_at_height {
-                if *hash != block && self.is_side_block_internal(storage, &block, current_topoheight).await? {
+                if *hash != block && self.is_side_block_internal(provider, &block, current_topoheight).await? {
                     side_blocks_count += 1;
                 }
             }
@@ -2410,13 +2465,13 @@ impl<S: Storage> Blockchain<S> {
     }
 
     // if a block is not ordered, it's an orphaned block and its transactions are not honoured
-    pub async fn is_block_orphaned_for_storage(&self, storage: &S, hash: &Hash) -> bool {
+    pub async fn is_block_orphaned_for_storage<P: DagOrderProvider>(&self, provider: &P, hash: &Hash) -> bool {
         trace!("is block {} orphaned", hash);
-        !storage.is_block_topological_ordered(hash).await
+        !provider.is_block_topological_ordered(hash).await
     }
 
-    pub async fn is_side_block(&self, storage: &S, hash: &Hash) -> Result<bool, BlockchainError> {
-        self.is_side_block_internal(storage, hash, self.get_topo_height()).await
+    pub async fn is_side_block<P: DifficultyProvider + DagOrderProvider>(&self, provider: &P, hash: &Hash) -> Result<bool, BlockchainError> {
+        self.is_side_block_internal(provider, hash, self.get_topo_height()).await
     }
 
     // a block is a side block if its ordered and its block height is less than or equal to height of past 8 topographical blocks
@@ -2600,23 +2655,19 @@ impl<S: Storage> Blockchain<S> {
 
 // Estimate the required fees for a transaction
 // For V1, new keys are only counted one time for creation fee instead of N transfers to it
-pub async fn estimate_required_tx_fees<P: AccountProvider>(provider: &P, current_topoheight: u64, tx: &Transaction, version: BlockVersion) -> Result<u64, BlockchainError> {
+pub async fn estimate_required_tx_fees<P: AccountProvider>(provider: &P, current_topoheight: u64, tx: &Transaction, _: BlockVersion) -> Result<u64, BlockchainError> {
     let mut output_count = 0;
-    let mut new_addresses = 0;
     let mut processed_keys = HashSet::new();
     if let TransactionType::Transfers(transfers) = tx.get_data() {
         output_count = transfers.len();
         for transfer in transfers {
             if !provider.is_account_registered_at_topoheight(transfer.get_destination(), current_topoheight).await? {
-                if version == BlockVersion::V0 || !processed_keys.contains(&transfer.get_destination()) {
-                    new_addresses += 1;
-                    processed_keys.insert(transfer.get_destination());
-                }
+                processed_keys.insert(transfer.get_destination());
             }
         }
     }
 
-    Ok(calculate_tx_fee(tx.size(), output_count, new_addresses))
+    Ok(calculate_tx_fee(tx.size(), output_count, processed_keys.len()))
 }
 
 // Get the block reward for a side block based on how many side blocks exists at same height

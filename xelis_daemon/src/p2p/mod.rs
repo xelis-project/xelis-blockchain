@@ -584,6 +584,10 @@ impl<S: Storage> P2pServer<S> {
             return Err(P2pError::InvalidNetworkID);
         }
 
+        if handshake.get_local_port() == 0 {
+            return Err(P2pError::InvalidLocalPort);
+        }
+
         if self.has_peer_id_used(&handshake.get_peer_id()).await {
             return Err(P2pError::PeerIdAlreadyUsed(handshake.get_peer_id()));
         }

@@ -3,6 +3,7 @@ use crate::crypto::Hash;
 pub const VERSION: &str = env!("BUILD_VERSION");
 pub const XELIS_ASSET: Hash = Hash::zero();
 
+// Lowest fee per KB possible on the network
 // 0.00010000 XEL per KB
 pub const FEE_PER_KB: u64 = 10000;
 // 0.00100000 XEL per account creation
@@ -26,12 +27,15 @@ pub const PREFIX_ADDRESS: &str = "xel";
 // testnet prefix address
 pub const TESTNET_PREFIX_ADDRESS: &str = "xet";
 
+// 1 KB = 1024 bytes
+pub const BYTES_PER_KB: usize = 1024;
+
 // Max transaction size in bytes
-pub const MAX_TRANSACTION_SIZE: usize = 1024 * 1024; // 1 MB
+pub const MAX_TRANSACTION_SIZE: usize = BYTES_PER_KB * BYTES_PER_KB; // 1 MB
 
 // Max block size in bytes
 // 1024 * 1024 + (256 * 1024) bytes = 1.25 MB maximum size per block with txs
-pub const MAX_BLOCK_SIZE: usize = (1024 * 1024) + (256 * 1024);
+pub const MAX_BLOCK_SIZE: usize = (BYTES_PER_KB * BYTES_PER_KB) + (256 * BYTES_PER_KB);
 
 // BlockDAG rules
 pub const TIPS_LIMIT: usize = 3; // maximum 3 TIPS per block

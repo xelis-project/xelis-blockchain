@@ -206,6 +206,7 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
     command_manager.add_command(Command::with_optional_arguments("whitelist", "View whitelist or add a peer address in it", vec![Arg::new("address", ArgType::String)], CommandHandler::Async(async_handler!(whitelist::<S>))))?;
     command_manager.add_command(Command::with_optional_arguments("verify_chain", "Check chain supply", vec![Arg::new("topoheight", ArgType::Number)], CommandHandler::Async(async_handler!(verify_chain::<S>))))?;
     command_manager.add_command(Command::with_required_arguments("kick_peer", "Kick a peer using its ip:port", vec![Arg::new("address", ArgType::String)], CommandHandler::Async(async_handler!(kick_peer::<S>))))?;
+    command_manager.add_command(Command::with_required_arguments("temp_ban_address", "Temporarily ban an address", vec![Arg::new("address", ArgType::String), Arg::new("seconds", ArgType::Number)], CommandHandler::Async(async_handler!(temp_ban_address::<S>))))?;
     command_manager.add_command(Command::new("clear_caches", "Clear storage caches", CommandHandler::Async(async_handler!(clear_caches::<S>))))?;
     command_manager.add_command(Command::new("clear_rpc_connections", "Clear all WS connections from RPC", CommandHandler::Async(async_handler!(clear_rpc_connections::<S>))))?;
     command_manager.add_command(Command::new("clear_p2p_connections", "Clear all P2P connections", CommandHandler::Async(async_handler!(clear_p2p_connections::<S>))))?;
@@ -216,6 +217,7 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
     command_manager.add_command(Command::with_required_arguments("add_peer", "Connect to a new peer using ip:port format", vec![Arg::new("address", ArgType::String)], CommandHandler::Async(async_handler!(add_peer::<S>))))?;
     command_manager.add_command(Command::new("list_unexecuted_transactions", "List all unexecuted transactions", CommandHandler::Async(async_handler!(list_unexecuted_transactions::<S>))))?;
     command_manager.add_command(Command::new("swap_blocks_executions_positions", "Swap the position of two blocks executions", CommandHandler::Async(async_handler!(swap_blocks_executions_positions::<S>))))?;
+    command_manager.add_command(Command::new("print_balance", "Print the encrypted balance at a specific topoheight", CommandHandler::Async(async_handler!(print_balance::<S>))))?;
 
     // Don't keep the lock for ever
     let (p2p, getwork) = {
@@ -447,6 +449,31 @@ async fn swap_blocks_executions_positions<S: Storage>(manager: &CommandManager, 
     Ok(())
 }
 
+async fn print_balance<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
+    let context = manager.get_context().lock()?;
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    let prompt = manager.get_prompt();
+    let storage = blockchain.get_storage().read().await;
+
+    let address = prompt.read_input("Address: ", false).await
+        .context("Error while reading address")?;
+    let address = Address::from_string(&address)
+        .context("Invalid address")?;
+
+    let topoheight: u64 = prompt.read("Topoheight: ").await
+        .context("Error while reading topoheight")?;
+
+    let asset = prompt.read_hash("Asset (default XELIS): ").await.ok();
+    let asset = asset.unwrap_or(XELIS_ASSET);
+
+    let balance = storage.get_balance_at_exact_topoheight(&address.to_public_key(), &asset, topoheight).await
+        .context("Error while retrieving balance")?;
+
+    manager.message(format!("{}", balance));
+
+    Ok(())
+}
+
 async fn kick_peer<S: Storage>(manager: &CommandManager, mut args: ArgumentManager) -> Result<(), CommandError> {
     let context = manager.get_context().lock()?;
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
@@ -464,6 +491,25 @@ async fn kick_peer<S: Storage>(manager: &CommandManager, mut args: ArgumentManag
             } else {
                 manager.error(format!("Peer {} not found", addr));
             }
+        },
+        None => {
+            manager.error("P2P is not enabled");
+        }
+    };
+
+    Ok(())
+}
+
+async fn temp_ban_address<S: Storage>(manager: &CommandManager, mut args: ArgumentManager) -> Result<(), CommandError> {
+    let context = manager.get_context().lock()?;
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    match blockchain.get_p2p().read().await.as_ref() {
+        Some(p2p) => {
+            let addr: IpAddr = args.get_value("address")?.to_string_value()?.parse().context("Error while parsing socket address")?;
+            let seconds = args.get_value("seconds")?.to_number()? as u64;
+            let peer_list = p2p.get_peer_list();
+
+            peer_list.temp_ban_address(&addr, seconds).await.context("Error while banning address")?;
         },
         None => {
             manager.error("P2P is not enabled");

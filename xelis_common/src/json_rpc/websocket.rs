@@ -426,7 +426,7 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
                                         continue;
                                     }
                                 }
-        
+
                                 // Check if this ID corresponds to a event subscribed
                                 {
                                     let mut handlers = self.handler_by_id.lock().await;
@@ -442,7 +442,9 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
                         Message::Close(_) => {
                             break;
                         },
-                        _ => {}
+                        m => {
+                            debug!("Received unhandled message: {:?}", m);
+                        }
                     }
                 }
             }
@@ -528,12 +530,14 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
     // Send a request to the sender channel that will be sent to the server
     async fn send_message_internal<P: Serialize>(&self, id: Option<usize>, method: &str, params: &P) -> JsonRPCResult<()> {
         let sender = self.sender.lock().await;
-        sender.send(InternalMessage::Send(serde_json::to_string(&json!({
+        let value = json!({
             "jsonrpc": JSON_RPC_VERSION,
             "method": method,
             "id": id,
             "params": params
-        }))?)).await.map_err(|e| JsonRPCError::SendError(e.to_string()))?;
+        });
+        sender.send(InternalMessage::Send(serde_json::to_string(&value)?)).await
+            .map_err(|e| JsonRPCError::SendError(value.to_string(), e.to_string()))?;
 
         Ok(())
     }
@@ -547,11 +551,26 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
             requests.insert(id, sender);
         }
 
+        // Send the request to the server
+        // If the request fails, we remove it from the pending requests
+        match self.send_internal(method, id, params, receiver).await {
+            Ok(res) => Ok(res),
+            Err(e) => {
+                let mut requests = self.requests.lock().await;
+                debug!("Removing request with id {} from the pending requests due to its fail", id);
+                requests.remove(&id);
+                Err(e)
+            }
+        }
+    }
+
+    // Send a request to the server and wait for the response
+    async fn send_internal<P: Serialize, R: DeserializeOwned>(&self, method: &str, id: usize, params: &P, receiver: oneshot::Receiver<JsonRPCResponse>) -> JsonRPCResult<R> {
         self.send_message_internal(Some(id), method, params).await?;
 
         let response = timeout(self.timeout_after, receiver).await
-            .or(Err(JsonRPCError::TimedOut))?
-            .or(Err(JsonRPCError::NoResponse))?;
+            .map_err(|_| JsonRPCError::TimedOut(json!(params).to_string()))?
+            .map_err(|e| JsonRPCError::NoResponse(json!(params).to_string(), e.to_string()))?;
 
         if let Some(error) = response.error {
             return Err(JsonRPCError::ServerError {
@@ -561,7 +580,7 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
             });
         }
 
-        let result = response.result.ok_or(JsonRPCError::NoResponse)?;
+        let result = response.result.unwrap_or(Value::Null);
 
         Ok(serde_json::from_value(result)?)
     }

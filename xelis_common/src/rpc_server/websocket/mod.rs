@@ -66,8 +66,10 @@ pub enum WebSocketError {
     SessionClosed(#[from] actix_ws::Closed),
     #[error("this session was already closed")]
     SessionAlreadyClosed,
-    #[error("error while sending message, channel is closed")]
-    ChannelClosed,
+    #[error("error while sending message '{}', channel is closed", _0)]
+    ChannelClosed(String),
+    #[error("error while closing, channel is already closed")]
+    ChannelAlreadyClosed,
     #[error(transparent)]
     Elapsed(#[from] Elapsed),
 }
@@ -93,7 +95,7 @@ where
     // Send a text message to the session
     pub async fn send_text<S: Into<String>>(self: &Arc<Self>, value: S) -> Result<(), WebSocketError> {
         self.channel.send(InnerMessage::Text(value.into()))
-            .map_err(|_| WebSocketError::ChannelClosed)?;
+            .map_err(|e| WebSocketError::ChannelClosed(e.to_string()))?;
 
         Ok(())
     }
@@ -127,7 +129,7 @@ where
     // Close the session
     pub async fn close(&self, reason: Option<CloseReason>) -> Result<(), WebSocketError> {
         self.channel.send(InnerMessage::Close(reason))
-            .map_err(|_| WebSocketError::ChannelClosed)?;
+            .map_err(|_| WebSocketError::ChannelAlreadyClosed)?;
 
         Ok(())
     }

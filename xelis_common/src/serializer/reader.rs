@@ -142,6 +142,24 @@ impl<'a> Reader<'a> {
         Ok(Some(byte))
     }
 
+    pub fn read_optional_non_zero_u16(&mut self) -> Result<Option<u16>, ReaderError> {
+        let value = self.read_u16()?;
+        if value == 0 {
+            return Ok(None)
+        }
+
+        Ok(Some(value))
+    }
+
+    pub fn read_optional_non_zero_u64(&mut self) -> Result<Option<u64>, ReaderError> {
+        let value = self.read_u64()?;
+        if value == 0 {
+            return Ok(None)
+        }
+
+        Ok(Some(value))
+    }
+
     pub fn total_size(&self) -> usize {
         self.bytes.len()
     }
