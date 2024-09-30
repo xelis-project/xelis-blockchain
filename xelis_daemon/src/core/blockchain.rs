@@ -1508,7 +1508,7 @@ impl<S: Storage> Blockchain<S> {
     }
 
     // Retrieve every orphaned blocks until a given height from the tips
-    async fn get_orphaned_blocks_for_tips_until_height(&self, storage: &S, tips: impl Iterator<Item = Hash>, height: u64) -> Result<Vec<(Hash, Arc<BlockHeader>)>, BlockchainError> {
+    async fn get_orphaned_blocks_for_tips_until_height<P: DifficultyProvider + DagOrderProvider>(&self, provider: &P, tips: impl Iterator<Item = Hash>, height: u64) -> Result<Vec<(Hash, Arc<BlockHeader>)>, BlockchainError> {
         // Current queue of blocks to process
         let mut queue: IndexSet<Hash> = IndexSet::new();
         queue.extend(tips);
@@ -1523,19 +1523,19 @@ impl<S: Storage> Blockchain<S> {
             }
 
             // if the block is not orphaned, we add its tips to the queue
-            let block = storage.get_block_header_by_hash(&hash).await?;
+            let block = provider.get_block_header_by_hash(&hash).await?;
             if block.get_height() <= height {
                 continue;
             }
 
             // if the block is orphaned, we add it to the list
-            if self.is_block_orphaned_for_storage(storage, &hash).await {
+            if self.is_block_orphaned_for_storage(provider, &hash).await {
                 orphaned_blocks.push((hash.clone(), block.clone()));
             }
 
             for tip in block.get_tips() {
-                if self.is_block_orphaned_for_storage(storage, &tip).await {
-                    let block = storage.get_block_header_by_hash(&tip).await?;
+                if self.is_block_orphaned_for_storage(provider, &tip).await {
+                    let block = provider.get_block_header_by_hash(&tip).await?;
                     orphaned_blocks.push((tip.clone(), block));
                     queue.insert(tip.clone());
                 }
@@ -2405,15 +2405,15 @@ impl<S: Storage> Blockchain<S> {
 
     // Get the block reward for a block
     // This will search all blocks at same height and verify which one are side blocks
-    pub async fn get_block_reward(&self, storage: &S, hash: &Hash, past_supply: u64, current_topoheight: u64) -> Result<u64, BlockchainError> {
-        let is_side_block = self.is_side_block(storage, hash).await?;
+    pub async fn get_block_reward<P: DifficultyProvider + DagOrderProvider + BlocksAtHeightProvider>(&self, provider: &P, hash: &Hash, past_supply: u64, current_topoheight: u64) -> Result<u64, BlockchainError> {
+        let is_side_block = self.is_side_block(provider, hash).await?;
         let mut side_blocks_count = 0;
         if is_side_block {
             // get the block height for this hash
-            let height = storage.get_height_for_block_hash(hash).await?;
-            let blocks_at_height = storage.get_blocks_at_height(height).await?;
+            let height = provider.get_height_for_block_hash(hash).await?;
+            let blocks_at_height = provider.get_blocks_at_height(height).await?;
             for block in blocks_at_height {
-                if *hash != block && self.is_side_block_internal(storage, &block, current_topoheight).await? {
+                if *hash != block && self.is_side_block_internal(provider, &block, current_topoheight).await? {
                     side_blocks_count += 1;
                 }
             }
@@ -2469,13 +2469,13 @@ impl<S: Storage> Blockchain<S> {
     }
 
     // if a block is not ordered, it's an orphaned block and its transactions are not honoured
-    pub async fn is_block_orphaned_for_storage(&self, storage: &S, hash: &Hash) -> bool {
+    pub async fn is_block_orphaned_for_storage<P: DagOrderProvider>(&self, provider: &P, hash: &Hash) -> bool {
         trace!("is block {} orphaned", hash);
-        !storage.is_block_topological_ordered(hash).await
+        !provider.is_block_topological_ordered(hash).await
     }
 
-    pub async fn is_side_block(&self, storage: &S, hash: &Hash) -> Result<bool, BlockchainError> {
-        self.is_side_block_internal(storage, hash, self.get_topo_height()).await
+    pub async fn is_side_block<P: DifficultyProvider + DagOrderProvider>(&self, provider: &P, hash: &Hash) -> Result<bool, BlockchainError> {
+        self.is_side_block_internal(provider, hash, self.get_topo_height()).await
     }
 
     // a block is a side block if its ordered and its block height is less than or equal to height of past 8 topographical blocks
