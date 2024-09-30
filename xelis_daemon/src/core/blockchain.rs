@@ -1591,7 +1591,7 @@ impl<S: Storage> Blockchain<S> {
 
             if orphaned_blocks.is_none() {
                 let blocks = self.get_orphaned_blocks_for_tips_until_height(storage, block.get_tips().iter().cloned(), stable_height).await?;
-                warn!("Found {} orphaned blocks linked for block template", blocks.len());
+                debug!("Found {} orphaned blocks linked for block template", blocks.len());
                 orphaned_blocks = Some(blocks);
             }
 
