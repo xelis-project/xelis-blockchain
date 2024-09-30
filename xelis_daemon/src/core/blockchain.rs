@@ -1507,6 +1507,44 @@ impl<S: Storage> Blockchain<S> {
         Ok(block)
     }
 
+    // Retrieve every orphaned blocks until a given height from the tips
+    async fn get_orphaned_blocks_for_tips_until_height(&self, storage: &S, tips: impl Iterator<Item = Hash>, height: u64) -> Result<Vec<(Hash, Arc<BlockHeader>)>, BlockchainError> {
+        // Current queue of blocks to process
+        let mut queue: IndexSet<Hash> = IndexSet::new();
+        queue.extend(tips);
+
+        let mut processed = HashSet::new();
+        let mut orphaned_blocks = Vec::new();
+
+        while let Some(hash) = queue.pop() {
+            // if we already processed this block, skip it
+            if !processed.insert(hash.clone()) {
+                continue;
+            }
+
+            // if the block is not orphaned, we add its tips to the queue
+            let block = storage.get_block_header_by_hash(&hash).await?;
+            if block.get_height() <= height {
+                continue;
+            }
+
+            // if the block is orphaned, we add it to the list
+            if self.is_block_orphaned_for_storage(storage, &hash).await {
+                orphaned_blocks.push((hash.clone(), block.clone()));
+            }
+
+            for tip in block.get_tips() {
+                if self.is_block_orphaned_for_storage(storage, &tip).await {
+                    let block = storage.get_block_header_by_hash(&tip).await?;
+                    orphaned_blocks.push((tip.clone(), block));
+                    queue.insert(tip.clone());
+                }
+            }
+        }
+
+        Ok(orphaned_blocks)
+    }
+
     // Get the mining block template for miners
     // This function is called when a miner request a new block template
     // We create a block candidate with selected TXs from mempool
@@ -1540,7 +1578,12 @@ impl<S: Storage> Blockchain<S> {
 
         // data used to verify txs
         let stable_topoheight = self.get_stable_topoheight();
+        let stable_height = self.get_stable_height();
         let topoheight = self.get_topo_height();
+
+        // Find all orphaned blocks that will be linked in this block
+        let orphaned_blocks = self.get_orphaned_blocks_for_tips_until_height(storage, block.get_tips().iter().cloned(), stable_height).await?;
+
         trace!("build chain state for block template");
         let mut chain_state = ChainState::new(storage, stable_topoheight, topoheight, block.get_version());
 
@@ -1548,6 +1591,14 @@ impl<S: Storage> Blockchain<S> {
         while let Some(TxSelectorEntry { size, hash, tx }) = tx_selector.next() {
             if block_size + total_txs_size + size >= MAX_BLOCK_SIZE {
                 break;
+            }
+
+            // We don't want to re-include a TX that is already in a TIP block, even if its not executed yet
+            for (block_hash, block) in orphaned_blocks.iter() {
+                if block.get_transactions().contains(hash.as_ref()) {
+                    warn!("Skipping TX {} because it is included in tips {}", hash, block_hash);
+                    continue;
+                }
             }
 
             if !self.skip_block_template_txs_verification {
