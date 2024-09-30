@@ -4,6 +4,27 @@ This file contains all the changelogs to ensure that changes can be tracked and 
 
 To see the full history and exact changes, please refer to the commits history directly.
 
+## v1.15.0
+
+Bug fixes for daemon & wallet, improvements & new features.
+
+Common:
+- Improve error messges
+- non-zero optional serializer fns
+- allow nullable responses in RPC client
+
+Daemon:
+- fix visual bugs for peerlist
+- no connection to tempbanned peers
+- `temp_ban_address` cli command
+- `print_balance` cli command
+- do not include txs present in orphaned tips
+- `get_estimated_fee_rates` experimental rpc method
+
+Wallet:
+- add `export_transactions` cli command
+- more logs
+
 ## v1.14.0
 
 Moving to 1.14.0 due to breaking changes in peerlist storage.
