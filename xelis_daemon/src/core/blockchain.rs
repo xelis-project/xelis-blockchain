@@ -1519,26 +1519,22 @@ impl<S: Storage> Blockchain<S> {
         while let Some(hash) = queue.pop() {
             // if we already processed this block, skip it
             if !processed.insert(hash.clone()) {
+                debug!("Skipping block {} because it was already processed", hash);
                 continue;
             }
 
             // if the block is not orphaned, we add its tips to the queue
             let block = provider.get_block_header_by_hash(&hash).await?;
             if block.get_height() <= height {
+                debug!("Block {} is not orphaned, skipping it", hash);
                 continue;
             }
 
-            // if the block is orphaned, we add it to the list
+            // if the block is orphaned, we add it to the list and we check its tips
             if self.is_block_orphaned_for_storage(provider, &hash).await {
+                debug!("Block {} is orphaned, adding it to the list", hash);
                 orphaned_blocks.push((hash.clone(), block.clone()));
-            }
-
-            for tip in block.get_tips() {
-                if self.is_block_orphaned_for_storage(provider, &tip).await {
-                    let block = provider.get_block_header_by_hash(&tip).await?;
-                    orphaned_blocks.push((tip.clone(), block));
-                    queue.insert(tip.clone());
-                }
+                queue.extend(block.get_tips().clone());
             }
         }
 
