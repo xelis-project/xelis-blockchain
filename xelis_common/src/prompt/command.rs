@@ -282,7 +282,7 @@ async fn help(manager: &CommandManager, mut args: ArgumentManager) -> Result<(),
         manager.message(&format!("Usage: {}", cmd.get_usage()));
     } else {
         manager.display_commands()?;
-        manager.message("See how to use a command using /help <command>");
+        manager.message("See how to use a command using help <command>");
     }
     Ok(())
 }
