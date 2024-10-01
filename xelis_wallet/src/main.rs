@@ -404,40 +404,137 @@ async fn setup_wallet_command_manager(wallet: Arc<Wallet>, command_manager: &Com
     command_manager.remove_command("create")?;
 
     // Add wallet commands
-    command_manager.add_command(Command::new("change_password", "Set a new password to open your wallet", CommandHandler::Async(async_handler!(change_password))))?;
-    command_manager.add_command(Command::with_optional_arguments("transfer", "Send asset to a specified address", vec![Arg::new("asset", ArgType::Hash), Arg::new("address", ArgType::String), Arg::new("amount", ArgType::String)], CommandHandler::Async(async_handler!(transfer))))?;
-    command_manager.add_command(Command::with_optional_arguments("transfer_all", "Send all your asset balance to a specified address", vec![Arg::new("asset", ArgType::Hash), Arg::new("address", ArgType::String)], CommandHandler::Async(async_handler!(transfer_all))))?;
-    command_manager.add_command(Command::with_optional_arguments("burn", "Burn amount of asset", vec![Arg::new("asset", ArgType::Hash), Arg::new("amount", ArgType::String)], CommandHandler::Async(async_handler!(burn))))?;
-    command_manager.add_command(Command::new("display_address", "Show your wallet address", CommandHandler::Async(async_handler!(display_address))))?;
-    command_manager.add_command(Command::with_optional_arguments("balance", "List all non-zero balances or show the selected one", vec![Arg::new("asset", ArgType::Hash)], CommandHandler::Async(async_handler!(balance))))?;
-    command_manager.add_command(Command::with_optional_arguments("history", "Show all your transactions", vec![Arg::new("page", ArgType::Number)], CommandHandler::Async(async_handler!(history))))?;
-    command_manager.add_command(Command::with_optional_arguments("seed", "Show seed of selected language", vec![Arg::new("language", ArgType::Number)], CommandHandler::Async(async_handler!(seed))))?;
-    command_manager.add_command(Command::new("nonce", "Show current nonce", CommandHandler::Async(async_handler!(nonce))))?;
-    command_manager.add_command(Command::new("set_nonce", "Set new nonce", CommandHandler::Async(async_handler!(set_nonce))))?;
-    command_manager.add_command(Command::new("logout", "Logout from existing wallet", CommandHandler::Async(async_handler!(logout))))?;
-    command_manager.add_command(Command::new("clear_tx_cache", "Clear the current TX cache", CommandHandler::Async(async_handler!(clear_tx_cache))))?;
-    command_manager.add_command(Command::with_required_arguments("export_transactions", "Export all your transactions in a CSV file", vec![Arg::new("filename", ArgType::String)], CommandHandler::Async(async_handler!(export_transactions_csv))))?;
+    command_manager.add_command(Command::new(
+        "change_password",
+        "Set a new password to open your wallet",
+        CommandHandler::Async(async_handler!(change_password))
+    ))?;
+    command_manager.add_command(Command::with_optional_arguments(
+        "transfer",
+        "Send asset to a specified address",
+        vec![
+            Arg::new("asset", ArgType::Hash),
+            Arg::new("address", ArgType::String),
+            Arg::new("amount", ArgType::String),
+            Arg::new("confirm", ArgType::Bool)
+        ],
+        CommandHandler::Async(async_handler!(transfer))
+    ))?;
+    command_manager.add_command(Command::with_optional_arguments(
+        "transfer_all",
+        "Send all your asset balance to a specified address",
+        vec![
+            Arg::new("asset", ArgType::Hash),
+            Arg::new("address", ArgType::String),
+            Arg::new("confirm", ArgType::Bool)
+        ],
+        CommandHandler::Async(async_handler!(transfer_all))
+    ))?;
+    command_manager.add_command(Command::with_optional_arguments(
+        "burn",
+        "Burn amount of asset",
+        vec![
+            Arg::new("asset", ArgType::Hash),
+            Arg::new("amount", ArgType::String),
+            Arg::new("confirm", ArgType::Bool)
+        ],    
+        CommandHandler::Async(async_handler!(burn))
+    ))?;
+    command_manager.add_command(Command::new(
+        "display_address",
+        "Show your wallet address",
+        CommandHandler::Async(async_handler!(display_address))
+    ))?;
+    command_manager.add_command(Command::with_optional_arguments(
+        "balance",
+        "List all non-zero balances or show the selected one",
+        vec![Arg::new("asset", ArgType::Hash)],
+        CommandHandler::Async(async_handler!(balance))
+    ))?;
+    command_manager.add_command(Command::with_optional_arguments(
+        "history",
+        "Show all your transactions",
+        vec![Arg::new("page", ArgType::Number)],
+        CommandHandler::Async(async_handler!(history))
+    ))?;
+    command_manager.add_command(Command::with_optional_arguments(
+        "seed",
+        "Show seed of selected language",
+        vec![Arg::new("language", ArgType::Number)],
+        CommandHandler::Async(async_handler!(seed))
+    ))?;
+    command_manager.add_command(Command::new(
+        "nonce",
+        "Show current nonce",
+        CommandHandler::Async(async_handler!(nonce))
+    ))?;
+    command_manager.add_command(Command::new(
+        "set_nonce",
+        "Set new nonce",
+        CommandHandler::Async(async_handler!(set_nonce))
+    ))?;
+    command_manager.add_command(Command::new(
+        "logout",
+        "Logout from existing wallet",
+        CommandHandler::Async(async_handler!(logout)))
+    )?;
+    command_manager.add_command(Command::new(
+        "clear_tx_cache",
+        "Clear the current TX cache",
+        CommandHandler::Async(async_handler!(clear_tx_cache))
+    ))?;
+    command_manager.add_command(Command::with_required_arguments(
+        "export_transactions",
+        "Export all your transactions in a CSV file",
+        vec![Arg::new("filename", ArgType::String)],
+        CommandHandler::Async(async_handler!(export_transactions_csv))
+    ))?;
 
     #[cfg(feature = "network_handler")]
     {
-        command_manager.add_command(Command::with_optional_arguments("online_mode", "Set your wallet in online mode", vec![Arg::new("daemon_address", ArgType::String)], CommandHandler::Async(async_handler!(online_mode))))?;
-        command_manager.add_command(Command::new("offline_mode", "Set your wallet in offline mode", CommandHandler::Async(async_handler!(offline_mode))))?;
-        command_manager.add_command(Command::with_optional_arguments("rescan", "Rescan balance and transactions", vec![Arg::new("topoheight", ArgType::Number)], CommandHandler::Async(async_handler!(rescan))))?;
+        command_manager.add_command(Command::with_optional_arguments(
+            "online_mode",
+            "Set your wallet in online mode",
+            vec![Arg::new("daemon_address", ArgType::String)],
+            CommandHandler::Async(async_handler!(online_mode))
+        ))?;
+        command_manager.add_command(Command::new(
+            "offline_mode",
+            "Set your wallet in offline mode",
+            CommandHandler::Async(async_handler!(offline_mode))
+        ))?;
+        command_manager.add_command(Command::with_optional_arguments(
+            "rescan",
+            "Rescan balance and transactions",
+            vec![Arg::new("topoheight", ArgType::Number)],
+            CommandHandler::Async(async_handler!(rescan))
+        ))?;
     }
 
     #[cfg(feature = "api_server")]
     {
         // Unauthenticated RPC Server can only be created by launch arguments option
-        command_manager.add_command(Command::with_required_arguments("start_rpc_server", "Start the RPC Server", vec![
-            Arg::new("bind_address", ArgType::String),
-            Arg::new("username", ArgType::String),
-            Arg::new("password", ArgType::String)
-        ], CommandHandler::Async(async_handler!(start_rpc_server))))?;
+        command_manager.add_command(Command::with_required_arguments(
+            "start_rpc_server",
+            "Start the RPC Server",
+            vec![
+                Arg::new("bind_address", ArgType::String),
+                Arg::new("username", ArgType::String),
+                Arg::new("password", ArgType::String)
+            ], CommandHandler::Async(async_handler!(start_rpc_server))))?;
 
-        command_manager.add_command(Command::new("start_xswd", "Start the XSWD Server",  CommandHandler::Async(async_handler!(start_xswd))))?;
+        command_manager.add_command(Command::new(
+            "start_xswd",
+            "Start the XSWD Server",
+            CommandHandler::Async(async_handler!(start_xswd)))
+        )?;
 
         // Stop API Server (RPC or XSWD)
-        command_manager.add_command(Command::new("stop_api_server", "Stop the API (XSWD/RPC) Server", CommandHandler::Async(async_handler!(stop_api_server))))?;
+        command_manager.add_command(Command::new(
+            "stop_api_server",
+            "Stop the API (XSWD/RPC) Server",
+            CommandHandler::Async(async_handler!(stop_api_server)))
+        )?;
     }
 
     let mut context = command_manager.get_context().lock()?;
@@ -712,7 +809,7 @@ async fn transfer(manager: &CommandManager, mut args: ArgumentManager) -> Result
     let amount = from_coin(amount, decimals).context("Invalid amount")?;
     manager.message(format!("Sending {} of {} to {}", format_coin(amount, decimals), asset, address.to_string()));
 
-    if !prompt.ask_confirmation().await.context("Error while confirming action")? {
+    if !args.get_flag("confirm")? && !prompt.ask_confirmation().await.context("Error while confirming action")? {
         manager.message("Transaction has been aborted");
         return Ok(())
     }
@@ -784,8 +881,8 @@ async fn transfer_all(manager: &CommandManager, mut args: ArgumentManager) -> Re
     }
 
     manager.message(format!("Sending {} of {} to {} (fees: {})", format_coin(amount, decimals), asset, address.to_string(), format_xelis(estimated_fees)));
-    
-    if !prompt.ask_confirmation().await.context("Error while confirming action")? {
+
+    if !args.get_flag("confirm")? && !prompt.ask_confirmation().await.context("Error while confirming action")? {
         manager.message("Transaction has been aborted");
         return Ok(())
     }
@@ -838,7 +935,7 @@ async fn burn(manager: &CommandManager, mut args: ArgumentManager) -> Result<(),
 
     let amount = from_coin(amount, decimals).context("Invalid amount")?;
     manager.message(format!("Burning {} of {}", format_coin(amount, decimals), asset));
-    if !prompt.ask_confirmation().await.context("Error while confirming action")? {
+    if !args.get_flag("confirm")? && !prompt.ask_confirmation().await.context("Error while confirming action")? {
         manager.message("Transaction has been aborted");
         return Ok(())
     }
