@@ -945,6 +945,8 @@ async fn burn(manager: &CommandManager, mut args: ArgumentManager) -> Result<(),
         asset
     };
 
+    manager.message("Building transaction...");
+
     let tx = wallet.create_transaction(TransactionTypeBuilder::Burn(payload), FeeBuilder::Multiplier(1f64)).await
         .context("Error while creating burn transaction")?;
 
