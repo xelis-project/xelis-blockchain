@@ -68,7 +68,16 @@ pub enum ArgType {
 impl ArgType {
     pub fn to_value(&self, value: &str) -> Result<ArgValue, ArgError> {
         Ok(match self {
-            ArgType::Bool => ArgValue::Bool(value.parse().map_err(|_| ArgError::InvalidType)?),
+            ArgType::Bool => {
+                let value = value.to_lowercase();
+                if ["true", "yes", "y", "1"].contains(&value.as_str()) {
+                    ArgValue::Bool(true)
+                } else if ["false", "no", "n", "0"].contains(&value.as_str()) {
+                    ArgValue::Bool(false)
+                } else {
+                    return Err(ArgError::InvalidType);
+                }
+            },
             ArgType::Number => ArgValue::Number(value.parse().map_err(|_| ArgError::InvalidType)?),
             ArgType::String => ArgValue::String(value.to_owned()),
             ArgType::Hash => ArgValue::Hash(Hash::from_hex(value.to_string()).map_err(|_| ArgError::InvalidType)?),
