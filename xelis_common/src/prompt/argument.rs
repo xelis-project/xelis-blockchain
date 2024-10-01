@@ -139,6 +139,12 @@ impl ArgumentManager {
         self.arguments.contains_key(name)
     }
 
+    // Get flag value
+    // If its not present, return false
+    pub fn get_flag(&mut self, name: &str) -> Result<bool, ArgError> {
+        self.arguments.remove(name).map(|value| value.to_bool()).unwrap_or(Ok(false))
+    }
+
     pub fn size(&self) -> usize {
         self.arguments.len()
     }
