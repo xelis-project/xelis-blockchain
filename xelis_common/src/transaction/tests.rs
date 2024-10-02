@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use async_trait::async_trait;
+use indexmap::IndexSet;
 use crate::{
     account::CiphertextCache,
     api::{DataElement, DataValue},
@@ -12,7 +13,12 @@ use crate::{
         PublicKey
     },
     serializer::Serializer,
-    transaction::{TransactionType, TxVersion, MAX_TRANSFER_COUNT},
+    transaction::{
+        TransactionType,
+        TxVersion,
+        MultiSigPayload,
+        MAX_TRANSFER_COUNT
+    },
     block::BlockVersion
 };
 use super::{
@@ -42,6 +48,7 @@ struct AccountChainState {
 
 struct ChainState {
     accounts: HashMap<PublicKey, AccountChainState>,
+    multisig: HashMap<PublicKey, MultiSigPayload>,
 }
 
 #[derive(Clone)]
@@ -176,6 +183,7 @@ async fn test_tx_verify() {
 
     let mut state = ChainState {
         accounts: HashMap::new(),
+        multisig: HashMap::new(),
     };
 
     // Create the chain state
@@ -237,6 +245,7 @@ async fn test_burn_tx_verify() {
 
     let mut state = ChainState {
         accounts: HashMap::new(),
+        multisig: HashMap::new(),
     };
 
     // Create the chain state
@@ -306,6 +315,7 @@ async fn test_max_transfers() {
     // Create the chain state
     let mut state = ChainState {
         accounts: HashMap::new(),
+        multisig: HashMap::new(),
     };
 
     // Alice
@@ -333,6 +343,71 @@ async fn test_max_transfers() {
     }
 
     assert!(tx.verify(&mut state).await.is_ok());
+}
+
+#[tokio::test]
+async fn test_multig_setup() {
+    let mut alice = Account::new();
+    let mut bob = Account::new();
+    let charlie = Account::new();
+
+    alice.set_balance(XELIS_ASSET, 100 * COIN_VALUE);
+    bob.set_balance(XELIS_ASSET, 0);
+
+    let tx = {
+        let mut state = AccountStateImpl {
+            balances: alice.balances.clone(),
+            nonce: alice.nonce,
+            reference: Reference {
+                topoheight: 0,
+                hash: Hash::zero(),
+            },
+        };
+    
+        let data = TransactionTypeBuilder::MultiSig(MultiSigPayload {
+            threshold: 2,
+            participants: IndexSet::from_iter(vec![bob.keypair.get_public_key().compress(), charlie.keypair.get_public_key().compress()]),
+        });
+        let builder = TransactionBuilder::new(TxVersion::V0, alice.keypair.get_public_key().compress(), data, FeeBuilder::Multiplier(1f64));
+        let estimated_size = builder.estimate_size();
+        let tx = builder.build(&mut state, &alice.keypair).unwrap();
+        assert!(estimated_size == tx.size());
+        assert!(tx.to_bytes().len() == estimated_size);
+
+        tx
+    };
+
+    let mut state = ChainState {
+        accounts: HashMap::new(),
+        multisig: HashMap::new(),
+    };
+
+    // Create the chain state
+    {
+        let mut balances = HashMap::new();
+        for (asset, balance) in alice.balances {
+            balances.insert(asset, balance.ciphertext.take_ciphertext().unwrap());
+        }
+        state.accounts.insert(alice.keypair.get_public_key().compress(), AccountChainState {
+            balances,
+            nonce: alice.nonce,
+        });
+    }
+
+    {
+        let mut balances = HashMap::new();
+        for (asset, balance) in bob.balances {
+            balances.insert(asset, balance.ciphertext.take_ciphertext().unwrap());
+        }
+        state.accounts.insert(bob.keypair.get_public_key().compress(), AccountChainState {
+            balances,
+            nonce: alice.nonce,
+        });
+    }
+
+    tx.verify(&mut state).await.unwrap();
+
+    assert!(state.multisig.contains_key(&alice.keypair.get_public_key().compress()));
 }
 
 #[async_trait]
@@ -394,6 +469,22 @@ impl<'a> BlockchainVerificationState<'a, ()> for ChainState {
 
     fn get_block_version(&self) -> BlockVersion {
         BlockVersion::V0
+    }
+
+    async fn set_multisig_state(
+        &mut self,
+        account: &'a PublicKey,
+        multisig: &MultiSigPayload
+    ) -> Result<(), ()> {
+        self.multisig.insert(account.clone(), multisig.clone());
+        Ok(())
+    }
+
+    async fn get_multisig_state(
+        &mut self,
+        account: &'a PublicKey
+    ) -> Result<Option<&MultiSigPayload>, ()> {
+        Ok(self.multisig.get(account))
     }
 }
 

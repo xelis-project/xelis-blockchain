@@ -1,26 +1,46 @@
 use bulletproofs::RangeProof;
 
-use crate::{crypto::{elgamal::CompressedPublicKey, KeyPair}, serializer::{Reader, ReaderError, Serializer, Writer}, transaction::{Reference, SourceCommitment, Transaction, TransactionType, TxVersion}};
-
+use crate::{
+    crypto::{
+        PublicKey,
+        KeyPair
+    },
+    serializer::{
+        Reader,
+        ReaderError,
+        Serializer,
+        Writer
+    },
+    transaction::{
+        multisig::MultiSig,
+        Reference,
+        SourceCommitment,
+        Transaction,
+        TransactionType,
+        TxVersion
+    }
+};
 
 // Used to build the final transaction
+// It can include the multi-signature logic
 // by signing it
 pub struct UnsignedTransaction {
     version: TxVersion,
-    source: CompressedPublicKey,
+    source: PublicKey,
     data: TransactionType,
     fee: u64,
     nonce: u64,
     source_commitments: Vec<SourceCommitment>,
     reference: Reference,
     range_proof: RangeProof,
+    multisig: Option<MultiSig>,
 }
 
 impl UnsignedTransaction {
     // Create a new unsigned transaction
     pub fn new(
         version: TxVersion,
-        source: CompressedPublicKey,
+        source: PublicKey,
         data: TransactionType,
         fee: u64,
         nonce: u64,
@@ -37,7 +57,13 @@ impl UnsignedTransaction {
             source_commitments,
             reference,
             range_proof,
+            multisig: None,
         }
+    }
+
+    // Set a multi-signature to the transaction
+    pub fn set_multisig(&mut self, multisig: MultiSig) {
+        self.multisig = Some(multisig);
     }
 
     // Finalize the transaction by signing it
@@ -45,17 +71,18 @@ impl UnsignedTransaction {
         let bytes = self.to_bytes();
         let signature = keypair.sign(&bytes);
 
-        Transaction {
-            version: self.version,
-            source: self.source,
-            data: self.data,
-            fee: self.fee,
-            nonce: self.nonce,
-            source_commitments: self.source_commitments,
-            range_proof: self.range_proof,
-            reference: self.reference,
+        Transaction::new(
+            self.version,
+            self.source,
+            self.data,
+            self.fee,
+            self.nonce,
+            self.source_commitments,
+            self.range_proof,
+            self.reference,
+            self.multisig,
             signature,
-        }
+        )
     }
 }
 

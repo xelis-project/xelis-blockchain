@@ -22,7 +22,6 @@ impl TryFrom<u8> for BlockVersion {
     }
 }
 
-
 impl Serializer for BlockVersion {
     fn write(&self, writer: &mut Writer) {
         match self {

@@ -1,6 +1,11 @@
 use crate::{
     crypto::{
-        elgamal::{CompressedCiphertext, CompressedCommitment, CompressedHandle, CompressedPublicKey},
+        elgamal::{
+            CompressedCiphertext,
+            CompressedCommitment,
+            CompressedHandle,
+            CompressedPublicKey
+        },
         proofs::{CiphertextValidityProof, CommitmentEqProof},
         Hash,
         Hashable,
@@ -9,12 +14,15 @@ use crate::{
     serializer::{Reader, ReaderError, Serializer, Writer}
 };
 use bulletproofs::RangeProof;
+use indexmap::IndexSet;
+use multisig::MultiSig;
 use serde::{Deserialize, Serialize};
 use self::extra_data::UnknownExtraDataFormat;
 
 pub mod builder;
 pub mod verify;
 pub mod extra_data;
+pub mod multisig;
 mod reference;
 mod version;
 
@@ -30,6 +38,8 @@ pub const EXTRA_DATA_LIMIT_SIZE: usize = 1024;
 pub const EXTRA_DATA_LIMIT_SUM_SIZE: usize = EXTRA_DATA_LIMIT_SIZE * 32;
 // Maximum number of transfers per transaction
 pub const MAX_TRANSFER_COUNT: usize = 255;
+// Maximum number of participants in a multi signature account
+pub const MAX_MULTISIG_PARTICIPANTS: usize = 255;
 
 pub enum Role {
     Sender,
@@ -64,12 +74,22 @@ pub struct BurnPayload {
     pub amount: u64
 }
 
+// MultiSigPayload is a public payload allowing to setup a multi signature account
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct MultiSigPayload {
+    // The threshold is the minimum number of signatures required to validate a transaction
+    pub threshold: u8,
+    // The participants are the public keys that can sign the transaction
+    pub participants: IndexSet<CompressedPublicKey>,
+}
+
 // this enum represent all types of transaction available on XELIS Network
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "snake_case")]
 pub enum TransactionType {
     Transfers(Vec<TransferPayload>),
     Burn(BurnPayload),
+    MultiSig(MultiSigPayload),
 }
 
 // Transaction to be sent over the network
@@ -92,6 +112,9 @@ pub struct Transaction {
     range_proof: RangeProof,
     /// At which block the TX is built
     reference: Reference,
+    /// MultiSig contains the signatures of the transaction
+    /// Only available since V1
+    multisig: Option<MultiSig>,
     /// The signature of the source key
     signature: Signature,
 }
@@ -161,9 +184,22 @@ impl TransferPayload {
 }
 
 impl Transaction {
-    pub fn new(source: CompressedPublicKey, data: TransactionType, fee: u64, nonce: u64, source_commitments: Vec<SourceCommitment>, range_proof: RangeProof, reference: Reference, signature: Signature) -> Self {
-        Transaction {
-            version: TxVersion::V0,
+    // Create a new transaction
+    #[inline(always)]
+    pub fn new(
+        version: TxVersion,
+        source: CompressedPublicKey,
+        data: TransactionType,
+        fee: u64,
+        nonce: u64,
+        source_commitments: Vec<SourceCommitment>,
+        range_proof: RangeProof,
+        reference: Reference,
+        multisig: Option<MultiSig>,
+        signature: Signature
+    ) -> Self {
+        Self {
+            version,
             source,
             data,
             fee,
@@ -171,7 +207,8 @@ impl Transaction {
             source_commitments,
             range_proof,
             reference,
-            signature
+            multisig,
+            signature,
         }
     }
 
@@ -213,6 +250,11 @@ impl Transaction {
     // Get the range proof
     pub fn get_range_proof(&self) -> &RangeProof {
         &self.range_proof
+    }
+
+    // Get the multisig
+    pub fn get_multisig(&self) -> &Option<MultiSig> {
+        &self.multisig
     }
 
     // Get the signature of source key
@@ -332,6 +374,14 @@ impl Serializer for TransactionType {
                 for tx in txs {
                     tx.write(writer);
                 }
+            },
+            TransactionType::MultiSig(setup) => {
+                writer.write_u8(2);
+                writer.write_u8(setup.threshold);
+                writer.write_u8(setup.participants.len() as u8);
+                for participant in &setup.participants {
+                    participant.write(writer);
+                }
             }
         };
     }
@@ -372,6 +422,10 @@ impl Serializer for TransactionType {
                     size += tx.size();
                 }
                 size
+            },
+            TransactionType::MultiSig(setup) => {
+                // 1 byte for variant, 1 byte for threshold, 1 byte for count of participants
+                1 + 1 + 1 + setup.participants.iter().map(|p| p.size()).sum::<usize>()
             }
         }
     }
@@ -414,9 +468,15 @@ impl Serializer for Transaction {
 
         let range_proof = RangeProof::read(reader)?;
         let reference = Reference::read(reader)?;
+        let multisig = if version == TxVersion::V0 {
+            None
+        } else {
+            MultiSig::read(reader).map(Some)?
+        };
+
         let signature = Signature::read(reader)?;
 
-        Ok(Transaction {
+        Ok(Transaction::new(
             version,
             source,
             data,
@@ -425,8 +485,9 @@ impl Serializer for Transaction {
             source_commitments,
             range_proof,
             reference,
+            multisig,
             signature,
-        })
+        ))
     }
 
     fn size(&self) -> usize {
@@ -442,6 +503,38 @@ impl Serializer for Transaction {
         + self.range_proof.size()
         + self.reference.size()
         + self.signature.size()
+    }
+}
+
+impl Serializer for MultiSigPayload {
+    fn write(&self, writer: &mut Writer) {
+        writer.write_u8(self.threshold);
+        writer.write_u8(self.participants.len() as u8);
+        for participant in &self.participants {
+            participant.write(writer);
+        }
+    }
+
+    fn read(reader: &mut Reader) -> Result<MultiSigPayload, ReaderError> {
+        let threshold = reader.read_u8()?;
+        let participants_len = reader.read_u8()?;
+        if participants_len == 0 || participants_len > MAX_MULTISIG_PARTICIPANTS as u8 {
+            return Err(ReaderError::InvalidSize)
+        }
+
+        let mut participants = IndexSet::new();
+        for _ in 0..participants_len {
+            participants.insert(CompressedPublicKey::read(reader)?);
+        }
+
+        Ok(MultiSigPayload {
+            threshold,
+            participants
+        })
+    }
+
+    fn size(&self) -> usize {
+        1 + 1 + self.participants.iter().map(|p| p.size()).sum::<usize>()
     }
 }
 

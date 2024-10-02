@@ -52,6 +52,7 @@ use thiserror::Error;
 use super::{
     extra_data::{ExtraData, PlaintextData},
     BurnPayload,
+    MultiSigPayload,
     Role,
     SourceCommitment,
     Transaction,
@@ -60,7 +61,8 @@ use super::{
     TxVersion,
     EXTRA_DATA_LIMIT_SIZE,
     EXTRA_DATA_LIMIT_SUM_SIZE,
-    MAX_TRANSFER_COUNT
+    MAX_TRANSFER_COUNT,
+    MAX_MULTISIG_PARTICIPANTS
 };
 
 #[derive(Error, Debug, Clone)]
@@ -83,6 +85,10 @@ pub enum GenerationError<T> {
     ExtraDataAndIntegratedAddress,
     #[error("Proof generation error: {0}")]
     Proof(#[from] ProofGenerationError),
+    #[error("Invalid multisig participants count")]
+    MultiSigParticipants,
+    #[error("Invalid multisig threshold")]
+    MultiSigThreshold,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -90,7 +96,8 @@ pub enum GenerationError<T> {
 pub enum TransactionTypeBuilder {
     Transfers(Vec<TransferBuilder>),
     // We can use the same as final transaction
-    Burn(BurnPayload)
+    Burn(BurnPayload),
+    MultiSig(MultiSigPayload),
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -148,7 +155,8 @@ impl TransactionTypeBuilder {
             }
             TransactionTypeBuilder::Burn(payload) => {
                 consumed.insert(&payload.asset);
-            }
+            },
+            _ => {}
         }
 
         consumed
@@ -164,7 +172,7 @@ impl TransactionTypeBuilder {
                     used_keys.insert(transfer.destination.get_public_key());
                 }
             }
-            TransactionTypeBuilder::Burn(_) => {}
+            _ => {},
         }
 
         used_keys
@@ -234,6 +242,11 @@ impl TransactionBuilder {
                 // Payload size
                 size += payload.size();
                 0
+            },
+            TransactionTypeBuilder::MultiSig(payload) => {
+                // Payload size
+                size += payload.size();
+                0
             }
         };
 
@@ -281,6 +294,7 @@ impl TransactionBuilder {
         Ok(calculated_fee)
     }
 
+    // Compute the new source ciphertext
     fn get_new_source_ct(&self, mut ct: Ciphertext, fee: u64, asset: &Hash, transfers: &[TransferWithCommitment]) -> Ciphertext {
         if asset == &XELIS_ASSET {
             // Fees are applied to the native blockchain asset only.
@@ -299,7 +313,8 @@ impl TransactionBuilder {
                 if *asset == payload.asset {
                     ct -= Scalar::from(payload.amount)
                 }
-            }
+            },
+            _ => {}
         }
 
         ct
@@ -326,7 +341,8 @@ impl TransactionBuilder {
                 if *asset == payload.asset {
                     cost += payload.amount
                 }
-            }
+            },
+            _ => {}
         }
 
         cost
@@ -569,7 +585,24 @@ impl TransactionBuilder {
 
         let data = match self.data {
             TransactionTypeBuilder::Transfers(_) => TransactionType::Transfers(transfers),
-            TransactionTypeBuilder::Burn(payload) => TransactionType::Burn(payload)
+            TransactionTypeBuilder::Burn(payload) => TransactionType::Burn(payload),
+            TransactionTypeBuilder::MultiSig(payload) => {
+                if payload.participants.len() > MAX_MULTISIG_PARTICIPANTS {
+                    return Err(GenerationError::MultiSigParticipants);
+                }
+
+                if payload.threshold as usize > payload.participants.len() || (payload.threshold == 0 && !payload.participants.is_empty()) {
+                    return Err(GenerationError::MultiSigThreshold);
+                }
+
+                transcript.multisig_proof_domain_separator();
+                transcript.append_u64(b"multisig_threshold", payload.threshold as u64);
+                for key in &payload.participants {
+                    transcript.append_public_key(b"multisig_participant", key);
+                }
+
+                TransactionType::MultiSig(payload)
+            },
         };
 
         // 3. Create the RangeProof

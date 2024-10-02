@@ -26,6 +26,7 @@ pub trait ProtocolTranscript {
     fn equality_proof_domain_separator(&mut self);
     fn new_commitment_eq_proof_domain_separator(&mut self);
     fn transfer_proof_domain_separator(&mut self);
+    fn multisig_proof_domain_separator(&mut self);
     fn ciphertext_validity_proof_domain_separator(&mut self);
 }
 
@@ -82,6 +83,10 @@ impl ProtocolTranscript for Transcript {
 
     fn transfer_proof_domain_separator(&mut self) {
         self.append_message(b"dom-sep", b"transfer-proof");
+    }
+
+    fn multisig_proof_domain_separator(&mut self) {
+        self.append_message(b"dom-sep", b"multisig-proof");
     }
 
     fn equality_proof_domain_separator(&mut self) {

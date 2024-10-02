@@ -1,3 +1,5 @@
+mod state;
+
 use bulletproofs::RangeProof;
 use curve25519_dalek::{
     ristretto::CompressedRistretto,
@@ -33,70 +35,19 @@ use crate::{
         TxVersion,
         EXTRA_DATA_LIMIT_SIZE,
         EXTRA_DATA_LIMIT_SUM_SIZE,
-        MAX_TRANSFER_COUNT
-    },
-    block::BlockVersion
+        MAX_TRANSFER_COUNT,
+        MAX_MULTISIG_PARTICIPANTS
+    }
 };
-use super::{Reference, Role, Transaction, TransactionType, TransferPayload};
+use super::{
+    Role,
+    Transaction,
+    TransactionType,
+    TransferPayload
+};
+pub use state::BlockchainVerificationState;
 use thiserror::Error;
 use std::iter;
-use async_trait::async_trait;
-
-/// This trait is used by the batch verification function.
-/// It is intended to represent a virtual snapshot of the current blockchain
-/// state, where the transactions can get applied in order.
-#[async_trait]
-pub trait BlockchainVerificationState<'a, E> {
-    // This is giving a "implementation is not general enough"
-    // We replace it by a generic type in the trait definition
-    // See: https://play.rust-lang.org/?version=stable&mode=debug&edition=2021&gist=aaa6065daaab514e638b2333703765c7
-    // type Error;
-
-    /// Pre-verify the TX
-    async fn pre_verify_tx<'b>(
-        &'b mut self,
-        tx: &Transaction,
-    ) -> Result<(), E>;
-
-    /// Get the balance ciphertext for a receiver account
-    async fn get_receiver_balance<'b>(
-        &'b mut self,
-        account: &'a CompressedPublicKey,
-        asset: &'a Hash,
-    ) -> Result<&'b mut Ciphertext, E>;
-
-    /// Get the balance ciphertext used for verification of funds for the sender account
-    async fn get_sender_balance<'b>(
-        &'b mut self,
-        account: &'a CompressedPublicKey,
-        asset: &'a Hash,
-        reference: &Reference,
-    ) -> Result<&'b mut Ciphertext, E>;
-
-    /// Apply new output to a sender account
-    async fn add_sender_output(
-        &mut self,
-        account: &'a CompressedPublicKey,
-        asset: &'a Hash,
-        output: Ciphertext,
-    ) -> Result<(), E>;
-
-    /// Get the nonce of an account
-    async fn get_account_nonce(
-        &mut self,
-        account: &'a CompressedPublicKey
-    ) -> Result<u64, E>;
-
-    /// Apply a new nonce to an account
-    async fn update_account_nonce(
-        &mut self,
-        account: &'a CompressedPublicKey,
-        new_nonce: u64
-    ) -> Result<(), E>;
-
-    /// Get the block version in which TX is executed
-    fn get_block_version(&self) -> BlockVersion;
-}
 
 #[derive(Error, Debug, Clone)]
 pub enum VerificationError<T> {
@@ -118,6 +69,12 @@ pub enum VerificationError<T> {
     TransferCount,
     #[error("Invalid commitments assets")]
     Commitments,
+    #[error("Invalid multisig participants count")]
+    MultiSigParticipants,
+    #[error("Invalid multisig threshold")]
+    MultiSigThreshold,
+    #[error("MultiSig not configured")]
+    MultiSigNotConfigured,
 }
 
 struct DecompressedTransferCt {
@@ -172,7 +129,8 @@ impl Transaction {
                 if *asset == payload.asset {
                     output += Scalar::from(payload.amount)
                 }
-            }
+            },
+            TransactionType::MultiSig(_) => {}
         }
 
         Ok(output)
@@ -226,6 +184,7 @@ impl Transaction {
                 .iter()
                 .all(|transfer| has_commitment_for_asset(&transfer.asset)),
             TransactionType::Burn(payload) => has_commitment_for_asset(&payload.asset),
+            TransactionType::MultiSig(_) => true,
         }
     }
 
@@ -362,41 +321,77 @@ impl Transaction {
         // 2. Verify every CtValidityProof
         trace!("verifying transfers ciphertext validity proofs");
 
-        if let TransactionType::Transfers(transfers) = &self.data {
-            for (transfer, decompressed) in transfers.iter().zip(&transfers_decompressed) {
-                let receiver = transfer
-                    .destination
-                    .decompress()
-                    .map_err(ProofVerificationError::from)?;
-
-                // Update receiver balance
-
+        match &self.data {
+            TransactionType::Transfers(transfers) => {
+                for (transfer, decompressed) in transfers.iter().zip(&transfers_decompressed) {
+                    let receiver = transfer
+                        .destination
+                        .decompress()
+                        .map_err(ProofVerificationError::from)?;
+    
+                    // Update receiver balance
+    
+                    let current_balance = state
+                        .get_receiver_balance(
+                            &transfer.destination,
+                            &transfer.asset
+                        ).await
+                        .map_err(VerificationError::State)?;
+    
+                    let receiver_ct = decompressed.get_ciphertext(Role::Receiver);
+                    *current_balance += receiver_ct;
+    
+                    // Validity proof
+    
+                    transcript.transfer_proof_domain_separator();
+                    transcript.append_public_key(b"dest_pubkey", &transfer.destination);
+                    transcript.append_commitment(b"amount_commitment", &transfer.commitment);
+                    transcript.append_handle(b"amount_sender_handle", &transfer.sender_handle);
+                    transcript
+                        .append_handle(b"amount_receiver_handle", &transfer.receiver_handle);
+    
+                    transfer.ct_validity_proof.pre_verify(
+                        &decompressed.commitment,
+                        &receiver,
+                        &decompressed.receiver_handle,
+                        &mut transcript,
+                        sigma_batch_collector,
+                    )?;
+                }
+            },
+            TransactionType::Burn(payload) => {
                 let current_balance = state
                     .get_receiver_balance(
-                        &transfer.destination,
-                        &transfer.asset
+                        &self.source,
+                        &payload.asset
                     ).await
                     .map_err(VerificationError::State)?;
 
-                let receiver_ct = decompressed.get_ciphertext(Role::Receiver);
-                *current_balance += receiver_ct;
+                *current_balance += Scalar::from(payload.amount);
+            },
+            TransactionType::MultiSig(setup) => {
+                if setup.participants.len() > MAX_MULTISIG_PARTICIPANTS {
+                    return Err(VerificationError::MultiSigParticipants);
+                }
 
-                // Validity proof
+                if setup.threshold as usize > setup.participants.len() {
+                    return Err(VerificationError::MultiSigThreshold);
+                }
 
-                transcript.transfer_proof_domain_separator();
-                transcript.append_public_key(b"dest_pubkey", &transfer.destination);
-                transcript.append_commitment(b"amount_commitment", &transfer.commitment);
-                transcript.append_handle(b"amount_sender_handle", &transfer.sender_handle);
-                transcript
-                    .append_handle(b"amount_receiver_handle", &transfer.receiver_handle);
+                let is_reset = setup.threshold == 0 && !setup.participants.is_empty();
+                if is_reset && state.get_multisig_state(&self.source).await.map_err(VerificationError::State)?.is_some() {
+                    return Err(VerificationError::MultiSigNotConfigured);
+                }
 
-                transfer.ct_validity_proof.pre_verify(
-                    &decompressed.commitment,
-                    &receiver,
-                    &decompressed.receiver_handle,
-                    &mut transcript,
-                    sigma_batch_collector,
-                )?;
+                transcript.multisig_proof_domain_separator();
+                transcript.append_u64(b"multisig_threshold", setup.threshold as u64);
+                for key in &setup.participants {
+                    transcript.append_public_key(b"multisig_participant", key);
+                }
+
+                // Setup the multisig
+                state.set_multisig_state(&self.source, setup).await
+                    .map_err(VerificationError::State)?;
             }
         }
 

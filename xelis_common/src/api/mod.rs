@@ -18,13 +18,15 @@ use crate::{
     serializer::Serializer,
     transaction::{
         extra_data::UnknownExtraDataFormat,
+        multisig::MultiSig,
         BurnPayload,
         Reference,
         SourceCommitment,
         Transaction,
         TransactionType,
         TransferPayload,
-        TxVersion
+        TxVersion,
+        MultiSigPayload,
     }
 };
 pub use data::*;
@@ -78,6 +80,7 @@ impl<'a> From<RPCTransferPayload<'a>> for TransferPayload {
 pub enum RPCTransactionType<'a> {
     Transfers(Vec<RPCTransferPayload<'a>>),
     Burn(Cow<'a, BurnPayload>),
+    MultiSigSetup(Cow<'a, MultiSigPayload>)
 }
 
 impl<'a> RPCTransactionType<'a> {
@@ -98,7 +101,8 @@ impl<'a> RPCTransactionType<'a> {
                 }
                 Self::Transfers(rpc_transfers)
             },
-            TransactionType::Burn(burn) => Self::Burn(Cow::Borrowed(burn))
+            TransactionType::Burn(burn) => Self::Burn(Cow::Borrowed(burn)),
+            TransactionType::MultiSig(setup) => Self::MultiSigSetup(Cow::Borrowed(setup))
         }
     }
 }
@@ -109,7 +113,8 @@ impl From<RPCTransactionType<'_>> for TransactionType {
             RPCTransactionType::Transfers(transfers) => {
                 TransactionType::Transfers(transfers.into_iter().map(|transfer| transfer.into()).collect::<Vec<TransferPayload>>())
             },
-            RPCTransactionType::Burn(burn) => TransactionType::Burn(burn.into_owned())
+            RPCTransactionType::Burn(burn) => TransactionType::Burn(burn.into_owned()),
+            RPCTransactionType::MultiSigSetup(setup) => TransactionType::MultiSig(setup.into_owned())
         }
     }
 }
@@ -138,6 +143,8 @@ pub struct RPCTransaction<'a> {
     pub range_proof: Cow<'a, RangeProof>,
     /// Reference at which block the transaction was built
     pub reference: Cow<'a, Reference>,
+    /// Multisig data if the transaction is a multisig transaction
+    pub multisig: Cow<'a, Option<MultiSig>>,
     /// Signature of the transaction
     pub signature: Cow<'a, Signature>,
     /// TX size in bytes
@@ -156,6 +163,7 @@ impl<'a> RPCTransaction<'a> {
             source_commitments: Cow::Borrowed(tx.get_source_commitments()),
             range_proof: Cow::Borrowed(tx.get_range_proof()),
             reference: Cow::Borrowed(tx.get_reference()),
+            multisig: Cow::Borrowed(tx.get_multisig()),
             signature: Cow::Borrowed(tx.get_signature()),
             size: tx.size()
         }
@@ -165,6 +173,7 @@ impl<'a> RPCTransaction<'a> {
 impl<'a> From<RPCTransaction<'a>> for Transaction {
     fn from(tx: RPCTransaction<'a>) -> Self {
         Transaction::new(
+            tx.version,
             tx.source.to_public_key(),
             tx.data.into(),
             tx.fee,
@@ -172,6 +181,7 @@ impl<'a> From<RPCTransaction<'a>> for Transaction {
             tx.source_commitments.into_owned(),
             tx.range_proof.into_owned(),
             tx.reference.into_owned(),
+            tx.multisig.into_owned(),
             tx.signature.into_owned()
         )
     }
