@@ -1,6 +1,13 @@
 //! This file represents the transactions without the proofs
 //! Not really a 'builder' per say
 //! Intended to be used when creating a transaction before making the associated proofs and signature
+mod state;
+mod fee;
+mod unsigned;
+
+pub use state::AccountState;
+pub use fee::{FeeHelper, FeeBuilder};
+pub use unsigned::UnsignedTransaction;
 
 use bulletproofs::RangeProof;
 use curve25519_dalek::Scalar;
@@ -10,7 +17,6 @@ use std::{
     iter,
 };
 use crate::{
-    account::CiphertextCache,
     api::DataElement,
     config::XELIS_ASSET,
     crypto::{
@@ -39,14 +45,13 @@ use crate::{
         HASH_SIZE,
         SIGNATURE_SIZE
     },
-    serializer::{Reader, ReaderError, Serializer, Writer},
+    serializer::Serializer,
     utils::calculate_tx_fee
 };
 use thiserror::Error;
 use super::{
     extra_data::{ExtraData, PlaintextData},
     BurnPayload,
-    Reference,
     Role,
     SourceCommitment,
     Transaction,
@@ -78,58 +83,6 @@ pub enum GenerationError<T> {
     ExtraDataAndIntegratedAddress,
     #[error("Proof generation error: {0}")]
     Proof(#[from] ProofGenerationError),
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-#[serde(rename_all = "snake_case")]
-pub enum FeeBuilder {
-    // calculate tx fees based on its size and multiply by this value
-    Multiplier(f64),
-    Value(u64) // set a direct value of how much fees you want to pay
-}
-
-impl Default for FeeBuilder {
-    fn default() -> Self {
-        FeeBuilder::Multiplier(1f64)
-    }
-}
-
-pub trait FeeHelper {
-    type Error;
-
-    /// Get the fee multiplier from wallet if wanted
-    fn get_fee_multiplier(&self) -> f64 {
-        1f64
-    }
-
-    /// Verify if the account exists or if we should pay more fees for account creation
-    fn account_exists(&self, account: &CompressedPublicKey) -> Result<bool, Self::Error>;
-}
-
-/// If the returned balance and ct do not match, the build function will panic and/or
-/// the proof will be invalid.
-pub trait AccountState: FeeHelper {
-
-    /// Used to verify if the address is on the same chain
-    fn is_mainnet(&self) -> bool;
-
-    /// Get the balance from the source
-    fn get_account_balance(&self, asset: &Hash) -> Result<u64, Self::Error>;
-
-    /// Block topoheight at which the transaction is being built
-    fn get_reference(&self) -> Reference;
-
-    /// Get the balance ciphertext from the source
-    fn get_account_ciphertext(&self, asset: &Hash) -> Result<CiphertextCache, Self::Error>;
-
-    /// Update the balance and the ciphertext
-    fn update_account_balance(&mut self, asset: &Hash, new_balance: u64, ciphertext: Ciphertext) -> Result<(), Self::Error>;
-
-    /// Get the nonce of the account
-    fn get_nonce(&self) -> Result<u64, Self::Error>;
-
-    /// Update account nonce
-    fn update_nonce(&mut self, new_nonce: u64) -> Result<(), Self::Error>;
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -215,38 +168,6 @@ impl TransactionTypeBuilder {
         }
 
         used_keys
-    }
-}
-
-// Used to build the final transaction
-// by signing it
-struct TransactionSigner {
-    version: TxVersion,
-    source: CompressedPublicKey,
-    data: TransactionType,
-    fee: u64,
-    nonce: u64,
-    source_commitments: Vec<SourceCommitment>,
-    reference: Reference,
-    range_proof: RangeProof,
-}
-
-impl TransactionSigner {
-    pub fn sign(self, keypair: &KeyPair) -> Transaction {
-        let bytes = self.to_bytes();
-        let signature = keypair.sign(&bytes);
-
-        Transaction {
-            version: self.version,
-            source: self.source,
-            data: self.data,
-            fee: self.fee,
-            nonce: self.nonce,
-            source_commitments: self.source_commitments,
-            range_proof: self.range_proof,
-            reference: self.reference,
-            signature,
-        }
     }
 }
 
@@ -663,41 +584,18 @@ impl TransactionBuilder {
         )
         .map_err(ProofGenerationError::from)?;
 
-        let transaction = TransactionSigner {
-            version: self.version,
-            source: self.source,
+        let transaction = UnsignedTransaction::new(
+            self.version,
+            self.source,
             data,
             fee,
             nonce,
             source_commitments,
             reference,
             range_proof,
-        }.sign(source_keypair);
+        ).finalize(source_keypair);
 
         Ok(transaction)
-    }
-}
-
-impl Serializer for TransactionSigner {
-    fn write(&self, writer: &mut Writer) {
-        self.version.write(writer);
-        self.source.write(writer);
-        self.data.write(writer);
-        self.fee.write(writer);
-        self.nonce.write(writer);
-
-        writer.write_u8(self.source_commitments.len() as u8);
-        for commitment in &self.source_commitments {
-            commitment.write(writer);
-        }
-
-        self.range_proof.write(writer);
-        self.reference.write(writer);
-    }
-
-    // Should never be called
-    fn read(_: &mut Reader) -> Result<Self, ReaderError> {
-        Err(ReaderError::InvalidValue)
     }
 }
 

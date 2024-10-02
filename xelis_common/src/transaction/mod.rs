@@ -1,4 +1,3 @@
-use std::fmt;
 use crate::{
     crypto::{
         elgamal::{CompressedCiphertext, CompressedCommitment, CompressedHandle, CompressedPublicKey},
@@ -16,8 +15,10 @@ use self::extra_data::UnknownExtraDataFormat;
 pub mod builder;
 pub mod verify;
 pub mod extra_data;
+mod reference;
 mod version;
 
+pub use reference::Reference;
 pub use version::TxVersion;
 
 #[cfg(test)]
@@ -29,24 +30,6 @@ pub const EXTRA_DATA_LIMIT_SIZE: usize = 1024;
 pub const EXTRA_DATA_LIMIT_SUM_SIZE: usize = EXTRA_DATA_LIMIT_SIZE * 32;
 // Maximum number of transfers per transaction
 pub const MAX_TRANSFER_COUNT: usize = 255;
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct Reference {
-    pub hash: Hash,
-    pub topoheight: u64,
-}
-
-impl fmt::Display for Reference {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Reference[hash: {}, topoheight: {}]", self.hash, self.topoheight)
-    }
-}
-
-impl PartialEq for Reference {
-    fn eq(&self, other: &Self) -> bool {
-        self.hash == other.hash && self.topoheight == other.topoheight
-    }
-}
 
 pub enum Role {
     Sender,
@@ -467,25 +450,5 @@ impl Hashable for Transaction {}
 impl AsRef<Transaction> for Transaction {
     fn as_ref(&self) -> &Transaction {
         self
-    }
-}
-
-impl Serializer for Reference {
-    fn write(&self, writer: &mut Writer) {
-        self.hash.write(writer);
-        writer.write_u64(&self.topoheight);
-    }
-
-    fn read(reader: &mut Reader) -> Result<Reference, ReaderError> {
-        let hash = Hash::read(reader)?;
-        let topoheight = reader.read_u64()?;
-        Ok(Reference {
-            hash,
-            topoheight
-        })
-    }
-
-    fn size(&self) -> usize {
-        self.hash.size() + self.topoheight.size()
     }
 }
