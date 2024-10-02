@@ -38,7 +38,7 @@ pub fn get_version_at_height(network: &Network, height: u64) -> BlockVersion {
 pub fn get_pow_algorithm_for_version(version: BlockVersion) -> Algorithm {
     match version {
         BlockVersion::V0 => Algorithm::V1,
-        BlockVersion::V1 => Algorithm::V2
+        _ => Algorithm::V2
     }
 }
 

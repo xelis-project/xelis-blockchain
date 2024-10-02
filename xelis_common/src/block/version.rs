@@ -6,6 +6,7 @@ use core::fmt;
 pub enum BlockVersion {
     V0,
     V1,
+    V2,
 }
 
 impl TryFrom<u8> for BlockVersion {
@@ -15,6 +16,7 @@ impl TryFrom<u8> for BlockVersion {
         match value {
             0 => Ok(BlockVersion::V0),
             1 => Ok(BlockVersion::V1),
+            2 => Ok(BlockVersion::V2),
             _ => Err(()),
         }
     }
@@ -26,6 +28,7 @@ impl Serializer for BlockVersion {
         match self {
             BlockVersion::V0 => writer.write_u8(0),
             BlockVersion::V1 => writer.write_u8(1),
+            BlockVersion::V2 => writer.write_u8(2),
         }
     }
 
@@ -45,6 +48,7 @@ impl fmt::Display for BlockVersion {
         match self {
             BlockVersion::V0 => write!(f, "V0"),
             BlockVersion::V1 => write!(f, "V1"),
+            BlockVersion::V2 => write!(f, "V2"),
         }
     }
 }
