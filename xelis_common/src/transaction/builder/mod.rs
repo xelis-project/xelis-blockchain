@@ -89,6 +89,8 @@ pub enum GenerationError<T> {
     MultiSigParticipants,
     #[error("Invalid multisig threshold")]
     MultiSigThreshold,
+    #[error("Burn amount is zero")]
+    BurnZero,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -585,7 +587,14 @@ impl TransactionBuilder {
 
         let data = match self.data {
             TransactionTypeBuilder::Transfers(_) => TransactionType::Transfers(transfers),
-            TransactionTypeBuilder::Burn(payload) => TransactionType::Burn(payload),
+            TransactionTypeBuilder::Burn(payload) => {
+                // Check if the burn amount is zero
+                // Burn of zero are useless and consume fees for nothing
+                if payload.amount == 0 {
+                    return Err(GenerationError::BurnZero);
+                }
+                TransactionType::Burn(payload)
+            },
             TransactionTypeBuilder::MultiSig(payload) => {
                 if payload.participants.len() > MAX_MULTISIG_PARTICIPANTS {
                     return Err(GenerationError::MultiSigParticipants);
