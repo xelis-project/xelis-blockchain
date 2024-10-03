@@ -1,5 +1,6 @@
 use indexmap::IndexSet;
 use xelis_common::{
+    time::TimestampMillis,
     api::{
         DataElement,
         wallet::{
@@ -207,7 +208,7 @@ impl Serializer for EntryData {
             },
             2 => {
                 let key = PublicKey::read(reader)?;
-                let size = reader.read_u16()? as usize;
+                let size = reader.read_u8()? as usize;
                 let mut transfers = Vec::new();
                 for _ in 0..size {
                     let transfer = TransferIn::read(reader)?;
@@ -216,7 +217,7 @@ impl Serializer for EntryData {
                 Self::Incoming { from: key, transfers }
             }
             3 => {
-                let size = reader.read_u16()? as usize;
+                let size = reader.read_u8()? as usize;
                 let mut transfers = Vec::new();
                 for _ in 0..size {
                     let transfer = TransferOut::read(reader)?;
@@ -245,7 +246,7 @@ impl Serializer for EntryData {
 
     fn write(&self, writer: &mut Writer) {
         match &self {
-            Self::Coinbase{ reward } => {
+            Self::Coinbase { reward } => {
                 writer.write_u8(0);
                 writer.write_u64(reward);
             },
@@ -259,14 +260,16 @@ impl Serializer for EntryData {
             Self::Incoming { from, transfers } => {
                 writer.write_u8(2);
                 from.write(writer);
-                writer.write_u16(transfers.len() as u16);
+                // Transfers are maximum 255, so we can use u8
+                writer.write_u8(transfers.len() as u8);
                 for transfer in transfers {
                     transfer.write(writer);
                 }
             },
             Self::Outgoing { transfers, fee, nonce } => {
                 writer.write_u8(3);
-                writer.write_u16(transfers.len() as u16);
+                // Max 255 transfers per TX, so we can use u8
+                writer.write_u8(transfers.len() as u8);
                 for transfer in transfers {
                     transfer.write(writer);
                 }
@@ -291,10 +294,10 @@ impl Serializer for EntryData {
             Self::Coinbase { reward } => reward.size(),
             Self::Burn { asset, amount, fee, nonce } => asset.size() + amount.size() + fee.size() + nonce.size(),
             Self::Incoming { from, transfers } => {
-                from.size() + 2 + transfers.iter().map(|t| t.size()).sum::<usize>()
+                from.size() + 1 + transfers.iter().map(|t| t.size()).sum::<usize>()
             },
             Self::Outgoing { transfers, fee, nonce } => {
-                2 + transfers.iter().map(|t| t.size()).sum::<usize>() + fee.size() + nonce.size()
+                1 + transfers.iter().map(|t| t.size()).sum::<usize>() + fee.size() + nonce.size()
             },
             Self::MultiSig { participants, threshold, fee, nonce } => {
                 1 + participants.iter().map(|k| k.size()).sum::<usize>() + threshold.size() + fee.size() + nonce.size()
@@ -305,32 +308,48 @@ impl Serializer for EntryData {
 
 #[derive(Debug, Clone)]
 pub struct TransactionEntry {
+    // Transaction hash
     hash: Hash,
+    // Block topoheight
     topoheight: u64,
+    // Block timestamp
+    timestamp: TimestampMillis,
+    // Entry data of the transaction
     entry: EntryData,
 }
 
 impl TransactionEntry {
-    pub fn new(hash: Hash, topoheight: u64, entry: EntryData) -> Self {
+    // Create a new transaction entry
+    pub const fn new(hash: Hash, topoheight: u64, timestamp: TimestampMillis, entry: EntryData) -> Self {
         Self {
             hash,
             topoheight,
+            timestamp,
             entry,
         }
     }
 
+    // Get the hash of the transaction
     pub fn get_hash(&self) -> &Hash {
         &self.hash
     }
 
+    // Get the topoheight at which the transaction was executed
     pub fn get_topoheight(&self) -> u64 {
         self.topoheight
     }
 
+    // Get the timestamp of the block
+    pub fn get_timestamp(&self) -> u64 {
+        self.timestamp
+    }
+
+    // Get the entry data of the transaction
     pub fn get_entry(&self) -> &EntryData {
         &self.entry
     }
 
+    // Get the mutable entry data of the transaction
     pub fn get_mut_entry(&mut self) -> &mut EntryData {
         &mut self.entry
     }
@@ -418,18 +437,21 @@ impl Serializer for TransactionEntry {
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
         let hash = reader.read_hash()?;
         let topoheight = reader.read_u64()?;
+        let timestamp = reader.read_u64()?;
         let entry = EntryData::read(reader)?;
 
-        Ok(Self {
+        Ok(Self::new(
             hash,
             topoheight,
+            timestamp,
             entry
-        })
+        ))
     }
 
     fn write(&self, writer: &mut Writer) {
         writer.write_hash(&self.hash);
         writer.write_u64(&self.topoheight);
+        writer.write_u64(&self.timestamp);
         self.entry.write(writer);
     }
 
