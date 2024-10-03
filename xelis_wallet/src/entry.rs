@@ -1,3 +1,4 @@
+use indexmap::IndexSet;
 use xelis_common::{
     api::{
         DataElement,
@@ -180,6 +181,16 @@ pub enum EntryData {
         fee: u64,
         // Nonce used
         nonce: u64
+    },
+    MultiSigSetup {
+        // Public keys
+        participants: IndexSet<PublicKey>,
+        // Required signatures
+        threshold: u8,
+        // Fee paid for the TX
+        fee: u64,
+        // Nonce used
+        nonce: u64,
     }
 }
 
@@ -216,6 +227,18 @@ impl Serializer for EntryData {
 
                 Self::Outgoing { transfers, fee, nonce }
             }
+            4 => {
+                let size = reader.read_u8()? as usize;
+                let mut participants = IndexSet::new();
+                for _ in 0..size {
+                    let key = PublicKey::read(reader)?;
+                    participants.insert(key);
+                }
+                let threshold = reader.read_u8()?;
+                let fee = reader.read_u64()?;
+                let nonce = reader.read_u64()?;
+                Self::MultiSigSetup { participants, threshold, fee, nonce }
+            }
             _ => return Err(ReaderError::InvalidValue)
         }) 
     }
@@ -249,6 +272,16 @@ impl Serializer for EntryData {
                 }
                 writer.write_u64(fee);
                 writer.write_u64(nonce);
+            },
+            Self::MultiSigSetup { participants: keys, threshold, fee, nonce } => {
+                writer.write_u8(4);
+                writer.write_u8(keys.len() as u8);
+                for key in keys {
+                    key.write(writer);
+                }
+                writer.write_u8(*threshold);
+                writer.write_u64(fee);
+                writer.write_u64(nonce);
             }
         }
     }
@@ -262,6 +295,9 @@ impl Serializer for EntryData {
             },
             Self::Outgoing { transfers, fee, nonce } => {
                 2 + transfers.iter().map(|t| t.size()).sum::<usize>() + fee.size() + nonce.size()
+            },
+            Self::MultiSigSetup { participants, threshold, fee, nonce } => {
+                1 + participants.iter().map(|k| k.size()).sum::<usize>() + threshold.size() + fee.size() + nonce.size()
             }
         }
     }
@@ -324,6 +360,10 @@ impl TransactionEntry {
                         extra_data: t.extra_data
                     }).collect();
                     RPCEntryType::Outgoing { transfers, fee, nonce }
+                },
+                EntryData::MultiSigSetup { participants, threshold, fee, nonce } => {
+                    let participants = participants.into_iter().map(|p| p.to_address(mainnet)).collect();
+                    RPCEntryType::MultiSigSetup { participants, threshold, fee, nonce }
                 }
             }
         }
@@ -357,6 +397,14 @@ impl TransactionEntry {
                         let decimals = storage.get_asset_decimals(transfer.get_asset())?;
                         str.push_str(&format!("Sent {} {} to {}", format_coin(transfer.get_amount(), decimals), transfer.get_asset(), transfer.get_destination().as_address(mainnet)));
                     }
+                }
+                str
+            },
+            EntryData::MultiSigSetup { participants, threshold, fee, nonce } => {
+                let mut str = format!("Fee: {}, Nonce: {} ", format_xelis(*fee), nonce);
+                str.push_str(&format!("MultiSig setup with threshold {} and {} participants", threshold, participants.len()));
+                for participant in participants {
+                    str.push_str(&format!("{}", participant.as_address(mainnet)));
                 }
                 str
             }

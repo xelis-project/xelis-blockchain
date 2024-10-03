@@ -832,6 +832,10 @@ impl Wallet {
                     for transfer in transfers {
                         writeln!(w, "{},{},{},{},{},{},{},{}", tx.get_topoheight(), tx.get_hash(), "Outgoing", transfer.get_destination().as_address(self.get_network().is_mainnet()), transfer.get_asset(), transfer.get_amount(), fee, nonce).context("Error while writing csv line")?;
                     }
+                },
+                EntryData::MultiSigSetup { participants, threshold, fee, nonce } => {
+                    let str_participants: Vec<String> = participants.iter().map(|p| p.as_address(self.get_network().is_mainnet()).to_string()).collect();
+                    writeln!(w, "{},{},{},{},{},-,{},{}", tx.get_topoheight(), tx.get_hash(), "MultiSigSetup", str_participants.join(","), threshold, fee, nonce).context("Error while writing csv line")?;
                 }
             }
         }

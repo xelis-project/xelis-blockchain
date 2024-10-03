@@ -349,7 +349,20 @@ impl NetworkHandler {
                     } else { // this TX has nothing to do with us, nothing to save
                         None
                     }
-                }
+                },
+                RPCTransactionType::MultiSigSetup(payload) => {
+                    let payload = payload.into_owned();
+                    if is_owner {
+                        if self.has_tx_stored(&tx.hash).await? {
+                            debug!("Transaction multisig setup {} was already stored, skipping it", tx.hash);
+                            continue 'main;
+                        }
+
+                        Some(EntryData::MultiSigSetup { participants: payload.participants, threshold: payload.threshold, fee: tx.fee, nonce: tx.nonce })
+                    } else {
+                        None
+                    }
+                },
             };
 
             if let Some(entry) = entry {
