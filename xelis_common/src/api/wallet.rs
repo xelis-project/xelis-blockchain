@@ -257,6 +257,16 @@ pub enum EntryType {
         fee: u64,
         // Nonce used
         nonce: u64
+    },
+    MultiSigSetup {
+        // List of participants
+        participants: Vec<Address>,
+        // Number of signatures required
+        threshold: u8,
+        // Fee paid
+        fee: u64,
+        // Nonce used
+        nonce: u64
     }
 }
 
