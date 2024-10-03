@@ -75,6 +75,8 @@ pub enum VerificationError<T> {
     MultiSigThreshold,
     #[error("MultiSig not configured")]
     MultiSigNotConfigured,
+    #[error("Invalid format")]
+    InvalidFormat,
 }
 
 struct DecompressedTransferCt {
@@ -103,13 +105,31 @@ impl DecompressedTransferCt {
 }
 
 impl Transaction {
+    // This function will be used to verify the transaction format
+    pub fn as_valid_version_format(&self) -> bool {
+        match self.version {
+            // V0 don't support MultiSig format
+            TxVersion::V0 => {
+                if self.get_multisig().is_some() {
+                    return false;
+                }
+
+                match &self.data {
+                    TransactionType::MultiSig(_) => false,
+                    _ => true,
+                }
+            }
+            TxVersion::V1 => true,
+        }
+    }
+
     /// Get the new output ciphertext
     // This is used to substract the amount from the sender's balance
     fn get_sender_output_ct(
         &self,
         asset: &Hash,
         decompressed_transfers: &[DecompressedTransferCt],
-    ) -> Result<Ciphertext, DecompressionError> {
+    ) -> Ciphertext {
         let mut output = Ciphertext::zero();
 
         if *asset == XELIS_ASSET {
@@ -133,7 +153,7 @@ impl Transaction {
             TransactionType::MultiSig(_) => {}
         }
 
-        Ok(output)
+        output
     }
 
     pub(crate) fn prepare_transcript(
@@ -197,6 +217,11 @@ impl Transaction {
     ) -> Result<(Transcript, Vec<(RistrettoPoint, CompressedRistretto)>), VerificationError<E>>
     {
         trace!("Pre-verifying transaction");
+        if !self.as_valid_version_format() {
+            return Err(VerificationError::InvalidFormat);
+        }
+
+        trace!("Pre-verifying transaction on state");
         state.pre_verify_tx(&self).await
             .map_err(VerificationError::State)?;
 
@@ -285,8 +310,7 @@ impl Transaction {
             .zip(&new_source_commitments_decompressed)
         {
             // Ciphertext containing all the funds spent for this commitment
-            let output = self.get_sender_output_ct(&commitment.asset, &transfers_decompressed)
-            .map_err(|err| VerificationError::Proof(err.into()))?;
+            let output = self.get_sender_output_ct(&commitment.asset, &transfers_decompressed);
 
             // Retrieve the balance of the sender
             let source_verification_ciphertext = state
@@ -536,8 +560,7 @@ impl Transaction {
                     &self.reference,
                 ).await?;
 
-            let output = self.get_sender_output_ct(asset, &transfers_decompressed)
-                .expect("ill-formed ciphertext");
+            let output = self.get_sender_output_ct(asset, &transfers_decompressed);
 
             // Compute the new final balance for account
             *current_bal_sender -= &output;
@@ -613,8 +636,7 @@ impl Transaction {
             .zip(&new_source_commitments_decompressed)
         {
             // Ciphertext containing all the funds spent for this commitment
-            let output = self.get_sender_output_ct(&commitment.asset, &transfers_decompressed)
-                .map_err(|err| VerificationError::Proof(err.into()))?;
+            let output = self.get_sender_output_ct(&commitment.asset, &transfers_decompressed);
 
             // Retrieve the balance of the sender
             let mut source_verification_ciphertext = state

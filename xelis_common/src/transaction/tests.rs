@@ -346,7 +346,7 @@ async fn test_max_transfers() {
 }
 
 #[tokio::test]
-async fn test_multig_setup() {
+async fn test_multisig_setup() {
     let mut alice = Account::new();
     let mut bob = Account::new();
     let charlie = Account::new();
@@ -368,7 +368,7 @@ async fn test_multig_setup() {
             threshold: 2,
             participants: IndexSet::from_iter(vec![bob.keypair.get_public_key().compress(), charlie.keypair.get_public_key().compress()]),
         });
-        let builder = TransactionBuilder::new(TxVersion::V0, alice.keypair.get_public_key().compress(), data, FeeBuilder::Multiplier(1f64));
+        let builder = TransactionBuilder::new(TxVersion::V1, alice.keypair.get_public_key().compress(), data, FeeBuilder::Multiplier(1f64));
         let estimated_size = builder.estimate_size();
         let tx = builder.build(&mut state, &alice.keypair).unwrap();
         assert!(estimated_size == tx.size());
