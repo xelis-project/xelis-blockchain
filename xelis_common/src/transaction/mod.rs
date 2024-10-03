@@ -375,11 +375,11 @@ impl Serializer for TransactionType {
                     tx.write(writer);
                 }
             },
-            TransactionType::MultiSig(setup) => {
+            TransactionType::MultiSig(payload) => {
                 writer.write_u8(2);
-                writer.write_u8(setup.threshold);
-                writer.write_u8(setup.participants.len() as u8);
-                for participant in &setup.participants {
+                writer.write_u8(payload.threshold);
+                writer.write_u8(payload.participants.len() as u8);
+                for participant in &payload.participants {
                     participant.write(writer);
                 }
             }
@@ -423,9 +423,9 @@ impl Serializer for TransactionType {
                 }
                 size
             },
-            TransactionType::MultiSig(setup) => {
+            TransactionType::MultiSig(payload) => {
                 // 1 byte for variant, 1 byte for threshold, 1 byte for count of participants
-                1 + 1 + 1 + setup.participants.iter().map(|p| p.size()).sum::<usize>()
+                1 + 1 + 1 + payload.participants.iter().map(|p| p.size()).sum::<usize>()
             }
         }
     }

@@ -80,7 +80,7 @@ impl<'a> From<RPCTransferPayload<'a>> for TransferPayload {
 pub enum RPCTransactionType<'a> {
     Transfers(Vec<RPCTransferPayload<'a>>),
     Burn(Cow<'a, BurnPayload>),
-    MultiSigSetup(Cow<'a, MultiSigPayload>)
+    MultiSig(Cow<'a, MultiSigPayload>)
 }
 
 impl<'a> RPCTransactionType<'a> {
@@ -102,7 +102,7 @@ impl<'a> RPCTransactionType<'a> {
                 Self::Transfers(rpc_transfers)
             },
             TransactionType::Burn(burn) => Self::Burn(Cow::Borrowed(burn)),
-            TransactionType::MultiSig(setup) => Self::MultiSigSetup(Cow::Borrowed(setup))
+            TransactionType::MultiSig(payload) => Self::MultiSig(Cow::Borrowed(payload))
         }
     }
 }
@@ -114,7 +114,7 @@ impl From<RPCTransactionType<'_>> for TransactionType {
                 TransactionType::Transfers(transfers.into_iter().map(|transfer| transfer.into()).collect::<Vec<TransferPayload>>())
             },
             RPCTransactionType::Burn(burn) => TransactionType::Burn(burn.into_owned()),
-            RPCTransactionType::MultiSigSetup(setup) => TransactionType::MultiSig(setup.into_owned())
+            RPCTransactionType::MultiSig(payload) => TransactionType::MultiSig(payload.into_owned())
         }
     }
 }

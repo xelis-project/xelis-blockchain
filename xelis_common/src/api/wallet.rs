@@ -258,7 +258,7 @@ pub enum EntryType {
         // Nonce used
         nonce: u64
     },
-    MultiSigSetup {
+    MultiSig {
         // List of participants
         participants: Vec<Address>,
         // Number of signatures required

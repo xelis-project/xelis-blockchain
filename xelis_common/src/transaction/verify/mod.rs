@@ -369,28 +369,28 @@ impl Transaction {
 
                 *current_balance += Scalar::from(payload.amount);
             },
-            TransactionType::MultiSig(setup) => {
-                if setup.participants.len() > MAX_MULTISIG_PARTICIPANTS {
+            TransactionType::MultiSig(payload) => {
+                if payload.participants.len() > MAX_MULTISIG_PARTICIPANTS {
                     return Err(VerificationError::MultiSigParticipants);
                 }
 
-                if setup.threshold as usize > setup.participants.len() {
+                if payload.threshold as usize > payload.participants.len() {
                     return Err(VerificationError::MultiSigThreshold);
                 }
 
-                let is_reset = setup.threshold == 0 && !setup.participants.is_empty();
+                let is_reset = payload.threshold == 0 && !payload.participants.is_empty();
                 if is_reset && state.get_multisig_state(&self.source).await.map_err(VerificationError::State)?.is_some() {
                     return Err(VerificationError::MultiSigNotConfigured);
                 }
 
                 transcript.multisig_proof_domain_separator();
-                transcript.append_u64(b"multisig_threshold", setup.threshold as u64);
-                for key in &setup.participants {
+                transcript.append_u64(b"multisig_threshold", payload.threshold as u64);
+                for key in &payload.participants {
                     transcript.append_public_key(b"multisig_participant", key);
                 }
 
                 // Setup the multisig
-                state.set_multisig_state(&self.source, setup).await
+                state.set_multisig_state(&self.source, payload).await
                     .map_err(VerificationError::State)?;
             }
         }
