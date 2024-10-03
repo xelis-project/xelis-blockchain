@@ -350,7 +350,7 @@ impl NetworkHandler {
                         None
                     }
                 },
-                RPCTransactionType::MultiSigSetup(payload) => {
+                RPCTransactionType::MultiSig(payload) => {
                     let payload = payload.into_owned();
                     if is_owner {
                         if self.has_tx_stored(&tx.hash).await? {
@@ -358,7 +358,7 @@ impl NetworkHandler {
                             continue 'main;
                         }
 
-                        Some(EntryData::MultiSigSetup { participants: payload.participants, threshold: payload.threshold, fee: tx.fee, nonce: tx.nonce })
+                        Some(EntryData::MultiSig { participants: payload.participants, threshold: payload.threshold, fee: tx.fee, nonce: tx.nonce })
                     } else {
                         None
                     }
