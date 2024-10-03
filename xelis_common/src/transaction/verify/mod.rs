@@ -243,41 +243,42 @@ impl Transaction {
             return Err(VerificationError::Commitments);
         }
 
-        let transfers_decompressed = if let TransactionType::Transfers(transfers) = &self.data {
-            if transfers.len() > MAX_TRANSFER_COUNT || transfers.is_empty() {
-                debug!("incorrect transfers size: {}", transfers.len());
-                return Err(VerificationError::TransferCount);
-            }
-
-            let mut extra_data_size = 0;
-            // Prevent sending to ourself
-            for transfer in transfers.iter() {
-                if transfer.destination == self.source {
-                    debug!("sender cannot be the receiver in the same TX");
-                    return Err(VerificationError::SenderIsReceiver);
+        let transfers_decompressed = match &self.data {
+            TransactionType::Transfers(transfers) => {
+                if transfers.len() > MAX_TRANSFER_COUNT || transfers.is_empty() {
+                    debug!("incorrect transfers size: {}", transfers.len());
+                    return Err(VerificationError::TransferCount);
                 }
-
-                if let Some(extra_data) = transfer.extra_data.as_ref() {
-                    let size = extra_data.size();
-                    if size > EXTRA_DATA_LIMIT_SIZE {
-                        return Err(VerificationError::TransferExtraDataSize);
+    
+                let mut extra_data_size = 0;
+                // Prevent sending to ourself
+                for transfer in transfers.iter() {
+                    if transfer.destination == self.source {
+                        debug!("sender cannot be the receiver in the same TX");
+                        return Err(VerificationError::SenderIsReceiver);
                     }
-                    extra_data_size += size;
+    
+                    if let Some(extra_data) = transfer.extra_data.as_ref() {
+                        let size = extra_data.size();
+                        if size > EXTRA_DATA_LIMIT_SIZE {
+                            return Err(VerificationError::TransferExtraDataSize);
+                        }
+                        extra_data_size += size;
+                    }
                 }
-            }
-
-            // Check the sum of extra data size
-            if extra_data_size > EXTRA_DATA_LIMIT_SUM_SIZE {
-                return Err(VerificationError::TransactionExtraDataSize);
-            }
-
-            transfers
-                .iter()
-                .map(DecompressedTransferCt::decompress)
-                .collect::<Result<_, DecompressionError>>()
-                .map_err(ProofVerificationError::from)?
-        } else {
-            vec![]
+    
+                // Check the sum of extra data size
+                if extra_data_size > EXTRA_DATA_LIMIT_SUM_SIZE {
+                    return Err(VerificationError::TransactionExtraDataSize);
+                }
+    
+                transfers
+                    .iter()
+                    .map(DecompressedTransferCt::decompress)
+                    .collect::<Result<_, DecompressionError>>()
+                    .map_err(ProofVerificationError::from)?
+            },
+            _ => Vec::new(),
         };
 
         let new_source_commitments_decompressed = self
@@ -384,6 +385,10 @@ impl Transaction {
                 }
             },
             TransactionType::Burn(payload) => {
+                if payload.amount == 0 {
+                    return Err(VerificationError::InvalidFormat);
+                }
+
                 let current_balance = state
                     .get_receiver_balance(
                         &self.source,
