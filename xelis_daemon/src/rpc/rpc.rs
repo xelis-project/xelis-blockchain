@@ -750,10 +750,12 @@ async fn get_transaction_executor<S: Storage>(context: &Context, body: Value) ->
 
     let block_executor = storage.get_block_executor_for_tx(&params.hash)?;
     let block_topoheight = storage.get_topo_height_for_hash(&block_executor).await?;
+    let block_timestamp = storage.get_timestamp_for_block_hash(&block_executor).await?;
 
     Ok(json!(
         GetTransactionExecutorResult {
             block_topoheight,
+            block_timestamp,
             block_hash: Cow::Borrowed(&block_executor)
         }
     ))
