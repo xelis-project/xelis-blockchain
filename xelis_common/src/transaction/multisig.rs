@@ -13,9 +13,9 @@ use crate::{
 pub struct SignatureId {
     // Signer id
     // This is the index of the signer in the transaction
-    id: u8,
+    pub id: u8,
     // Signature
-    signature: Signature
+    pub signature: Signature
 }
 
 // MultiSig is a structure that holds a set of signatures
@@ -34,13 +34,24 @@ impl MultiSig {
     }
 
     /// Adds a signature to the MultiSig
-    pub fn add_signature(&mut self, signature: SignatureId) {
-        self.signatures.insert(signature);
+    /// Returns true if the signature was added
+    pub fn add_signature(&mut self, signature: SignatureId) -> bool {
+        self.signatures.insert(signature)
     }
 
-    // Returns true if the set contains no elements.
+    /// Gets the signatures
+    pub fn get_signatures(&self) -> &IndexSet<SignatureId> {
+        &self.signatures
+    }
+
+    /// Returns true if the set contains no elements.
     pub fn is_empty(&self) -> bool {
         self.signatures.is_empty()
+    }
+
+    /// Returns the number of signatures
+    pub fn len(&self) -> usize {
+        self.signatures.len()
     }
 }
 
@@ -62,8 +73,7 @@ impl Serializer for MultiSig {
     fn write(&self, writer: &mut Writer) {
         writer.write_u8(self.signatures.len() as u8);
         for signature in &self.signatures {
-            writer.write_u8(signature.id);
-            signature.signature.write(writer);
+            signature.write(writer);
         }
     }
 
@@ -71,9 +81,9 @@ impl Serializer for MultiSig {
         let len = reader.read_u8()? as usize;
         let mut signatures = IndexSet::new();
         for _ in 0..len {
-            let id = reader.read_u8()?;
-            let signature = Signature::read(reader)?;
-            signatures.insert(SignatureId { id, signature });
+            if !signatures.insert(SignatureId::read(reader)?) {
+                return Err(ReaderError::InvalidValue);
+            }
         }
         Ok(Self { signatures })
     }
@@ -84,5 +94,42 @@ impl Serializer for MultiSig {
             size += 1 + signature.signature.size();
         }
         size
+    }
+}
+
+impl Serializer for SignatureId {
+    fn write(&self, writer: &mut Writer) {
+        writer.write_u8(self.id);
+        self.signature.write(writer);
+    }
+
+    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
+        let id = reader.read_u8()?;
+        let signature = Signature::read(reader)?;
+        Ok(Self { id, signature })
+    }
+
+    fn size(&self) -> usize {
+        1 + self.signature.size()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_multisig_unique_signer_id() {
+        let mut multisig = MultiSig::new();
+        let mut signature = SignatureId {
+            id: 0,
+            signature: Signature::from_bytes(&[0; 64]).unwrap(),
+        };
+
+        assert!(multisig.add_signature(signature.clone()));
+        assert!(!multisig.add_signature(signature.clone()));
+
+        signature.signature = Signature::from_bytes(&[1; 64]).unwrap();
+        assert!(!multisig.add_signature(signature.clone()));
     }
 }

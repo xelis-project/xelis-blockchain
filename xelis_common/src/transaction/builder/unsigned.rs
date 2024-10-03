@@ -2,8 +2,10 @@ use bulletproofs::RangeProof;
 
 use crate::{
     crypto::{
-        PublicKey,
-        KeyPair
+        hash,
+        Hash,
+        KeyPair,
+        PublicKey
     },
     serializer::{
         Reader,
@@ -12,7 +14,7 @@ use crate::{
         Writer
     },
     transaction::{
-        multisig::MultiSig,
+        multisig::{MultiSig, SignatureId},
         Reference,
         SourceCommitment,
         Transaction,
@@ -66,6 +68,39 @@ impl UnsignedTransaction {
         self.multisig = Some(multisig);
     }
 
+    // Get the bytes that need to be signed for the multi-signature
+    fn write_no_signature(&self, writer: &mut Writer) {
+        self.version.write(writer);
+        self.source.write(writer);
+        self.data.write(writer);
+        self.fee.write(writer);
+        self.nonce.write(writer);
+
+        writer.write_u8(self.source_commitments.len() as u8);
+        for commitment in &self.source_commitments {
+            commitment.write(writer);
+        }
+
+        self.range_proof.write(writer);
+        self.reference.write(writer);
+    }
+
+    // Get the hash of the transaction for the multi-signature
+    // This hash must be signed by each participant of the multisig
+    pub fn get_hash_for_multisig(&self) -> Hash {
+        let mut writer = Writer::new();
+        self.write_no_signature(&mut writer);
+        hash(writer.as_bytes())
+    }
+
+    // Sign the transaction for the multisig
+    pub fn sign_multisig(&mut self, keypair: &KeyPair, id: u8) {
+        let hash = self.get_hash_for_multisig();
+        let multisig = self.multisig.get_or_insert_with(MultiSig::new);
+        let signature = keypair.sign(hash.as_bytes());
+        multisig.add_signature(SignatureId { id, signature });
+    }
+
     // Finalize the transaction by signing it
     pub fn finalize(self, keypair: &KeyPair) -> Transaction {
         let bytes = self.to_bytes();
@@ -88,19 +123,10 @@ impl UnsignedTransaction {
 
 impl Serializer for UnsignedTransaction {
     fn write(&self, writer: &mut Writer) {
-        self.version.write(writer);
-        self.source.write(writer);
-        self.data.write(writer);
-        self.fee.write(writer);
-        self.nonce.write(writer);
-
-        writer.write_u8(self.source_commitments.len() as u8);
-        for commitment in &self.source_commitments {
-            commitment.write(writer);
+        self.write_no_signature(writer);
+        if let Some(multisig) = &self.multisig {
+            multisig.write(writer);
         }
-
-        self.range_proof.write(writer);
-        self.reference.write(writer);
     }
 
     // Should never be called

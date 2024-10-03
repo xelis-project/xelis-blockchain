@@ -75,6 +75,8 @@ pub enum VerificationError<T> {
     MultiSigThreshold,
     #[error("MultiSig not configured")]
     MultiSigNotConfigured,
+    #[error("MultiSig not found")]
+    MultiSigNotFound,
     #[error("Invalid format")]
     InvalidFormat,
 }
@@ -295,11 +297,38 @@ impl Transaction {
 
         let mut transcript = Self::prepare_transcript(self.version, &self.source, self.fee, self.nonce);
 
-        // 0. Verify Signature
+        // 0.a Verify Signature
         let bytes = self.to_bytes();
-        if !self.signature.verify(&bytes[..bytes.len() - SIGNATURE_SIZE], &owner) {
+        let bytes_len_no_signature = bytes.len() - SIGNATURE_SIZE;
+        if !self.signature.verify(&bytes[..bytes_len_no_signature], &owner) {
             debug!("transaction signature is invalid");
             return Err(VerificationError::InvalidSignature);
+        }
+    
+        // 0.b Verify multisig
+        if let Some(config) = state.get_multisig_state(&self.source).await.map_err(VerificationError::State)? {
+            let Some(multisig) = self.get_multisig() else {
+                return Err(VerificationError::MultiSigNotFound);
+            };
+
+            if (config.threshold as usize) != multisig.len() || multisig.len() > MAX_MULTISIG_PARTICIPANTS {
+                return Err(VerificationError::MultiSigParticipants);
+            }
+
+            for (i, sig) in multisig.get_signatures().iter().enumerate() {
+                let index = sig.id as usize;
+                let Some(key) = config.participants.get_index(index) else {
+                    return Err(VerificationError::MultiSigParticipants);
+                };
+
+                let end_index = bytes_len_no_signature - ((i + 1) * sig.size());
+                let decompressed = key.decompress().map_err(ProofVerificationError::from)?;
+                if !sig.signature.verify(&bytes[..end_index], &decompressed) {
+                    return Err(VerificationError::InvalidSignature);
+                }
+            }
+        } else if self.get_multisig().is_some() {
+            return Err(VerificationError::MultiSigNotConfigured);
         }
 
         // 1. Verify CommitmentEqProofs

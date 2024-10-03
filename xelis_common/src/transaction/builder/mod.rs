@@ -351,10 +351,19 @@ impl TransactionBuilder {
     }
 
     pub fn build<B: AccountState>(
-        mut self,
+        self,
         state: &mut B,
         source_keypair: &KeyPair,
     ) -> Result<Transaction, GenerationError<B::Error>> {
+        let unsigned = self.build_unsigned(state, source_keypair)?;
+        Ok(unsigned.finalize(source_keypair))
+    }
+
+    pub fn build_unsigned<B: AccountState>(
+        mut self,
+        state: &mut B,
+        source_keypair: &KeyPair,
+    ) -> Result<UnsignedTransaction, GenerationError<B::Error>> {
         // Compute the fees
         let fee = self.estimate_fees(state)?;
 
@@ -635,7 +644,7 @@ impl TransactionBuilder {
             source_commitments,
             reference,
             range_proof,
-        ).finalize(source_keypair);
+        );
 
         Ok(transaction)
     }

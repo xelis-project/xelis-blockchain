@@ -410,6 +410,77 @@ async fn test_multisig_setup() {
     assert!(state.multisig.contains_key(&alice.keypair.get_public_key().compress()));
 }
 
+#[tokio::test]
+async fn test_multisig() {
+    let mut alice = Account::new();
+    let mut bob = Account::new();
+
+    // Signers
+    let charlie = Account::new();
+    let dave = Account::new();
+
+    alice.set_balance(XELIS_ASSET, 100 * COIN_VALUE);
+    bob.set_balance(XELIS_ASSET, 0);
+
+    let tx = {
+        let mut state = AccountStateImpl {
+            balances: alice.balances.clone(),
+            nonce: alice.nonce,
+            reference: Reference {
+                topoheight: 0,
+                hash: Hash::zero(),
+            },
+        };
+    
+        let data = TransactionTypeBuilder::Transfers(vec![TransferBuilder {
+            amount: 1,
+            destination: bob.address(),
+            asset: XELIS_ASSET,
+            extra_data: None,
+        }]);
+        let builder = TransactionBuilder::new(TxVersion::V1, alice.keypair.get_public_key().compress(), data, FeeBuilder::Multiplier(1f64));
+        let mut tx = builder.build_unsigned(&mut state, &alice.keypair).unwrap();
+
+        tx.sign_multisig(&charlie.keypair, 0);
+        tx.sign_multisig(&dave.keypair, 1);
+
+        tx.finalize(&alice.keypair)
+    };
+
+    // Create the chain state
+    let mut state = ChainState {
+        accounts: HashMap::new(),
+        multisig: HashMap::new(),
+    };
+
+    // Alice
+    {
+        let mut balances = HashMap::new();
+        for (asset, balance) in alice.balances {
+            balances.insert(asset, balance.ciphertext.take_ciphertext().unwrap());
+        }
+        state.accounts.insert(alice.keypair.get_public_key().compress(), AccountChainState {
+            balances,
+            nonce: alice.nonce,
+        });
+    }
+
+    // Bob
+    {
+        let mut balances = HashMap::new();
+        for (asset, balance) in bob.balances {
+            balances.insert(asset, balance.ciphertext.take_ciphertext().unwrap());
+        }
+
+        state.accounts.insert(bob.keypair.get_public_key().compress(), AccountChainState {
+            balances,
+            nonce: alice.nonce,
+        });
+    }
+
+    assert!(tx.verify(&mut state).await.is_ok());
+}
+
 #[async_trait]
 impl<'a> BlockchainVerificationState<'a, ()> for ChainState {
 
