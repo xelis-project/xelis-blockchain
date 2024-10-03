@@ -325,6 +325,8 @@ pub enum BlockchainError {
     MultiSigParticipants,
     #[error("Invalid multisig threshold")]
     MultiSigThreshold,
+    #[error("Invalid transaction format")]
+    InvalidTransactionFormat,
 }
 
 impl BlockchainError {
@@ -361,6 +363,7 @@ impl From<VerificationError<BlockchainError>> for BlockchainError {
             VerificationError::MultiSigNotConfigured => BlockchainError::MultiSigNotConfigured,
             VerificationError::MultiSigParticipants => BlockchainError::MultiSigParticipants,
             VerificationError::MultiSigThreshold => BlockchainError::MultiSigThreshold,
+            VerificationError::InvalidFormat => BlockchainError::InvalidTransactionFormat,
         }
     }
 }
