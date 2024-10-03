@@ -275,6 +275,7 @@ pub type GetTransactionExecutorParams<'a> = GetTransactionParams<'a>;
 #[derive(Serialize, Deserialize)]
 pub struct GetTransactionExecutorResult<'a> {
     pub block_topoheight: u64,
+    pub block_timestamp: TimestampMillis,
     pub block_hash: Cow<'a, Hash>
 }
 
