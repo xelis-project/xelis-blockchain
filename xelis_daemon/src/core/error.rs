@@ -318,7 +318,13 @@ pub enum BlockchainError {
     #[error("Transfer count is invalid")]
     TransferCount,
     #[error("Invalid commitments assets")]
-    Commitments
+    Commitments,
+    #[error("MultiSig is not configured")]
+    MultiSigNotConfigured,
+    #[error("Invalid multisig participants count")]
+    MultiSigParticipants,
+    #[error("Invalid multisig threshold")]
+    MultiSigThreshold,
 }
 
 impl BlockchainError {
@@ -352,6 +358,9 @@ impl From<VerificationError<BlockchainError>> for BlockchainError {
             VerificationError::Commitments => BlockchainError::Commitments,
             VerificationError::TransactionExtraDataSize => BlockchainError::InvalidTransactionExtraData,
             VerificationError::TransferExtraDataSize => BlockchainError::InvalidTransferExtraData,
+            VerificationError::MultiSigNotConfigured => BlockchainError::MultiSigNotConfigured,
+            VerificationError::MultiSigParticipants => BlockchainError::MultiSigParticipants,
+            VerificationError::MultiSigThreshold => BlockchainError::MultiSigThreshold,
         }
     }
 }

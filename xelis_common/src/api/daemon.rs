@@ -412,6 +412,10 @@ pub enum AccountHistoryType {
     Burn { amount: u64 },
     Outgoing { to: Address },
     Incoming { from: Address },
+    MultiSig {
+        participants: Vec<Address>,
+        threshold: u8,
+    }
 }
 
 #[derive(Serialize, Deserialize)]
