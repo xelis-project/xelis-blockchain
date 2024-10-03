@@ -1131,6 +1131,20 @@ async fn get_account_history<S: Storage>(context: &Context, body: Value) -> Resu
                             });
                         }
                     }
+                },
+                TransactionType::MultiSig(payload) => {
+                    if is_sender {
+                        let mainnet = blockchain.get_network().is_mainnet();
+                        history.push(AccountHistoryEntry {
+                            topoheight: topo,
+                            hash: tx_hash.clone(),
+                            history_type: AccountHistoryType::MultiSig {
+                                participants: payload.participants.iter().map(|p| p.as_address(mainnet)).collect(),
+                                threshold: payload.threshold,
+                            },
+                            block_timestamp: block_header.get_timestamp()
+                        });
+                    }
                 }
             }
         }

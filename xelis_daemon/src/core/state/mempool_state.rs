@@ -10,7 +10,8 @@ use xelis_common::{
     transaction::{
         verify::BlockchainVerificationState,
         Reference,
-        Transaction
+        Transaction,
+        MultiSigPayload
     }
 };
 use crate::core::{
@@ -238,5 +239,23 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for Mempoo
     /// Get the block version
     fn get_block_version(&self) -> BlockVersion {
         self.block_version
+    }
+
+    /// Set the multisig state for an account
+    async fn set_multisig_state(
+        &mut self,
+        _: &'a PublicKey,
+        _: &MultiSigPayload
+    ) -> Result<(), BlockchainError> {
+        todo!("set_multisig_state")
+    }
+
+    /// Get the multisig state for an account
+    /// If the account is not a multisig account, return None
+    async fn get_multisig_state(
+        &mut self,
+        _: &'a PublicKey
+    ) -> Result<Option<&MultiSigPayload>, BlockchainError> {
+        todo!("get_multisig_state")
     }
 }
