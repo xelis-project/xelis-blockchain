@@ -98,6 +98,14 @@ pub struct SledStorage {
     pub(super) versioned_nonces: Tree,
     // Tree that store all balances with prefixed keys
     pub(super) balances: Tree,
+
+    // Tree that store all multisig setups for each account
+    // Value is the topoheight pointer at the versioned multisig
+    // Key is the account public key
+    pub(super) multisig: Tree,
+    // Tree that store all versioned multisig setups
+    pub(super) versioned_multisig: Tree,
+
     // Tree that store all versioned balances using hashed keys
     pub(super) versioned_balances: Tree,
     // Tree that store all merkle hashes for each topoheight
@@ -217,6 +225,8 @@ impl SledStorage {
             tx_blocks: sled.open_tree("tx_blocks")?,
             versioned_nonces: sled.open_tree("versioned_nonces")?,
             balances: sled.open_tree("balances")?,
+            multisig: sled.open_tree("multisig")?,
+            versioned_multisig: sled.open_tree("versioned_multisig")?,
             versioned_balances: sled.open_tree("versioned_balances")?,
             merkle_hashes: sled.open_tree("merkle_hashes")?,
             registrations: sled.open_tree("registrations")?,

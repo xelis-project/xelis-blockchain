@@ -13,6 +13,7 @@ mod merkle;
 mod account;
 mod block_execution_order;
 mod network;
+mod multisig;
 
 pub use asset::AssetProvider;
 pub use blocks_at_height::BlocksAtHeightProvider;
@@ -29,3 +30,4 @@ pub use merkle::MerkleHashProvider;
 pub use account::AccountProvider;
 pub use block_execution_order::BlockExecutionOrderProvider;
 pub use network::NetworkProvider;
+pub use multisig::MultiSigProvider;
