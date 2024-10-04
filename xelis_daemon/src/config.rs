@@ -198,7 +198,7 @@ const HARD_FORKS: [HardFork; 2] = [
 ];
 
 // Testnet / Devnet hard forks
-const TESTNET_HARD_FORKS: [HardFork; 2] = [
+const TESTNET_HARD_FORKS: [HardFork; 3] = [
     HardFork {
         height: 0,
         version: BlockVersion::V0,
@@ -210,6 +210,12 @@ const TESTNET_HARD_FORKS: [HardFork; 2] = [
         version: BlockVersion::V1,
         changelog: "xelis-hash v2",
         version_requirement: Some(">=1.13.0")
+    },
+    HardFork {
+        height: 10,
+        version: BlockVersion::V2,
+        changelog: "MultiSig, Smart Contracts",
+        version_requirement: Some(">=1.16.0")
     }
 ];
 
