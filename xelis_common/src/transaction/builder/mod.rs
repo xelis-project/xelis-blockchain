@@ -115,6 +115,7 @@ pub struct TransferBuilder {
 pub struct TransactionBuilder {
     version: TxVersion,
     source: CompressedPublicKey,
+    required_thresholds: u8,
     data: TransactionTypeBuilder,
     fee_builder: FeeBuilder
 }
@@ -182,10 +183,11 @@ impl TransactionTypeBuilder {
 }
 
 impl TransactionBuilder {
-    pub fn new(version: TxVersion, source: CompressedPublicKey, data: TransactionTypeBuilder, fee_builder: FeeBuilder) -> Self {
+    pub fn new(version: TxVersion, source: CompressedPublicKey, required_thresholds: u8, data: TransactionTypeBuilder, fee_builder: FeeBuilder) -> Self {
         Self {
             version,
             source,
+            required_thresholds,
             data,
             fee_builder,
         }
@@ -215,6 +217,16 @@ impl TransactionBuilder {
         // Signature
         + SIGNATURE_SIZE
         ;
+
+        if self.version != TxVersion::V0 {
+            // 1 for optional multisig bool
+            size += 1;
+        }
+
+        if self.required_thresholds != 0 {
+            // 1 for Multisig participants count byte
+            size += 1 + (self.required_thresholds as usize * (SIGNATURE_SIZE + 1))
+        }
 
         let transfers_count = match &self.data {
             TransactionTypeBuilder::Transfers(transfers) => {

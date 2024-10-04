@@ -19,6 +19,7 @@ use crate::{
             DecryptHandle,
             PedersenCommitment
         },
+        hash,
         proofs::{
             BatchCollector,
             ProofVerificationError,
@@ -299,8 +300,7 @@ impl Transaction {
 
         // 0.a Verify Signature
         let bytes = self.to_bytes();
-        let bytes_len_no_signature = bytes.len() - SIGNATURE_SIZE;
-        if !self.signature.verify(&bytes[..bytes_len_no_signature], &owner) {
+        if !self.signature.verify(&bytes[..bytes.len() - SIGNATURE_SIZE], &owner) {
             debug!("transaction signature is invalid");
             return Err(VerificationError::InvalidSignature);
         }
@@ -315,15 +315,25 @@ impl Transaction {
                 return Err(VerificationError::MultiSigParticipants);
             }
 
-            for (i, sig) in multisig.get_signatures().iter().enumerate() {
+            // Multisig are based on the Tx data, without the final signature
+            // We need to remove the final signature and the multisig from the bytes
+            // Each SigId is composed of a u8 and a signature (64 bytes + 1 byte)
+            // We have overhead of 1 byte for the optional bool, and 1 byte for the count in u8
+            // We also need to get rid of the final signature (64 bytes)
+            let size = 1 + 1 + SIGNATURE_SIZE + multisig.len() * (SIGNATURE_SIZE + 1);
+            if  size >= bytes.len() {
+                return Err(VerificationError::InvalidFormat);
+            }
+
+            let hash = hash(&bytes[..bytes.len() - size]);
+            for sig in multisig.get_signatures() {
                 let index = sig.id as usize;
                 let Some(key) = config.participants.get_index(index) else {
                     return Err(VerificationError::MultiSigParticipants);
                 };
 
-                let end_index = bytes_len_no_signature - ((i + 1) * sig.size());
                 let decompressed = key.decompress().map_err(ProofVerificationError::from)?;
-                if !sig.signature.verify(&bytes[..end_index], &decompressed) {
+                if !sig.signature.verify(hash.as_bytes(), &decompressed) {
                     return Err(VerificationError::InvalidSignature);
                 }
             }

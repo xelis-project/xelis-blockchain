@@ -124,8 +124,8 @@ impl UnsignedTransaction {
 impl Serializer for UnsignedTransaction {
     fn write(&self, writer: &mut Writer) {
         self.write_no_signature(writer);
-        if let Some(multisig) = &self.multisig {
-            multisig.write(writer);
+        if self.version != TxVersion::V0 {
+            self.multisig.write(writer);
         }
     }
 

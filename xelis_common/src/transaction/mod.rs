@@ -446,6 +446,11 @@ impl Serializer for Transaction {
 
         self.range_proof.write(writer);
         self.reference.write(writer);
+
+        if self.version != TxVersion::V0 {
+            self.multisig.write(writer);
+        }
+
         self.signature.write(writer);
     }
 
@@ -471,7 +476,7 @@ impl Serializer for Transaction {
         let multisig = if version == TxVersion::V0 {
             None
         } else {
-            MultiSig::read(reader).map(Some)?
+            Option::read(reader)?
         };
 
         let signature = Signature::read(reader)?;
@@ -492,7 +497,7 @@ impl Serializer for Transaction {
 
     fn size(&self) -> usize {
         // Version byte
-        1
+        let mut size = 1
         + self.source.size()
         + self.data.size()
         + self.fee.size()
@@ -502,7 +507,13 @@ impl Serializer for Transaction {
         + self.source_commitments.iter().map(|c| c.size()).sum::<usize>()
         + self.range_proof.size()
         + self.reference.size()
-        + self.signature.size()
+        + self.signature.size();
+
+        if self.version != TxVersion::V0 {
+            size += self.multisig.size();
+        }
+
+        size
     }
 }
 
