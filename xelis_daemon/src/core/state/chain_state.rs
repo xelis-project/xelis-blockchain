@@ -6,7 +6,8 @@ use xelis_common::{
         BalanceType,
         CiphertextCache,
         VersionedBalance,
-        VersionedNonce
+        VersionedNonce,
+        Nonce
     },
     config::XELIS_ASSET,
     crypto::{
@@ -412,7 +413,7 @@ impl<'a, S: Storage> ChainState<'a, S> {
 
     // Retrieve the account nonce
     // Only sender accounts should be used here
-    async fn internal_get_account_nonce(&mut self, key: &'a PublicKey) -> Result<u64, BlockchainError> {
+    async fn internal_get_account_nonce(&mut self, key: &'a PublicKey) -> Result<Nonce, BlockchainError> {
         match self.accounts.entry(key) {
             Entry::Occupied(o) => Ok(o.get().nonce.get_nonce()),
             Entry::Vacant(e) => {
@@ -425,7 +426,7 @@ impl<'a, S: Storage> ChainState<'a, S> {
     // Update the account nonce
     // Only sender accounts should be used here
     // For each TX, we must update the nonce by one
-    async fn internal_update_account_nonce(&mut self, account: &'a PublicKey, new_nonce: u64) -> Result<(), BlockchainError> {
+    async fn internal_update_account_nonce(&mut self, account: &'a PublicKey, new_nonce: Nonce) -> Result<(), BlockchainError> {
         trace!("Updating nonce for {} to {} at topoheight {}", account.as_address(self.storage.is_mainnet()), new_nonce, self.topoheight);
         match self.accounts.entry(account) {
             Entry::Occupied(mut o) => {
@@ -499,7 +500,7 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for ChainS
     async fn get_account_nonce(
         &mut self,
         account: &'a PublicKey
-    ) -> Result<u64, BlockchainError> {
+    ) -> Result<Nonce, BlockchainError> {
         self.internal_get_account_nonce(account).await
     }
 
@@ -507,7 +508,7 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for ChainS
     async fn update_account_nonce(
         &mut self,
         account: &'a PublicKey,
-        new_nonce: u64
+        new_nonce: Nonce
     ) -> Result<(), BlockchainError> {
         self.internal_update_account_nonce(account, new_nonce).await
     }
@@ -532,6 +533,6 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for ChainS
         &mut self,
         _: &'a PublicKey
     ) -> Result<Option<&MultiSigPayload>, BlockchainError> {
-        todo!("get_multisig_state")
+        Ok(None)
     }
 } 

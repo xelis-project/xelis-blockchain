@@ -2,6 +2,7 @@ use std::collections::{hash_map::Entry, HashMap};
 use async_trait::async_trait;
 use xelis_common::{
     block::BlockVersion,
+    account::Nonce,
     crypto::{
         elgamal::Ciphertext,
         Hash,
@@ -223,7 +224,7 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for Mempoo
     async fn get_account_nonce(
         &mut self,
         account: &'a PublicKey
-    ) -> Result<u64, BlockchainError> {
+    ) -> Result<Nonce, BlockchainError> {
         self.internal_get_account_nonce(account).await
     }
 
@@ -231,7 +232,7 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for Mempoo
     async fn update_account_nonce(
         &mut self,
         account: &'a PublicKey,
-        new_nonce: u64
+        new_nonce: Nonce
     ) -> Result<(), BlockchainError> {
         self.internal_update_account_nonce(account, new_nonce).await
     }
@@ -256,6 +257,6 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for Mempoo
         &mut self,
         _: &'a PublicKey
     ) -> Result<Option<&MultiSigPayload>, BlockchainError> {
-        todo!("get_multisig_state")
+        Ok(None)
     }
 }
