@@ -2,7 +2,8 @@ use anyhow::Result;
 use xelis_common::{
     api::daemon::HardFork,
     block::{Algorithm, BlockVersion},
-    network::Network
+    network::Network,
+    transaction::TxVersion
 };
 use crate::config::get_hard_forks;
 
@@ -68,6 +69,14 @@ pub fn is_version_allowed_at_height(network: &Network, height: u64, version: &st
     }
 
     Ok(true)
+}
+
+// This function checks if a transaction version is allowed in a block version
+pub fn is_tx_version_allowed_in_block_version(tx_version: TxVersion, block_version: BlockVersion) -> bool {
+    match block_version {
+        BlockVersion::V0 | BlockVersion::V1 => matches!(tx_version, TxVersion::V0),
+        BlockVersion::V2 => matches!(tx_version, TxVersion::V0 | TxVersion::V1),
+    }
 }
 
 #[cfg(test)]
@@ -141,5 +150,17 @@ mod tests {
     fn test_get_pow_algorithm_for_version() {
         assert_eq!(get_pow_algorithm_for_version(BlockVersion::V0), Algorithm::V1);
         assert_eq!(get_pow_algorithm_for_version(BlockVersion::V1), Algorithm::V2);
+    }
+
+    #[test]
+    fn test_is_tx_version_allowed_in_block_version() {
+        assert!(is_tx_version_allowed_in_block_version(TxVersion::V0, BlockVersion::V0));
+        assert!(!is_tx_version_allowed_in_block_version(TxVersion::V1, BlockVersion::V0));
+
+        assert!(is_tx_version_allowed_in_block_version(TxVersion::V0, BlockVersion::V1));
+        assert!(!is_tx_version_allowed_in_block_version(TxVersion::V1, BlockVersion::V1));
+
+        assert!(is_tx_version_allowed_in_block_version(TxVersion::V0, BlockVersion::V2));
+        assert!(is_tx_version_allowed_in_block_version(TxVersion::V1, BlockVersion::V2));
     }
 }

@@ -12,11 +12,13 @@ use log::{trace, debug};
 use xelis_common::{
     account::VersionedBalance,
     crypto::{Hash, PublicKey},
-    transaction::{Reference, Transaction, TxVersion},
+    transaction::{Reference, Transaction},
     block::{TopoHeight, BlockVersion},
     utils::format_xelis
 };
+
 use super::{
+    hard_fork,
     blockchain,
     error::BlockchainError,
     storage::{AccountProvider, BalanceProvider, DagOrderProvider}
@@ -26,8 +28,8 @@ use super::{
 // We only verify the reference and the required fees
 pub (super) async fn pre_verify_tx<P: AccountProvider + BalanceProvider>(provider: &P, tx: &Transaction, stable_topoheight: TopoHeight, topoheight: TopoHeight, block_version: BlockVersion) -> Result<(), BlockchainError> {
     debug!("Pre-verify TX at topoheight {} and stable topoheight {}", topoheight, stable_topoheight);
-    if tx.get_version() != TxVersion::V0 {
-        debug!("Invalid version: {}", tx.get_version());
+    if !hard_fork::is_tx_version_allowed_in_block_version(tx.get_version(), block_version) {
+        debug!("Invalid version {} in block {}", tx.get_version(), block_version);
         return Err(BlockchainError::InvalidTxVersion);
     }
 
