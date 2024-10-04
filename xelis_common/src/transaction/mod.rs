@@ -1,4 +1,5 @@
 use crate::{
+    account::Nonce,
     crypto::{
         elgamal::{
             CompressedCiphertext,
@@ -112,7 +113,7 @@ pub struct Transaction {
     fee: u64,
     /// nonce must be equal to the one on chain account
     /// used to prevent replay attacks and have ordered transactions
-    nonce: u64,
+    nonce: Nonce,
     /// We have one source commitment and equality proof per asset used in the tx.
     source_commitments: Vec<SourceCommitment>,
     /// The range proof is aggregated across all transfers and across all assets.
@@ -198,7 +199,7 @@ impl Transaction {
         source: CompressedPublicKey,
         data: TransactionType,
         fee: u64,
-        nonce: u64,
+        nonce: Nonce,
         source_commitments: Vec<SourceCommitment>,
         range_proof: RangeProof,
         reference: Reference,
@@ -240,7 +241,7 @@ impl Transaction {
     }
 
     // Get the nonce used
-    pub fn get_nonce(&self) -> u64 {
+    pub fn get_nonce(&self) -> Nonce {
         self.nonce
     }
 
@@ -466,7 +467,7 @@ impl Serializer for Transaction {
         let source = CompressedPublicKey::read(reader)?;
         let data = TransactionType::read(reader)?;
         let fee = reader.read_u64()?;
-        let nonce = reader.read_u64()?;
+        let nonce = Nonce::read(reader)?;
 
         let commitments_len = reader.read_u8()?;
         if commitments_len == 0 || commitments_len > MAX_TRANSFER_COUNT as u8 {

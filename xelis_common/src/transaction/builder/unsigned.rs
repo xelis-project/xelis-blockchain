@@ -1,6 +1,7 @@
 use bulletproofs::RangeProof;
 
 use crate::{
+    account::Nonce,
     crypto::{
         hash,
         Hash,
@@ -31,7 +32,7 @@ pub struct UnsignedTransaction {
     source: PublicKey,
     data: TransactionType,
     fee: u64,
-    nonce: u64,
+    nonce: Nonce,
     source_commitments: Vec<SourceCommitment>,
     reference: Reference,
     range_proof: RangeProof,
@@ -45,7 +46,7 @@ impl UnsignedTransaction {
         source: PublicKey,
         data: TransactionType,
         fee: u64,
-        nonce: u64,
+        nonce: Nonce,
         source_commitments: Vec<SourceCommitment>,
         reference: Reference,
         range_proof: RangeProof,

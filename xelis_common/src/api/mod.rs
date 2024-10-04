@@ -27,7 +27,8 @@ use crate::{
         TransferPayload,
         TxVersion,
         MultiSigPayload,
-    }
+    },
+    account::Nonce,
 };
 pub use data::*;
 
@@ -136,7 +137,7 @@ pub struct RPCTransaction<'a> {
     pub fee: u64,
     /// nonce must be equal to the one on chain account
     /// used to prevent replay attacks and have ordered transactions
-    pub nonce: u64,
+    pub nonce: Nonce,
     /// We have one source commitment and equality proof per asset used in the tx.
     pub source_commitments: Cow<'a, Vec<SourceCommitment>>,
     /// The range proof is aggregated across all transfers and across all assets.

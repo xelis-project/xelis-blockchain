@@ -11,6 +11,7 @@ use log::{debug, trace};
 use merlin::Transcript;
 use crate::{
     config::XELIS_ASSET,
+    account::Nonce,
     crypto::{
         elgamal::{
             Ciphertext,
@@ -55,7 +56,7 @@ pub enum VerificationError<T> {
     #[error("State error: {0}")]
     State(T),
     #[error("Invalid nonce, got {} expected {}", _0, _1)]
-    InvalidNonce(u64, u64),
+    InvalidNonce(Nonce, Nonce),
     #[error("Sender is receiver")]
     SenderIsReceiver,
     #[error("Invalid signature")]
@@ -163,7 +164,7 @@ impl Transaction {
         version: TxVersion,
         source_pubkey: &CompressedPublicKey,
         fee: u64,
-        nonce: u64,
+        nonce: Nonce,
     ) -> Transcript {
         let mut transcript = Transcript::new(b"transaction-proof");
         transcript.append_u64(b"version", version.into());

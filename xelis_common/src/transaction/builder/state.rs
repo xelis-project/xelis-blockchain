@@ -1,4 +1,8 @@
-use crate::{account::CiphertextCache, crypto::{elgamal::Ciphertext, Hash}, transaction::Reference};
+use crate::{
+    account::{Nonce, CiphertextCache},
+    crypto::{elgamal::Ciphertext, Hash},
+    transaction::Reference
+};
 
 use super::FeeHelper;
 
@@ -22,8 +26,8 @@ pub trait AccountState: FeeHelper {
     fn update_account_balance(&mut self, asset: &Hash, new_balance: u64, ciphertext: Ciphertext) -> Result<(), Self::Error>;
 
     /// Get the nonce of the account
-    fn get_nonce(&self) -> Result<u64, Self::Error>;
+    fn get_nonce(&self) -> Result<Nonce, Self::Error>;
 
     /// Update account nonce
-    fn update_nonce(&mut self, new_nonce: u64) -> Result<(), Self::Error>;
+    fn update_nonce(&mut self, new_nonce: Nonce) -> Result<(), Self::Error>;
 }

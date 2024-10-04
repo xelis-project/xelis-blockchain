@@ -7,26 +7,27 @@ use crate::serializer::{
     Writer
 };
 
+pub type Nonce = u64;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct VersionedNonce {
-    nonce: u64,
+    nonce: Nonce,
     previous_topoheight: Option<u64>,
 }
 
 impl VersionedNonce {
-    pub fn new(nonce: u64, previous_topoheight: Option<u64>) -> Self {
+    pub fn new(nonce: Nonce, previous_topoheight: Option<u64>) -> Self {
         Self {
             nonce,
             previous_topoheight
         }
     }
 
-    pub fn get_nonce(&self) -> u64 {
+    pub fn get_nonce(&self) -> Nonce {
         self.nonce
     }
 
-    pub fn set_nonce(&mut self, value: u64) {
+    pub fn set_nonce(&mut self, value: Nonce) {
         self.nonce = value;
     }
 
@@ -41,14 +42,14 @@ impl VersionedNonce {
 
 impl Serializer for VersionedNonce {
     fn write(&self, writer: &mut Writer) {
-        writer.write_u64(&self.nonce);
+        self.nonce.write(writer);
         if let Some(topo) = &self.previous_topoheight {
             writer.write_u64(topo);
         }
     }
 
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let nonce = reader.read_u64()?;
+        let nonce = Nonce::read(reader)?;
         let previous_topoheight = if reader.size() == 0 {
             None
         } else {

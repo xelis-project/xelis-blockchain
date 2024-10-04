@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use async_trait::async_trait;
 use indexmap::IndexSet;
 use crate::{
-    account::CiphertextCache,
+    account::{Nonce, CiphertextCache},
     api::{DataElement, DataValue},
     config::{COIN_VALUE, XELIS_ASSET},
     crypto::{
@@ -43,7 +43,7 @@ use super::{
 
 struct AccountChainState {
     balances: HashMap<Hash, Ciphertext>,
-    nonce: u64,
+    nonce: Nonce,
 }
 
 struct ChainState {
@@ -61,7 +61,7 @@ struct Balance {
 struct Account {
     balances: HashMap<Hash, Balance>,
     keypair: KeyPair,
-    nonce: u64,
+    nonce: Nonce,
 }
 
 impl Account {
@@ -89,7 +89,7 @@ impl Account {
 struct AccountStateImpl {
     balances: HashMap<Hash, Balance>,
     reference: Reference,
-    nonce: u64,
+    nonce: Nonce,
 }
 
 fn create_tx_for(account: Account, destination: Address, amount: u64, extra_data: Option<DataElement>) -> Transaction {
@@ -530,7 +530,7 @@ impl<'a> BlockchainVerificationState<'a, ()> for ChainState {
     async fn get_account_nonce(
         &mut self,
         account: &'a PublicKey
-    ) -> Result<u64, ()> {
+    ) -> Result<Nonce, ()> {
         self.accounts.get(account).map(|account| account.nonce).ok_or(())
     }
 
@@ -538,7 +538,7 @@ impl<'a> BlockchainVerificationState<'a, ()> for ChainState {
     async fn update_account_nonce(
         &mut self,
         account: &'a PublicKey,
-        new_nonce: u64
+        new_nonce: Nonce
     ) -> Result<(), ()> {
         self.accounts.get_mut(account).map(|account| account.nonce = new_nonce).ok_or(())
     }
@@ -597,11 +597,11 @@ impl AccountState for AccountStateImpl {
         Ok(())
     }
 
-    fn get_nonce(&self) -> Result<u64, Self::Error> {
+    fn get_nonce(&self) -> Result<Nonce, Self::Error> {
         Ok(self.nonce)
     }
 
-    fn update_nonce(&mut self, new_nonce: u64) -> Result<(), Self::Error> {
+    fn update_nonce(&mut self, new_nonce: Nonce) -> Result<(), Self::Error> {
         self.nonce = new_nonce;
         Ok(())
     }

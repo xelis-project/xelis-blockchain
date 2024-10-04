@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use crate::{
     block::BlockVersion,
+    account::Nonce,
     crypto::{
         elgamal::{
             Ciphertext,
@@ -58,13 +59,13 @@ pub trait BlockchainVerificationState<'a, E> {
     async fn get_account_nonce(
         &mut self,
         account: &'a CompressedPublicKey
-    ) -> Result<u64, E>;
+    ) -> Result<Nonce, E>;
 
     /// Apply a new nonce to an account
     async fn update_account_nonce(
         &mut self,
         account: &'a CompressedPublicKey,
-        new_nonce: u64
+        new_nonce: Nonce
     ) -> Result<(), E>;
 
     /// Get the block version in which TX is executed
