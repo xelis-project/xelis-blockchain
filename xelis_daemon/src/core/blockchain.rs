@@ -21,6 +21,7 @@ use xelis_common::{
         Block,
         BlockHeader,
         BlockVersion,
+        TopoHeight,
         EXTRA_NONCE_SIZE
     },
     config::{
@@ -555,7 +556,7 @@ impl<S: Storage> Blockchain<S> {
 
     // Prune the chain until topoheight
     // This will delete all blocks / versioned balances / txs until topoheight in param
-    pub async fn prune_until_topoheight(&self, topoheight: u64) -> Result<u64, BlockchainError> {
+    pub async fn prune_until_topoheight(&self, topoheight: TopoHeight) -> Result<TopoHeight, BlockchainError> {
         let mut storage = self.storage.write().await;
         self.prune_until_topoheight_for_storage(topoheight, &mut storage).await
     }
@@ -564,7 +565,7 @@ impl<S: Storage> Blockchain<S> {
     // for this, we have to locate the nearest Sync block for DAG under the limit topoheight
     // and then delete all blocks before it
     // keep a marge of PRUNE_SAFETY_LIMIT
-    pub async fn prune_until_topoheight_for_storage(&self, topoheight: u64, storage: &mut S) -> Result<u64, BlockchainError> {
+    pub async fn prune_until_topoheight_for_storage(&self, topoheight: TopoHeight, storage: &mut S) -> Result<TopoHeight, BlockchainError> {
         if topoheight == 0 {
             return Err(BlockchainError::PruneZero)
         }
@@ -614,7 +615,7 @@ impl<S: Storage> Blockchain<S> {
     }
 
     // determine the topoheight of the nearest sync block until limit topoheight
-    pub async fn locate_nearest_sync_block_for_topoheight<P>(&self, provider: &P, mut topoheight: u64, current_height: u64) -> Result<u64, BlockchainError>
+    pub async fn locate_nearest_sync_block_for_topoheight<P>(&self, provider: &P, mut topoheight: TopoHeight, current_height: u64) -> Result<TopoHeight, BlockchainError>
     where
         P: DifficultyProvider + DagOrderProvider + BlocksAtHeightProvider + PrunedTopoheightProvider
     {
@@ -638,7 +639,7 @@ impl<S: Storage> Blockchain<S> {
     }
 
     // returns the highest topological height
-    pub fn get_topo_height(&self) -> u64 {
+    pub fn get_topo_height(&self) -> TopoHeight {
         self.topoheight.load(Ordering::Acquire)
     }
 
@@ -651,7 +652,7 @@ impl<S: Storage> Blockchain<S> {
     // Get the stable topoheight
     // It is used to determine at which DAG topological height
     // the block is in case of rewind
-    pub fn get_stable_topoheight(&self) -> u64 {
+    pub fn get_stable_topoheight(&self) -> TopoHeight {
         self.stable_topoheight.load(Ordering::Acquire)
     }
 
@@ -770,7 +771,7 @@ impl<S: Storage> Blockchain<S> {
         Ok(true)
     }
 
-    async fn find_tip_base<P>(&self, provider: &P, hash: &Hash, height: u64, pruned_topoheight: u64) -> Result<(Hash, u64), BlockchainError>
+    async fn find_tip_base<P>(&self, provider: &P, hash: &Hash, height: u64, pruned_topoheight: TopoHeight) -> Result<(Hash, u64), BlockchainError>
     where
         P: DifficultyProvider + DagOrderProvider + BlocksAtHeightProvider + PrunedTopoheightProvider
     {
@@ -1018,7 +1019,7 @@ impl<S: Storage> Blockchain<S> {
 
     // Find tip work score internal for a block hash
     // this will recursively find all tips and their difficulty
-    async fn find_tip_work_score_internal<'a, P>(&self, provider: &P, map: &mut HashMap<Hash, CumulativeDifficulty>, hash: &'a Hash, base_topoheight: u64) -> Result<(), BlockchainError>
+    async fn find_tip_work_score_internal<'a, P>(&self, provider: &P, map: &mut HashMap<Hash, CumulativeDifficulty>, hash: &'a Hash, base_topoheight: TopoHeight) -> Result<(), BlockchainError>
     where
         P: DifficultyProvider + DagOrderProvider
     {
@@ -1112,7 +1113,7 @@ impl<S: Storage> Blockchain<S> {
     // the full order is re generated each time a new block is added based on new TIPS
     // first hash in order is the base hash
     // base_height is only used for the cache key
-    async fn generate_full_order<P>(&self, provider: &P, hash: &Hash, base: &Hash, base_height: u64, base_topo_height: u64) -> Result<IndexSet<Hash>, BlockchainError>
+    async fn generate_full_order<P>(&self, provider: &P, hash: &Hash, base: &Hash, base_height: u64, base_topo_height: TopoHeight) -> Result<IndexSet<Hash>, BlockchainError>
     where
         P: DifficultyProvider + DagOrderProvider
     {
@@ -2401,7 +2402,7 @@ impl<S: Storage> Blockchain<S> {
 
     // Get the block reward for a block
     // This will search all blocks at same height and verify which one are side blocks
-    pub async fn get_block_reward<P: DifficultyProvider + DagOrderProvider + BlocksAtHeightProvider>(&self, provider: &P, hash: &Hash, past_supply: u64, current_topoheight: u64) -> Result<u64, BlockchainError> {
+    pub async fn get_block_reward<P: DifficultyProvider + DagOrderProvider + BlocksAtHeightProvider>(&self, provider: &P, hash: &Hash, past_supply: u64, current_topoheight: TopoHeight) -> Result<u64, BlockchainError> {
         let is_side_block = self.is_side_block(provider, hash).await?;
         let mut side_blocks_count = 0;
         if is_side_block {
@@ -2475,7 +2476,7 @@ impl<S: Storage> Blockchain<S> {
     }
 
     // a block is a side block if its ordered and its block height is less than or equal to height of past 8 topographical blocks
-    pub async fn is_side_block_internal<P>(&self, provider: &P, hash: &Hash, current_topoheight: u64) -> Result<bool, BlockchainError>
+    pub async fn is_side_block_internal<P>(&self, provider: &P, hash: &Hash, current_topoheight: TopoHeight) -> Result<bool, BlockchainError>
     where
         P: DifficultyProvider + DagOrderProvider
     {
@@ -2510,7 +2511,7 @@ impl<S: Storage> Blockchain<S> {
     }
 
     // to have stable order: it must be ordered, and be under the stable height limit
-    pub async fn has_block_stable_order<P>(&self, provider: &P, hash: &Hash, topoheight: u64) -> Result<bool, BlockchainError>
+    pub async fn has_block_stable_order<P>(&self, provider: &P, hash: &Hash, topoheight: TopoHeight) -> Result<bool, BlockchainError>
     where
         P: DagOrderProvider
     {
@@ -2523,13 +2524,13 @@ impl<S: Storage> Blockchain<S> {
     }
 
     // Rewind the chain by removing N blocks from the top
-    pub async fn rewind_chain(&self, count: u64, until_stable_height: bool) -> Result<u64, BlockchainError> {
+    pub async fn rewind_chain(&self, count: u64, until_stable_height: bool) -> Result<TopoHeight, BlockchainError> {
         let mut storage = self.storage.write().await;
         self.rewind_chain_for_storage(&mut storage, count, until_stable_height).await
     }
 
     // Rewind the chain by removing N blocks from the top
-    pub async fn rewind_chain_for_storage(&self, storage: &mut S, count: u64, stop_at_stable_height: bool) -> Result<u64, BlockchainError> {
+    pub async fn rewind_chain_for_storage(&self, storage: &mut S, count: u64, stop_at_stable_height: bool) -> Result<TopoHeight, BlockchainError> {
         trace!("rewind chain with count = {}", count);
         let current_height = self.get_height();
         let current_topoheight = self.get_topo_height();
@@ -2655,7 +2656,7 @@ impl<S: Storage> Blockchain<S> {
 
 // Estimate the required fees for a transaction
 // For V1, new keys are only counted one time for creation fee instead of N transfers to it
-pub async fn estimate_required_tx_fees<P: AccountProvider>(provider: &P, current_topoheight: u64, tx: &Transaction, _: BlockVersion) -> Result<u64, BlockchainError> {
+pub async fn estimate_required_tx_fees<P: AccountProvider>(provider: &P, current_topoheight: TopoHeight, tx: &Transaction, _: BlockVersion) -> Result<u64, BlockchainError> {
     let mut output_count = 0;
     let mut processed_keys = HashSet::new();
     if let TransactionType::Transfers(transfers) = tx.get_data() {

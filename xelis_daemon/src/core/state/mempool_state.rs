@@ -1,7 +1,7 @@
 use std::collections::{hash_map::Entry, HashMap};
 use async_trait::async_trait;
 use xelis_common::{
-    block::BlockVersion,
+    block::{TopoHeight, BlockVersion},
     account::Nonce,
     crypto::{
         elgamal::Ciphertext,
@@ -42,15 +42,15 @@ pub struct MempoolState<'a, S: Storage> {
     // This is used to verify ZK Proofs and store/update nonces
     accounts: HashMap<&'a PublicKey, Account<'a>>,
     // The current stable topoheight of the chain
-    stable_topoheight: u64,
+    stable_topoheight: TopoHeight,
     // The current topoheight of the chain
-    topoheight: u64,
+    topoheight: TopoHeight,
     // Block header version
     block_version: BlockVersion,
 }
 
 impl<'a, S: Storage> MempoolState<'a, S> {
-    pub fn new(mempool: &'a Mempool, storage: &'a S, stable_topoheight: u64, topoheight: u64, block_version: BlockVersion) -> Self {
+    pub fn new(mempool: &'a Mempool, storage: &'a S, stable_topoheight: TopoHeight, topoheight: TopoHeight, block_version: BlockVersion) -> Self {
         Self {
             mempool,
             storage,
@@ -82,7 +82,7 @@ impl<'a, S: Storage> MempoolState<'a, S> {
     }
 
     // Retrieve the versioned balance based on the TX reference 
-    async fn get_versioned_balance_for_reference(storage: &S, key: &PublicKey, asset: &Hash, current_topoheight: u64, reference: &Reference) -> Result<Ciphertext, BlockchainError> {
+    async fn get_versioned_balance_for_reference(storage: &S, key: &PublicKey, asset: &Hash, current_topoheight: TopoHeight, reference: &Reference) -> Result<Ciphertext, BlockchainError> {
         let (output, _, version) = super::search_versioned_balance_for_reference(storage, key, asset, current_topoheight, reference).await?;
 
         Ok(version.take_balance_with(output).take_ciphertext()?)
@@ -137,7 +137,7 @@ impl<'a, S: Storage> MempoolState<'a, S> {
 
     // Retrieve the account nonce
     // Only sender accounts should be used here
-    async fn internal_get_account_nonce(&mut self, key: &'a PublicKey) -> Result<u64, BlockchainError> {
+    async fn internal_get_account_nonce(&mut self, key: &'a PublicKey) -> Result<Nonce, BlockchainError> {
         match self.accounts.entry(key) {
             Entry::Occupied(o) => Ok(o.get().nonce),
             Entry::Vacant(e) => match self.mempool.get_cache_for(key) {

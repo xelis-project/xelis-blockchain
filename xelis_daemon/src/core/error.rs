@@ -10,6 +10,8 @@ use xelis_common::{
         Hash,
         XelisHashError
     },
+    account::Nonce,
+    block::TopoHeight,
     difficulty::DifficultyError,
     prompt::PromptError,
     rpc_server::InternalRpcError,
@@ -29,7 +31,7 @@ pub enum DiskContext {
     #[error("get topo height for hash")]
     GetTopoHeightForHash,
     #[error("get block hash for topoheight '{}'", _0)]
-    GetBlockHashAtTopoHeight(u64),
+    GetBlockHashAtTopoHeight(TopoHeight),
     #[error("get transaction")]
     GetTransaction,
     #[error("get account registration topoheight")]
@@ -122,7 +124,7 @@ pub enum BlockchainError {
     #[error("Invalid difficulty")]
     InvalidDifficulty,
     #[error("Tx nonce {} already used by Tx {}", _0, _1)]
-    TxNonceAlreadyUsed(u64, Hash),
+    TxNonceAlreadyUsed(Nonce, Hash),
     #[error("Invalid hash, expected {}, got {}", _0, _1)]
     InvalidHash(Hash, Hash),
     #[error("Invalid previous block hash, expected {}, got {}", _0, _1)]
@@ -178,7 +180,7 @@ pub enum BlockchainError {
     #[error("Invalid tx registration, tx has a signature: {}", _0)]
     InvalidTxRegistrationSignature(Hash),
     #[error("Invalid transaction nonce: {}, account nonce is: {}", _0, _1)]
-    InvalidTransactionNonce(u64, u64),
+    InvalidTransactionNonce(Nonce, Nonce),
     #[error("Invalid transaction, sender trying to send coins to himself: {}", _0)]
     InvalidTransactionToSender(Hash),
     #[error("Invalid extra data in this transaction")]
@@ -262,9 +264,9 @@ pub enum BlockchainError {
     #[error("Invalid genesis block hash")]
     InvalidGenesisHash,
     #[error("Invalid tx {} nonce (got {} expected {}) for {}", _0, _1, _2, _3)]
-    InvalidTxNonce(Hash, u64, u64, Address),
+    InvalidTxNonce(Hash, Nonce, Nonce, Address),
     #[error("Invalid tx nonce {} for mempool cache, range: [{}-{}]", _0, _1, _2)]
-    InvalidTxNonceMempoolCache(u64, u64, u64),
+    InvalidTxNonceMempoolCache(Nonce, Nonce, Nonce),
     #[error("Invalid asset ID: {}", _0)]
     AssetNotFound(Hash),
     #[error(transparent)]
@@ -272,7 +274,7 @@ pub enum BlockchainError {
     #[error("No balance found on disk for {}", _0)]
     NoBalance(Address),
     #[error("No balance changes for {} at topoheight {} and asset {}", _0, _1, _2)]
-    NoBalanceChanges(Address, u64, Hash),
+    NoBalanceChanges(Address, TopoHeight, Hash),
     #[error("No nonce found on disk for {}", _0)]
     NoNonce(Address),
     #[error("No nonce changes for {} at specific topoheight", _0)]
@@ -308,7 +310,7 @@ pub enum BlockchainError {
     #[error(transparent)]
     Any(#[from] anyhow::Error),
     #[error("Invalid nonce: expected {}, got {}", _0, _1)]
-    InvalidNonce(u64, u64),
+    InvalidNonce(Nonce, Nonce),
     #[error("Sender cannot be receiver")]
     SenderIsReceiver,
     #[error("Invalid transaction proof: {}", _0)]

@@ -19,7 +19,12 @@ use xelis_common::{
         NotifyEvent,
         PeerPeerDisconnectedEvent
     },
-    block::{Block, BlockHeader, BlockVersion},
+    block::{
+        Block,
+        BlockHeader,
+        BlockVersion,
+        TopoHeight,
+    },
     config::{TIPS_LIMIT, VERSION},
     crypto::{Hash, Hashable, PublicKey},
     difficulty::CumulativeDifficulty,
@@ -2313,13 +2318,13 @@ impl<S: Storage> P2pServer<S> {
     }
 
     // Returns the median topoheight based on all peers
-    pub async fn get_median_topoheight_of_peers(&self) -> u64 {
+    pub async fn get_median_topoheight_of_peers(&self) -> TopoHeight {
         let topoheight = self.blockchain.get_topo_height();
         self.peer_list.get_median_topoheight(Some(topoheight)).await
     }
 
     // Returns the best topoheight based on all peers
-    pub async fn get_best_topoheight(&self) -> u64 {
+    pub async fn get_best_topoheight(&self) -> TopoHeight {
         self.peer_list.get_best_topoheight().await
     }
 

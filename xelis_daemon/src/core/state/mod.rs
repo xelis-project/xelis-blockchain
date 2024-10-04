@@ -13,7 +13,7 @@ use xelis_common::{
     account::VersionedBalance,
     crypto::{Hash, PublicKey},
     transaction::{Reference, Transaction, TxVersion},
-    block::BlockVersion,
+    block::{TopoHeight, BlockVersion},
     utils::format_xelis
 };
 use super::{
@@ -24,7 +24,7 @@ use super::{
 
 // Verify a transaction before adding it to mempool/chain state
 // We only verify the reference and the required fees
-pub (super) async fn pre_verify_tx<P: AccountProvider + BalanceProvider>(provider: &P, tx: &Transaction, stable_topoheight: u64, topoheight: u64, block_version: BlockVersion) -> Result<(), BlockchainError> {
+pub (super) async fn pre_verify_tx<P: AccountProvider + BalanceProvider>(provider: &P, tx: &Transaction, stable_topoheight: TopoHeight, topoheight: TopoHeight, block_version: BlockVersion) -> Result<(), BlockchainError> {
     debug!("Pre-verify TX at topoheight {} and stable topoheight {}", topoheight, stable_topoheight);
     if tx.get_version() != TxVersion::V0 {
         debug!("Invalid version: {}", tx.get_version());
@@ -53,7 +53,7 @@ pub (super) async fn pre_verify_tx<P: AccountProvider + BalanceProvider>(provide
 // - If we should use the output balance for verification
 // - is it a new version created
 // - Versioned Balance to use for verification
-pub (super) async fn search_versioned_balance_for_reference<S: DagOrderProvider + BalanceProvider>(storage: &S, key: &PublicKey, asset: &Hash, current_topoheight: u64, reference: &Reference) -> Result<(bool, bool, VersionedBalance), BlockchainError> {
+pub (super) async fn search_versioned_balance_for_reference<S: DagOrderProvider + BalanceProvider>(storage: &S, key: &PublicKey, asset: &Hash, current_topoheight: TopoHeight, reference: &Reference) -> Result<(bool, bool, VersionedBalance), BlockchainError> {
     trace!("search versioned balance for {} at topoheight {}, reference: {}", key.as_address(storage.is_mainnet()), current_topoheight, reference.topoheight);
     // Scenario A
     // TX A has reference topo 1000

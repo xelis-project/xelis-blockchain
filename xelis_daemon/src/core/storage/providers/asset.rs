@@ -6,6 +6,7 @@ use xelis_common::{
     asset::{AssetData, AssetWithData},
     crypto::{Hash, HASH_SIZE, PublicKey},
     serializer::Serializer,
+    block::TopoHeight
 };
 use crate::core::{
     error::{BlockchainError, DiskContext},
@@ -26,7 +27,7 @@ pub trait AssetProvider {
 
     // Get a partial list of assets supporting pagination and filtering by topoheight
     // TODO: replace with impl Iterator<Item = Result<Hash, BlockchainError>> when async trait methods are stable
-    async fn get_partial_assets(&self, maximum: usize, skip: usize, minimum_topoheight: u64, maximum_topoheight: u64) -> Result<IndexSet<AssetWithData>, BlockchainError>;
+    async fn get_partial_assets(&self, maximum: usize, skip: usize, minimum_topoheight: TopoHeight, maximum_topoheight: TopoHeight) -> Result<IndexSet<AssetWithData>, BlockchainError>;
 
     // Get chunked assets
     // This is useful to not retrieve all assets at once
@@ -65,7 +66,7 @@ impl AssetProvider for SledStorage {
         }).collect()
     }
 
-    async fn get_partial_assets(&self, maximum: usize, skip: usize, minimum_topoheight: u64, maximum_topoheight: u64) -> Result<IndexSet<AssetWithData>, BlockchainError> {
+    async fn get_partial_assets(&self, maximum: usize, skip: usize, minimum_topoheight: TopoHeight, maximum_topoheight: TopoHeight) -> Result<IndexSet<AssetWithData>, BlockchainError> {
         let mut assets = IndexSet::new();
         let mut skip_count = 0;
         for el in self.assets.iter() {

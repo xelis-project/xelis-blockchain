@@ -31,7 +31,8 @@ use xelis_common::{
     block::{
         Block,
         BlockHeader,
-        MinerWork
+        MinerWork,
+        TopoHeight
     },
     config::{
         MAXIMUM_SUPPLY,
@@ -77,7 +78,7 @@ pub async fn get_block_type_for_block<S: Storage>(blockchain: &Blockchain<S>, st
     })
 }
 
-async fn get_block_data<S: Storage>(blockchain: &Blockchain<S>, storage: &S, hash: &Hash) -> Result<(Option<u64>, Option<u64>, Option<u64>, BlockType, CumulativeDifficulty, Difficulty), InternalRpcError> {
+async fn get_block_data<S: Storage>(blockchain: &Blockchain<S>, storage: &S, hash: &Hash) -> Result<(Option<TopoHeight>, Option<u64>, Option<u64>, BlockType, CumulativeDifficulty, Difficulty), InternalRpcError> {
     let (topoheight, supply, reward) = if storage.is_block_topological_ordered(hash).await {
         let topoheight = storage.get_topo_height_for_hash(&hash).await.context("Error while retrieving topo height")?;
         (
@@ -890,7 +891,7 @@ async fn get_dag_order<S: Storage>(context: &Context, body: Value) -> Result<Val
 
 const MAX_BLOCKS: u64 = 20;
 
-fn get_range(start: Option<u64>, end: Option<u64>, maximum: u64, current: u64) -> Result<(u64, u64), InternalRpcError> {
+fn get_range(start: Option<TopoHeight>, end: Option<TopoHeight>, maximum: u64, current: TopoHeight) -> Result<(TopoHeight, TopoHeight), InternalRpcError> {
     let range_start = start.unwrap_or_else(|| {
         if end.is_none() && current > maximum {
             current - maximum

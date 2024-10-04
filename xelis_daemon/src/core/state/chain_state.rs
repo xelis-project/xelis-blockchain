@@ -15,7 +15,7 @@ use xelis_common::{
         Hash,
         PublicKey
     },
-    block::BlockVersion,
+    block::{TopoHeight, BlockVersion},
     transaction::{
         verify::BlockchainVerificationState,
         Reference,
@@ -138,9 +138,9 @@ pub struct ChainState<'a, S: Storage> {
     // This is used to verify ZK Proofs and store/update nonces
     accounts: HashMap<&'a PublicKey, Account<'a>>,
     // Current stable topoheight of the snapshot
-    stable_topoheight: u64,
+    stable_topoheight: TopoHeight,
     // Current topoheight of the snapshot
-    topoheight: u64,
+    topoheight: TopoHeight,
     // Block header version
     block_version: BlockVersion,
 }
@@ -177,7 +177,7 @@ impl<'a, S: Storage> AsMut<ChainState<'a, S>> for ApplicableChainState<'a, S> {
 }
 
 impl<'a, S: Storage> ApplicableChainState<'a, S> {
-    pub fn new(storage: &'a mut S, stable_topoheight: u64, topoheight: u64, block_version: BlockVersion) -> Self {
+    pub fn new(storage: &'a mut S, stable_topoheight: TopoHeight, topoheight: TopoHeight, block_version: BlockVersion) -> Self {
         Self {
             inner: ChainState::with(StorageReference::Mutable(storage), stable_topoheight, topoheight, block_version)
         }
@@ -312,7 +312,7 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
 }
 
 impl<'a, S: Storage> ChainState<'a, S> {
-    fn with(storage: StorageReference<'a, S>, stable_topoheight: u64, topoheight: u64, block_version: BlockVersion) -> Self {
+    fn with(storage: StorageReference<'a, S>, stable_topoheight: TopoHeight, topoheight: TopoHeight, block_version: BlockVersion) -> Self {
         Self {
             storage,
             receiver_balances: HashMap::new(),
@@ -323,7 +323,7 @@ impl<'a, S: Storage> ChainState<'a, S> {
         }
     }
 
-    pub fn new(storage: &'a S, stable_topoheight: u64, topoheight: u64, block_version: BlockVersion) -> Self {
+    pub fn new(storage: &'a S, stable_topoheight: TopoHeight, topoheight: TopoHeight, block_version: BlockVersion) -> Self {
         Self::with(StorageReference::Immutable(storage), stable_topoheight, topoheight, block_version)
     }
 
@@ -338,14 +338,14 @@ impl<'a, S: Storage> ChainState<'a, S> {
     }
 
     // Create a sender echange
-    async fn create_sender_echange(storage: &S, key: &'a PublicKey, asset: &'a Hash, current_topoheight: u64, reference: &Reference) -> Result<Echange, BlockchainError> {
+    async fn create_sender_echange(storage: &S, key: &'a PublicKey, asset: &'a Hash, current_topoheight: TopoHeight, reference: &Reference) -> Result<Echange, BlockchainError> {
         let (use_output_balance, new_version, version) = super::search_versioned_balance_for_reference(storage, key, asset, current_topoheight, reference).await?;
         Ok(Echange::new(use_output_balance, new_version,  version))
     }
 
     // Create a sender account by fetching its nonce and create a empty HashMap for balances,
     // those will be fetched lazily
-    async fn create_sender_account(key: &PublicKey, storage: &S, topoheight: u64) -> Result<Account<'a>, BlockchainError> {
+    async fn create_sender_account(key: &PublicKey, storage: &S, topoheight: TopoHeight) -> Result<Account<'a>, BlockchainError> {
         let (topo, mut version) = storage
             .get_nonce_at_maximum_topoheight(key, topoheight).await?
             .ok_or_else(|| BlockchainError::AccountNotFound(key.as_address(storage.is_mainnet())))?;

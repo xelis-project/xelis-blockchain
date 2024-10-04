@@ -13,8 +13,9 @@ use indexmap::IndexSet;
 use log::{debug, info, trace, warn};
 use xelis_common::{
     config::{BYTES_PER_KB, FEE_PER_KB},
+    account::Nonce,
     api::daemon::FeeRatesEstimated,
-    block::BlockVersion,
+    block::{BlockVersion, TopoHeight},
     crypto::{
         elgamal::Ciphertext,
         Hash,
@@ -43,9 +44,9 @@ pub struct SortedTx {
 #[derive(Serialize, Deserialize)]
 pub struct AccountCache {
     // lowest nonce used
-    min: u64,
+    min: Nonce,
     // highest nonce used
-    max: u64,
+    max: Nonce,
     // all txs for this user ordered by nonce
     txs: IndexSet<Arc<Hash>>,
     // Expected balances after all txs in this cache
@@ -126,7 +127,7 @@ impl Mempool {
     }
 
     // All checks are made in Blockchain before calling this function
-    pub async fn add_tx<S: Storage>(&mut self, storage: &S, stable_topoheight: u64, topoheight: u64, hash: Hash, tx: Arc<Transaction>, size: usize, block_version: BlockVersion) -> Result<(), BlockchainError> {
+    pub async fn add_tx<S: Storage>(&mut self, storage: &S, stable_topoheight: TopoHeight, topoheight: TopoHeight, hash: Hash, tx: Arc<Transaction>, size: usize, block_version: BlockVersion) -> Result<(), BlockchainError> {
         let mut state = MempoolState::new(&self, storage, stable_topoheight, topoheight, block_version);
         tx.verify(&mut state).await?;
 
@@ -336,7 +337,7 @@ impl Mempool {
     // Because of DAG reorg, we can't only check updated keys from new block,
     // as a block could be orphaned and the nonce order would change
     // So we need to check all keys from mempool and compare it from storage
-    pub async fn clean_up<S: Storage>(&mut self, storage: &S, stable_topoheight: u64, topoheight: u64, block_version: BlockVersion) -> Vec<(Arc<Hash>, SortedTx)> {
+    pub async fn clean_up<S: Storage>(&mut self, storage: &S, stable_topoheight: TopoHeight, topoheight: TopoHeight, block_version: BlockVersion) -> Vec<(Arc<Hash>, SortedTx)> {
         trace!("Cleaning up mempool...");
 
         // All deleted sorted txs with their hashes
@@ -556,18 +557,18 @@ impl SortedTx {
 
 impl AccountCache {
     // Get the lowest nonce for this cache
-    pub fn get_min(&self) -> u64 {
+    pub fn get_min(&self) -> Nonce {
         self.min
     }
 
     // Get the highest nonce for this cache
-    pub fn get_max(&self) -> u64 {
+    pub fn get_max(&self) -> Nonce {
         self.max
     }
 
     // Get the next nonce for this cache
     // This is necessary when we have several TXs
-    pub fn get_next_nonce(&self) -> u64 {
+    pub fn get_next_nonce(&self) -> Nonce {
         self.max + 1
     }
 
@@ -593,7 +594,7 @@ impl AccountCache {
     }
 
     // Update the nonce range for this cache
-    fn update_nonce_range(&mut self, nonce: u64) {
+    fn update_nonce_range(&mut self, nonce: Nonce) {
         debug_assert!(self.min <= self.max);
 
         if nonce < self.min {
@@ -606,7 +607,7 @@ impl AccountCache {
     }
 
     // Verify if a TX is in cache using its nonce
-    pub fn has_tx_with_same_nonce(&self, nonce: u64) -> Option<&Arc<Hash>> {
+    pub fn has_tx_with_same_nonce(&self, nonce: Nonce) -> Option<&Arc<Hash>> {
         if nonce < self.min || nonce > self.max || self.txs.is_empty() {
             return None;
         }

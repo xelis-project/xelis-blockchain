@@ -23,6 +23,7 @@ use serde::{Serialize, Deserialize};
 use tokio::sync::{mpsc::Sender, RwLock};
 use xelis_common::{
     api::daemon::Direction,
+    block::TopoHeight,
     serializer::{Reader, ReaderError, Serializer, Writer},
     time::{get_current_time_in_seconds, TimestampSeconds}
 };
@@ -252,7 +253,7 @@ impl PeerList {
     }
 
     // Returns the highest topoheight of all peers
-    pub async fn get_best_topoheight(&self) -> u64 {
+    pub async fn get_best_topoheight(&self) -> TopoHeight {
         let mut best_height = 0;
         let peers = self.peers.read().await;
         for (_, peer) in peers.iter() {
@@ -265,9 +266,9 @@ impl PeerList {
     }
 
     // Returns the median topoheight of all peers
-    pub async fn get_median_topoheight(&self, our_topoheight: Option<u64>) -> u64 {
+    pub async fn get_median_topoheight(&self, our_topoheight: Option<TopoHeight>) -> TopoHeight {
         let peers = self.peers.read().await;
-        let mut values = peers.values().map(|peer| peer.get_topoheight()).collect::<Vec<u64>>();
+        let mut values = peers.values().map(|peer| peer.get_topoheight()).collect::<Vec<TopoHeight>>();
         if let Some(our_topoheight) = our_topoheight {
             values.push(our_topoheight);
         }
