@@ -30,4 +30,4 @@ pub use merkle::MerkleHashProvider;
 pub use account::AccountProvider;
 pub use block_execution_order::BlockExecutionOrderProvider;
 pub use network::NetworkProvider;
-pub use multisig::MultiSigProvider;
+pub use multisig::*;

@@ -1,4 +1,8 @@
-use std::{collections::{hash_map::Entry, HashMap}, ops::{Deref, DerefMut}};
+use std::{
+    borrow::Cow,
+    collections::{hash_map::Entry, HashMap},
+    ops::{Deref, DerefMut}
+};
 use async_trait::async_trait;
 use log::{debug, trace};
 use xelis_common::{
@@ -26,7 +30,11 @@ use xelis_common::{
 };
 use crate::core::{
     error::BlockchainError,
-    storage::Storage
+    storage::{
+        VersionedMultiSig,
+        VersionedState,
+        Storage
+    }
 };
 
 // Sender changes
@@ -83,7 +91,10 @@ struct Account<'a> {
     // TODO: they must store also the ciphertext change
     // It will be added by next change at each TX
     // This is necessary to easily build the final user balance
-    assets: HashMap<&'a Hash, Echange>
+    assets: HashMap<&'a Hash, Echange>,
+    // Multisig configured
+    // This is used to verify the validity of the multisig setup
+    multisig: Option<(VersionedState, MultiSigPayload)>
 }
 
 pub enum StorageReference<'a, S: Storage> {
@@ -194,8 +205,14 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
     pub async fn apply_changes(mut self) -> Result<(), BlockchainError> {
         // Apply changes for sender accounts
         for (key, account) in &mut self.inner.accounts {
-            trace!("Saving {} for {} at topoheight {}", account.nonce, key.as_address(self.inner.storage.is_mainnet()), self.inner.topoheight);
+            trace!("Saving nonce {} for {} at topoheight {}", account.nonce, key.as_address(self.inner.storage.is_mainnet()), self.inner.topoheight);
             self.inner.storage.set_last_nonce_to(key, self.inner.topoheight, &account.nonce).await?;
+
+            if let Some((state, multisig)) = account.multisig.as_ref().filter(|(state, _)| state.should_be_stored()) {
+                trace!("Saving multisig for {} at topoheight {}", key.as_address(self.inner.storage.is_mainnet()), self.inner.topoheight);
+                let versioned = VersionedMultiSig::new(Some(Cow::Borrowed(multisig)), state.get_topoheight());
+                self.inner.storage.set_multisig_at_topoheight_for(key, self.inner.topoheight, versioned).await?;
+            }
 
             let balances = self.inner.receiver_balances.entry(&key).or_insert_with(HashMap::new);
             // Because account balances are only used to verify the validity of ZK Proofs, we can't store them
@@ -351,9 +368,14 @@ impl<'a, S: Storage> ChainState<'a, S> {
             .ok_or_else(|| BlockchainError::AccountNotFound(key.as_address(storage.is_mainnet())))?;
         version.set_previous_topoheight(Some(topo));
 
+        let multisig = storage.get_multisig_at_maximum_topoheight_for(key, topoheight).await?
+            .map(|(topo, multisig)| multisig.take().map(|m| (VersionedState::FetchedAt(topo), m.into_owned())))
+            .flatten();
+
         Ok(Account {
             nonce: version,
-            assets: HashMap::new()
+            assets: HashMap::new(),
+            multisig
         })
     }
 
@@ -411,16 +433,21 @@ impl<'a, S: Storage> ChainState<'a, S> {
         Ok(())
     }
 
+    // Get or create account for sender
+    async fn get_internal_account(&mut self, key: &'a PublicKey) -> Result<&mut Account<'a>, BlockchainError> {
+        match self.accounts.entry(key) {
+            Entry::Occupied(o) => Ok(o.into_mut()),
+            Entry::Vacant(e) => {
+                let account = Self::create_sender_account(key, &self.storage, self.topoheight).await?;
+                Ok(e.insert(account))
+            }
+        }
+    }
+
     // Retrieve the account nonce
     // Only sender accounts should be used here
     async fn internal_get_account_nonce(&mut self, key: &'a PublicKey) -> Result<Nonce, BlockchainError> {
-        match self.accounts.entry(key) {
-            Entry::Occupied(o) => Ok(o.get().nonce.get_nonce()),
-            Entry::Vacant(e) => {
-                let account = Self::create_sender_account(key, &self.storage, self.topoheight).await?;
-                Ok(e.insert(account).nonce.get_nonce())
-            }
-        }
+        self.get_internal_account(key).await.map(|a| a.nonce.get_nonce())
     }
 
     // Update the account nonce
@@ -428,20 +455,8 @@ impl<'a, S: Storage> ChainState<'a, S> {
     // For each TX, we must update the nonce by one
     async fn internal_update_account_nonce(&mut self, account: &'a PublicKey, new_nonce: Nonce) -> Result<(), BlockchainError> {
         trace!("Updating nonce for {} to {} at topoheight {}", account.as_address(self.storage.is_mainnet()), new_nonce, self.topoheight);
-        match self.accounts.entry(account) {
-            Entry::Occupied(mut o) => {
-                let account = o.get_mut();
-                account.nonce.set_nonce(new_nonce);
-            },
-            Entry::Vacant(e) => {
-                let mut account = Self::create_sender_account(account, &self.storage, self.topoheight).await?;
-                // Update nonce
-                account.nonce.set_nonce(new_nonce);
-
-                // Store it
-                e.insert(account);
-            }
-        }
+        let account = self.get_internal_account(account).await?;
+        account.nonce.set_nonce(new_nonce);
         Ok(())
     }
 
@@ -521,18 +536,27 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for ChainS
     /// Set the multisig state for an account
     async fn set_multisig_state(
         &mut self,
-        _: &'a PublicKey,
-        _: &MultiSigPayload
+        account: &'a PublicKey,
+        payload: &MultiSigPayload
     ) -> Result<(), BlockchainError> {
-        todo!("set_multisig_state")
+        let account = self.get_internal_account(account).await?;
+        if let Some((state, multisig)) = account.multisig.as_mut() {
+            state.mark_updated();
+            *multisig = payload.clone();
+        } else {
+            account.multisig = Some((VersionedState::New, payload.clone()));
+        }
+
+        Ok(())
     }
 
     /// Get the multisig state for an account
     /// If the account is not a multisig account, return None
     async fn get_multisig_state(
         &mut self,
-        _: &'a PublicKey
+        account: &'a PublicKey
     ) -> Result<Option<&MultiSigPayload>, BlockchainError> {
-        Ok(None)
+        self.get_internal_account(account).await
+            .map(|a| a.multisig.as_ref().map(|(_, m)| m))
     }
-} 
+}

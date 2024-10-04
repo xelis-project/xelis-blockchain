@@ -1,9 +1,11 @@
 mod providers;
 mod sled;
+mod versioned_type;
 
 pub use self::{
     sled::{SledStorage, StorageMode},
     providers::*,
+    versioned_type::*,
 };
 
 use std::{collections::HashSet, sync::Arc};

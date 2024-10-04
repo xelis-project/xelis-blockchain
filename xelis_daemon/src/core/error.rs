@@ -103,6 +103,8 @@ pub enum DiskContext {
 #[repr(usize)]
 #[derive(Error, Debug)]
 pub enum BlockchainError {
+    #[error("Versioned data not found in disk")]
+    VersionedNotFound,
     #[error("Block is not ordered")]
     BlockNotOrdered,
     #[error("Invalid balances merkle hash for block {}, expected {}, got {}", _0, _1, _2)]
