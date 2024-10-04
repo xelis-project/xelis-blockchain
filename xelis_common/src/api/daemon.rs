@@ -12,8 +12,8 @@ use serde::{
     de::Error
 };
 use crate::{
-    account::{CiphertextCache, VersionedBalance, VersionedNonce},
-    block::{Algorithm, BlockVersion, EXTRA_NONCE_SIZE},
+    account::{Nonce, CiphertextCache, VersionedBalance, VersionedNonce},
+    block::{TopoHeight, Algorithm, BlockVersion, EXTRA_NONCE_SIZE},
     crypto::{Address, Hash},
     difficulty::{CumulativeDifficulty, Difficulty},
     network::Network,
@@ -47,7 +47,7 @@ pub fn deserialize_extra_nonce<'de, 'a, D: Deserializer<'de>>(deserializer: D) -
 #[derive(Serialize, Deserialize)]
 pub struct RPCBlockResponse<'a> {
     pub hash: Cow<'a, Hash>,
-    pub topoheight: Option<u64>,
+    pub topoheight: Option<TopoHeight>,
     pub block_type: BlockType,
     pub difficulty: Cow<'a, Difficulty>,
     pub supply: Option<u64>,
@@ -64,7 +64,7 @@ pub struct RPCBlockResponse<'a> {
     pub tips: Cow<'a, IndexSet<Hash>>,
     pub timestamp: TimestampMillis,
     pub height: u64,
-    pub nonce: u64,
+    pub nonce: Nonce,
     #[serde(serialize_with = "serialize_extra_nonce")]
     #[serde(deserialize_with = "deserialize_extra_nonce")]
     pub extra_nonce: Cow<'a, [u8; EXTRA_NONCE_SIZE]>,
@@ -85,7 +85,7 @@ pub struct GetTopBlockParams {
 
 #[derive(Serialize, Deserialize)]
 pub struct GetBlockAtTopoHeightParams {
-    pub topoheight: u64,
+    pub topoheight: TopoHeight,
     #[serde(default)]
     pub include_txs: bool
 }
@@ -127,7 +127,7 @@ pub struct GetBlockTemplateResult {
     // Blockchain height
     pub height: u64,
     // Topoheight of the daemon
-    pub topoheight: u64,
+    pub topoheight: TopoHeight,
     // Difficulty target for the POW challenge
     pub difficulty: Difficulty,
 }
@@ -144,7 +144,7 @@ pub struct GetMinerWorkResult {
     pub difficulty: Difficulty,
     // topoheight of the daemon
     // this is for visual purposes only
-    pub topoheight: u64,
+    pub topoheight: TopoHeight,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -174,7 +174,7 @@ pub struct HasBalanceParams<'a> {
     pub address: Cow<'a, Address>,
     pub asset: Cow<'a, Hash>,
     #[serde(default)]
-    pub topoheight: Option<u64>
+    pub topoheight: Option<TopoHeight>
 }
 
 #[derive(Serialize, Deserialize)]
@@ -186,7 +186,7 @@ pub struct HasBalanceResult {
 pub struct GetBalanceAtTopoHeightParams<'a> {
     pub address: Cow<'a, Address>,
     pub asset: Cow<'a, Hash>,
-    pub topoheight: u64
+    pub topoheight: TopoHeight
 }
 
 #[derive(Serialize, Deserialize)]
@@ -198,18 +198,18 @@ pub struct GetNonceParams<'a> {
 pub struct HasNonceParams<'a> {
     pub address: Cow<'a, Address>,
     #[serde(default)]
-    pub topoheight: Option<u64>
+    pub topoheight: Option<TopoHeight>
 }
 
 #[derive(Serialize, Deserialize)]
 pub struct GetNonceAtTopoHeightParams<'a> {
     pub address: Cow<'a, Address>,
-    pub topoheight: u64
+    pub topoheight: TopoHeight
 }
 
 #[derive(Serialize, Deserialize)]
 pub struct GetNonceResult {
-    pub topoheight: u64,
+    pub topoheight: TopoHeight,
     #[serde(flatten)]
     pub version: VersionedNonce
 }
@@ -222,22 +222,22 @@ pub struct HasNonceResult {
 #[derive(Serialize, Deserialize)]
 pub struct GetBalanceResult {
     pub version: VersionedBalance,
-    pub topoheight: u64
+    pub topoheight: TopoHeight
 }
 
 #[derive(Serialize, Deserialize)]
 pub struct GetStableBalanceResult {
     pub version: VersionedBalance,
-    pub stable_topoheight: u64,
+    pub stable_topoheight: TopoHeight,
     pub stable_block_hash: Hash 
 }
 
 #[derive(Serialize, Deserialize)]
 pub struct GetInfoResult {
     pub height: u64,
-    pub topoheight: u64,
+    pub topoheight: TopoHeight,
     pub stableheight: u64,
-    pub pruned_topoheight: Option<u64>,
+    pub pruned_topoheight: Option<TopoHeight>,
     pub top_block_hash: Hash,
     // Current XELIS circulating supply
     pub circulating_supply: u64,
@@ -274,7 +274,7 @@ pub type GetTransactionExecutorParams<'a> = GetTransactionParams<'a>;
 
 #[derive(Serialize, Deserialize)]
 pub struct GetTransactionExecutorResult<'a> {
-    pub block_topoheight: u64,
+    pub block_topoheight: TopoHeight,
     pub block_timestamp: TimestampMillis,
     pub block_hash: Cow<'a, Hash>
 }
@@ -331,10 +331,10 @@ pub struct PeerEntry<'a> {
     pub tag: Cow<'a, Option<String>>,
     pub version: Cow<'a, String>,
     pub top_block_hash: Cow<'a, Hash>,
-    pub topoheight: u64,
+    pub topoheight: TopoHeight,
     pub height: u64,
     pub last_ping: TimestampSeconds,
-    pub pruned_topoheight: Option<u64>,
+    pub pruned_topoheight: Option<TopoHeight>,
     pub peers: Cow<'a, HashMap<SocketAddr, Direction>>,
     pub cumulative_difficulty: Cow<'a, CumulativeDifficulty>,
     pub connected_on: TimestampSeconds,
@@ -347,16 +347,16 @@ pub struct P2pStatusResult<'a> {
     pub peer_count: usize,
     pub max_peers: usize,
     pub tag: Cow<'a, Option<String>>,
-    pub our_topoheight: u64,
-    pub best_topoheight: u64,
-    pub median_topoheight: u64,
+    pub our_topoheight: TopoHeight,
+    pub best_topoheight: TopoHeight,
+    pub median_topoheight: TopoHeight,
     pub peer_id: u64
 }
 
 #[derive(Serialize, Deserialize)]
 pub struct GetTopoHeightRangeParams {
-    pub start_topoheight: Option<u64>,
-    pub end_topoheight: Option<u64>
+    pub start_topoheight: Option<TopoHeight>,
+    pub end_topoheight: Option<TopoHeight>
 }
 
 #[derive(Serialize, Deserialize)]
@@ -395,8 +395,8 @@ pub struct GetAccountHistoryParams {
     pub address: Address,
     #[serde(default = "default_xelis_asset")]
     pub asset: Hash,
-    pub minimum_topoheight: Option<u64>,
-    pub maximum_topoheight: Option<u64>,
+    pub minimum_topoheight: Option<TopoHeight>,
+    pub maximum_topoheight: Option<TopoHeight>,
     // Any incoming funds tracked
     #[serde(default = "default_true_value")]
     pub incoming_flow: bool,
@@ -421,7 +421,7 @@ pub enum AccountHistoryType {
 
 #[derive(Serialize, Deserialize)]
 pub struct AccountHistoryEntry {
-    pub topoheight: u64,
+    pub topoheight: TopoHeight,
     pub hash: Hash,
     #[serde(flatten)]
     pub history_type: AccountHistoryType,
@@ -442,16 +442,16 @@ pub struct GetAssetParams<'a> {
 pub struct GetAssetsParams {
     pub skip: Option<usize>,
     pub maximum: Option<usize>,
-    pub minimum_topoheight: Option<u64>,
-    pub maximum_topoheight: Option<u64>
+    pub minimum_topoheight: Option<TopoHeight>,
+    pub maximum_topoheight: Option<TopoHeight>
 }
 
 #[derive(Serialize, Deserialize)]
 pub struct GetAccountsParams {
     pub skip: Option<usize>,
     pub maximum: Option<usize>,
-    pub minimum_topoheight: Option<u64>,
-    pub maximum_topoheight: Option<u64>
+    pub minimum_topoheight: Option<TopoHeight>,
+    pub maximum_topoheight: Option<TopoHeight>
 }
 
 #[derive(Serialize, Deserialize)]
@@ -510,9 +510,9 @@ pub struct GetMempoolCacheParams<'a> {
 #[derive(Serialize, Deserialize)]
 pub struct GetMempoolCacheResult {
     // lowest nonce used
-    min: u64,
+    min: Nonce,
     // highest nonce used
-    max: u64,
+    max: Nonce,
     // all txs ordered by nonce
     txs: Vec<Hash>,
     // All "final" cached balances used
@@ -636,7 +636,7 @@ pub struct BlockOrderedEvent<'a> {
     pub block_hash: Cow<'a, Hash>,
     pub block_type: BlockType,
     // the new topoheight of the block
-    pub topoheight: u64,
+    pub topoheight: TopoHeight,
 }
 
 // Value of NotifyEvent::BlockOrphaned
@@ -644,7 +644,7 @@ pub struct BlockOrderedEvent<'a> {
 pub struct BlockOrphanedEvent<'a> {
     pub block_hash: Cow<'a, Hash>,
     // Tpoheight of the block before being orphaned
-    pub old_topoheight: u64
+    pub old_topoheight: TopoHeight
 }
 
 // Value of NotifyEvent::StableHeightChanged
@@ -657,8 +657,8 @@ pub struct StableHeightChangedEvent {
 // Value of NotifyEvent::StableTopoHeightChanged
 #[derive(Serialize, Deserialize)]
 pub struct StableTopoHeightChangedEvent {
-    pub previous_stable_topoheight: u64,
-    pub new_stable_topoheight: u64
+    pub previous_stable_topoheight: TopoHeight,
+    pub new_stable_topoheight: TopoHeight
 }
 
 
@@ -672,7 +672,7 @@ pub type TransactionOrphanedEvent = TransactionResponse<'static>;
 pub struct TransactionExecutedEvent<'a> {
     pub block_hash: Cow<'a, Hash>,
     pub tx_hash: Cow<'a, Hash>,
-    pub topoheight: u64,
+    pub topoheight: TopoHeight,
 }
 
 // Value of NotifyEvent::PeerConnected

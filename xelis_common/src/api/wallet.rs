@@ -1,6 +1,7 @@
 use std::{borrow::Cow, collections::HashMap};
 use serde::{Deserialize, Serialize};
 use crate::{
+    block::TopoHeight,
     account::CiphertextCache,
     crypto::{Address, Hash},
     transaction::{
@@ -67,8 +68,8 @@ pub struct ListTransactionsParams {
     // Filter by asset
     pub asset: Option<Hash>,
     // Filter by topoheight range (inclusive)
-    pub min_topoheight: Option<u64>,
-    pub max_topoheight: Option<u64>,
+    pub min_topoheight: Option<TopoHeight>,
+    pub max_topoheight: Option<TopoHeight>,
     /// Receiver address for outgoing txs, and owner/sender for incoming
     pub address: Option<Address>,
     #[serde(default = "default_true_value")]
@@ -105,7 +106,7 @@ pub struct GetAddressParams {
 
 #[derive(Serialize, Deserialize)]
 pub struct RescanParams {
-    pub until_topoheight: Option<u64>,
+    pub until_topoheight: Option<TopoHeight>,
     #[serde(default = "default_false_value")]
     pub auto_reconnect: bool
 }
@@ -275,7 +276,7 @@ pub enum EntryType {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TransactionEntry {
     pub hash: Hash,
-    pub topoheight: u64,
+    pub topoheight: TopoHeight,
     #[serde(flatten)]
     pub entry: EntryType,
 }

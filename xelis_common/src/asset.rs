@@ -1,26 +1,27 @@
 use std::hash::{Hash as StdHash, Hasher};
 use crate::{
     serializer::{Serializer, Writer, Reader, ReaderError},
-    crypto::Hash
+    crypto::Hash,
+    block::TopoHeight
 };
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub struct AssetData {
     // At which topoheight this asset is registered
-    topoheight: u64,
+    topoheight: TopoHeight,
     // How many atomic units is needed for a full coin
     decimals: u8,
 }
 
 impl AssetData {
-    pub fn new(topoheight: u64, decimals: u8) -> Self {
+    pub fn new(topoheight: TopoHeight, decimals: u8) -> Self {
         Self {
             topoheight,
             decimals
         }
     }
 
-    pub fn get_topoheight(&self) -> u64 {
+    pub fn get_topoheight(&self) -> TopoHeight {
         self.topoheight
     }
 
@@ -31,13 +32,13 @@ impl AssetData {
 
 impl Serializer for AssetData {
     fn write(&self, writer: &mut Writer) {
-        writer.write_u64(&self.topoheight);
-        writer.write_u8(self.decimals);
+        self.topoheight.write(writer);
+        self.decimals.write(writer);
     }
 
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
         Ok(
-            Self::new(reader.read_u64()?, reader.read_u8()?)
+            Self::new(TopoHeight::read(reader)?, reader.read_u8()?)
         )
     }
 

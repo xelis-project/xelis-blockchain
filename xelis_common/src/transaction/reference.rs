@@ -1,11 +1,20 @@
 use std::fmt;
 use serde::{Serialize, Deserialize};
-use crate::{crypto::Hash, serializer::{Reader, ReaderError, Serializer, Writer}};
+use crate::{
+    crypto::Hash,
+    block::TopoHeight,
+    serializer::{
+        Reader,
+        ReaderError,
+        Serializer,
+        Writer
+    }
+};
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Reference {
     pub hash: Hash,
-    pub topoheight: u64,
+    pub topoheight: TopoHeight,
 }
 
 impl fmt::Display for Reference {
@@ -23,12 +32,12 @@ impl PartialEq for Reference {
 impl Serializer for Reference {
     fn write(&self, writer: &mut Writer) {
         self.hash.write(writer);
-        writer.write_u64(&self.topoheight);
+        self.topoheight.write(writer);
     }
 
     fn read(reader: &mut Reader) -> Result<Reference, ReaderError> {
         let hash = Hash::read(reader)?;
-        let topoheight = reader.read_u64()?;
+        let topoheight = Reader::read(reader)?;
         Ok(Reference {
             hash,
             topoheight

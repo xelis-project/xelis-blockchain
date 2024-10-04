@@ -10,6 +10,11 @@ pub use version::BlockVersion;
 
 use crate::crypto::{Hash, HASH_SIZE};
 
+// Topoheight is the height of the block in the blockdag
+// It is a unique identifier for a block and can be changed during the unstable height
+// due to a DAG reorganization
+pub type TopoHeight = u64;
+
 pub const EXTRA_NONCE_SIZE: usize = 32;
 pub const HEADER_WORK_SIZE: usize = 73;
 pub const BLOCK_WORK_SIZE: usize = 112; // 32 + 8 + 8 + 32 + 32 = 112

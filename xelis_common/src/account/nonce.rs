@@ -1,10 +1,13 @@
 use std::fmt::{self, Display, Formatter};
 use serde::{Deserialize, Serialize};
-use crate::serializer::{
-    Reader,
-    ReaderError,
-    Serializer,
-    Writer
+use crate::{
+    block::TopoHeight,
+    serializer::{
+        Reader,
+        ReaderError,
+        Serializer,
+        Writer
+    }
 };
 
 pub type Nonce = u64;
@@ -12,11 +15,11 @@ pub type Nonce = u64;
 #[derive(Clone, Serialize, Deserialize)]
 pub struct VersionedNonce {
     nonce: Nonce,
-    previous_topoheight: Option<u64>,
+    previous_topoheight: Option<TopoHeight>,
 }
 
 impl VersionedNonce {
-    pub fn new(nonce: Nonce, previous_topoheight: Option<u64>) -> Self {
+    pub fn new(nonce: Nonce, previous_topoheight: Option<TopoHeight>) -> Self {
         Self {
             nonce,
             previous_topoheight
@@ -31,11 +34,11 @@ impl VersionedNonce {
         self.nonce = value;
     }
 
-    pub fn get_previous_topoheight(&self) -> Option<u64> {
+    pub fn get_previous_topoheight(&self) -> Option<TopoHeight> {
         self.previous_topoheight        
     }
 
-    pub fn set_previous_topoheight(&mut self, previous_topoheight: Option<u64>) {
+    pub fn set_previous_topoheight(&mut self, previous_topoheight: Option<TopoHeight>) {
         self.previous_topoheight = previous_topoheight;
     }
 }
@@ -44,7 +47,7 @@ impl Serializer for VersionedNonce {
     fn write(&self, writer: &mut Writer) {
         self.nonce.write(writer);
         if let Some(topo) = &self.previous_topoheight {
-            writer.write_u64(topo);
+            topo.write(writer);
         }
     }
 
@@ -53,7 +56,7 @@ impl Serializer for VersionedNonce {
         let previous_topoheight = if reader.size() == 0 {
             None
         } else {
-            Some(reader.read_u64()?)
+            Some(TopoHeight::read(reader)?)
         };
 
         Ok(Self {
