@@ -83,6 +83,13 @@ pub struct MultiSigPayload {
     pub participants: IndexSet<CompressedPublicKey>,
 }
 
+impl MultiSigPayload {
+    // Is the transaction a delete multisig transaction
+    pub fn is_delete(&self) -> bool {
+        self.threshold == 0 && self.participants.is_empty()
+    }
+}
+
 // this enum represent all types of transaction available on XELIS Network
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "snake_case")]
