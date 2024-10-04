@@ -24,8 +24,12 @@ pub async fn has_precomputed_tables(path: Option<String>) -> Result<bool> {
 
 // This will read from file if exists, or generate and store it in file
 // This must be call only one time, and can be cloned to be shared through differents wallets
-pub async fn read_or_generate_precomputed_tables<P: ecdlp::ProgressTableGenerationReportFunction>(path: Option<String>, progress_report: P) -> Result<PrecomputedTablesShared> {
-    if let Some(path) = path.as_ref() {
+pub async fn read_or_generate_precomputed_tables<P: ecdlp::ProgressTableGenerationReportFunction>(mut path: Option<String>, progress_report: P) -> Result<PrecomputedTablesShared> {
+    if let Some(path) = path.as_mut() {
+        if !path.ends_with('/') {
+            path.push_str("/");
+        }
+
         let path = Path::new(&path);
         if !path.exists() {
             create_dir_all(path)?;
