@@ -94,7 +94,7 @@ struct Account<'a> {
     assets: HashMap<&'a Hash, Echange>,
     // Multisig configured
     // This is used to verify the validity of the multisig setup
-    multisig: Option<(VersionedState, MultiSigPayload)>
+    multisig: Option<(VersionedState, Option<MultiSigPayload>)>
 }
 
 pub enum StorageReference<'a, S: Storage> {
@@ -210,7 +210,8 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
 
             if let Some((state, multisig)) = account.multisig.as_ref().filter(|(state, _)| state.should_be_stored()) {
                 trace!("Saving multisig for {} at topoheight {}", key.as_address(self.inner.storage.is_mainnet()), self.inner.topoheight);
-                let versioned = VersionedMultiSig::new(Some(Cow::Borrowed(multisig)), state.get_topoheight());
+                let multisig = multisig.as_ref().map(|v| Cow::Borrowed(v));
+                let versioned = VersionedMultiSig::new(multisig, state.get_topoheight());
                 self.inner.storage.set_multisig_at_topoheight_for(key, self.inner.topoheight, versioned).await?;
             }
 
@@ -369,7 +370,7 @@ impl<'a, S: Storage> ChainState<'a, S> {
         version.set_previous_topoheight(Some(topo));
 
         let multisig = storage.get_multisig_at_maximum_topoheight_for(key, topoheight).await?
-            .map(|(topo, multisig)| multisig.take().map(|m| (VersionedState::FetchedAt(topo), m.into_owned())))
+            .map(|(topo, multisig)| multisig.take().map(|m| (VersionedState::FetchedAt(topo), Some(m.into_owned()))))
             .flatten();
 
         Ok(Account {
@@ -542,9 +543,10 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for ChainS
         let account = self.get_internal_account(account).await?;
         if let Some((state, multisig)) = account.multisig.as_mut() {
             state.mark_updated();
-            *multisig = payload.clone();
+            *multisig = if payload.is_delete() { None } else { Some(payload.clone()) };
         } else {
-            account.multisig = Some((VersionedState::New, payload.clone()));
+            let multisig = if payload.is_delete() { None } else { Some(payload.clone()) };
+            account.multisig = Some((VersionedState::New, multisig));
         }
 
         Ok(())
@@ -556,7 +558,7 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for ChainS
         &mut self,
         account: &'a PublicKey
     ) -> Result<Option<&MultiSigPayload>, BlockchainError> {
-        self.get_internal_account(account).await
-            .map(|a| a.multisig.as_ref().map(|(_, m)| m))
+        let account = self.get_internal_account(account).await?;
+        Ok(account.multisig.as_ref().and_then(|(_, multisig)| multisig.as_ref()))
     }
 }

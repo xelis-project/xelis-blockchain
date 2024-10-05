@@ -50,7 +50,9 @@ impl VersionedState {
     }
 }
 
-// A versioned by topoheight data
+// A versioned data by topoheight data
+// In a blockDAG, a data can be updated by a new data at a certain topoheight
+// We must keep track of the previous data in case of reorgs that could occurs
 pub struct Versioned<T: Serializer> {
     data: T,
     previous_topoheight: Option<TopoHeight>,
