@@ -28,7 +28,10 @@ struct Account<'a> {
     // TODO: they must store also the ciphertext change
     // It will be added by next change at each TX
     // This is necessary to easily build the final user balance
-    assets: HashMap<&'a Hash, Ciphertext>
+    assets: HashMap<&'a Hash, Ciphertext>,
+    // Multisig configured
+    // This is used to verify the validity of the multisig setup
+    multisig: Option<MultiSigPayload>
 }
 
 pub struct MempoolState<'a, S: Storage> {
@@ -119,9 +122,13 @@ impl<'a, S: Storage> MempoolState<'a, S> {
                 let nonce = self.storage.get_nonce_at_maximum_topoheight(key, self.topoheight).await?
                     .map(|(_, v)| v.get_nonce()).unwrap_or(0);
 
+                let multisig = self.storage.get_multisig_at_maximum_topoheight_for(key, self.topoheight).await?
+                    .map(|(_, v)| v.take().map(|v| v.into_owned())).flatten();
+
                 let account = e.insert(Account {
                     nonce,
-                    assets: HashMap::new()
+                    assets: HashMap::new(),
+                    multisig
                 });
 
                 match account.assets.entry(asset) {
@@ -146,9 +153,13 @@ impl<'a, S: Storage> MempoolState<'a, S> {
                     let nonce = self.storage.get_nonce_at_maximum_topoheight(key, self.topoheight).await?
                         .map(|(_, v)| v.get_nonce()).unwrap_or(0);
     
+                    let multisig = self.storage.get_multisig_at_maximum_topoheight_for(key, self.topoheight).await?
+                        .map(|(_, v)| v.take().map(|v| v.into_owned())).flatten();
+
                     let account = Account {
                         nonce,
-                        assets: HashMap::new()
+                        assets: HashMap::new(),
+                        multisig
                     };
     
                     Ok(e.insert(account).nonce)
@@ -161,21 +172,9 @@ impl<'a, S: Storage> MempoolState<'a, S> {
     // Only sender accounts should be used here
     // For each TX, we must update the nonce by one
     async fn internal_update_account_nonce(&mut self, account: &'a PublicKey, new_nonce: u64) -> Result<(), BlockchainError> {
-        match self.accounts.entry(account) {
-            Entry::Occupied(mut o) => {
-                let account = o.get_mut();
-                account.nonce = new_nonce;
-            },
-            Entry::Vacant(e) => {
-                let account = Account {
-                    nonce: new_nonce,
-                    assets: HashMap::new()
-                };
+        let account = self.accounts.get_mut(account).ok_or_else(|| BlockchainError::AccountNotFound(account.as_address(self.storage.is_mainnet())))?;
+        account.nonce = new_nonce;
 
-                // Store it
-                e.insert(account);
-            }
-        }
         Ok(())
     }
 }
@@ -245,18 +244,23 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for Mempoo
     /// Set the multisig state for an account
     async fn set_multisig_state(
         &mut self,
-        _: &'a PublicKey,
-        _: &MultiSigPayload
+        account: &'a PublicKey,
+        payload: &MultiSigPayload
     ) -> Result<(), BlockchainError> {
-        todo!("set_multisig_state")
+        let account = self.accounts.get_mut(account).ok_or_else(|| BlockchainError::AccountNotFound(account.as_address(self.storage.is_mainnet())))?;
+        account.multisig = Some(payload.clone());
+
+        Ok(())
     }
 
     /// Get the multisig state for an account
     /// If the account is not a multisig account, return None
     async fn get_multisig_state(
         &mut self,
-        _: &'a PublicKey
+        account: &'a PublicKey
     ) -> Result<Option<&MultiSigPayload>, BlockchainError> {
-        Ok(None)
+        self.accounts.get(account)
+            .map(|a| a.multisig.as_ref())
+            .ok_or_else(|| BlockchainError::AccountNotFound(account.as_address(self.storage.is_mainnet())))
     }
 }

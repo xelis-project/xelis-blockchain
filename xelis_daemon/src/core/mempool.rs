@@ -135,6 +135,8 @@ impl Mempool {
             .ok_or_else(|| BlockchainError::AccountNotFound(tx.get_source().as_address(storage.is_mainnet())))?
             .iter().map(|(asset, ciphertext)| (Hash::clone(*asset), ciphertext.clone())).collect();
 
+        // TODO: store the multisig from state
+
         let hash = Arc::new(hash);
         let nonce = tx.get_nonce();
         // update the cache for this owner
