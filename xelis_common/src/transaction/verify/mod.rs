@@ -448,7 +448,8 @@ impl Transaction {
                 }
 
                 let is_reset = payload.threshold == 0 && !payload.participants.is_empty();
-                if is_reset && state.get_multisig_state(&self.source).await.map_err(VerificationError::State)?.is_some() {
+                // If the multisig is reset, we need to check if it was already configured
+                if is_reset && state.get_multisig_state(&self.source).await.map_err(VerificationError::State)?.is_none() {
                     return Err(VerificationError::MultiSigNotConfigured);
                 }
 
