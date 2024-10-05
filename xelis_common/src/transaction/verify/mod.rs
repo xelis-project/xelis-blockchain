@@ -583,16 +583,17 @@ impl Transaction {
     pub async fn apply_without_verify<'a, E, B: BlockchainVerificationState<'a, E>>(
         &'a self,
         state: &mut B,
-    ) -> Result<(), E> {
+    ) -> Result<(), VerificationError<E>> {
         // Update nonce
-        state.update_account_nonce(self.get_source(), self.nonce + 1).await?;
+        state.update_account_nonce(self.get_source(), self.nonce + 1).await
+            .map_err(VerificationError::State)?;
 
         let transfers_decompressed = if let TransactionType::Transfers(transfers) = &self.data {
             transfers
                 .iter()
                 .map(DecompressedTransferCt::decompress)
-                .map(Result::unwrap)
-                .collect()
+                .collect::<Result<_, DecompressionError>>()
+                .map_err(ProofVerificationError::from)?
         } else {
             vec![]
         };
@@ -604,7 +605,7 @@ impl Transaction {
                     &self.source,
                     asset,
                     &self.reference,
-                ).await?;
+                ).await.map_err(VerificationError::State)?;
 
             let output = self.get_sender_output_ct(asset, &transfers_decompressed);
 
@@ -616,25 +617,31 @@ impl Transaction {
                 &self.source,
                 &commitment.asset,
                 output,
-            ).await?;
+            ).await.map_err(VerificationError::State)?;
         }
 
-        if let TransactionType::Transfers(transfers) = &self.data {
-            for transfer in transfers {
-                // Update receiver balance
-                let current_bal = state
-                    .get_receiver_balance(
-                        &transfer.destination,
-                        &transfer.asset,
-                    ).await?;
-
-                let receiver_ct = transfer
-                    .get_ciphertext(Role::Receiver)
-                    .decompress()
-                    .expect("ill-formed ciphertext");
-
-                *current_bal += receiver_ct;
-            }
+        match &self.data {
+            TransactionType::Transfers(transfers) => {
+                for transfer in transfers {
+                    // Update receiver balance
+                    let current_bal = state
+                        .get_receiver_balance(
+                            &transfer.destination,
+                            &transfer.asset,
+                        ).await.map_err(VerificationError::State)?;
+    
+                    let receiver_ct = transfer
+                        .get_ciphertext(Role::Receiver)
+                        .decompress()
+                        .map_err(ProofVerificationError::from)?;
+    
+                    *current_bal += receiver_ct;
+                }
+            },
+            TransactionType::Burn(_) => {},
+            TransactionType::MultiSig(payload) => {
+                state.set_multisig_state(&self.source, payload).await.map_err(VerificationError::State)?;
+            },
         }
     
         Ok(())
@@ -733,23 +740,29 @@ impl Transaction {
         }
 
         // Apply receiver balances
-        if let TransactionType::Transfers(transfers) = &self.data {
-            for transfer in transfers {
-                // Update receiver balance
-                let current_bal = state
-                    .get_receiver_balance(
-                        &transfer.destination,
-                        &transfer.asset,
-                    ).await
-                    .map_err(VerificationError::State)?;
-
-                let receiver_ct = transfer
-                    .get_ciphertext(Role::Receiver)
-                    .decompress()
-                    .expect("ill-formed ciphertext");
-
-                *current_bal += receiver_ct;
-            }
+        match &self.data {
+            TransactionType::Transfers(transfers) => {
+                for transfer in transfers {
+                    // Update receiver balance
+                    let current_bal = state
+                        .get_receiver_balance(
+                            &transfer.destination,
+                            &transfer.asset,
+                        ).await
+                        .map_err(VerificationError::State)?;
+    
+                    let receiver_ct = transfer
+                        .get_ciphertext(Role::Receiver)
+                        .decompress()
+                        .map_err(ProofVerificationError::from)?;
+    
+                    *current_bal += receiver_ct;
+                }
+            },
+            TransactionType::Burn(_) => {},
+            TransactionType::MultiSig(payload) => {
+                state.set_multisig_state(&self.source, payload).await.map_err(VerificationError::State)?;
+            },
         }
 
         Ok(())
