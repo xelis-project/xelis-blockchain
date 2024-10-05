@@ -143,7 +143,8 @@ mod tests {
     #[test]
     fn test_get_version_at_height() {
         assert_eq!(get_version_at_height(&Network::Testnet, 0), BlockVersion::V0);
-        assert_eq!(get_version_at_height(&Network::Testnet, 100_000), BlockVersion::V1);
+        assert_eq!(get_version_at_height(&Network::Testnet, 6), BlockVersion::V1);
+        assert_eq!(get_version_at_height(&Network::Testnet, 100_000), BlockVersion::V2);
     }
 
     #[test]
