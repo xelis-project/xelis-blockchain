@@ -3,9 +3,14 @@ All rights reserved.
 
 A from scratch blockchain made in Rust and powered by Tokio, using account model. XELIS is based on an event-driven system combined with the native async/await and works with a unique and from scratch p2p system. This allow to be notified on any events happening on the network and to be able to react to them instead of checking periodically for updates.
 
-BlockDAG is enabled to improve the scalability and the security of the network. Homomorphic Encryption using ElGamal is used to provide privacy on transactions (transfered amounts) and balances.
+BlockDAG is enabled to improve the scalability and the security of the network.
+Homomorphic Encryption using Twisted ElGamal is used to provide privacy on transactions (transfered amounts) and balances.
 
-ElGamal cryptosystem was choosen because it's a well known and studied encryption algorithm which has homomorphism features. ElGamal is fast and is used in combination with Ristretto255 curve to provide a good level of security (~128 bits of security). Homomorphic operations available using ElGamal are addition/subtraction between ciphertexts and/or plaintext and multiplication against plaintext value.
+ElGamal cryptosystem was choosen because it's a well known and studied encryption algorithm which has homomorphism features.
+We use a variant named "Twisted ElGamal" which give us a full compatibility with Pedersen commitments, useful for Bulletproofs integration earning space and time by avoiding an intermediate proof.
+
+Twisted ElGamal is fast and is used with the Ristretto group over the popular elliptic curve "Curve25519" to provide a good level of security (~128 bits of security).
+Homomorphic operations available using ElGamal are addition/subtraction between ciphertexts and/or plaintext and multiplication against plaintext value.
 
 Account Model allows to have a more flexible system than UTXO model and to have a better privacy because there is no need to link inputs and outputs, which provide real fungibility. It allows also the fast-sync feature to only download the last state of the blockchain instead of downloading all the history.
 
