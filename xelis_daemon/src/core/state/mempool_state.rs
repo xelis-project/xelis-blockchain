@@ -1,8 +1,8 @@
 use std::collections::{hash_map::Entry, HashMap};
 use async_trait::async_trait;
 use xelis_common::{
-    block::{TopoHeight, BlockVersion},
     account::Nonce,
+    block::{BlockVersion, TopoHeight},
     crypto::{
         elgamal::Ciphertext,
         Hash,
@@ -10,9 +10,9 @@ use xelis_common::{
     },
     transaction::{
         verify::BlockchainVerificationState,
+        MultiSigPayload,
         Reference,
-        Transaction,
-        MultiSigPayload
+        Transaction
     }
 };
 use crate::core::{
@@ -65,10 +65,10 @@ impl<'a, S: Storage> MempoolState<'a, S> {
         }
     }
 
-    // Retrieve the sender balances
-    pub fn get_sender_balances(&mut self, key: &PublicKey) -> Option<HashMap<&Hash, Ciphertext>> {
+    // Retrieve the sender cache (inclunding balances and multisig)
+    pub fn get_sender_cache(&mut self, key: &PublicKey) -> Option<(HashMap<&Hash, Ciphertext>, Option<MultiSigPayload>)> {
         let account = self.accounts.remove(key)?;
-        Some(account.assets)
+        Some((account.assets, account.multisig))
     }
 
     // Retrieve the receiver balance
@@ -89,6 +89,35 @@ impl<'a, S: Storage> MempoolState<'a, S> {
         let (output, _, version) = super::search_versioned_balance_for_reference(storage, key, asset, current_topoheight, reference).await?;
 
         Ok(version.take_balance_with(output).take_ciphertext()?)
+    }
+
+    // Retrieve the nonce & the multisig state for a sender account
+    async fn create_sender_account(mempool: &Mempool, storage: &S, key: &'a PublicKey, topoheight: TopoHeight) -> Result<Account<'a>, BlockchainError> {
+        let (nonce, multisig) = if let Some(cache) = mempool.get_cache_for(key) {
+            let nonce = cache.get_next_nonce();
+            let multisig = if let Some(multisig) = cache.get_multisig() {
+                Some(multisig.clone())
+            } else {
+                storage.get_multisig_at_maximum_topoheight_for(key, topoheight).await?
+                    .map(|(_, v)| v.take().map(|v| v.into_owned())).flatten()
+            };
+
+            (nonce, multisig)
+        } else {
+            let nonce = storage.get_nonce_at_maximum_topoheight(key, topoheight).await?
+                .map(|(_, v)| v.get_nonce()).unwrap_or(0);
+
+            let multisig = storage.get_multisig_at_maximum_topoheight_for(key, topoheight).await?
+                .map(|(_, v)| v.take().map(|v| v.into_owned())).flatten();
+
+            (nonce, multisig)
+        };
+
+        Ok(Account {
+            nonce,
+            assets: HashMap::new(),
+            multisig
+        })
     }
 
     // Retrieve the sender balance
@@ -119,17 +148,7 @@ impl<'a, S: Storage> MempoolState<'a, S> {
                 }
             },
             Entry::Vacant(e) => {
-                let nonce = self.storage.get_nonce_at_maximum_topoheight(key, self.topoheight).await?
-                    .map(|(_, v)| v.get_nonce()).unwrap_or(0);
-
-                let multisig = self.storage.get_multisig_at_maximum_topoheight_for(key, self.topoheight).await?
-                    .map(|(_, v)| v.take().map(|v| v.into_owned())).flatten();
-
-                let account = e.insert(Account {
-                    nonce,
-                    assets: HashMap::new(),
-                    multisig
-                });
+                let account = e.insert(Self::create_sender_account(&self.mempool, &self.storage, key, self.topoheight).await?);
 
                 match account.assets.entry(asset) {
                     Entry::Occupied(entry) => Ok(entry.into_mut()),
@@ -150,18 +169,7 @@ impl<'a, S: Storage> MempoolState<'a, S> {
             Entry::Vacant(e) => match self.mempool.get_cache_for(key) {
                 Some(cache) => Ok(cache.get_next_nonce()),
                 None => {
-                    let nonce = self.storage.get_nonce_at_maximum_topoheight(key, self.topoheight).await?
-                        .map(|(_, v)| v.get_nonce()).unwrap_or(0);
-    
-                    let multisig = self.storage.get_multisig_at_maximum_topoheight_for(key, self.topoheight).await?
-                        .map(|(_, v)| v.take().map(|v| v.into_owned())).flatten();
-
-                    let account = Account {
-                        nonce,
-                        assets: HashMap::new(),
-                        multisig
-                    };
-    
+                    let account = Self::create_sender_account(&self.mempool, &self.storage, key, self.topoheight).await?;
                     Ok(e.insert(account).nonce)
                 }
             }
@@ -248,7 +256,11 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for Mempoo
         payload: &MultiSigPayload
     ) -> Result<(), BlockchainError> {
         let account = self.accounts.get_mut(account).ok_or_else(|| BlockchainError::AccountNotFound(account.as_address(self.storage.is_mainnet())))?;
-        account.multisig = Some(payload.clone());
+        if payload.is_delete() {
+            account.multisig = None;
+        } else {
+            account.multisig = Some(payload.clone());
+        }
 
         Ok(())
     }

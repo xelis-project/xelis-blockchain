@@ -24,7 +24,7 @@ use xelis_common::{
     network::Network,
     serializer::Serializer,
     time::{get_current_time_in_seconds, TimestampSeconds},
-    transaction::Transaction
+    transaction::{Transaction, MultiSigPayload}
 };
 
 // Wrap a TX with its hash and size in bytes for faster access
@@ -51,7 +51,9 @@ pub struct AccountCache {
     txs: IndexSet<Arc<Hash>>,
     // Expected balances after all txs in this cache
     // This is also used to verify the validity of the TX spendings
-    balances: HashMap<Hash, Ciphertext>
+    balances: HashMap<Hash, Ciphertext>,
+    // Expected multisig after all txs in this cache
+    multisig: Option<MultiSigPayload>
 }
 
 // Mempool is used to store all TXs waiting to be included in a block
@@ -131,11 +133,10 @@ impl Mempool {
         let mut state = MempoolState::new(&self, storage, stable_topoheight, topoheight, block_version);
         tx.verify(&mut state).await?;
 
-        let balances = state.get_sender_balances(tx.get_source())
-            .ok_or_else(|| BlockchainError::AccountNotFound(tx.get_source().as_address(storage.is_mainnet())))?
-            .iter().map(|(asset, ciphertext)| (Hash::clone(*asset), ciphertext.clone())).collect();
+        let (balances, multisig) = state.get_sender_cache(tx.get_source())
+            .ok_or_else(|| BlockchainError::AccountNotFound(tx.get_source().as_address(storage.is_mainnet())))?;
 
-        // TODO: store the multisig from state
+        let balances = balances.into_iter().map(|(asset, ciphertext)| (asset.clone(), ciphertext)).collect();
 
         let hash = Arc::new(hash);
         let nonce = tx.get_nonce();
@@ -171,6 +172,7 @@ impl Mempool {
             }
             // Update re-computed balances
             cache.set_balances(balances);
+            cache.set_multisig(multisig);
         } else {
             let mut txs = IndexSet::new();
             txs.insert(hash.clone());
@@ -180,7 +182,8 @@ impl Mempool {
                 max: nonce,
                 min: nonce,
                 txs,
-                balances
+                balances,
+                multisig
             };
             self.caches.insert(tx.get_source().clone(), cache);
         }
@@ -482,8 +485,9 @@ impl Mempool {
                             delete_cache = true;
                         } else {
                             // Update balances cache
-                            if let Some(balances) = state.get_sender_balances(&key) {
+                            if let Some((balances, multisig)) = state.get_sender_cache(&key) {
                                 cache.set_balances(balances.into_iter().map(|(asset, ciphertext)| (asset.clone(), ciphertext)).collect());
+                                cache.set_multisig(multisig);
                             }
                         }
                     }
@@ -587,6 +591,16 @@ impl AccountCache {
     // Returns the expected balances cache after the execution of all TXs
     pub fn get_balances(&self) -> &HashMap<Hash, Ciphertext> {
         &self.balances
+    }
+
+    // Set the multisig payload
+    pub fn set_multisig(&mut self, multisig: Option<MultiSigPayload>) {
+        self.multisig = multisig;
+    }
+
+    // Returns the expected multisig cache after the execution of all TXs
+    pub fn get_multisig(&self) -> &Option<MultiSigPayload> {
+        &self.multisig
     }
 
     // Update the cache with a new TX
