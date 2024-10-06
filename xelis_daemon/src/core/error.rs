@@ -115,7 +115,7 @@ pub enum BlockchainError {
     TxTooBig(usize, usize),
     #[error("Timestamp {} is less than parent", _0)]
     TimestampIsLessThanParent(TimestampMillis),
-    #[error("Timestamp {} is greater than current time {}", _0, _1)]
+    #[error("Timestamp {} is greater than current time {}", _1, _0)]
     TimestampIsInFuture(TimestampMillis, TimestampMillis), // left is expected, right is got
     #[error("Block height mismatch, expected {}, got {}.", _0, _1)]
     InvalidBlockHeight(u64, u64),
