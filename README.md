@@ -7,7 +7,7 @@ BlockDAG is enabled to improve the scalability and the security of the network.
 Homomorphic Encryption using Twisted ElGamal is used to provide privacy on transactions (transfered amounts) and balances.
 
 ElGamal cryptosystem was choosen because it's a well known and studied encryption algorithm which has homomorphism features.
-We use a variant named "Twisted ElGamal" which give us a full compatibility with Pedersen commitments, useful for Bulletproofs integration earning space and time by avoiding an intermediate proof.
+We use a variant named "Twisted ElGamal" which give us a full integration with Pedersen commitments, useful for Bulletproofs compatibility and also saving space and time by avoiding an intermediate proof.
 
 Twisted ElGamal is fast and is used with the Ristretto group over the popular elliptic curve "Curve25519" to provide a good level of security (~128 bits of security).
 Homomorphic operations available using ElGamal are addition/subtraction between ciphertexts and/or plaintext and multiplication against plaintext value.
