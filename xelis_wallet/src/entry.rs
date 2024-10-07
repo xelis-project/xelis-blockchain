@@ -360,6 +360,7 @@ impl TransactionEntry {
         RPCTransactionEntry {
             hash: self.hash,
             topoheight: self.topoheight,
+            timestamp: self.timestamp,
             entry: match self.entry {
                 EntryData::Coinbase { reward } => RPCEntryType::Coinbase { reward },
                 EntryData::Burn { asset, amount, fee, nonce } => RPCEntryType::Burn { asset, amount, fee, nonce },
