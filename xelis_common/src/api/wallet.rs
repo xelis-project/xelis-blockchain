@@ -277,6 +277,7 @@ pub enum EntryType {
 pub struct TransactionEntry {
     pub hash: Hash,
     pub topoheight: TopoHeight,
+    pub timestamp: u64,
     #[serde(flatten)]
     pub entry: EntryType,
 }
