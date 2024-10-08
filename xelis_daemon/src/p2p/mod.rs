@@ -2660,7 +2660,7 @@ impl<S: Storage> P2pServer<S> {
                 for (key, balance) in keys.iter().zip(balances) {
                     // check that the account have balance for this asset
                     if let Some(account) = balance {
-                        info!("Saving balance {} summary for {}", asset, key.as_address(self.blockchain.get_network().is_mainnet()));
+                        debug!("Saving balance {} summary for {}", asset, key.as_address(self.blockchain.get_network().is_mainnet()));
                         let fetch_balances = account.fetch_others_balances();
                         // TODO: summary should have the topoheight bounds only, not the versions
                         let ((stable_topo, mut stable), output) = account.as_versions();
@@ -2692,7 +2692,7 @@ impl<S: Storage> P2pServer<S> {
                             let mut previous_version: Option<(u64, VersionedBalance)> = None;
                             // Go through all balance history
                             while let Some(max) = max_topoheight {
-                                info!("Requesting spendable balances for asset {} at max topo {} for {}", asset, max, key.as_address(self.blockchain.get_network().is_mainnet()));
+                                debug!("Requesting spendable balances for asset {} at max topo {} for {}", asset, max, key.as_address(self.blockchain.get_network().is_mainnet()));
                                 let StepResponse::SpendableBalances(balances, max_next) = peer.request_boostrap_chain(StepRequest::SpendableBalances(Cow::Borrowed(&key), Cow::Borrowed(&asset), min_topo, max)).await? else {
                                     // shouldn't happen
                                     error!("Received an invalid StepResponse (how ?) while fetching balances");
