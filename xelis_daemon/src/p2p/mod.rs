@@ -2870,7 +2870,7 @@ impl<S: Storage> P2pServer<S> {
                     storage.set_pruned_topoheight(lowest_topoheight).await?;
                     storage.set_top_topoheight(top_topoheight)?;
                     storage.set_top_height(top_height)?;
-                    storage.store_tips(&HashSet::from([top_block_hash.take().expect("Expected top block hash for fast sync")]))?;
+                    storage.store_tips(&HashSet::from([top_block_hash.take().ok_or(BlockchainError::Unknown)?]))?;
 
                     None
                 },
