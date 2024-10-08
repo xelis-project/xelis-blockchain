@@ -192,12 +192,12 @@ pub struct Balance {
 }
 
 impl Balance {
-    pub fn as_version(self, previous: Option<TopoHeight>) -> (TopoHeight, VersionedBalance) {
+    pub fn as_version(self) -> (TopoHeight, VersionedBalance) {
         let version = VersionedBalance {
             output_balance: self.output_balance,
             final_balance: self.final_balance,
             balance_type: self.balance_type,
-            previous_topoheight: previous
+            previous_topoheight: None
         };
         (self.topoheight, version)
     }
