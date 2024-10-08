@@ -371,28 +371,25 @@ impl BalanceProvider for SledStorage {
                 return Ok(None)
             }
 
-            let mut previous = version.get_previous_topoheight();
-            let has_output = version.contains_output();
-
-            // If the highest version is not a output and has previous versions
-            // It means we have older versions available for spending
-            let fetch_others = !has_output && previous.is_some();
-            let mut account = AccountSummary::new(None, version.as_balance(topo), fetch_others);
-
+            
+            let mut account = AccountSummary {
+                output_topoheight: None,
+                stable_topoheight: topo,
+            };
+            
             // We have an output in it, we can return the account
-            if has_output {
+            if version.contains_output() {
                 trace!("Stable with output balance found for {} at topoheight {}", key.as_address(self.is_mainnet()), topo);
                 return Ok(Some(account))
             }
 
             // We need to search through the whole history to see if we have a balance with output
+            let mut previous = version.get_previous_topoheight();
             while let Some(topo) = previous {
-                let mut previous_version = self.get_balance_at_exact_topoheight(key, asset, topo).await?;
+                let previous_version = self.get_balance_at_exact_topoheight(key, asset, topo).await?;
                 if previous_version.contains_output() {
                     trace!("Output balance found for {} at topoheight {}", key.as_address(self.is_mainnet()), topo);
-                    previous_version.set_previous_topoheight(None);
-
-                    account.set_output_version(Some(previous_version.as_balance(topo)));
+                    account.output_topoheight = Some(topo);
                     break;
                 }
 
@@ -414,16 +411,19 @@ impl BalanceProvider for SledStorage {
         let mut fetch_topoheight = Some(max_topoheight);
         while let Some(topo) = fetch_topoheight.take().filter(|&t| t > min_topoheight && balances.len() < DEFAULT_MAX_ITEMS) {
             let version = self.get_balance_at_exact_topoheight(key, asset, topo).await?;
-            if version.contains_output() {
+            let has_output = version.contains_output();
+            let previous_topoheight = version.get_previous_topoheight();
+            balances.push(version.as_balance(topo));
+
+            if has_output {
                 trace!("Output balance found for {} at topoheight {}", key.as_address(self.is_mainnet()), topo);
                 break;
+            } else {
+                fetch_topoheight = previous_topoheight;
             }
-
-            fetch_topoheight = version.get_previous_topoheight();
-            balances.push(version.as_balance(topo));
         }
 
-        trace!("No balance found for {} at maximum topoheight {}", key.as_address(self.is_mainnet()), max_topoheight);
+        log::warn!("balances {} {}, {} - {}", balances.len(), key.as_address(self.is_mainnet()), min_topoheight, max_topoheight);
         Ok((balances, fetch_topoheight))
     }
 }
