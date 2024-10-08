@@ -2516,6 +2516,20 @@ impl<S: Storage> P2pServer<S> {
                 trace!("Sending {} balances to {}", balances.len(), peer);
                 StepResponse::Balances(balances)
             },
+            StepRequest::SpendableBalances(key, asset, min, max) => {
+                if min > max {
+                    warn!("Invalid range for spendable balances");
+                    return Err(P2pError::InvalidPacket.into())
+                }
+
+                if max > self.blockchain.get_stable_topoheight() {
+                    warn!("Requested spendable balances for topoheight {} but our stable topoheight is {}", max, self.blockchain.get_stable_topoheight());
+                    return Err(P2pError::InvalidRequestedTopoheight.into())
+                }
+
+                let (balances, next_max) = storage.get_spendable_balances_for(&key, &asset, min, max).await?;
+                StepResponse::SpendableBalances(balances, next_max)
+            },
             StepRequest::Nonces(topoheight, keys) => {
                 let mut nonces = Vec::with_capacity(keys.len());
                 for key in keys.iter() {
@@ -2635,7 +2649,7 @@ impl<S: Storage> P2pServer<S> {
 
             // Request every asset balances
             for asset in assets {
-                debug!("Requesting balances for asset {} at topo {}", asset, stable_topoheight);
+                info!("Requesting balances for asset {} at topo {}", asset, stable_topoheight);
                 let StepResponse::Balances(balances) = peer.request_boostrap_chain(StepRequest::Balances(Cow::Borrowed(&keys), Cow::Borrowed(&asset), our_topoheight, stable_topoheight)).await? else {
                     // shouldn't happen
                     error!("Received an invalid StepResponse (how ?) while fetching balances");
@@ -2646,19 +2660,50 @@ impl<S: Storage> P2pServer<S> {
                 for (key, balance) in keys.iter().zip(balances) {
                     // check that the account have balance for this asset
                     if let Some(account) = balance {
-                        debug!("Saving balance {} summary for {}", asset, key.as_address(self.blockchain.get_network().is_mainnet()));
-                        let ((stable_topo, stable), output) = account.as_versions();
+                        info!("Saving balance {} summary for {}", asset, key.as_address(self.blockchain.get_network().is_mainnet()));
+                        let fetch_balances = account.fetch_others_balances();
+                        let ((stable_topo, mut stable), output) = account.as_versions();
                         let mut storage = self.blockchain.get_storage().write().await;
-                        storage.set_last_balance_to(key, &asset, stable_topo, &stable).await?;
+
+                        // Calculate the minimum topoheight to fetch balances history
+                        // It is used as lowest topoheight bound for balance history
+                        // and will also be used as the previous topoheight for the stable version
+                        // to link the whole history
+                        let mut previous_topoheight = output.as_ref().filter(|_| fetch_balances).map(|(topo, _)| *topo);
 
                         // save the output balance if it's different from the stable one
-                        if let Some((topo, output)) = output{
+                        // If its present, its the lowest topoheight available for balance history
+                        if let Some((topo, output)) = output {
                             storage.set_balance_at_topoheight(&asset, topo, key, &output).await?;
                         }
 
-                        // TODO clean up old balances
+                        if fetch_balances {
+                            let mut max_topoheight = Some(stable_topo);
+                            let min_topo = previous_topoheight.unwrap_or(0);
+                            while let Some(max) = max_topoheight {
+                                info!("Requesting spendable balances for asset {} at max topo {} for {}", asset, max, key.as_address(self.blockchain.get_network().is_mainnet()));
+                                let StepResponse::SpendableBalances(balances, max_next) = peer.request_boostrap_chain(StepRequest::SpendableBalances(Cow::Borrowed(&key), Cow::Borrowed(&asset), min_topo, max)).await? else {
+                                    // shouldn't happen
+                                    error!("Received an invalid StepResponse (how ?) while fetching balances");
+                                    return Err(P2pError::InvalidPacket.into())
+                                };
+
+                                for balance in balances.into_iter().rev() {
+                                    let (topo, version) = balance.as_version(previous_topoheight);
+                                    storage.set_balance_at_topoheight(&asset, topo, key, &version).await?;
+                                    previous_topoheight = Some(topo);
+                                }
+
+                                max_topoheight = max_next;
+                            }
+                        }
+
+                        if previous_topoheight.is_some() {
+                            stable.set_previous_topoheight(previous_topoheight);
+                        }
+                        storage.set_last_balance_to(key, &asset, stable_topo, &stable).await?;
                     } else {
-                        debug!("No balance for key {} at topoheight {}", key.as_address(self.blockchain.get_network().is_mainnet()), stable_topoheight);
+                        warn!("No balance for key {} at topoheight {}", key.as_address(self.blockchain.get_network().is_mainnet()), stable_topoheight);
                     }
                 }
             }
@@ -2858,12 +2903,10 @@ impl<S: Storage> P2pServer<S> {
                     let mut storage = self.blockchain.get_storage().write().await;
 
                     // Create a snapshots for all others keys that didn't got updated
-                    // storage.create_snapshot_balances_at_topoheight(lowest_topoheight).await?;
                     storage.create_snapshot_nonces_at_topoheight(lowest_topoheight).await?;
                     storage.create_snapshot_registrations_at_topoheight(lowest_topoheight).await?;
 
                     // Delete all old data
-                    // storage.delete_versioned_balances_below_topoheight(lowest_topoheight).await?;
                     storage.delete_versioned_nonces_below_topoheight(lowest_topoheight).await?;
                     storage.delete_registrations_below_topoheight(lowest_topoheight).await?;
 

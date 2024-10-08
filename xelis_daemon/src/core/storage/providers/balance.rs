@@ -2,12 +2,12 @@ use async_trait::async_trait;
 use log::{trace, error};
 use xelis_common::{
     block::TopoHeight,
-    account::{AccountSummary, VersionedBalance},
+    account::{AccountSummary, Balance, VersionedBalance},
     crypto::{
         Hash,
         PublicKey
     },
-    serializer::Serializer
+    serializer::{Serializer, DEFAULT_MAX_ITEMS}
 };
 use crate::core::{
     error::{BlockchainError, DiskContext},
@@ -72,6 +72,11 @@ pub trait BalanceProvider: AssetProvider + NetworkProvider {
     // Get the account summary for a key and asset on the specified topoheight range
     // If None is returned, that means there was no changes that occured in the specified topoheight range
     async fn get_account_summary_for(&self, key: &PublicKey, asset: &Hash, min_topoheight: TopoHeight, max_topoheight: TopoHeight) -> Result<Option<AccountSummary>, BlockchainError>;
+
+    // Get the spendable balances for a key and asset on the specified topoheight range
+    // Maximum 1024 entries per Vec<Balance>, Option<TopoHeight> is Some if we have others previous versions available and Vec is full.
+    // It will stop at the first output balance found without including it
+    async fn get_spendable_balances_for(&self, key: &PublicKey, asset: &Hash, min_topoheight: TopoHeight, max_topoheight: TopoHeight) -> Result<(Vec<Balance>, Option<TopoHeight>), BlockchainError>;
 }
 
 impl SledStorage {
@@ -369,10 +374,10 @@ impl BalanceProvider for SledStorage {
             let mut previous = version.get_previous_topoheight();
             let has_output = version.contains_output();
 
-            let mut account = AccountSummary {
-                output_version: None,
-                stable_version: version.as_balance(topo)
-            };
+            // If the highest version is not a output and has previous versions
+            // It means we have older versions available for spending
+            let fetch_others = !has_output && previous.is_some();
+            let mut account = AccountSummary::new(None, version.as_balance(topo), fetch_others);
 
             // We have an output in it, we can return the account
             if has_output {
@@ -387,7 +392,7 @@ impl BalanceProvider for SledStorage {
                     trace!("Output balance found for {} at topoheight {}", key.as_address(self.is_mainnet()), topo);
                     previous_version.set_previous_topoheight(None);
 
-                    account.output_version = Some(previous_version.as_balance(topo));
+                    account.set_output_version(Some(previous_version.as_balance(topo)));
                     break;
                 }
 
@@ -399,5 +404,31 @@ impl BalanceProvider for SledStorage {
 
         trace!("No balance found for {} at maximum topoheight {}", key.as_address(self.is_mainnet()), max_topoheight);
         Ok(None)
+    }
+
+    async fn get_spendable_balances_for(&self, key: &PublicKey, asset: &Hash, min_topoheight: TopoHeight, max_topoheight: TopoHeight) -> Result<(Vec<Balance>, Option<TopoHeight>), BlockchainError> {
+        trace!("get spendable balances for {} at maximum topoheight {}", key.as_address(self.is_mainnet()), max_topoheight);
+
+        let mut balances = Vec::new();
+        let mut previous = None;
+
+        let mut fetch_topoheight = Some(max_topoheight);
+        while let Some(topo) = fetch_topoheight.filter(|&t| t > min_topoheight) {
+            let version = self.get_balance_at_exact_topoheight(key, asset, topo).await?;
+            if version.contains_output() {
+                trace!("Output balance found for {} at topoheight {}", key.as_address(self.is_mainnet()), topo);
+                break;
+            }
+
+            if balances.len() >= DEFAULT_MAX_ITEMS {
+                previous = Some(topo);
+                break;
+            }
+            fetch_topoheight = version.get_previous_topoheight();
+            balances.push(version.as_balance(topo));
+        }
+
+        trace!("No balance found for {} at maximum topoheight {}", key.as_address(self.is_mainnet()), max_topoheight);
+        Ok((balances, previous))
     }
 }
