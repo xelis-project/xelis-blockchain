@@ -13,7 +13,7 @@ pub use encryption::EncryptionKey;
 use indexmap::IndexSet;
 use lru::LruCache;
 use xelis_common::{
-    account::VersionedNonce,
+    account::{VersionedNonce, VersionedBalance},
     api::daemon::{
         Direction,
         NotifyEvent,
@@ -2662,6 +2662,7 @@ impl<S: Storage> P2pServer<S> {
                     if let Some(account) = balance {
                         info!("Saving balance {} summary for {}", asset, key.as_address(self.blockchain.get_network().is_mainnet()));
                         let fetch_balances = account.fetch_others_balances();
+                        // TODO: summary should have the topoheight bounds only, not the versions
                         let ((stable_topo, mut stable), output) = account.as_versions();
                         let mut storage = self.blockchain.get_storage().write().await;
 
@@ -2669,17 +2670,27 @@ impl<S: Storage> P2pServer<S> {
                         // It is used as lowest topoheight bound for balance history
                         // and will also be used as the previous topoheight for the stable version
                         // to link the whole history
-                        let mut previous_topoheight = output.as_ref().filter(|_| fetch_balances).map(|(topo, _)| *topo);
+                        let output_topoheight = output.as_ref().filter(|_| fetch_balances).map(|(topo, _)| *topo);
 
                         // save the output balance if it's different from the stable one
                         // If its present, its the lowest topoheight available for balance history
                         if let Some((topo, output)) = output {
+                            debug!("Saving balance {} at topo {} for {}", asset, topo, key.as_address(self.blockchain.get_network().is_mainnet()));
                             storage.set_balance_at_topoheight(&asset, topo, key, &output).await?;
                         }
 
+                        let mut highest_history_topo = None;
                         if fetch_balances {
+                            // Highest topoheight bound for balance history
                             let mut max_topoheight = Some(stable_topo);
-                            let min_topo = previous_topoheight.unwrap_or(0);
+
+                            // Lowest topoheight bound for balance histor
+                            let min_topo = output_topoheight.unwrap_or(0);
+
+                            // Each version are applied on iteration N+1 of the loop
+                            // This is done to get the previous topoheight of the current version
+                            let mut previous_version: Option<(u64, VersionedBalance)> = None;
+                            // Go through all balance history
                             while let Some(max) = max_topoheight {
                                 info!("Requesting spendable balances for asset {} at max topo {} for {}", asset, max, key.as_address(self.blockchain.get_network().is_mainnet()));
                                 let StepResponse::SpendableBalances(balances, max_next) = peer.request_boostrap_chain(StepRequest::SpendableBalances(Cow::Borrowed(&key), Cow::Borrowed(&asset), min_topo, max)).await? else {
@@ -2688,19 +2699,38 @@ impl<S: Storage> P2pServer<S> {
                                     return Err(P2pError::InvalidPacket.into())
                                 };
 
-                                for balance in balances.into_iter().rev() {
-                                    let (topo, version) = balance.as_version(previous_topoheight);
-                                    storage.set_balance_at_topoheight(&asset, topo, key, &version).await?;
-                                    previous_topoheight = Some(topo);
+                                for balance in balances {
+                                    let (topo, version) = balance.as_version();
+                                    if highest_history_topo.is_none() {
+                                        highest_history_topo = Some(topo);
+                                    }
+
+                                    if let Some((prev_topo, mut prev)) = previous_version {
+                                        prev.set_previous_topoheight(Some(topo));
+                                        storage.set_balance_at_topoheight(&asset, prev_topo, key, &prev).await?;
+                                    }
+
+                                    previous_version = Some((topo, version));
                                 }
 
                                 max_topoheight = max_next;
                             }
+
+                            if let Some((topo, mut prev)) = previous_version {
+                                // Link the output topoheight
+                                prev.set_previous_topoheight(output_topoheight);
+                                storage.set_balance_at_topoheight(&asset, topo, key, &prev).await?;
+                            }
                         }
 
-                        if previous_topoheight.is_some() {
-                            stable.set_previous_topoheight(previous_topoheight);
+                        // Only override it if we have a previous version
+                        if highest_history_topo.is_some() {
+                            trace!("set final previous topo: {:?}, current: {}", highest_history_topo, stable_topo);
+                            stable.set_previous_topoheight(highest_history_topo);
+                        } else {
+                            trace!("version final previous topo: {:?} {:?} current: {}", output_topoheight, stable.get_previous_topoheight(), stable_topo);
                         }
+
                         storage.set_last_balance_to(key, &asset, stable_topo, &stable).await?;
                     } else {
                         warn!("No balance for key {} at topoheight {}", key.as_address(self.blockchain.get_network().is_mainnet()), stable_topoheight);
