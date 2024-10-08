@@ -4,6 +4,7 @@ mod writer;
 
 pub use reader::{Reader, ReaderError};
 pub use writer::Writer;
+pub use defaults::DEFAULT_MAX_ITEMS;
 use std::marker::Sized;
 
 pub trait Serializer {
