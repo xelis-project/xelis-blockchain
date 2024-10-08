@@ -423,7 +423,7 @@ impl BalanceProvider for SledStorage {
             }
         }
 
-        log::warn!("balances {} {}, {} - {}", balances.len(), key.as_address(self.is_mainnet()), min_topoheight, max_topoheight);
+        trace!("balances {} {}, {} - {}", balances.len(), key.as_address(self.is_mainnet()), min_topoheight, max_topoheight);
         Ok((balances, fetch_topoheight))
     }
 }
