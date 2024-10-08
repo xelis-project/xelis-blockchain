@@ -400,7 +400,8 @@ impl InnerTree {
     pub fn iter(self: &Tree) -> Iter {
         Iter {
             tree: self.clone(),
-            skip: 0
+            index: 0,
+            index_back: 0
         }
     }
 
@@ -440,7 +441,8 @@ impl InnerTree {
 // So, even if it get changed while we iter, we still have a reference to the old entries.
 pub struct Iter {
     tree: Tree,
-    skip: usize
+    index: usize,
+    index_back: usize
 }
 
 impl Iter {
@@ -468,9 +470,12 @@ impl Iterator for Iter {
             Err(_) => return Some(Err(DbError::Poisoned.into())),
         };
 
-        let skip = self.skip;
-        self.skip += 1;
-        let (k, v) = entries.iter().skip(skip).next()?;
+        if self.index >= entries.len() - self.index_back {
+            return None
+        }
+
+        let (k, v) = entries.iter().nth(self.index)?;
+        self.index += 1;
 
         Some(Ok((k.clone(), v.clone())))
     }
@@ -483,9 +488,14 @@ impl DoubleEndedIterator for Iter {
             Err(_) => return Some(Err(DbError::Poisoned.into())),
         };
 
-        let skip = self.skip;
-        self.skip += 1;
-        let (k, v) = entries.iter().rev().skip(skip).next()?;
+        // If we reach the other bound, we stop
+        if self.index >= entries.len() - self.index_back {
+            return None
+        }
+
+        let (k, v) = entries.iter().rev().nth(self.index_back)?;
+        self.index_back += 1;
+
         Some(Ok((k.clone(), v.clone())))
     }
 }
@@ -582,6 +592,12 @@ mod tests {
         assert_eq!(iter.next_back().unwrap().unwrap(), b"666".into());
         assert_eq!(iter.next_back().unwrap().unwrap(), b"999".into());
 
+        let mut iter = tree.iter();
+        assert_eq!(iter.next().unwrap().unwrap(), (b"a".into(), b"999".into()));
+        assert_eq!(iter.next_back().unwrap().unwrap(), (b"c".into(), b"333".into()));
+        assert_eq!(iter.next().unwrap().unwrap(), (b"b".into(), b"666".into()));
         assert!(iter.next_back().is_none());
+        assert!(iter.next().is_none());
+
     }
 }
