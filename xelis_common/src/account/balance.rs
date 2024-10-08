@@ -238,112 +238,30 @@ pub struct AccountSummary {
     // last output balance stored on chain
     // It can be None if the account has no output balance
     // or if the output balance is already in stable_version
-    output_version: Option<Balance>,
+    pub output_topoheight: Option<TopoHeight>,
     // last balance stored on chain below or equal to stable topoheight
-    stable_version: Balance,
-    // If the account has other spendable balances
-    // Those are versions above the output version and below stable version
-    // If at least one is present, it has other spendable balances
-    fetch_others: bool,
-}
-
-impl AccountSummary {
-    pub fn new(output_version: Option<Balance>, stable_version: Balance, fetch_others: bool) -> Self {
-        Self {
-            output_version,
-            stable_version,
-            fetch_others
-        }
-    }
-
-    pub fn get_output_version(&self) -> Option<&Balance> {
-        self.output_version.as_ref()
-    }
-
-    pub fn get_stable_version(&self) -> &Balance {
-        &self.stable_version
-    }
-
-    pub fn get_stable_version_mut(&mut self) -> &mut Balance {
-        &mut self.stable_version
-    }
-
-    pub fn get_output_version_mut(&mut self) -> &mut Option<Balance> {
-        &mut self.output_version
-    }
-
-    pub fn set_output_version(&mut self, output_version: Option<Balance>) {
-        self.output_version = output_version;
-    }
-
-    pub fn set_stable_version(&mut self, stable_version: Balance) {
-        self.stable_version = stable_version;
-    }
-
-    pub fn fetch_others_balances(&self) -> bool {
-        self.fetch_others
-    }
-
-    pub fn consume(self) -> (Option<Balance>, Balance) {
-        (self.output_version, self.stable_version)
-    }
-
-    // Return the versions as a tuple of (topoheight, VersionedBalance)
-    // The first element is the stable version
-    // The second element is the output version if it exists
-    pub fn as_versions(self) -> ((TopoHeight, VersionedBalance), Option<(TopoHeight, VersionedBalance)>) {
-        let mut version = VersionedBalance {
-            output_balance: self.stable_version.output_balance,
-            final_balance: self.stable_version.final_balance,
-            balance_type: self.stable_version.balance_type,
-            previous_topoheight: None
-        };
-        let stable_topoheight = self.stable_version.topoheight;
-
-        let output_version = self.output_version
-            .filter(|balance| balance.topoheight != stable_topoheight)
-            .map(|balance| {
-                let output = VersionedBalance {
-                    output_balance: balance.output_balance,
-                    final_balance: balance.final_balance,
-                    balance_type: balance.balance_type,
-                    previous_topoheight: None
-                };
-                // Link the stable version to the output version
-                // Only if the output version is not the last one
-                if !self.fetch_others {
-                    version.set_previous_topoheight(Some(balance.topoheight));
-                }
-                (balance.topoheight, output)
-            });
-
-        ((stable_topoheight, version), output_version)
-    }
+    pub stable_topoheight: TopoHeight,
 }
 
 impl Serializer for AccountSummary {
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let output_version = Option::read(reader)?;
-        let stable_version = Balance::read(reader)?;
-        let fetch_others = reader.read_bool()?;
+        let output_topoheight = Option::read(reader)?;
+        let stable_topoheight = TopoHeight::read(reader)?;
 
         Ok(Self {
-            output_version,
-            stable_version,
-            fetch_others
+            output_topoheight,
+            stable_topoheight
         })
     }
 
     fn write(&self, writer: &mut Writer) {
-        self.output_version.write(writer);
-        self.stable_version.write(writer);
-        writer.write_bool(self.fetch_others);
+        self.output_topoheight.write(writer);
+        self.stable_topoheight.write(writer);
     }
 
     fn size(&self) -> usize {
-        self.output_version.size()
-        + self.stable_version.size()
-        + self.fetch_others.size()
+        self.output_topoheight.size()
+        + self.stable_topoheight.size()
     }
 }
 
