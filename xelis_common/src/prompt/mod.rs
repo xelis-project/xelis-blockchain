@@ -124,6 +124,8 @@ impl FromStr for LogLevel {
 
 #[derive(Error, Debug)]
 pub enum PromptError {
+    #[error("Logs path is not a folder, it must ends with /")]
+    LogsPathNotFolder,
     #[error("Canceled read input")]
     Canceled,
     #[error("End of stream")]
@@ -482,6 +484,10 @@ impl Prompt {
         module_logs: Vec<ModuleConfig>,
         file_level: LogLevel,
     ) -> Result<ShareablePrompt, PromptError> {
+        if !dir_path.ends_with("/") {
+            return Err(PromptError::LogsPathNotFolder);
+        }
+
         let (read_input_sender, read_input_receiver) = mpsc::channel(1);
         let prompt = Self {
             state: Arc::new(State::new(interactive)),
