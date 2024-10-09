@@ -145,21 +145,25 @@ const BLOCK_TIME: Difficulty = Difficulty::from_u64(BLOCK_TIME_MILLIS / MILLIS_P
 #[tokio::main]
 async fn main() -> Result<()> {
     let mut config: NodeConfig = NodeConfig::parse();
-
-    let prompt = Prompt::new(config.log_level, &config.logs_path, &config.filename_log, config.disable_file_logging, config.disable_file_log_date_based, config.disable_log_color, !config.disable_interactive_mode, config.logs_modules, config.file_log_level.unwrap_or(config.log_level))?;
-    info!("XELIS Blockchain running version: {}", VERSION);
-    info!("----------------------------------------------");
-
-    if config.nested.simulator.is_some() && config.network != Network::Dev {
-        config.network = Network::Dev;
-        warn!("Switching automatically to network {} because of simulator enabled", config.network);
-    }
-
     let blockchain_config = config.nested;
     if let Some(path) = blockchain_config.dir_path.as_ref() {
         if !(path.ends_with("/") || path.ends_with("\\")) {
             return Err(anyhow::anyhow!("Path must end with / or \\"));
         }
+
+        // If logs path is default, we will change it to be in the same directory as the blockchain
+        if config.logs_path == "logs/" {
+            config.logs_path = format!("{}logs/", path);
+        }
+    }
+
+    let prompt = Prompt::new(config.log_level, &config.logs_path, &config.filename_log, config.disable_file_logging, config.disable_file_log_date_based, config.disable_log_color, !config.disable_interactive_mode, config.logs_modules, config.file_log_level.unwrap_or(config.log_level))?;
+    info!("XELIS Blockchain running version: {}", VERSION);
+    info!("----------------------------------------------");
+
+    if blockchain_config.simulator.is_some() && config.network != Network::Dev {
+        config.network = Network::Dev;
+        warn!("Switching automatically to network {} because of simulator enabled", config.network);
     }
 
     let storage = {
