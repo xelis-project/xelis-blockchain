@@ -2708,7 +2708,7 @@ impl<S: Storage> P2pServer<S> {
                             storage.set_last_topoheight_for_balance(key, &asset, highest_topoheight)?;
                         }
                     } else {
-                        warn!("No balance for key {} at topoheight {}", key.as_address(self.blockchain.get_network().is_mainnet()), stable_topoheight);
+                        debug!("No balance for key {} at topoheight {}", key.as_address(self.blockchain.get_network().is_mainnet()), stable_topoheight);
                     }
                 }
             }
