@@ -128,7 +128,7 @@ impl Transaction {
     }
 
     /// Get the new output ciphertext
-    // This is used to substract the amount from the sender's balance
+    /// This is used to substract the amount from the sender's balance
     fn get_sender_output_ct(
         &self,
         asset: &Hash,
@@ -247,7 +247,8 @@ impl Transaction {
             return Err(VerificationError::Commitments);
         }
 
-        let transfers_decompressed = match &self.data {
+        let mut transfers_decompressed: Vec<_> = Vec::new();
+        match &self.data {
             TransactionType::Transfers(transfers) => {
                 if transfers.len() > MAX_TRANSFER_COUNT || transfers.is_empty() {
                     debug!("incorrect transfers size: {}", transfers.len());
@@ -276,13 +277,24 @@ impl Transaction {
                     return Err(VerificationError::TransactionExtraDataSize);
                 }
     
-                transfers
+                transfers_decompressed = transfers
                     .iter()
                     .map(DecompressedTransferCt::decompress)
                     .collect::<Result<_, DecompressionError>>()
-                    .map_err(ProofVerificationError::from)?
+                    .map_err(ProofVerificationError::from)?;
             },
-            _ => Vec::new(),
+            TransactionType::Burn(payload) => {
+                let fee = self.fee;
+                let amount = payload.amount;
+
+                let total = fee.checked_add(amount)
+                    .ok_or(VerificationError::InvalidFormat)?;
+
+                if total < fee || total < amount {
+                    return Err(VerificationError::InvalidFormat);
+                }
+            },
+            _ => {},
         };
 
         let new_source_commitments_decompressed = self
@@ -385,9 +397,18 @@ impl Transaction {
 
         // 2. Verify every CtValidityProof
         trace!("verifying transfers ciphertext validity proofs");
+        
+        // Prepare the new source commitments at same time
+        // Count the number of commitments
+        let mut n_commitments = self.source_commitments.len();
+        let mut value_commitments: Vec<(RistrettoPoint, CompressedRistretto)> = Vec::new();
 
         match &self.data {
             TransactionType::Transfers(transfers) => {
+                // Count the number of transfers
+                n_commitments += transfers.len();
+
+                // Prepare the new commitments
                 for (transfer, decompressed) in transfers.iter().zip(&transfers_decompressed) {
                     let receiver = transfer
                         .destination
@@ -422,6 +443,9 @@ impl Transaction {
                         &mut transcript,
                         sigma_batch_collector,
                     )?;
+
+                    // Add the commitment to the list
+                    value_commitments.push((decompressed.commitment.as_point().clone(), transfer.commitment.as_point().clone()));
                 }
             },
             TransactionType::Burn(payload) => {
@@ -465,9 +489,15 @@ impl Transaction {
             }
         }
 
-        // Prepare the new source commitments
+        // Finalize the new source commitments
 
-        let new_source_commitments = self
+        // Create fake commitments to make `m` (party size) of the bulletproof a power of two.
+        let n_dud_commitments = n_commitments
+            .checked_next_power_of_two()
+            .ok_or(ProofVerificationError::Format)?
+            - n_commitments;
+
+        let final_commitments = self
             .source_commitments
             .iter()
             .zip(&new_source_commitments_decompressed)
@@ -476,49 +506,20 @@ impl Transaction {
                     new_source_commitment.as_point().clone(),
                     commitment.commitment.as_point().clone(),
                 )
-            });
-
-        let mut n_commitments = self.source_commitments.len();
-        if let TransactionType::Transfers(transfers) = &self.data {
-            n_commitments += transfers.len()
-        }
-
-        // Create fake commitments to make `m` (party size) of the bulletproof a power of two.
-        let n_dud_commitments = n_commitments
-            .checked_next_power_of_two()
-            .ok_or(ProofVerificationError::Format)?
-            - n_commitments;
-
-        let value_commitments: Vec<(RistrettoPoint, CompressedRistretto)> = if let TransactionType::Transfers(transfers) = &self.data {
-            new_source_commitments
-                .chain(transfers.iter().zip(&transfers_decompressed).map(
-                    |(transfer, decompressed)| {
-                        (
-                            decompressed.commitment.as_point().clone(),
-                            transfer.commitment.as_point().clone(),
-                        )
-                    },
-                ))
-                .chain(
-                    iter::repeat((RistrettoPoint::identity(), CompressedRistretto::identity()))
-                        .take(n_dud_commitments),
-                )
-                .collect()
-        } else {
-            new_source_commitments
-                .chain(
-                    iter::repeat((RistrettoPoint::identity(), CompressedRistretto::identity()))
-                        .take(n_dud_commitments),
-                )
-                .collect()
-        };
+            })
+            .chain(value_commitments.into_iter())
+            .chain(
+                iter::repeat((RistrettoPoint::identity(), CompressedRistretto::identity()))
+                    .take(n_dud_commitments),
+            )
+            .collect();
 
         // 3. Verify the aggregated RangeProof
         trace!("verifying range proof");
 
         // range proof will be verified in batch by caller
 
-        Ok((transcript, value_commitments))
+        Ok((transcript, final_commitments))
     }
 
     pub async fn verify_batch<'a, T: AsRef<Transaction>, E, B: BlockchainVerificationState<'a, E>>(
