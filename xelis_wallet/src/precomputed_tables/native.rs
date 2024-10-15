@@ -41,11 +41,11 @@ pub async fn read_or_generate_precomputed_tables<P: ecdlp::ProgressTableGenerati
 
     let tables = if Path::new(&full_path).exists() {
         info!("Loading precomputed tables from {}", full_path);
-        ecdlp::ECDLPTables::load_from_file(full_path.as_str())?
+        ecdlp::ECDLPTables::load_from_file(PRECOMPUTED_TABLES_L1, full_path.as_str())?
     } else {
         // File does not exists, generate and store it
         info!("Generating precomputed tables");
-        let tables = ecdlp::ECDLPTables::generate_with_progress_report(progress_report)?;
+        let tables = ecdlp::ECDLPTables::generate_with_progress_report(PRECOMPUTED_TABLES_L1, progress_report)?;
         info!("Precomputed tables generated, storing to {}", full_path);
         tables.write_to_file(full_path.as_str())?;
 

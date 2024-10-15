@@ -30,4 +30,4 @@ use std::sync::Arc;
 use xelis_common::crypto::ecdlp;
 
 // Allows to be used in several wallets at the same time
-pub type PrecomputedTablesShared = Arc<ecdlp::ECDLPTables<PRECOMPUTED_TABLES_L1>>;
+pub type PrecomputedTablesShared = Arc<ecdlp::ECDLPTables>;

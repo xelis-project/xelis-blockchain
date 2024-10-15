@@ -86,7 +86,7 @@ pub async fn has_precomputed_tables(_: Option<String>) -> Result<bool> {
     if let Some(file_handle) = file_handle {
         // Verify the size of the file
         let file: File = execute!(file_handle.get_file(), IntoFile)?;
-        Ok(file.size() as usize == ECDLPTables::<PRECOMPUTED_TABLES_L1>::get_required_sizes().0)
+        Ok(file.size() as usize == ECDLPTables::get_required_sizes(PRECOMPUTED_TABLES_L1).0)
     } else {
         Ok(false)
     }
