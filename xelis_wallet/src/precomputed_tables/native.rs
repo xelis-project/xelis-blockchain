@@ -8,16 +8,12 @@ use anyhow::Result;
 use log::info;
 use xelis_common::crypto::ecdlp;
 
-use super::PrecomputedTablesShared;
-
-// ECDLP Tables L1 size
-// L1 at 26 is around ~330 MB of RAM and support up to 2^48 values
-pub const PRECOMPUTED_TABLES_L1: usize = 26;
+use super::*;
 
 // Check if the precomputed tables exists
 pub async fn has_precomputed_tables(path: Option<String>) -> Result<bool> {
     let path = path.unwrap_or_default();
-    let full_path = format!("{path}precomputed_tables_{PRECOMPUTED_TABLES_L1}.bin");
+    let full_path = format!("{path}precomputed_tables_{L1_FULL}.bin");
 
     Ok(Path::new(&full_path).exists())
 }
@@ -37,20 +33,20 @@ pub async fn read_or_generate_precomputed_tables<P: ecdlp::ProgressTableGenerati
     }
 
     let path = path.unwrap_or_default();
-    let full_path = format!("{path}precomputed_tables_{PRECOMPUTED_TABLES_L1}.bin");
+    let full_path = format!("{path}precomputed_tables_{L1_FULL}.bin");
 
     let tables = if Path::new(&full_path).exists() {
         info!("Loading precomputed tables from {}", full_path);
-        ecdlp::ECDLPTables::load_from_file(PRECOMPUTED_TABLES_L1, full_path.as_str())?
+        ecdlp::ECDLPTables::load_from_file(L1_FULL, full_path.as_str())?
     } else {
         // File does not exists, generate and store it
         info!("Generating precomputed tables");
-        let tables = ecdlp::ECDLPTables::generate_with_progress_report(PRECOMPUTED_TABLES_L1, progress_report)?;
+        let tables = ecdlp::ECDLPTables::generate_with_progress_report(L1_FULL, progress_report)?;
         info!("Precomputed tables generated, storing to {}", full_path);
         tables.write_to_file(full_path.as_str())?;
 
         tables
     };
 
-    Ok(Arc::new(tables))
+    Ok(Arc::new(RwLock::new(tables)))
 }

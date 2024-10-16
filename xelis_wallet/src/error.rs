@@ -87,7 +87,9 @@ pub enum WalletError {
     #[error(transparent)]
     AEADCipherFormatError(#[from] CipherFormatError),
     #[error("No network handler available")]
-    NoNetworkHandler
+    NoNetworkHandler,
+    #[error("Poison error")]
+    PoisonError,
 }
 
 impl WalletError {

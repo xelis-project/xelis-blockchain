@@ -219,7 +219,9 @@ impl InnerAccount {
 
     pub fn decrypt_ciphertext(&self, ciphertext: &Ciphertext) -> Result<u64, WalletError> {
         trace!("decrypt ciphertext");
-        let view = self.precomputed_tables.view();
+        let lock = self.precomputed_tables.read()
+            .map_err(|_| WalletError::PoisonError)?;
+        let view = lock.view();
         self.keypair.get_private_key()
             .decrypt(&view, &ciphertext)
             .ok_or(WalletError::CiphertextDecode)
