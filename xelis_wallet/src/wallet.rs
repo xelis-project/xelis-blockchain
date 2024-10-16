@@ -228,7 +228,7 @@ impl InnerAccount {
     }
 }
 
-pub fn hash_password(password: String, salt: &[u8]) -> Result<[u8; PASSWORD_HASH_SIZE], WalletError> {
+pub fn hash_password(password: &str, salt: &[u8]) -> Result<[u8; PASSWORD_HASH_SIZE], WalletError> {
     let mut output = [0; PASSWORD_HASH_SIZE];
     PASSWORD_ALGORITHM.hash_password_into(password.as_bytes(), salt, &mut output).map_err(|e| WalletError::AlgorithmHashingError(e.to_string()))?;
     Ok(output)
@@ -256,7 +256,7 @@ impl Wallet {
     }
 
     // Create a new wallet on disk
-    pub fn create(name: String, password: String, seed: Option<String>, network: Network, precomputed_tables: PrecomputedTablesShared) -> Result<Arc<Self>, Error> {
+    pub fn create(name: &str, password: &str, seed: Option<&str>, network: Network, precomputed_tables: PrecomputedTablesShared) -> Result<Arc<Self>, Error> {
         if name.is_empty() {
             return Err(WalletError::EmptyName.into())
         }
@@ -316,7 +316,7 @@ impl Wallet {
     }
 
     // Open an existing wallet on disk
-    pub fn open(name: String, password: String, network: Network, precomputed_tables: PrecomputedTablesShared) -> Result<Arc<Self>, Error> {
+    pub fn open(name: &str, password: &str, network: Network, precomputed_tables: PrecomputedTablesShared) -> Result<Arc<Self>, Error> {
         if name.is_empty() {
             return Err(WalletError::EmptyName.into())
         }
@@ -522,7 +522,7 @@ impl Wallet {
     }
 
     // Verify if a password is valid or not
-    pub async fn is_valid_password(&self, password: String) -> Result<(), Error> {
+    pub async fn is_valid_password(&self, password: &str) -> Result<(), Error> {
         let mut encrypted_storage = self.storage.write().await;
         let storage = encrypted_storage.get_mutable_public_storage();
         let salt = storage.get_password_salt()?;
@@ -534,7 +534,7 @@ impl Wallet {
     }
 
     // change the current password wallet to a new one
-    pub async fn set_password(&self, old_password: String, password: String) -> Result<(), Error> {
+    pub async fn set_password(&self, old_password: &str, password: &str) -> Result<(), Error> {
         let mut encrypted_storage = self.storage.write().await;
         let storage = encrypted_storage.get_mutable_public_storage();
         let (master_key, storage_salt) = {

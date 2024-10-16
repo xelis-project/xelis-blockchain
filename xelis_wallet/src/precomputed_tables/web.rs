@@ -57,8 +57,8 @@ macro_rules! execute {
 }
 
 // Check if the precomputed tables exists
-pub async fn has_precomputed_tables(_: Option<String>) -> Result<bool> {
-    let path = format!("precomputed_tables_{L1_LOW}.bin");
+pub async fn has_precomputed_tables(_: Option<String>, l1: usize) -> Result<bool> {
+    let path = format!("precomputed_tables_{l1}.bin");
 
     let window = window().ok_or(PrecomputedTablesError::Window("window not found in context".to_owned()))?;
     let navigator = window.navigator();
@@ -82,7 +82,7 @@ pub async fn has_precomputed_tables(_: Option<String>) -> Result<bool> {
     if let Some(file_handle) = file_handle {
         // Verify the size of the file
         let file: File = execute!(file_handle.get_file(), IntoFile)?;
-        Ok(file.size() as usize == ECDLPTables::get_required_sizes(L1_LOW).0)
+        Ok(file.size() as usize == ECDLPTables::get_required_sizes(l1).0)
     } else {
         Ok(false)
     }
@@ -90,8 +90,8 @@ pub async fn has_precomputed_tables(_: Option<String>) -> Result<bool> {
 
 // Precomputed tables is too heavy to be stored in local Storage, and generating it on the fly would be too slow
 // So we will generate it on the server and store it in a file, and then we will read it from the file
-pub async fn read_or_generate_precomputed_tables<P: ecdlp::ProgressTableGenerationReportFunction>(_: Option<String>, progress_report: P) -> Result<PrecomputedTablesShared> {
-    let path = format!("precomputed_tables_{L1_LOW}.bin");
+pub async fn read_or_generate_precomputed_tables<P: ecdlp::ProgressTableGenerationReportFunction>(_: Option<String>, l1: usize, progress_report: P) -> Result<PrecomputedTablesShared> {
+    let path = format!("precomputed_tables_{l1}.bin");
 
     let window = window().ok_or(PrecomputedTablesError::Window("window not found in context".to_owned()))?;
     let navigator = window.navigator();
@@ -123,12 +123,12 @@ pub async fn read_or_generate_precomputed_tables<P: ecdlp::ProgressTableGenerati
 
             let value: JsValue = execute!(file.array_buffer(), ArrayBuffer)?;
             let buffer = Uint8Array::new(&value).to_vec();
-            if buffer.len() != ECDLPTables::<L1_LOW>::get_required_sizes().0 {
+            if buffer.len() != ECDLPTables::get_required_sizes(l1).0 {
                 info!("File stored has an invalid size, generating precomputed tables again...");
                 generate_tables(path.as_str(), Some(file_handle), progress_report).await?
             } else {
                 info!("Loading {} bytes", buffer.len());
-                let tables = ecdlp::ECDLPTables::from_bytes(&buffer);
+                let tables = ecdlp::ECDLPTables::from_bytes(l1, &buffer);
                 tables
             }
 
@@ -151,7 +151,7 @@ pub async fn read_or_generate_precomputed_tables<P: ecdlp::ProgressTableGenerati
 }
 
 // Generate the tables and store them in a file if API is available
-async fn generate_tables<const L1: usize, P: ecdlp::ProgressTableGenerationReportFunction>(path: &str, file_handle: Option<FileSystemFileHandle>, progress_report: P) -> Result<ECDLPTables<L1>> {
+async fn generate_tables<P: ecdlp::ProgressTableGenerationReportFunction>(path: &str, file_handle: Option<FileSystemFileHandle>, progress_report: P) -> Result<ECDLPTables> {
     let tables = ecdlp::ECDLPTables::generate_with_progress_report(progress_report)?;
 
     let slice = tables.as_slice();

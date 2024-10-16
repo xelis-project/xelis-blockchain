@@ -131,6 +131,12 @@ pub struct Config {
     /// You will not be able to write CLI commands in it or to have an updated prompt
     #[clap(long)]
     disable_interactive_mode: bool,
+    /// L1 size for precomputed tables
+    /// By default, it is set to 26 (L1_FULL)
+    /// At each increment of 1, the size of the table is doubled
+    /// L1_FULL = 26, L1_MEDIUM = 18, L1_LOW = 13
+    #[clap(long, default_value_t = precomputed_tables::L1_FULL)]
+    precomputed_tables_l1: usize,
     /// Log filename
     /// 
     /// By default filename is xelis-wallet.log.
@@ -197,7 +203,7 @@ impl ecdlp::ProgressTableGenerationReportFunction for LogProgressTableGeneration
 #[tokio::main]
 async fn main() -> Result<()> {
     let config: Config = Config::parse();
-    let prompt = Prompt::new(config.log_level, &config.logs_path, &config.filename_log, config.disable_file_logging, config.disable_file_log_date_based, config.disable_log_color, !config.disable_interactive_mode, config.logs_modules, config.file_log_level.unwrap_or(config.log_level))?;
+    let prompt = Prompt::new(config.log_level, &config.logs_path, &config.filename_log, config.disable_file_logging, config.disable_file_log_date_based, config.disable_log_color, !config.disable_interactive_mode, config.logs_modules.clone(), config.file_log_level.unwrap_or(config.log_level))?;
 
     #[cfg(feature = "api_server")]
     {
@@ -224,27 +230,27 @@ async fn main() -> Result<()> {
     let command_manager = CommandManager::new(prompt.clone());
     command_manager.store_in_context(config.network)?;
 
-    if let Some(path) = config.wallet_path {
+    if let Some(path) = config.wallet_path.as_ref() {
         // read password from option or ask him
-        let password = if let Some(password) = config.password {
-            password
+        let password = if let Some(password) = config.password.as_ref() {
+            password.clone()
         } else {
             prompt.read_input(format!("Enter Password for '{}': ", path), true).await?
         };
 
-        let precomputed_tables = precomputed_tables::read_or_generate_precomputed_tables(config.precomputed_tables_path, LogProgressTableGenerationReportFunction).await?;
-        let p = Path::new(&path);
+        let precomputed_tables = precomputed_tables::read_or_generate_precomputed_tables(config.precomputed_tables_path.as_deref(), config.precomputed_tables_l1, LogProgressTableGenerationReportFunction).await?;
+        let p = Path::new(path);
         let wallet = if p.exists() && p.is_dir() && Path::new(&format!("{}/db", path)).exists() {
             info!("Opening wallet {}", path);
-            Wallet::open(path, password, config.network, precomputed_tables)?
+            Wallet::open(path, &password, config.network, precomputed_tables)?
         } else {
             info!("Creating a new wallet at {}", path);
-            Wallet::create(path, password, config.seed, config.network, precomputed_tables)?
+            Wallet::create(path, &password, config.seed.as_deref(), config.network, precomputed_tables)?
         };
 
         command_manager.register_default_commands()?;
 
-        apply_config(&wallet, #[cfg(feature = "api_server")] &prompt).await;
+        apply_config(config, &wallet, #[cfg(feature = "api_server")] &prompt).await;
         setup_wallet_command_manager(wallet, &command_manager).await?;
     } else {
         register_default_commands(&command_manager).await?;
@@ -345,9 +351,7 @@ async fn xswd_handle_request_permission(prompt: &ShareablePrompt, app_state: App
 }
 
 // Apply the config passed in params
-async fn apply_config(wallet: &Arc<Wallet>, #[cfg(feature = "api_server")] prompt: &ShareablePrompt) {
-    let config: Config = Config::parse();
-
+async fn apply_config(config: Config, wallet: &Arc<Wallet>, #[cfg(feature = "api_server")] prompt: &ShareablePrompt) {
     #[cfg(feature = "network_handler")]
     if !config.offline_mode {
         info!("Trying to connect to daemon at '{}'", config.daemon_address);
@@ -605,15 +609,20 @@ async fn prompt_message_builder(prompt: &Prompt, command_manager: Option<&Comman
 // Open a wallet based on the wallet name and its password
 async fn open_wallet(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
     let prompt = manager.get_prompt();
-    let name = prompt.read_input("Wallet name: ", false)
-        .await.context("Error while reading wallet name")?;
+    let config: Config = Config::parse();
+    let dir = if let Some(path) = config.wallet_path.as_ref() {
+        path.clone()
+    } else {
+        let name = prompt.read_input("Wallet name: ", false)
+            .await.context("Error while reading wallet name")?;
 
-    if name.is_empty() {
-        manager.error("Wallet name cannot be empty");
-        return Ok(())
-    }
+        if name.is_empty() {
+            manager.error("Wallet name cannot be empty");
+            return Ok(())
+        }
+        format!("{}{}", DIR_PATH, name)
+    };
 
-    let dir = format!("{}{}", DIR_PATH, name);
     if !Path::new(&dir).is_dir() {
         manager.message("No wallet found with this name");
         return Ok(())
@@ -625,12 +634,12 @@ async fn open_wallet(manager: &CommandManager, _: ArgumentManager) -> Result<(),
     let wallet = {
         let context = manager.get_context().lock()?;
         let network = context.get::<Network>()?;
-        let precomputed_tables = precomputed_tables::read_or_generate_precomputed_tables(None, LogProgressTableGenerationReportFunction).await?;
-        Wallet::open(dir, password, *network, precomputed_tables)?
+        let precomputed_tables = precomputed_tables::read_or_generate_precomputed_tables(config.precomputed_tables_path.as_deref(), config.precomputed_tables_l1, LogProgressTableGenerationReportFunction).await?;
+        Wallet::open(&dir, &password, *network, precomputed_tables)?
     };
 
     manager.message("Wallet sucessfully opened");
-    apply_config(&wallet, #[cfg(feature = "api_server")] prompt).await;
+    apply_config(config, &wallet, #[cfg(feature = "api_server")] prompt).await;
 
     setup_wallet_command_manager(wallet, manager).await?;
 
@@ -640,19 +649,22 @@ async fn open_wallet(manager: &CommandManager, _: ArgumentManager) -> Result<(),
 // Create a wallet by requesting name, password
 async fn create_wallet(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
     let prompt = manager.get_prompt();
+    let config: Config = Config::parse();
+    let dir = if let Some(path) = config.wallet_path.as_ref() {
+        path.clone()
+    } else {
+        let name = prompt.read_input("Wallet name: ", false)
+            .await.context("Error while reading wallet name")?;
 
-    let name = prompt.read_input("Wallet name: ", false)
-        .await.context("Error while reading wallet name")?;
+        if name.is_empty() {
+            manager.error("Wallet name cannot be empty");
+            return Ok(())
+        }
+        format!("{}{}", DIR_PATH, name)
+    };
 
-    if name.is_empty() {
-        manager.error("Wallet name cannot be empty");
-        return Ok(())
-    }
-
-    let dir = format!("{}{}", DIR_PATH, name);
-    // check if it doesn't exists yet
-    if Path::new(&dir).is_dir() {
-        manager.message("Wallet already exist with this name!");
+    if !Path::new(&dir).is_dir() {
+        manager.message("No wallet found with this name");
         return Ok(())
     }
 
@@ -670,12 +682,12 @@ async fn create_wallet(manager: &CommandManager, _: ArgumentManager) -> Result<(
     let wallet = {
         let context = manager.get_context().lock()?;
         let network = context.get::<Network>()?;
-        let precomputed_tables = precomputed_tables::read_or_generate_precomputed_tables(None, LogProgressTableGenerationReportFunction).await?;
-        Wallet::create(dir, password, None, *network, precomputed_tables)?
+        let precomputed_tables = precomputed_tables::read_or_generate_precomputed_tables(config.precomputed_tables_path.as_deref(), precomputed_tables::L1_FULL, LogProgressTableGenerationReportFunction).await?;
+        Wallet::create(&dir, &password, None, *network, precomputed_tables)?
     };
  
     manager.message("Wallet sucessfully created");
-    apply_config(&wallet, #[cfg(feature = "api_server")] prompt).await;
+    apply_config(config, &wallet, #[cfg(feature = "api_server")] prompt).await;
 
     // Display the seed in prompt
     {
@@ -692,6 +704,24 @@ async fn create_wallet(manager: &CommandManager, _: ArgumentManager) -> Result<(
 // Recover a wallet by requesting its seed, name and password
 async fn recover_wallet(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
     let prompt = manager.get_prompt();
+    let config: Config = Config::parse();
+    let dir = if let Some(path) = config.wallet_path.as_ref() {
+        path.clone()
+    } else {
+        let name = prompt.read_input("Wallet name: ", false)
+            .await.context("Error while reading wallet name")?;
+
+        if name.is_empty() {
+            manager.error("Wallet name cannot be empty");
+            return Ok(())
+        }
+        format!("{}{}", DIR_PATH, name)
+    };
+
+    if !Path::new(&dir).is_dir() {
+        manager.message("No wallet found with this name");
+        return Ok(())
+    }
 
     let seed = prompt.read_input("Seed: ", false)
         .await.context("Error while reading seed")?;
@@ -699,21 +729,6 @@ async fn recover_wallet(manager: &CommandManager, _: ArgumentManager) -> Result<
     let words_count = seed.split_whitespace().count();
     if words_count != 25 && words_count != 24 {
         manager.error("Seed must be 24 or 25 (checksum) words long");
-        return Ok(())
-    }
-
-    let name = prompt.read_input("Wallet name: ", false)
-        .await.context("Error while reading wallet name")?;
-
-    if name.is_empty() {
-        manager.error("Wallet name cannot be empty");
-        return Ok(())
-    }
-
-    let dir = format!("{}{}", DIR_PATH, name);
-    // check if it doesn't exists yet
-    if Path::new(&dir).is_dir() {
-        manager.message("Wallet already exist with this name!");
         return Ok(())
     }
 
@@ -728,16 +743,15 @@ async fn recover_wallet(manager: &CommandManager, _: ArgumentManager) -> Result<
         return Ok(())
     }
 
-
     let wallet = {
         let context = manager.get_context().lock()?;
         let network = context.get::<Network>()?;
-        let precomputed_tables = precomputed_tables::read_or_generate_precomputed_tables(None, LogProgressTableGenerationReportFunction).await?;
-        Wallet::create(dir, password, Some(seed), *network, precomputed_tables)?
+        let precomputed_tables = precomputed_tables::read_or_generate_precomputed_tables(config.precomputed_tables_path.as_deref(), config.precomputed_tables_l1, LogProgressTableGenerationReportFunction).await?;
+        Wallet::create(&dir, &password, Some(&seed), *network, precomputed_tables)?
     };
 
     manager.message("Wallet sucessfully recovered");
-    apply_config(&wallet, #[cfg(feature = "api_server")] prompt).await;
+    apply_config(config, &wallet, #[cfg(feature = "api_server")] prompt).await;
 
     setup_wallet_command_manager(wallet, manager).await?;
 
@@ -760,7 +774,7 @@ async fn change_password(manager: &CommandManager, _: ArgumentManager) -> Result
         .context("Error while asking new password")?;
 
     manager.message("Changing password...");
-    wallet.set_password(old_password, new_password).await?;
+    wallet.set_password(&old_password, &new_password).await?;
     manager.message("Your password has been changed!");
     Ok(())
 }
@@ -1113,7 +1127,7 @@ async fn seed(manager: &CommandManager, mut arguments: ArgumentManager) -> Resul
     let password = prompt.read_input("Password: ", true)
         .await.context("Error while reading password")?;
     // check if password is valid
-    wallet.is_valid_password(password).await?;
+    wallet.is_valid_password(&password).await?;
 
     let language = if arguments.has_argument("language") {
         arguments.get_value("language")?.to_number()?

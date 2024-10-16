@@ -1109,7 +1109,7 @@ impl EncryptedStorage {
 }
 
 impl Storage {
-    pub fn new(name: String) -> Result<Self> {
+    pub fn new(name: &str) -> Result<Self> {
         let db = backend::open(name)?;
 
         Ok(Self {
