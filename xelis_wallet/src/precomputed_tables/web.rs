@@ -125,7 +125,7 @@ pub async fn read_or_generate_precomputed_tables<P: ecdlp::ProgressTableGenerati
             let buffer = Uint8Array::new(&value).to_vec();
             if buffer.len() != ECDLPTables::get_required_sizes(l1).0 {
                 info!("File stored has an invalid size, generating precomputed tables again...");
-                generate_tables(path.as_str(), Some(file_handle), progress_report).await?
+                generate_tables(path.as_str(), l1, Some(file_handle), progress_report).await?
             } else {
                 info!("Loading {} bytes", buffer.len());
                 let tables = ecdlp::ECDLPTables::from_bytes(l1, &buffer);
@@ -143,7 +143,7 @@ pub async fn read_or_generate_precomputed_tables<P: ecdlp::ProgressTableGenerati
                 Some(directory) => Some(execute!(directory.get_file_handle_with_options(path.as_str(), &opts), File)?),
                 None => None
             };
-            generate_tables(path.as_str(), file_handle, progress_report).await?
+            generate_tables(path.as_str(), l1, file_handle, progress_report).await?
         }
     };
 
@@ -151,8 +151,8 @@ pub async fn read_or_generate_precomputed_tables<P: ecdlp::ProgressTableGenerati
 }
 
 // Generate the tables and store them in a file if API is available
-async fn generate_tables<P: ecdlp::ProgressTableGenerationReportFunction>(path: &str, file_handle: Option<FileSystemFileHandle>, progress_report: P) -> Result<ECDLPTables> {
-    let tables = ecdlp::ECDLPTables::generate_with_progress_report(progress_report)?;
+async fn generate_tables<P: ecdlp::ProgressTableGenerationReportFunction>(path: &str, l1: usize, file_handle: Option<FileSystemFileHandle>, progress_report: P) -> Result<ECDLPTables> {
+    let tables = ecdlp::ECDLPTables::generate_with_progress_report(l1, progress_report)?;
 
     let slice = tables.as_slice();
     info!("Precomputed tables generated");
