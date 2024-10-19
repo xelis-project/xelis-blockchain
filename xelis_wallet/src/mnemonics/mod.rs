@@ -63,6 +63,20 @@ pub struct Language<'a> {
     words: [&'a str; WORDS_LIST]
 }
 
+impl<'a> Language<'a> {
+    pub fn get_name(&self) -> &str {
+        self.name
+    }
+
+    pub fn get_words(&self) -> &[&str; WORDS_LIST] {
+        &self.words
+    }
+
+    pub fn get_prefix_length(&self) -> usize {
+        self.prefix_length
+    }
+}
+
 // Calculate the checksum index for the seed based on the language prefix length
 fn calculate_checksum_index(words: &[String], prefix_len: usize) -> Result<u32, MnemonicsError> {
     if words.len() != SEED_LENGTH {
