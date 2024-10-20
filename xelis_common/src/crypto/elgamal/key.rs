@@ -8,7 +8,11 @@ use zeroize::Zeroize;
 use crate::{
     api::DataElement,
     config::MAXIMUM_SUPPLY,
-    crypto::{Address, AddressType},
+    crypto::{
+        proofs::PC_GENS,
+        Address,
+        AddressType
+    },
     serializer::{
         Reader,
         ReaderError,
@@ -21,8 +25,7 @@ use super::{
     hash_and_point_to_scalar,
     pedersen::{DecryptHandle, PedersenCommitment, PedersenOpening},
     CompressedPublicKey,
-    Signature,
-    H
+    Signature
 };
 
 #[derive(Clone)]
@@ -50,7 +53,7 @@ impl PublicKey {
         let s = &secret.0;
         assert!(s != &Scalar::ZERO);
 
-        Self(s.invert() * *H)
+        Self(s.invert() * PC_GENS.B_blinding)
     }
 
     // Encrypt an amount to a Ciphertext
@@ -168,7 +171,7 @@ impl KeyPair {
     // Sign a message with the private key
     pub fn sign(&self, message: &[u8]) -> Signature {
         let k = Scalar::random(&mut OsRng);
-        let r = k * *H;
+        let r = k * PC_GENS.B_blinding;
         let e = hash_and_point_to_scalar(&self.public_key.compress(), message, &r);
         let s = self.private_key.as_scalar().invert() * e + k;
         Signature::new(s, e)

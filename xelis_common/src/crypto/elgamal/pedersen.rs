@@ -1,8 +1,16 @@
 use std::ops::{Add, AddAssign, Sub, SubAssign};
 
-use curve25519_dalek::{traits::MultiscalarMul, RistrettoPoint, Scalar};
+use curve25519_dalek::{RistrettoPoint, Scalar};
 use rand::rngs::OsRng;
-use super::{key::PublicKey, CompressedCommitment, CompressedHandle, G, H};
+
+use crate::crypto::{
+    proofs::PC_GENS,
+    elgamal::{
+        key::PublicKey,
+        CompressedCommitment,
+        CompressedHandle
+    }
+};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PedersenOpening(Scalar);
@@ -40,7 +48,7 @@ impl PedersenCommitment {
         let x: Scalar = amount.into();
         let r = opening.as_scalar();
 
-        Self(RistrettoPoint::multiscalar_mul(&[x, r], &[G, *H]))
+        Self(PC_GENS.commit(x, r))
     }
 
     pub fn as_point(&self) -> &RistrettoPoint {
@@ -100,7 +108,7 @@ impl Add<Scalar> for PedersenCommitment {
     type Output = Self;
 
     fn add(self, rhs: Scalar) -> Self {
-        Self(self.0 + (rhs * G))
+        Self(self.0 + (rhs * PC_GENS.B))
     }
 }
 
@@ -108,7 +116,7 @@ impl Add<&Scalar> for PedersenCommitment {
     type Output = Self;
 
     fn add(self, rhs: &Scalar) -> Self {
-        Self(self.0 + (rhs * G))
+        Self(self.0 + (rhs * PC_GENS.B))
     }
 }
 
@@ -144,13 +152,13 @@ impl AddAssign<&PedersenCommitment> for PedersenCommitment {
 
 impl AddAssign<Scalar> for PedersenCommitment {
     fn add_assign(&mut self, rhs: Scalar) {
-        self.0 += rhs * G;
+        self.0 += rhs * PC_GENS.B;
     }
 }
 
 impl AddAssign<&Scalar> for PedersenCommitment {
     fn add_assign(&mut self, rhs: &Scalar) {
-        self.0 += rhs * G;
+        self.0 += rhs * PC_GENS.B;
     }
 }
 
@@ -188,7 +196,7 @@ impl Sub<Scalar> for PedersenCommitment {
     type Output = Self;
 
     fn sub(self, rhs: Scalar) -> Self {
-        Self(self.0 - rhs * G)
+        Self(self.0 - rhs * PC_GENS.B)
     }
 }
 
@@ -196,7 +204,7 @@ impl Sub<&Scalar> for PedersenCommitment {
     type Output = Self;
 
     fn sub(self, rhs: &Scalar) -> Self {
-        Self(self.0 - rhs * G)
+        Self(self.0 - rhs * PC_GENS.B)
     }
 }
 
@@ -232,13 +240,13 @@ impl SubAssign<&PedersenCommitment> for PedersenCommitment {
 
 impl SubAssign<Scalar> for PedersenCommitment {
     fn sub_assign(&mut self, rhs: Scalar) {
-        self.0 -= rhs * G;
+        self.0 -= rhs * PC_GENS.B;
     }
 }
 
 impl SubAssign<&Scalar> for PedersenCommitment {
     fn sub_assign(&mut self, rhs: &Scalar) {
-        self.0 -= rhs * G;
+        self.0 -= rhs * PC_GENS.B;
     }
 }
 

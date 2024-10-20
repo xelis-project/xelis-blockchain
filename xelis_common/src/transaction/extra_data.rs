@@ -15,15 +15,17 @@ use thiserror::Error;
 
 use crate::{
     api::DataElement,
-    crypto::elgamal::{
-        Ciphertext,
-        CompressedHandle,
-        DecryptHandle,
-        PedersenOpening,
-        PrivateKey,
-        PublicKey,
-        H,
-        RISTRETTO_COMPRESSED_SIZE
+    crypto::{
+        elgamal::{
+            Ciphertext,
+            CompressedHandle,
+            DecryptHandle,
+            PedersenOpening,
+            PrivateKey,
+            PublicKey,
+            RISTRETTO_COMPRESSED_SIZE
+        },
+        proofs::PC_GENS
     },
     serializer::{
         Reader,
@@ -187,7 +189,7 @@ impl Serializer for ExtraData {
 
 /// See [`derive_shared_key`].
 pub fn derive_shared_key_from_opening(opening: &PedersenOpening) -> SharedKey {
-    derive_shared_key(&(opening.as_scalar() * &*H).compress())
+    derive_shared_key(&(opening.as_scalar() * &PC_GENS.B_blinding).compress())
 }
 /// See [`derive_shared_key`].
 pub fn derive_shared_key_from_ct(

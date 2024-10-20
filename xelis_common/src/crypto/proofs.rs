@@ -9,7 +9,15 @@ use merlin::Transcript;
 use rand::rngs::OsRng;
 use thiserror::Error;
 use std::iter;
-use crate::{serializer::{Reader, ReaderError, Serializer, Writer}, transaction::MAX_TRANSFER_COUNT};
+use crate::{
+    serializer::{
+        Reader,
+        ReaderError,
+        Serializer,
+        Writer
+    },
+    transaction::MAX_TRANSFER_COUNT
+};
 
 use super::{
     elgamal::{
@@ -20,7 +28,6 @@ use super::{
         PedersenCommitment,
         PedersenOpening,
         PublicKey,
-        G, H,
         RISTRETTO_COMPRESSED_SIZE,
         SCALAR_SIZE
     },
@@ -103,8 +110,8 @@ impl BatchCollector {
             self.dynamic_points
                 .iter()
                 .cloned()
-                .chain(iter::once(G))
-                .chain(iter::once(*H)),
+                .chain(iter::once(PC_GENS.B))
+                .chain(iter::once(PC_GENS.B_blinding)),
         );
 
         if mega_check.is_identity().into() {
@@ -142,8 +149,8 @@ impl CommitmentEqProof {
 
         let Y_0 = (&y_s * P_source).compress();
         let Y_1 =
-            RistrettoPoint::multiscalar_mul(vec![&y_x, &y_s], vec![&(G), D_source]).compress();
-        let Y_2 = RistrettoPoint::multiscalar_mul(vec![&y_x, &y_r], vec![&(G), &(*H)]).compress();
+            RistrettoPoint::multiscalar_mul([&y_x, &y_s], [&PC_GENS.B, D_source]).compress();
+        let Y_2 = PC_GENS.commit(y_x, y_r).compress();
 
         // record masking factors in the transcript
         transcript.append_point(b"Y_0", &Y_0);
@@ -275,7 +282,7 @@ impl CiphertextValidityProof {
         let mut y_r = Scalar::random(&mut OsRng);
         let mut y_x = Scalar::random(&mut OsRng);
 
-        let Y_0 = RistrettoPoint::multiscalar_mul(vec![&y_r, &y_x], vec![&(*H), &G]).compress();
+        let Y_0 = PC_GENS.commit(y_x, y_r).compress();
         let Y_1 = (&y_r * P_dest).compress();
 
         transcript.append_point(b"Y_0", &Y_0);
