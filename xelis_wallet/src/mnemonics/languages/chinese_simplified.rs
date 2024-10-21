@@ -1,7 +1,7 @@
 use crate::mnemonics::Language;
 
 pub const CHINESE_SIMPLIFIED: Language<'static> = Language {
-    name: "Chiniese Simplified",
+    name: "Chinese Simplified",
     prefix_length: 3,
     words: [
         "的",
