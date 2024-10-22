@@ -35,8 +35,15 @@ impl BalanceProof {
     /// Verify the balance proof.
     pub fn verify(&self, commitment: &PedersenCommitment) -> Result<(), ProofVerificationError> {
         let handle = self.handle.decompress().ok_or(DecompressionError)?;
+        let point = commitment.as_point();
 
-        let calculated_point = commitment.as_point() - handle;
+        // Check if the handle is the same as the commitment.
+        // This is a simple check to avoid fake proofs proving a 0 balance.
+        if handle == *point {
+            return Err(ProofVerificationError::GenericProof);
+        }
+
+        let calculated_point = point - handle;
         let expected_point = Scalar::from(self.amount) * PC_GENS.B;
         if calculated_point != expected_point {
             return Err(ProofVerificationError::GenericProof);
@@ -76,9 +83,15 @@ mod tests {
         let ct = keypair.get_public_key().encrypt(amount);
 
         let proof = BalanceProof::prove(keypair.get_private_key(), amount, &ct);
-        let fake_proof = BalanceProof::new(0, (Scalar::ZERO * ct.handle().as_point()).compress());
-
         assert!(proof.verify(&ct.commitment()).is_ok());
+
+        // Try a fake proof of 0 balance while we know the balance is 100.
+        let fake_proof = BalanceProof::new(0, ct.commitment().as_point().compress());
+        assert!(fake_proof.verify(&ct.commitment()).is_err());
+
+        // Try to generate a proof on another ciphertext that don't use the same opening.
+        let ct_2 = keypair.get_public_key().encrypt(amount);
+        let fake_proof = BalanceProof::prove(keypair.get_private_key(), amount, &ct_2);
         assert!(fake_proof.verify(&ct.commitment()).is_err());
     }
 }
