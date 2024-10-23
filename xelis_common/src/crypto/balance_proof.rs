@@ -93,5 +93,11 @@ mod tests {
         let ct_2 = keypair.get_public_key().encrypt(amount);
         let fake_proof = BalanceProof::prove(keypair.get_private_key(), amount, &ct_2);
         assert!(fake_proof.verify(&ct.commitment()).is_err());
+
+        // Generate a fake amount proof
+        // C - mG = handle
+        let handle = ct.commitment().as_point() - (Scalar::from(250u64) * PC_GENS.B);
+        let fake_proof = BalanceProof::new(250, handle.compress());
+        assert!(fake_proof.verify(&ct.commitment()).is_err());
     }
 }
