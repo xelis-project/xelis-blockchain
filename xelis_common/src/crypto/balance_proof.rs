@@ -70,7 +70,6 @@ impl BalanceProof {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::crypto::KeyPair;
 
     #[test]
     fn test_balance_proof() {
