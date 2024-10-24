@@ -54,7 +54,7 @@ impl BalanceProof {
     /// Verify the balance proof.
     pub fn verify(&self, public_key: &PublicKey, source_ciphertext: Ciphertext, transcript: &mut Transcript, batch_collector: &mut BatchCollector) -> Result<(), ProofVerificationError> {
         // Calculate the commitment that corresponds to the balance amount.
-        let destination_commitment = PedersenCommitment::new_with_opening(Scalar::from(0u64), &Self::OPENING);
+        let destination_commitment = PedersenCommitment::new_with_opening(Scalar::ZERO, &Self::OPENING);
 
         // Compute the zeroed balance
         let ct = public_key.encrypt_with_opening(self.amount, &Self::OPENING);
