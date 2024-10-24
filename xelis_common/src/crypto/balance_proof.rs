@@ -1,53 +1,67 @@
-use curve25519_dalek::{ristretto::CompressedRistretto, Scalar};
+use curve25519_dalek::Scalar;
+use merlin::Transcript;
 use super::{
     elgamal::{
         Ciphertext,
-        DecompressionError,
-        PedersenCommitment
+        PedersenCommitment,
+        PedersenOpening,
+        PublicKey
     },
-    proofs::{ProofVerificationError, PC_GENS},
-    PrivateKey
+    proofs::{
+        BatchCollector,
+        CommitmentEqProof,
+        ProofVerificationError,
+    },
+    KeyPair, ProtocolTranscript
 };
 
-/// A balance proof is a cryptographic proof that a user has a certain amount in its balance.
-/// It is used to prove that a user has enough money to make a transaction.
-/// WARNING: Not audit-ready, this is a simple proof and should be used for testing purposes only.
-/// It may be possible to build a fake proof.
+/// A balance proof is a cryptographic proof to reveal the balance of an account securely.
+/// When Alice wants to prove to Bob that she has a certain amount of money, she can use a balance proof.
+/// The balance proof is a zero-knowledge proof that proves that the difference between the balance ciphertext and the commitment of the balance amount is zero.
+/// In other words, the balance proof proves that the balance amount is equal to the amount that was encrypted in the ciphertext.
+/// The advantage of a Balance proof is to provide a one time proof that is outdated once the balance is again updated.
 pub struct BalanceProof {
     /// The expected balance amount.
     amount: u64,
-    /// The decrypted handle such as `s * D` where s is the private key and D is the decrypt handle of the ciphertext.
-    handle: CompressedRistretto,
+    /// The commitment proof.
+    commitment_eq_proof: CommitmentEqProof,
 }
 
 impl BalanceProof {
+    /// The opening used for the balance proof.
+    /// This is a constant value that is used to generate & verify the balance proof.
+    /// We use a constant opening to gain some space and because we don't need to hide the opening.
+    const OPENING: PedersenOpening = PedersenOpening::from_scalar(Scalar::ONE);
+
     /// Create a new balance proof.
-    pub fn new(amount: u64, handle: CompressedRistretto) -> Self {
-        Self { amount, handle }
+    pub fn new(amount: u64, commitment_eq_proof: CommitmentEqProof) -> Self {
+        Self { amount, commitment_eq_proof }
     }
 
     /// Prove the balance proof.
-    pub fn prove(sk: &PrivateKey, amount: u64, ciphertext: &Ciphertext) -> Self {
-        let handle = sk.as_scalar() * ciphertext.handle().as_point();
-        Self::new(amount, handle.compress())
+    pub fn prove(keypair: &KeyPair, amount: u64, ciphertext: Ciphertext, transcript: &mut Transcript) -> Self {
+        // Compute the zeroed balance
+        let ct = keypair.get_public_key().encrypt_with_opening(amount, &Self::OPENING);
+        let zeroed_balance = ciphertext - ct;
+
+        transcript.balance_proof_domain_separator();
+        // Generate the proof that the final balance is 0 after applying the commitment.
+        let commitment_eq_proof = CommitmentEqProof::new(keypair, &zeroed_balance, &Self::OPENING, 0, transcript);
+
+        Self::new(amount, commitment_eq_proof)
     }
 
     /// Verify the balance proof.
-    pub fn verify(&self, commitment: &PedersenCommitment) -> Result<(), ProofVerificationError> {
-        let handle = self.handle.decompress().ok_or(DecompressionError)?;
-        let point = commitment.as_point();
+    pub fn verify(&self, public_key: &PublicKey, source_ciphertext: Ciphertext, transcript: &mut Transcript, batch_collector: &mut BatchCollector) -> Result<(), ProofVerificationError> {
+        // Calculate the commitment that corresponds to the balance amount.
+        let destination_commitment = PedersenCommitment::new_with_opening(Scalar::from(0u64), &Self::OPENING);
 
-        // Check if the handle is the same as the commitment.
-        // This is a simple check to avoid fake proofs proving a 0 balance.
-        if handle == *point {
-            return Err(ProofVerificationError::GenericProof);
-        }
+        // Compute the zeroed balance
+        let ct = public_key.encrypt_with_opening(self.amount, &Self::OPENING);
+        let zeroed_balance = source_ciphertext - ct;
 
-        let calculated_point = point - handle;
-        let expected_point = Scalar::from(self.amount) * PC_GENS.B;
-        if calculated_point != expected_point {
-            return Err(ProofVerificationError::GenericProof);
-        }
+        transcript.balance_proof_domain_separator();
+        self.commitment_eq_proof.pre_verify(public_key, &zeroed_balance, &destination_commitment, transcript, batch_collector)?;
 
         Ok(())
     }
@@ -58,46 +72,62 @@ mod tests {
     use super::*;
     use crate::crypto::KeyPair;
 
-    fn test_proof(amount_prove: u64, amount_ct: u64) -> bool {
-        let keypair = KeyPair::new();
-        let ct = keypair.get_public_key().encrypt(amount_ct);
-
-        let proof = BalanceProof::prove(keypair.get_private_key(), amount_prove, &ct);
-        proof.verify(&ct.commitment()).is_ok()
-    }
-
     #[test]
     fn test_balance_proof() {
-        assert!(test_proof(100, 100));
-    }
-
-    #[test]
-    fn test_invalid_balance_proof() {
-        assert!(!test_proof(100, 200));
-    }
-
-    #[test]
-    fn test_fake_balance_proof() {
         let keypair = KeyPair::new();
+        // Generate the balance
         let amount = 100u64;
         let ct = keypair.get_public_key().encrypt(amount);
 
-        let proof = BalanceProof::prove(keypair.get_private_key(), amount, &ct);
-        assert!(proof.verify(&ct.commitment()).is_ok());
+        // Create proof
+        let mut transcript = Transcript::new(b"test");
+        let proof = BalanceProof::prove(&keypair, amount, ct.clone(), &mut transcript);
 
-        // Try a fake proof of 0 balance while we know the balance is 100.
-        let fake_proof = BalanceProof::new(0, ct.commitment().as_point().compress());
-        assert!(fake_proof.verify(&ct.commitment()).is_err());
+        // Verify the proof
+        let mut transcript = Transcript::new(b"test");
+        let mut batch_collector = BatchCollector::default();
+        assert!(proof.verify(keypair.get_public_key(), ct, &mut transcript, &mut batch_collector).is_ok());
+        assert!(batch_collector.verify().is_ok());
+    }
 
-        // Try to generate a proof on another ciphertext that don't use the same opening.
-        let ct_2 = keypair.get_public_key().encrypt(amount);
-        let fake_proof = BalanceProof::prove(keypair.get_private_key(), amount, &ct_2);
-        assert!(fake_proof.verify(&ct.commitment()).is_err());
+    #[test]
+    fn test_invalid_amount_balance_proof() {
+        let keypair = KeyPair::new();
+        // Generate the balance
+        let amount = 100u64;
+        let ct = keypair.get_public_key().encrypt(amount);
 
-        // Generate a fake amount proof
-        // C - mG = handle
-        let handle = ct.commitment().as_point() - (Scalar::from(250u64) * PC_GENS.B);
-        let fake_proof = BalanceProof::new(250, handle.compress());
-        assert!(fake_proof.verify(&ct.commitment()).is_err());
+        // Create proof with a lower amount than our balance
+        let mut transcript = Transcript::new(b"test");
+        let proof = BalanceProof::prove(&keypair, 95, ct.clone(), &mut transcript);
+
+        // Verify the proof
+        let mut transcript = Transcript::new(b"test");
+        let mut batch_collector = BatchCollector::default();
+
+        proof.verify(keypair.get_public_key(), ct, &mut transcript, &mut batch_collector).unwrap();
+        assert!(batch_collector.verify().is_err());
+    }
+
+    #[test]
+    fn test_invalid_balance_ciphertext_balance_proof() {
+        let keypair = KeyPair::new();
+        // Generate the balance
+        let amount = 100u64;
+        let ct = keypair.get_public_key().encrypt(amount);
+
+        // Create proof with a lower amount than our balance
+        let mut transcript = Transcript::new(b"test");
+        let proof = BalanceProof::prove(&keypair, amount, ct, &mut transcript);
+
+        // Verify the proof
+        let mut transcript = Transcript::new(b"test");
+        let mut batch_collector = BatchCollector::default();
+
+        // Generate another ciphertext with same amount
+        let ct = keypair.get_public_key().encrypt(amount);
+
+        proof.verify(keypair.get_public_key(), ct, &mut transcript, &mut batch_collector).unwrap();
+        assert!(batch_collector.verify().is_err());
     }
 }

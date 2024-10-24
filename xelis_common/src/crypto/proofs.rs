@@ -460,9 +460,9 @@ mod tests {
 
         // Generate the ciphertext representing the TX amount
         let amount = 5;
-        let opening = PedersenOpening::generate_new();
-        let ciphertext = keypair.get_public_key().encrypt_with_opening(amount, &opening);
+        let ciphertext = keypair.get_public_key().encrypt(amount);
 
+        let opening = PedersenOpening::generate_new();
         // Commitment of the final balance using the same Opening
         let commitment = PedersenCommitment::new_with_opening(balance - amount, &opening);
 
