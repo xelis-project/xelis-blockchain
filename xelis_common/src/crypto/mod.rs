@@ -1,7 +1,6 @@
 mod hash;
 mod address;
 mod transcript;
-mod balance_proof;
 
 pub mod elgamal;
 pub mod proofs;

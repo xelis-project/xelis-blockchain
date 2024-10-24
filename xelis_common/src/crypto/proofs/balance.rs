@@ -1,24 +1,27 @@
 use curve25519_dalek::Scalar;
 use merlin::Transcript;
-use crate::serializer::{
-    Reader,
-    ReaderError,
-    Serializer,
-    Writer
-};
-use super::{
-    elgamal::{
-        Ciphertext,
-        PedersenCommitment,
-        PedersenOpening,
-        PublicKey
+use crate::{
+    crypto::{
+        elgamal::{
+            Ciphertext,
+            PedersenCommitment,
+            PedersenOpening,
+            PublicKey
+        },
+        proofs::{
+            BatchCollector,
+            CommitmentEqProof,
+            ProofVerificationError,
+        },
+        KeyPair,
+        ProtocolTranscript
     },
-    proofs::{
-        BatchCollector,
-        CommitmentEqProof,
-        ProofVerificationError,
-    },
-    KeyPair, ProtocolTranscript
+    serializer::{
+        Reader,
+        ReaderError,
+        Serializer,
+        Writer
+    }
 };
 
 /// A balance proof is a cryptographic proof to reveal the balance of an account securely.
