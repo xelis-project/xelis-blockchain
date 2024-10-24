@@ -1,6 +1,7 @@
 mod hash;
 mod address;
 mod transcript;
+mod human_readable_proof;
 
 pub mod elgamal;
 pub mod proofs;

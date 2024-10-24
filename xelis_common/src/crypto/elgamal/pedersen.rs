@@ -16,7 +16,7 @@ use crate::crypto::{
 pub struct PedersenOpening(Scalar);
 
 impl PedersenOpening {
-    pub fn from_scalar(scalar: Scalar) -> Self {
+    pub const fn from_scalar(scalar: Scalar) -> Self {
         Self(scalar)
     }
 

@@ -27,6 +27,9 @@ pub const PREFIX_ADDRESS: &str = "xel";
 // testnet prefix address
 pub const TESTNET_PREFIX_ADDRESS: &str = "xet";
 
+// Proof prefix
+pub const PREFIX_PROOF: &str = "proof";
+
 // 1 KB = 1024 bytes
 pub const BYTES_PER_KB: usize = 1024;
 
