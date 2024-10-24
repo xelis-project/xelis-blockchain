@@ -1,5 +1,11 @@
 use curve25519_dalek::Scalar;
 use merlin::Transcript;
+use crate::serializer::{
+    Reader,
+    ReaderError,
+    Serializer,
+    Writer
+};
 use super::{
     elgamal::{
         Ciphertext,
@@ -64,6 +70,20 @@ impl BalanceProof {
         self.commitment_eq_proof.pre_verify(public_key, &zeroed_balance, &destination_commitment, transcript, batch_collector)?;
 
         Ok(())
+    }
+}
+
+impl Serializer for BalanceProof {
+    fn write(&self, writer: &mut Writer) {
+        self.amount.write(writer);
+        self.commitment_eq_proof.write(writer);
+    }
+
+    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
+        let amount = u64::read(reader)?;
+        let commitment_eq_proof = CommitmentEqProof::read(reader)?;
+
+        Ok(Self::new(amount, commitment_eq_proof))
     }
 }
 
