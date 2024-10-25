@@ -1,4 +1,6 @@
+use std::fmt::{self, Display, Formatter};
 use anyhow::Error;
+use serde::de::Error as SerdeError;
 
 use crate::{
     config::PREFIX_PROOF,
@@ -68,6 +70,31 @@ impl Serializer for HumanReadableProof {
         };
 
         Ok(proof)
+    }
+}
+
+impl serde::Serialize for HumanReadableProof {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&self.to_string())
+    }
+}
+
+impl<'a> serde::Deserialize<'a> for HumanReadableProof {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'a>
+    {
+        let s = String::deserialize(deserializer)?;
+        HumanReadableProof::from_string(&s).map_err(SerdeError::custom)
+    }
+}
+
+impl Display for HumanReadableProof {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.as_string().map_err(|_| fmt::Error)?)
     }
 }
 
