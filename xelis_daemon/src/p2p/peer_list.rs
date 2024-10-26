@@ -21,6 +21,7 @@ use std::{
 use humantime::format_duration;
 use serde::{Serialize, Deserialize};
 use tokio::sync::{mpsc::Sender, RwLock};
+use x25519_dalek::PublicKey;
 use xelis_common::{
     api::daemon::Direction,
     block::TopoHeight,
@@ -68,7 +69,11 @@ pub struct PeerListEntry {
     local_port: Option<u16>,
     // Until when the peer is banned
     temp_ban_until: Option<u64>,
-    state: PeerListEntryState
+    state: PeerListEntryState,
+    // public key used for the DH key exchange
+    // It is optional because we want to create peerlist entries without a public key
+    // for banlist etc
+    public_key: Option<PublicKey>
 }
 
 impl PeerList {
@@ -544,7 +549,8 @@ impl PeerListEntry {
             fail_count: 0,
             local_port,
             temp_ban_until: None,
-            state
+            state,
+            public_key: None
         }
     }
 
@@ -599,6 +605,14 @@ impl PeerListEntry {
     fn get_local_port(&self) -> Option<u16> {
         self.local_port
     }
+
+    pub fn get_public_key(&self) -> Option<&PublicKey> {
+        self.public_key.as_ref()
+    }
+
+    pub fn set_public_key(&mut self, public_key: PublicKey) {
+        self.public_key = Some(public_key);
+    }
 }
 
 impl Display for PeerListEntry {
@@ -643,6 +657,11 @@ impl Serializer for PeerListEntry {
         writer.write_optional_non_zero_u16(self.local_port);
         self.temp_ban_until.write(writer);
         self.state.write(writer);
+
+        writer.write_bool(self.public_key.is_some());
+        if let Some(public_key) = &self.public_key {
+            public_key.as_bytes().write(writer);
+        }
     }
 
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
@@ -653,6 +672,7 @@ impl Serializer for PeerListEntry {
         let local_port = reader.read_optional_non_zero_u16()?;
         let temp_ban_until = Option::read(reader)?;
         let state = PeerListEntryState::read(reader)?;
+        let public_key = Option::<[u8; 32]>::read(reader)?.map(PublicKey::from);
 
         Ok(Self {
             first_seen,
@@ -661,7 +681,8 @@ impl Serializer for PeerListEntry {
             fail_count,
             local_port,
             temp_ban_until,
-            state
+            state,
+            public_key
         })
     }
 }

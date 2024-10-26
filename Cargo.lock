@@ -660,7 +660,7 @@ version = "5.0.2"
 source = "git+https://github.com/xelis-project/bulletproofs?branch=main#d950e30eec804e27bf7bbb1853158c788acb3deb"
 dependencies = [
  "byteorder",
- "curve25519-dalek 4.1.3",
+ "curve25519-dalek 4.1.3 (git+https://github.com/xelis-project/curve25519-dalek?branch=main)",
  "digest 0.10.7",
  "group",
  "merlin",
@@ -1026,12 +1026,28 @@ dependencies = [
 [[package]]
 name = "curve25519-dalek"
 version = "4.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "97fb8b7c4503de7d6ae7b42ab72a5a59857b4c937ec27a3d4539dba95b5ab2be"
+dependencies = [
+ "cfg-if",
+ "cpufeatures",
+ "curve25519-dalek-derive 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "fiat-crypto",
+ "rustc_version",
+ "serde",
+ "subtle",
+ "zeroize",
+]
+
+[[package]]
+name = "curve25519-dalek"
+version = "4.1.3"
 source = "git+https://github.com/xelis-project/curve25519-dalek?branch=main#cfcef48b85ee9b8e6c25ee1581c57dbb2bd8f846"
 dependencies = [
  "bytemuck",
  "cfg-if",
  "cpufeatures",
- "curve25519-dalek-derive",
+ "curve25519-dalek-derive 0.1.1 (git+https://github.com/xelis-project/curve25519-dalek?branch=main)",
  "digest 0.10.7",
  "fiat-crypto",
  "group",
@@ -1040,6 +1056,17 @@ dependencies = [
  "serde",
  "subtle",
  "zeroize",
+]
+
+[[package]]
+name = "curve25519-dalek-derive"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f46882e17999c6cc590af592290432be3bce0428cb0d5f8b6715e4dc7b383eb3"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.79",
 ]
 
 [[package]]
@@ -3462,6 +3489,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "x25519-dalek"
+version = "2.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c7e468321c81fb07fa7f4c636c3972b9100f0346e5b6a9f2bd0603a52f7ed277"
+dependencies = [
+ "curve25519-dalek 4.1.3 (registry+https://github.com/rust-lang/crates.io-index)",
+ "rand_core 0.6.4",
+ "serde",
+ "zeroize",
+]
+
+[[package]]
 name = "xelis-hash"
 version = "0.1.0"
 source = "git+https://github.com/xelis-project/xelis-hash?branch=master#a10e44a6d1db8beb42f9324f29501d0b6de29849"
@@ -3491,7 +3530,7 @@ dependencies = [
  "clap",
  "console-subscriber",
  "crossterm",
- "curve25519-dalek 4.1.3",
+ "curve25519-dalek 4.1.3 (git+https://github.com/xelis-project/curve25519-dalek?branch=main)",
  "fern",
  "futures-util",
  "getrandom 0.2.15",
@@ -3546,6 +3585,7 @@ dependencies = [
  "sled",
  "thiserror",
  "tokio",
+ "x25519-dalek",
  "xelis_common",
 ]
 

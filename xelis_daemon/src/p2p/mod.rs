@@ -7,6 +7,7 @@ pub mod chain_validator;
 mod tracker;
 mod encryption;
 mod disk_cache;
+mod diffie_hellman;
 
 pub use encryption::EncryptionKey;
 
@@ -173,7 +174,9 @@ pub struct P2pServer<S: Storage> {
     // Are we syncing the chain with another peer
     is_syncing: AtomicBool,
     // Exit channel to notify all tasks to stop
-    exit_sender: broadcast::Sender<()>
+    exit_sender: broadcast::Sender<()>,
+    // Diffie-Hellman keypair
+    dh_keypair: diffie_hellman::DHKeyPair,
 }
 
 impl<S: Storage> P2pServer<S> {
@@ -225,6 +228,7 @@ impl<S: Storage> P2pServer<S> {
             is_syncing: AtomicBool::new(false),
             outgoing_connections_disabled: AtomicBool::new(disable_outgoing_connections),
             exit_sender,
+            dh_keypair: diffie_hellman::DHKeyPair::new(),
         };
 
         let arc = Arc::new(server);
@@ -653,7 +657,7 @@ impl<S: Storage> P2pServer<S> {
         trace!("New connection: {}", connection);
 
         // Exchange encryption keys
-        connection.exchange_keys(buf).await?;
+        connection.exchange_keys(&self.dh_keypair, buf).await?;
 
         // Start handshake now
         connection.set_state(State::Handshake);
