@@ -182,7 +182,7 @@ pub struct P2pServer<S: Storage> {
 }
 
 impl<S: Storage> P2pServer<S> {
-    pub fn new(concurrency: usize, dir_path: Option<String>, tag: Option<String>, max_peers: usize, bind_address: String, blockchain: Arc<Blockchain<S>>, use_peerlist: bool, exclusive_nodes: Vec<SocketAddr>, allow_fast_sync_mode: bool, allow_boost_sync_mode: bool, max_chain_response_size: Option<usize>, sharable: bool, disable_outgoing_connections: bool, dh_action: diffie_hellman::KeyVerificationAction) -> Result<Arc<Self>, P2pError> {
+    pub fn new(concurrency: usize, dir_path: Option<String>, tag: Option<String>, max_peers: usize, bind_address: String, blockchain: Arc<Blockchain<S>>, use_peerlist: bool, exclusive_nodes: Vec<SocketAddr>, allow_fast_sync_mode: bool, allow_boost_sync_mode: bool, max_chain_response_size: Option<usize>, sharable: bool, disable_outgoing_connections: bool, dh_keypair: Option<diffie_hellman::DHKeyPair>, dh_action: diffie_hellman::KeyVerificationAction) -> Result<Arc<Self>, P2pError> {
         if tag.as_ref().is_some_and(|tag| tag.len() == 0 || tag.len() > 16) {
             return Err(P2pError::InvalidTag);
         }
@@ -233,7 +233,7 @@ impl<S: Storage> P2pServer<S> {
             is_syncing: AtomicBool::new(false),
             outgoing_connections_disabled: AtomicBool::new(disable_outgoing_connections),
             exit_sender,
-            dh_keypair: diffie_hellman::DHKeyPair::new(),
+            dh_keypair: dh_keypair.unwrap_or_else(diffie_hellman::DHKeyPair::new),
             dh_action
         };
 

@@ -1,5 +1,36 @@
+use std::{fmt, str::FromStr};
+
 pub use x25519_dalek::{PublicKey, StaticSecret};
 use rand::rngs::OsRng;
+
+/// A wrapped secret key
+/// For clap implementation
+#[derive(Clone)]
+pub struct WrappedSecret(StaticSecret);
+
+impl fmt::Debug for WrappedSecret {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "WrappedSecret")
+    }
+}
+
+impl From<WrappedSecret> for StaticSecret {
+    fn from(wrapped: WrappedSecret) -> Self {
+        wrapped.0
+    }
+}
+
+impl From<StaticSecret> for WrappedSecret {
+    fn from(secret: StaticSecret) -> Self {
+        Self(secret)
+    }
+}
+
+impl From<WrappedSecret> for DHKeyPair {
+    fn from(wrapped: WrappedSecret) -> Self {
+        DHKeyPair::from(wrapped.0)
+    }
+}
 
 /// The action to take when a key is different from the one stored locally
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
@@ -48,5 +79,19 @@ impl DHKeyPair {
     #[inline]
     pub fn get_shared_secret(&self, pub_key: &PublicKey) -> [u8; 32] {
         self.priv_key.diffie_hellman(pub_key).to_bytes()
+    }
+}
+
+impl FromStr for WrappedSecret {
+    type Err = &'static str;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let decoded: [u8; 32] = hex::decode(s)
+            .map_err(|_| "Invalid hex")?
+            .try_into()
+            .map_err(|_| "Invalid decoded size")?;
+
+        let priv_key = StaticSecret::from(decoded);
+        Ok(Self(priv_key))
     }
 }
