@@ -39,10 +39,14 @@ type P2pResult<T> = Result<T, P2pError>;
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum State {
-    Pending, // connection is new, no handshake received
-    KeyExchange, // start exchanging keys
-    Handshake, // handshake received, not checked
-    Success // connection is ready
+    // connection is new, no handshake received
+    Pending,
+    // start exchanging keys
+    KeyExchange,
+    // handshake received, not checked
+    Handshake,
+    // connection is ready
+    Success
 }
 
 pub struct Connection {
@@ -98,17 +102,18 @@ impl Connection {
     }
 
     // Do a key exchange with the peer
-    // If we are the client, we send our key first in plaintext
-    // We wait for the peer to send its key
-    // If we are the server, we send back our key
-    // NOTE: This doesn't prevent any MITM at this point
+    // We use the Diffie-Hellman key exchange to generate a shared secret
+    // The shared secret is used to encrypt the generated (symetric) encryption key
+    // The encryption key is then used to encrypt the packets
+    // Each party will have its own key
+    // NOTE: This doesn't prevent any MITM if there is not a strict verification of the DH key of the peer.
     // Because a MITM could intercept the key and send its own key to the peer
     // and play the role as a proxy.
     // Afaik, there is no way to have a decentralized way to prevent MITM without trusting a third party
     // (That's what TLS/SSL does with the CA, but it's not decentralized and it's not trustless)
     // A potential idea would be to hardcode seed nodes keys,
     // and each nodes share the key of other along the socket address
-    pub async fn exchange_keys(&mut self, keypair: &diffie_hellman::DHKeyPair, buffer: &mut [u8]) -> P2pResult<()> {
+    pub async fn exchange_keys(&mut self, keypair: &diffie_hellman::DHKeyPair, expected_key: Option<&diffie_hellman::PublicKey>, action: diffie_hellman::KeyVerificationAction, buffer: &mut [u8]) -> P2pResult<diffie_hellman::PublicKey> {
         trace!("Exchanging keys with {}", self.addr);
 
         // Update our state
@@ -133,9 +138,28 @@ impl Connection {
 
         trace!("Received DH key from {}", self.addr);
 
-        let peer_key = diffie_hellman::PublicKey::from(peer_dh_key.into_owned());
+        let peer_dh_key = diffie_hellman::PublicKey::from(peer_dh_key.into_owned());
+
+        // Verify the key of the peer
+        if let Some(expected_key) = expected_key {
+            if expected_key != &peer_dh_key {
+                match action {
+                    diffie_hellman::KeyVerificationAction::Warn => {
+                        warn!("Expected Diffie-Hellman key from {} is different from the received key, ignoring", self.addr);
+                    },
+                    diffie_hellman::KeyVerificationAction::Reject => {
+                        error!("Expected Diffie-Hellman key from {} is different from the received key", self.addr);
+                        return Err(P2pError::InvalidDHKey);
+                    },
+                    diffie_hellman::KeyVerificationAction::Ignore => {
+                        debug!("Expected Diffie-Hellman key from {} is different from the received key, ignoring", self.addr);
+                    }
+                }
+            }
+        }
+
         // the secret generated is used to encrypt our newly generated encryption key
-        let secret = keypair.get_shared_secret(&peer_key);
+        let secret = keypair.get_shared_secret(&peer_dh_key);
 
         // Send our newly generated key if we initiated the connection
         {
@@ -165,7 +189,7 @@ impl Connection {
 
         trace!("Key exchange with {} successful", self.addr);
 
-        Ok(())
+        Ok(peer_dh_key)
     }
 
     // Verify if its a outgoing connection

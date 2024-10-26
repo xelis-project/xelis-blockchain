@@ -538,6 +538,30 @@ impl PeerList {
 
         Ok(true)
     }
+
+    // Get the public key of a peer from the stored peerlist
+    pub async fn get_dh_key_for_peer(&self, ip: &IpAddr) -> Result<Option<PublicKey>, P2pError> {
+        if self.cache.has_peerlist_entry(ip)? {
+            let entry = self.cache.get_peerlist_entry(ip)?;
+            Ok(entry.take_public_key())
+        } else {
+            Ok(None)
+        }
+    }
+
+    // Store the public key of a peer in the stored peerlist
+    pub async fn store_dh_key_for_peer(&self, ip: &IpAddr, public_key: PublicKey) -> Result<(), P2pError> {
+        let mut entry = if self.cache.has_peerlist_entry(ip)? {
+            self.cache.get_peerlist_entry(ip)?
+        } else {
+            PeerListEntry::new(None, PeerListEntryState::Graylist)
+        };
+
+        entry.set_public_key(public_key);
+        self.cache.set_peerlist_entry(ip, entry)?;
+
+        Ok(())
+    }
 }
 
 impl PeerListEntry {
@@ -606,8 +630,8 @@ impl PeerListEntry {
         self.local_port
     }
 
-    pub fn get_public_key(&self) -> Option<&PublicKey> {
-        self.public_key.as_ref()
+    pub fn take_public_key(self) -> Option<PublicKey> {
+        self.public_key
     }
 
     pub fn set_public_key(&mut self, public_key: PublicKey) {
