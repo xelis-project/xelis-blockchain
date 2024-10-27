@@ -2,6 +2,7 @@ mod ciphertext_validity;
 mod commitment_eq;
 mod range_proof;
 mod balance;
+mod ownership;
 
 use std::iter;
 use curve25519_dalek::{
@@ -19,6 +20,7 @@ use super::{elgamal::DecompressionError, TranscriptError};
 pub use commitment_eq::CommitmentEqProof;
 pub use ciphertext_validity::CiphertextValidityProof;
 pub use balance::BalanceProof;
+pub use ownership::OwnershipProof;
 
 // We are using 64 bits for the bulletproofs
 pub const BULLET_PROOF_SIZE: usize = 64;
