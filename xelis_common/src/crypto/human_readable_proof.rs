@@ -127,7 +127,7 @@ mod tests {
         // Verify it
         let mut transcript = Transcript::new(b"test");
         let mut batch_collector = BatchCollector::default();
-        assert!(proof.verify(keypair.get_public_key(), ct, &mut transcript, &mut batch_collector).is_ok());
+        assert!(proof.pre_verify(keypair.get_public_key(), ct, &mut transcript, &mut batch_collector).is_ok());
         assert!(batch_collector.verify().is_ok());
     }
 }

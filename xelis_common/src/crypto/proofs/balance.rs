@@ -63,7 +63,7 @@ impl BalanceProof {
     }
 
     /// Verify the balance proof.
-    pub fn verify(&self, public_key: &PublicKey, source_ciphertext: Ciphertext, transcript: &mut Transcript, batch_collector: &mut BatchCollector) -> Result<(), ProofVerificationError> {
+    pub fn pre_verify(&self, public_key: &PublicKey, source_ciphertext: Ciphertext, transcript: &mut Transcript, batch_collector: &mut BatchCollector) -> Result<(), ProofVerificationError> {
         transcript.balance_proof_domain_separator();
         transcript.append_u64(b"amount", self.amount);
 
@@ -112,7 +112,7 @@ mod tests {
         // Verify the proof
         let mut transcript = Transcript::new(b"test");
         let mut batch_collector = BatchCollector::default();
-        assert!(proof.verify(keypair.get_public_key(), ct, &mut transcript, &mut batch_collector).is_ok());
+        assert!(proof.pre_verify(keypair.get_public_key(), ct, &mut transcript, &mut batch_collector).is_ok());
         assert!(batch_collector.verify().is_ok());
     }
 
@@ -131,7 +131,7 @@ mod tests {
         let mut transcript = Transcript::new(b"test");
         let mut batch_collector = BatchCollector::default();
 
-        proof.verify(keypair.get_public_key(), ct, &mut transcript, &mut batch_collector).unwrap();
+        proof.pre_verify(keypair.get_public_key(), ct, &mut transcript, &mut batch_collector).unwrap();
         assert!(batch_collector.verify().is_err());
     }
 
@@ -153,7 +153,7 @@ mod tests {
         // Generate another ciphertext with same amount
         let ct = keypair.get_public_key().encrypt(amount);
 
-        proof.verify(keypair.get_public_key(), ct, &mut transcript, &mut batch_collector).unwrap();
+        proof.pre_verify(keypair.get_public_key(), ct, &mut transcript, &mut batch_collector).unwrap();
         assert!(batch_collector.verify().is_err());
     }
 }
