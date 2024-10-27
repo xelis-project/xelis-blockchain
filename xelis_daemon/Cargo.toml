@@ -21,6 +21,7 @@ humantime = "2.1.0"
 human_bytes = "0.4.2"
 lazy_static = "1.4.0"
 chacha20poly1305 = "0.10.1"
+x25519-dalek = { version = "2.0.1", features = ["serde", "zeroize", "static_secrets"] }
 
 # Common dependencies
 tokio = { version = "1", features = ["rt-multi-thread", "io-util", "io-std", "time", "macros", "sync", "net"] }

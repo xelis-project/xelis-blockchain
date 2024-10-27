@@ -38,7 +38,11 @@ use xelis_common::{
         PublicKey,
         HASH_SIZE
     },
-    difficulty::{check_difficulty, CumulativeDifficulty, Difficulty},
+    difficulty::{
+        check_difficulty,
+        CumulativeDifficulty,
+        Difficulty
+    },
     immutable::Immutable,
     network::Network,
     serializer::Serializer,
@@ -47,7 +51,11 @@ use xelis_common::{
         get_current_time_in_seconds,
         TimestampMillis
     },
-    transaction::{verify::BlockchainVerificationState, Transaction, TransactionType},
+    transaction::{
+        verify::BlockchainVerificationState,
+        Transaction,
+        TransactionType
+    },
     utils::{calculate_tx_fee, format_xelis},
     tokio::spawn_task,
     varuint::VarUint
@@ -74,7 +82,10 @@ use crate::{
         state::{ChainState, ApplicableChainState},
         hard_fork::*
     },
-    p2p::P2pServer,
+    p2p::{
+        P2pServer,
+        diffie_hellman::{KeyVerificationAction, WrappedSecret},
+    },
     rpc::{
         rpc::{
             get_block_type_for_block,
@@ -201,6 +212,12 @@ pub struct Config {
     /// Limit of concurrent tasks accepting new incoming connections.
     #[clap(long, default_value_t = P2P_DEFAULT_CONCURRENCY_TASK_COUNT_LIMIT)]
     pub p2p_concurrency_task_count_limit: usize,
+    /// Execute a specific action when the P2p Diffie-Hellman Key of a peer is different from our stored one.
+    /// By default, it will ignore the key change and update it.
+    #[clap(long, value_enum, default_value_t = KeyVerificationAction::Ignore)]
+    pub p2p_on_dh_key_change: KeyVerificationAction,
+    /// P2p DH private key to use.
+    pub p2p_private_key: Option<WrappedSecret>,
     /// Skip the TXs verification when building a block template.
     #[clap(long)]
     pub skip_block_template_txs_verification: bool
@@ -351,7 +368,7 @@ impl<S: Storage> Blockchain<S> {
                 }
             }
 
-            match P2pServer::new(config.p2p_concurrency_task_count_limit, config.dir_path, config.tag, config.max_peers, config.p2p_bind_address, Arc::clone(&arc), exclusive_nodes.is_empty(), exclusive_nodes, config.allow_fast_sync, config.allow_boost_sync, config.max_chain_response_size, !config.disable_ip_sharing, config.disable_p2p_outgoing_connections) {
+            match P2pServer::new(config.p2p_concurrency_task_count_limit, config.dir_path, config.tag, config.max_peers, config.p2p_bind_address, Arc::clone(&arc), exclusive_nodes.is_empty(), exclusive_nodes, config.allow_fast_sync, config.allow_boost_sync, config.max_chain_response_size, !config.disable_ip_sharing, config.disable_p2p_outgoing_connections, config.p2p_private_key.map(|v| v.into()), config.p2p_on_dh_key_change) {
                 Ok(p2p) => {
                     // connect to priority nodes
                     for addr in config.priority_nodes {
