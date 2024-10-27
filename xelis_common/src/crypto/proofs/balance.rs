@@ -49,11 +49,13 @@ impl BalanceProof {
 
     /// Prove the balance proof.
     pub fn prove(keypair: &KeyPair, amount: u64, ciphertext: Ciphertext, transcript: &mut Transcript) -> Self {
+        transcript.balance_proof_domain_separator();
+        transcript.append_u64(b"amount", amount);
+
         // Compute the zeroed balance
         let ct = keypair.get_public_key().encrypt_with_opening(amount, &Self::OPENING);
         let zeroed_balance = ciphertext - ct;
 
-        transcript.balance_proof_domain_separator();
         // Generate the proof that the final balance is 0 after applying the commitment.
         let commitment_eq_proof = CommitmentEqProof::new(keypair, &zeroed_balance, &Self::OPENING, 0, transcript);
 
@@ -62,6 +64,9 @@ impl BalanceProof {
 
     /// Verify the balance proof.
     pub fn verify(&self, public_key: &PublicKey, source_ciphertext: Ciphertext, transcript: &mut Transcript, batch_collector: &mut BatchCollector) -> Result<(), ProofVerificationError> {
+        transcript.balance_proof_domain_separator();
+        transcript.append_u64(b"amount", self.amount);
+
         // Calculate the commitment that corresponds to the balance amount.
         let destination_commitment = PedersenCommitment::new_with_opening(Scalar::ZERO, &Self::OPENING);
 
@@ -69,7 +74,6 @@ impl BalanceProof {
         let ct = public_key.encrypt_with_opening(self.amount, &Self::OPENING);
         let zeroed_balance = source_ciphertext - ct;
 
-        transcript.balance_proof_domain_separator();
         self.commitment_eq_proof.pre_verify(public_key, &zeroed_balance, &destination_commitment, transcript, batch_collector)?;
 
         Ok(())
