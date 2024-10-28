@@ -12,14 +12,34 @@ use crate::{
     }
 };
 use super::{
-    bech32::{convert_bits, encode, decode, Bech32Error},
-    proofs::BalanceProof
+    bech32::{
+        convert_bits,
+        decode,
+        encode,
+        Bech32Error
+    },
+    proofs::{BalanceProof, OwnershipProof},
+    Hash
 };
 
 /// A human reable proof that can be shared with other parties as a message.
 pub enum HumanReadableProof {
+    /// Prove the whole asset balance of an account.
     Balance {
+        /// The balance proof.
         proof: BalanceProof,
+        /// The asset of the proof.
+        asset: Hash,
+        /// The topological height of the balance ciphertext.
+        topoheight: u64
+    },
+    /// Ownership proofs are used to prove that the prover owns a certain amount of an asset.
+    Ownership {
+        /// The ownership proof.
+        proof: OwnershipProof,
+        /// The asset of the proof.
+        asset: Hash,
+        /// The topological height of the balance ciphertext.
         topoheight: u64
     }
 }
@@ -50,9 +70,16 @@ impl HumanReadableProof {
 impl Serializer for HumanReadableProof {
     fn write(&self, writer: &mut Writer) {
         match self {
-            HumanReadableProof::Balance { proof, topoheight } => {
+            HumanReadableProof::Balance { proof, asset, topoheight } => {
                 writer.write_u8(0);
                 proof.write(writer);
+                asset.write(writer);
+                topoheight.write(writer);
+            },
+            HumanReadableProof::Ownership { proof, asset, topoheight } => {
+                writer.write_u8(1);
+                proof.write(writer);
+                asset.write(writer);
                 topoheight.write(writer);
             }
         }
@@ -62,9 +89,17 @@ impl Serializer for HumanReadableProof {
         let proof = match reader.read_u8()? {
             0 => {
                 let proof = BalanceProof::read(reader)?;
+                let asset = Hash::read(reader)?;
                 let topoheight = u64::read(reader)?;
         
-                HumanReadableProof::Balance { proof, topoheight }
+                HumanReadableProof::Balance { proof, asset, topoheight }
+            },
+            1 => {
+                let proof = OwnershipProof::read(reader)?;
+                let asset = Hash::read(reader)?;
+                let topoheight = u64::read(reader)?;
+        
+                HumanReadableProof::Ownership { proof, asset, topoheight }
             },
             _ => return Err(ReaderError::InvalidValue)
         };
@@ -102,7 +137,13 @@ impl Display for HumanReadableProof {
 mod tests {
     use merlin::Transcript;
 
-    use crate::crypto::{proofs::BatchCollector, KeyPair};
+    use crate::{
+        config::XELIS_ASSET,
+        crypto::{
+            proofs::BatchCollector,
+            KeyPair
+        }
+    };
     use super::*;
 
     #[test]
@@ -115,14 +156,47 @@ mod tests {
         // Create proof
         let mut transcript = Transcript::new(b"test");
         let proof = BalanceProof::prove(&keypair, amount, ct.clone(), &mut transcript);
-        let shareable = HumanReadableProof::Balance { proof, topoheight: 0 };
+        let shareable = HumanReadableProof::Balance { proof, asset: XELIS_ASSET, topoheight: 0 };
 
         // Transform to string and back to a shareable proof
         let string = shareable.as_string().unwrap();
         assert!(string.starts_with(PREFIX_PROOF));
 
-        let HumanReadableProof::Balance { proof, topoheight } = HumanReadableProof::from_string(&string).unwrap();
+        let HumanReadableProof::Balance { proof, asset, topoheight } = HumanReadableProof::from_string(&string).unwrap() else {
+            panic!("Failed to parse the shareable proof");
+        };
         assert_eq!(topoheight, 0);
+        assert_eq!(asset, XELIS_ASSET);
+
+        // Verify it
+        let mut transcript = Transcript::new(b"test");
+        let mut batch_collector = BatchCollector::default();
+        assert!(proof.pre_verify(keypair.get_public_key(), ct, &mut transcript, &mut batch_collector).is_ok());
+        assert!(batch_collector.verify().is_ok());
+    }
+
+    #[test]
+    fn test_hr_ownership_proof() {
+        let keypair = KeyPair::new();
+        // Generate the balance
+        let balance = 100u64;
+        let amount = 10u64;
+        let ct = keypair.get_public_key().encrypt(balance);
+
+        // Create proof
+        let mut transcript = Transcript::new(b"test");
+        let proof = OwnershipProof::prove(&keypair, balance, amount, ct.clone(), &mut transcript).unwrap();
+        let shareable = HumanReadableProof::Ownership { proof, asset: XELIS_ASSET, topoheight: 0 };
+
+        // Transform to string and back to a shareable proof
+        let string = shareable.as_string().unwrap();
+        assert!(string.starts_with(PREFIX_PROOF));
+
+        let HumanReadableProof::Ownership { proof, asset, topoheight } = HumanReadableProof::from_string(&string).unwrap() else {
+            panic!("Failed to parse the shareable proof");
+        };
+        assert_eq!(topoheight, 0);
+        assert_eq!(asset, XELIS_ASSET);
 
         // Verify it
         let mut transcript = Transcript::new(b"test");
