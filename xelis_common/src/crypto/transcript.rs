@@ -29,6 +29,7 @@ pub trait ProtocolTranscript {
     fn multisig_proof_domain_separator(&mut self);
     fn ciphertext_validity_proof_domain_separator(&mut self);
     fn balance_proof_domain_separator(&mut self);
+    fn ownership_proof_domain_separator(&mut self);
 }
 
 impl ProtocolTranscript for Transcript {
@@ -100,5 +101,9 @@ impl ProtocolTranscript for Transcript {
 
     fn balance_proof_domain_separator(&mut self) {
         self.append_message(b"dom-sep", b"balance-proof");
+    }
+
+    fn ownership_proof_domain_separator(&mut self) {
+        self.append_message(b"dom-sep", b"ownership-proof");
     }
 }
