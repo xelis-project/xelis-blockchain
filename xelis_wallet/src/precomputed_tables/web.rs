@@ -57,7 +57,7 @@ macro_rules! execute {
 }
 
 // Check if the precomputed tables exists
-pub async fn has_precomputed_tables(_: Option<String>, l1: usize) -> Result<bool> {
+pub async fn has_precomputed_tables(_: Option<&str>, l1: usize) -> Result<bool> {
     let path = format!("precomputed_tables_{l1}.bin");
 
     let window = window().ok_or(PrecomputedTablesError::Window("window not found in context".to_owned()))?;
@@ -90,7 +90,7 @@ pub async fn has_precomputed_tables(_: Option<String>, l1: usize) -> Result<bool
 
 // Precomputed tables is too heavy to be stored in local Storage, and generating it on the fly would be too slow
 // So we will generate it on the server and store it in a file, and then we will read it from the file
-pub async fn read_or_generate_precomputed_tables<P: ecdlp::ProgressTableGenerationReportFunction>(_: Option<String>, l1: usize, progress_report: P) -> Result<PrecomputedTablesShared> {
+pub async fn read_or_generate_precomputed_tables<P: ecdlp::ProgressTableGenerationReportFunction>(_: Option<&str>, l1: usize, progress_report: P) -> Result<PrecomputedTablesShared> {
     let path = format!("precomputed_tables_{l1}.bin");
 
     let window = window().ok_or(PrecomputedTablesError::Window("window not found in context".to_owned()))?;

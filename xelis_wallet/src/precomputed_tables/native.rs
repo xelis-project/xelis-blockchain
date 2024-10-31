@@ -11,7 +11,7 @@ use xelis_common::crypto::ecdlp;
 use super::*;
 
 // Check if the precomputed tables exists
-pub async fn has_precomputed_tables(path: Option<String>, l1: usize) -> Result<bool> {
+pub async fn has_precomputed_tables(path: Option<&str>, l1: usize) -> Result<bool> {
     let path = path.unwrap_or_default();
     let full_path = format!("{path}precomputed_tables_{l1}.bin");
 
