@@ -2914,14 +2914,26 @@ dependencies = [
 
 [[package]]
 name = "tokio_with_wasm"
-version = "0.6.0"
-source = "git+https://github.com/Slixe/tokio-with-wasm?branch=main#ab485984922265d7d224f89b311a08d1ef79400f"
+version = "0.7.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "660450fdbb1f84b197fafe53d64566f2b8b10a972f70b53bd1ba2bafdea6928c"
 dependencies = [
  "js-sys",
  "tokio",
+ "tokio_with_wasm_proc",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
+]
+
+[[package]]
+name = "tokio_with_wasm_proc"
+version = "0.7.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "907a7822b53d3581eebb1c8ad9e8a2647f1ea1bfe0bd5c92983e46e1c0a9a87e"
+dependencies = [
+ "quote",
+ "syn 2.0.79",
 ]
 
 [[package]]
