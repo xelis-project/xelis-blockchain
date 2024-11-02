@@ -718,8 +718,8 @@ async fn recover_wallet(manager: &CommandManager, _: ArgumentManager) -> Result<
         format!("{}{}", DIR_PATH, name)
     };
 
-    if !Path::new(&dir).is_dir() {
-        manager.message("No wallet found with this name");
+    if Path::new(&dir).is_dir() {
+        manager.message("Wallet already exists with this name");
         return Ok(())
     }
 
