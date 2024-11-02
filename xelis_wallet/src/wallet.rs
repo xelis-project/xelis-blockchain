@@ -264,7 +264,7 @@ impl Wallet {
         // generate random keypair or recover it from seed
         let keypair = if let Some(seed) = seed {
         debug!("Retrieving keypair from seed...");
-        let words: Vec<String> = seed.trim().split_whitespace().map(str::to_string).collect();
+        let words: Vec<&str> = seed.trim().split_whitespace().collect();
         let key = mnemonics::words_to_key(&words)?;
             KeyPair::from_private_key(key)
         } else {

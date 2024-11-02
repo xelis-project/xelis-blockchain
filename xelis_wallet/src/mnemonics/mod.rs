@@ -78,7 +78,7 @@ impl<'a> Language<'a> {
 }
 
 // Calculate the checksum index for the seed based on the language prefix length
-fn calculate_checksum_index(words: &[String], prefix_len: usize) -> Result<u32, MnemonicsError> {
+fn calculate_checksum_index(words: &[&str], prefix_len: usize) -> Result<u32, MnemonicsError> {
     if words.len() != SEED_LENGTH {
         return Err(MnemonicsError::InvalidWordsCount);
     }
@@ -98,14 +98,14 @@ fn calculate_checksum_index(words: &[String], prefix_len: usize) -> Result<u32, 
 }
 
 // Verify the checksum of the seed based on the language prefix length and if the seed is composed of 25 words
-fn verify_checksum(words: &Vec<String>, prefix_len: usize) -> Result<Option<bool>, MnemonicsError> {
+fn verify_checksum(words: &Vec<&str>, prefix_len: usize) -> Result<Option<bool>, MnemonicsError> {
     let checksum_index = calculate_checksum_index(&words[0..SEED_LENGTH], prefix_len)?;
     let checksum_word = words.get(checksum_index as usize).ok_or(MnemonicsError::InvalidChecksumIndex)?;
     Ok(words.get(SEED_LENGTH).map(|v| v == checksum_word))
 }
 
 // Find the indices of the words in the languages
-fn find_indices(words: &Vec<String>) -> Result<Option<(Vec<usize>, usize)>, MnemonicsError> {
+fn find_indices(words: &Vec<&str>) -> Result<Option<(Vec<usize>, usize)>, MnemonicsError> {
     'main: for (i, language) in LANGUAGES.iter().enumerate() {
         // this map is used to store the indices of the words in the language
         let mut language_words: HashMap<&str, usize> = HashMap::with_capacity(WORDS_LIST);
@@ -117,7 +117,7 @@ fn find_indices(words: &Vec<String>) -> Result<Option<(Vec<usize>, usize)>, Mnem
         // find the indices of the words
         let mut indices = Vec::new();
         for word in words.iter() {
-            if let Some(index) = language_words.get(word.as_str()) {
+            if let Some(index) = language_words.get(word) {
                 indices.push(*index);
             } else {
                 // incorrect language for this word, try the next one
@@ -136,7 +136,7 @@ fn find_indices(words: &Vec<String>) -> Result<Option<(Vec<usize>, usize)>, Mnem
 }
 
 // convert a words list to a Private Key (32 bytes)
-pub fn words_to_key(words: &Vec<String>) -> Result<PrivateKey, MnemonicsError> {
+pub fn words_to_key(words: &Vec<&str>) -> Result<PrivateKey, MnemonicsError> {
     if !(words.len() == SEED_LENGTH + 1 || words.len() == SEED_LENGTH) {
         return Err(MnemonicsError::InvalidWordsCount);
     }
@@ -163,13 +163,13 @@ pub fn words_to_key(words: &Vec<String>) -> Result<PrivateKey, MnemonicsError> {
 }
 
 // Transform a Private Key to a list of words based on the language index
-pub fn key_to_words(key: &PrivateKey, language_index: usize) -> Result<Vec<String>, MnemonicsError> {
+pub fn key_to_words(key: &PrivateKey, language_index: usize) -> Result<Vec<&str>, MnemonicsError> {
     let language = LANGUAGES.get(language_index).ok_or(MnemonicsError::InvalidLanguageIndex)?;
     key_to_words_with_language(key, language)
 }
 
 // Transform a Private Key to a list of words with a specific language
-pub fn key_to_words_with_language(key: &PrivateKey, language: &Language) -> Result<Vec<String>, MnemonicsError> {
+pub fn key_to_words_with_language<'a>(key: &PrivateKey, language: &'a Language) -> Result<Vec<&'a str>, MnemonicsError> {
     if language.words.len() != WORDS_LIST {
         return Err(MnemonicsError::InvalidLanguage);
     }
@@ -186,13 +186,13 @@ pub fn key_to_words_with_language(key: &PrivateKey, language: &Language) -> Resu
         let b = ((val / WORDS_LIST_U32) + a) % WORDS_LIST_U32;
         let c = ((val / WORDS_LIST_U32 / WORDS_LIST_U32) + b) % WORDS_LIST_U32;
         
-        words.push(language.words[a as usize].to_owned());
-        words.push(language.words[b as usize].to_owned());
-        words.push(language.words[c as usize].to_owned());
+        words.push(language.words[a as usize]);
+        words.push(language.words[b as usize]);
+        words.push(language.words[c as usize]);
     }
 
     let checksum = calculate_checksum_index(&words, language.prefix_length)?;
-    words.push(words.get(checksum as usize).ok_or(MnemonicsError::InvalidChecksumCalculation)?.clone());
+    words.push(words.get(checksum as usize).ok_or(MnemonicsError::InvalidChecksumCalculation)?);
 
     Ok(words)
 }
