@@ -14,7 +14,6 @@ use std::{
     time::Duration
 };
 use crate::config::DEFAULT_DAEMON_ADDRESS;
-use fern::colors::Color;
 use futures_util::{StreamExt, SinkExt};
 use serde::{Serialize, Deserialize};
 use tokio::{
@@ -40,13 +39,16 @@ use tokio_tungstenite::{
     }
 };
 use xelis_common::{
-    tokio::spawn_task,
     api::daemon::{
         GetMinerWorkResult,
         SubmitMinerWorkParams,
     },
     async_handler,
-    block::{MinerWork, Worker, Algorithm},
+    block::{
+        Algorithm,
+        MinerWork,
+        Worker
+    },
     config::VERSION,
     crypto::{
         Address,
@@ -60,13 +62,15 @@ use xelis_common::{
     },
     prompt::{
         command::CommandManager,
+        Color,
         LogLevel,
+        ModuleConfig,
         Prompt,
-        ShareablePrompt,
-        ModuleConfig
+        ShareablePrompt
     },
     serializer::Serializer,
     time::get_current_time_in_millis,
+    tokio::spawn_task,
     utils::{
         format_difficulty,
         format_hashrate,
