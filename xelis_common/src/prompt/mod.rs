@@ -43,10 +43,13 @@ use crossterm::{
 };
 use self::command::{CommandError, CommandManager};
 use anyhow::Error;
-use fern::colors::{ColoredLevelConfig, Color};
+use fern::colors::ColoredLevelConfig;
 use regex::Regex;
 use log::{info, error, Level, debug, LevelFilter, warn};
 use thiserror::Error;
+
+// Re-export fern and colors
+pub use fern::colors::Color;
 
 // used for launch param
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
