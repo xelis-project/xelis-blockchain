@@ -3582,7 +3582,6 @@ dependencies = [
  "chacha20poly1305",
  "clap",
  "ed25519-dalek",
- "fern",
  "hex",
  "human_bytes",
  "humantime",
@@ -3607,7 +3606,6 @@ version = "1.15.0"
 dependencies = [
  "anyhow",
  "clap",
- "fern",
  "futures-util",
  "lazy_static",
  "log",
@@ -3634,7 +3632,6 @@ dependencies = [
  "chacha20poly1305",
  "clap",
  "crc32fast",
- "fern",
  "hex",
  "indexmap 2.6.0",
  "lazy_static",
