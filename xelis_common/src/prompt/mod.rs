@@ -475,8 +475,8 @@ type AsyncF<'a, T1, T2, R> = Box<dyn Fn(&'a T1, T2) -> LocalBoxFuture<'a, R> + '
 impl Prompt {
     pub fn new(
         level: LogLevel,
-        dir_path: &String,
-        filename_log: &String,
+        dir_path: &str,
+        filename_log: &str,
         disable_file_logging: bool,
         disable_file_log_date_based: bool,
         disable_colors: bool,
@@ -763,8 +763,8 @@ impl Prompt {
     fn setup_logger(
         &self,
         level: LogLevel,
-        dir_path: &String,
-        filename_log: &String,
+        dir_path: &str,
+        filename_log: &str,
         disable_file_logging: bool,
         disable_file_log_date_based: bool,
         module_logs: Vec<ModuleConfig>,
