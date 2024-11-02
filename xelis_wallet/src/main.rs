@@ -6,7 +6,6 @@ use std::{
     time::Duration
 };
 use anyhow::{Result, Context};
-use fern::colors::Color;
 use log::{error, info};
 use clap::Parser;
 use xelis_common::{
@@ -37,7 +36,8 @@ use xelis_common::{
         LogLevel,
         Prompt,
         ModuleConfig,
-        PromptError
+        PromptError,
+        Color
     },
     serializer::Serializer,
     transaction::{
