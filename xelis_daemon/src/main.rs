@@ -4,7 +4,6 @@ pub mod core;
 pub mod config;
 
 use config::{DEV_PUBLIC_KEY, STABLE_LIMIT};
-use fern::colors::Color;
 use humantime::format_duration;
 use log::{trace, error, info, warn};
 use p2p::P2pServer;
@@ -37,7 +36,8 @@ use xelis_common::{
         },
         LogLevel,
         ModuleConfig,
-        ShareablePrompt
+        ShareablePrompt,
+        Color
     },
     rpc_server::WebSocketServerHandler,
     serializer::Serializer,
