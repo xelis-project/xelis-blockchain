@@ -238,7 +238,7 @@ async fn main() -> Result<()> {
             prompt.read_input(format!("Enter Password for '{}': ", path), true).await?
         };
 
-        let precomputed_tables = precomputed_tables::read_or_generate_precomputed_tables(config.precomputed_tables_path.as_deref(), config.precomputed_tables_l1, LogProgressTableGenerationReportFunction).await?;
+        let precomputed_tables = precomputed_tables::read_or_generate_precomputed_tables(config.precomputed_tables_path.as_deref(), config.precomputed_tables_l1, LogProgressTableGenerationReportFunction, true).await?;
         let p = Path::new(path);
         let wallet = if p.exists() && p.is_dir() && Path::new(&format!("{}/db", path)).exists() {
             info!("Opening wallet {}", path);
@@ -634,7 +634,7 @@ async fn open_wallet(manager: &CommandManager, _: ArgumentManager) -> Result<(),
     let wallet = {
         let context = manager.get_context().lock()?;
         let network = context.get::<Network>()?;
-        let precomputed_tables = precomputed_tables::read_or_generate_precomputed_tables(config.precomputed_tables_path.as_deref(), config.precomputed_tables_l1, LogProgressTableGenerationReportFunction).await?;
+        let precomputed_tables = precomputed_tables::read_or_generate_precomputed_tables(config.precomputed_tables_path.as_deref(), config.precomputed_tables_l1, LogProgressTableGenerationReportFunction, true).await?;
         Wallet::open(&dir, &password, *network, precomputed_tables)?
     };
 
@@ -682,7 +682,7 @@ async fn create_wallet(manager: &CommandManager, _: ArgumentManager) -> Result<(
     let wallet = {
         let context = manager.get_context().lock()?;
         let network = context.get::<Network>()?;
-        let precomputed_tables = precomputed_tables::read_or_generate_precomputed_tables(config.precomputed_tables_path.as_deref(), precomputed_tables::L1_FULL, LogProgressTableGenerationReportFunction).await?;
+        let precomputed_tables = precomputed_tables::read_or_generate_precomputed_tables(config.precomputed_tables_path.as_deref(), precomputed_tables::L1_FULL, LogProgressTableGenerationReportFunction, true).await?;
         Wallet::create(&dir, &password, None, *network, precomputed_tables)?
     };
  
@@ -746,7 +746,7 @@ async fn recover_wallet(manager: &CommandManager, _: ArgumentManager) -> Result<
     let wallet = {
         let context = manager.get_context().lock()?;
         let network = context.get::<Network>()?;
-        let precomputed_tables = precomputed_tables::read_or_generate_precomputed_tables(config.precomputed_tables_path.as_deref(), config.precomputed_tables_l1, LogProgressTableGenerationReportFunction).await?;
+        let precomputed_tables = precomputed_tables::read_or_generate_precomputed_tables(config.precomputed_tables_path.as_deref(), config.precomputed_tables_l1, LogProgressTableGenerationReportFunction, true).await?;
         Wallet::create(&dir, &password, Some(&seed), *network, precomputed_tables)?
     };
 
