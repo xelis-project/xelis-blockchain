@@ -275,7 +275,8 @@ async fn main() -> Result<()> {
 async fn register_default_commands(manager: &CommandManager) -> Result<(), CommandError> {
     manager.add_command(Command::new("open", "Open a wallet", CommandHandler::Async(async_handler!(open_wallet))))?;
     manager.add_command(Command::new("create", "Create a new wallet", CommandHandler::Async(async_handler!(create_wallet))))?;
-    manager.add_command(Command::new("recover", "Recover a wallet using a seed", CommandHandler::Async(async_handler!(recover_wallet))))?;
+    manager.add_command(Command::new("recover_seed", "Recover a wallet using a seed", CommandHandler::Async(async_handler!(recover_seed))))?;
+    manager.add_command(Command::new("recover_private_key", "Recover a wallet using a private key", CommandHandler::Async(async_handler!(recover_private_key))))?;
 
     manager.register_default_commands()?;
     // Display available commands
@@ -704,8 +705,8 @@ async fn create_wallet(manager: &CommandManager, _: ArgumentManager) -> Result<(
     Ok(())
 }
 
-// Recover a wallet by requesting its seed, name and password
-async fn recover_wallet(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
+// Recover a wallet by requesting its seed or private key, name and password
+async fn recover_wallet(manager: &CommandManager, _: ArgumentManager, seed: bool) -> Result<(), CommandError> {
     let prompt = manager.get_prompt();
     let config: Config = Config::parse();
     let dir = if let Some(path) = config.wallet_path.as_ref() {
@@ -726,14 +727,26 @@ async fn recover_wallet(manager: &CommandManager, _: ArgumentManager) -> Result<
         return Ok(())
     }
 
-    let seed = prompt.read_input("Seed: ", false)
-        .await.context("Error while reading seed")?;
-
-    let words_count = seed.split_whitespace().count();
-    if words_count != 25 && words_count != 24 {
-        manager.error("Seed must be 24 or 25 (checksum) words long");
-        return Ok(())
-    }
+    let content = if seed {
+        let seed = prompt.read_input("Seed: ", false)
+            .await.context("Error while reading seed")?;
+    
+        let words_count = seed.split_whitespace().count();
+        if words_count != 25 && words_count != 24 {
+            manager.error("Seed must be 24 or 25 (checksum) words long");
+            return Ok(())
+        }
+        seed
+    } else {
+        let private_key = prompt.read_input("Private Key: ", false)
+            .await.context("Error while reading private key")?;
+    
+        if private_key.len() != 64 {
+            manager.error("Private key must be 64 characters long");
+            return Ok(())
+        }
+        private_key
+    };
 
     // ask and verify password
     let password = prompt.read_input("Password: ", true)
@@ -750,7 +763,13 @@ async fn recover_wallet(manager: &CommandManager, _: ArgumentManager) -> Result<
         let context = manager.get_context().lock()?;
         let network = context.get::<Network>()?;
         let precomputed_tables = precomputed_tables::read_or_generate_precomputed_tables(config.precomputed_tables_path.as_deref(), config.precomputed_tables_l1, LogProgressTableGenerationReportFunction, true).await?;
-        Wallet::create(&dir, &password, Some(RecoverOption::Seed(&seed)), *network, precomputed_tables)?
+
+        let recover = if seed {
+            RecoverOption::Seed(&content)
+        } else {
+            RecoverOption::PrivateKey(&content)
+        };
+        Wallet::create(&dir, &password, Some(recover), *network, precomputed_tables)?
     };
 
     manager.message("Wallet sucessfully recovered");
@@ -760,6 +779,15 @@ async fn recover_wallet(manager: &CommandManager, _: ArgumentManager) -> Result<
 
     Ok(())
 }
+
+async fn recover_seed(manager: &CommandManager, args: ArgumentManager) -> Result<(), CommandError> {
+    recover_wallet(manager, args, true).await
+}
+
+async fn recover_private_key(manager: &CommandManager, args: ArgumentManager) -> Result<(), CommandError> {
+    recover_wallet(manager, args, false).await
+}
+
 
 // Change wallet password
 async fn change_password(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
