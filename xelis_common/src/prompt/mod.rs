@@ -685,7 +685,7 @@ impl Prompt {
 
     pub async fn read_hash<S: ToString>(&self, prompt: S) -> Result<Hash, PromptError> {
         let hash_hex = self.read_input(prompt, false).await?;
-        Ok(Hash::from_hex(hash_hex)?)
+        Ok(Hash::from_hex(&hash_hex)?)
     }
 
     pub async fn cancel_read_input(&self) -> Result<(), Error> {

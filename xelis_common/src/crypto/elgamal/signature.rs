@@ -59,7 +59,7 @@ impl<'de> serde::Deserialize<'de> for Signature {
         D: serde::Deserializer<'de>
     {
         let s = String::deserialize(deserializer)?;
-        Ok(Self::from_hex(s).map_err(D::Error::custom)?)
+        Ok(Self::from_hex(&s).map_err(D::Error::custom)?)
     }
 }
 

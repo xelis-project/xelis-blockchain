@@ -31,9 +31,9 @@ pub trait Serializer {
     fn read(reader: &mut Reader) -> Result<Self, ReaderError>
     where Self: Sized;
 
-    fn from_hex(hex: String) -> Result<Self, ReaderError>
+    fn from_hex(hex: &str) -> Result<Self, ReaderError>
     where Self: Sized {
-        match hex::decode(&hex) {
+        match hex::decode(hex) {
             Ok(bytes) => {
                 let mut reader = Reader::new(&bytes);
                 Self::read(&mut reader)
