@@ -30,6 +30,7 @@ use xelis_common::{
         Hashable,
         KeyPair,
         PublicKey,
+        PrivateKey,
         Signature
     },
     network::Network,
@@ -44,7 +45,8 @@ use xelis_common::{
         Reference,
         Role,
         Transaction
-    }
+    },
+    serializer::Serializer
 };
 use crate::{
     cipher::Cipher,
@@ -128,6 +130,12 @@ use {
     target_os = "unknown"
 )))]
 use xelis_common::tokio::task::spawn_blocking;
+
+// Recover option for wallet creation
+pub enum RecoverOption<'a> {
+    Seed(&'a str),
+    PrivateKey(&'a str)
+}
 
 #[derive(Serialize, Clone, Debug)]
 #[serde(untagged)]
@@ -256,16 +264,23 @@ impl Wallet {
     }
 
     // Create a new wallet on disk
-    pub fn create(name: &str, password: &str, seed: Option<&str>, network: Network, precomputed_tables: PrecomputedTablesShared) -> Result<Arc<Self>, Error> {
+    pub fn create(name: &str, password: &str, seed: Option<RecoverOption>, network: Network, precomputed_tables: PrecomputedTablesShared) -> Result<Arc<Self>, Error> {
         if name.is_empty() {
             return Err(WalletError::EmptyName.into())
         }
 
         // generate random keypair or recover it from seed
         let keypair = if let Some(seed) = seed {
-        debug!("Retrieving keypair from seed...");
-        let words: Vec<&str> = seed.trim().split_whitespace().collect();
-        let key = mnemonics::words_to_key(&words)?;
+            debug!("Retrieving keypair from seed...");
+            let key = match seed {
+                RecoverOption::PrivateKey(hex) => {
+                    PrivateKey::from_hex(hex).context("Invalid private key provided")?
+                },
+                RecoverOption::Seed(seed) => {
+                    let words: Vec<&str> = seed.trim().split_whitespace().collect();
+                    mnemonics::words_to_key(&words)?
+                }
+            };
             KeyPair::from_private_key(key)
         } else {
             debug!("Generating a new keypair...");
