@@ -92,6 +92,10 @@ impl Serializer for BalanceProof {
 
         Ok(Self::new(amount, commitment_eq_proof))
     }
+
+    fn size(&self) -> usize {
+        self.amount.size() + self.commitment_eq_proof.size()
+    }
 }
 
 #[cfg(test)]

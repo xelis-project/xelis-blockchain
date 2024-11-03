@@ -134,4 +134,26 @@ impl Serializer for UnsignedTransaction {
     fn read(_: &mut Reader) -> Result<Self, ReaderError> {
         Err(ReaderError::InvalidValue)
     }
+
+    fn size(&self) -> usize {
+        let mut size = self.version.size()
+            + self.source.size()
+            + self.data.size()
+            + self.fee.size()
+            + self.nonce.size()
+            + 1; // source_commitments length
+
+        for commitment in &self.source_commitments {
+            size += commitment.size();
+        }
+
+        size += self.range_proof.size()
+            + self.reference.size();
+
+        if self.version != TxVersion::V0 {
+            size += self.multisig.size();
+        }
+
+        size
+    }
 }

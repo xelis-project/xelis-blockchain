@@ -202,6 +202,10 @@ impl Serializer for PrivateKey {
         let scalar = Scalar::read(reader)?;
         Ok(PrivateKey::from_scalar(scalar))
     }
+
+    fn size(&self) -> usize {
+        self.0.size()
+    }
 }
 
 #[cfg(test)]

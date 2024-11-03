@@ -47,4 +47,8 @@ impl Serializer for RangeProof {
         let bytes = reader.read_bytes_ref(len)?;
         RangeProof::from_bytes(&bytes).map_err(|_| ReaderError::InvalidValue)
     }
+
+    fn size(&self) -> usize {
+        self.to_bytes().len() + 2
+    }
 }

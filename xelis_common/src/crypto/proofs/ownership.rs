@@ -110,6 +110,12 @@ impl Serializer for OwnershipProof {
 
         Ok(Self::new(amount, commitment, commitment_eq_proof))
     }
+
+    fn size(&self) -> usize {
+        self.amount.size()
+            + self.commitment.size()
+            + self.commitment_eq_proof.size()
+    }
 }
 
 #[cfg(test)]

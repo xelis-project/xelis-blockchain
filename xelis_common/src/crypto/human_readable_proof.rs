@@ -106,6 +106,20 @@ impl Serializer for HumanReadableProof {
 
         Ok(proof)
     }
+
+    fn size(&self) -> usize {
+        let mut size = 1;
+        match self {
+            HumanReadableProof::Balance { proof, asset, topoheight } => {
+                size += proof.size() + asset.size() + topoheight.size();
+            },
+            HumanReadableProof::Ownership { proof, asset, topoheight } => {
+                size += proof.size() + asset.size() + topoheight.size();
+            }
+        }
+
+        size
+    }
 }
 
 impl serde::Serialize for HumanReadableProof {

@@ -436,6 +436,13 @@ impl Serializer for IpAddr {
             }
         };
     }
+
+    fn size(&self) -> usize {
+        match self {
+            IpAddr::V4(_) => 1 + 4,
+            IpAddr::V6(_) => 1 + 16
+        }
+    }
 }
 
 impl Serializer for () {
