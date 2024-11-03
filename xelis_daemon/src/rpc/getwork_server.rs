@@ -360,7 +360,7 @@ impl<S: Storage> GetWorkServer<S> {
     // if its block is rejected, resend him the job
     pub async fn handle_block_for(self: Arc<Self>, addr: Addr<GetWorkWebSocketHandler<S>>, submitted_work: SubmitMinerWorkParams) {
         trace!("handle block for");
-        let (response, hash) = match MinerWork::from_hex(submitted_work.miner_work) {
+        let (response, hash) = match MinerWork::from_hex(&submitted_work.miner_work) {
             Ok(job) => match self.accept_miner_job(job).await {
                 Ok((response, hash)) => (response, Some(hash)),
                 Err(e) => {

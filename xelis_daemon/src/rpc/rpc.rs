@@ -441,7 +441,7 @@ async fn get_miner_work<S: Storage>(context: &Context, body: Value) -> Result<Va
     let params: GetMinerWorkParams = parse_params(body)?;
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
 
-    let header = BlockHeader::from_hex(params.template.into_owned())?;
+    let header = BlockHeader::from_hex(&params.template)?;
     let (difficulty, _) = {
         let storage = blockchain.get_storage().read().await;
         blockchain.get_difficulty_at_tips(&*storage, header.get_tips().iter()).await.context("Error while retrieving difficulty at tips")?
@@ -471,9 +471,9 @@ async fn get_miner_work<S: Storage>(context: &Context, body: Value) -> Result<Va
 
 async fn submit_block<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: SubmitBlockParams = parse_params(body)?;
-    let mut header = BlockHeader::from_hex(params.block_template)?;
+    let mut header = BlockHeader::from_hex(&params.block_template)?;
     if let Some(work) = params.miner_work {
-        let work = MinerWork::from_hex(work)?;
+        let work = MinerWork::from_hex(&work)?;
         header.apply_miner_work(work);
     }
 
@@ -726,7 +726,7 @@ async fn submit_transaction<S: Storage>(context: &Context, body: Value) -> Resul
         return Err(InternalRpcError::InvalidJSONRequest).context(format!("Transaction size cannot be greater than {}", human_bytes(MAX_TRANSACTION_SIZE as f64)))?
     }
 
-    let transaction = Transaction::from_hex(params.data)
+    let transaction = Transaction::from_hex(&params.data)
         .map_err(|err| InternalRpcError::InvalidParamsAny(err.into()))?;
 
     let blockchain: &Arc<Blockchain<S>> = context.get()?;

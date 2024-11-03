@@ -508,7 +508,7 @@ impl<S: Storage> Blockchain<S> {
 
         let (genesis_block, genesis_hash) = if let Some(genesis_block) = get_hex_genesis_block(&self.network) {
             info!("De-serializing genesis block for network {}...", self.network);
-            let genesis = Block::from_hex(genesis_block.to_owned())?;
+            let genesis = Block::from_hex(genesis_block)?;
             if *genesis.get_miner() != *DEV_PUBLIC_KEY {
                 return Err(BlockchainError::GenesisBlockMiner)
             }

@@ -808,7 +808,7 @@ async fn add_tx<S: Storage>(manager: &CommandManager, mut arguments: ArgumentMan
         true
     };
 
-    let tx = Transaction::from_hex(hex).context("Error while decoding tx in hexadecimal format")?;
+    let tx = Transaction::from_hex(&hex).context("Error while decoding tx in hexadecimal format")?;
     let hash = tx.hash();
     manager.message(format!("Adding TX {} to mempool...", hash));
 
