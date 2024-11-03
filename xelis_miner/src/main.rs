@@ -427,7 +427,7 @@ async fn handle_websocket_message(message: Result<Message, TungsteniteError>, jo
             match serde_json::from_slice::<SocketMessage>(text.as_bytes())? {
                 SocketMessage::NewJob(job) => {
                     info!("New job received: difficulty {} at height {}", format_difficulty(job.difficulty), job.height);
-                    let block = MinerWork::from_hex(job.miner_work).context("Error while decoding new job received from daemon")?;
+                    let block = MinerWork::from_hex(&job.miner_work).context("Error while decoding new job received from daemon")?;
                     CURRENT_TOPO_HEIGHT.store(job.topoheight, Ordering::SeqCst);
                     JOB_ELAPSED.write().unwrap().replace(Instant::now());
 
