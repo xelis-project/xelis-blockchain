@@ -52,7 +52,10 @@ use xelis_common::{
     }
 };
 use xelis_wallet::{
-    wallet::Wallet,
+    wallet::{
+        Wallet,
+        RecoverOption
+    },
     config::DIR_PATH,
     precomputed_tables,
 };
@@ -245,7 +248,7 @@ async fn main() -> Result<()> {
             Wallet::open(path, &password, config.network, precomputed_tables)?
         } else {
             info!("Creating a new wallet at {}", path);
-            Wallet::create(path, &password, config.seed.as_deref(), config.network, precomputed_tables)?
+            Wallet::create(path, &password, config.seed.as_deref().map(RecoverOption::Seed), config.network, precomputed_tables)?
         };
 
         command_manager.register_default_commands()?;
@@ -747,7 +750,7 @@ async fn recover_wallet(manager: &CommandManager, _: ArgumentManager) -> Result<
         let context = manager.get_context().lock()?;
         let network = context.get::<Network>()?;
         let precomputed_tables = precomputed_tables::read_or_generate_precomputed_tables(config.precomputed_tables_path.as_deref(), config.precomputed_tables_l1, LogProgressTableGenerationReportFunction, true).await?;
-        Wallet::create(&dir, &password, Some(&seed), *network, precomputed_tables)?
+        Wallet::create(&dir, &password, Some(RecoverOption::Seed(&seed)), *network, precomputed_tables)?
     };
 
     manager.message("Wallet sucessfully recovered");
