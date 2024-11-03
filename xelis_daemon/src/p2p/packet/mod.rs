@@ -120,6 +120,12 @@ impl Packet<'_> {
             Packet::KeyExchange(_) => KEY_EXCHANGE_ID,
         }
     }
+
+    #[inline]
+    fn write_packet<T: Serializer>(writer: &mut Writer, id: u8, packet: &T) {
+        writer.write_u8(id);
+        packet.write(writer);
+    }
 }
 
 impl<'a> Serializer for Packet<'a> {
@@ -155,25 +161,21 @@ impl<'a> Serializer for Packet<'a> {
     }
 
     fn write(&self, writer: &mut Writer) {
-        let (id, serializer): (u8, &dyn Serializer) = match self {
-            Packet::KeyExchange(key) => (KEY_EXCHANGE_ID, key),
-            Packet::Handshake(handshake) => (HANDSHAKE_ID, handshake.as_ref()),
-            Packet::TransactionPropagation(tx) => (TX_PROPAGATION_ID, tx),
-            Packet::BlockPropagation(block) => (BLOCK_PROPAGATION_ID, block),
-            Packet::ChainRequest(request) => (CHAIN_REQUEST_ID, request),
-            Packet::ChainResponse(response) => (CHAIN_RESPONSE_ID, response),
-            Packet::Ping(ping) => (PING_ID, ping.as_ref()),
-            Packet::ObjectRequest(request) => (OBJECT_REQUEST_ID, request.as_ref()),
-            Packet::ObjectResponse(response) => (OBJECT_RESPONSE_ID, response),
-            Packet::NotifyInventoryRequest(request) => (NOTIFY_INV_REQUEST_ID, request),
-            Packet::NotifyInventoryResponse(inventory) => (NOTIFY_INV_RESPONSE_ID, inventory),
-            Packet::BootstrapChainRequest(request) => (BOOTSTRAP_CHAIN_REQUEST_ID, request),
-            Packet::BootstrapChainResponse(response) => (BOOTSTRAP_CHAIN_RESPONSE_ID, response),
-            Packet::PeerDisconnected(disconnected) => (PEER_DISCONNECTED_ID, disconnected),
+        match self {
+            Packet::KeyExchange(key) => Self::write_packet(writer, KEY_EXCHANGE_ID, key),
+            Packet::Handshake(handshake) => Self::write_packet(writer, HANDSHAKE_ID, handshake.as_ref()),
+            Packet::TransactionPropagation(tx) => Self::write_packet(writer, TX_PROPAGATION_ID, tx),
+            Packet::BlockPropagation(block) => Self::write_packet(writer, BLOCK_PROPAGATION_ID, block),
+            Packet::ChainRequest(request) => Self::write_packet(writer, CHAIN_REQUEST_ID, request),
+            Packet::ChainResponse(response) => Self::write_packet(writer, CHAIN_RESPONSE_ID, response),
+            Packet::Ping(ping) => Self::write_packet(writer, PING_ID, ping.as_ref()),
+            Packet::ObjectRequest(request) => Self::write_packet(writer, OBJECT_REQUEST_ID, request.as_ref()),
+            Packet::ObjectResponse(response) => Self::write_packet(writer, OBJECT_RESPONSE_ID, response),
+            Packet::NotifyInventoryRequest(request) => Self::write_packet(writer, NOTIFY_INV_REQUEST_ID, request),
+            Packet::NotifyInventoryResponse(inventory) => Self::write_packet(writer, NOTIFY_INV_RESPONSE_ID, inventory),
+            Packet::BootstrapChainRequest(request) => Self::write_packet(writer, BOOTSTRAP_CHAIN_REQUEST_ID, request),
+            Packet::BootstrapChainResponse(response) => Self::write_packet(writer, BOOTSTRAP_CHAIN_RESPONSE_ID, response),
+            Packet::PeerDisconnected(disconnected) => Self::write_packet(writer, PEER_DISCONNECTED_ID, disconnected),
         };
-
-        let packet = serializer.to_bytes();
-        writer.write_u8(id);
-        writer.write_bytes(&packet);
     }
 }
