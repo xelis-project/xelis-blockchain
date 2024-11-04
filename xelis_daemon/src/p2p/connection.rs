@@ -101,6 +101,47 @@ impl Connection {
         }
     }
 
+    // Exchange keys in the old way for compatibility reasons
+    pub async fn exchange_keys_old(&mut self, buffer: &mut [u8]) -> P2pResult<()> {
+        trace!("Exchanging keys with {}", self.addr);
+
+        // Update our state
+        self.set_state(State::KeyExchange);
+
+        // Send our key if we initiated the connection
+        if self.is_out() {
+            trace!("Sending our key to {}", self.addr);
+            let packet = self.rotate_key_packet().await?;
+            self.send_bytes(&packet).await?;
+            self.encryption.mark_ready();
+        }
+
+        trace!("Waiting for key from {}", self.addr);
+        // Wait for the peer to receive its key
+        let Packet::KeyExchange(peer_key) = timeout(
+            Duration::from_millis(PEER_TIMEOUT_INIT_CONNECTION),
+            self.read_packet(buffer, 256)
+        ).await?? else {
+            error!("Expected KeyExchange packet");
+            return Err(P2pError::InvalidPacket);
+        };
+
+        // Now that we got the peer key, update our encryption state
+        self.rotate_peer_key(peer_key.into_owned()).await?;
+
+        // Send back our key if we are the server
+        if !self.is_out() {
+            trace!("Replying with our key to {}", self.addr);
+            let packet = self.rotate_key_packet().await?;
+            self.send_bytes(&packet).await?;
+            self.encryption.mark_ready();
+        }
+
+        trace!("Key exchange with {} successful", self.addr);
+
+        Ok(())
+    }
+
     // Do a key exchange with the peer
     // We use the Diffie-Hellman key exchange to generate a shared secret
     // The shared secret is used to encrypt the generated (symetric) encryption key
@@ -208,8 +249,12 @@ impl Connection {
     // Rotate the current key with a new key and generate the packet
     async fn generate_rotate_key_packet(&self, new_key: EncryptionKey) -> P2pResult<Vec<u8>> {
         // Build the packet
-        let packet = Packet::KeyExchange(Cow::Borrowed(&new_key)).to_bytes();
-        let packet = self.encryption.encrypt_packet(&packet).await?;
+        let mut packet = Packet::KeyExchange(Cow::Borrowed(&new_key)).to_bytes();
+
+        if self.encryption.is_write_ready().await {
+            // Encrypt with the our previous key our new key
+            packet = self.encryption.encrypt_packet(&packet).await?;
+        }
 
         // Rotate the key in our encryption state
         self.encryption.rotate_key(new_key, CipherSide::Our).await?;

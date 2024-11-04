@@ -4,8 +4,12 @@ use core::fmt;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum BlockVersion {
+    // Genesis version
     V0,
+    // First hard fork including the new PoW algorithm
+    // difficulty adjustment algorithm tweaks
     V1,
+    // Smart Contracts, MultiSig, P2p, etc
     V2,
 }
 

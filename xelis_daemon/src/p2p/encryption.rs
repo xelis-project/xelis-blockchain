@@ -88,6 +88,11 @@ impl Encryption {
         self.peer_cipher.lock().await.is_some()
     }
 
+    // Check if the encryption is ready to write (encrypt)
+    pub async fn is_write_ready(&self) -> bool {
+        self.our_cipher.lock().await.is_some()
+    }
+
     // Generate a new random key
     pub fn generate_key(&self) -> EncryptionKey {
         ChaCha20Poly1305::generate_key(&mut OsRng).into()
@@ -114,7 +119,7 @@ impl Encryption {
     // Decrypt a packet using the shared symetric key
     pub async fn decrypt_packet(&self, buf: &[u8]) -> Result<Vec<u8>, EncryptionError> {
         let mut lock = self.peer_cipher.lock().await;
-        let cipher_state = lock.as_mut().ok_or(EncryptionError::WriteNotReady)?;
+        let cipher_state = lock.as_mut().ok_or(EncryptionError::ReadNotReady)?;
 
         // fill our buffer
         cipher_state.nonce_buffer[0..8].copy_from_slice(&cipher_state.nonce.to_be_bytes());

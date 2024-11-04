@@ -53,7 +53,7 @@ use crate::{
         blockchain::Blockchain,
         error::BlockchainError,
         storage::Storage,
-        hard_fork::{get_version_at_height, is_version_allowed_at_height}
+        hard_fork
     },
     p2p::{
         chain_validator::ChainValidator,
@@ -621,7 +621,7 @@ impl<S: Storage> P2pServer<S> {
         }
 
         // check if the version of this peer is allowed
-        if !is_version_allowed_at_height(self.blockchain.get_network(), self.blockchain.get_height(), handshake.get_version()).map_err(|e| P2pError::InvalidP2pVersion(e.to_string()))? {
+        if !hard_fork::is_version_allowed_at_height(self.blockchain.get_network(), self.blockchain.get_height(), handshake.get_version()).map_err(|e| P2pError::InvalidP2pVersion(e.to_string()))? {
             return Err(P2pError::InvalidP2pVersion(handshake.get_version().clone()));
         }
 
@@ -663,9 +663,13 @@ impl<S: Storage> P2pServer<S> {
         trace!("New connection: {}", connection);
 
         // Exchange encryption keys
-        let expected_key = self.peer_list.get_dh_key_for_peer(&connection.get_address().ip()).await?;
-        let new_key = connection.exchange_keys(&self.dh_keypair, expected_key.as_ref(), self.dh_action, buf).await?;
-        self.peer_list.store_dh_key_for_peer(&connection.get_address().ip(), new_key).await?;
+        if hard_fork::is_version_enabled_at_height(self.blockchain.get_network(), self.blockchain.get_height(), BlockVersion::V2) {
+            let expected_key = self.peer_list.get_dh_key_for_peer(&connection.get_address().ip()).await?;
+            let new_key = connection.exchange_keys(&self.dh_keypair, expected_key.as_ref(), self.dh_action, buf).await?;
+            self.peer_list.store_dh_key_for_peer(&connection.get_address().ip(), new_key).await?;
+        } else {
+            connection.exchange_keys_old(buf).await?;
+        }
 
         // Start handshake now
         connection.set_state(State::Handshake);
@@ -1960,7 +1964,7 @@ impl<S: Storage> P2pServer<S> {
 
                 let mut swap = false;
                 if let Some(previous_hash) = response_blocks.last() {
-                    let version = get_version_at_height(self.blockchain.get_network(), height);
+                    let version = hard_fork::get_version_at_height(self.blockchain.get_network(), height);
                     // Due to the TX being orphaned, some TXs may be in the wrong order in V1
                     // It has been sorted in V2 and should not happen anymore
                     if version == BlockVersion::V0 && storage.has_block_position_in_order(&hash).await? && storage.has_block_position_in_order(&previous_hash).await? {
