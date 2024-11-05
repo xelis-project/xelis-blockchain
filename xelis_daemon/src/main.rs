@@ -158,7 +158,17 @@ pub struct Config {
     /// Internal DB mode to use
     #[clap(long, value_enum, default_value_t = StorageMode::LowSpace)]
     #[serde(default)]
-    internal_db_mode: StorageMode
+    internal_db_mode: StorageMode,
+    /// JSON File to load the configuration from
+    #[clap(long)]
+    #[serde(skip)]
+    #[serde(default)]
+    config_file: Option<String>,
+    /// Generate the template at the `config_file` path
+    #[clap(long)]
+    #[serde(skip)]
+    #[serde(default)]
+    generate_config_template: bool
 }
 
 const BLOCK_TIME: Difficulty = Difficulty::from_u64(BLOCK_TIME_MILLIS / MILLIS_PER_SECOND);
@@ -166,6 +176,22 @@ const BLOCK_TIME: Difficulty = Difficulty::from_u64(BLOCK_TIME_MILLIS / MILLIS_P
 #[tokio::main]
 async fn main() -> Result<()> {
     let mut config: Config = Config::parse();
+    if let Some(path) = config.config_file.as_ref() {
+        if config.generate_config_template {
+            let mut file = File::create(path).context("Error while creating config file")?;
+            let json = serde_json::to_string_pretty(&config).context("Error while serializing config file")?;
+            file.write_all(json.as_bytes()).context("Error while writing config file")?;
+            println!("Config file template generated at {}", path);
+            return Ok(());
+        }
+
+        let file = File::open(path).context("Error while opening config file")?;
+        config = serde_json::from_reader(file).context("Error while reading config file")?;
+    } else if config.generate_config_template {
+        eprintln!("Provided config file path is required to generate the template with --config-file");
+        return Ok(());
+    }
+
     let blockchain_config = config.inner;
     if let Some(path) = blockchain_config.dir_path.as_ref() {
         if !(path.ends_with("/") || path.ends_with("\\")) {
