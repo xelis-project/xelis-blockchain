@@ -78,6 +78,7 @@ use std::{
     fs::File,
     io::Write,
     net::{IpAddr, SocketAddr},
+    path::Path,
     sync::Arc,
     time::Duration
 };
@@ -178,6 +179,11 @@ async fn main() -> Result<()> {
     let mut config: Config = Config::parse();
     if let Some(path) = config.config_file.as_ref() {
         if config.generate_config_template {
+            if Path::new(path).exists() {
+                eprintln!("Config file already exists at {}", path);
+                return Ok(());
+            }
+
             let mut file = File::create(path).context("Error while creating config file")?;
             let json = serde_json::to_string_pretty(&config).context("Error while serializing config file")?;
             file.write_all(json.as_bytes()).context("Error while writing config file")?;
