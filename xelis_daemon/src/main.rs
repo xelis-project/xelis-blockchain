@@ -11,6 +11,7 @@ use rpc::{
     getwork_server::SharedGetWorkServer,
     rpc::get_block_response_for_hash
 };
+use serde::{Deserialize, Serialize};
 use xelis_common::{
     async_handler,
     config::{VERSION, XELIS_ASSET},
@@ -50,8 +51,8 @@ use xelis_common::{
 };
 use crate::{
     core::{
+        config::Config as InnerConfig,
         blockchain::{
-            Config,
             Blockchain,
             get_block_reward
         },
@@ -86,14 +87,25 @@ use anyhow::{
     Context as AnyContext
 };
 
-#[derive(Parser)]
+// Functions helpers for serde default values
+fn default_filename_log() -> String {
+    "xelis-daemon.log".to_owned()
+}
+
+fn default_logs_path() -> String {
+    "logs/".to_owned()
+}
+
+#[derive(Parser, Serialize, Deserialize)]
 #[clap(version = VERSION, about = "XELIS is an innovative cryptocurrency built from scratch with BlockDAG, Homomorphic Encryption, Zero-Knowledge Proofs, and Smart Contracts.")]
 #[command(styles = xelis_common::get_cli_styles())]
-pub struct NodeConfig {
+pub struct Config {
     #[structopt(flatten)]
-    nested: Config,
+    #[serde(flatten)]
+    inner: InnerConfig,
     /// Set log level
     #[clap(long, value_enum, default_value_t = LogLevel::Info)]
+    #[serde(default)]
     log_level: LogLevel,
     /// Set file log level
     /// By default, it will be the same as log level
@@ -101,17 +113,21 @@ pub struct NodeConfig {
     file_log_level: Option<LogLevel>,
     /// Disable the log file
     #[clap(long)]
+    #[serde(default)]
     disable_file_logging: bool,
     /// Disable the log filename date based
     /// If disabled, the log file will be named xelis-daemon.log instead of YYYY-MM-DD.xelis-daemon.log
     #[clap(long)]
+    #[serde(default)]
     disable_file_log_date_based: bool,
     /// Disable the usage of colors in log
     #[clap(long)]
+    #[serde(default)]
     disable_log_color: bool,
     /// Disable terminal interactive mode
     /// You will not be able to write CLI commands in it or to have an updated prompt
     #[clap(long)]
+    #[serde(default)]
     disable_interactive_mode: bool,
     /// Log filename
     /// 
@@ -119,24 +135,29 @@ pub struct NodeConfig {
     /// File will be stored in logs directory, this is only the filename, not the full path.
     /// Log file is rotated every day and has the format YYYY-MM-DD.xelis-daemon.log.
     #[clap(long, default_value_t = String::from("xelis-daemon.log"))]
+    #[serde(default = "default_filename_log")]
     filename_log: String,
     /// Logs directory
     /// 
     /// By default it will be logs/ of the current directory.
     /// It must end with a / to be a valid folder.
     #[clap(long, default_value_t = String::from("logs/"))]
+    #[serde(default = "default_logs_path")]
     logs_path: String,
     /// Module configuration for logs
     #[clap(long)]
+    #[serde(default)]
     logs_modules: Vec<ModuleConfig>,
     /// Network selected for chain
     #[clap(long, value_enum, default_value_t = Network::Mainnet)]
+    #[serde(default)]
     network: Network,
     /// DB cache size in bytes
     #[clap(long)]
     internal_cache_size: Option<u64>,
     /// Internal DB mode to use
     #[clap(long, value_enum, default_value_t = StorageMode::LowSpace)]
+    #[serde(default)]
     internal_db_mode: StorageMode
 }
 
@@ -144,8 +165,8 @@ const BLOCK_TIME: Difficulty = Difficulty::from_u64(BLOCK_TIME_MILLIS / MILLIS_P
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let mut config: NodeConfig = NodeConfig::parse();
-    let blockchain_config = config.nested;
+    let mut config: Config = Config::parse();
+    let blockchain_config = config.inner;
     if let Some(path) = blockchain_config.dir_path.as_ref() {
         if !(path.ends_with("/") || path.ends_with("\\")) {
             return Err(anyhow::anyhow!("Path must end with / or \\"));
@@ -1130,4 +1151,15 @@ async fn add_peer<S: Storage>(manager: &CommandManager, mut args: ArgumentManage
     };
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_config_serde() {
+        let empty = "{}";
+        assert!(serde_json::from_str::<Config>(empty).is_ok());
+    }
 }

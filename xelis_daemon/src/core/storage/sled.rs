@@ -25,6 +25,7 @@ use std::{
         Arc
     }
 };
+use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 use lru::LruCache;
 use sled::Tree;
@@ -164,10 +165,17 @@ macro_rules! init_cache {
     }};
 }
 
-#[derive(Clone, Copy, clap::ValueEnum)]
+#[derive(Clone, Copy, clap::ValueEnum, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum StorageMode {
     HighThroughput,
     LowSpace
+}
+
+impl Default for StorageMode {
+    fn default() -> Self {
+        Self::LowSpace
+    }
 }
 
 impl FromStr for StorageMode {

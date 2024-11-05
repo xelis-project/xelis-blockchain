@@ -1,5 +1,6 @@
 use std::{fmt, str::FromStr};
 
+use serde::{Serialize, Deserialize};
 pub use x25519_dalek::{PublicKey, StaticSecret};
 use rand::rngs::OsRng;
 
@@ -33,7 +34,7 @@ impl From<WrappedSecret> for DHKeyPair {
 }
 
 /// The action to take when a key is different from the one stored locally
-#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum, Serialize, Deserialize)]
 pub enum KeyVerificationAction {
     /// Warn the user by logging a message
     Warn,
@@ -41,6 +42,12 @@ pub enum KeyVerificationAction {
     Reject,
     /// Ignore the key change for the peer
     Ignore
+}
+
+impl Default for KeyVerificationAction {
+    fn default() -> Self {
+        Self::Ignore
+    }
 }
 
 /// A Diffie-Hellman keypair
@@ -93,5 +100,24 @@ impl FromStr for WrappedSecret {
 
         let priv_key = StaticSecret::from(decoded);
         Ok(Self(priv_key))
+    }
+}
+
+impl serde::Serialize for WrappedSecret {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&hex::encode(self.0.to_bytes()))
+    }
+}
+
+impl<'a> serde::Deserialize<'a> for WrappedSecret {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'a>
+    {
+        let s = String::deserialize(deserializer)?;
+        WrappedSecret::from_str(&s).map_err(serde::de::Error::custom)
     }
 }
