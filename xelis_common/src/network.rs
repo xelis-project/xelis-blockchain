@@ -11,6 +11,12 @@ pub enum Network {
     Dev
 }
 
+impl Default for Network {
+    fn default() -> Self {
+        Self::Mainnet
+    }
+}
+
 impl Network {
     pub fn is_mainnet(&self) -> bool {
         match &self {

@@ -65,6 +65,12 @@ pub enum LogLevel {
     Trace
 }
 
+impl Default for LogLevel {
+    fn default() -> Self {
+        Self::Info
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModuleConfig {
     pub module: String,
