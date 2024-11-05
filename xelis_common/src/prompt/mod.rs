@@ -47,12 +47,14 @@ use fern::colors::ColoredLevelConfig;
 use regex::Regex;
 use log::{info, error, Level, debug, LevelFilter, warn};
 use thiserror::Error;
+use serde::{Serialize, Deserialize};
 
 // Re-export fern and colors
 pub use fern::colors::Color;
 
 // used for launch param
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 #[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
 pub enum LogLevel {
     Off,
@@ -63,7 +65,7 @@ pub enum LogLevel {
     Trace
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModuleConfig {
     pub module: String,
     pub level: LogLevel
