@@ -120,10 +120,8 @@ fn default_logs_path() -> String {
     String::from("logs/")
 }
 
-#[derive(Parser, Serialize, Deserialize)]
-#[clap(version = VERSION, about = "XELIS is an innovative cryptocurrency built from scratch with BlockDAG, Homomorphic Encryption, Zero-Knowledge Proofs, and Smart Contracts.")]
-#[command(styles = xelis_common::get_cli_styles())]
-pub struct Config {
+#[derive(Debug, clap::Args, Serialize, Deserialize)]
+pub struct NetworkConfig {
     /// Daemon address to use
     #[cfg(feature = "network_handler")]
     #[clap(long, default_value_t = String::from(DEFAULT_DAEMON_ADDRESS))]
@@ -133,6 +131,28 @@ pub struct Config {
     #[cfg(feature = "network_handler")]
     #[clap(long)]
     offline_mode: bool,
+}
+
+#[derive(Debug, clap::Args, Serialize, Deserialize)]
+pub struct PrecomputedTablesConfig {
+    /// L1 size for precomputed tables
+    /// By default, it is set to 26 (L1_FULL)
+    /// At each increment of 1, the size of the table is doubled
+    /// L1_FULL = 26, L1_MEDIUM = 18, L1_LOW = 13
+    #[clap(long, default_value_t = precomputed_tables::L1_FULL)]
+    #[serde(default = "default_precomputed_tables_l1")]
+    precomputed_tables_l1: usize,
+    /// Set the path to use for precomputed tables
+    /// 
+    /// By default, it will be from current directory.
+    #[clap(long)]
+    precomputed_tables_path: Option<String>,
+}
+
+#[derive(Parser, Serialize, Deserialize)]
+#[clap(version = VERSION, about = "XELIS is an innovative cryptocurrency built from scratch with BlockDAG, Homomorphic Encryption, Zero-Knowledge Proofs, and Smart Contracts.")]
+#[command(styles = xelis_common::get_cli_styles())]
+pub struct Config {
     /// Set log level
     #[clap(long, value_enum, default_value_t = LogLevel::Info)]
     #[serde(default)]
@@ -159,13 +179,6 @@ pub struct Config {
     #[clap(long)]
     #[serde(default)]
     disable_interactive_mode: bool,
-    /// L1 size for precomputed tables
-    /// By default, it is set to 26 (L1_FULL)
-    /// At each increment of 1, the size of the table is doubled
-    /// L1_FULL = 26, L1_MEDIUM = 18, L1_LOW = 13
-    #[clap(long, default_value_t = precomputed_tables::L1_FULL)]
-    #[serde(default = "default_precomputed_tables_l1")]
-    precomputed_tables_l1: usize,
     /// Log filename
     /// 
     /// By default filename is xelis-wallet.log.
@@ -188,11 +201,6 @@ pub struct Config {
     /// Set the path for wallet storage to open/create a wallet at this location
     #[clap(long)]
     wallet_path: Option<String>,
-    /// Set the path to use for precomputed tables
-    /// 
-    /// By default, it will be from current directory.
-    #[clap(long)]
-    precomputed_tables_path: Option<String>,
     /// Password used to open wallet
     #[clap(long)]
     password: Option<String>,
@@ -207,6 +215,12 @@ pub struct Config {
     #[cfg(feature = "api_server")]
     #[structopt(flatten)]
     rpc: RPCConfig,
+    /// Network Configuration
+    #[structopt(flatten)]
+    network_handler: NetworkConfig,
+    /// Precopmuted tables configuration
+    #[structopt(flatten)]
+    precomputed_tables: PrecomputedTablesConfig,
     /// XSWD Server configuration
     #[cfg(feature = "api_server")]
     #[clap(long)]
@@ -305,7 +319,7 @@ async fn main() -> Result<()> {
             prompt.read_input(format!("Enter Password for '{}': ", path), true).await?
         };
 
-        let precomputed_tables = precomputed_tables::read_or_generate_precomputed_tables(config.precomputed_tables_path.as_deref(), config.precomputed_tables_l1, LogProgressTableGenerationReportFunction, true).await?;
+        let precomputed_tables = precomputed_tables::read_or_generate_precomputed_tables(config.precomputed_tables.precomputed_tables_path.as_deref(), config.precomputed_tables.precomputed_tables_l1, LogProgressTableGenerationReportFunction, true).await?;
         let p = Path::new(path);
         let wallet = if p.exists() && p.is_dir() && Path::new(&format!("{}/db", path)).exists() {
             info!("Opening wallet {}", path);
@@ -421,9 +435,9 @@ async fn xswd_handle_request_permission(prompt: &ShareablePrompt, app_state: App
 // Apply the config passed in params
 async fn apply_config(config: Config, wallet: &Arc<Wallet>, #[cfg(feature = "api_server")] prompt: &ShareablePrompt) {
     #[cfg(feature = "network_handler")]
-    if !config.offline_mode {
-        info!("Trying to connect to daemon at '{}'", config.daemon_address);
-        if let Err(e) = wallet.set_online_mode(&config.daemon_address, true).await {
+    if !config.network_handler.offline_mode {
+        info!("Trying to connect to daemon at '{}'", config.network_handler.daemon_address);
+        if let Err(e) = wallet.set_online_mode(&config.network_handler.daemon_address, true).await {
             error!("Couldn't connect to daemon: {}", e);
             info!("You can activate online mode using 'online_mode [daemon_address]'");
         } else {
@@ -702,7 +716,7 @@ async fn open_wallet(manager: &CommandManager, _: ArgumentManager) -> Result<(),
     let wallet = {
         let context = manager.get_context().lock()?;
         let network = context.get::<Network>()?;
-        let precomputed_tables = precomputed_tables::read_or_generate_precomputed_tables(config.precomputed_tables_path.as_deref(), config.precomputed_tables_l1, LogProgressTableGenerationReportFunction, true).await?;
+        let precomputed_tables = precomputed_tables::read_or_generate_precomputed_tables(config.precomputed_tables.precomputed_tables_path.as_deref(), config.precomputed_tables.precomputed_tables_l1, LogProgressTableGenerationReportFunction, true).await?;
         Wallet::open(&dir, &password, *network, precomputed_tables)?
     };
 
@@ -750,7 +764,7 @@ async fn create_wallet(manager: &CommandManager, _: ArgumentManager) -> Result<(
     let wallet = {
         let context = manager.get_context().lock()?;
         let network = context.get::<Network>()?;
-        let precomputed_tables = precomputed_tables::read_or_generate_precomputed_tables(config.precomputed_tables_path.as_deref(), precomputed_tables::L1_FULL, LogProgressTableGenerationReportFunction, true).await?;
+        let precomputed_tables = precomputed_tables::read_or_generate_precomputed_tables(config.precomputed_tables.precomputed_tables_path.as_deref(), precomputed_tables::L1_FULL, LogProgressTableGenerationReportFunction, true).await?;
         Wallet::create(&dir, &password, None, *network, precomputed_tables)?
     };
  
@@ -826,7 +840,7 @@ async fn recover_wallet(manager: &CommandManager, _: ArgumentManager, seed: bool
     let wallet = {
         let context = manager.get_context().lock()?;
         let network = context.get::<Network>()?;
-        let precomputed_tables = precomputed_tables::read_or_generate_precomputed_tables(config.precomputed_tables_path.as_deref(), config.precomputed_tables_l1, LogProgressTableGenerationReportFunction, true).await?;
+        let precomputed_tables = precomputed_tables::read_or_generate_precomputed_tables(config.precomputed_tables.precomputed_tables_path.as_deref(), config.precomputed_tables.precomputed_tables_l1, LogProgressTableGenerationReportFunction, true).await?;
 
         let recover = if seed {
             RecoverOption::Seed(&content)
