@@ -98,12 +98,7 @@ fn default_logs_path() -> String {
 }
 
 #[derive(Parser, Serialize, Deserialize)]
-#[clap(version = VERSION, about = "XELIS is an innovative cryptocurrency built from scratch with BlockDAG, Homomorphic Encryption, Zero-Knowledge Proofs, and Smart Contracts.")]
-#[command(styles = xelis_common::get_cli_styles())]
-pub struct Config {
-    #[structopt(flatten)]
-    #[serde(flatten)]
-    inner: InnerConfig,
+pub struct LogConfig {
     /// Set log level
     #[clap(long, value_enum, default_value_t = LogLevel::Info)]
     #[serde(default)]
@@ -149,6 +144,18 @@ pub struct Config {
     #[clap(long)]
     #[serde(default)]
     logs_modules: Vec<ModuleConfig>,
+}
+
+#[derive(Parser, Serialize, Deserialize)]
+#[clap(version = VERSION, about = "XELIS is an innovative cryptocurrency built from scratch with BlockDAG, Homomorphic Encryption, Zero-Knowledge Proofs, and Smart Contracts.")]
+#[command(styles = xelis_common::get_cli_styles())]
+pub struct Config {
+    /// Blockchain core configuration
+    #[structopt(flatten)]
+    core: InnerConfig,
+    /// Log configuration
+    #[structopt(flatten)]
+    log: LogConfig,
     /// Network selected for chain
     #[clap(long, value_enum, default_value_t = Network::Mainnet)]
     #[serde(default)]
@@ -198,19 +205,20 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
-    let blockchain_config = config.inner;
+    let blockchain_config = config.core;
     if let Some(path) = blockchain_config.dir_path.as_ref() {
         if !(path.ends_with("/") || path.ends_with("\\")) {
             return Err(anyhow::anyhow!("Path must end with / or \\"));
         }
 
         // If logs path is default, we will change it to be in the same directory as the blockchain
-        if config.logs_path == "logs/" {
-            config.logs_path = format!("{}logs/", path);
+        if config.log.logs_path == "logs/" {
+            config.log.logs_path = format!("{}logs/", path);
         }
     }
 
-    let prompt = Prompt::new(config.log_level, &config.logs_path, &config.filename_log, config.disable_file_logging, config.disable_file_log_date_based, config.disable_log_color, !config.disable_interactive_mode, config.logs_modules, config.file_log_level.unwrap_or(config.log_level))?;
+    let log_config = config.log;
+    let prompt = Prompt::new(log_config.log_level, &log_config.logs_path, &log_config.filename_log, log_config.disable_file_logging, log_config.disable_file_log_date_based, log_config.disable_log_color, !log_config.disable_interactive_mode, log_config.logs_modules, log_config.file_log_level.unwrap_or(log_config.log_level))?;
     info!("XELIS Blockchain running version: {}", VERSION);
     info!("----------------------------------------------");
 
