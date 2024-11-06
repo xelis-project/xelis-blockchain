@@ -214,7 +214,7 @@ pub struct Config {
     precomputed_tables: PrecomputedTablesConfig,
     /// Log configuration
     #[structopt(flatten)]
-    log_config: LogConfig,
+    log: LogConfig,
     /// Set the path for wallet storage to open/create a wallet at this location
     #[clap(long)]
     wallet_path: Option<String>,
@@ -291,7 +291,7 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
-    let log_config = &config.log_config;
+    let log_config = &config.log;
     let prompt = Prompt::new(log_config.log_level, &log_config.logs_path, &log_config.filename_log, log_config.disable_file_logging, log_config.disable_file_log_date_based, log_config.disable_log_color, !log_config.disable_interactive_mode, log_config.logs_modules.clone(), log_config.file_log_level.unwrap_or(log_config.log_level))?;
 
     #[cfg(feature = "api_server")]
