@@ -1,5 +1,6 @@
 use std::{
     fs::File,
+    io::Write,
     ops::ControlFlow,
     path::Path,
     sync::Arc,
@@ -8,6 +9,7 @@ use std::{
 use anyhow::{Result, Context};
 use log::{error, info};
 use clap::Parser;
+use serde::{Deserialize, Serialize};
 use xelis_common::{
     async_handler,
     config::{
@@ -88,7 +90,7 @@ use {
 // In case we want to enable it instead of starting
 // the XSWD Server
 #[cfg(feature = "api_server")]
-#[derive(Debug, clap::Args)]
+#[derive(Debug, clap::Args, Serialize, Deserialize)]
 pub struct RPCConfig {
     /// RPC Server bind address
     #[clap(long)]
@@ -101,13 +103,31 @@ pub struct RPCConfig {
     rpc_password: Option<String>
 }
 
-#[derive(Parser)]
+// Functions Helpers
+fn default_daemon_address() -> String {
+    DEFAULT_DAEMON_ADDRESS.to_owned()
+}
+
+fn default_precomputed_tables_l1() -> usize {
+    precomputed_tables::L1_FULL
+}
+
+fn default_log_filename() -> String {
+    String::from("xelis-wallet.log")
+}
+
+fn default_logs_path() -> String {
+    String::from("logs/")
+}
+
+#[derive(Parser, Serialize, Deserialize)]
 #[clap(version = VERSION, about = "XELIS is an innovative cryptocurrency built from scratch with BlockDAG, Homomorphic Encryption, Zero-Knowledge Proofs, and Smart Contracts.")]
 #[command(styles = xelis_common::get_cli_styles())]
 pub struct Config {
     /// Daemon address to use
     #[cfg(feature = "network_handler")]
     #[clap(long, default_value_t = String::from(DEFAULT_DAEMON_ADDRESS))]
+    #[serde(default = "default_daemon_address")]
     daemon_address: String,
     /// Disable online mode
     #[cfg(feature = "network_handler")]
@@ -115,6 +135,7 @@ pub struct Config {
     offline_mode: bool,
     /// Set log level
     #[clap(long, value_enum, default_value_t = LogLevel::Info)]
+    #[serde(default)]
     log_level: LogLevel,
     /// Set file log level
     /// By default, it will be the same as log level
@@ -122,23 +143,28 @@ pub struct Config {
     file_log_level: Option<LogLevel>,
     /// Disable the log file
     #[clap(long)]
+    #[serde(default)]
     disable_file_logging: bool,
     /// Disable the log filename date based
     /// If disabled, the log file will be named xelis-wallet.log instead of YYYY-MM-DD.xelis-wallet.log
     #[clap(long)]
+    #[serde(default)]
     disable_file_log_date_based: bool,
     /// Disable the usage of colors in log
     #[clap(long)]
+    #[serde(default)]
     disable_log_color: bool,
     /// Disable terminal interactive mode
     /// You will not be able to write CLI commands in it or to have an updated prompt
     #[clap(long)]
+    #[serde(default)]
     disable_interactive_mode: bool,
     /// L1 size for precomputed tables
     /// By default, it is set to 26 (L1_FULL)
     /// At each increment of 1, the size of the table is doubled
     /// L1_FULL = 26, L1_MEDIUM = 18, L1_LOW = 13
     #[clap(long, default_value_t = precomputed_tables::L1_FULL)]
+    #[serde(default = "default_precomputed_tables_l1")]
     precomputed_tables_l1: usize,
     /// Log filename
     /// 
@@ -146,15 +172,18 @@ pub struct Config {
     /// File will be stored in logs directory, this is only the filename, not the full path.
     /// Log file is rotated every day and has the format YYYY-MM-DD.xelis-wallet.log.
     #[clap(long, default_value_t = String::from("xelis-wallet.log"))]
+    #[serde(default = "default_log_filename")]
     filename_log: String,
     /// Logs directory
     /// 
     /// By default it will be logs/ of the current directory.
     /// It must end with a / to be a valid folder.
     #[clap(long, default_value_t = String::from("logs/"))]
+    #[serde(default = "default_logs_path")]
     logs_path: String,
     /// Module configuration for logs
     #[clap(long)]
+    #[serde(default)]
     logs_modules: Vec<ModuleConfig>,
     /// Set the path for wallet storage to open/create a wallet at this location
     #[clap(long)]
@@ -172,6 +201,7 @@ pub struct Config {
     seed: Option<String>,
     /// Network selected for chain
     #[clap(long, value_enum, default_value_t = Network::Mainnet)]
+    #[serde(default)]
     network: Network,
     /// RPC Server configuration
     #[cfg(feature = "api_server")]
@@ -180,17 +210,30 @@ pub struct Config {
     /// XSWD Server configuration
     #[cfg(feature = "api_server")]
     #[clap(long)]
+    #[serde(default)]
     enable_xswd: bool,
     /// Disable the history scan
     /// This will prevent syncing old TXs/blocks
     /// Only blocks / transactions caught by the network handler will be stored, not the old ones
     #[clap(long)]
+    #[serde(default)]
     disable_history_scan: bool,
     /// Force the wallet to use a stable balance only during transactions creation.
     /// This will prevent the wallet to use unstable balance and prevent any orphaned transaction due to DAG reorg.
     /// This is only working if the wallet is in online mode.
     #[clap(long)]
-    force_stable_balance: bool
+    #[serde(default)]
+    force_stable_balance: bool,
+    /// JSON File to load the configuration from
+    #[clap(long)]
+    #[serde(skip)]
+    #[serde(default)]
+    config_file: Option<String>,
+    /// Generate the template at the `config_file` path
+    #[clap(long)]
+    #[serde(skip)]
+    #[serde(default)]
+    generate_config_template: bool
 }
 
 /// This struct is used to log the progress of the table generation
@@ -205,7 +248,28 @@ impl ecdlp::ProgressTableGenerationReportFunction for LogProgressTableGeneration
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let config: Config = Config::parse();
+    let mut config: Config = Config::parse();
+    if let Some(path) = config.config_file.as_ref() {
+        if config.generate_config_template {
+            if Path::new(path).exists() {
+                eprintln!("Config file already exists at {}", path);
+                return Ok(());
+            }
+
+            let mut file = File::create(path).context("Error while creating config file")?;
+            let json = serde_json::to_string_pretty(&config).context("Error while serializing config file")?;
+            file.write_all(json.as_bytes()).context("Error while writing config file")?;
+            println!("Config file template generated at {}", path);
+            return Ok(());
+        }
+
+        let file = File::open(path).context("Error while opening config file")?;
+        config = serde_json::from_reader(file).context("Error while reading config file")?;
+    } else if config.generate_config_template {
+        eprintln!("Provided config file path is required to generate the template with --config-file");
+        return Ok(());
+    }
+
     let prompt = Prompt::new(config.log_level, &config.logs_path, &config.filename_log, config.disable_file_logging, config.disable_file_log_date_based, config.disable_log_color, !config.disable_interactive_mode, config.logs_modules.clone(), config.file_log_level.unwrap_or(config.log_level))?;
 
     #[cfg(feature = "api_server")]
