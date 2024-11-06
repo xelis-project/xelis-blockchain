@@ -1,6 +1,9 @@
 pub mod config;
 
 use std::{
+    fs::File,
+    io::Write,
+    path::Path,
     sync::{
         atomic::{
             AtomicBool,
@@ -91,46 +94,54 @@ use anyhow::{
 };
 use lazy_static::lazy_static;
 
-#[derive(Parser)]
-#[clap(version = VERSION, about = "XELIS is an innovative cryptocurrency built from scratch with BlockDAG, Homomorphic Encryption, Zero-Knowledge Proofs, and Smart Contracts.")]
-#[command(styles = xelis_common::get_cli_styles())]
-pub struct MinerConfig {
-    /// Wallet address to mine and receive block rewards on
-    #[clap(short, long)]
-    miner_address: Option<Address>,
-    /// Daemon address to connect to for mining
-    #[clap(long, default_value_t = String::from(DEFAULT_DAEMON_ADDRESS))]
-    daemon_address: String,
-    /// Bind address for stats API
-    #[cfg(feature = "api_stats")]
-    #[clap(long)]
-    api_bind_address: Option<String>,
+// Functions helpers
+fn default_daemon_address() -> String {
+    DEFAULT_DAEMON_ADDRESS.to_owned()
+}
+
+fn default_iterations() -> usize {
+    100
+}
+
+fn default_log_filename() -> String {
+    "xelis-miner.log".to_owned()
+}
+
+fn default_logs_path() -> String {
+    "logs/".to_owned()
+}
+
+fn default_worker_name() -> String {
+    "default".to_owned()
+}
+
+#[derive(Parser, Serialize, Deserialize)]
+pub struct LogConfig {
     /// Set log level
     #[clap(long, value_enum, default_value_t = LogLevel::Info)]
+    #[serde(default)]
     log_level: LogLevel,
     /// Set file log level
     /// By default, it will be the same as log level
     #[clap(long, value_enum)]
     file_log_level: Option<LogLevel>,
-    /// Enable the benchmark mode with the specified algorithm
-    #[clap(long)]
-    benchmark: Option<Algorithm>,
-    /// Iterations to run the benchmark
-    #[clap(long, default_value_t = 100)]
-    iterations: usize,
     /// Disable the log file
     #[clap(long)]
+    #[serde(default)]
     disable_file_logging: bool,
     /// Disable the log filename date based
     /// If disabled, the log file will be named xelis-miner.log instead of YYYY-MM-DD.xelis-miner.log
     #[clap(long)]
+    #[serde(default)]
     disable_file_log_date_based: bool,
     /// Disable the usage of colors in log
     #[clap(long)]
+    #[serde(default)]
     disable_log_color: bool,
     /// Disable terminal interactive mode
     /// You will not be able to write CLI commands in it or to have an updated prompt
     #[clap(long)]
+    #[serde(default)]
     disable_interactive_mode: bool,
     /// Log filename
     /// 
@@ -138,23 +149,71 @@ pub struct MinerConfig {
     /// File will be stored in logs directory, this is only the filename, not the full path.
     /// Log file is rotated every day and has the format YYYY-MM-DD.xelis-miner.log.
     #[clap(default_value_t = String::from("xelis-miner.log"))]
+    #[serde(default = "default_log_filename")]
     filename_log: String,
     /// Logs directory
     /// 
     /// By default it will be logs/ of the current directory.
     /// It must end with a / to be a valid folder.
     #[clap(long, default_value_t = String::from("logs/"))]
+    #[serde(default = "default_logs_path")]
     logs_path: String,
     /// Module configuration for logs
     #[clap(long)]
+    #[serde(default)]
     logs_modules: Vec<ModuleConfig>,
+}
+
+#[derive(Parser, Serialize, Deserialize)]
+pub struct BenchmarkConfig {
+    /// Enable the benchmark mode with the specified algorithm
+    #[clap(long)]
+    benchmark: Option<Algorithm>,
+    /// Iterations to run the benchmark
+    #[clap(long, default_value_t = 100)]
+    #[serde(default = "default_iterations")]
+    iterations: usize,
+}
+
+#[derive(Parser, Serialize, Deserialize)]
+#[clap(version = VERSION, about = "XELIS is an innovative cryptocurrency built from scratch with BlockDAG, Homomorphic Encryption, Zero-Knowledge Proofs, and Smart Contracts.")]
+#[command(styles = xelis_common::get_cli_styles())]
+pub struct Config {
+    /// Log configuration
+    #[clap(flatten)]
+    log: LogConfig,
+    /// Benchmark configuration
+    #[clap(flatten)]
+    benchmark: BenchmarkConfig,
+    /// Wallet address to mine and receive block rewards on
+    #[clap(short, long)]
+    miner_address: Option<Address>,
+    /// Daemon address to connect to for mining
+    #[clap(long, default_value_t = String::from(DEFAULT_DAEMON_ADDRESS))]
+    #[serde(default = "default_daemon_address")]
+    daemon_address: String,
+    /// Bind address for stats API
+    #[cfg(feature = "api_stats")]
+    #[clap(long)]
+    api_bind_address: Option<String>,
     /// Numbers of threads to use (at least 1, max: 65535)
     /// By default, this will try to detect the number of threads available on your CPU.
     #[clap(short, long)]
     num_threads: Option<u16>,
     /// Worker name to be displayed on daemon side
     #[clap(short, long, default_value_t = String::from("default"))]
+    #[serde(default = "default_worker_name")]
     worker: String,
+    /// JSON File to load the configuration from
+    #[clap(long)]
+    #[serde(skip)]
+    #[serde(default)]
+    config_file: Option<String>,
+    /// Generate the template at the `config_file` path
+    #[clap(long)]
+    #[serde(skip)]
+    #[serde(default)]
+    generate_config_template: bool
 }
 
 #[derive(Clone)]
@@ -191,8 +250,30 @@ const UPDATE_EVERY_NONCE: u64 = 10;
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
-    let config: MinerConfig = MinerConfig::parse();
-    let prompt = Prompt::new(config.log_level, &config.logs_path, &config.filename_log, config.disable_file_logging, config.disable_file_log_date_based, config.disable_log_color, !config.disable_interactive_mode, config.logs_modules, config.file_log_level.unwrap_or(config.log_level))?;
+    let mut config: Config = Config::parse();
+    if let Some(path) = config.config_file.as_ref() {
+        if config.generate_config_template {
+            if Path::new(path).exists() {
+                eprintln!("Config file already exists at {}", path);
+                return Ok(());
+            }
+
+            let mut file = File::create(path).context("Error while creating config file")?;
+            let json = serde_json::to_string_pretty(&config).context("Error while serializing config file")?;
+            file.write_all(json.as_bytes()).context("Error while writing config file")?;
+            println!("Config file template generated at {}", path);
+            return Ok(());
+        }
+
+        let file = File::open(path).context("Error while opening config file")?;
+        config = serde_json::from_reader(file).context("Error while reading config file")?;
+    } else if config.generate_config_template {
+        eprintln!("Provided config file path is required to generate the template with --config-file");
+        return Ok(());
+    }
+
+    let log = config.log;
+    let prompt = Prompt::new(log.log_level, &log.logs_path, &log.filename_log, log.disable_file_logging, log.disable_file_log_date_based, log.disable_log_color, !log.disable_interactive_mode, log.logs_modules, log.file_log_level.unwrap_or(log.log_level))?;
 
     let detected_threads = match thread::available_parallelism() {
         Ok(value) => value.get() as u16,
@@ -210,9 +291,9 @@ async fn main() -> Result<()> {
 
     info!("Total threads to use: {} (detected: {})", threads, detected_threads);
 
-    if let Some(algorithm) = config.benchmark {
+    if let Some(algorithm) = config.benchmark.benchmark {
         info!("Benchmark mode enabled, miner will try up to {} threads", threads);
-        benchmark(threads as usize, config.iterations, algorithm);
+        benchmark(threads as usize, config.benchmark.iterations, algorithm);
         info!("Benchmark finished");
         return Ok(())
     }
