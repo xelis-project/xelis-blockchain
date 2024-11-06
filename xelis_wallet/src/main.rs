@@ -149,10 +149,8 @@ pub struct PrecomputedTablesConfig {
     precomputed_tables_path: Option<String>,
 }
 
-#[derive(Parser, Serialize, Deserialize)]
-#[clap(version = VERSION, about = "XELIS is an innovative cryptocurrency built from scratch with BlockDAG, Homomorphic Encryption, Zero-Knowledge Proofs, and Smart Contracts.")]
-#[command(styles = xelis_common::get_cli_styles())]
-pub struct Config {
+#[derive(Debug, clap::Args, Serialize, Deserialize)]
+pub struct LogConfig {
     /// Set log level
     #[clap(long, value_enum, default_value_t = LogLevel::Info)]
     #[serde(default)]
@@ -198,6 +196,25 @@ pub struct Config {
     #[clap(long)]
     #[serde(default)]
     logs_modules: Vec<ModuleConfig>,
+}
+
+#[derive(Parser, Serialize, Deserialize)]
+#[clap(version = VERSION, about = "XELIS is an innovative cryptocurrency built from scratch with BlockDAG, Homomorphic Encryption, Zero-Knowledge Proofs, and Smart Contracts.")]
+#[command(styles = xelis_common::get_cli_styles())]
+pub struct Config {
+    /// RPC Server configuration
+    #[cfg(feature = "api_server")]
+    #[structopt(flatten)]
+    rpc: RPCConfig,
+    /// Network Configuration
+    #[structopt(flatten)]
+    network_handler: NetworkConfig,
+    /// Precopmuted tables configuration
+    #[structopt(flatten)]
+    precomputed_tables: PrecomputedTablesConfig,
+    /// Log configuration
+    #[structopt(flatten)]
+    log_config: LogConfig,
     /// Set the path for wallet storage to open/create a wallet at this location
     #[clap(long)]
     wallet_path: Option<String>,
@@ -211,16 +228,6 @@ pub struct Config {
     #[clap(long, value_enum, default_value_t = Network::Mainnet)]
     #[serde(default)]
     network: Network,
-    /// RPC Server configuration
-    #[cfg(feature = "api_server")]
-    #[structopt(flatten)]
-    rpc: RPCConfig,
-    /// Network Configuration
-    #[structopt(flatten)]
-    network_handler: NetworkConfig,
-    /// Precopmuted tables configuration
-    #[structopt(flatten)]
-    precomputed_tables: PrecomputedTablesConfig,
     /// XSWD Server configuration
     #[cfg(feature = "api_server")]
     #[clap(long)]
@@ -284,7 +291,8 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
-    let prompt = Prompt::new(config.log_level, &config.logs_path, &config.filename_log, config.disable_file_logging, config.disable_file_log_date_based, config.disable_log_color, !config.disable_interactive_mode, config.logs_modules.clone(), config.file_log_level.unwrap_or(config.log_level))?;
+    let log_config = &config.log_config;
+    let prompt = Prompt::new(log_config.log_level, &log_config.logs_path, &log_config.filename_log, log_config.disable_file_logging, log_config.disable_file_log_date_based, log_config.disable_log_color, !log_config.disable_interactive_mode, log_config.logs_modules.clone(), log_config.file_log_level.unwrap_or(log_config.log_level))?;
 
     #[cfg(feature = "api_server")]
     {
