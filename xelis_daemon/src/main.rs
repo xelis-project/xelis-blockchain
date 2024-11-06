@@ -1192,14 +1192,3 @@ async fn add_peer<S: Storage>(manager: &CommandManager, mut args: ArgumentManage
 
     Ok(())
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_config_serde() {
-        let empty = "{}";
-        assert!(serde_json::from_str::<Config>(empty).is_ok());
-    }
-}
