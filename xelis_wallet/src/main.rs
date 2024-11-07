@@ -101,7 +101,10 @@ pub struct RPCConfig {
     rpc_username: Option<String>,
     /// password for RPC authentication
     #[clap(long)]
-    rpc_password: Option<String>
+    rpc_password: Option<String>,
+    /// Number of threads to use for the RPC Server
+    #[clap(long)]
+    rpc_threads: Option<usize>
 }
 
 // Functions Helpers
@@ -475,7 +478,7 @@ async fn apply_config(config: Config, wallet: &Arc<Wallet>, #[cfg(feature = "api
             };
 
             info!("Enabling RPC Server on {} {}", address, if auth_config.is_some() { "with authentication" } else { "without authentication" });
-            if let Err(e) = wallet.enable_rpc_server(address, auth_config).await {
+            if let Err(e) = wallet.enable_rpc_server(address, auth_config, config.rpc.rpc_threads).await {
                 error!("Error while enabling RPC Server: {}", e);
             }
         } else if config.enable_xswd {
@@ -1327,7 +1330,7 @@ async fn start_rpc_server(manager: &CommandManager, mut arguments: ArgumentManag
         password
     });
 
-    wallet.enable_rpc_server(bind_address, auth_config).await.context("Error while enabling RPC Server")?;
+    wallet.enable_rpc_server(bind_address, auth_config, None).await.context("Error while enabling RPC Server")?;
     manager.message("RPC Server has been enabled");
     Ok(())
 }
