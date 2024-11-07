@@ -3642,7 +3642,6 @@ dependencies = [
  "serde_json",
  "sled",
  "thiserror",
- "tokio",
  "wasm-bindgen-futures",
  "web-sys",
  "xelis_common",
