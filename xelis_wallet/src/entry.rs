@@ -354,6 +354,16 @@ impl TransactionEntry {
         &mut self.entry
     }
 
+    // Is the transaction created by us
+    pub fn is_outgoing(&self) -> bool {
+        match &self.entry {
+            EntryData::Burn { .. } => true,
+            EntryData::Outgoing { .. } => true,
+            EntryData::MultiSig { .. } => true,
+            _ => false,
+        }
+    }
+
     // Convert to RPC Transaction Entry
     // This is a necessary step to serialize correctly the public key into an address
     pub fn serializable(self, mainnet: bool) -> RPCTransactionEntry {

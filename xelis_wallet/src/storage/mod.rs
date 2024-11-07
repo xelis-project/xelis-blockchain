@@ -142,6 +142,7 @@ pub struct EncryptedStorage {
     // so we can build several txs without having to wait for the confirmation
     // We store it in a VecDeque so for each TX we have an entry and can just retrieve it
     unconfirmed_balances_cache: Mutex<HashMap<Hash, VecDeque<Balance>>>,
+    // Temporary TX Cache used to build ordered TXs
     tx_cache: Option<TxCache>,
     // Cache for the assets with their decimals
     assets_cache: Mutex<LruCache<Hash, u8>>,
@@ -584,6 +585,17 @@ impl EncryptedStorage {
         self.get_balance_for(asset).await.map(|balance| (balance, false))
     }
 
+    // Verify if we have any unconfirmed balance stored
+    pub async fn has_unconfirmed_balance_for(&self, asset: &Hash) -> Result<bool> {
+        trace!("has unconfirmed balance for {}", asset);
+        let cache = self.unconfirmed_balances_cache.lock().await;
+        if let Some(balances) = cache.get(asset) {
+            return Ok(!balances.is_empty());
+        }
+
+        Ok(false)
+    }
+
     // Retrieve the unconfirmed balance decoded for this asset if present
     pub async fn get_unconfirmed_balance_decoded_for(&self, asset: &Hash, compressed_ct: &CompressedCiphertext) -> Result<Option<u64>> {
         trace!("get unconfirmed balance decoded for {}", asset);
@@ -687,6 +699,29 @@ impl EncryptedStorage {
     pub fn get_transactions(&self) -> Result<Vec<TransactionEntry>> {
         trace!("get transactions");
         self.get_filtered_transactions(None, None, None, None, true, true, true, true, None)
+    }
+
+    // Find the last outgoing transaction created
+    pub fn get_last_outgoing_transaction(&self) -> Result<Option<TransactionEntry>> {
+        trace!("get last transaction created");
+        let mut last_tx: Option<TransactionEntry> = None;
+        for res in self.transactions.iter().values() {
+            let value = res?;
+            let entry = TransactionEntry::from_bytes(&self.cipher.decrypt_value(&value)?)?;
+            if !entry.is_outgoing() {
+                continue;
+            }
+
+            if let Some(last) = last_tx.as_ref() {
+                if entry.get_topoheight() > last.get_topoheight() {
+                    last_tx = Some(entry);
+                }
+            } else {
+                last_tx = Some(entry);
+            }
+        }
+
+        Ok(last_tx)
     }
 
     // delete all transactions above the specified topoheight

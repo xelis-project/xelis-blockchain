@@ -659,12 +659,13 @@ impl Wallet {
         #[cfg(feature = "network_handler")]
         {
             let force_stable_balance = self.get_stable_balance();
-            if (reference.is_none() && used_assets.contains(&XELIS_ASSET)) || force_stable_balance {
-                // debug!("Wallet got a coinbase reward at topoheight: {}, verify that its not unstable", topoheight);
+            // Reference must be none in order to use the last stable balance
+            // Otherwise that mean we're still waiting on a TX to be confirmed
+            if reference.is_none() && (used_assets.contains(&XELIS_ASSET) || force_stable_balance) {
                 if let Some(network_handler) = self.network_handler.lock().await.as_ref() {
                     // Last mining reward is above stable topoheight, this may increase orphans rate
                     // To avoid this, we will use the last balance version in stable topoheight as reference
-                    let use_stable_balance = if let Some(topoheight) = storage.get_last_coinbase_reward_topoheight().filter(|_| !force_stable_balance) {
+                    let mut use_stable_balance = if let Some(topoheight) = storage.get_last_coinbase_reward_topoheight().filter(|_| !force_stable_balance) {
                         let stable_topoheight = network_handler.get_api().get_stable_topoheight().await?;
                         daemon_stable_topoheight = Some(stable_topoheight);
                         debug!("stable topoheight: {}, topoheight: {}", stable_topoheight, topoheight);
@@ -672,6 +673,34 @@ impl Wallet {
                     } else {
                         force_stable_balance
                     };
+
+                    if use_stable_balance {
+                        // Verify that we don't have a pending TX with unconfirmed balance
+                        for asset in used_assets.iter() {
+                            if storage.has_unconfirmed_balance_for(asset).await? {
+                                warn!("Cannot use stable balance because we have unconfirmed balance for {}", asset);
+                                use_stable_balance = false;
+                                break;
+                            }
+                        }
+                    }
+
+                    // We also need to check if we have made an outgoing TX
+                    // Because we need to keep the order of TX and use correct ciphertexts
+                    if use_stable_balance {
+                        if let Some(entry) = storage.get_last_outgoing_transaction()? {
+                            let stable_topo = if let Some(topo) = daemon_stable_topoheight {
+                                topo
+                            } else {
+                                network_handler.get_api().get_stable_topoheight().await?
+                            };
+
+                            if stable_topo < entry.get_topoheight() {
+                                warn!("Cannot use stable balance because we have an outgoing TX not confirmed in stable height yet");
+                                use_stable_balance = false;
+                            }
+                        }
+                    }
 
                     if use_stable_balance {
                         warn!("Using stable balance for TX creation");
