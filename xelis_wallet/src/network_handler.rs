@@ -372,7 +372,7 @@ impl NetworkHandler {
 
                 // New transaction entry that may be linked to us, check if TX was executed
                 if !self.api.is_tx_executed_in_block(&tx.hash, &block_hash).await? {
-                    warn!("Transaction {} was a good candidate but was not executed in block {}, searching its block executor", tx.hash, block_hash);
+                    debug!("Transaction {} was a good candidate but was not executed in block {}, searching its block executor", tx.hash, block_hash);
                     // Don't skip the TX, we may have missed it
                     match self.api.get_transaction_executor(&tx.hash).await {
                         Ok(executor) => {
