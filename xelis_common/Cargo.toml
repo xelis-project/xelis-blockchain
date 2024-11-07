@@ -69,6 +69,7 @@ clap = ["dep:clap"]
 prompt = ["clap", "tokio", "dep:crossterm", "dep:chrono"]
 rpc_server = ["dep:actix-rt", "dep:actix-web", "dep:actix-ws", "dep:futures-util", "tokio", "dep:reqwest"]
 tracing = ["dep:console-subscriber", "tokio", "tokio/tracing"]
+tokio-multi-thread = ["tokio", "tokio/rt-multi-thread", "tokio_with_wasm/rt-multi-thread"]
 
 [lib]
 crate-type = ["cdylib", "rlib"]
