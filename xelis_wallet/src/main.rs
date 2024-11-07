@@ -11,6 +11,7 @@ use log::{error, info};
 use clap::Parser;
 use serde::{Deserialize, Serialize};
 use xelis_common::{
+    tokio,
     async_handler,
     config::{
         COIN_DECIMALS,

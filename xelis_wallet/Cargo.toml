@@ -28,8 +28,6 @@ indexmap = { version = "2.0.0", features = ["serde"] }
 log = "0.4"
 rand = "0.8.4"
 thiserror = "1.0.57"
-# Used by CLI for multi-threading
-tokio = { version = "1", features = ["rt-multi-thread"], optional = true }
 anyhow = "1"
 serde = { version = "1", features = ["derive", "rc"] }
 serde_json = "1"
@@ -45,9 +43,10 @@ wasm-bindgen-futures = "0.4.43"
 [features]
 # Set as default dependencies until https://github.com/rust-lang/cargo/issues/4663 is resolved for binary targets
 default = ["cli", "api_server"]
-cli = ["dep:tokio", "dep:clap", "xelis_common/prompt"]
+cli = ["xelis_common/tokio", "dep:clap", "xelis_common/prompt"]
 network_handler = ["xelis_common/json_rpc"]
 api_server = ["network_handler", "xelis_common/rpc_server", "dep:actix", "dep:actix-web", "dep:actix-web-httpauth"]
+tokio-multi-thread = ["xelis_common/tokio-multi-thread"]
 
 [lib]
 crate-type = ["cdylib", "rlib"]
