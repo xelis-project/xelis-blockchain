@@ -35,7 +35,31 @@ fn default_p2p_concurrency_task_count_limit() -> usize {
 }
 
 #[derive(Debug, clap::Args, Serialize, Deserialize)]
+pub struct RPCConfig {
+    /// Disable GetWork Server (WebSocket for miners).
+    #[clap(long)]
+    #[serde(default)]
+    pub disable_getwork_server: bool,
+    /// Disable RPC Server
+    /// This will also disable the GetWork Server as it is loaded on RPC server.
+    #[clap(long)]
+    #[serde(default)]
+    pub disable_rpc_server: bool,
+    /// Rpc bind address to listen for HTTP requests
+    #[clap(long, default_value_t = String::from(DEFAULT_RPC_BIND_ADDRESS))]
+    #[serde(default = "default_rpc_bind_address")]
+    pub rpc_bind_address: String,
+    /// Number of workers to spawn for the HTTP server.
+    /// If not provided, it will use the default value from Actix.
+    #[clap(long)]
+    pub rpc_threads: Option<usize>
+}
+
+#[derive(Debug, clap::Parser, Serialize, Deserialize)]
 pub struct Config {
+    /// RPC configuration
+    #[structopt(flatten)]
+    pub rpc: RPCConfig,
     /// Optional node tag
     #[clap(long)]
     pub tag: Option<String>,
@@ -47,10 +71,6 @@ pub struct Config {
     #[clap(long, default_value_t = P2P_DEFAULT_MAX_PEERS)]
     #[serde(default = "default_max_peers")]
     pub max_peers: usize,
-    /// Rpc bind address to listen for HTTP requests
-    #[clap(long, default_value_t = String::from(DEFAULT_RPC_BIND_ADDRESS))]
-    #[serde(default = "default_rpc_bind_address")]
-    pub rpc_bind_address: String,
     /// Add a priority node to connect when P2p is started.
     /// A priority node is connected only one time.
     #[clap(long)]
@@ -70,15 +90,6 @@ pub struct Config {
     #[clap(long, default_value_t = DEFAULT_CACHE_SIZE)]
     #[serde(default = "default_cache_size")]
     pub cache_size: usize,
-    /// Disable GetWork Server (WebSocket for miners).
-    #[clap(long)]
-    #[serde(default)]
-    pub disable_getwork_server: bool,
-    /// Disable RPC Server
-    /// This will also disable the GetWork Server as it is loaded on RPC server.
-    #[clap(long)]
-    #[serde(default)]
-    pub disable_rpc_server: bool,
     /// Enable the simulator (skip PoW verification, generate a new block for every BLOCK_TIME).
     #[clap(long)]
     pub simulator: Option<Simulator>,
