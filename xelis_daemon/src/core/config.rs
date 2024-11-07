@@ -55,11 +55,8 @@ pub struct RPCConfig {
     pub rpc_threads: Option<usize>
 }
 
-#[derive(Debug, clap::Parser, Serialize, Deserialize)]
-pub struct Config {
-    /// RPC configuration
-    #[structopt(flatten)]
-    pub rpc: RPCConfig,
+#[derive(Debug, clap::Args, Serialize, Deserialize)]
+pub struct P2pConfig {
     /// Optional node tag
     #[clap(long)]
     pub tag: Option<String>,
@@ -81,32 +78,10 @@ pub struct Config {
     #[clap(long)]
     #[serde(default)]
     pub exclusive_nodes: Vec<String>,
-    /// Set dir path for blockchain storage.
-    /// This will be appended by the network name for the database directory.
-    /// It must ends with a slash.
-    #[clap(long)]
-    pub dir_path: Option<String>,
-    /// Set LRUCache size (0 = disabled).
-    #[clap(long, default_value_t = DEFAULT_CACHE_SIZE)]
-    #[serde(default = "default_cache_size")]
-    pub cache_size: usize,
-    /// Enable the simulator (skip PoW verification, generate a new block for every BLOCK_TIME).
-    #[clap(long)]
-    pub simulator: Option<Simulator>,
-    /// Skip PoW verification.
-    /// Warning: This is dangerous and should not be used in production.
-    #[clap(long)]
-    #[serde(default)]
-    pub skip_pow_verification: bool,
     /// Disable the p2p connections.
     #[clap(long)]
     #[serde(default)]
     pub disable_p2p_server: bool,
-    /// Enable the auto prune mode and prune the chain
-    /// at each new block by keeping at least N blocks
-    /// before the top.
-    #[clap(long)]
-    pub auto_prune_keep_n_blocks: Option<u64>,
     /// Allow fast sync mode.
     /// 
     /// Sync a bootstrapped chain if your local copy is outdated.
@@ -157,6 +132,38 @@ pub struct Config {
     pub p2p_on_dh_key_change: KeyVerificationAction,
     /// P2p DH private key to use.
     pub p2p_private_key: Option<WrappedSecret>,
+}
+
+#[derive(Debug, clap::Args, Serialize, Deserialize)]
+pub struct Config {
+    /// RPC configuration
+    #[clap(flatten)]
+    pub rpc: RPCConfig,
+    /// P2P configuration
+    #[clap(flatten)]
+    pub p2p: P2pConfig,
+    /// Set dir path for blockchain storage.
+    /// This will be appended by the network name for the database directory.
+    /// It must ends with a slash.
+    #[clap(long)]
+    pub dir_path: Option<String>,
+    /// Set LRUCache size (0 = disabled).
+    #[clap(long, default_value_t = DEFAULT_CACHE_SIZE)]
+    #[serde(default = "default_cache_size")]
+    pub cache_size: usize,
+    /// Enable the simulator (skip PoW verification, generate a new block for every BLOCK_TIME).
+    #[clap(long)]
+    pub simulator: Option<Simulator>,
+    /// Skip PoW verification.
+    /// Warning: This is dangerous and should not be used in production.
+    #[clap(long)]
+    #[serde(default)]
+    pub skip_pow_verification: bool,
+    /// Enable the auto prune mode and prune the chain
+    /// at each new block by keeping at least N blocks
+    /// before the top.
+    #[clap(long)]
+    pub auto_prune_keep_n_blocks: Option<u64>,
     /// Skip the TXs verification when building a block template.
     #[clap(long)]
     #[serde(default)]

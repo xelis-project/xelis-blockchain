@@ -149,7 +149,7 @@ pub struct LogConfig {
 #[derive(Parser, Serialize, Deserialize)]
 #[clap(version = VERSION, about = "XELIS is an innovative cryptocurrency built from scratch with BlockDAG, Homomorphic Encryption, Zero-Knowledge Proofs, and Smart Contracts.")]
 #[command(styles = xelis_common::get_cli_styles())]
-pub struct Config {
+pub struct CliConfig {
     /// Blockchain core configuration
     #[structopt(flatten)]
     core: InnerConfig,
@@ -183,7 +183,7 @@ const BLOCK_TIME: Difficulty = Difficulty::from_u64(BLOCK_TIME_MILLIS / MILLIS_P
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let mut config: Config = Config::parse();
+    let mut config: CliConfig = CliConfig::parse();
     if let Some(path) = config.config_file.as_ref() {
         if config.generate_config_template {
             if Path::new(path).exists() {
