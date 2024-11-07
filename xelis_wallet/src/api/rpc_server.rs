@@ -83,6 +83,10 @@ where
             .bind(&bind_address)?;
 
             if let Some(threads) = threads {
+                if threads == 0 {
+                    return Err(anyhow::anyhow!("The number of workers must be greater than 0"));
+                }
+
                 info!("Setting the number of workers to: {}", threads);
                 builder = builder.workers(threads);
             }
