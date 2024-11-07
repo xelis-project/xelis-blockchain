@@ -43,10 +43,10 @@ wasm-bindgen-futures = "0.4.43"
 [features]
 # Set as default dependencies until https://github.com/rust-lang/cargo/issues/4663 is resolved for binary targets
 default = ["cli", "api_server"]
-cli = ["xelis_common/tokio", "dep:clap", "xelis_common/prompt"]
+cli = ["tokio-multi-thread", "dep:clap", "xelis_common/prompt"]
 network_handler = ["xelis_common/json_rpc"]
 api_server = ["network_handler", "xelis_common/rpc_server", "dep:actix", "dep:actix-web", "dep:actix-web-httpauth"]
-tokio-multi-thread = ["xelis_common/tokio-multi-thread"]
+tokio-multi-thread = ["xelis_common/tokio", "xelis_common/tokio-multi-thread"]
 
 [lib]
 crate-type = ["cdylib", "rlib"]
