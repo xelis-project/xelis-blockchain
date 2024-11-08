@@ -585,7 +585,7 @@ impl Prompt {
                         match command_manager.handle_command(input).await {
                             Err(CommandError::Exit) => break,
                             Err(e) => {
-                                error!("Error while executing command: {}", e);
+                                error!("Error while executing command: {:#}", e);
                             }
                             _ => {},
                         }
