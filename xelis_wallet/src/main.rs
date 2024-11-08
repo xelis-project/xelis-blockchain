@@ -349,7 +349,7 @@ async fn main() -> Result<()> {
     }
 
     if let Err(e) = prompt.start(Duration::from_millis(1000), Box::new(async_handler!(prompt_message_builder)), Some(&command_manager)).await {
-        error!("Error while running prompt: {}", e);
+        error!("Error while running prompt: {:#}", e);
     }
 
     if let Ok(context) = command_manager.get_context().lock() {
@@ -449,7 +449,7 @@ async fn apply_config(config: Config, wallet: &Arc<Wallet>, #[cfg(feature = "api
     if !config.network_handler.offline_mode {
         info!("Trying to connect to daemon at '{}'", config.network_handler.daemon_address);
         if let Err(e) = wallet.set_online_mode(&config.network_handler.daemon_address, true).await {
-            error!("Couldn't connect to daemon: {}", e);
+            error!("Couldn't connect to daemon: {:#}", e);
             info!("You can activate online mode using 'online_mode [daemon_address]'");
         } else {
             info!("Online mode enabled");
@@ -478,7 +478,7 @@ async fn apply_config(config: Config, wallet: &Arc<Wallet>, #[cfg(feature = "api
 
             info!("Enabling RPC Server on {} {}", address, if auth_config.is_some() { "with authentication" } else { "without authentication" });
             if let Err(e) = wallet.enable_rpc_server(address, auth_config, config.rpc.rpc_threads).await {
-                error!("Error while enabling RPC Server: {}", e);
+                error!("Error while enabling RPC Server: {:#}", e);
             }
         } else if config.enable_xswd {
             match wallet.enable_xswd().await {
@@ -1253,7 +1253,7 @@ async fn rescan(manager: &CommandManager, mut arguments: ArgumentManager) -> Res
     };
 
     if let Err(e) = wallet.rescan(topoheight, true).await {
-        manager.error(format!("Error while rescanning: {}", e));
+        manager.error(format!("Error while rescanning: {:#}", e));
     } else {
         manager.message("Network handler has been restarted!");
     }
@@ -1379,7 +1379,7 @@ async fn broadcast_tx(wallet: &Wallet, manager: &CommandManager, tx: Transaction
 
     if wallet.is_online().await {
         if let Err(e) = wallet.submit_transaction(&tx).await {
-            manager.error(format!("Couldn't submit transaction: {}", e));
+            manager.error(format!("Couldn't submit transaction: {:#}", e));
             manager.error("You can try to rescan your balance with the command 'rescan'");
 
             // Maybe cache is corrupted, clear it
