@@ -106,7 +106,7 @@ impl RpcResponseError {
             "id": self.get_id(),
             "error": {
                 "code": self.error.get_code(),
-                "message": self.error.to_string()
+                "message": format!("{:#}", self.error)
             }
         })
     }
@@ -114,7 +114,7 @@ impl RpcResponseError {
 
 impl Display for RpcResponseError {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "RpcError[id: {}, error: {}]", self.get_id(), self.error.to_string())
+        write!(f, "RpcError[id: {}, error: {:#}]", self.get_id(), self.error)
     }
 }
 
