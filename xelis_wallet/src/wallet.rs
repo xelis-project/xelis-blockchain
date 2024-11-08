@@ -46,7 +46,8 @@ use xelis_common::{
         Role,
         Transaction
     },
-    serializer::Serializer
+    serializer::Serializer,
+    utils::{format_xelis, format_coin}
 };
 use crate::{
     cipher::Cipher,
@@ -856,7 +857,7 @@ impl Wallet {
 
     // Export all transactions in CSV format to the given writer
     // This will sort the transactions by topoheight before exporting
-    pub fn export_transactions_in_csv<W: Write>(&self, mut transactions: Vec<InnerTransactionEntry>, w: &mut W) -> Result<(), WalletError> {
+    pub async fn export_transactions_in_csv<W: Write>(&self, storage: &EncryptedStorage, mut transactions: Vec<InnerTransactionEntry>, w: &mut W) -> Result<(), WalletError> {
         trace!("export transactions in csv");
 
         // Sort transactions by topoheight
@@ -866,24 +867,27 @@ impl Wallet {
         for tx in transactions {
             match tx.get_entry() {
                 EntryData::Burn { asset, amount, fee, nonce } => {
-                    writeln!(w, "{},{},{},{},-,{},{},{}", tx.get_topoheight(), tx.get_hash(), "Burn", asset, amount, fee, nonce).context("Error while writing csv line")?;
+                    let data = storage.get_asset(&asset).await?;
+                    writeln!(w, "{},{},{},{},-,{},{},{}", tx.get_topoheight(), tx.get_hash(), "Burn", data.name.unwrap_or_else(|| asset.to_string()), format_coin(*amount, data.decimals), format_xelis(*fee), nonce).context("Error while writing csv line")?;
                 },
                 EntryData::Coinbase { reward } => {
-                    writeln!(w, "{},{},{},{},-,{},-,-", tx.get_topoheight(), tx.get_hash(), "Coinbase", "XELIS", reward).context("Error while writing csv line")?;
+                    writeln!(w, "{},{},{},{},-,{},-,-", tx.get_topoheight(), tx.get_hash(), "Coinbase", "XELIS", format_xelis(*reward)).context("Error while writing csv line")?;
                 },
                 EntryData::Incoming { from, transfers } => {
                     for transfer in transfers {
-                        writeln!(w, "{},{},{},{},{},{},-,-", tx.get_topoheight(), tx.get_hash(), "Incoming", from.as_address(self.get_network().is_mainnet()), transfer.get_asset(), transfer.get_amount()).context("Error while writing csv line")?;
+                        let data = storage.get_asset(&transfer.get_asset()).await?;
+                        writeln!(w, "{},{},{},{},{},{},-,-", tx.get_topoheight(), tx.get_hash(), "Incoming", from.as_address(self.get_network().is_mainnet()), data.name.unwrap_or_else(|| transfer.get_asset().to_string()), format_coin(transfer.get_amount(), data.decimals)).context("Error while writing csv line")?;
                     }
                 },
                 EntryData::Outgoing { transfers, fee, nonce } => {
                     for transfer in transfers {
-                        writeln!(w, "{},{},{},{},{},{},{},{}", tx.get_topoheight(), tx.get_hash(), "Outgoing", transfer.get_destination().as_address(self.get_network().is_mainnet()), transfer.get_asset(), transfer.get_amount(), fee, nonce).context("Error while writing csv line")?;
+                        let data = storage.get_asset(&transfer.get_asset()).await?;
+                        writeln!(w, "{},{},{},{},{},{},{},{}", tx.get_topoheight(), tx.get_hash(), "Outgoing", transfer.get_destination().as_address(self.get_network().is_mainnet()), data.name.unwrap_or_else(|| transfer.get_asset().to_string()), format_coin(transfer.get_amount(), data.decimals), format_xelis(*fee), nonce).context("Error while writing csv line")?;
                     }
                 },
                 EntryData::MultiSig { participants, threshold, fee, nonce } => {
                     let str_participants: Vec<String> = participants.iter().map(|p| p.as_address(self.get_network().is_mainnet()).to_string()).collect();
-                    writeln!(w, "{},{},{},{},{},-,{},{}", tx.get_topoheight(), tx.get_hash(), "MultiSig", str_participants.join(","), threshold, fee, nonce).context("Error while writing csv line")?;
+                    writeln!(w, "{},{},{},{},{},-,{},{}", tx.get_topoheight(), tx.get_hash(), "MultiSig", str_participants.join("|"), threshold, format_xelis(*fee), nonce).context("Error while writing csv line")?;
                 }
             }
         }

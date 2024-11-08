@@ -8,7 +8,7 @@ use std::{
 };
 use thiserror::Error;
 use anyhow::Error;
-use log::{debug, error, trace, warn};
+use log::{debug, error, info, trace, warn};
 use xelis_common::{
     tokio::{
         sync::Mutex, task::{JoinHandle, JoinError},
@@ -695,11 +695,16 @@ impl NetworkHandler {
                 storage.contains_asset(&asset).await?
             } {
                 let data = self.api.get_asset(&asset).await?;
-                
                 // Add the asset to the storage
                 {
                     let mut storage = self.wallet.get_storage().write().await;
-                    storage.add_asset(&asset, data.get_decimals()).await?;
+                    let name = if *asset == XELIS_ASSET {
+                        Some("XELIS".to_string())
+                    } else {
+                        info!("New unnamed asset detected: {}", asset);
+                        None
+                    };
+                    storage.add_asset(&asset, name, data.get_decimals()).await?;
                 }
 
                 // New asset added to the wallet, inform listeners

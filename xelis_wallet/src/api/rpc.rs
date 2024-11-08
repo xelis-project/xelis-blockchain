@@ -67,6 +67,8 @@ pub fn register_methods(handler: &mut RPCHandler<Arc<Wallet>>) {
     handler.register_method("has_balance", async_handler!(has_balance));
     handler.register_method("get_tracked_assets", async_handler!(get_tracked_assets));
     handler.register_method("get_asset_precision", async_handler!(get_asset_precision));
+    handler.register_method("get_assets", async_handler!(get_assets));
+    handler.register_method("get_asset", async_handler!(get_asset));
     handler.register_method("get_transaction", async_handler!(get_transaction));
     handler.register_method("build_transaction", async_handler!(build_transaction));
     handler.register_method("build_transaction_offline", async_handler!(build_transaction_offline));
@@ -255,8 +257,30 @@ async fn get_asset_precision(context: &Context, body: Value) -> Result<Value, In
 
     let wallet: &Arc<Wallet> = context.get()?;
     let storage = wallet.get_storage().read().await;
-    let precision = storage.get_asset_decimals(&params.asset)?;
-    Ok(json!(precision))
+    let data = storage.get_asset(&params.asset).await?;
+    Ok(json!(data.decimals))
+}
+
+// Retrieve all assets tracked by the wallet
+async fn get_assets(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
+    if body != Value::Null {
+        return Err(InternalRpcError::UnexpectedParams)
+    }
+
+    let wallet: &Arc<Wallet> = context.get()?;
+    let storage = wallet.get_storage().read().await;
+    let assets = storage.get_assets_with_data().await?;
+    Ok(json!(assets))
+}
+
+// Retrieve an asset from the wallet storage using its hash
+async fn get_asset(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
+    let params: GetAssetPrecisionParams = parse_params(body)?;
+
+    let wallet: &Arc<Wallet> = context.get()?;
+    let storage = wallet.get_storage().read().await;
+    let data = storage.get_asset(&params.asset).await?;
+    Ok(json!(data))
 }
 
 // Retrieve a transaction from the wallet storage using its hash

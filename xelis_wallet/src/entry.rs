@@ -399,12 +399,12 @@ impl TransactionEntry {
         }
     }
 
-    pub fn summary(&self, mainnet: bool, storage: &EncryptedStorage) -> Result<String> {
+    pub async fn summary(&self, mainnet: bool, storage: &EncryptedStorage) -> Result<String> {
         let entry_str = match self.get_entry() {
             EntryData::Coinbase { reward } => format!("Coinbase {} XELIS", format_xelis(*reward)),
             EntryData::Burn { asset, amount, fee, nonce } => {
-                let decimals = storage.get_asset_decimals(asset)?;
-                format!("Fee: {}, Nonce: {} Burn {} of {}", format_xelis(*fee), nonce, format_coin(*amount, decimals), asset)
+                let data = storage.get_asset(asset).await?;
+                format!("Fee: {}, Nonce: {} Burn {} of {}", format_xelis(*fee), nonce, format_coin(*amount, data.decimals), asset)
             },
             EntryData::Incoming { from, transfers } => {
                 let mut str = String::new();
@@ -412,8 +412,8 @@ impl TransactionEntry {
                     if *transfer.get_asset() == XELIS_ASSET {
                         str.push_str(&format!("Received {} XELIS from {}", format_xelis(transfer.get_amount()), from.as_address(mainnet)));
                     } else {
-                        let decimals = storage.get_asset_decimals(transfer.get_asset())?;
-                        str.push_str(&format!("Received {} {} from {}", format_coin(transfer.get_amount(), decimals), transfer.get_asset(), from.as_address(mainnet)));
+                        let data = storage.get_asset(transfer.get_asset()).await?;
+                        str.push_str(&format!("Received {} {} from {}", format_coin(transfer.get_amount(), data.decimals), transfer.get_asset(), from.as_address(mainnet)));
                     }
                 }
                 str
@@ -424,8 +424,8 @@ impl TransactionEntry {
                     if *transfer.get_asset() == XELIS_ASSET {
                         str.push_str(&format!("Sent {} XELIS to {}", format_xelis(transfer.get_amount()), transfer.get_destination().as_address(mainnet)));
                     } else {
-                        let decimals = storage.get_asset_decimals(transfer.get_asset())?;
-                        str.push_str(&format!("Sent {} {} to {}", format_coin(transfer.get_amount(), decimals), transfer.get_asset(), transfer.get_destination().as_address(mainnet)));
+                        let data = storage.get_asset(transfer.get_asset()).await?;
+                        str.push_str(&format!("Sent {} {} to {}", format_coin(transfer.get_amount(), data.decimals), transfer.get_asset(), transfer.get_destination().as_address(mainnet)));
                     }
                 }
                 str

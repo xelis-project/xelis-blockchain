@@ -14,7 +14,6 @@ use xelis_common::{
     tokio,
     async_handler,
     config::{
-        COIN_DECIMALS,
         VERSION,
         XELIS_ASSET
     },
@@ -587,6 +586,12 @@ async fn setup_wallet_command_manager(wallet: Arc<Wallet>, command_manager: &Com
         vec![Arg::new("filename", ArgType::String)],
         CommandHandler::Async(async_handler!(export_transactions_csv))
     ))?;
+    command_manager.add_command(Command::with_required_arguments(
+        "set_asset_name",
+        "Set the name of an asset",
+        vec![Arg::new("asset", ArgType::Hash)],
+        CommandHandler::Async(async_handler!(set_asset_name))
+    ))?;
 
     #[cfg(feature = "network_handler")]
     {
@@ -878,6 +883,21 @@ async fn recover_private_key(manager: &CommandManager, args: ArgumentManager) ->
     recover_wallet(manager, args, false).await
 }
 
+// Set the asset name
+async fn set_asset_name(manager: &CommandManager, mut args: ArgumentManager) -> Result<(), CommandError> {
+    let prompt = manager.get_prompt();
+    let context = manager.get_context().lock()?;
+    let wallet: &Arc<Wallet> = context.get()?;
+
+    let asset = args.get_value("asset")?.to_hash()?;
+    let name = prompt.read_input("Asset name: ", false)
+        .await.context("Error while reading asset name")?;
+
+    let mut storage = wallet.get_storage().write().await;
+    storage.set_asset_name(&asset, name).await?;
+    manager.message("Asset name has been set");
+    Ok(())
+}
 
 // Change wallet password
 async fn change_password(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
@@ -928,7 +948,7 @@ async fn transfer(manager: &CommandManager, mut args: ArgumentManager) -> Result
     let (max_balance, decimals) = {
         let storage = wallet.get_storage().read().await;
         let balance = storage.get_plaintext_balance_for(&asset).await.unwrap_or(0);
-        let decimals = storage.get_asset_decimals(&asset).unwrap_or(COIN_DECIMALS);
+        let decimals = storage.get_asset(&asset).await?.decimals;
         (balance, decimals)
     };
 
@@ -998,7 +1018,7 @@ async fn transfer_all(manager: &CommandManager, mut args: ArgumentManager) -> Re
     let (mut amount, decimals) = {
         let storage = wallet.get_storage().read().await;
         let amount = storage.get_plaintext_balance_for(&asset).await.unwrap_or(0);
-        let decimals = storage.get_asset_decimals(&asset).unwrap_or(COIN_DECIMALS);
+        let decimals = storage.get_asset(&asset).await?.decimals;
         (amount, decimals)
     };
 
@@ -1055,7 +1075,7 @@ async fn burn(manager: &CommandManager, mut args: ArgumentManager) -> Result<(),
     let (max_balance, decimals) = {
         let storage = wallet.get_storage().read().await;
         let balance = storage.get_plaintext_balance_for(&asset).await.unwrap_or(0);
-        let decimals = storage.get_asset_decimals(&asset).unwrap_or(COIN_DECIMALS);
+        let decimals = storage.get_asset(&asset).await?.decimals;
         (balance, decimals)
     };
 
@@ -1105,14 +1125,14 @@ async fn balance(manager: &CommandManager, mut arguments: ArgumentManager) -> Re
 
     if arguments.has_argument("asset") {
         let asset = arguments.get_value("asset")?.to_hash()?;
-        let balance = storage.get_plaintext_balance_for(&asset).await.unwrap_or(0);
-        let decimals = storage.get_asset_decimals(&asset).unwrap_or(0);
-        manager.message(format!("Balance for asset {}: {}", asset, format_coin(balance, decimals)));
+        let balance = storage.get_plaintext_balance_for(&asset).await?;
+        let data = storage.get_asset(&asset).await?;
+        manager.message(format!("Balance for asset {}: {}", asset, format_coin(balance, data.decimals)));
     } else {
-        for (asset, decimals) in storage.get_assets_with_decimals().await? {
+        for (asset, data) in storage.get_assets_with_data().await? {
             let balance = storage.get_plaintext_balance_for(&asset).await.unwrap_or(0);
             if balance > 0 {
-                manager.message(format!("Balance for asset {}: {}", asset, format_coin(balance, decimals)));
+                manager.message(format!("Balance for asset {}: {}", asset, format_coin(balance, data.decimals)));
             }
         }
     }
@@ -1157,7 +1177,7 @@ async fn history(manager: &CommandManager, mut arguments: ArgumentManager) -> Re
 
     manager.message(format!("Transactions (total {}) page {}/{}:", transactions.len(), page, max_pages));
     for tx in transactions.iter().skip((page - 1) * TXS_PER_PAGE).take(TXS_PER_PAGE) {
-        manager.message(format!("- {}", tx.summary(wallet.get_network().is_mainnet(), &*storage)?));
+        manager.message(format!("- {}", tx.summary(wallet.get_network().is_mainnet(), &*storage).await?));
     }
 
     Ok(())
@@ -1171,7 +1191,7 @@ async fn export_transactions_csv(manager: &CommandManager, mut arguments: Argume
     let transactions = storage.get_transactions()?;
     let mut file = File::create(&filename).context("Error while creating CSV file")?;
 
-    wallet.export_transactions_in_csv(transactions, &mut file).context("Error while exporting transactions to CSV")?;
+    wallet.export_transactions_in_csv(&storage, transactions, &mut file).await.context("Error while exporting transactions to CSV")?;
 
     // writer.flush().context("Error while flushing CSV file")?;
     manager.message(format!("Transactions have been exported to {}", filename));
