@@ -4,6 +4,7 @@ use std::{
     Arc}
 };
 use anyhow::{Error, Context};
+use chrono::TimeZone;
 use serde::Serialize;
 use xelis_common::{
     tokio::sync::{
@@ -863,31 +864,31 @@ impl Wallet {
         // Sort transactions by topoheight
         transactions.sort_by(|a, b| a.get_topoheight().cmp(&b.get_topoheight()));
 
-        writeln!(w, "TopoHeight,Hash,Type,From/To,Asset,Amount,Fee,Nonce").context("Error while writing headers")?;
+        writeln!(w, "Date,TopoHeight,Hash,Type,From/To,Asset,Amount,Fee,Nonce").context("Error while writing headers")?;
         for tx in transactions {
             match tx.get_entry() {
                 EntryData::Burn { asset, amount, fee, nonce } => {
                     let data = storage.get_asset(&asset).await?;
-                    writeln!(w, "{},{},{},{},-,{},{},{}", tx.get_topoheight(), tx.get_hash(), "Burn", data.name.unwrap_or_else(|| asset.to_string()), format_coin(*amount, data.decimals), format_xelis(*fee), nonce).context("Error while writing csv line")?;
+                    writeln!(w, "{},{},{},{},{},-,{},{},{}", datetime_from_timestamp(tx.get_timestamp())?, tx.get_topoheight(), tx.get_hash(), "Burn", data.name.unwrap_or_else(|| asset.to_string()), format_coin(*amount, data.decimals), format_xelis(*fee), nonce).context("Error while writing csv line")?;
                 },
                 EntryData::Coinbase { reward } => {
-                    writeln!(w, "{},{},{},{},-,{},-,-", tx.get_topoheight(), tx.get_hash(), "Coinbase", "XELIS", format_xelis(*reward)).context("Error while writing csv line")?;
+                    writeln!(w, "{},{},{},{},{},-,{},-,-", datetime_from_timestamp(tx.get_timestamp())?, tx.get_topoheight(), tx.get_hash(), "Coinbase", "XELIS", format_xelis(*reward)).context("Error while writing csv line")?;
                 },
                 EntryData::Incoming { from, transfers } => {
                     for transfer in transfers {
                         let data = storage.get_asset(&transfer.get_asset()).await?;
-                        writeln!(w, "{},{},{},{},{},{},-,-", tx.get_topoheight(), tx.get_hash(), "Incoming", from.as_address(self.get_network().is_mainnet()), data.name.unwrap_or_else(|| transfer.get_asset().to_string()), format_coin(transfer.get_amount(), data.decimals)).context("Error while writing csv line")?;
+                        writeln!(w, "{},{},{},{},{},{},{},-,-", datetime_from_timestamp(tx.get_timestamp())?, tx.get_topoheight(), tx.get_hash(), "Incoming", from.as_address(self.get_network().is_mainnet()), data.name.unwrap_or_else(|| transfer.get_asset().to_string()), format_coin(transfer.get_amount(), data.decimals)).context("Error while writing csv line")?;
                     }
                 },
                 EntryData::Outgoing { transfers, fee, nonce } => {
                     for transfer in transfers {
                         let data = storage.get_asset(&transfer.get_asset()).await?;
-                        writeln!(w, "{},{},{},{},{},{},{},{}", tx.get_topoheight(), tx.get_hash(), "Outgoing", transfer.get_destination().as_address(self.get_network().is_mainnet()), data.name.unwrap_or_else(|| transfer.get_asset().to_string()), format_coin(transfer.get_amount(), data.decimals), format_xelis(*fee), nonce).context("Error while writing csv line")?;
+                        writeln!(w, "{},{},{},{},{},{},{},{},{}", datetime_from_timestamp(tx.get_timestamp())?, tx.get_topoheight(), tx.get_hash(), "Outgoing", transfer.get_destination().as_address(self.get_network().is_mainnet()), data.name.unwrap_or_else(|| transfer.get_asset().to_string()), format_coin(transfer.get_amount(), data.decimals), format_xelis(*fee), nonce).context("Error while writing csv line")?;
                     }
                 },
                 EntryData::MultiSig { participants, threshold, fee, nonce } => {
                     let str_participants: Vec<String> = participants.iter().map(|p| p.as_address(self.get_network().is_mainnet()).to_string()).collect();
-                    writeln!(w, "{},{},{},{},{},-,{},{}", tx.get_topoheight(), tx.get_hash(), "MultiSig", str_participants.join("|"), threshold, format_xelis(*fee), nonce).context("Error while writing csv line")?;
+                    writeln!(w, "{},{},{},{},{},{},-,{},{}", datetime_from_timestamp(tx.get_timestamp())?, tx.get_topoheight(), tx.get_hash(), "MultiSig", str_participants.join("|"), threshold, format_xelis(*fee), nonce).context("Error while writing csv line")?;
                 }
             }
         }
@@ -1063,6 +1064,14 @@ impl Wallet {
     // Network that the wallet is using
     pub fn get_network(&self) -> &Network {
         &self.network
+    }
+}
+
+// Parse a datetime from a timestamp
+fn datetime_from_timestamp(timestamp: u64) -> Result<chrono::DateTime<chrono::Local>, WalletError> {
+    match chrono::Local.timestamp_millis_opt(timestamp as i64) {
+        chrono::LocalResult::Single(dt) => Ok(dt),
+        _ => Err(WalletError::InvalidDatetime)
     }
 }
 

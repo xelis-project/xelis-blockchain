@@ -33,6 +33,7 @@ serde = { version = "1", features = ["derive", "rc"] }
 serde_json = "1"
 actix-web-httpauth = { version = "0.8.0", optional = true }
 async-trait = "0.1.64"
+chrono = "0.4.38"
 
 # WASM dependencies
 [target.'cfg(target_arch = "wasm32")'.dependencies]
