@@ -38,7 +38,7 @@ pub fn from_xelis(value: impl Into<String>) -> Option<u64> {
 // Convert a coin amount from string to a u64 based on the provided decimals
 pub fn from_coin(value: impl Into<String>, coin_decimals: u8) -> Option<u64> {
     let value = value.into();
-    let mut split = value.split('.');
+    let mut split = value.trim().split('.');
     let value: u64 = split.next()?.parse::<u64>().ok()?;
     let right_part = split.next().unwrap_or("0");
     let decimals: String = right_part.chars().chain(std::iter::repeat('0')).take(coin_decimals as usize).collect();
