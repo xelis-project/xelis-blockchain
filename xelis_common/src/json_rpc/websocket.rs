@@ -21,7 +21,7 @@ use tokio_tungstenite_wasm::{
     connect,
     Message
 };
-use log::{debug, error, warn};
+use log::{debug, error, info, warn};
 use crate::{
     tokio::{
         sync::{broadcast, oneshot, Mutex, mpsc},
@@ -302,6 +302,8 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
             error!("Error while resubscribing to events: {:?}", e);
         }
 
+        info!("Reconnected to the server '{}' successfully", self.target);
+
         Ok(true)
     }
 
@@ -327,8 +329,11 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
     async fn start_background_task(self: Arc<Self>, mut receiver: mpsc::Receiver<InternalMessage>, ws: WebSocketStream) -> Result<(), JsonRPCError> {
         let zelf = Arc::clone(&self);
         let handle = spawn_task("ws-background-task", async move {
+            debug!("Starting WS background task");
+
             let mut ws = Some(ws);
             while let Some(websocket) = ws.take() {
+                debug!("Connected to the server '{}'", zelf.target);
                 zelf.set_online(true).await;
 
                 match zelf.background_task(&mut receiver, websocket).await {
@@ -362,11 +367,14 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
 
                     match connect(&zelf.target).await {
                         Ok(websocket) => {
+                            info!("Reconnected to the server '{}'", zelf.target);
                             ws = Some(websocket);
 
                             // Register all events again
                             if let Err(e) = Arc::clone(&zelf).resubscribe_events().await {
                                 error!("Error while resubscribing to events due to reconnect: {:?}", e);
+                            } else {
+                                info!("Resubscribed to all events");
                             }
 
                             break;
@@ -379,6 +387,7 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
             }
 
             zelf.clear_events().await;
+            debug!("Events cleared, exiting background task");
         });
 
         {
@@ -405,6 +414,7 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
                             write.send(Message::Text(text)).await?;
                         },
                         InternalMessage::Close => {
+                            debug!("Closing the connection");
                             write.close().await?;
                             break;
                         }
