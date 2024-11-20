@@ -299,7 +299,7 @@ fn version(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandEr
 
 fn set_log_level(manager: &CommandManager, mut args: ArgumentManager) -> Result<(), CommandError> {
     let arg_value = args.get_value("level")?.to_string_value()?;
-    let level = LogLevel::from_str(&arg_value).map_err(|e| CommandError::InvalidArgument(e))?;
+    let level = LogLevel::from_str(&arg_value).map_err(|e| CommandError::InvalidArgument(e.to_owned()))?;
     log::set_max_level(level.into());
     manager.message(format!("Log level set to {}", level));
 
