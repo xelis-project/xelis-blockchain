@@ -128,6 +128,7 @@ impl FromStr for LogLevel {
             "info" => Self::Info,
             "debug" => Self::Debug,
             "trace" => Self::Trace,
+            "off" => Self::Off,
             _ => return Err("Invalid log level".into())
         })
     }
