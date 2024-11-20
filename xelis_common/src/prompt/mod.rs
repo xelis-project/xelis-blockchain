@@ -78,7 +78,7 @@ pub struct ModuleConfig {
 }
 
 impl FromStr for ModuleConfig {
-    type Err = String;
+    type Err = &'static str;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let mut parts = s.split('=');
@@ -119,7 +119,7 @@ impl Display for LogLevel {
 }
 
 impl FromStr for LogLevel {
-    type Err = String;
+    type Err = &'static str;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Ok(match s {
@@ -129,7 +129,7 @@ impl FromStr for LogLevel {
             "debug" => Self::Debug,
             "trace" => Self::Trace,
             "off" => Self::Off,
-            _ => return Err("Invalid log level".into())
+            _ => return Err("Invalid log level")
         })
     }
 }
