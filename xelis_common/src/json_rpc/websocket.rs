@@ -355,10 +355,13 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
                     }
                 }
 
+                debug!("Connection lost to the server '{}'", zelf.target);
                 // Clear all pending requests
                 zelf.clear_requests().await;
+                debug!("Requests cleared");
 
                 zelf.set_online(false).await;
+                debug!("Connection status set to offline");
 
                 // retry to connect until we are online or that it got disabled
                 while let Some(auto_reconnect) = { zelf.delay_auto_reconnect.lock().await.as_ref().cloned() } {
