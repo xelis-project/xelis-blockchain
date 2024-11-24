@@ -1,7 +1,7 @@
 use crate::serializer::{Reader, ReaderError, Serializer, Writer};
 use core::fmt;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(u8)]
 pub enum BlockVersion {
     // Genesis version
@@ -68,5 +68,26 @@ impl<'de> serde::Deserialize<'de> for BlockVersion {
         where D: serde::Deserializer<'de> {
         let value = u8::deserialize(deserializer)?;
         BlockVersion::try_from(value).map_err(|_| serde::de::Error::custom("Invalid value for BlockVersion"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_block_version_serde() {
+        let version = BlockVersion::V0;
+        let serialized = serde_json::to_string(&version).unwrap();
+        assert_eq!(serialized, "0");
+
+        let deserialized: BlockVersion = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(deserialized, version);
+    }
+
+    #[test]
+    fn test_block_version_ord() {
+        assert!(BlockVersion::V0 < BlockVersion::V1);
+        assert!(BlockVersion::V1 < BlockVersion::V2);
     }
 }
