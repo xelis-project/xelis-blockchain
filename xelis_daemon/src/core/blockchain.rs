@@ -1422,40 +1422,6 @@ impl<S: Storage> Blockchain<S> {
         Ok(block)
     }
 
-    // Retrieve every orphaned blocks until a given height from the tips
-    async fn get_orphaned_blocks_for_tips_until_height<P: DifficultyProvider + DagOrderProvider>(&self, provider: &P, tips: impl Iterator<Item = Hash>, height: u64) -> Result<Vec<(Hash, Arc<BlockHeader>)>, BlockchainError> {
-        // Current queue of blocks to process
-        let mut queue: IndexSet<Hash> = IndexSet::new();
-        queue.extend(tips);
-
-        let mut processed = HashSet::new();
-        let mut orphaned_blocks = Vec::new();
-
-        while let Some(hash) = queue.pop() {
-            // if we already processed this block, skip it
-            if !processed.insert(hash.clone()) {
-                debug!("Skipping block {} because it was already processed", hash);
-                continue;
-            }
-
-            // if the block is not orphaned, we add its tips to the queue
-            let block = provider.get_block_header_by_hash(&hash).await?;
-            if block.get_height() <= height {
-                debug!("Block {} is not orphaned, skipping it", hash);
-                continue;
-            }
-
-            // if the block is orphaned, we add it to the list and we check its tips
-            if self.is_block_orphaned_for_storage(provider, &hash).await {
-                debug!("Block {} is orphaned, adding it to the list", hash);
-                orphaned_blocks.push((hash.clone(), block.clone()));
-                queue.extend(block.get_tips().clone());
-            }
-        }
-
-        Ok(orphaned_blocks)
-    }
-
     // Get the mining block template for miners
     // This function is called when a miner request a new block template
     // We create a block candidate with selected TXs from mempool
@@ -1492,56 +1458,46 @@ impl<S: Storage> Blockchain<S> {
         let stable_height = self.get_stable_height();
         let topoheight = self.get_topo_height();
 
-        // Find all orphaned blocks that will be linked in this block
-        let mut orphaned_blocks = None;
-
         trace!("build chain state for block template");
         let mut chain_state = ChainState::new(storage, stable_topoheight, topoheight, block.get_version());
 
-        let mut failed_sources = HashSet::new();
-        while let Some(TxSelectorEntry { size, hash, tx }) = tx_selector.next() {
-            if block_size + total_txs_size + size >= MAX_BLOCK_SIZE {
-                break;
-            }
+        if !tx_selector.is_empty() {
+            let mut failed_sources = HashSet::new();
+            let processed_txs = self.get_all_txs_until_height(storage, stable_height, block.get_tips().iter().cloned()).await?;
+            while let Some(TxSelectorEntry { size, hash, tx }) = tx_selector.next() {
+                if block_size + total_txs_size + size >= MAX_BLOCK_SIZE {
+                    break;
+                }
 
-            if orphaned_blocks.is_none() {
-                let blocks = self.get_orphaned_blocks_for_tips_until_height(storage, block.get_tips().iter().cloned(), stable_height).await?;
-                debug!("Found {} orphaned blocks linked for block template", blocks.len());
-                orphaned_blocks = Some(blocks);
-            }
+                // Check if the TX is already in the block
+                if processed_txs.contains(hash) {
+                    debug!("Skipping TX {} because it is already in the DAG branch", hash);
+                    continue;
+                }
 
-            if let Some(orphaned_blocks) = orphaned_blocks.as_ref() {
-                // We don't want to re-include a TX that is already in a TIP block, even if its not executed yet
-                for (block_hash, block) in orphaned_blocks.iter() {
-                    if block.get_transactions().contains(hash.as_ref()) {
-                        warn!("Skipping TX {} because it is included in tips {}", hash, block_hash);
+                if !self.skip_block_template_txs_verification {
+                    // Check if the TX is valid for this potential block
+                    trace!("Checking TX {} with nonce {}, {}", hash, tx.get_nonce(), tx.get_source().as_address(self.network.is_mainnet()));
+
+                    let source = tx.get_source();
+                    if failed_sources.contains(&source) {
+                        debug!("Skipping TX {} because its source has failed before", hash);
+                        continue;
+                    }
+
+                    if let Err(e) = tx.verify(&mut chain_state).await {
+                        warn!("TX {} ({}) is not valid for mining: {}", hash, source.as_address(self.network.is_mainnet()), e);
+                        failed_sources.insert(source);
                         continue;
                     }
                 }
+
+                trace!("Selected {} (nonce: {}, fees: {}) for mining", hash, tx.get_nonce(), format_xelis(tx.get_fee()));
+                // TODO no clone
+                block.txs_hashes.insert(hash.as_ref().clone());
+                block_size += HASH_SIZE; // add the hash size
+                total_txs_size += size;
             }
-
-            if !self.skip_block_template_txs_verification {
-                // Check if the TX is valid for this potential block
-                trace!("Checking TX {} with nonce {}, {}", hash, tx.get_nonce(), tx.get_source().as_address(self.network.is_mainnet()));
-
-                let source = tx.get_source();
-                if failed_sources.contains(&source) {
-                    debug!("Skipping TX {} because its source has failed before", hash);
-                    continue;
-                }
-
-                if let Err(e) = tx.verify(&mut chain_state).await {
-                    warn!("TX {} ({}) is not valid for mining: {}", hash, source.as_address(self.network.is_mainnet()), e);
-                    failed_sources.insert(source);
-                    continue;
-                }
-            }
-
-            trace!("Selected {} (nonce: {}, fees: {}) for mining", hash, tx.get_nonce(), format_xelis(tx.get_fee()));
-            // TODO no clone
-            block.txs_hashes.insert(hash.as_ref().clone());
-            block_size += HASH_SIZE; // add the hash size
-            total_txs_size += size;
         }
 
         Ok(block)
@@ -1754,7 +1710,7 @@ impl<S: Storage> Blockchain<S> {
                 if all_parents_txs.is_none() {
                     debug!("Loading all TXs until height {}", stable_height);
                     // load it only one time
-                    all_parents_txs = Some(self.get_all_executed_txs_until_height(chain_state.get_storage(), stable_height, block.get_tips().iter().map(Hash::clone)).await?);
+                    all_parents_txs = Some(self.get_all_txs_until_height(chain_state.get_storage(), stable_height, block.get_tips().iter().cloned()).await?);
                 }
 
                 // if its the case, we should reject the block
@@ -2334,9 +2290,9 @@ impl<S: Storage> Blockchain<S> {
         self.internal_get_block_reward(past_supply, is_side_block, side_blocks_count).await
     }
 
-    // retrieve all txs hashes until height or until genesis block that were executed in a block
+    // retrieve all txs hashes until height or until genesis block
     // for this we get all tips and recursively retrieve all txs from tips until we reach height
-    async fn get_all_executed_txs_until_height<P>(&self, provider: &P, until_height: u64, tips: impl Iterator<Item = Hash>) -> Result<HashSet<Hash>, BlockchainError>
+    async fn get_all_txs_until_height<P>(&self, provider: &P, until_height: u64, tips: impl Iterator<Item = Hash>) -> Result<HashSet<Hash>, BlockchainError>
     where
         P: DifficultyProvider + ClientProtocolProvider
     {
@@ -2359,11 +2315,8 @@ impl<S: Storage> Blockchain<S> {
                 for tx in block.get_txs_hashes() {
                     // Check that we don't have it yet
                     if !hashes.contains(tx) {
-                        // Then check that it's executed in this block
-                        if provider.is_tx_executed_in_block(tx, &hash)? {
-                            // add it to the list
-                            hashes.insert(tx.clone());
-                        }
+                        // add it to the list
+                        hashes.insert(tx.clone());
                     }
                 }
 
