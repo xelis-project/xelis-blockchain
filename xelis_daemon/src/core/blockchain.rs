@@ -1463,7 +1463,7 @@ impl<S: Storage> Blockchain<S> {
 
         if !tx_selector.is_empty() {
             let mut failed_sources = HashSet::new();
-            let processed_txs = self.get_all_txs_until_height(storage, stable_height, block.get_tips().iter().cloned()).await?;
+            let processed_txs = self.get_all_txs_until_height(storage, stable_height, block.get_tips().iter().cloned(), false).await?;
             while let Some(TxSelectorEntry { size, hash, tx }) = tx_selector.next() {
                 if block_size + total_txs_size + size >= MAX_BLOCK_SIZE {
                     break;
@@ -1710,7 +1710,8 @@ impl<S: Storage> Blockchain<S> {
                 if all_parents_txs.is_none() {
                     debug!("Loading all TXs until height {}", stable_height);
                     // load it only one time
-                    all_parents_txs = Some(self.get_all_txs_until_height(chain_state.get_storage(), stable_height, block.get_tips().iter().cloned()).await?);
+                    let executed_only = block.get_version() < BlockVersion::V2;
+                    all_parents_txs = Some(self.get_all_txs_until_height(chain_state.get_storage(), stable_height, block.get_tips().iter().cloned(), executed_only).await?);
                 }
 
                 // if its the case, we should reject the block
@@ -2292,7 +2293,7 @@ impl<S: Storage> Blockchain<S> {
 
     // retrieve all txs hashes until height or until genesis block
     // for this we get all tips and recursively retrieve all txs from tips until we reach height
-    async fn get_all_txs_until_height<P>(&self, provider: &P, until_height: u64, tips: impl Iterator<Item = Hash>) -> Result<HashSet<Hash>, BlockchainError>
+    async fn get_all_txs_until_height<P>(&self, provider: &P, until_height: u64, tips: impl Iterator<Item = Hash>, executed_only: bool) -> Result<HashSet<Hash>, BlockchainError>
     where
         P: DifficultyProvider + ClientProtocolProvider
     {
@@ -2315,8 +2316,10 @@ impl<S: Storage> Blockchain<S> {
                 for tx in block.get_txs_hashes() {
                     // Check that we don't have it yet
                     if !hashes.contains(tx) {
-                        // add it to the list
-                        hashes.insert(tx.clone());
+                        if !executed_only || (executed_only && provider.is_tx_executed_in_a_block(tx)?) {
+                            // add it to the list
+                            hashes.insert(tx.clone());
+                        }
                     }
                 }
 
