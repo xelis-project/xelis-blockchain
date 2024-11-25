@@ -1681,6 +1681,7 @@ impl<S: Storage> Blockchain<S> {
             // All transactions to be verified in one batch
             let mut batch = Vec::with_capacity(block.get_txs_count());
             let is_v2_enabled = version >= BlockVersion::V2;
+            assert!(!is_v2_enabled);
             for (tx, hash) in block.get_transactions().iter().zip(block.get_txs_hashes()) {
                 let tx_size = tx.size();
                 if tx_size > MAX_TRANSACTION_SIZE {
@@ -1710,20 +1711,18 @@ impl<S: Storage> Blockchain<S> {
 
                 // now we should check that the TX was not executed in our TIP branch
                 // because that mean the miner was aware of the TX execution and still include it
-                if all_parents_txs.is_none() && (is_v2_enabled || is_executed) {
+                if all_parents_txs.is_none() && (is_executed || is_v2_enabled) {
                     debug!("Loading all TXs until height {} for block {} (executed only: {})", stable_height, block_hash, !is_v2_enabled);
                     all_parents_txs = Some(self.get_all_txs_until_height(chain_state.get_storage(), stable_height, block.get_tips().iter().cloned(), !is_v2_enabled).await?);
                 }
 
                 // if its the case, we should reject the block
-                if let Some(txs) = all_parents_txs.as_ref() {
+                if let Some(txs) = all_parents_txs.as_ref().filter(|_| is_v2_enabled || is_executed) {
                     // miner knows this tx was already executed because its present in block tips
                     // reject the whole block
                     if txs.contains(&tx_hash) {
-                        if is_v2_enabled || is_executed {
-                            debug!("Malicious Block {} formed, contains a dead tx {}, is executed: {}", block_hash, tx_hash, is_executed);
-                            return Err(BlockchainError::DeadTxFromTips(block_hash, tx_hash))
-                        }
+                        debug!("Malicious Block {} formed, contains a dead tx {}, is executed: {}", block_hash, tx_hash, is_executed);
+                        return Err(BlockchainError::DeadTxFromTips(block_hash, tx_hash))
                     } else if is_executed {
                         // otherwise, all looks good but because the TX was executed in another branch, we skip verification
                         // DAG will choose which branch will execute the TX
