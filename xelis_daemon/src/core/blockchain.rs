@@ -1677,7 +1677,10 @@ impl<S: Storage> Blockchain<S> {
             let mut chain_state = ChainState::new(storage, self.get_stable_topoheight(), current_topoheight, version);
             // Cache to retrieve only one time all TXs hashes until stable height
             let mut all_parents_txs: Option<HashSet<Hash>> = None;
+
+            // All transactions to be verified in one batch
             let mut batch = Vec::with_capacity(block.get_txs_count());
+            let is_v2_enabled = version >= BlockVersion::V2;
             for (tx, hash) in block.get_transactions().iter().zip(block.get_txs_hashes()) {
                 let tx_size = tx.size();
                 if tx_size > MAX_TRANSACTION_SIZE {
@@ -1707,11 +1710,9 @@ impl<S: Storage> Blockchain<S> {
 
                 // now we should check that the TX was not executed in our TIP branch
                 // because that mean the miner was aware of the TX execution and still include it
-                if all_parents_txs.is_none() {
-                    debug!("Loading all TXs until height {}", stable_height);
-                    // load it only one time
-                    let executed_only = block.get_version() < BlockVersion::V2;
-                    all_parents_txs = Some(self.get_all_txs_until_height(chain_state.get_storage(), stable_height, block.get_tips().iter().cloned(), executed_only).await?);
+                if all_parents_txs.is_none() && (is_v2_enabled || is_executed) {
+                    debug!("Loading all TXs until height {} for block {} (executed only: {})", stable_height, block_hash, !is_v2_enabled);
+                    all_parents_txs = Some(self.get_all_txs_until_height(chain_state.get_storage(), stable_height, block.get_tips().iter().cloned(), !is_v2_enabled).await?);
                 }
 
                 // if its the case, we should reject the block
@@ -1719,8 +1720,10 @@ impl<S: Storage> Blockchain<S> {
                     // miner knows this tx was already executed because its present in block tips
                     // reject the whole block
                     if txs.contains(&tx_hash) {
-                        debug!("Malicious Block {} formed, contains a dead tx {}", block_hash, tx_hash);
-                        return Err(BlockchainError::DeadTxFromTips(block_hash, tx_hash))
+                        if is_v2_enabled || is_executed {
+                            debug!("Malicious Block {} formed, contains a dead tx {}, is executed: {}", block_hash, tx_hash, is_executed);
+                            return Err(BlockchainError::DeadTxFromTips(block_hash, tx_hash))
+                        }
                     } else if is_executed {
                         // otherwise, all looks good but because the TX was executed in another branch, we skip verification
                         // DAG will choose which branch will execute the TX
@@ -1730,10 +1733,6 @@ impl<S: Storage> Blockchain<S> {
                         // we can safely skip the verification of this TX
                         continue;
                     }
-                } else {
-                    // impossible to happens because we compute it if value is None
-                    error!("FATAL ERROR! Unable to load all TXs until height {}", stable_height);
-                    return Err(BlockchainError::Unknown)
                 }
 
                 batch.push(tx);
