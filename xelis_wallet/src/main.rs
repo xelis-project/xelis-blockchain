@@ -43,12 +43,12 @@ use xelis_common::{
     }
 };
 use xelis_wallet::{
-    wallet::{
-        Wallet,
-        RecoverOption
-    },
     config::DIR_PATH,
     precomputed_tables,
+    wallet::{
+        RecoverOption,
+        Wallet
+    }
 };
 
 #[cfg(feature = "network_handler")]
@@ -630,10 +630,15 @@ async fn setup_wallet_command_manager(wallet: Arc<Wallet>, command_manager: &Com
     }
 
     // Also add multisig commands
-    command_manager.add_command(Command::new(
+    command_manager.add_command(Command::with_optional_arguments(
         "setup_multisig",
         "Setup a multisig",
-        CommandHandler::Async(async_handler!(multisig_offline))
+        vec![
+            Arg::new("participants", ArgType::Number),
+            Arg::new("threshold", ArgType::Number),
+            Arg::new("confirm", ArgType::Bool)
+        ],
+        CommandHandler::Async(async_handler!(multisig_setup))
     ))?;
 
     let mut context = command_manager.get_context().lock()?;
@@ -1367,32 +1372,67 @@ async fn start_xswd(manager: &CommandManager, _: ArgumentManager) -> Result<(), 
     Ok(())
 }
 
-// Setup a multisig offline (a multisig is present on chain, but this wallet is offline so can't sync it)
-async fn multisig_offline(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
+// Setup a multisig transaction (a multisig is present on chain, but this wallet is offline so can't sync it)
+async fn multisig_setup(manager: &CommandManager, mut args: ArgumentManager) -> Result<(), CommandError> {
     let context = manager.get_context().lock()?;
     let wallet: &Arc<Wallet> = context.get()?;
 
     let prompt = manager.get_prompt();
-    let participants: u8 = prompt.read("Participants count (min. 1):")
-        .await.context("Error while reading participants count")?;
+    let participants: u8 = if args.has_argument("participants") {
+        args.get_value("participants")?.to_number()? as u8
+    } else {
+        prompt.read("Participants count (min. 1):")
+            .await.context("Error while reading participants count")?
+    };
 
     if participants == 0 {
-        return Err(CommandError::InvalidArgument("Participants count must be greater than 0".to_string()));
+        {
+            let storage = wallet.get_storage().read().await;
+            let has_state = storage.has_multi_sig_state().await?;
+            if !has_state {
+                return Err(CommandError::InvalidArgument("Participants count must be greater than 0".to_string()));
+            }
+        }
+
+        manager.warn("Participants count is 0, this will delete the multisig");
+        if !args.get_flag("confirm")? && !prompt.ask_confirmation().await.context("Error while confirming action")? {
+            manager.message("Transaction has been aborted");
+            return Ok(())
+        }
+
+        let payload = MultiSigPayload {
+            participants: IndexSet::new(),
+            threshold: 0
+        };
+
+        let tx = wallet.create_transaction(TransactionTypeBuilder::MultiSig(payload), FeeBuilder::default()).await
+            .context("Error while creating multisig transaction")?;
+
+        broadcast_tx(wallet, manager, tx).await;
     }
 
-    let threshold: u8 = prompt.read("Threshold (min. 1):")
-        .await.context("Error while reading threshold")?;
+    let threshold: u8 = if args.has_argument("threshold") {
+        args.get_value("threshold")?.to_number()? as u8
+    } else {
+        prompt.read("Threshold (min. 1):")
+            .await.context("Error while reading threshold")?
+    };
 
     if threshold == 0 {
         return Err(CommandError::InvalidArgument("Threshold must be greater than 0".to_string()));
     }
 
+    if threshold > participants {
+        return Err(CommandError::InvalidArgument("Threshold must be less or equal to participants count".to_string()));
+    }
+
+    let mainnet = wallet.get_network().is_mainnet();
     let mut keys = IndexSet::with_capacity(participants as usize);
     for i in 0..participants {
         let address: Address = prompt.read(format!("Participant #{} address:", i + 1))
             .await.context("Error while reading participant address")?;
 
-        if address.is_mainnet() != wallet.get_network().is_mainnet() {
+        if address.is_mainnet() != mainnet {
             return Err(CommandError::InvalidArgument("Participant address must be on the same network".to_string()));
         }
 
@@ -1405,13 +1445,26 @@ async fn multisig_offline(manager: &CommandManager, _: ArgumentManager) -> Resul
         }
     }
 
-    let multisig = MultiSigPayload {
+    manager.message(format!("MultiSig payload ({} participants with threshold at {}):", participants, threshold));
+    for key in keys.iter() {
+        manager.message(format!("- {}", key.as_address(mainnet)));
+    }
+
+    if !args.get_flag("confirm")? && !prompt.ask_confirmation().await.context("Error while confirming action")? {
+        manager.message("Transaction has been aborted");
+        return Ok(())
+    }
+
+    manager.message("Building transaction...");
+
+    let payload = MultiSigPayload {
         participants: keys,
         threshold
     };
+    let tx = wallet.create_transaction(TransactionTypeBuilder::MultiSig(payload), FeeBuilder::default()).await
+        .context("Error while creating multisig transaction")?;
 
-    let mut storage = wallet.get_storage().write().await;
-    storage.set_multisig_state(multisig).await?;
+    broadcast_tx(wallet, manager, tx).await;
 
     Ok(())
 }
