@@ -9047,6 +9047,236 @@ This includes nonce range (min/max) used, final output balances expected per ass
 }
 ```
 
+#### Get Multisig at TopoHeight
+Retrieve the multisig information at a specific topoheight.
+
+##### Method `get_multisig_at_topoheight`
+
+##### Parameters
+
+|        Name        |   Type  | Required |                Note               |
+|:------------------:|:-------:|:--------:|:---------------------------------:|
+|       address      | Address | Required | Valid address registered on chain |
+|      topoheight    | Integer | Required | Topoheight to retrieve the state  |
+
+##### Request
+```json
+{
+	"jsonrpc": "2.0",
+	"id": 1,
+	"method": "get_multisig_at_topoheight",
+	"params": {
+		"address": "xet:6eadzwf5xdacts6fs4y3csmnsmy4mcxewqt3xyygwfx0hm0tm32sqxdy9zk",
+		"topoheight": 57
+	}
+}
+```
+
+##### Response
+```json
+{
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": {
+		"state": {
+			"participants": ["xet:yfxcjh7aua5lmpvmyh4fmhrjzlg9xx9p6uvel0248hxc42yja9usq27dz7s"],
+			"threshold": 1
+		}
+	}
+}
+```
+
+**NOTE**: If the address has disabled its multig setup setup, a `state` with value `inactive` will be returned instead.
+
+#### Get Multisig
+Retrieve the latest multisig information for a specific address.
+
+##### Method `get_multisig`
+
+##### Parameters
+|   Name  |   Type  | Required |                Note               |
+|:-------:|:-------:|:--------:|:---------------------------------:|
+| address | Address | Required | Valid address registered on chain |
+
+##### Request
+```json
+{
+	"jsonrpc": "2.0",
+	"id": 1,
+	"method": "get_multisig",
+	"params": {
+		"address": "xet:6eadzwf5xdacts6fs4y3csmnsmy4mcxewqt3xyygwfx0hm0tm32sqxdy9zk"
+	}
+}
+```
+
+##### Response
+```json
+{
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": {
+		"state": {
+			"participants": ["xet:yfxcjh7aua5lmpvmyh4fmhrjzlg9xx9p6uvel0248hxc42yja9usq27dz7s"],
+			"threshold": 1
+		},
+		"topoheight": 57
+	}
+}
+```
+
+#### Get Multisig at TopoHeight
+Retrieve the multisig information at a specific topoheight.
+
+##### Method `get_multisig_at_topoheight`
+
+##### Parameters
+
+|        Name        |   Type  | Required |                Note               |
+|:------------------:|:-------:|:--------:|:---------------------------------:|
+|       address      | Address | Required | Valid address registered on chain |
+|      topoheight    | Integer | Required | Topoheight to retrieve the state  |
+
+##### Request
+```json
+{
+	"jsonrpc": "2.0",
+	"id": 1,
+	"method": "get_multisig_at_topoheight",
+	"params": {
+		"address": "xet:6eadzwf5xdacts6fs4y3csmnsmy4mcxewqt3xyygwfx0hm0tm32sqxdy9zk",
+		"topoheight": 57
+	}
+}
+```
+
+##### Response
+```json
+{
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": {
+		"state": {
+			"participants": ["xet:yfxcjh7aua5lmpvmyh4fmhrjzlg9xx9p6uvel0248hxc42yja9usq27dz7s"],
+			"threshold": 1
+		}
+	}
+}
+```
+
+**NOTE**: If the address has disabled its multig setup setup, a `state` with value `inactive` will be returned instead.
+
+
+#### Has Multisig
+
+Verify if the address has a multisig setup.
+
+##### Method `has_multisig`
+
+##### Parameters
+
+|   Name  |   Type  | Required |                Note               |
+|:-------:|:-------:|:--------:|:---------------------------------:|
+| address | Address | Required | Valid address registered on chain |
+
+##### Request
+```json
+{
+	"jsonrpc": "2.0",
+	"id": 1,
+	"method": "has_multisig",
+	"params": {
+		"address": "xet:6eadzwf5xdacts6fs4y3csmnsmy4mcxewqt3xyygwfx0hm0tm32sqxdy9zk"
+	}
+}
+```
+
+##### Response
+```json
+{
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": true
+}
+```
+
+#### Has Multisig at TopoHeight
+
+Verify if the address has a multisig setup at a specific topoheight.
+
+##### Method `has_multisig_at_topoheight`
+
+##### Parameters
+
+|        Name        |   Type  | Required |                Note               |
+|:------------------:|:-------:|:--------:|:---------------------------------:|
+|       address      | Address | Required | Valid address registered on chain |
+|      topoheight    | Integer | Required | Topoheight to retrieve the state  |
+
+##### Request
+```json
+{
+	"jsonrpc": "2.0",
+	"id": 1,
+	"method": "has_multisig_at_topoheight",
+	"params": {
+		"address": "xet:6eadzwf5xdacts6fs4y3csmnsmy4mcxewqt3xyygwfx0hm0tm32sqxdy9zk",
+		"topoheight": 57
+	}
+}
+```
+
+##### Response
+```json
+{
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": true
+}
+```
+#### Get Multisig at TopoHeight
+Retrieve the multisig information at a specific topoheight.
+
+##### Method `get_multisig_at_topoheight`
+
+##### Parameters
+
+|        Name        |   Type  | Required |                Note               |
+|:------------------:|:-------:|:--------:|:---------------------------------:|
+|       address      | Address | Required | Valid address registered on chain |
+|      topoheight    | Integer | Required | Topoheight to retrieve the state  |
+
+##### Request
+```json
+{
+	"jsonrpc": "2.0",
+	"id": 1,
+	"method": "get_multisig_at_topoheight",
+	"params": {
+		"address": "xet:6eadzwf5xdacts6fs4y3csmnsmy4mcxewqt3xyygwfx0hm0tm32sqxdy9zk",
+		"topoheight": 57
+	}
+}
+```
+
+##### Response
+```json
+{
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": {
+		"state": {
+			"participants": ["xet:yfxcjh7aua5lmpvmyh4fmhrjzlg9xx9p6uvel0248hxc42yja9usq27dz7s"],
+			"threshold": 1
+		}
+	}
+}
+```
+
+**NOTE**:
+- If the address has an inactive multisig state, it will returns `false`.
+- If a version is not found at requested topoheight, an error will be returned.
+
 ## Wallet
 
 ### Events
