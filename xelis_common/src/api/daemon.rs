@@ -575,6 +575,50 @@ pub struct MakeIntegratedAddressParams<'a> {
     pub integrated_data: Cow<'a, DataElement>
 }
 
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MultisigState {
+    // If the user has deleted its multisig at requested topoheight
+    Deleted,
+    // If the user has a multisig at requested topoheight
+    Active {
+        participants: Vec<Address>,
+        threshold: u8
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct GetMultisigAtTopoHeightParams<'a> {
+    pub address: Cow<'a, Address>,
+    pub topoheight: TopoHeight
+}
+
+
+#[derive(Serialize, Deserialize)]
+pub struct GetMultisigAtTopoHeightResult {
+    pub state: MultisigState,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct GetMultisigParams<'a> {
+    pub address: Cow<'a, Address>
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct GetMultisigResult {
+    // State at topoheight
+    pub state: MultisigState,
+    // Topoheight of the last change
+    pub topoheight: TopoHeight
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct HasMultisigParams<'a> {
+    pub address: Cow<'a, Address>,
+    #[serde(default)]
+    pub topoheight: Option<TopoHeight>
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NotifyEvent {

@@ -340,6 +340,7 @@ impl Transaction {
 
             let hash = hash(&bytes[..bytes.len() - size]);
             for sig in multisig.get_signatures() {
+                // A participant can't sign more than once because of the IndexSet (SignatureId impl Hash on id)
                 let index = sig.id as usize;
                 let Some(key) = config.participants.get_index(index) else {
                     return Err(VerificationError::MultiSigParticipants);
