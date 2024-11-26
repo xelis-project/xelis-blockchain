@@ -385,11 +385,7 @@ impl Serializer for TransactionType {
             },
             TransactionType::MultiSig(payload) => {
                 writer.write_u8(2);
-                writer.write_u8(payload.threshold);
-                writer.write_u8(payload.participants.len() as u8);
-                for participant in &payload.participants {
-                    participant.write(writer);
-                }
+                payload.write(writer);
             }
         };
     }
@@ -412,6 +408,10 @@ impl Serializer for TransactionType {
                 }
                 TransactionType::Transfers(txs)
             },
+            2 => {
+                let payload = MultiSigPayload::read(reader)?;
+                TransactionType::MultiSig(payload)
+            }
             _ => {
                 return Err(ReaderError::InvalidValue)
             }
