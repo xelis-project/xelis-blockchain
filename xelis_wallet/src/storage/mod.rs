@@ -1,4 +1,5 @@
 mod backend;
+mod types;
 
 use std::{
     collections::{HashMap, HashSet, VecDeque},
@@ -6,9 +7,7 @@ use std::{
 };
 use indexmap::IndexMap;
 use lru::LruCache;
-use serde::{Deserialize, Serialize};
 use xelis_common::{
-    account::CiphertextCache,
     api::{
         query::{
             Query,
@@ -27,12 +26,9 @@ use xelis_common::{
     network::Network,
     serializer::{
         Reader,
-        ReaderError,
         Serializer,
-        Writer
     },
     tokio::sync::Mutex,
-    transaction::{MultiSigPayload, Reference}
 };
 use anyhow::{
     Context,
@@ -49,8 +45,11 @@ use crate::{
     },
     error::WalletError
 };
-use self::backend::{Db, Tree};
 use log::{trace, debug, error};
+
+use backend::{Db, Tree};
+
+pub use types::*;
 
 // keys used to retrieve from storage
 const NONCE_KEY: &[u8] = b"NONCE";
@@ -74,76 +73,9 @@ const MULTISIG: &[u8] = b"MSIG";
 // Default cache size
 const DEFAULT_CACHE_SIZE: usize = 100;
 
-#[derive(Debug, Clone)]
-pub struct Balance {
-    pub amount: u64,
-    pub ciphertext: CiphertextCache
-}
-
-impl Balance {
-    pub fn new(amount: u64, ciphertext: CiphertextCache) -> Self {
-        Self {
-            amount,
-            ciphertext
-        }
-    }
-}
-
-impl Serializer for Balance {
-    fn write(&self, writer: &mut Writer) {
-        self.amount.write(writer);
-        self.ciphertext.write(writer);
-    }
-
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let amount = u64::read(reader)?;
-        let ciphertext = CiphertextCache::read(reader)?;
-        Ok(Self {
-            amount,
-            ciphertext
-        })
-    }
-}
-
 // Use this struct to get access to non-encrypted keys (such as salt for KDF and encrypted master key)
 pub struct Storage {
     db: Db
-}
-
-#[derive(Debug, Clone)]
-pub struct TxCache {
-    // This is used to store the nonce used to create new transactions
-    pub nonce: u64,
-    // Last reference used to build a transaction
-    pub reference: Reference,
-    // Last transaction hash created
-    // This is used to determine if we should erase the last unconfirmed balance or not
-    pub last_tx_hash_created: Hash,
-}
-
-// A registered asset in the wallet DB
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Asset {
-    // Asset name given by the user
-    pub name: Option<String>,
-    // asset decimals
-    pub decimals: u8,
-}
-
-impl Serializer for Asset {
-    fn write(&self, writer: &mut Writer) {
-        self.name.write(writer);
-        self.decimals.write(writer);
-    }
-
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let name = Option::read(reader)?;
-        let decimals = u8::read(reader)?;
-        Ok(Self {
-            name,
-            decimals
-        })
-    }
 }
 
 // Implement an encrypted storage system
@@ -476,21 +408,34 @@ impl EncryptedStorage {
     }
 
     // Set a multisig state
-    pub async fn set_multisig_state(&mut self, state: MultiSigPayload) -> Result<()> {
+    pub async fn set_multisig_state(&mut self, state: MultiSig) -> Result<()> {
         trace!("set multisig state");
         self.save_to_disk(&self.extra, MULTISIG, &state.to_bytes())?;
         Ok(())
     }
 
+    // Delete the multisig state
+    pub async fn delete_multisig_state(&mut self) -> Result<()> {
+        trace!("delete multisig state");
+        self.delete_from_disk(&self.extra, MULTISIG)?;
+        Ok(())
+    }
+
     // Get the multisig state
-    pub async fn get_multisig_state(&self) -> Result<Option<MultiSigPayload>> {
+    pub async fn get_multisig_state(&self) -> Result<Option<MultiSig>> {
         trace!("get multisig state");
         if !self.contains_data(&self.extra, MULTISIG)? {
             return Ok(None);
         }
 
-        let state: MultiSigPayload = self.load_from_disk(&self.extra, MULTISIG)?;
+        let state: MultiSig = self.load_from_disk(&self.extra, MULTISIG)?;
         Ok(Some(state))
+    }
+
+    // Check if the wallet has a multisig state
+    pub async fn has_multi_sig_state(&self) -> Result<bool> {
+        trace!("has multisig state");
+        self.contains_data(&self.extra, MULTISIG)
     }
 
     // this function is specific because we save the key in encrypted form (and not hashed as others)

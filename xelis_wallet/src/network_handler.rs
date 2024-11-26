@@ -10,16 +10,11 @@ use thiserror::Error;
 use anyhow::Error;
 use log::{debug, error, info, trace, warn};
 use xelis_common::{
-    tokio::{
-        sync::Mutex, task::{JoinHandle, JoinError},
-        time::sleep,
-        select,
-        spawn_task
-    },
     account::CiphertextCache,
     api::{
         daemon::{
             BlockResponse,
+            MultisigState,
             NewBlockEvent
         },
         wallet::BalanceChanged,
@@ -32,7 +27,14 @@ use xelis_common::{
         Address,
         Hash
     },
-    transaction::Role,
+    tokio::{
+        select,
+        spawn_task,
+        sync::Mutex,
+        task::{JoinError, JoinHandle},
+        time::sleep
+    },
+    transaction::{MultiSigPayload, Role},
     utils::sanitize_daemon_address
 };
 use crate::{
@@ -44,7 +46,7 @@ use crate::{
         TransferIn,
         TransferOut
     },
-    storage::Balance,
+    storage::{Balance, MultiSig},
     wallet::{
         Event, Wallet
     }
@@ -404,6 +406,30 @@ impl NetworkHandler {
                         storage.add_topoheight_to_changes(topoheight, &block_hash)?;
                         changes_stored = true;
                     }
+
+                    if let EntryData::MultiSig { participants, threshold, .. } = entry.get_entry() {
+                        let multisig = MultiSig {
+                            payload: MultiSigPayload {
+                                participants: participants.clone(),
+                                threshold: *threshold
+                            },
+                            topoheight: tx_topoheight
+                        };
+                        let store = storage.get_multisig_state().await?
+                            .map(|m| m.topoheight < tx_topoheight)
+                            .unwrap_or(true);
+
+                        if store {
+                            info!("Detected a multisig state change at topoheight {} from TX {}", tx_topoheight, entry.get_hash());
+                            if multisig.payload.is_delete() {
+                                info!("Deleting multisig state");
+                                storage.delete_multisig_state().await?;
+                            } else {
+                                info!("Updating multisig state");
+                                storage.set_multisig_state(multisig).await?;
+                            }
+                        }
+                    }
                 }
 
                 // Propagate the event to the wallet
@@ -674,6 +700,29 @@ impl NetworkHandler {
         } else {
             None
         };
+
+        // Check if we have a multisig account
+        if self.api.has_multisig(address).await? {
+            debug!("Multisig account detected");
+            let data = self.api.get_multisig(address).await?;
+            if let MultisigState::Active { participants, threshold } = data.state {
+                debug!("Active multisig account with participants [{}] and threshold {}", participants.iter().map(Address::to_string).collect::<Vec<_>>().join(", "), threshold);
+
+                let payload = MultiSigPayload {
+                    participants: participants.into_iter().map(|p| p.to_public_key()).collect(),
+                    threshold
+                };
+
+                let multisig = MultiSig {
+                    payload,
+                    topoheight: data.topoheight
+                };
+                let mut storage = self.wallet.get_storage().write().await;
+                storage.set_multisig_state(multisig).await?;
+            } else {
+                warn!("Multisig account is not active while marked as, skipping it");
+            }
+        }
 
         let assets = if let Some(assets) = assets.filter(|a| !a.is_empty()) {
             assets
