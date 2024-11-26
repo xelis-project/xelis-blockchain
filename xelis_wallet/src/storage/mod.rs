@@ -32,7 +32,7 @@ use xelis_common::{
         Writer
     },
     tokio::sync::Mutex,
-    transaction::Reference
+    transaction::{MultiSigPayload, Reference}
 };
 use anyhow::{
     Context,
@@ -69,6 +69,7 @@ const TOP_BLOCK_HASH_KEY: &[u8] = b"TOPBH";
 const NETWORK: &[u8] = b"NET";
 // Last coinbase reward topoheight
 const LCRT: &[u8] = b"LCRT";
+const MULTISIG: &[u8] = b"MSIG";
 
 // Default cache size
 const DEFAULT_CACHE_SIZE: usize = 100;
@@ -472,6 +473,24 @@ impl EncryptedStorage {
         };
 
         Ok(count)
+    }
+
+    // Set a multisig state
+    pub async fn set_multisig_state(&mut self, state: MultiSigPayload) -> Result<()> {
+        trace!("set multisig state");
+        self.save_to_disk(&self.extra, MULTISIG, &state.to_bytes())?;
+        Ok(())
+    }
+
+    // Get the multisig state
+    pub async fn get_multisig_state(&self) -> Result<Option<MultiSigPayload>> {
+        trace!("get multisig state");
+        if !self.contains_data(&self.extra, MULTISIG)? {
+            return Ok(None);
+        }
+
+        let state: MultiSigPayload = self.load_from_disk(&self.extra, MULTISIG)?;
+        Ok(Some(state))
     }
 
     // this function is specific because we save the key in encrypted form (and not hashed as others)

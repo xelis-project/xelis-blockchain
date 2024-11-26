@@ -7,11 +7,11 @@ use std::{
     time::Duration
 };
 use anyhow::{Result, Context};
+use indexmap::IndexSet;
 use log::{error, info};
 use clap::Parser;
 use serde::{Deserialize, Serialize};
 use xelis_common::{
-    tokio,
     async_handler,
     config::{
         VERSION,
@@ -28,26 +28,15 @@ use xelis_common::{
             Arg,
             ArgType,
             ArgumentManager
-        },
-        command::{
+        }, command::{
             Command,
             CommandError,
             CommandHandler,
             CommandManager
-        },
-        LogLevel,
-        Prompt,
-        ModuleConfig,
-        PromptError,
-        Color
-    },
-    serializer::Serializer,
-    transaction::{
-        builder::{FeeBuilder, TransactionTypeBuilder, TransferBuilder},
-        BurnPayload,
-        Transaction
-    },
-    utils::{
+        }, Color, LogLevel, ModuleConfig, Prompt, PromptError
+    }, serializer::Serializer, tokio, transaction::{
+        builder::{FeeBuilder, TransactionTypeBuilder, TransferBuilder}, BurnPayload, MultiSigPayload, Transaction
+    }, utils::{
         format_coin,
         format_xelis,
         from_coin
@@ -639,6 +628,13 @@ async fn setup_wallet_command_manager(wallet: Arc<Wallet>, command_manager: &Com
             CommandHandler::Async(async_handler!(stop_api_server)))
         )?;
     }
+
+    // Also add multisig commands
+    command_manager.add_command(Command::new(
+        "setup_multisig",
+        "Setup a multisig",
+        CommandHandler::Async(async_handler!(multisig_offline))
+    ))?;
 
     let mut context = command_manager.get_context().lock()?;
     context.store(wallet);
@@ -1367,6 +1363,55 @@ async fn start_xswd(manager: &CommandManager, _: ArgumentManager) -> Result<(), 
         },
         Err(e) => manager.error(format!("Error while enabling XSWD Server: {}", e))
     };
+
+    Ok(())
+}
+
+// Setup a multisig offline (a multisig is present on chain, but this wallet is offline so can't sync it)
+async fn multisig_offline(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
+    let context = manager.get_context().lock()?;
+    let wallet: &Arc<Wallet> = context.get()?;
+
+    let prompt = manager.get_prompt();
+    let participants: u8 = prompt.read("Participants count (min. 1):")
+        .await.context("Error while reading participants count")?;
+
+    if participants == 0 {
+        return Err(CommandError::InvalidArgument("Participants count must be greater than 0".to_string()));
+    }
+
+    let threshold: u8 = prompt.read("Threshold (min. 1):")
+        .await.context("Error while reading threshold")?;
+
+    if threshold == 0 {
+        return Err(CommandError::InvalidArgument("Threshold must be greater than 0".to_string()));
+    }
+
+    let mut keys = IndexSet::with_capacity(participants as usize);
+    for i in 0..participants {
+        let address: Address = prompt.read(format!("Participant #{} address:", i + 1))
+            .await.context("Error while reading participant address")?;
+
+        if address.is_mainnet() != wallet.get_network().is_mainnet() {
+            return Err(CommandError::InvalidArgument("Participant address must be on the same network".to_string()));
+        }
+
+        if address.get_public_key() == wallet.get_public_key() {
+            return Err(CommandError::InvalidArgument("Participant address cannot be the same as the wallet address".to_string()));
+        }
+
+        if !keys.insert(address.to_public_key()) {
+            return Err(CommandError::InvalidArgument("Participant address already exists".to_string()));
+        }
+    }
+
+    let multisig = MultiSigPayload {
+        participants: keys,
+        threshold
+    };
+
+    let mut storage = wallet.get_storage().write().await;
+    storage.set_multisig_state(multisig).await?;
 
     Ok(())
 }
