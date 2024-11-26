@@ -763,8 +763,8 @@ async fn create_wallet(manager: &CommandManager, _: ArgumentManager) -> Result<(
         format!("{}{}", DIR_PATH, name)
     };
 
-    if !Path::new(&dir).is_dir() {
-        manager.message("No wallet found with this name");
+    if Path::new(&dir).is_dir() {
+        manager.message("wallet already exists with this name");
         return Ok(())
     }
 
@@ -1429,7 +1429,7 @@ async fn multisig_setup(manager: &CommandManager, mut args: ArgumentManager) -> 
     let mainnet = wallet.get_network().is_mainnet();
     let mut keys = IndexSet::with_capacity(participants as usize);
     for i in 0..participants {
-        let address: Address = prompt.read(format!("Participant #{} address:", i + 1))
+        let address: Address = prompt.read(format!("Participant #{} address: ", i + 1))
             .await.context("Error while reading participant address")?;
 
         if address.is_mainnet() != mainnet {
