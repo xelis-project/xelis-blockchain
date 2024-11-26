@@ -540,11 +540,6 @@ where
                 return Err(RpcResponseError::new(None, XSWDError::ApplicationPermissionsNotSigned))
             }
 
-            if app_data.signature.is_some() {
-                // TODO: verify the signature
-                return Err(RpcResponseError::new(None, XSWDError::InvalidSignatureForApplicationData))
-            }
-
             if app_data.permissions.len() > 255 {
                 return Err(RpcResponseError::new(None, XSWDError::TooManyPermissions))
             }
