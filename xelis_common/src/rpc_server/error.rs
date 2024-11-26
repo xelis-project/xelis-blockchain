@@ -23,7 +23,7 @@ pub enum InternalRpcError {
     InvalidJSONParams(#[from] SerdeError),
     #[error("Invalid params: {}", _0)]
     InvalidParams(&'static str),
-    #[error("Invalid params: {}", _0)]
+    #[error("Invalid params: {:#}", _0)]
     InvalidParamsAny(AnyError),
     #[error("Expected parameters for this method but was not present")]
     ExpectedParams,
@@ -46,7 +46,7 @@ pub enum InternalRpcError {
     #[error(transparent)]
     SerializeResponse(SerdeError),
     // Custom errors must have a code between -3 and -31999
-    #[error("{}", _1)]
+    #[error("{:#}", _1)]
     CustomAny(i16, AnyError),
     #[error("{}", _1)]
     Custom(i16, String),
