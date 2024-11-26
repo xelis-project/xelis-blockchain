@@ -24,6 +24,8 @@ use human_bytes::human_bytes;
 
 #[derive(Error, Debug)]
 pub enum DiskContext {
+    #[error("multisig")]
+    Multisig,
     #[error("get top block")]
     GetTopBlock,
     #[error("get top metadata")]
@@ -103,6 +105,8 @@ pub enum DiskContext {
 #[repr(usize)]
 #[derive(Error, Debug)]
 pub enum BlockchainError {
+    #[error("no multisig found")]
+    NoMultisig,
     #[error("Versioned data not found in disk")]
     VersionedNotFound,
     #[error("Block is not ordered")]

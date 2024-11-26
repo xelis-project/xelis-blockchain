@@ -325,6 +325,12 @@ pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>
     handler.register_method("extract_key_from_address", async_handler!(extract_key_from_address::<S>));
     handler.register_method("make_integrated_address", async_handler!(make_integrated_address::<S>));
 
+    // Multisig
+    handler.register_method("get_multisig_at_topoheight", async_handler!(get_multisig_at_topoheight::<S>));
+    handler.register_method("get_multisig", async_handler!(get_multisig::<S>));
+    handler.register_method("has_multisig", async_handler!(has_multisig::<S>));
+
+
     if allow_mining_methods {
         handler.register_method("get_block_template", async_handler!(get_block_template::<S>));
         handler.register_method("get_miner_work", async_handler!(get_miner_work::<S>));
@@ -1395,4 +1401,64 @@ async fn make_integrated_address<S: Storage>(context: &Context, body: Value) -> 
     let address = Address::new(params.address.is_mainnet(), AddressType::Data(params.integrated_data.into_owned()), params.address.into_owned().to_public_key());
 
     Ok(json!(address))
+}
+
+async fn get_multisig_at_topoheight<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
+    let params: GetMultisigAtTopoHeightParams = parse_params(body)?;
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    let storage = blockchain.get_storage().read().await;
+    let multisig = storage.get_multisig_at_topoheight_for(&params.address.get_public_key(), params.topoheight).await
+        .context("Error while retrieving multisig at topoheight")?;
+
+    let state = match multisig.take() {
+        Some(multisig) => {
+            let multisig = multisig.into_owned();
+            let mainnet = storage.is_mainnet();
+            let participants = multisig.participants.into_iter().map(|p| p.to_address(mainnet)).collect();
+            MultisigState::Active {
+                    participants,
+                    threshold: multisig.threshold,
+                }
+        },
+        None => MultisigState::Deleted
+    };
+
+    Ok(json!(GetMultisigAtTopoHeightResult { state }))
+}
+
+async fn get_multisig<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
+    let params: GetMultisigParams = parse_params(body)?;
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    let storage = blockchain.get_storage().read().await;
+    let (topoheight, multisig) = storage.get_last_multisig(&params.address.get_public_key()).await
+        .context("Error while retrieving multisig")?;
+
+    let state = match multisig.take() {
+        Some(multisig) => {
+            let multisig = multisig.into_owned();
+            let mainnet = storage.is_mainnet();
+            let participants = multisig.participants.into_iter().map(|p| p.to_address(mainnet)).collect();
+            MultisigState::Active {
+                    participants,
+                    threshold: multisig.threshold,
+                }
+        },
+        None => MultisigState::Deleted
+    };
+
+    Ok(json!(GetMultisigResult { state, topoheight }))
+}
+
+async fn has_multisig<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
+    let params: HasMultisigParams = parse_params(body)?;
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    let storage = blockchain.get_storage().read().await;
+
+    let multisig = if let Some(topoheight) = params.topoheight {
+        storage.has_multisig_at_topoheight(&params.address.get_public_key(), topoheight).await
+    } else {
+        storage.has_multisig(&params.address.get_public_key()).await
+    }.context("Error while checking if account has multisig")?;
+
+    Ok(json!(multisig))
 }
