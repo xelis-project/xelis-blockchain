@@ -1681,7 +1681,6 @@ impl<S: Storage> Blockchain<S> {
             // All transactions to be verified in one batch
             let mut batch = Vec::with_capacity(block.get_txs_count());
             let is_v2_enabled = version >= BlockVersion::V2;
-            assert!(!is_v2_enabled);
             for (tx, hash) in block.get_transactions().iter().zip(block.get_txs_hashes()) {
                 let tx_size = tx.size();
                 if tx_size > MAX_TRANSACTION_SIZE {
