@@ -1381,7 +1381,7 @@ async fn multisig_setup(manager: &CommandManager, mut args: ArgumentManager) -> 
     let participants: u8 = if args.has_argument("participants") {
         args.get_value("participants")?.to_number()? as u8
     } else {
-        prompt.read("Participants count (min. 1):")
+        prompt.read("Participants count (min. 1): ")
             .await.context("Error while reading participants count")?
     };
 
@@ -1414,7 +1414,7 @@ async fn multisig_setup(manager: &CommandManager, mut args: ArgumentManager) -> 
     let threshold: u8 = if args.has_argument("threshold") {
         args.get_value("threshold")?.to_number()? as u8
     } else {
-        prompt.read("Threshold (min. 1):")
+        prompt.read("Threshold (min. 1): ")
             .await.context("Error while reading threshold")?
     };
 
