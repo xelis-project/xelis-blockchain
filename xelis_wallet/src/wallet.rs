@@ -39,7 +39,8 @@ use xelis_common::{
         builder::{
             FeeBuilder,
             TransactionBuilder,
-            TransactionTypeBuilder
+            TransactionTypeBuilder,
+            UnsignedTransaction
         },
         TxVersion,
         extra_data::UnknownExtraDataFormat,
@@ -793,6 +794,17 @@ impl Wallet {
 
         Ok(transaction)
     }
+
+    // Create an unsigned transaction with the given transaction type and fee
+    pub fn create_unsigned_transaction(&self, state: &mut TransactionBuilderState, threshold: u8, transaction_type: TransactionTypeBuilder, fee: FeeBuilder, tx_version: TxVersion) -> Result<UnsignedTransaction, WalletError> {
+        trace!("create unsigned transaction");
+        let builder = TransactionBuilder::new(tx_version, self.get_public_key().clone(), threshold, transaction_type, fee);
+        let unsigned = builder.build_unsigned(state, &self.inner.keypair)
+            .map_err(|e| WalletError::Any(e.into()))?;
+
+        Ok(unsigned)
+    }
+
 
     // submit a transaction to the network through the connection to daemon
     // It will increase the local nonce by 1 if the TX is accepted by the daemon

@@ -324,7 +324,10 @@ async fn build_transaction(context: &Context, body: Value) -> Result<Value, Inte
             unsigned.sign_multisig(&keypair, signer.id);
         }
 
-        unsigned.finalize(wallet.get_keypair())
+        let tx = unsigned.finalize(wallet.get_keypair());
+        state.set_tx_hash_built(tx.hash());
+
+        tx
     };
 
     // if requested, broadcast the TX ourself
@@ -396,7 +399,10 @@ async fn build_transaction_offline(context: &Context, body: Value) -> Result<Val
             unsigned.sign_multisig(&keypair, signer.id);
         }
 
-        unsigned.finalize(wallet.get_keypair())
+        let tx = unsigned.finalize(wallet.get_keypair());
+        state.set_tx_hash_built(tx.hash());
+
+        tx
     };
 
     Ok(json!(TransactionResponse {
@@ -478,6 +484,23 @@ async fn finalize_unsigned_transaction(context: &Context, body: Value) -> Result
     }
 
     let tx = unsigned.finalize(keypair);
+    
+    let mut storage = wallet.get_storage().write().await;
+    let mut state = TransactionBuilderState::from_tx(&storage, &tx, wallet.get_network().is_mainnet()).await?;
+
+    if params.broadcast {
+        if let Err(e) = wallet.submit_transaction(&tx).await {
+            warn!("Clearing Tx cache & unconfirmed balances because of broadcasting error: {}", e);
+            debug!("TX HEX: {}", tx.to_hex());
+            storage.clear_tx_cache();
+            storage.delete_unconfirmed_balances().await;
+            return Err(e.into());
+        }
+    }
+
+    state.apply_changes(&mut storage).await
+        .context("Error while applying state changes")?;
+
     Ok(json!(TransactionResponse {
         tx_as_hex: if params.tx_as_hex {
             Some(hex::encode(tx.to_bytes()))

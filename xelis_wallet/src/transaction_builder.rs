@@ -2,8 +2,8 @@ use std::collections::{HashMap, HashSet};
 use log::debug;
 use xelis_common::{
     account::CiphertextCache,
-    crypto::{elgamal::Ciphertext, Hash, PublicKey},
-    transaction::{builder::{AccountState, FeeHelper}, Reference}
+    crypto::{elgamal::Ciphertext, Hash, Hashable, PublicKey},
+    transaction::{builder::{AccountState, FeeHelper}, Reference, Transaction}
 };
 use crate::{error::WalletError, storage::{Balance, EncryptedStorage, TxCache}};
 
@@ -72,6 +72,25 @@ impl TransactionBuilderState {
             tx_hash_built: None,
             stable_topoheight: None,
         }
+    }
+
+    pub async fn from_tx(storage: &EncryptedStorage, transaction: &Transaction, mainnet: bool) -> Result<Self, WalletError> {
+        let mut state = Self::new(mainnet, transaction.get_reference().clone(), transaction.get_nonce());
+        let ciphertexts = transaction.get_expected_sender_outputs()
+            .map_err(|e| WalletError::Any(e.into()))?;
+
+        for (asset, ct) in ciphertexts {
+            let (mut balance, _) = storage.get_unconfirmed_balance_for(asset).await?;
+            let balance_ct = balance.ciphertext.computable()
+                .map_err(|e| WalletError::Any(e.into()))?;
+
+            *balance_ct -= ct;
+            state.add_balance(asset.clone(), balance);
+        }
+
+        state.set_tx_hash_built(transaction.hash());
+
+        Ok(state)
     }
 
     pub fn set_balances(&mut self, balances: HashMap<Hash, Balance>) {

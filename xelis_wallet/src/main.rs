@@ -20,7 +20,8 @@ use xelis_common::{
     crypto::{
         ecdlp,
         Address,
-        Hashable
+        Hashable,
+        Signature
     },
     network::Network,
     prompt::{
@@ -34,9 +35,17 @@ use xelis_common::{
             CommandHandler,
             CommandManager
         }, Color, LogLevel, ModuleConfig, Prompt, PromptError
-    }, serializer::Serializer, tokio, transaction::{
-        builder::{FeeBuilder, TransactionTypeBuilder, TransferBuilder}, BurnPayload, MultiSigPayload, Transaction
-    }, utils::{
+    },
+    serializer::Serializer,
+    tokio,
+    transaction::{
+        builder::{FeeBuilder, TransactionTypeBuilder, TransferBuilder},
+        multisig::{MultiSig, SignatureId},
+        BurnPayload,
+        MultiSigPayload,
+        Transaction
+    },
+    utils::{
         format_coin,
         format_xelis,
         from_coin
@@ -921,6 +930,44 @@ async fn change_password(manager: &CommandManager, _: ArgumentManager) -> Result
     Ok(())
 }
 
+async fn create_transaction_with_multisig(manager: &CommandManager, prompt: &Prompt, wallet: &Wallet, tx_type: TransactionTypeBuilder, threshold: u8) -> Result<Transaction, CommandError> {
+    manager.message(format!("Multisig detected, you need to sign the transaction with {} keys.", threshold));
+
+    let mut storage = wallet.get_storage().write().await;
+    let fee = FeeBuilder::default();
+    let mut state = wallet.create_transaction_state_with_storage(&storage, &tx_type, &fee, None).await
+        .context("Error while creating transaction state")?;
+
+    let mut unsigned = wallet.create_unsigned_transaction(&mut state, threshold, tx_type, fee, storage.get_tx_version().await?)
+        .context("Error while building unsigned transaction")?;
+
+    let mut multisig = MultiSig::new();
+    for i in 0..threshold {
+        let signature = prompt.read_input(format!("Enter signature #{} hexadecimal: ", i), false).await
+            .context("Error while reading signature")?;
+        let signature = Signature::from_hex(&signature).context("Invalid signature")?;
+
+        let id = prompt.read(format!("Enter signer ID for signature #{}: ", i)).await
+            .context("Error while reading signer id")?;
+
+        if !multisig.add_signature(SignatureId {
+            id,
+            signature
+        }) {
+            return Err(CommandError::InvalidArgument("Invalid signature".to_string()));
+        }
+    }
+
+    unsigned.set_multisig(multisig);
+
+    let tx = unsigned.finalize(wallet.get_keypair());
+    state.set_tx_hash_built(tx.hash());
+
+    state.apply_changes(&mut storage).await.context("Error while applying changes")?;
+
+    Ok(tx)
+}
+
 // Create a new transfer to a specified address
 async fn transfer(manager: &CommandManager, mut args: ArgumentManager) -> Result<(), CommandError> {
     let prompt = manager.get_prompt();
@@ -946,11 +993,12 @@ async fn transfer(manager: &CommandManager, mut args: ArgumentManager) -> Result
         ).await.unwrap_or(XELIS_ASSET)
     };
 
-    let (max_balance, decimals) = {
+    let (max_balance, decimals, multisig) = {
         let storage = wallet.get_storage().read().await;
         let balance = storage.get_plaintext_balance_for(&asset).await.unwrap_or(0);
         let decimals = storage.get_asset(&asset).await?.decimals;
-        (balance, decimals)
+        let multisig = storage.get_multisig_state().await.context("Error while reading multisig state")?;
+        (balance, decimals, multisig)
     };
 
     // read amount
@@ -971,25 +1019,29 @@ async fn transfer(manager: &CommandManager, mut args: ArgumentManager) -> Result
     }
 
     manager.message("Building transaction...");
-
     let transfer = TransferBuilder {
         destination: address,
         amount,
         asset,
         extra_data: None
     };
-    let tx = match wallet.create_transaction(TransactionTypeBuilder::Transfers(vec![transfer]), FeeBuilder::default()).await {
-        Ok(tx) => tx,
-        Err(e) => {
-            manager.error(&format!("Error while creating transaction: {}", e));
-            return Ok(())
+    let tx_type = TransactionTypeBuilder::Transfers(vec![transfer]);
+    let tx = if let Some(multisig) = multisig {
+        create_transaction_with_multisig(manager, prompt, wallet, tx_type, multisig.payload.threshold).await?
+    } else {
+        match wallet.create_transaction(tx_type, FeeBuilder::default()).await {
+            Ok(tx) => tx,
+            Err(e) => {
+                manager.error(&format!("Error while creating transaction: {}", e));
+                return Ok(())
+            }
         }
     };
+
 
     broadcast_tx(wallet, manager, tx).await;
     Ok(())
 }
-
 
 // Send the whole balance to a specified address
 async fn transfer_all(manager: &CommandManager, mut args: ArgumentManager) -> Result<(), CommandError> {
@@ -1016,11 +1068,13 @@ async fn transfer_all(manager: &CommandManager, mut args: ArgumentManager) -> Re
     }
 
     let asset = asset.unwrap_or(XELIS_ASSET);
-    let (mut amount, decimals) = {
+    let (mut amount, decimals, multisig) = {
         let storage = wallet.get_storage().read().await;
         let amount = storage.get_plaintext_balance_for(&asset).await.unwrap_or(0);
         let decimals = storage.get_asset(&asset).await?.decimals;
-        (amount, decimals)
+        let multisig = storage.get_multisig_state().await
+            .context("Error while reading multisig state")?;
+        (amount, decimals, multisig)
     };
 
     let transfer = TransferBuilder {
@@ -1043,6 +1097,7 @@ async fn transfer_all(manager: &CommandManager, mut args: ArgumentManager) -> Re
         return Ok(())
     }
 
+    manager.message("Building transaction...");
     let transfer = TransferBuilder {
         destination: address,
         amount,
@@ -1050,11 +1105,17 @@ async fn transfer_all(manager: &CommandManager, mut args: ArgumentManager) -> Re
         extra_data: None
     };
     let tx_type = TransactionTypeBuilder::Transfers(vec![transfer]);
-
-    manager.message("Building transaction...");
-
-    let tx = wallet.create_transaction(tx_type, FeeBuilder::default()).await
-        .context("Error while creating transaction")?;
+    let tx = if let Some(multisig) = multisig {
+        create_transaction_with_multisig(manager, prompt, wallet, tx_type, multisig.payload.threshold).await?
+    } else {
+        match wallet.create_transaction(tx_type, FeeBuilder::default()).await {
+            Ok(tx) => tx,
+            Err(e) => {
+                manager.error(&format!("Error while creating transaction: {}", e));
+                return Ok(())
+            }
+        }
+    };
 
     broadcast_tx(wallet, manager, tx).await;
     Ok(())
@@ -1073,11 +1134,13 @@ async fn burn(manager: &CommandManager, mut args: ArgumentManager) -> Result<(),
         ).await.unwrap_or(XELIS_ASSET)
     };
 
-    let (max_balance, decimals) = {
+    let (max_balance, decimals, multisig) = {
         let storage = wallet.get_storage().read().await;
         let balance = storage.get_plaintext_balance_for(&asset).await.unwrap_or(0);
         let decimals = storage.get_asset(&asset).await?.decimals;
-        (balance, decimals)
+        let multisig = storage.get_multisig_state().await
+            .context("Error while reading multisig state")?;
+        (balance, decimals, multisig)
     };
 
     // read amount
@@ -1096,15 +1159,24 @@ async fn burn(manager: &CommandManager, mut args: ArgumentManager) -> Result<(),
         return Ok(())
     }
 
+    manager.message("Building transaction...");
     let payload = BurnPayload {
         amount,
         asset
     };
 
-    manager.message("Building transaction...");
-
-    let tx = wallet.create_transaction(TransactionTypeBuilder::Burn(payload), FeeBuilder::Multiplier(1f64)).await
-        .context("Error while creating burn transaction")?;
+    let tx_type = TransactionTypeBuilder::Burn(payload);
+    let tx = if let Some(multisig) = multisig {
+        create_transaction_with_multisig(manager, prompt, wallet, tx_type, multisig.payload.threshold).await?
+    } else {
+        match wallet.create_transaction(tx_type, FeeBuilder::default()).await {
+            Ok(tx) => tx,
+            Err(e) => {
+                manager.error(&format!("Error while creating transaction: {}", e));
+                return Ok(())
+            }
+        }
+    };
 
     broadcast_tx(wallet, manager, tx).await;
     Ok(())
@@ -1457,12 +1529,26 @@ async fn multisig_setup(manager: &CommandManager, mut args: ArgumentManager) -> 
 
     manager.message("Building transaction...");
 
+    let multisig = {
+        let storage = wallet.get_storage().read().await;
+        storage.get_multisig_state().await.context("Error while reading multisig state")?
+    };
     let payload = MultiSigPayload {
         participants: keys,
         threshold
     };
-    let tx = wallet.create_transaction(TransactionTypeBuilder::MultiSig(payload), FeeBuilder::default()).await
-        .context("Error while creating multisig transaction")?;
+    let tx_type = TransactionTypeBuilder::MultiSig(payload);
+    let tx = if let Some(multisig) = multisig {
+        create_transaction_with_multisig(manager, prompt, wallet, tx_type, multisig.payload.threshold).await?
+    } else {
+        match wallet.create_transaction(tx_type, FeeBuilder::default()).await {
+            Ok(tx) => tx,
+            Err(e) => {
+                manager.error(&format!("Error while creating transaction: {}", e));
+                return Ok(())
+            }
+        }
+    };
 
     broadcast_tx(wallet, manager, tx).await;
 
