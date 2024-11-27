@@ -942,6 +942,8 @@ async fn create_transaction_with_multisig(manager: &CommandManager, prompt: &Pro
         .context("Error while building unsigned transaction")?;
 
     let mut multisig = MultiSig::new();
+    manager.message(format!("Transaction hash to sign: {}", unsigned.get_hash_for_multisig()));
+    manager.message("Please enter the signatures and signer IDs");
     for i in 0..threshold {
         let signature = prompt.read_input(format!("Enter signature #{} hexadecimal: ", i), false).await
             .context("Error while reading signature")?;
