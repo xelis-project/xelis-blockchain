@@ -871,6 +871,16 @@ impl EncryptedStorage {
 
                     Some(transfers.iter_mut().map(|t| Transfer::Out(t)).collect())
                 },
+                EntryData::MultiSig { participants, .. } if accept_outgoing => {
+                    // Filter by address
+                    if let Some(filter_key) = address {
+                        if !participants.contains(filter_key) {
+                            continue;
+                        }
+                    }
+
+                    None
+                },
                 _ => continue,
             };
 
