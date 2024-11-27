@@ -42,12 +42,20 @@ impl FeeHelper for EstimateFeesState {
 // State used to build a transaction
 // It contains the balances of the wallet and the registered keys
 pub struct TransactionBuilderState {
+    // Inner state used to estimate fees
     inner: EstimateFeesState,
+    // If we are on mainnet or not
     mainnet: bool,
+    // Balances of the wallet
     balances: HashMap<Hash, Balance>,
+    // Reference at which the transaction is built
     reference: Reference,
+    // Nonce of the transaction
     nonce: u64,
+    // The hash of the transaction that has been built
     tx_hash_built: Option<Hash>,
+    // The stable topoheight detected during the TX building
+    // This is used to update the last coinbase reward topoheight
     stable_topoheight: Option<u64>,
 }
 

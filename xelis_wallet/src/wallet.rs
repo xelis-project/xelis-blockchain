@@ -626,7 +626,8 @@ impl Wallet {
     pub async fn create_transaction(&self, transaction_type: TransactionTypeBuilder, fee: FeeBuilder) -> Result<Transaction, WalletError> {
         trace!("create transaction");
         let mut storage = self.storage.write().await;
-        let (mut state, transaction) = self.create_transaction_with_storage(&storage, transaction_type, fee, None).await?;
+        let mut state = self.create_transaction_state_with_storage(&storage, &transaction_type, &fee, None).await?;
+        let transaction = self.create_transaction_with(&mut state, storage.get_tx_version().await?, transaction_type, fee)?;
 
         state.apply_changes(&mut storage).await?;
 
@@ -638,7 +639,7 @@ impl Wallet {
     // This will returns the transaction builder state along the transaction
     // You must handle "apply changes" to the storage
     // Warning: this is locking the network handler to access to the daemon api
-    pub async fn create_transaction_with_storage(&self, storage: &EncryptedStorage, transaction_type: TransactionTypeBuilder, fee: FeeBuilder, nonce: Option<u64>) -> Result<(TransactionBuilderState, Transaction), WalletError> {
+    pub async fn create_transaction_state_with_storage(&self, storage: &EncryptedStorage, transaction_type: &TransactionTypeBuilder, fee: &FeeBuilder, nonce: Option<u64>) -> Result<TransactionBuilderState, WalletError> {
         trace!("create transaction with storage");
         let nonce = nonce.unwrap_or_else(|| storage.get_unconfirmed_nonce());
 
@@ -771,17 +772,16 @@ impl Wallet {
         }
 
         #[cfg(feature = "network_handler")]
-        self.add_registered_keys_for_fees_estimation(state.as_mut(), &fee, &transaction_type).await?;
+        self.add_registered_keys_for_fees_estimation(state.as_mut(), fee, transaction_type).await?;
 
-        let transaction = self.create_transaction_with(&mut state, transaction_type, fee)?;
-        Ok((state, transaction))
+        Ok(state)
     }
 
     // Create the transaction with all needed parameters
-    pub fn create_transaction_with(&self, state: &mut TransactionBuilderState, transaction_type: TransactionTypeBuilder, fee: FeeBuilder) -> Result<Transaction, WalletError> {
+    pub fn create_transaction_with(&self, state: &mut TransactionBuilderState, tx_version: TxVersion, transaction_type: TransactionTypeBuilder, fee: FeeBuilder) -> Result<Transaction, WalletError> {
         // Create the transaction builder
         // TODO: support multisig
-        let builder = TransactionBuilder::new(TxVersion::V0, self.get_public_key().clone(), 0, transaction_type, fee);
+        let builder = TransactionBuilder::new(tx_version, self.get_public_key().clone(), 0, transaction_type, fee);
 
         // Build the final transaction
         let transaction = builder.build(state, &self.inner.keypair)
@@ -1031,6 +1031,11 @@ impl Wallet {
     // Get the public key of the wallet
     pub fn get_public_key(&self) -> &PublicKey {
         &self.inner.public_key
+    }
+
+    // Get the keypair of the wallet
+    pub fn get_keypair(&self) -> &KeyPair {
+        &self.inner.keypair
     }
 
     // Get the address of the wallet using its network used

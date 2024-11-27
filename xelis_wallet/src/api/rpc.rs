@@ -2,38 +2,16 @@ use std::{sync::Arc, borrow::Cow};
 use anyhow::Context as AnyContext;
 use xelis_common::{
     api::{
-        wallet::{
-            BuildTransactionParams,
-            BuildTransactionOfflineParams,
-            DeleteParams,
-            EstimateFeesParams,
-            GetAddressParams,
-            GetAssetPrecisionParams,
-            GetBalanceParams,
-            GetMatchingKeysParams,
-            CountMatchingEntriesParams,
-            GetTransactionParams,
-            GetValueFromKeyParams,
-            HasKeyParams,
-            ListTransactionsParams,
-            QueryDBParams,
-            RescanParams,
-            StoreParams,
-            TransactionResponse,
-            SetOnlineModeParams,
-            EstimateExtraDataSizeParams,
-            EstimateExtraDataSizeResult,
-            NetworkInfoResult
-        },
-        SplitAddressParams,
-        SplitAddressResult,
+        wallet::*,
         DataElement,
-        DataHash
+        DataHash,
+        SplitAddressParams,
+        SplitAddressResult
     },
     async_handler,
     config::{VERSION, XELIS_ASSET},
     context::Context,
-    crypto::Hashable,
+    crypto::{Hashable, KeyPair},
     rpc_server::{
         parse_params,
         websocket::WebSocketSessionShared,
@@ -41,7 +19,11 @@ use xelis_common::{
         RPCHandler
     },
     serializer::Serializer,
-    transaction::extra_data::ExtraData,
+    transaction::{
+        builder::TransactionBuilder,
+        extra_data::ExtraData,
+        multisig::{MultiSig, SignatureId}
+    },
 };
 use serde_json::{Value, json};
 use crate::{
@@ -72,6 +54,10 @@ pub fn register_methods(handler: &mut RPCHandler<Arc<Wallet>>) {
     handler.register_method("get_transaction", async_handler!(get_transaction));
     handler.register_method("build_transaction", async_handler!(build_transaction));
     handler.register_method("build_transaction_offline", async_handler!(build_transaction_offline));
+    handler.register_method("build_unsigned_transaction", async_handler!(build_unsigned_transaction));
+    handler.register_method("finalize_unsigned_transaction", async_handler!(finalize_unsigned_transaction));
+    handler.register_method("sign_unsigned_transaction", async_handler!(sign_unsigned_transaction));
+
     handler.register_method("clear_tx_cache", async_handler!(clear_tx_cache));
     handler.register_method("list_transactions", async_handler!(list_transactions));
     handler.register_method("is_online", async_handler!(is_online));
@@ -311,7 +297,35 @@ async fn build_transaction(context: &Context, body: Value) -> Result<Value, Inte
     // The lock is kept until the TX is applied to the storage
     // So even if we have few requests building a TX, they wait for the previous one to be applied
     let mut storage = wallet.get_storage().write().await;
-    let (mut state, tx) = wallet.create_transaction_with_storage(&storage, params.tx_type, params.fee.unwrap_or_default(), params.nonce).await?;
+
+    if params.signers.len() > u8::MAX as usize {
+        return Err(InternalRpcError::InvalidParams("Too many signers"))
+    }
+
+    let version = if let Some(v) = params.tx_version {
+        v
+    } else {
+        let storage = wallet.get_storage().read().await;
+        storage.get_tx_version().await?
+    };
+
+    let fee = params.fee.unwrap_or_default();
+    let mut state = wallet.create_transaction_state_with_storage(&storage, &params.tx_type, &fee, params.nonce).await?;
+
+    let tx = if params.signers.is_empty() {
+        wallet.create_transaction_with(&mut state, version, params.tx_type, fee)?
+    } else {
+        let builder = TransactionBuilder::new(version, wallet.get_public_key().clone(), params.signers.len() as u8, params.tx_type, fee);
+        let mut unsigned = builder.build_unsigned(&mut state, wallet.get_keypair())
+            .context("Error while building unsigned transaction")?;
+
+        for signer in params.signers {
+            let keypair = KeyPair::from_private_key(signer.private_key);
+            unsigned.sign_multisig(&keypair, signer.id);
+        }
+
+        unsigned.finalize(wallet.get_keypair())
+    };
 
     // if requested, broadcast the TX ourself
     if params.broadcast {
@@ -359,7 +373,32 @@ async fn build_transaction_offline(context: &Context, body: Value) -> Result<Val
         });
     }
 
-    let tx = wallet.create_transaction_with(&mut state, params.tx_type, params.fee)?;
+    if params.signers.len() > u8::MAX as usize {
+        return Err(InternalRpcError::InvalidParams("Too many signers"))
+    }
+
+    let version = if let Some(v) = params.tx_version {
+        v
+    } else {
+        let storage = wallet.get_storage().read().await;
+        storage.get_tx_version().await?
+    };
+
+    let tx = if params.signers.is_empty() {
+        wallet.create_transaction_with(&mut state, version, params.tx_type, params.fee)?
+    } else {
+        let builder = TransactionBuilder::new(version, wallet.get_public_key().clone(), params.signers.len() as u8, params.tx_type, params.fee);
+        let mut unsigned = builder.build_unsigned(&mut state, wallet.get_keypair())
+            .context("Error while building unsigned transaction")?;
+
+        for signer in params.signers {
+            let keypair = KeyPair::from_private_key(signer.private_key);
+            unsigned.sign_multisig(&keypair, signer.id);
+        }
+
+        unsigned.finalize(wallet.get_keypair())
+    };
+
     Ok(json!(TransactionResponse {
         tx_as_hex: if params.tx_as_hex {
             Some(hex::encode(tx.to_bytes()))
@@ -370,6 +409,97 @@ async fn build_transaction_offline(context: &Context, body: Value) -> Result<Val
             hash: Cow::Owned(tx.hash()),
             data: Cow::Owned(tx)
         }
+    }))
+}
+
+async fn build_unsigned_transaction(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
+    let params: BuildUnsignedTransactionParams = parse_params(body)?;
+    let wallet: &Arc<Wallet> = context.get()?;
+
+    // create the TX
+    // The lock is kept until the TX is applied to the storage
+    // So even if we have few requests building a TX, they wait for the previous one to be applied
+    let mut storage = wallet.get_storage().write().await;
+    let fee = params.fee.unwrap_or_default();
+    let mut state = wallet.create_transaction_state_with_storage(&storage, &params.tx_type, &fee, params.nonce).await?;
+    let version = storage.get_tx_version().await?;
+
+    let threshold = if let Some(state) = storage.get_multisig_state().await? {
+        state.payload.threshold
+    } else {
+        0
+    };
+
+    // Generate the TX
+    let builder = TransactionBuilder::new(version, wallet.get_public_key().clone(), threshold, params.tx_type, fee);
+    let unsigned = builder.build_unsigned(&mut state, wallet.get_keypair())
+        .context("Error while building unsigned transaction")?;
+
+    state.apply_changes(&mut storage).await
+        .context("Error while applying state changes")?;
+
+    // returns the created TX and its hash
+    Ok(json!(UnsignedTransactionResponse {
+        tx_as_hex: if params.tx_as_hex {
+            Some(hex::encode(unsigned.to_bytes()))
+        } else {
+            None
+        },
+        hash: unsigned.get_hash_for_multisig(),
+        inner: unsigned,
+        threshold
+    }))
+}
+
+// Finalize an unsigned transaction by signing it
+// Add the signatures to the transaction if a multisig is set
+async fn finalize_unsigned_transaction(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
+    let params: FinalizeUnsignedTransactionParams = parse_params(body)?;
+    let wallet: &Arc<Wallet> = context.get()?;
+
+    let mut unsigned = params.unsigned;
+    if params.signatures.is_empty() != unsigned.multisig().is_some() {
+        return Err(InternalRpcError::InvalidParams("Invalid signatures"))
+    }
+
+    if unsigned.source() != wallet.get_public_key() {
+        return Err(InternalRpcError::InvalidParams("Invalid source"))
+    }
+
+    let keypair = wallet.get_keypair();
+
+    if !params.signatures.is_empty() {
+        let mut multisig = MultiSig::new();
+        for signature in params.signatures {
+            multisig.add_signature(signature);
+        }
+
+        unsigned.set_multisig(multisig);
+    }
+
+    let tx = unsigned.finalize(keypair);
+    Ok(json!(TransactionResponse {
+        tx_as_hex: if params.tx_as_hex {
+            Some(hex::encode(tx.to_bytes()))
+        } else {
+            None
+        },
+        inner: DataHash {
+            hash: Cow::Owned(tx.hash()),
+            data: Cow::Owned(tx)
+        }
+    }))
+}
+
+// Sign a unsigned transaction as a multisig member
+async fn sign_unsigned_transaction(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
+    let params: SignUnsignedTransactionParams = parse_params(body)?;
+    let wallet: &Arc<Wallet> = context.get()?;
+
+    let signature = wallet.sign_data(params.hash.as_bytes());
+    Ok(json!(SignatureId {
+        id: params.signer_id,
+        signature
     }))
 }
 

@@ -29,6 +29,7 @@ use xelis_common::{
         Serializer,
     },
     tokio::sync::Mutex,
+    transaction::TxVersion,
 };
 use anyhow::{
     Context,
@@ -68,7 +69,10 @@ const TOP_BLOCK_HASH_KEY: &[u8] = b"TOPBH";
 const NETWORK: &[u8] = b"NET";
 // Last coinbase reward topoheight
 const LCRT: &[u8] = b"LCRT";
+// Key to store the multisig state
 const MULTISIG: &[u8] = b"MSIG";
+// TX version to determine which version of TX we need
+const TX_VERSION: &[u8] = b"TXV";
 
 // Default cache size
 const DEFAULT_CACHE_SIZE: usize = 100;
@@ -111,6 +115,8 @@ pub struct EncryptedStorage {
     // This is used to determine if we should
     // use a stable balance or not
     last_coinbase_reward_topoheight: Option<u64>,
+    // Transaction version to use
+    tx_version: TxVersion
 }
 
 impl EncryptedStorage {
@@ -129,7 +135,8 @@ impl EncryptedStorage {
             tx_cache: None,
             assets_cache: Mutex::new(LruCache::new(NonZeroUsize::new(DEFAULT_CACHE_SIZE).unwrap())),
             synced_topoheight: None,
-            last_coinbase_reward_topoheight: None
+            last_coinbase_reward_topoheight: None,
+            tx_version: TxVersion::V0
         };
 
         if storage.has_network()? {
@@ -144,6 +151,11 @@ impl EncryptedStorage {
         // Load one-time the last coinbase reward topoheight
         if storage.contains_data(&storage.extra, LCRT)? {
             storage.last_coinbase_reward_topoheight = Some(storage.load_from_disk(&storage.extra, LCRT)?);
+        }
+
+        // Load one-time the transaction version
+        if storage.contains_data(&storage.extra, TX_VERSION)? {
+            storage.tx_version = storage.load_from_disk(&storage.extra, TX_VERSION)?;
         }
 
         Ok(storage)
@@ -436,6 +448,20 @@ impl EncryptedStorage {
     pub async fn has_multi_sig_state(&self) -> Result<bool> {
         trace!("has multisig state");
         self.contains_data(&self.extra, MULTISIG)
+    }
+
+    // Set the TX Version
+    pub async fn set_tx_version(&mut self, version: TxVersion) -> Result<()> {
+        trace!("set tx version");
+        self.save_to_disk(&self.extra, TX_VERSION, &version.to_bytes())?;
+        self.tx_version = version;
+        Ok(())
+    }
+
+    // Get the TX Version
+    pub async fn get_tx_version(&self) -> Result<TxVersion> {
+        trace!("get tx version");
+        Ok(self.tx_version)
     }
 
     // this function is specific because we save the key in encrypted form (and not hashed as others)
