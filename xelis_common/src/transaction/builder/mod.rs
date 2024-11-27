@@ -298,7 +298,7 @@ impl TransactionBuilder {
                     (0, 0)
                 };
 
-                let expected_fee = calculate_tx_fee(size, transfers, new_addresses);
+                let expected_fee = calculate_tx_fee(size, transfers, new_addresses, self.required_thresholds as usize);
                 (expected_fee as f64 * multiplier) as u64
             },
             // If the value is set, use it

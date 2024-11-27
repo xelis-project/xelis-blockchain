@@ -14,6 +14,10 @@ pub const FEE_PER_ACCOUNT_CREATION: u64 = 100000;
 // Each transfer has a overhead of 5000 atomic units
 pub const FEE_PER_TRANSFER: u64 = 5000;
 
+// 0.000500 XEL per multisig signature
+// Each signature of a multisig has a overhead of 500 atomic units
+pub const FEE_PER_MULTISIG_SIGNATURE: u64 = 500;
+
 // 8 decimals numbers
 pub const COIN_DECIMALS: u8 = 8;
 // 100 000 000 to represent 1 XEL
