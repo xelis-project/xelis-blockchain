@@ -1,4 +1,5 @@
 use bulletproofs::RangeProof;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     account::Nonce,
@@ -27,6 +28,7 @@ use crate::{
 // Used to build the final transaction
 // It can include the multi-signature logic
 // by signing it
+#[derive(Clone, Serialize, Deserialize)]
 pub struct UnsignedTransaction {
     version: TxVersion,
     source: PublicKey,
