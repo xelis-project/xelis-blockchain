@@ -239,6 +239,7 @@ impl Serializer for Scalar {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn test_compressed_ciphertext_zero() {
@@ -247,5 +248,14 @@ mod tests {
         let decompressed = compressed.decompress().unwrap();
 
         assert_eq!(ciphertext, decompressed);
+    }
+
+    #[test]
+    fn test_compressed_ciphertext_serde() {
+        let ciphertext = Ciphertext::zero();
+        let json  = json!(ciphertext);
+
+        let deserialized: Ciphertext = serde_json::from_value(json).unwrap();
+        assert_eq!(ciphertext, deserialized);
     }
 }
