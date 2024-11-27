@@ -957,8 +957,12 @@ async fn create_transaction_with_multisig(manager: &CommandManager, prompt: &Pro
             .context("Error while reading signature")?;
         let signature = Signature::from_hex(&signature).context("Invalid signature")?;
 
-        let id = prompt.read("Enter signer ID: ").await
-            .context("Error while reading signer id")?;
+        let id = if payload.participants.len() == 1 {
+            0
+        } else {
+            prompt.read("Enter signer ID: ").await
+            .context("Error while reading signer id")?
+        };
 
         if !multisig.add_signature(SignatureId {
             id,
