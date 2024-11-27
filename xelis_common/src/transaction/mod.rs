@@ -265,6 +265,11 @@ impl Transaction {
         &self.multisig
     }
 
+    // Get the count of signatures in a multisig transaction
+    pub fn get_multisig_count(&self) -> usize {
+        self.multisig.as_ref().map(|m| m.len()).unwrap_or(0)
+    }
+
     // Get the signature of source key
     pub fn get_signature(&self) -> &Signature {
         &self.signature
@@ -543,7 +548,9 @@ impl Serializer for MultiSigPayload {
 
         let mut participants = IndexSet::new();
         for _ in 0..participants_len {
-            participants.insert(CompressedPublicKey::read(reader)?);
+            if !participants.insert(CompressedPublicKey::read(reader)?) {
+                return Err(ReaderError::InvalidValue)
+            }
         }
 
         Ok(MultiSigPayload {
