@@ -2536,7 +2536,7 @@ pub async fn estimate_required_tx_fees<P: AccountProvider>(provider: &P, current
         }
     }
 
-    Ok(calculate_tx_fee(tx.size(), output_count, processed_keys.len()))
+    Ok(calculate_tx_fee(tx.size(), output_count, processed_keys.len(), tx.get_multisig_count()))
 }
 
 // Get the block reward for a side block based on how many side blocks exists at same height
