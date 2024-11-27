@@ -84,11 +84,9 @@ pub fn is_version_enabled_at_height(network: &Network, height: u64, version: Blo
 }
 
 // This function checks if a transaction version is allowed in a block version
+#[inline(always)]
 pub fn is_tx_version_allowed_in_block_version(tx_version: TxVersion, block_version: BlockVersion) -> bool {
-    match block_version {
-        BlockVersion::V0 | BlockVersion::V1 => matches!(tx_version, TxVersion::V0),
-        BlockVersion::V2 => matches!(tx_version, TxVersion::V0 | TxVersion::V1),
-    }
+    block_version.is_tx_version_allowed(tx_version)
 }
 
 #[cfg(test)]
