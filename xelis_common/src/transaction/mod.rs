@@ -54,6 +54,32 @@ pub struct SourceCommitment {
     asset: Hash,
 }
 
+impl SourceCommitment {
+    /// Create a new SourceCommitment
+    pub fn new(commitment: CompressedCommitment, proof: CommitmentEqProof, asset: Hash) -> Self {
+        SourceCommitment {
+            commitment,
+            proof,
+            asset
+        }
+    }
+
+    // Get the commitment
+    pub fn get_commitment(&self) -> &CompressedCommitment {
+        &self.commitment
+    }
+
+    // Get the equality proof
+    pub fn get_proof(&self) -> &CommitmentEqProof {
+        &self.proof
+    }
+
+    // Get the asset hash
+    pub fn get_asset(&self) -> &Hash {
+        &self.asset
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct TransferPayload {
     asset: Hash,

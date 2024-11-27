@@ -105,6 +105,8 @@ pub struct FinalizeUnsignedTransactionParams {
     // Signatures to append in the transaction
     // In case it wasn't added in the unsigned already
     pub signatures: Vec<SignatureId>,
+    // Cannot be broadcasted if set to false
+    pub broadcast: bool,
     // Returns the TX in HEX format also
     #[serde(default = "default_false_value")]
     pub tx_as_hex: bool,

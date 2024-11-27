@@ -110,7 +110,7 @@ impl DecompressedTransferCt {
 
 impl Transaction {
     // This function will be used to verify the transaction format
-    pub fn as_valid_version_format(&self) -> bool {
+    pub fn has_valid_version_format(&self) -> bool {
         match self.version {
             // V0 don't support MultiSig format
             TxVersion::V0 => {
@@ -158,6 +158,27 @@ impl Transaction {
         }
 
         output
+    }
+
+    /// Get the new output ciphertext for the sender
+    pub fn get_expected_sender_outputs<'a>(&'a self) -> Result<Vec<(&'a Hash, Ciphertext)>, DecompressionError> {
+        let mut balances = Vec::new();
+        let decompressed_transfers = if let TransactionType::Transfers(transfers) = &self.data {
+            transfers
+                .iter()
+                .map(DecompressedTransferCt::decompress)
+                .collect::<Result<_, DecompressionError>>()?
+        } else {
+            Vec::new()
+        };
+
+        for commitment in self.source_commitments.iter() {
+            let ciphertext = self.get_sender_output_ct(&commitment.asset, &decompressed_transfers);
+
+            balances.push((&commitment.asset, ciphertext));
+        }
+
+        Ok(balances)
     }
 
     pub(crate) fn prepare_transcript(
@@ -221,7 +242,7 @@ impl Transaction {
     ) -> Result<(Transcript, Vec<(RistrettoPoint, CompressedRistretto)>), VerificationError<E>>
     {
         trace!("Pre-verifying transaction");
-        if !self.as_valid_version_format() {
+        if !self.has_valid_version_format() {
             return Err(VerificationError::InvalidFormat);
         }
 
