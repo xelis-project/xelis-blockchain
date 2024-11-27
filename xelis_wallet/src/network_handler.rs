@@ -732,6 +732,12 @@ impl NetworkHandler {
             } else {
                 warn!("Multisig account is not active while marked as, skipping it");
             }
+        } else {
+            let mut storage = self.wallet.get_storage().write().await;
+            if storage.has_multi_sig_state().await? {
+                info!("No multisig account detected, deleting multisig state");
+                storage.delete_multisig_state().await?;
+            }
         }
 
         let assets = if let Some(assets) = assets.filter(|a| !a.is_empty()) {
