@@ -437,6 +437,16 @@ impl NetworkHandler {
             }
         }
 
+        // Also, verify the block version, so we handle smoothly a change in TX Version
+        {
+            let tx_version = block.version.get_tx_version();
+            let mut storage = self.wallet.get_storage().write().await;
+            if storage.get_tx_version().await? < tx_version {
+                info!("Updating TX version to {}", tx_version);
+                storage.set_tx_version(tx_version).await?;
+            }
+        }
+
         if !changes_stored || assets_changed.is_empty() {
             debug!("No changes found in block {} at topoheight {}, assets: {}, changes stored: {}", block_hash, topoheight, assets_changed.len(), changes_stored);
             Ok(None)
