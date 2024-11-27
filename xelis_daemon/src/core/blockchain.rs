@@ -1857,6 +1857,7 @@ impl<S: Storage> Blockchain<S> {
                     // Delete changes made by this block
                     storage.delete_versioned_balances_at_topoheight(topoheight).await?;
                     storage.delete_versioned_nonces_at_topoheight(topoheight).await?;
+                    storage.delete_versioned_multisig_at_topoheight(topoheight).await?;
                     storage.delete_registrations_at_topoheight(topoheight).await?;
 
                     topoheight += 1;

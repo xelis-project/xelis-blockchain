@@ -212,7 +212,7 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
                 trace!("Saving multisig for {} at topoheight {}", key.as_address(self.inner.storage.is_mainnet()), self.inner.topoheight);
                 let multisig = multisig.as_ref().map(|v| Cow::Borrowed(v));
                 let versioned = VersionedMultiSig::new(multisig, state.get_topoheight());
-                self.inner.storage.set_multisig_at_topoheight_for(key, self.inner.topoheight, versioned).await?;
+                self.inner.storage.set_last_multisig_to(key, self.inner.topoheight, versioned).await?;
             }
 
             let balances = self.inner.receiver_balances.entry(&key).or_insert_with(HashMap::new);

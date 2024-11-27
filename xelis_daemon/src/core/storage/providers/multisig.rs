@@ -46,6 +46,12 @@ pub trait MultiSigProvider {
 
         Ok((topoheight, state))
     }
+
+    // Store the last topoheight for a given account
+    async fn set_last_topoheight_for_multisig<'a>(&mut self, account: &PublicKey, topoheight: TopoHeight) -> Result<(), BlockchainError>;
+
+    // Store the last multisig setup for a given account
+    async fn set_last_multisig_to<'a>(&mut self, account: &PublicKey, topoheight: TopoHeight, multisig: VersionedMultiSig<'a>) -> Result<(), BlockchainError>;
 }
 
 #[async_trait]
@@ -98,6 +104,17 @@ impl MultiSigProvider for SledStorage {
     async fn has_multisig_at_topoheight(&self, account: &PublicKey, topoheight: TopoHeight) -> Result<bool, BlockchainError> {
         let version = self.get_multisig_at_topoheight_for(account, topoheight).await?;
         Ok(version.get().is_some())
+    }
+
+    async fn set_last_topoheight_for_multisig<'a>(&mut self, account: &PublicKey, topoheight: TopoHeight) -> Result<(), BlockchainError> {
+        self.multisig.insert(account.as_bytes(), &topoheight.to_be_bytes())?;
+        Ok(())
+    }
+
+    async fn set_last_multisig_to<'a>(&mut self, account: &PublicKey, topoheight: TopoHeight, multisig: VersionedMultiSig<'a>) -> Result<(), BlockchainError> {
+        self.set_multisig_at_topoheight_for(account, topoheight, multisig).await?;
+        self.set_last_topoheight_for_multisig(account, topoheight).await?;
+        Ok(())
     }
 }
 

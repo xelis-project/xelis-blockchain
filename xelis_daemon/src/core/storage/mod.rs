@@ -43,8 +43,14 @@ pub trait Storage:
     // delete versioned nonces at topoheight
     async fn delete_versioned_nonces_at_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError>;
 
+    // delete versioned multisig at topoheight
+    async fn delete_versioned_multisig_at_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError>;
+
     // delete versioned balances above topoheight
     async fn delete_versioned_balances_above_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError>;
+
+    // delete versioned multisig above topoheight
+    async fn delete_versioned_multisig_above_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError>;
 
     // delete versioned nonces above topoheight
     async fn delete_versioned_nonces_above_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError>;

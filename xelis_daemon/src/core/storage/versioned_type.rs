@@ -4,6 +4,7 @@ use xelis_common::{
     serializer::{Reader, ReaderError, Serializer, Writer}
 };
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VersionedState {
     // Version is new
     New,
