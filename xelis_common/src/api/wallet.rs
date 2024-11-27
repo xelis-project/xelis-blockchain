@@ -1,13 +1,14 @@
 use std::{borrow::Cow, collections::HashMap};
 use serde::{Deserialize, Serialize};
 use crate::{
-    block::TopoHeight,
     account::CiphertextCache,
+    block::TopoHeight,
     crypto::{Address, Hash},
     transaction::{
         builder::{FeeBuilder, TransactionTypeBuilder},
         Reference,
-        Transaction
+        Transaction,
+        TxVersion
     }
 };
 use super::{
@@ -44,6 +45,10 @@ pub struct BuildTransactionOfflineParams {
     // Fixed fee is required and must be checked before calling this
     #[serde(default)]
     pub fee: FeeBuilder,
+    // Version to use for the TX
+    // By default set to V0
+    #[serde(default)]
+    pub tx_version: TxVersion,
     // Returns the TX in HEX format also
     #[serde(default = "default_false_value")]
     pub tx_as_hex: bool,
