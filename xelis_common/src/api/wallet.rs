@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     account::CiphertextCache,
     block::TopoHeight,
-    crypto::{Address, Hash},
+    crypto::{Address, Hash, PrivateKey},
     transaction::{
         builder::{FeeBuilder, TransactionTypeBuilder},
         Reference,
@@ -21,6 +21,13 @@ use super::{
     daemon
 };
 
+// Signer ID to use for signing the transaction
+#[derive(Serialize, Deserialize)]
+pub struct SignerId {
+    pub id: u8,
+    pub private_key: PrivateKey
+}
+
 #[derive(Serialize, Deserialize)]
 pub struct BuildTransactionParams {
     #[serde(flatten)]
@@ -35,7 +42,11 @@ pub struct BuildTransactionParams {
     pub broadcast: bool,
     // Returns the TX in HEX format also
     #[serde(default = "default_false_value")]
-    pub tx_as_hex: bool
+    pub tx_as_hex: bool,
+    // List of private keys to sign the transaction
+    // This allow a person to directly sign in the wallet
+    #[serde(default)]
+    pub signers: Vec<SignerId>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -58,7 +69,11 @@ pub struct BuildTransactionOfflineParams {
     // This must point to the most up-to-date topoheight/block hash
     pub reference: Reference,
     // Nonce to use for the transaction
-    pub nonce: u64
+    pub nonce: u64,
+    // List of private keys to sign the transaction
+    // This allow a person to directly sign in the wallet
+    #[serde(default)]
+    pub signers: Vec<SignerId>,
 }
 
 #[derive(Serialize, Deserialize)]

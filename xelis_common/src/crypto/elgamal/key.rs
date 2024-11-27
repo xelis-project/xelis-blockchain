@@ -4,6 +4,7 @@ use curve25519_dalek::{
     Scalar
 };
 use rand::rngs::OsRng;
+use serde::{Deserialize, Deserializer, Serialize};
 use zeroize::Zeroize;
 use crate::{
     api::DataElement,
@@ -205,6 +206,19 @@ impl Serializer for PrivateKey {
 
     fn size(&self) -> usize {
         self.0.size()
+    }
+}
+
+impl Serialize for PrivateKey {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.to_hex())
+    }
+}
+
+impl<'a> Deserialize<'a> for PrivateKey {
+    fn deserialize<D: Deserializer<'a>>(deserializer: D) -> Result<Self, D::Error> {
+        let hex = String::deserialize(deserializer)?;
+        PrivateKey::from_hex(&hex).map_err(serde::de::Error::custom)
     }
 }
 
