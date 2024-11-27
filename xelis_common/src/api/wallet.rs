@@ -6,6 +6,7 @@ use crate::{
     crypto::{Address, Hash, PrivateKey},
     transaction::{
         builder::{FeeBuilder, TransactionTypeBuilder, UnsignedTransaction},
+        multisig::SignatureId,
         Reference,
         Transaction,
         TxVersion
@@ -98,9 +99,31 @@ pub struct BuildUnsignedTransactionParams {
 }
 
 #[derive(Serialize, Deserialize)]
+pub struct FinalizeUnsignedTransactionParams {
+    // Unsigned transaction to finalize
+    pub unsigned: UnsignedTransaction,
+    // Signatures to append in the transaction
+    // In case it wasn't added in the unsigned already
+    pub signatures: Vec<SignatureId>,
+    // Returns the TX in HEX format also
+    #[serde(default = "default_false_value")]
+    pub tx_as_hex: bool,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct SignUnsignedTransactionParams {
+    // Unsigned transaction hash
+    pub hash: Hash,
+    // Signer ID to use for signing the transaction
+    pub signer_id: u8
+}
+
+#[derive(Serialize, Deserialize)]
 pub struct UnsignedTransactionResponse {
     #[serde(flatten)]
     pub inner: UnsignedTransaction,
+    // Unsigned TX hash for signing for multisig signers
+    pub hash: Hash,
     // Multisig threshold, zero if not active
     pub threshold: u8,
     // Unsigned transaction in hex format

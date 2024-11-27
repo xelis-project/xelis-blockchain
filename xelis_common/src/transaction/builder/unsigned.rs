@@ -66,9 +66,19 @@ impl UnsignedTransaction {
         }
     }
 
+    // Get the source of the transaction
+    pub fn source(&self) -> &PublicKey {
+        &self.source
+    }
+
     // Set a multi-signature to the transaction
     pub fn set_multisig(&mut self, multisig: MultiSig) {
         self.multisig = Some(multisig);
+    }
+
+    // Get multisig from the transaction
+    pub fn multisig(&self) -> Option<&MultiSig> {
+        self.multisig.as_ref()
     }
 
     // Get the bytes that need to be signed for the multi-signature
