@@ -10112,6 +10112,221 @@ where `id` is the index of the signer in the multisig setup.
 }
 ```
 
+
+#### Build Unsigned Transaction
+Build a transaction without signing it.
+This is useful in case of a MultiSig setup where you need to sign the transaction with other signers.
+
+##### Method `build_unsigned_transaction`
+
+##### Parameters
+
+|        Name       |       Type      | Required |                                    Note                                    |
+|:-----------------:|:---------------:|:--------:|:--------------------------------------------------------------------------:|
+|        fee        |    FeeBuilder   | Optional |                   Set an exact fee value or a multiplier                   |
+|       nonce       |     Integer     | Optional | Set the nonce to use by the transaction. By default its provided by wallet |
+|     tx_version    |     Integer     | Optional | Set the transaction version to use. By default take the version from wallet|
+|     tx_as_hex     |     Boolean     | Optional |            Serialize TX to hexadecimal. By default set to false            |
+| transfers OR burn | TransactionType | Required |                         Transaction Type parameter                         |
+
+##### Request
+```json
+{
+	"jsonrpc": "2.0",
+	"method": "build_unsigned_transaction",
+	"id": 1,
+	"params": {
+		"transfers": [
+			{
+				"amount": 1000,
+				"asset": "0000000000000000000000000000000000000000000000000000000000000000",
+				"destination": "xet:t23w8pp90zsj04sp5r3r9sjpz3vq7rxcwhydf5ztlk6efhnusersqvf8sny"
+			}
+		],
+		"tx_as_hex": true,
+	}
+}
+```
+
+##### Response
+```json
+{
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": {
+		"data": {
+			"transfers": [
+				{
+					"asset": "0000000000000000000000000000000000000000000000000000000000000000",
+					"commitment": [...],
+					"ct_validity_proof": {
+						"Y_0": [...],
+						"Y_1": [...],
+						"z_r": [...],
+						"z_x": [...]
+					},
+					"destination": [...],
+					"extra_data": null,
+					"receiver_handle": [...],
+					"sender_handle": [...]
+				}
+			]
+		},
+		"fee": 25000,
+		"hash": "f8bd7c15e3a94085f8130cc67e1fefd89192cdd208b68b10e1cc6e1a83afe5d6",
+		"nonce": 1463,
+		"range_proof": [...],
+		"reference": {
+			"hash": "000000000c1845717b0820bd32b57d1928af1b4ae80bdec71b73ab8d60f9eb74",
+			"topoheight": 25770
+		},
+		"source": [...],
+		"source_commitments": [
+			{
+				"asset": "0000000000000000000000000000000000000000000000000000000000000000",
+				"commitment": [...],
+				"proof": {
+					"Y_0": [...],
+					"Y_1": [...],
+					"Y_2": [...],
+					"z_r": [...],
+					"z_s": [...],
+					"z_x": [...]
+				}
+			}
+		],
+		"multisig": null,
+		"tx_as_hex": "<hexadecimal transaction>",
+		"version": 0
+	}
+}
+```
+
+#### Finalize Unsigned Transaction
+Finalize an unsigned transaction by signing it with the wallet key pair.
+Once signed, the transaction can be broadcasted to the network.
+
+##### Method `finalize_unsigned_transaction`
+
+##### Parameters
+
+|        Name       |        Type       | Required |                                    Note                                    |
+|:-----------------:|:-----------------:|:--------:|:--------------------------------------------------------------------------:|
+|      unsigned     |UnsignedTransaction| Required | Hexadecimal/JSON representation of the unsigned transaction to sign        |
+|     signatures    |        Array      | Optional | List of signatures to use for the transaction multisig.                    |
+|     tx_as_hex     |       Boolean     | Optional | Serialize TX to hexadecimal. By default set to false                       |
+
+##### Request
+```json
+{
+	"jsonrpc": "2.0",
+	"method": "finalize_unsigned_transaction",
+	"id": 1,
+	"params": {
+		"unsigned": "<hexadecimal transaction>",
+		"tx_as_hex": true
+	}
+}
+```
+
+##### Response
+```json
+{
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": {
+		"data": {
+			"transfers": [
+				{
+					"asset": "0000000000000000000000000000000000000000000000000000000000000000",
+					"commitment": [...],
+					"ct_validity_proof": {
+						"Y_0": [...],
+						"Y_1": [...],
+						"z_r": [...],
+						"z_x": [...]
+					},
+					"destination": [...],
+					"extra_data": null,
+					"receiver_handle": [...],
+					"sender_handle": [...]
+				}
+			]
+		},
+		"fee": 25000,
+		"hash": "f8bd7c15e3a94085f8130cc67e1fefd89192cdd208b68b10e1cc6e1a83afe5d6",
+		"nonce": 1463,
+		"range_proof": [...],
+		"reference": {
+			"hash": "000000000c1845717b0820bd32b57d1928af1b4ae80bdec71b73ab8d60f9eb74",
+			"topoheight": 25770
+		},
+		"source": [...],
+		"source_commitments": [
+			{
+				"asset": "0000000000000000000000000000000000000000000000000000000000000000",
+				"commitment": [...],
+				"proof": {
+					"Y_0": [...],
+					"Y_1": [...],
+					"Y_2": [...],
+					"z_r": [...],
+					"z_s": [...],
+					"z_x": [...]
+				}
+			}
+		],
+		"multisig": null,
+		"tx_as_hex": "<hexadecimal transaction>",
+		"version": 0
+	}
+}
+```
+
+**NOTE**:
+- The response is the same as `build_transaction` but without the signature.
+- `hash` field is not the real hash of the transaction because it's not signed yet. Its a hash used for multisig signing.
+
+#### Sign Unsigned Transaction
+Sign an unsigned transaction hash with the wallet key pair.
+This is useful in case you are a part of the multisig of another wallet and you need to sign a transaction.
+
+##### Method `sign_unsigned_transaction`
+
+##### Parameters
+
+|        Name       |        Type       | Required |                                    Note                                    |
+|:-----------------:|:-----------------:|:--------:|:--------------------------------------------------------------------------:|
+|        hash       |        Hash       | Required | Hash of the unsigned transaction to sign                                   |
+|     signer_id     |      Integer      | Required | Index of the signer in the multisig setup to use for signing               |
+
+#### Request
+```json
+{
+	"jsonrpc": "2.0",
+	"method": "sign_unsigned_transaction",
+	"id": 1,
+	"params": {
+		"hash": "f8bd7c15e3a94085f8130cc67e1fefd89192cdd208b68b10e1cc6e",
+		"signer_id": 0
+	},
+}
+```
+
+#### Response
+```json
+{
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": {
+		"signature": "6731b973cb5c06c7e4e6fa9135acf4ea7c1b2e2bd0a63e41110aad3b39174204067bf7de87f3c3e2042cbcf6899a307e480d80e7c7f96638eabbf1fe6cfded09",
+		"id": 0
+	}
+}
+```
+
+**NOTE**: The response is the signature of the hash provided. You can use this `SignatureId` returned to finalize the transaction by adding it to the Unsigned Transaction multisig.
+
 #### Clear TX Cache
 In case of a failure while broadcasting a TX from this wallet by yourself, you can erase the TX cache stored in the wallet.
 
