@@ -10214,8 +10214,8 @@ Once signed, the transaction can be broadcasted to the network.
 |:-----------------:|:-----------------:|:--------:|:--------------------------------------------------------------------------:|
 |      unsigned     |UnsignedTransaction| Required | Hexadecimal/JSON representation of the unsigned transaction to sign        |
 |     signatures    |        Array      | Optional | List of signatures to use for the transaction multisig.                    |
+|     broadcast     |       Boolean     | Optional | Broadcast TX to daemon. By default set to true                             |
 |     tx_as_hex     |       Boolean     | Optional | Serialize TX to hexadecimal. By default set to false                       |
-
 ##### Request
 ```json
 {
