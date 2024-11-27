@@ -649,6 +649,14 @@ async fn setup_wallet_command_manager(wallet: Arc<Wallet>, command_manager: &Com
         ],
         CommandHandler::Async(async_handler!(multisig_setup))
     ))?;
+    command_manager.add_command(Command::with_optional_arguments(
+        "multisig_sign",
+        "Sign a multisig transaction",
+        vec![
+            Arg::new("tx_hash", ArgType::Hash)
+        ],
+        CommandHandler::Async(async_handler!(multisig_sign))
+    ))?;
 
     let mut context = command_manager.get_context().lock()?;
     context.store(wallet);
@@ -930,26 +938,26 @@ async fn change_password(manager: &CommandManager, _: ArgumentManager) -> Result
     Ok(())
 }
 
-async fn create_transaction_with_multisig(manager: &CommandManager, prompt: &Prompt, wallet: &Wallet, tx_type: TransactionTypeBuilder, threshold: u8) -> Result<Transaction, CommandError> {
-    manager.message(format!("Multisig detected, you need to sign the transaction with {} keys.", threshold));
+async fn create_transaction_with_multisig(manager: &CommandManager, prompt: &Prompt, wallet: &Wallet, tx_type: TransactionTypeBuilder, payload: MultiSigPayload) -> Result<Transaction, CommandError> {
+    manager.message(format!("Multisig detected, you need to sign the transaction with {} keys.", payload.threshold));
 
     let mut storage = wallet.get_storage().write().await;
     let fee = FeeBuilder::default();
     let mut state = wallet.create_transaction_state_with_storage(&storage, &tx_type, &fee, None).await
         .context("Error while creating transaction state")?;
 
-    let mut unsigned = wallet.create_unsigned_transaction(&mut state, threshold, tx_type, fee, storage.get_tx_version().await?)
+    let mut unsigned = wallet.create_unsigned_transaction(&mut state, payload.threshold, tx_type, fee, storage.get_tx_version().await?)
         .context("Error while building unsigned transaction")?;
 
     let mut multisig = MultiSig::new();
     manager.message(format!("Transaction hash to sign: {}", unsigned.get_hash_for_multisig()));
-    manager.message("Please enter the signatures and signer IDs");
-    for i in 0..threshold {
-        let signature = prompt.read_input(format!("Enter signature #{} hexadecimal: ", i), false).await
+
+    if payload.threshold == 1 {
+        let signature = prompt.read_input("Enter signature hexadecimal: ", false).await
             .context("Error while reading signature")?;
         let signature = Signature::from_hex(&signature).context("Invalid signature")?;
 
-        let id = prompt.read(format!("Enter signer ID for signature #{}: ", i)).await
+        let id = prompt.read("Enter signer ID: ").await
             .context("Error while reading signer id")?;
 
         if !multisig.add_signature(SignatureId {
@@ -957,6 +965,28 @@ async fn create_transaction_with_multisig(manager: &CommandManager, prompt: &Pro
             signature
         }) {
             return Err(CommandError::InvalidArgument("Invalid signature".to_string()));
+        }        
+    } else {
+        manager.message("Participants available:");
+        for (i, participant) in payload.participants.iter().enumerate() {
+            manager.message(format!("Participant #{}: {}", i, participant.as_address(wallet.get_network().is_mainnet())));
+        }
+        
+        manager.message("Please enter the signatures and signer IDs");
+        for i in 0..payload.threshold {
+            let signature = prompt.read_input(format!("Enter signature #{} hexadecimal: ", i), false).await
+                .context("Error while reading signature")?;
+            let signature = Signature::from_hex(&signature).context("Invalid signature")?;
+    
+            let id = prompt.read("Enter signer ID for signature: ").await
+                .context("Error while reading signer id")?;
+    
+            if !multisig.add_signature(SignatureId {
+                id,
+                signature
+            }) {
+                return Err(CommandError::InvalidArgument("Invalid signature".to_string()));
+            }
         }
     }
 
@@ -1029,7 +1059,7 @@ async fn transfer(manager: &CommandManager, mut args: ArgumentManager) -> Result
     };
     let tx_type = TransactionTypeBuilder::Transfers(vec![transfer]);
     let tx = if let Some(multisig) = multisig {
-        create_transaction_with_multisig(manager, prompt, wallet, tx_type, multisig.payload.threshold).await?
+        create_transaction_with_multisig(manager, prompt, wallet, tx_type, multisig.payload).await?
     } else {
         match wallet.create_transaction(tx_type, FeeBuilder::default()).await {
             Ok(tx) => tx,
@@ -1108,7 +1138,7 @@ async fn transfer_all(manager: &CommandManager, mut args: ArgumentManager) -> Re
     };
     let tx_type = TransactionTypeBuilder::Transfers(vec![transfer]);
     let tx = if let Some(multisig) = multisig {
-        create_transaction_with_multisig(manager, prompt, wallet, tx_type, multisig.payload.threshold).await?
+        create_transaction_with_multisig(manager, prompt, wallet, tx_type, multisig.payload).await?
     } else {
         match wallet.create_transaction(tx_type, FeeBuilder::default()).await {
             Ok(tx) => tx,
@@ -1169,7 +1199,7 @@ async fn burn(manager: &CommandManager, mut args: ArgumentManager) -> Result<(),
 
     let tx_type = TransactionTypeBuilder::Burn(payload);
     let tx = if let Some(multisig) = multisig {
-        create_transaction_with_multisig(manager, prompt, wallet, tx_type, multisig.payload.threshold).await?
+        create_transaction_with_multisig(manager, prompt, wallet, tx_type, multisig.payload).await?
     } else {
         match wallet.create_transaction(tx_type, FeeBuilder::default()).await {
             Ok(tx) => tx,
@@ -1541,7 +1571,7 @@ async fn multisig_setup(manager: &CommandManager, mut args: ArgumentManager) -> 
     };
     let tx_type = TransactionTypeBuilder::MultiSig(payload);
     let tx = if let Some(multisig) = multisig {
-        create_transaction_with_multisig(manager, prompt, wallet, tx_type, multisig.payload.threshold).await?
+        create_transaction_with_multisig(manager, prompt, wallet, tx_type, multisig.payload).await?
     } else {
         match wallet.create_transaction(tx_type, FeeBuilder::default()).await {
             Ok(tx) => tx,
@@ -1553,6 +1583,23 @@ async fn multisig_setup(manager: &CommandManager, mut args: ArgumentManager) -> 
     };
 
     broadcast_tx(wallet, manager, tx).await;
+
+    Ok(())
+}
+
+async fn multisig_sign(manager: &CommandManager, mut args: ArgumentManager) -> Result<(), CommandError> {
+    let context = manager.get_context().lock()?;
+    let wallet: &Arc<Wallet> = context.get()?;
+    let prompt = manager.get_prompt();
+
+    let tx_hash = if args.has_argument("tx_hash") {
+        args.get_value("tx_hash")?.to_hash()?
+    } else {
+        prompt.read("Transaction hash: ").await.context("Error while reading transaction hash")?
+    };
+
+    let signature = wallet.sign_data(tx_hash.as_bytes());
+    manager.message(format!("Signature for transaction hash {}: {}", tx_hash, signature.to_hex()));
 
     Ok(())
 }
