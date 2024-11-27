@@ -46,9 +46,8 @@ pub struct BuildTransactionOfflineParams {
     #[serde(default)]
     pub fee: FeeBuilder,
     // Version to use for the TX
-    // By default set to V0
-    #[serde(default)]
-    pub tx_version: TxVersion,
+    // By default, grab the version from wallet
+    pub tx_version: Option<TxVersion>,
     // Returns the TX in HEX format also
     #[serde(default = "default_false_value")]
     pub tx_as_hex: bool,
