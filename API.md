@@ -9883,7 +9883,9 @@ It can be broadcasted or not to the network.
 |     broadcast     |     Boolean     | Optional |               Broadcast TX to daemon. By default set to true               |
 |     tx_as_hex     |     Boolean     | Optional |            Serialize TX to hexadecimal. By default set to false            |
 | transfers OR burn | TransactionType | Required |                         Transaction Type parameter                         |
+|      signers      |	  Array       | Optional |              List of signers to use for the transaction multisig.          |
 
+###### Fee Builder
 Fee builder has two variants:
 - One to provide a multiplier applied on estimated fees.
 ```json
@@ -9894,8 +9896,18 @@ Fee builder has two variants:
 ```json
 {"value":100}
 ```
-
 When it's not provided, Fee Builder is set by default to multiplier 1 to pay what is estimated.
+
+###### MultiSig Signers
+Signers is a list of `SignerId` to use to sign a transaction multisig.
+Example of one `SignerId`:
+```json
+{
+	"private_key": "<private key in hexadecimal>",
+	"id": 0
+}
+```
+where `id` is the index of the signer in the multisig setup.
 
 ##### Request
 ```json
@@ -9989,7 +10001,9 @@ It cannot be broadcasted by the wallet directly.
 | transfers OR burn | TransactionType | Required |                         Transaction Type parameter                         |
 |      balances     |     Array       | Required |              Map of asset<->balance to use for the transaction.            |
 |	 reference      |    Reference    | Required | Reference to use for the transaction. It contains the hash and topoheight  |
+|      signers      |	  Array       | Optional |              List of signers to use for the transaction multisig.          |
 
+###### Fee Builder
 Fee builder has two variants:
 - One to provide a multiplier applied on estimated fees.
 ```json
@@ -10000,8 +10014,18 @@ Fee builder has two variants:
 ```json
 {"value":100}
 ```
-
 When it's not provided, Fee Builder is set by default to multiplier 1 to pay what is estimated.
+
+###### MultiSig Signers
+Signers is a list of `SignerId` to use to sign a transaction multisig.
+Example of one `SignerId`:
+```json
+{
+	"private_key": "<private key in hexadecimal>",
+	"id": 0
+}
+```
+where `id` is the index of the signer in the multisig setup.
 
 ##### Request
 ```json
