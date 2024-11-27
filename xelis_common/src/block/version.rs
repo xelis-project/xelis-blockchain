@@ -1,4 +1,7 @@
-use crate::serializer::{Reader, ReaderError, Serializer, Writer};
+use crate::{
+    serializer::{Reader, ReaderError, Serializer, Writer},
+    transaction::TxVersion
+};
 use core::fmt;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -11,6 +14,24 @@ pub enum BlockVersion {
     V1,
     // Smart Contracts, MultiSig, P2p, etc
     V2,
+}
+
+impl BlockVersion {
+    // Check if a transaction version is allowed in a block version
+    pub fn is_tx_version_allowed(&self, tx_version: TxVersion) -> bool {
+        match self {
+            BlockVersion::V0 | BlockVersion::V1 => matches!(tx_version, TxVersion::V0),
+            BlockVersion::V2 => matches!(tx_version, TxVersion::V0 | TxVersion::V1),
+        }
+    }
+
+    // Get the transaction version for a given block version
+    pub fn get_tx_version(&self) -> TxVersion {
+        match self {
+            BlockVersion::V0 | BlockVersion::V1 => TxVersion::V0,
+            BlockVersion::V2 => TxVersion::V1,
+        }
+    }
 }
 
 impl TryFrom<u8> for BlockVersion {
