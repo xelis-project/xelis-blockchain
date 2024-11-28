@@ -189,7 +189,7 @@ impl CommandManager {
         &self.context
     }
 
-    pub fn get_prompt<'a>(&'a self) -> &ShareablePrompt {
+    pub fn get_prompt(&self) -> &ShareablePrompt {
         &self.prompt
     }
 
