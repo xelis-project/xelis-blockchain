@@ -152,7 +152,7 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
 
     // Generate a new ID for a JSON-RPC request
     fn next_id(&self) -> usize {
-        self.count.fetch_add(1, Ordering::SeqCst)
+        self.count.fetch_add(1, Ordering::Relaxed)
     }
 
     // Notify a channel if we lose/gain the connection
@@ -201,13 +201,14 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
 
     // Set if the client should try to reconnect to the server if the connection is lost
     pub async fn set_auto_reconnect_delay(&self, duration: Option<Duration>) {
+        debug!("Setting auto reconnect delay to {:?}", duration);
         let mut reconnect = self.delay_auto_reconnect.lock().await;
         *reconnect = duration;
     }
 
     // Is the client online
     pub fn is_online(&self) -> bool {
-        self.online.load(Ordering::SeqCst)
+        self.online.load(Ordering::Relaxed)
     }
 
     // resubscribe to all events because of a reconnection
@@ -242,16 +243,30 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
 
     // This will stop the task keeping the connection with the node
     pub async fn disconnect(&self) -> Result<(), Error> {
-        self.set_auto_reconnect_delay(None).await;
+        if !self.is_online() {
+            debug!("Already disconnected from the server");
+            return Ok(());
+        }
+
+        debug!("Disconnecting from the server '{}'", self.target);
         self.set_online(false).await;
         {
-
-            self.sender.lock().await.send(InternalMessage::Close).await?;
+            let sender = self.sender.lock().await;
+            if let Err(e) = sender.send(InternalMessage::Close).await {
+                error!("Error while sending close message to the background task: {:?}", e);
+            }
         }
+
         {
             let task = self.background_task.lock().await.take();
             if let Some(task) = task {
-                task.abort();
+                if task.is_finished() {
+                    if let Err(e) = task.await {
+                        error!("Error while waiting for the background task to finish: {:?}", e);
+                    }
+                } else {
+                    task.abort();
+                }
             }
         }
 
@@ -264,7 +279,8 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
 
     // Set the online status
     async fn set_online(&self, online: bool) {
-        let old = self.online.swap(online, Ordering::SeqCst);
+        debug!("Setting online status to {}", online);
+        let old = self.online.swap(online, Ordering::Relaxed);
         if old != online {
             if online {
                 self.notify_connection_channel(&self.online_channel).await;
@@ -327,6 +343,9 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
     }
 
     async fn start_background_task(self: Arc<Self>, mut receiver: mpsc::Receiver<InternalMessage>, ws: WebSocketStream) -> Result<(), JsonRPCError> {
+        debug!("Starting background task");
+        self.set_online(true).await;
+
         let zelf = Arc::clone(&self);
         let handle = spawn_task("ws-background-task", async move {
             debug!("Starting WS background task");
@@ -334,7 +353,6 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
             let mut ws = Some(ws);
             while let Some(websocket) = ws.take() {
                 debug!("Connected to the server '{}'", zelf.target);
-                zelf.set_online(true).await;
 
                 match zelf.background_task(&mut receiver, websocket).await {
                     Ok(()) => {
@@ -356,12 +374,12 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
                 }
 
                 debug!("Connection lost to the server '{}'", zelf.target);
+                zelf.set_online(false).await;
+                debug!("Connection status set to offline");
+
                 // Clear all pending requests
                 zelf.clear_requests().await;
                 debug!("Requests cleared");
-
-                zelf.set_online(false).await;
-                debug!("Connection status set to offline");
 
                 // retry to connect until we are online or that it got disabled
                 while let Some(auto_reconnect) = { zelf.delay_auto_reconnect.lock().await.as_ref().cloned() } {
@@ -370,6 +388,7 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
 
                     match connect(&zelf.target).await {
                         Ok(websocket) => {
+                            zelf.set_online(true).await;
                             info!("Reconnected to the server '{}'", zelf.target);
                             ws = Some(websocket);
 
