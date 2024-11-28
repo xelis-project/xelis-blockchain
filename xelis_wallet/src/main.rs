@@ -1484,8 +1484,25 @@ async fn start_xswd(manager: &CommandManager, _: ArgumentManager) -> Result<(), 
 async fn multisig_setup(manager: &CommandManager, mut args: ArgumentManager) -> Result<(), CommandError> {
     let context = manager.get_context().lock()?;
     let wallet: &Arc<Wallet> = context.get()?;
-
     let prompt = manager.get_prompt();
+
+    let has_multisig = {
+        let storage = wallet.get_storage().read().await;
+        storage.has_multi_sig_state().await?
+    };
+
+    if !has_multisig {
+        manager.warn("IMPORTANT: Make sure you have the correct participants and threshold before proceeding.");
+        manager.warn("If you are unsure, please cancel and verify the participants and threshold.");
+        manager.warn("An incorrect setup can lead to loss of funds.");
+        manager.warn("Do you want to continue?");
+    
+        if !prompt.ask_confirmation().await.context("Error while confirming action")? {
+            manager.message("Transaction has been aborted");
+            return Ok(())
+        }
+    }
+
     let participants: u8 = if args.has_argument("participants") {
         args.get_value("participants")?.to_number()? as u8
     } else {
