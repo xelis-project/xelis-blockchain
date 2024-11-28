@@ -21,7 +21,7 @@ use tokio_tungstenite_wasm::{
     connect,
     Message
 };
-use log::{debug, error, info, warn};
+use log::{debug, error, info, trace, warn};
 use crate::{
     tokio::{
         sync::{broadcast, oneshot, Mutex, mpsc},
@@ -213,6 +213,7 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
 
     // resubscribe to all events because of a reconnection
     async fn resubscribe_events(self: Arc<Self>) -> Result<(), JsonRPCError> {
+        trace!("Resubscribe events requested");
         let events = {
             let events = self.events_to_id.lock().await;
             events.clone()
@@ -292,15 +293,18 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
 
     // Reconnect by starting again the background task
     pub async fn reconnect(self: &Arc<Self>) -> Result<bool, Error> {
+        trace!("Reconnect requested: server '{}'", self.target);
         if self.is_online() {
             warn!("Already connected to the server");
             return Ok(false)
         }
 
+        trace!("Reconnecting to the server '{}'", self.target);
         let ws = connect(&self.target).await?;
         {
             let mut lock = self.background_task.lock().await;
             if let Some(handle) = lock.take() {
+                trace!("Task was still set while reconnecting, aborting it...");
                 handle.abort();
             }
         }
@@ -310,9 +314,9 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
             *lock = sender;
 
             let zelf = Arc::clone(&self);
+            trace!("Starting background task after reconnecting");
             zelf.start_background_task(receiver, ws).await?;
         }
-
 
         if let Err(e) = Arc::clone(&self).resubscribe_events().await {
             error!("Error while resubscribing to events: {:?}", e);
@@ -325,6 +329,7 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
 
     // Clear all pending requests to notifier the caller that the connection is lost
     async fn clear_requests(&self) {
+        trace!("Clearing all pending requests");
         let mut requests = self.requests.lock().await;
         requests.clear();
     }
@@ -332,11 +337,13 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
     // Clear all events
     // Because they are all channels, they will returns error to the caller
     async fn clear_events(&self) {
+        trace!("Clearing all events");
         {
             let mut events = self.events_to_id.lock().await;
             events.clear();
         }
         {
+            trace!("Clearing all events handlers");
             let mut handlers = self.handler_by_id.lock().await;
             handlers.clear();
         }
