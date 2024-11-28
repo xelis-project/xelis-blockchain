@@ -162,15 +162,18 @@ impl NetworkHandler {
         trace!("Stopping network handler");
         if let Some(handle) = self.task.lock().await.take() {
             if handle.is_finished() {
+                debug!("Network handler is already finished");
                 // We are already finished, which mean the event got triggered
                 handle.await??;
             } else {
+                debug!("Network handler is running, stopping it");
                 handle.abort();
 
                 // Notify that we are offline
                 self.wallet.propagate_event(Event::Offline).await;
             }
 
+            debug!("Network handler stopped, disconnecting api");
             // Turn off the websocket connection
             if let Err(e) = self.api.disconnect().await {
                 debug!("Error while closing websocket connection: {}", e);
