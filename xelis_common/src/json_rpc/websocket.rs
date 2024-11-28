@@ -244,6 +244,7 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
 
     // This will stop the task keeping the connection with the node
     pub async fn disconnect(&self) -> Result<(), Error> {
+        trace!("disconnect");
         if !self.is_online() {
             debug!("Already disconnected from the server");
             return Ok(());
@@ -497,11 +498,13 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
 
     // Call a method without parameters
     pub async fn call<R: DeserializeOwned>(&self, method: &str) -> JsonRPCResult<R> {
+        trace!("Calling method '{}'", method);
         self.send(method, None, &Value::Null).await
     }
 
     // Call a method with parameters
     pub async fn call_with<P: Serialize, R: DeserializeOwned>(&self, method: &str, params: &P) -> JsonRPCResult<R> {
+        trace!("Calling method '{}' with params: {}", method, json!(params));
         self.send(method, None, params).await
     }
 
@@ -514,6 +517,7 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
     // Subscribe to an event
     // Capacity represents the number of events that can be stored in the channel
     pub async fn subscribe_event<T: DeserializeOwned>(&self, event: E, capacity: usize) -> JsonRPCResult<EventReceiver<T>> {
+        trace!("Subscribing to event {:?}", event);
         // Returns a Receiver for this event if already registered
         {
             let ids = self.events_to_id.lock().await;
@@ -550,7 +554,8 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
     }
 
     // Unsubscribe from an event
-    pub async fn unsubscribe_event(&self, event: &E) -> JsonRPCResult<()> {        
+    pub async fn unsubscribe_event(&self, event: &E) -> JsonRPCResult<()> {
+        trace!("Unsubscribing from event {:?}", event);
         // Retrieve the id for this event
         let id = {
             let mut ids = self.events_to_id.lock().await;
@@ -629,12 +634,14 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
 
     // Send a request to the server without waiting for the response
     pub async fn notify_with<P: Serialize>(&self, method: &str, params: &P) -> JsonRPCResult<()> {
+        trace!("Notifying method '{}' with {}", method, json!(params));
         self.send_message_internal(None, method, params).await?;
         Ok(())
     }
 
     // Send a request to the server without waiting for the response
     pub async fn notify<P: Serialize>(&self, method: &str) -> JsonRPCResult<()> {
+        trace!("Notifying method '{}'", method);
         self.notify_with(method, &Value::Null).await
     }
 }
