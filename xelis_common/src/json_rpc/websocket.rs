@@ -357,6 +357,8 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
                 match zelf.background_task(&mut receiver, websocket).await {
                     Ok(()) => {
                         debug!("Closing background task");
+                        zelf.set_online(false).await;
+
                         {
                             let mut lock = zelf.background_task.lock().await;
                             *lock = None;
@@ -472,6 +474,7 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
                             }
                         },
                         Message::Close(_) => {
+                            debug!("Received close message from the server");
                             break;
                         },
                         m => {
