@@ -406,7 +406,7 @@ impl Wallet {
         {
             let mut lock = self.network_handler.lock().await;
             if let Some(handler) = lock.take() {
-                if let Err(e) = handler.stop().await {
+                if let Err(e) = handler.stop(true).await {
                     error!("Error while stopping network handler: {}", e);
                 }
             }
@@ -959,7 +959,7 @@ impl Wallet {
 
         let mut handler = self.network_handler.lock().await;
         if let Some(network_handler) = handler.take() {
-            network_handler.stop().await?;
+            network_handler.stop(true).await?;
         } else {
             return Err(WalletError::NotOnlineMode)
         }
@@ -994,7 +994,7 @@ impl Wallet {
             }
 
             debug!("Stopping network handler!");
-            network_handler.stop().await?;
+            network_handler.stop(false).await?;
             {
                 debug!("set synced topoheight to {}", topoheight);
                 storage.set_synced_topoheight(topoheight)?;

@@ -158,7 +158,7 @@ impl NetworkHandler {
     }
 
     // Stop the internal loop to stop syncing
-    pub async fn stop(&self) -> Result<(), NetworkError> {
+    pub async fn stop(&self, api: bool) -> Result<(), NetworkError> {
         trace!("Stopping network handler");
         if let Some(handle) = self.task.lock().await.take() {
             if handle.is_finished() {
@@ -173,10 +173,12 @@ impl NetworkHandler {
                 self.wallet.propagate_event(Event::Offline).await;
             }
 
-            debug!("Network handler stopped, disconnecting api");
-            // Turn off the websocket connection
-            if let Err(e) = self.api.disconnect().await {
-                debug!("Error while closing websocket connection: {}", e);
+            if api {
+                debug!("Network handler stopped, disconnecting api");
+                // Turn off the websocket connection
+                if let Err(e) = self.api.disconnect().await {
+                    debug!("Error while closing websocket connection: {}", e);
+                }
             }
 
             Ok(())
