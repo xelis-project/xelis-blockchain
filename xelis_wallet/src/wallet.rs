@@ -535,7 +535,7 @@ impl Wallet {
     }
 
     #[cfg(feature = "api_server")]
-    pub fn get_api_server<'a>(&'a self) -> &Mutex<Option<APIServer<Arc<Self>>>> {
+    pub fn get_api_server(&self) -> &Mutex<Option<APIServer<Arc<Self>>>> {
         &self.api_server
     }
 
