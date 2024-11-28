@@ -627,10 +627,17 @@ impl Wallet {
     pub async fn create_transaction(&self, transaction_type: TransactionTypeBuilder, fee: FeeBuilder) -> Result<Transaction, WalletError> {
         trace!("create transaction");
         let mut storage = self.storage.write().await;
+        self.create_transaction_with_storage(&mut storage, transaction_type, fee).await
+    }
+
+    // Create a transaction with the given transaction type and fee
+    // this will apply the changes to the storage if the transaction
+    pub async fn create_transaction_with_storage(&self, storage: &mut EncryptedStorage, transaction_type: TransactionTypeBuilder, fee: FeeBuilder) -> Result<Transaction, WalletError> {
+        trace!("create transaction with storage");
         let mut state = self.create_transaction_state_with_storage(&storage, &transaction_type, &fee, None).await?;
         let transaction = self.create_transaction_with(&mut state, storage.get_tx_version().await?, transaction_type, fee)?;
 
-        state.apply_changes(&mut storage).await?;
+        state.apply_changes(storage).await?;
 
         Ok(transaction)
     }
