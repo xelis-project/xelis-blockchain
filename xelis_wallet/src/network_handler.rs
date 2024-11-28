@@ -715,7 +715,7 @@ impl NetworkHandler {
         };
 
         // Check if we have a multisig account
-        if self.api.has_multisig(address).await? {
+        if self.api.has_multisig(address).await.unwrap_or(false) {
             debug!("Multisig account detected");
             let data = self.api.get_multisig(address).await?;
             if let MultisigState::Active { participants, threshold } = data.state {
