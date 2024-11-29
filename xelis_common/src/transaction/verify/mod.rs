@@ -500,7 +500,7 @@ impl Transaction {
                     return Err(VerificationError::MultiSigThreshold);
                 }
 
-                let is_reset = payload.threshold == 0 && !payload.participants.is_empty();
+                let is_reset = payload.threshold == 0 && payload.participants.is_empty();
                 // If the multisig is reset, we need to check if it was already configured
                 if is_reset && state.get_multisig_state(&self.source).await.map_err(VerificationError::State)?.is_none() {
                     return Err(VerificationError::MultiSigNotConfigured);
