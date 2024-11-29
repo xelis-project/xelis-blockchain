@@ -268,6 +268,8 @@ impl ecdlp::ProgressTableGenerationReportFunction for LogProgressTableGeneration
     }
 }
 
+const ELEMENTS_PER_PAGE: usize = 10;
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let mut config: Config = Config::parse();
@@ -590,6 +592,12 @@ async fn setup_wallet_command_manager(wallet: Arc<Wallet>, command_manager: &Com
         "Set the name of an asset",
         vec![Arg::new("asset", ArgType::Hash)],
         CommandHandler::Async(async_handler!(set_asset_name))
+    ))?;
+    command_manager.add_command(Command::with_optional_arguments(
+        "list_assets",
+        "List all registered assets",
+        vec![Arg::new("page", ArgType::Number)],
+        CommandHandler::Async(async_handler!(list_assets))
     ))?;
 
     #[cfg(feature = "network_handler")]
@@ -920,6 +928,41 @@ async fn set_asset_name(manager: &CommandManager, mut args: ArgumentManager) -> 
     let mut storage = wallet.get_storage().write().await;
     storage.set_asset_name(&asset, name).await?;
     manager.message("Asset name has been set");
+    Ok(())
+}
+
+async fn list_assets(manager: &CommandManager, mut args: ArgumentManager) -> Result<(), CommandError> {
+    let context = manager.get_context().lock()?;
+    let wallet: &Arc<Wallet> = context.get()?;
+
+    let page = if args.has_argument("page") {
+        args.get_value("page")?.to_number()? as usize
+    } else {
+        0
+    };
+
+    let storage = wallet.get_storage().read().await;
+    let assets = storage.get_assets_with_data().await?;
+
+    if assets.is_empty() {
+        manager.message("No assets found");
+        return Ok(())
+    }
+
+    let mut max_pages = assets.len() / ELEMENTS_PER_PAGE;
+    if assets.len() % ELEMENTS_PER_PAGE != 0 {
+        max_pages += 1;
+    }
+
+    if page > max_pages {
+        return Err(CommandError::InvalidArgument(format!("Page must be less than maximum pages ({})", max_pages - 1)));
+    }
+
+    manager.message(format!("Assets (page {}/{}):", page, max_pages));
+    for (asset, data) in assets {
+        manager.message(format!("{} ({} decimals): {}", asset, data.decimals, data.name.as_deref().unwrap_or("no name set")));
+    }
+
     Ok(())
 }
 
@@ -1256,7 +1299,6 @@ async fn balance(manager: &CommandManager, mut arguments: ArgumentManager) -> Re
 }
 
 // Show all transactions
-const TXS_PER_PAGE: usize = 10;
 async fn history(manager: &CommandManager, mut arguments: ArgumentManager) -> Result<(), CommandError> {
     let page = if arguments.has_argument("page") {
         arguments.get_value("page")?.to_number()? as usize
@@ -1281,8 +1323,8 @@ async fn history(manager: &CommandManager, mut arguments: ArgumentManager) -> Re
 
     // desc ordered
     transactions.sort_by(|a, b| b.get_topoheight().cmp(&a.get_topoheight()));
-    let mut max_pages = transactions.len() / TXS_PER_PAGE;
-    if transactions.len() % TXS_PER_PAGE != 0 {
+    let mut max_pages = transactions.len() / ELEMENTS_PER_PAGE;
+    if transactions.len() % ELEMENTS_PER_PAGE != 0 {
         max_pages += 1;
     }
 
@@ -1291,7 +1333,7 @@ async fn history(manager: &CommandManager, mut arguments: ArgumentManager) -> Re
     }
 
     manager.message(format!("Transactions (total {}) page {}/{}:", transactions.len(), page, max_pages));
-    for tx in transactions.iter().skip((page - 1) * TXS_PER_PAGE).take(TXS_PER_PAGE) {
+    for tx in transactions.iter().skip((page - 1) * ELEMENTS_PER_PAGE).take(ELEMENTS_PER_PAGE) {
         manager.message(format!("- {}", tx.summary(wallet.get_network().is_mainnet(), &*storage).await?));
     }
 
