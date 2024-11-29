@@ -640,7 +640,7 @@ async fn setup_wallet_command_manager(wallet: Arc<Wallet>, command_manager: &Com
 
     // Also add multisig commands
     command_manager.add_command(Command::with_optional_arguments(
-        "setup_multisig",
+        "multisig_setup",
         "Setup a multisig",
         vec![
             Arg::new("participants", ArgType::Number),
