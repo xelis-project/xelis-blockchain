@@ -544,14 +544,15 @@ impl EncryptedStorage {
         if self.contains_asset(asset).await? {
             return Err(WalletError::AssetAlreadyRegistered.into());
         }
-
-        self.save_to_disk_with_encrypted_key(&self.assets, asset.as_bytes(), &decimals.to_be_bytes())?;
-
-        let mut cache = self.assets_cache.lock().await;
-        cache.put(asset.clone(), Asset {
+        let data = Asset {
             name,
             decimals
-        });
+        };
+
+        self.save_to_disk_with_encrypted_key(&self.assets, asset.as_bytes(), &data.to_bytes())?;
+
+        let mut cache = self.assets_cache.lock().await;
+        cache.put(asset.clone(), data);
         Ok(())
     }
 
