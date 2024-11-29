@@ -559,14 +559,24 @@ impl Serializer for Transaction {
 impl Serializer for MultiSigPayload {
     fn write(&self, writer: &mut Writer) {
         writer.write_u8(self.threshold);
-        writer.write_u8(self.participants.len() as u8);
-        for participant in &self.participants {
-            participant.write(writer);
+        if self.threshold != 0 {
+            writer.write_u8(self.participants.len() as u8);
+            for participant in &self.participants {
+                participant.write(writer);
+            }
         }
     }
 
     fn read(reader: &mut Reader) -> Result<MultiSigPayload, ReaderError> {
         let threshold = reader.read_u8()?;
+        // Only 0 threshold is allowed for delete multisig
+        if threshold == 0 {
+            return Ok(MultiSigPayload {
+                threshold,
+                participants: IndexSet::new()
+            })
+        }
+
         let participants_len = reader.read_u8()?;
         if participants_len == 0 || participants_len > MAX_MULTISIG_PARTICIPANTS as u8 {
             return Err(ReaderError::InvalidSize)

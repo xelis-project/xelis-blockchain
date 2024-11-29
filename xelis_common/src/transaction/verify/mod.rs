@@ -489,7 +489,14 @@ impl Transaction {
                     return Err(VerificationError::MultiSigParticipants);
                 }
 
+                // Threshold should be less than or equal to the number of participants
                 if payload.threshold as usize > payload.participants.len() {
+                    return Err(VerificationError::MultiSigThreshold);
+                }
+
+                // If the threshold is set to 0, while we have participants, its invalid
+                // Threshold should be always > 0
+                if payload.threshold == 0 && !payload.participants.is_empty() {
                     return Err(VerificationError::MultiSigThreshold);
                 }
 
