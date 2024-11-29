@@ -1621,7 +1621,8 @@ async fn multisig_sign(manager: &CommandManager, mut args: ArgumentManager) -> R
     };
 
     let signature = wallet.sign_data(tx_hash.as_bytes());
-    manager.message(format!("Signature for transaction hash {}: {}", tx_hash, signature.to_hex()));
+    prompt.read_input(format!("Signature: {}\r\nPress ENTER to continue", signature.to_hex()), false).await
+        .context("Error while displaying seed")?;
 
     Ok(())
 }
