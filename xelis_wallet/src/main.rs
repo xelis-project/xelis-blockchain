@@ -495,7 +495,8 @@ async fn apply_config(config: Config, wallet: &Arc<Wallet>, #[cfg(feature = "api
 async fn setup_wallet_command_manager(wallet: Arc<Wallet>, command_manager: &CommandManager) -> Result<(), CommandError> {
     // Delete commands for opening a wallet
     command_manager.remove_command("open")?;
-    command_manager.remove_command("recover")?;
+    command_manager.remove_command("recover_seed")?;
+    command_manager.remove_command("recover_private_key")?;
     command_manager.remove_command("create")?;
 
     // Add wallet commands
