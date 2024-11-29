@@ -658,6 +658,11 @@ async fn setup_wallet_command_manager(wallet: Arc<Wallet>, command_manager: &Com
         ],
         CommandHandler::Async(async_handler!(multisig_sign))
     ))?;
+    command_manager.add_command(Command::new(
+        "multisig_show",
+        "Show the current state of multisig",
+        CommandHandler::Async(async_handler!(multisig_show))
+    ))?;
 
     let mut context = command_manager.get_context().lock()?;
     context.store(wallet);
@@ -1629,6 +1634,24 @@ async fn multisig_sign(manager: &CommandManager, mut args: ArgumentManager) -> R
     let signature = wallet.sign_data(tx_hash.as_bytes());
     prompt.read_input(format!("Signature: {}\r\nPress ENTER to continue", signature.to_hex()), false).await
         .context("Error while displaying seed")?;
+
+    Ok(())
+}
+
+async fn multisig_show(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
+    let context = manager.get_context().lock()?;
+    let wallet: &Arc<Wallet> = context.get()?;
+    let storage = wallet.get_storage().read().await;
+    let multisig = storage.get_multisig_state().await.context("Error while reading multisig state")?;
+
+    if let Some(multisig) = multisig {
+        manager.message(format!("MultiSig payload ({} participants with threshold at {}):", multisig.payload.participants.len(), multisig.payload.threshold));
+        for key in multisig.payload.participants.iter() {
+            manager.message(format!("- {}", key.as_address(wallet.get_network().is_mainnet())));
+        }
+    } else {
+        manager.message("No multisig configured");
+    }
 
     Ok(())
 }
