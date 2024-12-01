@@ -255,7 +255,7 @@ impl<'a, P: AccountProvider + BalanceProvider + NonceProvider + MultiSigProvider
         account: &'a PublicKey,
         payload: &MultiSigPayload
     ) -> Result<(), BlockchainError> {
-        let account = self.accounts.get_mut(account).ok_or_else(|| BlockchainError::AccountNotFound(account.as_address(self.provider.is_mainnet())))?;
+        let account = self.accounts.get_mut(account).ok_or_else(|| BlockchainError::AccountNotFound(account.as_address(self.mainnet)))?;
         if payload.is_delete() {
             account.multisig = None;
         } else {

@@ -112,7 +112,10 @@ use log::{info, error, debug, warn, trace};
 use rand::Rng;
 
 use super::storage::{
-    AccountProvider, BlockDagProvider, BlockExecutionOrderProvider, BlockProvider, BlocksAtHeightProvider, ClientProtocolProvider, NetworkProvider, PrunedTopoheightProvider, TipsProvider
+    AccountProvider,
+    BlocksAtHeightProvider,
+    ClientProtocolProvider,
+    PrunedTopoheightProvider,
 };
 
 pub struct Blockchain<S: Storage> {
@@ -469,14 +472,14 @@ impl<S: Storage> Blockchain<S> {
     // This will delete all blocks / versioned balances / txs until topoheight in param
     pub async fn prune_until_topoheight(&self, topoheight: TopoHeight) -> Result<TopoHeight, BlockchainError> {
         let mut storage = self.storage.write().await;
-        self.prune_until_topoheight_for_storage(topoheight, &mut storage).await
+        self.prune_until_topoheight_for_storage(topoheight, &mut *storage).await
     }
 
     // delete all blocks / versioned balances / txs until topoheight in param
     // for this, we have to locate the nearest Sync block for DAG under the limit topoheight
     // and then delete all blocks before it
     // keep a marge of PRUNE_SAFETY_LIMIT
-    pub async fn prune_until_topoheight_for_storage(&self, topoheight: TopoHeight, storage: &mut S) -> Result<TopoHeight, BlockchainError> {
+    pub async fn prune_until_topoheight_for_storage<P: Storage>(&self, topoheight: TopoHeight, storage: &mut P) -> Result<TopoHeight, BlockchainError> {
         if topoheight == 0 {
             return Err(BlockchainError::PruneZero)
         }
@@ -493,7 +496,7 @@ impl<S: Storage> Blockchain<S> {
         }
 
         // find new stable point based on a sync block under the limit topoheight
-        let located_sync_topoheight = self.locate_nearest_sync_block_for_topoheight::<S>(&storage, topoheight, self.get_height()).await?;
+        let located_sync_topoheight = self.locate_nearest_sync_block_for_topoheight::<P>(&storage, topoheight, self.get_height()).await?;
         debug!("Located sync topoheight found: {}", located_sync_topoheight);
 
         if located_sync_topoheight > last_pruned_topoheight {
@@ -1220,9 +1223,7 @@ impl<S: Storage> Blockchain<S> {
 
     // Add a tx to the mempool with the given hash, it will verify the TX and check that it is not already in mempool or in blockchain
     // and its validity (nonce, balance, etc...)
-    pub async fn add_tx_to_mempool_with_storage_and_hash<'a, P>(&'a self, provider: &P, tx: Arc<Transaction>, hash: Hash, broadcast: bool) -> Result<(), BlockchainError>
-    where
-        P: NetworkProvider + ClientProtocolProvider
+    pub async fn add_tx_to_mempool_with_storage_and_hash<'a, P: Storage>(&'a self, provider: &P, tx: Arc<Transaction>, hash: Hash, broadcast: bool) -> Result<(), BlockchainError>
     {
         let tx_size = tx.size();
         if tx_size > MAX_TRANSACTION_SIZE {
@@ -1533,17 +1534,7 @@ impl<S: Storage> Blockchain<S> {
     }
 
     // Add a new block in chain using the requested storage
-    pub async fn add_new_block_for_storage<P>(&self, storage: &mut P, block: Block, broadcast: bool, mining: bool) -> Result<(), BlockchainError>
-    where
-        P: DifficultyProvider
-        + DagOrderProvider
-        + PrunedTopoheightProvider
-        + BlockProvider
-        + BlockExecutionOrderProvider
-        + TipsProvider
-        + ClientProtocolProvider
-        + BlockDagProvider
-    {
+    pub async fn add_new_block_for_storage<P: Storage>(&self, storage: &mut P, block: Block, broadcast: bool, mining: bool) -> Result<(), BlockchainError> {
         let start = Instant::now();
 
         // Expected version for this block
@@ -2183,11 +2174,11 @@ impl<S: Storage> Blockchain<S> {
 
                 // Clone only if its necessary
                 if !orphan_event_tracked {
-                    if let Err(e) = self.add_tx_to_mempool_with_storage_and_hash(&storage, tx, tx_hash, false).await {
+                    if let Err(e) = self.add_tx_to_mempool_with_storage_and_hash::<P>(&storage, tx, tx_hash, false).await {
                         warn!("Error while adding back orphaned tx: {}", e);
                     }
                 } else {
-                    if let Err(e) = self.add_tx_to_mempool_with_storage_and_hash(&storage, tx.clone(), tx_hash.clone(), false).await {
+                    if let Err(e) = self.add_tx_to_mempool_with_storage_and_hash::<P>(&storage, tx.clone(), tx_hash.clone(), false).await {
                         warn!("Error while adding back orphaned tx: {}, broadcasting event", e);
                         // We couldn't add it back to mempool, let's notify this event
                         let data = RPCTransaction::from_tx(&tx, &tx_hash, storage.is_mainnet());
