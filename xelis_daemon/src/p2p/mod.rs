@@ -2172,6 +2172,24 @@ impl<S: Storage> P2pServer<S> {
                         // Assemble back the block and add it to the chain
                         let block = Block::new(Immutable::Arc(header), transactions);
                         self.blockchain.add_new_block(block, false, false).await?; // don't broadcast block because it's syncing
+                    } else {
+                        // We need to re execute it to make sure it's in DAG
+                        let mut storage = self.blockchain.get_storage().write().await;
+                        if !storage.is_block_topological_ordered(&hash).await {
+                            match storage.delete_block_with_hash(&hash).await {
+                                Ok(block) => {
+                                    warn!("Block {} is already in chain but not in DAG, re-executing it", hash);
+                                    self.blockchain.add_new_block(block, false, false).await?;
+                                },
+                                Err(e) => {
+                                    // This shouldn't happen, but in case
+                                    error!("Error while deleting block {} from storage to re-execute it for chain sync: {}", hash, e);
+                                    continue;
+                                }
+                            }
+                        } else {
+                            trace!("Block {} is already in DAG, skipping it", hash);
+                        }
                     }
                 }
             }
