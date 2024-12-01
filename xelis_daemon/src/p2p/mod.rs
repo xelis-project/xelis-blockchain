@@ -2505,7 +2505,7 @@ impl<S: Storage> P2pServer<S> {
 
             // Check that the block is stable
             let hash = storage.get_hash_at_topo_height(topoheight).await?;
-            if !self.blockchain.is_sync_block(&storage, &hash).await? {
+            if !self.blockchain.is_sync_block(&*storage, &hash).await? {
                 warn!("Requested topoheight {} is not stable, ignoring", topoheight);
                 return Err(P2pError::InvalidRequestedTopoheight.into())
             }

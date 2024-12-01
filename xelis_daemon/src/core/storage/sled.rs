@@ -45,20 +45,21 @@ use super::{
     TransactionProvider,
     BlockProvider,
     NetworkProvider,
+    TipsProvider,
     Storage,
     Tips
 };
 
 // Constant keys used for extra Tree
-const TIPS: &[u8; 4] = b"TIPS";
-const TOP_TOPO_HEIGHT: &[u8; 4] = b"TOPO";
-const TOP_HEIGHT: &[u8; 4] = b"TOPH";
-pub (super) const NETWORK: &[u8] = b"NET";
+pub(super) const TIPS: &[u8; 4] = b"TIPS";
+pub(super) const TOP_TOPO_HEIGHT: &[u8; 4] = b"TOPO";
+pub(super) const TOP_HEIGHT: &[u8; 4] = b"TOPH";
+pub(super) const NETWORK: &[u8] = b"NET";
 pub(super) const PRUNED_TOPOHEIGHT: &[u8; 4] = b"PRUN";
 // Counters (prevent to perform a O(n))
 pub(super) const ACCOUNTS_COUNT: &[u8; 4] = b"CACC";
 pub(super) const TXS_COUNT: &[u8; 4] = b"CTXS";
-const ASSETS_COUNT: &[u8; 4] = b"CAST";
+pub(super) const ASSETS_COUNT: &[u8; 4] = b"CAST";
 pub(super) const BLOCKS_COUNT: &[u8; 4] = b"CBLK";
 pub(super) const BLOCKS_EXECUTION_ORDER_COUNT: &[u8; 4] = b"EBLK";
 
@@ -119,7 +120,7 @@ pub struct SledStorage {
     // Account registrations prefixed by their topoheight for easier deletion
     pub(super) registrations_prefixed: Tree,
     // opened DB used for assets to create dynamic assets
-    db: sled::Db,
+    pub(super) db: sled::Db,
 
     // all available caches
     // Transaction cache
@@ -136,12 +137,8 @@ pub struct SledStorage {
     pub(super) cumulative_difficulty_cache: Option<Mutex<LruCache<Hash, CumulativeDifficulty>>>,
     // Assets cache
     pub(super) assets_cache: Option<Mutex<LruCache<Hash, ()>>>,
-    // Balances Trees cache: keep opened trees in memory to prevent re-open
-    balances_trees_cache: Option<Mutex<LruCache<(Hash, u64), Tree>>>,
-    // Nonces Trees cache: keep opened trees in memory to prevent re-open
-    nonces_trees_cache: Option<Mutex<LruCache<u64, Tree>>>,
     // Tips cache: current chain Tips
-    tips_cache: Tips,
+    pub(super) tips_cache: Tips,
     // Pruned topoheight cache
     pub(super) pruned_topoheight: Option<TopoHeight>,
 
@@ -250,8 +247,6 @@ impl SledStorage {
             hash_at_topo_cache: init_cache!(cache_size),
             cumulative_difficulty_cache: init_cache!(cache_size),
             assets_cache: init_cache!(cache_size),
-            balances_trees_cache: init_cache!(cache_size),
-            nonces_trees_cache: init_cache!(cache_size),
             tips_cache: HashSet::new(),
             pruned_topoheight: None,
             assets_count: AtomicU64::new(0),
@@ -506,16 +501,6 @@ impl Storage for SledStorage {
         }
 
         if let Some(cache) = self.assets_cache.as_ref() {
-            let mut cache = cache.lock().await;
-            cache.clear();
-        }
-
-        if let Some(cache) = self.balances_trees_cache.as_ref() {
-            let mut cache = cache.lock().await;
-            cache.clear();
-        }
-
-        if let Some(cache) = self.nonces_trees_cache.as_ref() {
             let mut cache = cache.lock().await;
             cache.clear();
         }
@@ -1164,18 +1149,6 @@ impl Storage for SledStorage {
 
         let block = Block::new(Immutable::Arc(block), transactions);
         Ok(block)
-    }
-
-    async fn get_tips(&self) -> Result<Tips, BlockchainError> {
-        trace!("get tips");
-        Ok(self.tips_cache.clone())
-    }
-
-    fn store_tips(&mut self, tips: &Tips) -> Result<(), BlockchainError> {
-        trace!("Saving {} Tips", tips.len());
-        self.extra.insert(TIPS, tips.to_bytes())?;
-        self.tips_cache = tips.clone();
-        Ok(())
     }
 
     // Returns the current size on disk in bytes

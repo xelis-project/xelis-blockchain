@@ -1,6 +1,7 @@
 mod providers;
 mod sled;
 mod versioned_type;
+mod snapshot;
 
 pub use self::{
     sled::{SledStorage, StorageMode},
@@ -29,7 +30,7 @@ pub type Tips = HashSet<Hash>;
 pub trait Storage:
     BlockExecutionOrderProvider + DagOrderProvider + PrunedTopoheightProvider
     + NonceProvider + AccountProvider + ClientProtocolProvider + BlockDagProvider
-    + MerkleHashProvider + NetworkProvider + MultiSigProvider
+    + MerkleHashProvider + NetworkProvider + MultiSigProvider + TipsProvider
     + Sync + Send + 'static {
     // Clear caches if exists
     async fn clear_caches(&mut self) -> Result<(), BlockchainError>;
@@ -101,12 +102,6 @@ pub trait Storage:
 
     // Set the top height of the chain
     fn set_top_height(&mut self, height: u64) -> Result<(), BlockchainError>;
-
-    // Get current chain tips
-    async fn get_tips(&self) -> Result<Tips, BlockchainError>;
-
-    // Store chain tips
-    fn store_tips(&mut self, tips: &Tips) -> Result<(), BlockchainError>;
 
     // Get the size of the chain on disk in bytes
     async fn get_size_on_disk(&self) -> Result<u64, BlockchainError>;

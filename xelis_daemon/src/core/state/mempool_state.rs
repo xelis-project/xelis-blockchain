@@ -18,7 +18,7 @@ use xelis_common::{
 use crate::core::{
     error::BlockchainError,
     mempool::Mempool,
-    storage::Storage
+    storage::{AccountProvider, BalanceProvider, DagOrderProvider, MultiSigProvider, NonceProvider}
 };
 
 struct Account<'a> {
@@ -34,11 +34,13 @@ struct Account<'a> {
     multisig: Option<MultiSigPayload>
 }
 
-pub struct MempoolState<'a, S: Storage> {
+pub struct MempoolState<'a, P: AccountProvider + BalanceProvider + NonceProvider + MultiSigProvider + DagOrderProvider> {
+    // If the provider is mainnet or not
+    mainnet: bool,
     // Mempool from which it's backed
     mempool: &'a Mempool,
     // Storage in case sender balances aren't in mempool cache
-    storage: &'a S,
+    provider: &'a P,
     // Receiver balances
     receiver_balances: HashMap<&'a PublicKey, HashMap<&'a Hash, Ciphertext>>,
     // Sender accounts
@@ -52,11 +54,12 @@ pub struct MempoolState<'a, S: Storage> {
     block_version: BlockVersion,
 }
 
-impl<'a, S: Storage> MempoolState<'a, S> {
-    pub fn new(mempool: &'a Mempool, storage: &'a S, stable_topoheight: TopoHeight, topoheight: TopoHeight, block_version: BlockVersion) -> Self {
+impl<'a, P: AccountProvider + BalanceProvider + NonceProvider + MultiSigProvider + DagOrderProvider> MempoolState<'a, P> {
+    pub fn new(mempool: &'a Mempool, provider: &'a P, stable_topoheight: TopoHeight, topoheight: TopoHeight, block_version: BlockVersion, mainnet: bool) -> Self {
         Self {
+            mainnet,
             mempool,
-            storage,
+            provider,
             receiver_balances: HashMap::new(),
             accounts: HashMap::new(),
             stable_topoheight,
@@ -78,36 +81,36 @@ impl<'a, S: Storage> MempoolState<'a, S> {
         match self.receiver_balances.entry(account).or_insert_with(HashMap::new).entry(asset) {
             Entry::Occupied(entry) => Ok(entry.into_mut()),
             Entry::Vacant(entry) => {
-                let version = self.storage.get_new_versioned_balance(account, asset, self.topoheight).await?;
+                let version = self.provider.get_new_versioned_balance(account, asset, self.topoheight).await?;
                 Ok(entry.insert(version.take_balance().take_ciphertext()?))
             }
         }
     }
 
     // Retrieve the versioned balance based on the TX reference 
-    async fn get_versioned_balance_for_reference(storage: &S, key: &PublicKey, asset: &Hash, current_topoheight: TopoHeight, reference: &Reference) -> Result<Ciphertext, BlockchainError> {
-        let (output, _, version) = super::search_versioned_balance_for_reference(storage, key, asset, current_topoheight, reference).await?;
+    async fn get_versioned_balance_for_reference(provider: &P, key: &PublicKey, asset: &Hash, current_topoheight: TopoHeight, reference: &Reference) -> Result<Ciphertext, BlockchainError> {
+        let (output, _, version) = super::search_versioned_balance_for_reference(provider, key, asset, current_topoheight, reference).await?;
 
         Ok(version.take_balance_with(output).take_ciphertext()?)
     }
 
     // Retrieve the nonce & the multisig state for a sender account
-    async fn create_sender_account(mempool: &Mempool, storage: &S, key: &'a PublicKey, topoheight: TopoHeight) -> Result<Account<'a>, BlockchainError> {
+    async fn create_sender_account(mempool: &Mempool, provider: &P, key: &'a PublicKey, topoheight: TopoHeight) -> Result<Account<'a>, BlockchainError> {
         let (nonce, multisig) = if let Some(cache) = mempool.get_cache_for(key) {
             let nonce = cache.get_next_nonce();
             let multisig = if let Some(multisig) = cache.get_multisig() {
                 Some(multisig.clone())
             } else {
-                storage.get_multisig_at_maximum_topoheight_for(key, topoheight).await?
+                provider.get_multisig_at_maximum_topoheight_for(key, topoheight).await?
                     .map(|(_, v)| v.take().map(|v| v.into_owned())).flatten()
             };
 
             (nonce, multisig)
         } else {
-            let nonce = storage.get_nonce_at_maximum_topoheight(key, topoheight).await?
+            let nonce = provider.get_nonce_at_maximum_topoheight(key, topoheight).await?
                 .map(|(_, v)| v.get_nonce()).unwrap_or(0);
 
-            let multisig = storage.get_multisig_at_maximum_topoheight_for(key, topoheight).await?
+            let multisig = provider.get_multisig_at_maximum_topoheight_for(key, topoheight).await?
                 .map(|(_, v)| v.take().map(|v| v.into_owned())).flatten();
 
             (nonce, multisig)
@@ -136,24 +139,24 @@ impl<'a, S: Storage> MempoolState<'a, S> {
                             if let Some(version) = cache.get_balances().get(asset) {
                                 Ok(entry.insert(version.clone()))
                             } else {
-                                let ct = Self::get_versioned_balance_for_reference(&self.storage, key, asset, self.topoheight, reference).await?;
+                                let ct = Self::get_versioned_balance_for_reference(&self.provider, key, asset, self.topoheight, reference).await?;
                                 Ok(entry.insert(ct))
                             }
                         },
                         None => {
-                            let ct = Self::get_versioned_balance_for_reference(&self.storage, key, asset, self.topoheight, reference).await?;
+                            let ct = Self::get_versioned_balance_for_reference(&self.provider, key, asset, self.topoheight, reference).await?;
                             Ok(entry.insert(ct))
                         }
                     }
                 }
             },
             Entry::Vacant(e) => {
-                let account = e.insert(Self::create_sender_account(&self.mempool, &self.storage, key, self.topoheight).await?);
+                let account = e.insert(Self::create_sender_account(&self.mempool, &self.provider, key, self.topoheight).await?);
 
                 match account.assets.entry(asset) {
                     Entry::Occupied(entry) => Ok(entry.into_mut()),
                     Entry::Vacant(entry) => {
-                        let version = self.storage.get_new_versioned_balance(key, asset, self.topoheight).await?;
+                        let version = self.provider.get_new_versioned_balance(key, asset, self.topoheight).await?;
                         Ok(entry.insert(version.take_balance().take_ciphertext()?))
                     }
                 }
@@ -167,7 +170,7 @@ impl<'a, S: Storage> MempoolState<'a, S> {
         match self.accounts.entry(key) {
             Entry::Occupied(o) => Ok(o.get().nonce),
             Entry::Vacant(e) => {
-                let account = Self::create_sender_account(&self.mempool, &self.storage, key, self.topoheight).await?;
+                let account = Self::create_sender_account(&self.mempool, &self.provider, key, self.topoheight).await?;
                 Ok(e.insert(account).nonce)
             }
         }
@@ -177,7 +180,7 @@ impl<'a, S: Storage> MempoolState<'a, S> {
     // Only sender accounts should be used here
     // For each TX, we must update the nonce by one
     async fn internal_update_account_nonce(&mut self, account: &'a PublicKey, new_nonce: u64) -> Result<(), BlockchainError> {
-        let account = self.accounts.get_mut(account).ok_or_else(|| BlockchainError::AccountNotFound(account.as_address(self.storage.is_mainnet())))?;
+        let account = self.accounts.get_mut(account).ok_or_else(|| BlockchainError::AccountNotFound(account.as_address(self.provider.is_mainnet())))?;
         account.nonce = new_nonce;
 
         Ok(())
@@ -185,13 +188,13 @@ impl<'a, S: Storage> MempoolState<'a, S> {
 }
 
 #[async_trait]
-impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for MempoolState<'a, S> {
+impl<'a, P: AccountProvider + BalanceProvider + NonceProvider + MultiSigProvider + DagOrderProvider + Sync + Send> BlockchainVerificationState<'a, BlockchainError> for MempoolState<'a, P> {
     /// Verify the TX version and reference
     async fn pre_verify_tx<'b>(
         &'b mut self,
         tx: &Transaction,
     ) -> Result<(), BlockchainError> {
-        super::pre_verify_tx(self.storage, tx, self.stable_topoheight, self.topoheight, self.get_block_version()).await
+        super::pre_verify_tx(self.provider, tx, self.stable_topoheight, self.topoheight, self.get_block_version()).await
     }
 
     /// Get the balance ciphertext for a receiver account
@@ -252,7 +255,7 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for Mempoo
         account: &'a PublicKey,
         payload: &MultiSigPayload
     ) -> Result<(), BlockchainError> {
-        let account = self.accounts.get_mut(account).ok_or_else(|| BlockchainError::AccountNotFound(account.as_address(self.storage.is_mainnet())))?;
+        let account = self.accounts.get_mut(account).ok_or_else(|| BlockchainError::AccountNotFound(account.as_address(self.provider.is_mainnet())))?;
         if payload.is_delete() {
             account.multisig = None;
         } else {
@@ -270,6 +273,6 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for Mempoo
     ) -> Result<Option<&MultiSigPayload>, BlockchainError> {
         self.accounts.get(account)
             .map(|a| a.multisig.as_ref())
-            .ok_or_else(|| BlockchainError::AccountNotFound(account.as_address(self.storage.is_mainnet())))
+            .ok_or_else(|| BlockchainError::AccountNotFound(account.as_address(self.provider.is_mainnet())))
     }
 }

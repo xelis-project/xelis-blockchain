@@ -1,7 +1,7 @@
 use super::{
-    state::MempoolState,
     error::BlockchainError,
-    storage::Storage
+    state::MempoolState,
+    storage::*
 };
 use std::{
     collections::{HashMap, HashSet},
@@ -129,12 +129,15 @@ impl Mempool {
     }
 
     // All checks are made in Blockchain before calling this function
-    pub async fn add_tx<S: Storage>(&mut self, storage: &S, stable_topoheight: TopoHeight, topoheight: TopoHeight, hash: Hash, tx: Arc<Transaction>, size: usize, block_version: BlockVersion) -> Result<(), BlockchainError> {
-        let mut state = MempoolState::new(&self, storage, stable_topoheight, topoheight, block_version);
+    pub async fn add_tx<P>(&mut self, provider: &P, stable_topoheight: TopoHeight, topoheight: TopoHeight, hash: Hash, tx: Arc<Transaction>, size: usize, block_version: BlockVersion) -> Result<(), BlockchainError>
+    where
+        P: AccountProvider + BalanceProvider + NonceProvider + MultiSigProvider + DagOrderProvider + Sync + Send
+    {
+        let mut state = MempoolState::new(&self, provider, stable_topoheight, topoheight, block_version, self.mainnet);
         tx.verify(&mut state).await?;
 
         let (balances, multisig) = state.get_sender_cache(tx.get_source())
-            .ok_or_else(|| BlockchainError::AccountNotFound(tx.get_source().as_address(storage.is_mainnet())))?;
+            .ok_or_else(|| BlockchainError::AccountNotFound(tx.get_source().as_address(self.mainnet)))?;
 
         let balances = balances.into_iter().map(|(asset, ciphertext)| (asset.clone(), ciphertext)).collect();
 
@@ -342,7 +345,10 @@ impl Mempool {
     // Because of DAG reorg, we can't only check updated keys from new block,
     // as a block could be orphaned and the nonce order would change
     // So we need to check all keys from mempool and compare it from storage
-    pub async fn clean_up<S: Storage>(&mut self, storage: &S, stable_topoheight: TopoHeight, topoheight: TopoHeight, block_version: BlockVersion) -> Vec<(Arc<Hash>, SortedTx)> {
+    pub async fn clean_up<P>(&mut self, provider: &P, stable_topoheight: TopoHeight, topoheight: TopoHeight, block_version: BlockVersion) -> Vec<(Arc<Hash>, SortedTx)>
+    where
+        P: AccountProvider + BalanceProvider + NonceProvider + MultiSigProvider + DagOrderProvider + Sync + Send
+    {
         trace!("Cleaning up mempool...");
 
         // All deleted sorted txs with their hashes
@@ -354,7 +360,7 @@ impl Mempool {
 
         for (key, mut cache) in caches {
             trace!("Cleaning up mempool for owner {}", key.as_address(self.mainnet));
-            let nonce = match storage.get_last_nonce(&key).await {
+            let nonce = match provider.get_last_nonce(&key).await {
                 Ok((_, version)) => version.get_nonce(),
                 Err(e) => {
                     // We get an error while retrieving the last nonce for this key,
@@ -473,7 +479,7 @@ impl Mempool {
                         // NOTE: this can be revert easily in case we are deleting valid TXs also,
                         // But will be slower during high traffic
                         debug!("Verifying TXs ({}) for sender {} at topoheight {}", txs_hashes.iter().map(|hash| hash.to_string()).collect::<Vec<String>>().join(", "), key.as_address(self.mainnet), topoheight);
-                        let mut state = MempoolState::new(&self, storage, stable_topoheight, topoheight, block_version);
+                        let mut state = MempoolState::new(&self, provider, stable_topoheight, topoheight, block_version, self.mainnet);
                         if let Err(e) = Transaction::verify_batch(txs.as_slice(), &mut state).await {
                             warn!("Error while verifying TXs for sender {}: {}", key.as_address(self.mainnet), e);
                             for (hash, tx) in txs_hashes.iter().zip(txs) {

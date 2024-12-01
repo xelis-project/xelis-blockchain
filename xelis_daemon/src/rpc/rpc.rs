@@ -14,7 +14,7 @@ use crate::{
         hard_fork::get_pow_algorithm_for_version,
         error::BlockchainError,
         mempool::Mempool,
-        storage::Storage
+        storage::*,
     },
     p2p::peer::Peer,
     BLOCK_TIME
@@ -66,25 +66,32 @@ use std::{sync::Arc, borrow::Cow};
 use log::{info, debug, trace};
 
 // Get the block type using the block hash and the blockchain current state
-pub async fn get_block_type_for_block<S: Storage>(blockchain: &Blockchain<S>, storage: &S, hash: &Hash) -> Result<BlockType, InternalRpcError> {
-    Ok(if blockchain.is_block_orphaned_for_storage(storage, hash).await {
+pub async fn get_block_type_for_block<S: Storage, P: DifficultyProvider + DagOrderProvider + BlocksAtHeightProvider + PrunedTopoheightProvider>(blockchain: &Blockchain<S>, provider: &P, hash: &Hash) -> Result<BlockType, InternalRpcError> {
+    Ok(if blockchain.is_block_orphaned_for_storage(provider, hash).await {
         BlockType::Orphaned
-    } else if blockchain.is_sync_block(storage, hash).await.context("Error while checking if block is sync")? {
+    } else if blockchain.is_sync_block(provider, hash).await.context("Error while checking if block is sync")? {
         BlockType::Sync
-    } else if blockchain.is_side_block(storage, hash).await.context("Error while checking if block is side")? {
+    } else if blockchain.is_side_block(provider, hash).await.context("Error while checking if block is side")? {
         BlockType::Side
     } else {
         BlockType::Normal
     })
 }
 
-async fn get_block_data<S: Storage>(blockchain: &Blockchain<S>, storage: &S, hash: &Hash) -> Result<(Option<TopoHeight>, Option<u64>, Option<u64>, BlockType, CumulativeDifficulty, Difficulty), InternalRpcError> {
-    let (topoheight, supply, reward) = if storage.is_block_topological_ordered(hash).await {
-        let topoheight = storage.get_topo_height_for_hash(&hash).await.context("Error while retrieving topo height")?;
+async fn get_block_data<S: Storage, P>(blockchain: &Blockchain<S>, provider: &P, hash: &Hash) -> Result<(Option<TopoHeight>, Option<u64>, Option<u64>, BlockType, CumulativeDifficulty, Difficulty), InternalRpcError>
+where
+    P: DifficultyProvider
+    + DagOrderProvider
+    + BlocksAtHeightProvider
+    + PrunedTopoheightProvider
+    + BlockDagProvider
+{
+    let (topoheight, supply, reward) = if provider.is_block_topological_ordered(hash).await {
+        let topoheight = provider.get_topo_height_for_hash(&hash).await.context("Error while retrieving topo height")?;
         (
             Some(topoheight),
-            Some(storage.get_supply_at_topo_height(topoheight).await.context("Error while retrieving supply")?),
-            Some(storage.get_block_reward_at_topo_height(topoheight).context("Error while retrieving block reward")?),
+            Some(provider.get_supply_at_topo_height(topoheight).await.context("Error while retrieving supply")?),
+            Some(provider.get_block_reward_at_topo_height(topoheight).context("Error while retrieving block reward")?),
         )
     } else {
         (
@@ -94,21 +101,29 @@ async fn get_block_data<S: Storage>(blockchain: &Blockchain<S>, storage: &S, has
         )
     };
 
-    let block_type = get_block_type_for_block(&blockchain, &storage, hash).await?;
-    let cumulative_difficulty = storage.get_cumulative_difficulty_for_block_hash(hash).await.context("Error while retrieving cumulative difficulty")?;
-    let difficulty = storage.get_difficulty_for_block_hash(&hash).await.context("Error while retrieving difficulty")?;
+    let block_type = get_block_type_for_block(&blockchain, &*provider, hash).await?;
+    let cumulative_difficulty = provider.get_cumulative_difficulty_for_block_hash(hash).await.context("Error while retrieving cumulative difficulty")?;
+    let difficulty = provider.get_difficulty_for_block_hash(&hash).await.context("Error while retrieving difficulty")?;
 
     Ok((topoheight, supply, reward, block_type, cumulative_difficulty, difficulty))
 }
 
-pub async fn get_block_response<S: Storage>(blockchain: &Blockchain<S>, storage: &S, hash: &Hash, block: &Block, total_size_in_bytes: usize) -> Result<Value, InternalRpcError> {
-    let (topoheight, supply, reward, block_type, cumulative_difficulty, difficulty) = get_block_data(blockchain, storage, hash).await?;
+pub async fn get_block_response<S: Storage, P>(blockchain: &Blockchain<S>, provider: &P, hash: &Hash, block: &Block, total_size_in_bytes: usize) -> Result<Value, InternalRpcError>
+where
+    P: DifficultyProvider
+    + DagOrderProvider
+    + BlocksAtHeightProvider
+    + PrunedTopoheightProvider
+    + BlockDagProvider
+    + ClientProtocolProvider
+{
+    let (topoheight, supply, reward, block_type, cumulative_difficulty, difficulty) = get_block_data(blockchain, provider, hash).await?;
     let mut total_fees = 0;
     if block_type != BlockType::Orphaned {
         for (tx, tx_hash) in block.get_transactions().iter().zip(block.get_txs_hashes()) {
             // check that the TX was correctly executed in this block
             // retrieve all fees for valid txs
-            if storage.is_tx_executed_in_block(tx_hash, &hash).context("Error while checking if tx was executed")? {
+            if provider.is_tx_executed_in_block(tx_hash, &hash).context("Error while checking if tx was executed")? {
                 total_fees += tx.get_fee();
             }
         }

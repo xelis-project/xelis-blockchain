@@ -14,6 +14,8 @@ mod account;
 mod block_execution_order;
 mod network;
 mod multisig;
+mod batch_applicator;
+mod tips_provider;
 
 pub use asset::AssetProvider;
 pub use blocks_at_height::BlocksAtHeightProvider;
@@ -31,3 +33,5 @@ pub use account::AccountProvider;
 pub use block_execution_order::BlockExecutionOrderProvider;
 pub use network::NetworkProvider;
 pub use multisig::*;
+pub use batch_applicator::BatchApplicator;
+pub use tips_provider::TipsProvider;
