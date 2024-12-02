@@ -24,7 +24,7 @@ impl TipsProvider for SledStorage {
 
     fn store_tips(&mut self, tips: &Tips) -> Result<(), BlockchainError> {
         trace!("Saving {} Tips", tips.len());
-        self.extra.insert(TIPS, tips.to_bytes())?;
+        Self::insert_into_disk(self.snapshot.as_mut(), &self.extra, TIPS, tips.to_bytes())?;
         self.tips_cache = tips.clone();
         Ok(())
     }

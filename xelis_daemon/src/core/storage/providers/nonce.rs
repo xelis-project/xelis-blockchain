@@ -112,7 +112,7 @@ impl NonceProvider for SledStorage {
     async fn has_nonce_at_exact_topoheight(&self, key: &PublicKey, topoheight: TopoHeight) -> Result<bool, BlockchainError> {
         trace!("has nonce {} at topoheight {}", key.as_address(self.is_mainnet()), topoheight);
         let key = self.get_versioned_nonce_key(key, topoheight);
-        self.contains_data::<_, ()>(&self.versioned_nonces, &None, &key).await
+        self.contains_data(&self.versioned_nonces, &key)
     }
 
     async fn get_last_nonce(&self, key: &PublicKey) -> Result<(TopoHeight, VersionedNonce), BlockchainError> {
@@ -249,13 +249,14 @@ impl NonceProvider for SledStorage {
     async fn set_nonce_at_topoheight(&mut self, key: &PublicKey, topoheight: TopoHeight, version: &VersionedNonce) -> Result<(), BlockchainError> {
         trace!("set nonce to {} for {} at topo {}", version.get_nonce(), key.as_address(self.is_mainnet()), topoheight);
         let disk_key = self.get_versioned_nonce_key(key, topoheight);
-        self.versioned_nonces.insert(&disk_key, version.to_bytes())?;
+        Self::insert_into_disk(self.snapshot.as_mut(), &self.versioned_nonces, &disk_key, version.to_bytes())?;
         Ok(())
     }
 
     async fn set_last_topoheight_for_nonce(&mut self, key: &PublicKey, topoheight: TopoHeight) -> Result<(), BlockchainError> {
         trace!("set last topoheight for nonce {} to {}", key.as_address(self.is_mainnet()), topoheight);
-        if self.nonces.insert(&key.as_bytes(), &topoheight.to_be_bytes())?.is_none() {
+        let prev = Self::insert_into_disk(self.snapshot.as_mut(), &self.nonces, key.as_bytes(), &topoheight.to_be_bytes())?;
+        if prev.is_none() {
             self.store_accounts_count(self.count_accounts().await? + 1)?;
         }
 

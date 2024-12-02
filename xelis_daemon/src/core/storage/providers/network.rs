@@ -28,12 +28,12 @@ impl NetworkProvider for SledStorage {
 
     fn set_network(&mut self, network: &Network) -> Result<(), BlockchainError> {
         trace!("set network to {}", network);
-        self.extra.insert(NETWORK, network.to_bytes())?;
+        Self::insert_into_disk(self.snapshot.as_mut(), &self.extra, NETWORK, network.to_bytes())?;
         Ok(())
     }
 
     fn has_network(&self) -> Result<bool, BlockchainError> {
         trace!("has network");
-        Ok(self.extra.contains_key(NETWORK)?)
+        self.contains_data(&self.extra, NETWORK)
     }
 }

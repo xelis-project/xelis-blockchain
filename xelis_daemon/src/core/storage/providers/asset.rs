@@ -48,7 +48,7 @@ pub trait AssetProvider {
 impl AssetProvider for SledStorage {
     async fn has_asset(&self, asset: &Hash) -> Result<bool, BlockchainError> {
         trace!("asset exist {}", asset);
-        self.contains_data(&self.assets, &self.assets_cache, asset).await
+        self.contains_data_cached(&self.assets, &self.assets_cache, asset).await
     }
 
     async fn get_asset(&self, asset: &Hash) -> Result<AssetData, BlockchainError> {
@@ -117,7 +117,7 @@ impl AssetProvider for SledStorage {
 
     async fn add_asset(&mut self, asset: &Hash, data: AssetData) -> Result<(), BlockchainError> {
         trace!("add asset {} at topoheight {}", asset, data.get_topoheight());
-        self.assets.insert(asset.as_bytes(), data.to_bytes())?;
+        Self::insert_into_disk(self.snapshot.as_mut(), &self.assets, asset.as_bytes(), data.to_bytes())?;
 
         // Update counter
         self.store_assets_count(self.count_assets().await? + 1)?;

@@ -58,7 +58,7 @@ impl TransactionProvider for SledStorage {
 
     async fn has_transaction(&self, hash: &Hash) -> Result<bool, BlockchainError> {
         trace!("has transaction {}", hash);
-        self.contains_data(&self.transactions, &self.transactions_cache, hash).await
+        self.contains_data_cached(&self.transactions, &self.transactions_cache, hash).await
     }
 
     async fn count_transactions(&self) -> Result<u64, BlockchainError> {
@@ -67,7 +67,7 @@ impl TransactionProvider for SledStorage {
     }
 
     async fn delete_transaction(&mut self, hash: &Hash) -> Result<Arc<Transaction>, BlockchainError> {
-        self.delete_cacheable_data::<Hash, HashSet<Hash>>(&self.tx_blocks, &None, hash).await?;
-        self.delete_data(&self.transactions, &self.transactions_cache, hash).await
+        Self::delete_cacheable_data::<Hash, HashSet<Hash>>(self.snapshot.as_mut(), &self.tx_blocks, &None, hash).await?;
+        Self::delete_arc_cacheable_data(self.snapshot.as_mut(), &self.transactions, &self.transactions_cache, hash).await
     }
 }

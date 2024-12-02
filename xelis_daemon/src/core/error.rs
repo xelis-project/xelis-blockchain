@@ -98,6 +98,8 @@ pub enum DiskContext {
     DeleteData,
     #[error("load data")]
     LoadData,
+    #[error("load optional data")]
+    LoadOptionalData,
     #[error("search block position in order")]
     SearchBlockPositionInOrder
 }
@@ -105,6 +107,10 @@ pub enum DiskContext {
 #[repr(usize)]
 #[derive(Error, Debug)]
 pub enum BlockchainError {
+    #[error("commit point already started")]
+    CommitPointAlreadyStarted,
+    #[error("commit point not started")]
+    CommitPointNotStarted,
     #[error("no multisig found")]
     NoMultisig,
     #[error("Versioned data not found in disk")]

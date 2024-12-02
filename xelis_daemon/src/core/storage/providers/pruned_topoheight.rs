@@ -19,7 +19,7 @@ pub trait PrunedTopoheightProvider {
 impl PrunedTopoheightProvider for SledStorage {
     async fn set_pruned_topoheight(&mut self, pruned_topoheight: TopoHeight) -> Result<(), BlockchainError> {
         self.pruned_topoheight = Some(pruned_topoheight);
-        self.extra.insert(PRUNED_TOPOHEIGHT, &pruned_topoheight.to_be_bytes())?;
+        Self::insert_into_disk(self.snapshot.as_mut(), &self.extra, PRUNED_TOPOHEIGHT, &pruned_topoheight.to_be_bytes())?;
         Ok(())
     }
 
