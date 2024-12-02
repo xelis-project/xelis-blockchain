@@ -158,6 +158,9 @@ pub struct Blockchain<S: Storage> {
     tip_work_score_cache: Mutex<LruCache<(Hash, Hash, u64), (HashSet<Hash>, CumulativeDifficulty)>>,
     // using base hash, current tip hash and base height, this cache is used to store the DAG order
     full_order_cache: Mutex<LruCache<(Hash, Hash, u64), IndexSet<Hash>>>,
+    // cache to store the sync blocks
+    // key is (hash, height), only sync blocks are stored
+    sync_blocks_cache: Mutex<LruCache<(Hash, u64), ()>>,
     // auto prune mode if enabled, will delete all blocks every N and keep only N top blocks (topoheight based)
     auto_prune_keep_n_blocks: Option<u64>
 }
@@ -222,6 +225,7 @@ impl<S: Storage> Blockchain<S> {
             tip_work_score_cache: Mutex::new(LruCache::new(NonZeroUsize::new(1024).unwrap())),
             common_base_cache: Mutex::new(LruCache::new(NonZeroUsize::new(1024).unwrap())),
             full_order_cache: Mutex::new(LruCache::new(NonZeroUsize::new(1024).unwrap())),
+            sync_blocks_cache: Mutex::new(LruCache::new(NonZeroUsize::new(1024).unwrap())),
             auto_prune_keep_n_blocks: config.auto_prune_keep_n_blocks,
             skip_block_template_txs_verification: config.skip_block_template_txs_verification
         };
@@ -368,6 +372,17 @@ impl<S: Storage> Blockchain<S> {
         info!("All modules are now stopped!");
     }
 
+    // Clear all caches
+    pub async fn clear_caches(&self) {
+        debug!("Clearing caches...");
+        self.tip_base_cache.lock().await.clear();
+        self.tip_work_score_cache.lock().await.clear();
+        self.common_base_cache.lock().await.clear();
+        self.full_order_cache.lock().await.clear();
+        self.sync_blocks_cache.lock().await.clear();
+        debug!("Caches are now cleared!");
+    }
+
     // Reload the storage and update all cache values
     // Clear the mempool also in case of not being up-to-date
     pub async fn reload_from_disk(&self) -> Result<(), BlockchainError> {
@@ -396,6 +411,8 @@ impl<S: Storage> Blockchain<S> {
         let mut mempool = self.mempool.write().await;
         debug!("Clearing mempool");
         mempool.clear();
+
+        self.clear_caches().await;
 
         Ok(())
     }
@@ -623,6 +640,13 @@ impl<S: Storage> Blockchain<S> {
         P: DifficultyProvider + DagOrderProvider + BlocksAtHeightProvider + PrunedTopoheightProvider
     {
         trace!("is sync block {} at height {}", hash, height);
+        let mut cache = self.sync_blocks_cache.lock().await;
+        let cache_key = (hash.clone(), height);
+        if cache.contains(&cache_key) {
+            trace!("cache hit for sync block {} at height {}", hash, height);
+            return Ok(true)
+        }
+
         let block_height = provider.get_height_for_block_hash(hash).await?;
         if block_height == 0 { // genesis block is a sync block
             return Ok(true)
@@ -686,6 +710,10 @@ impl<S: Storage> Blockchain<S> {
                 }
             }
         }
+
+        // save in cache
+        trace!("block {} at height {} is a sync block", hash, block_height);
+        cache.put(cache_key, ());
 
         Ok(true)
     }
@@ -2495,6 +2523,8 @@ impl<S: Storage> Blockchain<S> {
             self.stable_height.store(stable_height, Ordering::SeqCst);
             self.stable_topoheight.store(stable_topoheight, Ordering::SeqCst);
         }
+
+        self.clear_caches().await;
 
         Ok(new_topoheight)
     }
