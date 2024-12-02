@@ -53,7 +53,7 @@ impl AccountProvider for SledStorage {
     }
 
     async fn set_account_registration_topoheight(&mut self, key: &PublicKey, topoheight: TopoHeight) -> Result<(), BlockchainError> {
-        if let Some(old) = self.registrations.insert(key.as_bytes(), topoheight.to_bytes())? {
+        if let Some(old) = Self::insert_into_disk(self.snapshot.as_mut(), &self.registrations, key.as_bytes(), &topoheight.to_be_bytes())? {
             Self::remove_from_disk_without_reading(self.snapshot.as_mut(), &self.registrations_prefixed, &prefixed_db_key_no_u64(&old, key))?;
         }
 

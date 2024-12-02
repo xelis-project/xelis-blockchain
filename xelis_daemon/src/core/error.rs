@@ -24,6 +24,8 @@ use human_bytes::human_bytes;
 
 #[derive(Error, Debug)]
 pub enum DiskContext {
+    #[error("data len")]
+    DataLen,
     #[error("multisig")]
     Multisig,
     #[error("get top block")]

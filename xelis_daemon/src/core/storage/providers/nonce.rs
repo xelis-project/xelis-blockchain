@@ -61,7 +61,7 @@ impl SledStorage {
     // Update the accounts count and store it on disk
     pub fn store_accounts_count(&mut self, count: u64) -> Result<(), BlockchainError> {
         self.accounts_count.store(count, Ordering::SeqCst);
-        self.extra.insert(ACCOUNTS_COUNT, &count.to_be_bytes())?;
+        Self::insert_into_disk(self.snapshot.as_mut(), &self.extra, ACCOUNTS_COUNT, &count.to_be_bytes())?;
         Ok(())
     }
 
@@ -92,7 +92,8 @@ impl NonceProvider for SledStorage {
 
     async fn delete_last_topoheight_for_nonce(&mut self, key: &PublicKey) -> Result<(), BlockchainError> {
         trace!("delete last topoheight for nonce {}", key.as_address(self.is_mainnet()));
-        if self.nonces.remove(key.as_bytes())?.is_some() {
+        let prev = Self::delete_data_without_reading(self.snapshot.as_mut(), &self.nonces, key.as_bytes())?;
+        if prev {
             self.store_accounts_count(self.count_accounts().await? - 1)?;
         }
         Ok(())

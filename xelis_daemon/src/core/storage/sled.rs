@@ -329,21 +329,8 @@ impl SledStorage {
 
     // Load a value from the DB
     pub(super) fn load_from_disk<T: Serializer>(&self, tree: &Tree, key: &[u8], context: DiskContext) -> Result<T, BlockchainError> {
-        if let Some(snapshot) = self.snapshot.as_ref() {
-            if snapshot.contains_key(tree, key) {
-                return snapshot.load_from_disk(tree, key, context);
-            }
-        }
-
-        match tree.get(key)? {
-            Some(bytes) => {
-                let bytes = bytes.to_vec();
-                let mut reader = Reader::new(&bytes);
-                let value = T::read(&mut reader)?;
-                Ok(value)
-            },
-            None => Err(BlockchainError::NotFoundOnDisk(context))
-        }
+        self.load_optional_from_disk(tree, key)?
+            .ok_or(BlockchainError::NotFoundOnDisk(context))
     }
 
     // Delete a key from the DB
@@ -387,6 +374,19 @@ impl SledStorage {
         };
 
         Ok(previous)
+    }
+
+    pub(super) fn get_len_for(&self, tree: &Tree, key: &[u8]) -> Result<usize, BlockchainError> {
+        if let Some(snapshot) = self.snapshot.as_ref() {
+            if snapshot.contains_key(tree, key) {
+                return snapshot.get_len_for(tree, key).ok_or(BlockchainError::NotFoundOnDisk(DiskContext::DataLen));
+            }
+        }
+
+        let len = tree.get(key)?
+            .ok_or(BlockchainError::NotFoundOnDisk(DiskContext::DataLen))?
+            .len();
+        Ok(len)
     }
 
     // Load from disk and cache the value

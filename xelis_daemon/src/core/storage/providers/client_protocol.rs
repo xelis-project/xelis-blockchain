@@ -134,7 +134,7 @@ impl ClientProtocolProvider for SledStorage {
 
     fn set_blocks_for_tx(&mut self, tx: &Hash, blocks: &Tips) -> Result<(), BlockchainError> {
         trace!("set blocks ({}) for tx {} ", blocks.len(), tx);
-        self.tx_blocks.insert(tx.as_bytes(), blocks.to_bytes())?;
+        Self::insert_into_disk(self.snapshot.as_mut(), &self.tx_blocks, tx.as_bytes(), blocks.to_bytes())?;
         Ok(())
     }
 }

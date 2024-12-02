@@ -2,7 +2,7 @@ use std::collections::{hash_map::{Entry, IntoIter}, HashMap};
 use sled::{IVec, Tree};
 use xelis_common::serializer::Serializer;
 
-use crate::core::error::{BlockchainError, DiskContext};
+use crate::core::error::BlockchainError;
 
 pub struct Batch {
     writes: HashMap<IVec, Option<IVec>>,
@@ -85,19 +85,6 @@ impl Snapshot {
     }
 
     // Read from our snapshot
-    // If not found, read from the disk
-    pub fn load_from_disk<T: Serializer>(&self, tree: &Tree, key: &[u8], context: DiskContext) -> Result<T, BlockchainError> {
-        let data = self.trees.get(&tree.name())
-            .and_then(|batch| {
-                batch.writes.get(key)
-            })
-            .and_then(Option::as_ref)
-            .ok_or_else(|| BlockchainError::NotFoundOnDisk(context))?;
-
-        Ok(T::from_bytes(&data)?)
-    }
-
-    // Read from our snapshot
     pub fn load_optional_from_disk<T: Serializer>(&self, tree: &Tree, key: &[u8]) -> Result<Option<T>, BlockchainError> {
         let data = self.trees.get(&tree.name())
             .and_then(|batch| {
@@ -127,6 +114,13 @@ impl Snapshot {
             .or_insert_with(Batch::default);
 
         batch.remove(key.into())
+    }
+
+    // Get the length of a value using its tree key in the snapshot
+    pub fn get_len_for<K: AsRef<[u8]> + ?Sized>(&self, tree: &Tree, key: &K) -> Option<usize> {
+        let batch = self.trees.get(&tree.name())?;
+        let elem = batch.writes.get(key.as_ref())?.as_ref()?;
+        Some(elem.len())
     }
 
     // Transforms the snapshot into a BatchApply

@@ -8,16 +8,16 @@ use crate::core::{
 pub trait CommitPointProvider {
     // Start a commit point
     // This is useful to do some operations before applying the batch
-    async fn start(&mut self) -> Result<(), BlockchainError>;
+    async fn start_commit_point(&mut self) -> Result<(), BlockchainError>;
 
     // Apply the batch to the storage
-    async fn end(&mut self, apply: bool) -> Result<(), BlockchainError>;
+    async fn end_commit_point(&mut self, apply: bool) -> Result<(), BlockchainError>;
 }
 
 #[async_trait]
 impl CommitPointProvider for SledStorage {
 
-    async fn start(&mut self) -> Result<(), BlockchainError> {
+    async fn start_commit_point(&mut self) -> Result<(), BlockchainError> {
         trace!("Starting commit point");
         if self.snapshot.is_some() {
             return Err(BlockchainError::CommitPointAlreadyStarted);
@@ -27,7 +27,7 @@ impl CommitPointProvider for SledStorage {
         Ok(())
     }
 
-    async fn end(&mut self, apply: bool) -> Result<(), BlockchainError> {
+    async fn end_commit_point(&mut self, apply: bool) -> Result<(), BlockchainError> {
         trace!("end commit point");
 
         let snapshot = self.snapshot.take().ok_or(BlockchainError::CommitPointNotStarted)?;

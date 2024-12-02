@@ -88,7 +88,7 @@ impl<'a, S: Storage> ChainValidator<'a, S> {
     // validate the basic chain structure
     // We expect that the block added is the next block ordered by topoheight
     pub async fn insert_block(&mut self, hash: Hash, header: BlockHeader) -> Result<(), BlockchainError> {
-        trace!("Inserting block {} into chain validator", hash);
+        debug!("Inserting block {} into chain validator", hash);
 
         if self.blocks.contains_key(&hash) {
             debug!("Block {} is already in validator chain!", hash);
