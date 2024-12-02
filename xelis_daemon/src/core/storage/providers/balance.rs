@@ -103,7 +103,7 @@ impl SledStorage {
 
     async fn has_balance_internal(&self, key: &[u8; 64]) -> Result<bool, BlockchainError> {
         trace!("has balance internal");
-        Ok(self.balances.contains_key(key)?)
+        self.contains_data(&self.balances, key)
     }
 
 }

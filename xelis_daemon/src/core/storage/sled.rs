@@ -310,8 +310,11 @@ impl SledStorage {
 
     // Load an optional value from the DB
     pub(super) fn load_optional_from_disk<T: Serializer>(&self, tree: &Tree, key: &[u8]) -> Result<Option<T>, BlockchainError> {
+        trace!("load optional from disk");
         if let Some(snapshot) = self.snapshot.as_ref() {
+            trace!("load from snapshot");
             if snapshot.contains_key(tree, key) {
+                trace!("load from snapshot key {:?} from db", key);
                 return snapshot.load_optional_from_disk(tree, key);
             }
         }
@@ -329,6 +332,7 @@ impl SledStorage {
 
     // Load a value from the DB
     pub(super) fn load_from_disk<T: Serializer>(&self, tree: &Tree, key: &[u8], context: DiskContext) -> Result<T, BlockchainError> {
+        trace!("load from disk");
         self.load_optional_from_disk(tree, key)?
             .ok_or(BlockchainError::NotFoundOnDisk(context))
     }
@@ -426,6 +430,7 @@ impl SledStorage {
                 .unwrap_or(true)
             )
         {
+            trace!("load from cache");
             let mut cache = cache.lock().await;
             if let Some(value) = cache.get(key) {
                 return Ok(value.clone());
@@ -494,7 +499,9 @@ impl SledStorage {
 
         if let Some(cache) = cache {
             let cache = cache.lock().await;
-            return Ok(cache.contains(key) || tree.contains_key(&key_bytes)?)
+            if cache.contains(key) {
+                return Ok(true);
+            }
         }
 
         Ok(tree.contains_key(&key_bytes)?)

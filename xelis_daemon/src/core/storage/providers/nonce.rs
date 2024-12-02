@@ -106,7 +106,7 @@ impl NonceProvider for SledStorage {
 
     async fn has_nonce(&self, key: &PublicKey) -> Result<bool, BlockchainError> {
         trace!("has nonce {}", key.as_address(self.is_mainnet()));
-        let contains = self.nonces.contains_key(key.as_bytes())?;
+        let contains = self.contains_data(&self.nonces, key.as_bytes())?;
         Ok(contains)
     }
 

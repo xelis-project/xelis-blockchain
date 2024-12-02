@@ -153,7 +153,6 @@ impl<'a, S: Storage> ChainValidator<'a, S> {
 
         trace!("Common base: {} at height {} and hash {}", base, base_height, hash);
 
-
         // Store the block in both maps
         // One is for blocks at height and the other is for the block data
         self.blocks_at_height.entry(header.get_height()).or_insert_with(IndexSet::new).insert(hash.clone());
