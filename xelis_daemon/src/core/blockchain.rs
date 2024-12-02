@@ -649,11 +649,13 @@ impl<S: Storage> Blockchain<S> {
 
         let block_height = provider.get_height_for_block_hash(hash).await?;
         if block_height == 0 { // genesis block is a sync block
+            trace!("Block {} at height {} is a sync block because it can only be the genesis block", hash, block_height);
             return Ok(true)
         }
 
         // block must be ordered and in stable height
         if block_height + STABLE_LIMIT > height || !provider.is_block_topological_ordered(hash).await {
+            trace!("Block {} at height {} is not a sync block, it is not in stable height", hash, block_height);
             return Ok(false)
         }
 
@@ -661,6 +663,9 @@ impl<S: Storage> Blockchain<S> {
         if let Some(pruned_topo) = provider.get_pruned_topoheight().await? {
             let topoheight = provider.get_topo_height_for_hash(hash).await?;
             if pruned_topo == topoheight {
+                trace!("Block {} at height {} is not a sync block, it is pruned", hash, block_height);
+                cache.put(cache_key, ());
+
                 return Ok(true)
             }
         }
@@ -678,6 +683,7 @@ impl<S: Storage> Blockchain<S> {
             if provider.is_block_topological_ordered(&hash).await {
                 blocks_in_main_chain += 1;
                 if blocks_in_main_chain > 1 {
+                    trace!("Block {} at height {} is not a sync block, it has more than 1 block at its height", hash, block_height);
                     return Ok(false)
                 }
             }
