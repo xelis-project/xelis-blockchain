@@ -22,7 +22,8 @@ use xelis_common::{
         BlockHeader,
         BlockVersion,
         TopoHeight,
-        EXTRA_NONCE_SIZE
+        EXTRA_NONCE_SIZE,
+        get_combined_hash_for_tips
     },
     config::{
         COIN_DECIMALS,
@@ -150,6 +151,9 @@ pub struct Blockchain<S: Storage> {
     // this cache is used to avoid to recompute the common base for each block and is mandatory
     // key is (tip hash, tip height) while value is (base hash, base height)
     tip_base_cache: Mutex<LruCache<(Hash, u64), (Hash, u64)>>,
+    // This cache is used to avoid to recompute the common base
+    // key is a combined hash of tips
+    common_base_cache: Mutex<LruCache<Hash, (Hash, u64)>>,
     // tip work score is used to determine the best tip based on a block, tip base ands a base height
     tip_work_score_cache: Mutex<LruCache<(Hash, Hash, u64), (HashSet<Hash>, CumulativeDifficulty)>>,
     // using base hash, current tip hash and base height, this cache is used to store the DAG order
@@ -216,6 +220,7 @@ impl<S: Storage> Blockchain<S> {
             network,
             tip_base_cache: Mutex::new(LruCache::new(NonZeroUsize::new(1024).unwrap())),
             tip_work_score_cache: Mutex::new(LruCache::new(NonZeroUsize::new(1024).unwrap())),
+            common_base_cache: Mutex::new(LruCache::new(NonZeroUsize::new(1024).unwrap())),
             full_order_cache: Mutex::new(LruCache::new(NonZeroUsize::new(1024).unwrap())),
             auto_prune_keep_n_blocks: config.auto_prune_keep_n_blocks,
             skip_block_template_txs_verification: config.skip_block_template_txs_verification
@@ -781,6 +786,13 @@ impl<S: Storage> Blockchain<S> {
         I: IntoIterator<Item = &'a Hash> + Copy,
     {
         debug!("Searching for common base for tips {}", tips.into_iter().map(|h| h.to_string()).collect::<Vec<String>>().join(", "));
+        let mut cache = self.common_base_cache.lock().await;
+        let combined_tips = get_combined_hash_for_tips(tips.into_iter());
+        if let Some((hash, height)) = cache.get(&combined_tips) {
+            debug!("Common base found in cache: {} at height {}", hash, height);
+            return Ok((hash.clone(), *height))
+        }
+
         let mut best_height = 0;
         // first, we check the best (highest) height of all tips
         for hash in tips.into_iter() {
@@ -813,6 +825,10 @@ impl<S: Storage> Blockchain<S> {
         // and we want the lowest height
         let (base_hash, base_height) = bases.remove(bases.len() - 1);
         debug!("Common base {} with height {} on {}", base_hash, base_height, bases.len() + 1);
+
+        // save in cache
+        cache.put(combined_tips, (base_hash.clone(), base_height));
+
         Ok((base_hash, base_height))
     }
 
