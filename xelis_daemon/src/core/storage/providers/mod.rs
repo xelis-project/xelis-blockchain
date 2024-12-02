@@ -16,6 +16,7 @@ mod network;
 mod multisig;
 mod batch_applicator;
 mod tips_provider;
+mod db;
 
 pub use asset::AssetProvider;
 pub use blocks_at_height::BlocksAtHeightProvider;
@@ -35,3 +36,4 @@ pub use network::NetworkProvider;
 pub use multisig::*;
 pub use batch_applicator::BatchApplicator;
 pub use tips_provider::TipsProvider;
+pub use db::DBProvider;
