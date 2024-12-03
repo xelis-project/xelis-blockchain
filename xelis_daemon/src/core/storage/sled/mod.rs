@@ -393,6 +393,17 @@ impl SledStorage {
         Ok(len)
     }
 
+    // Drop a tree from the DB
+    pub(super) fn drop_tree<V: AsRef<[u8]>>(snapshot: Option<&mut Snapshot>, db: &sled::Db, tree_name: V) -> Result<bool, BlockchainError> {
+        let v = if let Some(snapshot) = snapshot {
+            snapshot.drop_tree(tree_name)
+        } else {
+            db.drop_tree(tree_name)?
+        };
+
+        Ok(v)
+    }
+
     // Load from disk and cache the value
     // Or load it from cache if available
     // Note that the Snapshot has no cache and is priority over the cache
@@ -1087,9 +1098,8 @@ impl Storage for SledStorage {
                 Self::remove_from_disk_without_reading(self.snapshot.as_mut(), &self.assets, &key)
                     .context(format!("Error while deleting asset {asset} from registered assets"))?;
 
-                // TODO: Support drop tree
                 // drop the tree for this asset
-                // self.db.drop_tree(key).context(format!("error on dropping asset {asset} tree"))?;
+                Self::drop_tree(self.snapshot.as_mut(), &self.db, key).context(format!("error on dropping asset {asset} tree"))?;
 
                 deleted_assets.insert(asset);
             }

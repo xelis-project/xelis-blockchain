@@ -52,7 +52,7 @@ impl IntoIterator for Batch {
 // We track all the changes made to the DB since the snapshot was created
 // So we can apply them to the DB or rollback them
 pub struct Snapshot {
-    trees: HashMap<IVec, Batch>,
+    trees: HashMap<IVec, Option<Batch>>,
     pub(crate) assets_count: u64,
     // Count of accounts
     pub(crate) accounts_count: u64,
@@ -67,7 +67,7 @@ pub struct Snapshot {
 // This is the final struct to get rid of the borrowed Storage
 // to be able to borrow it again mutably and apply changes
 pub struct BatchApply {
-    trees: HashMap<IVec, Batch>
+    trees: HashMap<IVec, Option<Batch>>
 }
 
 impl Default for Snapshot {
@@ -99,7 +99,9 @@ impl Snapshot {
     // Contains a key in the snapshot
     pub fn contains_key(&self, tree: &Tree, key: &[u8]) -> bool {
         self.trees.get(&tree.name())
-            .map(|batch| batch.writes.contains_key(key))
+            .map(|batch| batch.as_ref()
+                .map_or(false, |batch| batch.writes.contains_key(key))
+            )
             .unwrap_or(false)
     }
 
@@ -109,7 +111,8 @@ impl Snapshot {
     pub fn contains_key_with_value(&self, tree: &Tree, key: &[u8]) -> Option<bool> {
         self.trees.get(&tree.name())
             .and_then(|batch| {
-                batch.writes.get(key)
+                batch.as_ref()
+                    .and_then(|batch| batch.writes.get(key))
             })
             .map(|value| value.is_some())
     }
@@ -118,7 +121,8 @@ impl Snapshot {
     pub fn load_optional_from_disk<T: Serializer>(&self, tree: &Tree, key: &[u8]) -> Result<Option<T>, BlockchainError> {
         let data = self.trees.get(&tree.name())
             .and_then(|batch| {
-                batch.writes.get(key)
+                batch.as_ref()
+                    .and_then(|batch| batch.writes.get(key))
             })
             .and_then(Option::as_ref);
 
@@ -131,9 +135,18 @@ impl Snapshot {
     // Insert a key into the snapshot
     // Returns the previous value if it exists
     pub fn insert<K: Into<IVec>, V: Into<IVec>>(&mut self, tree: &Tree, key: K, value: V) -> Option<IVec> {
-        self.trees.entry(tree.name())
-            .or_insert_with(Batch::default)
-            .insert(key.into(), value.into())
+        let batch = self.trees.entry(tree.name())
+            .or_insert_with(|| Some(Batch::default()));
+        
+        match batch {
+            Some(batch) => batch.insert(key.into(), value.into()),
+            None => {
+                let mut b = Batch::default();
+                let res = b.insert(key.into(), value.into());
+                *batch = Some(b);
+                res
+            }
+        }
     }
 
     // Remove a key from the snapshot
@@ -141,16 +154,25 @@ impl Snapshot {
     // If the key is not found, it will return true to load from the disk
     pub fn remove<K: Into<IVec>>(&mut self, tree: &Tree, key: K) -> (Option<IVec>, bool) {
         let batch = self.trees.entry(tree.name())
-            .or_insert_with(Batch::default);
+            .or_insert_with(|| Some(Batch::default()));
 
-        batch.remove(key.into())
+        match batch {
+            Some(batch) => batch.remove(key.into()),
+            None => (None, false),
+        }
     }
 
     // Get the length of a value using its tree key in the snapshot
     pub fn get_len_for<K: AsRef<[u8]> + ?Sized>(&self, tree: &Tree, key: &K) -> Option<usize> {
-        let batch = self.trees.get(&tree.name())?;
+        let batch = self.trees.get(&tree.name())?
+            .as_ref()?;
         let elem = batch.writes.get(key.as_ref())?.as_ref()?;
         Some(elem.len())
+    }
+
+    // Drop the tree by marking it as None
+    pub fn drop_tree<V: AsRef<[u8]>>(&mut self, tree_name: V) -> bool {
+        self.trees.insert(tree_name.as_ref().into(), None).is_some()
     }
 
     // Transforms the snapshot into a BatchApply
@@ -160,8 +182,8 @@ impl Snapshot {
 }
 
 impl IntoIterator for BatchApply {
-    type Item = (IVec, Batch);
-    type IntoIter = IntoIter<IVec, Batch>;
+    type Item = (IVec, Option<Batch>);
+    type IntoIter = IntoIter<IVec, Option<Batch>>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.trees.into_iter()
