@@ -501,7 +501,7 @@ impl<S: Storage> Blockchain<S> {
     // for this, we have to locate the nearest Sync block for DAG under the limit topoheight
     // and then delete all blocks before it
     // keep a marge of PRUNE_SAFETY_LIMIT
-    pub async fn prune_until_topoheight_for_storage<P: Storage>(&self, topoheight: TopoHeight, storage: &mut P) -> Result<TopoHeight, BlockchainError> {
+    pub async fn prune_until_topoheight_for_storage(&self, topoheight: TopoHeight, storage: &mut S) -> Result<TopoHeight, BlockchainError> {
         if topoheight == 0 {
             return Err(BlockchainError::PruneZero)
         }
@@ -518,7 +518,7 @@ impl<S: Storage> Blockchain<S> {
         }
 
         // find new stable point based on a sync block under the limit topoheight
-        let located_sync_topoheight = self.locate_nearest_sync_block_for_topoheight::<P>(&storage, topoheight, self.get_height()).await?;
+        let located_sync_topoheight = self.locate_nearest_sync_block_for_topoheight(storage, topoheight, self.get_height()).await?;
         debug!("Located sync topoheight found: {}", located_sync_topoheight);
 
         if located_sync_topoheight > last_pruned_topoheight {
@@ -1266,14 +1266,14 @@ impl<S: Storage> Blockchain<S> {
     }
 
     // Add a tx to the mempool with the given hash, it is not computed and the TX is transformed into an Arc
-    pub async fn add_tx_to_mempool_with_hash<'a>(&'a self, tx: Transaction, hash: Hash, broadcast: bool) -> Result<(), BlockchainError> {
+    pub async fn add_tx_to_mempool_with_hash(&self, tx: Transaction, hash: Hash, broadcast: bool) -> Result<(), BlockchainError> {
         let storage = self.storage.read().await;
-        self.add_tx_to_mempool_with_storage_and_hash(&*storage, Arc::new(tx), hash, broadcast).await
+        self.add_tx_to_mempool_with_storage_and_hash(&storage, Arc::new(tx), hash, broadcast).await
     }
 
     // Add a tx to the mempool with the given hash, it will verify the TX and check that it is not already in mempool or in blockchain
     // and its validity (nonce, balance, etc...)
-    pub async fn add_tx_to_mempool_with_storage_and_hash<'a, P: Storage>(&'a self, provider: &P, tx: Arc<Transaction>, hash: Hash, broadcast: bool) -> Result<(), BlockchainError>
+    pub async fn add_tx_to_mempool_with_storage_and_hash(&self, storage: &S, tx: Arc<Transaction>, hash: Hash, broadcast: bool) -> Result<(), BlockchainError>
     {
         let tx_size = tx.size();
         if tx_size > MAX_TRANSACTION_SIZE {
@@ -1288,7 +1288,7 @@ impl<S: Storage> Blockchain<S> {
             }
     
             // check that the TX is not already in blockchain
-            if provider.is_tx_executed_in_a_block(&hash)? {
+            if storage.is_tx_executed_in_a_block(&hash)? {
                 return Err(BlockchainError::TxAlreadyInBlockchain(hash))
             }
 
@@ -1311,7 +1311,7 @@ impl<S: Storage> Blockchain<S> {
             }
 
             let version = get_version_at_height(self.get_network(), self.get_height());
-            mempool.add_tx(provider, stable_topoheight, current_topoheight, hash.clone(), tx.clone(), tx_size, version).await?;
+            mempool.add_tx(storage, stable_topoheight, current_topoheight, hash.clone(), tx.clone(), tx_size, version).await?;
         }
 
         if broadcast {
@@ -1337,7 +1337,7 @@ impl<S: Storage> Blockchain<S> {
                 }
 
                 if rpc.is_event_tracked(&NotifyEvent::TransactionAddedInMempool).await {
-                    let data = RPCTransaction::from_tx(&tx, &hash, provider.is_mainnet());
+                    let data = RPCTransaction::from_tx(&tx, &hash, storage.is_mainnet());
                     let data: TransactionResponse<'_> = TransactionResponse {
                         blocks: None,
                         executed_in_block: None,
@@ -1580,11 +1580,11 @@ impl<S: Storage> Blockchain<S> {
     // Add a new block in chain
     pub async fn add_new_block(&self, block: Block, broadcast: bool, mining: bool) -> Result<(), BlockchainError> {
         let mut storage = self.storage.write().await;
-        self.add_new_block_for_storage(&mut *storage, block, broadcast, mining).await
+        self.add_new_block_for_storage(&mut storage, block, broadcast, mining).await
     }
 
     // Add a new block in chain using the requested storage
-    pub async fn add_new_block_for_storage<P: Storage>(&self, storage: &mut P, block: Block, broadcast: bool, mining: bool) -> Result<(), BlockchainError> {
+    pub async fn add_new_block_for_storage(&self, storage: &mut S, block: Block, broadcast: bool, mining: bool) -> Result<(), BlockchainError> {
         let start = Instant::now();
 
         // Expected version for this block
@@ -1689,8 +1689,11 @@ impl<S: Storage> Blockchain<S> {
             }
 
             trace!("calculate distance from mainchain for tips: {}", hash);
-            if !self.verify_distance_from_mainchain(storage, hash, current_height).await? {
-                debug!("{} with hash {} have deviated too much (current height: {})", block, block_hash, current_height);
+
+            // We're processing the block tips, so we can't use the block height as it may not be in the chain yet
+            let height = block_height_by_tips.checked_sub(1).unwrap_or(0);
+            if !self.verify_distance_from_mainchain(storage, hash, height).await? {
+                error!("{} with hash {} have deviated too much (current height: {}, block height: {})", block, block_hash, current_height, block_height_by_tips);
                 return Err(BlockchainError::BlockDeviation)
             }
         }
@@ -1822,7 +1825,7 @@ impl<S: Storage> Blockchain<S> {
                 debug!("Computing cumulative difficulty for block {}", block_hash);
                 let (base, base_height) = self.find_common_base(storage, block.get_tips()).await?;
                 debug!("Common base found: {}, height: {}", base, base_height);
-                let (_, cumulative_difficulty) = self.find_tip_work_score::<P>(&storage, &block_hash, &base, base_height).await?;
+                let (_, cumulative_difficulty) = self.find_tip_work_score(storage, &block_hash, &base, base_height).await?;
                 cumulative_difficulty
             };
             storage.set_cumulative_difficulty_for_block_hash(&block_hash, cumulative_difficulty).await?;
@@ -2236,11 +2239,11 @@ impl<S: Storage> Blockchain<S> {
 
                 // Clone only if its necessary
                 if !orphan_event_tracked {
-                    if let Err(e) = self.add_tx_to_mempool_with_storage_and_hash::<P>(&storage, tx, tx_hash, false).await {
+                    if let Err(e) = self.add_tx_to_mempool_with_storage_and_hash(storage, tx, tx_hash, false).await {
                         warn!("Error while adding back orphaned tx: {}", e);
                     }
                 } else {
-                    if let Err(e) = self.add_tx_to_mempool_with_storage_and_hash::<P>(&storage, tx.clone(), tx_hash.clone(), false).await {
+                    if let Err(e) = self.add_tx_to_mempool_with_storage_and_hash(storage, tx.clone(), tx_hash.clone(), false).await {
                         warn!("Error while adding back orphaned tx: {}, broadcasting event", e);
                         // We couldn't add it back to mempool, let's notify this event
                         let data = RPCTransaction::from_tx(&tx, &tx_hash, storage.is_mainnet());
