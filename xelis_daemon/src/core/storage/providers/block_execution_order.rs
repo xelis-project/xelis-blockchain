@@ -53,8 +53,16 @@ impl BlockExecutionOrderProvider for SledStorage {
     }
 
     async fn add_block_execution_to_order(&mut self, hash: &Hash) -> Result<(), BlockchainError> {
-        let position = self.blocks_execution_count;
-        self.blocks_execution_count += 1;
+        let position = if let Some(snapshot) = self.snapshot.as_mut() {
+            let pos = snapshot.blocks_execution_count;
+            snapshot.blocks_execution_count += 1;
+            pos
+        } else {
+            let pos = self.blocks_execution_count;
+            self.blocks_execution_count += 1;
+            pos
+        };
+
         Self::insert_into_disk(self.snapshot.as_mut(), &self.blocks_execution_order, hash.as_bytes(), &position.to_be_bytes())?;
         Self::insert_into_disk(self.snapshot.as_mut(), &self.extra, BLOCKS_EXECUTION_ORDER_COUNT, &position.to_be_bytes())?;
 
@@ -62,7 +70,11 @@ impl BlockExecutionOrderProvider for SledStorage {
     }
 
     async fn get_blocks_execution_count(&self) -> u64 {
-        self.blocks_execution_count
+        if let Some(snapshot) = self.snapshot.as_ref() {
+            snapshot.blocks_execution_count
+        } else {
+            self.blocks_execution_count
+        }
     }
 
     async fn swap_blocks_executions_positions(&mut self, left: &Hash, right: &Hash) -> Result<(), BlockchainError> {

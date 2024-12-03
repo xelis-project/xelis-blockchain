@@ -37,7 +37,11 @@ pub trait BlockProvider: TransactionProvider + DifficultyProvider + BlocksAtHeig
 impl SledStorage {
     // Update the blocks count and store it on disk
     fn store_blocks_count(&mut self, count: u64) -> Result<(), BlockchainError> {
-        self.blocks_count = count;
+        if let Some(snapshot) = self.snapshot.as_mut() {
+            snapshot.blocks_count = count;
+        } else {
+            self.blocks_count = count;
+        }
         Self::insert_into_disk(self.snapshot.as_mut(), &self.extra, BLOCKS_COUNT, &count.to_be_bytes())?;
         Ok(())
     }
@@ -52,7 +56,12 @@ impl BlockProvider for SledStorage {
 
     async fn count_blocks(&self) -> Result<u64, BlockchainError> {
         trace!("count blocks");
-        Ok(self.blocks_count)
+        let count = if let Some(snapshot) = &self.snapshot {
+            snapshot.blocks_count
+        } else {
+            self.blocks_count
+        };
+        Ok(count)
     }
 
     async fn has_block_with_hash(&self, hash: &Hash) -> Result<bool, BlockchainError> {

@@ -111,7 +111,13 @@ impl AssetProvider for SledStorage {
     // count assets in storage
     async fn count_assets(&self) -> Result<u64, BlockchainError> {
         trace!("count assets");
-        Ok(self.assets_count)
+
+        let count = if let Some(snapshot) = self.snapshot.as_ref() {
+            snapshot.assets_count
+        } else {
+            self.assets_count
+        };
+        Ok(count)
     }
 
     async fn add_asset(&mut self, asset: &Hash, data: AssetData) -> Result<(), BlockchainError> {

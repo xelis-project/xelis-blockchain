@@ -33,7 +33,7 @@ use lru::LruCache;
 use sled::{IVec, Tree};
 use log::{debug, trace, warn, info};
 
-use snapshot::Snapshot;
+pub use snapshot::Snapshot;
 
 use super::{
     providers::*,
@@ -133,7 +133,7 @@ pub struct SledStorage {
     // Pruned topoheight cache
     pub(super) pruned_topoheight: Option<TopoHeight>,
 
-    // Atomic counters
+    // Cache for counters
     // Count of assets
     pub(super) assets_count: u64,
     // Count of accounts
@@ -521,8 +521,12 @@ impl SledStorage {
 
     // Update the assets count and store it on disk
     pub(super) fn store_assets_count(&mut self, count: u64) -> Result<(), BlockchainError> {
-        // TODO: store it in a snapshot
-        self.assets_count = count;
+        if let Some(snapshot) = self.snapshot.as_mut() {
+            snapshot.assets_count = count;
+        } else {
+            self.assets_count = count;
+        }
+
         Self::insert_into_disk(self.snapshot.as_mut(), &self.extra, ASSETS_COUNT, &count.to_be_bytes())?;
         Ok(())
     }

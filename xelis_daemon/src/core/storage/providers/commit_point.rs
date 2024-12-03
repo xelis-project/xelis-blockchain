@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use log::trace;
 use crate::core::{
     error::BlockchainError,
-    storage::{SledStorage, Storage}
+    storage::{SledStorage, Snapshot, Storage}
 };
 #[async_trait]
 pub trait CommitPointProvider {
@@ -23,7 +23,8 @@ impl CommitPointProvider for SledStorage {
             return Err(BlockchainError::CommitPointAlreadyStarted);
         }
 
-        self.snapshot = Some(Default::default());
+        let snapshot = Snapshot::new(self.assets_count, self.accounts_count, self.transactions_count, self.blocks_count, self.blocks_execution_count);
+        self.snapshot = Some(snapshot);
         Ok(())
     }
 
@@ -31,7 +32,14 @@ impl CommitPointProvider for SledStorage {
         trace!("end commit point");
 
         let snapshot = self.snapshot.take().ok_or(BlockchainError::CommitPointNotStarted)?;
+
         if apply {
+            self.assets_count = snapshot.assets_count;
+            self.accounts_count = snapshot.accounts_count;
+            self.transactions_count = snapshot.transactions_count;
+            self.blocks_count = snapshot.blocks_count;
+            self.blocks_execution_count = snapshot.blocks_execution_count;
+
             for (tree, batch) in snapshot.finalize().into_iter() {
                 trace!("Applying batch to tree {:?}", tree);
                 let tree = self.db.open_tree(tree)?;

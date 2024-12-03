@@ -52,7 +52,16 @@ impl IntoIterator for Batch {
 // We track all the changes made to the DB since the snapshot was created
 // So we can apply them to the DB or rollback them
 pub struct Snapshot {
-    trees: HashMap<IVec, Batch>
+    trees: HashMap<IVec, Batch>,
+    pub(crate) assets_count: u64,
+    // Count of accounts
+    pub(crate) accounts_count: u64,
+    // Count of transactions
+    pub(crate) transactions_count: u64,
+    // Count of blocks
+    pub(crate) blocks_count: u64,
+    // Count of blocks added in chain
+    pub(crate) blocks_execution_count: u64,
 }
 
 // This is the final struct to get rid of the borrowed Storage
@@ -63,11 +72,30 @@ pub struct BatchApply {
 
 impl Default for Snapshot {
     fn default() -> Self {
-        Self { trees: HashMap::new() }
+        Self {
+            trees: HashMap::new(),
+            assets_count: 0,
+            accounts_count: 0,
+            transactions_count: 0,
+            blocks_count: 0,
+            blocks_execution_count: 0,
+        }
     }
 }
 
 impl Snapshot {
+    // Create a new snapshot with current counts
+    pub fn new(assets_count: u64, accounts_count: u64, transactions_count: u64, blocks_count: u64, blocks_execution_count: u64) -> Self {
+        Self {
+            trees: HashMap::new(),
+            assets_count,
+            accounts_count,
+            transactions_count,
+            blocks_count,
+            blocks_execution_count,
+        }
+    }
+
     // Contains a key in the snapshot
     pub fn contains_key(&self, tree: &Tree, key: &[u8]) -> bool {
         self.trees.get(&tree.name())

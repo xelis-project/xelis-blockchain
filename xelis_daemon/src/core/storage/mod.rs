@@ -3,7 +3,7 @@ mod sled;
 mod versioned_type;
 
 pub use self::{
-    sled::{SledStorage, StorageMode},
+    sled::*,
     providers::*,
     versioned_type::*,
 };
