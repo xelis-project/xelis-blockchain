@@ -88,7 +88,7 @@ impl<'a, S: Storage> ChainValidator<'a, S> {
     // validate the basic chain structure
     // We expect that the block added is the next block ordered by topoheight
     pub async fn insert_block(&mut self, hash: Hash, header: BlockHeader) -> Result<(), BlockchainError> {
-        trace!("Inserting block {} into chain validator", hash);
+        debug!("Inserting block {} into chain validator", hash);
 
         if self.blocks.contains_key(&hash) {
             debug!("Block {} is already in validator chain!", hash);
@@ -152,7 +152,6 @@ impl<'a, S: Storage> ChainValidator<'a, S> {
         let (base, base_height) = self.blockchain.find_common_base(self, header.get_tips()).await?;
 
         trace!("Common base: {} at height {} and hash {}", base, base_height, hash);
-
 
         // Store the block in both maps
         // One is for blocks at height and the other is for the block data

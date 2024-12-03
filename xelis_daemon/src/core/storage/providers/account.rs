@@ -53,11 +53,11 @@ impl AccountProvider for SledStorage {
     }
 
     async fn set_account_registration_topoheight(&mut self, key: &PublicKey, topoheight: TopoHeight) -> Result<(), BlockchainError> {
-        if let Some(old) = self.registrations.insert(key.as_bytes(), topoheight.to_bytes())? {
-            self.registrations_prefixed.remove(&prefixed_db_key_no_u64(&old, key))?;
+        if let Some(old) = Self::insert_into_disk(self.snapshot.as_mut(), &self.registrations, key.as_bytes(), &topoheight.to_be_bytes())? {
+            Self::remove_from_disk_without_reading(self.snapshot.as_mut(), &self.registrations_prefixed, &prefixed_db_key_no_u64(&old, key))?;
         }
 
-        self.registrations_prefixed.insert(prefixed_db_key(topoheight, key), &[])?;
+        Self::insert_into_disk(self.snapshot.as_mut(), &self.registrations_prefixed, &prefixed_db_key(topoheight, key), &[])?;
 
         Ok(())
     }
@@ -65,7 +65,8 @@ impl AccountProvider for SledStorage {
     async fn is_account_registered(&self, key: &PublicKey) -> Result<bool, BlockchainError> {
         let value = self.load_optional_from_disk::<TopoHeight>(&self.registrations, key.as_bytes())?;
         if let Some(topo) = value {
-            return Ok(self.registrations_prefixed.contains_key(prefixed_db_key(topo, key))?)
+            let k = prefixed_db_key(topo, key);
+            return self.contains_data(&self.registrations_prefixed, &k)
         }
 
         Ok(false)
@@ -83,9 +84,10 @@ impl AccountProvider for SledStorage {
     async fn delete_registrations_at_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError> {
         for el in self.registrations_prefixed.scan_prefix(topoheight.to_bytes()).keys() {
             let k = el?;
-            self.registrations_prefixed.remove(&k)?;
+            Self::remove_from_disk_without_reading(self.snapshot.as_mut(), &self.registrations_prefixed, &k)?;
+
             let key = &k[8..40];
-            self.registrations.remove(key)?;
+            Self::remove_from_disk_without_reading(self.snapshot.as_mut(), &self.registrations, key)?;
         }
 
         Ok(())

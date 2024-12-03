@@ -33,7 +33,7 @@ impl MerkleHashProvider for SledStorage {
 
     async fn set_balances_merkle_hash_at_topoheight(&mut self, topoheight: TopoHeight, merkle_proof: &Hash) -> Result<(), BlockchainError> {
         trace!("set merkle hash {} at topoheight {}", merkle_proof, topoheight);
-        self.merkle_hashes.insert(&topoheight.to_bytes(), merkle_proof.as_bytes())?;
+        Self::insert_into_disk(self.snapshot.as_mut(), &self.merkle_hashes, &topoheight.to_bytes(), merkle_proof.as_bytes())?;
         Ok(())
     }
 }

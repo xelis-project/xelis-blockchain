@@ -3,7 +3,6 @@ use log::trace;
 use xelis_common::{
     crypto::Hash,
     block::TopoHeight,
-    serializer::Serializer
 };
 use crate::core::{
     error::{BlockchainError, DiskContext},
@@ -23,8 +22,8 @@ pub trait DagOrderProvider {
 impl DagOrderProvider for SledStorage {
     async fn set_topo_height_for_block(&mut self, hash: &Hash, topoheight: TopoHeight) -> Result<(), BlockchainError> {
         trace!("set topo height for {} at {}", hash, topoheight);
-        self.topo_by_hash.insert(hash.as_bytes(), topoheight.to_bytes())?;
-        self.hash_at_topo.insert(topoheight.to_be_bytes(), hash.as_bytes())?;
+        Self::insert_into_disk(self.snapshot.as_mut(), &self.topo_by_hash, hash.as_bytes(), &topoheight.to_be_bytes())?;
+        Self::insert_into_disk(self.snapshot.as_mut(), &self.hash_at_topo, &topoheight.to_be_bytes(), hash.as_bytes())?;
 
         // save in cache
         if let Some(cache) = &self.topo_by_hash_cache {

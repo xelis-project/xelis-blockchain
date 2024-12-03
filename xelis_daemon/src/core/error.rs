@@ -24,6 +24,8 @@ use human_bytes::human_bytes;
 
 #[derive(Error, Debug)]
 pub enum DiskContext {
+    #[error("data len")]
+    DataLen,
     #[error("multisig")]
     Multisig,
     #[error("get top block")]
@@ -98,6 +100,8 @@ pub enum DiskContext {
     DeleteData,
     #[error("load data")]
     LoadData,
+    #[error("load optional data")]
+    LoadOptionalData,
     #[error("search block position in order")]
     SearchBlockPositionInOrder
 }
@@ -105,6 +109,12 @@ pub enum DiskContext {
 #[repr(usize)]
 #[derive(Error, Debug)]
 pub enum BlockchainError {
+    #[error("Invalid ip order for block {}, expected {}, got {}", _0, _1, _2)]
+    InvalidTipsOrder(Hash, Hash, Hash),
+    #[error("commit point already started")]
+    CommitPointAlreadyStarted,
+    #[error("commit point not started")]
+    CommitPointNotStarted,
     #[error("no multisig found")]
     NoMultisig,
     #[error("Versioned data not found in disk")]

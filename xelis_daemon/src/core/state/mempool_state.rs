@@ -35,6 +35,8 @@ struct Account<'a> {
 }
 
 pub struct MempoolState<'a, S: Storage> {
+    // If the provider is mainnet or not
+    mainnet: bool,
     // Mempool from which it's backed
     mempool: &'a Mempool,
     // Storage in case sender balances aren't in mempool cache
@@ -53,8 +55,9 @@ pub struct MempoolState<'a, S: Storage> {
 }
 
 impl<'a, S: Storage> MempoolState<'a, S> {
-    pub fn new(mempool: &'a Mempool, storage: &'a S, stable_topoheight: TopoHeight, topoheight: TopoHeight, block_version: BlockVersion) -> Self {
+    pub fn new(mempool: &'a Mempool, storage: &'a S, stable_topoheight: TopoHeight, topoheight: TopoHeight, block_version: BlockVersion, mainnet: bool) -> Self {
         Self {
+            mainnet,
             mempool,
             storage,
             receiver_balances: HashMap::new(),
@@ -252,7 +255,7 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for Mempoo
         account: &'a PublicKey,
         payload: &MultiSigPayload
     ) -> Result<(), BlockchainError> {
-        let account = self.accounts.get_mut(account).ok_or_else(|| BlockchainError::AccountNotFound(account.as_address(self.storage.is_mainnet())))?;
+        let account = self.accounts.get_mut(account).ok_or_else(|| BlockchainError::AccountNotFound(account.as_address(self.mainnet)))?;
         if payload.is_delete() {
             account.multisig = None;
         } else {

@@ -14,6 +14,9 @@ mod account;
 mod block_execution_order;
 mod network;
 mod multisig;
+mod commit_point;
+mod tips_provider;
+mod db;
 
 pub use asset::AssetProvider;
 pub use blocks_at_height::BlocksAtHeightProvider;
@@ -31,3 +34,6 @@ pub use account::AccountProvider;
 pub use block_execution_order::BlockExecutionOrderProvider;
 pub use network::NetworkProvider;
 pub use multisig::*;
+pub use commit_point::CommitPointProvider;
+pub use tips_provider::TipsProvider;
+pub use db::DBProvider;

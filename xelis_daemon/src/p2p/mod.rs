@@ -848,6 +848,7 @@ impl<S: Storage> P2pServer<S> {
             {
                 let cumulative_difficulty = p.get_cumulative_difficulty().lock().await;
                 if *cumulative_difficulty <= our_cumulative_difficulty {
+                    trace!("Peer {} has a lower cumulative difficulty than us, skipping...", p);
                     continue;
                 }
             }
@@ -857,12 +858,14 @@ impl<S: Storage> P2pServer<S> {
                 // if we want to fast sync, but this peer is not compatible, we skip it
                 // for this we check that the peer topoheight is not less than the prune safety limit
                 if peer_topoheight < PRUNE_SAFETY_LIMIT || our_topoheight + PRUNE_SAFETY_LIMIT > peer_topoheight {
+                    trace!("Peer {} has a topoheight less than the prune safety limit, skipping...", p);
                     continue;
                 }
                 if let Some(pruned_topoheight) = p.get_pruned_topoheight() {
                     // This shouldn't be possible if following the protocol,
                     // But we may never know if a peer is not following the protocol strictly
                     if peer_topoheight - pruned_topoheight < PRUNE_SAFETY_LIMIT {
+                        trace!("Peer {} has a pruned topoheight {} less than the prune safety limit, skipping...", p, pruned_topoheight);
                         continue;
                     }
                 }
@@ -871,12 +874,14 @@ impl<S: Storage> P2pServer<S> {
                 // so we can sync chain from pruned chains
                 if let Some(pruned_topoheight) = p.get_pruned_topoheight() {
                     if pruned_topoheight > our_topoheight {
+                        trace!("Peer {} has a pruned topoheight {} higher than our topoheight {}, skipping...", p, pruned_topoheight, our_topoheight);
                         continue;
                     }
                 }
             }
 
             if !(p.get_height() > our_height || peer_topoheight > our_topoheight) {
+                trace!("Peer {} has a lower height/topoheight than us, skipping...", p);
                 continue;
             }
 
@@ -2018,6 +2023,63 @@ impl<S: Storage> P2pServer<S> {
         Ok(())
     }
 
+    async fn handle_chain_validator_with_rewind(&self, peer: &Arc<Peer>, pop_count: u64, chain_validator: ChainValidator<'_, S>) -> Result<(), BlockchainError> {
+        // peer chain looks correct, lets rewind our chain
+        warn!("Rewinding chain because of {} (pop count: {})", peer, pop_count);
+        self.blockchain.rewind_chain(pop_count, false).await?;
+
+        // now retrieve all txs from all blocks header and add block in chain
+        for (hash, header) in chain_validator.get_blocks() {
+            trace!("Processing block {} from chain validator", hash);
+            // we don't already have this block, lets retrieve its txs and add in our chain
+            if !self.blockchain.has_block(&hash).await? {
+                let mut transactions = Vec::new(); // don't pre allocate
+                for tx_hash in header.get_txs_hashes() {
+                    // check first on disk in case it was already fetch by a previous block
+                    // it can happens as TXs can be integrated in multiple blocks and executed only one time
+                    // check if we find it
+                    if let Some(tx) = self.blockchain.get_tx(tx_hash).await.ok() {
+                        trace!("Found the transaction {} on disk", tx_hash);
+                        transactions.push(Immutable::Arc(tx));
+                    } else { // otherwise, ask it from peer
+                        let response = peer.request_blocking_object(ObjectRequest::Transaction(tx_hash.clone())).await?;
+                        if let OwnedObjectResponse::Transaction(tx, _) = response {
+                            trace!("Received transaction {} at block {} from {}", tx_hash, hash, peer);
+                            transactions.push(Immutable::Owned(tx));
+                        } else {
+                            error!("{} sent us an invalid block response", peer);
+                            return Err(P2pError::ExpectedTransaction.into())
+                        }
+                    }
+                }
+
+                // Assemble back the block and add it to the chain
+                let block = Block::new(Immutable::Arc(header), transactions);
+                self.blockchain.add_new_block(block, false, false).await?; // don't broadcast block because it's syncing
+            } else {
+                // We need to re execute it to make sure it's in DAG
+                let mut storage = self.blockchain.get_storage().write().await;
+                if !storage.is_block_topological_ordered(&hash).await {
+                    match storage.delete_block_with_hash(&hash).await {
+                        Ok(block) => {
+                            warn!("Block {} is already in chain but not in DAG, re-executing it", hash);
+                            self.blockchain.add_new_block(block, false, false).await?;
+                        },
+                        Err(e) => {
+                            // This shouldn't happen, but in case
+                            error!("Error while deleting block {} from storage to re-execute it for chain sync: {}", hash, e);
+                            continue;
+                        }
+                    }
+                } else {
+                    trace!("Block {} is already in DAG, skipping it", hash);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     // Handle a chain response from another peer
     // We receive a list of blocks hashes ordered by their topoheight
     // It also contains a CommonPoint which is a block hash point where we have the same topoheight as our peer
@@ -2140,58 +2202,22 @@ impl<S: Storage> P2pServer<S> {
                     return Err(BlockchainError::LowerCumulativeDifficulty)
                 }
 
-                // peer chain looks correct, lets rewind our chain
-                warn!("Rewinding chain because of {} (pop count: {})", peer, pop_count);
-                self.blockchain.rewind_chain(pop_count, false).await?;
-
-                // now retrieve all txs from all blocks header and add block in chain
-                for (hash, header) in chain_validator.get_blocks() {
-                    trace!("Processing block {} from chain validator", hash);
-                    // we don't already have this block, lets retrieve its txs and add in our chain
-                    if !self.blockchain.has_block(&hash).await? {
-                        let mut transactions = Vec::new(); // don't pre allocate
-                        for tx_hash in header.get_txs_hashes() {
-                            // check first on disk in case it was already fetch by a previous block
-                            // it can happens as TXs can be integrated in multiple blocks and executed only one time
-                            // check if we find it
-                            if let Some(tx) = self.blockchain.get_tx(tx_hash).await.ok() {
-                                trace!("Found the transaction {} on disk", tx_hash);
-                                transactions.push(Immutable::Arc(tx));
-                            } else { // otherwise, ask it from peer
-                                let response = peer.request_blocking_object(ObjectRequest::Transaction(tx_hash.clone())).await?;
-                                if let OwnedObjectResponse::Transaction(tx, _) = response {
-                                    trace!("Received transaction {} at block {} from {}", tx_hash, hash, peer);
-                                    transactions.push(Immutable::Owned(tx));
-                                } else {
-                                    error!("{} sent us an invalid block response", peer);
-                                    return Err(P2pError::ExpectedTransaction.into())
-                                }
-                            }
-                        }
-
-                        // Assemble back the block and add it to the chain
-                        let block = Block::new(Immutable::Arc(header), transactions);
-                        self.blockchain.add_new_block(block, false, false).await?; // don't broadcast block because it's syncing
-                    } else {
-                        // We need to re execute it to make sure it's in DAG
-                        let mut storage = self.blockchain.get_storage().write().await;
-                        if !storage.is_block_topological_ordered(&hash).await {
-                            match storage.delete_block_with_hash(&hash).await {
-                                Ok(block) => {
-                                    warn!("Block {} is already in chain but not in DAG, re-executing it", hash);
-                                    self.blockchain.add_new_block(block, false, false).await?;
-                                },
-                                Err(e) => {
-                                    // This shouldn't happen, but in case
-                                    error!("Error while deleting block {} from storage to re-execute it for chain sync: {}", hash, e);
-                                    continue;
-                                }
-                            }
-                        } else {
-                            trace!("Block {} is already in DAG, skipping it", hash);
-                        }
-                    }
+                // Handle the chain validator
+                {
+                    info!("Starting commit point for chain validator");
+                    let mut storage = self.blockchain.get_storage().write().await;
+                    storage.start_commit_point().await?;
+                    info!("Commit point started for chain validator");
                 }
+                let res = self.handle_chain_validator_with_rewind(peer, pop_count, chain_validator).await;
+                {
+                    info!("Ending commit point for chain validator");
+                    let mut storage = self.blockchain.get_storage().write().await;
+                    storage.end_commit_point(res.is_ok()).await?;
+                    info!("Commit point ended for chain validator: {}", res.is_ok());
+                }
+
+                res?;
             }
         } else {
             // no rewind are needed, process normally
@@ -2505,7 +2531,7 @@ impl<S: Storage> P2pServer<S> {
 
             // Check that the block is stable
             let hash = storage.get_hash_at_topo_height(topoheight).await?;
-            if !self.blockchain.is_sync_block(&storage, &hash).await? {
+            if !self.blockchain.is_sync_block(&*storage, &hash).await? {
                 warn!("Requested topoheight {} is not stable, ignoring", topoheight);
                 return Err(P2pError::InvalidRequestedTopoheight.into())
             }

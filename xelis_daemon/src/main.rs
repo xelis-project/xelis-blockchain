@@ -1154,7 +1154,7 @@ async fn mine_block<S: Storage>(manager: &CommandManager, mut arguments: Argumen
         manager.message(format!("Block mined: {}", block_hash));
 
         let mut storage = blockchain.get_storage().write().await;
-        blockchain.add_new_block_for_storage(&mut storage, block, true, true).await.context("Error while adding block to chain")?;
+        blockchain.add_new_block_for_storage(&mut *storage, block, true, true).await.context("Error while adding block to chain")?;
     }
     Ok(())
 }

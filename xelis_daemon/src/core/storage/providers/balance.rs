@@ -103,7 +103,7 @@ impl SledStorage {
 
     async fn has_balance_internal(&self, key: &[u8; 64]) -> Result<bool, BlockchainError> {
         trace!("has balance internal");
-        Ok(self.balances.contains_key(key)?)
+        self.contains_data(&self.balances, key)
     }
 
 }
@@ -135,7 +135,7 @@ impl BalanceProvider for SledStorage {
     fn set_last_topoheight_for_balance(&mut self, key: &PublicKey, asset: &Hash, topoheight: TopoHeight) -> Result<(), BlockchainError> {
         trace!("set last topoheight to {} for balance {} for {}", topoheight, asset, key.as_address(self.is_mainnet()));
         let key = self.get_balance_key_for(key, asset);
-        self.balances.insert(&key, &topoheight.to_be_bytes())?;
+        Self::insert_into_disk(self.snapshot.as_mut(), &self.balances, &key, &topoheight.to_be_bytes())?;
         Ok(())
     }
 
@@ -149,7 +149,7 @@ impl BalanceProvider for SledStorage {
         }
 
         let key = self.get_versioned_balance_key(key, asset, topoheight);
-        self.contains_data::<_, ()>(&self.versioned_balances, &None, &key).await
+        self.contains_data(&self.versioned_balances, &key)
     }
 
     // get the balance at a specific topoheight
@@ -173,7 +173,7 @@ impl BalanceProvider for SledStorage {
     fn delete_last_topoheight_for_balance(&mut self, key: &PublicKey, asset: &Hash) -> Result<(), BlockchainError> {
         trace!("delete last topoheight balance {} for {}", asset, key.as_address(self.is_mainnet()));
         let key = self.get_balance_key_for(key, asset);
-        self.balances.remove(&key)?;
+        Self::delete_data_without_reading(self.snapshot.as_mut(), &self.balances, &key)?;
         Ok(())
     }
 
@@ -272,7 +272,8 @@ impl BalanceProvider for SledStorage {
     async fn delete_balance_at_topoheight(&mut self, key: &PublicKey, asset: &Hash, topoheight: TopoHeight) -> Result<VersionedBalance, BlockchainError> {
         trace!("delete balance {} for {} at topoheight {}", asset, key.as_address(self.is_mainnet()), topoheight);
         let disk_key = self.get_versioned_balance_key(key, asset, topoheight);
-        self.delete_cacheable_data(&self.versioned_balances, &None, &disk_key).await.map_err(|_| BlockchainError::NoBalanceChanges(key.as_address(self.is_mainnet()), topoheight, asset.clone()))
+        Self::delete_cacheable_data(self.snapshot.as_mut(), &self.versioned_balances, &None, &disk_key).await
+            .map_err(|_| BlockchainError::NoBalanceChanges(key.as_address(self.is_mainnet()), topoheight, asset.clone()))
     }
 
     // returns a new versioned balance with already-set previous topoheight
@@ -357,7 +358,8 @@ impl BalanceProvider for SledStorage {
     async fn set_balance_at_topoheight(&mut self, asset: &Hash, topoheight: TopoHeight, key: &PublicKey, balance: &VersionedBalance) -> Result<(), BlockchainError> {
         trace!("set balance {} at topoheight {} for {}", asset, topoheight, key.as_address(self.is_mainnet()));
         let key = self.get_versioned_balance_key(key, asset, topoheight);
-        self.versioned_balances.insert(key, balance.to_bytes())?;
+        Self::insert_into_disk(self.snapshot.as_mut(), &self.versioned_balances, &key, balance.to_bytes())?;
+
         Ok(())
     }
 

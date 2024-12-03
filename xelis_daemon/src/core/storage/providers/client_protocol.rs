@@ -61,35 +61,33 @@ impl ClientProtocolProvider for SledStorage {
 
     fn set_tx_executed_in_block(&mut self, tx: &Hash, block: &Hash) -> Result<(), BlockchainError> {
         trace!("set tx {} executed in block {}", tx, block);
-        self.txs_executed.insert(tx.as_bytes(), block.as_bytes())?;
+        Self::insert_into_disk(self.snapshot.as_mut(), &self.txs_executed, tx.as_bytes(), block.as_bytes())?;
         Ok(())
     }
 
     fn remove_tx_executed(&mut self, tx: &Hash) -> Result<(), BlockchainError> {
         trace!("remove tx {} executed", tx);
-        self.txs_executed.remove(tx.as_bytes())?;
+        Self::delete_data_without_reading(self.snapshot.as_mut(), &self.txs_executed, tx.as_bytes())?;
+
         Ok(())
     }
 
     fn is_tx_executed_in_a_block(&self, tx: &Hash) -> Result<bool, BlockchainError> {
         trace!("is tx {} executed in a block", tx);
-        Ok(self.txs_executed.contains_key(tx.as_bytes())?)
+        self.contains_data(&self.txs_executed, tx.as_bytes())
     }
 
     fn is_tx_executed_in_block(&self, tx: &Hash, block: &Hash) -> Result<bool, BlockchainError> {
         trace!("is tx {} executed in block {}", tx, block);
         if let Ok(hash) = self.get_block_executor_for_tx(tx) {
-            if hash == *block {
-                return Ok(true)
-            }
+            return Ok(hash == *block)
         }
         Ok(false)
     }
 
     fn has_tx_blocks(&self, hash: &Hash) -> Result<bool, BlockchainError> {
         trace!("has tx blocks {}", hash);
-        let contains = self.tx_blocks.contains_key(hash.as_bytes())?;
-        Ok(contains)
+        self.contains_data(&self.tx_blocks, hash.as_bytes())
     }
 
     fn has_block_linked_to_tx(&self, tx: &Hash, block: &Hash) -> Result<bool, BlockchainError> {
@@ -107,7 +105,7 @@ impl ClientProtocolProvider for SledStorage {
 
         let insert = hashes.insert(Cow::Borrowed(block));
         if insert {
-            self.tx_blocks.insert(tx.as_bytes(), hashes.to_bytes())?;
+            Self::insert_into_disk(self.snapshot.as_mut(), &self.tx_blocks, tx.as_bytes(), hashes.to_bytes())?;
         }
 
         Ok(insert)
@@ -136,7 +134,7 @@ impl ClientProtocolProvider for SledStorage {
 
     fn set_blocks_for_tx(&mut self, tx: &Hash, blocks: &Tips) -> Result<(), BlockchainError> {
         trace!("set blocks ({}) for tx {} ", blocks.len(), tx);
-        self.tx_blocks.insert(tx.as_bytes(), blocks.to_bytes())?;
+        Self::insert_into_disk(self.snapshot.as_mut(), &self.tx_blocks, tx.as_bytes(), blocks.to_bytes())?;
         Ok(())
     }
 }

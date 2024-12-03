@@ -1,5 +1,4 @@
-use std::sync::{atomic::Ordering, Arc};
-
+use std::sync::Arc;
 use async_trait::async_trait;
 use log::{debug, trace};
 use xelis_common::{
@@ -37,9 +36,13 @@ pub trait BlockProvider: TransactionProvider + DifficultyProvider + BlocksAtHeig
 
 impl SledStorage {
     // Update the blocks count and store it on disk
-    fn store_blocks_count(&self, count: u64) -> Result<(), BlockchainError> {
-        self.blocks_count.store(count, Ordering::SeqCst);
-        self.extra.insert(BLOCKS_COUNT, &count.to_be_bytes())?;
+    fn store_blocks_count(&mut self, count: u64) -> Result<(), BlockchainError> {
+        if let Some(snapshot) = self.snapshot.as_mut() {
+            snapshot.blocks_count = count;
+        } else {
+            self.blocks_count = count;
+        }
+        Self::insert_into_disk(self.snapshot.as_mut(), &self.extra, BLOCKS_COUNT, &count.to_be_bytes())?;
         Ok(())
     }
 }
@@ -53,12 +56,17 @@ impl BlockProvider for SledStorage {
 
     async fn count_blocks(&self) -> Result<u64, BlockchainError> {
         trace!("count blocks");
-        Ok(self.blocks_count.load(Ordering::SeqCst))
+        let count = if let Some(snapshot) = &self.snapshot {
+            snapshot.blocks_count
+        } else {
+            self.blocks_count
+        };
+        Ok(count)
     }
 
     async fn has_block_with_hash(&self, hash: &Hash) -> Result<bool, BlockchainError> {
         trace!("has block {}", hash);
-        self.contains_data(&self.blocks, &self.blocks_cache, hash).await
+        self.contains_data_cached(&self.blocks, &self.blocks_cache, hash).await
     }
 
     async fn save_block(&mut self, block: Arc<BlockHeader>, txs: &Vec<Immutable<Transaction>>, difficulty: Difficulty, p: VarUint, hash: Hash) -> Result<(), BlockchainError> {
@@ -68,7 +76,8 @@ impl BlockProvider for SledStorage {
         let mut txs_count = 0;
         for (hash, tx) in block.get_transactions().iter().zip(txs) { // first save all txs, then save block
             if !self.has_transaction(hash).await? {
-                self.transactions.insert(hash.as_bytes(), tx.to_bytes())?;
+                Self::insert_into_disk(self.snapshot.as_mut(), &self.transactions, hash, tx.to_bytes())?;
+
                 txs_count += 1;
             }
         }
@@ -79,14 +88,16 @@ impl BlockProvider for SledStorage {
         }
 
         // Store block header and increase blocks count if it's a new block
-        if self.blocks.insert(hash.as_bytes(), block.to_bytes())?.is_none() {
+        let no_prev = Self::insert_into_disk(self.snapshot.as_mut(), &self.blocks, hash.as_bytes(), block.to_bytes())?.is_none();
+        if no_prev {
             self.store_blocks_count(self.count_blocks().await? + 1)?;
         }
 
         // Store difficulty
-        self.difficulty.insert(hash.as_bytes(), difficulty.to_bytes())?;
+        Self::insert_into_disk(self.snapshot.as_mut(), &self.difficulty, hash.as_bytes(), difficulty.to_bytes())?;
+
         // Store P
-        self.difficulty_covariance.insert(hash.as_bytes(), p.to_bytes())?;
+        Self::insert_into_disk(self.snapshot.as_mut(), &self.difficulty_covariance, hash.as_bytes(), p.to_bytes())?;
 
         self.add_block_hash_at_height(hash.clone(), block.get_height()).await?;
 
@@ -115,15 +126,16 @@ impl BlockProvider for SledStorage {
         debug!("Deleting block with hash: {}", hash);
 
         // Delete block header
-        let header = self.delete_arc_cacheable_data(&self.blocks, &self.blocks_cache, &hash).await?;
+        let header = Self::delete_arc_cacheable_data(self.snapshot.as_mut(), &self.blocks, &self.blocks_cache, &hash).await?;
 
         // Decrease blocks count
         self.store_blocks_count(self.count_blocks().await? - 1)?;
 
         // Delete difficulty
-        self.difficulty.remove(hash.as_bytes())?;
+        Self::delete_data_without_reading(self.snapshot.as_mut(), &self.difficulty, hash.as_bytes())?;
+
         // Delete P
-        self.difficulty_covariance.remove(hash.as_bytes())?;
+        Self::delete_data_without_reading(self.snapshot.as_mut(), &self.difficulty_covariance, hash.as_bytes())?;
 
         self.remove_block_hash_at_height(&hash, header.get_height()).await?;
 

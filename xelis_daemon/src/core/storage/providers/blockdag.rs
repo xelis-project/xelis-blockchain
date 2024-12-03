@@ -50,13 +50,13 @@ impl BlockDagProvider for SledStorage {
 
     fn set_block_reward_at_topo_height(&mut self, topoheight: TopoHeight, reward: u64) -> Result<(), BlockchainError> {
         trace!("set block reward to {} at topo height {}", reward, topoheight);
-        self.rewards.insert(topoheight.to_be_bytes(), &reward.to_be_bytes())?;
+        Self::insert_into_disk(self.snapshot.as_mut(), &self.rewards, &topoheight.to_be_bytes(), &reward.to_be_bytes())?;
         Ok(())
     }
 
     fn set_supply_at_topo_height(&mut self, topoheight: TopoHeight, supply: u64) -> Result<(), BlockchainError> {
         trace!("set supply at topo height {}", topoheight);
-        self.supply.insert(topoheight.to_be_bytes(), &supply.to_be_bytes())?;
+        Self::insert_into_disk(self.snapshot.as_mut(), &self.supply, &topoheight.to_be_bytes(), &supply.to_be_bytes())?;
         Ok(())
     }
 }

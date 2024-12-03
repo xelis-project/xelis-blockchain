@@ -371,6 +371,21 @@ impl<const N: usize> Serializer for [u8; N] {
         )
     }
 
+    fn to_bytes(&self) -> Vec<u8> {
+        self.to_vec()
+    }
+
+    fn from_bytes(bytes: &[u8]) -> Result<Self, ReaderError>
+        where Self: Sized {
+        if bytes.len() != N {
+            return Err(ReaderError::InvalidSize)
+        }
+
+        let mut array = [0; N];
+        array.copy_from_slice(bytes);
+        Ok(array)
+    }
+
     fn size(&self) -> usize {
         N
     }

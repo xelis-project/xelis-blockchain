@@ -22,7 +22,8 @@ use xelis_common::{
         BlockHeader,
         BlockVersion,
         TopoHeight,
-        EXTRA_NONCE_SIZE
+        EXTRA_NONCE_SIZE,
+        get_combined_hash_for_tips
     },
     config::{
         COIN_DECIMALS,
@@ -112,10 +113,10 @@ use log::{info, error, debug, warn, trace};
 use rand::Rng;
 
 use super::storage::{
+    AccountProvider,
     BlocksAtHeightProvider,
     ClientProtocolProvider,
     PrunedTopoheightProvider,
-    AccountProvider
 };
 
 pub struct Blockchain<S: Storage> {
@@ -150,10 +151,16 @@ pub struct Blockchain<S: Storage> {
     // this cache is used to avoid to recompute the common base for each block and is mandatory
     // key is (tip hash, tip height) while value is (base hash, base height)
     tip_base_cache: Mutex<LruCache<(Hash, u64), (Hash, u64)>>,
+    // This cache is used to avoid to recompute the common base
+    // key is a combined hash of tips
+    common_base_cache: Mutex<LruCache<Hash, (Hash, u64)>>,
     // tip work score is used to determine the best tip based on a block, tip base ands a base height
     tip_work_score_cache: Mutex<LruCache<(Hash, Hash, u64), (HashSet<Hash>, CumulativeDifficulty)>>,
     // using base hash, current tip hash and base height, this cache is used to store the DAG order
     full_order_cache: Mutex<LruCache<(Hash, Hash, u64), IndexSet<Hash>>>,
+    // cache to store the sync blocks
+    // key is (hash, height), only sync blocks are stored
+    sync_blocks_cache: Mutex<LruCache<(Hash, u64), ()>>,
     // auto prune mode if enabled, will delete all blocks every N and keep only N top blocks (topoheight based)
     auto_prune_keep_n_blocks: Option<u64>
 }
@@ -216,7 +223,9 @@ impl<S: Storage> Blockchain<S> {
             network,
             tip_base_cache: Mutex::new(LruCache::new(NonZeroUsize::new(1024).unwrap())),
             tip_work_score_cache: Mutex::new(LruCache::new(NonZeroUsize::new(1024).unwrap())),
+            common_base_cache: Mutex::new(LruCache::new(NonZeroUsize::new(1024).unwrap())),
             full_order_cache: Mutex::new(LruCache::new(NonZeroUsize::new(1024).unwrap())),
+            sync_blocks_cache: Mutex::new(LruCache::new(NonZeroUsize::new(1024).unwrap())),
             auto_prune_keep_n_blocks: config.auto_prune_keep_n_blocks,
             skip_block_template_txs_verification: config.skip_block_template_txs_verification
         };
@@ -363,6 +372,17 @@ impl<S: Storage> Blockchain<S> {
         info!("All modules are now stopped!");
     }
 
+    // Clear all caches
+    pub async fn clear_caches(&self) {
+        debug!("Clearing caches...");
+        self.tip_base_cache.lock().await.clear();
+        self.tip_work_score_cache.lock().await.clear();
+        self.common_base_cache.lock().await.clear();
+        self.full_order_cache.lock().await.clear();
+        self.sync_blocks_cache.lock().await.clear();
+        debug!("Caches are now cleared!");
+    }
+
     // Reload the storage and update all cache values
     // Clear the mempool also in case of not being up-to-date
     pub async fn reload_from_disk(&self) -> Result<(), BlockchainError> {
@@ -391,6 +411,8 @@ impl<S: Storage> Blockchain<S> {
         let mut mempool = self.mempool.write().await;
         debug!("Clearing mempool");
         mempool.clear();
+
+        self.clear_caches().await;
 
         Ok(())
     }
@@ -434,7 +456,7 @@ impl<S: Storage> Blockchain<S> {
         storage.set_topo_height_for_block(&genesis_block.hash(), 0).await?;
         storage.set_top_height(0)?;
 
-        self.add_new_block_for_storage(&mut storage, genesis_block, false, false).await?;
+        self.add_new_block_for_storage(&mut *storage, genesis_block, false, false).await?;
 
         Ok(())
     }
@@ -472,7 +494,7 @@ impl<S: Storage> Blockchain<S> {
     // This will delete all blocks / versioned balances / txs until topoheight in param
     pub async fn prune_until_topoheight(&self, topoheight: TopoHeight) -> Result<TopoHeight, BlockchainError> {
         let mut storage = self.storage.write().await;
-        self.prune_until_topoheight_for_storage(topoheight, &mut storage).await
+        self.prune_until_topoheight_for_storage(topoheight, &mut *storage).await
     }
 
     // delete all blocks / versioned balances / txs until topoheight in param
@@ -496,7 +518,7 @@ impl<S: Storage> Blockchain<S> {
         }
 
         // find new stable point based on a sync block under the limit topoheight
-        let located_sync_topoheight = self.locate_nearest_sync_block_for_topoheight::<S>(&storage, topoheight, self.get_height()).await?;
+        let located_sync_topoheight = self.locate_nearest_sync_block_for_topoheight(storage, topoheight, self.get_height()).await?;
         debug!("Located sync topoheight found: {}", located_sync_topoheight);
 
         if located_sync_topoheight > last_pruned_topoheight {
@@ -605,9 +627,9 @@ impl<S: Storage> Blockchain<S> {
     }
 
     // Verify if the block is a sync block for current chain height
-    pub async fn is_sync_block(&self, storage: &S, hash: &Hash) -> Result<bool, BlockchainError> {
+    pub async fn is_sync_block<P: DifficultyProvider + DagOrderProvider + BlocksAtHeightProvider + PrunedTopoheightProvider>(&self, provider: &P, hash: &Hash) -> Result<bool, BlockchainError> {
         let current_height = self.get_height();
-        self.is_sync_block_at_height::<S>(storage, hash, current_height).await
+        self.is_sync_block_at_height(provider, hash, current_height).await
     }
 
     // Verify if the block is a sync block
@@ -618,13 +640,22 @@ impl<S: Storage> Blockchain<S> {
         P: DifficultyProvider + DagOrderProvider + BlocksAtHeightProvider + PrunedTopoheightProvider
     {
         trace!("is sync block {} at height {}", hash, height);
+        let mut cache = self.sync_blocks_cache.lock().await;
+        let cache_key = (hash.clone(), height);
+        if cache.contains(&cache_key) {
+            trace!("cache hit for sync block {} at height {}", hash, height);
+            return Ok(true)
+        }
+
         let block_height = provider.get_height_for_block_hash(hash).await?;
         if block_height == 0 { // genesis block is a sync block
+            trace!("Block {} at height {} is a sync block because it can only be the genesis block", hash, block_height);
             return Ok(true)
         }
 
         // block must be ordered and in stable height
         if block_height + STABLE_LIMIT > height || !provider.is_block_topological_ordered(hash).await {
+            trace!("Block {} at height {} is not a sync block, it is not in stable height", hash, block_height);
             return Ok(false)
         }
 
@@ -632,6 +663,9 @@ impl<S: Storage> Blockchain<S> {
         if let Some(pruned_topo) = provider.get_pruned_topoheight().await? {
             let topoheight = provider.get_topo_height_for_hash(hash).await?;
             if pruned_topo == topoheight {
+                trace!("Block {} at height {} is not a sync block, it is pruned", hash, block_height);
+                cache.put(cache_key, ());
+
                 return Ok(true)
             }
         }
@@ -649,6 +683,7 @@ impl<S: Storage> Blockchain<S> {
             if provider.is_block_topological_ordered(&hash).await {
                 blocks_in_main_chain += 1;
                 if blocks_in_main_chain > 1 {
+                    trace!("Block {} at height {} is not a sync block, it has more than 1 block at its height", hash, block_height);
                     return Ok(false)
                 }
             }
@@ -681,6 +716,10 @@ impl<S: Storage> Blockchain<S> {
                 }
             }
         }
+
+        // save in cache
+        trace!("block {} at height {} is a sync block", hash, block_height);
+        cache.put(cache_key, ());
 
         Ok(true)
     }
@@ -781,6 +820,13 @@ impl<S: Storage> Blockchain<S> {
         I: IntoIterator<Item = &'a Hash> + Copy,
     {
         debug!("Searching for common base for tips {}", tips.into_iter().map(|h| h.to_string()).collect::<Vec<String>>().join(", "));
+        let mut cache = self.common_base_cache.lock().await;
+        let combined_tips = get_combined_hash_for_tips(tips.into_iter());
+        if let Some((hash, height)) = cache.get(&combined_tips) {
+            debug!("Common base found in cache: {} at height {}", hash, height);
+            return Ok((hash.clone(), *height))
+        }
+
         let mut best_height = 0;
         // first, we check the best (highest) height of all tips
         for hash in tips.into_iter() {
@@ -813,10 +859,14 @@ impl<S: Storage> Blockchain<S> {
         // and we want the lowest height
         let (base_hash, base_height) = bases.remove(bases.len() - 1);
         debug!("Common base {} with height {} on {}", base_hash, base_height, bases.len() + 1);
+
+        // save in cache
+        cache.put(combined_tips, (base_hash.clone(), base_height));
+
         Ok((base_hash, base_height))
     }
 
-    async fn build_reachability(&self, storage: &S, hash: Hash) -> Result<HashSet<Hash>, BlockchainError> {
+    async fn build_reachability<P: DifficultyProvider>(&self, provider: &P, hash: Hash) -> Result<HashSet<Hash>, BlockchainError> {
         let mut set = HashSet::new();
         let mut stack: VecDeque<(Hash, u64)> = VecDeque::new();
         stack.push_back((hash, 0));
@@ -827,7 +877,7 @@ impl<S: Storage> Blockchain<S> {
                 set.insert(current_hash);
             } else {
                 trace!("Level {} reached with hash {}", current_level, current_hash);
-                let tips = storage.get_past_blocks_for_block_hash(&current_hash).await?;
+                let tips = provider.get_past_blocks_for_block_hash(&current_hash).await?;
                 set.insert(current_hash);
                 for past_hash in tips.iter() {
                     if !set.contains(past_hash) {
@@ -841,12 +891,12 @@ impl<S: Storage> Blockchain<S> {
     }
 
     // this function check that a TIP cannot be refered as past block in another TIP
-    async fn verify_non_reachability(&self, storage: &S, tips: &IndexSet<Hash>) -> Result<bool, BlockchainError> {
+    async fn verify_non_reachability<P: DifficultyProvider>(&self, provider: &P, tips: &IndexSet<Hash>) -> Result<bool, BlockchainError> {
         trace!("Verifying non reachability for block");
         let tips_count = tips.len();
         let mut reach = Vec::with_capacity(tips_count);
         for hash in tips {
-            let set = self.build_reachability(storage, hash.clone()).await?;
+            let set = self.build_reachability(provider, hash.clone()).await?;
             reach.push(set);
         }
 
@@ -1005,14 +1055,14 @@ impl<S: Storage> Blockchain<S> {
 
     // find the best tip (highest cumulative difficulty)
     // We get their cumulative difficulty and sort them then take the first one
-    async fn find_best_tip<'a>(&self, storage: &S, tips: &'a HashSet<Hash>, base: &Hash, base_height: u64) -> Result<&'a Hash, BlockchainError> {
+    async fn find_best_tip<'a, P: DifficultyProvider + DagOrderProvider>(&self, provider: &P, tips: &'a HashSet<Hash>, base: &Hash, base_height: u64) -> Result<&'a Hash, BlockchainError> {
         if tips.len() == 0 {
             return Err(BlockchainError::ExpectedTips)
         }
 
         let mut scores = Vec::with_capacity(tips.len());
         for hash in tips {
-            let (_, cumulative_difficulty) = self.find_tip_work_score::<S>(storage, hash, base, base_height).await?;
+            let (_, cumulative_difficulty) = self.find_tip_work_score(provider, hash, base, base_height).await?;
             scores.push((hash, cumulative_difficulty));
         }
 
@@ -1216,14 +1266,15 @@ impl<S: Storage> Blockchain<S> {
     }
 
     // Add a tx to the mempool with the given hash, it is not computed and the TX is transformed into an Arc
-    pub async fn add_tx_to_mempool_with_hash<'a>(&'a self, tx: Transaction, hash: Hash, broadcast: bool) -> Result<(), BlockchainError> {
+    pub async fn add_tx_to_mempool_with_hash(&self, tx: Transaction, hash: Hash, broadcast: bool) -> Result<(), BlockchainError> {
         let storage = self.storage.read().await;
-        self.add_tx_to_mempool_with_storage_and_hash(&*storage, Arc::new(tx), hash, broadcast).await
+        self.add_tx_to_mempool_with_storage_and_hash(&storage, Arc::new(tx), hash, broadcast).await
     }
 
     // Add a tx to the mempool with the given hash, it will verify the TX and check that it is not already in mempool or in blockchain
     // and its validity (nonce, balance, etc...)
-    pub async fn add_tx_to_mempool_with_storage_and_hash<'a>(&'a self, storage: &S, tx: Arc<Transaction>, hash: Hash, broadcast: bool) -> Result<(), BlockchainError> {
+    pub async fn add_tx_to_mempool_with_storage_and_hash(&self, storage: &S, tx: Arc<Transaction>, hash: Hash, broadcast: bool) -> Result<(), BlockchainError>
+    {
         let tx_size = tx.size();
         if tx_size > MAX_TRANSACTION_SIZE {
             return Err(BlockchainError::TxTooBig(tx_size, MAX_TRANSACTION_SIZE))
@@ -1612,9 +1663,21 @@ impl<S: Storage> Blockchain<S> {
             }
         }
 
+        // Verify the reachability of the block
         if !self.verify_non_reachability(storage, block.get_tips()).await? {
             debug!("{} with hash {} has an invalid reachability", block, block_hash);
             return Err(BlockchainError::InvalidReachability)
+        }
+
+        if version >= BlockVersion::V2 {
+            // Verify that the tips are well sorted by cumulative difficulty
+            let sorted_tips = blockdag::sort_tips(storage, block.get_tips().iter().cloned()).await?;
+            for (expected, got) in sorted_tips.iter().zip(block.get_tips().iter()) {
+                if expected != got {
+                    debug!("Invalid tips order, expected {} but got {} for this block {}", expected, got, block_hash);
+                    return Err(BlockchainError::InvalidTipsOrder(block_hash, expected.clone(), got.clone()))
+                }
+            }
         }
 
         for hash in block.get_tips() {
@@ -1626,8 +1689,11 @@ impl<S: Storage> Blockchain<S> {
             }
 
             trace!("calculate distance from mainchain for tips: {}", hash);
-            if !self.verify_distance_from_mainchain(storage, hash, current_height).await? {
-                debug!("{} with hash {} have deviated too much (current height: {})", block, block_hash, current_height);
+
+            // We're processing the block tips, so we can't use the block height as it may not be in the chain yet
+            let height = block_height_by_tips.checked_sub(1).unwrap_or(0);
+            if !self.verify_distance_from_mainchain(storage, hash, height).await? {
+                error!("{} with hash {} have deviated too much (current height: {}, block height: {})", block, block_hash, current_height, block_height_by_tips);
                 return Err(BlockchainError::BlockDeviation)
             }
         }
@@ -1759,7 +1825,7 @@ impl<S: Storage> Blockchain<S> {
                 debug!("Computing cumulative difficulty for block {}", block_hash);
                 let (base, base_height) = self.find_common_base(storage, block.get_tips()).await?;
                 debug!("Common base found: {}, height: {}", base, base_height);
-                let (_, cumulative_difficulty) = self.find_tip_work_score::<S>(&storage, &block_hash, &base, base_height).await?;
+                let (_, cumulative_difficulty) = self.find_tip_work_score(storage, &block_hash, &base, base_height).await?;
                 cumulative_difficulty
             };
             storage.set_cumulative_difficulty_for_block_hash(&block_hash, cumulative_difficulty).await?;
@@ -2006,7 +2072,7 @@ impl<S: Storage> Blockchain<S> {
                 if should_track_events.contains(&NotifyEvent::BlockOrdered) {
                     let value = json!(BlockOrderedEvent {
                         block_hash: Cow::Borrowed(&hash),
-                        block_type: get_block_type_for_block(self, &storage, &hash).await.unwrap_or(BlockType::Normal),
+                        block_type: get_block_type_for_block(self, storage, &hash).await.unwrap_or(BlockType::Normal),
                         topoheight: highest_topo,
                     });
                     events.entry(NotifyEvent::BlockOrdered).or_insert_with(Vec::new).push(value);
@@ -2030,7 +2096,7 @@ impl<S: Storage> Blockchain<S> {
         let best_tip = blockdag::find_best_tip_by_cumulative_difficulty(storage, new_tips.iter()).await?.clone();
         for hash in new_tips {
             if best_tip != hash {
-                if !self.validate_tips::<S>(&storage, &best_tip, &hash).await? {
+                if !self.validate_tips(storage, &best_tip, &hash).await? {
                     warn!("Rusty TIP {} declared stale", hash);
                 } else {
                     debug!("Tip {} is valid, adding to final Tips list", hash);
@@ -2173,11 +2239,11 @@ impl<S: Storage> Blockchain<S> {
 
                 // Clone only if its necessary
                 if !orphan_event_tracked {
-                    if let Err(e) = self.add_tx_to_mempool_with_storage_and_hash(&storage, tx, tx_hash, false).await {
+                    if let Err(e) = self.add_tx_to_mempool_with_storage_and_hash(storage, tx, tx_hash, false).await {
                         warn!("Error while adding back orphaned tx: {}", e);
                     }
                 } else {
-                    if let Err(e) = self.add_tx_to_mempool_with_storage_and_hash(&storage, tx.clone(), tx_hash.clone(), false).await {
+                    if let Err(e) = self.add_tx_to_mempool_with_storage_and_hash(storage, tx.clone(), tx_hash.clone(), false).await {
                         warn!("Error while adding back orphaned tx: {}, broadcasting event", e);
                         // We couldn't add it back to mempool, let's notify this event
                         let data = RPCTransaction::from_tx(&tx, &tx_hash, storage.is_mainnet());
@@ -2478,6 +2544,8 @@ impl<S: Storage> Blockchain<S> {
             self.stable_height.store(stable_height, Ordering::SeqCst);
             self.stable_topoheight.store(stable_topoheight, Ordering::SeqCst);
         }
+
+        self.clear_caches().await;
 
         Ok(new_topoheight)
     }
