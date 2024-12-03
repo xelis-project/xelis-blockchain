@@ -1,7 +1,6 @@
 mod providers;
 mod sled;
 mod versioned_type;
-mod snapshot;
 
 pub use self::{
     sled::{SledStorage, StorageMode},

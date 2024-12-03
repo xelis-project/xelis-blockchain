@@ -1,3 +1,5 @@
+mod snapshot;
+
 use anyhow::Context;
 use async_trait::async_trait;
 use indexmap::IndexSet;
@@ -34,9 +36,10 @@ use lru::LruCache;
 use sled::{IVec, Tree};
 use log::{debug, trace, warn, info};
 
+use snapshot::Snapshot;
+
 use super::{
     providers::*,
-    snapshot::Snapshot,
     Storage,
     Tips
 };

@@ -61,11 +61,13 @@ pub struct BatchApply {
     trees: HashMap<IVec, Batch>
 }
 
-impl Snapshot {
-    pub fn new() -> Self {
+impl Default for Snapshot {
+    fn default() -> Self {
         Self { trees: HashMap::new() }
     }
+}
 
+impl Snapshot {
     // Contains a key in the snapshot
     pub fn contains_key(&self, tree: &Tree, key: &[u8]) -> bool {
         self.trees.get(&tree.name())
