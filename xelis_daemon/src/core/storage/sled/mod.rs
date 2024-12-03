@@ -263,49 +263,53 @@ impl SledStorage {
             storage.set_network(&network)?;
         }
 
+        storage.load_cache();
+
+        Ok(storage)
+    }
+
+    fn load_cache(&mut self) {
         // Load tips from disk if available
-        if let Ok(tips) = storage.load_from_disk::<Tips>(&storage.extra, TIPS, DiskContext::Tips) {
+        if let Ok(tips) = self.load_from_disk::<Tips>(&self.extra, TIPS, DiskContext::Tips) {
             debug!("Found tips: {}", tips.len());
-            storage.tips_cache = tips;
+            self.tips_cache = tips;
         }
 
         // Load the pruned topoheight from disk if available
-        if let Ok(pruned_topoheight) = storage.load_from_disk::<u64>(&storage.extra, PRUNED_TOPOHEIGHT, DiskContext::PrunedTopoHeight) {
+        if let Ok(pruned_topoheight) = self.load_from_disk::<u64>(&self.extra, PRUNED_TOPOHEIGHT, DiskContext::PrunedTopoHeight) {
             debug!("Found pruned topoheight: {}", pruned_topoheight);
-            storage.pruned_topoheight = Some(pruned_topoheight);
+            self.pruned_topoheight = Some(pruned_topoheight);
         }
 
         // Load the assets count from disk if available
-        if let Ok(assets_count) = storage.load_from_disk::<u64>(&storage.extra, ASSETS_COUNT, DiskContext::AssetsCount) {
+        if let Ok(assets_count) = self.load_from_disk::<u64>(&self.extra, ASSETS_COUNT, DiskContext::AssetsCount) {
             debug!("Found assets count: {}", assets_count);
-            storage.assets_count = assets_count;
+            self.assets_count = assets_count;
         }
 
         // Load the txs count from disk if available
-        if let Ok(txs_count) = storage.load_from_disk::<u64>(&storage.extra, TXS_COUNT, DiskContext::TxsCount) {
+        if let Ok(txs_count) = self.load_from_disk::<u64>(&self.extra, TXS_COUNT, DiskContext::TxsCount) {
             debug!("Found txs count: {}", txs_count);
-            storage.transactions_count = txs_count;
+            self.transactions_count = txs_count;
         }
 
         // Load the blocks count from disk if available
-        if let Ok(blocks_count) = storage.load_from_disk::<u64>(&storage.extra, BLOCKS_COUNT, DiskContext::BlocksCount) {
+        if let Ok(blocks_count) = self.load_from_disk::<u64>(&self.extra, BLOCKS_COUNT, DiskContext::BlocksCount) {
             debug!("Found blocks count: {}", blocks_count);
-            storage.blocks_count = blocks_count;
+            self.blocks_count = blocks_count;
         }
 
         // Load the accounts count from disk if available
-        if let Ok(accounts_count) = storage.load_from_disk::<u64>(&storage.extra, ACCOUNTS_COUNT, DiskContext::AccountsCount) {
+        if let Ok(accounts_count) = self.load_from_disk::<u64>(&self.extra, ACCOUNTS_COUNT, DiskContext::AccountsCount) {
             debug!("Found accounts count: {}", accounts_count);
-            storage.accounts_count = accounts_count;
+            self.accounts_count = accounts_count;
         }
 
         // Load the blocks execution count from disk if available
-        if let Ok(blocks_execution_count) = storage.load_from_disk::<u64>(&storage.extra, BLOCKS_EXECUTION_ORDER_COUNT, DiskContext::BlocksExecutionOrderCount) {
+        if let Ok(blocks_execution_count) = self.load_from_disk::<u64>(&self.extra, BLOCKS_EXECUTION_ORDER_COUNT, DiskContext::BlocksExecutionOrderCount) {
             debug!("Found blocks execution count: {}", blocks_execution_count);
-            storage.blocks_execution_count = blocks_execution_count;
+            self.blocks_execution_count = blocks_execution_count;
         }
-
-        Ok(storage)
     }
 
     // Load an optional value from the DB
@@ -606,11 +610,7 @@ impl Storage for SledStorage {
         }
 
         // also load the atomic counters from disk
-        self.assets_count = self.load_from_disk(&self.extra, ASSETS_COUNT, DiskContext::AssetsCount)?;
-        self.accounts_count = self.load_from_disk(&self.extra, ACCOUNTS_COUNT, DiskContext::AccountsCount)?;
-        self.transactions_count = self.load_from_disk(&self.extra, TXS_COUNT, DiskContext::TxsCount)?;
-        self.blocks_count = self.load_from_disk(&self.extra, BLOCKS_COUNT, DiskContext::BlocksCount)?;
-        self.blocks_execution_count = self.load_from_disk(&self.extra, BLOCKS_EXECUTION_ORDER_COUNT, DiskContext::BlocksExecutionOrderCount)?;
+        self.load_cache();
 
         Ok(())
     }
