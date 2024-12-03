@@ -1663,9 +1663,21 @@ impl<S: Storage> Blockchain<S> {
             }
         }
 
+        // Verify the reachability of the block
         if !self.verify_non_reachability(storage, block.get_tips()).await? {
             debug!("{} with hash {} has an invalid reachability", block, block_hash);
             return Err(BlockchainError::InvalidReachability)
+        }
+
+        if version >= BlockVersion::V2 {
+            // Verify that the tips are well sorted by cumulative difficulty
+            let sorted_tips = blockdag::sort_tips(storage, block.get_tips().iter().cloned()).await?;
+            for (expected, got) in sorted_tips.iter().zip(block.get_tips().iter()) {
+                if expected != got {
+                    debug!("Invalid tips order, expected {} but got {} for this block {}", expected, got, block_hash);
+                    return Err(BlockchainError::InvalidTipsOrder(block_hash, expected.clone(), got.clone()))
+                }
+            }
         }
 
         for hash in block.get_tips() {

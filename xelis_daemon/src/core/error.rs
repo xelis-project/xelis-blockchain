@@ -109,6 +109,8 @@ pub enum DiskContext {
 #[repr(usize)]
 #[derive(Error, Debug)]
 pub enum BlockchainError {
+    #[error("Invalid ip order for block {}, expected {}, got {}", _0, _1, _2)]
+    InvalidTipsOrder(Hash, Hash, Hash),
     #[error("commit point already started")]
     CommitPointAlreadyStarted,
     #[error("commit point not started")]
