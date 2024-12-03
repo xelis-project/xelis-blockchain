@@ -594,7 +594,12 @@ impl Storage for SledStorage {
             cache.clear();
         }
 
-        // TODO: also load the atomic counters from disk
+        // also load the atomic counters from disk
+        self.assets_count = self.load_from_disk(&self.extra, ASSETS_COUNT, DiskContext::AssetsCount)?;
+        self.accounts_count = self.load_from_disk(&self.extra, ACCOUNTS_COUNT, DiskContext::AccountsCount)?;
+        self.transactions_count = self.load_from_disk(&self.extra, TXS_COUNT, DiskContext::TxsCount)?;
+        self.blocks_count = self.load_from_disk(&self.extra, BLOCKS_COUNT, DiskContext::BlocksCount)?;
+        self.blocks_execution_count = self.load_from_disk(&self.extra, BLOCKS_EXECUTION_ORDER_COUNT, DiskContext::BlocksExecutionOrderCount)?;
 
         Ok(())
     }
