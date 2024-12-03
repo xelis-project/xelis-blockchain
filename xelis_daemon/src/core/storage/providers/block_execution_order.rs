@@ -1,5 +1,3 @@
-use std::sync::atomic::Ordering;
-
 use async_trait::async_trait;
 use indexmap::IndexSet;
 use xelis_common::{crypto::Hash, serializer::Serializer};
@@ -55,7 +53,8 @@ impl BlockExecutionOrderProvider for SledStorage {
     }
 
     async fn add_block_execution_to_order(&mut self, hash: &Hash) -> Result<(), BlockchainError> {
-        let position = self.blocks_execution_count.fetch_add(1, Ordering::SeqCst);
+        let position = self.blocks_execution_count;
+        self.blocks_execution_count += 1;
         Self::insert_into_disk(self.snapshot.as_mut(), &self.blocks_execution_order, hash.as_bytes(), &position.to_be_bytes())?;
         Self::insert_into_disk(self.snapshot.as_mut(), &self.extra, BLOCKS_EXECUTION_ORDER_COUNT, &position.to_be_bytes())?;
 
@@ -63,7 +62,7 @@ impl BlockExecutionOrderProvider for SledStorage {
     }
 
     async fn get_blocks_execution_count(&self) -> u64 {
-        self.blocks_execution_count.load(Ordering::SeqCst)
+        self.blocks_execution_count
     }
 
     async fn swap_blocks_executions_positions(&mut self, left: &Hash, right: &Hash) -> Result<(), BlockchainError> {

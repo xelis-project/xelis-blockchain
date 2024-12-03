@@ -25,10 +25,7 @@ use std::{
     hash::Hash as StdHash,
     num::NonZeroUsize,
     str::FromStr,
-    sync::{
-        atomic::{AtomicU64, Ordering},
-        Arc
-    }
+    sync::Arc
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
@@ -138,15 +135,15 @@ pub struct SledStorage {
 
     // Atomic counters
     // Count of assets
-    pub(super) assets_count: AtomicU64,
+    pub(super) assets_count: u64,
     // Count of accounts
-    pub(super) accounts_count: AtomicU64,
+    pub(super) accounts_count: u64,
     // Count of transactions
-    pub(super) transactions_count: AtomicU64,
+    pub(super) transactions_count: u64,
     // Count of blocks
-    pub(super) blocks_count: AtomicU64,
+    pub(super) blocks_count: u64,
     // Count of blocks added in chain
-    pub(super) blocks_execution_count: AtomicU64,
+    pub(super) blocks_execution_count: u64,
 
     // If we have a snapshot, we can use it to rollback
     pub(super) snapshot: Option<Snapshot>
@@ -246,11 +243,11 @@ impl SledStorage {
             assets_cache: init_cache!(cache_size),
             tips_cache: HashSet::new(),
             pruned_topoheight: None,
-            assets_count: AtomicU64::new(0),
-            accounts_count: AtomicU64::new(0),
-            transactions_count: AtomicU64::new(0),
-            blocks_count: AtomicU64::new(0),
-            blocks_execution_count: AtomicU64::new(0),
+            assets_count: 0,
+            accounts_count: 0,
+            transactions_count: 0,
+            blocks_count: 0,
+            blocks_execution_count: 0,
 
             snapshot: None
         };
@@ -281,31 +278,31 @@ impl SledStorage {
         // Load the assets count from disk if available
         if let Ok(assets_count) = storage.load_from_disk::<u64>(&storage.extra, ASSETS_COUNT, DiskContext::AssetsCount) {
             debug!("Found assets count: {}", assets_count);
-            storage.assets_count.store(assets_count, Ordering::SeqCst);
+            storage.assets_count = assets_count;
         }
 
         // Load the txs count from disk if available
         if let Ok(txs_count) = storage.load_from_disk::<u64>(&storage.extra, TXS_COUNT, DiskContext::TxsCount) {
             debug!("Found txs count: {}", txs_count);
-            storage.transactions_count.store(txs_count, Ordering::SeqCst);
+            storage.transactions_count = txs_count;
         }
 
         // Load the blocks count from disk if available
         if let Ok(blocks_count) = storage.load_from_disk::<u64>(&storage.extra, BLOCKS_COUNT, DiskContext::BlocksCount) {
             debug!("Found blocks count: {}", blocks_count);
-            storage.blocks_count.store(blocks_count, Ordering::SeqCst);
+            storage.blocks_count = blocks_count;
         }
 
         // Load the accounts count from disk if available
         if let Ok(accounts_count) = storage.load_from_disk::<u64>(&storage.extra, ACCOUNTS_COUNT, DiskContext::AccountsCount) {
             debug!("Found accounts count: {}", accounts_count);
-            storage.accounts_count.store(accounts_count, Ordering::SeqCst);
+            storage.accounts_count = accounts_count;
         }
 
         // Load the blocks execution count from disk if available
         if let Ok(blocks_execution_count) = storage.load_from_disk::<u64>(&storage.extra, BLOCKS_EXECUTION_ORDER_COUNT, DiskContext::BlocksExecutionOrderCount) {
             debug!("Found blocks execution count: {}", blocks_execution_count);
-            storage.blocks_execution_count.store(blocks_execution_count, Ordering::SeqCst);
+            storage.blocks_execution_count = blocks_execution_count;
         }
 
         Ok(storage)
@@ -525,7 +522,7 @@ impl SledStorage {
     // Update the assets count and store it on disk
     pub(super) fn store_assets_count(&mut self, count: u64) -> Result<(), BlockchainError> {
         // TODO: store it in a snapshot
-        self.assets_count.store(count, Ordering::SeqCst);
+        self.assets_count = count;
         Self::insert_into_disk(self.snapshot.as_mut(), &self.extra, ASSETS_COUNT, &count.to_be_bytes())?;
         Ok(())
     }

@@ -1,5 +1,4 @@
-use std::sync::{atomic::Ordering, Arc};
-
+use std::sync::Arc;
 use async_trait::async_trait;
 use log::{debug, trace};
 use xelis_common::{
@@ -38,7 +37,7 @@ pub trait BlockProvider: TransactionProvider + DifficultyProvider + BlocksAtHeig
 impl SledStorage {
     // Update the blocks count and store it on disk
     fn store_blocks_count(&mut self, count: u64) -> Result<(), BlockchainError> {
-        self.blocks_count.store(count, Ordering::SeqCst);
+        self.blocks_count = count;
         Self::insert_into_disk(self.snapshot.as_mut(), &self.extra, BLOCKS_COUNT, &count.to_be_bytes())?;
         Ok(())
     }
@@ -53,7 +52,7 @@ impl BlockProvider for SledStorage {
 
     async fn count_blocks(&self) -> Result<u64, BlockchainError> {
         trace!("count blocks");
-        Ok(self.blocks_count.load(Ordering::SeqCst))
+        Ok(self.blocks_count)
     }
 
     async fn has_block_with_hash(&self, hash: &Hash) -> Result<bool, BlockchainError> {

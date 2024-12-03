@@ -1,4 +1,4 @@
-use std::{collections::HashSet, sync::{atomic::Ordering, Arc}};
+use std::{collections::HashSet, sync::Arc};
 use async_trait::async_trait;
 use log::trace;
 use xelis_common::{
@@ -37,7 +37,7 @@ pub trait TransactionProvider {
 impl SledStorage {
     // Update the txs count and store it on disk
     pub(super) fn store_transactions_count(&mut self, count: u64) -> Result<(), BlockchainError> {
-        self.transactions_count.store(count, Ordering::SeqCst);
+        self.transactions_count = count;
         Self::insert_into_disk(self.snapshot.as_mut(), &self.extra, TXS_COUNT, &count.to_be_bytes())?;
         Ok(())
     }    
@@ -62,7 +62,7 @@ impl TransactionProvider for SledStorage {
 
     async fn count_transactions(&self) -> Result<u64, BlockchainError> {
         trace!("count transactions");
-        Ok(self.transactions_count.load(Ordering::SeqCst))
+        Ok(self.transactions_count)
     }
 
     async fn delete_transaction(&mut self, hash: &Hash) -> Result<Arc<Transaction>, BlockchainError> {

@@ -1,4 +1,3 @@
-use std::sync::atomic::Ordering;
 use async_trait::async_trait;
 use indexmap::IndexSet;
 use log::trace;
@@ -112,7 +111,7 @@ impl AssetProvider for SledStorage {
     // count assets in storage
     async fn count_assets(&self) -> Result<u64, BlockchainError> {
         trace!("count assets");
-        Ok(self.assets_count.load(Ordering::SeqCst))
+        Ok(self.assets_count)
     }
 
     async fn add_asset(&mut self, asset: &Hash, data: AssetData) -> Result<(), BlockchainError> {

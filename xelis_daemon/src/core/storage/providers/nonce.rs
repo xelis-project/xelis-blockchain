@@ -1,5 +1,3 @@
-use std::sync::atomic::Ordering;
-
 use async_trait::async_trait;
 use log::{trace, error};
 use xelis_common::{
@@ -60,7 +58,7 @@ pub trait NonceProvider: BalanceProvider {
 impl SledStorage {
     // Update the accounts count and store it on disk
     pub fn store_accounts_count(&mut self, count: u64) -> Result<(), BlockchainError> {
-        self.accounts_count.store(count, Ordering::SeqCst);
+        self.accounts_count = count;
         Self::insert_into_disk(self.snapshot.as_mut(), &self.extra, ACCOUNTS_COUNT, &count.to_be_bytes())?;
         Ok(())
     }
@@ -80,7 +78,7 @@ impl SledStorage {
 impl NonceProvider for SledStorage {
     async fn count_accounts(&self) -> Result<u64, BlockchainError> {
         trace!("count accounts");
-        Ok(self.accounts_count.load(Ordering::SeqCst))
+        Ok(self.accounts_count)
     }
 
     async fn set_last_nonce_to(&mut self, key: &PublicKey, topoheight: TopoHeight, version: &VersionedNonce) -> Result<(), BlockchainError> {
