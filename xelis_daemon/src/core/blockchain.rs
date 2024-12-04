@@ -2380,7 +2380,8 @@ impl<S: Storage> Blockchain<S> {
                 for tx in block.get_txs_hashes() {
                     // Check that we don't have it yet
                     if !hashes.contains(tx) {
-                        if !executed_only || (executed_only && provider.is_tx_executed_in_a_block(tx)?) {
+                        // Then check that it's executed in this block
+                        if !executed_only || (executed_only && provider.is_tx_executed_in_block(tx, &hash)?) {
                             // add it to the list
                             hashes.insert(tx.clone());
                         }
