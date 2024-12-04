@@ -91,18 +91,12 @@ impl<T: Serializer> Versioned<T> {
 impl<T: Serializer> Serializer for Versioned<T> {
     fn write(&self, writer: &mut Writer) {
         self.data.write(writer);
-        if let Some(topo) = &self.previous_topoheight {
-            topo.write(writer);
-        }
+        self.previous_topoheight.write(writer);
     }
 
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
         let data = T::read(reader)?;
-        let previous_topoheight = if reader.size() == 0 {
-            None
-        } else {
-            Some(Reader::read(reader)?)
-        };
+        let previous_topoheight = Option::read(reader)?;
 
         Ok(Self {
             data,
