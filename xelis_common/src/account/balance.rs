@@ -281,33 +281,15 @@ impl Serializer for VersionedBalance {
     fn write(&self, writer: &mut Writer) {
         self.final_balance.write(writer);
         self.balance_type.write(writer);
-        if let Some(topo) = &self.previous_topoheight {
-            topo.write(writer);
-        }
-        if let Some(output) = &self.output_balance {
-            output.write(writer);
-        }
+        self.previous_topoheight.write(writer);
+        self.output_balance.write(writer);
     }
 
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
         let final_balance = CiphertextCache::read(reader)?;
         let balance_type = BalanceType::read(reader)?;
-        let (previous_topoheight, output_balance) = if reader.size() == 0 {
-            (None, None)
-        } else {
-            // Compressed ciphertext is 32 * 2 bytes, + 8 for topoheight
-            let previous_topo = if reader.size() == 8 || (balance_type == BalanceType::Both && reader.size() == 72) {
-                Some(TopoHeight::read(reader)?)
-            } else {
-                None
-            };
-
-            if balance_type == BalanceType::Both {
-                (previous_topo, Some(CiphertextCache::read(reader)?))
-            } else {
-                (previous_topo, None)
-            }
-        };
+        let previous_topoheight = Option::read(reader)?;
+        let output_balance = Option::read(reader)?;
 
         Ok(Self {
             output_balance,
