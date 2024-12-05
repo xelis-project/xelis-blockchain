@@ -1766,7 +1766,7 @@ impl<S: Storage> Blockchain<S> {
                 }
 
                 debug!("Verifying TX {}", tx_hash);
-                // check that the TX included is not executed in stable height or in block TIPS
+                // check that the TX included is not executed in stable height
                 let is_executed = chain_state.get_storage().is_tx_executed_in_a_block(hash)?;
                 if is_executed {
                     let block_executor = chain_state.get_storage().get_block_executor_for_tx(hash)?;
@@ -1779,28 +1779,39 @@ impl<S: Storage> Blockchain<S> {
                     }
                 }
 
-                // now we should check that the TX was not executed in our TIP branch
-                // because that mean the miner was aware of the TX execution and still include it
-                if all_parents_txs.is_none() && (is_executed || is_v2_enabled) {
-                    debug!("Loading all TXs until height {} for block {} (executed only: {})", stable_height, block_hash, !is_v2_enabled);
-                    all_parents_txs = Some(self.get_all_txs_until_height(chain_state.get_storage(), stable_height, block.get_tips().iter().cloned(), !is_v2_enabled).await?);
-                }
+                // If the TX is already executed,
+                // we should check that the TX is not in block tips
+                // For v2 and above, all TXs that are presents in block TIPs are rejected
+                if is_v2_enabled || (is_executed && !is_v2_enabled) {
+                    // now we should check that the TX was not executed in our TIP branch
+                    // because that mean the miner was aware of the TX execution and still include it
+                    if all_parents_txs.is_none() {
+                        debug!("Loading all TXs until height {} for block {} (executed only: {})", stable_height, block_hash, !is_v2_enabled);
+                        let txs = self.get_all_txs_until_height(
+                            chain_state.get_storage(),
+                            stable_height,
+                            block.get_tips().iter().cloned(),
+                            !is_v2_enabled
+                        ).await?;
+                        all_parents_txs = Some(txs);
+                    }
 
-                // if its the case, we should reject the block
-                if let Some(txs) = all_parents_txs.as_ref().filter(|_| is_v2_enabled || is_executed) {
-                    // miner knows this tx was already executed because its present in block tips
-                    // reject the whole block
-                    if txs.contains(&tx_hash) {
-                        debug!("Malicious Block {} formed, contains a dead tx {}, is executed: {}", block_hash, tx_hash, is_executed);
-                        return Err(BlockchainError::DeadTxFromTips(block_hash, tx_hash))
-                    } else if is_executed {
-                        // otherwise, all looks good but because the TX was executed in another branch, we skip verification
-                        // DAG will choose which branch will execute the TX
-                        debug!("TX {} was executed in another branch, skipping verification", tx_hash);
-
-                        // because TX was already validated & executed and is not in block tips
-                        // we can safely skip the verification of this TX
-                        continue;
+                    // if its the case, we should reject the block
+                    if let Some(txs) = all_parents_txs.as_ref() {
+                        // miner knows this tx was already executed because its present in block tips
+                        // reject the whole block
+                        if txs.contains(&tx_hash) {
+                            debug!("Malicious Block {} formed, contains a dead tx {}, is executed: {}", block_hash, tx_hash, is_executed);
+                            return Err(BlockchainError::DeadTxFromTips(block_hash, tx_hash))
+                        } else if is_executed {
+                            // otherwise, all looks good but because the TX was executed in another branch, we skip verification
+                            // DAG will choose which branch will execute the TX
+                            debug!("TX {} was executed in another branch, skipping verification", tx_hash);
+    
+                            // because TX was already validated & executed and is not in block tips
+                            // we can safely skip the verification of this TX
+                            continue;
+                        }
                     }
                 }
 
@@ -2393,7 +2404,7 @@ impl<S: Storage> Blockchain<S> {
             let block = provider.get_block_header_by_hash(&hash).await?;
 
             // check that the block height is higher than the height passed in param
-            if until_height < block.get_height() {
+            if block.get_height() >= until_height {
                 // add all txs from block
                 for tx in block.get_txs_hashes() {
                     // Check that we don't have it yet
