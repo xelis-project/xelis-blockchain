@@ -240,7 +240,13 @@ pub struct GetInfoResult {
     pub pruned_topoheight: Option<TopoHeight>,
     pub top_block_hash: Hash,
     // Current XELIS circulating supply
+    // This is calculated by doing
+    // emitted_supply - burned_supply
     pub circulating_supply: u64,
+    // Burned XELIS supply
+    pub burned_supply: u64,
+    // Emitted XELIS supply
+    pub emitted_supply: u64,
     // Maximum supply of XELIS
     pub maximum_supply: u64,
     // Current difficulty at tips
