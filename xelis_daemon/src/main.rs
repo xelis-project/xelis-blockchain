@@ -911,6 +911,7 @@ async fn status<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Res
     let top_block_hash = blockchain.get_top_block_hash_for_storage(&storage).await.context("Error while retrieving top block hash")?;
     let avg_block_time = blockchain.get_average_block_time::<S>(&storage).await.context("Error while retrieving average block time")?;
     let supply = storage.get_supply_at_topo_height(topoheight).await.context("Error while retrieving supply")?;
+    let burned_supply = storage.get_burned_supply_at_topo_height(topoheight).await.context("Error while retrieving burned supply")?;
     let accounts_count = storage.count_accounts().await.context("Error while counting accounts")?;
     let transactions_count = storage.count_transactions().await.context("Error while counting transactions")?;
     let blocks_count = storage.count_blocks().await.context("Error while counting blocks")?;
@@ -928,6 +929,7 @@ async fn status<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Res
     manager.message(format!("Average Block Time: {:.2}s", avg_block_time as f64 / MILLIS_PER_SECOND as f64));
     manager.message(format!("Target Block Time: {:.2}s", BLOCK_TIME_MILLIS as f64 / MILLIS_PER_SECOND as f64));
     manager.message(format!("Current Supply: {} XELIS", format_xelis(supply)));
+    manager.message(format!("Burned Supply: {} XELIS", format_xelis(burned_supply)));
     manager.message(format!("Current Block Reward: {} XELIS", format_xelis(get_block_reward(supply))));
     manager.message(format!("Stored accounts/transactions/blocks/assets: {}/{}/{}/{}", accounts_count, transactions_count, blocks_count, assets));
     manager.message(format!("Block Version: {}", version));

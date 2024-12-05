@@ -202,6 +202,7 @@ impl TransferPayload {
         &self.ct_validity_proof
     }
 
+    // Get the ciphertext based on the role in the transaction
     pub fn get_ciphertext(&self, role: Role) -> CompressedCiphertext {
         let handle = match role {
             Role::Receiver => self.receiver_handle.clone(),
@@ -306,6 +307,18 @@ impl Transaction {
         &self.reference
     }
 
+    // Get the burned amount
+    // This will returns the burned amount by a Burn payload
+    // Or the % of execution fees to burn due to a Smart Contracts call
+    // only if the asset is XELIS
+    pub fn get_burned_amount(&self, asset: &Hash) -> Option<u64> {
+        match &self.data {
+            TransactionType::Burn(payload) if payload.asset == *asset => Some(payload.amount),
+            _ => None
+        }
+    }
+
+    // Consume the transaction by returning the source public key and the transaction type
     pub fn consume(self) -> (CompressedPublicKey, TransactionType) {
         (self.source, self.data)
     }

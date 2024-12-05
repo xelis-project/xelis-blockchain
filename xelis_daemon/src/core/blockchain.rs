@@ -602,6 +602,11 @@ impl<S: Storage> Blockchain<S> {
         self.storage.read().await.get_supply_at_topo_height(self.get_topo_height()).await
     }
 
+    // Get the current burned supply of XELIS at current topoheight
+    pub async fn get_burned_supply(&self) -> Result<u64, BlockchainError> {
+        self.storage.read().await.get_burned_supply_at_topo_height(self.get_topo_height()).await
+    }
+
     // Get the count of transactions available in the mempool
     pub async fn get_mempool_size(&self) -> usize {
         self.mempool.read().await.size()
@@ -1955,6 +1960,11 @@ impl<S: Storage> Blockchain<S> {
                 } else {
                     storage.get_supply_at_topo_height(highest_topo - 1).await?
                 };
+                let past_burned_supply = if highest_topo == 0 {
+                    0
+                } else {
+                    storage.get_burned_supply_at_topo_height(highest_topo - 1).await?
+                };
 
                 // Block for this hash
                 let block = storage.get_block_by_hash(&hash).await?;
@@ -1986,7 +1996,6 @@ impl<S: Storage> Blockchain<S> {
                 }
 
                 storage.set_block_reward_at_topo_height(highest_topo, block_reward)?;
-                
                 let supply = past_supply + block_reward;
                 trace!("set block supply to {} at {}", supply, highest_topo);
                 storage.set_supply_at_topo_height(highest_topo, supply)?;
@@ -1997,6 +2006,7 @@ impl<S: Storage> Blockchain<S> {
                 trace!("building chain state to execute TXs in block {}", block_hash);
                 let mut chain_state = ApplicableChainState::new(storage, base_topo_height, highest_topo, version);
 
+                let mut burned_supply = past_burned_supply;
                 // compute rewards & execute txs
                 for (tx, tx_hash) in block.get_transactions().iter().zip(block.get_txs_hashes()) { // execute all txs
                     // Link the transaction hash to this block
@@ -2051,8 +2061,16 @@ impl<S: Storage> Blockchain<S> {
 
                         // Increase total tx fees for miner
                         total_fees += tx.get_fee();
+                        // Increase burned supply
+                        if let Some(burn) = tx.get_burned_amount(&XELIS_ASSET) {
+                            burned_supply += burn;
+                        }
                     }
                 }
+
+                trace!("set burned supply to {} at {}", burned_supply, highest_topo);
+                chain_state.get_mut_storage()
+                    .set_burned_supply_at_topo_height(highest_topo, burned_supply)?;
 
                 let dev_fee_percentage = get_block_dev_fee(block.get_height());
                 // Dev fee are only applied on block reward
