@@ -244,8 +244,10 @@ pub struct GetInfoResult {
     // emitted_supply - burned_supply
     pub circulating_supply: u64,
     // Burned XELIS supply
+    #[serde(default)]
     pub burned_supply: u64,
     // Emitted XELIS supply
+    #[serde(default)]
     pub emitted_supply: u64,
     // Maximum supply of XELIS
     pub maximum_supply: u64,
