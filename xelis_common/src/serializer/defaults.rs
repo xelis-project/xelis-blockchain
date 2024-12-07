@@ -534,3 +534,17 @@ impl<K: Serializer + std::hash::Hash + Eq, V: Serializer> Serializer for IndexMa
         size
     }
 }
+
+impl<T: Serializer> Serializer for Box<T> {
+    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
+        Ok(Box::new(T::read(reader)?))
+    }
+
+    fn write(&self, writer: &mut Writer) {
+        self.as_ref().write(writer);
+    }
+
+    fn size(&self) -> usize {
+        self.as_ref().size()
+    }
+}

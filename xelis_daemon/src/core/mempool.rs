@@ -24,7 +24,7 @@ use xelis_common::{
     network::Network,
     serializer::Serializer,
     time::{get_current_time_in_seconds, TimestampSeconds},
-    transaction::{Transaction, MultiSigPayload}
+    transaction::{Transaction, multisig::MultiSigPayload}
 };
 
 // Wrap a TX with its hash and size in bytes for faster access

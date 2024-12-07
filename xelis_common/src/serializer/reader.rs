@@ -18,7 +18,7 @@ pub enum ReaderError {
     #[error(transparent)]
     TryFromSliceError(#[from] TryFromSliceError),
     #[error(transparent)]
-    Any(anyhow::Error)
+    Any(#[from] anyhow::Error)
 }
 
 // Reader help us to read safely from bytes

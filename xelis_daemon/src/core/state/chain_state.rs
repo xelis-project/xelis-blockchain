@@ -24,7 +24,7 @@ use xelis_common::{
         verify::BlockchainVerificationState,
         Reference,
         Transaction,
-        MultiSigPayload
+        multisig::MultiSigPayload
     },
     utils::format_xelis
 };

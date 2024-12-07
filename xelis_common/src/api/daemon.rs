@@ -424,7 +424,11 @@ pub enum AccountHistoryType {
     MultiSig {
         participants: Vec<Address>,
         threshold: u8,
-    }
+    },
+    InvokeContract {
+        contract: Hash,
+        chunk_id: u16,
+    },
 }
 
 #[derive(Serialize, Deserialize)]

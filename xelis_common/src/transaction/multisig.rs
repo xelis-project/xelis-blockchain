@@ -4,9 +4,25 @@ use indexmap::IndexSet;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    crypto::Signature,
+    crypto::{elgamal::CompressedPublicKey, Signature},
     serializer::{Reader, ReaderError, Serializer, Writer}
 };
+
+// MultiSigPayload is a public payload allowing to setup a multi signature account
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct MultiSigPayload {
+    // The threshold is the minimum number of signatures required to validate a transaction
+    pub threshold: u8,
+    // The participants are the public keys that can sign the transaction
+    pub participants: IndexSet<CompressedPublicKey>,
+}
+
+impl MultiSigPayload {
+    // Is the transaction a delete multisig transaction
+    pub fn is_delete(&self) -> bool {
+        self.threshold == 0 && self.participants.is_empty()
+    }
+}
 
 // SignatureId is a structure that holds the signature and the id of the signer
 #[derive(Serialize, Deserialize, Debug, Clone)]

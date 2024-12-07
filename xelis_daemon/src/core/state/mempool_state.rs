@@ -10,7 +10,7 @@ use xelis_common::{
     },
     transaction::{
         verify::BlockchainVerificationState,
-        MultiSigPayload,
+        multisig::MultiSigPayload,
         Reference,
         Transaction
     }

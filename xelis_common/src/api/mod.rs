@@ -18,7 +18,7 @@ use crate::{
     serializer::Serializer,
     transaction::{
         extra_data::UnknownExtraDataFormat,
-        multisig::MultiSig,
+        multisig::{MultiSig, MultiSigPayload},
         BurnPayload,
         Reference,
         SourceCommitment,
@@ -26,7 +26,6 @@ use crate::{
         TransactionType,
         TransferPayload,
         TxVersion,
-        MultiSigPayload,
     },
     account::Nonce,
 };
@@ -103,7 +102,8 @@ impl<'a> RPCTransactionType<'a> {
                 Self::Transfers(rpc_transfers)
             },
             TransactionType::Burn(burn) => Self::Burn(Cow::Borrowed(burn)),
-            TransactionType::MultiSig(payload) => Self::MultiSig(Cow::Borrowed(payload))
+            TransactionType::MultiSig(payload) => Self::MultiSig(Cow::Borrowed(payload)),
+            TransactionType::InvokeContract(_) => todo!(),
         }
     }
 }

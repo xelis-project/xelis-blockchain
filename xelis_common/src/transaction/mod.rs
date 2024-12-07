@@ -15,8 +15,9 @@ use crate::{
     serializer::{Reader, ReaderError, Serializer, Writer}
 };
 use bulletproofs::RangeProof;
+use contract::InvokeContractPayload;
 use indexmap::IndexSet;
-use multisig::MultiSig;
+use multisig::{MultiSig, MultiSigPayload};
 use serde::{Deserialize, Serialize};
 use self::extra_data::UnknownExtraDataFormat;
 
@@ -24,6 +25,7 @@ pub mod builder;
 pub mod verify;
 pub mod extra_data;
 pub mod multisig;
+pub mod contract;
 mod reference;
 mod version;
 
@@ -39,6 +41,8 @@ pub const EXTRA_DATA_LIMIT_SIZE: usize = 1024;
 pub const EXTRA_DATA_LIMIT_SUM_SIZE: usize = EXTRA_DATA_LIMIT_SIZE * 32;
 // Maximum number of transfers per transaction
 pub const MAX_TRANSFER_COUNT: usize = 255;
+// Maximum number of deposits per Invoke Call
+pub const MAX_DEPOSIT_PER_INVOKE_CALL: usize = 255;
 // Maximum number of participants in a multi signature account
 pub const MAX_MULTISIG_PARTICIPANTS: usize = 255;
 
@@ -101,22 +105,6 @@ pub struct BurnPayload {
     pub amount: u64
 }
 
-// MultiSigPayload is a public payload allowing to setup a multi signature account
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct MultiSigPayload {
-    // The threshold is the minimum number of signatures required to validate a transaction
-    pub threshold: u8,
-    // The participants are the public keys that can sign the transaction
-    pub participants: IndexSet<CompressedPublicKey>,
-}
-
-impl MultiSigPayload {
-    // Is the transaction a delete multisig transaction
-    pub fn is_delete(&self) -> bool {
-        self.threshold == 0 && self.participants.is_empty()
-    }
-}
-
 // this enum represent all types of transaction available on XELIS Network
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "snake_case")]
@@ -124,6 +112,7 @@ pub enum TransactionType {
     Transfers(Vec<TransferPayload>),
     Burn(BurnPayload),
     MultiSig(MultiSigPayload),
+    InvokeContract(InvokeContractPayload),
 }
 
 // Transaction to be sent over the network
@@ -430,6 +419,10 @@ impl Serializer for TransactionType {
             TransactionType::MultiSig(payload) => {
                 writer.write_u8(2);
                 payload.write(writer);
+            },
+            TransactionType::InvokeContract(payload) => {
+                writer.write_u8(3);
+                payload.write(writer);
             }
         };
     }
@@ -463,13 +456,11 @@ impl Serializer for TransactionType {
     }
 
     fn size(&self) -> usize {
-        match self {
-            TransactionType::Burn(payload) => {
-                1 + payload.size()
-            },
+        1 + match self {
+            TransactionType::Burn(payload) => payload.size(),
             TransactionType::Transfers(txs) => {
                 // 1 byte for variant, 1 byte for count of transfers
-                let mut size = 1 + 1;
+                let mut size = 1;
                 for tx in txs {
                     size += tx.size();
                 }
@@ -477,8 +468,9 @@ impl Serializer for TransactionType {
             },
             TransactionType::MultiSig(payload) => {
                 // 1 byte for variant, 1 byte for threshold, 1 byte for count of participants
-                1 + 1 + 1 + payload.participants.iter().map(|p| p.size()).sum::<usize>()
-            }
+                1 + 1 + payload.participants.iter().map(|p| p.size()).sum::<usize>()
+            },
+            TransactionType::InvokeContract(payload) => payload.size()
         }
     }
 }

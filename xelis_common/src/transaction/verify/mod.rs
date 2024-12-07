@@ -10,8 +10,9 @@ use curve25519_dalek::{
 use log::{debug, trace};
 use merlin::Transcript;
 use crate::{
-    config::XELIS_ASSET,
     account::Nonce,
+    block::BlockVersion,
+    config::XELIS_ASSET,
     crypto::{
         elgamal::{
             Ciphertext,
@@ -37,11 +38,13 @@ use crate::{
         TxVersion,
         EXTRA_DATA_LIMIT_SIZE,
         EXTRA_DATA_LIMIT_SUM_SIZE,
+        MAX_MULTISIG_PARTICIPANTS,
         MAX_TRANSFER_COUNT,
-        MAX_MULTISIG_PARTICIPANTS
+        MAX_DEPOSIT_PER_INVOKE_CALL
     }
 };
 use super::{
+    contract::ContractDeposit,
     Role,
     Transaction,
     TransactionType,
@@ -133,7 +136,7 @@ impl Transaction {
         &self,
         asset: &Hash,
         decompressed_transfers: &[DecompressedTransferCt],
-    ) -> Ciphertext {
+    ) -> Result<Ciphertext, DecompressionError> {
         let mut output = Ciphertext::zero();
 
         if *asset == XELIS_ASSET {
@@ -154,10 +157,22 @@ impl Transaction {
                     output += Scalar::from(payload.amount)
                 }
             },
-            TransactionType::MultiSig(_) => {}
+            TransactionType::MultiSig(_) => {},
+            TransactionType::InvokeContract(payload) => {
+                if let Some(deposit) = payload.assets.get(asset) {
+                    match deposit {
+                        ContractDeposit::Public(amount) => {
+                            output += Scalar::from(*amount);
+                        },
+                        ContractDeposit::Private(ct) => {
+                            output += ct.decompress()?;
+                        }
+                    }
+                }
+            }
         }
 
-        output
+        Ok(output)
     }
 
     /// Get the new output ciphertext for the sender
@@ -173,7 +188,7 @@ impl Transaction {
         };
 
         for commitment in self.source_commitments.iter() {
-            let ciphertext = self.get_sender_output_ct(&commitment.asset, &decompressed_transfers);
+            let ciphertext = self.get_sender_output_ct(&commitment.asset, &decompressed_transfers)?;
 
             balances.push((&commitment.asset, ciphertext));
         }
@@ -230,6 +245,10 @@ impl Transaction {
                 .all(|transfer| has_commitment_for_asset(&transfer.asset)),
             TransactionType::Burn(payload) => has_commitment_for_asset(&payload.asset),
             TransactionType::MultiSig(_) => true,
+            TransactionType::InvokeContract(payload) => payload
+                .assets
+                .keys()
+                .all(|asset| has_commitment_for_asset(asset)),
         }
     }
 
@@ -275,7 +294,7 @@ impl Transaction {
                     debug!("incorrect transfers size: {}", transfers.len());
                     return Err(VerificationError::TransferCount);
                 }
-    
+
                 let mut extra_data_size = 0;
                 // Prevent sending to ourself
                 for transfer in transfers.iter() {
@@ -297,7 +316,7 @@ impl Transaction {
                 if extra_data_size > EXTRA_DATA_LIMIT_SUM_SIZE {
                     return Err(VerificationError::TransactionExtraDataSize);
                 }
-    
+
                 transfers_decompressed = transfers
                     .iter()
                     .map(DecompressedTransferCt::decompress)
@@ -308,6 +327,10 @@ impl Transaction {
                 let fee = self.fee;
                 let amount = payload.amount;
 
+                if amount == 0 {
+                    return Err(VerificationError::InvalidFormat);
+                }
+
                 let total = fee.checked_add(amount)
                     .ok_or(VerificationError::InvalidFormat)?;
 
@@ -315,7 +338,36 @@ impl Transaction {
                     return Err(VerificationError::InvalidFormat);
                 }
             },
-            _ => {},
+            TransactionType::MultiSig(payload) => {
+                if payload.participants.len() > MAX_MULTISIG_PARTICIPANTS {
+                    return Err(VerificationError::MultiSigParticipants);
+                }
+
+                // Threshold should be less than or equal to the number of participants
+                if payload.threshold as usize > payload.participants.len() {
+                    return Err(VerificationError::MultiSigThreshold);
+                }
+
+                // If the threshold is set to 0, while we have participants, its invalid
+                // Threshold should be always > 0
+                if payload.threshold == 0 && !payload.participants.is_empty() {
+                    return Err(VerificationError::MultiSigThreshold);
+                }
+
+                let is_reset = payload.threshold == 0 && payload.participants.is_empty();
+                // If the multisig is reset, we need to check if it was already configured
+                if is_reset && state.get_multisig_state(&self.source).await.map_err(VerificationError::State)?.is_none() {
+                    return Err(VerificationError::MultiSigNotConfigured);
+                }
+            },
+            TransactionType::InvokeContract(payload) => {
+                if payload.assets.len() > MAX_DEPOSIT_PER_INVOKE_CALL {
+                    return Err(VerificationError::TransferCount);
+                }
+
+                // TODO verify the contract hash
+                // TODO verify the parameters
+            }
         };
 
         let new_source_commitments_decompressed = self
@@ -385,7 +437,8 @@ impl Transaction {
             .zip(&new_source_commitments_decompressed)
         {
             // Ciphertext containing all the funds spent for this commitment
-            let output = self.get_sender_output_ct(&commitment.asset, &transfers_decompressed);
+            let output = self.get_sender_output_ct(&commitment.asset, &transfers_decompressed)
+                .map_err(ProofVerificationError::from)?;
 
             // Retrieve the balance of the sender
             let source_verification_ciphertext = state
@@ -471,41 +524,13 @@ impl Transaction {
                 }
             },
             TransactionType::Burn(payload) => {
-                if payload.amount == 0 {
-                    return Err(VerificationError::InvalidFormat);
+                if state.get_block_version() >= BlockVersion::V2 {
+                    transcript.burn_proof_domain_separator();
+                    transcript.append_hash(b"burn_asset", &payload.asset);
+                    transcript.append_u64(b"burn_amount", payload.amount);
                 }
-
-                let current_balance = state
-                    .get_receiver_balance(
-                        &self.source,
-                        &payload.asset
-                    ).await
-                    .map_err(VerificationError::State)?;
-
-                *current_balance += Scalar::from(payload.amount);
             },
             TransactionType::MultiSig(payload) => {
-                if payload.participants.len() > MAX_MULTISIG_PARTICIPANTS {
-                    return Err(VerificationError::MultiSigParticipants);
-                }
-
-                // Threshold should be less than or equal to the number of participants
-                if payload.threshold as usize > payload.participants.len() {
-                    return Err(VerificationError::MultiSigThreshold);
-                }
-
-                // If the threshold is set to 0, while we have participants, its invalid
-                // Threshold should be always > 0
-                if payload.threshold == 0 && !payload.participants.is_empty() {
-                    return Err(VerificationError::MultiSigThreshold);
-                }
-
-                let is_reset = payload.threshold == 0 && payload.participants.is_empty();
-                // If the multisig is reset, we need to check if it was already configured
-                if is_reset && state.get_multisig_state(&self.source).await.map_err(VerificationError::State)?.is_none() {
-                    return Err(VerificationError::MultiSigNotConfigured);
-                }
-
                 transcript.multisig_proof_domain_separator();
                 transcript.append_u64(b"multisig_threshold", payload.threshold as u64);
                 for key in &payload.participants {
@@ -515,6 +540,25 @@ impl Transaction {
                 // Setup the multisig
                 state.set_multisig_state(&self.source, payload).await
                     .map_err(VerificationError::State)?;
+            },
+            TransactionType::InvokeContract(payload) => {
+                transcript.invoke_contract_proof_domain_separator();
+                transcript.append_hash(b"contract_hash", &payload.contract);
+                for (asset, deposit) in &payload.assets {
+                    transcript.append_hash(b"deposit_asset", asset);
+                    match deposit {
+                        ContractDeposit::Public(amount) => {
+                            transcript.append_u64(b"deposit_plain", *amount);
+                        },
+                        ContractDeposit::Private(ct) => {
+                            transcript.append_ciphertext(b"deposit_ct", ct);
+                        }
+                    }
+                }
+
+                // for param in &payload.parameters {
+                //     transcript.append_hash(b"contract_invoke", param);
+                // }
             }
         }
 
@@ -637,7 +681,8 @@ impl Transaction {
                     &self.reference,
                 ).await.map_err(VerificationError::State)?;
 
-            let output = self.get_sender_output_ct(asset, &transfers_decompressed);
+            let output = self.get_sender_output_ct(asset, &transfers_decompressed)
+                .map_err(ProofVerificationError::from)?;
 
             // Compute the new final balance for account
             *current_bal_sender -= &output;
@@ -664,7 +709,7 @@ impl Transaction {
                         .get_ciphertext(Role::Receiver)
                         .decompress()
                         .map_err(ProofVerificationError::from)?;
-    
+
                     *current_bal += receiver_ct;
                 }
             },
@@ -672,6 +717,9 @@ impl Transaction {
             TransactionType::MultiSig(payload) => {
                 state.set_multisig_state(&self.source, payload).await.map_err(VerificationError::State)?;
             },
+            TransactionType::InvokeContract(_) => {
+                todo!("apply invoke contract");
+            }
         }
     
         Ok(())
@@ -719,7 +767,8 @@ impl Transaction {
             .zip(&new_source_commitments_decompressed)
         {
             // Ciphertext containing all the funds spent for this commitment
-            let output = self.get_sender_output_ct(&commitment.asset, &transfers_decompressed);
+            let output = self.get_sender_output_ct(&commitment.asset, &transfers_decompressed)
+                .map_err(ProofVerificationError::from)?;
 
             // Retrieve the balance of the sender
             let mut source_verification_ciphertext = state
@@ -793,6 +842,9 @@ impl Transaction {
             TransactionType::MultiSig(payload) => {
                 state.set_multisig_state(&self.source, payload).await.map_err(VerificationError::State)?;
             },
+            TransactionType::InvokeContract(_) => {
+                todo!("apply invoke contract");
+            }
         }
 
         Ok(())

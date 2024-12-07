@@ -1172,6 +1172,19 @@ async fn get_account_history<S: Storage>(context: &Context, body: Value) -> Resu
                             block_timestamp: block_header.get_timestamp()
                         });
                     }
+                },
+                TransactionType::InvokeContract(payload) => {
+                    if is_sender {
+                        history.push(AccountHistoryEntry {
+                            topoheight: topo,
+                            hash: tx_hash.clone(),
+                            history_type: AccountHistoryType::InvokeContract {
+                                contract: payload.contract.clone(),
+                                chunk_id: payload.chunk_id,
+                            },
+                            block_timestamp: block_header.get_timestamp()
+                        });
+                    }
                 }
             }
         }
