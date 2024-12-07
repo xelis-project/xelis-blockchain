@@ -1,7 +1,9 @@
+mod const_reader;
+
 use anyhow::Context;
-use indexmap::{IndexMap, IndexSet};
+use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
-use xelis_vm::{Constant, EnumType, EnumValueType, StructType, TypeId, Value, U256};
+use xelis_vm::{Constant, Value, U256};
 
 use crate::{
     crypto::{elgamal::CompressedCiphertext, Hash},
@@ -168,61 +170,10 @@ impl Serializer for Value {
     }
 }
 
-fn read_constant_with(reader: &mut Reader, enums: &IndexSet<EnumType>, structures: &IndexSet<StructType>) -> Result<Constant, ReaderError> {
-    Ok(match reader.read_u8()? {
-        0 => Constant::Default(Value::read(reader)?),
-        1 => {
-            let len = reader.read_u8()? as usize;
-            let mut values = Vec::with_capacity(len);
-            for _ in 0..len {
-                values.push(Constant::read(reader)?);
-            }
-
-            let struct_id = reader.read_u16()?;
-            let struct_type = structures.get(&TypeId(struct_id)).context("struct type")?;
-            Constant::Struct(values, struct_type.clone())
-        },
-        2 => {
-            let len = reader.read_u32()? as usize;
-            let mut values = Vec::with_capacity(len);
-            for _ in 0..len {
-                values.push(Constant::read(reader)?);
-            }
-
-            Constant::Array(values)
-        },
-        3 => Constant::Optional(Option::read(reader)?),
-        4 => {
-            let len = reader.read_u32()? as usize;
-            let mut map = IndexMap::new();
-            for _ in 0..len {
-                let key = Constant::read(reader)?;
-                let value = Constant::read(reader)?;
-                map.insert(key, value);
-            }
-
-            Constant::Map(map)
-        },
-        5 => {
-            let len = reader.read_u8()? as usize;
-            let mut values = Vec::with_capacity(len);
-            for _ in 0..len {
-                values.push(Constant::read(reader)?);
-            }
-
-            let id = reader.read_u16()?;
-            let variant_id = reader.read_u8()?;
-            let enum_type = enums.get(&TypeId(id)).context("invalid enum type")?;
-            if enum_type.get_variant(variant_id).is_none() {
-                return Err(ReaderError::InvalidValue);
-            }
-            Constant::Enum(values, EnumValueType::new(enum_type.clone(), variant_id))
-        },
-        _ => return Err(ReaderError::InvalidValue)
-    })
-}
-
 impl Serializer for Constant {
+    // Serialize a constant
+    // Constant with more than one value are serialized in reverse order
+    // This help us to save a reverse operation when deserializing
     fn write(&self, writer: &mut Writer) {
         match self {
             Constant::Default(value) => {
@@ -232,7 +183,7 @@ impl Serializer for Constant {
             Constant::Struct(values, struct_type) => {
                 writer.write_u8(1);
                 writer.write_u8(values.len() as u8);
-                for value in values {
+                for value in values.iter().rev() {
                     value.write(writer);
                 }
 
@@ -242,7 +193,7 @@ impl Serializer for Constant {
                 writer.write_u8(2);
                 let len = values.len() as u32;
                 writer.write_u32(&len);
-                for value in values {
+                for value in values.iter().rev() {
                     value.write(writer);
                 }
             },
@@ -254,7 +205,7 @@ impl Serializer for Constant {
                 writer.write_u8(4);
                 let len = map.len() as u32;
                 writer.write_u32(&len);
-                for (key, value) in map {
+                for (key, value) in map.iter().rev() {
                     key.write(writer);
                     value.write(writer);
                 }
@@ -262,7 +213,7 @@ impl Serializer for Constant {
             Constant::Enum(values, enum_type) => {
                 writer.write_u8(5);
                 writer.write_u8(values.len() as u8);
-                for value in values {
+                for value in values.iter().rev() {
                     value.write(writer);
                 }
                 writer.write_u16(enum_type.id());
