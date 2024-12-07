@@ -22,6 +22,42 @@ pub enum ContractDeposit {
     Private(CompressedCiphertext)
 }
 
+// CompressedConstant is a compressed version of a constant
+// Because we can't directly deserialize a constant as its dependent on a Module
+// We compress it and decompress it lazily when needed
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct CompressedConstant(Vec<u8>);
+
+impl CompressedConstant {
+    // Create a new compressed constant
+    pub fn new(constant: &Constant) -> Self {
+        Self(constant.to_bytes())
+    }
+
+    // Decompress the compressed constant
+    pub fn decompress(&self) -> Result<Constant, ReaderError> {
+        let mut reader = Reader::new(&self.0);
+        Constant::read(&mut reader)
+    }
+}
+
+impl Serializer for CompressedConstant {
+    fn write(&self, writer: &mut Writer) {
+        let len = self.0.len() as u32;
+        writer.write_u32(&len);
+        writer.write_bytes(&self.0);
+    }
+
+    fn read(reader: &mut Reader) -> Result<CompressedConstant, ReaderError> {
+        let len = reader.read_u32()? as usize;
+        Ok(CompressedConstant(reader.read_bytes(len)?))
+    }
+
+    fn size(&self) -> usize {
+        self.0.len()
+    }
+}
+
 // InvokeContractPayload is a public payload allowing to call a smart contract
 // It contains all the assets deposited in the contract and the parameters to call the contract
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -34,7 +70,7 @@ pub struct InvokeContractPayload {
     // The chunk to invoke
     pub chunk_id: u16,
     // The parameters to call the contract
-    pub parameters: Vec<xelis_vm::Constant>
+    pub parameters: Vec<CompressedConstant>
 }
 
 impl Serializer for ContractDeposit {
@@ -219,6 +255,7 @@ impl Serializer for Constant {
         };
     }
 
+    // No deserialization can occurs here as we're missing context
     fn read(_: &mut Reader) -> Result<Constant, ReaderError> {
         Err(ReaderError::InvalidValue)
     }
@@ -258,7 +295,7 @@ impl Serializer for InvokeContractPayload {
         let len = reader.read_u8()? as usize;
         let mut parameters = Vec::with_capacity(len);
         for _ in 0..len {
-            parameters.push(Constant::read(reader)?);
+            parameters.push(CompressedConstant::read(reader)?);
         }
         Ok(InvokeContractPayload { contract, assets, chunk_id, parameters })
     }
