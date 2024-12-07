@@ -7,15 +7,16 @@ use crate::serializer::{Reader, ReaderError, Serializer};
 enum Step {
     ReadConstant,
     AssembleStruct {
-        len: usize,
+        struct_type: StructType,
+    },
+    AssembleEnum {
+        enum_type: EnumValueType,
+        len: usize
     },
     AssembleArray {
         len: usize,
     },
     AssembleMap {
-        len: usize,
-    },
-    AssembleEnum {
         len: usize,
     },
     AssembleOptional
@@ -34,8 +35,13 @@ fn read_constant_iterative(reader: &mut Reader, structures: &IndexSet<StructType
                         values.push(Constant::Default(value));
                     },
                     1 => {
-                        let len = reader.read_u8()? as usize;
-                        stack.push(Step::AssembleStruct { len });
+                        let struct_type = reader.read_u16()?;
+                        let struct_type = structures.get(&TypeId(struct_type))
+                            .context("struct type")?
+                            .clone();
+
+                        let len = struct_type.fields().len();
+                        stack.push(Step::AssembleStruct { struct_type });
                         for _ in 0..len {
                             stack.push(Step::ReadConstant);
                         }
@@ -64,8 +70,18 @@ fn read_constant_iterative(reader: &mut Reader, structures: &IndexSet<StructType
                         }
                     },
                     5 => {
-                        let len = reader.read_u8()? as usize;
-                        stack.push(Step::AssembleEnum { len });
+                        let enum_id = reader.read_u16()?;
+                        let variant_id = reader.read_u8()?;
+                        let enum_type = enums.get(&TypeId(enum_id))
+                            .context("enum type")?
+                            .clone();
+
+                        let variant = enum_type.get_variant(variant_id)
+                            .context("enum variant")?;
+                        let len = variant.fields().len();
+
+                        let enum_type = EnumValueType::new(enum_type, variant_id);
+                        stack.push(Step::AssembleEnum { enum_type, len });
                         for _ in 0..len {
                             stack.push(Step::ReadConstant);
                         }
@@ -73,9 +89,8 @@ fn read_constant_iterative(reader: &mut Reader, structures: &IndexSet<StructType
                     _ => return Err(ReaderError::InvalidValue)
                 }
             },
-            Step::AssembleStruct { len } => {
-                let struct_id = reader.read_u16()?;
-                let struct_type = structures.get(&TypeId(struct_id)).context("struct type")?;
+            Step::AssembleStruct { struct_type } => {
+                let len = struct_type.fields().len();
                 let mut struct_values = Vec::with_capacity(len);
                 for _ in 0..len {
                     struct_values.push(values.pop().context("struct field")?);
@@ -101,20 +116,13 @@ fn read_constant_iterative(reader: &mut Reader, structures: &IndexSet<StructType
 
                 values.push(Constant::Map(map));
             },
-            Step::AssembleEnum { len } => {
-                let id = reader.read_u16().context("enum type id")?;
-                let variant_id = reader.read_u8().context("enum variant id")?;
-                let enum_type = enums.get(&TypeId(id)).context("invalid enum type")?;
-                if !enum_type.get_variant(variant_id).is_some() {
-                    return Err(ReaderError::InvalidValue);
-                }
-
+            Step::AssembleEnum { enum_type, len } => {
                 let mut enum_values = Vec::with_capacity(len);
                 for _ in 0..len {
                     enum_values.push(values.pop().context("enum field")?);
                 }
 
-                values.push(Constant::Enum(enum_values, EnumValueType::new(enum_type.clone(), variant_id)));
+                values.push(Constant::Enum(enum_values, enum_type));
             },
             Step::AssembleOptional => {
                 let value = values.pop().context("optional value")?;
@@ -132,9 +140,8 @@ fn read_constant_iterative(reader: &mut Reader, structures: &IndexSet<StructType
 
 #[cfg(test)]
 mod tests {
-    use xelis_vm::EnumVariant;
-
     use super::*;
+    use xelis_vm::{EnumVariant, Type};
 
     #[test]
     fn test_double_map() {
@@ -179,7 +186,10 @@ mod tests {
     #[test]
     fn test_enum() {
         let enum_type = EnumType::new(0, vec![
-            EnumVariant::new(vec![]),
+            EnumVariant::new(vec![
+                Type::U32,
+                Type::U32,
+            ]),
         ]);
 
         let enum_value = Constant::Enum(vec![

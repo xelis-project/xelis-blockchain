@@ -182,12 +182,10 @@ impl Serializer for Constant {
             },
             Constant::Struct(values, struct_type) => {
                 writer.write_u8(1);
-                writer.write_u8(values.len() as u8);
+                writer.write_u16(struct_type.id());
                 for value in values.iter().rev() {
                     value.write(writer);
                 }
-
-                writer.write_u16(struct_type.id());
             },
             Constant::Array(values) => {
                 writer.write_u8(2);
@@ -212,12 +210,11 @@ impl Serializer for Constant {
             },
             Constant::Enum(values, enum_type) => {
                 writer.write_u8(5);
-                writer.write_u8(values.len() as u8);
+                writer.write_u16(enum_type.id());
+                writer.write_u8(enum_type.variant_id());
                 for value in values.iter().rev() {
                     value.write(writer);
                 }
-                writer.write_u16(enum_type.id());
-                writer.write_u8(enum_type.variant_id());
             }
         };
     }
