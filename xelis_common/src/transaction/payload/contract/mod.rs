@@ -1,9 +1,10 @@
 mod compressed;
 
 use anyhow::Context;
-use indexmap::IndexMap;
+use compressed::{decompress_constant, decompress_type};
+use indexmap::{IndexMap, IndexSet};
 use serde::{Deserialize, Serialize};
-use xelis_vm::{Constant, Module, Value, U256};
+use xelis_vm::{Chunk, Constant, EnumType, EnumVariant, Module, StructType, Type, Value, U256};
 use crate::{
     crypto::{elgamal::CompressedCiphertext, Hash},
     serializer::{Reader, ReaderError, Serializer, Writer}
@@ -226,13 +227,180 @@ impl Serializer for Constant {
     }
 }
 
-impl Serializer for Module {
-    fn write(&self, _: &mut Writer) {
-        todo!("Implement Module serialization")
+impl Serializer for Type {
+    fn write(&self, writer: &mut Writer) {
+        match self {
+            Type::U8 => writer.write_u8(0),
+            Type::U16 => writer.write_u8(1),
+            Type::U32 => writer.write_u8(2),
+            Type::U64 => writer.write_u8(3),
+            Type::U128 => writer.write_u8(4),
+            Type::U256 => writer.write_u8(5),
+            Type::Bool => writer.write_u8(6),
+            Type::Blob => writer.write_u8(7),
+            Type::String => writer.write_u8(8),
+            Type::Struct(struct_type) => {
+                writer.write_u8(9);
+                writer.write_u16(struct_type.id());
+            },
+            Type::Array(inner) => {
+                writer.write_u8(10);
+                inner.write(writer);
+            },
+            Type::Optional(inner) => {
+                writer.write_u8(11);
+                inner.write(writer);
+            },
+            Type::Map(key, value) => {
+                writer.write_u8(12);
+                key.write(writer);
+                value.write(writer);
+            },
+            Type::Enum(enum_type) => {
+                writer.write_u8(13);
+                writer.write_u16(enum_type.id());
+            },
+            Type::Range(inner) => {
+                writer.write_u8(14);
+                inner.write(writer);
+            },
+            _ => {}
+        }        
     }
 
-    fn read(_: &mut Reader) -> Result<Module, ReaderError> {
-        todo!("Implement Module deserialization")
+    fn read(_: &mut Reader) -> Result<Self, ReaderError> {
+        Err(ReaderError::InvalidValue)
+    }
+}
+
+impl Serializer for Module {
+    fn write(&self, writer: &mut Writer) {
+        let structs = self.structs();
+        writer.write_u16(structs.len() as u16);
+
+        for structure in structs {
+            writer.write_u16(structure.id());
+            for field in structure.fields() {
+                field.write(writer);
+            }
+        }
+
+        let enums = self.enums();
+        writer.write_u16(enums.len() as u16);
+
+        for enum_type in enums {
+            writer.write_u16(enum_type.id());
+            for (index, variant) in enum_type.variants().iter().enumerate() {
+                writer.write_u8(index as u8);
+                for field in variant.fields() {
+                    field.write(writer);
+                }
+            }
+        }
+
+        let constants = self.constants();
+        writer.write_u16(constants.len() as u16);
+        for constant in constants {
+            constant.write(writer);
+        }
+
+        let chunks = self.chunks();
+        writer.write_u16(chunks.len() as u16);
+        for chunk in chunks {
+            let instructions = chunk.get_instructions();
+            let len = instructions.len() as u32;
+            writer.write_u32(&len);
+            writer.write_bytes(instructions);
+        }
+
+        // Write entry ids
+        let entry_ids = self.chunks_entry_ids();
+        // We can have only up to u16::MAX chunks, so same for entry ids
+        let len = entry_ids.len() as u16;
+        writer.write_u16(len);
+
+        for entry_id in entry_ids {
+            writer.write_u16(*entry_id as u16);
+        }
+    }
+
+    fn read(reader: &mut Reader) -> Result<Module, ReaderError> {
+        let structs_len = reader.read_u16()?;
+        let mut structures = IndexSet::with_capacity(structs_len as usize);
+        let mut enums = IndexSet::new();
+
+        for _ in 0..structs_len {
+            let id = reader.read_u16()?;
+            let fields_len = reader.read_u16()?;
+            let mut fields = Vec::with_capacity(fields_len as usize);
+
+            for _ in 0..fields_len {
+                fields.push(decompress_type(reader, &structures, &enums)?);
+            }
+
+            let structure = StructType::new(id, fields);
+            if !structures.insert(structure) {
+                return Err(ReaderError::InvalidValue);
+            }
+        }
+
+        let enums_len = reader.read_u16()?;
+        for _ in 0..enums_len {
+            let id = reader.read_u16()?;
+            let variants_len = reader.read_u8()?;
+            let mut variants = Vec::with_capacity(variants_len as usize);
+
+            for _ in 0..variants_len {
+                let mut fields = Vec::new();
+                for _ in 0..reader.read_u8()? {
+                    fields.push(decompress_type(reader, &structures, &enums)?);
+                }
+
+                variants.push(EnumVariant::new(fields));
+            }
+
+            let enum_type = EnumType::new(id, variants);
+            if !enums.insert(enum_type) {
+                return Err(ReaderError::InvalidValue);
+            }
+        }
+
+        let constants_len = reader.read_u16()?;
+        let mut constants = IndexSet::with_capacity(constants_len as usize);
+
+        for _ in 0..constants_len {
+            if !constants.insert(decompress_constant(reader, &structures, &enums)?) {
+                return Err(ReaderError::InvalidValue);
+            }
+        }
+
+        let chunks_len = reader.read_u16()?;
+        let mut chunks = Vec::with_capacity(chunks_len as usize);
+
+        for _ in 0..chunks_len {
+            let instructions_len = reader.read_u32()? as usize;
+            let instructions: Vec<u8> = reader.read_bytes(instructions_len)?;
+            chunks.push(Chunk::from_instructions(instructions));
+        }
+
+        let entry_ids_len = reader.read_u16()?;
+        if entry_ids_len > chunks_len {
+            return Err(ReaderError::InvalidValue);
+        }
+
+        let mut entry_ids = IndexSet::with_capacity(entry_ids_len as usize);
+        for _ in 0..entry_ids_len {
+            let id = reader.read_u16()?;
+            if id > chunks_len {
+                return Err(ReaderError::InvalidValue);
+            }
+
+            if !entry_ids.insert(id as usize) {
+                return Err(ReaderError::InvalidValue);
+            }
+        }
+
+        Ok(Module::with(constants, chunks, entry_ids, structures, enums))
     }
 }
 
