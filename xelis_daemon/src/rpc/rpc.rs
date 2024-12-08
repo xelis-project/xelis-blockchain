@@ -1187,7 +1187,14 @@ async fn get_account_history<S: Storage>(context: &Context, body: Value) -> Resu
                     }
                 },
                 TransactionType::DeployContract(_) => {
-                    todo!("Deploy contract history");
+                    if is_sender {
+                        history.push(AccountHistoryEntry {
+                            topoheight: topo,
+                            hash: tx_hash.clone(),
+                            history_type: AccountHistoryType::DeployContract,
+                            block_timestamp: block_header.get_timestamp()
+                        });
+                    }
                 }
             }
         }
