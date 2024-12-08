@@ -429,6 +429,9 @@ pub enum AccountHistoryType {
         contract: Hash,
         chunk_id: u16,
     },
+    // Contract hash is already stored
+    // by the parent struct
+    DeployContract,
 }
 
 #[derive(Serialize, Deserialize)]
