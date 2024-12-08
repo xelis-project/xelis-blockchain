@@ -346,7 +346,9 @@ pub enum BlockchainError {
     #[error("Invalid transaction format")]
     InvalidTransactionFormat,
     #[error("MultiSig not found")]
-    MultiSigNotFound
+    MultiSigNotFound,
+    #[error("Error in module: {}", _0)]
+    ModuleError(String)
 }
 
 impl BlockchainError {
@@ -385,6 +387,7 @@ impl From<VerificationError<BlockchainError>> for BlockchainError {
             VerificationError::MultiSigThreshold => BlockchainError::MultiSigThreshold,
             VerificationError::InvalidFormat => BlockchainError::InvalidTransactionFormat,
             VerificationError::MultiSigNotFound => BlockchainError::MultiSigNotFound,
+            VerificationError::ModuleError(e) => BlockchainError::ModuleError(e)
         }
     }
 }

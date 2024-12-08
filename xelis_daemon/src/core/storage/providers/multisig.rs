@@ -5,7 +5,7 @@ use xelis_common::{
     block::TopoHeight,
     crypto::PublicKey,
     serializer::Serializer,
-    transaction::multisig::MultiSigPayload
+    transaction::MultiSigPayload
 };
 
 use crate::core::{

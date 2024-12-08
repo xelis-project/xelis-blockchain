@@ -24,10 +24,11 @@ use xelis_common::{
         verify::BlockchainVerificationState,
         Reference,
         Transaction,
-        multisig::MultiSigPayload
+        MultiSigPayload
     },
     utils::format_xelis
 };
+use xelis_environment::Environment;
 use crate::core::{
     error::BlockchainError,
     storage::{
@@ -560,5 +561,10 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for ChainS
     ) -> Result<Option<&MultiSigPayload>, BlockchainError> {
         let account = self.get_internal_account(account).await?;
         Ok(account.multisig.as_ref().and_then(|(_, multisig)| multisig.as_ref()))
+    }
+
+    /// Get the contract environment
+    async fn get_contract_environment(&mut self) -> Result<&Environment, BlockchainError> {
+        unimplemented!()
     }
 }

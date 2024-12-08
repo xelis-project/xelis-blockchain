@@ -10,11 +10,12 @@ use xelis_common::{
     },
     transaction::{
         verify::BlockchainVerificationState,
-        multisig::MultiSigPayload,
+        MultiSigPayload,
         Reference,
         Transaction
     }
 };
+use xelis_environment::Environment;
 use crate::core::{
     error::BlockchainError,
     mempool::Mempool,
@@ -274,5 +275,10 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for Mempoo
         self.accounts.get(account)
             .map(|a| a.multisig.as_ref())
             .ok_or_else(|| BlockchainError::AccountNotFound(account.as_address(self.storage.is_mainnet())))
+    }
+
+    /// Get the contract environment
+    async fn get_contract_environment(&mut self) -> Result<&Environment, BlockchainError> {
+        todo!()
     }
 }
