@@ -7,7 +7,9 @@ use std::borrow::Cow;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use bulletproofs::RangeProof;
+use xelis_vm::Module;
 use crate::{
+    account::Nonce,
     crypto::{
         elgamal::{CompressedCommitment, CompressedHandle},
         proofs::CiphertextValidityProof,
@@ -19,16 +21,16 @@ use crate::{
     transaction::{
         extra_data::UnknownExtraDataFormat,
         multisig::MultiSig,
-        MultiSigPayload,
         BurnPayload,
+        InvokeContractPayload,
+        MultiSigPayload,
         Reference,
         SourceCommitment,
         Transaction,
         TransactionType,
         TransferPayload,
         TxVersion,
-    },
-    account::Nonce,
+    }
 };
 pub use data::*;
 
@@ -81,7 +83,9 @@ impl<'a> From<RPCTransferPayload<'a>> for TransferPayload {
 pub enum RPCTransactionType<'a> {
     Transfers(Vec<RPCTransferPayload<'a>>),
     Burn(Cow<'a, BurnPayload>),
-    MultiSig(Cow<'a, MultiSigPayload>)
+    MultiSig(Cow<'a, MultiSigPayload>),
+    InvokeContract(Cow<'a, InvokeContractPayload>),
+    DeployContract(Cow<'a, Module>)
 }
 
 impl<'a> RPCTransactionType<'a> {
@@ -104,8 +108,8 @@ impl<'a> RPCTransactionType<'a> {
             },
             TransactionType::Burn(burn) => Self::Burn(Cow::Borrowed(burn)),
             TransactionType::MultiSig(payload) => Self::MultiSig(Cow::Borrowed(payload)),
-            TransactionType::InvokeContract(_) => todo!(),
-            TransactionType::DeployContract(_) => todo!(),
+            TransactionType::InvokeContract(payload) => Self::InvokeContract(Cow::Borrowed(payload)),
+            TransactionType::DeployContract(module) => Self::DeployContract(Cow::Borrowed(module))
         }
     }
 }
@@ -117,7 +121,9 @@ impl From<RPCTransactionType<'_>> for TransactionType {
                 TransactionType::Transfers(transfers.into_iter().map(|transfer| transfer.into()).collect::<Vec<TransferPayload>>())
             },
             RPCTransactionType::Burn(burn) => TransactionType::Burn(burn.into_owned()),
-            RPCTransactionType::MultiSig(payload) => TransactionType::MultiSig(payload.into_owned())
+            RPCTransactionType::MultiSig(payload) => TransactionType::MultiSig(payload.into_owned()),
+            RPCTransactionType::InvokeContract(payload) => TransactionType::InvokeContract(payload.into_owned()),
+            RPCTransactionType::DeployContract(module) => TransactionType::DeployContract(module.into_owned())
         }
     }
 }
