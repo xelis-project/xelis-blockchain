@@ -123,6 +123,7 @@ impl Serializer for Value {
             },
             Value::String(value) => {
                 writer.write_u8(9);
+                // TODO support > 255 length strings
                 writer.write_string(value);
             }
             Value::Range(left, right, _) => {
@@ -169,6 +170,22 @@ impl Serializer for Value {
             },
             _ => return Err(ReaderError::InvalidValue)
         })
+    }
+
+    fn size(&self) -> usize {
+        1 + match self {
+            Value::Null => 0,
+            Value::U8(_) => 1,
+            Value::U16(_) => 2,
+            Value::U32(_) => 4,
+            Value::U64(_) => 8,
+            Value::U128(_) => 16,
+            Value::U256(value) => value.size(),
+            Value::Boolean(_) => 1,
+            Value::Blob(value) => 4 + value.len(),
+            Value::String(value) => 1 + value.len(),
+            Value::Range(left, right, _) => left.size() + right.size()
+        }
     }
 }
 
@@ -225,6 +242,29 @@ impl Serializer for Constant {
     fn read(_: &mut Reader) -> Result<Constant, ReaderError> {
         Err(ReaderError::InvalidValue)
     }
+
+    fn size(&self) -> usize {
+        1 + match self {
+            Constant::Default(value) => value.size(),
+            Constant::Struct(values, _) => {
+                // 2 bytes for the struct id
+                2 + values.iter().map(|value| value.size()).sum::<usize>()
+            },
+            Constant::Array(values) => {
+                // 4 bytes for the length
+                4 + values.iter().map(|value| value.size()).sum::<usize>()
+            },
+            Constant::Optional(opt) => opt.size(),
+            Constant::Map(map) => {
+                // 4 bytes for the length
+                4 + map.iter().map(|(key, value)| key.size() + value.size()).sum::<usize>()
+            },
+            Constant::Enum(values, _) => {
+                // 2 bytes for the enum id and 1 byte for the variant id
+                3 + values.iter().map(|value| value.size()).sum::<usize>()
+            }
+        }
+    }
 }
 
 impl Serializer for Type {
@@ -270,6 +310,19 @@ impl Serializer for Type {
 
     fn read(_: &mut Reader) -> Result<Self, ReaderError> {
         Err(ReaderError::InvalidValue)
+    }
+
+    fn size(&self) -> usize {
+        1 + match self {
+            Type::U8 | Type::U16 | Type::U32 | Type::U64 | Type::U128 | Type::U256 | Type::Bool | Type::Blob | Type::String => 0,
+            Type::Struct(_) => 2, // 2 bytes for the struct id
+            Type::Array(inner) => inner.size(),
+            Type::Optional(inner) => inner.size(),
+            Type::Map(key, value) => key.size() + value.size(),
+            Type::Enum(_) => 2,
+            Type::Range(inner) => inner.size(),
+            _ => 0
+        }
     }
 }
 
@@ -444,7 +497,11 @@ impl Serializer for InvokeContractPayload {
     }
 
     fn size(&self) -> usize {
-        let mut size = self.contract.size() + 1;
+        let mut size = self.contract.size()
+            + self.chunk_id.size()
+        // 1 byte for the deposits length
+            + 1;
+
         for (asset, deposit) in &self.assets {
             size += asset.size() + deposit.size();
         }
