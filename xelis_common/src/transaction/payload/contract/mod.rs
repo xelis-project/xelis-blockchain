@@ -3,7 +3,7 @@ mod compressed;
 use anyhow::Context;
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
-use xelis_vm::{Constant, Value, U256};
+use xelis_vm::{Constant, Module, Value, U256};
 use crate::{
     crypto::{elgamal::CompressedCiphertext, Hash},
     serializer::{Reader, ReaderError, Serializer, Writer}
@@ -223,6 +223,16 @@ impl Serializer for Constant {
     // No deserialization can occurs here as we're missing context
     fn read(_: &mut Reader) -> Result<Constant, ReaderError> {
         Err(ReaderError::InvalidValue)
+    }
+}
+
+impl Serializer for Module {
+    fn write(&self, _: &mut Writer) {
+        todo!("Implement Module serialization")
+    }
+
+    fn read(_: &mut Reader) -> Result<Module, ReaderError> {
+        todo!("Implement Module deserialization")
     }
 }
 

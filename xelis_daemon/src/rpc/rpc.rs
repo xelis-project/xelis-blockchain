@@ -1185,6 +1185,9 @@ async fn get_account_history<S: Storage>(context: &Context, body: Value) -> Resu
                             block_timestamp: block_header.get_timestamp()
                         });
                     }
+                },
+                TransactionType::DeployContract(_) => {
+                    todo!("Deploy contract history");
                 }
             }
         }

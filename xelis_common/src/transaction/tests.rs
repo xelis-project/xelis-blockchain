@@ -149,7 +149,7 @@ fn test_encrypt_decrypt_two_parties() {
     };
 
     let transfer = &transfers[0];
-    let cipher = transfer.extra_data.clone().unwrap();
+    let cipher = transfer.get_extra_data().clone().unwrap();
     // Verify the extra data from alice (sender)
     {
         let decrypted = cipher.decrypt_v2(&alice.keypair.get_private_key(), Role::Sender).unwrap();

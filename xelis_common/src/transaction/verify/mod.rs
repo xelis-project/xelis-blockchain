@@ -44,7 +44,7 @@ use crate::{
     }
 };
 use super::{
-    contract::ContractDeposit,
+    ContractDeposit,
     Role,
     Transaction,
     TransactionType,
@@ -95,9 +95,9 @@ struct DecompressedTransferCt {
 impl DecompressedTransferCt {
     fn decompress(transfer: &TransferPayload) -> Result<Self, DecompressionError> {
         Ok(Self {
-            commitment: transfer.commitment.decompress()?,
-            sender_handle: transfer.sender_handle.decompress()?,
-            receiver_handle: transfer.receiver_handle.decompress()?,
+            commitment: transfer.get_commitment().decompress()?,
+            sender_handle: transfer.get_sender_handle().decompress()?,
+            receiver_handle: transfer.get_receiver_handle().decompress()?,
         })
     }
 
@@ -147,7 +147,7 @@ impl Transaction {
         match &self.data {
             TransactionType::Transfers(transfers) => {
                 for (transfer, d) in transfers.iter().zip(decompressed_transfers.iter()) {
-                    if asset == &transfer.asset {
+                    if asset == transfer.get_asset() {
                         output += d.get_ciphertext(Role::Sender);
                     }
                 }
@@ -169,7 +169,8 @@ impl Transaction {
                         }
                     }
                 }
-            }
+            },
+            TransactionType::DeployContract(_) => {}
         }
 
         Ok(output)
@@ -242,13 +243,14 @@ impl Transaction {
         match &self.data {
             TransactionType::Transfers(transfers) => transfers
                 .iter()
-                .all(|transfer| has_commitment_for_asset(&transfer.asset)),
+                .all(|transfer| has_commitment_for_asset(transfer.get_asset())),
             TransactionType::Burn(payload) => has_commitment_for_asset(&payload.asset),
             TransactionType::MultiSig(_) => true,
             TransactionType::InvokeContract(payload) => payload
                 .assets
                 .keys()
                 .all(|asset| has_commitment_for_asset(asset)),
+            TransactionType::DeployContract(_) => true,
         }
     }
 
@@ -298,12 +300,12 @@ impl Transaction {
                 let mut extra_data_size = 0;
                 // Prevent sending to ourself
                 for transfer in transfers.iter() {
-                    if transfer.destination == self.source {
+                    if *transfer.get_destination() == self.source {
                         debug!("sender cannot be the receiver in the same TX");
                         return Err(VerificationError::SenderIsReceiver);
                     }
     
-                    if let Some(extra_data) = transfer.extra_data.as_ref() {
+                    if let Some(extra_data) = transfer.get_extra_data() {
                         let size = extra_data.size();
                         if size > EXTRA_DATA_LIMIT_SIZE {
                             return Err(VerificationError::TransferExtraDataSize);
@@ -367,6 +369,9 @@ impl Transaction {
 
                 // TODO verify the contract hash
                 // TODO verify the parameters
+            },
+            TransactionType::DeployContract(_) => {
+                todo!("deploy contract");
             }
         };
 
@@ -486,7 +491,7 @@ impl Transaction {
                 // Prepare the new commitments
                 for (transfer, decompressed) in transfers.iter().zip(&transfers_decompressed) {
                     let receiver = transfer
-                        .destination
+                        .get_destination()
                         .decompress()
                         .map_err(ProofVerificationError::from)?;
     
@@ -494,8 +499,8 @@ impl Transaction {
     
                     let current_balance = state
                         .get_receiver_balance(
-                            &transfer.destination,
-                            &transfer.asset
+                            transfer.get_destination(),
+                            transfer.get_asset()
                         ).await
                         .map_err(VerificationError::State)?;
     
@@ -505,13 +510,13 @@ impl Transaction {
                     // Validity proof
     
                     transcript.transfer_proof_domain_separator();
-                    transcript.append_public_key(b"dest_pubkey", &transfer.destination);
-                    transcript.append_commitment(b"amount_commitment", &transfer.commitment);
-                    transcript.append_handle(b"amount_sender_handle", &transfer.sender_handle);
+                    transcript.append_public_key(b"dest_pubkey", transfer.get_destination());
+                    transcript.append_commitment(b"amount_commitment", transfer.get_commitment());
+                    transcript.append_handle(b"amount_sender_handle", transfer.get_sender_handle());
                     transcript
-                        .append_handle(b"amount_receiver_handle", &transfer.receiver_handle);
+                        .append_handle(b"amount_receiver_handle", transfer.get_receiver_handle());
     
-                    transfer.ct_validity_proof.pre_verify(
+                    transfer.get_proof().pre_verify(
                         &decompressed.commitment,
                         &receiver,
                         &decompressed.receiver_handle,
@@ -520,7 +525,7 @@ impl Transaction {
                     )?;
 
                     // Add the commitment to the list
-                    value_commitments.push((decompressed.commitment.as_point().clone(), transfer.commitment.as_point().clone()));
+                    value_commitments.push((decompressed.commitment.as_point().clone(), transfer.get_commitment().as_point().clone()));
                 }
             },
             TransactionType::Burn(payload) => {
@@ -559,6 +564,9 @@ impl Transaction {
                 // for param in &payload.parameters {
                 //     transcript.append_hash(b"contract_invoke", param);
                 // }
+            },
+            TransactionType::DeployContract(_) => {
+                todo!("deploy contract");
             }
         }
 
@@ -701,8 +709,8 @@ impl Transaction {
                     // Update receiver balance
                     let current_bal = state
                         .get_receiver_balance(
-                            &transfer.destination,
-                            &transfer.asset,
+                            transfer.get_destination(),
+                            transfer.get_asset(),
                         ).await.map_err(VerificationError::State)?;
     
                     let receiver_ct = transfer
@@ -719,6 +727,9 @@ impl Transaction {
             },
             TransactionType::InvokeContract(_) => {
                 todo!("apply invoke contract");
+            },
+            TransactionType::DeployContract(_) => {
+                todo!("apply deploy contract");
             }
         }
     
@@ -825,8 +836,8 @@ impl Transaction {
                     // Update receiver balance
                     let current_bal = state
                         .get_receiver_balance(
-                            &transfer.destination,
-                            &transfer.asset,
+                            transfer.get_destination(),
+                            transfer.get_asset(),
                         ).await
                         .map_err(VerificationError::State)?;
     
@@ -844,6 +855,9 @@ impl Transaction {
             },
             TransactionType::InvokeContract(_) => {
                 todo!("apply invoke contract");
+            },
+            TransactionType::DeployContract(_) => {
+                todo!("apply deploy contract");
             }
         }
 

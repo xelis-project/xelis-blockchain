@@ -574,15 +574,15 @@ impl TransactionBuilder {
                         None
                     };
 
-                    Ok(TransferPayload {
-                        commitment,
-                        receiver_handle,
-                        sender_handle,
-                        destination: transfer.inner.destination.to_public_key(),
-                        asset: transfer.inner.asset,
-                        ct_validity_proof,
+                    Ok(TransferPayload::new(
+                        transfer.inner.asset,
+                        transfer.inner.destination.to_public_key(),
                         extra_data,
-                    })
+                        commitment,
+                        sender_handle,
+                        receiver_handle,
+                        ct_validity_proof,
+                    ))
                 })
                 .collect::<Result<Vec<_>, GenerationError<B::Error>>>()?;
 
