@@ -16,7 +16,6 @@ use crate::{
 };
 use bulletproofs::RangeProof;
 use contract::InvokeContractPayload;
-use indexmap::IndexSet;
 use multisig::{MultiSig, MultiSigPayload};
 use serde::{Deserialize, Serialize};
 use self::extra_data::UnknownExtraDataFormat;
@@ -46,12 +45,18 @@ pub const MAX_DEPOSIT_PER_INVOKE_CALL: usize = 255;
 // Maximum number of participants in a multi signature account
 pub const MAX_MULTISIG_PARTICIPANTS: usize = 255;
 
+/// Simple enum to determine which DecryptHandle to use to craft a Ciphertext
+/// This allows us to store one time the commitment and only a decrypt handle for each.
+/// The DecryptHandle is used to decrypt the ciphertext and is selected based on the role in the transaction.
 pub enum Role {
     Sender,
     Receiver,
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+// SourceCommitment is a structure that holds the commitment and the equality proof
+// of the commitment to the asset
+// In a transaction, every spendings are summed up in a single commitment per asset
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct SourceCommitment {
     commitment: CompressedCommitment,
     proof: CommitmentEqProof,
@@ -84,6 +89,10 @@ impl SourceCommitment {
     }
 }
 
+// TransferPayload is a public payload allowing to transfer an asset to another account
+// It contains the asset hash, the destination account, the ciphertext commitment, the sender and receiver decrypt handles
+// A validity proof is also provided to ensure the receiver ciphertext is valid
+// to prevent any attack
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct TransferPayload {
     asset: Hash,
@@ -558,50 +567,6 @@ impl Serializer for Transaction {
         }
 
         size
-    }
-}
-
-impl Serializer for MultiSigPayload {
-    fn write(&self, writer: &mut Writer) {
-        writer.write_u8(self.threshold);
-        if self.threshold != 0 {
-            writer.write_u8(self.participants.len() as u8);
-            for participant in &self.participants {
-                participant.write(writer);
-            }
-        }
-    }
-
-    fn read(reader: &mut Reader) -> Result<MultiSigPayload, ReaderError> {
-        let threshold = reader.read_u8()?;
-        // Only 0 threshold is allowed for delete multisig
-        if threshold == 0 {
-            return Ok(MultiSigPayload {
-                threshold,
-                participants: IndexSet::new()
-            })
-        }
-
-        let participants_len = reader.read_u8()?;
-        if participants_len == 0 || participants_len > MAX_MULTISIG_PARTICIPANTS as u8 {
-            return Err(ReaderError::InvalidSize)
-        }
-
-        let mut participants = IndexSet::new();
-        for _ in 0..participants_len {
-            if !participants.insert(CompressedPublicKey::read(reader)?) {
-                return Err(ReaderError::InvalidValue)
-            }
-        }
-
-        Ok(MultiSigPayload {
-            threshold,
-            participants
-        })
-    }
-
-    fn size(&self) -> usize {
-        1 + 1 + self.participants.iter().map(|p| p.size()).sum::<usize>()
     }
 }
 

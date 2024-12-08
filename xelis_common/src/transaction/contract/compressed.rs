@@ -1,9 +1,48 @@
 use anyhow::Context;
 use indexmap::{IndexMap, IndexSet};
+use serde::{Deserialize, Serialize};
 use xelis_vm::{Constant, EnumType, EnumValueType, StructType, TypeId, Value};
 
-use crate::serializer::{Reader, ReaderError, Serializer};
+use crate::serializer::{Reader, ReaderError, Serializer, Writer};
 
+
+// CompressedConstant is a compressed version of a constant
+// Because we can't directly deserialize a constant as its dependent on a Module
+// We compress it and decompress it lazily when needed
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct CompressedConstant(Vec<u8>);
+
+impl CompressedConstant {
+    // Create a new compressed constant
+    pub fn new(constant: &Constant) -> Self {
+        Self(constant.to_bytes())
+    }
+
+    // Decompress the compressed constant
+    pub fn decompress(&self, structures: &IndexSet<StructType>, enums: &IndexSet<EnumType>) -> Result<Constant, ReaderError> {
+        let mut reader = Reader::new(&self.0);
+        decompress_constant(&mut reader, structures, enums)
+    }
+}
+
+impl Serializer for CompressedConstant {
+    fn write(&self, writer: &mut Writer) {
+        let len = self.0.len() as u32;
+        writer.write_u32(&len);
+        writer.write_bytes(&self.0);
+    }
+
+    fn read(reader: &mut Reader) -> Result<CompressedConstant, ReaderError> {
+        let len = reader.read_u32()? as usize;
+        Ok(CompressedConstant(reader.read_bytes(len)?))
+    }
+
+    fn size(&self) -> usize {
+        self.0.len()
+    }
+}
+
+// Simple enum helper for iterative constant reading
 enum Step {
     ReadConstant,
     AssembleStruct {
@@ -22,7 +61,9 @@ enum Step {
     AssembleOptional
 }
 
-fn read_constant_iterative(reader: &mut Reader, structures: &IndexSet<StructType>, enums: &IndexSet<EnumType>) -> Result<Constant, ReaderError> {
+// Read a constant from a reader iteratively
+// Prevent any attack by limiting the stack size
+pub fn decompress_constant(reader: &mut Reader, structures: &IndexSet<StructType>, enums: &IndexSet<EnumType>) -> Result<Constant, ReaderError> {
     let mut stack = vec![Step::ReadConstant];
     let mut values = Vec::new();
     while let Some(step) = stack.pop() {
@@ -159,7 +200,7 @@ mod tests {
 
         let structures = IndexSet::new();
         let enums = IndexSet::new();
-        let result = read_constant_iterative(&mut reader, &structures, &enums).unwrap();
+        let result = decompress_constant(&mut reader, &structures, &enums).unwrap();
 
         assert_eq!(result, map);
     }
@@ -178,7 +219,7 @@ mod tests {
 
         let structures = IndexSet::new();
         let enums = IndexSet::new();
-        let result = read_constant_iterative(&mut reader, &structures, &enums).unwrap();
+        let result = decompress_constant(&mut reader, &structures, &enums).unwrap();
 
         assert_eq!(result, array);
     }
@@ -203,7 +244,7 @@ mod tests {
         let structures = IndexSet::new();
         let mut enums = IndexSet::new();
         enums.insert(enum_type);
-        let result = read_constant_iterative(&mut reader, &structures, &enums).unwrap();
+        let result = decompress_constant(&mut reader, &structures, &enums).unwrap();
 
         assert_eq!(result, enum_value);
     }

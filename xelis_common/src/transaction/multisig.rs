@@ -8,6 +8,8 @@ use crate::{
     serializer::{Reader, ReaderError, Serializer, Writer}
 };
 
+use super::MAX_MULTISIG_PARTICIPANTS;
+
 // MultiSigPayload is a public payload allowing to setup a multi signature account
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct MultiSigPayload {
@@ -25,7 +27,7 @@ impl MultiSigPayload {
 }
 
 // SignatureId is a structure that holds the signature and the id of the signer
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, Eq)]
 pub struct SignatureId {
     // Signer id
     // This is the index of the signer in the transaction
@@ -83,8 +85,6 @@ impl PartialEq for SignatureId {
     }
 }
 
-impl Eq for SignatureId {}
-
 impl Serializer for MultiSig {
     fn write(&self, writer: &mut Writer) {
         writer.write_u8(self.signatures.len() as u8);
@@ -110,6 +110,50 @@ impl Serializer for MultiSig {
             size += 1 + signature.signature.size();
         }
         size
+    }
+}
+
+impl Serializer for MultiSigPayload {
+    fn write(&self, writer: &mut Writer) {
+        writer.write_u8(self.threshold);
+        if self.threshold != 0 {
+            writer.write_u8(self.participants.len() as u8);
+            for participant in &self.participants {
+                participant.write(writer);
+            }
+        }
+    }
+
+    fn read(reader: &mut Reader) -> Result<MultiSigPayload, ReaderError> {
+        let threshold = reader.read_u8()?;
+        // Only 0 threshold is allowed for delete multisig
+        if threshold == 0 {
+            return Ok(MultiSigPayload {
+                threshold,
+                participants: IndexSet::new()
+            })
+        }
+
+        let participants_len = reader.read_u8()?;
+        if participants_len == 0 || participants_len > MAX_MULTISIG_PARTICIPANTS as u8 {
+            return Err(ReaderError::InvalidSize)
+        }
+
+        let mut participants = IndexSet::new();
+        for _ in 0..participants_len {
+            if !participants.insert(CompressedPublicKey::read(reader)?) {
+                return Err(ReaderError::InvalidValue)
+            }
+        }
+
+        Ok(MultiSigPayload {
+            threshold,
+            participants
+        })
+    }
+
+    fn size(&self) -> usize {
+        1 + 1 + self.participants.iter().map(|p| p.size()).sum::<usize>()
     }
 }
 

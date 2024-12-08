@@ -1,14 +1,15 @@
-mod const_reader;
+mod compressed;
 
 use anyhow::Context;
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use xelis_vm::{Constant, Value, U256};
-
 use crate::{
     crypto::{elgamal::CompressedCiphertext, Hash},
     serializer::{Reader, ReaderError, Serializer, Writer}
 };
+
+pub use compressed::CompressedConstant;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "snake_case")]
@@ -20,42 +21,6 @@ pub enum ContractDeposit {
     // Private deposit
     // The ciphertext represents the amount of the asset deposited
     Private(CompressedCiphertext)
-}
-
-// CompressedConstant is a compressed version of a constant
-// Because we can't directly deserialize a constant as its dependent on a Module
-// We compress it and decompress it lazily when needed
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct CompressedConstant(Vec<u8>);
-
-impl CompressedConstant {
-    // Create a new compressed constant
-    pub fn new(constant: &Constant) -> Self {
-        Self(constant.to_bytes())
-    }
-
-    // Decompress the compressed constant
-    pub fn decompress(&self) -> Result<Constant, ReaderError> {
-        let mut reader = Reader::new(&self.0);
-        Constant::read(&mut reader)
-    }
-}
-
-impl Serializer for CompressedConstant {
-    fn write(&self, writer: &mut Writer) {
-        let len = self.0.len() as u32;
-        writer.write_u32(&len);
-        writer.write_bytes(&self.0);
-    }
-
-    fn read(reader: &mut Reader) -> Result<CompressedConstant, ReaderError> {
-        let len = reader.read_u32()? as usize;
-        Ok(CompressedConstant(reader.read_bytes(len)?))
-    }
-
-    fn size(&self) -> usize {
-        self.0.len()
-    }
 }
 
 // InvokeContractPayload is a public payload allowing to call a smart contract
