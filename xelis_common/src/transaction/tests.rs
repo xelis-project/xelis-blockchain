@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use async_trait::async_trait;
 use indexmap::IndexSet;
+use xelis_vm::Environment;
 use crate::{
     account::{Nonce, CiphertextCache},
     api::{DataElement, DataValue},
@@ -561,6 +562,10 @@ impl<'a> BlockchainVerificationState<'a, ()> for ChainState {
         account: &'a PublicKey
     ) -> Result<Option<&MultiSigPayload>, ()> {
         Ok(self.multisig.get(account))
+    }
+
+    async fn get_contract_environment(&mut self) -> Result<&Environment, ()> {
+        unimplemented!()
     }
 }
 

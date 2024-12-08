@@ -23,6 +23,10 @@ impl CompressedConstant {
         let mut reader = Reader::new(&self.0);
         decompress_constant(&mut reader, structures, enums)
     }
+
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
 }
 
 impl Serializer for CompressedConstant {

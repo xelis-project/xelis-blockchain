@@ -9,6 +9,7 @@ use curve25519_dalek::{
 };
 use log::{debug, trace};
 use merlin::Transcript;
+use xelis_vm::ModuleValidator;
 use crate::{
     account::Nonce,
     block::BlockVersion,
@@ -84,6 +85,8 @@ pub enum VerificationError<T> {
     MultiSigNotFound,
     #[error("Invalid format")]
     InvalidFormat,
+    #[error("Module error: {0}")]
+    ModuleError(String)
 }
 
 struct DecompressedTransferCt {
@@ -561,12 +564,17 @@ impl Transaction {
                     }
                 }
 
-                // for param in &payload.parameters {
-                //     transcript.append_hash(b"contract_invoke", param);
-                // }
+                for param in payload.parameters.iter() {
+                    transcript.append_message(b"contract_param", param.as_bytes());
+                }
             },
-            TransactionType::DeployContract(_) => {
-                todo!("deploy contract");
+            TransactionType::DeployContract(module) => {
+                let environment = state.get_contract_environment().await
+                    .map_err(VerificationError::State)?;
+
+                let validator = ModuleValidator::new(module, environment);
+                validator.verify()
+                    .map_err(|err| VerificationError::ModuleError(format!("{:#}", err)))?;
             }
         }
 

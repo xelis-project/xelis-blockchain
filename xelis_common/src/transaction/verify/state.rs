@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use xelis_vm::Environment;
 use crate::{
     block::BlockVersion,
     account::Nonce,
@@ -83,4 +84,7 @@ pub trait BlockchainVerificationState<'a, E> {
         &mut self,
         account: &'a CompressedPublicKey
     ) -> Result<Option<&MultiSigPayload>, E>;
+
+    /// Get the contract environment
+    async fn get_contract_environment(&mut self) -> Result<&Environment, E>;
 }
