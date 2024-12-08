@@ -244,26 +244,45 @@ impl Serializer for Constant {
     }
 
     fn size(&self) -> usize {
-        1 + match self {
-            Constant::Default(value) => value.size(),
-            Constant::Struct(values, _) => {
-                // 2 bytes for the struct id
-                2 + values.iter().map(|value| value.size()).sum::<usize>()
-            },
-            Constant::Array(values) => {
-                // 4 bytes for the length
-                4 + values.iter().map(|value| value.size()).sum::<usize>()
-            },
-            Constant::Optional(opt) => opt.size(),
-            Constant::Map(map) => {
-                // 4 bytes for the length
-                4 + map.iter().map(|(key, value)| key.size() + value.size()).sum::<usize>()
-            },
-            Constant::Enum(values, _) => {
-                // 2 bytes for the enum id and 1 byte for the variant id
-                3 + values.iter().map(|value| value.size()).sum::<usize>()
+        let mut total = 0;
+        let mut stack = vec![self];
+
+        while let Some(constant) = stack.pop() {
+            total += 1;
+            match constant {
+                Constant::Default(value) => total += value.size(),
+                Constant::Struct(values, _) => {
+                    total += 2;
+                    for value in values {
+                        stack.push(value);
+                    }
+                },
+                Constant::Array(values) => {
+                    total += 4;
+                    for value in values {
+                        stack.push(value);
+                    }
+                },
+                Constant::Optional(opt) => {
+                    total += opt.size();
+                },
+                Constant::Map(map) => {
+                    total += 4;
+                    for (key, value) in map {
+                        stack.push(value);
+                        stack.push(key);
+                    }
+                },
+                Constant::Enum(values, _) => {
+                    total += 3;
+                    for value in values {
+                        stack.push(value);
+                    }
+                }
             }
         }
+
+        total
     }
 }
 
@@ -309,20 +328,45 @@ impl Serializer for Type {
     }
 
     fn read(_: &mut Reader) -> Result<Self, ReaderError> {
+        // Read is not supported as we need a specific Context to read correct types
         Err(ReaderError::InvalidValue)
     }
 
     fn size(&self) -> usize {
-        1 + match self {
-            Type::U8 | Type::U16 | Type::U32 | Type::U64 | Type::U128 | Type::U256 | Type::Bool | Type::Blob | Type::String => 0,
-            Type::Struct(_) => 2, // 2 bytes for the struct id
-            Type::Array(inner) => inner.size(),
-            Type::Optional(inner) => inner.size(),
-            Type::Map(key, value) => key.size() + value.size(),
-            Type::Enum(_) => 2,
-            Type::Range(inner) => inner.size(),
-            _ => 0
+        let mut total = 0;
+        let mut stack = vec![self];
+
+        while let Some(ty) = stack.pop() {
+            total += 1;
+            match ty {
+                Type::Struct(_) => {
+                    total += 2;
+                },
+                Type::Array(inner) => {
+                    total += 1;
+                    stack.push(inner);
+                },
+                Type::Optional(inner) => {
+                    total += 1;
+                    stack.push(inner);
+                },
+                Type::Map(key, value) => {
+                    total += 1;
+                    stack.push(value);
+                    stack.push(key);
+                },
+                Type::Enum(_) => {
+                    total += 2;
+                },
+                Type::Range(inner) => {
+                    total += 1;
+                    stack.push(inner);
+                },
+                _ => {}
+            }
         }
+
+        total
     }
 }
 

@@ -292,12 +292,14 @@ mod tests {
 
     fn test_serde_value(value: Constant) {
         let bytes = value.to_bytes();
+        let len = bytes.len();
         let mut reader = Reader::new(&bytes);
 
         let structures = IndexSet::new();
         let enums = IndexSet::new();
         let result = decompress_constant(&mut reader, &structures, &enums).unwrap();
         assert_eq!(result, value);
+        assert_eq!(result.size(), len);
     }
 
     #[test]
