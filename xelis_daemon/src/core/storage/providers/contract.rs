@@ -27,10 +27,16 @@ pub trait ContractProvider {
     async fn get_contract_at_topoheight_for<'a>(&self, hash: &Hash, topoheight: TopoHeight) -> Result<VersionedContract<'a>, BlockchainError>;
 
     // Store a contract at a given topoheight
-    async fn set_contract_at_topoheight_for<'a>(&mut self, hash: &Hash, topoheight: TopoHeight, contract: VersionedContract<'a>) -> Result<(), BlockchainError>;
+    async fn set_contract_at_topoheight<'a>(&mut self, hash: &Hash, topoheight: TopoHeight, contract: VersionedContract<'a>) -> Result<(), BlockchainError>;
 
     // Delete the last topoheight for a given contract
-    async fn delete_contract_last_topoheight(&mut self, hash: &Hash) -> Result<(), BlockchainError>;
+    async fn delete_last_topoheight_for_contract(&mut self, hash: &Hash) -> Result<(), BlockchainError>;
+
+    // Check if a contract exists
+    async fn has_contract(&self, hash: &Hash) -> Result<bool, BlockchainError>;
+
+    // Check if a contract exists at a given topoheight
+    async fn has_contract_at_exact_topoheight(&self, hash: &Hash, topoheight: TopoHeight) -> Result<bool, BlockchainError>;
 
     // Count the number of contracts
     async fn count_contracts(&self) -> Result<u64, BlockchainError>;
@@ -40,7 +46,7 @@ pub trait ContractProvider {
 impl ContractProvider for SledStorage {
     async fn set_last_contract_to<'a>(&mut self, hash: &Hash, topoheight: TopoHeight, contract: VersionedContract<'a>) -> Result<(), BlockchainError> {
         trace!("Setting contract {} at topoheight {}", hash, topoheight);
-        self.set_contract_at_topoheight_for(hash, topoheight, contract).await?;
+        self.set_contract_at_topoheight(hash, topoheight, contract).await?;
         self.set_last_topoheight_for_contract(hash, topoheight).await?;
         Ok(())
     }
@@ -66,20 +72,32 @@ impl ContractProvider for SledStorage {
         self.load_from_disk(&self.versioned_contracts, &key, DiskContext::ContractTopoHeight)
     }
 
-    async fn set_contract_at_topoheight_for<'a>(&mut self, hash: &Hash, topoheight: TopoHeight, contract: VersionedContract<'a>) -> Result<(), BlockchainError> {
+    async fn set_contract_at_topoheight<'a>(&mut self, hash: &Hash, topoheight: TopoHeight, contract: VersionedContract<'a>) -> Result<(), BlockchainError> {
         trace!("Setting contract {} at topoheight {}", hash, topoheight);
         let key = Self::get_contract_key(hash, topoheight);
         Self::insert_into_disk(self.snapshot.as_mut(), &self.versioned_contracts, &key, contract.to_bytes())?;
         Ok(())
     }
 
-    async fn delete_contract_last_topoheight(&mut self, hash: &Hash) -> Result<(), BlockchainError> {
+    async fn delete_last_topoheight_for_contract(&mut self, hash: &Hash) -> Result<(), BlockchainError> {
         trace!("Deleting last topoheight for contract {}", hash);
         let prev = Self::delete_data_without_reading(self.snapshot.as_mut(), &self.contracts, hash.as_bytes())?;
         if prev {
             self.store_contracts_count(self.count_contracts().await? - 1)?;
         }
         Ok(())
+    }
+
+    async fn has_contract(&self, hash: &Hash) -> Result<bool, BlockchainError> {
+        trace!("Checking if contract {} exists", hash);
+        let topoheight = self.get_last_topoheight_for_contract(hash).await?;
+        self.has_contract_at_exact_topoheight(hash, topoheight).await
+    }
+
+    async fn has_contract_at_exact_topoheight(&self, hash: &Hash, topoheight: TopoHeight) -> Result<bool, BlockchainError> {
+        trace!("Checking if contract {} exists at topoheight {}", hash, topoheight);
+        let contract = self.get_contract_at_topoheight_for(hash, topoheight).await?;
+        Ok(contract.get().is_some())
     }
 
     async fn count_contracts(&self) -> Result<u64, BlockchainError> {
