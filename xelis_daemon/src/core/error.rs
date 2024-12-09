@@ -103,7 +103,9 @@ pub enum DiskContext {
     #[error("load optional data")]
     LoadOptionalData,
     #[error("search block position in order")]
-    SearchBlockPositionInOrder
+    SearchBlockPositionInOrder,
+    #[error("get contract topoheight")]
+    ContractTopoHeight,
 }
 
 #[repr(usize)]

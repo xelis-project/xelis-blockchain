@@ -1,0 +1,76 @@
+use std::borrow::Cow;
+
+use async_trait::async_trait;
+use xelis_common::{block::TopoHeight, crypto::Hash, serializer::Serializer};
+use xelis_vm::Module;
+use crate::core::{
+    error::{BlockchainError, DiskContext},
+    storage::{SledStorage, Versioned}
+};
+
+// A versioned contract is a contract that can be updated or deleted
+pub type VersionedContract<'a> = Versioned<Option<Cow<'a, Module>>>;
+
+#[async_trait]
+pub trait ContractProvider {
+    // Deploy a contract
+    async fn set_last_contract_to<'a>(&mut self, hash: &Hash, topoheight: TopoHeight, contract: VersionedContract<'a>) -> Result<(), BlockchainError>;
+
+    // Set the last topoheight for a given contract
+    async fn set_last_topoheight_for_contract(&mut self, hash: &Hash, topoheight: TopoHeight) -> Result<(), BlockchainError>;
+
+    // Retrieve the last topoheight for a given contract
+    async fn get_last_topoheight_for_contract(&self, hash: &Hash) -> Result<TopoHeight, BlockchainError>;
+
+    // Retrieve a contract at a given topoheight
+    async fn get_contract_at_topoheight_for<'a>(&self, hash: &Hash, topoheight: TopoHeight) -> Result<VersionedContract<'a>, BlockchainError>;
+
+    // Store a contract at a given topoheight
+    async fn set_contract_at_topoheight_for<'a>(&mut self, hash: &Hash, topoheight: TopoHeight, contract: VersionedContract<'a>) -> Result<(), BlockchainError>;
+
+    // Delete the last topoheight for a given contract
+    async fn delete_contract_last_topoheight(&mut self, hash: &Hash) -> Result<(), BlockchainError>;
+}
+
+#[async_trait]
+impl ContractProvider for SledStorage {
+    async fn set_last_contract_to<'a>(&mut self, hash: &Hash, topoheight: TopoHeight, contract: VersionedContract<'a>) -> Result<(), BlockchainError> {
+        self.set_contract_at_topoheight_for(hash, topoheight, contract).await?;
+        self.set_last_topoheight_for_contract(hash, topoheight).await?;
+        Ok(())
+    }
+
+    async fn set_last_topoheight_for_contract(&mut self, hash: &Hash, topoheight: TopoHeight) -> Result<(), BlockchainError> {
+        Self::insert_into_disk(self.snapshot.as_mut(), &self.contracts, hash.as_bytes(), &topoheight.to_be_bytes())?;
+        Ok(())
+    }
+
+    async fn get_last_topoheight_for_contract(&self, hash: &Hash) -> Result<TopoHeight, BlockchainError> {
+        self.load_from_disk(&self.contracts, hash.as_bytes(), DiskContext::ContractTopoHeight)   
+    }
+
+    async fn get_contract_at_topoheight_for<'a>(&self, hash: &Hash, topoheight: TopoHeight) -> Result<VersionedContract<'a>, BlockchainError> {
+        let key = Self::get_contract_key(hash, topoheight);
+        self.load_from_disk(&self.versioned_contracts, &key, DiskContext::ContractTopoHeight)
+    }
+
+    async fn set_contract_at_topoheight_for<'a>(&mut self, hash: &Hash, topoheight: TopoHeight, contract: VersionedContract<'a>) -> Result<(), BlockchainError> {
+        let key = Self::get_contract_key(hash, topoheight);
+        Self::insert_into_disk(self.snapshot.as_mut(), &self.versioned_contracts, &key, contract.to_bytes())?;
+        Ok(())
+    }
+
+    async fn delete_contract_last_topoheight(&mut self, hash: &Hash) -> Result<(), BlockchainError> {
+        Self::delete_data_without_reading(self.snapshot.as_mut(), &self.contracts, hash.as_bytes())?;
+        Ok(())
+    }
+}
+
+impl SledStorage {
+    fn get_contract_key(hash: &Hash, topoheight: TopoHeight) -> [u8; 40] {
+        let mut key = [0; 40];
+        key[..32].copy_from_slice(hash.as_bytes());
+        key[32..].copy_from_slice(&topoheight.to_be_bytes());
+        key
+    }
+}

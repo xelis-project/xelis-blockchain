@@ -17,6 +17,7 @@ mod multisig;
 mod commit_point;
 mod tips_provider;
 mod db;
+mod contract;
 
 pub use asset::AssetProvider;
 pub use blocks_at_height::BlocksAtHeightProvider;
@@ -37,3 +38,4 @@ pub use multisig::*;
 pub use commit_point::CommitPointProvider;
 pub use tips_provider::TipsProvider;
 pub use db::DBProvider;
+pub use contract::ContractProvider;

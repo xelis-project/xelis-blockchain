@@ -112,6 +112,11 @@ pub struct SledStorage {
     pub(super) registrations: Tree,
     // Account registrations prefixed by their topoheight for easier deletion
     pub(super) registrations_prefixed: Tree,
+    // All contracts registered on the network
+    // To allow up-dateable contracts, we need to version them
+    // key is the hash, value is the latest topoheight
+    pub(super) contracts: Tree,
+    pub(super) versioned_contracts: Tree,
     // opened DB used for assets to create dynamic assets
     pub(super) db: sled::Db,
 
@@ -236,6 +241,8 @@ impl SledStorage {
             merkle_hashes: sled.open_tree("merkle_hashes")?,
             registrations: sled.open_tree("registrations")?,
             registrations_prefixed: sled.open_tree("registrations_prefixed")?,
+            contracts: sled.open_tree("contracts")?,
+            versioned_contracts: sled.open_tree("versioned_contracts")?,
             db: sled,
             transactions_cache: init_cache!(cache_size),
             blocks_cache: init_cache!(cache_size),
