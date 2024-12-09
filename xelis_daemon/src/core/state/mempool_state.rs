@@ -308,4 +308,18 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for Mempoo
             .copied()
             .ok_or_else(|| BlockchainError::ContractNotFound(hash.clone()))
     }
+
+    async fn get_contract_module_with_environment(
+        &mut self,
+        hash: &Hash
+    ) -> Result<(&Module, &Environment), BlockchainError> {
+        // TODO: load from storage
+        let module = self.contracts.get(hash)
+            .copied()
+            .ok_or_else(|| BlockchainError::ContractNotFound(hash.clone()))?;
+
+        let environment = self.storage.get_contract_environment().await?;
+
+        Ok((module, environment))
+    }
 }

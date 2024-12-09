@@ -482,6 +482,24 @@ impl<'a, S: Storage> ChainState<'a, S> {
         }
     }
 
+    async fn load_versioned_contract(&mut self, hash: &Hash) -> Result<(), BlockchainError> {
+        if !self.contracts.contains_key(hash) {
+            let contract = self.storage.get_contract_at_maximum_topoheight_for(hash, self.topoheight).await?
+                .map(|(topo, contract)| (VersionedState::FetchedAt(topo), contract.take()))
+                .unwrap_or((VersionedState::New, None));
+
+            self.contracts.insert(hash.clone(), contract);
+        }
+
+        Ok(())
+    }
+
+    async fn internal_get_contract_module(&self, hash: &Hash) -> Result<&Module, BlockchainError> {
+        self.contracts.get(hash)
+            .ok_or_else(|| BlockchainError::ContractNotFound(hash.clone()))
+            .and_then(|(_, module)| module.as_ref().map(|m| m.deref()).ok_or_else(|| BlockchainError::ContractNotFound(hash.clone())))
+    }
+
     // Reward a miner for the block mined
     pub async fn reward_miner(&mut self, miner: &'a PublicKey, reward: u64) -> Result<(), BlockchainError> {
         debug!("Rewarding miner {} with {} XEL at topoheight {}", miner.as_address(self.storage.is_mainnet()), format_xelis(reward), self.topoheight);
@@ -614,5 +632,19 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for ChainS
         module.as_ref()
             .map(|m| m.deref())
             .ok_or_else(|| BlockchainError::ContractNotFound(hash.clone()))
+    }
+
+    /// Get the contract module with the environment
+    async fn get_contract_module_with_environment(
+        &mut self,
+        hash: &Hash
+    ) -> Result<(&Module, &Environment), BlockchainError> {
+        // First load if not already loaded
+        // TODO: refactor
+        self.load_versioned_contract(hash).await?;
+
+        let module = self.internal_get_contract_module(hash).await?;
+        let env = self.storage.get_contract_environment().await?;
+        Ok((module, env))
     }
 }
