@@ -5,7 +5,7 @@ use xelis_common::{block::TopoHeight, crypto::Hash, serializer::Serializer};
 use xelis_vm::Module;
 use crate::core::{
     error::{BlockchainError, DiskContext},
-    storage::{SledStorage, Versioned}
+    storage::{SledStorage, Versioned, CONTRACTS_COUNT}
 };
 
 // A versioned contract is a contract that can be updated or deleted
@@ -30,6 +30,9 @@ pub trait ContractProvider {
 
     // Delete the last topoheight for a given contract
     async fn delete_contract_last_topoheight(&mut self, hash: &Hash) -> Result<(), BlockchainError>;
+
+    // Count the number of contracts
+    async fn count_contracts(&self) -> Result<u64, BlockchainError>;
 }
 
 #[async_trait]
@@ -41,7 +44,11 @@ impl ContractProvider for SledStorage {
     }
 
     async fn set_last_topoheight_for_contract(&mut self, hash: &Hash, topoheight: TopoHeight) -> Result<(), BlockchainError> {
-        Self::insert_into_disk(self.snapshot.as_mut(), &self.contracts, hash.as_bytes(), &topoheight.to_be_bytes())?;
+        let prev = Self::insert_into_disk(self.snapshot.as_mut(), &self.contracts, hash.as_bytes(), &topoheight.to_be_bytes())?;
+        if prev.is_none() {
+            self.store_contracts_count(self.count_contracts().await? + 1)?;
+        }
+
         Ok(())
     }
 
@@ -61,12 +68,30 @@ impl ContractProvider for SledStorage {
     }
 
     async fn delete_contract_last_topoheight(&mut self, hash: &Hash) -> Result<(), BlockchainError> {
-        Self::delete_data_without_reading(self.snapshot.as_mut(), &self.contracts, hash.as_bytes())?;
+        let prev = Self::delete_data_without_reading(self.snapshot.as_mut(), &self.contracts, hash.as_bytes())?;
+        if prev {
+            self.store_contracts_count(self.count_contracts().await? - 1)?;
+        }
         Ok(())
+    }
+
+    async fn count_contracts(&self) -> Result<u64, BlockchainError> {
+        self.load_from_disk(&self.extra, CONTRACTS_COUNT, DiskContext::ContractsCount)
     }
 }
 
 impl SledStorage {
+    // Update the contracts count and store it on disk
+    pub fn store_contracts_count(&mut self, count: u64) -> Result<(), BlockchainError> {
+        if let Some(snapshot) = self.snapshot.as_mut() {
+            snapshot.contracts_count = count;
+        } else {
+            self.contracts_count = count;
+        }
+        Self::insert_into_disk(self.snapshot.as_mut(), &self.extra, CONTRACTS_COUNT, &count.to_be_bytes())?;
+        Ok(())
+    }
+
     fn get_contract_key(hash: &Hash, topoheight: TopoHeight) -> [u8; 40] {
         let mut key = [0; 40];
         key[..32].copy_from_slice(hash.as_bytes());

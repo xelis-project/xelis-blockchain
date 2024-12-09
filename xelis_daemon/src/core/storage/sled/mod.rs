@@ -53,6 +53,7 @@ pub(super) const TXS_COUNT: &[u8; 4] = b"CTXS";
 pub(super) const ASSETS_COUNT: &[u8; 4] = b"CAST";
 pub(super) const BLOCKS_COUNT: &[u8; 4] = b"CBLK";
 pub(super) const BLOCKS_EXECUTION_ORDER_COUNT: &[u8; 4] = b"EBLK";
+pub(super) const CONTRACTS_COUNT: &[u8; 4] = b"CCON";
 
 pub struct SledStorage {
     // Network used by the storage
@@ -151,6 +152,8 @@ pub struct SledStorage {
     pub(super) blocks_count: u64,
     // Count of blocks added in chain
     pub(super) blocks_execution_count: u64,
+    // Count of contracts deployed
+    pub(super) contracts_count: u64,
 
     // If we have a snapshot, we can use it to rollback
     pub(super) snapshot: Option<Snapshot>
@@ -258,6 +261,7 @@ impl SledStorage {
             transactions_count: 0,
             blocks_count: 0,
             blocks_execution_count: 0,
+            contracts_count: 0,
 
             snapshot: None
         };
@@ -319,6 +323,12 @@ impl SledStorage {
         if let Ok(blocks_execution_count) = self.load_from_disk::<u64>(&self.extra, BLOCKS_EXECUTION_ORDER_COUNT, DiskContext::BlocksExecutionOrderCount) {
             debug!("Found blocks execution count: {}", blocks_execution_count);
             self.blocks_execution_count = blocks_execution_count;
+        }
+
+        // Load the contracts count from disk if available
+        if let Ok(contracts_count) = self.load_from_disk::<u64>(&self.extra, CONTRACTS_COUNT, DiskContext::ContractsCount) {
+            debug!("Found contracts count: {}", contracts_count);
+            self.contracts_count = contracts_count;
         }
     }
 

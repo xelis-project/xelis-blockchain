@@ -62,6 +62,8 @@ pub struct Snapshot {
     pub(crate) blocks_count: u64,
     // Count of blocks added in chain
     pub(crate) blocks_execution_count: u64,
+    // Count of contracts
+    pub(crate) contracts_count: u64,
 }
 
 // This is the final struct to get rid of the borrowed Storage
@@ -79,13 +81,14 @@ impl Default for Snapshot {
             transactions_count: 0,
             blocks_count: 0,
             blocks_execution_count: 0,
+            contracts_count: 0,
         }
     }
 }
 
 impl Snapshot {
     // Create a new snapshot with current counts
-    pub fn new(assets_count: u64, accounts_count: u64, transactions_count: u64, blocks_count: u64, blocks_execution_count: u64) -> Self {
+    pub fn new(assets_count: u64, accounts_count: u64, transactions_count: u64, blocks_count: u64, blocks_execution_count: u64, contracts_count: u64) -> Self {
         Self {
             trees: HashMap::new(),
             assets_count,
@@ -93,6 +96,7 @@ impl Snapshot {
             transactions_count,
             blocks_count,
             blocks_execution_count,
+            contracts_count
         }
     }
 

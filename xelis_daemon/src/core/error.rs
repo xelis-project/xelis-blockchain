@@ -106,6 +106,8 @@ pub enum DiskContext {
     SearchBlockPositionInOrder,
     #[error("get contract topoheight")]
     ContractTopoHeight,
+    #[error("contracts count")]
+    ContractsCount,
 }
 
 #[repr(usize)]
