@@ -595,6 +595,10 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for ChainS
         module: &'a Module
     ) -> Result<(), BlockchainError> {
         let (state, m) = self.internal_get_versioned_contract(&hash).await?;
+        if !state.is_new() {
+            return Err(BlockchainError::ContractAlreadyExists);
+        }
+
         state.mark_updated();
         *m = Some(Cow::Borrowed(module));
 

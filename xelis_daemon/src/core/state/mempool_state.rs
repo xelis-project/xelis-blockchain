@@ -292,7 +292,10 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for Mempoo
         hash: Hash,
         module: &'a Module
     ) -> Result<(), BlockchainError> {
-        self.contracts.insert(hash, module);
+        if self.contracts.insert(hash, module).is_some() {
+            return Err(BlockchainError::ContractAlreadyExists);
+        }
+
         Ok(())
     }
 

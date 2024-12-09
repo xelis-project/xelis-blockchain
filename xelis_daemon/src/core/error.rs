@@ -113,6 +113,8 @@ pub enum DiskContext {
 #[repr(usize)]
 #[derive(Error, Debug)]
 pub enum BlockchainError {
+    #[error("Contract already exists")]
+    ContractAlreadyExists,
     #[error("Contract not found: {}", _0)]
     ContractNotFound(Hash),
     #[error("Invalid ip order for block {}, expected {}, got {}", _0, _1, _2)]
