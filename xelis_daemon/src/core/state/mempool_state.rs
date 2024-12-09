@@ -279,6 +279,6 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for Mempoo
 
     /// Get the contract environment
     async fn get_contract_environment(&mut self) -> Result<&Environment, BlockchainError> {
-        todo!()
+        self.storage.get_contract_environment().await
     }
 }

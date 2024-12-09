@@ -3,6 +3,7 @@ mod snapshot;
 use anyhow::Context;
 use async_trait::async_trait;
 use indexmap::IndexSet;
+use xelis_vm::Environment;
 use crate::{
     config::PRUNE_SAFETY_LIMIT,
     core::{
@@ -156,7 +157,9 @@ pub struct SledStorage {
     pub(super) contracts_count: u64,
 
     // If we have a snapshot, we can use it to rollback
-    pub(super) snapshot: Option<Snapshot>
+    pub(super) snapshot: Option<Snapshot>,
+    // Contract environment for the stdlib
+    pub(super) environment: Environment
 }
 
 macro_rules! init_cache {
@@ -263,7 +266,8 @@ impl SledStorage {
             blocks_execution_count: 0,
             contracts_count: 0,
 
-            snapshot: None
+            snapshot: None,
+            environment: Environment::default()
         };
 
         // Verify that we are opening a DB on same network

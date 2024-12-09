@@ -565,6 +565,6 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for ChainS
 
     /// Get the contract environment
     async fn get_contract_environment(&mut self) -> Result<&Environment, BlockchainError> {
-        unimplemented!()
+        self.storage.get_contract_environment().await
     }
 }
