@@ -32,7 +32,7 @@ pub struct InvokeContractPayload {
     // Contract are the TXID of the transaction that deployed the contract
     pub contract: Hash,
     // Assets deposited with this call
-    pub assets: IndexMap<Hash, ContractDeposit>,
+    pub deposits: IndexMap<Hash, ContractDeposit>,
     // The chunk to invoke
     pub chunk_id: u16,
     // The parameters to call the contract
@@ -505,8 +505,8 @@ impl Serializer for InvokeContractPayload {
     fn write(&self, writer: &mut Writer) {
         self.contract.write(writer);
 
-        writer.write_u8(self.assets.len() as u8);
-        for (asset, deposit) in &self.assets {
+        writer.write_u8(self.deposits.len() as u8);
+        for (asset, deposit) in &self.deposits {
             asset.write(writer);
             deposit.write(writer);
         }
@@ -523,11 +523,11 @@ impl Serializer for InvokeContractPayload {
         let contract = Hash::read(reader)?;
 
         let len = reader.read_u8()? as usize;
-        let mut assets = IndexMap::new();
+        let mut deposits = IndexMap::new();
         for _ in 0..len {
             let asset = Hash::read(reader)?;
             let deposit = ContractDeposit::read(reader)?;
-            assets.insert(asset, deposit);
+            deposits.insert(asset, deposit);
         }
 
         let chunk_id = reader.read_u16()?;
@@ -537,7 +537,7 @@ impl Serializer for InvokeContractPayload {
         for _ in 0..len {
             parameters.push(CompressedConstant::read(reader)?);
         }
-        Ok(InvokeContractPayload { contract, assets, chunk_id, parameters })
+        Ok(InvokeContractPayload { contract, deposits, chunk_id, parameters })
     }
 
     fn size(&self) -> usize {
@@ -546,7 +546,7 @@ impl Serializer for InvokeContractPayload {
         // 1 byte for the deposits length
             + 1;
 
-        for (asset, deposit) in &self.assets {
+        for (asset, deposit) in &self.deposits {
             size += asset.size() + deposit.size();
         }
 

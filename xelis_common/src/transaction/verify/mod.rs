@@ -162,7 +162,7 @@ impl Transaction {
             },
             TransactionType::MultiSig(_) => {},
             TransactionType::InvokeContract(payload) => {
-                if let Some(deposit) = payload.assets.get(asset) {
+                if let Some(deposit) = payload.deposits.get(asset) {
                     match deposit {
                         ContractDeposit::Public(amount) => {
                             output += Scalar::from(*amount);
@@ -250,7 +250,7 @@ impl Transaction {
             TransactionType::Burn(payload) => has_commitment_for_asset(&payload.asset),
             TransactionType::MultiSig(_) => true,
             TransactionType::InvokeContract(payload) => payload
-                .assets
+                .deposits
                 .keys()
                 .all(|asset| has_commitment_for_asset(asset)),
             TransactionType::DeployContract(_) => true,
@@ -366,7 +366,7 @@ impl Transaction {
                 }
             },
             TransactionType::InvokeContract(payload) => {
-                if payload.assets.len() > MAX_DEPOSIT_PER_INVOKE_CALL {
+                if payload.deposits.len() > MAX_DEPOSIT_PER_INVOKE_CALL {
                     return Err(VerificationError::TransferCount);
                 }
 
@@ -552,7 +552,7 @@ impl Transaction {
             TransactionType::InvokeContract(payload) => {
                 transcript.invoke_contract_proof_domain_separator();
                 transcript.append_hash(b"contract_hash", &payload.contract);
-                for (asset, deposit) in &payload.assets {
+                for (asset, deposit) in &payload.deposits {
                     transcript.append_hash(b"deposit_asset", asset);
                     match deposit {
                         ContractDeposit::Public(amount) => {

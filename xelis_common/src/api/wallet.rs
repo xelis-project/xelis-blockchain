@@ -1,4 +1,5 @@
 use std::{borrow::Cow, collections::HashMap};
+use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use crate::{
     account::CiphertextCache,
@@ -340,6 +341,24 @@ pub enum EntryType {
         participants: Vec<Address>,
         // Number of signatures required
         threshold: u8,
+        // Fee paid
+        fee: u64,
+        // Nonce used
+        nonce: u64
+    },
+    InvokeContract {
+        // Contract address
+        contract: Hash,
+        // Deposits made
+        deposits: IndexMap<Hash, u64>,
+        // Chunk id invoked
+        chunk_id: u16,
+        // Fee paid
+        fee: u64,
+        // Nonce used
+        nonce: u64
+    },
+    DeployContract {
         // Fee paid
         fee: u64,
         // Nonce used
