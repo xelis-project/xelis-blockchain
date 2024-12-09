@@ -370,10 +370,17 @@ impl Transaction {
                     return Err(VerificationError::TransferCount);
                 }
 
-                let _module = state.get_contract_module(&payload.contract).await
+                let (module, environment) = state.get_contract_module_with_environment(&payload.contract).await
                     .map_err(VerificationError::State)?;
 
-                // TODO verify the parameters
+                let validator = ModuleValidator::new(module, environment);
+                // for constant in payload.parameters.iter() {
+                //     let decompressed = constant.decompress(module.structs(), module.enums())
+                //         .map_err(ProofVerificationError::from)?;
+
+                //     validator.verify_constant(&decompressed)
+                //         .map_err(|err| VerificationError::ModuleError(format!("{:#}", err)))?;
+                // }
             },
             TransactionType::DeployContract(module) => {
                 let environment = state.get_contract_environment().await

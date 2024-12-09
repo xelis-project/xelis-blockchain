@@ -100,4 +100,10 @@ pub trait BlockchainVerificationState<'a, E> {
         &mut self,
         hash: &Hash
     ) -> Result<&Module, E>;
+
+    /// Get the contract module
+    async fn get_contract_module_with_environment(
+        &mut self,
+        hash: &Hash
+    ) -> Result<(&Module, &Environment), E>;
 }
