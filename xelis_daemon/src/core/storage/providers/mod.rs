@@ -38,4 +38,4 @@ pub use multisig::*;
 pub use commit_point::CommitPointProvider;
 pub use tips_provider::TipsProvider;
 pub use db::DBProvider;
-pub use contract::ContractProvider;
+pub use contract::*;

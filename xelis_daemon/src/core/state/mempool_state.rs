@@ -16,6 +16,7 @@ use xelis_common::{
     }
 };
 use xelis_environment::Environment;
+use xelis_vm::Module;
 use crate::core::{
     error::BlockchainError,
     mempool::Mempool,
@@ -47,6 +48,8 @@ pub struct MempoolState<'a, S: Storage> {
     // Sender accounts
     // This is used to verify ZK Proofs and store/update nonces
     accounts: HashMap<&'a PublicKey, Account<'a>>,
+    // Contract modules
+    contracts: HashMap<Hash, &'a Module>,
     // The current stable topoheight of the chain
     stable_topoheight: TopoHeight,
     // The current topoheight of the chain
@@ -63,6 +66,7 @@ impl<'a, S: Storage> MempoolState<'a, S> {
             storage,
             receiver_balances: HashMap::new(),
             accounts: HashMap::new(),
+            contracts: HashMap::new(),
             stable_topoheight,
             topoheight,
             block_version,
@@ -280,5 +284,25 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for Mempoo
     /// Get the contract environment
     async fn get_contract_environment(&mut self) -> Result<&Environment, BlockchainError> {
         self.storage.get_contract_environment().await
+    }
+
+    /// Set the contract module
+    async fn set_contract_module(
+        &mut self,
+        hash: Hash,
+        module: &'a Module
+    ) -> Result<(), BlockchainError> {
+        self.contracts.insert(hash, module);
+        Ok(())
+    }
+
+    /// Get the contract module
+    async fn get_contract_module(
+        &mut self,
+        hash: &Hash
+    ) -> Result<&Module, BlockchainError> {
+        self.contracts.get(hash)
+            .copied()
+            .ok_or_else(|| BlockchainError::ContractNotFound(hash.clone()))
     }
 }
