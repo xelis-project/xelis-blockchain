@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use xelis_vm::Environment;
+use xelis_vm::{Environment, Module};
 use crate::{
     block::BlockVersion,
     account::Nonce,
@@ -87,4 +87,17 @@ pub trait BlockchainVerificationState<'a, E> {
 
     /// Get the contract environment
     async fn get_contract_environment(&mut self) -> Result<&Environment, E>;
+
+    /// Set the contract module
+    async fn set_contract_module(
+        &mut self,
+        hash: Hash,
+        module: &'a Module
+    ) -> Result<(), E>;
+
+    /// Get the contract module
+    async fn get_contract_module(
+        &mut self,
+        hash: &Hash
+    ) -> Result<&Module, E>;
 }

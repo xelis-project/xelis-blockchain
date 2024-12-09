@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use async_trait::async_trait;
 use indexmap::IndexSet;
-use xelis_vm::Environment;
+use xelis_vm::{Environment, Module};
 use crate::{
     account::{Nonce, CiphertextCache},
     api::{DataElement, DataValue},
@@ -565,6 +565,21 @@ impl<'a> BlockchainVerificationState<'a, ()> for ChainState {
     }
 
     async fn get_contract_environment(&mut self) -> Result<&Environment, ()> {
+        unimplemented!()
+    }
+
+    async fn set_contract_module(
+        &mut self,
+        _: Hash,
+        _: &'a Module
+    ) -> Result<(), ()> {
+        unimplemented!()
+    }
+
+    async fn get_contract_module(
+        &mut self,
+        _: &Hash
+    ) -> Result<&Module, ()> {
         unimplemented!()
     }
 }

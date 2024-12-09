@@ -12,7 +12,6 @@ use merlin::Transcript;
 use xelis_vm::ModuleValidator;
 use crate::{
     account::Nonce,
-    block::BlockVersion,
     config::XELIS_ASSET,
     crypto::{
         elgamal::{
@@ -31,6 +30,7 @@ use crate::{
             PC_GENS
         },
         Hash,
+        Hashable,
         ProtocolTranscript,
         SIGNATURE_SIZE
     },
@@ -370,11 +370,18 @@ impl Transaction {
                     return Err(VerificationError::TransferCount);
                 }
 
-                // TODO verify the contract hash
+                let _module = state.get_contract_module(&payload.contract).await
+                    .map_err(VerificationError::State)?;
+
                 // TODO verify the parameters
             },
-            TransactionType::DeployContract(_) => {
-                todo!("deploy contract");
+            TransactionType::DeployContract(module) => {
+                let environment = state.get_contract_environment().await
+                    .map_err(VerificationError::State)?;
+
+                let validator = ModuleValidator::new(module, environment);
+                validator.verify()
+                    .map_err(|err| VerificationError::ModuleError(format!("{:#}", err)))?;
             }
         };
 
@@ -532,7 +539,7 @@ impl Transaction {
                 }
             },
             TransactionType::Burn(payload) => {
-                if state.get_block_version() >= BlockVersion::V2 {
+                if self.get_version() >= TxVersion::V1 {
                     transcript.burn_proof_domain_separator();
                     transcript.append_hash(b"burn_asset", &payload.asset);
                     transcript.append_u64(b"burn_amount", payload.amount);
@@ -569,12 +576,10 @@ impl Transaction {
                 }
             },
             TransactionType::DeployContract(module) => {
-                let environment = state.get_contract_environment().await
-                    .map_err(VerificationError::State)?;
+                transcript.deploy_contract_proof_domain_separator();
 
-                let validator = ModuleValidator::new(module, environment);
-                validator.verify()
-                    .map_err(|err| VerificationError::ModuleError(format!("{:#}", err)))?;
+                state.set_contract_module(self.hash(), module).await
+                    .map_err(VerificationError::State)?;
             }
         }
 
@@ -736,8 +741,9 @@ impl Transaction {
             TransactionType::InvokeContract(_) => {
                 todo!("apply invoke contract");
             },
-            TransactionType::DeployContract(_) => {
-                todo!("apply deploy contract");
+            TransactionType::DeployContract(module) => {
+                state.set_contract_module(self.hash(), module).await
+                    .map_err(VerificationError::State)?;
             }
         }
     
@@ -864,8 +870,8 @@ impl Transaction {
             TransactionType::InvokeContract(_) => {
                 todo!("apply invoke contract");
             },
-            TransactionType::DeployContract(_) => {
-                todo!("apply deploy contract");
+            TransactionType::DeployContract(module) => {
+                state.set_contract_module(self.hash(), module).await.map_err(VerificationError::State)?;
             }
         }
 
