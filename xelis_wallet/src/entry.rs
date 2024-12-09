@@ -1,4 +1,4 @@
-use indexmap::IndexSet;
+use indexmap::{IndexMap, IndexSet};
 use xelis_common::{
     time::TimestampMillis,
     api::{
@@ -192,6 +192,24 @@ pub enum EntryData {
         fee: u64,
         // Nonce used
         nonce: u64,
+    },
+    InvokeContract {
+        // Contract address
+        contract: Hash,
+        // Deposits made
+        deposits: IndexMap<Hash, u64>,
+        // Chunk id invoked
+        chunk_id: u16,
+        // Fee paid
+        fee: u64,
+        // Nonce used
+        nonce: u64
+    },
+    DeployContract {
+        // Fee paid
+        fee: u64,
+        // Nonce used
+        nonce: u64
     }
 }
 
@@ -239,6 +257,26 @@ impl Serializer for EntryData {
                 let fee = reader.read_u64()?;
                 let nonce = reader.read_u64()?;
                 Self::MultiSig { participants, threshold, fee, nonce }
+            },
+            5 => {
+                let contract = reader.read_hash()?;
+                let chunk_id = reader.read_u16()?;
+                let deposits_size = reader.read_u8()? as usize;
+                let mut deposits = IndexMap::new();
+                for _ in 0..deposits_size {
+                    let asset = reader.read_hash()?;
+                    let amount = reader.read_u64()?;
+                    deposits.insert(asset, amount);
+                }
+
+                let fee = reader.read_u64()?;
+                let nonce = reader.read_u64()?;
+                Self::InvokeContract { contract, deposits, chunk_id, fee, nonce }
+            },
+            6 => {
+                let fee = reader.read_u64()?;
+                let nonce = reader.read_u64()?;
+                Self::DeployContract { fee, nonce }
             }
             _ => return Err(ReaderError::InvalidValue)
         }) 
@@ -285,6 +323,24 @@ impl Serializer for EntryData {
                 writer.write_u8(*threshold);
                 writer.write_u64(fee);
                 writer.write_u64(nonce);
+            },
+            Self::InvokeContract { contract, deposits, chunk_id, fee, nonce } => {
+                writer.write_u8(5);
+                writer.write_hash(contract);
+                writer.write_u16(*chunk_id);
+                writer.write_u8(deposits.len() as u8);
+                for (asset, amount) in deposits {
+                    asset.write(writer);
+                    amount.write(writer);
+                }
+
+                writer.write_u64(fee);
+                writer.write_u64(nonce);
+            },
+            Self::DeployContract { fee, nonce } => {
+                writer.write_u8(6);
+                writer.write_u64(fee);
+                writer.write_u64(nonce);
             }
         }
     }
@@ -301,6 +357,12 @@ impl Serializer for EntryData {
             },
             Self::MultiSig { participants, threshold, fee, nonce } => {
                 1 + participants.iter().map(|k| k.size()).sum::<usize>() + threshold.size() + fee.size() + nonce.size()
+            },
+            Self::InvokeContract { contract, deposits, chunk_id, fee, nonce } => {
+                contract.size() + 2 + deposits.iter().map(|(a, b)| a.size() + b.size()).sum::<usize>() + chunk_id.size() + fee.size() + nonce.size()
+            },
+            Self::DeployContract { fee, nonce } => {
+                fee.size() + nonce.size()
             }
         }
     }
@@ -394,6 +456,12 @@ impl TransactionEntry {
                 EntryData::MultiSig { participants, threshold, fee, nonce } => {
                     let participants = participants.into_iter().map(|p| p.to_address(mainnet)).collect();
                     RPCEntryType::MultiSig { participants, threshold, fee, nonce }
+                },
+                EntryData::InvokeContract { contract, deposits, chunk_id, fee, nonce } => {
+                    RPCEntryType::InvokeContract { contract, deposits, chunk_id, fee, nonce }
+                },
+                EntryData::DeployContract { fee, nonce } => {
+                    RPCEntryType::DeployContract { fee, nonce }
                 }
             }
         }
@@ -437,6 +505,18 @@ impl TransactionEntry {
                     str.push_str(&format!("{}", participant.as_address(mainnet)));
                 }
                 str
+            },
+            EntryData::InvokeContract { contract, deposits, chunk_id, fee, nonce } => {
+                let mut str = format!("Fee: {}, Nonce: {} ", format_xelis(*fee), nonce);
+                str.push_str(&format!("Invoke contract {} with chunk id {}", contract, chunk_id));
+                for (asset, amount) in deposits {
+                    let data = storage.get_asset(&asset).await?;
+                    str.push_str(&format!("Deposit {} {} to contract", format_coin(*amount, data.decimals), asset));
+                }
+                str
+            },
+            EntryData::DeployContract { fee, nonce } => {
+                format!("Fee: {}, Nonce: {} Deploy contract", format_xelis(*fee), nonce)
             }
         };
 

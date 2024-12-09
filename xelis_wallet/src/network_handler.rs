@@ -6,6 +6,7 @@ use std::{
     sync::Arc,
     time::Duration
 };
+use indexmap::IndexMap;
 use thiserror::Error;
 use anyhow::Error;
 use log::{debug, error, info, trace, warn};
@@ -34,7 +35,7 @@ use xelis_common::{
         task::{JoinError, JoinHandle},
         time::sleep
     },
-    transaction::{MultiSigPayload, Role},
+    transaction::{ContractDeposit, MultiSigPayload, Role},
     utils::sanitize_daemon_address
 };
 use crate::{
@@ -370,6 +371,47 @@ impl NetworkHandler {
                         None
                     }
                 },
+                RPCTransactionType::InvokeContract(payload) => {
+                    let payload = payload.into_owned();
+                    if is_owner {
+                        if self.has_tx_stored(&tx.hash).await? {
+                            debug!("Transaction invoke contract {} was already stored, skipping it", tx.hash);
+                            continue 'main;
+                        }
+
+                        let mut deposits = IndexMap::new();
+                        for (asset, deposit) in payload.deposits {
+                            assets_changed.insert(asset.clone());
+
+                            match deposit {
+                                ContractDeposit::Private(ct) => {
+                                    let ct = ct.decompress()?;
+                                    let amount = self.wallet.decrypt_ciphertext(ct).await?;
+                                    deposits.insert(asset, amount);
+                                },
+                                ContractDeposit::Public(amount) => {
+                                    deposits.insert(asset, amount);
+                                }
+                            }
+                        }
+
+                        Some(EntryData::InvokeContract { contract: payload.contract, deposits, chunk_id: payload.chunk_id, fee: tx.fee, nonce: tx.nonce })
+                    } else {
+                        None
+                    }
+                },
+                RPCTransactionType::DeployContract(_) => {
+                    if is_owner {
+                        if self.has_tx_stored(&tx.hash).await? {
+                            debug!("Transaction deploy contract {} was already stored, skipping it", tx.hash);
+                            continue 'main;
+                        }
+
+                        Some(EntryData::DeployContract { fee: tx.fee, nonce: tx.nonce })
+                    } else {
+                        None
+                    }
+                }
             };
 
             if let Some(entry) = entry {
