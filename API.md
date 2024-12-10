@@ -4429,6 +4429,32 @@ No parameters
 }
 ```
 
+Counts the number of contracts saved on disk
+
+##### Method `count_contracts`
+
+##### Parameters
+No parameters
+
+##### Request
+```json
+{
+	"jsonrpc": "2.0",
+	"id": 1,
+	"method": "count_contracts"
+}
+```
+
+##### Response
+```json
+{
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": 17
+}
+```
+
+
 #### Get Tips
 Retrieve Tips (highest blocks from blockDAG) from chain.
 This is the available blocks hashes to mine on to continue the chain and merge DAG branches in one chain.
