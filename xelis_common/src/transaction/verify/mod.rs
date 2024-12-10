@@ -128,7 +128,9 @@ impl Transaction {
                 }
 
                 match &self.data {
-                    TransactionType::MultiSig(_) => false,
+                    TransactionType::MultiSig(_)
+                    | TransactionType::InvokeContract(_)
+                    | TransactionType::DeployContract(_) => false,
                     _ => true,
                 }
             }
@@ -497,7 +499,7 @@ impl Transaction {
 
         // 2. Verify every CtValidityProof
         trace!("verifying transfers ciphertext validity proofs");
-        
+
         // Prepare the new source commitments at same time
         // Count the number of commitments
         let mut n_commitments = self.source_commitments.len();
