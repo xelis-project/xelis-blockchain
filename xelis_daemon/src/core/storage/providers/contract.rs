@@ -78,7 +78,7 @@ impl ContractProvider for SledStorage {
 
     async fn get_contract_at_topoheight_for<'a>(&self, hash: &Hash, topoheight: TopoHeight) -> Result<VersionedContract<'a>, BlockchainError> {
         trace!("Getting contract {} at topoheight {}", hash, topoheight);
-        let key = Self::get_contract_key(hash, topoheight);
+        let key = Self::get_versioned_contract_key(hash, topoheight);
         self.load_from_disk(&self.versioned_contracts, &key, DiskContext::ContractTopoHeight)
     }
 
@@ -106,7 +106,7 @@ impl ContractProvider for SledStorage {
 
     async fn set_contract_at_topoheight<'a>(&mut self, hash: &Hash, topoheight: TopoHeight, contract: VersionedContract<'a>) -> Result<(), BlockchainError> {
         trace!("Setting contract {} at topoheight {}", hash, topoheight);
-        let key = Self::get_contract_key(hash, topoheight);
+        let key = Self::get_versioned_contract_key(hash, topoheight);
         Self::insert_into_disk(self.snapshot.as_mut(), &self.versioned_contracts, &key, contract.to_bytes())?;
         Ok(())
     }
@@ -161,10 +161,10 @@ impl SledStorage {
         Ok(())
     }
 
-    fn get_contract_key(hash: &Hash, topoheight: TopoHeight) -> [u8; 40] {
+    fn get_versioned_contract_key(hash: &Hash, topoheight: TopoHeight) -> [u8; 40] {
         let mut key = [0; 40];
-        key[..32].copy_from_slice(hash.as_bytes());
-        key[32..].copy_from_slice(&topoheight.to_be_bytes());
+        key[..8].copy_from_slice(&topoheight.to_be_bytes());
+        key[8..].copy_from_slice(hash.as_bytes());
         key
     }
 }

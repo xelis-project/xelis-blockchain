@@ -6,13 +6,9 @@ use indexmap::IndexSet;
 use xelis_vm::Environment;
 use crate::{
     config::PRUNE_SAFETY_LIMIT,
-    core::{
-        error::{BlockchainError, DiskContext},
-        storage::VersionedMultiSig
-    }
+    core::error::{BlockchainError, DiskContext}
 };
 use xelis_common::{
-    account::{VersionedBalance, VersionedNonce},
     block::{TopoHeight, Block, BlockHeader},
     crypto::{Hash, PublicKey},
     difficulty::{CumulativeDifficulty, Difficulty},
@@ -104,7 +100,7 @@ pub struct SledStorage {
     // Key is the account public key
     pub(super) multisig: Tree,
     // Tree that store all versioned multisig setups
-    pub(super) versioned_multisig: Tree,
+    pub(super) versioned_multisigs: Tree,
 
     // Tree that store all versioned balances using hashed keys
     pub(super) versioned_balances: Tree,
@@ -242,7 +238,7 @@ impl SledStorage {
             versioned_nonces: sled.open_tree("versioned_nonces")?,
             balances: sled.open_tree("balances")?,
             multisig: sled.open_tree("multisig")?,
-            versioned_multisig: sled.open_tree("versioned_multisig")?,
+            versioned_multisigs: sled.open_tree("versioned_multisig")?,
             versioned_balances: sled.open_tree("versioned_balances")?,
             merkle_hashes: sled.open_tree("merkle_hashes")?,
             registrations: sled.open_tree("registrations")?,
@@ -569,30 +565,6 @@ impl SledStorage {
         Self::insert_into_disk(self.snapshot.as_mut(), &self.extra, ASSETS_COUNT, &count.to_be_bytes())?;
         Ok(())
     }
-
-    fn delete_versioned_tree_above_topoheight(snapshot: &mut Option<Snapshot>, tree: &Tree, topoheight: u64) -> Result<(), BlockchainError> {
-        trace!("delete versioned nonces above or at topoheight {}", topoheight);
-        for el in tree.iter().keys() {
-            let key = el?;
-            let topo = u64::from_bytes(&key[0..8])?;
-            if topo > topoheight {
-                Self::remove_from_disk(snapshot.as_mut(), tree, &key)?;
-            }
-        }
-        Ok(())
-    }
-
-    fn delete_versioned_tree_below_topoheight(snapshot: &mut Option<Snapshot>, tree: &Tree, topoheight: u64) -> Result<(), BlockchainError> {
-        trace!("delete versioned nonces above or at topoheight {}", topoheight);
-        for el in tree.iter().keys() {
-            let key = el?;
-            let topo = u64::from_bytes(&key[0..8])?;
-            if topo < topoheight {
-                Self::remove_from_disk(snapshot.as_mut(), tree, &key)?;
-            }
-        }
-        Ok(())
-    }
 }
 
 #[async_trait]
@@ -715,160 +687,6 @@ impl Storage for SledStorage {
         }
 
         Ok((hash, block, txs))
-    }
-
-    async fn delete_versioned_balances_at_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError> {
-        trace!("delete versioned balances at topoheight {}", topoheight);
-        // TODO: scan prefix support snapshot
-        for el in self.versioned_balances.scan_prefix(&topoheight.to_be_bytes()) {
-            let (key, value) = el?;
-            // Delete this version from DB
-            Self::remove_from_disk_without_reading(self.snapshot.as_mut(), &self.versioned_balances, &key)?;
-
-            // Deserialize keys part
-            let asset = Hash::from_bytes(&key[40..72])?;
-            let key = PublicKey::from_bytes(&key[8..40])?;
-
-            let last_topoheight = self.get_last_topoheight_for_balance(&key, &asset).await?;
-            if last_topoheight >= topoheight {
-                // Deserialize value, it is needed to get the previous topoheight
-                let versioned_balance = VersionedBalance::from_bytes(&value)?;
-    
-                // Now records changes, for each balances
-                let db_key = self.get_balance_key_for(&key, &asset);
-                if let Some(previous_topoheight) = versioned_balance.get_previous_topoheight() {
-                    Self::insert_into_disk(self.snapshot.as_mut(), &self.balances, &db_key, &previous_topoheight.to_be_bytes())?;
-                } else {
-                    // if there is no previous topoheight, it means that this is the first version
-                    // so we can delete the balance
-                    Self::remove_from_disk_without_reading(self.snapshot.as_mut(), &self.balances, &db_key)?;
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    async fn delete_versioned_nonces_at_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError> {
-        trace!("delete versioned nonces at topoheight {}", topoheight);
-        // TODO: scan prefix support snapshot
-        for el in self.versioned_nonces.scan_prefix(&topoheight.to_be_bytes()) {
-            let (key, value) = el?;
-            // Delete this version from DB
-            Self::remove_from_disk_without_reading(self.snapshot.as_mut(), &self.versioned_nonces, &key)?;
-
-            // Deserialize keys part
-            let key = PublicKey::from_bytes(&key[8..40])?;
-
-            // Because of chain reorg, it may have been already deleted
-            if let Ok(last_topoheight) = self.get_last_topoheight_for_nonce(&key).await {
-                if last_topoheight >= topoheight {
-                    // Deserialize value, it is needed to get the previous topoheight
-                    let version = VersionedNonce::from_bytes(&value)?;
-                    // Now records changes
-                    if let Some(previous_topoheight) = version.get_previous_topoheight() {
-                        self.set_last_topoheight_for_nonce(&key, previous_topoheight).await?;
-                    } else {
-                        // if there is no previous topoheight, it means that this is the first version
-                        // so we can delete the balance
-                        self.delete_last_topoheight_for_nonce(&key).await?;
-                    }
-                }
-            }
-        }
-
-        trace!("delete versioned nonces at topoheight {} done!", topoheight);
-        Ok(())
-    }
-
-    // TODO: make it generic
-    async fn delete_versioned_multisig_at_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError> {
-        trace!("delete versioned nonces at topoheight {}", topoheight);
-        // TODO: scan prefix support snapshot
-        for el in self.versioned_multisig.scan_prefix(&topoheight.to_be_bytes()) {
-            let (key, value) = el?;
-            // Delete this version from DB
-            Self::remove_from_disk_without_reading(self.snapshot.as_mut(), &self.versioned_multisig, &key)?;
-
-            // Deserialize keys part
-            let key = PublicKey::from_bytes(&key[8..40])?;
-
-            // Because of chain reorg, it may have been already deleted
-            if let Some(last_topoheight) = self.get_last_topoheight_for_multisig(&key).await? {
-                if last_topoheight >= topoheight {
-                    // Deserialize value, it is needed to get the previous topoheight
-                    let version = VersionedMultiSig::from_bytes(&value)?;
-                    // Now records changes
-                    if let Some(previous_topoheight) = version.get_previous_topoheight() {
-                        self.set_last_topoheight_for_multisig(&key, previous_topoheight).await?;
-                    } else {
-                        // if there is no previous topoheight, it means that this is the first version
-                        // so we can delete the balance
-                        self.delete_last_topoheight_for_multisig(&key).await?;
-                    }
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    async fn delete_versioned_balances_above_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError> {
-        trace!("delete versioned balances above topoheight {}!", topoheight);
-        Self::delete_versioned_tree_above_topoheight(&mut self.snapshot, &self.versioned_balances, topoheight)
-    }
-
-    async fn delete_versioned_nonces_above_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError> {
-        trace!("delete versioned nonces above topoheight {}", topoheight);
-        Self::delete_versioned_tree_above_topoheight(&mut self.snapshot, &self.versioned_nonces, topoheight)
-    }
-
-    async fn delete_versioned_multisig_above_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError> {
-        trace!("delete versioned multisig above topoheight {}", topoheight);
-        Self::delete_versioned_tree_above_topoheight(&mut self.snapshot, &self.versioned_multisig, topoheight)
-    }
-
-    async fn delete_registrations_above_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError> {
-        trace!("delete registrations above topoheight {}", topoheight);
-        for el in self.registrations_prefixed.iter().keys() {
-            let key = el?;
-            let topo = u64::from_bytes(&key[0..8])?;
-            if topo > topoheight {
-                Self::remove_from_disk_without_reading(self.snapshot.as_mut(), &self.registrations, &key[8..40])?;
-                let pkey = &key[8..40];
-                Self::remove_from_disk_without_reading(self.snapshot.as_mut(), &self.registrations_prefixed, &pkey)?;
-            }
-        }
-
-        Ok(())
-    }
-
-    async fn delete_registrations_below_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError> {
-        trace!("delete registrations below topoheight {}", topoheight);
-        let mut buf = [0u8; 40];
-        for el in self.registrations.iter() {
-            let (key, value) = el?;
-            let topo = u64::from_bytes(&value[0..8])?;
-            if topo < topoheight {
-                buf[0..8].copy_from_slice(&value);
-                buf[8..40].copy_from_slice(&key);
-
-                Self::remove_from_disk_without_reading(self.snapshot.as_mut(), &self.registrations_prefixed, &buf)?;
-                Self::remove_from_disk_without_reading(self.snapshot.as_mut(), &self.registrations, &key)?;
-            }
-        }
-
-        Ok(())
-    }
-
-    async fn delete_versioned_balances_below_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError> {
-        trace!("delete versioned balances below topoheight {}!", topoheight);
-        Self::delete_versioned_tree_below_topoheight(&mut self.snapshot, &self.versioned_balances, topoheight)
-    }
-
-    async fn delete_versioned_nonces_below_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError> {
-        trace!("delete versioned nonces below topoheight {}", topoheight);
-        Self::delete_versioned_tree_below_topoheight(&mut self.snapshot, &self.versioned_nonces, topoheight)
     }
 
     // The first versioned balance that is under the topoheight is bumped to topoheight
@@ -1226,11 +1044,7 @@ impl Storage for SledStorage {
         trace!("Cleaning versioned balances and nonces");
 
         // now delete all versioned balances and nonces above the new topoheight
-        self.delete_versioned_balances_above_topoheight(topoheight).await?;
-        self.delete_versioned_nonces_above_topoheight(topoheight).await?;
-        self.delete_versioned_multisig_above_topoheight(topoheight).await?;
-        // Delete also registrations
-        self.delete_registrations_above_topoheight(topoheight).await?;
+        self.delete_versioned_data_above_topoheight(topoheight).await?;
 
         trace!("Cleaning caches");
         // Clear all caches to not have old data after rewind

@@ -535,11 +535,7 @@ impl<S: Storage> Blockchain<S> {
             }
 
             // delete balances for all assets
-            storage.delete_versioned_balances_below_topoheight(located_sync_topoheight).await?;
-            // delete nonces versions
-            storage.delete_versioned_nonces_below_topoheight(located_sync_topoheight).await?;
-            // Also delete registrations
-            storage.delete_registrations_below_topoheight(located_sync_topoheight).await?;
+            storage.delete_versioned_data_below_topoheight(located_sync_topoheight, false).await?;
 
             // Update the pruned topoheight
             storage.set_pruned_topoheight(located_sync_topoheight).await?;
@@ -1937,10 +1933,7 @@ impl<S: Storage> Blockchain<S> {
                     }
 
                     // Delete changes made by this block
-                    storage.delete_versioned_balances_at_topoheight(topoheight).await?;
-                    storage.delete_versioned_nonces_at_topoheight(topoheight).await?;
-                    storage.delete_versioned_multisig_at_topoheight(topoheight).await?;
-                    storage.delete_registrations_at_topoheight(topoheight).await?;
+                    storage.delete_versioned_data_at_topoheight(topoheight).await?;
 
                     topoheight += 1;
                 }

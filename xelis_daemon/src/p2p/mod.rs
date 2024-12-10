@@ -2975,8 +2975,7 @@ impl<S: Storage> P2pServer<S> {
                     storage.create_snapshot_registrations_at_topoheight(lowest_topoheight).await?;
 
                     // Delete all old data
-                    storage.delete_versioned_nonces_below_topoheight(lowest_topoheight).await?;
-                    storage.delete_registrations_below_topoheight(lowest_topoheight).await?;
+                    storage.delete_versioned_data_below_topoheight(lowest_topoheight, false).await?;
 
                     storage.set_pruned_topoheight(lowest_topoheight).await?;
                     storage.set_top_topoheight(top_topoheight)?;

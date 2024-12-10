@@ -64,12 +64,12 @@ impl MultiSigProvider for SledStorage {
     }
 
     async fn get_multisig_at_topoheight_for<'a>(&'a self, account: &PublicKey, topoheight: TopoHeight) -> Result<VersionedMultiSig<'a>, BlockchainError> {
-        self.load_from_disk(&self.versioned_multisig, &self.get_multisig_key(account, topoheight), DiskContext::Multisig )
+        self.load_from_disk(&self.versioned_multisigs, &self.get_multisig_key(account, topoheight), DiskContext::Multisig )
     }
 
     async fn set_multisig_at_topoheight_for<'a>(&mut self, account: &PublicKey, topoheight: TopoHeight, multisig: VersionedMultiSig<'a>) -> Result<(), BlockchainError> {
         let key: [u8; 40] = self.get_multisig_key(account, topoheight);
-        Self::insert_into_disk(self.snapshot.as_mut(), &self.versioned_multisig, &key, multisig.to_bytes())?;
+        Self::insert_into_disk(self.snapshot.as_mut(), &self.versioned_multisigs, &key, multisig.to_bytes())?;
         Ok(())
     }
 
