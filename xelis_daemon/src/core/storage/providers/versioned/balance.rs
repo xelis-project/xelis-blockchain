@@ -82,7 +82,7 @@ impl VersionedBalanceProvider for SledStorage {
                 let k = el?;
                 let topo = TopoHeight::from_bytes(&k[..8])?;
                 if topo < topoheight {
-                    let output_topo = match last_outputs.entry(k[8..].into()) {
+                    let output_topo = match last_outputs.entry(k.subslice(8, 64)) {
                         Entry::Occupied(e) => e.get().as_ref().copied(),
                         Entry::Vacant(e) => {
                             let key = PublicKey::from_bytes(&k[8..40])?;
