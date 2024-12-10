@@ -1,6 +1,6 @@
 mod state;
 
-use anyhow::{Context, Error as AnyError};
+use anyhow::{Context as AnyContext, Error as AnyError};
 use bulletproofs::RangeProof;
 use curve25519_dalek::{
     ristretto::CompressedRistretto,
@@ -10,10 +10,10 @@ use curve25519_dalek::{
 };
 use log::{debug, trace};
 use merlin::Transcript;
-use xelis_vm::{ConstantWrapper, ModuleValidator};
+use xelis_vm::{ConstantWrapper, ModuleValidator, ValueCell, VM};
 use crate::{
     account::Nonce,
-    config::{BURN_PER_CONTRACT, XELIS_ASSET},
+    config::{BURN_PER_CONTRACT, TRANSACTION_FEE_BURN_PERCENT, XELIS_ASSET},
     crypto::{
         elgamal::{
             Ciphertext,
@@ -89,7 +89,11 @@ pub enum VerificationError<T> {
     #[error("Module error: {0}")]
     ModuleError(String),
     #[error(transparent)]
-    AnyError(#[from] AnyError)
+    AnyError(#[from] AnyError),
+    #[error("Invalid invoke contract")]
+    InvalidInvokeContract,
+    #[error("overflow during gas calculation")]
+    GasOverflow,
 }
 
 struct DecompressedTransferCt {
@@ -385,6 +389,10 @@ impl Transaction {
 
                 let (module, environment) = state.get_contract_module_with_environment(&payload.contract).await
                     .map_err(VerificationError::State)?;
+
+                if !module.is_entry_chunk(payload.chunk_id as usize) {
+                    return Err(VerificationError::InvalidInvokeContract);
+                }
 
                 let validator = ModuleValidator::new(module, environment);
                 for constant in payload.parameters.iter() {
@@ -886,12 +894,65 @@ impl Transaction {
                     *current_bal += receiver_ct;
                 }
             },
-            TransactionType::Burn(_) => {},
+            TransactionType::Burn(payload) => {
+                if payload.asset == XELIS_ASSET {
+                    state.add_burned_xelis(payload.amount).await
+                        .map_err(VerificationError::State)?;
+                }
+            },
             TransactionType::MultiSig(payload) => {
                 state.set_multisig_state(&self.source, payload).await.map_err(VerificationError::State)?;
             },
-            TransactionType::InvokeContract(_) => {
-                todo!("apply invoke contract");
+            TransactionType::InvokeContract(payload) => {
+                let (module, environment) = state.get_contract_module_with_environment(&payload.contract).await
+                    .map_err(VerificationError::State)?;
+
+                let mut used_gas = 0;
+                let res: Result<xelis_vm::Constant, AnyError> = tokio::task::block_in_place(|| {
+                    let mut parameters: Vec<ValueCell> = Vec::with_capacity(payload.parameters.len());
+                    for constant in payload.parameters.iter() {
+                        let decompressed = constant.decompress(module.structs(), module.enums())
+                            .context("decompress param")?;
+                        parameters.push(decompressed.into());
+                    }
+
+                    let mut vm = VM::new(module, environment);
+
+                    vm.invoke_entry_chunk_with_args(payload.chunk_id, parameters.into_iter()).context("Invoke entry chunk")?;
+                    vm.context_mut().set_gas_limit(payload.max_gas);
+                    used_gas = vm.context().current_gas_usage();
+                    vm.run().context("Run VM")
+                });
+
+                match res {
+                    Ok(res) => {
+                        log::info!("Invoke contract result: {:#}", res);
+                    },
+                    Err(err) => {
+                        log::error!("Invoke contract error: {:#}", err);
+                    }
+                }
+                
+                // Part of the gas is burned
+                let burned_gas = used_gas * TRANSACTION_FEE_BURN_PERCENT / 100;
+                // Part of the gas is given to the miners as fees
+                let gas_fee = used_gas.checked_sub(burned_gas).ok_or(VerificationError::GasOverflow)?;
+                // The remaining gas is refunded to the sender
+                let refund_gas = payload.max_gas.checked_sub(used_gas).ok_or(VerificationError::GasOverflow)?;
+
+                debug!("Invoke contract used gas: {}, burned: {}, fee: {}, refund: {}", used_gas, burned_gas, gas_fee, refund_gas);
+                state.add_burned_xelis(burned_gas).await
+                    .map_err(VerificationError::State)?;
+
+                state.add_fee_xelis(gas_fee).await
+                    .map_err(VerificationError::State)?;
+
+                if refund_gas > 0 {
+                    let balance = state.get_receiver_balance(self.get_source(), &XELIS_ASSET).await
+                        .map_err(VerificationError::State)?;
+    
+                    *balance += Scalar::from(refund_gas);
+                }
             },
             TransactionType::DeployContract(module) => {
                 state.set_contract_module(self.hash(), module).await.map_err(VerificationError::State)?;

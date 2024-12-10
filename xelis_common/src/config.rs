@@ -26,6 +26,12 @@ pub const FEE_PER_MULTISIG_SIGNATURE: u64 = 500;
 // Note that if we depends on fees only, miners could do such attacks for free
 // by mining their own transactions and getting the fees back
 pub const BURN_PER_CONTRACT: u64 = COIN_VALUE;
+// 30% of the transaction fee is burned
+// This is to reduce the supply over time
+// and also to prevent spamming the network with low fee transactions
+// or free tx from miners
+// This should be enabled once Smart Contracts are released
+pub const TRANSACTION_FEE_BURN_PERCENT: u64 = 30;
 
 // 8 decimals numbers
 pub const COIN_DECIMALS: u8 = 8;

@@ -100,4 +100,10 @@ pub trait BlockchainVerificationState<'a, E> {
         &mut self,
         hash: &Hash
     ) -> Result<(&Module, &Environment), E>;
+
+    /// Add burned XELIS
+    async fn add_burned_xelis(&mut self, amount: u64) -> Result<(), E>;
+
+    /// Add fee XELIS
+    async fn add_fee_xelis(&mut self, amount: u64) -> Result<(), E>;
 }

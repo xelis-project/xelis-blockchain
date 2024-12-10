@@ -582,6 +582,14 @@ impl<'a> BlockchainVerificationState<'a, ()> for ChainState {
     ) -> Result<(&Module, &Environment), ()> {
         unimplemented!()
     }
+
+    async fn add_burned_xelis(&mut self, _: u64) -> Result<(), ()> {
+        Ok(())
+    }
+
+    async fn add_fee_xelis(&mut self, _: u64) -> Result<(), ()> {
+        Ok(())
+    }
 }
 
 impl FeeHelper for AccountStateImpl {
