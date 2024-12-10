@@ -10,7 +10,7 @@ use curve25519_dalek::{
 };
 use log::{debug, trace};
 use merlin::Transcript;
-use xelis_vm::ModuleValidator;
+use xelis_vm::{ConstantWrapper, ModuleValidator};
 use crate::{
     account::Nonce,
     config::{BURN_PER_CONTRACT, XELIS_ASSET},
@@ -321,7 +321,7 @@ impl Transaction {
                         debug!("sender cannot be the receiver in the same TX");
                         return Err(VerificationError::SenderIsReceiver);
                     }
-    
+
                     if let Some(extra_data) = transfer.get_extra_data() {
                         let size = extra_data.size();
                         if size > EXTRA_DATA_LIMIT_SIZE {
@@ -391,7 +391,10 @@ impl Transaction {
                     let decompressed = constant.decompress(module.structs(), module.enums())
                         .context("decompress param")?;
 
-                    validator.verify_constant(&decompressed)
+                    // For safety, we wrap it in our custom type in case of a potential stackoverflow attack
+                    let wrapped = ConstantWrapper(decompressed);
+
+                    validator.verify_constant(&wrapped.0)
                         .map_err(|err| VerificationError::ModuleError(format!("{:#}", err)))?;
                 }
             },
@@ -536,16 +539,16 @@ impl Transaction {
     
                     let receiver_ct = decompressed.get_ciphertext(Role::Receiver);
                     *current_balance += receiver_ct;
-    
+
                     // Validity proof
-    
+
                     transcript.transfer_proof_domain_separator();
                     transcript.append_public_key(b"dest_pubkey", transfer.get_destination());
                     transcript.append_commitment(b"amount_commitment", transfer.get_commitment());
                     transcript.append_handle(b"amount_sender_handle", transfer.get_sender_handle());
                     transcript
                         .append_handle(b"amount_receiver_handle", transfer.get_receiver_handle());
-    
+
                     transfer.get_proof().pre_verify(
                         &decompressed.commitment,
                         &receiver,
