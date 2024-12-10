@@ -2008,9 +2008,14 @@ impl<S: Storage> Blockchain<S> {
                 let mut total_fees = 0;
                 // Chain State used for the verification
                 trace!("building chain state to execute TXs in block {}", block_hash);
-                let mut chain_state = ApplicableChainState::new(storage, base_topo_height, highest_topo, version);
+                let mut chain_state = ApplicableChainState::new(
+                    storage,
+                    base_topo_height,
+                    highest_topo,
+                    version,
+                    past_burned_supply
+                );
 
-                let mut burned_supply = past_burned_supply;
                 // compute rewards & execute txs
                 for (tx, tx_hash) in block.get_transactions().iter().zip(block.get_txs_hashes()) { // execute all txs
                     // Link the transaction hash to this block
@@ -2065,16 +2070,8 @@ impl<S: Storage> Blockchain<S> {
 
                         // Increase total tx fees for miner
                         total_fees += tx.get_fee();
-                        // Increase burned supply
-                        if let Some(burn) = tx.get_burned_amount(&XELIS_ASSET) {
-                            burned_supply += burn;
-                        }
                     }
                 }
-
-                trace!("set burned supply to {} at {}", burned_supply, highest_topo);
-                chain_state.get_mut_storage()
-                    .set_burned_supply_at_topo_height(highest_topo, burned_supply)?;
 
                 let dev_fee_percentage = get_block_dev_fee(block.get_height());
                 // Dev fee are only applied on block reward

@@ -158,6 +158,8 @@ pub struct ChainState<'a, S: Storage> {
     contracts: HashMap<Hash, (VersionedState, Option<Cow<'a, Module>>)>,
     // Block header version
     block_version: BlockVersion,
+    // Burned supply tracked
+    burned_supply: u64
 }
 
 // Chain State that can be applied to the mutable storage
@@ -192,9 +194,21 @@ impl<'a, S: Storage> AsMut<ChainState<'a, S>> for ApplicableChainState<'a, S> {
 }
 
 impl<'a, S: Storage> ApplicableChainState<'a, S> {
-    pub fn new(storage: &'a mut S, stable_topoheight: TopoHeight, topoheight: TopoHeight, block_version: BlockVersion) -> Self {
+    pub fn new(
+        storage: &'a mut S,
+        stable_topoheight: TopoHeight,
+        topoheight: TopoHeight,
+        block_version: BlockVersion,
+        burned_supply: u64
+    ) -> Self {
         Self {
-            inner: ChainState::with(StorageReference::Mutable(storage), stable_topoheight, topoheight, block_version)
+            inner: ChainState::with(
+                StorageReference::Mutable(storage),
+                stable_topoheight,
+                topoheight,
+                block_version,
+                burned_supply
+            )
         }
     }
 
@@ -329,12 +343,20 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
             }
         }
 
+        self.inner.storage.set_burned_supply_at_topo_height(self.inner.topoheight, self.inner.burned_supply)?;
+
         Ok(())
     }
 }
 
 impl<'a, S: Storage> ChainState<'a, S> {
-    fn with(storage: StorageReference<'a, S>, stable_topoheight: TopoHeight, topoheight: TopoHeight, block_version: BlockVersion) -> Self {
+    fn with(
+        storage: StorageReference<'a, S>,
+        stable_topoheight: TopoHeight,
+        topoheight: TopoHeight,
+        block_version: BlockVersion,
+        burned_supply: u64
+    ) -> Self {
         Self {
             storage,
             receiver_balances: HashMap::new(),
@@ -342,12 +364,19 @@ impl<'a, S: Storage> ChainState<'a, S> {
             stable_topoheight,
             topoheight,
             contracts: HashMap::new(),
-            block_version
+            block_version,
+            burned_supply
         }
     }
 
     pub fn new(storage: &'a S, stable_topoheight: TopoHeight, topoheight: TopoHeight, block_version: BlockVersion) -> Self {
-        Self::with(StorageReference::Immutable(storage), stable_topoheight, topoheight, block_version)
+        Self::with(
+            StorageReference::Immutable(storage),
+            stable_topoheight,
+            topoheight,
+            block_version,
+            0
+        )
     }
 
     // Get the storage used by the chain state
@@ -635,5 +664,11 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for ChainS
         let module = self.internal_get_contract_module(hash).await?;
         let env = self.storage.get_contract_environment().await?;
         Ok((module, env))
+    }
+
+    /// Track burned supply
+    async fn add_burned_xelis(&mut self, amount: u64) -> Result<(), BlockchainError> {
+        self.burned_supply += amount;
+        Ok(())
     }
 }
