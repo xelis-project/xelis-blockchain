@@ -6,8 +6,8 @@ use indexmap::{IndexMap, IndexSet};
 use serde::{Deserialize, Serialize};
 use xelis_vm::{Chunk, Constant, ConstantWrapper, EnumType, EnumVariant, Module, StructType, Type, Value, U256};
 use crate::{
-    crypto::{elgamal::CompressedCiphertext, Hash},
-    serializer::{Reader, ReaderError, Serializer, Writer}
+    crypto::Hash,
+    serializer::*
 };
 
 pub use compressed::CompressedConstant;
@@ -21,7 +21,14 @@ pub enum ContractDeposit {
     Public(u64),
     // Private deposit
     // The ciphertext represents the amount of the asset deposited
-    Private(CompressedCiphertext)
+    // Private {
+    //     commitment: CompressedCommitment,
+    //     sender_handle: CompressedHandle,
+    //     receiver_handle: CompressedHandle,
+    //     // The proof is a proof that the amount is a valid encryption
+    //     // for the smart contract to be compatible with its encrypted balance.
+    //     proof: CiphertextValidityProof
+    // }
 }
 
 // InvokeContractPayload is a public payload allowing to call a smart contract
@@ -51,25 +58,45 @@ impl Serializer for ContractDeposit {
                 writer.write_u8(0);
                 writer.write_u64(amount);
             },
-            ContractDeposit::Private(ciphertext) => {
-                writer.write_u8(1);
-                ciphertext.write(writer);
-            }
+            // ContractDeposit::Private {
+            //     commitment,
+            //     sender_handle,
+            //     receiver_handle,
+            //     proof
+            // } => {
+            //     writer.write_u8(1);
+            //     commitment.write(writer);
+            //     sender_handle.write(writer);
+            //     receiver_handle.write(writer);
+            //     proof.write(writer);
+            // }
         }
     }
 
     fn read(reader: &mut Reader) -> Result<ContractDeposit, ReaderError> {
         Ok(match reader.read_u8()? {
             0 => ContractDeposit::Public(reader.read_u64()?),
-            1 => ContractDeposit::Private(CompressedCiphertext::read(reader)?),
+            // 1 => ContractDeposit::Private {
+            //     commitment: CompressedCommitment::read(reader)?,
+            //     sender_handle: CompressedHandle::read(reader)?,
+            //     receiver_handle: CompressedHandle::read(reader)?,
+            //     proof: CiphertextValidityProof::read(reader)?
+            // },
             _ => return Err(ReaderError::InvalidValue)
         })
     }
 
     fn size(&self) -> usize {
-        match self {
-            ContractDeposit::Public(_) => 1 + 8,
-            ContractDeposit::Private(ciphertext) => 1 + ciphertext.size()
+        1 + match self {
+            ContractDeposit::Public(amount) => amount.size(),
+            // ContractDeposit::Private {
+            //     commitment,
+            //     sender_handle,
+            //     receiver_handle,
+            //     proof
+            // } => {
+            //     commitment.size() + sender_handle.size() + receiver_handle.size() + proof.size()
+            // }
         }
     }
 }

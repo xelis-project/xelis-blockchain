@@ -176,9 +176,9 @@ impl Transaction {
                         ContractDeposit::Public(amount) => {
                             output += Scalar::from(*amount);
                         },
-                        ContractDeposit::Private(ct) => {
-                            output += ct.decompress()?;
-                        }
+                        // ContractDeposit::Private { .. } => {
+                            
+                        // }
                     }
                 }
             },
@@ -536,7 +536,7 @@ impl Transaction {
                             transfer.get_asset()
                         ).await
                         .map_err(VerificationError::State)?;
-    
+
                     let receiver_ct = decompressed.get_ciphertext(Role::Receiver);
                     *current_balance += receiver_ct;
 
@@ -588,9 +588,9 @@ impl Transaction {
                         ContractDeposit::Public(amount) => {
                             transcript.append_u64(b"deposit_plain", *amount);
                         },
-                        ContractDeposit::Private(ct) => {
-                            transcript.append_ciphertext(b"deposit_ct", ct);
-                        }
+                        // ContractDeposit::Private { .. } => {
+                        //     todo!("private deposit");
+                        // }
                     }
                 }
 
