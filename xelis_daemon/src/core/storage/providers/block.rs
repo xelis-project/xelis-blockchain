@@ -132,10 +132,10 @@ impl BlockProvider for SledStorage {
         self.store_blocks_count(self.count_blocks().await? - 1)?;
 
         // Delete difficulty
-        Self::delete_data_without_reading(self.snapshot.as_mut(), &self.difficulty, hash.as_bytes())?;
+        Self::remove_from_disk_without_reading(self.snapshot.as_mut(), &self.difficulty, hash.as_bytes())?;
 
         // Delete P
-        Self::delete_data_without_reading(self.snapshot.as_mut(), &self.difficulty_covariance, hash.as_bytes())?;
+        Self::remove_from_disk_without_reading(self.snapshot.as_mut(), &self.difficulty_covariance, hash.as_bytes())?;
 
         self.remove_block_hash_at_height(&hash, header.get_height()).await?;
 

@@ -1,5 +1,8 @@
+use std::collections::{hash_map::Entry, HashMap};
+
 use async_trait::async_trait;
-use log::trace;
+use log::{debug, trace};
+use sled::IVec;
 use xelis_common::{
     account::VersionedBalance,
     block::TopoHeight,
@@ -23,7 +26,7 @@ pub trait VersionedBalanceProvider {
     async fn delete_versioned_balances_above_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError>;
 
     // delete versioned balances below topoheight
-    async fn delete_versioned_balances_below_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError>;
+    async fn delete_versioned_balances_below_topoheight(&mut self, topoheight: TopoHeight, all: bool) -> Result<(), BlockchainError>;
 }
 
 
@@ -65,8 +68,43 @@ impl VersionedBalanceProvider for SledStorage {
         Self::delete_versioned_tree_above_topoheight(&mut self.snapshot, &self.versioned_balances, topoheight)
     }
 
-    async fn delete_versioned_balances_below_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError> {
-        trace!("delete versioned balances below topoheight {}!", topoheight);
-        Self::delete_versioned_tree_below_topoheight(&mut self.snapshot, &self.versioned_balances, topoheight)
+    async fn delete_versioned_balances_below_topoheight(&mut self, topoheight: u64, all: bool) -> Result<(), BlockchainError> {
+        trace!("delete versioned balances (all: {}) below topoheight {}!", all, topoheight);
+        if all {
+            Self::delete_versioned_tree_below_topoheight(&mut self.snapshot, &self.versioned_balances, topoheight)
+        } else {
+            // We need to search until we find the latest output version
+            // And we delete everything below it
+
+            // To prevent too much IO, we keep the output version in memory for each key (public key + asset)
+            let mut last_outputs: HashMap<IVec, Option<TopoHeight>> = HashMap::new();
+            for el in self.versioned_balances.iter().keys() {
+                let k = el?;
+                let topo = TopoHeight::from_bytes(&k[..8])?;
+                if topo < topoheight {
+                    let output_topo = match last_outputs.entry(k[8..].into()) {
+                        Entry::Occupied(e) => e.get().as_ref().copied(),
+                        Entry::Vacant(e) => {
+                            let key = PublicKey::from_bytes(&k[8..40])?;
+                            let asset = Hash::from_bytes(&k[40..72])?;
+                            let res = self.get_output_balance_at_maximum_topoheight(&key, &asset, topoheight).await?
+                                .map(|(v, _)| v);
+
+                            e.insert(res);
+                            res
+                        }
+                    };
+
+                    if let Some(output_topo) = output_topo {
+                        if topo < output_topo {
+                            debug!("delete versioned balance at topoheight {} (output: {}) for key {:?}", topo, output_topo, &k[8..40]);
+                            Self::remove_from_disk_without_reading(self.snapshot.as_mut(), &self.versioned_balances, &k)?;
+                        }
+                    }
+                }
+            }
+
+            Ok(())
+        }
     }
 }

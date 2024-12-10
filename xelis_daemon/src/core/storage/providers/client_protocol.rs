@@ -67,7 +67,7 @@ impl ClientProtocolProvider for SledStorage {
 
     fn remove_tx_executed(&mut self, tx: &Hash) -> Result<(), BlockchainError> {
         trace!("remove tx {} executed", tx);
-        Self::delete_data_without_reading(self.snapshot.as_mut(), &self.txs_executed, tx.as_bytes())?;
+        Self::remove_from_disk_without_reading(self.snapshot.as_mut(), &self.txs_executed, tx.as_bytes())?;
 
         Ok(())
     }

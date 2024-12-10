@@ -46,11 +46,8 @@ pub trait VersionedProvider:
     // Delete versioned data below topoheight
     // Special case for versioned balances:
     // Because users can link a TX to an old versioned balance, we need to keep track of them until the latest spent version
-    // TODO: delete_versioned_balances_below_topoheight with this in mind
-    async fn delete_versioned_data_below_topoheight(&mut self, topoheight: TopoHeight, balances: bool) -> Result<(), BlockchainError> {
-        if balances {
-            self.delete_versioned_balances_below_topoheight(topoheight).await?;
-        }
+    async fn delete_versioned_data_below_topoheight(&mut self, topoheight: TopoHeight, all_balances: bool) -> Result<(), BlockchainError> {
+        self.delete_versioned_balances_below_topoheight(topoheight, all_balances).await?;
         self.delete_versioned_nonces_below_topoheight(topoheight).await?;
         self.delete_versioned_multisigs_below_topoheight(topoheight).await?;
         self.delete_versioned_registrations_below_topoheight(topoheight).await?;
@@ -78,7 +75,7 @@ impl SledStorage {
             let key = el?;
             let topo = u64::from_bytes(&key[0..8])?;
             if topo > topoheight {
-                Self::remove_from_disk(snapshot.as_mut(), tree, &key)?;
+                Self::remove_from_disk_without_reading(snapshot.as_mut(), tree, &key)?;
             }
         }
         Ok(())
@@ -90,7 +87,7 @@ impl SledStorage {
             let key = el?;
             let topo = u64::from_bytes(&key[0..8])?;
             if topo < topoheight {
-                Self::remove_from_disk(snapshot.as_mut(), tree, &key)?;
+                Self::remove_from_disk_without_reading(snapshot.as_mut(), tree, &key)?;
             }
         }
         Ok(())

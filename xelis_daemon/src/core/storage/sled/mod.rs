@@ -518,11 +518,6 @@ impl SledStorage {
         Ok(Arc::new(value))
     }
 
-    pub(super) fn delete_data_without_reading<K: Serializer>(snapshot: Option<&mut Snapshot>, tree: &Tree, key: &K) -> Result<bool, BlockchainError> {
-        let v = Self::remove_from_disk(snapshot, tree, &key.to_bytes())?;
-        Ok(v.is_some())
-    }
-
     // Check if our DB contains a data in cache or on disk
     pub(super) async fn contains_data_cached<K: Eq + StdHash + Serializer + Clone, V>(&self, tree: &Tree, cache: &Option<Mutex<LruCache<K, V>>>, key: &K) -> Result<bool, BlockchainError> {
         let key_bytes = key.to_bytes();
@@ -619,7 +614,7 @@ impl Storage for SledStorage {
         let hash = Self::delete_cacheable_data(self.snapshot.as_mut(), &self.hash_at_topo, &self.hash_at_topo_cache, &topoheight).await?;
 
         trace!("Deleting block execution order");
-        Self::delete_data_without_reading(self.snapshot.as_mut(), &self.blocks_execution_order, &hash)?;
+        Self::remove_from_disk_without_reading(self.snapshot.as_mut(), &self.blocks_execution_order, hash.as_bytes())?;
 
         trace!("Hash is {hash} at topo {topoheight}");
 

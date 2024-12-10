@@ -173,7 +173,7 @@ impl BalanceProvider for SledStorage {
     fn delete_last_topoheight_for_balance(&mut self, key: &PublicKey, asset: &Hash) -> Result<(), BlockchainError> {
         trace!("delete last topoheight balance {} for {}", asset, key.as_address(self.is_mainnet()));
         let key = self.get_balance_key_for(key, asset);
-        Self::delete_data_without_reading(self.snapshot.as_mut(), &self.balances, &key)?;
+        Self::remove_from_disk_without_reading(self.snapshot.as_mut(), &self.balances, &key)?;
         Ok(())
     }
 

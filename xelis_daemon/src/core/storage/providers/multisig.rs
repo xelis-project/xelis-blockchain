@@ -74,7 +74,7 @@ impl MultiSigProvider for SledStorage {
     }
 
     async fn delete_last_topoheight_for_multisig(&mut self, account: &PublicKey) -> Result<(), BlockchainError> {
-        Self::delete_data_without_reading(self.snapshot.as_mut(), &self.multisig, account.as_bytes())?;
+        Self::remove_from_disk_without_reading(self.snapshot.as_mut(), &self.multisig, account.as_bytes())?;
         Ok(())
     }
 

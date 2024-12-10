@@ -113,7 +113,7 @@ impl ContractProvider for SledStorage {
 
     async fn delete_last_topoheight_for_contract(&mut self, hash: &Hash) -> Result<(), BlockchainError> {
         trace!("Deleting last topoheight for contract {}", hash);
-        let prev = Self::delete_data_without_reading(self.snapshot.as_mut(), &self.contracts, hash.as_bytes())?;
+        let prev = Self::remove_from_disk_without_reading(self.snapshot.as_mut(), &self.contracts, hash.as_bytes())?;
         if prev {
             self.store_contracts_count(self.count_contracts().await? - 1)?;
         }
