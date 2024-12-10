@@ -576,13 +576,6 @@ impl<'a> BlockchainVerificationState<'a, ()> for ChainState {
         unimplemented!()
     }
 
-    async fn get_contract_module(
-        &mut self,
-        _: &Hash
-    ) -> Result<&Module, ()> {
-        unimplemented!()
-    }
-
     async fn get_contract_module_with_environment(
         &mut self,
         _: &Hash
