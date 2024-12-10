@@ -86,6 +86,8 @@ pub enum GenerationError<T> {
     MultiSigParticipants,
     #[error("Invalid multisig threshold")]
     MultiSigThreshold,
+    #[error("Cannot contains yourself in the multisig participants")]
+    MultiSigSelfParticipant,
     #[error("Burn amount is zero")]
     BurnZero,
 }
@@ -651,6 +653,12 @@ impl TransactionBuilder {
                 for key in &payload.participants {
                     transcript.append_public_key(b"multisig_participant", key.get_public_key());
                     keys.insert(key.get_public_key().clone());
+                }
+
+                // You can't contains yourself in the participants
+                let pk = source_keypair.get_public_key().compress();
+                if keys.contains(&pk) {
+                    return Err(GenerationError::MultiSigSelfParticipant);
                 }
 
                 TransactionType::MultiSig(MultiSigPayload {
