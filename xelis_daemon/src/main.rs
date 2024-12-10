@@ -916,6 +916,7 @@ async fn status<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Res
     let transactions_count = storage.count_transactions().await.context("Error while counting transactions")?;
     let blocks_count = storage.count_blocks().await.context("Error while counting blocks")?;
     let assets = storage.count_assets().await.context("Error while counting assets")?;
+    let contracts = storage.count_contracts().await.context("Error while counting contracts")?;
     let pruned_topoheight = storage.get_pruned_topoheight().await.context("Error while retrieving pruned topoheight")?;
     let version = get_version_at_height(blockchain.get_network(), height);
 
@@ -931,7 +932,7 @@ async fn status<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Res
     manager.message(format!("Current Supply: {} XELIS", format_xelis(supply)));
     manager.message(format!("Burned Supply: {} XELIS", format_xelis(burned_supply)));
     manager.message(format!("Current Block Reward: {} XELIS", format_xelis(get_block_reward(supply))));
-    manager.message(format!("Stored accounts/transactions/blocks/assets: {}/{}/{}/{}", accounts_count, transactions_count, blocks_count, assets));
+    manager.message(format!("Accounts / Transactions / Blocks / Assets / Contracts: {} / {} / {} / {} / {}", accounts_count, transactions_count, blocks_count, assets, contracts));
     manager.message(format!("Block Version: {}", version));
     manager.message(format!("POW Algorithm: {}", get_pow_algorithm_for_version(version)));
 
