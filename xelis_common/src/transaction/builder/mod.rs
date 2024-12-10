@@ -12,13 +12,14 @@ pub use unsigned::UnsignedTransaction;
 use bulletproofs::RangeProof;
 use curve25519_dalek::Scalar;
 use serde::{Deserialize, Serialize};
+use xelis_vm::Module;
 use std::{
     collections::HashSet,
     iter,
 };
 use crate::{
     api::DataElement,
-    config::XELIS_ASSET,
+    config::{BURN_PER_CONTRACT, XELIS_ASSET},
     crypto::{
         elgamal::{
             Ciphertext,
@@ -32,12 +33,7 @@ use crate::{
             SCALAR_SIZE
         },
         proofs::{
-            CiphertextValidityProof,
-            CommitmentEqProof,
-            ProofGenerationError,
-            BP_GENS,
-            PC_GENS,
-            BULLET_PROOF_SIZE,
+            CiphertextValidityProof, CommitmentEqProof, ProofGenerationError, BP_GENS, BULLET_PROOF_SIZE, PC_GENS
         },
         Address,
         Hash,
@@ -100,6 +96,7 @@ pub enum TransactionTypeBuilder {
     // We can use the same as final transaction
     Burn(BurnPayload),
     MultiSig(MultiSigPayload),
+    DeployContract(Module),
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -228,7 +225,8 @@ impl TransactionBuilder {
             size += 1 + (self.required_thresholds as usize * (SIGNATURE_SIZE + 1))
         }
 
-        let transfers_count = match &self.data {
+        let mut transfers_count = 0;
+        match &self.data {
             TransactionTypeBuilder::Transfers(transfers) => {
                 // Transfers count byte
                 size += 1;
@@ -250,17 +248,19 @@ impl TransactionBuilder {
                         size += ExtraData::estimate_size(extra_data);
                     }
                 }
-                transfers.len()
+                transfers_count = transfers.len()
             }
             TransactionTypeBuilder::Burn(payload) => {
                 // Payload size
                 size += payload.size();
-                0
             },
             TransactionTypeBuilder::MultiSig(payload) => {
                 // Payload size
                 size += payload.size();
-                0
+            },
+            TransactionTypeBuilder::DeployContract(module) => {
+                // Module size
+                size += module.size();
             }
         };
 
@@ -356,7 +356,12 @@ impl TransactionBuilder {
                     cost += payload.amount
                 }
             },
-            _ => {}
+            TransactionTypeBuilder::MultiSig(_) => {},
+            TransactionTypeBuilder::DeployContract(_) => {
+                if *asset == XELIS_ASSET {
+                    cost += BURN_PER_CONTRACT;
+                }
+            }
         }
 
         cost
@@ -614,6 +619,13 @@ impl TransactionBuilder {
                 if payload.amount == 0 {
                     return Err(GenerationError::BurnZero);
                 }
+
+                if self.version >= TxVersion::V1 {
+                    transcript.burn_proof_domain_separator();
+                    transcript.append_hash(b"burn_asset", &payload.asset);
+                    transcript.append_u64(b"burn_amount", payload.amount);
+                }
+
                 TransactionType::Burn(payload)
             },
             TransactionTypeBuilder::MultiSig(payload) => {
@@ -633,6 +645,10 @@ impl TransactionBuilder {
 
                 TransactionType::MultiSig(payload)
             },
+            TransactionTypeBuilder::DeployContract(module) => {
+                transcript.deploy_contract_proof_domain_separator();
+                TransactionType::DeployContract(module)
+            }
         };
 
         // 3. Create the RangeProof
