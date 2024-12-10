@@ -907,8 +907,8 @@ impl Transaction {
                 let (module, environment) = state.get_contract_module_with_environment(&payload.contract).await
                     .map_err(VerificationError::State)?;
 
-                let mut used_gas = 0;
-                let res: Result<xelis_vm::Constant, AnyError> = tokio::task::block_in_place(|| {
+                let used_gas;
+                {
                     let mut parameters: Vec<ValueCell> = Vec::with_capacity(payload.parameters.len());
                     for constant in payload.parameters.iter() {
                         let decompressed = constant.decompress(module.structs(), module.enums())
@@ -921,18 +921,17 @@ impl Transaction {
                     vm.invoke_entry_chunk_with_args(payload.chunk_id, parameters.into_iter()).context("Invoke entry chunk")?;
                     vm.context_mut().set_gas_limit(payload.max_gas);
                     used_gas = vm.context().current_gas_usage();
-                    vm.run().context("Run VM")
-                });
 
-                match res {
-                    Ok(res) => {
-                        log::info!("Invoke contract result: {:#}", res);
-                    },
-                    Err(err) => {
-                        log::error!("Invoke contract error: {:#}", err);
+                    match vm.run() {
+                        Ok(res) => {
+                            log::info!("Invoke contract result: {:#}", res);
+                        },
+                        Err(err) => {
+                            log::error!("Invoke contract error: {:#}", err);
+                        }
                     }
                 }
-                
+
                 // Part of the gas is burned
                 let burned_gas = used_gas * TRANSACTION_FEE_BURN_PERCENT / 100;
                 // Part of the gas is given to the miners as fees
