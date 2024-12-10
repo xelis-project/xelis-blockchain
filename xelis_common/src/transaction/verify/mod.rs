@@ -920,8 +920,7 @@ impl Transaction {
 
                     vm.invoke_entry_chunk_with_args(payload.chunk_id, parameters.into_iter()).context("Invoke entry chunk")?;
                     vm.context_mut().set_gas_limit(payload.max_gas);
-                    used_gas = vm.context().current_gas_usage();
-
+                    
                     match vm.run() {
                         Ok(res) => {
                             log::info!("Invoke contract result: {:#}", res);
@@ -930,6 +929,7 @@ impl Transaction {
                             log::error!("Invoke contract error: {:#}", err);
                         }
                     }
+                    used_gas = vm.context().current_gas_usage();
                 }
 
                 // Part of the gas is burned
