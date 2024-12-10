@@ -2083,7 +2083,9 @@ impl<S: Storage> Blockchain<S> {
                 }
                 
                 // reward the miner
-                chain_state.reward_miner(block.get_miner(), block_reward + total_fees).await?;
+                // Miner gets the block reward + total fees + gas fee
+                let gas_fee = chain_state.get_gas_fee();
+                chain_state.reward_miner(block.get_miner(), block_reward + total_fees + gas_fee).await?;
 
                 // apply changes from Chain State
                 chain_state.apply_changes().await?;

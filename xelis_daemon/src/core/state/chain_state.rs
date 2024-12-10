@@ -159,7 +159,9 @@ pub struct ChainState<'a, S: Storage> {
     // Block header version
     block_version: BlockVersion,
     // Burned supply tracked
-    burned_supply: u64
+    burned_supply: u64,
+    // All gas fees tracked
+    gas_fee: u64
 }
 
 // Chain State that can be applied to the mutable storage
@@ -365,7 +367,8 @@ impl<'a, S: Storage> ChainState<'a, S> {
             topoheight,
             contracts: HashMap::new(),
             block_version,
-            burned_supply
+            burned_supply,
+            gas_fee: 0
         }
     }
 
@@ -377,6 +380,11 @@ impl<'a, S: Storage> ChainState<'a, S> {
             block_version,
             0
         )
+    }
+
+    // Get all the gas fees
+    pub fn get_gas_fee(&self) -> u64 {
+        self.gas_fee
     }
 
     // Get the storage used by the chain state
@@ -667,14 +675,14 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for ChainS
     }
 
     /// Track burned supply
-    async fn add_burned_xelis(&mut self, amount: u64) -> Result<(), BlockchainError> {
+    async fn add_burned_coins(&mut self, amount: u64) -> Result<(), BlockchainError> {
         self.burned_supply += amount;
         Ok(())
     }
 
     /// Track miner fees
-    async fn add_fee_xelis(&mut self, _amount: u64) -> Result<(), BlockchainError> {
-        // TODO: We don't need to track fees for now
+    async fn add_gas_fee(&mut self, amount: u64) -> Result<(), BlockchainError> {
+        self.gas_fee += amount;
         Ok(())
     }
 }
