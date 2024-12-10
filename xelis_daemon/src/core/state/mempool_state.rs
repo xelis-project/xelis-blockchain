@@ -1,4 +1,4 @@
-use std::collections::{hash_map::Entry, HashMap};
+use std::{borrow::Cow, collections::{hash_map::Entry, HashMap}};
 use async_trait::async_trait;
 use xelis_common::{
     account::Nonce,
@@ -49,7 +49,7 @@ pub struct MempoolState<'a, S: Storage> {
     // This is used to verify ZK Proofs and store/update nonces
     accounts: HashMap<&'a PublicKey, Account<'a>>,
     // Contract modules
-    contracts: HashMap<Hash, &'a Module>,
+    contracts: HashMap<Hash, Cow<'a, Module>>,
     // The current stable topoheight of the chain
     stable_topoheight: TopoHeight,
     // The current topoheight of the chain
@@ -292,32 +292,27 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for Mempoo
         hash: Hash,
         module: &'a Module
     ) -> Result<(), BlockchainError> {
-        if self.contracts.insert(hash, module).is_some() {
+        if self.contracts.insert(hash, Cow::Borrowed(module)).is_some() {
             return Err(BlockchainError::ContractAlreadyExists);
         }
 
         Ok(())
     }
 
-    /// Get the contract module
-    async fn get_contract_module(
-        &mut self,
-        hash: &Hash
-    ) -> Result<&Module, BlockchainError> {
-        self.contracts.get(hash)
-            .copied()
-            .ok_or_else(|| BlockchainError::ContractNotFound(hash.clone()))
-    }
-
     async fn get_contract_module_with_environment(
         &mut self,
         hash: &Hash
     ) -> Result<(&Module, &Environment), BlockchainError> {
-        // TODO: load from storage
-        let module = self.contracts.get(hash)
-            .copied()
+        if !self.contracts.contains_key(hash) {
+            let module = self.storage.get_contract_at_maximum_topoheight_for(hash, self.topoheight).await?
+            .map(|(_, v)| v.take().map(|v| v.into_owned()))
+            .flatten()
             .ok_or_else(|| BlockchainError::ContractNotFound(hash.clone()))?;
 
+            self.contracts.insert(hash.clone(), Cow::Owned(module));
+        }
+
+        let module = self.contracts.get(hash).ok_or_else(|| BlockchainError::ContractNotFound(hash.clone()))?;
         let environment = self.storage.get_contract_environment().await?;
 
         Ok((module, environment))

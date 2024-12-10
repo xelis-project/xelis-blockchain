@@ -623,17 +623,6 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for ChainS
         Ok(())
     }
 
-    /// Get the contract module
-    async fn get_contract_module(
-        &mut self,
-        hash: &Hash
-    ) -> Result<&Module, BlockchainError> {
-        let (_, module) = self.internal_get_versioned_contract(hash).await?;
-        module.as_ref()
-            .map(|m| m.deref())
-            .ok_or_else(|| BlockchainError::ContractNotFound(hash.clone()))
-    }
-
     /// Get the contract module with the environment
     async fn get_contract_module_with_environment(
         &mut self,
