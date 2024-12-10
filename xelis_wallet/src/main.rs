@@ -39,7 +39,7 @@ use xelis_common::{
     serializer::Serializer,
     tokio,
     transaction::{
-        builder::{FeeBuilder, TransactionTypeBuilder, TransferBuilder},
+        builder::{FeeBuilder, MultiSigBuilder, TransactionTypeBuilder, TransferBuilder},
         multisig::{MultiSig, SignatureId},
         BurnPayload,
         MultiSigPayload,
@@ -1573,7 +1573,7 @@ async fn multisig_setup(manager: &CommandManager, mut args: ArgumentManager) -> 
             return Ok(())
         }
 
-        let payload = MultiSigPayload {
+        let payload = MultiSigBuilder {
             participants: IndexSet::new(),
             threshold: 0
         };
@@ -1613,14 +1613,14 @@ async fn multisig_setup(manager: &CommandManager, mut args: ArgumentManager) -> 
             return Err(CommandError::InvalidArgument("Participant address cannot be the same as the wallet address".to_string()));
         }
 
-        if !keys.insert(address.to_public_key()) {
+        if !keys.insert(address) {
             return Err(CommandError::InvalidArgument("Participant address already exists".to_string()));
         }
     }
 
     manager.message(format!("MultiSig payload ({} participants with threshold at {}):", participants, threshold));
     for key in keys.iter() {
-        manager.message(format!("- {}", key.as_address(mainnet)));
+        manager.message(format!("- {}", key));
     }
 
     if !args.get_flag("confirm")? && !prompt.ask_confirmation().await.context("Error while confirming action")? {
@@ -1634,7 +1634,7 @@ async fn multisig_setup(manager: &CommandManager, mut args: ArgumentManager) -> 
         let storage = wallet.get_storage().read().await;
         storage.get_multisig_state().await.context("Error while reading multisig state")?
     };
-    let payload = MultiSigPayload {
+    let payload = MultiSigBuilder {
         participants: keys,
         threshold
     };
