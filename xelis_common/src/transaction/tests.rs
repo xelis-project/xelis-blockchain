@@ -33,7 +33,8 @@ use super::{
         FeeHelper,
         TransactionBuilder,
         TransactionTypeBuilder,
-        TransferBuilder
+        TransferBuilder,
+        MultiSigBuilder
     },
     verify::BlockchainVerificationState,
     BurnPayload,
@@ -365,9 +366,9 @@ async fn test_multisig_setup() {
             },
         };
     
-        let data = TransactionTypeBuilder::MultiSig(MultiSigPayload {
+        let data = TransactionTypeBuilder::MultiSig(MultiSigBuilder {
             threshold: 2,
-            participants: IndexSet::from_iter(vec![bob.keypair.get_public_key().compress(), charlie.keypair.get_public_key().compress()]),
+            participants: IndexSet::from_iter(vec![bob.keypair.get_public_key().to_address(false), charlie.keypair.get_public_key().to_address(false)]),
         });
         let builder = TransactionBuilder::new(TxVersion::V1, alice.keypair.get_public_key().compress(), 0, data, FeeBuilder::Multiplier(1f64));
         let estimated_size = builder.estimate_size();

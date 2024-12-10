@@ -5,6 +5,7 @@ mod state;
 mod fee;
 mod unsigned;
 
+use indexmap::IndexSet;
 pub use state::AccountState;
 pub use fee::{FeeHelper, FeeBuilder};
 pub use unsigned::UnsignedTransaction;
@@ -95,8 +96,14 @@ pub enum TransactionTypeBuilder {
     Transfers(Vec<TransferBuilder>),
     // We can use the same as final transaction
     Burn(BurnPayload),
-    MultiSig(MultiSigPayload),
+    MultiSig(MultiSigBuilder),
     DeployContract(Module),
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct MultiSigBuilder {
+    pub participants: IndexSet<Address>,
+    pub threshold: u8,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -256,7 +263,7 @@ impl TransactionBuilder {
             },
             TransactionTypeBuilder::MultiSig(payload) => {
                 // Payload size
-                size += payload.size();
+                size += payload.threshold.size() + 1 + (payload.participants.len() * RISTRETTO_COMPRESSED_SIZE);
             },
             TransactionTypeBuilder::DeployContract(module) => {
                 // Module size
@@ -639,11 +646,17 @@ impl TransactionBuilder {
 
                 transcript.multisig_proof_domain_separator();
                 transcript.append_u64(b"multisig_threshold", payload.threshold as u64);
+
+                let mut keys = IndexSet::new();
                 for key in &payload.participants {
-                    transcript.append_public_key(b"multisig_participant", key);
+                    transcript.append_public_key(b"multisig_participant", key.get_public_key());
+                    keys.insert(key.get_public_key().clone());
                 }
 
-                TransactionType::MultiSig(payload)
+                TransactionType::MultiSig(MultiSigPayload {
+                    participants: keys,
+                    threshold: payload.threshold,
+                })
             },
             TransactionTypeBuilder::DeployContract(module) => {
                 transcript.deploy_contract_proof_domain_separator();
