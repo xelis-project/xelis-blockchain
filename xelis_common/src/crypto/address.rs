@@ -1,5 +1,6 @@
 use std::{
     fmt::{Display, Formatter},
+    hash::{Hash, Hasher},
     mem,
     str::FromStr
 };
@@ -31,6 +32,12 @@ pub struct Address {
     mainnet: bool,
     addr_type: AddressType,
     key: PublicKey
+}
+
+impl Hash for Address {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.key.hash(state);
+    }
 }
 
 impl Address {
