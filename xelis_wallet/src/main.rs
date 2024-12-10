@@ -1609,6 +1609,10 @@ async fn multisig_setup(manager: &CommandManager, mut args: ArgumentManager) -> 
             return Err(CommandError::InvalidArgument("Participant address must be on the same network".to_string()));
         }
 
+        if !address.is_normal() {
+            return Err(CommandError::InvalidArgument("Participant address must be a normal address".to_string()));
+        }
+
         if address.get_public_key() == wallet.get_public_key() {
             return Err(CommandError::InvalidArgument("Participant address cannot be the same as the wallet address".to_string()));
         }
