@@ -650,9 +650,10 @@ impl TransactionBuilder {
                 transcript.append_u64(b"multisig_threshold", payload.threshold as u64);
 
                 let mut keys = IndexSet::new();
-                for key in &payload.participants {
-                    transcript.append_public_key(b"multisig_participant", key.get_public_key());
-                    keys.insert(key.get_public_key().clone());
+                for addr in payload.participants {
+                    let key = addr.to_public_key();
+                    transcript.append_public_key(b"multisig_participant", &key);
+                    keys.insert(key);
                 }
 
                 // You can't contains yourself in the participants
