@@ -329,18 +329,17 @@ impl Transaction {
                         }
                         extra_data_size += size;
                     }
+
+                    let decompressed = DecompressedTransferCt::decompress(transfer)
+                        .map_err(ProofVerificationError::from)?;
+
+                    transfers_decompressed.push(decompressed);
                 }
     
                 // Check the sum of extra data size
                 if extra_data_size > EXTRA_DATA_LIMIT_SUM_SIZE {
                     return Err(VerificationError::TransactionExtraDataSize);
                 }
-
-                transfers_decompressed = transfers
-                    .iter()
-                    .map(DecompressedTransferCt::decompress)
-                    .collect::<Result<_, DecompressionError>>()
-                    .map_err(ProofVerificationError::from)?;
             },
             TransactionType::Burn(payload) => {
                 let fee = self.fee;
