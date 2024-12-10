@@ -167,6 +167,10 @@ impl Transaction {
             },
             TransactionType::MultiSig(_) => {},
             TransactionType::InvokeContract(payload) => {
+                if *asset == XELIS_ASSET {
+                    output += Scalar::from(payload.max_gas);
+                }
+
                 if let Some(deposit) = payload.deposits.get(asset) {
                     match deposit {
                         ContractDeposit::Public(amount) => {
