@@ -384,14 +384,14 @@ impl NetworkHandler {
                             assets_changed.insert(asset.clone());
 
                             match deposit {
-                                ContractDeposit::Private(ct) => {
-                                    let ct = ct.decompress()?;
-                                    let amount = self.wallet.decrypt_ciphertext(ct).await?;
-                                    deposits.insert(asset, amount);
-                                },
                                 ContractDeposit::Public(amount) => {
                                     deposits.insert(asset, amount);
-                                }
+                                },
+                                // ContractDeposit::Private(ct) => {
+                                //     let ct = ct.decompress()?;
+                                //     let amount = self.wallet.decrypt_ciphertext(ct).await?;
+                                //     deposits.insert(asset, amount);
+                                // }
                             }
                         }
 
