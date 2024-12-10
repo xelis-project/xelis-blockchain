@@ -18,6 +18,15 @@ pub const FEE_PER_TRANSFER: u64 = 5000;
 // Each signature of a multisig has a overhead of 500 atomic units
 pub const FEE_PER_MULTISIG_SIGNATURE: u64 = 500;
 
+// 1 XEL per contract deployed
+// Each contract deployed has a overhead of 1 XEL
+// This amount is burned and is needed for safety of the chain
+// Otherwise people could bloat the chain by deploying contracts
+// And could make the chain unusable or slow
+// Note that if we depends on fees only, miners could do such attacks for free
+// by mining their own transactions and getting the fees back
+pub const BURN_PER_CONTRACT: u64 = COIN_VALUE;
+
 // 8 decimals numbers
 pub const COIN_DECIMALS: u8 = 8;
 // 100 000 000 to represent 1 XEL

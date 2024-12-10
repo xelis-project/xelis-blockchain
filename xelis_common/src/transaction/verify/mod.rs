@@ -13,7 +13,7 @@ use merlin::Transcript;
 use xelis_vm::ModuleValidator;
 use crate::{
     account::Nonce,
-    config::XELIS_ASSET,
+    config::{BURN_PER_CONTRACT, XELIS_ASSET},
     crypto::{
         elgamal::{
             Ciphertext,
@@ -40,9 +40,9 @@ use crate::{
         TxVersion,
         EXTRA_DATA_LIMIT_SIZE,
         EXTRA_DATA_LIMIT_SUM_SIZE,
+        MAX_DEPOSIT_PER_INVOKE_CALL,
         MAX_MULTISIG_PARTICIPANTS,
-        MAX_TRANSFER_COUNT,
-        MAX_DEPOSIT_PER_INVOKE_CALL
+        MAX_TRANSFER_COUNT
     }
 };
 use super::{
@@ -182,7 +182,12 @@ impl Transaction {
                     }
                 }
             },
-            TransactionType::DeployContract(_) => {}
+            TransactionType::DeployContract(_) => {
+                // Burn a full coin for each contract deployed
+                if *asset == XELIS_ASSET {
+                    output += Scalar::from(BURN_PER_CONTRACT);
+                }
+            }
         }
 
         Ok(output)
