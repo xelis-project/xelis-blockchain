@@ -313,6 +313,7 @@ pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>
     handler.register_method("count_assets", async_handler!(count_assets::<S>));
     handler.register_method("count_accounts", async_handler!(count_accounts::<S>));
     handler.register_method("count_transactions", async_handler!(count_transactions::<S>));
+    handler.register_method("count_contracts", async_handler!(count_contracts::<S>));
     handler.register_method("submit_transaction", async_handler!(submit_transaction::<S>));
     handler.register_method("get_transaction", async_handler!(get_transaction::<S>));
     handler.register_method("get_transaction_executor", async_handler!(get_transaction_executor::<S>));
@@ -740,6 +741,16 @@ async fn count_transactions<S: Storage>(context: &Context, body: Value) -> Resul
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let storage = blockchain.get_storage().read().await;
     let count = storage.count_transactions().await.context("Error while retrieving transactions count")?;
+    Ok(json!(count))
+}
+
+async fn count_contracts<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
+    if body != Value::Null {
+        return Err(InternalRpcError::UnexpectedParams)
+    }
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    let storage = blockchain.get_storage().read().await;
+    let count = storage.count_contracts().await.context("Error while retrieving contracts count")?;
     Ok(json!(count))
 }
 
