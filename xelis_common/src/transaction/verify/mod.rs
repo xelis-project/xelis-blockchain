@@ -1,5 +1,6 @@
 mod state;
 
+use anyhow::{Context, Error as AnyError};
 use bulletproofs::RangeProof;
 use curve25519_dalek::{
     ristretto::CompressedRistretto,
@@ -55,7 +56,7 @@ pub use state::BlockchainVerificationState;
 use thiserror::Error;
 use std::iter;
 
-#[derive(Error, Debug, Clone)]
+#[derive(Error, Debug)]
 pub enum VerificationError<T> {
     #[error("State error: {0}")]
     State(T),
@@ -86,7 +87,9 @@ pub enum VerificationError<T> {
     #[error("Invalid format")]
     InvalidFormat,
     #[error("Module error: {0}")]
-    ModuleError(String)
+    ModuleError(String),
+    #[error(transparent)]
+    AnyError(#[from] AnyError)
 }
 
 struct DecompressedTransferCt {
@@ -374,13 +377,13 @@ impl Transaction {
                     .map_err(VerificationError::State)?;
 
                 let validator = ModuleValidator::new(module, environment);
-                // for constant in payload.parameters.iter() {
-                //     let decompressed = constant.decompress(module.structs(), module.enums())
-                //         .map_err(ProofVerificationError::from)?;
+                for constant in payload.parameters.iter() {
+                    let decompressed = constant.decompress(module.structs(), module.enums())
+                        .context("decompress param")?;
 
-                //     validator.verify_constant(&decompressed)
-                //         .map_err(|err| VerificationError::ModuleError(format!("{:#}", err)))?;
-                // }
+                    validator.verify_constant(&decompressed)
+                        .map_err(|err| VerificationError::ModuleError(format!("{:#}", err)))?;
+                }
             },
             TransactionType::DeployContract(module) => {
                 let environment = state.get_contract_environment().await

@@ -4,7 +4,7 @@ use anyhow::Context;
 use compressed::{decompress_constant, decompress_type};
 use indexmap::{IndexMap, IndexSet};
 use serde::{Deserialize, Serialize};
-use xelis_vm::{Chunk, Constant, EnumType, EnumVariant, Module, StructType, Type, Value, U256};
+use xelis_vm::{Chunk, Constant, ConstantWrapper, EnumType, EnumVariant, Module, StructType, Type, Value, U256};
 use crate::{
     crypto::{elgamal::CompressedCiphertext, Hash},
     serializer::{Reader, ReaderError, Serializer, Writer}
@@ -398,7 +398,7 @@ impl Serializer for Module {
         let constants = self.constants();
         writer.write_u16(constants.len() as u16);
         for constant in constants {
-            constant.write(writer);
+            constant.0.write(writer);
         }
 
         let chunks = self.chunks();
@@ -466,7 +466,8 @@ impl Serializer for Module {
         let mut constants = IndexSet::with_capacity(constants_len as usize);
 
         for _ in 0..constants_len {
-            if !constants.insert(decompress_constant(reader, &structures, &enums)?) {
+            let c = decompress_constant(reader, &structures, &enums)?;
+            if !constants.insert(ConstantWrapper(c)) {
                 return Err(ReaderError::InvalidValue);
             }
         }
