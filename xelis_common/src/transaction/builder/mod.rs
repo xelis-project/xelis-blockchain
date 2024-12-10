@@ -34,7 +34,12 @@ use crate::{
             SCALAR_SIZE
         },
         proofs::{
-            CiphertextValidityProof, CommitmentEqProof, ProofGenerationError, BP_GENS, BULLET_PROOF_SIZE, PC_GENS
+            CiphertextValidityProof,
+            CommitmentEqProof,
+            ProofGenerationError,
+            BP_GENS,
+            PC_GENS,
+            BULLET_PROOF_SIZE,
         },
         Address,
         Hash,
@@ -49,6 +54,8 @@ use thiserror::Error;
 use super::{
     extra_data::{ExtraData, PlaintextData},
     BurnPayload,
+    ContractDeposit,
+    InvokeContractPayload,
     MultiSigPayload,
     Role,
     SourceCommitment,
@@ -99,6 +106,8 @@ pub enum TransactionTypeBuilder {
     // We can use the same as final transaction
     Burn(BurnPayload),
     MultiSig(MultiSigBuilder),
+    // TODO: create a Builder for contract depostsis
+    InvokeContract(InvokeContractPayload),
     DeployContract(Module),
 }
 
@@ -267,6 +276,10 @@ impl TransactionBuilder {
                 // Payload size
                 size += payload.threshold.size() + 1 + (payload.participants.len() * RISTRETTO_COMPRESSED_SIZE);
             },
+            TransactionTypeBuilder::InvokeContract(payload) => {
+                // Payload size
+                size += payload.size();
+            },
             TransactionTypeBuilder::DeployContract(module) => {
                 // Module size
                 size += module.size();
@@ -366,6 +379,19 @@ impl TransactionBuilder {
                 }
             },
             TransactionTypeBuilder::MultiSig(_) => {},
+            TransactionTypeBuilder::InvokeContract(payload) => {
+                if let Some(deposit) = payload.deposits.get(asset) {
+                    match deposit {
+                        ContractDeposit::Public(amount) => {
+                            cost += *amount;
+                        }
+                    }
+                }
+
+                if *asset == XELIS_ASSET {
+                    cost += payload.max_gas;
+                }
+            },
             TransactionTypeBuilder::DeployContract(_) => {
                 if *asset == XELIS_ASSET {
                     cost += BURN_PER_CONTRACT;
@@ -666,6 +692,24 @@ impl TransactionBuilder {
                     participants: keys,
                     threshold: payload.threshold,
                 })
+            },
+            TransactionTypeBuilder::InvokeContract(payload) => {
+                transcript.invoke_contract_proof_domain_separator();
+                transcript.append_hash(b"contract_hash", &payload.contract);
+                for (asset, deposit) in &payload.deposits {
+                    transcript.append_hash(b"deposit_asset", asset);
+                    match deposit {
+                        ContractDeposit::Public(amount) => {
+                            transcript.append_u64(b"deposit_plain", *amount);
+                        }
+                    }
+                }
+
+                for param in payload.parameters.iter() {
+                    transcript.append_message(b"contract_param", param.as_bytes());
+                }
+
+                TransactionType::InvokeContract(payload)
             },
             TransactionTypeBuilder::DeployContract(module) => {
                 transcript.deploy_contract_proof_domain_separator();
