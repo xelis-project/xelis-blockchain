@@ -376,6 +376,11 @@ impl Transaction {
                     return Err(VerificationError::MultiSigThreshold);
                 }
 
+                // You can't contains yourself in the participants
+                if payload.participants.contains(self.get_source()) {
+                    return Err(VerificationError::MultiSigParticipants);
+                }
+
                 let is_reset = payload.threshold == 0 && payload.participants.is_empty();
                 // If the multisig is reset, we need to check if it was already configured
                 if is_reset && state.get_multisig_state(&self.source).await.map_err(VerificationError::State)?.is_none() {
