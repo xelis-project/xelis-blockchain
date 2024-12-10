@@ -317,4 +317,12 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for Mempoo
 
         Ok((module, environment))
     }
+
+    async fn add_burned_xelis(&mut self, _: u64) -> Result<(), BlockchainError> {
+        Ok(())
+    }
+
+    async fn add_fee_xelis(&mut self, _: u64) -> Result<(), BlockchainError> {
+        Ok(())
+    }
 }

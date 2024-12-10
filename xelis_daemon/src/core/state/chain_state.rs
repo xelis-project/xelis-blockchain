@@ -671,4 +671,10 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for ChainS
         self.burned_supply += amount;
         Ok(())
     }
+
+    /// Track miner fees
+    async fn add_fee_xelis(&mut self, _amount: u64) -> Result<(), BlockchainError> {
+        // TODO: We don't need to track fees for now
+        Ok(())
+    }
 }

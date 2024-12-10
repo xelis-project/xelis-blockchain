@@ -396,7 +396,9 @@ impl From<VerificationError<BlockchainError>> for BlockchainError {
             VerificationError::InvalidFormat => BlockchainError::InvalidTransactionFormat,
             VerificationError::MultiSigNotFound => BlockchainError::MultiSigNotFound,
             VerificationError::ModuleError(e) => BlockchainError::ModuleError(e),
-            VerificationError::AnyError(e) => BlockchainError::Any(e)
+            VerificationError::AnyError(e) => BlockchainError::Any(e),
+            VerificationError::GasOverflow => BlockchainError::Overflow,
+            VerificationError::InvalidInvokeContract => BlockchainError::InvalidTransactionFormat,
         }
     }
 }
