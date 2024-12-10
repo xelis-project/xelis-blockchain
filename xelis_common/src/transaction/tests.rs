@@ -584,11 +584,11 @@ impl<'a> BlockchainVerificationState<'a, ()> for ChainState {
         unimplemented!()
     }
 
-    async fn add_burned_xelis(&mut self, _: u64) -> Result<(), ()> {
+    async fn add_burned_coins(&mut self, _: u64) -> Result<(), ()> {
         Ok(())
     }
 
-    async fn add_fee_xelis(&mut self, _: u64) -> Result<(), ()> {
+    async fn add_gas_fee(&mut self, _: u64) -> Result<(), ()> {
         Ok(())
     }
 }

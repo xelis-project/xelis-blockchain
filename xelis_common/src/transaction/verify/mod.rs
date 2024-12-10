@@ -901,7 +901,7 @@ impl Transaction {
             },
             TransactionType::Burn(payload) => {
                 if payload.asset == XELIS_ASSET {
-                    state.add_burned_xelis(payload.amount).await
+                    state.add_burned_coins(payload.amount).await
                         .map_err(VerificationError::State)?;
                 }
             },
@@ -960,10 +960,10 @@ impl Transaction {
                     let refund_gas = payload.max_gas.checked_sub(used_gas).ok_or(VerificationError::GasOverflow)?;
     
                     debug!("Invoke contract used gas: {}, burned: {}, fee: {}, refund: {}", used_gas, burned_gas, gas_fee, refund_gas);
-                    state.add_burned_xelis(burned_gas).await
+                    state.add_burned_coins(burned_gas).await
                         .map_err(VerificationError::State)?;
     
-                    state.add_fee_xelis(gas_fee).await
+                    state.add_gas_fee(gas_fee).await
                         .map_err(VerificationError::State)?;
     
                     if refund_gas > 0 {
