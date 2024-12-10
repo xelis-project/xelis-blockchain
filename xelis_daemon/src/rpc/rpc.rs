@@ -290,6 +290,12 @@ pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>
     handler.register_method("get_height", async_handler!(get_height::<S>));
     handler.register_method("get_topoheight", async_handler!(get_topoheight::<S>));
     handler.register_method("get_pruned_topoheight", async_handler!(get_pruned_topoheight::<S>));
+    handler.register_method("get_info", async_handler!(get_info::<S>));
+    handler.register_method("get_difficulty", async_handler!(get_difficulty::<S>));
+    handler.register_method("get_tips", async_handler!(get_tips::<S>));
+    handler.register_method("get_dev_fee_thresholds", async_handler!(get_dev_fee_thresholds::<S>));
+    handler.register_method("get_size_on_disk", async_handler!(get_size_on_disk::<S>));
+
     // Retro compatibility, use stable_height
     handler.register_method("get_stableheight", async_handler!(get_stable_height::<S>));
     handler.register_method("get_stable_height", async_handler!(get_stable_height::<S>));
@@ -300,42 +306,48 @@ pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>
     handler.register_method("get_blocks_at_height", async_handler!(get_blocks_at_height::<S>));
     handler.register_method("get_block_by_hash", async_handler!(get_block_by_hash::<S>));
     handler.register_method("get_top_block", async_handler!(get_top_block::<S>));
+
     handler.register_method("get_balance", async_handler!(get_balance::<S>));
     handler.register_method("get_stable_balance", async_handler!(get_stable_balance::<S>));
     handler.register_method("has_balance", async_handler!(has_balance::<S>));
     handler.register_method("get_balance_at_topoheight", async_handler!(get_balance_at_topoheight::<S>));
-    handler.register_method("get_info", async_handler!(get_info::<S>));
+
     handler.register_method("get_nonce", async_handler!(get_nonce::<S>));
     handler.register_method("has_nonce", async_handler!(has_nonce::<S>));
     handler.register_method("get_nonce_at_topoheight", async_handler!(get_nonce_at_topoheight::<S>));
+
     handler.register_method("get_asset", async_handler!(get_asset::<S>));
     handler.register_method("get_assets", async_handler!(get_assets::<S>));
+
     handler.register_method("count_assets", async_handler!(count_assets::<S>));
     handler.register_method("count_accounts", async_handler!(count_accounts::<S>));
     handler.register_method("count_transactions", async_handler!(count_transactions::<S>));
     handler.register_method("count_contracts", async_handler!(count_contracts::<S>));
+
     handler.register_method("submit_transaction", async_handler!(submit_transaction::<S>));
-    handler.register_method("get_transaction", async_handler!(get_transaction::<S>));
     handler.register_method("get_transaction_executor", async_handler!(get_transaction_executor::<S>));
+    handler.register_method("get_transaction", async_handler!(get_transaction::<S>));
+    handler.register_method("get_transactions", async_handler!(get_transactions::<S>));
+    handler.register_method("is_tx_executed_in_block", async_handler!(is_tx_executed_in_block::<S>));
+
     handler.register_method("p2p_status", async_handler!(p2p_status::<S>));
     handler.register_method("get_peers", async_handler!(get_peers::<S>));
+
     handler.register_method("get_mempool", async_handler!(get_mempool::<S>));
+    handler.register_method("get_mempool_cache", async_handler!(get_mempool_cache::<S>));
     handler.register_method("get_estimated_fee_rates", async_handler!(get_estimated_fee_rates::<S>));
-    handler.register_method("get_tips", async_handler!(get_tips::<S>));
+
     handler.register_method("get_dag_order", async_handler!(get_dag_order::<S>));
     handler.register_method("get_blocks_range_by_topoheight", async_handler!(get_blocks_range_by_topoheight::<S>));
     handler.register_method("get_blocks_range_by_height", async_handler!(get_blocks_range_by_height::<S>));
-    handler.register_method("get_transactions", async_handler!(get_transactions::<S>));
+
     handler.register_method("get_account_history", async_handler!(get_account_history::<S>));
     handler.register_method("get_account_assets", async_handler!(get_account_assets::<S>));
     handler.register_method("get_accounts", async_handler!(get_accounts::<S>));
     handler.register_method("is_account_registered", async_handler!(is_account_registered::<S>));
     handler.register_method("get_account_registration_topoheight", async_handler!(get_account_registration_topoheight::<S>));
-    handler.register_method("is_tx_executed_in_block", async_handler!(is_tx_executed_in_block::<S>));
-    handler.register_method("get_dev_fee_thresholds", async_handler!(get_dev_fee_thresholds::<S>));
-    handler.register_method("get_size_on_disk", async_handler!(get_size_on_disk::<S>));
-    handler.register_method("get_mempool_cache", async_handler!(get_mempool_cache::<S>));
-    handler.register_method("get_difficulty", async_handler!(get_difficulty::<S>));
+
+    // Useful methods
     handler.register_method("validate_address", async_handler!(validate_address::<S>));
     handler.register_method("split_address", async_handler!(split_address::<S>));
     handler.register_method("extract_key_from_address", async_handler!(extract_key_from_address::<S>));
@@ -345,7 +357,6 @@ pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>
     handler.register_method("get_multisig_at_topoheight", async_handler!(get_multisig_at_topoheight::<S>));
     handler.register_method("get_multisig", async_handler!(get_multisig::<S>));
     handler.register_method("has_multisig", async_handler!(has_multisig::<S>));
-
 
     if allow_mining_methods {
         handler.register_method("get_block_template", async_handler!(get_block_template::<S>));
