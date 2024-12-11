@@ -9,6 +9,7 @@ use crate::{
     core::error::{BlockchainError, DiskContext}
 };
 use xelis_common::{
+    contract::build_environment,
     block::{TopoHeight, Block, BlockHeader},
     crypto::{Hash, PublicKey},
     difficulty::{CumulativeDifficulty, Difficulty},
@@ -263,7 +264,7 @@ impl SledStorage {
             contracts_count: 0,
 
             snapshot: None,
-            environment: Environment::default()
+            environment: build_environment(),
         };
 
         // Verify that we are opening a DB on same network

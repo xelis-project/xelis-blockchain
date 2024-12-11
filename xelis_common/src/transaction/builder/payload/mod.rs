@@ -34,6 +34,7 @@ pub struct InvokeContractBuilder {
     pub max_gas: u64,
     pub chunk_id: u16,
     pub parameters: Vec<Constant>,
+    #[serde(default)]
     pub deposits: IndexMap<Hash, ContractDepositBuilder>,
 }
 
@@ -60,8 +61,6 @@ mod tests {
                 }
             },
         };
-
-        // println!("{}", serde_json::to_string_pretty(&builder).unwrap());
 
         let data: InvokeContractBuilder = serde_json::from_value(json!(builder)).unwrap();
         assert_eq!(builder.parameters, data.parameters);

@@ -770,9 +770,12 @@ impl Transaction {
                     vm.invoke_entry_chunk(payload.chunk_id)
                         .context("invoke entry chunk")?;
 
+                    let context = vm.context_mut();
+
                     // Set the gas limit for the VM
-                    vm.context_mut()
-                        .set_gas_limit(payload.max_gas);
+                    context.set_gas_limit(payload.max_gas);
+
+                    context.insert_ref(environment);
 
                     // TODO:
                     // We need to handle the result of the VM

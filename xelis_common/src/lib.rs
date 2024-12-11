@@ -4,6 +4,7 @@ pub mod transaction;
 pub mod block;
 pub mod account;
 pub mod api;
+pub mod contract;
 
 pub mod utils;
 pub mod config;
