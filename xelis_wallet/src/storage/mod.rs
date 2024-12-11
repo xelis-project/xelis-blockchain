@@ -882,6 +882,15 @@ impl EncryptedStorage {
 
                     None
                 },
+                EntryData::InvokeContract { deposits, .. } if accept_outgoing => {
+                    // Filter by asset
+                    if let Some(asset) = asset {
+                        deposits.retain(|deposit, _| *deposit == *asset);
+                    }
+
+                    None
+                },
+                EntryData::InvokeContract { .. } if accept_outgoing => None,
                 _ => continue,
             };
 
