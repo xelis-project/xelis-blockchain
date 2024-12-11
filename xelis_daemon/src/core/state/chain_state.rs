@@ -34,6 +34,7 @@ use crate::core::{
     error::BlockchainError,
     storage::{
         Storage,
+        VersionedContract,
         VersionedMultiSig,
         VersionedState
     }
@@ -345,6 +346,15 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
             }
         }
 
+        // Also store the contracts updated
+        for (hash, (state, module)) in self.inner.contracts {
+            if state.should_be_stored() {
+                trace!("Saving contract {} at topoheight {}", hash, self.inner.topoheight);
+                self.inner.storage.set_last_contract_to(&hash, self.inner.topoheight, VersionedContract::new(module, state.get_topoheight())).await?;
+            }
+        }
+
+        trace!("Saving burned supply {} at topoheight {}", self.inner.burned_supply, self.inner.topoheight);
         self.inner.storage.set_burned_supply_at_topo_height(self.inner.topoheight, self.inner.burned_supply)?;
 
         Ok(())
@@ -519,7 +529,9 @@ impl<'a, S: Storage> ChainState<'a, S> {
         }
     }
 
+    // Load a contract from the storage if its not already loaded
     async fn load_versioned_contract(&mut self, hash: &Hash) -> Result<(), BlockchainError> {
+        trace!("Loading contract {} at topoheight {}", hash, self.topoheight);
         if !self.contracts.contains_key(hash) {
             let contract = self.storage.get_contract_at_maximum_topoheight_for(hash, self.topoheight).await?
                 .map(|(topo, contract)| (VersionedState::FetchedAt(topo), contract.take()))
@@ -531,7 +543,9 @@ impl<'a, S: Storage> ChainState<'a, S> {
         Ok(())
     }
 
+    // Get the contract module from our cache
     async fn internal_get_contract_module(&self, hash: &Hash) -> Result<&Module, BlockchainError> {
+        trace!("Getting contract module {}", hash);
         self.contracts.get(hash)
             .ok_or_else(|| BlockchainError::ContractNotFound(hash.clone()))
             .and_then(|(_, module)| module.as_ref().map(|m| m.deref()).ok_or_else(|| BlockchainError::ContractNotFound(hash.clone())))
