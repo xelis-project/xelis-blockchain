@@ -353,6 +353,8 @@ pub enum BlockchainError {
     MultiSigThreshold,
     #[error("Invalid transaction format")]
     InvalidTransactionFormat,
+    #[error("Invalid invoke contract")]
+    InvalidInvokeContract,
     #[error("MultiSig not found")]
     MultiSigNotFound,
     #[error("Error in module: {}", _0)]
@@ -398,7 +400,7 @@ impl From<VerificationError<BlockchainError>> for BlockchainError {
             VerificationError::ModuleError(e) => BlockchainError::ModuleError(e),
             VerificationError::AnyError(e) => BlockchainError::Any(e),
             VerificationError::GasOverflow => BlockchainError::Overflow,
-            VerificationError::InvalidInvokeContract => BlockchainError::InvalidTransactionFormat,
+            VerificationError::InvalidInvokeContract => BlockchainError::InvalidInvokeContract,
         }
     }
 }
