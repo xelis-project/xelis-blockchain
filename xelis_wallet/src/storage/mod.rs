@@ -833,18 +833,17 @@ impl EncryptedStorage {
                 }
             }
 
-            let mut transfers: Option<Vec<Transfer>> = match entry.get_mut_entry() {
-                EntryData::Coinbase { .. } if accept_coinbase && (asset.map(|a| *a == XELIS_ASSET).unwrap_or(true)) => None,
+            let mut transfers: Option<Vec<Transfer>> = None;
+            match entry.get_mut_entry() {
+                EntryData::Coinbase { .. } if accept_coinbase && (asset.map(|a| *a == XELIS_ASSET).unwrap_or(true)) => {},
                 EntryData::Burn { asset: burn_asset, .. } if accept_burn => {
                     if let Some(asset) = asset {
                         if *asset != *burn_asset {
                             continue;
                         }
                     }
-
-                    None
                 },
-                EntryData::Incoming { from, transfers } if accept_incoming => {
+                EntryData::Incoming { from, transfers: t } if accept_incoming => {
                     // Filter by address
                     if let Some(filter_key) = address {
                         if *from != *filter_key {
@@ -854,23 +853,24 @@ impl EncryptedStorage {
 
                     // Filter by asset
                     if let Some(asset) = asset {
-                        transfers.retain(|transfer| *transfer.get_asset() == *asset);
+                        t.retain(|transfer| *transfer.get_asset() == *asset);
                     }
 
-                    Some(transfers.iter_mut().map(|t| Transfer::In(t)).collect())
+                    transfers = Some(t.iter_mut().map(|t| Transfer::In(t)).collect());
+
                 },
-                EntryData::Outgoing { transfers, .. } if accept_outgoing => {
+                EntryData::Outgoing { transfers: t, .. } if accept_outgoing => {
                     // Filter by address
                     if let Some(filter_key) = address {
-                        transfers.retain(|transfer| *transfer.get_destination() == *filter_key);
+                        t.retain(|transfer| *transfer.get_destination() == *filter_key);
                     }
 
                     // Filter by asset
                     if let Some(asset) = asset {
-                        transfers.retain(|transfer| *transfer.get_asset() == *asset);
+                        t.retain(|transfer| *transfer.get_asset() == *asset);
                     }
 
-                    Some(transfers.iter_mut().map(|t| Transfer::Out(t)).collect())
+                    transfers = Some(t.iter_mut().map(|t| Transfer::Out(t)).collect());
                 },
                 EntryData::MultiSig { participants, .. } if accept_outgoing => {
                     // Filter by address
@@ -879,18 +879,18 @@ impl EncryptedStorage {
                             continue;
                         }
                     }
-
-                    None
                 },
                 EntryData::InvokeContract { deposits, .. } if accept_outgoing => {
                     // Filter by asset
                     if let Some(asset) = asset {
+                        if !deposits.contains_key(asset) {
+                            continue;
+                        }
+
                         deposits.retain(|deposit, _| *deposit == *asset);
                     }
-
-                    None
                 },
-                EntryData::InvokeContract { .. } if accept_outgoing => None,
+                EntryData::DeployContract { .. } if accept_outgoing => {},
                 _ => continue,
             };
 
