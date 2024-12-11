@@ -932,7 +932,7 @@ async fn status<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Res
     manager.message(format!("Current Supply: {} XELIS", format_xelis(supply)));
     manager.message(format!("Burned Supply: {} XELIS", format_xelis(burned_supply)));
     manager.message(format!("Current Block Reward: {} XELIS", format_xelis(get_block_reward(supply))));
-    manager.message(format!("Accounts / Transactions / Blocks / Assets / Contracts: {} / {} / {} / {} / {}", accounts_count, transactions_count, blocks_count, assets, contracts));
+    manager.message(format!("Accounts/Transactions/Blocks/Assets/Contracts: {}/{}/{}/{}/{}", accounts_count, transactions_count, blocks_count, assets, contracts));
     manager.message(format!("Block Version: {}", version));
     manager.message(format!("POW Algorithm: {}", get_pow_algorithm_for_version(version)));
 
