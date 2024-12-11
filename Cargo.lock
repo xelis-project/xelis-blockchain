@@ -2599,18 +2599,18 @@ checksum = "61697e0a1c7e512e84a621326239844a24d8207b4669b41bc18b32ea5cbf988b"
 
 [[package]]
 name = "serde"
-version = "1.0.215"
+version = "1.0.216"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6513c1ad0b11a9376da888e3e0baa0077f1aed55c17f50e7b2397136129fb88f"
+checksum = "0b9781016e935a97e8beecf0c933758c97a5520d32930e460142b4cd80c6338e"
 dependencies = [
  "serde_derive",
 ]
 
 [[package]]
 name = "serde_derive"
-version = "1.0.215"
+version = "1.0.216"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ad1e866f866923f252f05c889987993144fb74e722403468a4ebd70c3cd756c0"
+checksum = "46f859dbbf73865c6627ed570e78961cd3ac92407a2d117204c49232485da55e"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3696,7 +3696,7 @@ dependencies = [
 [[package]]
 name = "xelis-bytecode"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#a71f178567135d58e80bf5985e378ef1aa306957"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#97d261bb982dd175eab3ee5c92ee6e91db22bc2a"
 dependencies = [
  "indexmap 2.7.0",
  "serde",
@@ -3706,7 +3706,7 @@ dependencies = [
 [[package]]
 name = "xelis-environment"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#a71f178567135d58e80bf5985e378ef1aa306957"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#97d261bb982dd175eab3ee5c92ee6e91db22bc2a"
 dependencies = [
  "anyhow",
  "indexmap 2.7.0",
@@ -3730,7 +3730,7 @@ dependencies = [
 [[package]]
 name = "xelis-types"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#a71f178567135d58e80bf5985e378ef1aa306957"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#97d261bb982dd175eab3ee5c92ee6e91db22bc2a"
 dependencies = [
  "indexmap 2.7.0",
  "serde",
@@ -3740,7 +3740,7 @@ dependencies = [
 [[package]]
 name = "xelis-vm"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#a71f178567135d58e80bf5985e378ef1aa306957"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#97d261bb982dd175eab3ee5c92ee6e91db22bc2a"
 dependencies = [
  "thiserror 2.0.6",
  "xelis-bytecode",
