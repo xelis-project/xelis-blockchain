@@ -99,6 +99,8 @@ pub enum GenerationError<T> {
     MultiSigSelfParticipant,
     #[error("Burn amount is zero")]
     BurnZero,
+    #[error("Invalid module hexadecimal")]
+    InvalidModule,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -109,7 +111,7 @@ pub enum TransactionTypeBuilder {
     Burn(BurnPayload),
     MultiSig(MultiSigBuilder),
     InvokeContract(InvokeContractBuilder),
-    DeployContract(Module),
+    DeployContract(String),
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -288,7 +290,7 @@ impl TransactionBuilder {
             },
             TransactionTypeBuilder::DeployContract(module) => {
                 // Module size
-                size += module.size();
+                size += module.size() / 2;
             }
         };
 
@@ -728,6 +730,7 @@ impl TransactionBuilder {
             },
             TransactionTypeBuilder::DeployContract(module) => {
                 transcript.deploy_contract_proof_domain_separator();
+                let module = Module::from_hex(&module).map_err(|_| GenerationError::InvalidModule)?;
                 TransactionType::DeployContract(module)
             }
         };

@@ -36,3 +36,34 @@ pub struct InvokeContractBuilder {
     pub parameters: Vec<Constant>,
     pub deposits: IndexMap<Hash, ContractDepositBuilder>,
 }
+
+#[cfg(test)]
+mod tests {
+    use indexmap::indexmap;
+    use serde_json::json;
+    use xelis_vm::Value;
+    use crate::config::XELIS_ASSET;
+
+    use super::*;
+
+    #[test]
+    fn test_invoke_contract_builder() {
+        let builder = InvokeContractBuilder {
+            contract: XELIS_ASSET,
+            max_gas: 1000,
+            chunk_id: 0,
+            parameters: vec![Constant::Default(Value::U64(100))],
+            deposits: indexmap! {
+                XELIS_ASSET => ContractDepositBuilder {
+                    amount: 100,
+                    private: false,
+                }
+            },
+        };
+
+        // println!("{}", serde_json::to_string_pretty(&builder).unwrap());
+
+        let data: InvokeContractBuilder = serde_json::from_value(json!(builder)).unwrap();
+        assert_eq!(builder.parameters, data.parameters);
+    }
+}
