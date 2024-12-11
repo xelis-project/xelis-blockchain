@@ -163,6 +163,10 @@ pub enum Event {
     Rescan {
         start_topoheight: u64   
     },
+    // Called when the `sync_new_blocks` is done
+    HistorySynced {
+        topoheight: u64
+    },
     // Wallet is now in online mode
     Online,
     // Wallet is now in offline mode
@@ -177,6 +181,7 @@ impl Event {
             Event::BalanceChanged(_) => NotifyEvent::BalanceChanged,
             Event::NewAsset(_) => NotifyEvent::NewAsset,
             Event::Rescan { .. } => NotifyEvent::Rescan,
+            Event::HistorySynced { .. } => NotifyEvent::HistorySynced,
             Event::Online => NotifyEvent::Online,
             Event::Offline => NotifyEvent::Offline
         }

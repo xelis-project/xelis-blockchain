@@ -1083,6 +1083,8 @@ impl NetworkHandler {
             }
         }
 
+        self.wallet.propagate_event(Event::HistorySynced { topoheight: current_topoheight }).await;
+
         Ok(())
     }
 }
