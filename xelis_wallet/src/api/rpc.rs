@@ -305,7 +305,6 @@ async fn build_transaction(context: &Context, body: Value) -> Result<Value, Inte
     let version = if let Some(v) = params.tx_version {
         v
     } else {
-        let storage = wallet.get_storage().read().await;
         storage.get_tx_version().await?
     };
 

@@ -4,6 +4,7 @@
 mod state;
 mod fee;
 mod unsigned;
+mod payload;
 
 use indexmap::{IndexMap, IndexSet};
 pub use state::AccountState;
@@ -13,13 +14,12 @@ pub use unsigned::UnsignedTransaction;
 use bulletproofs::RangeProof;
 use curve25519_dalek::Scalar;
 use serde::{Deserialize, Serialize};
-use xelis_vm::{Constant, Module};
+use xelis_vm::Module;
 use std::{
     collections::HashSet,
     iter,
 };
 use crate::{
-    api::DataElement,
     config::{BURN_PER_CONTRACT, XELIS_ASSET},
     crypto::{
         elgamal::{
@@ -41,7 +41,6 @@ use crate::{
             PC_GENS,
             BULLET_PROOF_SIZE,
         },
-        Address,
         Hash,
         ProtocolTranscript,
         HASH_SIZE,
@@ -69,6 +68,8 @@ use super::{
     MAX_TRANSFER_COUNT,
     MAX_MULTISIG_PARTICIPANTS
 };
+
+pub use payload::*;
 
 #[derive(Error, Debug, Clone)]
 pub enum GenerationError<T> {
@@ -109,37 +110,6 @@ pub enum TransactionTypeBuilder {
     MultiSig(MultiSigBuilder),
     InvokeContract(InvokeContractBuilder),
     DeployContract(Module),
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct MultiSigBuilder {
-    pub participants: IndexSet<Address>,
-    pub threshold: u8,
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct ContractDepositBuilder {
-    pub amount: u64,
-    #[serde(default)]
-    pub private: bool,
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct InvokeContractBuilder {
-    pub contract: Hash,
-    pub max_gas: u64,
-    pub chunk_id: u16,
-    pub parameters: Vec<Constant>,
-    pub deposits: IndexMap<Hash, ContractDepositBuilder>,
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct TransferBuilder {
-    pub asset: Hash,
-    pub amount: u64,
-    pub destination: Address,
-    // we can put whatever we want up to EXTRA_DATA_LIMIT_SIZE bytes
-    pub extra_data: Option<DataElement>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
