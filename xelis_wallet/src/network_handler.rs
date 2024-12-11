@@ -268,6 +268,11 @@ impl NetworkHandler {
         'main: for tx in block.transactions.into_iter() {
             trace!("Checking transaction {}", tx.hash);
             let is_owner = *tx.source.get_public_key() == *address.get_public_key();
+            if is_owner {
+                debug!("Transaction {} is from us", tx.hash);
+                assets_changed.insert(XELIS_ASSET);
+            }
+
             let entry: Option<EntryData> = match tx.data {
                 RPCTransactionType::Burn(payload) => {
                     let payload = payload.into_owned();
