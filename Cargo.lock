@@ -3696,7 +3696,7 @@ dependencies = [
 [[package]]
 name = "xelis-bytecode"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#97d261bb982dd175eab3ee5c92ee6e91db22bc2a"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#14678315cc3ea2f56355549b0d64fab1495d1462"
 dependencies = [
  "indexmap 2.7.0",
  "serde",
@@ -3706,7 +3706,7 @@ dependencies = [
 [[package]]
 name = "xelis-environment"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#97d261bb982dd175eab3ee5c92ee6e91db22bc2a"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#14678315cc3ea2f56355549b0d64fab1495d1462"
 dependencies = [
  "anyhow",
  "indexmap 2.7.0",
@@ -3730,7 +3730,7 @@ dependencies = [
 [[package]]
 name = "xelis-types"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#97d261bb982dd175eab3ee5c92ee6e91db22bc2a"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#14678315cc3ea2f56355549b0d64fab1495d1462"
 dependencies = [
  "indexmap 2.7.0",
  "serde",
@@ -3740,7 +3740,7 @@ dependencies = [
 [[package]]
 name = "xelis-vm"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#97d261bb982dd175eab3ee5c92ee6e91db22bc2a"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#14678315cc3ea2f56355549b0d64fab1495d1462"
 dependencies = [
  "thiserror 2.0.6",
  "xelis-bytecode",
