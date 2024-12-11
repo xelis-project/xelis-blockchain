@@ -946,18 +946,19 @@ impl NetworkHandler {
             sync_new_blocks |= self.sync_head_state(&address, None, None, true).await?;
         }
 
+        // Update the topoheight and block hash for wallet
+        {
+            trace!("updating block reference in storage");
+            let mut storage = self.wallet.get_storage().write().await;
+            storage.set_synced_topoheight(daemon_topoheight)?;
+            storage.set_top_block_hash(&daemon_block_hash)?;
+        }
+
         // we have something that changed, sync transactions
         // prevent a double sync head state if history scan is disabled
         if sync_new_blocks && self.wallet.get_history_scan() {
             debug!("Syncing new blocks");
             self.sync_new_blocks(address, wallet_topoheight, true).await?;
-        }
-
-        // Update the topoheight and block hash for wallet
-        {
-            let mut storage = self.wallet.get_storage().write().await;
-            storage.set_synced_topoheight(daemon_topoheight)?;
-            storage.set_top_block_hash(&daemon_block_hash)?;
         }
 
         // Propagate the event
