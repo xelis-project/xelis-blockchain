@@ -54,6 +54,9 @@ impl Serializer for BalanceType {
 
 #[derive(Clone, Deserialize, Serialize, PartialEq, Eq, Debug)]
 pub struct VersionedBalance {
+    // Topoheight of the previous versioned balance
+    // If its none, that means it's the first version available
+    previous_topoheight: Option<TopoHeight>,
     // Output balance is used in case of multi TXs not in same block
     // If you build several TXs at same time but are not in the same block,
     // and a incoming tx happen we need to keep track of the output balance
@@ -63,18 +66,15 @@ pub struct VersionedBalance {
     final_balance: CiphertextCache,
     // Determine if there was any output made in this version
     balance_type: BalanceType,
-    // Topoheight of the previous versioned balance
-    // If its none, that means it's the first version available
-    previous_topoheight: Option<TopoHeight>,
 }
 
 impl VersionedBalance {
     pub const fn new(final_balance: CiphertextCache, previous_topoheight: Option<TopoHeight>) -> Self {
         Self {
+            previous_topoheight,
             output_balance: None,
             final_balance,
             balance_type: BalanceType::Input,
-            previous_topoheight,
         }
     }
 
@@ -279,16 +279,16 @@ impl Display for VersionedBalance {
 
 impl Serializer for VersionedBalance {
     fn write(&self, writer: &mut Writer) {
+        self.previous_topoheight.write(writer);
         self.final_balance.write(writer);
         self.balance_type.write(writer);
-        self.previous_topoheight.write(writer);
         self.output_balance.write(writer);
     }
 
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
+        let previous_topoheight = Option::read(reader)?;
         let final_balance = CiphertextCache::read(reader)?;
         let balance_type = BalanceType::read(reader)?;
-        let previous_topoheight = Option::read(reader)?;
         let output_balance = Option::read(reader)?;
 
         Ok(Self {
@@ -302,8 +302,8 @@ impl Serializer for VersionedBalance {
     fn size(&self) -> usize {
         self.final_balance.size()
         + self.balance_type.size()
-        + if let Some(topoheight) = self.previous_topoheight { topoheight.size() } else { 0 }
-        + if let Some(output_balance) = &self.output_balance { output_balance.size() } else { 0 }
+        + self.previous_topoheight.size()
+        + self.output_balance.size()
     }
 }
 
