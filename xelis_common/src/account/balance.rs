@@ -280,15 +280,15 @@ impl Display for VersionedBalance {
 impl Serializer for VersionedBalance {
     fn write(&self, writer: &mut Writer) {
         self.previous_topoheight.write(writer);
-        self.final_balance.write(writer);
         self.balance_type.write(writer);
+        self.final_balance.write(writer);
         self.output_balance.write(writer);
     }
 
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
         let previous_topoheight = Option::read(reader)?;
-        let final_balance = CiphertextCache::read(reader)?;
         let balance_type = BalanceType::read(reader)?;
+        let final_balance = CiphertextCache::read(reader)?;
         let output_balance = Option::read(reader)?;
 
         Ok(Self {
