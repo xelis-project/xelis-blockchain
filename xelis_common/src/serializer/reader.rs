@@ -2,8 +2,7 @@ use std::array::TryFromSliceError;
 use thiserror::Error;
 
 use crate::crypto::Hash;
-
-use super::Serializer;
+use super::{Serializer, Writer};
 
 #[derive(Error, Debug)]
 pub enum ReaderError {
@@ -34,6 +33,15 @@ impl<'a> Reader<'a> {
             bytes,
             total: 0
         }
+    }
+
+    pub fn skip(&mut self, n: usize) -> Result<(), ReaderError> {
+        if n > self.size() {
+            return Err(ReaderError::InvalidSize)
+        }
+
+        self.total += n;
+        Ok(())
     }
 
     pub fn read<T: Serializer>(&mut self) -> Result<T, ReaderError> {
@@ -170,5 +178,33 @@ impl<'a> Reader<'a> {
 
     pub fn total_read(&self) -> usize {
         self.total
+    }
+}
+
+
+// Skip N bytes before reading the next value
+pub struct Skip<const N: usize, T>(pub T);
+
+impl<const N: usize, T: Serializer> Serializer for Skip<N, T> {
+    fn write(&self, _: &mut Writer) {}
+
+    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
+        reader.skip(N)?;
+        T::read(reader).map(Self)
+    }
+}
+
+// Same as `Skip` but only skip if the first bool read is true
+pub struct SkipIf<const N: usize, T>(pub T);
+
+impl<const N: usize, T: Serializer> Serializer for SkipIf<N, T> {
+    fn write(&self, _: &mut Writer) {}
+
+    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
+        if reader.read_bool()? {
+            reader.skip(N)?;
+        }
+
+        T::read(reader).map(Self)
     }
 }
