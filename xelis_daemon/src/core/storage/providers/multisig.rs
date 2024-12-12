@@ -79,16 +79,7 @@ impl MultiSigProvider for SledStorage {
     }
 
     async fn get_multisig_at_maximum_topoheight_for<'a>(&'a self, account: &PublicKey, maximum_topoheight: TopoHeight) -> Result<Option<(TopoHeight, VersionedMultiSig<'a>)>, BlockchainError> {
-        let Some(topoheight) = self.get_last_topoheight_for_multisig(account).await? else {
-            return Ok(None)
-        };
-
-        if topoheight <= maximum_topoheight {
-            let version = self.get_multisig_at_topoheight_for(account, topoheight).await?;
-            return Ok(Some((topoheight, version)))
-        }
-
-        let mut previous_topoheight = Some(topoheight);
+        let mut previous_topoheight = self.get_last_topoheight_for_multisig(account).await?;
         while let Some(topoheight) = previous_topoheight {
             if topoheight <= maximum_topoheight {
                 let version = self.get_multisig_at_topoheight_for(account, topoheight).await?;
