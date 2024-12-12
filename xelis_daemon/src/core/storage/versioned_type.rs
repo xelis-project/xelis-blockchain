@@ -54,9 +54,11 @@ impl VersionedState {
 // A versioned data by topoheight data
 // In a blockDAG, a data can be updated by a new data at a certain topoheight
 // We must keep track of the previous data in case of reorgs that could occurs
+// For serializer, previous_topoheight is written before the data
+// So we can go through all the previous versions without reading the actual data
 pub struct Versioned<T: Serializer> {
-    data: T,
     previous_topoheight: Option<TopoHeight>,
+    data: T,
 }
 
 impl<T: Serializer> Versioned<T> {
@@ -90,21 +92,21 @@ impl<T: Serializer> Versioned<T> {
 
 impl<T: Serializer> Serializer for Versioned<T> {
     fn write(&self, writer: &mut Writer) {
-        self.data.write(writer);
         self.previous_topoheight.write(writer);
+        self.data.write(writer);
     }
 
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let data = T::read(reader)?;
         let previous_topoheight = Option::read(reader)?;
+        let data = T::read(reader)?;
 
         Ok(Self {
+            previous_topoheight,
             data,
-            previous_topoheight
         })
     }
 
     fn size(&self) -> usize {
-        self.data.size() + if let Some(topoheight) = self.previous_topoheight { topoheight.size() } else { 0 }
+        self.previous_topoheight.size() + self.data.size()
     }
 }
