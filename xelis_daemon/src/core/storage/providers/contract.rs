@@ -1,6 +1,7 @@
 use std::borrow::Cow;
 
 use async_trait::async_trait;
+use indexmap::IndexSet;
 use xelis_common::{block::TopoHeight, crypto::Hash, serializer::Serializer};
 use xelis_vm::{Environment, Module};
 use crate::core::{
@@ -28,6 +29,9 @@ pub trait ContractProvider {
 
     // Retrieve a contract at maximum topoheight
     async fn get_contract_at_maximum_topoheight_for<'a>(&self, hash: &Hash, maximum_topoheight: TopoHeight) -> Result<Option<(TopoHeight, VersionedContract<'a>)>, BlockchainError>;
+
+    // Retrieve all the contracts hashes
+    async fn get_contracts(&self, maximum: usize, skip: usize, minimum_topoheight: TopoHeight, maximum_topoheight: TopoHeight) -> Result<IndexSet<Hash>, BlockchainError>;
 
     // Retrieve the size of a contract at a given topoheight without loading the contract
     async fn get_contract_size_at_topoheight(&self, hash: &Hash, topoheight: TopoHeight) -> Result<usize, BlockchainError>;
@@ -99,23 +103,82 @@ impl ContractProvider for SledStorage {
         }
 
         let topoheight = self.get_last_topoheight_for_contract(hash).await?;
-        let mut version = self.get_contract_at_topoheight_for(hash, topoheight).await?;
 
         if topoheight <= maximum_topoheight {
+            let version = self.get_contract_at_topoheight_for(hash, topoheight).await?;
             trace!("Contract {} is at maximum topoheight", hash);
             return Ok(Some((topoheight, version)))
         }
 
-        while let Some(topoheight) = version.get_previous_topoheight() {
+        // We need to go through all the previous versions to get the first one that matches the maximum topoheight
+        let mut previous_topo = self.load_from_disk(
+            &self.versioned_contracts,
+            &Self::get_versioned_contract_key(hash, topoheight),
+            DiskContext::ContractTopoHeight
+        )?;
+
+        while let Some(topoheight) = previous_topo {
             if topoheight <= maximum_topoheight {
+                let version = self.get_contract_at_topoheight_for(hash, topoheight).await?;
                 trace!("Contract {} is at maximum topoheight", hash);
                 return Ok(Some((topoheight, version)))
             }
 
-            version = self.get_contract_at_topoheight_for(hash, topoheight).await?;
+            previous_topo = self.load_from_disk(
+                &self.versioned_contracts,
+                &Self::get_versioned_contract_key(hash, topoheight),
+                DiskContext::ContractTopoHeight
+            )?;
         }
 
         Ok(None)
+    }
+
+    async fn get_contracts(&self, maximum: usize, skip: usize, minimum_topoheight: TopoHeight, maximum_topoheight: TopoHeight) -> Result<IndexSet<Hash>, BlockchainError> {
+        trace!("Getting contracts, maximum: {}, skip: {}, minimum_topoheight: {}, maximum_topoheight: {}", maximum, skip, minimum_topoheight, maximum_topoheight);
+        let mut contracts = IndexSet::new();
+        let mut skip_count = 0;
+
+        // Unlike the keys, we don't prefix them with a topoheight at which they got registered
+        // Because we allow contracts code to be updated, we need to get the latest version of the contract
+        // We can't do a fast path with the skip checking, we need to process them all
+        for el in self.contracts.iter() {
+            let (key, value) = el?;
+            let topoheight = TopoHeight::from_bytes(&value)?;
+            let hash = Hash::from_bytes(&key)?;
+
+            let mut found = false;
+            let mut prev_topoheight = Some(topoheight);
+            while let Some(topoheight) = prev_topoheight.take() {
+                if topoheight < minimum_topoheight {
+                    break;
+                }
+
+                if topoheight < maximum_topoheight {
+                    found = true;
+                    break;
+                }
+
+                let key = Self::get_versioned_contract_key(&hash, topoheight);
+                prev_topoheight = self.load_from_disk(&self.versioned_contracts, &key, DiskContext::ContractTopoHeight)?;
+            }
+
+            if !found {
+                continue;
+            }
+
+            if skip_count < skip {
+                skip_count += 1;
+                continue;
+            }
+
+            contracts.insert(hash);
+            if contracts.len() >= maximum {
+                break;
+            }
+        }
+
+        Ok(contracts)
     }
 
     async fn set_contract_at_topoheight<'a>(&mut self, hash: &Hash, topoheight: TopoHeight, contract: VersionedContract<'a>) -> Result<(), BlockchainError> {

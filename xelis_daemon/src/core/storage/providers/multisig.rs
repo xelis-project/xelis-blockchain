@@ -83,18 +83,19 @@ impl MultiSigProvider for SledStorage {
             return Ok(None)
         };
 
-        let mut version = self.get_multisig_at_topoheight_for(account, topoheight).await?;
-
         if topoheight <= maximum_topoheight {
+            let version = self.get_multisig_at_topoheight_for(account, topoheight).await?;
             return Ok(Some((topoheight, version)))
         }
 
-        while let Some(topoheight) = version.get_previous_topoheight() {
+        let mut previous_topoheight = Some(topoheight);
+        while let Some(topoheight) = previous_topoheight {
             if topoheight <= maximum_topoheight {
+                let version = self.get_multisig_at_topoheight_for(account, topoheight).await?;
                 return Ok(Some((topoheight, version)))
             }
 
-            version = self.get_multisig_at_topoheight_for(account, topoheight).await?;
+            previous_topoheight = self.load_from_disk(&self.versioned_multisigs, &self.get_multisig_key(account, topoheight), DiskContext::Multisig)?;
         }
 
         Ok(None)
