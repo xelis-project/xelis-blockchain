@@ -29,6 +29,12 @@ pub enum BalanceType {
     Both
 }
 
+impl BalanceType {
+    pub fn contains_output(&self) -> bool {
+        matches!(self, BalanceType::Output | BalanceType::Both)
+    }
+}
+
 impl Serializer for BalanceType {
     fn write(&self, writer: &mut Writer) {
         match self {
@@ -153,7 +159,7 @@ impl VersionedBalance {
     }
 
     pub fn contains_output(&self) -> bool {
-        self.balance_type != BalanceType::Input
+        self.balance_type.contains_output()
     }
 
     pub fn set_balance_type(&mut self, balance_type: BalanceType) {
