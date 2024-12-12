@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use log::{trace, error};
+use log::trace;
 use xelis_common::{
     block::TopoHeight,
     account::{AccountSummary, Balance, VersionedBalance},
@@ -189,36 +189,16 @@ impl BalanceProvider for SledStorage {
             return Ok(None)
         }
 
-        // Fast path: if the balance is at exact topoheight, return it
-        if self.has_balance_at_exact_topoheight(key, asset, topoheight).await? {
-            trace!("Balance version found at exact (maximum) topoheight {}", topoheight);
-            return Ok(Some((topoheight, self.get_balance_at_exact_topoheight(key, asset, topoheight).await?)))
-        }
-
-        let (topo, mut version) = self.get_last_balance(key, asset).await?;
-        trace!("Last version balance {} for {} is at topoheight {}", asset, key.as_address(self.is_mainnet()), topo);
-        // if it's the latest and its under the maximum topoheight
-        if topo <= topoheight {
-            trace!("Last version balance (valid) found at {} (maximum topoheight = {})", topo, topoheight);
-            return Ok(Some((topo, version)))
-        }
-
+        let topo = self.get_last_topoheight_for_balance(key, asset).await?;
+        let mut previous_topoheight = Some(topo);
         // otherwise, we have to go through the whole chain
-        while let Some(previous) = version.get_previous_topoheight() {
-            let previous_version = self.get_balance_at_exact_topoheight(key, asset, previous).await?;
-            trace!("previous version {}", previous);
-            if previous <= topoheight {
-                trace!("Highest version balance found at {} (maximum topoheight = {})", topo, topoheight);
-                return Ok(Some((previous, previous_version)))
+        while let Some(topo) = previous_topoheight {
+            if topo <= topoheight {
+                let version = self.get_balance_at_exact_topoheight(key, asset, topo).await?;
+                return Ok(Some((topo, version)))
             }
 
-            if let Some(value) = previous_version.get_previous_topoheight() {
-                if value > previous {
-                    error!("FATAL ERROR: Previous topoheight ({}) should not be higher than current version ({})!", value, previous);
-                    return Err(BlockchainError::Unknown)
-                }
-            }
-            version = previous_version;
+            previous_topoheight = self.load_from_disk(&self.versioned_balances, &self.get_versioned_balance_key(key, asset, topo), DiskContext::BalanceAtTopoHeight)?;
         }
 
         Ok(None)
