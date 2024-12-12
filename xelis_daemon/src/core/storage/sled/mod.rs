@@ -405,10 +405,13 @@ impl SledStorage {
         Ok(previous)
     }
 
-    pub(super) fn get_len_for(&self, tree: &Tree, key: &[u8]) -> Result<usize, BlockchainError> {
+    // Retrieve the exact size of a value from the DB
+    pub(super) fn get_size_from_disk(&self, tree: &Tree, key: &[u8]) -> Result<usize, BlockchainError> {
+        trace!("get size from disk");
+
         if let Some(snapshot) = self.snapshot.as_ref() {
             if snapshot.contains_key(tree, key) {
-                return snapshot.get_len_for(tree, key).ok_or(BlockchainError::NotFoundOnDisk(DiskContext::DataLen));
+                return snapshot.get_value_size(tree, key).ok_or(BlockchainError::NotFoundOnDisk(DiskContext::DataLen));
             }
         }
 

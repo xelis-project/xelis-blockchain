@@ -29,6 +29,9 @@ pub trait ContractProvider {
     // Retrieve a contract at maximum topoheight
     async fn get_contract_at_maximum_topoheight_for<'a>(&self, hash: &Hash, maximum_topoheight: TopoHeight) -> Result<Option<(TopoHeight, VersionedContract<'a>)>, BlockchainError>;
 
+    // Retrieve the size of a contract at a given topoheight without loading the contract
+    async fn get_contract_size_at_topoheight(&self, hash: &Hash, topoheight: TopoHeight) -> Result<usize, BlockchainError>;
+
     // Store a contract at a given topoheight
     async fn set_contract_at_topoheight<'a>(&mut self, hash: &Hash, topoheight: TopoHeight, contract: VersionedContract<'a>) -> Result<(), BlockchainError>;
 
@@ -80,6 +83,12 @@ impl ContractProvider for SledStorage {
         trace!("Getting contract {} at topoheight {}", hash, topoheight);
         let key = Self::get_versioned_contract_key(hash, topoheight);
         self.load_from_disk(&self.versioned_contracts, &key, DiskContext::ContractTopoHeight)
+    }
+
+    async fn get_contract_size_at_topoheight(&self, hash: &Hash, topoheight: TopoHeight) -> Result<usize, BlockchainError> {
+        trace!("Getting contract size at topoheight {}", topoheight);
+        let key = Self::get_versioned_contract_key(hash, topoheight);
+        self.get_size_from_disk(&self.versioned_contracts, &key)
     }
 
     async fn get_contract_at_maximum_topoheight_for<'a>(&self, hash: &Hash, maximum_topoheight: TopoHeight) -> Result<Option<(TopoHeight, VersionedContract<'a>)>, BlockchainError> {

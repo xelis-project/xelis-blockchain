@@ -167,7 +167,7 @@ impl Snapshot {
     }
 
     // Get the length of a value using its tree key in the snapshot
-    pub fn get_len_for<K: AsRef<[u8]> + ?Sized>(&self, tree: &Tree, key: &K) -> Option<usize> {
+    pub fn get_value_size<K: AsRef<[u8]> + ?Sized>(&self, tree: &Tree, key: &K) -> Option<usize> {
         let batch = self.trees.get(&tree.name())?
             .as_ref()?;
         let elem = batch.writes.get(key.as_ref())?.as_ref()?;
