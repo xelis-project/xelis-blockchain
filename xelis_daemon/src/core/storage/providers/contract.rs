@@ -102,21 +102,8 @@ impl ContractProvider for SledStorage {
             return Ok(None)
         }
 
-        let topoheight = self.get_last_topoheight_for_contract(hash).await?;
-
-        if topoheight <= maximum_topoheight {
-            let version = self.get_contract_at_topoheight_for(hash, topoheight).await?;
-            trace!("Contract {} is at maximum topoheight", hash);
-            return Ok(Some((topoheight, version)))
-        }
-
-        // We need to go through all the previous versions to get the first one that matches the maximum topoheight
-        let mut previous_topo = self.load_from_disk(
-            &self.versioned_contracts,
-            &Self::get_versioned_contract_key(hash, topoheight),
-            DiskContext::ContractTopoHeight
-        )?;
-
+        let topo = self.get_last_topoheight_for_contract(hash).await?;
+        let mut previous_topo = Some(topo);
         while let Some(topoheight) = previous_topo {
             if topoheight <= maximum_topoheight {
                 let version = self.get_contract_at_topoheight_for(hash, topoheight).await?;
