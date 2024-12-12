@@ -14,6 +14,53 @@ pub enum VersionedState {
     Updated(TopoHeight),
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum State<T: Serializer> {
+    Clean,
+    Some(T),
+    None,
+    Deleted,
+}
+
+impl<T: Serializer> Serializer for State<T> {
+    fn write(&self, writer: &mut Writer) {
+        match self {
+            Self::Clean => {
+                writer.write_u8(0);
+            },
+            Self::Some(data) => {
+                writer.write_u8(1);
+                data.write(writer);
+            },
+            Self::None => {
+                writer.write_u8(2);
+            },
+            Self::Deleted => {
+                writer.write_u8(3);
+            },
+        }
+    }
+
+    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
+        Ok(match reader.read_u8()? {
+            0 => Self::Clean,
+            1 => Self::Some(T::read(reader)?),
+            2 => Self::None,
+            3 => Self::Deleted,
+            _ => return Err(ReaderError::InvalidValue),
+        })
+    }
+
+    fn size(&self) -> usize {
+        match self {
+            Self::Clean => 1,
+            Self::Some(data) => 1 + data.size(),
+            Self::None => 1,
+            Self::Deleted => 1,
+        }
+    }
+}
+
 impl VersionedState {
     pub fn is_new(&self) -> bool {
         matches!(self, Self::New)

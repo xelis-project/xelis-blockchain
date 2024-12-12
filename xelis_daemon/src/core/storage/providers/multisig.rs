@@ -1,6 +1,7 @@
 use std::borrow::Cow;
 
 use async_trait::async_trait;
+use indexmap::IndexSet;
 use xelis_common::{
     block::TopoHeight,
     crypto::PublicKey,
@@ -10,7 +11,7 @@ use xelis_common::{
 
 use crate::core::{
     error::{BlockchainError, DiskContext},
-    storage::{SledStorage, Versioned}
+    storage::{SledStorage, State, Versioned}
 };
 
 pub type VersionedMultiSig<'a> = Versioned<Option<Cow<'a, MultiSigPayload>>>;
@@ -31,6 +32,9 @@ pub trait MultiSigProvider {
 
     // Retrieve the multisig setup at the maximum topoheight for a given account
     async fn get_multisig_at_maximum_topoheight_for<'a>(&'a self, account: &PublicKey, maximum_topoheight: TopoHeight) -> Result<Option<(TopoHeight, VersionedMultiSig<'a>)>, BlockchainError>;
+
+    // Get all the multisig setups for a given set of keys
+    async fn get_updated_multisigs(&self, keys: &IndexSet<PublicKey>, minimum_topoheight: TopoHeight, maximum_topoheight: TopoHeight) -> Result<Vec<State<MultiSigPayload>>, BlockchainError>;
 
     // Verify if an account has a multisig setup
     // If the latest version is None, the account has no multisig setup
@@ -90,6 +94,28 @@ impl MultiSigProvider for SledStorage {
         }
 
         Ok(None)
+    }
+
+    async fn get_updated_multisigs(&self, keys: &IndexSet<PublicKey>, minimum_topoheight: TopoHeight, maximum_topoheight: TopoHeight) -> Result<Vec<State<MultiSigPayload>>, BlockchainError> {
+        let mut multisigs = Vec::with_capacity(keys.len());
+        for key in keys {
+            // We need to search the multisig state that match min and max topoheight
+            if let Some((topoheight, version)) = self.get_multisig_at_maximum_topoheight_for(key, maximum_topoheight).await? {
+                if topoheight >= minimum_topoheight {
+                    let state = match version.take() {
+                        Some(multisig) => State::Some(multisig.into_owned()),
+                        None => State::Deleted,
+                    };
+                    multisigs.push(state);
+                } else {
+                    multisigs.push(State::Clean);
+                }
+            } else {
+                multisigs.push(State::None);
+            }
+        }
+
+        Ok(multisigs)
     }
 
     async fn has_multisig(&self, account: &PublicKey) -> Result<bool, BlockchainError> {

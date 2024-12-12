@@ -26,7 +26,7 @@ use xelis_common::{
     varuint::VarUint
 };
 use super::chain::{BlockId, CommonPoint};
-use crate::config::CHAIN_SYNC_REQUEST_MAX_BLOCKS;
+use crate::{config::CHAIN_SYNC_REQUEST_MAX_BLOCKS, core::storage::State};
 
 // this file implements the protocol for the fast sync (bootstrapped chain)
 // You will have to request through StepRequest::FetchAssets all the registered assets
@@ -153,7 +153,8 @@ pub enum StepRequest<'a> {
     // max Topoheight, List of public keys
     Nonces(TopoHeight, Cow<'a, IndexSet<PublicKey>>),
     // Request the multisigs of a list of public key
-    MultiSigs(TopoHeight, Cow<'a, IndexSet<PublicKey>>),
+    // min, max topo, keys
+    MultiSigs(TopoHeight, TopoHeight, Cow<'a, IndexSet<PublicKey>>),
     // Min topoheight, Max topoheight, pagination
     Contracts(TopoHeight, TopoHeight, Option<u64>),
     // Request the contract module and its metadata
@@ -172,7 +173,7 @@ impl<'a> StepRequest<'a> {
             Self::Balances(_, _, _, _) => StepKind::Balances,
             Self::SpendableBalances(_, _, _, _) => StepKind::Balances,
             Self::Nonces(_, _) => StepKind::Nonces,
-            Self::MultiSigs(_, _) => StepKind::MultiSigs,   
+            Self::MultiSigs(_, _, _) => StepKind::MultiSigs,   
             Self::Contracts(_, _, _) => StepKind::Contracts,
             Self::ContractMetadata(_, _) => StepKind::Contracts,
             Self::BlocksMetadata(_) => StepKind::BlocksMetadata
@@ -186,7 +187,7 @@ impl<'a> StepRequest<'a> {
             Self::Balances(_, _, _, topo) => topo,
             Self::SpendableBalances(_, _, _, topo) => topo,
             Self::Nonces(topo, _) => topo,
-            Self::MultiSigs(topo, _) => topo,
+            Self::MultiSigs(_, topo, _) => topo,
             Self::Contracts(_, topo, _) => topo,
             Self::ContractMetadata(topo, _) => topo,
             Self::BlocksMetadata(topo) => topo,
@@ -278,9 +279,10 @@ impl Serializer for StepRequest<'_> {
                 Self::Nonces(topoheight, keys)
             },
             6 => {
-                let topoheight = reader.read_u64()?;
+                let min = reader.read_u64()?;
+                let max = reader.read_u64()?;
                 let keys = Cow::<'_, IndexSet<PublicKey>>::read(reader)?;
-                Self::MultiSigs(topoheight, keys)
+                Self::MultiSigs(min, max, keys)
             }
             7 => {
                 let min = reader.read_u64()?;
@@ -349,9 +351,10 @@ impl Serializer for StepRequest<'_> {
                 writer.write_u64(topoheight);
                 nonces.write(writer);
             },
-            Self::MultiSigs(topoheight, keys) => {
+            Self::MultiSigs(min, max, keys) => {
                 writer.write_u8(6);
-                writer.write_u64(topoheight);
+                writer.write_u64(min);
+                writer.write_u64(max);
                 keys.write(writer);
             },
             Self::Contracts(min, max, pagination) => {
@@ -380,7 +383,7 @@ impl Serializer for StepRequest<'_> {
             Self::Balances(keys, asset, min, max) => keys.size() + asset.size() + min.size() + max.size(),
             Self::SpendableBalances(key, asset, min, max) => key.size() + asset.size() + min.size() + max.size(),
             Self::Nonces(topoheight, nonces) => topoheight.size() + nonces.size(),
-            Self::MultiSigs(topoheight, keys) => topoheight.size() + keys.size(),
+            Self::MultiSigs(min, max, keys) => min.size() + max.size() + keys.size(),
             Self::Contracts(min, max, pagination) => min.size() + max.size() + pagination.size(),
             Self::ContractMetadata(topoheight, hash) => topoheight.size() + hash.size(),
             Self::BlocksMetadata(topoheight) => topoheight.size()
@@ -406,7 +409,7 @@ pub enum StepResponse {
     // Nonces for requested accounts
     Nonces(Vec<Nonce>),
     // All multisig configured for the requested accounts
-    MultiSigs(Vec<Option<MultiSigPayload>>),
+    MultiSigs(Vec<State<MultiSigPayload>>),
     // Contracts hashes with pagination
     Contracts(IndexSet<Hash>, Option<u64>),
     // TODO: Contract metadata
@@ -468,10 +471,7 @@ impl Serializer for StepResponse {
             3 => Self::Balances(Vec::read(reader)?),
             4 => Self::SpendableBalances(Vec::<Balance>::read(reader)?, Option::read(reader)?),
             5 => Self::Nonces(Vec::<u64>::read(reader)?),
-            6 => {
-                let multisigs = Vec::<Option<MultiSigPayload>>::read(reader)?;
-                Self::MultiSigs(multisigs)
-            },
+            6 => Self::MultiSigs( Vec::read(reader)?),
             7 => {
                 let contracts = IndexSet::<Hash>::read(reader)?;
                 let page = Option::read(reader)?;

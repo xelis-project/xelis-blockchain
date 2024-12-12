@@ -52,8 +52,12 @@ use crate::{
     core::{
         blockchain::Blockchain,
         error::BlockchainError,
-        storage::Storage,
-        hard_fork
+        hard_fork,
+        storage::{
+            State as VersionedState,
+            Storage,
+            VersionedMultiSig
+        }
     },
     p2p::{
         chain_validator::ChainValidator,
@@ -2613,6 +2617,16 @@ impl<S: Storage> P2pServer<S> {
                 };
                 StepResponse::Keys(keys, page)
             },
+            StepRequest::MultiSigs(min, max, keys) => {
+                let multisigs = storage.get_updated_multisigs(&keys, min, max).await?;
+                StepResponse::MultiSigs(multisigs)
+            },
+            StepRequest::Contracts(min, max, page) => {
+                todo!()
+            },
+            StepRequest::ContractMetadata(topoheight, contract) => {
+                todo!()
+            },
             StepRequest::BlocksMetadata(topoheight) => {
                 let mut blocks = IndexSet::with_capacity(PRUNE_SAFETY_LIMIT as usize);
                 // go from the lowest available point until the requested stable topoheight
@@ -2691,6 +2705,34 @@ impl<S: Storage> P2pServer<S> {
                 debug!("Saving nonce {} for {}", nonce, key.as_address(self.blockchain.get_network().is_mainnet()));
                 storage.set_last_nonce_to(key, stable_topoheight, &VersionedNonce::new(nonce, None)).await?;
                 storage.set_account_registration_topoheight(key, stable_topoheight).await?;
+            }
+        }
+
+        // Also request the multisigs states
+        let StepResponse::MultiSigs(multisigs) = peer.request_boostrap_chain(StepRequest::MultiSigs(our_topoheight, stable_topoheight, Cow::Borrowed(keys))).await? else {
+            // shouldn't happen
+            error!("Received an invalid StepResponse (how ?) while fetching multisigs");
+            return Err(P2pError::InvalidPacket.into())
+        };
+
+        {
+            let mut storage = self.blockchain.get_storage().write().await;
+            // save all multisigs
+            for (key, multisig) in keys.iter().zip(multisigs) {
+                match multisig {
+                    VersionedState::None | VersionedState::Clean => {
+                        trace!("No multisig change for {}", key.as_address(self.blockchain.get_network().is_mainnet()));
+                    },
+                    VersionedState::Deleted => {
+                        trace!("Deleting multisig for {}", key.as_address(self.blockchain.get_network().is_mainnet()));
+                        storage.delete_last_topoheight_for_multisig(key).await?;
+                    },
+                    VersionedState::Some(multisig) => {
+                        trace!("Saving multisig for {}", key.as_address(self.blockchain.get_network().is_mainnet()));
+                        let data = VersionedMultiSig::new(Some(Cow::Owned(multisig)), None);
+                        storage.set_last_multisig_to(key, stable_topoheight, data).await?;
+                    },
+                };
             }
         }
 
