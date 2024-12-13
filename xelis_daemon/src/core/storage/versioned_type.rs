@@ -16,9 +16,14 @@ pub enum VersionedState {
 
 #[derive(Debug, Clone, Copy)]
 pub enum State<T: Serializer> {
+    // Clean, we don't have to do anything
+    // (It wasn't updated in the given range)
     Clean,
+    // Need to update
     Some(T),
+    // Not found in the given range
     None,
+    // Versioned data is deleted
     Deleted,
 }
 
