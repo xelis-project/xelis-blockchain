@@ -1,9 +1,14 @@
+mod metadata;
+
 use anyhow::Context as AnyhowContext;
 use log::info;
 use xelis_builder::EnvironmentBuilder;
 use xelis_vm::{Context, Environment, FnInstance, FnParams, FnReturnType, Type, Value};
 
 use crate::transaction::Transaction;
+
+pub use metadata::ContractMetadata;
+
 
 // Build the environment for the contract
 pub fn build_environment() -> Environment {
