@@ -2597,7 +2597,7 @@ impl<S: Storage> P2pServer<S> {
             StepRequest::Nonces(topoheight, keys) => {
                 let mut nonces = Vec::with_capacity(keys.len());
                 for key in keys.iter() {
-                    let nonce = storage.get_nonce_at_maximum_topoheight(key, topoheight).await?.map(|(_, v)| v.get_nonce()).unwrap_or(0);
+                    let nonce = storage.get_nonce_at_maximum_topoheight(key, topoheight).await?.map(|(_, v)| v.get_nonce());
                     nonces.push(nonce);
                 }
                 StepResponse::Nonces(nonces)
@@ -2622,10 +2622,22 @@ impl<S: Storage> P2pServer<S> {
                 StepResponse::MultiSigs(multisigs)
             },
             StepRequest::Contracts(min, max, page) => {
-                todo!()
+                if min > max {
+                    warn!("Invalid range for contracts");
+                    return Err(P2pError::InvalidPacket.into())
+                }
+
+                let page = page.unwrap_or(0);
+                let contracts = storage.get_contracts(MAX_ITEMS_PER_PAGE, page as usize * MAX_ITEMS_PER_PAGE, min, max).await?;
+                let page = if contracts.len() == MAX_ITEMS_PER_PAGE {
+                    Some(page + 1)
+                } else {
+                    None
+                };
+                StepResponse::Contracts(contracts, page)
             },
             StepRequest::ContractMetadata(topoheight, contract) => {
-                todo!()
+                StepResponse::ContractMetadata
             },
             StepRequest::BlocksMetadata(topoheight) => {
                 let mut blocks = IndexSet::with_capacity(PRUNE_SAFETY_LIMIT as usize);
@@ -2683,7 +2695,6 @@ impl<S: Storage> P2pServer<S> {
         Ok(blocks)
     }
 
-
     // Update all keys using bootstrap request
     // This will fetch the nonce and associated balance for each asset
     async fn update_bootstrap_keys(&self, peer: &Arc<Peer>, keys: &IndexSet<PublicKey>, our_topoheight: u64, stable_topoheight: u64) -> Result<(), P2pError> {
@@ -2702,9 +2713,15 @@ impl<S: Storage> P2pServer<S> {
             let mut storage = self.blockchain.get_storage().write().await;
             // save all nonces
             for (key, nonce) in keys.iter().zip(nonces) {
-                debug!("Saving nonce {} for {}", nonce, key.as_address(self.blockchain.get_network().is_mainnet()));
-                storage.set_last_nonce_to(key, stable_topoheight, &VersionedNonce::new(nonce, None)).await?;
-                storage.set_account_registration_topoheight(key, stable_topoheight).await?;
+                if let Some(nonce) = nonce {
+                    debug!("Saving nonce {} for {}", nonce, key.as_address(self.blockchain.get_network().is_mainnet()));
+                    storage.set_last_nonce_to(key, stable_topoheight, &VersionedNonce::new(nonce, None)).await?;
+                    storage.set_account_registration_topoheight(key, stable_topoheight).await?;
+                } else {
+                    debug!("No nonce for {}", key.as_address(self.blockchain.get_network().is_mainnet()));
+                    storage.delete_last_topoheight_for_nonce(key).await?;
+                    storage.delete_account_registration(key).await?;
+                }
             }
         }
 
@@ -2818,6 +2835,7 @@ impl<S: Storage> P2pServer<S> {
 
         Ok(())
     }
+
     // first, retrieve chain info of selected peer
     // We retrieve all assets through pagination,
     // then we fetch all keys with its nonces and its balances (also through pagination)
@@ -2947,6 +2965,14 @@ impl<S: Storage> P2pServer<S> {
 
                     if next_page.is_some() {
                         Some(StepRequest::Keys(our_topoheight, stable_topoheight, next_page))
+                    } else {
+                        // Go to next step
+                        Some(StepRequest::Contracts(our_topoheight, stable_topoheight, None))
+                    }
+                },
+                StepResponse::Contracts(contracts, page) => {
+                    if page.is_some() {
+                        Some(StepRequest::Contracts(our_topoheight, stable_topoheight, page))
                     } else {
                         // Go to next step
                         Some(StepRequest::BlocksMetadata(stable_topoheight))

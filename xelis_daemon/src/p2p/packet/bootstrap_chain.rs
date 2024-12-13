@@ -407,7 +407,9 @@ pub enum StepResponse {
     // TopoHeight is for the next max exclusive topoheight (if none, no more data)
     SpendableBalances(Vec<Balance>, Option<TopoHeight>),
     // Nonces for requested accounts
-    Nonces(Vec<Nonce>),
+    // It is optional in case the peer send us some keys
+    // that got deleted because he forked
+    Nonces(Vec<Option<Nonce>>),
     // All multisig configured for the requested accounts
     MultiSigs(Vec<State<MultiSigPayload>>),
     // Contracts hashes with pagination
@@ -447,7 +449,7 @@ impl Serializer for StepResponse {
                 Self::ChainInfo(common_point, topoheight, stable_height, hash)
             },
             1 => {
-                let assets = IndexSet::<AssetWithData>::read(reader)?;
+                let assets = IndexSet::read(reader)?;
                 let page = Option::read(reader)?;
                 if let Some(page_number) = &page {
                     if *page_number == 0 {
@@ -458,7 +460,7 @@ impl Serializer for StepResponse {
                 Self::Assets(assets, page)
             },
             2 => {
-                let keys = IndexSet::<PublicKey>::read(reader)?;
+                let keys = IndexSet::read(reader)?;
                 let page = Option::read(reader)?;
                 if let Some(page_number) = &page {
                     if *page_number == 0 {
@@ -469,8 +471,8 @@ impl Serializer for StepResponse {
                 Self::Keys(keys, page)
             },
             3 => Self::Balances(Vec::read(reader)?),
-            4 => Self::SpendableBalances(Vec::<Balance>::read(reader)?, Option::read(reader)?),
-            5 => Self::Nonces(Vec::<u64>::read(reader)?),
+            4 => Self::SpendableBalances(Vec::read(reader)?, Option::read(reader)?),
+            5 => Self::Nonces(Vec::read(reader)?),
             6 => Self::MultiSigs( Vec::read(reader)?),
             7 => {
                 let contracts = IndexSet::<Hash>::read(reader)?;
