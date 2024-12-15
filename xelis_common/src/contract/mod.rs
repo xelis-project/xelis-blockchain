@@ -115,6 +115,7 @@ pub fn build_environment() -> EnvironmentBuilder<'static> {
         Some(Type::U64)
     );
 
+    // Hash
     env.register_native_function(
         "as_bytes",
         Some(hash_type.clone()),

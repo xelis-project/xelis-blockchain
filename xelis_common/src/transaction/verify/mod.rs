@@ -14,6 +14,7 @@ use xelis_vm::{ConstantWrapper, ModuleValidator, VM};
 use crate::{
     account::Nonce,
     config::{BURN_PER_CONTRACT, TRANSACTION_FEE_BURN_PERCENT, XELIS_ASSET},
+    contract::{ChainState, DeterministicRandom},
     crypto::{
         elgamal::{
             Ciphertext,
@@ -34,9 +35,7 @@ use crate::{
         Hashable,
         ProtocolTranscript,
         SIGNATURE_SIZE
-    },
-    serializer::Serializer,
-    transaction::{
+    }, serializer::Serializer, transaction::{
         TxVersion,
         EXTRA_DATA_LIMIT_SIZE,
         EXTRA_DATA_LIMIT_SUM_SIZE,
@@ -775,8 +774,18 @@ impl Transaction {
                     // Set the gas limit for the VM
                     context.set_gas_limit(payload.max_gas);
 
+                    // TODO
+                    let random = DeterministicRandom::new(&payload.contract, &XELIS_ASSET, &XELIS_ASSET);
+                    let chain_state = ChainState {
+                        mainnet: false,
+                        debug_mode: false,
+                        contract: payload.contract.clone(),
+                        random
+                    };
+
                     // Configure the context
                     context.insert_ref(self);
+                    context.insert_ref(&chain_state);
 
                     // TODO:
                     // We need to handle the result of the VM
