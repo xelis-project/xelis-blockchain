@@ -1,6 +1,6 @@
 use std::{any::TypeId, hash::Hasher};
 
-use anyhow::Context as AnyhowContext;
+use anyhow::{bail, Context as AnyhowContext};
 use xelis_vm::{traits::{DynEq, DynHash, JSONHelper}, Context, FnInstance, FnParams, FnReturnType, Opaque, OpaqueWrapper, Value, U256};
 
 use crate::contract::{ChainState, DeterministicRandom};
@@ -25,7 +25,11 @@ impl JSONHelper for DeterministicRandom {
     }
 
     fn serialize_json(&self) -> Result<serde_json::Value, anyhow::Error> {
-        Ok(serde_json::Value::Null)
+        bail!("not supported")
+    }
+
+    fn is_supported(&self) -> bool {
+        false
     }
 }
 
@@ -118,4 +122,16 @@ pub fn random_u256(zelf: FnInstance, _: FnParams, _: &mut Context) -> FnReturnTy
 
     let value = U256::from_le_bytes(buffer);
     Ok(Some(Value::U256(value).into()))
+}
+
+pub fn random_bool(zelf: FnInstance, _: FnParams, _: &mut Context) -> FnReturnType {
+    let opaque = zelf?.as_opaque_mut()?;
+    let random: &mut DeterministicRandom = opaque.as_mut()?;
+
+    let mut buffer = [0; 1];
+    random.fill(&mut buffer).context("filling random buffer")?;
+
+    let value = buffer[0] & 1 == 1;
+
+    Ok(Some(Value::Boolean(value).into()))
 }

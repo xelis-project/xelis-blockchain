@@ -8,7 +8,6 @@ use opaque::*;
 use xelis_builder::EnvironmentBuilder;
 use xelis_vm::{
     Context,
-    Environment,
     FnInstance,
     FnParams,
     FnReturnType,
@@ -29,7 +28,7 @@ pub struct ChainState {
 }
 
 // Build the environment for the contract
-pub fn build_environment() -> Environment {
+pub fn build_environment() -> EnvironmentBuilder<'static> {
     debug!("Building environment for contract");
     register_opaque_types();
 
@@ -145,7 +144,7 @@ pub fn build_environment() -> Environment {
         "next_u32",
         Some(random_type.clone()),
         vec![],
-        random_u64,
+        random_u32,
         5,
         Some(Type::U32)
     );
@@ -173,8 +172,16 @@ pub fn build_environment() -> Environment {
         5,
         Some(Type::U256)
     );
+    env.register_native_function(
+        "next_bool",
+        Some(random_type.clone()),
+        vec![],
+        random_bool,
+        5,
+        Some(Type::Bool)
+    );
 
-    env.build()
+    env
 }
 
 fn println_fn(_: FnInstance, params: FnParams, context: &mut Context) -> FnReturnType {
