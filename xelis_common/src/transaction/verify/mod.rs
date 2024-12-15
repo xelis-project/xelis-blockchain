@@ -775,7 +775,7 @@ impl Transaction {
                     // Set the gas limit for the VM
                     context.set_gas_limit(payload.max_gas);
 
-                    context.insert_ref(environment);
+                    // Configure the context
                     context.insert_ref(self);
 
                     // TODO:

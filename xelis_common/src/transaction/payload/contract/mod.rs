@@ -4,7 +4,19 @@ use anyhow::Context;
 use compressed::{decompress_constant, decompress_type};
 use indexmap::{IndexMap, IndexSet};
 use serde::{Deserialize, Serialize};
-use xelis_vm::{Chunk, Constant, ConstantWrapper, EnumType, EnumVariant, Module, StructType, Type, Value, U256};
+use xelis_vm::{
+    Chunk,
+    Constant,
+    ConstantWrapper,
+    EnumType,
+    EnumVariant,
+    Module,
+    OpaqueWrapper,
+    StructType,
+    Type,
+    Value,
+    U256
+};
 use crate::{
     crypto::Hash,
     serializer::*
@@ -162,6 +174,10 @@ impl Serializer for Value {
                 writer.write_u8(10);
                 left.write(writer);
                 right.write(writer);
+            },
+            Value::Opaque(opaque) => {
+                writer.write_u8(11);
+                opaque.write(writer);
             }
         }
     }
@@ -200,6 +216,7 @@ impl Serializer for Value {
 
                 Value::Range(Box::new(left), Box::new(right), right_type)
             },
+            11 => Value::Opaque(OpaqueWrapper::read(reader)?),
             _ => return Err(ReaderError::InvalidValue)
         })
     }
@@ -216,7 +233,8 @@ impl Serializer for Value {
             Value::Boolean(_) => 1,
             Value::Blob(value) => 4 + value.len(),
             Value::String(value) => 1 + value.len(),
-            Value::Range(left, right, _) => left.size() + right.size()
+            Value::Range(left, right, _) => left.size() + right.size(),
+            Value::Opaque(opaque) => opaque.size()
         }
     }
 }
