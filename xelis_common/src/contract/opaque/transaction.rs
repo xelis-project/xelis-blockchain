@@ -2,8 +2,7 @@ use std::{any::TypeId, fmt, hash::{Hash, Hasher}, ops::Deref};
 
 use anyhow::Context as AnyhowContext;
 use serde::{Deserialize, Serialize};
-use xelis_vm::{Context, FnInstance, FnParams, FnReturnType, Opaque, OpaqueWrapper, Value};
-
+use xelis_vm::{traits::Serializable, Context, FnInstance, FnParams, FnReturnType, Opaque, OpaqueWrapper, Value};
 use crate::{api::RPCTransaction, contract::ChainState, crypto, immutable::Immutable, transaction::Transaction};
 
 #[derive(Clone, Debug)]
@@ -25,10 +24,6 @@ impl OpaqueTransaction {
     pub fn get_hash(&self) -> &crypto::Hash {
         &self.hash
     }
-
-    pub fn is_mainnet(&self) -> bool {
-        self.mainnet
-    }
 }
 
 impl Serialize for OpaqueTransaction {
@@ -46,6 +41,13 @@ impl<'a> Deserialize<'a> for OpaqueTransaction {
         let transaction = Transaction::from(rpc);
 
         Ok(Self::new(hash.into_owned(), Immutable::Owned(transaction), is_mainnet))
+    }
+}
+
+
+impl Serializable for OpaqueTransaction {
+    fn is_serializable(&self) -> bool {
+        false
     }
 }
 
@@ -90,7 +92,6 @@ impl Opaque for OpaqueTransaction {
         write!(f, "Transaction")
     }
 }
-
 
 pub fn current_transaction(_: FnInstance, _: FnParams, context: &mut Context) -> FnReturnType {
     let tx: &OpaqueTransaction = context.get().context("current transaction not found")?;

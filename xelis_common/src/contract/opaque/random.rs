@@ -1,9 +1,15 @@
 use std::{any::TypeId, hash::Hasher};
 
 use anyhow::{bail, Context as AnyhowContext};
-use xelis_vm::{traits::{DynEq, DynHash, JSONHelper}, Context, FnInstance, FnParams, FnReturnType, Opaque, OpaqueWrapper, Value, U256};
+use xelis_vm::{traits::{DynEq, DynHash, JSONHelper, Serializable}, Context, FnInstance, FnParams, FnReturnType, Opaque, OpaqueWrapper, Value, U256};
 
 use crate::contract::{ChainState, DeterministicRandom};
+
+impl Serializable for DeterministicRandom {
+    fn is_serializable(&self) -> bool {
+        false
+    }
+}
 
 impl Opaque for DeterministicRandom {
     fn clone_box(&self) -> Box<dyn Opaque> {
@@ -28,7 +34,7 @@ impl JSONHelper for DeterministicRandom {
         bail!("not supported")
     }
 
-    fn is_supported(&self) -> bool {
+    fn is_json_supported(&self) -> bool {
         false
     }
 }

@@ -101,9 +101,10 @@ impl UnsignedTransaction {
     // Get the hash of the transaction for the multi-signature
     // This hash must be signed by each participant of the multisig
     pub fn get_hash_for_multisig(&self) -> Hash {
-        let mut writer = Writer::new();
+        let mut buffer = Vec::new();
+        let mut writer = Writer::new(&mut buffer);
         self.write_no_signature(&mut writer);
-        hash(writer.as_bytes())
+        hash(&buffer)
     }
 
     // Sign the transaction for the multisig

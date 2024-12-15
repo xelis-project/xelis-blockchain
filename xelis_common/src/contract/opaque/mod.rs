@@ -16,6 +16,9 @@ use crate::{
     serializer::*
 };
 
+pub const HASH_OPAQUE_ID: u8 = 0;
+pub const ADDRESS_OPAQUE_ID: u8 = 1;
+
 macro_rules! register_opaque {
     ($name:literal, $opaque:ty) => {
         debug!("Registering opaque type: {}", $name);
@@ -31,11 +34,15 @@ pub fn register_opaque_types() {
 }
 
 impl Serializer for OpaqueWrapper {
-    fn write(&self, _: &mut Writer) {
-        todo!("write opaque wrapper")
+    fn write(&self, writer: &mut Writer) {
+        self.inner().serialize(writer.as_mut_bytes());
     }
 
-    fn read(_: &mut Reader) -> Result<Self, ReaderError> {
-        todo!("read opaque wrapper")
+    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
+        Ok(match reader.read_u8()? {
+            HASH_OPAQUE_ID => OpaqueWrapper::new(Hash::read(reader)?),
+            ADDRESS_OPAQUE_ID => OpaqueWrapper::new(Address::read(reader)?),
+            _ => return Err(ReaderError::InvalidValue)
+        })
     }
 }

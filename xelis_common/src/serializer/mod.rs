@@ -11,21 +11,24 @@ pub trait Serializer {
     fn write(&self, writer: &mut Writer);
 
     fn to_bytes(&self) -> Vec<u8> {
-        let mut writer = Writer::new();
+        let mut buffer = Vec::new();
+        let mut writer = Writer::new(&mut buffer);
         self.write(&mut writer);
-        writer.bytes()
+        buffer
     }
 
     fn to_hex(&self) -> String {
-        let mut writer = Writer::new();
+        let mut buffer = Vec::new();
+        let mut writer = Writer::new(&mut buffer);
         self.write(&mut writer);
-        hex::encode(writer.bytes())
+        hex::encode(buffer)
     }
 
     fn size(&self) -> usize {
-        let mut writer = Writer::new();
+        let mut buffer = Vec::new();
+        let mut writer = Writer::new(&mut buffer);
         self.write(&mut writer);
-        writer.total_write()
+        buffer.len()
     }
 
     fn read(reader: &mut Reader) -> Result<Self, ReaderError>

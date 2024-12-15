@@ -1,7 +1,18 @@
 use std::any::TypeId;
 use anyhow::Context as AnyhowContext;
-use xelis_vm::{Context, FnInstance, FnParams, FnReturnType, Opaque, Value, ValueCell};
+use xelis_vm::{traits::Serializable, Context, FnInstance, FnParams, FnReturnType, Opaque, Value, ValueCell};
 use crate::crypto::Hash;
+
+use super::{Serializer, Writer, HASH_OPAQUE_ID};
+
+impl Serializable for Hash {
+    fn serialize(&self, buffer: &mut Vec<u8>) -> usize {
+        let mut writer = Writer::new(buffer);
+        writer.write_u8(HASH_OPAQUE_ID);
+        self.write(&mut writer);
+        writer.total_write()
+    }
+}
 
 impl Opaque for Hash {
     fn get_type(&self) -> TypeId {
