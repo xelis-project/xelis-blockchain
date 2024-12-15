@@ -369,7 +369,7 @@ impl<S: Storage> P2pServer<S> {
                             error!("Received an invalid StepResponse (how ?) while fetching contract metadata");
                             return Err(P2pError::InvalidPacket.into())
                         };
-    
+
                         let mut storage = self.blockchain.get_storage().write().await;
                         match metadata {
                             // It wasn't found on their side or was deleted

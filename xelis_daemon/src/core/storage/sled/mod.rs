@@ -264,7 +264,7 @@ impl SledStorage {
             contracts_count: 0,
 
             snapshot: None,
-            environment: build_environment(),
+            environment: build_environment().build(),
         };
 
         // Verify that we are opening a DB on same network
