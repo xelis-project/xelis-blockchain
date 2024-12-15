@@ -9,10 +9,9 @@ use crate::crypto::Hash;
 #[derive(Debug, Clone)]
 pub struct DeterministicRandom {
     // Key for the random number generator
-    reader: OutputReader,
     // Blake3 support up to 2^64 - 1 bytes
     // We need to check pos is less than 2^64 - 1
-    pos: u64,
+    reader: OutputReader,
 }
 
 impl DeterministicRandom {
@@ -25,15 +24,14 @@ impl DeterministicRandom {
 
         Self {
             reader,
-            pos: 0,
         }
     }
 
     pub fn fill(&mut self, buffer: &mut [u8]) -> Result<(), anyhow::Error> {
-        self.pos = self.pos.checked_add(buffer.len() as u64)
-            .context("Random number generator overflow")?;
+        let pos = self.reader.position().checked_add(buffer.len() as u64)
+            .context("overflow")?;
 
-        if self.pos == u64::MAX - 1 {
+        if pos >= u64::MAX - 1 {
             return Err(anyhow::anyhow!("2^64 - 1 bytes reached"));
         }
 
