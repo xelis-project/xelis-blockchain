@@ -106,13 +106,22 @@ pub fn build_environment() -> EnvironmentBuilder<'static> {
         "transfer",
         Some(tx_type.clone()),
         vec![
-            ("to", address_type),
+            ("to", address_type.clone()),
             ("amount", Type::U64),
-            ("asset", hash_type),
+            ("asset", hash_type.clone()),
         ],
         transfer,
         5,
         Some(Type::U64)
+    );
+
+    env.register_native_function(
+        "as_bytes",
+        Some(hash_type.clone()),
+        vec![],
+        hash_as_bytes_fn,
+        5,
+        Some(Type::Array(Box::new(Type::U8)))
     );
 
     // Random number generator

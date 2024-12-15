@@ -8,6 +8,7 @@ use xelis_types::register_opaque as r_op;
 use xelis_vm::OpaqueWrapper;
 
 pub use transaction::*;
+pub use hash::*;
 pub use random::*;
 
 use crate::{
