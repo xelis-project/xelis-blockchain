@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use log::{debug, trace};
 use xelis_common::{
     account::{BalanceType, Nonce, VersionedNonce},
-    block::{BlockVersion, TopoHeight},
+    block::{Block, BlockVersion, TopoHeight},
     crypto::{elgamal::Ciphertext, Hash, PublicKey},
     transaction::{
         verify::{BlockchainApplyState, BlockchainVerificationState},
@@ -25,7 +25,9 @@ use super::{ChainState, StorageReference, Echange};
 
 // Chain State that can be applied to the mutable storage
 pub struct ApplicableChainState<'a, S: Storage> {
-    inner: ChainState<'a, S>
+    inner: ChainState<'a, S>,
+    block_hash: &'a Hash,
+    block: &'a Block,
 }
 
 #[async_trait]
@@ -115,8 +117,15 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for Applic
         self.inner.set_contract_module(hash, module).await
     }
 
-    async fn get_contract_module_with_environment(
+    async fn load_contract_module(
         &mut self,
+        hash: &Hash
+    ) -> Result<(), BlockchainError> {
+        self.inner.load_contract_module(hash).await
+    }
+
+    async fn get_contract_module_with_environment(
+        &self,
         hash: &Hash
     ) -> Result<(&xelis_vm::Module, &Environment), BlockchainError> {
         self.inner.get_contract_module_with_environment(hash).await
@@ -135,6 +144,18 @@ impl<'a, S: Storage> BlockchainApplyState<'a, BlockchainError> for ApplicableCha
     async fn add_gas_fee(&mut self, amount: u64) -> Result<(), BlockchainError> {
         self.gas_fee += amount;
         Ok(())
+    }
+
+    fn get_block_hash(&self) -> &Hash {
+        &self.block_hash
+    }
+
+    fn get_block(&self) -> &Block {
+        self.block
+    }
+
+    fn is_mainnet(&self) -> bool {
+        self.inner.storage.is_mainnet()
     }
 }
 
@@ -170,7 +191,9 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
         stable_topoheight: TopoHeight,
         topoheight: TopoHeight,
         block_version: BlockVersion,
-        burned_supply: u64
+        burned_supply: u64,
+        block_hash: &'a Hash,
+        block: &'a Block
     ) -> Self {
         Self {
             inner: ChainState::with(
@@ -178,8 +201,10 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
                 stable_topoheight,
                 topoheight,
                 block_version,
-                burned_supply
-            )
+                burned_supply,
+            ),
+            block_hash,
+            block
         }
     }
 

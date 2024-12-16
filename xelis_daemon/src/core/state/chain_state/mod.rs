@@ -329,7 +329,6 @@ impl<'a, S: Storage> ChainState<'a, S> {
 
 #[async_trait]
 impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for ChainState<'a, S> {
-
     /// Verify the TX version and reference
     async fn pre_verify_tx<'b>(
         &'b mut self,
@@ -440,15 +439,18 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for ChainS
         Ok(())
     }
 
-    /// Get the contract module with the environment
-    async fn get_contract_module_with_environment(
+    async fn load_contract_module(
         &mut self,
         hash: &Hash
-    ) -> Result<(&Module, &Environment), BlockchainError> {
-        // First load if not already loaded
-        // TODO: refactor
-        self.load_versioned_contract(hash).await?;
+    ) -> Result<(), BlockchainError> {
+        self.load_versioned_contract(hash).await
+    }
 
+    /// Get the contract module with the environment
+    async fn get_contract_module_with_environment(
+        &self,
+        hash: &Hash
+    ) -> Result<(&Module, &Environment), BlockchainError> {
         let module = self.internal_get_contract_module(hash).await?;
         let env = self.storage.get_contract_environment().await?;
         Ok((module, env))
