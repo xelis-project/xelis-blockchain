@@ -51,7 +51,7 @@ use super::{
     TransactionType,
     TransferPayload
 };
-pub use state::BlockchainVerificationState;
+pub use state::*;
 use thiserror::Error;
 use std::iter;
 
@@ -710,7 +710,7 @@ impl Transaction {
     }
 
     // Apply the transaction to the state
-    async fn apply<'a, E, B: BlockchainVerificationState<'a, E>>(
+    async fn apply<'a, E, B: BlockchainApplyState<'a, E>>(
         &'a self,
         state: &mut B,
     ) -> Result<(), VerificationError<E>> {
@@ -839,7 +839,7 @@ impl Transaction {
     }
 
     /// Assume the tx is valid, apply it to `state`. May panic if a ciphertext is ill-formed.
-    pub async fn apply_without_verify<'a, E, B: BlockchainVerificationState<'a, E>>(
+    pub async fn apply_without_verify<'a, E, B: BlockchainApplyState<'a, E>>(
         &'a self,
         state: &mut B,
     ) -> Result<(), VerificationError<E>> {
@@ -883,7 +883,7 @@ impl Transaction {
     /// Verify only that the final sender balance is the expected one for each commitment
     /// Then apply ciphertexts to the state
     /// Checks done are: commitment eq proofs only
-    pub async fn apply_with_partial_verify<'a, E, B: BlockchainVerificationState<'a, E>>(&'a self, state: &mut B) -> Result<(), VerificationError<E>> {
+    pub async fn apply_with_partial_verify<'a, E, B: BlockchainApplyState<'a, E>>(&'a self, state: &mut B) -> Result<(), VerificationError<E>> {
         trace!("apply with partial verify");
         let mut sigma_batch_collector = BatchCollector::default();
 
