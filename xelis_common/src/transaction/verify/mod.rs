@@ -789,7 +789,7 @@ impl Transaction {
                     // Configure the context
                     // Note that the VM already include the environment in Context
                     context.insert_ref(self);
-                    context.insert_ref(&chain_state);
+                    context.insert(chain_state);
                     context.insert_ref(state.get_block());
                     context.insert_ref(state.get_block_hash());
 

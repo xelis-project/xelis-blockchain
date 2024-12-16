@@ -1,23 +1,36 @@
-use std::{any::TypeId, hash::Hasher};
+use std::any::TypeId;
 
 use anyhow::{bail, Context as AnyhowContext};
-use xelis_vm::{traits::{DynEq, DynHash, JSONHelper, Serializable}, Context, FnInstance, FnParams, FnReturnType, Opaque, OpaqueWrapper, Value, U256};
+use xelis_vm::{
+    traits::{JSONHelper, Serializable},
+    Context,
+    FnInstance,
+    FnParams,
+    FnReturnType,
+    Opaque,
+    OpaqueWrapper,
+    Value,
+    U256
+};
 
 use crate::contract::{ChainState, DeterministicRandom};
 
-impl Serializable for DeterministicRandom {
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct OpaqueRandom;
+
+impl Serializable for OpaqueRandom {
     fn is_serializable(&self) -> bool {
         false
     }
 }
 
-impl Opaque for DeterministicRandom {
+impl Opaque for OpaqueRandom {
     fn clone_box(&self) -> Box<dyn Opaque> {
         Box::new(self.clone())
     }
 
     fn display(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "DeterministicRandom")
+        write!(f, "Random")
     }
 
     fn get_type(&self) -> TypeId {
@@ -25,9 +38,9 @@ impl Opaque for DeterministicRandom {
     }
 }
 
-impl JSONHelper for DeterministicRandom {
+impl JSONHelper for OpaqueRandom {
     fn get_type_name(&self) -> &'static str {
-        "DeterministicRandom"
+        "Random"
     }
 
     fn serialize_json(&self) -> Result<serde_json::Value, anyhow::Error> {
@@ -39,103 +52,108 @@ impl JSONHelper for DeterministicRandom {
     }
 }
 
-impl DynEq for DeterministicRandom {
-    fn as_eq(&self) -> &dyn DynEq {
-        self
-    }
-
-    fn is_equal(&self, _: &dyn DynEq) -> bool {
-        false
-    }
+pub fn random_fn(_: FnInstance, _: FnParams, _: &mut Context) -> FnReturnType {
+    Ok(Some(Value::Opaque(OpaqueWrapper::new(OpaqueRandom)).into()))
 }
 
-impl DynHash for DeterministicRandom {
-    fn dyn_hash(&self, _: &mut dyn Hasher) {}
-}
-
-
-pub fn random_fn(_: FnInstance, _: FnParams, context: &mut Context) -> FnReturnType {
-    let state: &ChainState = context.get().context("chain state not found")?;
-    Ok(Some(Value::Opaque(OpaqueWrapper::new(state.random.clone())).into()))
-}
-
-pub fn random_u8(zelf: FnInstance, _: FnParams, _: &mut Context) -> FnReturnType {
+pub fn random_u8(zelf: FnInstance, _: FnParams, context: &mut Context) -> FnReturnType {
     let opaque = zelf?.as_opaque_mut()?;
-    let random: &mut DeterministicRandom = opaque.as_mut()?;
+    let _: &OpaqueRandom = opaque.as_ref()?;
+
+    let state: &mut ChainState = context.get_mut()
+        .context("chain state not found")?;
 
     let mut buffer = [0; 1];
-    random.fill(&mut buffer).context("filling random buffer")?;
+    state.random.fill(&mut buffer).context("filling random buffer")?;
 
     let value = buffer[0];
 
     Ok(Some(Value::U8(value).into()))
 }
 
-pub fn random_u16(zelf: FnInstance, _: FnParams, _: &mut Context) -> FnReturnType {
+pub fn random_u16(zelf: FnInstance, _: FnParams, context: &mut Context) -> FnReturnType {
     let opaque = zelf?.as_opaque_mut()?;
-    let random: &mut DeterministicRandom = opaque.as_mut()?;
+    let _: &OpaqueRandom = opaque.as_ref()?;
+
+    let state: &mut ChainState = context.get_mut()
+        .context("chain state not found")?;
 
     let mut buffer = [0; 2];
-    random.fill(&mut buffer).context("filling random buffer")?;
+    state.random.fill(&mut buffer).context("filling random buffer")?;
 
     let value = u16::from_le_bytes(buffer);
 
     Ok(Some(Value::U16(value).into()))
 }
 
-pub fn random_u32(zelf: FnInstance, _: FnParams, _: &mut Context) -> FnReturnType {
+pub fn random_u32(zelf: FnInstance, _: FnParams, context: &mut Context) -> FnReturnType {
     let opaque = zelf?.as_opaque_mut()?;
-    let random: &mut DeterministicRandom = opaque.as_mut()?;
+    let _: &OpaqueRandom = opaque.as_ref()?;
+
+    let state: &mut ChainState = context.get_mut()
+        .context("chain state not found")?;
 
     let mut buffer = [0; 4];
-    random.fill(&mut buffer).context("filling random buffer")?;
+    state.random.fill(&mut buffer).context("filling random buffer")?;
 
     let value = u32::from_le_bytes(buffer);
 
     Ok(Some(Value::U32(value).into()))
 }
 
-pub fn random_u64(zelf: FnInstance, _: FnParams, _: &mut Context) -> FnReturnType {
+pub fn random_u64(zelf: FnInstance, _: FnParams, context: &mut Context) -> FnReturnType {
     let opaque = zelf?.as_opaque_mut()?;
-    let random: &mut DeterministicRandom = opaque.as_mut()?;
+    let _: &OpaqueRandom = opaque.as_ref()?;
+
+    let state: &mut ChainState = context.get_mut()
+        .context("chain state not found")?;
 
     let mut buffer = [0; 8];
-    random.fill(&mut buffer).context("filling random buffer")?;
+    state.random.fill(&mut buffer).context("filling random buffer")?;
 
     let value = u64::from_le_bytes(buffer);
 
     Ok(Some(Value::U64(value).into()))
 }
 
-pub fn random_u128(zelf: FnInstance, _: FnParams, _: &mut Context) -> FnReturnType {
+pub fn random_u128(zelf: FnInstance, _: FnParams, context: &mut Context) -> FnReturnType {
     let opaque = zelf?.as_opaque_mut()?;
-    let random: &mut DeterministicRandom = opaque.as_mut()?;
+    let _: &OpaqueRandom = opaque.as_ref()?;
+
+    let state: &mut ChainState = context.get_mut()
+        .context("chain state not found")?;
 
     let mut buffer = [0; 16];
-    random.fill(&mut buffer).context("filling random buffer")?;
+    state.random.fill(&mut buffer).context("filling random buffer")?;
 
     let value = u128::from_le_bytes(buffer);
 
     Ok(Some(Value::U128(value).into()))
 }
 
-pub fn random_u256(zelf: FnInstance, _: FnParams, _: &mut Context) -> FnReturnType {
+pub fn random_u256(zelf: FnInstance, _: FnParams, context: &mut Context) -> FnReturnType {
     let opaque = zelf?.as_opaque_mut()?;
-    let random: &mut DeterministicRandom = opaque.as_mut()?;
+    let _: &OpaqueRandom = opaque.as_ref()?;
+
+    let state: &mut ChainState = context.get_mut()
+        .context("chain state not found")?;
 
     let mut buffer = [0; 32];
-    random.fill(&mut buffer).context("filling random buffer")?;
+    state.random.fill(&mut buffer).context("filling random buffer")?;
 
     let value = U256::from_le_bytes(buffer);
     Ok(Some(Value::U256(value).into()))
 }
 
-pub fn random_bool(zelf: FnInstance, _: FnParams, _: &mut Context) -> FnReturnType {
+pub fn random_bool(zelf: FnInstance, _: FnParams, context: &mut Context) -> FnReturnType {
     let opaque = zelf?.as_opaque_mut()?;
-    let random: &mut DeterministicRandom = opaque.as_mut()?;
+    let _: &OpaqueRandom = opaque.as_ref()?;
+
+    let state: &mut ChainState = context.get_mut()
+        .context("chain state not found")?;
 
     let mut buffer = [0; 1];
-    random.fill(&mut buffer).context("filling random buffer")?;
+    state.random.fill(&mut buffer).context("filling random buffer")?;
 
     let value = buffer[0] & 1 == 1;
 

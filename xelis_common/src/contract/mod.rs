@@ -44,7 +44,7 @@ pub fn build_environment() -> EnvironmentBuilder<'static> {
     let tx_type = Type::Opaque(env.register_opaque::<OpaqueTransaction>("Transaction"));
     let hash_type = Type::Opaque(env.register_opaque::<Hash>("Hash"));
     let address_type = Type::Opaque(env.register_opaque::<Hash>("Address"));
-    let random_type = Type::Opaque(env.register_opaque::<DeterministicRandom>("Random"));
+    let random_type = Type::Opaque(env.register_opaque::<OpaqueRandom>("Random"));
     let block_type = Type::Opaque(env.register_opaque::<OpaqueBlock>("Block"));
 
     // Transaction
