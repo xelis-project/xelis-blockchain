@@ -3,7 +3,7 @@ mod opaque;
 mod random;
 
 use anyhow::Context as AnyhowContext;
-use log::debug;
+use log::{debug, info};
 use opaque::*;
 use xelis_builder::EnvironmentBuilder;
 use xelis_vm::{
@@ -36,6 +36,9 @@ pub fn build_environment() -> EnvironmentBuilder<'static> {
 
     env.get_mut_function("println", None, vec![Type::Any])
         .set_on_call(println_fn);
+
+    env.get_mut_function("debug", None, vec![Type::Any])
+        .set_on_call(debug_fn);
 
     // Opaque type but we provide getters
     let tx_type = Type::Opaque(env.register_opaque::<OpaqueTransaction>("Transaction"));
@@ -277,12 +280,20 @@ pub fn build_environment() -> EnvironmentBuilder<'static> {
 fn println_fn(_: FnInstance, params: FnParams, context: &mut Context) -> FnReturnType {
     let state: &ChainState = context.get().context("chain state not found")?;
     if state.debug_mode {
-        debug!("{}", params[0].as_ref());
+        info!("{}", params[0].as_ref());
     }
 
     Ok(None)
 }
 
+fn debug_fn(_: FnInstance, params: FnParams, context: &mut Context) -> FnReturnType {
+    let state: &ChainState = context.get().context("chain state not found")?;
+    if state.debug_mode {
+        debug!("{:?}", params[0].as_ref().as_value());
+    }
+
+    Ok(None)
+}
 
 fn get_contract_hash(_: FnInstance, _: FnParams, context: &mut Context) -> FnReturnType {
     let state: &ChainState = context.get().context("chain state not found")?;
