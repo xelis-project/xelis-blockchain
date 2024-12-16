@@ -317,12 +317,4 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for Mempoo
 
         Ok((module, environment))
     }
-
-    async fn add_burned_coins(&mut self, _: u64) -> Result<(), BlockchainError> {
-        Ok(())
-    }
-
-    async fn add_gas_fee(&mut self, _: u64) -> Result<(), BlockchainError> {
-        Ok(())
-    }
 }

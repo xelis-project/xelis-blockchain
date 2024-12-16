@@ -2019,7 +2019,7 @@ impl<S: Storage> Blockchain<S> {
 
                         // Execute the transaction by applying changes in storage
                         debug!("Executing tx {} in block {} with nonce {}", tx_hash, hash, tx.get_nonce());
-                        if let Err(e) = tx.apply_with_partial_verify(chain_state.as_mut()).await {
+                        if let Err(e) = tx.apply_with_partial_verify(&mut chain_state).await {
                             warn!("Error while executing TX {} with current DAG org: {}", tx_hash, e);
                             // TX may be orphaned if not added again in good order in next blocks
                             orphaned_transactions.insert(tx_hash.clone());
