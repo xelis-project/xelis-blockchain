@@ -2,6 +2,7 @@ mod transaction;
 mod hash;
 mod address;
 mod random;
+mod block;
 
 use log::debug;
 use xelis_types::register_opaque as r_op;
@@ -10,6 +11,7 @@ use xelis_vm::OpaqueWrapper;
 pub use transaction::*;
 pub use hash::*;
 pub use random::*;
+pub use block::*;
 
 use crate::{
     crypto::{Address, Hash},

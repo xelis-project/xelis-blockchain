@@ -791,6 +791,7 @@ impl Transaction {
                     context.insert_ref(self);
                     context.insert_ref(&chain_state);
                     context.insert_ref(state.get_block());
+                    context.insert_ref(state.get_block_hash());
 
                     // TODO:
                     // We need to handle the result of the VM
