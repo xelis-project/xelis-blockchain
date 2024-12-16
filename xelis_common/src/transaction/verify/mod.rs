@@ -712,6 +712,7 @@ impl Transaction {
     // Apply the transaction to the state
     async fn apply<'a, E, B: BlockchainApplyState<'a, E>>(
         &'a self,
+        tx_hash: &Hash,
         state: &mut B,
     ) -> Result<(), VerificationError<E>> {
         trace!("Applying transaction data");
@@ -749,6 +750,9 @@ impl Transaction {
                 state.set_multisig_state(&self.source, payload).await.map_err(VerificationError::State)?;
             },
             TransactionType::InvokeContract(payload) => {
+                state.load_contract_module(&payload.contract).await
+                    .map_err(VerificationError::State)?;
+
                 let (module, environment) = state.get_contract_module_with_environment(&payload.contract).await
                     .map_err(VerificationError::State)?;
 
@@ -774,8 +778,7 @@ impl Transaction {
                     // Set the gas limit for the VM
                     context.set_gas_limit(payload.max_gas);
 
-                    // TODO
-                    let random = DeterministicRandom::new(&payload.contract, &XELIS_ASSET, &XELIS_ASSET);
+                    let random = DeterministicRandom::new(&payload.contract, state.get_block_hash(), tx_hash);
                     let chain_state = ChainState {
                         mainnet: false,
                         debug_mode: false,
@@ -784,8 +787,10 @@ impl Transaction {
                     };
 
                     // Configure the context
+                    // Note that the VM already include the environment in Context
                     context.insert_ref(self);
                     context.insert_ref(&chain_state);
+                    context.insert_ref(state.get_block());
 
                     // TODO:
                     // We need to handle the result of the VM
@@ -841,6 +846,7 @@ impl Transaction {
     /// Assume the tx is valid, apply it to `state`. May panic if a ciphertext is ill-formed.
     pub async fn apply_without_verify<'a, E, B: BlockchainApplyState<'a, E>>(
         &'a self,
+        tx_hash: &Hash,
         state: &mut B,
     ) -> Result<(), VerificationError<E>> {
         let transfers_decompressed = if let TransactionType::Transfers(transfers) = &self.data {
@@ -877,13 +883,17 @@ impl Transaction {
             ).await.map_err(VerificationError::State)?;
         }
 
-        self.apply(state).await
+        self.apply(tx_hash, state).await
     }
 
     /// Verify only that the final sender balance is the expected one for each commitment
     /// Then apply ciphertexts to the state
     /// Checks done are: commitment eq proofs only
-    pub async fn apply_with_partial_verify<'a, E, B: BlockchainApplyState<'a, E>>(&'a self, state: &mut B) -> Result<(), VerificationError<E>> {
+    pub async fn apply_with_partial_verify<'a, E, B: BlockchainApplyState<'a, E>>(
+        &'a self,
+        tx_hash: &Hash,
+        state: &mut B
+    ) -> Result<(), VerificationError<E>> {
         trace!("apply with partial verify");
         let mut sigma_batch_collector = BatchCollector::default();
 
@@ -973,6 +983,6 @@ impl Transaction {
                 .map_err(VerificationError::State)?;
         }
 
-        self.apply(state).await
+        self.apply(tx_hash, state).await
     }
 }

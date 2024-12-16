@@ -1,8 +1,8 @@
 use async_trait::async_trait;
 use xelis_vm::{Environment, Module};
 use crate::{
-    block::BlockVersion,
     account::Nonce,
+    block::{Block, BlockVersion},
     crypto::{
         elgamal::{
             Ciphertext,
@@ -95,9 +95,16 @@ pub trait BlockchainVerificationState<'a, E> {
         module: &'a Module
     ) -> Result<(), E>;
 
+    /// Load in the cache the contract module
+    /// This is called before `get_contract_module_with_environment`
+    async fn load_contract_module(
+        &mut self,
+        hash: &Hash
+    ) -> Result<(), E>;
+
     /// Get the contract module
     async fn get_contract_module_with_environment(
-        &mut self,
+        &self,
         hash: &Hash
     ) -> Result<(&Module, &Environment), E>;
 }
@@ -109,4 +116,13 @@ pub trait BlockchainApplyState<'a, E>: BlockchainVerificationState<'a, E> {
 
     /// Add fee XELIS
     async fn add_gas_fee(&mut self, amount: u64) -> Result<(), E>;
+
+    /// Get the hash of the block
+    fn get_block_hash(&self) -> &Hash;
+
+    /// Get the block
+    fn get_block(&self) -> &Block;
+
+    /// Is mainnet network
+    fn is_mainnet(&self) -> bool;
 }
