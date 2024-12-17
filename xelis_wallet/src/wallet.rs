@@ -43,7 +43,7 @@ use xelis_common::{
             UnsignedTransaction
         },
         TxVersion,
-        extra_data::UnknownExtraDataFormat,
+        extra_data::{UnknownExtraDataFormat, PlaintextExtraData},
         Reference,
         Role,
         Transaction
@@ -622,7 +622,7 @@ impl Wallet {
     }
 
     // Decrypt the extra data from a transfer
-    pub fn decrypt_extra_data(&self, cipher: UnknownExtraDataFormat, handle: &DecryptHandle, role: Role) -> Result<DataElement, WalletError> {
+    pub fn decrypt_extra_data(&self, cipher: UnknownExtraDataFormat, handle: &DecryptHandle, role: Role) -> Result<PlaintextExtraData, WalletError> {
         trace!("decrypt extra data");
         cipher.decrypt(&self.inner.keypair.get_private_key(), handle, role).map_err(|_| WalletError::CiphertextDecode)
     }

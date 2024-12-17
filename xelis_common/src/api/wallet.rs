@@ -6,6 +6,7 @@ use crate::{
     block::TopoHeight,
     crypto::{Address, Hash, PrivateKey},
     transaction::{
+        extra_data::PlaintextExtraData,
         builder::{FeeBuilder, TransactionTypeBuilder, UnsignedTransaction},
         multisig::SignatureId,
         Reference,
@@ -302,7 +303,7 @@ pub struct TransferOut {
     // Plaintext amount
     pub amount: u64,
     // extra data
-    pub extra_data: Option<DataElement>
+    pub extra_data: Option<PlaintextExtraData>
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -312,7 +313,7 @@ pub struct TransferIn {
     // Plaintext amount
     pub amount: u64,
     // extra data
-    pub extra_data: Option<DataElement>
+    pub extra_data: Option<PlaintextExtraData>
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

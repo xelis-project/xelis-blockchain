@@ -1,14 +1,11 @@
 use indexmap::{IndexMap, IndexSet};
 use xelis_common::{
     time::TimestampMillis,
-    api::{
-        DataElement,
-        wallet::{
-            TransactionEntry as RPCTransactionEntry,
-            EntryType as RPCEntryType,
-            TransferIn as RPCTransferIn,
-            TransferOut as RPCTransferOut
-        }
+    api::wallet::{
+        TransactionEntry as RPCTransactionEntry,
+        EntryType as RPCEntryType,
+        TransferIn as RPCTransferIn,
+        TransferOut as RPCTransferOut
     },
     config::XELIS_ASSET,
     crypto::{
@@ -21,6 +18,7 @@ use xelis_common::{
         Serializer,
         Writer
     },
+    transaction::extra_data::PlaintextExtraData,
     utils::{
         format_coin,
         format_xelis
@@ -38,7 +36,7 @@ pub struct TransferOut {
     // Amount spent
     amount: u64,
     // Extra data with good format
-    extra_data: Option<DataElement>
+    extra_data: Option<PlaintextExtraData>
 }
 
 #[derive(Debug, Clone)]
@@ -48,11 +46,11 @@ pub struct TransferIn {
     // Amount spent
     amount: u64,
     // Extra data with good format
-    extra_data: Option<DataElement>
+    extra_data: Option<PlaintextExtraData>
 }
 
 impl TransferOut {
-    pub fn new(destination: PublicKey, asset: Hash, amount: u64, extra_data: Option<DataElement>) -> Self {
+    pub fn new(destination: PublicKey, asset: Hash, amount: u64, extra_data: Option<PlaintextExtraData>) -> Self {
         Self {
             destination,
             asset,
@@ -73,14 +71,14 @@ impl TransferOut {
         self.amount
     }
 
-    pub fn get_extra_data(&self) -> &Option<DataElement> {
+    pub fn get_extra_data(&self) -> &Option<PlaintextExtraData> {
         &self.extra_data
     }
 }
 
 
 impl TransferIn {
-    pub fn new(asset: Hash, amount: u64, extra_data: Option<DataElement>) -> Self {
+    pub fn new(asset: Hash, amount: u64, extra_data: Option<PlaintextExtraData>) -> Self {
         Self {
             asset,
             amount,
@@ -96,7 +94,7 @@ impl TransferIn {
         self.amount
     }
 
-    pub fn get_extra_data(&self) -> &Option<DataElement> {
+    pub fn get_extra_data(&self) -> &Option<PlaintextExtraData> {
         &self.extra_data
     }
 }
@@ -572,7 +570,7 @@ impl<'a> Transfer<'a> {
         }
     }
 
-    pub fn get_extra_data(&self) -> &Option<DataElement> {
+    pub fn get_extra_data(&self) -> &Option<PlaintextExtraData> {
         match self {
             Transfer::In(t) => &t.extra_data,
             Transfer::Out(t) => &t.extra_data
