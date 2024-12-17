@@ -352,6 +352,7 @@ pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>
     handler.register_method("split_address", async_handler!(split_address::<S>));
     handler.register_method("extract_key_from_address", async_handler!(extract_key_from_address::<S>));
     handler.register_method("make_integrated_address", async_handler!(make_integrated_address::<S>));
+    handler.register_method("decrypt_extra_data", async_handler!(decrypt_extra_data::<S>));
 
     // Multisig
     handler.register_method("get_multisig_at_topoheight", async_handler!(get_multisig_at_topoheight::<S>));
@@ -1464,6 +1465,15 @@ async fn make_integrated_address<S: Storage>(context: &Context, body: Value) -> 
     let address = Address::new(params.address.is_mainnet(), AddressType::Data(params.integrated_data.into_owned()), params.address.into_owned().to_public_key());
 
     Ok(json!(address))
+}
+
+async fn decrypt_extra_data<S: Storage>(_: &Context, body: Value) -> Result<Value, InternalRpcError> {
+    let params: DecryptExtraDataParams = parse_params(body)?;
+    let data = params.extra_data
+        .decrypt_with_shared_key(&params.shared_key)
+        .context("Error while decrypting using provided shared key")?;
+
+    Ok(json!(data))
 }
 
 async fn get_multisig_at_topoheight<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
