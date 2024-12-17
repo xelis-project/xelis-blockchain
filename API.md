@@ -9260,6 +9260,7 @@ Verify if the address has a multisig setup at a specific topoheight.
 	"result": true
 }
 ```
+
 #### Get Multisig at TopoHeight
 Retrieve the multisig information at a specific topoheight.
 
@@ -9302,6 +9303,44 @@ Retrieve the multisig information at a specific topoheight.
 **NOTE**:
 - If the address has an inactive multisig state, it will returns `false`.
 - If a version is not found at requested topoheight, an error will be returned.
+
+#### Decrypt Extra Data
+Decrypt the extra data from a transaction.
+
+##### Method `decrypt_extra_data`
+
+##### Parameters
+
+|    Name    |     Type    | Required |                         Note                         |
+|:----------:|:-----------:|:--------:|:----------------------------------------------------:|
+| shared_key | Hexadecimal | Required | Shared Key in hexadecimal format used for decryption |
+| extra_data |  Byte Array | Required |    Byte array containing the encrypted extra data    |
+
+##### Request
+```json
+{
+    "jsonrpc": "2.0",
+    "method": "decrypt_extra_data",
+    "id": 1,
+    "params": {
+        "shared_key": "<hexadecimal shared key>",
+        "extra_data": [
+            ...
+        ]
+    }
+}
+```
+
+##### Response
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+        "hello": "world!"
+    }
+}
+```
 
 ## Wallet
 
