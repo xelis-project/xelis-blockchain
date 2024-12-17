@@ -17,7 +17,7 @@ use xelis_vm::{
     Value,
     ValueCell
 };
-use crate::{crypto::{Hash, PublicKey}, transaction::ContractDeposit};
+use crate::{crypto::{Address, Hash, PublicKey}, transaction::ContractDeposit};
 
 pub use metadata::ContractMetadata;
 pub use random::DeterministicRandom;
@@ -215,7 +215,7 @@ pub fn build_environment() -> EnvironmentBuilder<'static> {
         None,
         vec![("asset", hash_type.clone())],
         get_balance_for_asset,
-        5,
+        25,
         Some(Type::U64)
     );
 
@@ -223,13 +223,13 @@ pub fn build_environment() -> EnvironmentBuilder<'static> {
         "transfer",
         Some(tx_type.clone()),
         vec![
-            ("to", address_type.clone()),
+            ("destination", address_type.clone()),
             ("amount", Type::U64),
             ("asset", hash_type.clone()),
         ],
         transfer,
-        5,
-        Some(Type::U64)
+        500,
+        Some(Type::Bool)
     );
 
     // Hash
@@ -361,6 +361,27 @@ fn get_balance_for_asset(_: FnInstance, _: FnParams, _: &mut Context) -> FnRetur
     Ok(None)
 }
 
-fn transfer(_: FnInstance, _: FnParams, _: &mut Context) -> FnReturnType {
-    Ok(None)
+fn transfer(_: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType {
+    let state: &mut ChainState = context.get_mut()
+        .context("chain state not found")?;
+
+    let amount = params.remove(2)
+        .into_owned()
+        .to_u64()?;
+
+    let asset: Hash = params.remove(1)
+        .into_owned()
+        .into_opaque_type()?;
+
+    let destination: Address = params.remove(0)
+        .into_owned()
+        .into_opaque_type()?;
+
+    state.transfers.push(TransferOutput {
+        destination: destination.to_public_key(),
+        amount,
+        asset,
+    });
+
+    Ok(Some(Value::Boolean(true).into()))
 }

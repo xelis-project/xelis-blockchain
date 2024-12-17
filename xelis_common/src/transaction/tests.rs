@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{borrow::Cow, collections::HashMap};
 use async_trait::async_trait;
 use indexmap::IndexSet;
 use xelis_vm::{Environment, Module};
@@ -502,10 +502,10 @@ impl<'a> BlockchainVerificationState<'a, ()> for ChainState {
     /// Get the balance ciphertext for a receiver account
     async fn get_receiver_balance<'b>(
         &'b mut self,
-        account: &'a PublicKey,
-        asset: &'a Hash,
+        account: Cow<'a, PublicKey>,
+        asset: Cow<'a, Hash>,
     ) -> Result<&'b mut Ciphertext, ()> {
-        self.accounts.get_mut(account).and_then(|account| account.balances.get_mut(asset)).ok_or(())
+        self.accounts.get_mut(&account).and_then(|account| account.balances.get_mut(&asset)).ok_or(())
     }
 
     /// Get the balance ciphertext used for verification of funds for the sender account

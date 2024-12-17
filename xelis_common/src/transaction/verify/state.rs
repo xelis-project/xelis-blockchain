@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use async_trait::async_trait;
 use xelis_vm::{Environment, Module};
 use crate::{
@@ -36,8 +38,8 @@ pub trait BlockchainVerificationState<'a, E> {
     /// Get the balance ciphertext for a receiver account
     async fn get_receiver_balance<'b>(
         &'b mut self,
-        account: &'a CompressedPublicKey,
-        asset: &'a Hash,
+        account: Cow<'a, CompressedPublicKey>,
+        asset: Cow<'a, Hash>,
     ) -> Result<&'b mut Ciphertext, E>;
 
     /// Get the balance ciphertext used for verification of funds for the sender account

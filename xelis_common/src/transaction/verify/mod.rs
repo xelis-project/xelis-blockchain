@@ -53,7 +53,7 @@ use super::{
 };
 pub use state::*;
 use thiserror::Error;
-use std::iter;
+use std::{borrow::Cow, iter};
 
 #[derive(Error, Debug)]
 pub enum VerificationError<T> {
@@ -544,8 +544,8 @@ impl Transaction {
     
                     let current_balance = state
                         .get_receiver_balance(
-                            transfer.get_destination(),
-                            transfer.get_asset()
+                            Cow::Borrowed(transfer.get_destination()),
+                            Cow::Borrowed(transfer.get_asset())
                         ).await
                         .map_err(VerificationError::State)?;
 
@@ -727,8 +727,8 @@ impl Transaction {
                     // Update receiver balance
                     let current_bal = state
                         .get_receiver_balance(
-                            transfer.get_destination(),
-                            transfer.get_asset(),
+                            Cow::Borrowed(transfer.get_destination()),
+                            Cow::Borrowed(transfer.get_asset()),
                         ).await
                         .map_err(VerificationError::State)?;
     
@@ -756,8 +756,21 @@ impl Transaction {
                 let (module, environment) = state.get_contract_module_with_environment(&payload.contract).await
                     .map_err(VerificationError::State)?;
 
+                let random = DeterministicRandom::new(&payload.contract, state.get_block_hash(), tx_hash);
+                let mut chain_state = ChainState {
+                    mainnet: false,
+                    debug_mode: false,
+                    contract: payload.contract.clone(),
+                    block_hash: state.get_block_hash().clone(),
+                    tx_hash: tx_hash.clone(),
+
+                    random,
+                    deposits: payload.deposits.clone(),
+                    transfers: Vec::new(),
+                };
+
                 // Total used gas by the VM
-                let used_gas = {
+                let (used_gas, success) = {
                     // Create the VM
                     let mut vm = VM::new(module, environment);
                     for constant in payload.parameters.iter() {
@@ -778,42 +791,47 @@ impl Transaction {
                     // Set the gas limit for the VM
                     context.set_gas_limit(payload.max_gas);
 
-                    let random = DeterministicRandom::new(&payload.contract, state.get_block_hash(), tx_hash);
-                    let chain_state = ChainState {
-                        mainnet: false,
-                        debug_mode: false,
-                        contract: payload.contract.clone(),
-                        block_hash: state.get_block_hash().clone(),
-                        tx_hash: tx_hash.clone(),
-
-                        random,
-                        deposits: payload.deposits.clone(),
-                        transfers: Vec::new(),
-                    };
-
                     // Configure the context
                     // Note that the VM already include the environment in Context
                     context.insert_ref(self);
-                    context.insert(chain_state);
+                    context.insert_mut(&mut chain_state);
                     context.insert_ref(state.get_block());
 
                     // TODO:
                     // We need to handle the result of the VM
-                    match vm.run() {
+                    let res = vm.run();
+
+                    // To be sure that we don't have any overflow
+                    // We take the minimum between the gas used and the max gas
+                    let gas_usage = vm.context()
+                        .current_gas_usage()
+                        .min(payload.max_gas);
+
+                    let success = res.is_ok();
+                    match res {
                         Ok(res) => {
                             log::info!("Invoke contract result: {:#}", res);
                         },
                         Err(err) => {
                             log::error!("Invoke contract error: {:#}", err);
                         }
-                    }
+                    };
 
-                    // To be sure that we don't have any overflow
-                    // We take the minimum between the gas used and the max gas
-                    vm.context()
-                        .current_gas_usage()
-                        .min(payload.max_gas)
+                    (gas_usage, success)
                 };
+
+                if success {
+                    for transfer in chain_state.transfers {
+                        let current_bal = state
+                            .get_receiver_balance(
+                                Cow::Owned(transfer.destination),
+                                Cow::Owned(transfer.asset),
+                            ).await
+                            .map_err(VerificationError::State)?;
+    
+                        *current_bal += Scalar::from(transfer.amount);
+                    }
+                }
 
                 if used_gas > 0 {
                     // Part of the gas is burned
@@ -833,7 +851,7 @@ impl Transaction {
                     if refund_gas > 0 {
                         // If we have some funds to refund, we add it to the sender balance
                         // But to prevent any front running, we add to the sender balance by considering him as a receiver.
-                        let balance = state.get_receiver_balance(self.get_source(), &XELIS_ASSET).await
+                        let balance = state.get_receiver_balance(Cow::Borrowed(self.get_source()), Cow::Owned(XELIS_ASSET)).await
                             .map_err(VerificationError::State)?;
         
                         *balance += Scalar::from(refund_gas);
