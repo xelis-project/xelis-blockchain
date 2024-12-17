@@ -1,3 +1,8 @@
+mod plaintext;
+mod shared_key;
+mod unknown;
+mod extra_data;
+
 use std::borrow::Cow;
 
 use chacha20poly1305::{
@@ -14,16 +19,12 @@ use zeroize::Zeroize;
 use thiserror::Error;
 
 use crate::{
-    api::DataElement,
     crypto::{
         elgamal::{
             Ciphertext,
-            CompressedHandle,
             DecryptHandle,
             PedersenOpening,
             PrivateKey,
-            PublicKey,
-            RISTRETTO_COMPRESSED_SIZE
         },
         proofs::PC_GENS
     },
@@ -35,13 +36,13 @@ use crate::{
     }
 };
 
-use super::Role;
+pub use plaintext::PlaintextExtraData;
+pub use shared_key::SharedKey;
+pub use unknown::UnknownExtraDataFormat;
+pub use extra_data::ExtraData;
 
-pub type SharedKey = chacha20poly1305::Key;
-pub type KDF = sha3::Sha3_256;
-
-// The size of the tag in bytes.
-pub const TAG_SIZE: usize = 16;
+// Key Derivation Function used to derive the shared key
+type KDF = sha3::Sha3_256;
 
 // This error is thrown when the ciphertext is not in the expected format.
 #[derive(Error, Clone, Debug, Eq, PartialEq)]
@@ -71,126 +72,11 @@ struct AEADCipherInner<'a>(Cow<'a, Vec<u8>>);
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Zeroize)]
 pub struct PlaintextData(pub Vec<u8>);
 
-// A wrapper around a Vec<u8>.
-// This is used for outside the wallet as we don't know what is used
-// Cipher format isn't validated
-#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
-pub struct UnknownExtraDataFormat(pub Vec<u8>);
-
-// New version of Extra Data due to the issue of commitment randomness reuse
-// https://gist.github.com/kayabaNerve/b754e9ed9fa4cc2c607f38a83aa3df2a
-// We create a new opening to be independant of the amount opening.
-// This is more secure and prevent bruteforce attack from the above link.
-// We need to store 64 bytes more than previous version due to the exclusive handles created.
-pub struct ExtraData {
-    cipher: Cipher,
-    sender_handle: CompressedHandle,
-    receiver_handle: CompressedHandle,
-}
-
-impl UnknownExtraDataFormat {
-    pub fn decrypt_v2(&self, private_key: &PrivateKey, role: Role) -> Result<DataElement, CipherFormatError> {
-        let e = ExtraData::from_bytes(&self.0).map_err(|_| CipherFormatError)?;
-        let plaintext = e.decrypt(private_key, role)?;
-        DataElement::from_bytes(&plaintext.0).map_err(|_| CipherFormatError)
-    }
-
-    pub fn decrypt_v1(&self, private_key: &PrivateKey, handle: &DecryptHandle) -> Result<DataElement, CipherFormatError> {
-        let key = derive_shared_key_from_handle(private_key, handle);
-        let plaintext = AEADCipherInner(Cow::Borrowed(&self.0)).decrypt(&key)?;
-        DataElement::from_bytes(&plaintext.0).map_err(|_| CipherFormatError)
-    }
-
-    pub fn decrypt(&self, private_key: &PrivateKey, handle: &DecryptHandle, role: Role) -> Result<DataElement, CipherFormatError> {
-        // Try the new version
-        // If it has 64 + 2 bytes of overhead at least, it may be a V2 
-        if self.0.len() >= (RISTRETTO_COMPRESSED_SIZE * 2) + 2 {
-            if let Ok(e) = self.decrypt_v2(private_key, role) {
-                return Ok(e)
-            }
-        }
-
-        // Otherwise, fallback on old version
-        self.decrypt_v1(private_key, handle)
-    }
-}
-
-impl ExtraData {
-    // Create a new extra data that will encrypt the message for receiver & sender keys.
-    // Both will be able to decrypt it.
-    pub fn new(data: PlaintextData, sender: &PublicKey, receiver: &PublicKey) -> Self {
-        // Generate a new opening (randomness r)
-        let opening = PedersenOpening::generate_new();
-        // From the randomness, derive the opening it to get the shared key
-        // that will be used for encrypt/decrypt
-        let k = derive_shared_key_from_opening(&opening);
-        Self {
-            // Encrypt the cipher using the shared key
-            cipher: data.encrypt_in_place(&k),
-            // Create a handle for the sender so he can decrypt the message later
-            // SH = sender PK * r
-            // Because SK is invert of PK, we can decrypt it by doing SH * SK 
-            sender_handle: sender.decrypt_handle(&opening).compress(),
-            // Same for the receiver
-            // RH = receiver PK * r
-            receiver_handle: receiver.decrypt_handle(&opening).compress(),
-        }
-    }
-
-    // Estimate the final size for the extra data based on the plaintext format
-    pub fn estimate_size(data: &DataElement) -> usize {
-        let cipher: UnknownExtraDataFormat = Cipher(data.to_bytes()).into();
-        // 2 bytes of additional overhead because the extra data store
-        // the cipher size again 
-        2 + cipher.size() + (RISTRETTO_COMPRESSED_SIZE * 2)
-    }
-
-    // Get the compressed handle based on its role
-    fn get_handle(&self, role: Role) -> &CompressedHandle {
-        match role {
-            Role::Sender => &self.sender_handle,
-            Role::Receiver => &self.receiver_handle,
-        }
-    }
-
-    // Decrypt the message using the private key and the role to determine the correct handle to use.
-    pub fn decrypt(&self, private_key: &PrivateKey, role: Role) -> Result<PlaintextData, CipherFormatError> {
-        let handle = self.get_handle(role).decompress().map_err(|_| CipherFormatError)?;
-        let key = derive_shared_key_from_handle(private_key, &handle);
-        Ok(self.cipher.clone().decrypt(&key)?)
-    }
-}
-
-pub enum ExtraDataVariant {
-    // Warning: should not be used anymore as cryptographically broken
-    V1(AEADCipher),
-    V2(ExtraData)
-}
-
-impl Serializer for ExtraData {
-    fn write(&self, writer: &mut Writer) {
-        self.sender_handle.write(writer); 
-        self.receiver_handle.write(writer);
-        self.cipher.write(writer);
-    }
-
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        Ok(Self {
-            sender_handle: CompressedHandle::read(reader)?,
-            receiver_handle: CompressedHandle::read(reader)?,
-            cipher: Cipher::read(reader)?,
-        })
-    }
-
-    fn size(&self) -> usize {
-        self.cipher.size() + self.sender_handle.size() + self.receiver_handle.size()
-    }
-}
-
 /// See [`derive_shared_key`].
 pub fn derive_shared_key_from_opening(opening: &PedersenOpening) -> SharedKey {
     derive_shared_key(&(opening.as_scalar() * &PC_GENS.B_blinding).compress())
 }
+
 /// See [`derive_shared_key`].
 pub fn derive_shared_key_from_ct(
     sk: &PrivateKey,
@@ -212,13 +98,14 @@ pub fn derive_shared_key_from_handle(
 pub fn derive_shared_key(point: &CompressedRistretto) -> SharedKey {
     let mut hash = KDF::new();
     hash.update(point.as_bytes());
-    hash.finalize()
+    let bytes: [u8; 32] = hash.finalize().into();
+    SharedKey(bytes)
 }
 
 impl AEADCipher {
     /// Warning: keys should not be reused
     pub fn decrypt_in_place(mut self, key: &SharedKey) -> Result<PlaintextData, CipherFormatError> {
-        let c = ChaCha20Poly1305::new(&key);
+        let c = ChaCha20Poly1305::new(&key.0.into());
         c.decrypt_in_place(NONCE.into(), &[], &mut self.0)
             .map_err(|_| CipherFormatError)?;
 
@@ -234,7 +121,7 @@ impl AEADCipher {
 impl Cipher {
     /// Warning: keys should not be reused
     pub fn decrypt(mut self, key: &SharedKey) -> Result<PlaintextData, CipherFormatError> {
-        let mut c = ChaCha20::new(key.into(), NONCE.into());
+        let mut c = ChaCha20::new(&key.0.into(), NONCE.into());
         c.try_apply_keystream(&mut self.0)
             .map_err(|_| CipherFormatError)?;
 
@@ -263,7 +150,7 @@ impl From<ExtraData> for UnknownExtraDataFormat {
 impl<'a> AEADCipherInner<'a> {
     /// Warning: keys should not be reused
     pub fn decrypt(&self, key: &SharedKey) -> Result<PlaintextData, CipherFormatError> {
-        let c = ChaCha20Poly1305::new(&key);
+        let c = ChaCha20Poly1305::new(&key.0.into());
         let res = c.decrypt(
             NONCE.into(),
             Payload {
@@ -280,7 +167,7 @@ impl<'a> AEADCipherInner<'a> {
 impl PlaintextData {
     /// Warning: keys should not be reused
     pub fn encrypt_in_place_with_aead(mut self, key: &SharedKey) -> AEADCipher {
-        let c = ChaCha20Poly1305::new(&key);
+        let c = ChaCha20Poly1305::new(&key.0.into());
         c.encrypt_in_place(NONCE.into(), &[], &mut self.0)
             .expect("unreachable (unsufficient capacity on a vec)");
 
@@ -289,24 +176,10 @@ impl PlaintextData {
 
     /// Warning: keys should not be reused
     pub fn encrypt_in_place(mut self, key: &SharedKey) -> Cipher {
-        let mut c = ChaCha20::new(key.into(), NONCE.into());
+        let mut c = ChaCha20::new(&key.0.into(), NONCE.into());
         c.apply_keystream(&mut self.0);
 
         Cipher(self.0)
-    }
-}
-
-impl Serializer for UnknownExtraDataFormat {
-    fn write(&self, writer: &mut Writer) {
-        self.0.write(writer);
-    }
-
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        Ok(Self(Vec::read(reader)?))
-    }
-
-    fn size(&self) -> usize {
-        self.0.size()
     }
 }
 
@@ -340,7 +213,10 @@ impl Serializer for Cipher {
 
 #[cfg(test)]
 mod tests {
-    use crate::crypto::KeyPair;
+    use crate::{
+        crypto::KeyPair,
+        transaction::Role
+    };
 
     use super::*;
 

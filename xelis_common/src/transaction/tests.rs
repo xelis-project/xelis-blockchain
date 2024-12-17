@@ -155,13 +155,13 @@ fn test_encrypt_decrypt_two_parties() {
     // Verify the extra data from alice (sender)
     {
         let decrypted = cipher.decrypt_v2(&alice.keypair.get_private_key(), Role::Sender).unwrap();
-        assert_eq!(decrypted, payload);
+        assert_eq!(*decrypted.data(), payload);
     }
 
     // Verify the extra data from bob (receiver)
     {
         let decrypted = cipher.decrypt_v2(&bob.keypair.get_private_key(), Role::Receiver).unwrap();
-        assert_eq!(decrypted, payload);
+        assert_eq!(*decrypted.data(), payload);
     }
 
     // Verify the extra data from alice (sender) with the wrong key
