@@ -202,10 +202,10 @@ pub fn build_environment() -> EnvironmentBuilder<'static> {
     );
 
     env.register_native_function(
-        "get_public_deposit_for_asset",
+        "get_deposit_for_asset",
         None,
         vec![("asset", hash_type.clone())],
-        get_public_deposit_for_asset,
+        get_deposit_for_asset,
         5,
         Some(Type::Optional(Box::new(Type::U64)))
     );
@@ -336,7 +336,7 @@ fn get_contract_hash(_: FnInstance, _: FnParams, context: &mut Context) -> FnRet
     Ok(Some(Value::Opaque(OpaqueWrapper::new(state.contract.clone())).into()))
 }
 
-fn get_public_deposit_for_asset(_: FnInstance, params: FnParams, context: &mut Context) -> FnReturnType {
+fn get_deposit_for_asset(_: FnInstance, params: FnParams, context: &mut Context) -> FnReturnType {
     let param = params[0].as_ref();
     let asset: &Hash = param
         .as_value()
