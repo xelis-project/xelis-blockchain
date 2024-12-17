@@ -8,7 +8,7 @@ use crate::{
     serializer::*,
     transaction::Role
 };
-use super::{derive_shared_key_from_handle, AEADCipherInner, CipherFormatError, ExtraData, PlaintextExtraData};
+use super::{derive_shared_key_from_handle, AEADCipherInner, CipherFormatError, ExtraData, PlaintextExtraData, SharedKey};
 
 // A wrapper around a Vec<u8>.
 // This is used for outside the wallet as we don't know what is used
@@ -17,6 +17,14 @@ use super::{derive_shared_key_from_handle, AEADCipherInner, CipherFormatError, E
 pub struct UnknownExtraDataFormat(pub Vec<u8>);
 
 impl UnknownExtraDataFormat {
+    // Decrypt the encrypted data using the shared key
+    pub fn decrypt_with_shared_key(&self, shared_key: &SharedKey) -> Result<DataElement, CipherFormatError> {
+        let e = ExtraData::from_bytes(&self.0).map_err(|_| CipherFormatError)?;
+        let plaintext = e.decrypt_with_shared_key(shared_key)?;
+        DataElement::from_bytes(&plaintext.0)
+            .map_err(|_| CipherFormatError)
+    }
+
     // Decrypt the encrypted data using the V2 version which includes the decrypt handles for each role
     pub fn decrypt_v2(&self, private_key: &PrivateKey, role: Role) -> Result<PlaintextExtraData, CipherFormatError> {
         let e = ExtraData::from_bytes(&self.0).map_err(|_| CipherFormatError)?;

@@ -17,7 +17,8 @@ use crate::{
     crypto::{Address, Hash},
     difficulty::{CumulativeDifficulty, Difficulty},
     network::Network,
-    time::{TimestampMillis, TimestampSeconds}
+    time::{TimestampMillis, TimestampSeconds},
+    transaction::extra_data::{SharedKey, UnknownExtraDataFormat},
 };
 use super::{default_true_value, DataElement, RPCTransaction};
 
@@ -588,6 +589,12 @@ pub enum ExtractKeyFromAddressResult {
 pub struct MakeIntegratedAddressParams<'a> {
     pub address: Cow<'a, Address>,
     pub integrated_data: Cow<'a, DataElement>
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct DecryptExtraDataParams<'a> {
+    pub shared_key: Cow<'a, SharedKey>,
+    pub extra_data: Cow<'a, UnknownExtraDataFormat>
 }
 
 #[derive(Serialize, Deserialize)]
