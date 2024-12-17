@@ -5,7 +5,10 @@ mod random;
 mod block;
 
 use log::debug;
-use xelis_types::register_opaque as r_op;
+use xelis_types::{
+    register_opaque_json,
+    impl_opaque_json
+};
 use xelis_vm::OpaqueWrapper;
 
 pub use transaction::*;
@@ -21,18 +24,13 @@ use crate::{
 pub const HASH_OPAQUE_ID: u8 = 0;
 pub const ADDRESS_OPAQUE_ID: u8 = 1;
 
-macro_rules! register_opaque {
-    ($name:literal, $opaque:ty) => {
-        debug!("Registering opaque type: {}", $name);
-        r_op!($name, $opaque);
-    };
-}
+impl_opaque_json!("Hash", Hash);
+impl_opaque_json!("Address", Address);
 
 pub fn register_opaque_types() {
     debug!("Registering opaque types");
-    register_opaque!("Transaction", OpaqueTransaction);
-    register_opaque!("Hash", Hash);
-    register_opaque!("Address", Address);
+    register_opaque_json!("Hash", Hash);
+    register_opaque_json!("Address", Address);
 }
 
 impl Serializer for OpaqueWrapper {

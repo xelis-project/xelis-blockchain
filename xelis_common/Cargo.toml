@@ -21,9 +21,9 @@ lazy_static = "1.4.0"
 sha3 = "0.10.8"
 chacha20poly1305 = "0.10.1"
 xelis-hash = { git = "https://github.com/xelis-project/xelis-hash", branch = "master" }
-xelis-vm = { git = "https://github.com/xelis-project/xelis-vm", branch = "opaque-type" }
-xelis-types = { git = "https://github.com/xelis-project/xelis-vm", branch = "opaque-type" }
-xelis-builder = { git = "https://github.com/xelis-project/xelis-vm", branch = "opaque-type" }
+xelis-vm = { git = "https://github.com/xelis-project/xelis-vm", branch = "dev" }
+xelis-types = { git = "https://github.com/xelis-project/xelis-vm", branch = "dev" }
+xelis-builder = { git = "https://github.com/xelis-project/xelis-vm", branch = "dev" }
 thiserror = "1"
 anyhow = "1"
 log = "0.4"

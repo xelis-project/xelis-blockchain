@@ -13,7 +13,7 @@ use xelis_vm::{
     Value, ValueCell
 };
 
-use crate::{block::Block, crypto::Hash};
+use crate::{block::Block, contract::ChainState};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct OpaqueBlock;
@@ -61,56 +61,46 @@ pub fn current_block(_: FnInstance, _: FnParams, _: &mut Context) -> FnReturnTyp
 }
 
 pub fn block_nonce(zelf: FnInstance, _: FnParams, context: &mut Context) -> FnReturnType {
-    let opaque = zelf?.as_opaque()?;
-    let _: &OpaqueBlock = opaque.as_ref()?;
-
+    let _: &OpaqueBlock = zelf?.as_opaque_type()?;
     let block: &Block = context.get().context("current block not found")?;
 
     Ok(Some(Value::U64(block.get_nonce()).into()))
 }
 
 pub fn block_timestamp(zelf: FnInstance, _: FnParams, context: &mut Context) -> FnReturnType {
-    let opaque = zelf?.as_opaque()?;
-    let _: &OpaqueBlock = opaque.as_ref()?;
-
+    let _: &OpaqueBlock = zelf?.as_opaque_type()?;
     let block: &Block = context.get().context("current block not found")?;
 
     Ok(Some(Value::U64(block.get_timestamp()).into()))
 }
 
 pub fn block_miner(zelf: FnInstance, _: FnParams, context: &mut Context) -> FnReturnType {
-    let opaque = zelf?.as_opaque()?;
-    let _: &OpaqueBlock = opaque.as_ref()?;
-
+    let _: &OpaqueBlock = zelf?.as_opaque_type()?;
     let block: &Block = context.get().context("current block not found")?;
-    let miner_address = block.get_miner().as_address(true);
+    let state: &ChainState = context.get().context("chain state not found")?;
 
+    let miner_address = block.get_miner().as_address(state.mainnet);
     Ok(Some(Value::Opaque(OpaqueWrapper::new(miner_address)).into()))
 }
 
 pub fn block_hash(zelf: FnInstance, _: FnParams, context: &mut Context) -> FnReturnType {
-    let opaque = zelf?.as_opaque()?;
-    let _: &OpaqueBlock = opaque.as_ref()?;
+    let _: &OpaqueBlock = zelf?.as_opaque_type()?;
+    let state: &ChainState = context.get().context("chain state not found")?;
 
-    let block_hash: &Hash = context.get().context("current block hash not found")?;
-
-    Ok(Some(Value::Opaque(OpaqueWrapper::new(block_hash.clone())).into()))
+    Ok(Some(Value::Opaque(OpaqueWrapper::new(state.block_hash.clone())).into()))
 }
 
 pub fn block_version(zelf: FnInstance, _: FnParams, context: &mut Context) -> FnReturnType {
-    let opaque = zelf?.as_opaque()?;
-    let _: &OpaqueBlock = opaque.as_ref()?;
-
+    let _: &OpaqueBlock = zelf?.as_opaque_type()?;
     let block: &Block = context.get().context("current block not found")?;
 
     Ok(Some(Value::U8(block.get_version() as u8).into()))
 }
 
 pub fn block_tips(zelf: FnInstance, _: FnParams, context: &mut Context) -> FnReturnType {
-    let opaque = zelf?.as_opaque()?;
-    let _: &OpaqueBlock = opaque.as_ref()?;
-
+    let _: &OpaqueBlock = zelf?.as_opaque_type()?;
     let block: &Block = context.get().context("current block not found")?;
+
     let tips = block.get_tips()
         .iter()
         .map(|tip| Value::Opaque(OpaqueWrapper::new(tip.clone())).into())

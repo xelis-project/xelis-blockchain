@@ -783,7 +783,12 @@ impl Transaction {
                         mainnet: false,
                         debug_mode: false,
                         contract: payload.contract.clone(),
-                        random
+                        block_hash: state.get_block_hash().clone(),
+                        tx_hash: tx_hash.clone(),
+
+                        random,
+                        deposits: payload.deposits.clone(),
+                        transfers: Vec::new(),
                     };
 
                     // Configure the context
@@ -791,7 +796,6 @@ impl Transaction {
                     context.insert_ref(self);
                     context.insert(chain_state);
                     context.insert_ref(state.get_block());
-                    context.insert_ref(state.get_block_hash());
 
                     // TODO:
                     // We need to handle the result of the VM
