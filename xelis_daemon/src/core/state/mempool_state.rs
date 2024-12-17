@@ -44,7 +44,7 @@ pub struct MempoolState<'a, S: Storage> {
     // Storage in case sender balances aren't in mempool cache
     storage: &'a S,
     // Receiver balances
-    receiver_balances: HashMap<&'a PublicKey, HashMap<&'a Hash, Ciphertext>>,
+    receiver_balances: HashMap<Cow<'a, PublicKey>, HashMap<Cow<'a, Hash>, Ciphertext>>,
     // Sender accounts
     // This is used to verify ZK Proofs and store/update nonces
     accounts: HashMap<&'a PublicKey, Account<'a>>,
@@ -82,11 +82,12 @@ impl<'a, S: Storage> MempoolState<'a, S> {
     // Retrieve the receiver balance
     // We never store the receiver balance in mempool, only outgoing balances
     // So we just get it from our internal cache or from storage
-    async fn internal_get_receiver_balance<'b>(&'b mut self, account: &'a PublicKey, asset: &'a Hash) -> Result<&'b mut Ciphertext, BlockchainError> {
-        match self.receiver_balances.entry(account).or_insert_with(HashMap::new).entry(asset) {
+    async fn internal_get_receiver_balance<'b>(&'b mut self, account: Cow<'a, PublicKey>, asset: Cow<'a, Hash>) -> Result<&'b mut Ciphertext, BlockchainError> {
+        // If its borrowed, it cost nothing to clone the Cow as it's just the reference being cloned
+        match self.receiver_balances.entry(account.clone()).or_insert_with(HashMap::new).entry(asset.clone()) {
             Entry::Occupied(entry) => Ok(entry.into_mut()),
             Entry::Vacant(entry) => {
-                let version = self.storage.get_new_versioned_balance(account, asset, self.topoheight).await?;
+                let version = self.storage.get_new_versioned_balance(&account, &asset, self.topoheight).await?;
                 Ok(entry.insert(version.take_balance().take_ciphertext()?))
             }
         }
@@ -205,8 +206,8 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for Mempoo
     /// Get the balance ciphertext for a receiver account
     async fn get_receiver_balance<'b>(
         &'b mut self,
-        account: &'a PublicKey,
-        asset: &'a Hash,
+        account: Cow<'a, PublicKey>,
+        asset: Cow<'a, Hash>,
     ) -> Result<&'b mut Ciphertext, BlockchainError> {
         self.internal_get_receiver_balance(account, asset).await
     }

@@ -109,7 +109,7 @@ pub struct ChainState<'a, S: Storage> {
     // Storage to read and write the balances and nonces
     storage: StorageReference<'a, S>,
     // Balances of the receiver accounts
-    receiver_balances: HashMap<&'a PublicKey, HashMap<&'a Hash, VersionedBalance>>,
+    receiver_balances: HashMap<Cow<'a, PublicKey>, HashMap<Cow<'a, Hash>, VersionedBalance>>,
     // Sender accounts
     // This is used to verify ZK Proofs and store/update nonces
     accounts: HashMap<&'a PublicKey, Account<'a>>,
@@ -200,11 +200,11 @@ impl<'a, S: Storage> ChainState<'a, S> {
 
     // Retrieve the receiver balance of an account
     // This is mostly the final balance where everything is added (outputs and inputs)
-    async fn internal_get_receiver_balance<'b>(&'b mut self, key: &'a PublicKey, asset: &'a Hash) -> Result<&'b mut Ciphertext, BlockchainError> {
-        match self.receiver_balances.entry(key).or_insert_with(HashMap::new).entry(asset) {
+    async fn internal_get_receiver_balance<'b>(&'b mut self, key: Cow<'a, PublicKey>, asset: Cow<'a, Hash>) -> Result<&'b mut Ciphertext, BlockchainError> {
+        match self.receiver_balances.entry(key.clone()).or_insert_with(HashMap::new).entry(asset.clone()) {
             Entry::Occupied(o) => Ok(o.into_mut().get_mut_balance().computable()?),
             Entry::Vacant(e) => {
-                let version = self.storage.get_new_versioned_balance(key, asset, self.topoheight).await?;
+                let version = self.storage.get_new_versioned_balance(&key, &asset, self.topoheight).await?;
                 Ok(e.insert(version).get_mut_balance().computable()?)
             }
         }
@@ -320,7 +320,7 @@ impl<'a, S: Storage> ChainState<'a, S> {
     // Reward a miner for the block mined
     pub async fn reward_miner(&mut self, miner: &'a PublicKey, reward: u64) -> Result<(), BlockchainError> {
         debug!("Rewarding miner {} with {} XEL at topoheight {}", miner.as_address(self.storage.is_mainnet()), format_xelis(reward), self.topoheight);
-        let miner_balance = self.internal_get_receiver_balance(miner, &XELIS_ASSET).await?;
+        let miner_balance = self.internal_get_receiver_balance(Cow::Borrowed(miner), Cow::Borrowed(&XELIS_ASSET)).await?;
         *miner_balance += reward;
 
         Ok(())
@@ -340,8 +340,8 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for ChainS
     /// Get the balance ciphertext for a receiver account
     async fn get_receiver_balance<'b>(
         &'b mut self,
-        account: &'a PublicKey,
-        asset: &'a Hash,
+        account: Cow<'a, PublicKey>,
+        asset: Cow<'a, Hash>,
     ) -> Result<&'b mut Ciphertext, BlockchainError> {
         let ct = self.internal_get_receiver_balance(account, asset).await?;
         Ok(ct)

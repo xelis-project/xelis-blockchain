@@ -43,8 +43,8 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for Applic
     /// Get the balance ciphertext for a receiver account
     async fn get_receiver_balance<'b>(
         &'b mut self,
-        account: &'a PublicKey,
-        asset: &'a Hash,
+        account: Cow<'a, PublicKey>,
+        asset: Cow<'a, Hash>,
     ) -> Result<&'b mut Ciphertext, BlockchainError> {
         self.inner.get_receiver_balance(account, asset).await
     }
@@ -229,7 +229,7 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
                 self.inner.storage.set_last_multisig_to(key, self.inner.topoheight, versioned).await?;
             }
 
-            let balances = self.inner.receiver_balances.entry(&key).or_insert_with(HashMap::new);
+            let balances = self.inner.receiver_balances.entry(Cow::Borrowed(key)).or_insert_with(HashMap::new);
             // Because account balances are only used to verify the validity of ZK Proofs, we can't store them
             // We have to recompute the final balance for each asset using the existing current balance
             // Otherwise, we could have a front running problem
@@ -239,7 +239,7 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
                 trace!("{} {} updated for {} at topoheight {}", echange.version, asset, key.as_address(self.inner.storage.is_mainnet()), self.inner.topoheight);
                 let Echange { mut version, output_sum, output_balance_used, new_version, .. } = echange;
                 trace!("sender output sum: {:?}", output_sum.compress());
-                match balances.entry(asset) {
+                match balances.entry(Cow::Borrowed(asset)) {
                     Entry::Occupied(mut o) => {
                         trace!("{} already has a balance for {} at topoheight {}", key.as_address(self.inner.storage.is_mainnet()), asset, self.inner.topoheight);
                         // We got incoming funds while spending some
@@ -324,18 +324,18 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
         for (account, balances) in self.inner.receiver_balances {
             for (asset, version) in balances {
                 trace!("Saving versioned balance {} for {} at topoheight {}", version, account.as_address(self.inner.storage.is_mainnet()), self.inner.topoheight);
-                self.inner.storage.set_last_balance_to(account, asset, self.inner.topoheight, &version).await?;
+                self.inner.storage.set_last_balance_to(&account, &asset, self.inner.topoheight, &version).await?;
             }
 
             // If the account has no nonce set, set it to 0
-            if !self.inner.accounts.contains_key(account) && !self.inner.storage.has_nonce(account).await? {
+            if !self.inner.accounts.contains_key(account.as_ref()) && !self.inner.storage.has_nonce(&account).await? {
                 debug!("{} has now a balance but without any nonce registered, set default (0) nonce", account.as_address(self.inner.storage.is_mainnet()));
-                self.inner.storage.set_last_nonce_to(account, self.inner.topoheight, &VersionedNonce::new(0, None)).await?;
+                self.inner.storage.set_last_nonce_to(&account, self.inner.topoheight, &VersionedNonce::new(0, None)).await?;
             }
 
             // Mark it as registered at this topoheight
-            if !self.inner.storage.is_account_registered_at_topoheight(account, self.inner.topoheight).await? {
-                self.inner.storage.set_account_registration_topoheight(account, self.inner.topoheight).await?;
+            if !self.inner.storage.is_account_registered_at_topoheight(&account, self.inner.topoheight).await? {
+                self.inner.storage.set_account_registration_topoheight(&account, self.inner.topoheight).await?;
             }
         }
 
