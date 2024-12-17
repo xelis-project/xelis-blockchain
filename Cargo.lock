@@ -1507,9 +1507,9 @@ checksum = "9a3a5bfb195931eeb336b2a7b4d761daec841b97f947d34394601737a7bba5e4"
 
 [[package]]
 name = "hyper"
-version = "0.14.31"
+version = "0.14.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8c08302e8fa335b151b788c775ff56e7a03ae64ff85c548ee820fecb70356e85"
+checksum = "41dfc780fdec9373c01bae43289ea34c972e40ee3c9f6b3c8801a35f35586ce7"
 dependencies = [
  "bytes",
  "futures-channel",
@@ -1956,9 +1956,9 @@ checksum = "68354c5c6bd36d73ff3feceb05efa59b6acb7626617f4962be322a825e61f79a"
 
 [[package]]
 name = "miniz_oxide"
-version = "0.8.0"
+version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e2d80299ef12ff69b16a84bb182e3b9df68b5a91574d3d4fa6e41b65deec4df1"
+checksum = "a2ef2593ffb6958c941575cee70c8e257438749971869c4ae5acf6f91a168a61"
 dependencies = [
  "adler2",
 ]
@@ -3754,7 +3754,7 @@ dependencies = [
 [[package]]
 name = "xelis-ast"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=opaque-type#545d128605caf06041e76cc688be9629b88f5307"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#11aaaa118f774b03b22eecf3b4657d1ef62f2aca"
 dependencies = [
  "indexmap 2.7.0",
  "xelis-types",
@@ -3763,7 +3763,7 @@ dependencies = [
 [[package]]
 name = "xelis-builder"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=opaque-type#545d128605caf06041e76cc688be9629b88f5307"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#11aaaa118f774b03b22eecf3b4657d1ef62f2aca"
 dependencies = [
  "paste",
  "thiserror 2.0.7",
@@ -3775,7 +3775,7 @@ dependencies = [
 [[package]]
 name = "xelis-bytecode"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=opaque-type#545d128605caf06041e76cc688be9629b88f5307"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#11aaaa118f774b03b22eecf3b4657d1ef62f2aca"
 dependencies = [
  "indexmap 2.7.0",
  "serde",
@@ -3785,7 +3785,7 @@ dependencies = [
 [[package]]
 name = "xelis-environment"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=opaque-type#545d128605caf06041e76cc688be9629b88f5307"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#11aaaa118f774b03b22eecf3b4657d1ef62f2aca"
 dependencies = [
  "anyhow",
  "indexmap 2.7.0",
@@ -3809,7 +3809,7 @@ dependencies = [
 [[package]]
 name = "xelis-types"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=opaque-type#545d128605caf06041e76cc688be9629b88f5307"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#11aaaa118f774b03b22eecf3b4657d1ef62f2aca"
 dependencies = [
  "anyhow",
  "indexmap 2.7.0",
@@ -3822,7 +3822,7 @@ dependencies = [
 [[package]]
 name = "xelis-vm"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=opaque-type#545d128605caf06041e76cc688be9629b88f5307"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#11aaaa118f774b03b22eecf3b4657d1ef62f2aca"
 dependencies = [
  "thiserror 2.0.7",
  "xelis-bytecode",
