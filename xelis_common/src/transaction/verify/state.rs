@@ -132,16 +132,7 @@ pub trait BlockchainApplyState<'a, E>: BlockchainVerificationState<'a, E> {
     /// Track the contract outputs
     async fn add_contract_output(
         &mut self,
-        contract: &'a Hash,
         tx_hash: &'a Hash,
         output: ContractOutput
-    ) -> Result<(), E>;
-
-    /// Track the invoke contract result
-    async fn add_contract_result(
-        &mut self,
-        contract: &'a Hash,
-        tx_hash: &'a Hash,
-        result: Option<u64>
     ) -> Result<(), E>;
 }

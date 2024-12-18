@@ -16,7 +16,12 @@ pub enum ContractOutput {
         asset: Hash,
         /// The destination of the transfer
         destination: PublicKey
-    }
+    },
+    // Exit code returned by the Contract
+    // If None, an error occurred
+    // If Some(0), the contract executed successfully
+    // If Some(n), the contract exited with code n (state not applied!)
+    ExitCode(Option<u64>)
 }
 
 impl Serializer for ContractOutput {
@@ -31,6 +36,10 @@ impl Serializer for ContractOutput {
                 amount.write(writer);
                 asset.write(writer);
                 destination.write(writer);
+            },
+            ContractOutput::ExitCode(code) => {
+                writer.write_u8(2);
+                code.write(writer);
             }
         }
     }
@@ -47,6 +56,7 @@ impl Serializer for ContractOutput {
                 let destination = PublicKey::read(reader)?;
                 Ok(ContractOutput::Transfer { amount, asset, destination })
             },
+            2 => Ok(ContractOutput::ExitCode(Option::read(reader)?)),
             _ => Err(ReaderError::InvalidValue)
         }
     }

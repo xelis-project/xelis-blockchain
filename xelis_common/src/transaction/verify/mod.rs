@@ -844,13 +844,13 @@ impl Transaction {
                             asset: transfer.asset,
                             amount: transfer.amount,
                         };
-                        state.add_contract_output(&payload.contract, tx_hash, output).await
+                        state.add_contract_output(tx_hash, output).await
                             .map_err(VerificationError::State)?;
                     }
                 }
 
                 // We store the result of the contract execution
-                state.add_contract_result(&payload.contract, tx_hash, exit_code).await
+                state.add_contract_output(tx_hash, ContractOutput::ExitCode(exit_code)).await
                     .map_err(VerificationError::State)?;
 
                 if used_gas > 0 {
@@ -880,7 +880,7 @@ impl Transaction {
 
                         // Track the refund
                         let output = ContractOutput::RefundGas { amount: refund_gas };
-                        state.add_contract_output(&payload.contract, tx_hash, output).await
+                        state.add_contract_output(tx_hash, output).await
                             .map_err(VerificationError::State)?;
                     }
                 }
