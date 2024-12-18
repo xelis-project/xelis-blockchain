@@ -108,6 +108,12 @@ pub enum DiskContext {
     ContractTopoHeight,
     #[error("contracts count")]
     ContractsCount,
+    #[error("get contract data topoheight")]
+    ContractDataTopoHeight,
+    #[error("get contract data")]
+    ContractData,
+    #[error("get contract output")]
+    ContractOutput,
 }
 
 #[repr(usize)]

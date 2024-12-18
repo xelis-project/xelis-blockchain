@@ -5,12 +5,7 @@ mod nonce;
 mod registrations;
 
 use async_trait::async_trait;
-use balance::VersionedBalanceProvider;
-use contract::VersionedContractProvider;
 use log::trace;
-use multisig::VersionedMultiSigProvider;
-use nonce::VersionedNonceProvider;
-use registrations::VersionedRegistrationsProvider;
 use sled::Tree;
 use xelis_common::{
     block::TopoHeight,
@@ -23,6 +18,11 @@ use crate::core::{
         Snapshot
     }
 };
+use balance::VersionedBalanceProvider;
+use contract::*;
+use multisig::VersionedMultiSigProvider;
+use nonce::VersionedNonceProvider;
+use registrations::VersionedRegistrationsProvider;
 
 // Every versioned key should start with the topoheight in order to be able to delete them easily
 #[async_trait]
@@ -31,7 +31,8 @@ pub trait VersionedProvider:
     + VersionedNonceProvider
     + VersionedMultiSigProvider
     + VersionedContractProvider
-    + VersionedRegistrationsProvider {
+    + VersionedRegistrationsProvider
+    + VersionedContractDataProvider {
 
     // Delete versioned data at topoheight
     async fn delete_versioned_data_at_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError> {
@@ -40,6 +41,7 @@ pub trait VersionedProvider:
         self.delete_versioned_multisigs_at_topoheight(topoheight).await?;
         self.delete_versioned_registrations_at_topoheight(topoheight).await?;
         self.delete_versioned_contracts_at_topoheight(topoheight).await?;
+        self.delete_versioned_contract_data_at_topoheight(topoheight).await?;
         Ok(())
     }
 
@@ -52,6 +54,7 @@ pub trait VersionedProvider:
         self.delete_versioned_multisigs_below_topoheight(topoheight).await?;
         self.delete_versioned_registrations_below_topoheight(topoheight).await?;
         self.delete_versioned_contracts_below_topoheight(topoheight).await?;
+        self.delete_versioned_contract_data_below_topoheight(topoheight).await?;
         Ok(())
     }
 
@@ -62,6 +65,7 @@ pub trait VersionedProvider:
         self.delete_versioned_multisigs_above_topoheight(topoheight).await?;
         self.delete_versioned_registrations_above_topoheight(topoheight).await?;
         self.delete_versioned_contracts_above_topoheight(topoheight).await?;
+        self.delete_versioned_contract_data_above_topoheight(topoheight).await?;
         Ok(())
     }
 }

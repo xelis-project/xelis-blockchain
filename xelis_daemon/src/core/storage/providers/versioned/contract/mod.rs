@@ -1,3 +1,5 @@
+mod data;
+
 use async_trait::async_trait;
 use log::trace;
 use xelis_common::{
@@ -9,6 +11,8 @@ use crate::core::{
     error::BlockchainError,
     storage::{ContractProvider, SledStorage, VersionedContract}
 };
+
+pub use data::*;
 
 #[async_trait]
 pub trait VersionedContractProvider {
@@ -25,7 +29,7 @@ pub trait VersionedContractProvider {
 #[async_trait]
 impl VersionedContractProvider for SledStorage {
     async fn delete_versioned_contracts_at_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError> {
-        trace!("delete versioned nonces at topoheight {}", topoheight);
+        trace!("delete versioned contracts at topoheight {}", topoheight);
         for el in self.versioned_contracts.scan_prefix(&topoheight.to_be_bytes()) {
             let (key, value) = el?;
             // Delete this version from DB

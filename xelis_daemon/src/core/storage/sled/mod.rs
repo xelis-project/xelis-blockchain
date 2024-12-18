@@ -115,7 +115,18 @@ pub struct SledStorage {
     // To allow up-dateable contracts, we need to version them
     // key is the hash, value is the latest topoheight
     pub(super) contracts: Tree,
+    // All the versioned contracts
+    // Because a contract module can be updated (or deleted), we need to keep track of all versions
     pub(super) versioned_contracts: Tree,
+    // All the contracts data
+    // key is composed of the contract hash and the storage key, value is the latest contract data topoheight
+    pub(super) contracts_data: Tree,
+    // Key is prefixed by the topoheight for fast scan_prefix search,
+    // value is the contract data
+    pub(super) versioned_contracts_data: Tree,
+    // Contract outputs per TX
+    // Key is the TX Hash that called the contract, value is a list of contract outputs
+    pub(super) contracts_outputs: Tree,
     // opened DB used for assets to create dynamic assets
     pub(super) db: sled::Db,
 
@@ -246,6 +257,9 @@ impl SledStorage {
             registrations_prefixed: sled.open_tree("registrations_prefixed")?,
             contracts: sled.open_tree("contracts")?,
             versioned_contracts: sled.open_tree("versioned_contracts")?,
+            contracts_data: sled.open_tree("contracts_data")?,
+            versioned_contracts_data: sled.open_tree("versioned_contracts_data")?,
+            contracts_outputs: sled.open_tree("contracts_outputs")?,
             db: sled,
             transactions_cache: init_cache!(cache_size),
             blocks_cache: init_cache!(cache_size),

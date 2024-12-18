@@ -1,3 +1,6 @@
+mod data;
+mod output;
+
 use std::borrow::Cow;
 
 use async_trait::async_trait;
@@ -9,6 +12,10 @@ use crate::core::{
     storage::{SledStorage, Versioned, CONTRACTS_COUNT}
 };
 use log::trace;
+
+
+pub use data::*;
+pub use output::*;
 
 // A versioned contract is a contract that can be updated or deleted
 pub type VersionedContract<'a> = Versioned<Option<Cow<'a, Module>>>;

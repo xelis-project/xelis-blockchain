@@ -29,6 +29,7 @@ pub struct ApplicableChainState<'a, S: Storage> {
     inner: ChainState<'a, S>,
     block_hash: &'a Hash,
     block: &'a Block,
+    contracts_outputs: HashMap<&'a Hash, Vec<ContractOutput>>,
 }
 
 #[async_trait]
@@ -161,20 +162,14 @@ impl<'a, S: Storage> BlockchainApplyState<'a, BlockchainError> for ApplicableCha
 
     async fn add_contract_output(
         &mut self,
-        contract: &'a Hash,
         tx_hash: &'a Hash,
         output: ContractOutput
     ) -> Result<(), BlockchainError> {
-        todo!("add_contract_output")
-    }
+        self.contracts_outputs.entry(tx_hash)
+            .or_insert_with(Vec::new)
+            .push(output);
 
-    async fn add_contract_result(
-        &mut self,
-        contract: &'a Hash,
-        tx_hash: &'a Hash,
-        result: Option<u64>
-    ) -> Result<(), BlockchainError> {
-        todo!("add_contract_result")
+        Ok(())
     }
 }
 
@@ -222,6 +217,7 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
                 block_version,
                 burned_supply,
             ),
+            contracts_outputs: HashMap::new(),
             block_hash,
             block
         }
@@ -241,6 +237,7 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
             trace!("Saving nonce {} for {} at topoheight {}", account.nonce, key.as_address(self.inner.storage.is_mainnet()), self.inner.topoheight);
             self.inner.storage.set_last_nonce_to(key, self.inner.topoheight, &account.nonce).await?;
 
+            // Save the multisig state if needed
             if let Some((state, multisig)) = account.multisig.as_ref().filter(|(state, _)| state.should_be_stored()) {
                 trace!("Saving multisig for {} at topoheight {}", key.as_address(self.inner.storage.is_mainnet()), self.inner.topoheight);
                 let multisig = multisig.as_ref().map(|v| Cow::Borrowed(v));
@@ -364,6 +361,11 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
                 trace!("Saving contract {} at topoheight {}", hash, self.inner.topoheight);
                 self.inner.storage.set_last_contract_to(&hash, self.inner.topoheight, VersionedContract::new(module, state.get_topoheight())).await?;
             }
+        }
+
+        // Apply all the contract outputs
+        for (key, outputs) in self.contracts_outputs {
+            self.inner.storage.set_contract_output_for_tx(&key, outputs).await?;
         }
 
         trace!("Saving burned supply {} at topoheight {}", self.inner.burned_supply, self.inner.topoheight);
