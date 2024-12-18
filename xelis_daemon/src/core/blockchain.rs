@@ -1518,7 +1518,7 @@ impl<S: Storage> Blockchain<S> {
                         continue;
                     }
 
-                    if let Err(e) = tx.verify(&mut chain_state).await {
+                    if let Err(e) = tx.verify(&hash, &mut chain_state).await {
                         warn!("TX {} ({}) is not valid for mining: {}", hash, source.as_address(self.network.is_mainnet()), e);
                         failed_sources.insert(source);
                         continue;
@@ -1792,11 +1792,11 @@ impl<S: Storage> Blockchain<S> {
                     }
                 }
 
-                batch.push(tx);
+                batch.push((tx, tx_hash));
             }
 
             if !batch.is_empty() {
-                debug!("proof verifications of TXs ({}) in block {}", batch.iter().map(|v| v.hash().to_string()).collect::<Vec<String>>().join(","), block_hash);
+                debug!("proof verifications of TXs ({}) in block {}", batch.iter().map(|(_, hash)| hash.to_string()).collect::<Vec<String>>().join(","), block_hash);
                 // Verify all valid transactions in one batch
                 Transaction::verify_batch(batch.as_slice(), &mut chain_state).await?;
             }

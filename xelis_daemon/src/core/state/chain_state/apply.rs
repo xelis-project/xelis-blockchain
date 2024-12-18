@@ -8,6 +8,7 @@ use log::{debug, trace};
 use xelis_common::{
     account::{BalanceType, Nonce, VersionedNonce},
     block::{Block, BlockVersion, TopoHeight},
+    contract::ContractOutput,
     crypto::{elgamal::Ciphertext, Hash, PublicKey},
     transaction::{
         verify::{BlockchainApplyState, BlockchainVerificationState},
@@ -111,7 +112,7 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for Applic
 
     async fn set_contract_module(
         &mut self,
-        hash: Hash,
+        hash: &'a Hash,
         module: &'a xelis_vm::Module
     ) -> Result<(), BlockchainError> {
         self.inner.set_contract_module(hash, module).await
@@ -119,14 +120,14 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for Applic
 
     async fn load_contract_module(
         &mut self,
-        hash: &Hash
+        hash: &'a Hash
     ) -> Result<(), BlockchainError> {
         self.inner.load_contract_module(hash).await
     }
 
     async fn get_contract_module_with_environment(
         &self,
-        hash: &Hash
+        hash: &'a Hash
     ) -> Result<(&xelis_vm::Module, &Environment), BlockchainError> {
         self.inner.get_contract_module_with_environment(hash).await
     }
@@ -156,6 +157,24 @@ impl<'a, S: Storage> BlockchainApplyState<'a, BlockchainError> for ApplicableCha
 
     fn is_mainnet(&self) -> bool {
         self.inner.storage.is_mainnet()
+    }
+
+    async fn add_contract_output(
+        &mut self,
+        contract: &'a Hash,
+        tx_hash: &'a Hash,
+        output: ContractOutput
+    ) -> Result<(), BlockchainError> {
+        todo!("add_contract_output")
+    }
+
+    async fn add_contract_result(
+        &mut self,
+        contract: &'a Hash,
+        tx_hash: &'a Hash,
+        result: Option<u64>
+    ) -> Result<(), BlockchainError> {
+        todo!("add_contract_result")
     }
 }
 

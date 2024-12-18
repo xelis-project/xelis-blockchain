@@ -118,7 +118,7 @@ pub struct ChainState<'a, S: Storage> {
     // Current topoheight of the snapshot
     topoheight: TopoHeight,
     // All contracts updated
-    contracts: HashMap<Hash, (VersionedState, Option<Cow<'a, Module>>)>,
+    contracts: HashMap<&'a Hash, (VersionedState, Option<Cow<'a, Module>>)>,
     // Block header version
     block_version: BlockVersion,
     // Burned supply tracked
@@ -282,8 +282,8 @@ impl<'a, S: Storage> ChainState<'a, S> {
     // Search for a contract versioned state
     // if not found, fetch it from the storage
     // if not found in storage, create a new one
-    async fn internal_get_versioned_contract(&mut self, hash: &Hash) -> Result<&mut (VersionedState, Option<Cow<'a, Module>>), BlockchainError> {
-        match self.contracts.entry(hash.clone()) {
+    async fn internal_get_versioned_contract(&mut self, hash: &'a Hash) -> Result<&mut (VersionedState, Option<Cow<'a, Module>>), BlockchainError> {
+        match self.contracts.entry(hash) {
             Entry::Occupied(o) => Ok(o.into_mut()),
             Entry::Vacant(e) => {
                 let contract = self.storage.get_contract_at_maximum_topoheight_for(hash, self.topoheight).await?
@@ -296,14 +296,14 @@ impl<'a, S: Storage> ChainState<'a, S> {
     }
 
     // Load a contract from the storage if its not already loaded
-    async fn load_versioned_contract(&mut self, hash: &Hash) -> Result<(), BlockchainError> {
+    async fn load_versioned_contract(&mut self, hash: &'a Hash) -> Result<(), BlockchainError> {
         trace!("Loading contract {} at topoheight {}", hash, self.topoheight);
         if !self.contracts.contains_key(hash) {
             let contract = self.storage.get_contract_at_maximum_topoheight_for(hash, self.topoheight).await?
                 .map(|(topo, contract)| (VersionedState::FetchedAt(topo), contract.take()))
                 .unwrap_or((VersionedState::New, None));
 
-            self.contracts.insert(hash.clone(), contract);
+            self.contracts.insert(hash, contract);
         }
 
         Ok(())
@@ -425,7 +425,7 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for ChainS
     /// Set the contract module
     async fn set_contract_module(
         &mut self,
-        hash: Hash,
+        hash: &'a Hash,
         module: &'a Module
     ) -> Result<(), BlockchainError> {
         let (state, m) = self.internal_get_versioned_contract(&hash).await?;
@@ -441,7 +441,7 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for ChainS
 
     async fn load_contract_module(
         &mut self,
-        hash: &Hash
+        hash: &'a Hash
     ) -> Result<(), BlockchainError> {
         self.load_versioned_contract(hash).await
     }
@@ -449,7 +449,7 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for ChainS
     /// Get the contract module with the environment
     async fn get_contract_module_with_environment(
         &self,
-        hash: &Hash
+        hash: &'a Hash
     ) -> Result<(&Module, &Environment), BlockchainError> {
         let module = self.internal_get_contract_module(hash).await?;
         let env = self.storage.get_contract_environment().await?;
