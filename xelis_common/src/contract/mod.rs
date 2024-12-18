@@ -73,14 +73,15 @@ pub fn build_environment() -> EnvironmentBuilder<'static> {
     let address_type = Type::Opaque(env.register_opaque::<Hash>("Address"));
     let random_type = Type::Opaque(env.register_opaque::<OpaqueRandom>("Random"));
     let block_type = Type::Opaque(env.register_opaque::<OpaqueBlock>("Block"));
+    let storage_type = Type::Opaque(env.register_opaque::<OpaqueStorage>("Storage"));
 
     // Transaction
     {
         env.register_native_function(
-            "current_transaction",
+            "transaction",
             Some(tx_type.clone()),
             vec![],
-            current_transaction,
+            transaction,
             5,
             Some(Type::U64)
         );
@@ -121,10 +122,10 @@ pub fn build_environment() -> EnvironmentBuilder<'static> {
     // Block
     {
         env.register_native_function(
-            "current_block",
+            "block",
             Some(block_type.clone()),
             vec![],
-            current_block,
+            block,
             5,
             Some(Type::U64)
         );
@@ -191,6 +192,42 @@ pub fn build_environment() -> EnvironmentBuilder<'static> {
             block_tips,
             5,
             Some(Type::Array(Box::new(hash_type.clone())))
+        );
+    }
+
+    // Storage
+    {
+        env.register_native_function(
+            "storage",
+            Some(storage_type.clone()),
+            vec![],
+            storage,
+            5,
+            Some(Type::U64)
+        );
+        env.register_native_function(
+            "load",
+            Some(storage_type.clone()),
+            vec![("key", Type::U64)],
+            storage_load,
+            50,
+            Some(Type::Any)
+        );
+        env.register_native_function(
+            "has",
+            Some(storage_type.clone()),
+            vec![("key", Type::U64)],
+            storage_has,
+            25,
+            Some(Type::Bool)
+        );
+        env.register_native_function(
+            "store",
+            Some(storage_type.clone()),
+            vec![("key", Type::U64), ("value", Type::Any)],
+            storage_store,
+            50,
+            Some(Type::Bool)
         );
     }
 

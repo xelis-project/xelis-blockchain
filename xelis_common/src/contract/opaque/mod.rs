@@ -23,6 +23,7 @@ pub use transaction::*;
 pub use hash::*;
 pub use random::*;
 pub use block::*;
+pub use storage::*;
 
 
 pub const HASH_OPAQUE_ID: u8 = 0;

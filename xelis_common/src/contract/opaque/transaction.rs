@@ -41,7 +41,7 @@ impl Opaque for OpaqueTransaction {
     }
 }
 
-pub fn current_transaction(_: FnInstance, _: FnParams, _: &mut Context) -> FnReturnType {
+pub fn transaction(_: FnInstance, _: FnParams, _: &mut Context) -> FnReturnType {
     Ok(Some(Value::Opaque(OpaqueWrapper::new(OpaqueTransaction)).into()))
 }
 

@@ -56,7 +56,7 @@ impl Opaque for OpaqueBlock {
     }
 }
 
-pub fn current_block(_: FnInstance, _: FnParams, _: &mut Context) -> FnReturnType {
+pub fn block(_: FnInstance, _: FnParams, _: &mut Context) -> FnReturnType {
     Ok(Some(Value::Opaque(OpaqueWrapper::new(OpaqueBlock)).into()))
 }
 
