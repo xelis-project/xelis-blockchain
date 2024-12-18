@@ -10,6 +10,7 @@ use crate::{
         elgamal::{Ciphertext, PedersenOpening},
         Address,
         Hash,
+        Hashable,
         KeyPair,
         PublicKey
     },
@@ -211,7 +212,8 @@ async fn test_tx_verify() {
         });
     }
 
-    tx.verify(&mut state).await.unwrap();
+    let hash = tx.hash();
+    tx.verify(&hash, &mut state).await.unwrap();
 }
 
 #[tokio::test]
@@ -273,7 +275,8 @@ async fn test_burn_tx_verify() {
         });
     }
 
-    tx.verify(&mut state).await.unwrap();
+    let hash = tx.hash();
+    tx.verify(&hash, &mut state).await.unwrap();
 }
 
 #[tokio::test]
@@ -343,8 +346,8 @@ async fn test_max_transfers() {
             nonce: alice.nonce,
         });
     }
-
-    assert!(tx.verify(&mut state).await.is_ok());
+    let hash = tx.hash();
+    assert!(tx.verify(&hash, &mut state).await.is_ok());
 }
 
 #[tokio::test]
@@ -407,7 +410,8 @@ async fn test_multisig_setup() {
         });
     }
 
-    tx.verify(&mut state).await.unwrap();
+    let hash = tx.hash();
+    tx.verify(&hash, &mut state).await.unwrap();
 
     assert!(state.multisig.contains_key(&alice.keypair.get_public_key().compress()));
 }
@@ -485,7 +489,8 @@ async fn test_multisig() {
         participants: IndexSet::from_iter(vec![charlie.keypair.get_public_key().compress(), dave.keypair.get_public_key().compress()]),
     });
 
-    tx.verify(&mut state).await.unwrap();
+    let hash = tx.hash();
+    tx.verify(&hash, &mut state).await.unwrap();
 }
 
 #[async_trait]
@@ -571,7 +576,7 @@ impl<'a> BlockchainVerificationState<'a, ()> for ChainState {
 
     async fn set_contract_module(
         &mut self,
-        _: Hash,
+        _: &'a Hash,
         _: &'a Module
     ) -> Result<(), ()> {
         unimplemented!()
@@ -579,14 +584,14 @@ impl<'a> BlockchainVerificationState<'a, ()> for ChainState {
 
     async fn load_contract_module(
         &mut self,
-        _: &Hash
+        _: &'a Hash
     ) -> Result<(), ()> {
         unimplemented!()
     }
 
     async fn get_contract_module_with_environment(
         &self,
-        _: &Hash
+        _: &'a Hash
     ) -> Result<(&Module, &Environment), ()> {
         unimplemented!()
     }

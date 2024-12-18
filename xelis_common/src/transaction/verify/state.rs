@@ -94,7 +94,7 @@ pub trait BlockchainVerificationState<'a, E> {
     /// Set the contract module
     async fn set_contract_module(
         &mut self,
-        hash: Hash,
+        hash: &'a Hash,
         module: &'a Module
     ) -> Result<(), E>;
 
@@ -102,13 +102,13 @@ pub trait BlockchainVerificationState<'a, E> {
     /// This is called before `get_contract_module_with_environment`
     async fn load_contract_module(
         &mut self,
-        hash: &Hash
+        hash: &'a Hash
     ) -> Result<(), E>;
 
     /// Get the contract module
     async fn get_contract_module_with_environment(
         &self,
-        hash: &Hash
+        hash: &'a Hash
     ) -> Result<(&Module, &Environment), E>;
 }
 

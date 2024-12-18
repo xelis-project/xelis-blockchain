@@ -32,7 +32,6 @@ use crate::{
             PC_GENS
         },
         Hash,
-        Hashable,
         ProtocolTranscript,
         SIGNATURE_SIZE
     }, serializer::Serializer, transaction::{
@@ -278,6 +277,7 @@ impl Transaction {
     // returns (transcript, commitments for range proof)
     async fn pre_verify<'a, E, B: BlockchainVerificationState<'a, E>>(
         &'a self,
+        tx_hash: &'a Hash,
         state: &mut B,
         sigma_batch_collector: &mut BatchCollector,
     ) -> Result<(Transcript, Vec<(RistrettoPoint, CompressedRistretto)>), VerificationError<E>>
@@ -613,7 +613,7 @@ impl Transaction {
             TransactionType::DeployContract(module) => {
                 transcript.deploy_contract_proof_domain_separator();
 
-                state.set_contract_module(self.hash(), module).await
+                state.set_contract_module(tx_hash, module).await
                     .map_err(VerificationError::State)?;
             }
         }
@@ -651,15 +651,16 @@ impl Transaction {
         Ok((transcript, final_commitments))
     }
 
-    pub async fn verify_batch<'a, T: AsRef<Transaction>, E, B: BlockchainVerificationState<'a, E>>(
-        txs: &'a [T],
+    pub async fn verify_batch<'a, T: AsRef<Transaction>, H: AsRef<Hash>, E, B: BlockchainVerificationState<'a, E>>(
+        txs: &'a [(T, H)],
         state: &mut B,
     ) -> Result<(), VerificationError<E>> {
         trace!("Verifying batch of {} transactions", txs.len());
         let mut sigma_batch_collector = BatchCollector::default();
         let mut prepared = Vec::with_capacity(txs.len());
-        for tx in txs {
-            let (transcript, commitments) = tx.as_ref().pre_verify(state, &mut sigma_batch_collector).await?;
+        for (tx, hash) in txs {
+            let (transcript, commitments) = tx.as_ref()
+                .pre_verify(hash.as_ref(), state, &mut sigma_batch_collector).await?;
             prepared.push((transcript, commitments));
         }
 
@@ -670,8 +671,9 @@ impl Transaction {
         RangeProof::verify_batch(
             txs.iter()
                 .zip(&mut prepared)
-                .map(|(tx, (transcript, commitments))| {
-                    tx.as_ref().range_proof
+                .map(|((tx, _), (transcript, commitments))| {
+                    tx.as_ref()
+                        .range_proof
                         .verification_view(transcript, commitments, 64)
                 }),
             &BP_GENS,
@@ -685,10 +687,11 @@ impl Transaction {
     /// Verify one transaction. Use `verify_batch` to verify a batch of transactions.
     pub async fn verify<'a, E, B: BlockchainVerificationState<'a, E>>(
         &'a self,
+        tx_hash: &'a Hash,
         state: &mut B,
     ) -> Result<(), VerificationError<E>> {
         let mut sigma_batch_collector = BatchCollector::default();
-        let (mut transcript, commitments) = self.pre_verify(state, &mut sigma_batch_collector).await?;
+        let (mut transcript, commitments) = self.pre_verify(tx_hash, state, &mut sigma_batch_collector).await?;
 
         trace!("Verifying sigma proofs");
         sigma_batch_collector
@@ -883,7 +886,7 @@ impl Transaction {
                 }
             },
             TransactionType::DeployContract(module) => {
-                state.set_contract_module(tx_hash.clone(), module).await
+                state.set_contract_module(tx_hash, module).await
                     .map_err(VerificationError::State)?;
             }
         }
