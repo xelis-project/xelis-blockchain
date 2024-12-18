@@ -14,7 +14,7 @@ use xelis_vm::{ConstantWrapper, ModuleValidator, VM};
 use crate::{
     account::Nonce,
     config::{BURN_PER_CONTRACT, TRANSACTION_FEE_BURN_PERCENT, XELIS_ASSET},
-    contract::{ChainState, DeterministicRandom},
+    contract::{ChainState, ContractOutput, DeterministicRandom},
     crypto::{
         elgamal::{
             Ciphertext,
@@ -710,9 +710,9 @@ impl Transaction {
     }
 
     // Apply the transaction to the state
-    async fn apply<'a, E, B: BlockchainApplyState<'a, E>>(
+    async fn apply<'b, 'a: 'b, E, B: BlockchainApplyState<'a, E>>(
         &'a self,
-        tx_hash: &Hash,
+        tx_hash: &'a Hash,
         state: &mut B,
     ) -> Result<(), VerificationError<E>> {
         trace!("Applying transaction data");
@@ -756,21 +756,23 @@ impl Transaction {
                 let (module, environment) = state.get_contract_module_with_environment(&payload.contract).await
                     .map_err(VerificationError::State)?;
 
-                let random = DeterministicRandom::new(&payload.contract, state.get_block_hash(), tx_hash);
+                let block_hash = state.get_block_hash();
+                let block = state.get_block();
+                let random = DeterministicRandom::new(&payload.contract, block_hash, tx_hash);
                 let mut chain_state = ChainState {
                     mainnet: false,
                     debug_mode: false,
-                    contract: payload.contract.clone(),
-                    block_hash: state.get_block_hash().clone(),
-                    tx_hash: tx_hash.clone(),
+                    contract: &payload.contract,
+                    block_hash,
+                    tx_hash,
 
                     random,
-                    deposits: payload.deposits.clone(),
+                    deposits: &payload.deposits,
                     transfers: Vec::new(),
                 };
 
                 // Total used gas by the VM
-                let (used_gas, success) = {
+                let (used_gas, success, exit_code) = {
                     // Create the VM
                     let mut vm = VM::new(module, environment);
                     for constant in payload.parameters.iter() {
@@ -793,11 +795,10 @@ impl Transaction {
 
                     // Configure the context
                     // Note that the VM already include the environment in Context
-                    context.insert_ref(self);
+                    context.insert_ref(&self);
+                    context.insert_ref(&block);
                     context.insert_mut(&mut chain_state);
-                    context.insert_ref(state.get_block());
 
-                    // TODO:
                     // We need to handle the result of the VM
                     let res = vm.run();
 
@@ -807,44 +808,62 @@ impl Transaction {
                         .current_gas_usage()
                         .min(payload.max_gas);
 
-                    let success = res.is_ok();
-                    match res {
+                    let (success, exit_code) = match res {
                         Ok(res) => {
-                            log::info!("Invoke contract result: {:#}", res);
+                            debug!("Invoke contract {} from TX {} result: {:#}", payload.contract, tx_hash, res);
+                            // If the result return 0 as exit code, it means that everything went well
+                            let exit_code = res.as_u64().ok();
+                            (exit_code == Some(0), exit_code)
                         },
                         Err(err) => {
-                            log::error!("Invoke contract error: {:#}", err);
+                            debug!("Invoke contract {} from TX {} error: {:#}", payload.contract, tx_hash, err);
+                            (false, None)
                         }
                     };
 
-                    (gas_usage, success)
+                    (gas_usage, success, exit_code)
                 };
 
                 if success {
                     for transfer in chain_state.transfers {
                         let current_bal = state
                             .get_receiver_balance(
-                                Cow::Owned(transfer.destination),
-                                Cow::Owned(transfer.asset),
+                                Cow::Owned(transfer.destination.clone()),
+                                Cow::Owned(transfer.asset.clone()),
                             ).await
                             .map_err(VerificationError::State)?;
     
                         *current_bal += Scalar::from(transfer.amount);
+
+                        // Track the output
+                        let output = ContractOutput::Transfer {
+                            destination: transfer.destination,
+                            asset: transfer.asset,
+                            amount: transfer.amount,
+                        };
+                        state.add_contract_output(&payload.contract, tx_hash, output).await
+                            .map_err(VerificationError::State)?;
                     }
                 }
+
+                // We store the result of the contract execution
+                state.add_contract_result(&payload.contract, tx_hash, exit_code).await
+                    .map_err(VerificationError::State)?;
 
                 if used_gas > 0 {
                     // Part of the gas is burned
                     let burned_gas = used_gas * TRANSACTION_FEE_BURN_PERCENT / 100;
                     // Part of the gas is given to the miners as fees
-                    let gas_fee = used_gas.checked_sub(burned_gas).ok_or(VerificationError::GasOverflow)?;
+                    let gas_fee = used_gas.checked_sub(burned_gas)
+                        .ok_or(VerificationError::GasOverflow)?;
                     // The remaining gas is refunded to the sender
-                    let refund_gas = payload.max_gas.checked_sub(used_gas).ok_or(VerificationError::GasOverflow)?;
+                    let refund_gas = payload.max_gas.checked_sub(used_gas)
+                        .ok_or(VerificationError::GasOverflow)?;
     
                     debug!("Invoke contract used gas: {}, burned: {}, fee: {}, refund: {}", used_gas, burned_gas, gas_fee, refund_gas);
                     state.add_burned_coins(burned_gas).await
                         .map_err(VerificationError::State)?;
-    
+
                     state.add_gas_fee(gas_fee).await
                         .map_err(VerificationError::State)?;
     
@@ -853,13 +872,19 @@ impl Transaction {
                         // But to prevent any front running, we add to the sender balance by considering him as a receiver.
                         let balance = state.get_receiver_balance(Cow::Borrowed(self.get_source()), Cow::Owned(XELIS_ASSET)).await
                             .map_err(VerificationError::State)?;
-        
+
                         *balance += Scalar::from(refund_gas);
+
+                        // Track the refund
+                        let output = ContractOutput::RefundGas { amount: refund_gas };
+                        state.add_contract_output(&payload.contract, tx_hash, output).await
+                            .map_err(VerificationError::State)?;
                     }
                 }
             },
             TransactionType::DeployContract(module) => {
-                state.set_contract_module(self.hash(), module).await.map_err(VerificationError::State)?;
+                state.set_contract_module(tx_hash.clone(), module).await
+                    .map_err(VerificationError::State)?;
             }
         }
 
@@ -869,7 +894,7 @@ impl Transaction {
     /// Assume the tx is valid, apply it to `state`. May panic if a ciphertext is ill-formed.
     pub async fn apply_without_verify<'a, E, B: BlockchainApplyState<'a, E>>(
         &'a self,
-        tx_hash: &Hash,
+        tx_hash: &'a Hash,
         state: &mut B,
     ) -> Result<(), VerificationError<E>> {
         let transfers_decompressed = if let TransactionType::Transfers(transfers) = &self.data {
@@ -914,7 +939,7 @@ impl Transaction {
     /// Checks done are: commitment eq proofs only
     pub async fn apply_with_partial_verify<'a, E, B: BlockchainApplyState<'a, E>>(
         &'a self,
-        tx_hash: &Hash,
+        tx_hash: &'a Hash,
         state: &mut B
     ) -> Result<(), VerificationError<E>> {
         trace!("apply with partial verify");

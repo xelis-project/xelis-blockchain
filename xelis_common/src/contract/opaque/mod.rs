@@ -3,29 +3,39 @@ mod hash;
 mod address;
 mod random;
 mod block;
+mod storage;
 
 use log::debug;
 use xelis_types::{
     register_opaque_json,
     impl_opaque_json
 };
-use xelis_vm::OpaqueWrapper;
+use xelis_vm::{tid, OpaqueWrapper};
+use crate::{
+    block::Block,
+    crypto::{Address, Hash},
+    serializer::*,
+    transaction::Transaction
+};
+use super::ChainState;
 
 pub use transaction::*;
 pub use hash::*;
 pub use random::*;
 pub use block::*;
 
-use crate::{
-    crypto::{Address, Hash},
-    serializer::*
-};
 
 pub const HASH_OPAQUE_ID: u8 = 0;
 pub const ADDRESS_OPAQUE_ID: u8 = 1;
 
 impl_opaque_json!("Hash", Hash);
 impl_opaque_json!("Address", Address);
+
+// Injectable context data
+tid!(ChainState<'_>);
+tid!(Hash);
+tid!(Transaction);
+tid!(Block);
 
 pub fn register_opaque_types() {
     debug!("Registering opaque types");
