@@ -18,6 +18,7 @@ use crate::{
         Signature
     },
     serializer::Serializer,
+    contract::ContractOutput,
     transaction::{
         extra_data::UnknownExtraDataFormat,
         multisig::MultiSig,
@@ -214,6 +215,48 @@ pub struct SplitAddressResult {
     pub integrated_data: DataElement,
     // Integrated data size
     pub size: usize
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RPCContractOutput<'a> {
+    RefundGas {
+        amount: u64
+    },
+    Transfer {
+        amount: u64,
+        asset: Cow<'a, Hash>,
+        destination: Cow<'a, Address>
+    },
+    ExitCode(Option<u64>)
+}
+
+impl<'a> RPCContractOutput<'a> {
+    pub fn from_output(output: ContractOutput, mainnet: bool) -> Self {
+        match output {
+            ContractOutput::RefundGas { amount } => RPCContractOutput::RefundGas { amount },
+            ContractOutput::Transfer { amount, asset, destination } => RPCContractOutput::Transfer {
+                amount,
+                asset: Cow::Owned(asset),
+                destination: Cow::Owned(destination.to_address(mainnet))
+            },
+            ContractOutput::ExitCode(code) => RPCContractOutput::ExitCode(code)
+        }
+    }
+}
+
+impl<'a> From<RPCContractOutput<'a>> for ContractOutput {
+    fn from(output: RPCContractOutput<'a>) -> Self {
+        match output {
+            RPCContractOutput::RefundGas { amount } => ContractOutput::RefundGas { amount },
+            RPCContractOutput::Transfer { amount, asset, destination } => ContractOutput::Transfer {
+                amount,
+                asset: asset.into_owned(),
+                destination: destination.into_owned().to_public_key()
+            },
+            RPCContractOutput::ExitCode(code) => ContractOutput::ExitCode(code)
+        }
+    }
 }
 
 // :(

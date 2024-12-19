@@ -641,6 +641,11 @@ pub struct HasMultisigParams<'a> {
     pub topoheight: Option<TopoHeight>
 }
 
+#[derive(Serialize, Deserialize)]
+pub struct GetContractOutputsParams<'a> {
+    pub transaction: Cow<'a, Hash>
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NotifyEvent {

@@ -45,8 +45,6 @@ impl Opaque for OpaqueStorage {
     }
 }
 
-
-
 pub fn storage(_: FnInstance, _: FnParams, _: &mut Context) -> FnReturnType {
     let storage = OpaqueStorage;
 
