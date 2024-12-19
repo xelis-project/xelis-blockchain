@@ -10618,6 +10618,44 @@ No parameter
 }
 ```
 
+#### Decrypt Extra Data
+Decrypt the extra data from a transaction.
+This function is useful in case your wallet is offline and you want it to decrypt a extra data without having it in online mode.
+
+##### Method `decrypt_extra_data`
+
+##### Parameters
+|    Name    |     Type    | Required |                          Note                         |
+|:----------:|:-----------:|:--------:|:-----------------------------------------------------:|
+| extra_data |  Byte Array | Required |     Byte array containing the encrypted extra data    |
+|	 role    |    String   | Required |Role of the wallet in the transaction (sender/receiver)|
+
+##### Request
+```json
+{
+    "jsonrpc": "2.0",
+    "method": "decrypt_extra_data",
+    "id": 1,
+    "params": {
+        "role": "receiver",
+        "extra_data": [
+            ...
+        ]
+    }
+}
+```
+
+##### Response
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+        "hello": "world!"
+    }
+}
+```
+
 ### Storage
 
 XELIS Wallet has the ability to have a built-in encrypted DB that can be used to store / fetch entries easily.
