@@ -391,6 +391,10 @@ impl Transaction {
                     return Err(VerificationError::TransferCount);
                 }
 
+                // We need to load the contract module if not already in cache
+                state.load_contract_module(&payload.contract).await
+                    .map_err(VerificationError::State)?;
+
                 let (module, environment) = state.get_contract_module_with_environment(&payload.contract).await
                     .map_err(VerificationError::State)?;
 
