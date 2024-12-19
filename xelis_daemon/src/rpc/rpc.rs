@@ -23,6 +23,7 @@ use super::{InternalRpcError, ApiError};
 use xelis_common::{
     api::{
         daemon::*,
+        RPCContractOutput,
         RPCTransaction,
         SplitAddressParams,
         SplitAddressResult,
@@ -358,6 +359,9 @@ pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>
     handler.register_method("get_multisig_at_topoheight", async_handler!(get_multisig_at_topoheight::<S>));
     handler.register_method("get_multisig", async_handler!(get_multisig::<S>));
     handler.register_method("has_multisig", async_handler!(has_multisig::<S>));
+
+    // Contracts
+    handler.register_method("get_contract_outputs", async_handler!(get_contract_outputs::<S>));
 
     if allow_mining_methods {
         handler.register_method("get_block_template", async_handler!(get_block_template::<S>));
@@ -1534,4 +1538,18 @@ async fn has_multisig<S: Storage>(context: &Context, body: Value) -> Result<Valu
     }.context("Error while checking if account has multisig")?;
 
     Ok(json!(multisig))
+}
+
+async fn get_contract_outputs<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
+    let params: GetContractOutputsParams = parse_params(body)?;
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    let is_mainnet = blockchain.get_network().is_mainnet();
+    let storage = blockchain.get_storage().read().await;
+    let outputs = storage.get_contract_outputs_for_tx(&params.transaction).await
+        .context("Error while retrieving contract outputs")?
+        .into_iter()
+        .map(|output| RPCContractOutput::from_output(output, is_mainnet))
+        .collect::<Vec<_>>();
+
+    Ok(json!(outputs))
 }

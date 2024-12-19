@@ -365,7 +365,7 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
 
         // Apply all the contract outputs
         for (key, outputs) in self.contracts_outputs {
-            self.inner.storage.set_contract_output_for_tx(&key, outputs).await?;
+            self.inner.storage.set_contract_outputs_for_tx(&key, outputs).await?;
         }
 
         trace!("Saving burned supply {} at topoheight {}", self.inner.burned_supply, self.inner.topoheight);

@@ -1906,7 +1906,7 @@ impl<S: Storage> Blockchain<S> {
                         if storage.is_tx_executed_in_block(tx_hash, &hash_at_topo)? {
                             trace!("Removing execution of {}", tx_hash);
                             storage.remove_tx_executed(tx_hash)?;
-                            storage.delete_contract_output_for_tx(tx_hash).await?;
+                            storage.delete_contract_outputs_for_tx(tx_hash).await?;
 
                             if is_orphaned {
                                 orphaned_transactions.insert(tx_hash.clone());
