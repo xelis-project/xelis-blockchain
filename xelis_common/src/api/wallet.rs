@@ -6,10 +6,11 @@ use crate::{
     block::TopoHeight,
     crypto::{Address, Hash, PrivateKey},
     transaction::{
-        extra_data::PlaintextExtraData,
         builder::{FeeBuilder, TransactionTypeBuilder, UnsignedTransaction},
+        extra_data::{PlaintextExtraData, UnknownExtraDataFormat},
         multisig::SignatureId,
         Reference,
+        Role,
         Transaction,
         TxVersion
     }
@@ -264,6 +265,15 @@ pub struct QueryDBParams {
     pub value: Option<Query>,
     #[serde(default = "default_false_value")]
     pub return_on_first: bool
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct DecryptExtraDataParams<'a> {
+    // Encrypted data to decrypt
+    pub extra_data: Cow<'a, UnknownExtraDataFormat>,
+    // The role we have in the transaction
+    // This is needed to select the correct handle
+    pub role: Role,
 }
 
 #[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
