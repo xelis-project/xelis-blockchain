@@ -306,9 +306,9 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for Mempoo
     ) -> Result<(), BlockchainError> {
         if !self.contracts.contains_key(hash) {
             let module = self.storage.get_contract_at_maximum_topoheight_for(hash, self.topoheight).await?
-            .map(|(_, v)| v.take().map(|v| v.into_owned()))
-            .flatten()
-            .ok_or_else(|| BlockchainError::ContractNotFound(hash.clone()))?;
+                .map(|(_, v)| v.take().map(|v| v.into_owned()))
+                .flatten()
+                .ok_or_else(|| BlockchainError::ContractNotFound(hash.clone()))?;
 
             self.contracts.insert(hash, Cow::Owned(module));
         }
