@@ -67,6 +67,7 @@ pub fn register_methods(handler: &mut RPCHandler<Arc<Wallet>>) {
     handler.register_method("estimate_fees", async_handler!(estimate_fees));
     handler.register_method("estimate_extra_data_size", async_handler!(estimate_extra_data_size));
     handler.register_method("network_info", async_handler!(network_info));
+    handler.register_method("decrypt_extra_data", async_handler!(decrypt_extra_data));
 
     // These functions allow to have an encrypted DB directly in the wallet storage
     // You can retrieve keys, values, have differents trees, and store values
@@ -189,6 +190,17 @@ async fn network_info(context: &Context, body: Value) -> Result<Value, InternalR
     } else {
         Err(InternalRpcError::InvalidRequestStr("Wallet is not connected to a daemon"))
     }
+}
+
+// Decrypt extra data using the wallet private key
+async fn decrypt_extra_data(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
+    let params: DecryptExtraDataParams = parse_params(body)?;
+
+    let wallet: &Arc<Wallet> = context.get()?;
+    let data = wallet.decrypt_extra_data(params.extra_data.into_owned(), params.role)
+        .context("Error while decrypting extra data")?;
+
+    Ok(json!(data))
 }
 
 // Rescan the wallet from the provided topoheight (or from the beginning if not provided)
