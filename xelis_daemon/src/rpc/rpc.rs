@@ -362,6 +362,7 @@ pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>
 
     // Contracts
     handler.register_method("get_contract_outputs", async_handler!(get_contract_outputs::<S>));
+    handler.register_method("get_contract_data_with_key", async_handler!(get_contract_data_with_key::<S>));
 
     if allow_mining_methods {
         handler.register_method("get_block_template", async_handler!(get_block_template::<S>));
@@ -1552,4 +1553,22 @@ async fn get_contract_outputs<S: Storage>(context: &Context, body: Value) -> Res
         .collect::<Vec<_>>();
 
     Ok(json!(outputs))
+}
+
+async fn get_contract_data_with_key<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
+    let params: GetContractDataParams = parse_params(body)?;
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    let storage = blockchain.get_storage().read().await;
+
+    let hash = SledStorage::get_contract_data_key(&params.key, &params.contract);
+    let topoheight = if let Some(topoheight) = params.topoheight {
+        topoheight
+    } else {
+        storage.get_last_topoheight_for_contract_data(&hash).await
+            .context("Error while retrieving last topoheight for contract data")?
+    };
+
+    storage.get_contract_data_at_topoheight_for(&hash, topoheight).await?;
+
+    Ok(json!(false))
 }
