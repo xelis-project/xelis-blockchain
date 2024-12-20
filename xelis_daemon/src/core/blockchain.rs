@@ -12,8 +12,11 @@ use xelis_common::{
             StableHeightChangedEvent,
             StableTopoHeightChangedEvent,
             TransactionExecutedEvent,
-            TransactionResponse
+            TransactionResponse,
+            NewContractEvent,
+            InvokeContractEvent,
         },
+        RPCContractOutput,
         RPCTransaction
     },
     asset::AssetData,
@@ -2050,6 +2053,42 @@ impl<S: Storage> Blockchain<S> {
                                 topoheight: highest_topo,
                             });
                             events.entry(NotifyEvent::TransactionExecuted).or_insert_with(Vec::new).push(value);
+                        }
+
+                        match tx.get_data() {
+                            TransactionType::InvokeContract(payload) => {
+                                let event = NotifyEvent::InvokeContract {
+                                    contract: payload.contract.clone(),
+                                };
+                                if should_track_events.contains(&event) {
+                                    let is_mainnet = self.network.is_mainnet();
+
+                                    let contract_outputs = chain_state.get_storage()
+                                        .get_contract_outputs_for_tx(&tx_hash).await?
+                                        .into_iter()
+                                        .map(|output| RPCContractOutput::from_output(output, is_mainnet))
+                                        .collect::<Vec<_>>();
+
+                                    let value = json!(InvokeContractEvent {
+                                        tx_hash: Cow::Borrowed(&tx_hash),
+                                        block_hash: Cow::Borrowed(&hash),
+                                        topoheight: highest_topo,
+                                        contract_outputs,
+                                    });
+                                    events.entry(event).or_insert_with(Vec::new).push(value);
+                                }
+                            },
+                            TransactionType::DeployContract(_) => {
+                                if should_track_events.contains(&NotifyEvent::DeployContract) {
+                                    let value = json!(NewContractEvent {
+                                        contract: Cow::Borrowed(&tx_hash),
+                                        block_hash: Cow::Borrowed(&hash),
+                                        topoheight: highest_topo,
+                                    });
+                                    events.entry(NotifyEvent::DeployContract).or_insert_with(Vec::new).push(value);
+                                }
+                            }
+                            _ => {}
                         }
 
                         // Increase total tx fees for miner
