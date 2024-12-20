@@ -68,6 +68,7 @@ pub fn register_methods(handler: &mut RPCHandler<Arc<Wallet>>) {
     handler.register_method("estimate_extra_data_size", async_handler!(estimate_extra_data_size));
     handler.register_method("network_info", async_handler!(network_info));
     handler.register_method("decrypt_extra_data", async_handler!(decrypt_extra_data));
+    handler.register_method("decrypt_ciphertext", async_handler!(decrypt_ciphertext));
 
     // These functions allow to have an encrypted DB directly in the wallet storage
     // You can retrieve keys, values, have differents trees, and store values
@@ -201,6 +202,17 @@ async fn decrypt_extra_data(context: &Context, body: Value) -> Result<Value, Int
         .context("Error while decrypting extra data")?;
 
     Ok(json!(data))
+}
+
+async fn decrypt_ciphertext(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
+    let params: DecryptCiphertextParams = parse_params(body)?;
+
+    let wallet: &Arc<Wallet> = context.get()?;
+    let decompressed = params.ciphertext.decompress().context("Error while decompressing ciphertext")?;
+    let amount = wallet.decrypt_ciphertext(decompressed).await
+        .context("Error while decrypting ciphertext")?;
+
+    Ok(json!(amount))
 }
 
 // Rescan the wallet from the provided topoheight (or from the beginning if not provided)
