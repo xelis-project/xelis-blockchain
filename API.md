@@ -9342,6 +9342,50 @@ Decrypt the extra data from a transaction.
 }
 ```
 
+#### Get Contract Outputs
+Retrieve the contract outputs that have occurred in the requested transaction hash.
+
+It contains, the refunded gas amount, exit code and transfers.
+
+##### Method `get_contract_outputs`
+
+##### Parameters
+
+|    Name    |     Type    | Required |                         Note                         |
+|:----------:|:-----------:|:--------:|:----------------------------------------------------:|
+| shared_key | Hexadecimal | Required | Shared Key in hexadecimal format used for decryption |
+| extra_data |  Byte Array | Required |    Byte array containing the encrypted extra data    |
+
+##### Request
+```json
+{
+    "jsonrpc": "2.0",
+    "method": "get_contract_outputs",
+    "id": 1,
+    "params": {
+        "transaction": "8a354baac1d53d02249aadee92c5a3e0585b126439947cb4a3c3aa9baaea5f17"
+    }
+}
+```
+
+##### Response
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": [
+        {
+            "exit_code": 0
+        },
+        {
+            "refund_gas": {
+                "amount": 99593
+            }
+        }
+    ]
+}
+```
+
 ## Wallet
 
 ### Events
