@@ -11,6 +11,7 @@ use serde::{
     Deserializer,
     de::Error
 };
+use xelis_vm::Constant;
 use crate::{
     account::{Nonce, CiphertextCache, VersionedBalance, VersionedNonce},
     block::{TopoHeight, Algorithm, BlockVersion, EXTRA_NONCE_SIZE},
@@ -644,6 +645,15 @@ pub struct HasMultisigParams<'a> {
 #[derive(Serialize, Deserialize)]
 pub struct GetContractOutputsParams<'a> {
     pub transaction: Cow<'a, Hash>
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct GetContractDataParams<'a> {
+    pub contract: Cow<'a, Hash>,
+    pub key: Cow<'a, Constant>,
+    // Get at a specific topoheight or the latest
+    #[serde(default)]
+    pub topoheight: Option<TopoHeight>
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
