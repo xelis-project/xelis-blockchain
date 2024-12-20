@@ -9342,45 +9342,6 @@ Decrypt the extra data from a transaction.
 }
 ```
 
-#### Decrypt Ciphertext
-Decrypt a ciphertext from its compressed format.
-
-If you want to decrypt the ciphertext of a Transaction, you need to take the Transfer `commitment` field.
-For the `handle` field, you need to select either `receiver_handle` or `sender_handle` based on the flow of the transaction.
-
-Please note that the value returned is in atomic units.
-
-##### Method `decrypt_ciphertext`
-
-##### Parameters
-|    Name    |     Type    | Required |               Note                 |
-|:----------:|:-----------:|:--------:|:----------------------------------:|
-| ciphertext | Compressed  | Required |    Ciphertext compressed format    |
-
-##### Request
-```json
-{
-    "jsonrpc": "2.0",
-    "method": "decrypt_ciphertext",
-    "id": 1,
-    "params": {
-        "ciphertext": {
-            "handle": [ ... ],
-            "commitment": [ ... ]
-}
-    }
-}
-```
-
-##### Response
-```json
-{
-    "id": 1,
-    "jsonrpc": "2.0",
-    "result": 5700000000
-}
-```
-
 ## Wallet
 
 ### Events
@@ -10692,6 +10653,45 @@ This function is useful in case your wallet is offline and you want it to decryp
     "result": {
         "hello": "world!"
     }
+}
+```
+
+#### Decrypt Ciphertext
+Decrypt a ciphertext from its compressed format.
+
+If you want to decrypt the ciphertext of a Transaction, you need to take the Transfer `commitment` field.
+For the `handle` field, you need to select either `receiver_handle` or `sender_handle` based on the flow of the transaction.
+
+Please note that the value returned is in atomic units.
+
+##### Method `decrypt_ciphertext`
+
+##### Parameters
+|    Name    |     Type    | Required |               Note                 |
+|:----------:|:-----------:|:--------:|:----------------------------------:|
+| ciphertext | Compressed  | Required |    Ciphertext compressed format    |
+
+##### Request
+```json
+{
+    "jsonrpc": "2.0",
+    "method": "decrypt_ciphertext",
+    "id": 1,
+    "params": {
+        "ciphertext": {
+            "handle": [ ... ],
+            "commitment": [ ... ]
+}
+    }
+}
+```
+
+##### Response
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": 5700000000
 }
 ```
 
