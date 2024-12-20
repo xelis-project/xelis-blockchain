@@ -20,7 +20,7 @@ use crate::{
     time::{TimestampMillis, TimestampSeconds},
     transaction::extra_data::{SharedKey, UnknownExtraDataFormat},
 };
-use super::{default_true_value, DataElement, RPCTransaction};
+use super::{default_true_value, DataElement, RPCContractOutput, RPCTransaction};
 
 #[derive(Serialize, Deserialize, PartialEq, Eq)]
 pub enum BlockType {
@@ -673,9 +673,13 @@ pub enum NotifyEvent {
     // When a transaction has been included in a valid block & executed on chain
     // it contains TransactionExecutedEvent struct as value
     TransactionExecuted,
-    // When a registered TX SC Call hash has been executed by chain
-    // TODO: Smart Contracts
-    TransactionSCResult,
+    // When the contract has been invoked
+    // This allows to track all the contract invocations
+    InvokeContract {
+        contract: Hash
+    },
+    // When a new contract has been deployed
+    DeployContract,
     // When a new asset has been registered
     // TODO: Smart Contracts
     NewAsset,
@@ -771,4 +775,21 @@ pub struct PeerPeerDisconnectedEvent {
     pub peer_id: u64,
     // address of the peer that disconnected from him
     pub peer_addr: SocketAddr
+}
+
+// Value of NotifyEvent::InvokeContract
+#[derive(Serialize, Deserialize)]
+pub struct InvokeContractEvent<'a> {
+    pub block_hash: Cow<'a, Hash>,
+    pub tx_hash: Cow<'a, Hash>,
+    pub topoheight: TopoHeight,
+    pub contract_outputs: Vec<RPCContractOutput<'a>>
+}
+
+// Value of NotifyEvent::NewContract
+#[derive(Serialize, Deserialize)]
+pub struct NewContractEvent<'a> {
+    pub contract: Cow<'a, Hash>,
+    pub block_hash: Cow<'a, Hash>,
+    pub topoheight: TopoHeight,
 }
