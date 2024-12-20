@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     account::CiphertextCache,
     block::TopoHeight,
-    crypto::{Address, Hash, PrivateKey},
+    crypto::{elgamal::CompressedCiphertext, Address, Hash, PrivateKey},
     transaction::{
         builder::{FeeBuilder, TransactionTypeBuilder, UnsignedTransaction},
         extra_data::{PlaintextExtraData, UnknownExtraDataFormat},
@@ -274,6 +274,12 @@ pub struct DecryptExtraDataParams<'a> {
     // The role we have in the transaction
     // This is needed to select the correct handle
     pub role: Role,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct DecryptCiphertextParams<'a> {
+    // Ciphertext with the correct handle to use
+    pub ciphertext: Cow<'a, CompressedCiphertext>
 }
 
 #[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
