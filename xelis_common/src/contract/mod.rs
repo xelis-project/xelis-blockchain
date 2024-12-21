@@ -55,7 +55,7 @@ pub struct ChainState<'a> {
 }
 
 // Build the environment for the contract
-pub fn build_environment() -> EnvironmentBuilder<'static> {
+pub fn build_environment<S: ContractStorage + 'static>() -> EnvironmentBuilder<'static> {
     debug!("Building environment for contract");
     register_opaque_types();
 
@@ -209,15 +209,15 @@ pub fn build_environment() -> EnvironmentBuilder<'static> {
             "load",
             Some(storage_type.clone()),
             vec![("key", Type::U64)],
-            storage_load,
+            storage_load::<S>,
             50,
-            Some(Type::Any)
+            Some(Type::Optional(Box::new(Type::Any)))
         );
         env.register_native_function(
             "has",
             Some(storage_type.clone()),
             vec![("key", Type::U64)],
-            storage_has,
+            storage_has::<S>,
             25,
             Some(Type::Bool)
         );
@@ -225,9 +225,17 @@ pub fn build_environment() -> EnvironmentBuilder<'static> {
             "store",
             Some(storage_type.clone()),
             vec![("key", Type::U64), ("value", Type::Any)],
-            storage_store,
+            storage_store::<S>,
             50,
-            Some(Type::Bool)
+            None
+        );
+        env.register_native_function(
+            "delete",
+            Some(storage_type.clone()),
+            vec![("key", Type::U64)],
+            storage_delete::<S>,
+            50,
+            None
         );
     }
 
