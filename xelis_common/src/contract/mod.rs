@@ -98,7 +98,7 @@ pub fn build_environment<S: ContractStorage>() -> EnvironmentBuilder<'static> {
             vec![],
             transaction,
             5,
-            Some(Type::U64)
+            Some(tx_type.clone())
         );
         env.register_native_function(
             "nonce",
@@ -142,7 +142,7 @@ pub fn build_environment<S: ContractStorage>() -> EnvironmentBuilder<'static> {
             vec![],
             block,
             5,
-            Some(Type::U64)
+            Some(block_type.clone())
         );
         env.register_native_function(
             "nonce",
@@ -218,7 +218,7 @@ pub fn build_environment<S: ContractStorage>() -> EnvironmentBuilder<'static> {
             vec![],
             storage,
             5,
-            Some(Type::U64)
+            Some(storage_type.clone())
         );
         env.register_native_function(
             "load",
