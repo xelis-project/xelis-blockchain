@@ -85,7 +85,7 @@ pub fn build_environment<S: ContractStorage>() -> EnvironmentBuilder<'static> {
     // Opaque type but we provide getters
     let tx_type = Type::Opaque(env.register_opaque::<OpaqueTransaction>("Transaction"));
     let hash_type = Type::Opaque(env.register_opaque::<Hash>("Hash"));
-    let address_type = Type::Opaque(env.register_opaque::<Hash>("Address"));
+    let address_type = Type::Opaque(env.register_opaque::<Address>("Address"));
     let random_type = Type::Opaque(env.register_opaque::<OpaqueRandom>("Random"));
     let block_type = Type::Opaque(env.register_opaque::<OpaqueBlock>("Block"));
     let storage_type = Type::Opaque(env.register_opaque::<OpaqueStorage>("Storage"));
@@ -94,7 +94,7 @@ pub fn build_environment<S: ContractStorage>() -> EnvironmentBuilder<'static> {
     {
         env.register_native_function(
             "transaction",
-            Some(tx_type.clone()),
+            None,
             vec![],
             transaction,
             5,
@@ -138,7 +138,7 @@ pub fn build_environment<S: ContractStorage>() -> EnvironmentBuilder<'static> {
     {
         env.register_native_function(
             "block",
-            Some(block_type.clone()),
+            None,
             vec![],
             block,
             5,
@@ -214,7 +214,7 @@ pub fn build_environment<S: ContractStorage>() -> EnvironmentBuilder<'static> {
     {
         env.register_native_function(
             "storage",
-            Some(storage_type.clone()),
+            None,
             vec![],
             storage,
             5,
