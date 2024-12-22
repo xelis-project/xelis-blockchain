@@ -8,10 +8,11 @@ use log::{debug, trace};
 use xelis_common::{
     account::{BalanceType, Nonce, VersionedNonce},
     block::{Block, BlockVersion, TopoHeight},
-    contract::ContractOutput,
+    contract::{ChainState as ContractChainState, ContractOutput, DeterministicRandom},
     crypto::{elgamal::Ciphertext, Hash, PublicKey},
     transaction::{
-        verify::{BlockchainApplyState, BlockchainVerificationState},
+        verify::{BlockchainApplyState, BlockchainVerificationState, ContractEnvironment},
+        InvokeContractPayload,
         MultiSigPayload,
         Reference
     }
@@ -30,6 +31,7 @@ pub struct ApplicableChainState<'a, S: Storage> {
     block_hash: &'a Hash,
     block: &'a Block,
     contracts_outputs: HashMap<&'a Hash, Vec<ContractOutput>>,
+    burned_supply: u64,
 }
 
 #[async_trait]
@@ -107,8 +109,8 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for Applic
         self.inner.get_multisig_state(account).await
     }
 
-    async fn get_contract_environment(&mut self) -> Result<&Environment, BlockchainError> {
-        self.inner.get_contract_environment().await
+    async fn get_environment(&mut self) -> Result<&Environment, BlockchainError> {
+        self.inner.get_environment().await
     }
 
     async fn set_contract_module(
@@ -135,7 +137,7 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for Applic
 }
 
 #[async_trait]
-impl<'a, S: Storage> BlockchainApplyState<'a, BlockchainError> for ApplicableChainState<'a, S> {
+impl<'a, S: Storage> BlockchainApplyState<'a, S, BlockchainError> for ApplicableChainState<'a, S> {
     /// Track burned supply
     async fn add_burned_coins(&mut self, amount: u64) -> Result<(), BlockchainError> {
         self.burned_supply += amount;
@@ -171,6 +173,40 @@ impl<'a, S: Storage> BlockchainApplyState<'a, BlockchainError> for ApplicableCha
 
         Ok(())
     }
+
+    async fn get_contract_environment_for<'b>(&'b mut self, payload: &'b InvokeContractPayload, tx_hash: &'b Hash) -> Result<(ContractEnvironment<'b, S>, ContractChainState<'b>), BlockchainError> {
+        // Find the contract module in our cache
+        // We don't use the function `get_contract_module_with_environment` because we need to return the mutable storage
+        let module = self.inner.contracts.get(&payload.contract)
+            .ok_or_else(|| BlockchainError::ContractNotFound(payload.contract.clone()))
+            .and_then(|(_, module)| module.as_ref()
+                .map(|m| m.as_ref())
+                .ok_or_else(|| BlockchainError::ContractNotFound(payload.contract.clone()))
+            )?;
+
+        // Create a deterministic random for the contract
+        let random = DeterministicRandom::new(&payload.contract, &self.block_hash, tx_hash);
+
+        let state = ContractChainState {
+            debug_mode: true,
+            mainnet: self.inner.storage.is_mainnet(),
+            contract: &payload.contract,
+            block_hash: self.block_hash,
+            block: self.block,
+            deposits: &payload.deposits,
+            random: random,
+            tx_hash,
+            transfers: Vec::new(),
+        };
+
+        let contract_environment = ContractEnvironment {
+            environment: self.inner.environment,
+            module,
+            storage: self.inner.storage.as_mut(),
+        };
+
+        Ok((contract_environment, state))
+    }
 }
 
 impl<'a, S: Storage> Deref for ApplicableChainState<'a, S> {
@@ -202,21 +238,23 @@ impl<'a, S: Storage> AsMut<ChainState<'a, S>> for ApplicableChainState<'a, S> {
 impl<'a, S: Storage> ApplicableChainState<'a, S> {
     pub fn new(
         storage: &'a mut S,
+        environment: &'a Environment,
         stable_topoheight: TopoHeight,
         topoheight: TopoHeight,
         block_version: BlockVersion,
         burned_supply: u64,
         block_hash: &'a Hash,
-        block: &'a Block
+        block: &'a Block,
     ) -> Self {
         Self {
             inner: ChainState::with(
                 StorageReference::Mutable(storage),
+                environment,
                 stable_topoheight,
                 topoheight,
                 block_version,
-                burned_supply,
             ),
+            burned_supply,
             contracts_outputs: HashMap::new(),
             block_hash,
             block
@@ -368,8 +406,8 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
             self.inner.storage.set_contract_outputs_for_tx(&key, outputs).await?;
         }
 
-        trace!("Saving burned supply {} at topoheight {}", self.inner.burned_supply, self.inner.topoheight);
-        self.inner.storage.set_burned_supply_at_topo_height(self.inner.topoheight, self.inner.burned_supply)?;
+        trace!("Saving burned supply {} at topoheight {}", self.burned_supply, self.inner.topoheight);
+        self.inner.storage.set_burned_supply_at_topo_height(self.inner.topoheight, self.burned_supply)?;
 
         Ok(())
     }

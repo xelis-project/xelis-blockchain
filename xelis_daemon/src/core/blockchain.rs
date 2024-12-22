@@ -62,8 +62,10 @@ use xelis_common::{
     },
     utils::{calculate_tx_fee, format_xelis},
     tokio::spawn_task,
-    varuint::VarUint
+    varuint::VarUint,
+    contract::build_environment,
 };
+use xelis_vm::Environment;
 use crate::{
     config::{
         get_genesis_block_hash, get_hex_genesis_block, get_minimum_difficulty,
@@ -136,6 +138,8 @@ pub struct Blockchain<S: Storage> {
     mempool: RwLock<Mempool>,
     // storage to retrieve/add blocks
     storage: RwLock<S>,
+    // Contract environment stdlib
+    environment: Environment,
     // P2p module
     p2p: RwLock<Option<Arc<P2pServer<S>>>>,
     // RPC module
@@ -207,6 +211,8 @@ impl<S: Storage> Blockchain<S> {
             (height, topoheight)
         } else { (0, 0) };
 
+        let environment = build_environment::<S>().build();
+
         info!("Initializing chain...");
         let blockchain = Self {
             height: AtomicU64::new(height),
@@ -215,6 +221,7 @@ impl<S: Storage> Blockchain<S> {
             stable_topoheight: AtomicU64::new(0),
             mempool: RwLock::new(Mempool::new(network)),
             storage: RwLock::new(storage),
+            environment,
             p2p: RwLock::new(None),
             rpc: RwLock::new(None),
             difficulty: Mutex::new(GENESIS_BLOCK_DIFFICULTY),
@@ -335,6 +342,11 @@ impl<S: Storage> Blockchain<S> {
     // Skip PoW verification flag
     pub fn skip_pow_verification(&self) -> bool {
         self.skip_pow_verification
+    }
+
+    // get the environment stdlib for contract execution
+    pub fn get_contract_environment(&self) -> &Environment {
+        &self.environment
     }
 
     // Stop all blockchain modules
@@ -1296,7 +1308,7 @@ impl<S: Storage> Blockchain<S> {
             }
 
             let version = get_version_at_height(self.get_network(), self.get_height());
-            mempool.add_tx(storage, stable_topoheight, current_topoheight, hash.clone(), tx.clone(), tx_size, version).await?;
+            mempool.add_tx(storage, &self.environment, stable_topoheight, current_topoheight, hash.clone(), tx.clone(), tx_size, version).await?;
         }
 
         if broadcast {
@@ -1495,7 +1507,7 @@ impl<S: Storage> Blockchain<S> {
         let topoheight = self.get_topo_height();
 
         trace!("build chain state for block template");
-        let mut chain_state = ChainState::new(storage, stable_topoheight, topoheight, block.get_version());
+        let mut chain_state = ChainState::new(storage, &self.environment, stable_topoheight, topoheight, block.get_version());
 
         if !tx_selector.is_empty() {
             let mut failed_sources = HashSet::new();
@@ -1725,7 +1737,7 @@ impl<S: Storage> Blockchain<S> {
             }
 
             trace!("verifying {} TXs in block {}", txs_len, block_hash);
-            let mut chain_state = ChainState::new(storage, self.get_stable_topoheight(), current_topoheight, version);
+            let mut chain_state = ChainState::new(storage, &self.environment, self.get_stable_topoheight(), current_topoheight, version);
             // Cache to retrieve only one time all TXs hashes until stable height
             let mut all_parents_txs: Option<HashSet<Hash>> = None;
 
@@ -1995,6 +2007,7 @@ impl<S: Storage> Blockchain<S> {
                 trace!("building chain state to execute TXs in block {}", block_hash);
                 let mut chain_state = ApplicableChainState::new(
                     storage,
+                    &self.environment,
                     base_topo_height,
                     highest_topo,
                     version,
@@ -2237,7 +2250,7 @@ impl<S: Storage> Blockchain<S> {
             let mut mempool = self.mempool.write().await;
             debug!("mempool write mode ok");
             let version = get_version_at_height(self.get_network(), current_height);
-            mempool.clean_up(&*storage, base_topo_height, highest_topo, version).await
+            mempool.clean_up(&*storage, &self.environment, base_topo_height, highest_topo, version).await
         } else {
             Vec::new()
         };

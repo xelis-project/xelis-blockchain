@@ -1,18 +1,18 @@
 mod data;
 mod output;
+mod storage;
 
 use std::borrow::Cow;
 
 use async_trait::async_trait;
 use indexmap::IndexSet;
 use xelis_common::{block::TopoHeight, crypto::Hash, serializer::Serializer};
-use xelis_vm::{Environment, Module};
+use xelis_vm::Module;
 use crate::core::{
     error::{BlockchainError, DiskContext},
     storage::{SledStorage, Versioned, CONTRACTS_COUNT}
 };
 use log::trace;
-
 
 pub use data::*;
 pub use output::*;
@@ -61,9 +61,6 @@ pub trait ContractProvider {
 
     // Count the number of contracts
     async fn count_contracts(&self) -> Result<u64, BlockchainError>;
-
-    // Get the environment to use for contract execution
-    async fn get_contract_environment(&self) -> Result<&Environment, BlockchainError>;
 }
 
 #[async_trait]
@@ -217,11 +214,6 @@ impl ContractProvider for SledStorage {
         };
 
         Ok(count)
-    }
-
-    async fn get_contract_environment(&self) -> Result<&Environment, BlockchainError> {
-        trace!("Getting contract environment");
-        Ok(&self.environment)
     }
 }
 

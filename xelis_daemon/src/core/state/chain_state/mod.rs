@@ -108,6 +108,7 @@ struct Account<'a> {
 pub struct ChainState<'a, S: Storage> {
     // Storage to read and write the balances and nonces
     storage: StorageReference<'a, S>,
+    environment: &'a Environment,
     // Balances of the receiver accounts
     receiver_balances: HashMap<Cow<'a, PublicKey>, HashMap<Cow<'a, Hash>, VersionedBalance>>,
     // Sender accounts
@@ -121,8 +122,6 @@ pub struct ChainState<'a, S: Storage> {
     contracts: HashMap<&'a Hash, (VersionedState, Option<Cow<'a, Module>>)>,
     // Block header version
     block_version: BlockVersion,
-    // Burned supply tracked
-    burned_supply: u64,
     // All gas fees tracked
     gas_fee: u64
 }
@@ -130,31 +129,31 @@ pub struct ChainState<'a, S: Storage> {
 impl<'a, S: Storage> ChainState<'a, S> {
     fn with(
         storage: StorageReference<'a, S>,
+        environment: &'a Environment,
         stable_topoheight: TopoHeight,
         topoheight: TopoHeight,
         block_version: BlockVersion,
-        burned_supply: u64
     ) -> Self {
         Self {
             storage,
+            environment,
             receiver_balances: HashMap::new(),
             accounts: HashMap::new(),
             stable_topoheight,
             topoheight,
             contracts: HashMap::new(),
             block_version,
-            burned_supply,
             gas_fee: 0
         }
     }
 
-    pub fn new(storage: &'a S, stable_topoheight: TopoHeight, topoheight: TopoHeight, block_version: BlockVersion) -> Self {
+    pub fn new(storage: &'a S, environment: &'a Environment, stable_topoheight: TopoHeight, topoheight: TopoHeight, block_version: BlockVersion) -> Self {
         Self::with(
             StorageReference::Immutable(storage),
+            environment,
             stable_topoheight,
             topoheight,
-            block_version,
-            0
+            block_version
         )
     }
 
@@ -418,8 +417,8 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for ChainS
     }
 
     /// Get the contract environment
-    async fn get_contract_environment(&mut self) -> Result<&Environment, BlockchainError> {
-        self.storage.get_contract_environment().await
+    async fn get_environment(&mut self) -> Result<&Environment, BlockchainError> {
+        Ok(self.environment)
     }
 
     /// Set the contract module
@@ -452,7 +451,6 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for ChainS
         hash: &'a Hash
     ) -> Result<(&Module, &Environment), BlockchainError> {
         let module = self.internal_get_contract_module(hash).await?;
-        let env = self.storage.get_contract_environment().await?;
-        Ok((module, env))
+        Ok((module, self.environment))
     }
 }

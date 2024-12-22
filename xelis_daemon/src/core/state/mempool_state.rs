@@ -43,6 +43,8 @@ pub struct MempoolState<'a, S: Storage> {
     mempool: &'a Mempool,
     // Storage in case sender balances aren't in mempool cache
     storage: &'a S,
+    // Contract environment
+    environment: &'a Environment,
     // Receiver balances
     receiver_balances: HashMap<Cow<'a, PublicKey>, HashMap<Cow<'a, Hash>, Ciphertext>>,
     // Sender accounts
@@ -59,11 +61,12 @@ pub struct MempoolState<'a, S: Storage> {
 }
 
 impl<'a, S: Storage> MempoolState<'a, S> {
-    pub fn new(mempool: &'a Mempool, storage: &'a S, stable_topoheight: TopoHeight, topoheight: TopoHeight, block_version: BlockVersion, mainnet: bool) -> Self {
+    pub fn new(mempool: &'a Mempool, storage: &'a S, environment: &'a Environment, stable_topoheight: TopoHeight, topoheight: TopoHeight, block_version: BlockVersion, mainnet: bool) -> Self {
         Self {
             mainnet,
             mempool,
             storage,
+            environment,
             receiver_balances: HashMap::new(),
             accounts: HashMap::new(),
             contracts: HashMap::new(),
@@ -283,8 +286,8 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for Mempoo
     }
 
     /// Get the contract environment
-    async fn get_contract_environment(&mut self) -> Result<&Environment, BlockchainError> {
-        self.storage.get_contract_environment().await
+    async fn get_environment(&mut self) -> Result<&Environment, BlockchainError> {
+        Ok(self.environment)
     }
 
     /// Set the contract module
@@ -320,9 +323,9 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for Mempoo
         &self,
         hash: &'a Hash
     ) -> Result<(&Module, &Environment), BlockchainError> {
-        let module = self.contracts.get(hash).ok_or_else(|| BlockchainError::ContractNotFound(hash.clone()))?;
-        let environment = self.storage.get_contract_environment().await?;
+        let module = self.contracts.get(hash)
+            .ok_or_else(|| BlockchainError::ContractNotFound(hash.clone()))?;
 
-        Ok((module, environment))
+        Ok((module, self.environment))
     }
 }

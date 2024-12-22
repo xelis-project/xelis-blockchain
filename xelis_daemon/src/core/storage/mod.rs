@@ -17,6 +17,7 @@ use xelis_common::{
         BlockHeader,
         TopoHeight,
     },
+    contract::ContractStorage,
     crypto::Hash,
     transaction::Transaction,
 };
@@ -31,7 +32,7 @@ pub trait Storage:
     + NonceProvider + AccountProvider + ClientProtocolProvider + BlockDagProvider
     + MerkleHashProvider + NetworkProvider + MultiSigProvider + TipsProvider
     + CommitPointProvider + ContractProvider + ContractDataProvider + ContractOutputsProvider
-    + VersionedProvider + Sync + Send + 'static {
+    + ContractStorage + VersionedProvider + Sync + Send + 'static {
     // Clear caches if exists
     async fn clear_caches(&mut self) -> Result<(), BlockchainError>;
 

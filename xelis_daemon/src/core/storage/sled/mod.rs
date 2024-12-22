@@ -3,13 +3,11 @@ mod snapshot;
 use anyhow::Context;
 use async_trait::async_trait;
 use indexmap::IndexSet;
-use xelis_vm::Environment;
 use crate::{
     config::PRUNE_SAFETY_LIMIT,
     core::error::{BlockchainError, DiskContext}
 };
 use xelis_common::{
-    contract::build_environment,
     block::{TopoHeight, Block, BlockHeader},
     crypto::{Hash, PublicKey},
     difficulty::{CumulativeDifficulty, Difficulty},
@@ -166,8 +164,6 @@ pub struct SledStorage {
 
     // If we have a snapshot, we can use it to rollback
     pub(super) snapshot: Option<Snapshot>,
-    // Contract environment for the stdlib
-    pub(super) environment: Environment
 }
 
 macro_rules! init_cache {
@@ -278,7 +274,6 @@ impl SledStorage {
             contracts_count: 0,
 
             snapshot: None,
-            environment: build_environment().build(),
         };
 
         // Verify that we are opening a DB on same network

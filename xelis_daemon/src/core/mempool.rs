@@ -26,6 +26,7 @@ use xelis_common::{
     time::{get_current_time_in_seconds, TimestampSeconds},
     transaction::{Transaction, MultiSigPayload}
 };
+use xelis_vm::Environment;
 
 // Wrap a TX with its hash and size in bytes for faster access
 // size of tx can be heavy to compute, so we store it here
@@ -129,8 +130,8 @@ impl Mempool {
     }
 
     // All checks are made in Blockchain before calling this function
-    pub async fn add_tx<S: Storage>(&mut self, storage: &S, stable_topoheight: TopoHeight, topoheight: TopoHeight, hash: Hash, tx: Arc<Transaction>, size: usize, block_version: BlockVersion) -> Result<(), BlockchainError> {
-        let mut state = MempoolState::new(&self, storage, stable_topoheight, topoheight, block_version, self.mainnet);
+    pub async fn add_tx<S: Storage>(&mut self, storage: &S, environment: &Environment, stable_topoheight: TopoHeight, topoheight: TopoHeight, hash: Hash, tx: Arc<Transaction>, size: usize, block_version: BlockVersion) -> Result<(), BlockchainError> {
+        let mut state = MempoolState::new(&self, storage, environment, stable_topoheight, topoheight, block_version, self.mainnet);
         tx.verify(&hash, &mut state).await?;
 
         let (balances, multisig) = state.get_sender_cache(tx.get_source())
@@ -342,7 +343,7 @@ impl Mempool {
     // Because of DAG reorg, we can't only check updated keys from new block,
     // as a block could be orphaned and the nonce order would change
     // So we need to check all keys from mempool and compare it from storage
-    pub async fn clean_up<S: Storage>(&mut self, storage: &S, stable_topoheight: TopoHeight, topoheight: TopoHeight, block_version: BlockVersion) -> Vec<(Arc<Hash>, SortedTx)> {
+    pub async fn clean_up<S: Storage>(&mut self, storage: &S, environment: &Environment, stable_topoheight: TopoHeight, topoheight: TopoHeight, block_version: BlockVersion) -> Vec<(Arc<Hash>, SortedTx)> {
         trace!("Cleaning up mempool...");
 
         // All deleted sorted txs with their hashes
@@ -471,7 +472,7 @@ impl Mempool {
                         // NOTE: this can be revert easily in case we are deleting valid TXs also,
                         // But will be slower during high traffic
                         debug!("Verifying TXs ({}) for sender {} at topoheight {}", txs.iter().map(|(_, hash)| hash.to_string()).collect::<Vec<String>>().join(", "), key.as_address(self.mainnet), topoheight);
-                        let mut state = MempoolState::new(&self, storage, stable_topoheight, topoheight, block_version, self.mainnet);
+                        let mut state = MempoolState::new(&self, storage, environment, stable_topoheight, topoheight, block_version, self.mainnet);
                         if let Err(e) = Transaction::verify_batch(txs.as_slice(), &mut state).await {
                             warn!("Error while verifying TXs for sender {}: {}", key.as_address(self.mainnet), e);
                             for (tx, hash) in txs {
