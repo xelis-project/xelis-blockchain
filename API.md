@@ -9987,6 +9987,7 @@ It can be broadcasted or not to the network.
 ##### Parameters
 |        Name       |       Type      | Required |                                    Note                                    |
 |:-----------------:|:---------------:|:--------:|:--------------------------------------------------------------------------:|
+|     tx_version    |     Integer     | Optional | Set the transaction version to use. By default take the version from wallet|
 |        fee        |    FeeBuilder   | Optional |                   Set an exact fee value or a multiplier                   |
 |       nonce       |     Integer     | Optional | Set the nonce to use by the transaction. By default its provided by wallet |
 |     broadcast     |     Boolean     | Optional |               Broadcast TX to daemon. By default set to true               |
@@ -10742,7 +10743,7 @@ Please note that the value returned is in atomic units.
 ### Storage
 
 XELIS Wallet has the ability to have a built-in encrypted DB that can be used to store / fetch entries easily.
-This can be really helpful for small services / applications that don't to setup a whole database system.
+This can be really helpful for small services / applications that don't want to setup a whole database system.
 
 It is a key / value DB with support of multiples Trees, everything is stored in encrypted form on the disk.
 
