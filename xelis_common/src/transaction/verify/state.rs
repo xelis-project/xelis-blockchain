@@ -1,7 +1,6 @@
 use std::borrow::Cow;
 
 use async_trait::async_trait;
-use better_any::tid;
 use xelis_vm::{Environment, Module};
 use crate::{
     account::Nonce,
@@ -123,8 +122,6 @@ pub struct ContractEnvironment<'a, S: ContractStorage> {
     // Storage for the contract
     pub storage: &'a mut S,
 }
-
-tid! { impl<'a, S: 'static> TidAble<'a> for ContractEnvironment<'a, S> where S: ContractStorage }
 
 #[async_trait]
 pub trait BlockchainApplyState<'a, S: ContractStorage, E>: BlockchainVerificationState<'a, E> {

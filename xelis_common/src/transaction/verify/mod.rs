@@ -14,7 +14,7 @@ use xelis_vm::{ConstantWrapper, ModuleValidator, VM};
 use crate::{
     account::Nonce,
     config::{BURN_PER_CONTRACT, TRANSACTION_FEE_BURN_PERCENT, XELIS_ASSET},
-    contract::{ContractOutput, ContractStorage},
+    contract::{ContractOutput, ContractStorage, StorageWrapper},
     crypto::{
         elgamal::{
             Ciphertext,
@@ -34,7 +34,9 @@ use crate::{
         Hash,
         ProtocolTranscript,
         SIGNATURE_SIZE
-    }, serializer::Serializer, transaction::{
+    },
+    serializer::Serializer,
+    transaction::{
         TxVersion,
         EXTRA_DATA_LIMIT_SIZE,
         EXTRA_DATA_LIMIT_SUM_SIZE,
@@ -760,7 +762,7 @@ impl Transaction {
                 state.load_contract_module(&payload.contract).await
                     .map_err(VerificationError::State)?;
 
-                let (mut contract_environment, mut chain_state) = state.get_contract_environment_for(payload, tx_hash).await
+                let (contract_environment, mut chain_state) = state.get_contract_environment_for(payload, tx_hash).await
                     .map_err(VerificationError::State)?;
 
                 // Total used gas by the VM
@@ -791,8 +793,9 @@ impl Transaction {
                     context.insert_ref(&self);
                     // insert the chain state separetly to avoid to give the S type
                     context.insert_mut(&mut chain_state);
-                    // insert the contract environment
-                    context.insert_mut(&mut contract_environment);
+                    // insert the storage through our wrapper
+                    // so it can be easily mocked
+                    context.insert(StorageWrapper(contract_environment.storage));
 
                     // We need to handle the result of the VM
                     let res = vm.run();

@@ -30,7 +30,7 @@ pub use metadata::ContractMetadata;
 pub use random::DeterministicRandom;
 pub use output::*;
 
-pub use opaque::ContractStorage;
+pub use opaque::{ContractStorage, StorageWrapper};
 
 pub struct TransferOutput {
     // The destination key for the transfer

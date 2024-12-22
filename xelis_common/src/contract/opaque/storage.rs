@@ -1,5 +1,5 @@
 use std::any::TypeId;
-
+use better_any::tid;
 use anyhow::{bail, Context as AnyhowContext};
 use xelis_vm::{
     traits::{JSONHelper, Serializable},
@@ -16,21 +16,21 @@ use crate::{
     block::TopoHeight,
     contract::ChainState,
     crypto::Hash,
-    transaction::verify::ContractEnvironment,
 };
 
 macro_rules! context {
     ($instance: expr, $context: expr) => {{
         let _: &OpaqueStorage = $instance?.as_opaque_type()?;
-        let mut datas = $context.get_many_mut([&TypeId::of::<ContractEnvironment<S>>(), &TypeId::of::<ChainState>()]);
+        let mut datas = $context.get_many_mut([&TypeId::of::<StorageWrapper<S>>(), &TypeId::of::<ChainState>()]);
 
-        let environment: &mut ContractEnvironment<'_, S> = datas[0]
+        let wrapper: &mut StorageWrapper<S> = datas[0]
             .take()
             .context("Contract Environment is not initialized")?
             .downcast_mut()
             .context("Contract Environment is not initialized correctly")?;
 
-        let storage: &mut S = environment.storage;
+        let storage: &mut S = wrapper.0;
+
         let state: &mut ChainState = datas[1]
             .take()
             .context("Chain state is not initialized")?
@@ -43,6 +43,12 @@ macro_rules! context {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct OpaqueStorage;
+
+// This is a wrapper around the storage to allow for the storage to be passed in the Context
+pub struct StorageWrapper<'a, S: ContractStorage>(pub &'a mut S);
+
+tid! { impl<'a, S: 'static> TidAble<'a> for StorageWrapper<'a, S> where S: ContractStorage }
+
 
 pub trait ContractStorage: 'static {
     // load a value from the storage
