@@ -16,6 +16,7 @@ use crate::{
     block::TopoHeight,
     contract::ChainState,
     crypto::Hash,
+    versioned_type::VersionedState,
 };
 
 macro_rules! context {
@@ -52,10 +53,13 @@ tid! { impl<'a, S: 'static> TidAble<'a> for StorageWrapper<'a, S> where S: Contr
 
 pub trait ContractStorage: 'static {
     // load a value from the storage
-    fn load(&mut self, contract: &Hash, key: Constant, topoheight: TopoHeight) -> Result<Option<Constant>, anyhow::Error>;
+    fn load(&mut self, contract: &Hash, key: &Constant, topoheight: TopoHeight) -> Result<Option<(TopoHeight, Option<Constant>)>, anyhow::Error>;
+
+    // load the latest topoheight from the storage
+    fn load_latest_topoheight(&self, contract: &Hash, key: &Constant, topoheight: TopoHeight) -> Result<Option<TopoHeight>, anyhow::Error>;
 
     // check if a key exists in the storage
-    fn has(&self, contract: &Hash, key: Constant, topoheight: TopoHeight) -> Result<bool, anyhow::Error>;
+    fn has(&self, contract: &Hash, key: &Constant, topoheight: TopoHeight) -> Result<bool, anyhow::Error>;
 }
 
 impl JSONHelper for OpaqueStorage {
@@ -101,8 +105,14 @@ pub fn storage_load<S: ContractStorage>(instance: FnInstance, mut params: FnPara
         .map_err(|_| anyhow::anyhow!("Invalid key"))?;
 
     let value = match state.storage.get(&key) {
-        Some(value) => value.clone(),
-        None => storage.load(&state.contract, key, state.topoheight)?
+        Some((_, value)) => value.clone(),
+        None => match storage.load(&state.contract, &key, state.topoheight)? {
+            Some((topoheight, constant)) => {
+                state.storage.insert(key.clone(), (VersionedState::FetchedAt(topoheight), constant.clone()));
+                constant
+            },
+            None => None
+        }
     };
 
     Ok(Some(ValueCell::Optional(value.map(|c| c.into())).into()))
@@ -117,19 +127,17 @@ pub fn storage_has<S: ContractStorage>(instance: FnInstance, mut params: FnParam
         .map_err(|_| anyhow::anyhow!("Invalid key"))?;
 
     let contains = match state.storage.get(&key) {
-        Some(value) => value.is_some(),
-        None => storage.has(state.contract, key, state.topoheight)?
+        Some((_, value)) => value.is_some(),
+        None => storage.has(state.contract, &key, state.topoheight)?
     };
 
     Ok(Some(Value::Boolean(contains).into()))
 }
 
 pub fn storage_store<S: ContractStorage>(instance: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType {
-    let _: &OpaqueStorage = instance?.as_opaque_type()?;
-    let state: &mut ChainState = context.get_mut()
-        .context("Chain state is not initialized")?;
+    let (storage, state) = context!(instance, context);
 
-    let key = params.remove(0)
+    let key= params.remove(0)
         .into_owned()
         .try_into()
         .map_err(|_| anyhow::anyhow!("Invalid key"))?;
@@ -139,22 +147,52 @@ pub fn storage_store<S: ContractStorage>(instance: FnInstance, mut params: FnPar
         .try_into()
         .map_err(|_| anyhow::anyhow!("Invalid value"))?;
 
-    state.storage.insert(key, Some(value));
+    let data_state = match state.storage.get(&key) {
+        Some((state, _)) => match state {
+            VersionedState::New => VersionedState::New,
+            VersionedState::FetchedAt(topoheight) => VersionedState::Updated(*topoheight),
+            VersionedState::Updated(topoheight) => VersionedState::Updated(*topoheight),
+        },
+        None => {
+            // We need to retrieve the latest topoheight version
+            storage.load_latest_topoheight(&state.contract, &key, state.topoheight)?
+                .map(|topoheight| VersionedState::Updated(topoheight))
+                .unwrap_or(VersionedState::New)
+        }
+    };
+
+    state.storage.insert(key, (data_state, Some(value)));
 
     Ok(None)
 }
 
 pub fn storage_delete<S: ContractStorage>(instance: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType {
-    let _: &OpaqueStorage = instance?.as_opaque_type()?;
-    let state: &mut ChainState = context.get_mut()
-        .context("Chain state is not initialized")?;
+    let (storage, state) = context!(instance, context);
 
     let key = params.remove(0)
         .into_owned()
         .try_into()
         .map_err(|_| anyhow::anyhow!("Invalid key"))?;
 
-    state.storage.insert(key, None);
+    let data_state = match state.storage.get(&key) {
+        Some((s, _)) => match s {
+            VersionedState::New => {
+                state.storage.remove(&key);
+                return Ok(None);
+            },
+            VersionedState::FetchedAt(topoheight) => VersionedState::Updated(*topoheight),
+            VersionedState::Updated(topoheight) => VersionedState::Updated(*topoheight),
+        },
+        None => {
+            // We need to retrieve the latest topoheight version
+            match storage.load_latest_topoheight(&state.contract, &key, state.topoheight)? {
+                Some(topoheight) => VersionedState::Updated(topoheight),
+                None => return Ok(None),
+            }
+        }
+    };
+
+    state.storage.insert(key, (data_state, None));
 
     Ok(None)
 }

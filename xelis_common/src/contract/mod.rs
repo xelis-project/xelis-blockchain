@@ -23,7 +23,8 @@ use xelis_vm::{
 use crate::{
     block::{Block, TopoHeight},
     crypto::{Address, Hash, PublicKey},
-    transaction::ContractDeposit
+    transaction::ContractDeposit,
+    versioned_type::VersionedState
 };
 
 pub use metadata::ContractMetadata;
@@ -66,7 +67,7 @@ pub struct ChainState<'a> {
     pub transfers: Vec<TransferOutput>,
     // The storage of the contract
     // All the changes made by the contract are stored here
-    pub storage: HashMap<Constant, Option<Constant>>
+    pub storage: HashMap<Constant, (VersionedState, Option<Constant>)>
 }
 
 // Build the environment for the contract

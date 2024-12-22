@@ -823,6 +823,7 @@ impl Transaction {
                 };
 
                 if success {
+                    let storage = chain_state.storage;
                     for transfer in chain_state.transfers {
                         let current_bal = state
                             .get_receiver_balance(
@@ -840,6 +841,12 @@ impl Transaction {
                             amount: transfer.amount,
                         };
                         state.add_contract_output(tx_hash, output).await
+                            .map_err(VerificationError::State)?;
+                    }
+
+                    // Also track the changes in the storage
+                    for (key, value) in storage {
+                        state.add_storage_change(tx_hash, key, value).await
                             .map_err(VerificationError::State)?;
                     }
                 }

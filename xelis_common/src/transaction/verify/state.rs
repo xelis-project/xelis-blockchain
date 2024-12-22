@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 
 use async_trait::async_trait;
-use xelis_vm::{Environment, Module};
+use xelis_vm::{Constant, Environment, Module};
 use crate::{
     account::Nonce,
     block::{Block, BlockVersion},
@@ -18,7 +18,8 @@ use crate::{
         MultiSigPayload,
         Reference,
         Transaction
-    }
+    },
+    versioned_type::VersionedState
 };
 
 /// This trait is used by the batch verification function.
@@ -148,5 +149,17 @@ pub trait BlockchainApplyState<'a, S: ContractStorage, E>: BlockchainVerificatio
     ) -> Result<(), E>;
 
     /// Get the contract environment
-    async fn get_contract_environment_for<'b>(&'b mut self, payload: &'b InvokeContractPayload, tx_hash: &'b Hash) -> Result<(ContractEnvironment<'b, S>, ChainState<'b>), E>;
+    async fn get_contract_environment_for<'b>(
+        &'b mut self,
+        payload: &'b InvokeContractPayload,
+        tx_hash: &'b Hash
+    ) -> Result<(ContractEnvironment<'b, S>, ChainState<'b>), E>;
+
+    /// Track the storage changes
+    async fn add_storage_change(
+        &mut self,
+        contract: &'a Hash,
+        key: Constant,
+        value: (VersionedState, Option<Constant>)
+    ) -> Result<(), E>;
 }

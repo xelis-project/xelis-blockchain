@@ -16,6 +16,7 @@ pub mod context;
 pub mod queue;
 pub mod varuint;
 pub mod time;
+pub mod versioned_type;
 
 #[cfg(feature = "tokio")]
 pub mod tokio;
