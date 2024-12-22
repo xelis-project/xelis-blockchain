@@ -191,12 +191,14 @@ impl<'a, S: Storage> BlockchainApplyState<'a, S, BlockchainError> for Applicable
             debug_mode: true,
             mainnet: self.inner.storage.is_mainnet(),
             contract: &payload.contract,
+            topoheight: self.topoheight,
             block_hash: self.block_hash,
             block: self.block,
             deposits: &payload.deposits,
             random: random,
             tx_hash,
             transfers: Vec::new(),
+            storage: HashMap::new(),
         };
 
         let contract_environment = ContractEnvironment {
