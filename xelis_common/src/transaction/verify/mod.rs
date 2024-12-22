@@ -14,7 +14,7 @@ use xelis_vm::{ConstantWrapper, ModuleValidator, VM};
 use crate::{
     account::Nonce,
     config::{BURN_PER_CONTRACT, TRANSACTION_FEE_BURN_PERCENT, XELIS_ASSET},
-    contract::{ChainState, ContractOutput, DeterministicRandom},
+    contract::{ContractOutput, ContractStorage},
     crypto::{
         elgamal::{
             Ciphertext,
@@ -415,7 +415,7 @@ impl Transaction {
                 }
             },
             TransactionType::DeployContract(module) => {
-                let environment = state.get_contract_environment().await
+                let environment = state.get_environment().await
                     .map_err(VerificationError::State)?;
 
                 let validator = ModuleValidator::new(module, environment);
@@ -717,7 +717,7 @@ impl Transaction {
     }
 
     // Apply the transaction to the state
-    async fn apply<'b, 'a: 'b, E, B: BlockchainApplyState<'a, E>>(
+    async fn apply<'a, S: ContractStorage, E, B: BlockchainApplyState<'a, S, E>>(
         &'a self,
         tx_hash: &'a Hash,
         state: &mut B,
@@ -760,28 +760,14 @@ impl Transaction {
                 state.load_contract_module(&payload.contract).await
                     .map_err(VerificationError::State)?;
 
-                let (module, environment) = state.get_contract_module_with_environment(&payload.contract).await
+                let (mut contract_environment, mut chain_state) = state.get_contract_environment_for(payload, tx_hash).await
                     .map_err(VerificationError::State)?;
-
-                let block_hash = state.get_block_hash();
-                let block = state.get_block();
-                let random = DeterministicRandom::new(&payload.contract, block_hash, tx_hash);
-                let mut chain_state = ChainState {
-                    mainnet: false,
-                    debug_mode: false,
-                    contract: &payload.contract,
-                    block_hash,
-                    tx_hash,
-
-                    random,
-                    deposits: &payload.deposits,
-                    transfers: Vec::new(),
-                };
 
                 // Total used gas by the VM
                 let (used_gas, success, exit_code) = {
                     // Create the VM
-                    let mut vm = VM::new(module, environment);
+                    let module = contract_environment.module;
+                    let mut vm = VM::new(module, contract_environment.environment);
                     for constant in payload.parameters.iter() {
                         let decompressed = constant.decompress(module.structs(), module.enums())
                             .context("decompress param")?;
@@ -803,8 +789,10 @@ impl Transaction {
                     // Configure the context
                     // Note that the VM already include the environment in Context
                     context.insert_ref(&self);
-                    context.insert_ref(&block);
+                    // insert the chain state separetly to avoid to give the S type
                     context.insert_mut(&mut chain_state);
+                    // insert the contract environment
+                    context.insert_mut(&mut contract_environment);
 
                     // We need to handle the result of the VM
                     let res = vm.run();
@@ -899,7 +887,7 @@ impl Transaction {
     }
 
     /// Assume the tx is valid, apply it to `state`. May panic if a ciphertext is ill-formed.
-    pub async fn apply_without_verify<'a, E, B: BlockchainApplyState<'a, E>>(
+    pub async fn apply_without_verify<'a, S: ContractStorage, E, B: BlockchainApplyState<'a, S, E>>(
         &'a self,
         tx_hash: &'a Hash,
         state: &mut B,
@@ -944,7 +932,7 @@ impl Transaction {
     /// Verify only that the final sender balance is the expected one for each commitment
     /// Then apply ciphertexts to the state
     /// Checks done are: commitment eq proofs only
-    pub async fn apply_with_partial_verify<'a, E, B: BlockchainApplyState<'a, E>>(
+    pub async fn apply_with_partial_verify<'a, S: ContractStorage, E, B: BlockchainApplyState<'a, S, E>>(
         &'a self,
         tx_hash: &'a Hash,
         state: &mut B

@@ -18,11 +18,17 @@ use xelis_vm::{
     Value,
     ValueCell
 };
-use crate::{crypto::{Address, Hash, PublicKey}, transaction::ContractDeposit};
+use crate::{
+    block::Block,
+    crypto::{Address, Hash, PublicKey},
+    transaction::ContractDeposit
+};
 
 pub use metadata::ContractMetadata;
 pub use random::DeterministicRandom;
 pub use output::*;
+
+pub use opaque::ContractStorage;
 
 pub struct TransferOutput {
     // The destination key for the transfer
@@ -46,6 +52,8 @@ pub struct ChainState<'a> {
     pub contract: &'a Hash,
     // Block hash in which the contract is executed
     pub block_hash: &'a Hash,
+    // The block in which the contract is executed
+    pub block: &'a Block,
     // Tx hash in which the contract is executed
     pub tx_hash: &'a Hash,
     // All deposits made by the caller
@@ -55,7 +63,7 @@ pub struct ChainState<'a> {
 }
 
 // Build the environment for the contract
-pub fn build_environment<S: ContractStorage + 'static>() -> EnvironmentBuilder<'static> {
+pub fn build_environment<S: ContractStorage>() -> EnvironmentBuilder<'static> {
     debug!("Building environment for contract");
     register_opaque_types();
 

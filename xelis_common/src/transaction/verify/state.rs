@@ -1,11 +1,12 @@
 use std::borrow::Cow;
 
 use async_trait::async_trait;
+use better_any::tid;
 use xelis_vm::{Environment, Module};
 use crate::{
     account::Nonce,
     block::{Block, BlockVersion},
-    contract::ContractOutput,
+    contract::{ChainState, ContractOutput, ContractStorage},
     crypto::{
         elgamal::{
             Ciphertext,
@@ -14,6 +15,7 @@ use crate::{
         Hash
     },
     transaction::{
+        InvokeContractPayload,
         MultiSigPayload,
         Reference,
         Transaction
@@ -88,8 +90,8 @@ pub trait BlockchainVerificationState<'a, E> {
         account: &'a CompressedPublicKey
     ) -> Result<Option<&MultiSigPayload>, E>;
 
-    /// Get the contract environment
-    async fn get_contract_environment(&mut self) -> Result<&Environment, E>;
+    /// Get the environment
+    async fn get_environment(&mut self) -> Result<&Environment, E>;
 
     /// Set the contract module
     async fn set_contract_module(
@@ -105,15 +107,27 @@ pub trait BlockchainVerificationState<'a, E> {
         hash: &'a Hash
     ) -> Result<(), E>;
 
-    /// Get the contract module
+    /// Get the contract module with the environment
+    /// This is used to verify that all parameters are correct
     async fn get_contract_module_with_environment(
         &self,
         hash: &'a Hash
     ) -> Result<(&Module, &Environment), E>;
 }
 
+pub struct ContractEnvironment<'a, S: ContractStorage> {
+    // Environment with the embed stdlib
+    pub environment: &'a Environment,
+    // Module to execute
+    pub module: &'a Module,
+    // Storage for the contract
+    pub storage: &'a mut S,
+}
+
+tid! { impl<'a, S: 'static> TidAble<'a> for ContractEnvironment<'a, S> where S: ContractStorage }
+
 #[async_trait]
-pub trait BlockchainApplyState<'a, E>: BlockchainVerificationState<'a, E> {
+pub trait BlockchainApplyState<'a, S: ContractStorage, E>: BlockchainVerificationState<'a, E> {
     /// Add burned XELIS
     async fn add_burned_coins(&mut self, amount: u64) -> Result<(), E>;
 
@@ -135,4 +149,7 @@ pub trait BlockchainApplyState<'a, E>: BlockchainVerificationState<'a, E> {
         tx_hash: &'a Hash,
         output: ContractOutput
     ) -> Result<(), E>;
+
+    /// Get the contract environment
+    async fn get_contract_environment_for<'b>(&'b mut self, payload: &'b InvokeContractPayload, tx_hash: &'b Hash) -> Result<(ContractEnvironment<'b, S>, ChainState<'b>), E>;
 }

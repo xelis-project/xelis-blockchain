@@ -12,20 +12,25 @@ use xelis_vm::{
     OpaqueWrapper,
     Value, ValueCell
 };
-use crate::{contract::ChainState, crypto::Hash};
+use crate::{
+    contract::ChainState,
+    crypto::Hash,
+    transaction::verify::ContractEnvironment,
+};
 
 macro_rules! context {
     ($instance: expr, $context: expr) => {{
         let _: &OpaqueStorage = $instance?.as_opaque_type()?;
 
-        let mut datas = $context.get_many_mut([&TypeId::of::<S>(), &TypeId::of::<ChainState>()]);
+        let mut datas = $context.get_many_mut([&TypeId::of::<ContractEnvironment<S>>(), &TypeId::of::<ChainState>()]);
 
-        let storage = datas[0]
+        let environment: &mut ContractEnvironment<'_, S> = datas[0]
             .take()
             .context("Storage is not initialized")?
-            .downcast_mut_any::<S>()
+            .downcast_mut()
             .context("Storage is not initialized correctly")?;
-    
+
+        let storage: &mut S = environment.storage;
         let state: &ChainState = datas[1]
             .take()
             .context("Chain state is not initialized")?
@@ -39,7 +44,7 @@ macro_rules! context {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct OpaqueStorage;
 
-pub trait ContractStorage {
+pub trait ContractStorage: 'static {
     // load a value from the storage
     fn load(&mut self, contract: &Hash, key: Constant) -> Result<Option<Constant>, anyhow::Error>;
 
@@ -87,7 +92,7 @@ pub fn storage(_: FnInstance, _: FnParams, _: &mut Context) -> FnReturnType {
     Ok(Some(Value::Opaque(OpaqueWrapper::new(OpaqueStorage)).into()))
 }
 
-pub fn storage_load<S: ContractStorage + 'static>(instance: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType {
+pub fn storage_load<S: ContractStorage>(instance: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType {
     let (storage, state) = context!(instance, context);
 
     let key = params.remove(0)
@@ -100,7 +105,7 @@ pub fn storage_load<S: ContractStorage + 'static>(instance: FnInstance, mut para
     Ok(Some(ValueCell::Optional(constant.map(|constant| constant.into())).into()))
 }
 
-pub fn storage_has<S: ContractStorage + 'static>(instance: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType {
+pub fn storage_has<S: ContractStorage>(instance: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType {
     let (storage, state) = context!(instance, context);
 
     let key = params.remove(0)
@@ -113,7 +118,7 @@ pub fn storage_has<S: ContractStorage + 'static>(instance: FnInstance, mut param
     Ok(Some(Value::Boolean(contains).into()))
 }
 
-pub fn storage_store<S: ContractStorage + 'static>(instance: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType {
+pub fn storage_store<S: ContractStorage>(instance: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType {
     let (storage, state) = context!(instance, context);
 
     let key = params.remove(0)
@@ -131,7 +136,7 @@ pub fn storage_store<S: ContractStorage + 'static>(instance: FnInstance, mut par
     Ok(None)
 }
 
-pub fn storage_delete<S: ContractStorage + 'static>(instance: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType {
+pub fn storage_delete<S: ContractStorage>(instance: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType {
     let (storage, state) = context!(instance, context);
 
     let key = params.remove(0)

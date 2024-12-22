@@ -570,7 +570,7 @@ impl<'a> BlockchainVerificationState<'a, ()> for ChainState {
         Ok(self.multisig.get(account))
     }
 
-    async fn get_contract_environment(&mut self) -> Result<&Environment, ()> {
+    async fn get_environment(&mut self) -> Result<&Environment, ()> {
         unimplemented!()
     }
 
