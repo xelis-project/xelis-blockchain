@@ -13,6 +13,7 @@ use xelis_vm::{
     Value, ValueCell
 };
 use crate::{
+    block::TopoHeight,
     contract::ChainState,
     crypto::Hash,
     transaction::verify::ContractEnvironment,
@@ -21,20 +22,19 @@ use crate::{
 macro_rules! context {
     ($instance: expr, $context: expr) => {{
         let _: &OpaqueStorage = $instance?.as_opaque_type()?;
-
         let mut datas = $context.get_many_mut([&TypeId::of::<ContractEnvironment<S>>(), &TypeId::of::<ChainState>()]);
 
         let environment: &mut ContractEnvironment<'_, S> = datas[0]
             .take()
-            .context("Storage is not initialized")?
+            .context("Contract Environment is not initialized")?
             .downcast_mut()
-            .context("Storage is not initialized correctly")?;
+            .context("Contract Environment is not initialized correctly")?;
 
         let storage: &mut S = environment.storage;
-        let state: &ChainState = datas[1]
+        let state: &mut ChainState = datas[1]
             .take()
             .context("Chain state is not initialized")?
-            .downcast_ref()
+            .downcast_mut()
             .context("Chain state is not initialized correctly")?;
 
         (storage, state)
@@ -46,16 +46,10 @@ pub struct OpaqueStorage;
 
 pub trait ContractStorage: 'static {
     // load a value from the storage
-    fn load(&mut self, contract: &Hash, key: Constant) -> Result<Option<Constant>, anyhow::Error>;
+    fn load(&mut self, contract: &Hash, key: Constant, topoheight: TopoHeight) -> Result<Option<Constant>, anyhow::Error>;
 
     // check if a key exists in the storage
-    fn has(&self, contract: &Hash, key: Constant) -> Result<bool, anyhow::Error>;
-
-    // store a value in the storage
-    fn store(&mut self, contract: &Hash, key: Constant, value: Constant) -> Result<(), anyhow::Error>;
-
-    // delete a value from the storage
-    fn delete(&mut self, contract: &Hash, key: Constant) -> Result<(), anyhow::Error>;
+    fn has(&self, contract: &Hash, key: Constant, topoheight: TopoHeight) -> Result<bool, anyhow::Error>;
 }
 
 impl JSONHelper for OpaqueStorage {
@@ -100,9 +94,12 @@ pub fn storage_load<S: ContractStorage>(instance: FnInstance, mut params: FnPara
         .try_into()
         .map_err(|_| anyhow::anyhow!("Invalid key"))?;
 
-    let constant = storage.load(&state.contract, key)?;
+    let value = match state.storage.get(&key) {
+        Some(value) => value.clone(),
+        None => storage.load(&state.contract, key, state.topoheight)?
+    };
 
-    Ok(Some(ValueCell::Optional(constant.map(|constant| constant.into())).into()))
+    Ok(Some(ValueCell::Optional(value.map(|c| c.into())).into()))
 }
 
 pub fn storage_has<S: ContractStorage>(instance: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType {
@@ -113,13 +110,18 @@ pub fn storage_has<S: ContractStorage>(instance: FnInstance, mut params: FnParam
         .try_into()
         .map_err(|_| anyhow::anyhow!("Invalid key"))?;
 
-    let contains = storage.has(state.contract, key)?;
+    let contains = match state.storage.get(&key) {
+        Some(value) => value.is_some(),
+        None => storage.has(state.contract, key, state.topoheight)?
+    };
 
     Ok(Some(Value::Boolean(contains).into()))
 }
 
 pub fn storage_store<S: ContractStorage>(instance: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType {
-    let (storage, state) = context!(instance, context);
+    let _: &OpaqueStorage = instance?.as_opaque_type()?;
+    let state: &mut ChainState = context.get_mut()
+        .context("Chain state is not initialized")?;
 
     let key = params.remove(0)
         .into_owned()
@@ -131,20 +133,22 @@ pub fn storage_store<S: ContractStorage>(instance: FnInstance, mut params: FnPar
         .try_into()
         .map_err(|_| anyhow::anyhow!("Invalid value"))?;
 
-    storage.store(&state.contract, key, value)?;
+    state.storage.insert(key, Some(value));
 
     Ok(None)
 }
 
 pub fn storage_delete<S: ContractStorage>(instance: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType {
-    let (storage, state) = context!(instance, context);
+    let _: &OpaqueStorage = instance?.as_opaque_type()?;
+    let state: &mut ChainState = context.get_mut()
+        .context("Chain state is not initialized")?;
 
     let key = params.remove(0)
         .into_owned()
         .try_into()
         .map_err(|_| anyhow::anyhow!("Invalid key"))?;
 
-    storage.delete(&state.contract, key)?;
+    state.storage.insert(key, None);
 
     Ok(None)
 }
