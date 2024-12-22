@@ -223,7 +223,7 @@ pub fn build_environment<S: ContractStorage>() -> EnvironmentBuilder<'static> {
         env.register_native_function(
             "load",
             Some(storage_type.clone()),
-            vec![("key", Type::U64)],
+            vec![("key", Type::Any)],
             storage_load::<S>,
             50,
             Some(Type::Optional(Box::new(Type::Any)))
@@ -231,7 +231,7 @@ pub fn build_environment<S: ContractStorage>() -> EnvironmentBuilder<'static> {
         env.register_native_function(
             "has",
             Some(storage_type.clone()),
-            vec![("key", Type::U64)],
+            vec![("key", Type::Any)],
             storage_has::<S>,
             25,
             Some(Type::Bool)
@@ -239,7 +239,7 @@ pub fn build_environment<S: ContractStorage>() -> EnvironmentBuilder<'static> {
         env.register_native_function(
             "store",
             Some(storage_type.clone()),
-            vec![("key", Type::U64), ("value", Type::Any)],
+            vec![("key", Type::Any), ("value", Type::Any)],
             storage_store::<S>,
             50,
             None
@@ -247,7 +247,7 @@ pub fn build_environment<S: ContractStorage>() -> EnvironmentBuilder<'static> {
         env.register_native_function(
             "delete",
             Some(storage_type.clone()),
-            vec![("key", Type::U64)],
+            vec![("key", Type::Any)],
             storage_delete::<S>,
             50,
             None
@@ -283,7 +283,7 @@ pub fn build_environment<S: ContractStorage>() -> EnvironmentBuilder<'static> {
 
     env.register_native_function(
         "transfer",
-        Some(tx_type.clone()),
+        None,
         vec![
             ("destination", address_type.clone()),
             ("amount", Type::U64),
