@@ -1,5 +1,5 @@
 use std::any::TypeId;
-use better_any::tid;
+use better_any::{tid, Tid};
 use anyhow::{bail, Context as AnyhowContext};
 use xelis_vm::{
     traits::{JSONHelper, Serializable},
@@ -21,7 +21,7 @@ use crate::{
 macro_rules! context {
     ($instance: expr, $context: expr) => {{
         let _: &OpaqueStorage = $instance?.as_opaque_type()?;
-        let mut datas = $context.get_many_mut([&TypeId::of::<StorageWrapper<S>>(), &TypeId::of::<ChainState>()]);
+        let mut datas = $context.get_many_mut([&StorageWrapper::<S>::id(), &TypeId::of::<ChainState>()]);
 
         let wrapper: &mut StorageWrapper<S> = datas[0]
             .take()
