@@ -15,12 +15,13 @@ use xelis_common::{
         InvokeContractPayload,
         MultiSigPayload,
         Reference
-    }
+    },
+    versioned_type::VersionedState
 };
-use xelis_vm::Environment;
+use xelis_vm::{Constant, Environment};
 use crate::core::{
     error::BlockchainError,
-    storage::{Storage, VersionedContract, VersionedMultiSig}
+    storage::{Storage, VersionedContract, VersionedContractData, VersionedMultiSig}
 };
 
 use super::{ChainState, StorageReference, Echange};
@@ -31,6 +32,7 @@ pub struct ApplicableChainState<'a, S: Storage> {
     block_hash: &'a Hash,
     block: &'a Block,
     contracts_outputs: HashMap<&'a Hash, Vec<ContractOutput>>,
+    contracts_storage_changes: HashMap<&'a Hash, HashMap<Constant, (VersionedState, Option<Constant>)>>,
     burned_supply: u64,
 }
 
@@ -209,6 +211,19 @@ impl<'a, S: Storage> BlockchainApplyState<'a, S, BlockchainError> for Applicable
 
         Ok((contract_environment, state))
     }
+
+    async fn add_storage_change(
+        &mut self,
+        contract: &'a Hash,
+        key: Constant,
+        value: (VersionedState, Option<Constant>)
+    ) -> Result<(), BlockchainError> {
+        self.contracts_storage_changes.entry(contract)
+            .or_insert_with(HashMap::new)
+            .insert(key, value);
+
+        Ok(())
+    }
 }
 
 impl<'a, S: Storage> Deref for ApplicableChainState<'a, S> {
@@ -258,6 +273,7 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
             ),
             burned_supply,
             contracts_outputs: HashMap::new(),
+            contracts_storage_changes: HashMap::new(),
             block_hash,
             block
         }
@@ -406,6 +422,16 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
         // Apply all the contract outputs
         for (key, outputs) in self.contracts_outputs {
             self.inner.storage.set_contract_outputs_for_tx(&key, outputs).await?;
+        }
+
+        // Apply all the contract storage changes
+        for (contract, changes) in self.contracts_storage_changes {
+            for (key, (state, value)) in changes {
+                if state.should_be_stored() {
+                    trace!("Saving contract data {} key {} at topoheight {}", contract, key, self.inner.topoheight);
+                    self.inner.storage.set_contract_data_at_topoheight(&contract, &key, self.inner.topoheight, VersionedContractData::new(value, state.get_topoheight())).await?;
+                }
+            }
         }
 
         trace!("Saving burned supply {} at topoheight {}", self.burned_supply, self.inner.topoheight);

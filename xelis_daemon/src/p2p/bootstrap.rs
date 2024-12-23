@@ -6,7 +6,8 @@ use xelis_common::{
     account::{VersionedBalance, VersionedNonce},
     contract::ContractMetadata,
     crypto::{Hash, PublicKey},
-    immutable::Immutable
+    immutable::Immutable,
+    versioned_type::State,
 };
 
 use crate::{
@@ -14,7 +15,6 @@ use crate::{
     core::{
         error::BlockchainError,
         storage::{
-            State,
             Storage,
             VersionedContract,
             VersionedMultiSig

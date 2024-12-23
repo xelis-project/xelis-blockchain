@@ -27,16 +27,14 @@ use xelis_common::{
         Reference,
         Transaction
     },
-    utils::format_xelis
+    utils::format_xelis,
+    versioned_type::VersionedState,
 };
 use xelis_environment::Environment;
 use xelis_vm::Module;
 use crate::core::{
     error::BlockchainError,
-    storage::{
-        Storage,
-        VersionedState
-    }
+    storage::Storage
 };
 
 pub use apply::*;

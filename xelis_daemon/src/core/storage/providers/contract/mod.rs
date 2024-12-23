@@ -6,11 +6,16 @@ use std::borrow::Cow;
 
 use async_trait::async_trait;
 use indexmap::IndexSet;
-use xelis_common::{block::TopoHeight, crypto::Hash, serializer::Serializer};
+use xelis_common::{
+    block::TopoHeight,
+    crypto::Hash,
+    serializer::Serializer,
+    versioned_type::Versioned
+};
 use xelis_vm::Module;
 use crate::core::{
     error::{BlockchainError, DiskContext},
-    storage::{SledStorage, Versioned, CONTRACTS_COUNT}
+    storage::{SledStorage, CONTRACTS_COUNT}
 };
 use log::trace;
 

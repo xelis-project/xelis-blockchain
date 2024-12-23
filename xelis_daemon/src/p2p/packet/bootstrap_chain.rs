@@ -24,10 +24,11 @@ use xelis_common::{
         Writer
     },
     transaction::MultiSigPayload,
-    varuint::VarUint
+    varuint::VarUint,
+    versioned_type::State
 };
 use super::chain::{BlockId, CommonPoint};
-use crate::{config::CHAIN_SYNC_REQUEST_MAX_BLOCKS, core::storage::State};
+use crate::config::CHAIN_SYNC_REQUEST_MAX_BLOCKS;
 
 // this file implements the protocol for the fast sync (bootstrapped chain)
 // You will have to request through StepRequest::FetchAssets all the registered assets

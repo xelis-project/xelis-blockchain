@@ -6,12 +6,13 @@ use xelis_common::{
     block::TopoHeight,
     crypto::PublicKey,
     serializer::Serializer,
-    transaction::MultiSigPayload
+    transaction::MultiSigPayload,
+    versioned_type::{State, Versioned}
 };
 
 use crate::core::{
     error::{BlockchainError, DiskContext},
-    storage::{SledStorage, State, Versioned}
+    storage::SledStorage
 };
 
 pub type VersionedMultiSig<'a> = Versioned<Option<Cow<'a, MultiSigPayload>>>;
