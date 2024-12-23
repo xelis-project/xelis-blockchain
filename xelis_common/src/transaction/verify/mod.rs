@@ -850,7 +850,7 @@ impl Transaction {
                     // Also track the changes in the storage
                     for (key, (s, value)) in storage {
                         trace!("Storage change: {} -> {:?}", key, value);
-                        state.add_storage_change(tx_hash, key, (s, value)).await
+                        state.add_storage_change(&payload.contract, key, (s, value)).await
                             .map_err(VerificationError::State)?;
                     }
                 }
