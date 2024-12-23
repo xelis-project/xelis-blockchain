@@ -2,11 +2,11 @@ use std::{
     borrow::Cow,
     hash::{Hash as StdHash, Hasher}
 };
-use indexmap::IndexSet;
+use indexmap::{IndexMap, IndexSet};
 use log::debug;
 use xelis_common::{
     account::{AccountSummary, Balance, Nonce},
-    asset::AssetWithData,
+    asset::AssetData,
     block::TopoHeight,
     contract::ContractMetadata,
     crypto::{
@@ -404,7 +404,7 @@ pub enum StepResponse {
     // common point, topoheight of stable hash, stable height, stable hash
     ChainInfo(Option<CommonPoint>, u64, u64, Hash),
     // Set of assets, pagination
-    Assets(IndexSet<AssetWithData>, Option<u64>),
+    Assets(IndexMap<Hash, AssetData<'static>>, Option<u64>),
     // Set of keys, pagination
     Keys(IndexSet<PublicKey>, Option<u64>),
     // Account summary response
@@ -454,7 +454,7 @@ impl Serializer for StepResponse {
                 Self::ChainInfo(common_point, topoheight, stable_height, hash)
             },
             1 => {
-                let assets = IndexSet::read(reader)?;
+                let assets = IndexMap::read(reader)?;
                 let page = Option::read(reader)?;
                 if let Some(page_number) = &page {
                     if *page_number == 0 {

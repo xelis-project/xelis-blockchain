@@ -433,7 +433,11 @@ impl<S: Storage> Blockchain<S> {
 
         // register XELIS asset
         debug!("Registering XELIS asset: {} at topoheight 0", XELIS_ASSET);
-        storage.add_asset(&XELIS_ASSET, AssetData::new(0, COIN_DECIMALS)).await?;
+        storage.add_asset(
+            &XELIS_ASSET,
+            0,
+            AssetData::new(COIN_DECIMALS, Cow::Borrowed("XELIS"), Some(MAXIMUM_SUPPLY), None)
+        ).await?;
 
         let (genesis_block, genesis_hash) = if let Some(genesis_block) = get_hex_genesis_block(&self.network) {
             info!("De-serializing genesis block for network {}...", self.network);
@@ -533,6 +537,7 @@ impl<S: Storage> Blockchain<S> {
 
         if located_sync_topoheight > last_pruned_topoheight {
             // create snapshots of balances to located_sync_topoheight
+            // TODO: delete snapshot, replace by not deleting the latest versino
             storage.create_snapshot_balances_at_topoheight(located_sync_topoheight).await?;
             storage.create_snapshot_nonces_at_topoheight(located_sync_topoheight).await?;
             storage.create_snapshot_registrations_at_topoheight(located_sync_topoheight).await?;
@@ -545,7 +550,7 @@ impl<S: Storage> Blockchain<S> {
             }
 
             // delete balances for all assets
-            storage.delete_versioned_data_below_topoheight(located_sync_topoheight, false).await?;
+            storage.delete_versioned_data_below_topoheight(located_sync_topoheight, true).await?;
 
             // Update the pruned topoheight
             storage.set_pruned_topoheight(located_sync_topoheight).await?;

@@ -301,10 +301,9 @@ impl<S: Storage> P2pServer<S> {
                 StepResponse::Assets(assets, next_page) => {
                     {
                         let mut storage = self.blockchain.get_storage().write().await;
-                        for asset in assets {
-                            let (asset, data) = asset.consume();
+                        for (asset, data) in assets {
                             debug!("Saving asset {} at topoheight {}", asset, stable_topoheight);
-                            storage.add_asset(&asset, data).await?;
+                            storage.add_asset(&asset, stable_topoheight, data).await?;
                         }
                     }
 
@@ -461,7 +460,7 @@ impl<S: Storage> P2pServer<S> {
                     storage.create_snapshot_registrations_at_topoheight(lowest_topoheight).await?;
 
                     // Delete all old data
-                    storage.delete_versioned_data_below_topoheight(lowest_topoheight, false).await?;
+                    storage.delete_versioned_data_below_topoheight(lowest_topoheight, true).await?;
 
                     storage.set_pruned_topoheight(lowest_topoheight).await?;
                     storage.set_top_topoheight(top_topoheight)?;

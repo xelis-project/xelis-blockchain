@@ -3,6 +3,7 @@ mod contract;
 mod multisig;
 mod nonce;
 mod registrations;
+mod asset;
 
 use async_trait::async_trait;
 use log::trace;
@@ -23,6 +24,7 @@ use contract::*;
 use multisig::VersionedMultiSigProvider;
 use nonce::VersionedNonceProvider;
 use registrations::VersionedRegistrationsProvider;
+use asset::VersionedAssetProvider;
 
 // Every versioned key should start with the topoheight in order to be able to delete them easily
 #[async_trait]
@@ -32,7 +34,8 @@ pub trait VersionedProvider:
     + VersionedMultiSigProvider
     + VersionedContractProvider
     + VersionedRegistrationsProvider
-    + VersionedContractDataProvider {
+    + VersionedContractDataProvider
+    + VersionedAssetProvider {
 
     // Delete versioned data at topoheight
     async fn delete_versioned_data_at_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError> {
@@ -42,19 +45,25 @@ pub trait VersionedProvider:
         self.delete_versioned_registrations_at_topoheight(topoheight).await?;
         self.delete_versioned_contracts_at_topoheight(topoheight).await?;
         self.delete_versioned_contract_data_at_topoheight(topoheight).await?;
+
+        if topoheight > 0 {
+            self.delete_versioned_assets_at_topoheight(topoheight).await?;
+        }
+
         Ok(())
     }
 
     // Delete versioned data below topoheight
     // Special case for versioned balances:
     // Because users can link a TX to an old versioned balance, we need to keep track of them until the latest spent version
-    async fn delete_versioned_data_below_topoheight(&mut self, topoheight: TopoHeight, all_balances: bool) -> Result<(), BlockchainError> {
-        self.delete_versioned_balances_below_topoheight(topoheight, all_balances).await?;
+    async fn delete_versioned_data_below_topoheight(&mut self, topoheight: TopoHeight, keep_last: bool) -> Result<(), BlockchainError> {
+        self.delete_versioned_balances_below_topoheight(topoheight, keep_last).await?;
         self.delete_versioned_nonces_below_topoheight(topoheight).await?;
         self.delete_versioned_multisigs_below_topoheight(topoheight).await?;
         self.delete_versioned_registrations_below_topoheight(topoheight).await?;
         self.delete_versioned_contracts_below_topoheight(topoheight).await?;
         self.delete_versioned_contract_data_below_topoheight(topoheight).await?;
+        self.delete_versioned_assets_below_topoheight(topoheight).await?;
         Ok(())
     }
 
@@ -66,6 +75,7 @@ pub trait VersionedProvider:
         self.delete_versioned_registrations_above_topoheight(topoheight).await?;
         self.delete_versioned_contracts_above_topoheight(topoheight).await?;
         self.delete_versioned_contract_data_above_topoheight(topoheight).await?;
+        self.delete_versioned_assets_above_topoheight(topoheight).await?;
         Ok(())
     }
 }

@@ -76,7 +76,11 @@ pub struct SledStorage {
     // Difficulty estimated covariance (P)
     pub(super) difficulty_covariance: Tree,
     // keep tracks of all available assets on network
+    // Key is the asset hash, value is the topoheight
     pub(super) assets: Tree,
+    // Key is prefixed by the topoheight for easier deletion
+    // Value is the asset data
+    pub(super) assets_prefixed: Tree,
     // account nonces to prevent TX replay attack
     pub(super) nonces: Tree,
     // block reward for each block topoheight
@@ -237,6 +241,7 @@ impl SledStorage {
             cumulative_difficulty: sled.open_tree("cumulative_difficulty")?,
             difficulty_covariance: sled.open_tree("difficulty_covariance")?,
             assets: sled.open_tree("assets")?,
+            assets_prefixed: sled.open_tree("assets_prefixed")?,
             nonces: sled.open_tree("nonces")?,
             rewards: sled.open_tree("rewards")?,
             supply: sled.open_tree("supply")?,
@@ -944,14 +949,16 @@ impl Storage for SledStorage {
         // clean all assets
         for el in self.assets.iter() {
             let (key, value) = el.context("error on asset iterator")?;
-            let asset = Hash::from_bytes(&key)?;
-            trace!("verifying asset registered: {}", asset);
-
             let registration_topoheight = TopoHeight::from_bytes(&value)?;
             if registration_topoheight > topoheight {
+                let asset = Hash::from_bytes(&key)?;
                 trace!("Asset {} was registered at topoheight {}, deleting", asset, registration_topoheight);
                 // Delete it from registered assets
                 Self::remove_from_disk_without_reading(self.snapshot.as_mut(), &self.assets, &key)
+                    .context(format!("Error while deleting asset {asset} from registered assets"))?;
+
+                let key = Self::get_asset_key(&asset, registration_topoheight);
+                Self::remove_from_disk_without_reading(self.snapshot.as_mut(), &self.assets_prefixed, &key)
                     .context(format!("Error while deleting asset {asset} from registered assets"))?;
 
                 // drop the tree for this asset
