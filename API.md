@@ -9386,6 +9386,55 @@ It contains, the refunded gas amount, exit code and transfers.
 }
 ```
 
+#### Get Contract Data With Key
+Retrieve the contract data with the requested key.
+
+##### Method `get_contract_data_with_key`
+
+##### Parameters
+
+|    Name    |     Type    | Required |                         Note                         |
+|:----------:|:-----------:|:--------:|:----------------------------------------------------:|
+|  contract  |   Address   | Required |       Contract address to search for the key         |
+|     key    |   Constant  | Required |        Constant value representing the key           |
+
+##### Request
+```json
+{
+    "jsonrpc": "2.0",
+    "method": "get_contract_data_with_key",
+    "id": 1,
+    "params": {
+        "contract": "b756566452b2c7bfea785f1b87b90d7bf075cb45a0dc33fb524e5e25f7e85fb4",
+        "key": {
+            "type": "default",
+            "value": {
+                "type": "string",
+                "value": "my beautiful key"
+            }
+        }
+    }
+}
+```
+
+##### Response
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+        "data": {
+            "type": "default",
+            "value": {
+                "type": "string",
+                "value": "my beautiful value"
+            }
+        },
+        "previous_topoheight": 68
+    }
+}
+```
+
 ## Wallet
 
 ### Events
