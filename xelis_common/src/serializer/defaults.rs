@@ -244,6 +244,20 @@ impl<T: Serializer + Clone> Serializer for Cow<'_, T> {
     }
 }
 
+impl Serializer for Cow<'_, str> {
+    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
+        Ok(Cow::Owned(reader.read_string()?))
+    }
+
+    fn write(&self, writer: &mut Writer) {
+        writer.write_string(self);
+    }
+
+    fn size(&self) -> usize {
+        self.len() + 1
+    }
+}
+
 impl<T: Serializer> Serializer for Option<T> {
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
         if reader.read_bool()? {

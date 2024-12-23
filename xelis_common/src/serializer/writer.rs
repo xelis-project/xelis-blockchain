@@ -44,7 +44,8 @@ impl<'a> Writer<'a> {
         self.bytes.extend(value.to_be_bytes());
     }
 
-    pub fn write_string(&mut self, value: &String) {
+    // max 255 bytes
+    pub fn write_string(&mut self, value: &str) {
         self.bytes.push(value.len() as u8);
         self.bytes.extend(value.as_bytes());
     }
