@@ -197,7 +197,7 @@ impl<'a, S: Storage> BlockchainApplyState<'a, S, BlockchainError> for Applicable
             block_hash: self.block_hash,
             block: self.block,
             deposits: &payload.deposits,
-            random: random,
+            random,
             tx_hash,
             transfers: Vec::new(),
             storage: HashMap::new(),
@@ -429,7 +429,7 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
             for (key, (state, value)) in changes {
                 if state.should_be_stored() {
                     trace!("Saving contract data {} key {} at topoheight {}", contract, key, self.inner.topoheight);
-                    self.inner.storage.set_contract_data_at_topoheight(&contract, &key, self.inner.topoheight, VersionedContractData::new(value, state.get_topoheight())).await?;
+                    self.inner.storage.set_last_contract_data_to(&contract, &key, self.inner.topoheight, VersionedContractData::new(value, state.get_topoheight())).await?;
                 }
             }
         }

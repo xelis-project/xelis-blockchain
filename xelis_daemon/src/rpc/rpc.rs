@@ -362,6 +362,7 @@ pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>
 
     // Contracts
     handler.register_method("get_contract_outputs", async_handler!(get_contract_outputs::<S>));
+    handler.register_method("get_contract_module", async_handler!(get_contract_module::<S>));
     handler.register_method("get_contract_data_with_key", async_handler!(get_contract_data_with_key::<S>));
 
     if allow_mining_methods {
@@ -1555,20 +1556,30 @@ async fn get_contract_outputs<S: Storage>(context: &Context, body: Value) -> Res
     Ok(json!(outputs))
 }
 
+async fn get_contract_module<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
+    let params: GetContractModuleParams = parse_params(body)?;
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    let storage = blockchain.get_storage().read().await;
+    let topoheight = storage.get_last_topoheight_for_contract(&params.contract).await?;
+    let module = storage.get_contract_at_topoheight_for(&params.contract, topoheight).await
+        .context("Error while retrieving contract module")?;
+
+    Ok(json!(module))
+}
+
 async fn get_contract_data_with_key<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: GetContractDataParams = parse_params(body)?;
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let storage = blockchain.get_storage().read().await;
 
-    let hash = SledStorage::get_contract_data_key(&params.key, &params.contract);
     let topoheight = if let Some(topoheight) = params.topoheight {
         topoheight
     } else {
-        storage.get_last_topoheight_for_contract_data(&hash).await
+        storage.get_last_topoheight_for_contract_data(&params.contract, &params.key).await
             .context("Error while retrieving last topoheight for contract data")?
     };
 
-    storage.get_contract_data_at_topoheight_for(&hash, topoheight).await?;
+    let data = storage.get_contract_data_at_topoheight_for(&params.contract, &params.key, topoheight).await?;
 
-    Ok(json!(false))
+    Ok(json!(data))
 }

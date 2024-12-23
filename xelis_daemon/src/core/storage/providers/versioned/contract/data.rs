@@ -1,9 +1,9 @@
 use async_trait::async_trait;
 use log::trace;
-use xelis_common::{block::TopoHeight, crypto::Hash, serializer::Serializer};
+use xelis_common::{block::TopoHeight, serializer::Serializer};
 use crate::core::{
     error::BlockchainError,
-    storage::{ContractDataProvider, SledStorage, VersionedContractData}
+    storage::{SledStorage, VersionedContractData}
 };
 
 #[async_trait]
@@ -25,20 +25,20 @@ impl VersionedContractDataProvider for SledStorage {
             Self::remove_from_disk_without_reading(self.snapshot.as_mut(), &self.versioned_contracts_data, &key)?;
 
             // Deserialize keys part
-            let key = Hash::from_bytes(&key[8..])?;
+            let key_pointer = &key[8..];
 
             // Because of chain reorg, it may have been already deleted
-            if let Ok(last_topoheight) = self.get_last_topoheight_for_contract_data(&key).await {
+            if let Some(last_topoheight) = self.load_optional_from_disk::<TopoHeight>(&self.contracts_data, key_pointer)? {
                 if last_topoheight >= topoheight {
                     // Deserialize value, it is needed to get the previous topoheight
                     let version = VersionedContractData::from_bytes(&value)?;
                     // Now records changes
                     if let Some(previous_topoheight) = version.get_previous_topoheight() {
-                        self.set_last_topoheight_for_contract_data(&key, previous_topoheight).await?;
+                        Self::insert_into_disk(self.snapshot.as_mut(), &self.contracts_data, key_pointer, &previous_topoheight.to_be_bytes())?;
                     } else {
                         // if there is no previous topoheight, it means that this is the first version
                         // so we can delete the balance
-                        self.delete_last_topoheight_for_contract_data(&key).await?;
+                        Self::remove_from_disk_without_reading(self.snapshot.as_mut(), &self.contracts_data, key_pointer)?;
                     }
                 }
             }
