@@ -1,4 +1,5 @@
 use log::debug;
+use serde::{Deserialize, Serialize};
 use crate::{
     block::TopoHeight,
     serializer::{Reader, ReaderError, Serializer, Writer}
@@ -108,6 +109,7 @@ impl VersionedState {
 // We must keep track of the previous data in case of reorgs that could occurs
 // For serializer, previous_topoheight is written before the data
 // So we can go through all the previous versions without reading the actual data
+#[derive(Serialize, Deserialize)]
 pub struct Versioned<T: Serializer> {
     previous_topoheight: Option<TopoHeight>,
     data: T,

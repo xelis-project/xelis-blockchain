@@ -289,6 +289,7 @@ pub fn decompress_type(reader: &mut Reader, structures: &IndexSet<StructType>, e
 
     values.pop().ok_or(ReaderError::InvalidValue)
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -304,6 +305,12 @@ mod tests {
         let result = decompress_constant(&mut reader, &structures, &enums).unwrap();
         assert_eq!(result, value);
         assert_eq!(result.size(), len);
+    }
+
+    #[test]
+    fn test_string() {
+        let string = Constant::Default(Value::String("Hello, World!".to_string()));
+        test_serde_value(string);
     }
 
     #[test]

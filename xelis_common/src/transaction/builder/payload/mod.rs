@@ -43,7 +43,7 @@ mod tests {
     use indexmap::indexmap;
     use serde_json::json;
     use xelis_vm::Value;
-    use crate::config::XELIS_ASSET;
+    use crate::{config::XELIS_ASSET, serializer::Serializer};
 
     use super::*;
 
@@ -64,5 +64,17 @@ mod tests {
 
         let data: InvokeContractBuilder = serde_json::from_value(json!(builder)).unwrap();
         assert_eq!(builder.parameters, data.parameters);
+    }
+
+    #[test]
+    fn test_serde_constant_str() {
+        let str_constant = Constant::Default(Value::String("Hello, World!".to_string()));
+
+        // JSON
+        let str_data = serde_json::to_string_pretty(&str_constant).unwrap();
+        assert_eq!(str_constant, serde_json::from_str::<Constant>(&str_data).unwrap());
+
+        let bytes = str_constant.to_bytes();
+        assert_eq!(str_constant, Constant::from_bytes(&bytes).unwrap());
     }
 }

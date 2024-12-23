@@ -770,10 +770,13 @@ impl Transaction {
                     // Create the VM
                     let module = contract_environment.module;
                     let mut vm = VM::new(module, contract_environment.environment);
-                    for constant in payload.parameters.iter() {
+
+                    // We need to push it in reverse order because the VM will pop them in reverse order
+                    for constant in payload.parameters.iter().rev() {
                         let decompressed = constant.decompress(module.structs(), module.enums())
                             .context("decompress param")?;
 
+                        trace!("Pushing constant: {}", decompressed);
                         vm.push_stack(decompressed)
                             .context("push param")?;
                     }
@@ -845,8 +848,9 @@ impl Transaction {
                     }
 
                     // Also track the changes in the storage
-                    for (key, value) in storage {
-                        state.add_storage_change(tx_hash, key, value).await
+                    for (key, (s, value)) in storage {
+                        trace!("Storage change: {} -> {:?}", key, value);
+                        state.add_storage_change(tx_hash, key, (s, value)).await
                             .map_err(VerificationError::State)?;
                     }
                 }

@@ -289,8 +289,8 @@ impl Serializer for Constant {
     }
 
     // No deserialization can occurs here as we're missing context
-    fn read(_: &mut Reader) -> Result<Constant, ReaderError> {
-        Err(ReaderError::InvalidValue)
+    fn read(reader: &mut Reader) -> Result<Constant, ReaderError> {
+        decompress_constant(reader, &IndexSet::new(), &IndexSet::new())
     }
 
     fn size(&self) -> usize {

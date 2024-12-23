@@ -648,6 +648,11 @@ pub struct GetContractOutputsParams<'a> {
 }
 
 #[derive(Serialize, Deserialize)]
+pub struct GetContractModuleParams<'a> {
+    pub contract: Cow<'a, Hash>
+}
+
+#[derive(Serialize, Deserialize)]
 pub struct GetContractDataParams<'a> {
     pub contract: Cow<'a, Hash>,
     pub key: Cow<'a, Constant>,
