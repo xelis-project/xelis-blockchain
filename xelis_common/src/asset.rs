@@ -13,15 +13,18 @@ pub struct AssetData<'a> {
     decimals: u8,
     // The name of the asset
     name: Cow<'a, str>,
+    // The total supply of the asset
+    max_supply: Option<u64>,
     // The contract that created this asset
     contract: Option<Cow<'a, Hash>>,
 }
 
 impl<'a> AssetData<'a> {
-    pub fn new(decimals: u8, name: Cow<'a, str>, contract: Option<Cow<'a, Hash>>) -> Self {
+    pub fn new(decimals: u8, name: Cow<'a, str>, max_supply: Option<u64>, contract: Option<Cow<'a, Hash>>) -> Self {
         Self {
             decimals,
             name,
+            max_supply,
             contract
         }
     }
@@ -29,25 +32,39 @@ impl<'a> AssetData<'a> {
     pub fn get_decimals(&self) -> u8 {
         self.decimals
     }
+
+    pub fn get_name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn get_max_supply(&self) -> Option<u64> {
+        self.max_supply
+    }
+
+    pub fn get_contract(&self) -> Option<&Hash> {
+        self.contract.as_deref()
+    }
 }
 
 impl<'a> Serializer for AssetData<'a> {
     fn write(&self, writer: &mut Writer) {
         self.decimals.write(writer);
         self.name.write(writer);
+        self.max_supply.write(writer);
         self.contract.write(writer);
     }
 
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
         let decimals = reader.read()?;
         let name = reader.read()?;
+        let max_supply = reader.read()?;
         let contract = reader.read()?;
 
-        Ok(Self::new(decimals, name, contract))
+        Ok(Self::new(decimals, name, max_supply, contract))
     }
 
     fn size(&self) -> usize {
-        self.decimals.size() + self.name.size() + self.contract.size()
+        self.decimals.size() + self.name.size() + self.max_supply.size() + self.contract.size()
     }
 }
 
