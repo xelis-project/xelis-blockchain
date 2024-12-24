@@ -181,6 +181,19 @@ impl<'a> Reader<'a> {
     }
 }
 
+// NoTransform is a serializer that does not transform the data
+// It keeps the data as it is
+pub struct NoTransform(pub Vec<u8>);
+
+impl Serializer for NoTransform {
+    fn write(&self, writer: &mut Writer) {
+        writer.write_bytes(&self.0);
+    }
+
+    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
+        Ok(NoTransform(reader.read_bytes(reader.size())?))
+    }
+}
 
 // Skip N bytes before reading the next value
 pub struct Skip<const N: usize, T>(pub T);
