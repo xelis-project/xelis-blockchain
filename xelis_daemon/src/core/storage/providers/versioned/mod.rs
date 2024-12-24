@@ -10,7 +10,8 @@ use log::trace;
 use sled::Tree;
 use xelis_common::{
     block::TopoHeight,
-    serializer::Serializer
+    serializer::{NoTransform, Serializer},
+    versioned_type::Versioned
 };
 use crate::core::{
     error::{BlockchainError, DiskContext},
@@ -111,14 +112,22 @@ impl SledStorage {
                 // We fetch the last version to take its previous topoheight
                 // And we loop on it to delete them all until the end of the chained data
                 let mut prev_version = Self::load_from_disk_internal::<Option<u64>>(snapshot.as_ref(), tree_versioned, &Self::get_versioned_key(&key, topo), context)?;
+                let mut patched = false;
                 while let Some(prev_topo) = prev_version {
                     let key = Self::get_versioned_key(&key, prev_topo);
 
                     // Delete this version from DB if its below the threshold
-                    if prev_topo < topoheight {
+                    if patched {
                         prev_version = Self::remove_from_disk(snapshot.as_mut(), &tree_versioned, &key)?;
                     } else {
                         prev_version = Self::load_from_disk_internal(snapshot.as_ref(), tree_versioned, &key, context)?;
+                        if prev_version.filter(|v| *v < topoheight).is_some() {
+                            trace!("Patching versioned data at topoheight {}", topoheight);
+                            patched = true;
+                            let mut data: Versioned<NoTransform> = Self::load_from_disk_internal(snapshot.as_ref(), tree_versioned, &key, context)?;
+                            data.set_previous_topoheight(None);
+                            tree_versioned.insert(key, data.to_bytes())?;
+                        }
                     }
                 }
             }
@@ -135,10 +144,11 @@ impl SledStorage {
     }
 
     // Versioned key is a key that starts with the topoheight
-    pub fn get_versioned_key<T: AsRef<[u8]>>(data: T, topoheight: TopoHeight) -> [u8; 40] {
-        let mut key = [0; 40];
-        key[0..8].copy_from_slice(&topoheight.to_be_bytes());
-        key[8..].copy_from_slice(data.as_ref());
-        key
+    pub fn get_versioned_key<T: AsRef<[u8]>>(data: T, topoheight: TopoHeight) -> Vec<u8> {
+        let bytes = data.as_ref();
+        let mut buf = Vec::with_capacity(8 + bytes.len());
+        buf.extend(topoheight.to_be_bytes());
+        buf.extend(bytes);
+        buf
     }
 }

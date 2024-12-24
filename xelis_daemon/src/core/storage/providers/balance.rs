@@ -236,24 +236,22 @@ impl BalanceProvider for SledStorage {
 
     async fn get_output_balance_at_maximum_topoheight(&self, key: &PublicKey, asset: &Hash, topoheight: TopoHeight) -> Result<Option<(TopoHeight, VersionedBalance)>, BlockchainError> {
         trace!("get output balance {} for {} at maximum topoheight {}", asset, key.as_address(self.is_mainnet()), topoheight);
-        if let Some((topo, version)) = self.get_balance_at_maximum_topoheight(key, asset, topoheight).await? {
-            if version.contains_output() {
+        if !self.has_balance_for(key, asset).await? {
+            trace!("No balance {} found for {} at maximum topoheight {}", asset, key.as_address(self.is_mainnet()), topoheight);
+            return Ok(None)
+        }
+
+        let topo = self.get_last_topoheight_for_balance(key, asset).await?;
+        let mut next = Some(topo);
+        while let Some(topo) = next {
+            // We read the next topoheight (previous topo of the versioned balance) and its current balance type
+            let (prev_topo, balance_type): (Option<u64>, BalanceType) = self.load_from_disk(&self.versioned_balances, &self.get_versioned_balance_key(key, asset, topo), DiskContext::BalanceAtTopoHeight)?;
+            if topo <= topoheight && balance_type.contains_output() {
+                let version = self.get_balance_at_exact_topoheight(key, asset, topo).await?;
                 return Ok(Some((topo, version)))
             }
 
-            // TODO: maybe we can optimize this by storing the last output balance topoheight as pointer
-            let topo = self.get_last_topoheight_for_balance(key, asset).await?;
-            let mut next = Some(topo);
-            while let Some(topo) = next {
-                // We read the next topoheight (previous topo of the versioned balance) and its current balance type
-                let (prev_topo, balance_type): (Option<u64>, BalanceType) = self.load_from_disk(&self.versioned_balances, &self.get_versioned_balance_key(key, asset, topo), DiskContext::BalanceAtTopoHeight)?;
-                if topo <= topoheight && balance_type.contains_output() {
-                    let version = self.get_balance_at_exact_topoheight(key, asset, topo).await?;
-                    return Ok(Some((topo, version)))
-                }
-
-                next = prev_topo;
-            }
+            next = prev_topo;
         }
 
         Ok(None)

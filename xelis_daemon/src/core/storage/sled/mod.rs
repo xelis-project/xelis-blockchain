@@ -358,11 +358,7 @@ impl SledStorage {
         }
 
         match tree.get(key)? {
-            Some(bytes) => {
-                let mut reader = Reader::new(&bytes);
-                let value = T::read(&mut reader)?;
-                Ok(Some(value))
-            },
+            Some(bytes) => Ok(Some(T::from_bytes(&bytes)?)),
             None => Ok(None)
         }
     }
