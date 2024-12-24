@@ -60,20 +60,20 @@ impl ContractDataProvider for SledStorage {
 
     async fn set_last_topoheight_for_contract_data(&mut self, contract: &Hash, key: &Constant, topoheight: TopoHeight) -> Result<(), BlockchainError> {
         trace!("set last topoheight for contract data to topoheight {}", topoheight);
-        let hash = Self::get_contract_data_key(key, contract);
+        let hash = self.get_contract_data_key(key, contract);
         Self::insert_into_disk(self.snapshot.as_mut(), &self.contracts_data, hash.as_bytes(), &topoheight.to_be_bytes())?;
         Ok(())
     }
 
     async fn get_last_topoheight_for_contract_data(&self, contract: &Hash, key: &Constant) -> Result<TopoHeight, BlockchainError> {
         trace!("get last topoheight for contract data");
-        let hash = Self::get_contract_data_key(key, contract);
+        let hash = self.get_contract_data_key(key, contract);
         self.load_from_disk(&self.contracts_data, hash.as_bytes(), DiskContext::ContractDataTopoHeight)
     }
 
     async fn get_contract_data_at_topoheight_for<'a>(&self, contract: &Hash, key: &Constant, topoheight: TopoHeight) -> Result<VersionedContractData, BlockchainError> {
         trace!("get contract data at topoheight {}", topoheight);
-        self.load_from_disk(&self.versioned_contracts_data, &Self::get_versioned_contract_data_key(contract, key, topoheight), DiskContext::ContractData)
+        self.load_from_disk(&self.versioned_contracts_data, &self.get_versioned_contract_data_key(contract, key, topoheight), DiskContext::ContractData)
     }
 
     async fn get_contract_data_at_maximum_topoheight_for<'a>(&self, contract: &Hash, key: &Constant, maximum_topoheight: TopoHeight) -> Result<Option<(TopoHeight, VersionedContractData)>, BlockchainError> {
@@ -104,7 +104,7 @@ impl ContractDataProvider for SledStorage {
 
             previous_topo = self.load_from_disk(
                 &self.versioned_contracts,
-                &Self::get_versioned_contract_data_key(&contract, key, topoheight),
+                &self.get_versioned_contract_data_key(&contract, key, topoheight),
                 DiskContext::ContractDataTopoHeight
             )?;
         }
@@ -114,7 +114,8 @@ impl ContractDataProvider for SledStorage {
 
     async fn set_contract_data_at_topoheight<'a>(&mut self, contract: &Hash, key: &Constant, topoheight: TopoHeight, data: VersionedContractData) -> Result<(), BlockchainError> {
         trace!("set contract data at topoheight {}", topoheight);
-        Self::insert_into_disk(self.snapshot.as_mut(), &self.versioned_contracts_data, Self::get_versioned_contract_data_key(contract, key, topoheight), data.to_bytes())?;
+        let key = self.get_versioned_contract_data_key(contract, key, topoheight);
+        Self::insert_into_disk(self.snapshot.as_mut(), &self.versioned_contracts_data, &key, data.to_bytes())?;
         Ok(())
     }
 
@@ -125,27 +126,34 @@ impl ContractDataProvider for SledStorage {
 
     async fn has_contract_data_pointer(&self, contract: &Hash, key: &Constant) -> Result<bool, BlockchainError> {
         trace!("has contract data pointer");
-        let hash = Self::get_contract_data_key(key, contract);
+        let hash = self.get_contract_data_key(key, contract);
         self.contains_data(&self.contracts_data, hash.as_bytes())
     }
 
     async fn delete_last_topoheight_for_contract_data(&mut self, contract: &Hash, key: &Constant) -> Result<(), BlockchainError> {
         trace!("delete last topoheight for contract data");
-        let hash = Self::get_contract_data_key(key, contract);
-        Self::remove_from_disk(self.snapshot.as_mut(), &self.contracts_data, hash.as_bytes())?;
+        let hash = self.get_contract_data_key(key, contract);
+        Self::remove_from_disk_without_reading(self.snapshot.as_mut(), &self.contracts_data, hash.as_bytes())?;
         Ok(())
     }
 }
 
 impl SledStorage {
-    pub fn get_versioned_contract_data_key(contract: &Hash, key: &Constant, topoheight: TopoHeight) -> [u8; 40] {
+    pub fn get_versioned_contract_data_key(&self, contract: &Hash, key: &Constant, topoheight: TopoHeight) -> [u8; 40] {
         let mut buffer = [0u8; 40];
         buffer[..8].copy_from_slice(&topoheight.to_be_bytes());
-        buffer[8..].copy_from_slice(Self::get_contract_data_key(key, contract).as_bytes());
+        buffer[8..].copy_from_slice(self.get_contract_data_key(key, contract).as_bytes());
         buffer
     }
 
-    pub fn get_contract_data_key(constant: &Constant, contract: &Hash) -> Hash {
+    pub fn get_versioned_contract_data_key_from_hash(&self, hash: &Hash, topoheight: TopoHeight) -> [u8; 40] {
+        let mut buffer = [0u8; 40];
+        buffer[..8].copy_from_slice(&topoheight.to_be_bytes());
+        buffer[8..].copy_from_slice(hash.as_bytes());
+        buffer
+    }
+
+    pub fn get_contract_data_key(&self, constant: &Constant, contract: &Hash) -> Hash {
         hash(&[constant.to_bytes(), contract.to_bytes()].concat())
     }
 }

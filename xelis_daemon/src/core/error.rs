@@ -22,12 +22,14 @@ use xelis_common::{
 };
 use human_bytes::human_bytes;
 
-#[derive(Error, Debug)]
+#[derive(Error, Debug, Clone, Copy)]
 pub enum DiskContext {
     #[error("data len")]
     DataLen,
     #[error("multisig")]
     Multisig,
+    #[error("get multisig at topoheight")]
+    MultisigAtTopoHeight,
     #[error("get top block")]
     GetTopBlock,
     #[error("get top metadata")]
@@ -106,10 +108,14 @@ pub enum DiskContext {
     SearchBlockPositionInOrder,
     #[error("get contract topoheight")]
     ContractTopoHeight,
+    #[error("get contract at topoheight")]
+    ContractAtTopoHeight,
     #[error("contracts count")]
     ContractsCount,
     #[error("get contract data topoheight")]
     ContractDataTopoHeight,
+    #[error("get contract data at topoheight")]
+    ContractDataAtTopoHeight,
     #[error("get contract data")]
     ContractData,
     #[error("get contract output")]

@@ -16,9 +16,6 @@ pub trait VersionedAssetProvider {
 
     // delete versioned assets above topoheight
     async fn delete_versioned_assets_above_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError>;
-
-    // delete versioned assets below topoheight
-    async fn delete_versioned_assets_below_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError>;
 }
 
 #[async_trait]
@@ -46,24 +43,6 @@ impl VersionedAssetProvider for SledStorage {
             if topo > topoheight {
                 Self::remove_from_disk_without_reading(self.snapshot.as_mut(), &self.assets, &key[8..])?;
                 Self::remove_from_disk_without_reading(self.snapshot.as_mut(), &self.assets_prefixed, &key)?;
-            }
-        }
-
-        Ok(())
-    }
-
-    async fn delete_versioned_assets_below_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError> {
-        trace!("delete versioned assets below topoheight {}", topoheight);
-        let mut buf = [0u8; 40];
-        for el in self.assets.iter() {
-            let (key, value) = el?;
-            let topo = u64::from_bytes(&value[0..8])?;
-            if topo < topoheight {
-                buf[0..8].copy_from_slice(&value);
-                buf[8..40].copy_from_slice(&key);
-
-                Self::remove_from_disk_without_reading(self.snapshot.as_mut(), &self.assets_prefixed, &buf)?;
-                Self::remove_from_disk_without_reading(self.snapshot.as_mut(), &self.assets, &key)?;
             }
         }
 

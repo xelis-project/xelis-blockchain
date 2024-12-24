@@ -347,10 +347,9 @@ impl SledStorage {
         }
     }
 
-    // Load an optional value from the DB
-    pub(super) fn load_optional_from_disk<T: Serializer>(&self, tree: &Tree, key: &[u8]) -> Result<Option<T>, BlockchainError> {
-        trace!("load optional from disk");
-        if let Some(snapshot) = self.snapshot.as_ref() {
+    pub fn load_optional_from_disk_internal<T: Serializer>(snapshot: Option<&Snapshot>, tree: &Tree, key: &[u8]) -> Result<Option<T>, BlockchainError> {
+        trace!("load optional from disk internal");
+        if let Some(snapshot) = snapshot {
             trace!("load from snapshot");
             if snapshot.contains_key(tree, key) {
                 trace!("load from snapshot key {:?} from db", key);
@@ -360,13 +359,24 @@ impl SledStorage {
 
         match tree.get(key)? {
             Some(bytes) => {
-                let bytes = bytes.to_vec();
                 let mut reader = Reader::new(&bytes);
                 let value = T::read(&mut reader)?;
                 Ok(Some(value))
             },
             None => Ok(None)
         }
+    }
+
+    pub fn load_from_disk_internal<T: Serializer>(snapshot: Option<&Snapshot>, tree: &Tree, key: &[u8], context: DiskContext) -> Result<T, BlockchainError> {
+        trace!("load from disk internal");
+        Self::load_optional_from_disk_internal(snapshot, tree, key)?
+            .ok_or(BlockchainError::NotFoundOnDisk(context))
+    }
+
+    // Load an optional value from the DB
+    pub(super) fn load_optional_from_disk<T: Serializer>(&self, tree: &Tree, key: &[u8]) -> Result<Option<T>, BlockchainError> {
+        trace!("load optional from disk");
+        Self::load_optional_from_disk_internal(self.snapshot.as_ref(), tree, key)
     }
 
     // Load a value from the DB
@@ -377,30 +387,38 @@ impl SledStorage {
     }
 
     // Delete a key from the DB
-    pub(super) fn remove_from_disk(snapshot: Option<&mut Snapshot>, tree: &Tree, key: &[u8]) -> Result<Option<IVec>, BlockchainError> {
-        if let Some(snapshot) = snapshot {
-            if snapshot.contains_key(tree, key) {
-                let (value, load) = snapshot.remove(tree, key);
-                return Ok(if load {
-                    info!("Rollback: loading key {:?} from db", key);
-                    tree.get(key)?
-                } else {
-                    value
-                })
+    pub(super) fn remove_from_disk<T: Serializer>(snapshot: Option<&mut Snapshot>, tree: &Tree, key: &[u8]) -> Result<Option<T>, BlockchainError> {
+        let data = if let Some(snapshot) = snapshot {
+            let (value, load) = snapshot.remove(tree, key);
+            if load {
+                tree.get(key)?
+            } else {
+                value
             }
-        }
+        } else {
+            tree.remove(key)?
+        };
 
-        let data = tree.remove(key)?;
-        Ok(data)
+        match data {
+            Some(bytes) => {
+                let mut reader = Reader::new(&bytes);
+                let value = T::read(&mut reader)?;
+                Ok(Some(value))
+            },
+            None => Ok(None)
+        }
     }
 
     // Delete a key from the DB without reading it
     pub(super) fn remove_from_disk_without_reading(snapshot: Option<&mut Snapshot>, tree: &Tree, key: &[u8]) -> Result<bool, BlockchainError> {
         if let Some(snapshot) = snapshot {
-            if snapshot.contains_key(tree, key) {
-                let (v, _ ) = snapshot.remove(tree, key);
-                return Ok(v.is_some());
-            }
+                let (v, load) = snapshot.remove(tree, key);
+                let res = if load {
+                    tree.contains_key(key)?
+                } else {
+                    v.is_some()
+                };
+                return Ok(res);
         }
 
         let v = tree.remove(key)?;
@@ -500,8 +518,8 @@ impl SledStorage {
     }
 
     pub(super) async fn delete_cacheable_data<K: Eq + StdHash + Serializer + Clone, V: Serializer>(snapshot: Option<&mut Snapshot>, tree: &Tree, cache: &Option<Mutex<LruCache<K, V>>>, key: &K) -> Result<V, BlockchainError> {
-        let bytes = match Self::remove_from_disk(snapshot, tree, &key.to_bytes())? {
-            Some(data) => data.to_vec(),
+        let value = match Self::remove_from_disk::<V>(snapshot, tree, &key.to_bytes())? {
+            Some(data) => data,
             None => return Err(BlockchainError::NotFoundOnDisk(DiskContext::DeleteData))
         };
 
@@ -512,15 +530,13 @@ impl SledStorage {
             }
         }
 
-        let mut reader = Reader::new(&bytes);
-        let value = V::read(&mut reader)?;
         Ok(value)
     }
 
     // Delete a cacheable data from disk and cache behind a Arc
     pub(super) async fn delete_arc_cacheable_data<K: Eq + StdHash + Serializer + Clone, V: Serializer>(snapshot: Option<&mut Snapshot>, tree: &Tree, cache: &Option<Mutex<LruCache<K, Arc<V>>>>, key: &K) -> Result<Arc<V>, BlockchainError> {
-        let bytes = match Self::remove_from_disk(snapshot, tree, &key.to_bytes())? {
-            Some(data) => data.to_vec(),
+        let value = match Self::remove_from_disk::<V>(snapshot, tree, &key.to_bytes())? {
+            Some(data) => data,
             None => return Err(BlockchainError::NotFoundOnDisk(DiskContext::DeleteData))
         };
 
@@ -531,8 +547,6 @@ impl SledStorage {
             }
         }
 
-        let mut reader = Reader::new(&bytes);
-        let value = V::read(&mut reader)?;
         Ok(Arc::new(value))
     }
 
@@ -701,148 +715,6 @@ impl Storage for SledStorage {
         }
 
         Ok((hash, block, txs))
-    }
-
-    // The first versioned balance that is under the topoheight is bumped to topoheight
-    async fn create_snapshot_balances_at_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError> {
-        // asset tree where PublicKey are stored with the highest balance topoheight in it
-        for el in self.balances.iter() {
-            let (key_bytes, value) = el?;
-            let key = PublicKey::from_bytes(&key_bytes[0..32])?;
-            let asset = Hash::from_bytes(&key_bytes[32..64])?;
-            let highest_balance_topoheight = u64::from_bytes(&value)?;
-
-            // retrieve the highest versioned balance
-            let mut versioned_balance = self.get_balance_at_exact_topoheight(&key, &asset, highest_balance_topoheight).await?;
-
-            // if the highest topoheight for this account is less than the snapshot topoheight
-            // update it to the topoheight
-            // otherwise, delete the previous topoheight in VersionedBalance which is under topoheight
-            if highest_balance_topoheight <= topoheight {
-                // save the new highest topoheight
-                Self::insert_into_disk(self.snapshot.as_mut(), &self.balances, &key_bytes, &topoheight.to_be_bytes())?;
-
-                // remove the previous topoheight
-                versioned_balance.set_previous_topoheight(None);
-
-                // save it
-                let key = self.get_versioned_balance_key(&key, &asset, topoheight);
-                Self::insert_into_disk(self.snapshot.as_mut(), &self.versioned_balances, &key, versioned_balance.to_bytes())?;
-            } else {
-                // find the first VersionedBalance which is under topoheight
-                let mut current_version_topoheight = highest_balance_topoheight;
-                while let Some(previous_topoheight) = versioned_balance.get_previous_topoheight() {
-                    if previous_topoheight <= topoheight {
-                        // update the current versioned balance that refer to the pruned versioned balance
-                        {
-                            versioned_balance.set_previous_topoheight(Some(topoheight));
-                            let key = self.get_versioned_balance_key(&key, &asset, current_version_topoheight);
-                            Self::insert_into_disk(self.snapshot.as_mut(), &self.versioned_balances, &key, versioned_balance.to_bytes())?;
-                        }
-                        
-                        // Now update the previous version which is under topoheight
-                        {
-                            let mut previous_version = self.get_balance_at_exact_topoheight(&key, &asset, previous_topoheight).await?;
-                            previous_version.set_previous_topoheight(None);
-                            let key = self.get_versioned_balance_key(&key, &asset, topoheight);
-                            Self::insert_into_disk(self.snapshot.as_mut(), &self.versioned_balances, &key, previous_version.to_bytes())?;
-                        }
-                        break;
-                    }
-
-                    // keep searching
-                    versioned_balance = self.get_balance_at_exact_topoheight(&key, &asset, previous_topoheight).await?;
-                    current_version_topoheight = previous_topoheight;
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    // The first versioned balance that is under the topoheight is bumped to topoheight
-    async fn create_snapshot_nonces_at_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError> {
-        // tree where VersionedNonce are stored
-        // tree where PublicKey are stored with the highest noce topoheight in it
-        for el in self.nonces.iter() {
-            let (key_bytes, value) = el?;
-            let key = PublicKey::from_bytes(&key_bytes)?;
-            let highest_topoheight = TopoHeight::from_bytes(&value)?;
-
-            // retrieve the highest versioned nonce
-            let mut versioned_nonce = self.get_nonce_at_exact_topoheight(&key, highest_topoheight).await?;
-
-            // if the highest topoheight for this account is less than the snapshot topoheight
-            // update it to the topoheight
-            // otherwise, delete the previous topoheight in VersionedNonce which is under topoheight
-            if highest_topoheight <= topoheight {
-                // save the new highest topoheight
-                Self::insert_into_disk(self.snapshot.as_mut(), &self.nonces, &key_bytes, &topoheight.to_be_bytes())?;
-
-                // remove the previous topoheight
-                versioned_nonce.set_previous_topoheight(None);
-
-                // save it
-                let key = self.get_versioned_nonce_key(&key, topoheight);
-                Self::insert_into_disk(self.snapshot.as_mut(), &self.versioned_nonces, &key, versioned_nonce.to_bytes())?;
-            } else {
-                // find the first VersionedBalance which is under topoheight
-                let mut current_version_topoheight = highest_topoheight;
-                while let Some(previous_topoheight) = versioned_nonce.get_previous_topoheight() {
-                    if previous_topoheight <= topoheight {
-                        // update the current versioned data that refer to the pruned versioned data
-                        {
-                            versioned_nonce.set_previous_topoheight(Some(topoheight));
-                            let key = self.get_versioned_nonce_key(&key, current_version_topoheight);
-                            Self::insert_into_disk(self.snapshot.as_mut(), &self.versioned_nonces, &key, versioned_nonce.to_bytes())?;
-                        }
-                        
-                        // Now update the previous version which is under topoheight
-                        {
-                            let mut previous_version = self.get_nonce_at_exact_topoheight(&key, previous_topoheight).await?;
-                            previous_version.set_previous_topoheight(None);
-                            let key = self.get_versioned_nonce_key(&key, topoheight);
-                            Self::insert_into_disk(self.snapshot.as_mut(), &self.versioned_nonces, &key, previous_version.to_bytes())?;
-                        }
-                        break;
-                    }
-
-                    // keep searching
-                    versioned_nonce = self.get_nonce_at_exact_topoheight(&key, previous_topoheight).await?;
-                    current_version_topoheight = previous_topoheight;
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    async fn create_snapshot_registrations_at_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError> {
-        trace!("create snapshot registrations at topoheight {}", topoheight);
-        // tree where PublicKey are stored with the registration topoheight in it
-        let mut buf = [0u8; 40];
-        for el in self.registrations.iter() {
-            let (key, value) = el?;
-            let registration_topo = u64::from_bytes(&value)?;
-
-            // if the registration topoheight for this account is less than the snapshot topoheight
-            // update it to the topoheight
-            if registration_topo <= topoheight {
-                // Delete the prefixed registration
-                buf[0..8].copy_from_slice(&value);
-                buf[8..40].copy_from_slice(&key);
-                Self::remove_from_disk_without_reading(self.snapshot.as_mut(), &self.registrations_prefixed, &buf)?;
-
-                // save the new registration topoheight
-                Self::insert_into_disk(self.snapshot.as_mut(), &self.registrations, &key, &topoheight.to_be_bytes())?;
-
-                // Overwrite with the new topoheight
-                buf[0..8].copy_from_slice(&topoheight.to_be_bytes());
-                Self::insert_into_disk(self.snapshot.as_mut(), &self.registrations_prefixed, &buf, &[])?;
-            }
-        }
-
-        Ok(())
     }
 
     async fn pop_blocks(&mut self, mut height: u64, mut topoheight: TopoHeight, count: u64, stable_topo_height: TopoHeight) -> Result<(u64, TopoHeight, Vec<(Hash, Arc<Transaction>)>), BlockchainError> {

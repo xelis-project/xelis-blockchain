@@ -30,7 +30,7 @@ impl ContractOutputsProvider for SledStorage {
     }
 
     async fn delete_contract_outputs_for_tx(&mut self, tx_hash: &Hash) -> Result<(), BlockchainError> {
-        Self::remove_from_disk(self.snapshot.as_mut(), &self.contracts_outputs, tx_hash.as_bytes())?;
+        Self::remove_from_disk_without_reading(self.snapshot.as_mut(), &self.contracts_outputs, tx_hash.as_bytes())?;
         Ok(())
     }
 }

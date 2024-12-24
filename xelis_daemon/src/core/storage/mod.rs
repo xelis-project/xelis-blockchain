@@ -37,17 +37,6 @@ pub trait Storage:
     // delete block at topoheight, and all pointers (hash_at_topo, topo_by_hash, reward, supply, diff, cumulative diff...)
     async fn delete_block_at_topoheight(&mut self, topoheight: TopoHeight) -> Result<(Hash, Arc<BlockHeader>, Vec<(Hash, Arc<Transaction>)>), BlockchainError>;
 
-    // delete all versions of balances under the specified topoheight
-    // for those who don't have more recents, set it to the topoheight
-    // for those above it, cut the chain by deleting the previous topoheight when it's going under
-    async fn create_snapshot_balances_at_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError>;
-
-    // same as above but for nonces
-    async fn create_snapshot_nonces_at_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError>;
-
-    // same as above but for registrations
-    async fn create_snapshot_registrations_at_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError>;
-
     // Count is the number of blocks (topoheight) to rewind
     async fn pop_blocks(&mut self, mut height: u64, mut topoheight: TopoHeight, count: u64, stable_height: u64) -> Result<(u64, TopoHeight, Vec<(Hash, Arc<Transaction>)>), BlockchainError>;
 

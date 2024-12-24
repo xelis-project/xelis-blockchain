@@ -13,7 +13,7 @@ use xelis_common::{
     serializer::Serializer
 };
 use crate::core::{
-    error::BlockchainError,
+    error::{BlockchainError, DiskContext},
     storage::{
         SledStorage,
         Snapshot
@@ -58,12 +58,11 @@ pub trait VersionedProvider:
     // Because users can link a TX to an old versioned balance, we need to keep track of them until the latest spent version
     async fn delete_versioned_data_below_topoheight(&mut self, topoheight: TopoHeight, keep_last: bool) -> Result<(), BlockchainError> {
         self.delete_versioned_balances_below_topoheight(topoheight, keep_last).await?;
-        self.delete_versioned_nonces_below_topoheight(topoheight).await?;
-        self.delete_versioned_multisigs_below_topoheight(topoheight).await?;
-        self.delete_versioned_registrations_below_topoheight(topoheight).await?;
-        self.delete_versioned_contracts_below_topoheight(topoheight).await?;
-        self.delete_versioned_contract_data_below_topoheight(topoheight).await?;
-        self.delete_versioned_assets_below_topoheight(topoheight).await?;
+        self.delete_versioned_nonces_below_topoheight(topoheight, keep_last).await?;
+        self.delete_versioned_multisigs_below_topoheight(topoheight, keep_last).await?;
+        self.delete_versioned_contracts_below_topoheight(topoheight, keep_last).await?;
+        self.delete_versioned_contract_data_below_topoheight(topoheight, keep_last).await?;
+
         Ok(())
     }
 
@@ -84,7 +83,7 @@ impl VersionedProvider for SledStorage {}
 
 impl SledStorage {
     fn delete_versioned_tree_above_topoheight(snapshot: &mut Option<Snapshot>, tree: &Tree, topoheight: u64) -> Result<(), BlockchainError> {
-        trace!("delete versioned nonces above or at topoheight {}", topoheight);
+        trace!("delete versioned nonces above topoheight {}", topoheight);
         for el in tree.iter().keys() {
             let key = el?;
             let topo = u64::from_bytes(&key[0..8])?;
@@ -95,15 +94,51 @@ impl SledStorage {
         Ok(())
     }
 
-    fn delete_versioned_tree_below_topoheight(snapshot: &mut Option<Snapshot>, tree: &Tree, topoheight: u64) -> Result<(), BlockchainError> {
-        trace!("delete versioned nonces above or at topoheight {}", topoheight);
-        for el in tree.iter().keys() {
-            let key = el?;
-            let topo = u64::from_bytes(&key[0..8])?;
-            if topo < topoheight {
-                Self::remove_from_disk_without_reading(snapshot.as_mut(), tree, &key)?;
+    fn delete_versioned_tree_below_topoheight(
+        snapshot: &mut Option<Snapshot>,
+        tree_pointer: &Tree,
+        tree_versioned: &Tree,
+        topoheight: u64,
+        keep_last: bool,
+        context: DiskContext,
+    ) -> Result<(), BlockchainError> {
+        trace!("delete versioned nonces below topoheight {}", topoheight);
+        if keep_last {
+            for el in tree_pointer.iter() {
+                let (key, value) = el?;
+                let topo = u64::from_bytes(&value)?;
+
+                // We fetch the last version to take its previous topoheight
+                // And we loop on it to delete them all until the end of the chained data
+                let mut prev_version = Self::load_from_disk_internal::<Option<u64>>(snapshot.as_ref(), tree_versioned, &Self::get_versioned_key(&key, topo), context)?;
+                while let Some(prev_topo) = prev_version {
+                    let key = Self::get_versioned_key(&key, prev_topo);
+
+                    // Delete this version from DB if its below the threshold
+                    if prev_topo < topoheight {
+                        prev_version = Self::remove_from_disk(snapshot.as_mut(), &tree_versioned, &key)?;
+                    } else {
+                        prev_version = Self::load_from_disk_internal(snapshot.as_ref(), tree_versioned, &key, context)?;
+                    }
+                }
+            }
+        } else {
+            for el in tree_versioned.iter().keys() {
+                let key = el?;
+                let topo = u64::from_bytes(&key[0..8])?;
+                if topo < topoheight {
+                    Self::remove_from_disk_without_reading(snapshot.as_mut(), tree_versioned, &key)?;
+                }
             }
         }
         Ok(())
+    }
+
+    // Versioned key is a key that starts with the topoheight
+    pub fn get_versioned_key<T: AsRef<[u8]>>(data: T, topoheight: TopoHeight) -> [u8; 40] {
+        let mut key = [0; 40];
+        key[0..8].copy_from_slice(&topoheight.to_be_bytes());
+        key[8..].copy_from_slice(data.as_ref());
+        key
     }
 }

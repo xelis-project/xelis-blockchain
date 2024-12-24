@@ -6,7 +6,7 @@ use xelis_common::{
     serializer::Serializer
 };
 use crate::core::{
-    error::BlockchainError,
+    error::{BlockchainError, DiskContext},
     storage::{
         MultiSigProvider,
         SledStorage,
@@ -23,7 +23,7 @@ pub trait VersionedMultiSigProvider {
     async fn delete_versioned_multisigs_above_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError>;
 
     // delete versioned multisigs below topoheight
-    async fn delete_versioned_multisigs_below_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError>;
+    async fn delete_versioned_multisigs_below_topoheight(&mut self, topoheight: TopoHeight, keep_last: bool) -> Result<(), BlockchainError>;
 }
 
 #[async_trait]
@@ -63,8 +63,8 @@ impl VersionedMultiSigProvider for SledStorage {
         Self::delete_versioned_tree_above_topoheight(&mut self.snapshot, &self.versioned_multisigs, topoheight)
     }
 
-    async fn delete_versioned_multisigs_below_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError> {
+    async fn delete_versioned_multisigs_below_topoheight(&mut self, topoheight: u64, keep_last: bool) -> Result<(), BlockchainError> {
         trace!("delete versioned multisigs below topoheight {}!", topoheight);
-        Self::delete_versioned_tree_below_topoheight(&mut self.snapshot, &self.versioned_multisigs, topoheight)
+        Self::delete_versioned_tree_below_topoheight(&mut self.snapshot, &self.multisig, &self.versioned_multisigs, topoheight, keep_last, DiskContext::MultisigAtTopoHeight)
     }
 }
