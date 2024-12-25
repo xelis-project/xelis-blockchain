@@ -46,6 +46,7 @@ pub struct BuildTransactionParams {
     // By default, grab the version from wallet
     pub tx_version: Option<TxVersion>,
     // Cannot be broadcasted if set to false
+    #[serde(default = "default_true_value")]
     pub broadcast: bool,
     // Returns the TX in HEX format also
     #[serde(default = "default_false_value")]
@@ -109,6 +110,7 @@ pub struct FinalizeUnsignedTransactionParams {
     // In case it wasn't added in the unsigned already
     pub signatures: Vec<SignatureId>,
     // Cannot be broadcasted if set to false
+    #[serde(default = "default_true_value")]
     pub broadcast: bool,
     // Returns the TX in HEX format also
     #[serde(default = "default_false_value")]
