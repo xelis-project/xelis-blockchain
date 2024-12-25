@@ -511,14 +511,15 @@ fn transfer<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &
         .into_owned()
         .into_opaque_type()?;
 
-    let (_, balance) = match state.cache.balances.entry(asset.clone()) {
+    let Some((_, balance)) = match state.cache.balances.entry(asset.clone()) {
         Entry::Occupied(entry) => entry.into_mut(),
         Entry::Vacant(entry) => {
             let balance = provider.get_contract_balance_for_asset(state.contract, &asset)?;
             entry.insert(balance.map(|(topoheight, balance)| (VersionedState::FetchedAt(topoheight), balance)))
         }
-    }.as_mut()
-    .context("No balance found for asset")?;
+    }.as_mut() else {
+        return Ok(Some(Value::Boolean(false).into()));
+    };
 
     // We have to check if the contract has enough balance to transfer
     if *balance < amount || amount == 0 {
@@ -547,14 +548,15 @@ fn burn<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &mut 
         .into_owned()
         .to_u64()?;
 
-    let (_, balance) = match state.cache.balances.entry(asset.clone()) {
+    let Some((_, balance)) = match state.cache.balances.entry(asset.clone()) {
         Entry::Occupied(entry) => entry.into_mut(),
         Entry::Vacant(entry) => {
             let balance = provider.get_contract_balance_for_asset(state.contract, &asset)?;
             entry.insert(balance.map(|(topoheight, balance)| (VersionedState::FetchedAt(topoheight), balance)))
         }
-    }.as_mut()
-    .context("No balance found for asset")?;
+    }.as_mut() else {
+        return Ok(Some(Value::Boolean(false).into()));
+    };
 
     // We have to check if the contract has enough balance to transfer
     if *balance < amount || amount == 0 {
