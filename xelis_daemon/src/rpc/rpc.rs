@@ -28,6 +28,7 @@ use xelis_common::{
         SplitAddressParams,
         SplitAddressResult,
     },
+    asset::RPCAssetData,
     async_handler,
     block::{
         Block,
@@ -705,8 +706,15 @@ async fn get_asset<S: Storage>(context: &Context, body: Value) -> Result<Value, 
     let params: GetAssetParams = parse_params(body)?;
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let storage = blockchain.get_storage().read().await;
-    let asset = storage.get_asset(&params.asset).await.context("Asset was not found")?;
-    Ok(json!(asset))
+    let (topoheight, data) = storage.get_asset(&params.asset).await.context("Asset was not found")?;
+    Ok(json!(RPCAssetData {
+        asset: Cow::Borrowed(&params.asset),
+        topoheight,
+        contract: None,
+        decimals: data.get_decimals(),
+        max_supply: data.get_max_supply(),
+        name: Cow::Borrowed(data.get_name())
+    }))
 }
 
 const MAX_ASSETS: usize = 100;
@@ -728,6 +736,19 @@ async fn get_assets<S: Storage>(context: &Context, body: Value) -> Result<Value,
     let max =  params.maximum_topoheight.unwrap_or_else(|| blockchain.get_topo_height());
     let assets = storage.get_partial_assets(maximum, skip, min, max).await
         .context("Error while retrieving registered assets")?;
+
+    let mut response = Vec::with_capacity(assets.len());
+    for (asset, (topoheight, data)) in assets.iter() {
+        response.push(RPCAssetData {
+            asset: Cow::Borrowed(asset),
+            topoheight: *topoheight,
+            // TODO
+            contract: None,
+            decimals: data.get_decimals(),
+            max_supply: data.get_max_supply(),
+            name: Cow::Borrowed(data.get_name())
+        });
+    }
 
     Ok(json!(assets))
 }

@@ -404,7 +404,7 @@ pub enum StepResponse {
     // common point, topoheight of stable hash, stable height, stable hash
     ChainInfo(Option<CommonPoint>, u64, u64, Hash),
     // Set of assets, pagination
-    Assets(IndexMap<Hash, AssetData<'static>>, Option<u64>),
+    Assets(IndexMap<Hash, AssetData>, Option<u64>),
     // Set of keys, pagination
     Keys(IndexSet<PublicKey>, Option<u64>),
     // Account summary response

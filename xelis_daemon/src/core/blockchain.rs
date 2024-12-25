@@ -436,7 +436,7 @@ impl<S: Storage> Blockchain<S> {
         storage.add_asset(
             &XELIS_ASSET,
             0,
-            AssetData::new(COIN_DECIMALS, Cow::Borrowed("XELIS"), Some(MAXIMUM_SUPPLY), None)
+            AssetData::new(COIN_DECIMALS, "XELIS".to_owned(), Some(MAXIMUM_SUPPLY))
         ).await?;
 
         let (genesis_block, genesis_hash) = if let Some(genesis_block) = get_hex_genesis_block(&self.network) {

@@ -21,10 +21,10 @@ pub trait AssetProvider {
     async fn get_asset_topoheight(&self, hash: &Hash) -> Result<TopoHeight, BlockchainError>;
 
     // Get the asset data from its hash and topoheight at which it got registered
-    async fn get_asset_at_topoheight(&self, hash: &Hash, topoheight: TopoHeight) -> Result<AssetData<'static>, BlockchainError>;
+    async fn get_asset_at_topoheight(&self, hash: &Hash, topoheight: TopoHeight) -> Result<AssetData, BlockchainError>;
 
     // Get the asset data from its hash and topoheight at which it got registered
-    async fn get_asset(&self, hash: &Hash) -> Result<AssetData, BlockchainError>;
+    async fn get_asset(&self, hash: &Hash) -> Result<(TopoHeight, AssetData), BlockchainError>;
 
     // Get all available assets
     // TODO: replace with impl Iterator<Item = Result<Hash, BlockchainError>> when async trait methods are stable
@@ -32,7 +32,7 @@ pub trait AssetProvider {
 
     // Get a partial list of assets supporting pagination and filtering by topoheight
     // TODO: replace with impl Iterator<Item = Result<Hash, BlockchainError>> when async trait methods are stable
-    async fn get_partial_assets(&self, maximum: usize, skip: usize, minimum_topoheight: TopoHeight, maximum_topoheight: TopoHeight) -> Result<IndexMap<Hash, AssetData<'static>>, BlockchainError>;
+    async fn get_partial_assets(&self, maximum: usize, skip: usize, minimum_topoheight: TopoHeight, maximum_topoheight: TopoHeight) -> Result<IndexMap<Hash, (TopoHeight, AssetData)>, BlockchainError>;
 
     // Get chunked assets
     // This is useful to not retrieve all assets at once
@@ -46,7 +46,7 @@ pub trait AssetProvider {
     async fn count_assets(&self) -> Result<u64, BlockchainError>;
 
     // Add an asset to the storage
-    async fn add_asset(&mut self, hash: &Hash, topoheight: TopoHeight, data: AssetData<'_>) -> Result<(), BlockchainError>;
+    async fn add_asset(&mut self, hash: &Hash, topoheight: TopoHeight, data: AssetData) -> Result<(), BlockchainError>;
 }
 
 #[async_trait]
@@ -56,10 +56,10 @@ impl AssetProvider for SledStorage {
         self.contains_data_cached(&self.assets, &self.assets_cache, asset).await
     }
 
-    async fn get_asset(&self, hash: &Hash) -> Result<AssetData, BlockchainError> {
+    async fn get_asset(&self, hash: &Hash) -> Result<(TopoHeight, AssetData), BlockchainError> {
         trace!("get asset {}", hash);
         let topoheight = self.get_asset_topoheight(hash).await?;
-        self.get_asset_at_topoheight(hash, topoheight).await
+        Ok((topoheight, self.get_asset_at_topoheight(hash, topoheight).await?))
     }
 
     async fn get_asset_topoheight(&self, hash: &Hash) -> Result<TopoHeight, BlockchainError> {
@@ -67,7 +67,7 @@ impl AssetProvider for SledStorage {
         self.load_from_disk(&self.assets, hash.as_bytes(), DiskContext::Asset)
     }
 
-    async fn get_asset_at_topoheight(&self, asset: &Hash, topoheight: TopoHeight) -> Result<AssetData<'static>, BlockchainError> {
+    async fn get_asset_at_topoheight(&self, asset: &Hash, topoheight: TopoHeight) -> Result<AssetData, BlockchainError> {
         trace!("get asset registration topoheight {}", asset);
         let key = Self::get_asset_key(asset, topoheight);
         self.load_from_disk(&self.assets_prefixed, &key, DiskContext::Asset)
@@ -83,7 +83,7 @@ impl AssetProvider for SledStorage {
         }).collect()
     }
 
-    async fn get_partial_assets(&self, maximum: usize, skip: usize, minimum_topoheight: TopoHeight, maximum_topoheight: TopoHeight) -> Result<IndexMap<Hash, AssetData<'static>>, BlockchainError> {
+    async fn get_partial_assets(&self, maximum: usize, skip: usize, minimum_topoheight: TopoHeight, maximum_topoheight: TopoHeight) -> Result<IndexMap<Hash, (TopoHeight, AssetData)>, BlockchainError> {
         trace!("get partial assets with maximum {} and skip {}", maximum, skip);
         let mut assets = IndexMap::new();
         let mut skip_count = 0;
@@ -98,7 +98,7 @@ impl AssetProvider for SledStorage {
                     let asset = Hash::from_bytes(&key)?;
 
                     let data = self.get_asset_at_topoheight(&asset, topo).await?;
-                    assets.insert(asset, data);
+                    assets.insert(asset, (topo, data));
 
                     if assets.len() == maximum {
                         break;
@@ -141,7 +141,7 @@ impl AssetProvider for SledStorage {
         Ok(count)
     }
 
-    async fn add_asset(&mut self, asset: &Hash, topoheight: TopoHeight, data: AssetData<'_>) -> Result<(), BlockchainError> {
+    async fn add_asset(&mut self, asset: &Hash, topoheight: TopoHeight, data: AssetData) -> Result<(), BlockchainError> {
         trace!("add asset {} at topoheight {}", asset, topoheight);
         Self::insert_into_disk(self.snapshot.as_mut(), &self.assets, asset.as_bytes(), &topoheight.to_be_bytes())?;
 
