@@ -32,7 +32,11 @@ pub trait AssetProvider {
 
     // Get a partial list of assets supporting pagination and filtering by topoheight
     // TODO: replace with impl Iterator<Item = Result<Hash, BlockchainError>> when async trait methods are stable
-    async fn get_partial_assets(&self, maximum: usize, skip: usize, minimum_topoheight: TopoHeight, maximum_topoheight: TopoHeight) -> Result<IndexMap<Hash, (TopoHeight, AssetData)>, BlockchainError>;
+    async fn get_partial_assets_with_topoheight(&self, maximum: usize, skip: usize, minimum_topoheight: TopoHeight, maximum_topoheight: TopoHeight) -> Result<IndexMap<Hash, (TopoHeight, AssetData)>, BlockchainError>;
+
+    // Get a partial list of assets supporting pagination and filtering by topoheight
+    // TODO: replace with impl Iterator<Item = Result<Hash, BlockchainError>> when async trait methods are stable
+    async fn get_partial_assets(&self, maximum: usize, skip: usize, minimum_topoheight: TopoHeight, maximum_topoheight: TopoHeight) -> Result<IndexMap<Hash, AssetData>, BlockchainError>;
 
     // Get chunked assets
     // This is useful to not retrieve all assets at once
@@ -83,8 +87,8 @@ impl AssetProvider for SledStorage {
         }).collect()
     }
 
-    async fn get_partial_assets(&self, maximum: usize, skip: usize, minimum_topoheight: TopoHeight, maximum_topoheight: TopoHeight) -> Result<IndexMap<Hash, (TopoHeight, AssetData)>, BlockchainError> {
-        trace!("get partial assets with maximum {} and skip {}", maximum, skip);
+    async fn get_partial_assets_with_topoheight(&self, maximum: usize, skip: usize, minimum_topoheight: TopoHeight, maximum_topoheight: TopoHeight) -> Result<IndexMap<Hash, (TopoHeight, AssetData)>, BlockchainError> {
+        trace!("get partial assets with topoheight with maximum {} and skip {}", maximum, skip);
         let mut assets = IndexMap::new();
         let mut skip_count = 0;
         for el in self.assets.iter() {
@@ -99,6 +103,32 @@ impl AssetProvider for SledStorage {
 
                     let data = self.get_asset_at_topoheight(&asset, topo).await?;
                     assets.insert(asset, (topo, data));
+
+                    if assets.len() == maximum {
+                        break;
+                    }
+                }
+            }
+        }
+        Ok(assets)
+    }
+
+    async fn get_partial_assets(&self, maximum: usize, skip: usize, minimum_topoheight: TopoHeight, maximum_topoheight: TopoHeight) -> Result<IndexMap<Hash, AssetData>, BlockchainError> {
+        trace!("get partial assets with maximum {} and skip {}", maximum, skip);
+        let mut assets = IndexMap::new();
+        let mut skip_count = 0;
+        for el in self.assets.iter() {
+            let (key, value) = el?;
+            let topo = u64::from_bytes(&value)?;
+            // check that we have a registered asset before the maximum topoheight
+            if topo >= minimum_topoheight && topo <= maximum_topoheight {
+                if skip_count < skip {
+                    skip_count += 1;
+                } else {
+                    let asset = Hash::from_bytes(&key)?;
+
+                    let data = self.get_asset_at_topoheight(&asset, topo).await?;
+                    assets.insert(asset, data);
 
                     if assets.len() == maximum {
                         break;

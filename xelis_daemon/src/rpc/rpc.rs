@@ -734,7 +734,7 @@ async fn get_assets<S: Storage>(context: &Context, body: Value) -> Result<Value,
     let storage = blockchain.get_storage().read().await;
     let min = params.minimum_topoheight.unwrap_or(0);
     let max =  params.maximum_topoheight.unwrap_or_else(|| blockchain.get_topo_height());
-    let assets = storage.get_partial_assets(maximum, skip, min, max).await
+    let assets = storage.get_partial_assets_with_topoheight(maximum, skip, min, max).await
         .context("Error while retrieving registered assets")?;
 
     let mut response = Vec::with_capacity(assets.len());
