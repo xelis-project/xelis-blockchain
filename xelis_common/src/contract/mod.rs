@@ -312,6 +312,18 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static> {
         Some(Type::Bool)
     );
 
+    env.register_native_function(
+        "burn",
+        None,
+        vec![
+            ("amount", Type::U64),
+            ("asset", hash_type.clone()),
+        ],
+        burn::<P>,
+        500,
+        Some(Type::Bool)
+    );
+
     // Hash
     env.register_native_function(
         "as_bytes",
@@ -521,6 +533,37 @@ fn transfer<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &
         amount,
         asset,
     });
+
+    Ok(Some(Value::Boolean(true).into()))
+}
+
+fn burn<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType {
+    let (provider, state) = from_context::<P>(context)?;
+
+    let asset: Hash = params.remove(1)
+        .into_owned()
+        .into_opaque_type()?;
+    let amount = params.remove(0)
+        .into_owned()
+        .to_u64()?;
+
+    let (_, balance) = match state.cache.balances.entry(asset.clone()) {
+        Entry::Occupied(entry) => entry.into_mut(),
+        Entry::Vacant(entry) => {
+            let balance = provider.get_contract_balance_for_asset(state.contract, &asset)?;
+            entry.insert(balance.map(|(topoheight, balance)| (VersionedState::FetchedAt(topoheight), balance)))
+        }
+    }.as_mut()
+    .context("No balance found for asset")?;
+
+    // We have to check if the contract has enough balance to transfer
+    if *balance < amount || amount == 0 {
+        return Ok(Some(Value::Boolean(false).into()));
+    }
+
+    // Update the balance
+    // By only decreasing the balance, it will be burned
+    *balance -= amount;
 
     Ok(Some(Value::Boolean(true).into()))
 }
