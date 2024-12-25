@@ -382,12 +382,18 @@ impl ObjectTracker {
             while let Some((_, request)) = queue.peek_mut() {
                 match request.take_response() {
                     Some(response) => {
-                        let (_, request) = queue.pop().unwrap();
                         if let Err(e) = self.handle_object_response_internal(&blockchain, response, request.broadcast(), request.get_peer()).await {
-                            if request.get_group_id().is_none() {
+                            let peer_id = request.get_peer().get_id();
+                            let group_id = request.get_group_id();
+                            if group_id.is_none() {
                                 warn!("Error while handling object response for {} in ObjectTracker from {}: {}", request.get_hash(), request.get_peer(), e);
                             }
-                            self.clean_queue(&mut queue, request.get_peer().get_id(), request.get_group_id().map(|v| (v, e))).await;
+
+                            self.clean_queue(&mut queue, peer_id, group_id.map(|v| (v, e))).await;
+                        } else {
+                            if let Some((hash, _)) = queue.pop() {
+                                trace!("Object {} handled successfully", hash);
+                            }
                         }
                     },
                     None => {
@@ -395,13 +401,17 @@ impl ObjectTracker {
                             // check if the request is timed out
                             if requested_at.elapsed() > TIME_OUT {
                                 warn!("Request timed out for object {}", request.get_hash());
-                                let (_, request) = queue.pop().unwrap();
-                                self.clean_queue(&mut queue, request.get_peer().get_id(), request.get_group_id().map(|v| (v, P2pError::TrackerRequestExpired))).await;
+                                let peer_id = request.get_peer().get_id();
+                                let group_id = request.get_group_id()
+                                    .map(|v| (v, P2pError::TrackerRequestExpired));
+
+                                self.clean_queue(&mut queue, peer_id, group_id).await;
                             } else {
                                 break;
                             }
                         } else {
                             // It wasn't yet requested
+                            debug!("Request not yet sent for object {}", request.get_hash());
                             break;
                         }
                     }
