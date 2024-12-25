@@ -1,11 +1,11 @@
 use std::borrow::Cow;
 
 use async_trait::async_trait;
-use xelis_vm::{Constant, Environment, Module};
+use xelis_vm::{Environment, Module};
 use crate::{
     account::Nonce,
     block::{Block, BlockVersion},
-    contract::{ChainState, ContractOutput, ContractStorage},
+    contract::{ChainState, ContractOutput, ContractProvider},
     crypto::{
         elgamal::{
             Ciphertext,
@@ -18,8 +18,7 @@ use crate::{
         MultiSigPayload,
         Reference,
         Transaction
-    },
-    versioned_type::VersionedState
+    }
 };
 
 /// This trait is used by the batch verification function.
@@ -115,17 +114,17 @@ pub trait BlockchainVerificationState<'a, E> {
     ) -> Result<(&Module, &Environment), E>;
 }
 
-pub struct ContractEnvironment<'a, S: ContractStorage> {
+pub struct ContractEnvironment<'a, P: ContractProvider> {
     // Environment with the embed stdlib
     pub environment: &'a Environment,
     // Module to execute
     pub module: &'a Module,
-    // Storage for the contract
-    pub storage: &'a mut S,
+    // Provider for the contract
+    pub provider: &'a mut P,
 }
 
 #[async_trait]
-pub trait BlockchainApplyState<'a, S: ContractStorage, E>: BlockchainVerificationState<'a, E> {
+pub trait BlockchainApplyState<'a, P: ContractProvider, E>: BlockchainVerificationState<'a, E> {
     /// Add burned XELIS
     async fn add_burned_coins(&mut self, amount: u64) -> Result<(), E>;
 
@@ -142,10 +141,10 @@ pub trait BlockchainApplyState<'a, S: ContractStorage, E>: BlockchainVerificatio
     fn is_mainnet(&self) -> bool;
 
     /// Track the contract outputs
-    async fn add_contract_output(
+    async fn set_contract_outputs(
         &mut self,
         tx_hash: &'a Hash,
-        output: ContractOutput
+        outputs: Vec<ContractOutput>
     ) -> Result<(), E>;
 
     /// Get the contract environment
@@ -153,13 +152,5 @@ pub trait BlockchainApplyState<'a, S: ContractStorage, E>: BlockchainVerificatio
         &'b mut self,
         payload: &'b InvokeContractPayload,
         tx_hash: &'b Hash
-    ) -> Result<(ContractEnvironment<'b, S>, ChainState<'b>), E>;
-
-    /// Track the storage changes
-    async fn add_storage_change(
-        &mut self,
-        contract: &'a Hash,
-        key: Constant,
-        value: (VersionedState, Option<Constant>)
-    ) -> Result<(), E>;
+    ) -> Result<(ContractEnvironment<'b, P>, ChainState<'b>), E>;
 }

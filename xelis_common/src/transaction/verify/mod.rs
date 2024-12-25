@@ -14,7 +14,7 @@ use xelis_vm::{ConstantWrapper, ModuleValidator, VM};
 use crate::{
     account::Nonce,
     config::{BURN_PER_CONTRACT, TRANSACTION_FEE_BURN_PERCENT, XELIS_ASSET},
-    contract::{ContractOutput, ContractStorage, StorageWrapper},
+    contract::{ContractOutput, ContractProvider, ContractProviderWrapper},
     crypto::{
         elgamal::{
             Ciphertext,
@@ -719,7 +719,7 @@ impl Transaction {
     }
 
     // Apply the transaction to the state
-    async fn apply<'a, S: ContractStorage, E, B: BlockchainApplyState<'a, S, E>>(
+    async fn apply<'a, P: ContractProvider, E, B: BlockchainApplyState<'a, P, E>>(
         &'a self,
         tx_hash: &'a Hash,
         state: &mut B,
@@ -798,7 +798,7 @@ impl Transaction {
                     context.insert_mut(&mut chain_state);
                     // insert the storage through our wrapper
                     // so it can be easily mocked
-                    context.insert(StorageWrapper(contract_environment.storage));
+                    context.insert(ContractProviderWrapper(contract_environment.provider));
 
                     // We need to handle the result of the VM
                     let res = vm.run();
@@ -825,39 +825,21 @@ impl Transaction {
                     (gas_usage, success, exit_code)
                 };
 
-                if success {
-                    let storage = chain_state.storage;
-                    for transfer in chain_state.transfers {
-                        let current_bal = state
-                            .get_receiver_balance(
-                                Cow::Owned(transfer.destination.clone()),
-                                Cow::Owned(transfer.asset.clone()),
-                            ).await
-                            .map_err(VerificationError::State)?;
-    
-                        *current_bal += Scalar::from(transfer.amount);
-
+                let mut outputs = if success {
+                    let cache = chain_state.cache;
+                    cache.transfers.iter().map(|transfer| {
                         // Track the output
-                        let output = ContractOutput::Transfer {
-                            destination: transfer.destination,
-                            asset: transfer.asset,
+                        ContractOutput::Transfer {
+                            destination: transfer.destination.clone(),
+                            asset: transfer.asset.clone(),
                             amount: transfer.amount,
-                        };
-                        state.add_contract_output(tx_hash, output).await
-                            .map_err(VerificationError::State)?;
-                    }
+                        }
+                    }).collect::<Vec<_>>()
+                } else {
+                    Vec::new()
+                };
 
-                    // Also track the changes in the storage
-                    for (key, (s, value)) in storage {
-                        trace!("Storage change: {} -> {:?}", key, value);
-                        state.add_storage_change(&payload.contract, key, (s, value)).await
-                            .map_err(VerificationError::State)?;
-                    }
-                }
-
-                // We store the result of the contract execution
-                state.add_contract_output(tx_hash, ContractOutput::ExitCode(exit_code)).await
-                    .map_err(VerificationError::State)?;
+                outputs.push(ContractOutput::ExitCode(exit_code));
 
                 if used_gas > 0 {
                     // Part of the gas is burned
@@ -886,10 +868,13 @@ impl Transaction {
 
                         // Track the refund
                         let output = ContractOutput::RefundGas { amount: refund_gas };
-                        state.add_contract_output(tx_hash, output).await
-                            .map_err(VerificationError::State)?;
+                        outputs.push(output);
                     }
                 }
+
+                // Track the outputs
+                state.set_contract_outputs(tx_hash, outputs).await
+                    .map_err(VerificationError::State)?;
             },
             TransactionType::DeployContract(module) => {
                 state.set_contract_module(tx_hash, module).await
@@ -901,7 +886,7 @@ impl Transaction {
     }
 
     /// Assume the tx is valid, apply it to `state`. May panic if a ciphertext is ill-formed.
-    pub async fn apply_without_verify<'a, S: ContractStorage, E, B: BlockchainApplyState<'a, S, E>>(
+    pub async fn apply_without_verify<'a, P: ContractProvider, E, B: BlockchainApplyState<'a, P, E>>(
         &'a self,
         tx_hash: &'a Hash,
         state: &mut B,
@@ -946,7 +931,7 @@ impl Transaction {
     /// Verify only that the final sender balance is the expected one for each commitment
     /// Then apply ciphertexts to the state
     /// Checks done are: commitment eq proofs only
-    pub async fn apply_with_partial_verify<'a, S: ContractStorage, E, B: BlockchainApplyState<'a, S, E>>(
+    pub async fn apply_with_partial_verify<'a, P: ContractProvider, E, B: BlockchainApplyState<'a, P, E>>(
         &'a self,
         tx_hash: &'a Hash,
         state: &mut B

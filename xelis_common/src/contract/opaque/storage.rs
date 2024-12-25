@@ -1,6 +1,5 @@
 use std::any::TypeId;
-use better_any::{tid, Tid};
-use anyhow::{bail, Context as AnyhowContext};
+use anyhow::bail;
 use xelis_vm::{
     traits::{JSONHelper, Serializable},
     Constant,
@@ -15,43 +14,14 @@ use xelis_vm::{
 use crate::{
     block::TopoHeight,
     config::{FEE_PER_BYTE_STORED_CONTRACT, FEE_PER_STORE_CONTRACT},
-    contract::ChainState,
+    contract::{from_context, ContractProvider},
     crypto::Hash,
     versioned_type::VersionedState
 };
-
 use super::Serializer;
-
-macro_rules! context {
-    ($instance: expr, $context: expr) => {{
-        let _: &OpaqueStorage = $instance?.as_opaque_type()?;
-        let mut datas = $context.get_many_mut([&StorageWrapper::<S>::id(), &TypeId::of::<ChainState>()]);
-
-        let wrapper: &mut StorageWrapper<S> = datas[0]
-            .take()
-            .context("Contract Environment is not initialized")?
-            .downcast_mut()
-            .context("Contract Environment is not initialized correctly")?;
-
-        let storage: &mut S = wrapper.0;
-
-        let state: &mut ChainState = datas[1]
-            .take()
-            .context("Chain state is not initialized")?
-            .downcast_mut()
-            .context("Chain state is not initialized correctly")?;
-
-        (storage, state)
-    }};
-}
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct OpaqueStorage;
-
-// This is a wrapper around the storage to allow for the storage to be passed in the Context
-pub struct StorageWrapper<'a, S: ContractStorage>(pub &'a mut S);
-
-tid! { impl<'a, S: 'static> TidAble<'a> for StorageWrapper<'a, S> where S: ContractStorage }
 
 // Maximum size of a value in the storage
 pub const MAX_VALUE_SIZE: usize = 4096;
@@ -59,9 +29,9 @@ pub const MAX_VALUE_SIZE: usize = 4096;
 // Maximum size of a key in the storage
 pub const MAX_KEY_SIZE: usize = 256;
 
-pub trait ContractStorage: 'static {
+pub trait ContractStorage {
     // load a value from the storage
-    fn load(&mut self, contract: &Hash, key: &Constant, topoheight: TopoHeight) -> Result<Option<(TopoHeight, Option<Constant>)>, anyhow::Error>;
+    fn load(&self, contract: &Hash, key: &Constant, topoheight: TopoHeight) -> Result<Option<(TopoHeight, Option<Constant>)>, anyhow::Error>;
 
     // load the latest topoheight from the storage
     fn load_latest_topoheight(&self, contract: &Hash, key: &Constant, topoheight: TopoHeight) -> Result<Option<TopoHeight>, anyhow::Error>;
@@ -104,19 +74,19 @@ pub fn storage(_: FnInstance, _: FnParams, _: &mut Context) -> FnReturnType {
     Ok(Some(Value::Opaque(OpaqueWrapper::new(OpaqueStorage)).into()))
 }
 
-pub fn storage_load<S: ContractStorage>(instance: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType {
-    let (storage, state) = context!(instance, context);
+pub fn storage_load<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType {
+    let (storage, state) = from_context::<P>(context)?;
 
     let key = params.remove(0)
         .into_owned()
         .try_into()
         .map_err(|_| anyhow::anyhow!("Invalid key"))?;
 
-    let value = match state.storage.get(&key) {
+    let value = match state.cache.storage.get(&key) {
         Some((_, value)) => value.clone(),
         None => match storage.load(&state.contract, &key, state.topoheight)? {
             Some((topoheight, constant)) => {
-                state.storage.insert(key.clone(), (VersionedState::FetchedAt(topoheight), constant.clone()));
+                state.cache.storage.insert(key.clone(), (VersionedState::FetchedAt(topoheight), constant.clone()));
                 constant
             },
             None => None
@@ -126,15 +96,15 @@ pub fn storage_load<S: ContractStorage>(instance: FnInstance, mut params: FnPara
     Ok(Some(ValueCell::Optional(value.map(|c| c.into())).into()))
 }
 
-pub fn storage_has<S: ContractStorage>(instance: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType {
-    let (storage, state) = context!(instance, context);
+pub fn storage_has<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType {
+    let (storage, state) = from_context::<P>(context)?;
 
     let key = params.remove(0)
         .into_owned()
         .try_into()
         .map_err(|_| anyhow::anyhow!("Invalid key"))?;
 
-    let contains = match state.storage.get(&key) {
+    let contains = match state.cache.storage.get(&key) {
         Some((_, value)) => value.is_some(),
         None => storage.has(state.contract, &key, state.topoheight)?
     };
@@ -142,7 +112,7 @@ pub fn storage_has<S: ContractStorage>(instance: FnInstance, mut params: FnParam
     Ok(Some(Value::Boolean(contains).into()))
 }
 
-pub fn storage_store<S: ContractStorage>(instance: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType {
+pub fn storage_store<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType {
     let key: Constant = params.remove(0)
         .into_owned()
         .try_into()
@@ -167,9 +137,9 @@ pub fn storage_store<S: ContractStorage>(instance: FnInstance, mut params: FnPar
     let cost = FEE_PER_STORE_CONTRACT + total_size * FEE_PER_BYTE_STORED_CONTRACT;
     context.increase_gas_usage(cost)?;
 
-    let (storage, state) = context!(instance, context);
+    let (storage, state) = from_context::<P>(context)?;
 
-    let data_state = match state.storage.get(&key) {
+    let data_state = match state.cache.storage.get(&key) {
         Some((state, _)) => match state {
             VersionedState::New => VersionedState::New,
             VersionedState::FetchedAt(topoheight) => VersionedState::Updated(*topoheight),
@@ -183,23 +153,23 @@ pub fn storage_store<S: ContractStorage>(instance: FnInstance, mut params: FnPar
         }
     };
 
-    state.storage.insert(key, (data_state, Some(value)));
+    state.cache.storage.insert(key, (data_state, Some(value)));
 
     Ok(None)
 }
 
-pub fn storage_delete<S: ContractStorage>(instance: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType {
-    let (storage, state) = context!(instance, context);
+pub fn storage_delete<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType {
+    let (storage, state) = from_context::<P>(context)?;
 
     let key = params.remove(0)
         .into_owned()
         .try_into()
         .map_err(|_| anyhow::anyhow!("Invalid key"))?;
 
-    let data_state = match state.storage.get(&key) {
+    let data_state = match state.cache.storage.get(&key) {
         Some((s, _)) => match s {
             VersionedState::New => {
-                state.storage.remove(&key);
+                state.cache.storage.remove(&key);
                 return Ok(None);
             },
             VersionedState::FetchedAt(topoheight) => VersionedState::Updated(*topoheight),
@@ -214,7 +184,7 @@ pub fn storage_delete<S: ContractStorage>(instance: FnInstance, mut params: FnPa
         }
     };
 
-    state.storage.insert(key, (data_state, None));
+    state.cache.storage.insert(key, (data_state, None));
 
     Ok(None)
 }
