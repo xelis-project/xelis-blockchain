@@ -4,6 +4,7 @@ pub mod core;
 pub mod config;
 
 use config::{DEV_PUBLIC_KEY, STABLE_LIMIT};
+use human_bytes::human_bytes;
 use humantime::format_duration;
 use log::{trace, error, info, warn};
 use p2p::P2pServer;
@@ -283,6 +284,7 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
     command_manager.add_command(Command::new("list_unexecuted_transactions", "List all unexecuted transactions", CommandHandler::Async(async_handler!(list_unexecuted_transactions::<S>))))?;
     command_manager.add_command(Command::new("swap_blocks_executions_positions", "Swap the position of two blocks executions", CommandHandler::Async(async_handler!(swap_blocks_executions_positions::<S>))))?;
     command_manager.add_command(Command::new("print_balance", "Print the encrypted balance at a specific topoheight", CommandHandler::Async(async_handler!(print_balance::<S>))))?;
+    command_manager.add_command(Command::new("estimate_db_size", "Estimate the database total size", CommandHandler::Async(async_handler!(estimate_db_size::<S>))))?;
 
     // Don't keep the lock for ever
     let (p2p, getwork) = {
@@ -535,6 +537,16 @@ async fn print_balance<S: Storage>(manager: &CommandManager, _: ArgumentManager)
         .context("Error while retrieving balance")?;
 
     manager.message(format!("{}", balance));
+
+    Ok(())
+}
+
+async fn estimate_db_size<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
+    let context = manager.get_context().lock()?;
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    let storage = blockchain.get_storage().read().await;
+    let size = storage.estimate_size().await.context("Error while estimating size")?;
+    manager.message(format!("Estimated size: {}", human_bytes(size as f64)));
 
     Ok(())
 }

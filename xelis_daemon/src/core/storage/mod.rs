@@ -69,4 +69,7 @@ pub trait Storage:
 
     // Get all the unexecuted transactions
     async fn get_unexecuted_transactions(&self) -> Result<IndexSet<Hash>, BlockchainError>;
+
+    // Estimate the size of the DB in bytes
+    async fn estimate_size(&self) -> Result<u64, BlockchainError>;
 }

@@ -990,4 +990,20 @@ impl Storage for SledStorage {
 
         Ok(txs)
     }
+
+    async fn estimate_size(&self) -> Result<u64, BlockchainError> {
+        trace!("Estimating size");
+
+        let mut size = 0;
+        for tree in self.db.tree_names() {
+            let tree = self.db.open_tree(tree)?;
+            debug!("Estimating size for tree {}", String::from_utf8_lossy(&tree.name()));
+            for el in tree.iter() {
+                let (key, value) = el?;
+                size += key.len() + value.len();
+            }
+        }
+
+        Ok(size as u64)
+    }
 }
