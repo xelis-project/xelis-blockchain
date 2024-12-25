@@ -14,10 +14,13 @@ use xelis_vm::{
 };
 use crate::{
     block::TopoHeight,
+    config::{FEE_PER_BYTE_STORED_CONTRACT, FEE_PER_STORE_CONTRACT},
     contract::ChainState,
     crypto::Hash,
-    versioned_type::VersionedState,
+    versioned_type::VersionedState
 };
+
+use super::Serializer;
 
 macro_rules! context {
     ($instance: expr, $context: expr) => {{
@@ -50,6 +53,11 @@ pub struct StorageWrapper<'a, S: ContractStorage>(pub &'a mut S);
 
 tid! { impl<'a, S: 'static> TidAble<'a> for StorageWrapper<'a, S> where S: ContractStorage }
 
+// Maximum size of a value in the storage
+pub const MAX_VALUE_SIZE: usize = 4096;
+
+// Maximum size of a key in the storage
+pub const MAX_KEY_SIZE: usize = 256;
 
 pub trait ContractStorage: 'static {
     // load a value from the storage
@@ -135,17 +143,31 @@ pub fn storage_has<S: ContractStorage>(instance: FnInstance, mut params: FnParam
 }
 
 pub fn storage_store<S: ContractStorage>(instance: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType {
-    let (storage, state) = context!(instance, context);
-
-    let key= params.remove(0)
+    let key: Constant = params.remove(0)
         .into_owned()
         .try_into()
         .map_err(|_| anyhow::anyhow!("Invalid key"))?;
 
-    let value = params.remove(0)
+    let key_size = key.size();
+    if key_size > MAX_KEY_SIZE {
+        return Err(anyhow::anyhow!("Key is too large").into());
+    }
+
+    let value: Constant = params.remove(0)
         .into_owned()
         .try_into()
         .map_err(|_| anyhow::anyhow!("Invalid value"))?;
+
+    let value_size = value.size();
+    if value_size > MAX_VALUE_SIZE {
+        return Err(anyhow::anyhow!("Value is too large").into());
+    }
+
+    let total_size = (key_size + value_size) as u64;
+    let cost = FEE_PER_STORE_CONTRACT + total_size * FEE_PER_BYTE_STORED_CONTRACT;
+    context.increase_gas_usage(cost)?;
+
+    let (storage, state) = context!(instance, context);
 
     let data_state = match state.storage.get(&key) {
         Some((state, _)) => match state {
