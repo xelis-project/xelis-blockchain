@@ -825,19 +825,21 @@ impl Transaction {
                     (gas_usage, success, exit_code)
                 };
 
-                let mut outputs = if success {
+                let mut outputs = Vec::new();
+                if success {
                     let cache = chain_state.cache;
-                    cache.transfers.iter().map(|transfer| {
+                    outputs = cache.transfers.iter().map(|transfer| {
                         // Track the output
                         ContractOutput::Transfer {
                             destination: transfer.destination.clone(),
                             asset: transfer.asset.clone(),
                             amount: transfer.amount,
                         }
-                    }).collect::<Vec<_>>()
-                } else {
-                    Vec::new()
-                };
+                    }).collect::<Vec<_>>();
+
+                    state.merge_contract_cache(&payload.contract, cache).await
+                        .map_err(VerificationError::State)?;
+                }
 
                 outputs.push(ContractOutput::ExitCode(exit_code));
 

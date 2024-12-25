@@ -5,7 +5,7 @@ use xelis_vm::{Environment, Module};
 use crate::{
     account::Nonce,
     block::{Block, BlockVersion},
-    contract::{ChainState, ContractOutput, ContractProvider},
+    contract::{ChainState, ContractCache, ContractOutput, ContractProvider},
     crypto::{
         elgamal::{
             Ciphertext,
@@ -153,4 +153,11 @@ pub trait BlockchainApplyState<'a, P: ContractProvider, E>: BlockchainVerificati
         payload: &'b InvokeContractPayload,
         tx_hash: &'b Hash
     ) -> Result<(ContractEnvironment<'b, P>, ChainState<'b>), E>;
+
+    /// Merge the contract cache with the stored one
+    async fn merge_contract_cache(
+        &mut self,
+        hash: &'a Hash,
+        cache: ContractCache
+    ) -> Result<(), E>;
 }
