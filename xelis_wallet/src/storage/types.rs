@@ -53,7 +53,7 @@ pub struct TxCache {
     pub reference: Reference,
     // Last transaction hash created
     // This is used to determine if we should erase the last unconfirmed balance or not
-    pub last_tx_hash_created: Hash,
+    pub last_tx_hash_created: Option<Hash>,
 }
 
 // A multisig state in the wallet DB

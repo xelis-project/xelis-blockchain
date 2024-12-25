@@ -1042,7 +1042,7 @@ impl NetworkHandler {
                         storage.delete_transaction(&tx.hash)?;
                     }
 
-                    if storage.get_tx_cache().is_some_and(|cache| cache.last_tx_hash_created == *tx.hash) {
+                    if storage.get_tx_cache().is_some_and(|cache| cache.last_tx_hash_created.as_ref() == Some(&tx.hash)) {
                         warn!("Transaction {} was orphaned, deleting it from cache", tx.hash);
                         storage.clear_tx_cache();
                     }

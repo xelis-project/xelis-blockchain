@@ -1,5 +1,5 @@
 use std::collections::{HashMap, HashSet};
-use log::debug;
+use log::{debug, trace};
 use xelis_common::{
     account::CiphertextCache,
     crypto::{elgamal::Ciphertext, Hash, Hashable, PublicKey},
@@ -121,7 +121,8 @@ impl TransactionBuilderState {
 
     // Apply the changes to the storage
     pub async fn apply_changes(&mut self, storage: &mut EncryptedStorage) -> Result<(), WalletError> {
-        let last_tx_hash_created = self.tx_hash_built.take().ok_or(WalletError::TxNotBuilt)?;
+        trace!("Applying changes to storage");
+
         for (asset, balance) in self.balances.drain() {
             debug!("Setting balance for asset {} to {} ({})", asset, balance.amount, balance.ciphertext);
             storage.set_unconfirmed_balance_for(asset, balance).await?;
@@ -130,7 +131,7 @@ impl TransactionBuilderState {
         storage.set_tx_cache(TxCache {
             reference: self.reference.clone(),
             nonce: self.nonce,
-            last_tx_hash_created,
+            last_tx_hash_created: self.tx_hash_built.take(),
         });
 
         // Lets verify if the last coinbase reward topoheight is still valid
