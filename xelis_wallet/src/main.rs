@@ -960,7 +960,7 @@ async fn list_assets(manager: &CommandManager, mut args: ArgumentManager) -> Res
 
     manager.message(format!("Assets (page {}/{}):", page, max_pages));
     for (asset, data) in assets {
-        manager.message(format!("{} ({} decimals): {}", asset, data.decimals, data.name.as_deref().unwrap_or("no name set")));
+        manager.message(format!("{} ({} decimals): {}", asset, data.get_decimals(), data.get_name()));
     }
 
     Ok(())
@@ -1081,7 +1081,7 @@ async fn transfer(manager: &CommandManager, mut args: ArgumentManager) -> Result
     let (max_balance, decimals, multisig) = {
         let storage = wallet.get_storage().read().await;
         let balance = storage.get_plaintext_balance_for(&asset).await.unwrap_or(0);
-        let decimals = storage.get_asset(&asset).await?.decimals;
+        let decimals = storage.get_asset(&asset).await?.get_decimals();
         let multisig = storage.get_multisig_state().await.context("Error while reading multisig state")?;
         (balance, decimals, multisig)
     };
@@ -1156,7 +1156,7 @@ async fn transfer_all(manager: &CommandManager, mut args: ArgumentManager) -> Re
     let (mut amount, decimals, multisig) = {
         let storage = wallet.get_storage().read().await;
         let amount = storage.get_plaintext_balance_for(&asset).await.unwrap_or(0);
-        let decimals = storage.get_asset(&asset).await?.decimals;
+        let decimals = storage.get_asset(&asset).await?.get_decimals();
         let multisig = storage.get_multisig_state().await
             .context("Error while reading multisig state")?;
         (amount, decimals, multisig)
@@ -1222,7 +1222,7 @@ async fn burn(manager: &CommandManager, mut args: ArgumentManager) -> Result<(),
     let (max_balance, decimals, multisig) = {
         let storage = wallet.get_storage().read().await;
         let balance = storage.get_plaintext_balance_for(&asset).await.unwrap_or(0);
-        let decimals = storage.get_asset(&asset).await?.decimals;
+        let decimals = storage.get_asset(&asset).await?.get_decimals();
         let multisig = storage.get_multisig_state().await
             .context("Error while reading multisig state")?;
         (balance, decimals, multisig)
@@ -1285,12 +1285,12 @@ async fn balance(manager: &CommandManager, mut arguments: ArgumentManager) -> Re
         let asset = arguments.get_value("asset")?.to_hash()?;
         let balance = storage.get_plaintext_balance_for(&asset).await?;
         let data = storage.get_asset(&asset).await?;
-        manager.message(format!("Balance for asset {}: {}", asset, format_coin(balance, data.decimals)));
+        manager.message(format!("Balance for asset {}: {}", asset, format_coin(balance, data.get_decimals())));
     } else {
         for (asset, data) in storage.get_assets_with_data().await? {
             let balance = storage.get_plaintext_balance_for(&asset).await.unwrap_or(0);
             if balance > 0 {
-                manager.message(format!("Balance for asset {}: {}", asset, format_coin(balance, data.decimals)));
+                manager.message(format!("Balance for asset {}: {}", asset, format_coin(balance, data.get_decimals())));
             }
         }
     }

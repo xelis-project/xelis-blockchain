@@ -21,7 +21,7 @@ use xelis_common::{
         wallet::BalanceChanged,
         RPCTransactionType
     },
-    asset::AssetWithData,
+    asset::AssetData,
     config::XELIS_ASSET,
     crypto::{
         elgamal::Ciphertext,
@@ -815,17 +815,12 @@ impl NetworkHandler {
                 // Add the asset to the storage
                 {
                     let mut storage = self.wallet.get_storage().write().await;
-                    let name = if *asset == XELIS_ASSET {
-                        Some("XELIS".to_string())
-                    } else {
-                        info!("New unnamed asset detected: {}", asset);
-                        None
-                    };
-                    storage.add_asset(&asset, name, data.get_decimals()).await?;
+                    let data = AssetData::new(data.decimals, data.name.as_ref().to_owned(), data.max_supply);
+                    storage.add_asset(&asset, data).await?;
                 }
 
                 // New asset added to the wallet, inform listeners
-                self.wallet.propagate_event(Event::NewAsset(AssetWithData::new(asset.clone(), data))).await;
+                self.wallet.propagate_event(Event::NewAsset(data)).await;
             }
 
             // get the balance for this asset

@@ -16,6 +16,7 @@ use xelis_common::{
         DataElement,
         DataValue
     },
+    asset::AssetData,
     config::XELIS_ASSET,
     crypto::{
         elgamal::CompressedCiphertext,
@@ -29,7 +30,7 @@ use xelis_common::{
         Serializer,
     },
     tokio::sync::Mutex,
-    transaction::TxVersion,
+    transaction::TxVersion
 };
 use anyhow::{
     Context,
@@ -108,7 +109,7 @@ pub struct EncryptedStorage {
     // Temporary TX Cache used to build ordered TXs
     tx_cache: Option<TxCache>,
     // Cache for the assets with their decimals
-    assets_cache: Mutex<LruCache<Hash, Asset>>,
+    assets_cache: Mutex<LruCache<Hash, AssetData>>,
     // Cache for the synced topoheight
     synced_topoheight: Option<u64>,
     // Topoheight of the last coinbase reward
@@ -484,7 +485,7 @@ impl EncryptedStorage {
             if !cache.contains(&asset) {
                 let raw_value = &self.cipher.decrypt_value(&value)?;
                 let mut reader = Reader::new(raw_value);
-                let a = Asset::read(&mut reader)?;
+                let a = AssetData::read(&mut reader)?;
                 cache.put(asset.clone(), a);
             }
 
@@ -495,7 +496,7 @@ impl EncryptedStorage {
     }
 
     // Retrieve all assets with their data
-    pub async fn get_assets_with_data(&self) -> Result<Vec<(Hash, Asset)>> {
+    pub async fn get_assets_with_data(&self) -> Result<Vec<(Hash, AssetData)>> {
         trace!("get assets with decimals");
         let mut cache = self.assets_cache.lock().await;
         if cache.len() == self.assets.len() {
@@ -511,7 +512,7 @@ impl EncryptedStorage {
             } else {
                 let raw_value = &self.cipher.decrypt_value(&value)?;
                 let mut reader = Reader::new(raw_value);
-                let data = Asset::read(&mut reader)?;
+                let data = AssetData::read(&mut reader)?;
                 if cache.cap().get() != cache.len() {
                     cache.put(asset.clone(), data.clone());
                 }
@@ -539,15 +540,11 @@ impl EncryptedStorage {
     }
 
     // save asset with its corresponding decimals
-    pub async fn add_asset(&mut self, asset: &Hash, name: Option<String>, decimals: u8) -> Result<()> {
+    pub async fn add_asset(&mut self, asset: &Hash, data: AssetData) -> Result<()> {
         trace!("add asset");
         if self.contains_asset(asset).await? {
             return Err(WalletError::AssetAlreadyRegistered.into());
         }
-        let data = Asset {
-            name,
-            decimals
-        };
 
         self.save_to_disk_with_encrypted_key(&self.assets, asset.as_bytes(), &data.to_bytes())?;
 
@@ -557,14 +554,14 @@ impl EncryptedStorage {
     }
 
     // Retrieve the stored decimals for this asset for better display
-    pub async fn get_asset(&self, asset: &Hash) -> Result<Asset> {
+    pub async fn get_asset(&self, asset: &Hash) -> Result<AssetData> {
         trace!("get asset");
         let mut cache = self.assets_cache.lock().await;
         if let Some(asset) = cache.get(asset) {
             return Ok(asset.clone());
         }
 
-        let data: Asset = self.load_from_disk_with_encrypted_key(&self.assets, asset.as_bytes())?;
+        let data: AssetData = self.load_from_disk_with_encrypted_key(&self.assets, asset.as_bytes())?;
         cache.put(asset.clone(), data.clone());
 
         Ok(data)
@@ -575,12 +572,12 @@ impl EncryptedStorage {
         trace!("set asset name");
         let mut cache = self.assets_cache.lock().await;
         if let Some(asset) = cache.get_mut(asset) {
-            asset.name = Some(name.clone());
+            asset.set_name(name.clone());
         }
 
-        let data: Asset = self.load_from_disk_with_encrypted_key(&self.assets, asset.as_bytes())?;
+        let data: AssetData = self.load_from_disk_with_encrypted_key(&self.assets, asset.as_bytes())?;
         let mut data = data;
-        data.name = Some(name);
+        data.set_name(name);
         self.save_to_disk_with_encrypted_key(&self.assets, asset.as_bytes(), &data.to_bytes())?;
         Ok(())
     }

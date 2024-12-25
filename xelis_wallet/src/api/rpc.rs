@@ -268,7 +268,7 @@ async fn get_asset_precision(context: &Context, body: Value) -> Result<Value, In
     let wallet: &Arc<Wallet> = context.get()?;
     let storage = wallet.get_storage().read().await;
     let data = storage.get_asset(&params.asset).await?;
-    Ok(json!(data.decimals))
+    Ok(json!(data.get_decimals()))
 }
 
 // Retrieve all assets tracked by the wallet

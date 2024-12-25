@@ -24,7 +24,7 @@ use xelis_common::{
         },
         DataElement
     },
-    asset::AssetWithData,
+    asset::RPCAssetData,
     crypto::{
         elgamal::Ciphertext,
         Address,
@@ -156,7 +156,7 @@ pub enum Event {
     // When a balance change occurs on wallet
     BalanceChanged(BalanceChanged),
     // When a new asset is added to wallet
-    NewAsset(AssetWithData),
+    NewAsset(RPCAssetData<'static>),
     // When a rescan happened (because of user request or DAG reorg/fork)
     // Value is topoheight until it deleted transactions
     // Next sync will restart at this topoheight
@@ -894,7 +894,7 @@ impl Wallet {
             match tx.get_entry() {
                 EntryData::Burn { asset, amount, fee, nonce } => {
                     let data = storage.get_asset(&asset).await?;
-                    writeln!(w, "{},{},{},{},{},-,{},{},{}", datetime_from_timestamp(tx.get_timestamp())?, tx.get_topoheight(), tx.get_hash(), "Burn", data.name.unwrap_or_else(|| asset.to_string()), format_coin(*amount, data.decimals), format_xelis(*fee), nonce).context("Error while writing csv line")?;
+                    writeln!(w, "{},{},{},{},{},-,{},{},{}", datetime_from_timestamp(tx.get_timestamp())?, tx.get_topoheight(), tx.get_hash(), "Burn", data.get_name(), format_coin(*amount, data.get_decimals()), format_xelis(*fee), nonce).context("Error while writing csv line")?;
                 },
                 EntryData::Coinbase { reward } => {
                     writeln!(w, "{},{},{},{},{},-,{},-,-", datetime_from_timestamp(tx.get_timestamp())?, tx.get_topoheight(), tx.get_hash(), "Coinbase", "XELIS", format_xelis(*reward)).context("Error while writing csv line")?;
@@ -902,13 +902,13 @@ impl Wallet {
                 EntryData::Incoming { from, transfers } => {
                     for transfer in transfers {
                         let data = storage.get_asset(&transfer.get_asset()).await?;
-                        writeln!(w, "{},{},{},{},{},{},{},-,-", datetime_from_timestamp(tx.get_timestamp())?, tx.get_topoheight(), tx.get_hash(), "Incoming", from.as_address(self.get_network().is_mainnet()), data.name.unwrap_or_else(|| transfer.get_asset().to_string()), format_coin(transfer.get_amount(), data.decimals)).context("Error while writing csv line")?;
+                        writeln!(w, "{},{},{},{},{},{},{},-,-", datetime_from_timestamp(tx.get_timestamp())?, tx.get_topoheight(), tx.get_hash(), "Incoming", from.as_address(self.get_network().is_mainnet()), data.get_name(), format_coin(transfer.get_amount(), data.get_decimals())).context("Error while writing csv line")?;
                     }
                 },
                 EntryData::Outgoing { transfers, fee, nonce } => {
                     for transfer in transfers {
                         let data = storage.get_asset(&transfer.get_asset()).await?;
-                        writeln!(w, "{},{},{},{},{},{},{},{},{}", datetime_from_timestamp(tx.get_timestamp())?, tx.get_topoheight(), tx.get_hash(), "Outgoing", transfer.get_destination().as_address(self.get_network().is_mainnet()), data.name.unwrap_or_else(|| transfer.get_asset().to_string()), format_coin(transfer.get_amount(), data.decimals), format_xelis(*fee), nonce).context("Error while writing csv line")?;
+                        writeln!(w, "{},{},{},{},{},{},{},{},{}", datetime_from_timestamp(tx.get_timestamp())?, tx.get_topoheight(), tx.get_hash(), "Outgoing", transfer.get_destination().as_address(self.get_network().is_mainnet()), data.get_name(), format_coin(transfer.get_amount(), data.get_decimals()), format_xelis(*fee), nonce).context("Error while writing csv line")?;
                     }
                 },
                 EntryData::MultiSig { participants, threshold, fee, nonce } => {
@@ -919,7 +919,7 @@ impl Wallet {
                     let mut str_deposits = Vec::new();
                     for (asset, amount) in deposits {
                         let data = storage.get_asset(&asset).await?;
-                        str_deposits.push(format!("{}:{}", data.name.unwrap_or_else(|| asset.to_string()), format_coin(*amount, data.decimals)));
+                        str_deposits.push(format!("{}:{}", data.get_name(), format_coin(*amount, data.get_decimals())));
                     }
 
                     writeln!(w, "{},{},{},{},{},{},{},{},{}", datetime_from_timestamp(tx.get_timestamp())?, tx.get_topoheight(), tx.get_hash(), "InvokeContract", contract, str_deposits.join("|"), chunk_id, format_xelis(*fee), nonce).context("Error while writing csv line")?;

@@ -56,31 +56,6 @@ pub struct TxCache {
     pub last_tx_hash_created: Hash,
 }
 
-// A registered asset in the wallet DB
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Asset {
-    // Asset name given by the user
-    pub name: Option<String>,
-    // asset decimals
-    pub decimals: u8,
-}
-
-impl Serializer for Asset {
-    fn write(&self, writer: &mut Writer) {
-        self.name.write(writer);
-        self.decimals.write(writer);
-    }
-
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let name = Option::read(reader)?;
-        let decimals = u8::read(reader)?;
-        Ok(Self {
-            name,
-            decimals
-        })
-    }
-}
-
 // A multisig state in the wallet DB
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MultiSig {
