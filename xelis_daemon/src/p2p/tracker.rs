@@ -44,7 +44,6 @@ use super::{
     peer::Peer
 };
 use log::{
-    error,
     debug,
     trace,
     warn
@@ -275,7 +274,7 @@ impl ObjectTracker {
             group: GroupManager::new(),
             cache: ExpirableCache::new()
         });
-        
+
         // start the requester task loop which send requests to peers
         {
             let server_exit = server_exit.resubscribe();
@@ -462,9 +461,7 @@ impl ObjectTracker {
             }
         }
 
-        if self.handler_sender.send(response).await.is_err() {
-            error!("Error while sending object response in ObjectTracker");
-        }
+        self.handler_sender.send(response).await?;
 
         Ok(())
     }

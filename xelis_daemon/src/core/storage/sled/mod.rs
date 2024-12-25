@@ -841,42 +841,20 @@ impl Storage for SledStorage {
         // we set the new highest topoheight to the highest found under the new topoheight
         for el in self.nonces.iter() {
             let (key, value) = el?;
-            let highest_topoheight = TopoHeight::from_bytes(&value)?;
-            if highest_topoheight < pruned_topoheight {
-                warn!("wrong nonce topoheight stored, highest topoheight is {}, pruned topoheight is {}", highest_topoheight, pruned_topoheight);
-                Self::remove_from_disk_without_reading(self.snapshot.as_mut(), &self.nonces, &key)?;
-                continue;
-            }
+            let topo_pointer = TopoHeight::from_bytes(&value)?;
 
-            if highest_topoheight > topoheight {
-                let contains = Self::remove_from_disk_without_reading(self.snapshot.as_mut(), &self.nonces, &key)?;
-                if contains {
-                    self.store_accounts_count(self.count_accounts().await? - 1)?;
-                }
-
-                // find the first version which is under topoheight
+            if topo_pointer > topoheight {
                 let pkey = PublicKey::from_bytes(&key)?;
-                trace!("Highest topoheight for {} nonce is {}, above {}", pkey.as_address(self.is_mainnet()), highest_topoheight, topoheight);
-                let mut version = self.get_nonce_at_exact_topoheight(&pkey, highest_topoheight).await
-                    .context(format!("Error while retrieving nonce at exact topoheight {highest_topoheight}"))?;
-
-                while let Some(previous_topoheight) = version.get_previous_topoheight() {
-                    if previous_topoheight <= topoheight {
-                        // we find the new highest version which is under new topoheight
-                        trace!("New highest version nonce for {} is at topoheight {}", pkey.as_address(self.is_mainnet()), previous_topoheight);
-                        let insert = Self::insert_into_disk(self.snapshot.as_mut(), &self.nonces, &key, &previous_topoheight.to_be_bytes())?;
-                        if insert.is_none() {
-                            self.store_accounts_count(self.count_accounts().await? + 1)?;
-                        }
-                        break;
+                match self.get_nonce_at_maximum_topoheight(&pkey, topoheight).await? {
+                    Some((topo, _)) => {
+                        trace!("New highest version nonce for {} is at topoheight {}", pkey.as_address(self.is_mainnet()), topo);
+                        Self::insert_into_disk(self.snapshot.as_mut(), &self.nonces, &key, &topo.to_be_bytes())?;
+                    },
+                    None => {
+                        Self::remove_from_disk_without_reading(self.snapshot.as_mut(), &self.nonces, &key)?;
+                        self.store_accounts_count(self.count_accounts().await? - 1)?;
                     }
-
-                    // keep searching
-                    version = self.get_nonce_at_exact_topoheight(&pkey, previous_topoheight).await
-                        .context(format!("Error while searching nonce at exact topoheight"))?;
                 }
-            } else {
-                // nothing to do as its under the rewinded topoheight
             }
         }
 
@@ -890,28 +868,21 @@ impl Storage for SledStorage {
             // if the asset is not deleted, we can process it
             if !deleted_assets.contains(&asset) {
                 let highest_topoheight = u64::from_bytes(&value)?;
-                if highest_topoheight > topoheight && highest_topoheight >= pruned_topoheight {
+                // If the highest topoheight is above the new topoheight, we have to find the new highest version
+                if highest_topoheight > topoheight {
                     // find the first version which is under topoheight
                     let pkey = PublicKey::from_bytes(&key[0..32])?;
                     trace!("Highest topoheight for balance {} is {}, above {}", pkey.as_address(self.is_mainnet()), highest_topoheight, topoheight);
 
-                    let mut version = self.get_balance_at_exact_topoheight(&pkey, &asset, highest_topoheight).await
-                        .context(format!("Error while retrieving balance at exact topoheight {highest_topoheight}"))?;
-
-                    // Mark for deletion if we can't find a version under the new topoheight
-                    delete = true;
-
-                    while let Some(previous_topoheight) = version.get_previous_topoheight() {
-                        if previous_topoheight <= topoheight {
+                    match self.get_balance_at_maximum_topoheight(&pkey, &asset, topoheight).await? {
+                        Some((topo, _)) => {
                             // we find the new highest version which is under new topoheight
-                            trace!("New highest version balance for {} is at topoheight {} with asset {}", pkey.as_address(self.is_mainnet()), previous_topoheight, asset);
-                            Self::insert_into_disk(self.snapshot.as_mut(), &self.balances, &key, &previous_topoheight.to_be_bytes())?;
-                            delete = false;
-                            break;
+                            trace!("New highest version balance for {} is at topoheight {}", pkey.as_address(self.is_mainnet()), topo);
+                            Self::insert_into_disk(self.snapshot.as_mut(), &self.balances, &key, &topo.to_be_bytes())?;
+                        },
+                        None => {
+                            delete = true;
                         }
-    
-                        // keep searching
-                        version = self.get_balance_at_exact_topoheight(&pkey, &asset, previous_topoheight).await?;
                     }
                 }
             } else {

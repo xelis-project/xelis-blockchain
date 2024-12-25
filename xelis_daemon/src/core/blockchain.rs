@@ -532,19 +532,25 @@ impl<S: Storage> Blockchain<S> {
         }
 
         // find new stable point based on a sync block under the limit topoheight
+        let start = Instant::now();
         let located_sync_topoheight = self.locate_nearest_sync_block_for_topoheight(storage, topoheight, self.get_height()).await?;
-        debug!("Located sync topoheight found: {}", located_sync_topoheight);
+        debug!("Located sync topoheight found {} in {}ms", located_sync_topoheight, start.elapsed().as_millis());
 
         if located_sync_topoheight > last_pruned_topoheight {
             // delete all blocks until the new topoheight
+            let start = Instant::now();
             for topoheight in last_pruned_topoheight..located_sync_topoheight {
                 trace!("Pruning block at topoheight {}", topoheight);
                 // delete block
                 let _ = storage.delete_block_at_topoheight(topoheight).await?;
             }
+            debug!("Pruned blocks until topoheight {} in {}ms", located_sync_topoheight, start.elapsed().as_millis());
 
+            let start = Instant::now();
             // delete balances for all assets
+            // TODO: this is currently going through ALL data, we need to only detect changes made in last..located
             storage.delete_versioned_data_below_topoheight(located_sync_topoheight, true).await?;
+            debug!("Pruned versioned data until topoheight {} in {}ms", located_sync_topoheight, start.elapsed().as_millis());
 
             // Update the pruned topoheight
             storage.set_pruned_topoheight(located_sync_topoheight).await?;
@@ -2188,9 +2194,12 @@ impl<S: Storage> Blockchain<S> {
                 // and that we can prune the chain using the config while respecting the safety limit
                 if current_topoheight % keep_only == 0 && current_topoheight - keep_only > 0 {
                     info!("Auto pruning chain until topoheight {} (keep only {} blocks)", current_topoheight - keep_only, keep_only);
+                    let start = Instant::now();
                     if let Err(e) = self.prune_until_topoheight_for_storage(current_topoheight - keep_only, storage).await {
                         warn!("Error while trying to auto prune chain: {}", e);
                     }
+
+                    info!("Auto pruning done in {}ms", start.elapsed().as_millis());
                 }
             }
         }

@@ -112,7 +112,8 @@ impl SledStorage {
                 // We fetch the last version to take its previous topoheight
                 // And we loop on it to delete them all until the end of the chained data
                 let mut prev_version = Self::load_from_disk_internal::<Option<u64>>(snapshot.as_ref(), tree_versioned, &Self::get_versioned_key(&key, topo), context)?;
-                let mut patched = false;
+                // If we are already below the threshold, we can directly erase without patching
+                let mut patched = topo < topoheight;
                 while let Some(prev_topo) = prev_version {
                     let key = Self::get_versioned_key(&key, prev_topo);
 
