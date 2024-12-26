@@ -4,7 +4,7 @@ use xelis_vm::Constant;
 use crate::core::storage::{ContractDataProvider, SledStorage};
 
 impl ContractStorage for SledStorage {
-    fn load(&mut self, contract: &Hash, key: &Constant, topoheight: TopoHeight) -> Result<Option<(TopoHeight, Option<Constant>)>, anyhow::Error> {
+    fn load(&self, contract: &Hash, key: &Constant, topoheight: TopoHeight) -> Result<Option<(TopoHeight, Option<Constant>)>, anyhow::Error> {
         trace!("load contract {} key {} data at topoheight {}", contract, key, topoheight);
         let res = futures::executor::block_on(self.get_contract_data_at_maximum_topoheight_for(contract, &key, topoheight))?;
 

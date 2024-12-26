@@ -8,17 +8,16 @@ use log::{debug, trace};
 use xelis_common::{
     account::{BalanceType, Nonce, VersionedNonce},
     block::{Block, BlockVersion, TopoHeight},
-    contract::{ChainState as ContractChainState, ContractOutput, DeterministicRandom},
+    contract::{ChainState as ContractChainState, ContractCache, ContractOutput, DeterministicRandom},
     crypto::{elgamal::Ciphertext, Hash, PublicKey},
     transaction::{
         verify::{BlockchainApplyState, BlockchainVerificationState, ContractEnvironment},
         InvokeContractPayload,
         MultiSigPayload,
         Reference
-    },
-    versioned_type::VersionedState
+    }
 };
-use xelis_vm::{Constant, Environment};
+use xelis_vm::Environment;
 use crate::core::{
     error::BlockchainError,
     storage::{Storage, VersionedContract, VersionedContractData, VersionedMultiSig}
@@ -32,7 +31,7 @@ pub struct ApplicableChainState<'a, S: Storage> {
     block_hash: &'a Hash,
     block: &'a Block,
     contracts_outputs: HashMap<&'a Hash, Vec<ContractOutput>>,
-    contracts_storage_changes: HashMap<&'a Hash, HashMap<Constant, (VersionedState, Option<Constant>)>>,
+    contracts_cache: HashMap<&'a Hash, ContractCache>, 
     burned_supply: u64,
 }
 
@@ -164,14 +163,19 @@ impl<'a, S: Storage> BlockchainApplyState<'a, S, BlockchainError> for Applicable
         self.inner.storage.is_mainnet()
     }
 
-    async fn add_contract_output(
+    async fn set_contract_outputs(
         &mut self,
         tx_hash: &'a Hash,
-        output: ContractOutput
+        outputs: Vec<ContractOutput>
     ) -> Result<(), BlockchainError> {
-        self.contracts_outputs.entry(tx_hash)
-            .or_insert_with(Vec::new)
-            .push(output);
+        match self.contracts_outputs.entry(tx_hash) {
+            Entry::Occupied(mut o) => {
+                o.get_mut().extend(outputs);
+            },
+            Entry::Vacant(e) => {
+                e.insert(outputs);
+            }
+        };
 
         Ok(())
     }
@@ -186,6 +190,13 @@ impl<'a, S: Storage> BlockchainApplyState<'a, S, BlockchainError> for Applicable
                 .ok_or_else(|| BlockchainError::ContractNotFound(payload.contract.clone()))
             )?;
 
+        // We need to clone it to prevent that we store changes while the contract have failed
+        let cache = if let Some(cache) = self.contracts_cache.get(&payload.contract) {
+            cache.clone()
+        } else {
+            ContractCache::new()
+        };
+
         // Create a deterministic random for the contract
         let random = DeterministicRandom::new(&payload.contract, &self.block_hash, tx_hash);
 
@@ -193,34 +204,38 @@ impl<'a, S: Storage> BlockchainApplyState<'a, S, BlockchainError> for Applicable
             debug_mode: true,
             mainnet: self.inner.storage.is_mainnet(),
             contract: &payload.contract,
-            topoheight: self.topoheight,
+            topoheight: self.inner.topoheight,
             block_hash: self.block_hash,
             block: self.block,
             deposits: &payload.deposits,
             random,
             tx_hash,
-            transfers: Vec::new(),
-            storage: HashMap::new(),
+            cache
         };
 
         let contract_environment = ContractEnvironment {
             environment: self.inner.environment,
             module,
-            storage: self.inner.storage.as_mut(),
+            provider: self.inner.storage.as_mut(),
         };
 
         Ok((contract_environment, state))
     }
 
-    async fn add_storage_change(
+    async fn merge_contract_cache(
         &mut self,
-        contract: &'a Hash,
-        key: Constant,
-        value: (VersionedState, Option<Constant>)
+        hash: &'a Hash,
+        cache: ContractCache
     ) -> Result<(), BlockchainError> {
-        self.contracts_storage_changes.entry(contract)
-            .or_insert_with(HashMap::new)
-            .insert(key, value);
+        match self.contracts_cache.entry(hash) {
+            Entry::Occupied(mut o) => {
+                let current = o.get_mut();
+                current.merge(cache);
+            },
+            Entry::Vacant(e) => {
+                e.insert(cache);
+            }
+        };
 
         Ok(())
     }
@@ -273,7 +288,7 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
             ),
             burned_supply,
             contracts_outputs: HashMap::new(),
-            contracts_storage_changes: HashMap::new(),
+            contracts_cache: HashMap::new(),
             block_hash,
             block
         }
@@ -391,6 +406,46 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
             }
         }
 
+        // Apply all the contract storage changes
+        for (contract, cache) in self.contracts_cache {
+            // Apply all storage changes
+            for (key, (state, value)) in cache.storage {
+                if state.should_be_stored() {
+                    trace!("Saving contract data {} key {} at topoheight {}", contract, key, self.inner.topoheight);
+                    self.inner.storage.set_last_contract_data_to(&contract, &key, self.inner.topoheight, VersionedContractData::new(value, state.get_topoheight())).await?;
+                }
+            }
+
+            // Apply all the transfers
+            for transfer in cache.transfers {
+                trace!("Transfering {} {} to {} at topoheight {}", transfer.amount, transfer.asset, transfer.destination.as_address(self.inner.storage.is_mainnet()), self.inner.topoheight);
+                let receiver_balance = self.inner.internal_get_receiver_balance(Cow::Owned(transfer.destination), Cow::Owned(transfer.asset)).await?;
+                *receiver_balance += transfer.amount;
+            }
+
+            for (asset, data) in cache.balances {
+                if let Some((state, balance)) = data {
+                    if state.should_be_stored() {
+                        trace!("Saving contract balance {} for {} at topoheight {}", balance, asset, self.inner.topoheight);
+
+                    }
+                }
+            }
+        }
+
+        // Also store the contracts updated
+        for (hash, (state, module)) in self.inner.contracts {
+            if state.should_be_stored() {
+                trace!("Saving contract {} at topoheight {}", hash, self.inner.topoheight);
+                self.inner.storage.set_last_contract_to(&hash, self.inner.topoheight, VersionedContract::new(module, state.get_topoheight())).await?;
+            }
+        }
+
+        // Apply all the contract outputs
+        for (key, outputs) in self.contracts_outputs {
+            self.inner.storage.set_contract_outputs_for_tx(&key, outputs).await?;
+        }
+
         // Apply all balances changes at topoheight
         // We injected the sender balances in the receiver balances previously
         for (account, balances) in self.inner.receiver_balances {
@@ -408,29 +463,6 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
             // Mark it as registered at this topoheight
             if !self.inner.storage.is_account_registered_at_topoheight(&account, self.inner.topoheight).await? {
                 self.inner.storage.set_account_registration_topoheight(&account, self.inner.topoheight).await?;
-            }
-        }
-
-        // Also store the contracts updated
-        for (hash, (state, module)) in self.inner.contracts {
-            if state.should_be_stored() {
-                trace!("Saving contract {} at topoheight {}", hash, self.inner.topoheight);
-                self.inner.storage.set_last_contract_to(&hash, self.inner.topoheight, VersionedContract::new(module, state.get_topoheight())).await?;
-            }
-        }
-
-        // Apply all the contract outputs
-        for (key, outputs) in self.contracts_outputs {
-            self.inner.storage.set_contract_outputs_for_tx(&key, outputs).await?;
-        }
-
-        // Apply all the contract storage changes
-        for (contract, changes) in self.contracts_storage_changes {
-            for (key, (state, value)) in changes {
-                if state.should_be_stored() {
-                    trace!("Saving contract data {} key {} at topoheight {}", contract, key, self.inner.topoheight);
-                    self.inner.storage.set_last_contract_data_to(&contract, &key, self.inner.topoheight, VersionedContractData::new(value, state.get_topoheight())).await?;
-                }
             }
         }
 
