@@ -506,7 +506,7 @@ async fn finalize_unsigned_transaction(context: &Context, body: Value) -> Result
         unsigned.set_multisig(multisig);
     }
 
-    let tx = unsigned.finalize(keypair);
+    let tx = unsigned.0.finalize(keypair);
     
     let mut storage = wallet.get_storage().write().await;
     let mut state = TransactionBuilderState::from_tx(&storage, &tx, wallet.get_network().is_mainnet()).await?;
