@@ -109,6 +109,7 @@ pub struct FinalizeUnsignedTransactionParams {
     pub unsigned: Hexable<UnsignedTransaction>,
     // Signatures to append in the transaction
     // In case it wasn't added in the unsigned already
+    #[serde(default)]
     pub signatures: Vec<SignatureId>,
     // Cannot be broadcasted if set to false
     #[serde(default = "default_true_value")]
