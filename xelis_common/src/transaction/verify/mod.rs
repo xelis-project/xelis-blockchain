@@ -827,7 +827,7 @@ impl Transaction {
 
                 let mut outputs = Vec::new();
                 if success {
-                    let cache = chain_state.cache;
+                    let cache = chain_state.changes;
                     outputs = cache.transfers.iter().map(|transfer| {
                         // Track the output
                         ContractOutput::Transfer {
@@ -841,6 +841,7 @@ impl Transaction {
                         .map_err(VerificationError::State)?;
                 }
 
+                // Push the exit code to the outputs
                 outputs.push(ContractOutput::ExitCode(exit_code));
 
                 if used_gas > 0 {

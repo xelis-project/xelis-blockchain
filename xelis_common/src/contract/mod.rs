@@ -68,7 +68,11 @@ pub struct ChainState<'a> {
     // All deposits made by the caller
     pub deposits: &'a IndexMap<Hash, ContractDeposit>,
     // The contract cache
-    pub cache: ContractCache,
+    // If the contract was called already, we may have a cache
+    pub cache: Option<&'a ContractCache>,
+    // The contract changes that occured during the execution
+    // If the contract exit correctly, these changes are merged into above cache
+    pub changes: ContractCache,
 }
 
 // Contract cache containing all the changes/cache made by the contract
@@ -450,6 +454,29 @@ pub fn from_context<'a, 'ty, 'r, P: ContractProvider>(context: &'a mut Context<'
     Ok((provider, state))
 }
 
+pub fn get_balance_from<P: ContractProvider>(provider: &P, state: &mut ChainState, asset: Hash) -> Result<Option<u64>, anyhow::Error> {
+    Ok(match state.cache {
+        Some(cache) => match cache.balances.get(&asset) {
+            Some(Some((_, balance))) => Some(*balance),
+            Some(None) => None,
+            None => get_balance_from_changes(provider, state.contract, &mut state.changes, asset)?
+        },
+        None => get_balance_from_changes(provider, state.contract, &mut state.changes, asset)?
+    })
+}
+
+pub fn get_balance_from_changes<P: ContractProvider>(provider: &P, contract: &Hash, cache: &mut ContractCache, asset: Hash) -> Result<Option<u64>, anyhow::Error> {
+    Ok(match cache.balances.get(&asset) {
+        Some(Some((_, balance))) => Some(*balance),
+        Some(None) => None,
+        None => {
+            let balance = provider.get_contract_balance_for_asset(contract, &asset)?;
+            cache.balances.insert(asset.clone(), balance.map(|(topoheight, balance)| (VersionedState::FetchedAt(topoheight), balance)));
+            balance.map(|(_, balance)| balance)
+        }
+    })
+}
+
 fn println_fn(_: FnInstance, params: FnParams, context: &mut Context) -> FnReturnType {
     let state: &ChainState = context.get().context("chain state not found")?;
     if state.debug_mode {
@@ -501,14 +528,13 @@ fn get_balance_for_asset<P: ContractProvider>(_: FnInstance, mut params: FnParam
         .into_owned()
         .into_opaque_type()?;
 
-    let balance = match state.cache.balances.get(&asset) {
-        Some(Some((_, balance))) => Some(*balance),
-        Some(None) => None,
-        None => {
-            let balance = provider.get_contract_balance_for_asset(state.contract, &asset)?;
-            state.cache.balances.insert(asset.clone(), balance.map(|(topoheight, balance)| (VersionedState::FetchedAt(topoheight), balance)));
-            balance.map(|(_, balance)| balance)
-        }
+    let balance = match state.cache {
+        Some(cache) => match cache.balances.get(&asset) {
+            Some(Some((_, balance))) => Some(*balance),
+            Some(None) => None,
+            None => get_balance_from_changes(provider, state.contract, &mut state.changes, asset)?
+        },
+        None => get_balance_from_changes(provider, state.contract, &mut state.changes, asset)?
     };
 
     Ok(Some(ValueCell::Optional(balance.map(|v| Value::U64(v).into()))))
@@ -529,7 +555,7 @@ fn transfer<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &
         .into_owned()
         .into_opaque_type()?;
 
-    let Some((balance_state, balance)) = match state.cache.balances.entry(asset.clone()) {
+    let Some((balance_state, balance)) = match state.changes.balances.entry(asset.clone()) {
         Entry::Occupied(entry) => entry.into_mut(),
         Entry::Vacant(entry) => {
             let balance = provider.get_contract_balance_for_asset(state.contract, &asset)?;
@@ -548,7 +574,7 @@ fn transfer<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &
     *balance -= amount;
     balance_state.mark_updated();
 
-    state.cache.transfers.push(TransferOutput {
+    state.changes.transfers.push(TransferOutput {
         destination: destination.to_public_key(),
         amount,
         asset,
@@ -567,7 +593,7 @@ fn burn<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &mut 
         .into_owned()
         .to_u64()?;
 
-    let Some((balance_state, balance)) = match state.cache.balances.entry(asset.clone()) {
+    let Some((balance_state, balance)) = match state.changes.balances.entry(asset.clone()) {
         Entry::Occupied(entry) => entry.into_mut(),
         Entry::Vacant(entry) => {
             let balance = provider.get_contract_balance_for_asset(state.contract, &asset)?;
