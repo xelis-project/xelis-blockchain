@@ -178,19 +178,30 @@ impl EncryptedStorage {
     }
 
     // Key must be hashed or encrypted before calling this function
-    fn internal_load<V: Serializer>(&self, tree: &Tree, key: &[u8]) -> Result<V> {
+    fn internal_load<V: Serializer>(&self, tree: &Tree, key: &[u8]) -> Result<Option<V>> {
         trace!("internal load");
-        let data = tree.get(key)?.context(format!("load from disk: tree = {:?}, key = {}", tree.name(), String::from_utf8_lossy(key)))?;
-        let bytes = self.cipher.decrypt_value(&data).context("Error while decrypting value from disk")?;
-        let mut reader = Reader::new(&bytes);
-        Ok(V::read(&mut reader).context("Error while de-serializing value from disk")?)
+        let data = tree.get(key)?;
+        Ok(match data {
+            Some(data) => {
+                let bytes = self.cipher.decrypt_value(&data).context("Error while decrypting value from disk")?;
+                Some(V::from_bytes(&bytes).context("Error while de-serializing value from disk")?)
+            },
+            None => None
+        })
+    }
+
+    // load from disk using a hashed key, decrypt the value and deserialize it
+    fn load_from_disk_optional<V: Serializer>(&self, tree: &Tree, key: &[u8]) -> Result<Option<V>> {
+        trace!("load from disk optional");
+        let hashed_key = self.cipher.hash_key(key);
+        self.internal_load(tree, &hashed_key)
     }
 
     // load from disk using a hashed key, decrypt the value and deserialize it
     fn load_from_disk<V: Serializer>(&self, tree: &Tree, key: &[u8]) -> Result<V> {
         trace!("load from disk");
-        let hashed_key = self.cipher.hash_key(key);
-        self.internal_load(tree, &hashed_key)
+        self.load_from_disk_optional(tree, key)?
+            .context(format!("Error while loading data with hashed key {} from disk", String::from_utf8_lossy(key)))
     }
 
     // Because we can't predict the nonce used for encryption, we make it determistic
@@ -211,7 +222,8 @@ impl EncryptedStorage {
     fn load_from_disk_with_encrypted_key<V: Serializer>(&self, tree: &Tree, key: &[u8]) -> Result<V> {
         trace!("load from disk with encrypted key");
         let encrypted_key = self.create_encrypted_key(key)?;
-        self.internal_load(tree, &encrypted_key)
+        self.internal_load(tree, &encrypted_key)?
+            .context(format!("Error while loading data with encrypted key {} from disk", String::from_utf8_lossy(key)))
     }
 
     // Encrypt key, encrypt data and then save to disk
@@ -992,7 +1004,8 @@ impl EncryptedStorage {
     // Retrieve the nonce used to create new transactions
     pub fn get_nonce(&self) -> Result<u64> {
         trace!("get nonce");
-        self.load_from_disk(&self.extra, NONCE_KEY)
+        Ok(self.load_from_disk_optional(&self.extra, NONCE_KEY)?
+            .unwrap_or(0))
     }
 
     // Get the unconfirmed nonce to use to build ordered TXs
