@@ -49,6 +49,7 @@ chacha20 = "0.9.1"
 # WebSocket support
 tokio-tungstenite-wasm = { version = "0.3.1", features = ["rustls-tls-webpki-roots"], optional = true }
 better_any = "0.2.0"
+log-panics = { version = "2", features = ["with-backtrace"]}
 
 [target.'cfg(windows)'.dependencies]
 win32console = "0.1.5"
