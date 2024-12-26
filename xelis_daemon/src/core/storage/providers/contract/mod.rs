@@ -1,6 +1,6 @@
 mod data;
 mod output;
-mod storage;
+mod provider;
 
 use std::borrow::Cow;
 

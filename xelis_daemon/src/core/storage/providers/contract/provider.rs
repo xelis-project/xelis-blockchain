@@ -1,5 +1,5 @@
 use log::trace;
-use xelis_common::{block::TopoHeight, contract::ContractStorage, crypto::Hash};
+use xelis_common::{block::TopoHeight, contract::{ContractProvider, ContractStorage}, crypto::Hash};
 use xelis_vm::Constant;
 use crate::core::storage::{ContractDataProvider, SledStorage};
 
@@ -27,5 +27,14 @@ impl ContractStorage for SledStorage {
         trace!("load latest topoheight for contract {} key {} at topoheight {}", contract, key, topoheight);
         let res = futures::executor::block_on(self.get_contract_data_topoheight_at_maximum_topoheight_for(contract, &key, topoheight))?;
         Ok(res)
+    }
+}
+
+impl ContractProvider for SledStorage {
+    fn get_contract_balance_for_asset(&self, contract: &Hash, asset: &Hash) -> Result<Option<(TopoHeight, u64)>, anyhow::Error> {
+        trace!("get contract balance for contract {} asset {}", contract, asset);
+        // let res = futures::executor::block_on(self.get_contract_balance_for_asset(contract, asset))?;
+        // Ok(res)
+        todo!("get_contract_balance_for_asset")
     }
 }

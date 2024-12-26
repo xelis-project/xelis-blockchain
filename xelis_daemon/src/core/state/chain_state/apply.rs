@@ -190,12 +190,8 @@ impl<'a, S: Storage> BlockchainApplyState<'a, S, BlockchainError> for Applicable
                 .ok_or_else(|| BlockchainError::ContractNotFound(payload.contract.clone()))
             )?;
 
-        // We need to clone it to prevent that we store changes while the contract have failed
-        let cache = if let Some(cache) = self.contracts_cache.get(&payload.contract) {
-            cache.clone()
-        } else {
-            ContractCache::new()
-        };
+        // Find the contract cache in our cache map
+        let cache = self.contracts_cache.get(&payload.contract);
 
         // Create a deterministic random for the contract
         let random = DeterministicRandom::new(&payload.contract, &self.block_hash, tx_hash);
@@ -210,7 +206,8 @@ impl<'a, S: Storage> BlockchainApplyState<'a, S, BlockchainError> for Applicable
             deposits: &payload.deposits,
             random,
             tx_hash,
-            cache
+            cache,
+            changes: ContractCache::new(),
         };
 
         let contract_environment = ContractEnvironment {
