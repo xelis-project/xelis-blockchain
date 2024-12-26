@@ -5,6 +5,7 @@ use crate::{
     account::CiphertextCache,
     block::TopoHeight,
     crypto::{elgamal::CompressedCiphertext, Address, Hash, PrivateKey},
+    serializer::Hexable,
     transaction::{
         builder::{FeeBuilder, TransactionTypeBuilder, UnsignedTransaction},
         extra_data::{PlaintextExtraData, UnknownExtraDataFormat},
@@ -105,7 +106,7 @@ pub struct BuildUnsignedTransactionParams {
 #[derive(Serialize, Deserialize)]
 pub struct FinalizeUnsignedTransactionParams {
     // Unsigned transaction to finalize
-    pub unsigned: UnsignedTransaction,
+    pub unsigned: Hexable<UnsignedTransaction>,
     // Signatures to append in the transaction
     // In case it wasn't added in the unsigned already
     pub signatures: Vec<SignatureId>,
