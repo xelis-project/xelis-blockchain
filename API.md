@@ -10357,10 +10357,14 @@ This is useful in case of a MultiSig setup where you need to sign the transactio
         ],
         "multisig": null,
         "tx_as_hex": "<hexadecimal transaction>",
-        "version": 0
+        "version": 0,
+        "threshold": 0
     }
 }
 ```
+
+**NOTE**: If the wallet is offline, it can't determine the exact `threshold` needed to sign the transaction.
+It will be set to 0.
 
 #### Finalize Unsigned Transaction
 Finalize an unsigned transaction by signing it with the wallet key pair.
