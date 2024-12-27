@@ -7216,6 +7216,42 @@ No parameters
 }
 ```
 
+
+#### Get Transaction Executor
+Fetch the block hash where the transaction was executed and its topoheight.
+
+##### Method `get_transaction_executor`
+
+##### Parameters
+| Name | Type | Required |            Note           |
+|:----:|:----:|:--------:|:-------------------------:|
+| hash | Hash | Required | Transaction hash to fetch |
+
+##### Request
+```json
+{
+    "jsonrpc": "2.0",
+    "method": "get_transaction_executor",
+    "id": 1,
+    "params": {
+        "hash": "dd693bad09cb03ba0bf9a6fa7b787f918748db869c1463b7fa16e20b498dea88"
+    }
+}
+```
+
+##### Response
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+        "block_topoheight": 22285,
+        "block_hash": "000000000bc1070fda6b86eb31fbf3f15e89be9c10928415b2254fcab96088a8",
+        "block_timestamp": 1711665284
+    }
+}
+```
+
 #### Get Transactions
 Fetch transactions by theirs hashes from database and mempool of daemon and keep the same order in response
 
