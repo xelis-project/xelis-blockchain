@@ -66,4 +66,13 @@ impl Serializer for ContractOutput {
             _ => Err(ReaderError::InvalidValue)
         }
     }
+
+    fn size(&self) -> usize {
+        match self {
+            ContractOutput::RefundGas { amount } => 1 + amount.size(),
+            ContractOutput::Transfer { amount, asset, destination } => 1 + amount.size() + asset.size() + destination.size(),
+            ContractOutput::ExitCode(code) => 1 + code.size(),
+            ContractOutput::RefundDeposits => 1
+        }
+    }
 }

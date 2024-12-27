@@ -228,7 +228,8 @@ pub enum RPCContractOutput<'a> {
         asset: Cow<'a, Hash>,
         destination: Cow<'a, Address>
     },
-    ExitCode(Option<u64>)
+    ExitCode(Option<u64>),
+    RefundDeposits
 }
 
 impl<'a> RPCContractOutput<'a> {
@@ -240,7 +241,8 @@ impl<'a> RPCContractOutput<'a> {
                 asset: Cow::Owned(asset),
                 destination: Cow::Owned(destination.to_address(mainnet))
             },
-            ContractOutput::ExitCode(code) => RPCContractOutput::ExitCode(code)
+            ContractOutput::ExitCode(code) => RPCContractOutput::ExitCode(code),
+            ContractOutput::RefundDeposits => RPCContractOutput::RefundDeposits,
         }
     }
 }
@@ -254,7 +256,8 @@ impl<'a> From<RPCContractOutput<'a>> for ContractOutput {
                 asset: asset.into_owned(),
                 destination: destination.into_owned().to_public_key()
             },
-            RPCContractOutput::ExitCode(code) => ContractOutput::ExitCode(code)
+            RPCContractOutput::ExitCode(code) => ContractOutput::ExitCode(code),
+            RPCContractOutput::RefundDeposits => ContractOutput::RefundDeposits,
         }
     }
 }

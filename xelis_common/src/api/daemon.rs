@@ -637,9 +637,14 @@ pub struct GetMultisigResult {
 
 #[derive(Serialize, Deserialize)]
 pub struct HasMultisigParams<'a> {
+    pub address: Cow<'a, Address>
+}
+
+
+#[derive(Serialize, Deserialize)]
+pub struct HasMultisigAtTopoHeightParams<'a> {
     pub address: Cow<'a, Address>,
-    #[serde(default)]
-    pub topoheight: Option<TopoHeight>
+    pub topoheight: TopoHeight
 }
 
 #[derive(Serialize, Deserialize)]
