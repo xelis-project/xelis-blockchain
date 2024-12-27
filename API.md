@@ -9222,6 +9222,9 @@ Verify if the address has a multisig setup.
 }
 ```
 
+**NOTE**:
+- If the address has an inactive multisig state, it will returns `false`.
+
 #### Has Multisig at TopoHeight
 
 Verify if the address has a multisig setup at a specific topoheight.
