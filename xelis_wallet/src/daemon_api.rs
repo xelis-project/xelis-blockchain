@@ -293,8 +293,7 @@ impl DaemonAPI {
     pub async fn has_multisig(&self, address: &Address) -> Result<bool> {
         trace!("has_multisig");
         let has_multisig = self.client.call_with("has_multisig", &HasMultisigParams {
-            address: Cow::Borrowed(address),
-            topoheight: None
+            address: Cow::Borrowed(address)
         }).await?;
         Ok(has_multisig)
     }
