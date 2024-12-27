@@ -1555,11 +1555,8 @@ async fn has_multisig<S: Storage>(context: &Context, body: Value) -> Result<Valu
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let storage = blockchain.get_storage().read().await;
 
-    let multisig = if let Some(topoheight) = params.topoheight {
-        storage.has_multisig_at_topoheight(&params.address.get_public_key(), topoheight).await
-    } else {
-        storage.has_multisig(&params.address.get_public_key()).await
-    }.context("Error while checking if account has multisig")?;
+    let multisig = storage.has_multisig(&params.address.get_public_key()).await
+            .context("Error while checking if account has multisig")?;
 
     Ok(json!(multisig))
 }
