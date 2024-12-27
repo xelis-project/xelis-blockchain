@@ -360,6 +360,7 @@ pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>
     handler.register_method("get_multisig_at_topoheight", async_handler!(get_multisig_at_topoheight::<S>));
     handler.register_method("get_multisig", async_handler!(get_multisig::<S>));
     handler.register_method("has_multisig", async_handler!(has_multisig::<S>));
+    handler.register_method("has_multisig_at_topoheight", async_handler!(has_multisig_at_topoheight::<S>));
 
     // Contracts
     handler.register_method("get_contract_outputs", async_handler!(get_contract_outputs::<S>));
@@ -1559,6 +1560,17 @@ async fn has_multisig<S: Storage>(context: &Context, body: Value) -> Result<Valu
     } else {
         storage.has_multisig(&params.address.get_public_key()).await
     }.context("Error while checking if account has multisig")?;
+
+    Ok(json!(multisig))
+}
+
+async fn has_multisig_at_topoheight<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
+    let params: HasMultisigAtTopoHeightParams = parse_params(body)?;
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    let storage = blockchain.get_storage().read().await;
+
+    let multisig = storage.has_multisig_at_topoheight(&params.address.get_public_key(), params.topoheight).await
+        .context("Error while checking if account has multisig at topoheight")?;
 
     Ok(json!(multisig))
 }
