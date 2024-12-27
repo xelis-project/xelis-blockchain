@@ -1,5 +1,7 @@
 mod state;
 
+use std::{borrow::Cow, iter};
+use thiserror::Error;
 use anyhow::{Context as AnyContext, Error as AnyError};
 use bulletproofs::RangeProof;
 use curve25519_dalek::{
@@ -14,7 +16,7 @@ use xelis_vm::{ConstantWrapper, ModuleValidator, VM};
 use crate::{
     account::Nonce,
     config::{BURN_PER_CONTRACT, TRANSACTION_FEE_BURN_PERCENT, XELIS_ASSET},
-    contract::{ContractOutput, ContractProvider, ContractProviderWrapper},
+    contract::{get_balance_from_cache, ContractOutput, ContractProvider, ContractProviderWrapper},
     crypto::{
         elgamal::{
             Ciphertext,
@@ -43,7 +45,8 @@ use crate::{
         MAX_DEPOSIT_PER_INVOKE_CALL,
         MAX_MULTISIG_PARTICIPANTS,
         MAX_TRANSFER_COUNT
-    }
+    },
+    versioned_type::VersionedState
 };
 use super::{
     ContractDeposit,
@@ -52,9 +55,8 @@ use super::{
     TransactionType,
     TransferPayload
 };
+
 pub use state::*;
-use thiserror::Error;
-use std::{borrow::Cow, iter};
 
 #[derive(Error, Debug)]
 pub enum VerificationError<T> {
@@ -765,8 +767,23 @@ impl Transaction {
                 let (contract_environment, mut chain_state) = state.get_contract_environment_for(payload, tx_hash).await
                     .map_err(VerificationError::State)?;
 
+                // We need to add the deposits to the balances
+                for (asset, deposit) in payload.deposits.iter() {
+                    match deposit {
+                        ContractDeposit::Public(amount) => {
+                            let (mut balance_state, mut balance) = get_balance_from_cache(contract_environment.provider, &mut chain_state, asset.clone())?
+                                .unwrap_or((VersionedState::New, 0));
+
+                            balance += amount;
+                            balance_state.mark_updated();
+
+                            chain_state.changes.balances.insert(asset.clone(), Some((balance_state, balance)));
+                        },
+                    }
+                }
+
                 // Total used gas by the VM
-                let (used_gas, success, exit_code) = {
+                let (used_gas, exit_code) = {
                     // Create the VM
                     let module = contract_environment.module;
                     let mut vm = VM::new(module, contract_environment.environment);
@@ -809,24 +826,24 @@ impl Transaction {
                         .current_gas_usage()
                         .min(payload.max_gas);
 
-                    let (success, exit_code) = match res {
+                    let exit_code = match res {
                         Ok(res) => {
                             debug!("Invoke contract {} from TX {} result: {:#}", payload.contract, tx_hash, res);
                             // If the result return 0 as exit code, it means that everything went well
                             let exit_code = res.as_u64().ok();
-                            (exit_code == Some(0), exit_code)
+                            exit_code
                         },
                         Err(err) => {
                             debug!("Invoke contract {} from TX {} error: {:#}", payload.contract, tx_hash, err);
-                            (false, None)
+                            None
                         }
                     };
 
-                    (gas_usage, success, exit_code)
+                    (gas_usage, exit_code)
                 };
 
                 let mut outputs = Vec::new();
-                if success {
+                if exit_code == Some(0) {
                     let cache = chain_state.changes;
                     outputs = cache.transfers.iter().map(|transfer| {
                         // Track the output
@@ -839,6 +856,20 @@ impl Transaction {
 
                     state.merge_contract_cache(&payload.contract, cache).await
                         .map_err(VerificationError::State)?;
+                } else if !payload.deposits.is_empty() {
+                    // It was not successful, we need to refund the deposits
+                    for (asset, deposit) in payload.deposits.iter() {
+                        match deposit {
+                            ContractDeposit::Public(amount) => {
+                                let balance = state.get_receiver_balance(Cow::Borrowed(self.get_source()), Cow::Owned(asset.clone())).await
+                                    .map_err(VerificationError::State)?;
+
+                                *balance += Scalar::from(*amount);
+                            },
+                        }
+                    }
+
+                    outputs.push(ContractOutput::RefundDeposits);
                 }
 
                 // Push the exit code to the outputs

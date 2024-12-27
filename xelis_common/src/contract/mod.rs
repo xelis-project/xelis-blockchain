@@ -454,25 +454,23 @@ pub fn from_context<'a, 'ty, 'r, P: ContractProvider>(context: &'a mut Context<'
     Ok((provider, state))
 }
 
-pub fn get_balance_from<P: ContractProvider>(provider: &P, state: &mut ChainState, asset: Hash) -> Result<Option<u64>, anyhow::Error> {
+// Function helper to get the balance for the given asset
+pub fn get_balance_from_cache<P: ContractProvider>(provider: &P, state: &mut ChainState, asset: Hash) -> Result<Option<(VersionedState, u64)>, anyhow::Error> {
     Ok(match state.cache {
         Some(cache) => match cache.balances.get(&asset) {
-            Some(Some((_, balance))) => Some(*balance),
-            Some(None) => None,
-            None => get_balance_from_changes(provider, state.contract, &mut state.changes, asset)?
+            Some(v) => *v,
+            None => *get_balance_from_changes(provider, state.contract, &mut state.changes, asset)?
         },
-        None => get_balance_from_changes(provider, state.contract, &mut state.changes, asset)?
+        None => *get_balance_from_changes(provider, state.contract, &mut state.changes, asset)?
     })
 }
 
-pub fn get_balance_from_changes<P: ContractProvider>(provider: &P, contract: &Hash, cache: &mut ContractCache, asset: Hash) -> Result<Option<u64>, anyhow::Error> {
-    Ok(match cache.balances.get(&asset) {
-        Some(Some((_, balance))) => Some(*balance),
-        Some(None) => None,
-        None => {
+pub fn get_balance_from_changes<'a, P: ContractProvider>(provider: &P, contract: &Hash, cache: &'a mut ContractCache, asset: Hash) -> Result<&'a mut Option<(VersionedState, u64)>, anyhow::Error> {
+    Ok(match cache.balances.entry(asset.clone()) {
+        Entry::Occupied(entry) => entry.into_mut(),
+        Entry::Vacant(entry) => {
             let balance = provider.get_contract_balance_for_asset(contract, &asset)?;
-            cache.balances.insert(asset.clone(), balance.map(|(topoheight, balance)| (VersionedState::FetchedAt(topoheight), balance)));
-            balance.map(|(_, balance)| balance)
+            entry.insert(balance.map(|(topoheight, balance)| (VersionedState::FetchedAt(topoheight), balance)))
         }
     })
 }
@@ -528,16 +526,9 @@ fn get_balance_for_asset<P: ContractProvider>(_: FnInstance, mut params: FnParam
         .into_owned()
         .into_opaque_type()?;
 
-    let balance = match state.cache {
-        Some(cache) => match cache.balances.get(&asset) {
-            Some(Some((_, balance))) => Some(*balance),
-            Some(None) => None,
-            None => get_balance_from_changes(provider, state.contract, &mut state.changes, asset)?
-        },
-        None => get_balance_from_changes(provider, state.contract, &mut state.changes, asset)?
-    };
+    let balance = get_balance_from_cache(provider, state, asset)?;
 
-    Ok(Some(ValueCell::Optional(balance.map(|v| Value::U64(v).into()))))
+    Ok(Some(ValueCell::Optional(balance.map(|(_, v)| Value::U64(v).into()))))
 }
 
 fn transfer<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType {
@@ -555,24 +546,20 @@ fn transfer<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &
         .into_owned()
         .into_opaque_type()?;
 
-    let Some((balance_state, balance)) = match state.changes.balances.entry(asset.clone()) {
-        Entry::Occupied(entry) => entry.into_mut(),
-        Entry::Vacant(entry) => {
-            let balance = provider.get_contract_balance_for_asset(state.contract, &asset)?;
-            entry.insert(balance.map(|(topoheight, balance)| (VersionedState::FetchedAt(topoheight), balance)))
-        }
-    }.as_mut() else {
+    let Some((mut balance_state, mut balance)) = get_balance_from_cache(provider, state, asset.clone())? else {
         return Ok(Some(Value::Boolean(false).into()));
     };
 
     // We have to check if the contract has enough balance to transfer
-    if *balance < amount || amount == 0 {
+    if balance < amount || amount == 0 {
         return Ok(Some(Value::Boolean(false).into()));
     }
 
     // Update the balance
-    *balance -= amount;
+    balance -= amount;
     balance_state.mark_updated();
+
+    state.changes.balances.insert(asset.clone(), Some((balance_state, balance)));
 
     state.changes.transfers.push(TransferOutput {
         destination: destination.to_public_key(),
@@ -593,25 +580,21 @@ fn burn<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &mut 
         .into_owned()
         .to_u64()?;
 
-    let Some((balance_state, balance)) = match state.changes.balances.entry(asset.clone()) {
-        Entry::Occupied(entry) => entry.into_mut(),
-        Entry::Vacant(entry) => {
-            let balance = provider.get_contract_balance_for_asset(state.contract, &asset)?;
-            entry.insert(balance.map(|(topoheight, balance)| (VersionedState::FetchedAt(topoheight), balance)))
-        }
-    }.as_mut() else {
+    let Some((mut balance_state, mut balance)) = get_balance_from_cache(provider, state, asset.clone())? else {
         return Ok(Some(Value::Boolean(false).into()));
     };
 
     // We have to check if the contract has enough balance to transfer
-    if *balance < amount || amount == 0 {
+    if balance < amount || amount == 0 {
         return Ok(Some(Value::Boolean(false).into()));
     }
 
     // Update the balance
     // By only decreasing the balance, it will be burned
-    *balance -= amount;
+    balance -= amount;
     balance_state.mark_updated();
+
+    state.changes.balances.insert(asset, Some((balance_state, balance)));
 
     Ok(Some(Value::Boolean(true).into()))
 }

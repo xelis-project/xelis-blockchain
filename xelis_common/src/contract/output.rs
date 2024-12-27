@@ -21,7 +21,9 @@ pub enum ContractOutput {
     // If None, an error occurred
     // If Some(0), the contract executed successfully
     // If Some(n), the contract exited with code n (state not applied!)
-    ExitCode(Option<u64>)
+    ExitCode(Option<u64>),
+    // Inform that we refund the deposits
+    RefundDeposits
 }
 
 impl Serializer for ContractOutput {
@@ -40,6 +42,9 @@ impl Serializer for ContractOutput {
             ContractOutput::ExitCode(code) => {
                 writer.write_u8(2);
                 code.write(writer);
+            },
+            ContractOutput::RefundDeposits => {
+                writer.write_u8(3);
             }
         }
     }
@@ -57,6 +62,7 @@ impl Serializer for ContractOutput {
                 Ok(ContractOutput::Transfer { amount, asset, destination })
             },
             2 => Ok(ContractOutput::ExitCode(Option::read(reader)?)),
+            3 => Ok(ContractOutput::RefundDeposits),
             _ => Err(ReaderError::InvalidValue)
         }
     }
