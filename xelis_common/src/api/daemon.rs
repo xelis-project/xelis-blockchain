@@ -666,6 +666,19 @@ pub struct GetContractDataParams<'a> {
     pub topoheight: Option<TopoHeight>
 }
 
+#[derive(Serialize, Deserialize)]
+pub struct GetContractBalanceParams<'a> {
+    pub contract: Cow<'a, Hash>,
+    pub asset: Cow<'a, Hash>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct RPCVersioned<T> {
+    pub topoheight: TopoHeight,
+    #[serde(flatten)]
+    pub version: T
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NotifyEvent {
