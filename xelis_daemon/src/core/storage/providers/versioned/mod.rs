@@ -36,6 +36,7 @@ pub trait VersionedProvider:
     + VersionedContractProvider
     + VersionedRegistrationsProvider
     + VersionedContractDataProvider
+    + VersionedContractBalanceProvider
     + VersionedAssetProvider {
 
     // Delete versioned data at topoheight

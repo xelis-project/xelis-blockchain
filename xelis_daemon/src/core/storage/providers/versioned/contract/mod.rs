@@ -1,4 +1,5 @@
 mod data;
+mod balance;
 
 use async_trait::async_trait;
 use log::trace;
@@ -13,6 +14,7 @@ use crate::core::{
 };
 
 pub use data::*;
+pub use balance::*;
 
 #[async_trait]
 pub trait VersionedContractProvider {
