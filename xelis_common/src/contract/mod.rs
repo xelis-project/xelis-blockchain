@@ -478,7 +478,7 @@ pub fn get_balance_from_changes<'a, P: ContractProvider>(provider: &P, contract:
 fn println_fn(_: FnInstance, params: FnParams, context: &mut Context) -> FnReturnType {
     let state: &ChainState = context.get().context("chain state not found")?;
     if state.debug_mode {
-        info!("{}", params[0].as_ref());
+        info!("[{}]: {}", state.contract, params[0].as_ref());
     }
 
     Ok(None)
