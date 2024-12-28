@@ -6,7 +6,7 @@ use super::ContractStorage;
 
 pub trait ContractProvider: ContractStorage + 'static {
     // Returns the balance of the contract
-    fn get_contract_balance_for_asset(&self, contract: &Hash, asset: &Hash) -> Result<Option<(TopoHeight, u64)>, anyhow::Error>;
+    fn get_contract_balance_for_asset(&self, contract: &Hash, asset: &Hash, topoheight: TopoHeight) -> Result<Option<(TopoHeight, u64)>, anyhow::Error>;
 }
 
 // This is a wrapper around the storage to allow for the storage to be passed in the Context

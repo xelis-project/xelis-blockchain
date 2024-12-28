@@ -459,17 +459,17 @@ pub fn get_balance_from_cache<P: ContractProvider>(provider: &P, state: &mut Cha
     Ok(match state.cache {
         Some(cache) => match cache.balances.get(&asset) {
             Some(v) => *v,
-            None => *get_balance_from_changes(provider, state.contract, &mut state.changes, asset)?
+            None => *get_balance_from_changes(provider, state.contract, &mut state.changes, state.topoheight, asset)?
         },
-        None => *get_balance_from_changes(provider, state.contract, &mut state.changes, asset)?
+        None => *get_balance_from_changes(provider, state.contract, &mut state.changes, state.topoheight, asset)?
     })
 }
 
-pub fn get_balance_from_changes<'a, P: ContractProvider>(provider: &P, contract: &Hash, cache: &'a mut ContractCache, asset: Hash) -> Result<&'a mut Option<(VersionedState, u64)>, anyhow::Error> {
+pub fn get_balance_from_changes<'a, P: ContractProvider>(provider: &P, contract: &Hash, cache: &'a mut ContractCache, topoheight: TopoHeight, asset: Hash) -> Result<&'a mut Option<(VersionedState, u64)>, anyhow::Error> {
     Ok(match cache.balances.entry(asset.clone()) {
         Entry::Occupied(entry) => entry.into_mut(),
         Entry::Vacant(entry) => {
-            let balance = provider.get_contract_balance_for_asset(contract, &asset)?;
+            let balance = provider.get_contract_balance_for_asset(contract, &asset, topoheight)?;
             entry.insert(balance.map(|(topoheight, balance)| (VersionedState::FetchedAt(topoheight), balance)))
         }
     })
