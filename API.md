@@ -9347,10 +9347,10 @@ It contains, the refunded gas amount, exit code and transfers.
 }
 ```
 
-#### Get Contract Data With Key
+#### Get Contract Data
 Retrieve the contract data with the requested key.
 
-##### Method `get_contract_data_with_key`
+##### Method `get_contract_data`
 
 ##### Parameters
 
@@ -9363,10 +9363,61 @@ Retrieve the contract data with the requested key.
 ```json
 {
     "jsonrpc": "2.0",
-    "method": "get_contract_data_with_key",
+    "method": "get_contract_data",
     "id": 1,
     "params": {
         "contract": "b756566452b2c7bfea785f1b87b90d7bf075cb45a0dc33fb524e5e25f7e85fb4",
+        "key": {
+            "type": "default",
+            "value": {
+                "type": "string",
+                "value": "my beautiful key"
+            }
+        }
+    }
+}
+```
+
+##### Response
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+        "topoheight": 70,
+        "data": {
+            "type": "default",
+            "value": {
+                "type": "string",
+                "value": "my beautiful value"
+            }
+        },
+        "previous_topoheight": 68
+    }
+}
+```
+
+#### Get Contract Data At TopoHeight
+Retrieve the contract data with the requested key at a specific topoheight.
+
+##### Method `get_contract_data_at_topoheight`
+
+##### Parameters
+|    Name    |     Type    | Required |                         Note                         |
+|:----------:|:-----------:|:--------:|:----------------------------------------------------:|
+|  contract  |   Address   | Required |       Contract address to search for the key         |
+|     key    |   Constant  | Required |        Constant value representing the key           |
+| topoheight |   Integer   | Required |           Topoheight to retrieve the data            |
+
+##### Request
+```json
+{
+    "jsonrpc": "2.0",
+    "method": "get_contract_data_at_topoheight",
+    "id": 1,
+    "params": {
+        "contract": "b756566452b2c7bfea785f1b87b90d7bf075cb45a0dc33fb524e5e25f7e85fb4",
+        "topoheight": 70,
         "key": {
             "type": "default",
             "value": {
@@ -9392,6 +9443,81 @@ Retrieve the contract data with the requested key.
             }
         },
         "previous_topoheight": 68
+    }
+}
+```
+
+#### Get Contract Balance
+Retrieve the contract balance
+
+##### Method `get_contract_balance`
+
+##### Parameters
+|    Name    |     Type    | Required |                         Note                         |
+|:----------:|:-----------:|:--------:|:----------------------------------------------------:|
+|  contract  |   Address   | Required |       Contract address to search for the key         |
+|    asset   |   Constant  | Required |   The asset ID to determine which balance to fetch   |
+
+##### Request
+```json
+{
+    "jsonrpc": "2.0",
+    "method": "get_contract_balance",
+    "id": 1,
+    "params": {
+        "contract": "b756566452b2c7bfea785f1b87b90d7bf075cb45a0dc33fb524e5e25f7e85fb4",
+        "asset": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+}
+```
+
+##### Response
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+        "topoheight": 70,
+        "data": 99900000,
+        "previous_topoheight": null
+    }
+}
+```
+
+#### Get Contract Balance At TopoHeight
+Retrieve the contract balance at a specific topoheight.
+
+##### Method `get_contract_balance_at_topoheight`
+
+##### Parameters
+|    Name    |     Type    | Required |                         Note                         |
+|:----------:|:-----------:|:--------:|:----------------------------------------------------:|
+|  contract  |   Address   | Required |       Contract address to search for the key         |
+|    asset   |   Constant  | Required |   The asset ID to determine which balance to fetch   |
+| topoheight |   Integer   | Required |           Topoheight to retrieve the data            |
+
+##### Request
+```json
+{
+    "jsonrpc": "2.0",
+    "method": "get_contract_balance",
+    "id": 1,
+    "params": {
+        "contract": "b756566452b2c7bfea785f1b87b90d7bf075cb45a0dc33fb524e5e25f7e85fb4",
+        "asset": "0000000000000000000000000000000000000000000000000000000000000000",
+        "topoheight": 70
+    }
+}
+```
+
+##### Response
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+        "data": 99900000,
+        "previous_topoheight": null
     }
 }
 ```
