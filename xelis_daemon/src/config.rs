@@ -192,7 +192,7 @@ const HARD_FORKS: [HardFork; 2] = [
 ];
 
 // Testnet / Devnet hard forks
-const TESTNET_HARD_FORKS: [HardFork; 3] = [
+const TESTNET_HARD_FORKS: [HardFork; 4] = [
     HardFork {
         height: 0,
         version: BlockVersion::V0,
@@ -208,7 +208,13 @@ const TESTNET_HARD_FORKS: [HardFork; 3] = [
     HardFork {
         height: 10,
         version: BlockVersion::V2,
-        changelog: "MultiSig, Smart Contracts",
+        changelog: "MultiSig, P2P",
+        version_requirement: Some(">=1.16.0")
+    },
+    HardFork {
+        height: 15,
+        version: BlockVersion::V3,
+        changelog: "Smart Contracts",
         version_requirement: Some(">=1.16.0")
     }
 ];
