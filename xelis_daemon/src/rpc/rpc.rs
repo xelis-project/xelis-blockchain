@@ -365,8 +365,10 @@ pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>
     // Contracts
     handler.register_method("get_contract_outputs", async_handler!(get_contract_outputs::<S>));
     handler.register_method("get_contract_module", async_handler!(get_contract_module::<S>));
-    handler.register_method("get_contract_data_with_key", async_handler!(get_contract_data_with_key::<S>));
+    handler.register_method("get_contract_data", async_handler!(get_contract_data::<S>));
+    handler.register_method("get_contract_data_at_topoheight", async_handler!(get_contract_data_at_topoheight::<S>));
     handler.register_method("get_contract_balance", async_handler!(get_contract_balance::<S>));
+    handler.register_method("get_contract_balance_at_topoheight", async_handler!(get_contract_balance_at_topoheight::<S>));
 
     if allow_mining_methods {
         handler.register_method("get_block_template", async_handler!(get_block_template::<S>));
@@ -1598,21 +1600,31 @@ async fn get_contract_module<S: Storage>(context: &Context, body: Value) -> Resu
     Ok(json!(module))
 }
 
-async fn get_contract_data_with_key<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
+async fn get_contract_data<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: GetContractDataParams = parse_params(body)?;
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let storage = blockchain.get_storage().read().await;
 
-    let topoheight = if let Some(topoheight) = params.topoheight {
-        topoheight
-    } else {
-        storage.get_last_topoheight_for_contract_data(&params.contract, &params.key).await
-            .context("Error while retrieving last topoheight for contract data")?
-    };
+    let topoheight = storage.get_last_topoheight_for_contract_data(&params.contract, &params.key).await
+        .context("Error while retrieving last topoheight for contract data")?;
 
-    let data = storage.get_contract_data_at_topoheight_for(&params.contract, &params.key, topoheight).await?;
+    let version = storage.get_contract_data_at_topoheight_for(&params.contract, &params.key, topoheight).await?;
 
-    Ok(json!(data))
+    Ok(json!(RPCVersioned {
+        topoheight,
+        version,
+    }))
+}
+
+
+async fn get_contract_data_at_topoheight<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
+    let params: GetContractDataAtTopoHeightParams = parse_params(body)?;
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    let storage = blockchain.get_storage().read().await;
+
+    let version = storage.get_contract_data_at_topoheight_for(&params.contract, &params.key, params.topoheight).await?;
+
+    Ok(json!(version))
 }
 
 async fn get_contract_balance<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
@@ -1627,4 +1639,15 @@ async fn get_contract_balance<S: Storage>(context: &Context, body: Value) -> Res
         topoheight,
         version,
     }))
+}
+
+async fn get_contract_balance_at_topoheight<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
+    let params: GetContractBalanceAtTopoHeightParams = parse_params(body)?;
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    let storage = blockchain.get_storage().read().await;
+
+    let version = storage.get_contract_balance_at_exact_topoheight(&params.contract, &params.asset, params.topoheight).await
+        .context("Error while retrieving contract balance")?;
+
+    Ok(json!(version))
 }
