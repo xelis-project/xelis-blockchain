@@ -660,16 +660,27 @@ pub struct GetContractModuleParams<'a> {
 #[derive(Serialize, Deserialize)]
 pub struct GetContractDataParams<'a> {
     pub contract: Cow<'a, Hash>,
+    pub key: Cow<'a, Constant>
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct GetContractDataAtTopoHeightParams<'a> {
+    pub contract: Cow<'a, Hash>,
     pub key: Cow<'a, Constant>,
-    // Get at a specific topoheight or the latest
-    #[serde(default)]
-    pub topoheight: Option<TopoHeight>
+    pub topoheight: TopoHeight
 }
 
 #[derive(Serialize, Deserialize)]
 pub struct GetContractBalanceParams<'a> {
     pub contract: Cow<'a, Hash>,
     pub asset: Cow<'a, Hash>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct GetContractBalanceAtTopoHeightParams<'a> {
+    pub contract: Cow<'a, Hash>,
+    pub asset: Cow<'a, Hash>,
+    pub topoheight: TopoHeight
 }
 
 #[derive(Serialize, Deserialize)]
