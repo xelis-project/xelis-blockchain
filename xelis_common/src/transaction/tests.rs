@@ -113,7 +113,7 @@ fn create_tx_for(account: Account, destination: Address, amount: u64, extra_data
     }]);
 
 
-    let builder = TransactionBuilder::new(TxVersion::V0, account.keypair.get_public_key().compress(), 0, data, FeeBuilder::Multiplier(1f64));
+    let builder = TransactionBuilder::new(TxVersion::V1, account.keypair.get_public_key().compress(), 0, data, FeeBuilder::Multiplier(1f64));
     let estimated_size = builder.estimate_size();
     let tx = builder.build(&mut state, &account.keypair).unwrap();
     assert!(estimated_size == tx.size(), "expected {} bytes got {} bytes", tx.size(), estimated_size);
@@ -306,7 +306,7 @@ async fn test_max_transfers() {
                 hash: Hash::zero(),
             },
         };
-    
+
         let data = TransactionTypeBuilder::Transfers(transfers);
         let builder = TransactionBuilder::new(TxVersion::V0, alice.keypair.get_public_key().compress(), 0, data, FeeBuilder::Multiplier(1f64));
         let estimated_size = builder.estimate_size();
@@ -347,7 +347,7 @@ async fn test_max_transfers() {
         });
     }
     let hash = tx.hash();
-    assert!(tx.verify(&hash, &mut state).await.is_ok());
+    tx.verify(&hash, &mut state).await.unwrap();
 }
 
 #[tokio::test]

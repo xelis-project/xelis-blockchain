@@ -372,6 +372,10 @@ impl Serializer for Transaction {
 
     fn read(reader: &mut Reader) -> Result<Transaction, ReaderError> {
         let version = TxVersion::read(reader)?;
+
+        reader.context_mut()
+            .store(version);
+
         let source = CompressedPublicKey::read(reader)?;
         let data = TransactionType::read(reader)?;
         let fee = reader.read_u64()?;

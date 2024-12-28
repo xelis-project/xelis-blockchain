@@ -248,6 +248,11 @@ impl TransactionBuilder {
                     // Extra data byte flag
                     + 1;
 
+                    if self.version >= TxVersion::V1 {
+                        // Another point for Y_2
+                        size += RISTRETTO_COMPRESSED_SIZE;
+                    }
+
                     if let Some(extra_data) = transfer.extra_data.as_ref().or(transfer.destination.get_extra_data()) {
                         // 2 represents u16 length of AEADCipher in extra data
                         // 2 represents u16 length of UnknownExtraDataFormat
@@ -539,6 +544,8 @@ impl TransactionBuilder {
                     .take_ciphertext()
                     .map_err(|err| GenerationError::Proof(err.into()))?;
 
+                let source_ct_compressed = source_current_ciphertext.compress();
+
                 let commitment =
                     PedersenCommitment::new_with_opening(source_new_balance, &new_source_opening)
                     .compress();
@@ -551,6 +558,10 @@ impl TransactionBuilder {
                 transcript.new_commitment_eq_proof_domain_separator();
                 transcript.append_hash(b"new_source_commitment_asset", &asset);
                 transcript.append_commitment(b"new_source_commitment", &commitment);
+
+                if self.version >= TxVersion::V1 {
+                    transcript.append_ciphertext(b"source_ct", &source_ct_compressed);
+                }
 
                 let proof = CommitmentEqProof::new(
                     &source_keypair,
@@ -591,8 +602,15 @@ impl TransactionBuilder {
                     transcript.append_handle(b"amount_sender_handle", &sender_handle);
                     transcript.append_handle(b"amount_receiver_handle", &receiver_handle);
 
+                    let source_pubkey = if self.version >= TxVersion::V1 {
+                        Some(source_keypair.get_public_key())
+                    } else {
+                        None
+                    };
+
                     let ct_validity_proof = CiphertextValidityProof::new(
                         &transfer.destination,
+                        source_pubkey,
                         transfer.inner.amount,
                         &transfer.amount_opening,
                         &mut transcript,

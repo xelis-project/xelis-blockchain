@@ -1,7 +1,7 @@
 use std::array::TryFromSliceError;
 use thiserror::Error;
 
-use crate::crypto::Hash;
+use crate::{context::Context, crypto::Hash};
 use super::{Serializer, Writer};
 
 #[derive(Error, Debug)]
@@ -23,16 +23,33 @@ pub enum ReaderError {
 // Reader help us to read safely from bytes
 // Mostly used when de-serializing an object from Serializer trait 
 pub struct Reader<'a> {
-    bytes: &'a [u8], // bytes to read
-    total: usize // total read bytes
+    // bytes to read
+    bytes: &'a [u8],
+    // total read bytes
+    total: usize,
+    // Context if needed
+    context: Context
 }
 
 impl<'a> Reader<'a> {
     pub fn new(bytes: &'a [u8]) -> Self {
-        Reader {
+        Self::with_context(bytes, Context::default())
+    }
+
+    pub fn with_context(bytes: &'a [u8], context: Context) -> Self {
+        Self {
             bytes,
-            total: 0
+            total: 0,
+            context
         }
+    }
+
+    pub fn context_mut(&mut self) -> &mut Context {
+        &mut self.context
+    }
+
+    pub fn context(&self) -> &Context {
+        &self.context
     }
 
     pub fn skip(&mut self, n: usize) -> Result<(), ReaderError> {

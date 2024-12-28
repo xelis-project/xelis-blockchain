@@ -455,7 +455,7 @@ impl Transaction {
             debug!("transaction signature is invalid");
             return Err(VerificationError::InvalidSignature);
         }
-    
+
         // 0.b Verify multisig
         if let Some(config) = state.get_multisig_state(&self.source).await.map_err(VerificationError::State)? {
             let Some(multisig) = self.get_multisig() else {
@@ -510,12 +510,18 @@ impl Transaction {
                 .get_sender_balance(&self.source, &commitment.asset, &self.reference).await
                 .map_err(VerificationError::State)?;
 
+            let source_ct_compressed = source_verification_ciphertext.compress();
+
             // Compute the new final balance for account
             *source_verification_ciphertext -= &output;
             transcript.new_commitment_eq_proof_domain_separator();
             transcript.append_hash(b"new_source_commitment_asset", &commitment.asset);
             transcript
                 .append_commitment(b"new_source_commitment", &commitment.commitment);
+
+            if self.version >= TxVersion::V1 {
+                transcript.append_ciphertext(b"source_ct", &source_ct_compressed);
+            }
 
             commitment.proof.pre_verify(
                 &owner,
@@ -548,6 +554,9 @@ impl Transaction {
                 // Count the number of transfers
                 n_commitments += transfers.len();
 
+                let source_decompressed = self.source.decompress()
+                    .map_err(ProofVerificationError::from)?;
+
                 // Prepare the new commitments
                 for (transfer, decompressed) in transfers.iter().zip(&transfers_decompressed) {
                     let receiver = transfer
@@ -579,7 +588,10 @@ impl Transaction {
                     transfer.get_proof().pre_verify(
                         &decompressed.commitment,
                         &receiver,
+                        &source_decompressed,
                         &decompressed.receiver_handle,
+                        &decompressed.sender_handle,
+                        self.version >= TxVersion::V1,
                         &mut transcript,
                         sigma_batch_collector,
                     )?;
