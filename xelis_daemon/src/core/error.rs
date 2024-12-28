@@ -127,6 +127,8 @@ pub enum DiskContext {
 #[repr(usize)]
 #[derive(Error, Debug)]
 pub enum BlockchainError {
+    #[error("No contract balance found")]
+    NoContractBalance,
     #[error("Contract already exists")]
     ContractAlreadyExists,
     #[error("Contract not found: {}", _0)]

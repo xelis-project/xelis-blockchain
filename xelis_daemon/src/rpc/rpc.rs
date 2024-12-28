@@ -366,6 +366,7 @@ pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>
     handler.register_method("get_contract_outputs", async_handler!(get_contract_outputs::<S>));
     handler.register_method("get_contract_module", async_handler!(get_contract_module::<S>));
     handler.register_method("get_contract_data_with_key", async_handler!(get_contract_data_with_key::<S>));
+    handler.register_method("get_contract_balance", async_handler!(get_contract_balance::<S>));
 
     if allow_mining_methods {
         handler.register_method("get_block_template", async_handler!(get_block_template::<S>));
@@ -1612,4 +1613,18 @@ async fn get_contract_data_with_key<S: Storage>(context: &Context, body: Value) 
     let data = storage.get_contract_data_at_topoheight_for(&params.contract, &params.key, topoheight).await?;
 
     Ok(json!(data))
+}
+
+async fn get_contract_balance<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
+    let params: GetContractBalanceParams = parse_params(body)?;
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    let storage = blockchain.get_storage().read().await;
+
+    let (topoheight, version) = storage.get_last_contract_balance(&params.contract, &params.asset).await
+        .context("Error while retrieving contract balance")?;
+
+    Ok(json!(RPCVersioned {
+        topoheight,
+        version,
+    }))
 }
