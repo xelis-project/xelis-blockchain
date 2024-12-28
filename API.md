@@ -4430,6 +4430,7 @@ No parameters
 }
 ```
 
+#### Count Contracts
 Counts the number of contracts saved on disk
 
 ##### Method `count_contracts`
