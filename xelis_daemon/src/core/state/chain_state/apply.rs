@@ -20,7 +20,7 @@ use xelis_common::{
 use xelis_vm::Environment;
 use crate::core::{
     error::BlockchainError,
-    storage::{Storage, VersionedContract, VersionedContractData, VersionedMultiSig}
+    storage::{Storage, VersionedContract, VersionedContractBalance, VersionedContractData, VersionedMultiSig}
 };
 
 use super::{ChainState, StorageReference, Echange};
@@ -424,7 +424,7 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
                 if let Some((state, balance)) = data {
                     if state.should_be_stored() {
                         trace!("Saving contract balance {} for {} at topoheight {}", balance, asset, self.inner.topoheight);
-
+                        self.inner.storage.set_last_contract_balance_to(&contract, &asset, self.inner.topoheight, VersionedContractBalance::new(balance, state.get_topoheight())).await?;
                     }
                 }
             }

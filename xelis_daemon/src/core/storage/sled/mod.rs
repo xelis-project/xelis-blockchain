@@ -126,6 +126,11 @@ pub struct SledStorage {
     // Key is prefixed by the topoheight for fast scan_prefix search,
     // value is the contract data
     pub(super) versioned_contracts_data: Tree,
+    // Key is the contract hash, value is the topoheight
+    pub(super) contracts_balances: Tree,
+    // Key is prefxied by the topoheight for fast scan_prefix search
+    // value is the contract balance (u64)
+    pub(super) versioned_contracts_balances: Tree,
     // Contract outputs per TX
     // Key is the TX Hash that called the contract, value is a list of contract outputs
     pub(super) contracts_outputs: Tree,
@@ -260,6 +265,8 @@ impl SledStorage {
             versioned_contracts: sled.open_tree("versioned_contracts")?,
             contracts_data: sled.open_tree("contracts_data")?,
             versioned_contracts_data: sled.open_tree("versioned_contracts_data")?,
+            contracts_balances: sled.open_tree("contracts_balances")?,
+            versioned_contracts_balances: sled.open_tree("versioned_contracts_balances")?,
             contracts_outputs: sled.open_tree("contracts_outputs")?,
             db: sled,
             transactions_cache: init_cache!(cache_size),

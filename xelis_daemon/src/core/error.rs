@@ -120,6 +120,8 @@ pub enum DiskContext {
     ContractData,
     #[error("get contract output")]
     ContractOutput,
+    #[error("get contract balance")]
+    ContractBalance,
 }
 
 #[repr(usize)]
