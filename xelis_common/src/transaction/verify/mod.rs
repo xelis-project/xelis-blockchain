@@ -139,8 +139,11 @@ impl Transaction {
                     | TransactionType::DeployContract(_) => false,
                     _ => true,
                 }
-            }
-            TxVersion::V1 => true,
+            },
+            // MultiSig is supported in V1
+            TxVersion::V1 => !matches!(&self.data, TransactionType::InvokeContract(_) | TransactionType::DeployContract(_)),
+            // No restriction
+            TxVersion::V2 => true,
         }
     }
 
@@ -884,7 +887,7 @@ impl Transaction {
                     // The remaining gas is refunded to the sender
                     let refund_gas = payload.max_gas.checked_sub(used_gas)
                         .ok_or(VerificationError::GasOverflow)?;
-    
+
                     debug!("Invoke contract used gas: {}, burned: {}, fee: {}, refund: {}", used_gas, burned_gas, gas_fee, refund_gas);
                     state.add_burned_coins(burned_gas).await
                         .map_err(VerificationError::State)?;

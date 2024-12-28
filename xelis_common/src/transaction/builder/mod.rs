@@ -145,7 +145,6 @@ impl TransferWithCommitment {
 }
 
 impl TransactionTypeBuilder {
-
     // Get the assets used in the transaction
     pub fn used_assets<'a>(&'a self) -> HashSet<&'a Hash> {
         let mut consumed = HashSet::new();
