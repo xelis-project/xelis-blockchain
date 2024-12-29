@@ -53,16 +53,14 @@ impl<S: Storage> P2pServer<S> {
             if
                 pruned_topoheight >= topoheight
                 || topoheight > our_topoheight
-                || topoheight < PRUNE_SAFETY_LIMIT
             {
                 warn!("Invalid begin topoheight (received {}, our is {}, pruned: {}) received from {} on step {:?}", topoheight, our_topoheight, pruned_topoheight, peer, request_kind);
                 return Err(P2pError::InvalidRequestedTopoheight.into())
             }
 
-            // Check that the block is stable
-            let hash = storage.get_hash_at_topo_height(topoheight).await?;
-            if !self.blockchain.is_sync_block(&*storage, &hash).await? {
-                warn!("Requested topoheight {} is not stable, ignoring", topoheight);
+            // Check that the block is in stable topoheight
+            if topoheight > self.blockchain.get_stable_topoheight() {
+                warn!("Requested topoheight {} is not stable ({}), ignoring {:?}", topoheight, self.blockchain.get_stable_topoheight(), request_kind);
                 return Err(P2pError::InvalidRequestedTopoheight.into())
             }
         }
@@ -212,12 +210,13 @@ impl<S: Storage> P2pServer<S> {
                 for topoheight in (lower..=topoheight).rev() {
                     let hash = storage.get_hash_at_topo_height(topoheight).await?;
                     let supply = storage.get_supply_at_topo_height(topoheight).await?;
+                    let burned_supply = storage.get_burned_supply_at_topo_height(topoheight).await?;
                     let reward = storage.get_block_reward_at_topo_height(topoheight)?;
                     let difficulty = storage.get_difficulty_for_block_hash(&hash).await?;
                     let cumulative_difficulty = storage.get_cumulative_difficulty_for_block_hash(&hash).await?;
                     let p = storage.get_estimated_covariance_for_block_hash(&hash).await?;
 
-                    blocks.insert(BlockMetadata { hash, supply, reward, difficulty, cumulative_difficulty, p });
+                    blocks.insert(BlockMetadata { hash, supply, burned_supply, reward, difficulty, cumulative_difficulty, p });
                 }
                 StepResponse::BlocksMetadata(blocks)
             },
@@ -327,6 +326,8 @@ impl<S: Storage> P2pServer<S> {
                                 // We could do it in one request and store in memory all keys,
                                 // but think about future and dozen of millions of accounts, in memory :)
                                 if let Some(key) = keys.last() {
+                                    debug!("Last key is {}", key.as_address(self.blockchain.get_network().is_mainnet()));
+                                    // TODO: bug bug bug, if only one key, it will fetch forever
                                     minimum_topoheight = storage.get_account_registration_topoheight(key).await?;
                                 } else {
                                     break;
@@ -444,6 +445,7 @@ impl<S: Storage> P2pServer<S> {
 
                         // save metadata of this block
                         storage.set_supply_at_topo_height(lowest_topoheight, metadata.supply)?;
+                        storage.set_burned_supply_at_topo_height(lowest_topoheight, metadata.burned_supply)?;
                         storage.set_block_reward_at_topo_height(lowest_topoheight, metadata.reward)?;
                         storage.set_topo_height_for_block(&hash, lowest_topoheight).await?;
 

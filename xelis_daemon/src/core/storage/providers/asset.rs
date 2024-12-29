@@ -173,13 +173,15 @@ impl AssetProvider for SledStorage {
 
     async fn add_asset(&mut self, asset: &Hash, topoheight: TopoHeight, data: AssetData) -> Result<(), BlockchainError> {
         trace!("add asset {} at topoheight {}", asset, topoheight);
-        Self::insert_into_disk(self.snapshot.as_mut(), &self.assets, asset.as_bytes(), &topoheight.to_be_bytes())?;
+        let prev1 = Self::insert_into_disk(self.snapshot.as_mut(), &self.assets, asset.as_bytes(), &topoheight.to_be_bytes())?;
 
         let key = Self::get_asset_key(asset, topoheight);
-        Self::insert_into_disk(self.snapshot.as_mut(), &self.assets_prefixed, &key, data.to_bytes())?;
+        let prev2 = Self::insert_into_disk(self.snapshot.as_mut(), &self.assets_prefixed, &key, data.to_bytes())?;
 
         // Update counter
-        self.store_assets_count(self.count_assets().await? + 1)?;
+        if prev1.is_none() && prev2.is_none() {
+            self.store_assets_count(self.count_assets().await? + 1)?;
+        }
 
         if let Some(cache) = &self.assets_cache {
             let mut cache = cache.lock().await;

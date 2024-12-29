@@ -46,6 +46,8 @@ pub struct BlockMetadata {
     pub hash: Hash,
     // Circulating supply
     pub supply: u64,
+    // Burned supply
+    pub burned_supply: u64,
     // Miner reward
     pub reward: u64,
     // Difficulty of the block
@@ -74,6 +76,7 @@ impl Serializer for BlockMetadata {
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
         let hash = reader.read_hash()?;
         let supply = reader.read_u64()?;
+        let burned_supply = reader.read_u64()?;
         let reward = reader.read_u64()?;
         let difficulty = Difficulty::read(reader)?;
         let cumulative_difficulty = CumulativeDifficulty::read(reader)?;
@@ -82,6 +85,7 @@ impl Serializer for BlockMetadata {
         Ok(Self {
             hash,
             supply,
+            burned_supply,
             reward,
             difficulty,
             cumulative_difficulty,
@@ -92,6 +96,7 @@ impl Serializer for BlockMetadata {
     fn write(&self, writer: &mut Writer) {
         writer.write_hash(&self.hash);
         writer.write_u64(&self.supply);
+        writer.write_u64(&self.burned_supply);
         writer.write_u64(&self.reward);
         self.difficulty.write(writer);
         self.cumulative_difficulty.write(writer);
@@ -101,6 +106,7 @@ impl Serializer for BlockMetadata {
     fn size(&self) -> usize {
         self.hash.size()
         + self.supply.size()
+        + self.burned_supply.size()
         + self.reward.size()
         + self.difficulty.size()
         + self.cumulative_difficulty.size()

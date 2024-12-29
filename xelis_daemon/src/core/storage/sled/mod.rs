@@ -457,15 +457,15 @@ impl SledStorage {
     }
 
     // Drop a tree from the DB
-    pub(super) fn drop_tree<V: AsRef<[u8]>>(snapshot: Option<&mut Snapshot>, db: &sled::Db, tree_name: V) -> Result<bool, BlockchainError> {
-        let v = if let Some(snapshot) = snapshot {
-            snapshot.drop_tree(tree_name)
-        } else {
-            db.drop_tree(tree_name)?
-        };
+    // pub(super) fn drop_tree<V: AsRef<[u8]>>(snapshot: Option<&mut Snapshot>, db: &sled::Db, tree_name: V) -> Result<bool, BlockchainError> {
+    //     let v = if let Some(snapshot) = snapshot {
+    //         snapshot.drop_tree(tree_name)
+    //     } else {
+    //         db.drop_tree(tree_name)?
+    //     };
 
-        Ok(v)
-    }
+    //     Ok(v)
+    // }
 
     // Load from disk and cache the value
     // Or load it from cache if available
@@ -820,7 +820,7 @@ impl Storage for SledStorage {
 
         // All deleted assets
         let mut deleted_assets = HashSet::new();
-        
+
         // clean all assets
         for el in self.assets.iter() {
             let (key, value) = el.context("error on asset iterator")?;
@@ -836,8 +836,7 @@ impl Storage for SledStorage {
                 Self::remove_from_disk_without_reading(self.snapshot.as_mut(), &self.assets_prefixed, &key)
                     .context(format!("Error while deleting asset {asset} from registered assets"))?;
 
-                // drop the tree for this asset
-                Self::drop_tree(self.snapshot.as_mut(), &self.db, key).context(format!("error on dropping asset {asset} tree"))?;
+                self.store_assets_count(self.count_assets().await? - 1)?;
 
                 deleted_assets.insert(asset);
             }

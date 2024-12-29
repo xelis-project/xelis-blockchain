@@ -46,7 +46,7 @@ impl VersionedContractDataProvider for SledStorage {
 
         Ok(())
     }
-    
+
     async fn delete_versioned_contract_data_above_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError> {
         trace!("delete versioned contracts data above topoheight {}", topoheight);
         Self::delete_versioned_tree_above_topoheight(&mut self.snapshot, &self.versioned_contracts_data, topoheight)
