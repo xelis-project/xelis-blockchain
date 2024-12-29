@@ -91,7 +91,7 @@ impl BatchCollector {
                 .chain(iter::once(PC_GENS.B_blinding)),
         );
 
-        if mega_check.is_identity().into() {
+        if mega_check.is_identity() {
             Ok(())
         } else {
             Err(MultiscalarMulVerificationError)
