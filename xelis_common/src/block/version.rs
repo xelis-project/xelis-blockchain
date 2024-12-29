@@ -23,8 +23,8 @@ impl BlockVersion {
     pub fn is_tx_version_allowed(&self, tx_version: TxVersion) -> bool {
         match self {
             BlockVersion::V0 | BlockVersion::V1 => matches!(tx_version, TxVersion::V0),
-            BlockVersion::V2 => matches!(tx_version, TxVersion::V0 | TxVersion::V1),
-            BlockVersion::V3 => matches!(tx_version, TxVersion::V0 | TxVersion::V1 | TxVersion::V2),
+            BlockVersion::V2 => matches!(tx_version, TxVersion::V1),
+            BlockVersion::V3 => matches!(tx_version, TxVersion::V2),
         }
     }
 

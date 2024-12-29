@@ -134,14 +134,18 @@ impl Transaction {
                 }
 
                 match &self.data {
-                    TransactionType::MultiSig(_)
-                    | TransactionType::InvokeContract(_)
-                    | TransactionType::DeployContract(_) => false,
-                    _ => true,
+                    TransactionType::Transfers(_)
+                    | TransactionType::Burn(_) => true,
+                    _ => false,
                 }
             },
             // MultiSig is supported in V1
-            TxVersion::V1 => !matches!(&self.data, TransactionType::InvokeContract(_) | TransactionType::DeployContract(_)),
+            TxVersion::V1 => match &self.data {
+                TransactionType::Transfers(_)
+                | TransactionType::Burn(_)
+                | TransactionType::MultiSig(_) => true,
+                _ => false,
+            }
             // No restriction
             TxVersion::V2 => true,
         }
