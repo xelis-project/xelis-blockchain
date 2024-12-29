@@ -175,8 +175,12 @@ pub const PEER_PACKET_CHANNEL_SIZE: usize = 1024;
 // Millis
 pub const PEER_SEND_BYTES_TIMEOUT: u64 = 3_000;
 
+// P2P Key Exchange rules
+// Temporary
+pub const TEMP_P2P_KEY_EXCHANGE_TIMESTAMP_START: u64 = 1735574400;
+
 // Hard Forks configured
-const HARD_FORKS: [HardFork; 2] = [
+const HARD_FORKS: [HardFork; 3] = [
     HardFork {
         height: 0,
         version: BlockVersion::V0,
@@ -184,10 +188,18 @@ const HARD_FORKS: [HardFork; 2] = [
         version_requirement: None
     },
     HardFork {
-        height: 434_100, // Expected date: 10/07/2024 12am UTC
+        // Expected date: 10/07/2024 12am UTC
+        height: 434_100,
         version: BlockVersion::V1,
         changelog: "xelis-hash v2",
         version_requirement: Some(">=1.13.0")
+    },
+    HardFork {
+        // Expected date: 30/12/2024 4pm UTC
+        height: 1_375_000,
+        version: BlockVersion::V2,
+        changelog: "MultiSig, P2P",
+        version_requirement: Some(">=1.16.0")
     }
 ];
 
