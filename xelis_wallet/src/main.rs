@@ -29,12 +29,18 @@ use xelis_common::{
             Arg,
             ArgType,
             ArgumentManager
-        }, command::{
+        },
+        command::{
             Command,
             CommandError,
             CommandHandler,
             CommandManager
-        }, Color, LogLevel, ModuleConfig, Prompt, PromptError
+        },
+        Color,
+        LogLevel,
+        ModuleConfig,
+        Prompt,
+        PromptError
     },
     serializer::Serializer,
     tokio,
