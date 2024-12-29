@@ -347,14 +347,31 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static> {
     );
 
     // Hash
-    env.register_native_function(
-        "as_bytes",
-        Some(hash_type.clone()),
-        vec![],
-        hash_as_bytes_fn,
-        5,
-        Some(Type::Array(Box::new(Type::U8)))
-    );
+    {
+        env.register_native_function(
+            "as_bytes",
+            Some(hash_type.clone()),
+            vec![],
+            hash_as_bytes_fn,
+            5,
+            Some(Type::Array(Box::new(Type::U8)))
+        );
+
+        // Const function
+        env.register_const_function(
+            "from_bytes",
+            hash_type.clone(),
+            vec![("bytes", Type::Array(Box::new(Type::U8)))],
+            hash_from_bytes_fn,
+        );
+
+        env.register_const_function(
+            "from_hex",
+            hash_type.clone(),
+            vec![("hex", Type::String)],
+            hash_from_hex_fn,
+        );
+    }
 
     // Random number generator
     {
