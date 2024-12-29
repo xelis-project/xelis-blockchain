@@ -291,6 +291,42 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static> {
         );
     }
 
+    // Address
+    {
+        env.register_native_function(
+            "is_mainnet",
+            None,
+            vec![],
+            address_is_mainnet,
+            5,
+            Some(Type::Bool)
+        );
+        env.register_native_function(
+            "is_normal",
+            None,
+            vec![],
+            address_is_normal,
+            5,
+            Some(Type::Bool)
+        );
+
+        env.register_native_function(
+            "to_public_key_bytes",
+            Some(address_type.clone()),
+            vec![],
+            address_public_key_bytes,
+            10,
+            Some(Type::Array(Box::new(Type::U8)))
+        );
+
+        env.register_const_function(
+            "from_string",
+            address_type.clone(),
+            vec![("address", Type::String)],
+            address_from_string
+        );
+    }
+
     // Get the current contract hash
     env.register_native_function(
         "get_contract_hash",
@@ -562,6 +598,16 @@ fn transfer<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &
     let destination: Address = params.remove(0)
         .into_owned()
         .into_opaque_type()?;
+
+    if !destination.is_normal() {
+        return Ok(Some(Value::Boolean(false).into()));
+    }
+
+    if destination.is_mainnet() != state.mainnet {
+        return Ok(Some(Value::Boolean(false).into()));
+    }
+
+    // TODO: verify that the address is well registered, otherwise: pay extra fees
 
     let Some((mut balance_state, mut balance)) = get_balance_from_cache(provider, state, asset.clone())? else {
         return Ok(Some(Value::Boolean(false).into()));

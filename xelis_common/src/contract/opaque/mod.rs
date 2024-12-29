@@ -24,6 +24,7 @@ pub use hash::*;
 pub use random::*;
 pub use block::*;
 pub use storage::*;
+pub use address::*;
 
 
 pub const HASH_OPAQUE_ID: u8 = 0;
