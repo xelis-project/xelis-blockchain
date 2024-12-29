@@ -43,14 +43,20 @@ impl BalanceProof {
     const OPENING: PedersenOpening = PedersenOpening::from_scalar(Scalar::ONE);
 
     /// Create a new balance proof.
-    pub fn new(amount: u64, commitment_eq_proof: CommitmentEqProof) -> Self {
+    pub fn from(amount: u64, commitment_eq_proof: CommitmentEqProof) -> Self {
         Self { amount, commitment_eq_proof }
     }
 
-    /// Prove the balance proof.
+    /// Create a new balance proof
+    pub fn new(keypair: &KeyPair, amount: u64, ciphertext: Ciphertext) -> Self {
+        Self::prove(keypair, amount, ciphertext, &mut Transcript::new(b"balance_proof"))
+    }
+
+    /// Prove the balance proof using transcript.
     pub fn prove(keypair: &KeyPair, amount: u64, ciphertext: Ciphertext, transcript: &mut Transcript) -> Self {
         transcript.balance_proof_domain_separator();
         transcript.append_u64(b"amount", amount);
+        transcript.append_ciphertext(b"source_ct", &ciphertext.compress());
 
         // Compute the zeroed balance
         let ct = keypair.get_public_key().encrypt_with_opening(amount, &Self::OPENING);
@@ -59,13 +65,14 @@ impl BalanceProof {
         // Generate the proof that the final balance is 0 after applying the commitment.
         let commitment_eq_proof = CommitmentEqProof::new(keypair, &zeroed_balance, &Self::OPENING, 0, transcript);
 
-        Self::new(amount, commitment_eq_proof)
+        Self::from(amount, commitment_eq_proof)
     }
 
     /// Verify the balance proof.
     pub fn pre_verify(&self, public_key: &PublicKey, source_ciphertext: Ciphertext, transcript: &mut Transcript, batch_collector: &mut BatchCollector) -> Result<(), ProofVerificationError> {
         transcript.balance_proof_domain_separator();
         transcript.append_u64(b"amount", self.amount);
+        transcript.append_ciphertext(b"source_ct", &source_ciphertext.compress());
 
         // Calculate the commitment that corresponds to the balance amount.
         let destination_commitment = PedersenCommitment::new_with_opening(Scalar::ZERO, &Self::OPENING);
@@ -76,6 +83,17 @@ impl BalanceProof {
 
         self.commitment_eq_proof.pre_verify(public_key, &zeroed_balance, &destination_commitment, transcript, batch_collector)?;
 
+        Ok(())
+    }
+
+    /// Verify the balance proof.
+    pub fn verify(&self, public_key: &PublicKey, source_ciphertext: Ciphertext) -> Result<(), ProofVerificationError> {
+        let mut transcript = Transcript::new(b"balance_proof");
+        let mut batch_collector = BatchCollector::default();
+
+        self.pre_verify(public_key, source_ciphertext, &mut transcript, &mut batch_collector)?;
+
+        batch_collector.verify()?;
         Ok(())
     }
 }
@@ -90,7 +108,7 @@ impl Serializer for BalanceProof {
         let amount = u64::read(reader)?;
         let commitment_eq_proof = CommitmentEqProof::read(reader)?;
 
-        Ok(Self::new(amount, commitment_eq_proof))
+        Ok(Self::from(amount, commitment_eq_proof))
     }
 
     fn size(&self) -> usize {
@@ -110,14 +128,10 @@ mod tests {
         let ct = keypair.get_public_key().encrypt(amount);
 
         // Create proof
-        let mut transcript = Transcript::new(b"test");
-        let proof = BalanceProof::prove(&keypair, amount, ct.clone(), &mut transcript);
+        let proof = BalanceProof::new(&keypair, amount, ct.clone());
 
         // Verify the proof
-        let mut transcript = Transcript::new(b"test");
-        let mut batch_collector = BatchCollector::default();
-        assert!(proof.pre_verify(keypair.get_public_key(), ct, &mut transcript, &mut batch_collector).is_ok());
-        assert!(batch_collector.verify().is_ok());
+        assert!(proof.verify(keypair.get_public_key(), ct).is_ok());
     }
 
     #[test]
@@ -128,15 +142,10 @@ mod tests {
         let ct = keypair.get_public_key().encrypt(amount);
 
         // Create proof with a lower amount than our balance
-        let mut transcript = Transcript::new(b"test");
-        let proof = BalanceProof::prove(&keypair, 95, ct.clone(), &mut transcript);
+        let proof = BalanceProof::new(&keypair, 95, ct.clone());
 
         // Verify the proof
-        let mut transcript = Transcript::new(b"test");
-        let mut batch_collector = BatchCollector::default();
-
-        proof.pre_verify(keypair.get_public_key(), ct, &mut transcript, &mut batch_collector).unwrap();
-        assert!(batch_collector.verify().is_err());
+        assert!(proof.verify(keypair.get_public_key(), ct).is_err());
     }
 
     #[test]
@@ -147,17 +156,12 @@ mod tests {
         let ct = keypair.get_public_key().encrypt(amount);
 
         // Create proof with a lower amount than our balance
-        let mut transcript = Transcript::new(b"test");
-        let proof = BalanceProof::prove(&keypair, amount, ct, &mut transcript);
+        let proof = BalanceProof::new(&keypair, amount, ct);
 
         // Verify the proof
-        let mut transcript = Transcript::new(b"test");
-        let mut batch_collector = BatchCollector::default();
-
         // Generate another ciphertext with same amount
         let ct = keypair.get_public_key().encrypt(amount);
 
-        proof.pre_verify(keypair.get_public_key(), ct, &mut transcript, &mut batch_collector).unwrap();
-        assert!(batch_collector.verify().is_err());
+        assert!(proof.verify(keypair.get_public_key(), ct).is_err());
     }
 }
