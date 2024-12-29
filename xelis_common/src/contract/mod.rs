@@ -295,7 +295,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static> {
     {
         env.register_native_function(
             "is_mainnet",
-            None,
+            Some(address_type.clone()),
             vec![],
             address_is_mainnet,
             5,
@@ -303,7 +303,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static> {
         );
         env.register_native_function(
             "is_normal",
-            None,
+            Some(address_type.clone()),
             vec![],
             address_is_normal,
             5,
