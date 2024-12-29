@@ -647,7 +647,7 @@ impl<S: Storage> P2pServer<S> {
         trace!("New connection: {}", connection);
 
         // Exchange encryption keys
-        if hard_fork::is_version_enabled_at_height(self.blockchain.get_network(), self.blockchain.get_height(), BlockVersion::V2) {
+        if get_current_time_in_seconds() >= TEMP_P2P_KEY_EXCHANGE_TIMESTAMP_START {
             let expected_key = self.peer_list.get_dh_key_for_peer(&connection.get_address().ip()).await?;
             let new_key = connection.exchange_keys(&self.dh_keypair, expected_key.as_ref(), self.dh_action, buf).await?;
             self.peer_list.store_dh_key_for_peer(&connection.get_address().ip(), new_key).await?;
