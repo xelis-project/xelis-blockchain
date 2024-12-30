@@ -900,6 +900,26 @@ impl Storage for SledStorage {
             }
         }
 
+        // Clean the multisig
+        trace!("Cleaning multisig");
+        for el in self.multisig.iter() {
+            let (key, value) = el?;
+            let topo_pointer = TopoHeight::from_bytes(&value)?;
+
+            if topo_pointer > topoheight {
+                let pkey = PublicKey::from_bytes(&key)?;
+                match self.get_multisig_at_maximum_topoheight_for(&pkey, topoheight).await? {
+                    Some((topo, _)) => {
+                        trace!("New highest version multisig for {} is at topoheight {}", pkey.as_address(self.is_mainnet()), topo);
+                        Self::insert_into_disk(self.snapshot.as_mut(), &self.multisig, &key, &topo.to_be_bytes())?;
+                    },
+                    None => {
+                        Self::remove_from_disk_without_reading(self.snapshot.as_mut(), &self.multisig, &key)?;
+                    }
+                }
+            }
+        }
+
         warn!("Blocks rewinded: {}, new topoheight: {}, new height: {}", done, topoheight, height);
 
         trace!("Cleaning versioned balances and nonces");
