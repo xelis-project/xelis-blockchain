@@ -1036,12 +1036,18 @@ impl Transaction {
                 .map_err(VerificationError::State)?
                 .clone();
 
+            let source_ct_compressed = source_verification_ciphertext.compress();
+
             // Compute the new final balance for account
             source_verification_ciphertext -= &output;
             transcript.new_commitment_eq_proof_domain_separator();
             transcript.append_hash(b"new_source_commitment_asset", &commitment.asset);
             transcript
                 .append_commitment(b"new_source_commitment", &commitment.commitment);
+
+            if self.version >= TxVersion::V1 {
+                transcript.append_ciphertext(b"source_ct", &source_ct_compressed);
+            }
 
             commitment.proof.pre_verify(
                 &owner,
