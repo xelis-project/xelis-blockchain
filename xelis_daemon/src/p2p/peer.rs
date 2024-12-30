@@ -50,6 +50,7 @@ use std::{
     time::Duration
 };
 use tokio::{
+    select,
     sync::{broadcast, mpsc, oneshot::Sender, Mutex},
     time::timeout,
 };
@@ -419,13 +420,18 @@ impl Peer {
             objects.insert(request.clone(), sender); // clone is necessary in case timeout has occured
             receiver
         };
-        let object = match timeout(Duration::from_millis(PEER_TIMEOUT_REQUEST_OBJECT), receiver).await {
-            Ok(res) => res?,
-            Err(e) => {
-                trace!("Requested data has timed out");
-                let mut objects = self.objects_requested.lock().await;
-                objects.remove(&request); // remove it from request list
-                return Err(P2pError::AsyncTimeOut(e));
+
+        let mut exit_channel = self.get_exit_receiver();
+        let object = select! {
+            _ = exit_channel.recv() => return Err(P2pError::Disconnected),
+            res = timeout(Duration::from_millis(PEER_TIMEOUT_REQUEST_OBJECT), receiver) => match res {
+                Ok(res) => res?,
+                Err(e) => {
+                    trace!("Requested data has timed out");
+                    let mut objects = self.objects_requested.lock().await;
+                    objects.remove(&request); // remove it from request list
+                    return Err(P2pError::AsyncTimeOut(e));
+                }
             }
         };
 
@@ -456,12 +462,15 @@ impl Peer {
         // send the packet
         self.send_packet(Packet::BootstrapChainRequest(BootstrapChainRequest::new(step))).await?;
 
-        // wait on the response
-        let response: StepResponse = match timeout(Duration::from_millis(PEER_TIMEOUT_BOOTSTRAP_STEP), receiver).await {
-            Ok(res) => res?,
-            Err(e) => {
-                debug!("Requested bootstrap chain step {:?} has timed out", step_kind);
-                return Err(P2pError::AsyncTimeOut(e));
+        let mut exit_channel = self.get_exit_receiver();
+        let response = select! {
+            _ = exit_channel.recv() => return Err(P2pError::Disconnected),
+            res = timeout(Duration::from_millis(PEER_TIMEOUT_BOOTSTRAP_STEP), receiver) => match res {
+                Ok(res) => res?,
+                Err(e) => {
+                    debug!("Requested bootstrap chain step {:?} has timed out", step_kind);
+                    return Err(P2pError::AsyncTimeOut(e));
+                }
             }
         };
 
@@ -487,11 +496,15 @@ impl Peer {
         self.send_packet(Packet::ChainRequest(request)).await?;
 
         trace!("waiting for chain response");
-        let response: ChainResponse = match timeout(Duration::from_secs(CHAIN_SYNC_TIMEOUT_SECS), receiver).await {
-            Ok(res) => res?,
-            Err(e) => {
-                debug!("Requested sync chain step timed out");
-                return Err(P2pError::AsyncTimeOut(e));
+        let mut exit_channel = self.get_exit_receiver();
+        let response = select! {
+            _ = exit_channel.recv() => return Err(P2pError::Disconnected),
+            res = timeout(Duration::from_secs(CHAIN_SYNC_TIMEOUT_SECS), receiver) => match res {
+                Ok(res) => res?,
+                Err(e) => {
+                    debug!("Requested sync chain has timed out");
+                    return Err(P2pError::AsyncTimeOut(e));
+                }
             }
         };
 
