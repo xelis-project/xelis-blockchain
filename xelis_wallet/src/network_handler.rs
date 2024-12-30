@@ -6,33 +6,36 @@ use std::{
     sync::Arc,
     time::Duration
 };
+use indexmap::IndexMap;
 use thiserror::Error;
 use anyhow::Error;
-use log::{debug, error, trace, warn};
+use log::{debug, error, info, trace, warn};
 use xelis_common::{
-    tokio::{
-        sync::Mutex, task::{JoinHandle, JoinError},
-        time::sleep,
-        select,
-        spawn_task
-    },
     account::CiphertextCache,
     api::{
         daemon::{
             BlockResponse,
+            MultisigState,
             NewBlockEvent
         },
         wallet::BalanceChanged,
         RPCTransactionType
     },
-    asset::AssetWithData,
+    asset::AssetData,
     config::XELIS_ASSET,
     crypto::{
         elgamal::Ciphertext,
         Address,
         Hash
     },
-    transaction::Role,
+    tokio::{
+        select,
+        spawn_task,
+        sync::Mutex,
+        task::{JoinError, JoinHandle},
+        time::sleep
+    },
+    transaction::{ContractDeposit, MultiSigPayload, Role},
     utils::sanitize_daemon_address
 };
 use crate::{
@@ -44,7 +47,7 @@ use crate::{
         TransferIn,
         TransferOut
     },
-    storage::Balance,
+    storage::{Balance, MultiSig},
     wallet::{
         Event, Wallet
     }
@@ -156,22 +159,27 @@ impl NetworkHandler {
     }
 
     // Stop the internal loop to stop syncing
-    pub async fn stop(&self) -> Result<(), NetworkError> {
+    pub async fn stop(&self, api: bool) -> Result<(), NetworkError> {
         trace!("Stopping network handler");
         if let Some(handle) = self.task.lock().await.take() {
             if handle.is_finished() {
+                debug!("Network handler is already finished");
                 // We are already finished, which mean the event got triggered
                 handle.await??;
             } else {
+                debug!("Network handler is running, stopping it");
                 handle.abort();
 
                 // Notify that we are offline
                 self.wallet.propagate_event(Event::Offline).await;
             }
 
-            // Turn off the websocket connection
-            if let Err(e) = self.api.disconnect().await {
-                debug!("Error while closing websocket connection: {}", e);
+            if api {
+                debug!("Network handler stopped, disconnecting api");
+                // Turn off the websocket connection
+                if let Err(e) = self.api.disconnect().await {
+                    debug!("Error while closing websocket connection: {}", e);
+                }
             }
 
             Ok(())
@@ -219,7 +227,7 @@ impl NetworkHandler {
             debug!("Block {} at topoheight {} is mined by us", block_hash, topoheight);
             if let Some(reward) = block.miner_reward {
                 let coinbase = EntryData::Coinbase { reward };
-                let entry = TransactionEntry::new(block_hash.clone(), topoheight, coinbase);
+                let entry = TransactionEntry::new(block_hash.clone(), topoheight, block.timestamp, coinbase);
                 assets_changed.insert(XELIS_ASSET);
 
                 let broadcast = {
@@ -260,6 +268,11 @@ impl NetworkHandler {
         'main: for tx in block.transactions.into_iter() {
             trace!("Checking transaction {}", tx.hash);
             let is_owner = *tx.source.get_public_key() == *address.get_public_key();
+            if is_owner {
+                debug!("Transaction {} is from us", tx.hash);
+                assets_changed.insert(XELIS_ASSET);
+            }
+
             let entry: Option<EntryData> = match tx.data {
                 RPCTransactionType::Burn(payload) => {
                     let payload = payload.into_owned();
@@ -320,7 +333,7 @@ impl NetworkHandler {
                             };
 
                             let extra_data = if let Some(cipher) = transfer.extra_data.into_owned() {
-                                self.wallet.decrypt_extra_data(cipher, &handle, role).ok()
+                                self.wallet.decrypt_extra_data(cipher, role).ok()
                             } else {
                                 None
                             };
@@ -349,20 +362,76 @@ impl NetworkHandler {
                     } else { // this TX has nothing to do with us, nothing to save
                         None
                     }
+                },
+                RPCTransactionType::MultiSig(payload) => {
+                    let payload = payload.into_owned();
+                    if is_owner {
+                        if self.has_tx_stored(&tx.hash).await? {
+                            debug!("Transaction multisig setup {} was already stored, skipping it", tx.hash);
+                            continue 'main;
+                        }
+
+                        Some(EntryData::MultiSig { participants: payload.participants, threshold: payload.threshold, fee: tx.fee, nonce: tx.nonce })
+                    } else {
+                        None
+                    }
+                },
+                RPCTransactionType::InvokeContract(payload) => {
+                    let payload = payload.into_owned();
+                    if is_owner {
+                        if self.has_tx_stored(&tx.hash).await? {
+                            debug!("Transaction invoke contract {} was already stored, skipping it", tx.hash);
+                            continue 'main;
+                        }
+
+                        let mut deposits = IndexMap::new();
+                        for (asset, deposit) in payload.deposits {
+                            assets_changed.insert(asset.clone());
+
+                            match deposit {
+                                ContractDeposit::Public(amount) => {
+                                    deposits.insert(asset, amount);
+                                },
+                                // ContractDeposit::Private(ct) => {
+                                //     let ct = ct.decompress()?;
+                                //     let amount = self.wallet.decrypt_ciphertext(ct).await?;
+                                //     deposits.insert(asset, amount);
+                                // }
+                            }
+                        }
+
+                        Some(EntryData::InvokeContract { contract: payload.contract, deposits, chunk_id: payload.chunk_id, fee: tx.fee, nonce: tx.nonce })
+                    } else {
+                        None
+                    }
+                },
+                RPCTransactionType::DeployContract(_) => {
+                    if is_owner {
+                        if self.has_tx_stored(&tx.hash).await? {
+                            debug!("Transaction deploy contract {} was already stored, skipping it", tx.hash);
+                            continue 'main;
+                        }
+
+                        Some(EntryData::DeployContract { fee: tx.fee, nonce: tx.nonce })
+                    } else {
+                        None
+                    }
                 }
             };
 
             if let Some(entry) = entry {
                 // Transaction found at which topoheight it was executed
                 let mut tx_topoheight = topoheight;
+                let mut tx_timestamp = block.timestamp;
 
                 // New transaction entry that may be linked to us, check if TX was executed
                 if !self.api.is_tx_executed_in_block(&tx.hash, &block_hash).await? {
-                    warn!("Transaction {} was a good candidate but was not executed in block {}, searching its block executor", tx.hash, block_hash);
+                    debug!("Transaction {} was a good candidate but was not executed in block {}, searching its block executor", tx.hash, block_hash);
                     // Don't skip the TX, we may have missed it
                     match self.api.get_transaction_executor(&tx.hash).await {
                         Ok(executor) => {
                             tx_topoheight = executor.block_topoheight;
+                            tx_timestamp = executor.block_timestamp;
                             debug!("Transaction {} was executed in block {} at topoheight {}", tx.hash, executor.block_hash, executor.block_topoheight);
                         },
                         Err(e) => {
@@ -380,7 +449,7 @@ impl NetworkHandler {
                 }
 
                 // Save the transaction
-                let entry = TransactionEntry::new(tx.hash.into_owned(), tx_topoheight, entry);
+                let entry = TransactionEntry::new(tx.hash.into_owned(), tx_topoheight, tx_timestamp, entry);
                 {
                     let mut storage = self.wallet.get_storage().write().await;
                     storage.save_transaction(entry.get_hash(), &entry)?;
@@ -389,10 +458,44 @@ impl NetworkHandler {
                         storage.add_topoheight_to_changes(topoheight, &block_hash)?;
                         changes_stored = true;
                     }
+
+                    if let EntryData::MultiSig { participants, threshold, .. } = entry.get_entry() {
+                        let multisig = MultiSig {
+                            payload: MultiSigPayload {
+                                participants: participants.clone(),
+                                threshold: *threshold
+                            },
+                            topoheight: tx_topoheight
+                        };
+                        let store = storage.get_multisig_state().await?
+                            .map(|m| m.topoheight < tx_topoheight)
+                            .unwrap_or(true);
+
+                        if store {
+                            info!("Detected a multisig state change at topoheight {} from TX {}", tx_topoheight, entry.get_hash());
+                            if multisig.payload.is_delete() {
+                                info!("Deleting multisig state");
+                                storage.delete_multisig_state().await?;
+                            } else {
+                                info!("Updating multisig state");
+                                storage.set_multisig_state(multisig).await?;
+                            }
+                        }
+                    }
                 }
 
                 // Propagate the event to the wallet
                 self.wallet.propagate_event(Event::NewTransaction(entry.serializable(self.wallet.get_network().is_mainnet()))).await;
+            }
+        }
+
+        // Also, verify the block version, so we handle smoothly a change in TX Version
+        {
+            let tx_version = block.version.get_tx_version();
+            let mut storage = self.wallet.get_storage().write().await;
+            if storage.get_tx_version().await? < tx_version {
+                info!("Updating TX version to {}", tx_version);
+                storage.set_tx_version(tx_version).await?;
             }
         }
 
@@ -660,6 +763,35 @@ impl NetworkHandler {
             None
         };
 
+        // Check if we have a multisig account
+        if self.api.has_multisig(address).await.unwrap_or(false) {
+            debug!("Multisig account detected");
+            let data = self.api.get_multisig(address).await?;
+            if let MultisigState::Active { participants, threshold } = data.state {
+                debug!("Active multisig account with participants [{}] and threshold {}", participants.iter().map(Address::to_string).collect::<Vec<_>>().join(", "), threshold);
+
+                let payload = MultiSigPayload {
+                    participants: participants.into_iter().map(|p| p.to_public_key()).collect(),
+                    threshold
+                };
+
+                let multisig = MultiSig {
+                    payload,
+                    topoheight: data.topoheight
+                };
+                let mut storage = self.wallet.get_storage().write().await;
+                storage.set_multisig_state(multisig).await?;
+            } else {
+                warn!("Multisig account is not active while marked as, skipping it");
+            }
+        } else {
+            let mut storage = self.wallet.get_storage().write().await;
+            if storage.has_multi_sig_state().await? {
+                info!("No multisig account detected, deleting multisig state");
+                storage.delete_multisig_state().await?;
+            }
+        }
+
         let assets = if let Some(assets) = assets.filter(|a| !a.is_empty()) {
             assets
         } else {
@@ -680,15 +812,15 @@ impl NetworkHandler {
                 storage.contains_asset(&asset).await?
             } {
                 let data = self.api.get_asset(&asset).await?;
-                
                 // Add the asset to the storage
                 {
                     let mut storage = self.wallet.get_storage().write().await;
-                    storage.add_asset(&asset, data.get_decimals()).await?;
+                    let data = AssetData::new(data.decimals, data.name.as_ref().to_owned(), data.max_supply);
+                    storage.add_asset(&asset, data).await?;
                 }
 
                 // New asset added to the wallet, inform listeners
-                self.wallet.propagate_event(Event::NewAsset(AssetWithData::new(asset.clone(), data))).await;
+                self.wallet.propagate_event(Event::NewAsset(data)).await;
             }
 
             // get the balance for this asset
@@ -814,18 +946,19 @@ impl NetworkHandler {
             sync_new_blocks |= self.sync_head_state(&address, None, None, true).await?;
         }
 
+        // Update the topoheight and block hash for wallet
+        {
+            trace!("updating block reference in storage");
+            let mut storage = self.wallet.get_storage().write().await;
+            storage.set_synced_topoheight(daemon_topoheight)?;
+            storage.set_top_block_hash(&daemon_block_hash)?;
+        }
+
         // we have something that changed, sync transactions
         // prevent a double sync head state if history scan is disabled
         if sync_new_blocks && self.wallet.get_history_scan() {
             debug!("Syncing new blocks");
             self.sync_new_blocks(address, wallet_topoheight, true).await?;
-        }
-
-        // Update the topoheight and block hash for wallet
-        {
-            let mut storage = self.wallet.get_storage().write().await;
-            storage.set_synced_topoheight(daemon_topoheight)?;
-            storage.set_top_block_hash(&daemon_block_hash)?;
         }
 
         // Propagate the event
@@ -909,7 +1042,7 @@ impl NetworkHandler {
                         storage.delete_transaction(&tx.hash)?;
                     }
 
-                    if storage.get_tx_cache().is_some_and(|cache| cache.last_tx_hash_created == *tx.hash) {
+                    if storage.get_tx_cache().is_some_and(|cache| cache.last_tx_hash_created.as_ref() == Some(&tx.hash)) {
                         warn!("Transaction {} was orphaned, deleting it from cache", tx.hash);
                         storage.clear_tx_cache();
                     }
@@ -950,6 +1083,8 @@ impl NetworkHandler {
                 error!("Error while syncing balance for asset {}: {}", asset, e);
             }
         }
+
+        self.wallet.propagate_event(Event::HistorySynced { topoheight: current_topoheight }).await;
 
         Ok(())
     }

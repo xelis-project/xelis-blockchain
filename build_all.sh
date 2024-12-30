@@ -42,6 +42,19 @@ for target in "${targets[@]}"; do
         cp $file build/$target/$file
     done
 
+    # generate checksums
+    echo "Generating checksums for $target"
+    cd build/$target
+    > checksums.txt
+    for binary in "${binaries[@]}"; do
+        # add .exe extension to windows binaries
+        if [[ "$target" == *"windows"* ]]; then
+            binary="$binary.exe"
+        fi
+        sha256sum $binary >> checksums.txt
+    done
+    cd ../..
+
     # create archive
     cd build/
     if [[ "$target" == *"windows"* ]]; then
@@ -51,5 +64,18 @@ for target in "${targets[@]}"; do
     fi
     cd ..
 done
+
+# Generate final checksums.txt in build/
+echo "Generating final checksums.txt in build/"
+cd build/
+> checksums.txt
+for target in "${targets[@]}"; do
+    if [[ "$target" == *"windows"* ]]; then
+        sha256sum $target.zip >> checksums.txt
+    else
+        sha256sum $target.tar.gz >> checksums.txt
+    fi
+done
+cd ..
 
 echo "Done"

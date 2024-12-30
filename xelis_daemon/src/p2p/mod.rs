@@ -4,24 +4,30 @@ pub mod error;
 pub mod packet;
 pub mod peer_list;
 pub mod chain_validator;
+pub mod diffie_hellman;
 mod tracker;
 mod encryption;
 mod disk_cache;
+mod bootstrap;
 
 pub use encryption::EncryptionKey;
 
 use indexmap::IndexSet;
 use lru::LruCache;
 use xelis_common::{
-    account::VersionedNonce,
     api::daemon::{
         Direction,
         NotifyEvent,
         PeerPeerDisconnectedEvent
     },
-    block::{Block, BlockHeader, BlockVersion},
+    block::{
+        Block,
+        BlockHeader,
+        BlockVersion,
+        TopoHeight,
+    },
     config::{TIPS_LIMIT, VERSION},
-    crypto::{Hash, Hashable, PublicKey},
+    crypto::{Hash, Hashable},
     difficulty::CumulativeDifficulty,
     immutable::Immutable,
     serializer::Serializer,
@@ -33,32 +39,16 @@ use xelis_common::{
     }
 };
 use crate::{
-    config::{
-        get_genesis_block_hash,
-        get_seed_nodes,
-        CHAIN_SYNC_DEFAULT_RESPONSE_BLOCKS, CHAIN_SYNC_DELAY, CHAIN_SYNC_REQUEST_EXPONENTIAL_INDEX_START,
-        CHAIN_SYNC_REQUEST_MAX_BLOCKS, CHAIN_SYNC_RESPONSE_MAX_BLOCKS, CHAIN_SYNC_RESPONSE_MIN_BLOCKS,
-        CHAIN_SYNC_TOP_BLOCKS, MILLIS_PER_SECOND, NETWORK_ID, P2P_AUTO_CONNECT_PRIORITY_NODES_DELAY,
-        P2P_EXTEND_PEERLIST_DELAY, P2P_PING_DELAY, P2P_PING_PEER_LIST_DELAY, P2P_PING_PEER_LIST_LIMIT,
-        PEER_FAIL_LIMIT, PEER_MAX_PACKET_SIZE, PEER_TIMEOUT_INIT_CONNECTION, PEER_TIMEOUT_INIT_OUTGOING_CONNECTION,
-        PRUNE_SAFETY_LIMIT, STABLE_LIMIT, P2P_PING_TIMEOUT, P2P_HEARTBEAT_INTERVAL
-    },
+    config::*,
     core::{
         blockchain::Blockchain,
         error::BlockchainError,
-        storage::Storage,
-        hard_fork::{get_version_at_height, is_version_allowed_at_height}
+        hard_fork,
+        storage::Storage
     },
     p2p::{
         chain_validator::ChainValidator,
         packet::{
-            bootstrap_chain::{
-                BlockMetadata,
-                BootstrapChainResponse,
-                StepRequest,
-                StepResponse,
-                MAX_ITEMS_PER_PAGE
-            },
             chain::CommonPoint,
             inventory::{
                 NotifyInventoryRequest,
@@ -106,7 +96,7 @@ use tokio::{
 use log::{info, warn, error, debug, trace};
 use std::{
     borrow::Cow,
-    collections::{hash_map::Entry, HashSet},
+    collections::hash_map::Entry,
     io,
     net::{IpAddr, SocketAddr},
     num::NonZeroUsize,
@@ -168,11 +158,15 @@ pub struct P2pServer<S: Storage> {
     // Are we syncing the chain with another peer
     is_syncing: AtomicBool,
     // Exit channel to notify all tasks to stop
-    exit_sender: broadcast::Sender<()>
+    exit_sender: broadcast::Sender<()>,
+    // Diffie-Hellman keypair
+    dh_keypair: diffie_hellman::DHKeyPair,
+    // Diffie-Hellman key verification action
+    dh_action: diffie_hellman::KeyVerificationAction
 }
 
 impl<S: Storage> P2pServer<S> {
-    pub fn new(concurrency: usize, dir_path: Option<String>, tag: Option<String>, max_peers: usize, bind_address: String, blockchain: Arc<Blockchain<S>>, use_peerlist: bool, exclusive_nodes: Vec<SocketAddr>, allow_fast_sync_mode: bool, allow_boost_sync_mode: bool, max_chain_response_size: Option<usize>, sharable: bool, disable_outgoing_connections: bool) -> Result<Arc<Self>, P2pError> {
+    pub fn new(concurrency: usize, dir_path: Option<String>, tag: Option<String>, max_peers: usize, bind_address: String, blockchain: Arc<Blockchain<S>>, use_peerlist: bool, exclusive_nodes: Vec<SocketAddr>, allow_fast_sync_mode: bool, allow_boost_sync_mode: bool, max_chain_response_size: Option<usize>, sharable: bool, disable_outgoing_connections: bool, dh_keypair: Option<diffie_hellman::DHKeyPair>, dh_action: diffie_hellman::KeyVerificationAction) -> Result<Arc<Self>, P2pError> {
         if tag.as_ref().is_some_and(|tag| tag.len() == 0 || tag.len() > 16) {
             return Err(P2pError::InvalidTag);
         }
@@ -187,8 +181,11 @@ impl<S: Storage> P2pServer<S> {
 
         // set channel to communicate with listener thread
         let mut rng = rand::thread_rng();
-        let peer_id: u64 = rng.gen(); // generate a random peer id for network
-        let addr: SocketAddr = bind_address.parse()?; // parse the bind address
+        // generate a random peer id for network
+        let peer_id: u64 = rng.gen();
+        // parse the bind address
+        let addr: SocketAddr = bind_address.parse()?;
+
         // create mspc channel for connections to peers
         let (connections_sender, connections_receiver) = mpsc::channel(max_peers);
         let (blocks_processor, blocks_processor_receiver) = mpsc::channel(TIPS_LIMIT * STABLE_LIMIT as usize);
@@ -220,6 +217,8 @@ impl<S: Storage> P2pServer<S> {
             is_syncing: AtomicBool::new(false),
             outgoing_connections_disabled: AtomicBool::new(disable_outgoing_connections),
             exit_sender,
+            dh_keypair: dh_keypair.unwrap_or_else(diffie_hellman::DHKeyPair::new),
+            dh_action
         };
 
         let arc = Arc::new(server);
@@ -606,7 +605,7 @@ impl<S: Storage> P2pServer<S> {
         }
 
         // check if the version of this peer is allowed
-        if !is_version_allowed_at_height(self.blockchain.get_network(), self.blockchain.get_height(), handshake.get_version()).map_err(|e| P2pError::InvalidP2pVersion(e.to_string()))? {
+        if !hard_fork::is_version_allowed_at_height(self.blockchain.get_network(), self.blockchain.get_height(), handshake.get_version()).map_err(|e| P2pError::InvalidP2pVersion(e.to_string()))? {
             return Err(P2pError::InvalidP2pVersion(handshake.get_version().clone()));
         }
 
@@ -648,7 +647,13 @@ impl<S: Storage> P2pServer<S> {
         trace!("New connection: {}", connection);
 
         // Exchange encryption keys
-        connection.exchange_keys(buf).await?;
+        if get_current_time_in_seconds() >= TEMP_P2P_KEY_EXCHANGE_TIMESTAMP_START {
+            let expected_key = self.peer_list.get_dh_key_for_peer(&connection.get_address().ip()).await?;
+            let new_key = connection.exchange_keys(&self.dh_keypair, expected_key.as_ref(), self.dh_action, buf).await?;
+            self.peer_list.store_dh_key_for_peer(&connection.get_address().ip(), new_key).await?;
+        } else {
+            connection.exchange_keys_old(buf).await?;
+        }
 
         // Start handshake now
         connection.set_state(State::Handshake);
@@ -827,6 +832,7 @@ impl<S: Storage> P2pServer<S> {
             {
                 let cumulative_difficulty = p.get_cumulative_difficulty().lock().await;
                 if *cumulative_difficulty <= our_cumulative_difficulty {
+                    trace!("Peer {} has a lower cumulative difficulty than us, skipping...", p);
                     continue;
                 }
             }
@@ -836,12 +842,14 @@ impl<S: Storage> P2pServer<S> {
                 // if we want to fast sync, but this peer is not compatible, we skip it
                 // for this we check that the peer topoheight is not less than the prune safety limit
                 if peer_topoheight < PRUNE_SAFETY_LIMIT || our_topoheight + PRUNE_SAFETY_LIMIT > peer_topoheight {
+                    trace!("Peer {} has a topoheight less than the prune safety limit, skipping...", p);
                     continue;
                 }
                 if let Some(pruned_topoheight) = p.get_pruned_topoheight() {
                     // This shouldn't be possible if following the protocol,
                     // But we may never know if a peer is not following the protocol strictly
                     if peer_topoheight - pruned_topoheight < PRUNE_SAFETY_LIMIT {
+                        trace!("Peer {} has a pruned topoheight {} less than the prune safety limit, skipping...", p, pruned_topoheight);
                         continue;
                     }
                 }
@@ -850,12 +858,14 @@ impl<S: Storage> P2pServer<S> {
                 // so we can sync chain from pruned chains
                 if let Some(pruned_topoheight) = p.get_pruned_topoheight() {
                     if pruned_topoheight > our_topoheight {
+                        trace!("Peer {} has a pruned topoheight {} higher than our topoheight {}, skipping...", p, pruned_topoheight, our_topoheight);
                         continue;
                     }
                 }
             }
 
             if !(p.get_height() > our_height || peer_topoheight > our_topoheight) {
+                trace!("Peer {} has a lower height/topoheight than us, skipping...", p);
                 continue;
             }
 
@@ -1943,7 +1953,7 @@ impl<S: Storage> P2pServer<S> {
 
                 let mut swap = false;
                 if let Some(previous_hash) = response_blocks.last() {
-                    let version = get_version_at_height(self.blockchain.get_network(), height);
+                    let version = hard_fork::get_version_at_height(self.blockchain.get_network(), height);
                     // Due to the TX being orphaned, some TXs may be in the wrong order in V1
                     // It has been sorted in V2 and should not happen anymore
                     if version == BlockVersion::V0 && storage.has_block_position_in_order(&hash).await? && storage.has_block_position_in_order(&previous_hash).await? {
@@ -1994,6 +2004,63 @@ impl<S: Storage> P2pServer<S> {
 
         debug!("Sending {} blocks & {} top blocks as response to {}", response_blocks.len(), top_blocks.len(), peer);
         peer.send_packet(Packet::ChainResponse(ChainResponse::new(common_point, lowest_common_height, response_blocks, top_blocks))).await?;
+        Ok(())
+    }
+
+    async fn handle_chain_validator_with_rewind(&self, peer: &Arc<Peer>, pop_count: u64, chain_validator: ChainValidator<'_, S>) -> Result<(), BlockchainError> {
+        // peer chain looks correct, lets rewind our chain
+        warn!("Rewinding chain because of {} (pop count: {})", peer, pop_count);
+        self.blockchain.rewind_chain(pop_count, false).await?;
+
+        // now retrieve all txs from all blocks header and add block in chain
+        for (hash, header) in chain_validator.get_blocks() {
+            trace!("Processing block {} from chain validator", hash);
+            // we don't already have this block, lets retrieve its txs and add in our chain
+            if !self.blockchain.has_block(&hash).await? {
+                let mut transactions = Vec::new(); // don't pre allocate
+                for tx_hash in header.get_txs_hashes() {
+                    // check first on disk in case it was already fetch by a previous block
+                    // it can happens as TXs can be integrated in multiple blocks and executed only one time
+                    // check if we find it
+                    if let Some(tx) = self.blockchain.get_tx(tx_hash).await.ok() {
+                        trace!("Found the transaction {} on disk", tx_hash);
+                        transactions.push(Immutable::Arc(tx));
+                    } else { // otherwise, ask it from peer
+                        let response = peer.request_blocking_object(ObjectRequest::Transaction(tx_hash.clone())).await?;
+                        if let OwnedObjectResponse::Transaction(tx, _) = response {
+                            trace!("Received transaction {} at block {} from {}", tx_hash, hash, peer);
+                            transactions.push(Immutable::Owned(tx));
+                        } else {
+                            error!("{} sent us an invalid block response", peer);
+                            return Err(P2pError::ExpectedTransaction.into())
+                        }
+                    }
+                }
+
+                // Assemble back the block and add it to the chain
+                let block = Block::new(Immutable::Arc(header), transactions);
+                self.blockchain.add_new_block(block, false, false).await?; // don't broadcast block because it's syncing
+            } else {
+                // We need to re execute it to make sure it's in DAG
+                let mut storage = self.blockchain.get_storage().write().await;
+                if !storage.is_block_topological_ordered(&hash).await {
+                    match storage.delete_block_with_hash(&hash).await {
+                        Ok(block) => {
+                            warn!("Block {} is already in chain but not in DAG, re-executing it", hash);
+                            self.blockchain.add_new_block(block, false, false).await?;
+                        },
+                        Err(e) => {
+                            // This shouldn't happen, but in case
+                            error!("Error while deleting block {} from storage to re-execute it for chain sync: {}", hash, e);
+                            continue;
+                        }
+                    }
+                } else {
+                    trace!("Block {} is already in DAG, skipping it", hash);
+                }
+            }
+        }
+
         Ok(())
     }
 
@@ -2119,40 +2186,22 @@ impl<S: Storage> P2pServer<S> {
                     return Err(BlockchainError::LowerCumulativeDifficulty)
                 }
 
-                // peer chain looks correct, lets rewind our chain
-                warn!("Rewinding chain because of {} (pop count: {})", peer, pop_count);
-                self.blockchain.rewind_chain(pop_count, false).await?;
-
-                // now retrieve all txs from all blocks header and add block in chain
-                for (hash, header) in chain_validator.get_blocks() {
-                    trace!("Processing block {} from chain validator", hash);
-                    // we don't already have this block, lets retrieve its txs and add in our chain
-                    if !self.blockchain.has_block(&hash).await? {
-                        let mut transactions = Vec::new(); // don't pre allocate
-                        for tx_hash in header.get_txs_hashes() {
-                            // check first on disk in case it was already fetch by a previous block
-                            // it can happens as TXs can be integrated in multiple blocks and executed only one time
-                            // check if we find it
-                            if let Some(tx) = self.blockchain.get_tx(tx_hash).await.ok() {
-                                trace!("Found the transaction {} on disk", tx_hash);
-                                transactions.push(Immutable::Arc(tx));
-                            } else { // otherwise, ask it from peer
-                                let response = peer.request_blocking_object(ObjectRequest::Transaction(tx_hash.clone())).await?;
-                                if let OwnedObjectResponse::Transaction(tx, _) = response {
-                                    trace!("Received transaction {} at block {} from {}", tx_hash, hash, peer);
-                                    transactions.push(Immutable::Owned(tx));
-                                } else {
-                                    error!("{} sent us an invalid block response", peer);
-                                    return Err(P2pError::ExpectedTransaction.into())
-                                }
-                            }
-                        }
-
-                        // Assemble back the block and add it to the chain
-                        let block = Block::new(Immutable::Arc(header), transactions);
-                        self.blockchain.add_new_block(block, false, false).await?; // don't broadcast block because it's syncing
-                    }
+                // Handle the chain validator
+                {
+                    info!("Starting commit point for chain validator");
+                    let mut storage = self.blockchain.get_storage().write().await;
+                    storage.start_commit_point().await?;
+                    info!("Commit point started for chain validator");
                 }
+                let res = self.handle_chain_validator_with_rewind(peer, pop_count, chain_validator).await;
+                {
+                    info!("Ending commit point for chain validator");
+                    let mut storage = self.blockchain.get_storage().write().await;
+                    storage.end_commit_point(res.is_ok()).await?;
+                    info!("Commit point ended for chain validator: {}", res.is_ok());
+                }
+
+                res?;
             }
         } else {
             // no rewind are needed, process normally
@@ -2313,13 +2362,13 @@ impl<S: Storage> P2pServer<S> {
     }
 
     // Returns the median topoheight based on all peers
-    pub async fn get_median_topoheight_of_peers(&self) -> u64 {
+    pub async fn get_median_topoheight_of_peers(&self) -> TopoHeight {
         let topoheight = self.blockchain.get_topo_height();
         self.peer_list.get_median_topoheight(Some(topoheight)).await
     }
 
     // Returns the best topoheight based on all peers
-    pub async fn get_best_topoheight(&self) -> u64 {
+    pub async fn get_best_topoheight(&self) -> TopoHeight {
         self.peer_list.get_best_topoheight().await
     }
 
@@ -2444,122 +2493,6 @@ impl<S: Storage> P2pServer<S> {
         trace!("broadcasting block {} is done", hash);
     }
 
-    // Handle a bootstrap chain request
-    // We have differents steps available for a bootstrap sync
-    // We verify that they are send in good order
-    async fn handle_bootstrap_chain_request(self: &Arc<Self>, peer: &Arc<Peer>, request: StepRequest<'_>) -> Result<(), BlockchainError> {
-        let request_kind = request.kind();
-        debug!("Handle bootstrap chain request {:?} from {}", request_kind, peer);
-
-        let storage = self.blockchain.get_storage().read().await;
-        let pruned_topoheight = storage.get_pruned_topoheight().await?.unwrap_or(0);
-        if let Some(topoheight) = request.get_requested_topoheight() {
-            let our_topoheight = self.blockchain.get_topo_height();
-            if
-                pruned_topoheight >= topoheight
-                || topoheight > our_topoheight
-                || topoheight < PRUNE_SAFETY_LIMIT
-            {
-                warn!("Invalid begin topoheight (received {}, our is {}, pruned: {}) received from {} on step {:?}", topoheight, our_topoheight, pruned_topoheight, peer, request_kind);
-                return Err(P2pError::InvalidRequestedTopoheight.into())
-            }
-
-            // Check that the block is stable
-            let hash = storage.get_hash_at_topo_height(topoheight).await?;
-            if !self.blockchain.is_sync_block(&storage, &hash).await? {
-                warn!("Requested topoheight {} is not stable, ignoring", topoheight);
-                return Err(P2pError::InvalidRequestedTopoheight.into())
-            }
-        }
-
-        let response = match request {
-            StepRequest::ChainInfo(blocks) => {
-                let common_point = self.find_common_point(&*storage, blocks).await?;
-                let tips = storage.get_tips().await?;
-                let (hash, height) = self.blockchain.find_common_base::<S, _>(&storage, &tips).await?;
-                let stable_topo = storage.get_topo_height_for_hash(&hash).await?;
-                StepResponse::ChainInfo(common_point, stable_topo, height, hash)
-            },
-            StepRequest::Assets(min, max, page) => {
-                if min > max {
-                    warn!("Invalid range for assets");
-                    return Err(P2pError::InvalidPacket.into())
-                }
-
-                let page = page.unwrap_or(0);
-                let assets = storage.get_partial_assets(MAX_ITEMS_PER_PAGE, page as usize * MAX_ITEMS_PER_PAGE, min, max).await?;
-                let page = if assets.len() == MAX_ITEMS_PER_PAGE {
-                    Some(page + 1)
-                } else {
-                    None
-                };
-                StepResponse::Assets(assets, page)
-            },
-            StepRequest::Balances(key, asset, min, max) => {
-                if min > max {
-                    warn!("Invalid range for account balance");
-                    return Err(P2pError::InvalidPacket.into())
-                }
-
-                let mut balances = Vec::with_capacity(MAX_ITEMS_PER_PAGE);
-                for key in key.iter() {
-                    trace!("Requesting balance for {} requested by {} for bootstrap chain", key.as_address(true), peer);
-                    let balance = storage.get_account_summary_for(&key, &asset, min, max).await?;
-                    balances.push(balance);
-                }
-
-                trace!("Sending {} balances to {}", balances.len(), peer);
-                StepResponse::Balances(balances)
-            },
-            StepRequest::Nonces(topoheight, keys) => {
-                let mut nonces = Vec::with_capacity(keys.len());
-                for key in keys.iter() {
-                    let nonce = storage.get_nonce_at_maximum_topoheight(key, topoheight).await?.map(|(_, v)| v.get_nonce()).unwrap_or(0);
-                    nonces.push(nonce);
-                }
-                StepResponse::Nonces(nonces)
-            },
-            StepRequest::Keys(min, max, page) => {
-                if min > max {
-                    warn!("Invalid range for keys");
-                    return Err(P2pError::InvalidPacket.into())
-                }
-
-                let page = page.unwrap_or(0);
-                let keys = storage.get_registered_keys(MAX_ITEMS_PER_PAGE, page as usize * MAX_ITEMS_PER_PAGE, min, max).await?;
-                let page = if keys.len() == MAX_ITEMS_PER_PAGE {
-                    Some(page + 1)
-                } else {
-                    None
-                };
-                StepResponse::Keys(keys, page)
-            },
-            StepRequest::BlocksMetadata(topoheight) => {
-                let mut blocks = IndexSet::with_capacity(PRUNE_SAFETY_LIMIT as usize);
-                // go from the lowest available point until the requested stable topoheight
-                let lower = if topoheight - PRUNE_SAFETY_LIMIT <= pruned_topoheight {
-                    pruned_topoheight + 1
-                } else {
-                    topoheight - PRUNE_SAFETY_LIMIT
-                };
-
-                for topoheight in (lower..=topoheight).rev() {
-                    let hash = storage.get_hash_at_topo_height(topoheight).await?;
-                    let supply = storage.get_supply_at_topo_height(topoheight).await?;
-                    let reward = storage.get_block_reward_at_topo_height(topoheight)?;
-                    let difficulty = storage.get_difficulty_for_block_hash(&hash).await?;
-                    let cumulative_difficulty = storage.get_cumulative_difficulty_for_block_hash(&hash).await?;
-                    let p = storage.get_estimated_covariance_for_block_hash(&hash).await?;
-
-                    blocks.insert(BlockMetadata { hash, supply, reward, difficulty, cumulative_difficulty, p });
-                }
-                StepResponse::BlocksMetadata(blocks)
-            },
-        };
-        peer.send_packet(Packet::BootstrapChainResponse(BootstrapChainResponse::new(response))).await?;
-        Ok(())
-    }
-
     // Build a block id list to share our DAG order and chain state
     // Block id list must be in descending order and unique hash / topoheight
     // This is used to search the common point between two peers
@@ -2588,297 +2521,6 @@ impl<S: Storage> P2pServer<S> {
         let genesis_block = storage.get_hash_at_topo_height(0).await?;
         blocks.insert(BlockId::new(genesis_block, 0));
         Ok(blocks)
-    }
-
-
-    // Update all keys using bootstrap request
-    // This will fetch the nonce and associated balance for each asset
-    async fn update_bootstrap_keys(&self, peer: &Arc<Peer>, keys: &IndexSet<PublicKey>, our_topoheight: u64, stable_topoheight: u64) -> Result<(), P2pError> {
-        if keys.is_empty() {
-            warn!("No keys to update");
-            return Ok(())
-        }
-
-        let StepResponse::Nonces(nonces) = peer.request_boostrap_chain(StepRequest::Nonces(stable_topoheight, Cow::Borrowed(&keys))).await? else {
-            // shouldn't happen
-            error!("Received an invalid StepResponse (how ?) while fetching nonces");
-            return Err(P2pError::InvalidPacket.into())
-        };
-
-        {
-            let mut storage = self.blockchain.get_storage().write().await;
-            // save all nonces
-            for (key, nonce) in keys.iter().zip(nonces) {
-                debug!("Saving nonce {} for {}", nonce, key.as_address(self.blockchain.get_network().is_mainnet()));
-                storage.set_last_nonce_to(key, stable_topoheight, &VersionedNonce::new(nonce, None)).await?;
-                storage.set_account_registration_topoheight(key, stable_topoheight).await?;
-            }
-        }
-
-        let mut page = 0;
-        loop {
-            // Retrieve chunked assets
-            let assets = {
-                let storage = self.blockchain.get_storage().read().await;
-                let assets = storage.get_chunked_assets(MAX_ITEMS_PER_PAGE, page * MAX_ITEMS_PER_PAGE).await?;
-                if assets.is_empty() {
-                    break;
-                }
-                page += 1;
-                assets
-            };
-
-            // Request every asset balances
-            for asset in assets {
-                debug!("Requesting balances for asset {} at topo {}", asset, stable_topoheight);
-                let StepResponse::Balances(balances) = peer.request_boostrap_chain(StepRequest::Balances(Cow::Borrowed(&keys), Cow::Borrowed(&asset), our_topoheight, stable_topoheight)).await? else {
-                    // shouldn't happen
-                    error!("Received an invalid StepResponse (how ?) while fetching balances");
-                    return Err(P2pError::InvalidPacket.into())
-                };
-
-                // save all balances for this asset
-                for (key, balance) in keys.iter().zip(balances) {
-                    // check that the account have balance for this asset
-                    if let Some(account) = balance {
-                        debug!("Saving balance {} summary for {}", asset, key.as_address(self.blockchain.get_network().is_mainnet()));
-                        let ((stable_topo, stable), output) = account.as_versions();
-                        let mut storage = self.blockchain.get_storage().write().await;
-                        storage.set_last_balance_to(key, &asset, stable_topo, &stable).await?;
-
-                        // save the output balance if it's different from the stable one
-                        if let Some((topo, output)) = output{
-                            storage.set_balance_at_topoheight(&asset, topo, key, &output).await?;
-                        }
-
-                        // TODO clean up old balances
-                    } else {
-                        debug!("No balance for key {} at topoheight {}", key.as_address(self.blockchain.get_network().is_mainnet()), stable_topoheight);
-                    }
-                }
-            }
-        }
-
-        Ok(())
-    }
-    // first, retrieve chain info of selected peer
-    // We retrieve all assets through pagination,
-    // then we fetch all keys with its nonces and its balances (also through pagination)
-    // and for the last step, retrieve last STABLE TOPOHEIGHT - PRUNE_SAFETY_LIMIT blocks
-    // reload blockchain cache from disk, and we're ready to sync the rest of the chain
-    // NOTE: it could be even faster without retrieving each TXs, but we do it in case user don't enable pruning
-    async fn bootstrap_chain(&self, peer: &Arc<Peer>) -> Result<(), BlockchainError> {
-        info!("Starting fast sync with {}", peer);
-
-        let mut our_topoheight = self.blockchain.get_topo_height();
-
-        let mut stable_topoheight = 0;
-        let mut step: Option<StepRequest> = {
-            let storage = self.blockchain.get_storage().read().await;
-            Some(StepRequest::ChainInfo(self.build_list_of_blocks_id(&*storage).await?))
-        };
-
-        // keep them in memory, we add them when we're syncing
-        // it's done to prevent any sync failure
-        let mut top_topoheight: u64 = 0;
-        let mut top_height: u64 = 0;
-        let mut top_block_hash: Option<Hash> = None;
-
-        loop {
-            let response = if let Some(step) = step.take() {
-                info!("Requesting step {:?}", step.kind());
-                // This will also verify that the received step is the requested one
-                peer.request_boostrap_chain(step).await?
-            } else {
-                break;
-            };
-
-            step = match response {
-                StepResponse::ChainInfo(common_point, topoheight, height, hash) => {
-                    // first, check the common point in case we deviated from the chain
-                    if let Some(common_point) = common_point {
-                        let mut storage = self.blockchain.get_storage().write().await;
-                        debug!("Unverified common point found at {} with hash {}", common_point.get_topoheight(), common_point.get_hash());
-                        let hash_at_topo = storage.get_hash_at_topo_height(common_point.get_topoheight()).await?;
-                        if hash_at_topo != *common_point.get_hash() {
-                            warn!("Common point is {} while our hash at topoheight {} is {}. Aborting", common_point.get_hash(), common_point.get_topoheight(), storage.get_hash_at_topo_height(common_point.get_topoheight()).await?);
-                            return Err(BlockchainError::Unknown)
-                        }
-
-                        let top_block_hash = storage.get_top_block_hash().await?;
-                        if *common_point.get_hash() != top_block_hash {
-                            let pruned_topoheight = storage.get_pruned_topoheight().await?.unwrap_or(0);
-                            
-                            warn!("Common point is {} while our top block hash is {} !", common_point.get_hash(), top_block_hash);
-                            // Count how much blocks we need to pop
-                            let pop_count = if pruned_topoheight >= common_point.get_topoheight() {
-                                our_topoheight - pruned_topoheight
-                            } else {
-                                our_topoheight - common_point.get_topoheight()
-                            };
-                            warn!("We need to pop {} blocks for fast sync", pop_count);
-                            our_topoheight = self.blockchain.rewind_chain_for_storage(&mut *storage, pop_count, !peer.is_priority()).await?;
-                            debug!("New topoheight after rewind is now {}", our_topoheight);
-                        }
-                    } else {
-                        warn!("No common point with {} ! Not same chain ?", peer);
-                        return Err(BlockchainError::Unknown)
-                    }
-
-                    top_topoheight = topoheight;
-                    top_height = height;
-                    top_block_hash = Some(hash);
-                    stable_topoheight = topoheight;
-
-                    Some(StepRequest::Assets(our_topoheight, topoheight, None))
-                },
-                // fetch all assets from peer
-                StepResponse::Assets(assets, next_page) => {
-                    {
-                        let mut storage = self.blockchain.get_storage().write().await;
-                        for asset in assets {
-                            let (asset, data) = asset.consume();
-                            debug!("Saving asset {} at topoheight {}", asset, stable_topoheight);
-                            storage.add_asset(&asset, data).await?;
-                        }
-                    }
-
-                    if next_page.is_some() {
-                        Some(StepRequest::Assets(our_topoheight, stable_topoheight, next_page))
-                    } else {
-                        // We must handle all stored keys before extending our ledger
-                        let mut minimum_topoheight = 0;
-                        loop {
-
-                            let keys = {
-                                let storage = self.blockchain.get_storage().read().await;
-                                let keys = storage.get_registered_keys(MAX_ITEMS_PER_PAGE, 0, minimum_topoheight, our_topoheight).await?;
-
-                                // Because the keys are sorted by topoheight, we can get the minimum topoheight
-                                // of the last key to avoid fetching the same keys again
-                                // We could use skip, but because update_bootstrap_keys can reorganize the keys,
-                                // we may miss some
-                                // This solution may also duplicate some keys
-                                // We could do it in one request and store in memory all keys,
-                                // but think about future and dozen of millions of accounts, in memory :)
-                                if let Some(key) = keys.last() {
-                                    minimum_topoheight = storage.get_account_registration_topoheight(key).await?;
-                                } else {
-                                    break;
-                                }
-
-                                keys
-                            };
-
-                            self.update_bootstrap_keys(peer, &keys, our_topoheight, stable_topoheight).await?;
-                            if keys.len() < MAX_ITEMS_PER_PAGE {
-                                break;
-                            }
-                        }
-
-                        // Go to next step
-                        Some(StepRequest::Keys(our_topoheight, stable_topoheight, None))
-                    }
-                },
-                // fetch all new accounts
-                StepResponse::Keys(keys, next_page) => {
-                    debug!("Requesting nonces for keys");
-                    self.update_bootstrap_keys(peer, &keys, our_topoheight, stable_topoheight).await?;                    
-
-                    if next_page.is_some() {
-                        Some(StepRequest::Keys(our_topoheight, stable_topoheight, next_page))
-                    } else {
-                        // Go to next step
-                        Some(StepRequest::BlocksMetadata(stable_topoheight))
-                    }
-                },
-                StepResponse::BlocksMetadata(blocks) => {
-                    // Last N blocks + stable block
-                    if blocks.len() != PRUNE_SAFETY_LIMIT as usize + 1 {
-                        error!("Received {} blocks metadata while expecting {}", blocks.len(), PRUNE_SAFETY_LIMIT + 1);
-                        return Err(P2pError::InvalidPacket.into())
-                    }
-
-                    let mut lowest_topoheight = stable_topoheight;
-                    for (i, metadata) in blocks.into_iter().enumerate() {
-                        let topoheight = stable_topoheight - i as u64;
-                        trace!("Processing block metadata {} at topoheight {}", metadata.hash, topoheight);
-                        // check that we don't already have this block in storage
-                        if self.blockchain.has_block(&metadata.hash).await? {
-                            warn!("Block {} at topo {} already in storage, skipping", metadata.hash, topoheight);
-                            continue;
-                        }
-
-                        lowest_topoheight = topoheight;
-                        debug!("Saving block metadata {}", metadata.hash);
-                        let OwnedObjectResponse::BlockHeader(header, hash) = peer.request_blocking_object(ObjectRequest::BlockHeader(metadata.hash)).await? else {
-                            error!("Received an invalid requested object while fetching blocks metadata");
-                            return Err(P2pError::InvalidPacket.into())
-                        };
-
-                        let mut txs = Vec::with_capacity(header.get_txs_hashes().len());
-                        debug!("Retrieving {} txs for block {}", header.get_txs_count(), hash);
-                        for tx_hash in header.get_txs_hashes() {
-                            trace!("Retrieving TX {} for block {}", tx_hash, hash);
-                            let tx = if self.blockchain.has_tx(tx_hash).await? {
-                                Immutable::Arc(self.blockchain.get_tx(tx_hash).await?)
-                            } else {
-                                let OwnedObjectResponse::Transaction(tx, _) = peer.request_blocking_object(ObjectRequest::Transaction(tx_hash.clone())).await? else {
-                                    error!("Received an invalid requested object while fetching block transaction {}", tx_hash);
-                                    return Err(P2pError::InvalidObjectResponseType.into())
-                                };
-                                Immutable::Owned(tx)
-                            };
-                            trace!("TX {} ok", tx_hash);
-                            txs.push(tx);
-                        }
-
-                        // link its TX to the block
-                        let mut storage = self.blockchain.get_storage().write().await;
-                        for tx_hash in header.get_txs_hashes() {
-                            storage.add_block_for_tx(tx_hash, &hash)?;
-                        }
-
-                        // save metadata of this block
-                        storage.set_supply_at_topo_height(lowest_topoheight, metadata.supply)?;
-                        storage.set_block_reward_at_topo_height(lowest_topoheight, metadata.reward)?;
-                        storage.set_topo_height_for_block(&hash, lowest_topoheight).await?;
-
-                        storage.set_cumulative_difficulty_for_block_hash(&hash, metadata.cumulative_difficulty).await?;
-
-                        // save the block with its transactions, difficulty
-                        storage.save_block(Arc::new(header), &txs, metadata.difficulty, metadata.p, hash).await?;
-                    }
-
-                    let mut storage = self.blockchain.get_storage().write().await;
-
-                    // Create a snapshots for all others keys that didn't got updated
-                    // storage.create_snapshot_balances_at_topoheight(lowest_topoheight).await?;
-                    storage.create_snapshot_nonces_at_topoheight(lowest_topoheight).await?;
-                    storage.create_snapshot_registrations_at_topoheight(lowest_topoheight).await?;
-
-                    // Delete all old data
-                    // storage.delete_versioned_balances_below_topoheight(lowest_topoheight).await?;
-                    storage.delete_versioned_nonces_below_topoheight(lowest_topoheight).await?;
-                    storage.delete_registrations_below_topoheight(lowest_topoheight).await?;
-
-                    storage.set_pruned_topoheight(lowest_topoheight).await?;
-                    storage.set_top_topoheight(top_topoheight)?;
-                    storage.set_top_height(top_height)?;
-                    storage.store_tips(&HashSet::from([top_block_hash.take().expect("Expected top block hash for fast sync")]))?;
-
-                    None
-                },
-                response => { // shouldn't happens
-                    error!("Received bootstrap chain response {:?} but didn't asked for it", response);
-                    return Err(P2pError::InvalidPacket.into());
-                }
-            };
-        }
-        self.blockchain.reload_from_disk().await?;
-        info!("Fast sync done with {}", peer);
-
-        Ok(())
     }
 
     // Request the inventory of a peer

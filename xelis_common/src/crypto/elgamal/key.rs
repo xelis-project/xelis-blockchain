@@ -4,11 +4,16 @@ use curve25519_dalek::{
     Scalar
 };
 use rand::rngs::OsRng;
+use serde::{Deserialize, Deserializer, Serialize};
 use zeroize::Zeroize;
 use crate::{
     api::DataElement,
     config::MAXIMUM_SUPPLY,
-    crypto::{Address, AddressType},
+    crypto::{
+        proofs::PC_GENS,
+        Address,
+        AddressType
+    },
     serializer::{
         Reader,
         ReaderError,
@@ -21,8 +26,7 @@ use super::{
     hash_and_point_to_scalar,
     pedersen::{DecryptHandle, PedersenCommitment, PedersenOpening},
     CompressedPublicKey,
-    Signature,
-    H
+    Signature
 };
 
 #[derive(Clone)]
@@ -50,7 +54,7 @@ impl PublicKey {
         let s = &secret.0;
         assert!(s != &Scalar::ZERO);
 
-        Self(s.invert() * *H)
+        Self(s.invert() * PC_GENS.B_blinding)
     }
 
     // Encrypt an amount to a Ciphertext
@@ -118,13 +122,13 @@ impl PrivateKey {
     }
 
     // Decode a point to a u64 with precomputed tables
-    pub fn decode_point<const L1: usize>(&self, precomputed_tables: &ECDLPTablesFileView<L1>, point: RistrettoPoint) -> Option<u64> {
+    pub fn decode_point(&self, precomputed_tables: &ECDLPTablesFileView, point: RistrettoPoint) -> Option<u64> {
         ecdlp::decode(precomputed_tables, point, ECDLPArguments::new_with_range(0, MAXIMUM_SUPPLY as i64))
             .map(|x| x as u64)
     }
 
     // Decrypt a Ciphertext to a u64 with precomputed tables
-    pub fn decrypt<const L1: usize>(&self, precomputed_tables: &ECDLPTablesFileView<L1>, ciphertext: &Ciphertext) -> Option<u64> {
+    pub fn decrypt(&self, precomputed_tables: &ECDLPTablesFileView, ciphertext: &Ciphertext) -> Option<u64> {
         let point = self.decrypt_to_point(ciphertext);
         self.decode_point(precomputed_tables, point)
     }
@@ -157,7 +161,7 @@ impl KeyPair {
     }
 
     // Decrypt a Ciphertext to a u64 with precomputed tables
-    pub fn decrypt<const L1: usize>(&self, precomputed_tables: &ECDLPTablesFileView<L1>, ciphertext: &Ciphertext) -> Option<u64> {
+    pub fn decrypt(&self, precomputed_tables: &ECDLPTablesFileView, ciphertext: &Ciphertext) -> Option<u64> {
         self.private_key.decrypt(precomputed_tables, ciphertext)
     }
 
@@ -168,7 +172,7 @@ impl KeyPair {
     // Sign a message with the private key
     pub fn sign(&self, message: &[u8]) -> Signature {
         let k = Scalar::random(&mut OsRng);
-        let r = k * *H;
+        let r = k * PC_GENS.B_blinding;
         let e = hash_and_point_to_scalar(&self.public_key.compress(), message, &r);
         let s = self.private_key.as_scalar().invert() * e + k;
         Signature::new(s, e)
@@ -198,6 +202,23 @@ impl Serializer for PrivateKey {
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
         let scalar = Scalar::read(reader)?;
         Ok(PrivateKey::from_scalar(scalar))
+    }
+
+    fn size(&self) -> usize {
+        self.0.size()
+    }
+}
+
+impl Serialize for PrivateKey {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.to_hex())
+    }
+}
+
+impl<'a> Deserialize<'a> for PrivateKey {
+    fn deserialize<D: Deserializer<'a>>(deserializer: D) -> Result<Self, D::Error> {
+        let hex = String::deserialize(deserializer)?;
+        PrivateKey::from_hex(&hex).map_err(serde::de::Error::custom)
     }
 }
 

@@ -35,7 +35,8 @@ pub struct DiskCache {
 impl DiskCache {
     // Create a new disk cache
     pub fn new(filename: String) -> Result<Self, DiskError> {
-        let config = Config::new().temporary(false)
+        let config = Config::new()
+            .temporary(false)
             .path(filename)
             .cache_capacity(16 * 1024)
             .segment_size(256)

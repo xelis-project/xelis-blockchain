@@ -4,6 +4,7 @@ use std::{
     Arc}
 };
 use anyhow::{Error, Context};
+use chrono::TimeZone;
 use serde::Serialize;
 use xelis_common::{
     tokio::sync::{
@@ -23,13 +24,14 @@ use xelis_common::{
         },
         DataElement
     },
-    asset::AssetWithData,
+    asset::RPCAssetData,
     crypto::{
-        elgamal::{Ciphertext, DecryptHandle},
+        elgamal::Ciphertext,
         Address,
         Hashable,
         KeyPair,
         PublicKey,
+        PrivateKey,
         Signature
     },
     network::Network,
@@ -37,14 +39,17 @@ use xelis_common::{
         builder::{
             FeeBuilder,
             TransactionBuilder,
-            TransactionTypeBuilder
+            TransactionTypeBuilder,
+            UnsignedTransaction
         },
         TxVersion,
-        extra_data::UnknownExtraDataFormat,
+        extra_data::{UnknownExtraDataFormat, PlaintextExtraData},
         Reference,
         Role,
         Transaction
-    }
+    },
+    serializer::Serializer,
+    utils::{format_xelis, format_coin}
 };
 use crate::{
     cipher::Cipher,
@@ -129,6 +134,12 @@ use {
 )))]
 use xelis_common::tokio::task::spawn_blocking;
 
+// Recover option for wallet creation
+pub enum RecoverOption<'a> {
+    Seed(&'a str),
+    PrivateKey(&'a str)
+}
+
 #[derive(Serialize, Clone, Debug)]
 #[serde(untagged)]
 pub enum Event {
@@ -145,12 +156,16 @@ pub enum Event {
     // When a balance change occurs on wallet
     BalanceChanged(BalanceChanged),
     // When a new asset is added to wallet
-    NewAsset(AssetWithData),
+    NewAsset(RPCAssetData<'static>),
     // When a rescan happened (because of user request or DAG reorg/fork)
     // Value is topoheight until it deleted transactions
     // Next sync will restart at this topoheight
     Rescan {
         start_topoheight: u64   
+    },
+    // Called when the `sync_new_blocks` is done
+    HistorySynced {
+        topoheight: u64
     },
     // Wallet is now in online mode
     Online,
@@ -166,6 +181,7 @@ impl Event {
             Event::BalanceChanged(_) => NotifyEvent::BalanceChanged,
             Event::NewAsset(_) => NotifyEvent::NewAsset,
             Event::Rescan { .. } => NotifyEvent::Rescan,
+            Event::HistorySynced { .. } => NotifyEvent::HistorySynced,
             Event::Online => NotifyEvent::Online,
             Event::Offline => NotifyEvent::Offline
         }
@@ -219,14 +235,16 @@ impl InnerAccount {
 
     pub fn decrypt_ciphertext(&self, ciphertext: &Ciphertext) -> Result<u64, WalletError> {
         trace!("decrypt ciphertext");
-        let view = self.precomputed_tables.view();
+        let lock = self.precomputed_tables.read()
+            .map_err(|_| WalletError::PoisonError)?;
+        let view = lock.view();
         self.keypair.get_private_key()
             .decrypt(&view, &ciphertext)
             .ok_or(WalletError::CiphertextDecode)
     }
 }
 
-pub fn hash_password(password: String, salt: &[u8]) -> Result<[u8; PASSWORD_HASH_SIZE], WalletError> {
+pub fn hash_password(password: &str, salt: &[u8]) -> Result<[u8; PASSWORD_HASH_SIZE], WalletError> {
     let mut output = [0; PASSWORD_HASH_SIZE];
     PASSWORD_ALGORITHM.hash_password_into(password.as_bytes(), salt, &mut output).map_err(|e| WalletError::AlgorithmHashingError(e.to_string()))?;
     Ok(output)
@@ -254,16 +272,23 @@ impl Wallet {
     }
 
     // Create a new wallet on disk
-    pub fn create(name: String, password: String, seed: Option<String>, network: Network, precomputed_tables: PrecomputedTablesShared) -> Result<Arc<Self>, Error> {
+    pub fn create(name: &str, password: &str, seed: Option<RecoverOption>, network: Network, precomputed_tables: PrecomputedTablesShared) -> Result<Arc<Self>, Error> {
         if name.is_empty() {
             return Err(WalletError::EmptyName.into())
         }
 
         // generate random keypair or recover it from seed
         let keypair = if let Some(seed) = seed {
-        debug!("Retrieving keypair from seed...");
-        let words: Vec<String> = seed.trim().split_whitespace().map(str::to_string).collect();
-        let key = mnemonics::words_to_key(&words)?;
+            debug!("Retrieving keypair from seed...");
+            let key = match seed {
+                RecoverOption::PrivateKey(hex) => {
+                    PrivateKey::from_hex(hex).context("Invalid private key provided")?
+                },
+                RecoverOption::Seed(seed) => {
+                    let words: Vec<&str> = seed.trim().split_whitespace().collect();
+                    mnemonics::words_to_key(&words)?
+                }
+            };
             KeyPair::from_private_key(key)
         } else {
             debug!("Generating a new keypair...");
@@ -314,7 +339,7 @@ impl Wallet {
     }
 
     // Open an existing wallet on disk
-    pub fn open(name: String, password: String, network: Network, precomputed_tables: PrecomputedTablesShared) -> Result<Arc<Self>, Error> {
+    pub fn open(name: &str, password: &str, network: Network, precomputed_tables: PrecomputedTablesShared) -> Result<Arc<Self>, Error> {
         if name.is_empty() {
             return Err(WalletError::EmptyName.into())
         }
@@ -386,7 +411,7 @@ impl Wallet {
         {
             let mut lock = self.network_handler.lock().await;
             if let Some(handler) = lock.take() {
-                if let Err(e) = handler.stop().await {
+                if let Err(e) = handler.stop(true).await {
                     error!("Error while stopping network handler: {}", e);
                 }
             }
@@ -472,7 +497,7 @@ impl Wallet {
 
     // Enable RPC Server with requested authentication and bind address
     #[cfg(feature = "api_server")]
-    pub async fn enable_rpc_server(self: &Arc<Self>, bind_address: String, config: Option<AuthConfig>) -> Result<(), Error> {
+    pub async fn enable_rpc_server(self: &Arc<Self>, bind_address: String, config: Option<AuthConfig>, threads: Option<usize>) -> Result<(), Error> {
         let mut lock = self.api_server.lock().await;
         if lock.is_some() {
             return Err(WalletError::RPCServerAlreadyRunning.into())
@@ -480,7 +505,7 @@ impl Wallet {
         let mut rpc_handler = RPCHandler::new(self.clone());
         register_rpc_methods(&mut rpc_handler);
 
-        let rpc_server = WalletRpcServer::new(bind_address, rpc_handler, config).await?;
+        let rpc_server = WalletRpcServer::new(bind_address, rpc_handler, config, threads).await?;
         *lock = Some(APIServer::RPCServer(rpc_server));
         Ok(())
     }
@@ -515,12 +540,12 @@ impl Wallet {
     }
 
     #[cfg(feature = "api_server")]
-    pub fn get_api_server<'a>(&'a self) -> &Mutex<Option<APIServer<Arc<Self>>>> {
+    pub fn get_api_server(&self) -> &Mutex<Option<APIServer<Arc<Self>>>> {
         &self.api_server
     }
 
     // Verify if a password is valid or not
-    pub async fn is_valid_password(&self, password: String) -> Result<(), Error> {
+    pub async fn is_valid_password(&self, password: &str) -> Result<(), Error> {
         let mut encrypted_storage = self.storage.write().await;
         let storage = encrypted_storage.get_mutable_public_storage();
         let salt = storage.get_password_salt()?;
@@ -532,7 +557,7 @@ impl Wallet {
     }
 
     // change the current password wallet to a new one
-    pub async fn set_password(&self, old_password: String, password: String) -> Result<(), Error> {
+    pub async fn set_password(&self, old_password: &str, password: &str) -> Result<(), Error> {
         let mut encrypted_storage = self.storage.write().await;
         let storage = encrypted_storage.get_mutable_public_storage();
         let (master_key, storage_salt) = {
@@ -597,9 +622,9 @@ impl Wallet {
     }
 
     // Decrypt the extra data from a transfer
-    pub fn decrypt_extra_data(&self, cipher: UnknownExtraDataFormat, handle: &DecryptHandle, role: Role) -> Result<DataElement, WalletError> {
+    pub fn decrypt_extra_data(&self, cipher: UnknownExtraDataFormat, role: Role) -> Result<PlaintextExtraData, WalletError> {
         trace!("decrypt extra data");
-        cipher.decrypt(&self.inner.keypair.get_private_key(), handle, role).map_err(|_| WalletError::CiphertextDecode)
+        cipher.decrypt_v2(&self.inner.keypair.get_private_key(), role).map_err(|_| WalletError::CiphertextDecode)
     }
 
     // Create a transaction with the given transaction type and fee
@@ -607,11 +632,20 @@ impl Wallet {
     pub async fn create_transaction(&self, transaction_type: TransactionTypeBuilder, fee: FeeBuilder) -> Result<Transaction, WalletError> {
         trace!("create transaction");
         let mut storage = self.storage.write().await;
-        let (mut state, transaction) = self.create_transaction_with_storage(&storage, transaction_type, fee, None).await?;
-
+        let (tx, mut state) = self.create_transaction_with_storage(&storage, transaction_type, fee).await?;
         state.apply_changes(&mut storage).await?;
 
-        Ok(transaction)
+        Ok(tx)
+    }
+
+    // Create a transaction with the given transaction type and fee
+    // this will apply the changes to the storage if the transaction
+    pub async fn create_transaction_with_storage(&self, storage: &EncryptedStorage, transaction_type: TransactionTypeBuilder, fee: FeeBuilder) -> Result<(Transaction, TransactionBuilderState), WalletError> {
+        trace!("create transaction with storage");
+        let mut state = self.create_transaction_state_with_storage(&storage, &transaction_type, &fee, None).await?;
+        let transaction = self.create_transaction_with(&mut state, storage.get_tx_version().await?, transaction_type, fee)?;
+
+        Ok((transaction, state))
     }
 
     // create the final transaction with calculated fees and signature
@@ -619,7 +653,7 @@ impl Wallet {
     // This will returns the transaction builder state along the transaction
     // You must handle "apply changes" to the storage
     // Warning: this is locking the network handler to access to the daemon api
-    pub async fn create_transaction_with_storage(&self, storage: &EncryptedStorage, transaction_type: TransactionTypeBuilder, fee: FeeBuilder, nonce: Option<u64>) -> Result<(TransactionBuilderState, Transaction), WalletError> {
+    pub async fn create_transaction_state_with_storage(&self, storage: &EncryptedStorage, transaction_type: &TransactionTypeBuilder, fee: &FeeBuilder, nonce: Option<u64>) -> Result<TransactionBuilderState, WalletError> {
         trace!("create transaction with storage");
         let nonce = nonce.unwrap_or_else(|| storage.get_unconfirmed_nonce());
 
@@ -642,12 +676,13 @@ impl Wallet {
         #[cfg(feature = "network_handler")]
         {
             let force_stable_balance = self.get_stable_balance();
-            if (reference.is_none() && used_assets.contains(&XELIS_ASSET)) || force_stable_balance {
-                // debug!("Wallet got a coinbase reward at topoheight: {}, verify that its not unstable", topoheight);
+            // Reference must be none in order to use the last stable balance
+            // Otherwise that mean we're still waiting on a TX to be confirmed
+            if reference.is_none() && (used_assets.contains(&XELIS_ASSET) || force_stable_balance) {
                 if let Some(network_handler) = self.network_handler.lock().await.as_ref() {
                     // Last mining reward is above stable topoheight, this may increase orphans rate
                     // To avoid this, we will use the last balance version in stable topoheight as reference
-                    let use_stable_balance = if let Some(topoheight) = storage.get_last_coinbase_reward_topoheight().filter(|_| !force_stable_balance) {
+                    let mut use_stable_balance = if let Some(topoheight) = storage.get_last_coinbase_reward_topoheight().filter(|_| !force_stable_balance) {
                         let stable_topoheight = network_handler.get_api().get_stable_topoheight().await?;
                         daemon_stable_topoheight = Some(stable_topoheight);
                         debug!("stable topoheight: {}, topoheight: {}", stable_topoheight, topoheight);
@@ -655,6 +690,34 @@ impl Wallet {
                     } else {
                         force_stable_balance
                     };
+
+                    if use_stable_balance {
+                        // Verify that we don't have a pending TX with unconfirmed balance
+                        for asset in used_assets.iter() {
+                            if storage.has_unconfirmed_balance_for(asset).await? {
+                                warn!("Cannot use stable balance because we have unconfirmed balance for {}", asset);
+                                use_stable_balance = false;
+                                break;
+                            }
+                        }
+                    }
+
+                    // We also need to check if we have made an outgoing TX
+                    // Because we need to keep the order of TX and use correct ciphertexts
+                    if use_stable_balance {
+                        if let Some(entry) = storage.get_last_outgoing_transaction()? {
+                            let stable_topo = if let Some(topo) = daemon_stable_topoheight {
+                                topo
+                            } else {
+                                network_handler.get_api().get_stable_topoheight().await?
+                            };
+
+                            if stable_topo < entry.get_topoheight() {
+                                warn!("Cannot use stable balance because we have an outgoing TX not confirmed in stable height yet");
+                                use_stable_balance = false;
+                            }
+                        }
+                    }
 
                     if use_stable_balance {
                         warn!("Using stable balance for TX creation");
@@ -723,16 +786,16 @@ impl Wallet {
         }
 
         #[cfg(feature = "network_handler")]
-        self.add_registered_keys_for_fees_estimation(state.as_mut(), &fee, &transaction_type).await?;
+        self.add_registered_keys_for_fees_estimation(state.as_mut(), fee, transaction_type).await?;
 
-        let transaction = self.create_transaction_with(&mut state, transaction_type, fee)?;
-        Ok((state, transaction))
+        Ok(state)
     }
 
     // Create the transaction with all needed parameters
-    pub fn create_transaction_with(&self, state: &mut TransactionBuilderState, transaction_type: TransactionTypeBuilder, fee: FeeBuilder) -> Result<Transaction, WalletError> {
+    pub fn create_transaction_with(&self, state: &mut TransactionBuilderState, tx_version: TxVersion, transaction_type: TransactionTypeBuilder, fee: FeeBuilder) -> Result<Transaction, WalletError> {
         // Create the transaction builder
-        let builder = TransactionBuilder::new(TxVersion::V0, self.get_public_key().clone(), transaction_type, fee);
+        // TODO: support multisig
+        let builder = TransactionBuilder::new(tx_version, self.get_public_key().clone(), 0, transaction_type, fee);
 
         // Build the final transaction
         let transaction = builder.build(state, &self.inner.keypair)
@@ -744,6 +807,17 @@ impl Wallet {
 
         Ok(transaction)
     }
+
+    // Create an unsigned transaction with the given transaction type and fee
+    pub fn create_unsigned_transaction(&self, state: &mut TransactionBuilderState, threshold: u8, transaction_type: TransactionTypeBuilder, fee: FeeBuilder, tx_version: TxVersion) -> Result<UnsignedTransaction, WalletError> {
+        trace!("create unsigned transaction");
+        let builder = TransactionBuilder::new(tx_version, self.get_public_key().clone(), threshold, transaction_type, fee);
+        let unsigned = builder.build_unsigned(state, &self.inner.keypair)
+            .map_err(|e| WalletError::Any(e.into()))?;
+
+        Ok(unsigned)
+    }
+
 
     // submit a transaction to the network through the connection to daemon
     // It will increase the local nonce by 1 if the TX is accepted by the daemon
@@ -799,7 +873,8 @@ impl Wallet {
         #[cfg(feature = "network_handler")]
         self.add_registered_keys_for_fees_estimation(&mut state, &FeeBuilder::default(), &tx_type).await?;
 
-        let builder = TransactionBuilder::new(TxVersion::V0, self.get_public_key().clone(), tx_type, FeeBuilder::default());
+        // TODO: support multisig
+        let builder = TransactionBuilder::new(TxVersion::V0, self.get_public_key().clone(), 0, tx_type, FeeBuilder::default());
         let estimated_fees = builder.estimate_fees(&mut state)
             .map_err(|e| WalletError::Any(e.into()))?;
 
@@ -808,31 +883,50 @@ impl Wallet {
 
     // Export all transactions in CSV format to the given writer
     // This will sort the transactions by topoheight before exporting
-    pub fn export_transactions_in_csv<W: Write>(&self, mut transactions: Vec<InnerTransactionEntry>, w: &mut W) -> Result<(), WalletError> {
+    pub async fn export_transactions_in_csv<W: Write>(&self, storage: &EncryptedStorage, mut transactions: Vec<InnerTransactionEntry>, w: &mut W) -> Result<(), WalletError> {
         trace!("export transactions in csv");
 
         // Sort transactions by topoheight
         transactions.sort_by(|a, b| a.get_topoheight().cmp(&b.get_topoheight()));
 
-        writeln!(w, "TopoHeight,Hash,Type,From/To,Asset,Amount,Fee,Nonce").context("Error while writing headers")?;
+        writeln!(w, "Date,TopoHeight,Hash,Type,From/To,Asset,Amount,Fee,Nonce").context("Error while writing headers")?;
         for tx in transactions {
             match tx.get_entry() {
                 EntryData::Burn { asset, amount, fee, nonce } => {
-                    writeln!(w, "{},{},{},{},-,{},{},{}", tx.get_topoheight(), tx.get_hash(), "Burn", asset, amount, fee, nonce).context("Error while writing csv line")?;
+                    let data = storage.get_asset(&asset).await?;
+                    writeln!(w, "{},{},{},{},{},-,{},{},{}", datetime_from_timestamp(tx.get_timestamp())?, tx.get_topoheight(), tx.get_hash(), "Burn", data.get_name(), format_coin(*amount, data.get_decimals()), format_xelis(*fee), nonce).context("Error while writing csv line")?;
                 },
                 EntryData::Coinbase { reward } => {
-                    writeln!(w, "{},{},{},{},-,{},-,-", tx.get_topoheight(), tx.get_hash(), "Coinbase", "XELIS", reward).context("Error while writing csv line")?;
+                    writeln!(w, "{},{},{},{},{},-,{},-,-", datetime_from_timestamp(tx.get_timestamp())?, tx.get_topoheight(), tx.get_hash(), "Coinbase", "XELIS", format_xelis(*reward)).context("Error while writing csv line")?;
                 },
                 EntryData::Incoming { from, transfers } => {
                     for transfer in transfers {
-                        writeln!(w, "{},{},{},{},{},{},-,-", tx.get_topoheight(), tx.get_hash(), "Incoming", from.as_address(self.get_network().is_mainnet()), transfer.get_asset(), transfer.get_amount()).context("Error while writing csv line")?;
+                        let data = storage.get_asset(&transfer.get_asset()).await?;
+                        writeln!(w, "{},{},{},{},{},{},{},-,-", datetime_from_timestamp(tx.get_timestamp())?, tx.get_topoheight(), tx.get_hash(), "Incoming", from.as_address(self.get_network().is_mainnet()), data.get_name(), format_coin(transfer.get_amount(), data.get_decimals())).context("Error while writing csv line")?;
                     }
                 },
                 EntryData::Outgoing { transfers, fee, nonce } => {
                     for transfer in transfers {
-                        writeln!(w, "{},{},{},{},{},{},{},{}", tx.get_topoheight(), tx.get_hash(), "Outgoing", transfer.get_destination().as_address(self.get_network().is_mainnet()), transfer.get_asset(), transfer.get_amount(), fee, nonce).context("Error while writing csv line")?;
+                        let data = storage.get_asset(&transfer.get_asset()).await?;
+                        writeln!(w, "{},{},{},{},{},{},{},{},{}", datetime_from_timestamp(tx.get_timestamp())?, tx.get_topoheight(), tx.get_hash(), "Outgoing", transfer.get_destination().as_address(self.get_network().is_mainnet()), data.get_name(), format_coin(transfer.get_amount(), data.get_decimals()), format_xelis(*fee), nonce).context("Error while writing csv line")?;
                     }
-                }
+                },
+                EntryData::MultiSig { participants, threshold, fee, nonce } => {
+                    let str_participants: Vec<String> = participants.iter().map(|p| p.as_address(self.get_network().is_mainnet()).to_string()).collect();
+                    writeln!(w, "{},{},{},{},{},{},-,{},{}", datetime_from_timestamp(tx.get_timestamp())?, tx.get_topoheight(), tx.get_hash(), "MultiSig", str_participants.join("|"), threshold, format_xelis(*fee), nonce).context("Error while writing csv line")?;
+                },
+                EntryData::InvokeContract { contract, deposits, chunk_id, fee, nonce } => {
+                    let mut str_deposits = Vec::new();
+                    for (asset, amount) in deposits {
+                        let data = storage.get_asset(&asset).await?;
+                        str_deposits.push(format!("{}:{}", data.get_name(), format_coin(*amount, data.get_decimals())));
+                    }
+
+                    writeln!(w, "{},{},{},{},{},{},{},{},{}", datetime_from_timestamp(tx.get_timestamp())?, tx.get_topoheight(), tx.get_hash(), "InvokeContract", contract, str_deposits.join("|"), chunk_id, format_xelis(*fee), nonce).context("Error while writing csv line")?;
+                },
+                EntryData::DeployContract { fee, nonce } => {
+                    writeln!(w, "{},{},{},{},-,-,-,{},{}", datetime_from_timestamp(tx.get_timestamp())?, tx.get_topoheight(), tx.get_hash(), "DeployContract", format_xelis(*fee), nonce).context("Error while writing csv line")?;
+                },
             }
         }
     
@@ -882,7 +976,7 @@ impl Wallet {
 
         let mut handler = self.network_handler.lock().await;
         if let Some(network_handler) = handler.take() {
-            network_handler.stop().await?;
+            network_handler.stop(true).await?;
         } else {
             return Err(WalletError::NotOnlineMode)
         }
@@ -917,7 +1011,7 @@ impl Wallet {
             }
 
             debug!("Stopping network handler!");
-            network_handler.stop().await?;
+            network_handler.stop(false).await?;
             {
                 debug!("set synced topoheight to {}", topoheight);
                 storage.set_synced_topoheight(topoheight)?;
@@ -976,6 +1070,11 @@ impl Wallet {
         &self.inner.public_key
     }
 
+    // Get the keypair of the wallet
+    pub fn get_keypair(&self) -> &KeyPair {
+        &self.inner.keypair
+    }
+
     // Get the address of the wallet using its network used
     pub fn get_address(&self) -> Address {
         self.get_public_key().clone().to_address(self.get_network().is_mainnet())
@@ -1007,6 +1106,14 @@ impl Wallet {
     // Network that the wallet is using
     pub fn get_network(&self) -> &Network {
         &self.network
+    }
+}
+
+// Parse a datetime from a timestamp
+fn datetime_from_timestamp(timestamp: u64) -> Result<chrono::DateTime<chrono::Local>, WalletError> {
+    match chrono::Local.timestamp_millis_opt(timestamp as i64) {
+        chrono::LocalResult::Single(dt) => Ok(dt),
+        _ => Err(WalletError::InvalidDatetime)
     }
 }
 

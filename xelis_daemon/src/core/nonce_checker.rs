@@ -2,18 +2,22 @@ use std::collections::HashMap;
 
 use indexmap::IndexMap;
 use log::trace;
-use xelis_common::crypto::PublicKey;
+use xelis_common::{
+    account::Nonce,
+    block::TopoHeight,
+    crypto::PublicKey
+};
 
 use super::{storage::Storage, error::BlockchainError};
 
 struct AccountEntry {
-    initial_nonce: u64,
-    expected_nonce: u64,
-    used_nonces: IndexMap<u64, u64>
+    initial_nonce: Nonce,
+    expected_nonce: Nonce,
+    used_nonces: IndexMap<Nonce, TopoHeight>
 }
 
 impl AccountEntry {
-    pub fn new(nonce: u64) -> Self {
+    pub fn new(nonce: Nonce) -> Self {
         Self {
             initial_nonce: nonce,
             expected_nonce: nonce,
@@ -21,11 +25,11 @@ impl AccountEntry {
         }
     }
 
-    pub fn contains_nonce(&self, nonce: &u64) -> bool {
+    pub fn contains_nonce(&self, nonce: &Nonce) -> bool {
         self.used_nonces.contains_key(nonce)
     }
 
-    pub fn insert_nonce_at_topoheight(&mut self, nonce: u64, topoheight: u64) -> bool {
+    pub fn insert_nonce_at_topoheight(&mut self, nonce: Nonce, topoheight: TopoHeight) -> bool {
         trace!("insert nonce {} at topoheight {}, (expected: {})", nonce, topoheight, self.expected_nonce);
         if self.contains_nonce(&nonce) || nonce != self.expected_nonce {
             return false;
@@ -53,7 +57,7 @@ impl NonceChecker {
 
     // Undo the nonce usage
     // We remove it from the used nonces list and revert the expected nonce to the previous nonce if present.
-    pub fn undo_nonce(&mut self, key: &PublicKey, nonce: u64) {
+    pub fn undo_nonce(&mut self, key: &PublicKey, nonce: Nonce) {
         if let Some(entry) = self.cache.get_mut(key) {
             entry.used_nonces.shift_remove(&nonce);
 
@@ -67,7 +71,7 @@ impl NonceChecker {
 
     // Key may be cloned on first entry
     // Returns false if nonce is already used
-    pub async fn use_nonce<S: Storage>(&mut self, storage: &S, key: &PublicKey, nonce: u64, topoheight: u64) -> Result<bool, BlockchainError> {
+    pub async fn use_nonce<S: Storage>(&mut self, storage: &S, key: &PublicKey, nonce: Nonce, topoheight: TopoHeight) -> Result<bool, BlockchainError> {
         trace!("use_nonce {} for {} at topoheight {}", nonce, key.as_address(storage.is_mainnet()), topoheight);
 
         match self.cache.get_mut(key) {

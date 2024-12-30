@@ -4,7 +4,7 @@ pub mod core;
 pub mod config;
 
 use config::{DEV_PUBLIC_KEY, STABLE_LIMIT};
-use fern::colors::Color;
+use human_bytes::human_bytes;
 use humantime::format_duration;
 use log::{trace, error, info, warn};
 use p2p::P2pServer;
@@ -12,6 +12,7 @@ use rpc::{
     getwork_server::SharedGetWorkServer,
     rpc::get_block_response_for_hash
 };
+use serde::{Deserialize, Serialize};
 use xelis_common::{
     async_handler,
     config::{VERSION, XELIS_ASSET},
@@ -37,7 +38,8 @@ use xelis_common::{
         },
         LogLevel,
         ModuleConfig,
-        ShareablePrompt
+        ShareablePrompt,
+        Color
     },
     rpc_server::WebSocketServerHandler,
     serializer::Serializer,
@@ -50,8 +52,8 @@ use xelis_common::{
 };
 use crate::{
     core::{
+        config::Config as InnerConfig,
         blockchain::{
-            Config,
             Blockchain,
             get_block_reward
         },
@@ -77,6 +79,7 @@ use std::{
     fs::File,
     io::Write,
     net::{IpAddr, SocketAddr},
+    path::Path,
     sync::Arc,
     time::Duration
 };
@@ -86,14 +89,20 @@ use anyhow::{
     Context as AnyContext
 };
 
-#[derive(Parser)]
-#[clap(version = VERSION, about = "XELIS is an innovative cryptocurrency built from scratch with BlockDAG, Homomorphic Encryption, Zero-Knowledge Proofs, and Smart Contracts.")]
-#[command(styles = xelis_common::get_cli_styles())]
-pub struct NodeConfig {
-    #[structopt(flatten)]
-    nested: Config,
+// Functions helpers for serde default values
+fn default_filename_log() -> String {
+    "xelis-daemon.log".to_owned()
+}
+
+fn default_logs_path() -> String {
+    "logs/".to_owned()
+}
+
+#[derive(Parser, Serialize, Deserialize)]
+pub struct LogConfig {
     /// Set log level
     #[clap(long, value_enum, default_value_t = LogLevel::Info)]
+    #[serde(default)]
     log_level: LogLevel,
     /// Set file log level
     /// By default, it will be the same as log level
@@ -101,17 +110,21 @@ pub struct NodeConfig {
     file_log_level: Option<LogLevel>,
     /// Disable the log file
     #[clap(long)]
+    #[serde(default)]
     disable_file_logging: bool,
     /// Disable the log filename date based
     /// If disabled, the log file will be named xelis-daemon.log instead of YYYY-MM-DD.xelis-daemon.log
     #[clap(long)]
+    #[serde(default)]
     disable_file_log_date_based: bool,
     /// Disable the usage of colors in log
     #[clap(long)]
+    #[serde(default)]
     disable_log_color: bool,
     /// Disable terminal interactive mode
     /// You will not be able to write CLI commands in it or to have an updated prompt
     #[clap(long)]
+    #[serde(default)]
     disable_interactive_mode: bool,
     /// Log filename
     /// 
@@ -119,47 +132,100 @@ pub struct NodeConfig {
     /// File will be stored in logs directory, this is only the filename, not the full path.
     /// Log file is rotated every day and has the format YYYY-MM-DD.xelis-daemon.log.
     #[clap(long, default_value_t = String::from("xelis-daemon.log"))]
+    #[serde(default = "default_filename_log")]
     filename_log: String,
     /// Logs directory
     /// 
     /// By default it will be logs/ of the current directory.
     /// It must end with a / to be a valid folder.
     #[clap(long, default_value_t = String::from("logs/"))]
+    #[serde(default = "default_logs_path")]
     logs_path: String,
     /// Module configuration for logs
     #[clap(long)]
+    #[serde(default)]
     logs_modules: Vec<ModuleConfig>,
+}
+
+#[derive(Parser, Serialize, Deserialize)]
+#[clap(version = VERSION, about = "XELIS is an innovative cryptocurrency built from scratch with BlockDAG, Homomorphic Encryption, Zero-Knowledge Proofs, and Smart Contracts.")]
+#[command(styles = xelis_common::get_cli_styles())]
+pub struct CliConfig {
+    /// Blockchain core configuration
+    #[structopt(flatten)]
+    core: InnerConfig,
+    /// Log configuration
+    #[structopt(flatten)]
+    log: LogConfig,
     /// Network selected for chain
     #[clap(long, value_enum, default_value_t = Network::Mainnet)]
+    #[serde(default)]
     network: Network,
     /// DB cache size in bytes
     #[clap(long)]
     internal_cache_size: Option<u64>,
     /// Internal DB mode to use
     #[clap(long, value_enum, default_value_t = StorageMode::LowSpace)]
-    internal_db_mode: StorageMode
+    #[serde(default)]
+    internal_db_mode: StorageMode,
+    /// JSON File to load the configuration from
+    #[clap(long)]
+    #[serde(skip)]
+    #[serde(default)]
+    config_file: Option<String>,
+    /// Generate the template at the `config_file` path
+    #[clap(long)]
+    #[serde(skip)]
+    #[serde(default)]
+    generate_config_template: bool
 }
 
 const BLOCK_TIME: Difficulty = Difficulty::from_u64(BLOCK_TIME_MILLIS / MILLIS_PER_SECOND);
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let mut config: NodeConfig = NodeConfig::parse();
+    let mut config: CliConfig = CliConfig::parse();
+    if let Some(path) = config.config_file.as_ref() {
+        if config.generate_config_template {
+            if Path::new(path).exists() {
+                eprintln!("Config file already exists at {}", path);
+                return Ok(());
+            }
 
-    let prompt = Prompt::new(config.log_level, &config.logs_path, &config.filename_log, config.disable_file_logging, config.disable_file_log_date_based, config.disable_log_color, !config.disable_interactive_mode, config.logs_modules, config.file_log_level.unwrap_or(config.log_level))?;
-    info!("XELIS Blockchain running version: {}", VERSION);
-    info!("----------------------------------------------");
+            let mut file = File::create(path).context("Error while creating config file")?;
+            let json = serde_json::to_string_pretty(&config).context("Error while serializing config file")?;
+            file.write_all(json.as_bytes()).context("Error while writing config file")?;
+            println!("Config file template generated at {}", path);
+            return Ok(());
+        }
 
-    if config.nested.simulator.is_some() && config.network != Network::Dev {
-        config.network = Network::Dev;
-        warn!("Switching automatically to network {} because of simulator enabled", config.network);
+        let file = File::open(path).context("Error while opening config file")?;
+        config = serde_json::from_reader(file).context("Error while reading config file")?;
+    } else if config.generate_config_template {
+        eprintln!("Provided config file path is required to generate the template with --config-file");
+        return Ok(());
     }
 
-    let blockchain_config = config.nested;
+    let blockchain_config = config.core;
     if let Some(path) = blockchain_config.dir_path.as_ref() {
         if !(path.ends_with("/") || path.ends_with("\\")) {
             return Err(anyhow::anyhow!("Path must end with / or \\"));
         }
+
+        // If logs path is default, we will change it to be in the same directory as the blockchain
+        if config.log.logs_path == "logs/" {
+            config.log.logs_path = format!("{}logs/", path);
+        }
+    }
+
+    let log_config = config.log;
+    let prompt = Prompt::new(log_config.log_level, &log_config.logs_path, &log_config.filename_log, log_config.disable_file_logging, log_config.disable_file_log_date_based, log_config.disable_log_color, !log_config.disable_interactive_mode, log_config.logs_modules, log_config.file_log_level.unwrap_or(log_config.log_level))?;
+    info!("XELIS Blockchain running version: {}", VERSION);
+    info!("----------------------------------------------");
+
+    if blockchain_config.simulator.is_some() && config.network != Network::Dev {
+        config.network = Network::Dev;
+        warn!("Switching automatically to network {} because of simulator enabled", config.network);
     }
 
     let storage = {
@@ -218,6 +284,7 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
     command_manager.add_command(Command::new("list_unexecuted_transactions", "List all unexecuted transactions", CommandHandler::Async(async_handler!(list_unexecuted_transactions::<S>))))?;
     command_manager.add_command(Command::new("swap_blocks_executions_positions", "Swap the position of two blocks executions", CommandHandler::Async(async_handler!(swap_blocks_executions_positions::<S>))))?;
     command_manager.add_command(Command::new("print_balance", "Print the encrypted balance at a specific topoheight", CommandHandler::Async(async_handler!(print_balance::<S>))))?;
+    command_manager.add_command(Command::new("estimate_db_size", "Estimate the database total size", CommandHandler::Async(async_handler!(estimate_db_size::<S>))))?;
 
     // Don't keep the lock for ever
     let (p2p, getwork) = {
@@ -470,6 +537,16 @@ async fn print_balance<S: Storage>(manager: &CommandManager, _: ArgumentManager)
         .context("Error while retrieving balance")?;
 
     manager.message(format!("{}", balance));
+
+    Ok(())
+}
+
+async fn estimate_db_size<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
+    let context = manager.get_context().lock()?;
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    let storage = blockchain.get_storage().read().await;
+    let size = storage.estimate_size().await.context("Error while estimating size")?;
+    manager.message(format!("Estimated size: {}", human_bytes(size as f64)));
 
     Ok(())
 }
@@ -804,7 +881,7 @@ async fn add_tx<S: Storage>(manager: &CommandManager, mut arguments: ArgumentMan
         true
     };
 
-    let tx = Transaction::from_hex(hex).context("Error while decoding tx in hexadecimal format")?;
+    let tx = Transaction::from_hex(&hex).context("Error while decoding tx in hexadecimal format")?;
     let hash = tx.hash();
     manager.message(format!("Adding TX {} to mempool...", hash));
 
@@ -846,10 +923,12 @@ async fn status<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Res
     let top_block_hash = blockchain.get_top_block_hash_for_storage(&storage).await.context("Error while retrieving top block hash")?;
     let avg_block_time = blockchain.get_average_block_time::<S>(&storage).await.context("Error while retrieving average block time")?;
     let supply = storage.get_supply_at_topo_height(topoheight).await.context("Error while retrieving supply")?;
+    let burned_supply = storage.get_burned_supply_at_topo_height(topoheight).await.context("Error while retrieving burned supply")?;
     let accounts_count = storage.count_accounts().await.context("Error while counting accounts")?;
     let transactions_count = storage.count_transactions().await.context("Error while counting transactions")?;
     let blocks_count = storage.count_blocks().await.context("Error while counting blocks")?;
     let assets = storage.count_assets().await.context("Error while counting assets")?;
+    let contracts = storage.count_contracts().await.context("Error while counting contracts")?;
     let pruned_topoheight = storage.get_pruned_topoheight().await.context("Error while retrieving pruned topoheight")?;
     let version = get_version_at_height(blockchain.get_network(), height);
 
@@ -863,8 +942,9 @@ async fn status<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Res
     manager.message(format!("Average Block Time: {:.2}s", avg_block_time as f64 / MILLIS_PER_SECOND as f64));
     manager.message(format!("Target Block Time: {:.2}s", BLOCK_TIME_MILLIS as f64 / MILLIS_PER_SECOND as f64));
     manager.message(format!("Current Supply: {} XELIS", format_xelis(supply)));
+    manager.message(format!("Burned Supply: {} XELIS", format_xelis(burned_supply)));
     manager.message(format!("Current Block Reward: {} XELIS", format_xelis(get_block_reward(supply))));
-    manager.message(format!("Stored accounts/transactions/blocks/assets: {}/{}/{}/{}", accounts_count, transactions_count, blocks_count, assets));
+    manager.message(format!("Accounts/Transactions/Blocks/Assets/Contracts: {}/{}/{}/{}/{}", accounts_count, transactions_count, blocks_count, assets, contracts));
     manager.message(format!("Block Version: {}", version));
     manager.message(format!("POW Algorithm: {}", get_pow_algorithm_for_version(version)));
 
@@ -1089,7 +1169,7 @@ async fn mine_block<S: Storage>(manager: &CommandManager, mut arguments: Argumen
         manager.message(format!("Block mined: {}", block_hash));
 
         let mut storage = blockchain.get_storage().write().await;
-        blockchain.add_new_block_for_storage(&mut storage, block, true, true).await.context("Error while adding block to chain")?;
+        blockchain.add_new_block_for_storage(&mut *storage, block, true, true).await.context("Error while adding block to chain")?;
     }
     Ok(())
 }

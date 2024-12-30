@@ -10,6 +10,8 @@ use xelis_common::{
         Hash,
         XelisHashError
     },
+    account::Nonce,
+    block::TopoHeight,
     difficulty::DifficultyError,
     prompt::PromptError,
     rpc_server::InternalRpcError,
@@ -20,8 +22,14 @@ use xelis_common::{
 };
 use human_bytes::human_bytes;
 
-#[derive(Error, Debug)]
+#[derive(Error, Debug, Clone, Copy)]
 pub enum DiskContext {
+    #[error("data len")]
+    DataLen,
+    #[error("multisig")]
+    Multisig,
+    #[error("get multisig at topoheight")]
+    MultisigAtTopoHeight,
     #[error("get top block")]
     GetTopBlock,
     #[error("get top metadata")]
@@ -29,7 +37,7 @@ pub enum DiskContext {
     #[error("get topo height for hash")]
     GetTopoHeightForHash,
     #[error("get block hash for topoheight '{}'", _0)]
-    GetBlockHashAtTopoHeight(u64),
+    GetBlockHashAtTopoHeight(TopoHeight),
     #[error("get transaction")]
     GetTransaction,
     #[error("get account registration topoheight")]
@@ -46,6 +54,8 @@ pub enum DiskContext {
     BlockRewardAtTopoHeight,
     #[error("get supply at topoheight")]
     SupplyAtTopoHeight,
+    #[error("get burned supply at topoheight")]
+    BurnedSupplyAtTopoHeight,
     #[error("get blocks at height")]
     BlocksAtHeight,
     #[error("get block executor for tx")]
@@ -94,13 +104,47 @@ pub enum DiskContext {
     DeleteData,
     #[error("load data")]
     LoadData,
+    #[error("load optional data")]
+    LoadOptionalData,
     #[error("search block position in order")]
-    SearchBlockPositionInOrder
+    SearchBlockPositionInOrder,
+    #[error("get contract topoheight")]
+    ContractTopoHeight,
+    #[error("get contract at topoheight")]
+    ContractAtTopoHeight,
+    #[error("contracts count")]
+    ContractsCount,
+    #[error("get contract data topoheight")]
+    ContractDataTopoHeight,
+    #[error("get contract data at topoheight")]
+    ContractDataAtTopoHeight,
+    #[error("get contract data")]
+    ContractData,
+    #[error("get contract output")]
+    ContractOutput,
+    #[error("get contract balance")]
+    ContractBalance,
 }
 
 #[repr(usize)]
 #[derive(Error, Debug)]
 pub enum BlockchainError {
+    #[error("No contract balance found")]
+    NoContractBalance,
+    #[error("Contract already exists")]
+    ContractAlreadyExists,
+    #[error("Contract not found: {}", _0)]
+    ContractNotFound(Hash),
+    #[error("Invalid ip order for block {}, expected {}, got {}", _0, _1, _2)]
+    InvalidTipsOrder(Hash, Hash, Hash),
+    #[error("commit point already started")]
+    CommitPointAlreadyStarted,
+    #[error("commit point not started")]
+    CommitPointNotStarted,
+    #[error("no multisig found")]
+    NoMultisig,
+    #[error("Versioned data not found in disk")]
+    VersionedNotFound,
     #[error("Block is not ordered")]
     BlockNotOrdered,
     #[error("Invalid balances merkle hash for block {}, expected {}, got {}", _0, _1, _2)]
@@ -111,7 +155,7 @@ pub enum BlockchainError {
     TxTooBig(usize, usize),
     #[error("Timestamp {} is less than parent", _0)]
     TimestampIsLessThanParent(TimestampMillis),
-    #[error("Timestamp {} is greater than current time {}", _0, _1)]
+    #[error("Timestamp {} is greater than current time {}", _1, _0)]
     TimestampIsInFuture(TimestampMillis, TimestampMillis), // left is expected, right is got
     #[error("Block height mismatch, expected {}, got {}.", _0, _1)]
     InvalidBlockHeight(u64, u64),
@@ -122,7 +166,7 @@ pub enum BlockchainError {
     #[error("Invalid difficulty")]
     InvalidDifficulty,
     #[error("Tx nonce {} already used by Tx {}", _0, _1)]
-    TxNonceAlreadyUsed(u64, Hash),
+    TxNonceAlreadyUsed(Nonce, Hash),
     #[error("Invalid hash, expected {}, got {}", _0, _1)]
     InvalidHash(Hash, Hash),
     #[error("Invalid previous block hash, expected {}, got {}", _0, _1)]
@@ -178,7 +222,7 @@ pub enum BlockchainError {
     #[error("Invalid tx registration, tx has a signature: {}", _0)]
     InvalidTxRegistrationSignature(Hash),
     #[error("Invalid transaction nonce: {}, account nonce is: {}", _0, _1)]
-    InvalidTransactionNonce(u64, u64),
+    InvalidTransactionNonce(Nonce, Nonce),
     #[error("Invalid transaction, sender trying to send coins to himself: {}", _0)]
     InvalidTransactionToSender(Hash),
     #[error("Invalid extra data in this transaction")]
@@ -262,9 +306,9 @@ pub enum BlockchainError {
     #[error("Invalid genesis block hash")]
     InvalidGenesisHash,
     #[error("Invalid tx {} nonce (got {} expected {}) for {}", _0, _1, _2, _3)]
-    InvalidTxNonce(Hash, u64, u64, Address),
+    InvalidTxNonce(Hash, Nonce, Nonce, Address),
     #[error("Invalid tx nonce {} for mempool cache, range: [{}-{}]", _0, _1, _2)]
-    InvalidTxNonceMempoolCache(u64, u64, u64),
+    InvalidTxNonceMempoolCache(Nonce, Nonce, Nonce),
     #[error("Invalid asset ID: {}", _0)]
     AssetNotFound(Hash),
     #[error(transparent)]
@@ -272,7 +316,7 @@ pub enum BlockchainError {
     #[error("No balance found on disk for {}", _0)]
     NoBalance(Address),
     #[error("No balance changes for {} at topoheight {} and asset {}", _0, _1, _2)]
-    NoBalanceChanges(Address, u64, Hash),
+    NoBalanceChanges(Address, TopoHeight, Hash),
     #[error("No nonce found on disk for {}", _0)]
     NoNonce(Address),
     #[error("No nonce changes for {} at specific topoheight", _0)]
@@ -308,7 +352,7 @@ pub enum BlockchainError {
     #[error(transparent)]
     Any(#[from] anyhow::Error),
     #[error("Invalid nonce: expected {}, got {}", _0, _1)]
-    InvalidNonce(u64, u64),
+    InvalidNonce(Nonce, Nonce),
     #[error("Sender cannot be receiver")]
     SenderIsReceiver,
     #[error("Invalid transaction proof: {}", _0)]
@@ -318,7 +362,21 @@ pub enum BlockchainError {
     #[error("Transfer count is invalid")]
     TransferCount,
     #[error("Invalid commitments assets")]
-    Commitments
+    Commitments,
+    #[error("MultiSig is not configured")]
+    MultiSigNotConfigured,
+    #[error("Invalid multisig participants count")]
+    MultiSigParticipants,
+    #[error("Invalid multisig threshold")]
+    MultiSigThreshold,
+    #[error("Invalid transaction format")]
+    InvalidTransactionFormat,
+    #[error("Invalid invoke contract")]
+    InvalidInvokeContract,
+    #[error("MultiSig not found")]
+    MultiSigNotFound,
+    #[error("Error in module: {}", _0)]
+    ModuleError(String)
 }
 
 impl BlockchainError {
@@ -352,6 +410,15 @@ impl From<VerificationError<BlockchainError>> for BlockchainError {
             VerificationError::Commitments => BlockchainError::Commitments,
             VerificationError::TransactionExtraDataSize => BlockchainError::InvalidTransactionExtraData,
             VerificationError::TransferExtraDataSize => BlockchainError::InvalidTransferExtraData,
+            VerificationError::MultiSigNotConfigured => BlockchainError::MultiSigNotConfigured,
+            VerificationError::MultiSigParticipants => BlockchainError::MultiSigParticipants,
+            VerificationError::MultiSigThreshold => BlockchainError::MultiSigThreshold,
+            VerificationError::InvalidFormat => BlockchainError::InvalidTransactionFormat,
+            VerificationError::MultiSigNotFound => BlockchainError::MultiSigNotFound,
+            VerificationError::ModuleError(e) => BlockchainError::ModuleError(e),
+            VerificationError::AnyError(e) => BlockchainError::Any(e),
+            VerificationError::GasOverflow => BlockchainError::Overflow,
+            VerificationError::InvalidInvokeContract => BlockchainError::InvalidInvokeContract,
         }
     }
 }

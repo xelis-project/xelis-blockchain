@@ -1,9 +1,9 @@
 use std::collections::{HashMap, HashSet};
-use log::debug;
+use log::{debug, trace};
 use xelis_common::{
     account::CiphertextCache,
-    crypto::{elgamal::Ciphertext, Hash, PublicKey},
-    transaction::{builder::{AccountState, FeeHelper}, Reference}
+    crypto::{elgamal::Ciphertext, Hash, Hashable, PublicKey},
+    transaction::{builder::{AccountState, FeeHelper}, Reference, Transaction}
 };
 use crate::{error::WalletError, storage::{Balance, EncryptedStorage, TxCache}};
 
@@ -42,12 +42,20 @@ impl FeeHelper for EstimateFeesState {
 // State used to build a transaction
 // It contains the balances of the wallet and the registered keys
 pub struct TransactionBuilderState {
+    // Inner state used to estimate fees
     inner: EstimateFeesState,
+    // If we are on mainnet or not
     mainnet: bool,
+    // Balances of the wallet
     balances: HashMap<Hash, Balance>,
+    // Reference at which the transaction is built
     reference: Reference,
+    // Nonce of the transaction
     nonce: u64,
+    // The hash of the transaction that has been built
     tx_hash_built: Option<Hash>,
+    // The stable topoheight detected during the TX building
+    // This is used to update the last coinbase reward topoheight
     stable_topoheight: Option<u64>,
 }
 
@@ -64,6 +72,25 @@ impl TransactionBuilderState {
             tx_hash_built: None,
             stable_topoheight: None,
         }
+    }
+
+    pub async fn from_tx(storage: &EncryptedStorage, transaction: &Transaction, mainnet: bool) -> Result<Self, WalletError> {
+        let mut state = Self::new(mainnet, transaction.get_reference().clone(), transaction.get_nonce());
+        let ciphertexts = transaction.get_expected_sender_outputs()
+            .map_err(|e| WalletError::Any(e.into()))?;
+
+        for (asset, ct) in ciphertexts {
+            let (mut balance, _) = storage.get_unconfirmed_balance_for(asset).await?;
+            let balance_ct = balance.ciphertext.computable()
+                .map_err(|e| WalletError::Any(e.into()))?;
+
+            *balance_ct -= ct;
+            state.add_balance(asset.clone(), balance);
+        }
+
+        state.set_tx_hash_built(transaction.hash());
+
+        Ok(state)
     }
 
     pub fn set_balances(&mut self, balances: HashMap<Hash, Balance>) {
@@ -94,7 +121,8 @@ impl TransactionBuilderState {
 
     // Apply the changes to the storage
     pub async fn apply_changes(&mut self, storage: &mut EncryptedStorage) -> Result<(), WalletError> {
-        let last_tx_hash_created = self.tx_hash_built.take().ok_or(WalletError::TxNotBuilt)?;
+        trace!("Applying changes to storage");
+
         for (asset, balance) in self.balances.drain() {
             debug!("Setting balance for asset {} to {} ({})", asset, balance.amount, balance.ciphertext);
             storage.set_unconfirmed_balance_for(asset, balance).await?;
@@ -103,7 +131,7 @@ impl TransactionBuilderState {
         storage.set_tx_cache(TxCache {
             reference: self.reference.clone(),
             nonce: self.nonce,
-            last_tx_hash_created,
+            last_tx_hash_created: self.tx_hash_built.take(),
         });
 
         // Lets verify if the last coinbase reward topoheight is still valid

@@ -164,10 +164,11 @@ impl CommandManager {
     // - help
     // - version
     // - exit
+    // - set_log_level
     pub fn register_default_commands(&self) -> Result<(), CommandError> {
         self.add_command(Command::with_optional_arguments("help", "Show this help", vec![Arg::new("command", ArgType::String)], CommandHandler::Async(async_handler!(help))))?;
         self.add_command(Command::new("version", "Show the current version", CommandHandler::Sync(version)))?;
-        self.add_command(Command::new("exit", "Shutdown the daemon", CommandHandler::Sync(exit)))?;
+        self.add_command(Command::new("exit", "Shutdown the application", CommandHandler::Sync(exit)))?;
         self.add_command(Command::with_required_arguments("set_log_level", "Set the log level", vec![Arg::new("level", ArgType::String)], CommandHandler::Sync(set_log_level)))?;
 
         Ok(())
@@ -189,7 +190,7 @@ impl CommandManager {
         &self.context
     }
 
-    pub fn get_prompt<'a>(&'a self) -> &ShareablePrompt {
+    pub fn get_prompt(&self) -> &ShareablePrompt {
         &self.prompt
     }
 
@@ -299,7 +300,7 @@ fn version(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandEr
 
 fn set_log_level(manager: &CommandManager, mut args: ArgumentManager) -> Result<(), CommandError> {
     let arg_value = args.get_value("level")?.to_string_value()?;
-    let level = LogLevel::from_str(&arg_value).map_err(|e| CommandError::InvalidArgument(e))?;
+    let level = LogLevel::from_str(&arg_value).map_err(|e| CommandError::InvalidArgument(e.to_owned()))?;
     log::set_max_level(level.into());
     manager.message(format!("Log level set to {}", level));
 

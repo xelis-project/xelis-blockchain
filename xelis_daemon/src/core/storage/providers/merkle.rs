@@ -1,7 +1,14 @@
 use async_trait::async_trait;
 use log::trace;
-use xelis_common::{crypto::Hash, serializer::Serializer};
-use crate::core::{error::{BlockchainError, DiskContext}, storage::SledStorage};
+use xelis_common::{
+    crypto::Hash,
+    serializer::Serializer,
+    block::TopoHeight
+};
+use crate::core::{
+    error::{BlockchainError, DiskContext},
+    storage::SledStorage
+};
 
 // Merkle Hash provider allow to give a Hash at a specific topoheight
 // The merkle hash only contains account balances
@@ -11,22 +18,22 @@ use crate::core::{error::{BlockchainError, DiskContext}, storage::SledStorage};
 #[async_trait]
 pub trait MerkleHashProvider {
     // Get the merkle hash at a specific topoheight
-    async fn get_balances_merkle_hash_at_topoheight(&self, topoheight: u64) -> Result<Hash, BlockchainError>;
+    async fn get_balances_merkle_hash_at_topoheight(&self, topoheight: TopoHeight) -> Result<Hash, BlockchainError>;
 
     // Set the merkle hash at a specific topoheight
-    async fn set_balances_merkle_hash_at_topoheight(&mut self, topoheight: u64, merkle_proof: &Hash) -> Result<(), BlockchainError>;
+    async fn set_balances_merkle_hash_at_topoheight(&mut self, topoheight: TopoHeight, merkle_proof: &Hash) -> Result<(), BlockchainError>;
 }
 
 #[async_trait]
 impl MerkleHashProvider for SledStorage {
-    async fn get_balances_merkle_hash_at_topoheight(&self, topoheight: u64) -> Result<Hash, BlockchainError> {
+    async fn get_balances_merkle_hash_at_topoheight(&self, topoheight: TopoHeight) -> Result<Hash, BlockchainError> {
         trace!("get merkle hash at topoheight {}", topoheight);
         self.load_from_disk(&self.merkle_hashes, &topoheight.to_bytes(), DiskContext::BalancesMerkleHashAtTopoHeight)
     }
 
-    async fn set_balances_merkle_hash_at_topoheight(&mut self, topoheight: u64, merkle_proof: &Hash) -> Result<(), BlockchainError> {
+    async fn set_balances_merkle_hash_at_topoheight(&mut self, topoheight: TopoHeight, merkle_proof: &Hash) -> Result<(), BlockchainError> {
         trace!("set merkle hash {} at topoheight {}", merkle_proof, topoheight);
-        self.merkle_hashes.insert(&topoheight.to_bytes(), merkle_proof.as_bytes())?;
+        Self::insert_into_disk(self.snapshot.as_mut(), &self.merkle_hashes, &topoheight.to_bytes(), merkle_proof.as_bytes())?;
         Ok(())
     }
 }

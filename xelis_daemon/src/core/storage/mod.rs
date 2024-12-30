@@ -2,15 +2,20 @@ mod providers;
 mod sled;
 
 pub use self::{
-    sled::{SledStorage, StorageMode},
-    providers::*,
+    sled::*,
+    providers::*
 };
 
 use std::{collections::HashSet, sync::Arc};
 use async_trait::async_trait;
 use indexmap::IndexSet;
 use xelis_common::{
-    block::{Block, BlockHeader},
+    block::{
+        Block,
+        BlockHeader,
+        TopoHeight,
+    },
+    contract::ContractProvider as ContractInfoProvider,
     crypto::Hash,
     transaction::Transaction,
 };
@@ -20,50 +25,20 @@ use crate::core::error::BlockchainError;
 pub type Tips = HashSet<Hash>;
 
 #[async_trait]
-pub trait Storage: BlockExecutionOrderProvider + DagOrderProvider + PrunedTopoheightProvider + NonceProvider + AccountProvider + ClientProtocolProvider + BlockDagProvider + MerkleHashProvider + NetworkProvider + Sync + Send + 'static {
+pub trait Storage:
+    BlockExecutionOrderProvider + DagOrderProvider + PrunedTopoheightProvider
+    + NonceProvider + AccountProvider + ClientProtocolProvider + BlockDagProvider
+    + MerkleHashProvider + NetworkProvider + MultiSigProvider + TipsProvider
+    + CommitPointProvider + ContractProvider + ContractDataProvider + ContractOutputsProvider
+    + ContractInfoProvider + ContractBalanceProvider + VersionedProvider + Sync + Send + 'static {
     // Clear caches if exists
     async fn clear_caches(&mut self) -> Result<(), BlockchainError>;
 
     // delete block at topoheight, and all pointers (hash_at_topo, topo_by_hash, reward, supply, diff, cumulative diff...)
-    async fn delete_block_at_topoheight(&mut self, topoheight: u64) -> Result<(Hash, Arc<BlockHeader>, Vec<(Hash, Arc<Transaction>)>), BlockchainError>;
-
-    // delete versioned balances at topoheight
-    async fn delete_versioned_balances_at_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError>;
-
-    // delete versioned nonces at topoheight
-    async fn delete_versioned_nonces_at_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError>;
-
-    // delete versioned balances above topoheight
-    async fn delete_versioned_balances_above_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError>;
-
-    // delete versioned nonces above topoheight
-    async fn delete_versioned_nonces_above_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError>;
-
-    // delete account registrations above topoheight
-    async fn delete_registrations_above_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError>;
-
-    // delete account registrations below topoheight
-    async fn delete_registrations_below_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError>;
-
-    // delete versioned balances below topoheight
-    async fn delete_versioned_balances_below_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError>;
-
-    // delete versioned nonces below topoheight
-    async fn delete_versioned_nonces_below_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError>;
-
-    // delete all versions of balances under the specified topoheight
-    // for those who don't have more recents, set it to the topoheight
-    // for those above it, cut the chain by deleting the previous topoheight when it's going under
-    async fn create_snapshot_balances_at_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError>;
-
-    // same as above but for nonces
-    async fn create_snapshot_nonces_at_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError>;
-
-    // same as above but for registrations
-    async fn create_snapshot_registrations_at_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError>;
+    async fn delete_block_at_topoheight(&mut self, topoheight: TopoHeight) -> Result<(Hash, Arc<BlockHeader>, Vec<(Hash, Arc<Transaction>)>), BlockchainError>;
 
     // Count is the number of blocks (topoheight) to rewind
-    async fn pop_blocks(&mut self, mut height: u64, mut topoheight: u64, count: u64, stable_height: u64) -> Result<(u64, u64, Vec<(Hash, Arc<Transaction>)>), BlockchainError>;
+    async fn pop_blocks(&mut self, mut height: u64, mut topoheight: TopoHeight, count: u64, stable_height: u64) -> Result<(u64, TopoHeight, Vec<(Hash, Arc<Transaction>)>), BlockchainError>;
 
     // Get the top block hash of the chain
     async fn get_top_block_hash(&self) -> Result<Hash, BlockchainError>;
@@ -78,19 +53,13 @@ pub trait Storage: BlockExecutionOrderProvider + DagOrderProvider + PrunedTopohe
     fn get_top_topoheight(&self) -> Result<u64, BlockchainError>;
 
     // Set the top topoheight of the chain
-    fn set_top_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError>;
+    fn set_top_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError>;
 
     // Get the top height of the chain
     fn get_top_height(&self) -> Result<u64, BlockchainError>;
 
     // Set the top height of the chain
     fn set_top_height(&mut self, height: u64) -> Result<(), BlockchainError>;
-
-    // Get current chain tips
-    async fn get_tips(&self) -> Result<Tips, BlockchainError>;
-
-    // Store chain tips
-    fn store_tips(&mut self, tips: &Tips) -> Result<(), BlockchainError>;
 
     // Get the size of the chain on disk in bytes
     async fn get_size_on_disk(&self) -> Result<u64, BlockchainError>;
@@ -100,4 +69,7 @@ pub trait Storage: BlockExecutionOrderProvider + DagOrderProvider + PrunedTopohe
 
     // Get all the unexecuted transactions
     async fn get_unexecuted_transactions(&self) -> Result<IndexSet<Hash>, BlockchainError>;
+
+    // Estimate the size of the DB in bytes
+    async fn estimate_size(&self) -> Result<u64, BlockchainError>;
 }

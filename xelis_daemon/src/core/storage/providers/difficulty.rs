@@ -103,7 +103,7 @@ impl DifficultyProvider for SledStorage {
 
     async fn set_cumulative_difficulty_for_block_hash(&mut self, hash: &Hash, cumulative_difficulty: CumulativeDifficulty) -> Result<(), BlockchainError> {
         trace!("set cumulative difficulty for hash {}", hash);
-        self.cumulative_difficulty.insert(hash.as_bytes(), cumulative_difficulty.to_bytes())?;
+        Self::insert_into_disk(self.snapshot.as_mut(), &self.cumulative_difficulty, hash.as_bytes(), cumulative_difficulty.to_bytes())?;
         Ok(())
     }
 
@@ -114,7 +114,7 @@ impl DifficultyProvider for SledStorage {
 
     async fn set_estimated_covariance_for_block_hash(&mut self, hash: &Hash, p: VarUint) -> Result<(), BlockchainError> {
         trace!("set p for hash {}", hash);
-        self.difficulty_covariance.insert(hash.as_bytes(), p.to_bytes())?;
+        Self::insert_into_disk(self.snapshot.as_mut(), &self.difficulty_covariance, hash.as_bytes(), p.to_bytes())?;
         Ok(())
     }
 }

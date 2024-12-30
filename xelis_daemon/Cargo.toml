@@ -1,6 +1,6 @@
 [package]
 name = "xelis_daemon"
-version = "1.15.0"
+version = "1.16.0"
 edition = "2021"
 authors = ["Slixe <slixeprivate@gmail.com>"]
 
@@ -21,6 +21,9 @@ humantime = "2.1.0"
 human_bytes = "0.4.2"
 lazy_static = "1.4.0"
 chacha20poly1305 = "0.10.1"
+x25519-dalek = { version = "2.0.1", features = ["serde", "zeroize", "static_secrets"] }
+xelis-environment = { git = "https://github.com/xelis-project/xelis-vm", branch = "dev" }
+xelis-vm = { git = "https://github.com/xelis-project/xelis-vm", branch = "dev" }
 
 # Common dependencies
 tokio = { version = "1", features = ["rt-multi-thread", "io-util", "io-std", "time", "macros", "sync", "net"] }
@@ -28,10 +31,10 @@ hex = "0.4.3"
 log = "0.4"
 anyhow = "1"
 thiserror = "1"
-fern = { version = "0.6", features = ["colored"] }
 serde = { version = "1", features = ["derive", "rc"] }
 serde_json = "1"
 rand = "0.8.4"
 ed25519-dalek = "1"
 indexmap = { version = "2.0.0", features = ["serde"] }
 semver = "1.0.23"
+futures = "0.3.31"

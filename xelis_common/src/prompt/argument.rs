@@ -80,7 +80,7 @@ impl ArgType {
             },
             ArgType::Number => ArgValue::Number(value.parse().map_err(|_| ArgError::InvalidType)?),
             ArgType::String => ArgValue::String(value.to_owned()),
-            ArgType::Hash => ArgValue::Hash(Hash::from_hex(value.to_string()).map_err(|_| ArgError::InvalidType)?),
+            ArgType::Hash => ArgValue::Hash(Hash::from_hex(value).map_err(|_| ArgError::InvalidType)?),
             ArgType::Array(value_type) => {
                 let values = value.split(",");
                 let mut array: Vec<ArgValue> = Vec::new();

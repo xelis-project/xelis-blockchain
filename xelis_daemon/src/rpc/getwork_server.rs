@@ -36,6 +36,7 @@ use serde::Serialize;
 use serde_json::json;
 use tokio::sync::Mutex;
 use xelis_common::{
+    config::TIPS_LIMIT,
     api::daemon::{
         GetMinerWorkResult,
         SubmitMinerWorkParams
@@ -225,7 +226,7 @@ impl<S: Storage> GetWorkServer<S> {
         Self {
             miners: Mutex::new(HashMap::new()),
             blockchain,
-            mining_jobs: Mutex::new(LruCache::new(NonZeroUsize::new(STABLE_LIMIT as usize).unwrap())),
+            mining_jobs: Mutex::new(LruCache::new(NonZeroUsize::new(STABLE_LIMIT as usize * TIPS_LIMIT).unwrap())),
             last_header_hash: Mutex::new(None),
             last_notify: AtomicU64::new(0),
             notify_rate_limit_ms: 500 // maximum one time every 500ms
@@ -360,7 +361,7 @@ impl<S: Storage> GetWorkServer<S> {
     // if its block is rejected, resend him the job
     pub async fn handle_block_for(self: Arc<Self>, addr: Addr<GetWorkWebSocketHandler<S>>, submitted_work: SubmitMinerWorkParams) {
         trace!("handle block for");
-        let (response, hash) = match MinerWork::from_hex(submitted_work.miner_work) {
+        let (response, hash) = match MinerWork::from_hex(&submitted_work.miner_work) {
             Ok(job) => match self.accept_miner_job(job).await {
                 Ok((response, hash)) => (response, Some(hash)),
                 Err(e) => {

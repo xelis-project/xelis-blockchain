@@ -1,5 +1,6 @@
 use std::{
     fmt::{Display, Formatter},
+    hash::{Hash, Hasher},
     mem,
     str::FromStr
 };
@@ -31,6 +32,12 @@ pub struct Address {
     mainnet: bool,
     addr_type: AddressType,
     key: PublicKey
+}
+
+impl Hash for Address {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.key.hash(state);
+    }
 }
 
 impl Address {
@@ -107,10 +114,11 @@ impl Address {
     // Compress the address to a byte array
     // We don't use Serializer trait to avoid storing mainnet bool
     fn compress(&self) -> Vec<u8> {
-        let mut writer = Writer::new();
+        let mut buffer = Vec::new();
+        let mut writer = Writer::new(&mut buffer);
         self.key.write(&mut writer);
         self.addr_type.write(&mut writer);
-        writer.bytes()
+        buffer
     }
 
     // Read the address from a byte array
@@ -166,6 +174,26 @@ impl Address {
         }
 
         Ok(addr)
+    }
+}
+
+impl Serializer for Address {
+    fn write(&self, writer: &mut Writer) {
+        self.mainnet.write(writer);
+        self.key.write(writer);
+        self.addr_type.write(writer);
+    }
+
+    fn read(reader: &mut Reader) -> Result<Address, ReaderError> {
+        let mainnet = bool::read(reader)?;
+        let key = PublicKey::read(reader)?;
+        let addr_type = AddressType::read(reader)?;
+        let addr = Address::new(mainnet, addr_type, key);
+        Ok(addr)
+    }
+
+    fn size(&self) -> usize {
+        self.compress().size()
     }
 }
 

@@ -36,6 +36,8 @@ use super::{
 
 #[derive(Error, Debug)]
 pub enum P2pError {
+    #[error("Invalid Diffie-Hellman key")]
+    InvalidDHKey,
     #[error("Invalid local port, it must be greater than 0")]
     InvalidLocalPort,
     #[error("disk error: {0}")]

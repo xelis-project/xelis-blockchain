@@ -1,9 +1,16 @@
 use curve25519_dalek::{RistrettoPoint, Scalar};
 use serde::{de::Error, Serialize};
 use sha3::{Digest, Sha3_512};
-use crate::serializer::{Reader, ReaderError, Serializer, Writer};
-
-use super::{CompressedPublicKey, PublicKey, H, SCALAR_SIZE};
+use crate::{
+    crypto::proofs::PC_GENS,
+    serializer::{
+        Reader,
+        ReaderError,
+        Serializer,
+        Writer
+    }
+};
+use super::{CompressedPublicKey, PublicKey, SCALAR_SIZE};
 
 pub const SIGNATURE_SIZE: usize = SCALAR_SIZE * 2;
 
@@ -20,7 +27,7 @@ impl Signature {
 
     // Verify the signature using the Public Key and the hash of the message
     pub fn verify(&self, message: &[u8], key: &PublicKey) -> bool {
-        let r = *H * &self.s + key.as_point() * -self.e;
+        let r = PC_GENS.B_blinding * &self.s + key.as_point() * -self.e;
         let calculated = hash_and_point_to_scalar(&key.compress(), message, &r);
         self.e == calculated
     }
@@ -52,7 +59,7 @@ impl<'de> serde::Deserialize<'de> for Signature {
         D: serde::Deserializer<'de>
     {
         let s = String::deserialize(deserializer)?;
-        Ok(Self::from_hex(s).map_err(D::Error::custom)?)
+        Ok(Self::from_hex(&s).map_err(D::Error::custom)?)
     }
 }
 
