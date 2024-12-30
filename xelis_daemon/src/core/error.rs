@@ -54,6 +54,8 @@ pub enum DiskContext {
     BlockRewardAtTopoHeight,
     #[error("get supply at topoheight")]
     SupplyAtTopoHeight,
+    #[error("get burned supply at topoheight")]
+    BurnedSupplyAtTopoHeight,
     #[error("get blocks at height")]
     BlocksAtHeight,
     #[error("get block executor for tx")]
