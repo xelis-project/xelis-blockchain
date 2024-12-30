@@ -49,7 +49,8 @@ use xelis_common::{
         multisig::{MultiSig, SignatureId},
         BurnPayload,
         MultiSigPayload,
-        Transaction
+        Transaction,
+        TxVersion
     },
     utils::{
         format_coin,
@@ -676,6 +677,17 @@ async fn setup_wallet_command_manager(wallet: Arc<Wallet>, command_manager: &Com
         "multisig_show",
         "Show the current state of multisig",
         CommandHandler::Async(async_handler!(multisig_show))
+    ))?;
+
+    command_manager.add_command(Command::new(
+        "tx_version",
+        "See the current transaction version",
+        CommandHandler::Async(async_handler!(tx_version))
+    ))?;
+    command_manager.add_command(Command::new(
+        "set_tx_version",
+        "Set the transaction version",
+        CommandHandler::Async(async_handler!(set_tx_version))
     ))?;
 
     let mut context = command_manager.get_context().lock()?;
@@ -1472,6 +1484,31 @@ async fn set_nonce(manager: &CommandManager, _: ArgumentManager) -> Result<(), C
     storage.clear_tx_cache();
 
     manager.message(format!("New nonce is: {}", value));
+    Ok(())
+}
+
+async fn tx_version(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
+    let context = manager.get_context().lock()?;
+    let wallet: &Arc<Wallet> = context.get()?;
+    let storage = wallet.get_storage().read().await;
+    let version = storage.get_tx_version().await?;
+    manager.message(format!("Transaction version: {}", version));
+    Ok(())
+}
+
+async fn set_tx_version(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
+    let value: u8 = manager.get_prompt().read("New Transaction Version: ".to_string()).await
+        .context("Error while reading new transaction version to set")?;
+
+    let tx_version = TxVersion::try_from(value)
+        .map_err(|_| CommandError::InvalidArgument("Invalid transaction version".to_string()))?;
+
+    let context = manager.get_context().lock()?;
+    let wallet: &Arc<Wallet> = context.get()?;
+    let mut storage = wallet.get_storage().write().await;
+    storage.set_tx_version(tx_version).await?;
+
+    manager.message(format!("New transaction version is: {}", value));
     Ok(())
 }
 
