@@ -68,7 +68,7 @@ use xelis_common::{
 use xelis_vm::Environment;
 use crate::{
     config::{
-        get_genesis_block_hash, get_hex_genesis_block, get_minimum_difficulty,
+        get_genesis_block_hash, get_hex_genesis_block, get_minimum_difficulty, get_difficulty_at_hard_fork,
         BLOCK_TIME_MILLIS, CHAIN_SYNC_RESPONSE_MAX_BLOCKS, CHAIN_SYNC_RESPONSE_MIN_BLOCKS,
         DEV_FEES, DEV_PUBLIC_KEY, EMISSION_SPEED_FACTOR, GENESIS_BLOCK_DIFFICULTY,
         MILLIS_PER_SECOND, SIDE_BLOCK_REWARD_MAX_BLOCKS, PRUNE_SAFETY_LIMIT,
@@ -1188,7 +1188,7 @@ impl<S: Storage> Blockchain<S> {
 
         // Simulator is enabled, don't calculate difficulty
         if height <= 1 || self.is_simulator_enabled() || has_hard_fork {
-            return Ok((get_minimum_difficulty(self.get_network(), version), difficulty::get_covariance_p(version)))
+            return Ok((get_difficulty_at_hard_fork(self.get_network(), version), difficulty::get_covariance_p(version)))
         }
 
         // Search the highest difficulty available
@@ -1205,7 +1205,7 @@ impl<S: Storage> Blockchain<S> {
         let p = provider.get_estimated_covariance_for_block_hash(best_tip).await?;
 
         // Get the minimum difficulty configured
-        let minimum_difficulty = get_minimum_difficulty(self.get_network(), version);
+        let minimum_difficulty = get_minimum_difficulty(self.get_network());
 
         let (difficulty, p_new) = difficulty::calculate_difficulty(parent_newest_tip_timestamp, newest_tip_timestamp, biggest_difficulty, p, minimum_difficulty, version);
         Ok((difficulty, p_new))

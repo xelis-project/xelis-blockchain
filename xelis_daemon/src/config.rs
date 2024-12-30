@@ -298,7 +298,14 @@ pub const fn get_seed_nodes(network: &Network) -> &[&str] {
 // Get minimum difficulty based on the network
 // Mainnet has a minimum difficulty to prevent spamming the network
 // Testnet has a lower difficulty to allow faster block generation
-pub fn get_minimum_difficulty(network: &Network, block_version: BlockVersion) -> Difficulty {
+pub fn get_minimum_difficulty(network: &Network) -> Difficulty {
+    match network {
+        Network::Mainnet => MAINNET_MINIMUM_DIFFICULTY,
+        _ => OTHER_MINIMUM_DIFFICULTY,
+    }
+}
+
+pub fn get_difficulty_at_hard_fork(network: &Network, block_version: BlockVersion) -> Difficulty {
     match network {
         Network::Mainnet => match block_version {
             BlockVersion::V0 | BlockVersion::V1 => MAINNET_MINIMUM_DIFFICULTY,
