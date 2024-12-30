@@ -4,8 +4,11 @@ use core::fmt;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(u8)]
 pub enum TxVersion {
+    // Burn, Transfer
     V0,
+    // Multisig
     V1,
+    // Deploy Contract, Invoke Contract
     V2
 }
 

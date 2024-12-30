@@ -137,7 +137,7 @@ impl UnsignedTransaction {
 impl Serializer for UnsignedTransaction {
     fn write(&self, writer: &mut Writer) {
         self.write_no_signature(writer);
-        if self.version != TxVersion::V0 {
+        if self.version > TxVersion::V0 {
             self.multisig.write(writer);
         }
     }
@@ -158,8 +158,8 @@ impl Serializer for UnsignedTransaction {
         let range_proof = RangeProof::read(reader)?;
         let reference = Reference::read(reader)?;
 
-        let multisig = if version != TxVersion::V0 {
-            Some(MultiSig::read(reader)?)
+        let multisig = if version > TxVersion::V0 {
+            Option::read(reader)?
         } else {
             None
         };
