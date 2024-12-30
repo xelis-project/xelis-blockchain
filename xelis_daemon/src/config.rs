@@ -175,10 +175,6 @@ pub const PEER_PACKET_CHANNEL_SIZE: usize = 1024;
 // Millis
 pub const PEER_SEND_BYTES_TIMEOUT: u64 = 3_000;
 
-// P2P Key Exchange rules
-// Temporary
-pub const TEMP_P2P_KEY_EXCHANGE_TIMESTAMP_START: u64 = 1735574400;
-
 // Hard Forks configured
 const HARD_FORKS: [HardFork; 3] = [
     HardFork {
