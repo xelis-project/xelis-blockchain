@@ -34,7 +34,7 @@ pub trait AccountProvider {
 
     // Get registered accounts supporting pagination and filtering by topoheight
     // Returned keys must have a nonce or a balance updated in the range given
-    async fn get_registered_keys(&self, maximum: usize, skip: usize, minimum_topoheight: TopoHeight, maximum_topoheight: TopoHeight) -> Result<IndexSet<PublicKey>, BlockchainError>;
+    async fn get_registered_keys(&self, maximum: usize, skip: usize, minimum_topoheight: TopoHeight, maximum_topoheight: TopoHeight) -> Result<(IndexSet<PublicKey>, usize), BlockchainError>;
 }
 
 fn prefixed_db_key(topoheight: TopoHeight, key: &PublicKey) -> [u8; 40] {
@@ -115,11 +115,15 @@ impl AccountProvider for SledStorage {
     }
 
     // Get all keys that got registered in the range given
-    async fn get_registered_keys(&self, maximum: usize, skip: usize, minimum_topoheight: TopoHeight, maximum_topoheight: TopoHeight) -> Result<IndexSet<PublicKey>, BlockchainError> {
+    async fn get_registered_keys(&self, maximum: usize, skip: usize, minimum_topoheight: TopoHeight, maximum_topoheight: TopoHeight) -> Result<(IndexSet<PublicKey>, usize), BlockchainError> {
         trace!("get partial keys, maximum: {}, skip: {}, minimum_topoheight: {}, maximum_topoheight: {}", maximum, skip, minimum_topoheight, maximum_topoheight);
 
         let mut keys: IndexSet<PublicKey> = IndexSet::new();
         let mut skip_count = 0;
+        // At which index the previous key was set
+        // so we skip until it
+        let mut local_index = 0;
+        let mut current_topo = 0;
         for el in self.registrations_prefixed.iter().keys() {
             let key = el?;
             let topo = TopoHeight::from_bytes(&key[0..8])?;
@@ -128,6 +132,13 @@ impl AccountProvider for SledStorage {
             if topo < minimum_topoheight || topo > maximum_topoheight {
                 continue;
             }
+
+            if topo != current_topo {
+                current_topo = topo;
+                local_index = 0;
+            }
+
+            local_index += 1;
 
             // Skip if asked
             if skip_count < skip {
@@ -141,6 +152,6 @@ impl AccountProvider for SledStorage {
             }
         }
 
-        Ok(keys)
+        Ok((keys, local_index))
     }
 }
