@@ -195,8 +195,8 @@ const HARD_FORKS: [HardFork; 3] = [
         version_requirement: Some(">=1.13.0")
     },
     HardFork {
-        // Expected date: 30/12/2024 4pm UTC
-        height: 1_375_000,
+        // Expected date: 30/12/2024 9pm UTC
+        height: 1_376_000,
         version: BlockVersion::V2,
         changelog: "MultiSig, P2P",
         version_requirement: Some(">=1.16.0")
