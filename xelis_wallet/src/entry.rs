@@ -1,14 +1,11 @@
-use indexmap::IndexSet;
+use indexmap::{IndexMap, IndexSet};
 use xelis_common::{
     time::TimestampMillis,
-    api::{
-        DataElement,
-        wallet::{
-            TransactionEntry as RPCTransactionEntry,
-            EntryType as RPCEntryType,
-            TransferIn as RPCTransferIn,
-            TransferOut as RPCTransferOut
-        }
+    api::wallet::{
+        TransactionEntry as RPCTransactionEntry,
+        EntryType as RPCEntryType,
+        TransferIn as RPCTransferIn,
+        TransferOut as RPCTransferOut
     },
     config::XELIS_ASSET,
     crypto::{
@@ -21,6 +18,7 @@ use xelis_common::{
         Serializer,
         Writer
     },
+    transaction::extra_data::PlaintextExtraData,
     utils::{
         format_coin,
         format_xelis
@@ -38,7 +36,7 @@ pub struct TransferOut {
     // Amount spent
     amount: u64,
     // Extra data with good format
-    extra_data: Option<DataElement>
+    extra_data: Option<PlaintextExtraData>
 }
 
 #[derive(Debug, Clone)]
@@ -48,11 +46,11 @@ pub struct TransferIn {
     // Amount spent
     amount: u64,
     // Extra data with good format
-    extra_data: Option<DataElement>
+    extra_data: Option<PlaintextExtraData>
 }
 
 impl TransferOut {
-    pub fn new(destination: PublicKey, asset: Hash, amount: u64, extra_data: Option<DataElement>) -> Self {
+    pub fn new(destination: PublicKey, asset: Hash, amount: u64, extra_data: Option<PlaintextExtraData>) -> Self {
         Self {
             destination,
             asset,
@@ -73,14 +71,14 @@ impl TransferOut {
         self.amount
     }
 
-    pub fn get_extra_data(&self) -> &Option<DataElement> {
+    pub fn get_extra_data(&self) -> &Option<PlaintextExtraData> {
         &self.extra_data
     }
 }
 
 
 impl TransferIn {
-    pub fn new(asset: Hash, amount: u64, extra_data: Option<DataElement>) -> Self {
+    pub fn new(asset: Hash, amount: u64, extra_data: Option<PlaintextExtraData>) -> Self {
         Self {
             asset,
             amount,
@@ -96,7 +94,7 @@ impl TransferIn {
         self.amount
     }
 
-    pub fn get_extra_data(&self) -> &Option<DataElement> {
+    pub fn get_extra_data(&self) -> &Option<PlaintextExtraData> {
         &self.extra_data
     }
 }
@@ -192,6 +190,24 @@ pub enum EntryData {
         fee: u64,
         // Nonce used
         nonce: u64,
+    },
+    InvokeContract {
+        // Contract address
+        contract: Hash,
+        // Deposits made
+        deposits: IndexMap<Hash, u64>,
+        // Chunk id invoked
+        chunk_id: u16,
+        // Fee paid
+        fee: u64,
+        // Nonce used
+        nonce: u64
+    },
+    DeployContract {
+        // Fee paid
+        fee: u64,
+        // Nonce used
+        nonce: u64
     }
 }
 
@@ -239,6 +255,26 @@ impl Serializer for EntryData {
                 let fee = reader.read_u64()?;
                 let nonce = reader.read_u64()?;
                 Self::MultiSig { participants, threshold, fee, nonce }
+            },
+            5 => {
+                let contract = reader.read_hash()?;
+                let chunk_id = reader.read_u16()?;
+                let deposits_size = reader.read_u8()? as usize;
+                let mut deposits = IndexMap::new();
+                for _ in 0..deposits_size {
+                    let asset = reader.read_hash()?;
+                    let amount = reader.read_u64()?;
+                    deposits.insert(asset, amount);
+                }
+
+                let fee = reader.read_u64()?;
+                let nonce = reader.read_u64()?;
+                Self::InvokeContract { contract, deposits, chunk_id, fee, nonce }
+            },
+            6 => {
+                let fee = reader.read_u64()?;
+                let nonce = reader.read_u64()?;
+                Self::DeployContract { fee, nonce }
             }
             _ => return Err(ReaderError::InvalidValue)
         }) 
@@ -285,6 +321,24 @@ impl Serializer for EntryData {
                 writer.write_u8(*threshold);
                 writer.write_u64(fee);
                 writer.write_u64(nonce);
+            },
+            Self::InvokeContract { contract, deposits, chunk_id, fee, nonce } => {
+                writer.write_u8(5);
+                writer.write_hash(contract);
+                writer.write_u16(*chunk_id);
+                writer.write_u8(deposits.len() as u8);
+                for (asset, amount) in deposits {
+                    asset.write(writer);
+                    amount.write(writer);
+                }
+
+                writer.write_u64(fee);
+                writer.write_u64(nonce);
+            },
+            Self::DeployContract { fee, nonce } => {
+                writer.write_u8(6);
+                writer.write_u64(fee);
+                writer.write_u64(nonce);
             }
         }
     }
@@ -301,6 +355,12 @@ impl Serializer for EntryData {
             },
             Self::MultiSig { participants, threshold, fee, nonce } => {
                 1 + participants.iter().map(|k| k.size()).sum::<usize>() + threshold.size() + fee.size() + nonce.size()
+            },
+            Self::InvokeContract { contract, deposits, chunk_id, fee, nonce } => {
+                contract.size() + 2 + deposits.iter().map(|(a, b)| a.size() + b.size()).sum::<usize>() + chunk_id.size() + fee.size() + nonce.size()
+            },
+            Self::DeployContract { fee, nonce } => {
+                fee.size() + nonce.size()
             }
         }
     }
@@ -394,6 +454,12 @@ impl TransactionEntry {
                 EntryData::MultiSig { participants, threshold, fee, nonce } => {
                     let participants = participants.into_iter().map(|p| p.to_address(mainnet)).collect();
                     RPCEntryType::MultiSig { participants, threshold, fee, nonce }
+                },
+                EntryData::InvokeContract { contract, deposits, chunk_id, fee, nonce } => {
+                    RPCEntryType::InvokeContract { contract, deposits, chunk_id, fee, nonce }
+                },
+                EntryData::DeployContract { fee, nonce } => {
+                    RPCEntryType::DeployContract { fee, nonce }
                 }
             }
         }
@@ -404,7 +470,7 @@ impl TransactionEntry {
             EntryData::Coinbase { reward } => format!("Coinbase {} XELIS", format_xelis(*reward)),
             EntryData::Burn { asset, amount, fee, nonce } => {
                 let data = storage.get_asset(asset).await?;
-                format!("Fee: {}, Nonce: {} Burn {} of {}", format_xelis(*fee), nonce, format_coin(*amount, data.decimals), asset)
+                format!("Fee: {}, Nonce: {} Burn {} of {}", format_xelis(*fee), nonce, format_coin(*amount, data.get_decimals()), asset)
             },
             EntryData::Incoming { from, transfers } => {
                 let mut str = String::new();
@@ -413,7 +479,7 @@ impl TransactionEntry {
                         str.push_str(&format!("Received {} XELIS from {}", format_xelis(transfer.get_amount()), from.as_address(mainnet)));
                     } else {
                         let data = storage.get_asset(transfer.get_asset()).await?;
-                        str.push_str(&format!("Received {} {} from {}", format_coin(transfer.get_amount(), data.decimals), transfer.get_asset(), from.as_address(mainnet)));
+                        str.push_str(&format!("Received {} {} from {}", format_coin(transfer.get_amount(), data.get_decimals()), transfer.get_asset(), from.as_address(mainnet)));
                     }
                 }
                 str
@@ -425,7 +491,7 @@ impl TransactionEntry {
                         str.push_str(&format!("Sent {} XELIS to {}", format_xelis(transfer.get_amount()), transfer.get_destination().as_address(mainnet)));
                     } else {
                         let data = storage.get_asset(transfer.get_asset()).await?;
-                        str.push_str(&format!("Sent {} {} to {}", format_coin(transfer.get_amount(), data.decimals), transfer.get_asset(), transfer.get_destination().as_address(mainnet)));
+                        str.push_str(&format!("Sent {} {} to {}", format_coin(transfer.get_amount(), data.get_decimals()), transfer.get_asset(), transfer.get_destination().as_address(mainnet)));
                     }
                 }
                 str
@@ -437,6 +503,18 @@ impl TransactionEntry {
                     str.push_str(&format!("{}", participant.as_address(mainnet)));
                 }
                 str
+            },
+            EntryData::InvokeContract { contract, deposits, chunk_id, fee, nonce } => {
+                let mut str = format!("Fee: {}, Nonce: {} ", format_xelis(*fee), nonce);
+                str.push_str(&format!("Invoke contract {} with chunk id {}", contract, chunk_id));
+                for (asset, amount) in deposits {
+                    let data = storage.get_asset(&asset).await?;
+                    str.push_str(&format!("Deposit {} {} to contract", format_coin(*amount, data.get_decimals()), asset));
+                }
+                str
+            },
+            EntryData::DeployContract { fee, nonce } => {
+                format!("Fee: {}, Nonce: {} Deploy contract", format_xelis(*fee), nonce)
             }
         };
 
@@ -492,7 +570,7 @@ impl<'a> Transfer<'a> {
         }
     }
 
-    pub fn get_extra_data(&self) -> &Option<DataElement> {
+    pub fn get_extra_data(&self) -> &Option<PlaintextExtraData> {
         match self {
             Transfer::In(t) => &t.extra_data,
             Transfer::Out(t) => &t.extra_data

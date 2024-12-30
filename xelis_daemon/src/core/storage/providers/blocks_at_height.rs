@@ -73,7 +73,7 @@ impl BlocksAtHeightProvider for SledStorage {
 
         // Delete the height if there is no blocks present anymore
         if tips.is_empty() {
-            Self::delete_data_without_reading(self.snapshot.as_mut(), &self.blocks_at_height, &height.to_be_bytes())?;
+            Self::remove_from_disk_without_reading(self.snapshot.as_mut(), &self.blocks_at_height, &height.to_be_bytes())?;
         } else {
             self.set_blocks_at_height(tips, height).await?;
         }

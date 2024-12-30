@@ -67,6 +67,8 @@ pub fn register_methods(handler: &mut RPCHandler<Arc<Wallet>>) {
     handler.register_method("estimate_fees", async_handler!(estimate_fees));
     handler.register_method("estimate_extra_data_size", async_handler!(estimate_extra_data_size));
     handler.register_method("network_info", async_handler!(network_info));
+    handler.register_method("decrypt_extra_data", async_handler!(decrypt_extra_data));
+    handler.register_method("decrypt_ciphertext", async_handler!(decrypt_ciphertext));
 
     // These functions allow to have an encrypted DB directly in the wallet storage
     // You can retrieve keys, values, have differents trees, and store values
@@ -191,6 +193,28 @@ async fn network_info(context: &Context, body: Value) -> Result<Value, InternalR
     }
 }
 
+// Decrypt extra data using the wallet private key
+async fn decrypt_extra_data(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
+    let params: DecryptExtraDataParams = parse_params(body)?;
+
+    let wallet: &Arc<Wallet> = context.get()?;
+    let data = wallet.decrypt_extra_data(params.extra_data.into_owned(), params.role)
+        .context("Error while decrypting extra data")?;
+
+    Ok(json!(data))
+}
+
+async fn decrypt_ciphertext(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
+    let params: DecryptCiphertextParams = parse_params(body)?;
+
+    let wallet: &Arc<Wallet> = context.get()?;
+    let decompressed = params.ciphertext.decompress().context("Error while decompressing ciphertext")?;
+    let amount = wallet.decrypt_ciphertext(decompressed).await
+        .context("Error while decrypting ciphertext")?;
+
+    Ok(json!(amount))
+}
+
 // Rescan the wallet from the provided topoheight (or from the beginning if not provided)
 async fn rescan(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: RescanParams = parse_params(body)?;
@@ -244,7 +268,7 @@ async fn get_asset_precision(context: &Context, body: Value) -> Result<Value, In
     let wallet: &Arc<Wallet> = context.get()?;
     let storage = wallet.get_storage().read().await;
     let data = storage.get_asset(&params.asset).await?;
-    Ok(json!(data.decimals))
+    Ok(json!(data.get_decimals()))
 }
 
 // Retrieve all assets tracked by the wallet
@@ -305,7 +329,6 @@ async fn build_transaction(context: &Context, body: Value) -> Result<Value, Inte
     let version = if let Some(v) = params.tx_version {
         v
     } else {
-        let storage = wallet.get_storage().read().await;
         storage.get_tx_version().await?
     };
 
@@ -483,7 +506,7 @@ async fn finalize_unsigned_transaction(context: &Context, body: Value) -> Result
         unsigned.set_multisig(multisig);
     }
 
-    let tx = unsigned.finalize(keypair);
+    let tx = unsigned.0.finalize(keypair);
     
     let mut storage = wallet.get_storage().write().await;
     let mut state = TransactionBuilderState::from_tx(&storage, &tx, wallet.get_network().is_mainnet()).await?;

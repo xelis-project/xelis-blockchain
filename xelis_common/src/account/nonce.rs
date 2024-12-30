@@ -45,13 +45,13 @@ impl VersionedNonce {
 
 impl Serializer for VersionedNonce {
     fn write(&self, writer: &mut Writer) {
-        self.nonce.write(writer);
         self.previous_topoheight.write(writer);
+        self.nonce.write(writer);
     }
 
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let nonce = Nonce::read(reader)?;
         let previous_topoheight = Option::read(reader)?;
+        let nonce = Nonce::read(reader)?;
 
         Ok(Self {
             nonce,
@@ -60,7 +60,7 @@ impl Serializer for VersionedNonce {
     }
 
     fn size(&self) -> usize {
-        self.nonce.size() + if let Some(topoheight) = self.previous_topoheight { topoheight.size() } else { 0 }
+        self.nonce.size() + self.previous_topoheight.size()
     }
 }
 

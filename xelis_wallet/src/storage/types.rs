@@ -53,32 +53,7 @@ pub struct TxCache {
     pub reference: Reference,
     // Last transaction hash created
     // This is used to determine if we should erase the last unconfirmed balance or not
-    pub last_tx_hash_created: Hash,
-}
-
-// A registered asset in the wallet DB
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Asset {
-    // Asset name given by the user
-    pub name: Option<String>,
-    // asset decimals
-    pub decimals: u8,
-}
-
-impl Serializer for Asset {
-    fn write(&self, writer: &mut Writer) {
-        self.name.write(writer);
-        self.decimals.write(writer);
-    }
-
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let name = Option::read(reader)?;
-        let decimals = u8::read(reader)?;
-        Ok(Self {
-            name,
-            decimals
-        })
-    }
+    pub last_tx_hash_created: Option<Hash>,
 }
 
 // A multisig state in the wallet DB

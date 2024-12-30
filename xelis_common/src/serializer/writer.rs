@@ -1,13 +1,15 @@
 use crate::crypto::Hash;
 
-pub struct Writer {
-    bytes: Vec<u8>
+pub struct Writer<'a> {
+    bytes: &'a mut Vec<u8>,
+    len: usize,
 }
 
-impl Writer {
-    pub fn new() -> Self {
+impl<'a> Writer<'a> {
+    pub fn new(bytes: &'a mut Vec<u8>) -> Self {
         Self {
-            bytes: Vec::new()
+            len: bytes.len(),
+            bytes
         }
     }
 
@@ -42,7 +44,8 @@ impl Writer {
         self.bytes.extend(value.to_be_bytes());
     }
 
-    pub fn write_string(&mut self, value: &String) {
+    // max 255 bytes
+    pub fn write_string(&mut self, value: &str) {
         self.bytes.push(value.len() as u8);
         self.bytes.extend(value.as_bytes());
     }
@@ -71,14 +74,14 @@ impl Writer {
     }
 
     pub fn total_write(&self) -> usize {
-        self.bytes.len()
+        self.bytes.len() - self.len
+    }
+
+    pub fn as_mut_bytes(&mut self) -> &mut Vec<u8> {
+        &mut self.bytes
     }
 
     pub fn as_bytes(&self) -> &[u8] {
         &self.bytes
-    }
-
-    pub fn bytes(self) -> Vec<u8> {
-        self.bytes
     }
 }

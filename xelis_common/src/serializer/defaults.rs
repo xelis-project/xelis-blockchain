@@ -244,6 +244,20 @@ impl<T: Serializer + Clone> Serializer for Cow<'_, T> {
     }
 }
 
+impl Serializer for Cow<'_, str> {
+    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
+        Ok(Cow::Owned(reader.read_string()?))
+    }
+
+    fn write(&self, writer: &mut Writer) {
+        writer.write_string(self);
+    }
+
+    fn size(&self) -> usize {
+        self.len() + 1
+    }
+}
+
 impl<T: Serializer> Serializer for Option<T> {
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
         if reader.read_bool()? {
@@ -532,5 +546,19 @@ impl<K: Serializer + std::hash::Hash + Eq, V: Serializer> Serializer for IndexMa
             size += key.size() + value.size();
         }
         size
+    }
+}
+
+impl<T: Serializer> Serializer for Box<T> {
+    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
+        Ok(Box::new(T::read(reader)?))
+    }
+
+    fn write(&self, writer: &mut Writer) {
+        self.as_ref().write(writer);
+    }
+
+    fn size(&self) -> usize {
+        self.as_ref().size()
     }
 }

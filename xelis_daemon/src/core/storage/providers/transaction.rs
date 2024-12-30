@@ -56,7 +56,7 @@ impl TransactionProvider for SledStorage {
 
     async fn get_transaction_size(&self, hash: &Hash) -> Result<usize, BlockchainError> {
         trace!("get transaction size for hash {}", hash);
-        self.get_len_for(&self.transactions, hash.as_bytes())
+        self.get_size_from_disk(&self.transactions, hash.as_bytes())
     }
 
     async fn has_transaction(&self, hash: &Hash) -> Result<bool, BlockchainError> {

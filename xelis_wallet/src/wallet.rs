@@ -24,9 +24,9 @@ use xelis_common::{
         },
         DataElement
     },
-    asset::AssetWithData,
+    asset::RPCAssetData,
     crypto::{
-        elgamal::{Ciphertext, DecryptHandle},
+        elgamal::Ciphertext,
         Address,
         Hashable,
         KeyPair,
@@ -43,7 +43,7 @@ use xelis_common::{
             UnsignedTransaction
         },
         TxVersion,
-        extra_data::UnknownExtraDataFormat,
+        extra_data::{UnknownExtraDataFormat, PlaintextExtraData},
         Reference,
         Role,
         Transaction
@@ -156,12 +156,16 @@ pub enum Event {
     // When a balance change occurs on wallet
     BalanceChanged(BalanceChanged),
     // When a new asset is added to wallet
-    NewAsset(AssetWithData),
+    NewAsset(RPCAssetData<'static>),
     // When a rescan happened (because of user request or DAG reorg/fork)
     // Value is topoheight until it deleted transactions
     // Next sync will restart at this topoheight
     Rescan {
         start_topoheight: u64   
+    },
+    // Called when the `sync_new_blocks` is done
+    HistorySynced {
+        topoheight: u64
     },
     // Wallet is now in online mode
     Online,
@@ -177,6 +181,7 @@ impl Event {
             Event::BalanceChanged(_) => NotifyEvent::BalanceChanged,
             Event::NewAsset(_) => NotifyEvent::NewAsset,
             Event::Rescan { .. } => NotifyEvent::Rescan,
+            Event::HistorySynced { .. } => NotifyEvent::HistorySynced,
             Event::Online => NotifyEvent::Online,
             Event::Offline => NotifyEvent::Offline
         }
@@ -617,9 +622,9 @@ impl Wallet {
     }
 
     // Decrypt the extra data from a transfer
-    pub fn decrypt_extra_data(&self, cipher: UnknownExtraDataFormat, handle: &DecryptHandle, role: Role) -> Result<DataElement, WalletError> {
+    pub fn decrypt_extra_data(&self, cipher: UnknownExtraDataFormat, role: Role) -> Result<PlaintextExtraData, WalletError> {
         trace!("decrypt extra data");
-        cipher.decrypt(&self.inner.keypair.get_private_key(), handle, role).map_err(|_| WalletError::CiphertextDecode)
+        cipher.decrypt_v2(&self.inner.keypair.get_private_key(), role).map_err(|_| WalletError::CiphertextDecode)
     }
 
     // Create a transaction with the given transaction type and fee
@@ -889,7 +894,7 @@ impl Wallet {
             match tx.get_entry() {
                 EntryData::Burn { asset, amount, fee, nonce } => {
                     let data = storage.get_asset(&asset).await?;
-                    writeln!(w, "{},{},{},{},{},-,{},{},{}", datetime_from_timestamp(tx.get_timestamp())?, tx.get_topoheight(), tx.get_hash(), "Burn", data.name.unwrap_or_else(|| asset.to_string()), format_coin(*amount, data.decimals), format_xelis(*fee), nonce).context("Error while writing csv line")?;
+                    writeln!(w, "{},{},{},{},{},-,{},{},{}", datetime_from_timestamp(tx.get_timestamp())?, tx.get_topoheight(), tx.get_hash(), "Burn", data.get_name(), format_coin(*amount, data.get_decimals()), format_xelis(*fee), nonce).context("Error while writing csv line")?;
                 },
                 EntryData::Coinbase { reward } => {
                     writeln!(w, "{},{},{},{},{},-,{},-,-", datetime_from_timestamp(tx.get_timestamp())?, tx.get_topoheight(), tx.get_hash(), "Coinbase", "XELIS", format_xelis(*reward)).context("Error while writing csv line")?;
@@ -897,19 +902,31 @@ impl Wallet {
                 EntryData::Incoming { from, transfers } => {
                     for transfer in transfers {
                         let data = storage.get_asset(&transfer.get_asset()).await?;
-                        writeln!(w, "{},{},{},{},{},{},{},-,-", datetime_from_timestamp(tx.get_timestamp())?, tx.get_topoheight(), tx.get_hash(), "Incoming", from.as_address(self.get_network().is_mainnet()), data.name.unwrap_or_else(|| transfer.get_asset().to_string()), format_coin(transfer.get_amount(), data.decimals)).context("Error while writing csv line")?;
+                        writeln!(w, "{},{},{},{},{},{},{},-,-", datetime_from_timestamp(tx.get_timestamp())?, tx.get_topoheight(), tx.get_hash(), "Incoming", from.as_address(self.get_network().is_mainnet()), data.get_name(), format_coin(transfer.get_amount(), data.get_decimals())).context("Error while writing csv line")?;
                     }
                 },
                 EntryData::Outgoing { transfers, fee, nonce } => {
                     for transfer in transfers {
                         let data = storage.get_asset(&transfer.get_asset()).await?;
-                        writeln!(w, "{},{},{},{},{},{},{},{},{}", datetime_from_timestamp(tx.get_timestamp())?, tx.get_topoheight(), tx.get_hash(), "Outgoing", transfer.get_destination().as_address(self.get_network().is_mainnet()), data.name.unwrap_or_else(|| transfer.get_asset().to_string()), format_coin(transfer.get_amount(), data.decimals), format_xelis(*fee), nonce).context("Error while writing csv line")?;
+                        writeln!(w, "{},{},{},{},{},{},{},{},{}", datetime_from_timestamp(tx.get_timestamp())?, tx.get_topoheight(), tx.get_hash(), "Outgoing", transfer.get_destination().as_address(self.get_network().is_mainnet()), data.get_name(), format_coin(transfer.get_amount(), data.get_decimals()), format_xelis(*fee), nonce).context("Error while writing csv line")?;
                     }
                 },
                 EntryData::MultiSig { participants, threshold, fee, nonce } => {
                     let str_participants: Vec<String> = participants.iter().map(|p| p.as_address(self.get_network().is_mainnet()).to_string()).collect();
                     writeln!(w, "{},{},{},{},{},{},-,{},{}", datetime_from_timestamp(tx.get_timestamp())?, tx.get_topoheight(), tx.get_hash(), "MultiSig", str_participants.join("|"), threshold, format_xelis(*fee), nonce).context("Error while writing csv line")?;
-                }
+                },
+                EntryData::InvokeContract { contract, deposits, chunk_id, fee, nonce } => {
+                    let mut str_deposits = Vec::new();
+                    for (asset, amount) in deposits {
+                        let data = storage.get_asset(&asset).await?;
+                        str_deposits.push(format!("{}:{}", data.get_name(), format_coin(*amount, data.get_decimals())));
+                    }
+
+                    writeln!(w, "{},{},{},{},{},{},{},{},{}", datetime_from_timestamp(tx.get_timestamp())?, tx.get_topoheight(), tx.get_hash(), "InvokeContract", contract, str_deposits.join("|"), chunk_id, format_xelis(*fee), nonce).context("Error while writing csv line")?;
+                },
+                EntryData::DeployContract { fee, nonce } => {
+                    writeln!(w, "{},{},{},{},-,-,-,{},{}", datetime_from_timestamp(tx.get_timestamp())?, tx.get_topoheight(), tx.get_hash(), "DeployContract", format_xelis(*fee), nonce).context("Error while writing csv line")?;
+                },
             }
         }
     

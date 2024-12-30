@@ -29,17 +29,23 @@ use xelis_common::{
             Arg,
             ArgType,
             ArgumentManager
-        }, command::{
+        },
+        command::{
             Command,
             CommandError,
             CommandHandler,
             CommandManager
-        }, Color, LogLevel, ModuleConfig, Prompt, PromptError
+        },
+        Color,
+        LogLevel,
+        ModuleConfig,
+        Prompt,
+        PromptError
     },
     serializer::Serializer,
     tokio,
     transaction::{
-        builder::{FeeBuilder, TransactionTypeBuilder, TransferBuilder},
+        builder::{FeeBuilder, MultiSigBuilder, TransactionTypeBuilder, TransferBuilder},
         multisig::{MultiSig, SignatureId},
         BurnPayload,
         MultiSigPayload,
@@ -960,7 +966,7 @@ async fn list_assets(manager: &CommandManager, mut args: ArgumentManager) -> Res
 
     manager.message(format!("Assets (page {}/{}):", page, max_pages));
     for (asset, data) in assets {
-        manager.message(format!("{} ({} decimals): {}", asset, data.decimals, data.name.as_deref().unwrap_or("no name set")));
+        manager.message(format!("{} ({} decimals): {}", asset, data.get_decimals(), data.get_name()));
     }
 
     Ok(())
@@ -1081,7 +1087,7 @@ async fn transfer(manager: &CommandManager, mut args: ArgumentManager) -> Result
     let (max_balance, decimals, multisig) = {
         let storage = wallet.get_storage().read().await;
         let balance = storage.get_plaintext_balance_for(&asset).await.unwrap_or(0);
-        let decimals = storage.get_asset(&asset).await?.decimals;
+        let decimals = storage.get_asset(&asset).await?.get_decimals();
         let multisig = storage.get_multisig_state().await.context("Error while reading multisig state")?;
         (balance, decimals, multisig)
     };
@@ -1156,7 +1162,7 @@ async fn transfer_all(manager: &CommandManager, mut args: ArgumentManager) -> Re
     let (mut amount, decimals, multisig) = {
         let storage = wallet.get_storage().read().await;
         let amount = storage.get_plaintext_balance_for(&asset).await.unwrap_or(0);
-        let decimals = storage.get_asset(&asset).await?.decimals;
+        let decimals = storage.get_asset(&asset).await?.get_decimals();
         let multisig = storage.get_multisig_state().await
             .context("Error while reading multisig state")?;
         (amount, decimals, multisig)
@@ -1222,7 +1228,7 @@ async fn burn(manager: &CommandManager, mut args: ArgumentManager) -> Result<(),
     let (max_balance, decimals, multisig) = {
         let storage = wallet.get_storage().read().await;
         let balance = storage.get_plaintext_balance_for(&asset).await.unwrap_or(0);
-        let decimals = storage.get_asset(&asset).await?.decimals;
+        let decimals = storage.get_asset(&asset).await?.get_decimals();
         let multisig = storage.get_multisig_state().await
             .context("Error while reading multisig state")?;
         (balance, decimals, multisig)
@@ -1285,12 +1291,12 @@ async fn balance(manager: &CommandManager, mut arguments: ArgumentManager) -> Re
         let asset = arguments.get_value("asset")?.to_hash()?;
         let balance = storage.get_plaintext_balance_for(&asset).await?;
         let data = storage.get_asset(&asset).await?;
-        manager.message(format!("Balance for asset {}: {}", asset, format_coin(balance, data.decimals)));
+        manager.message(format!("Balance for asset {}: {}", asset, format_coin(balance, data.get_decimals())));
     } else {
         for (asset, data) in storage.get_assets_with_data().await? {
             let balance = storage.get_plaintext_balance_for(&asset).await.unwrap_or(0);
             if balance > 0 {
-                manager.message(format!("Balance for asset {}: {}", asset, format_coin(balance, data.decimals)));
+                manager.message(format!("Balance for asset {}: {}", asset, format_coin(balance, data.get_decimals())));
             }
         }
     }
@@ -1573,7 +1579,7 @@ async fn multisig_setup(manager: &CommandManager, mut args: ArgumentManager) -> 
             return Ok(())
         }
 
-        let payload = MultiSigPayload {
+        let payload = MultiSigBuilder {
             participants: IndexSet::new(),
             threshold: 0
         };
@@ -1609,18 +1615,22 @@ async fn multisig_setup(manager: &CommandManager, mut args: ArgumentManager) -> 
             return Err(CommandError::InvalidArgument("Participant address must be on the same network".to_string()));
         }
 
+        if !address.is_normal() {
+            return Err(CommandError::InvalidArgument("Participant address must be a normal address".to_string()));
+        }
+
         if address.get_public_key() == wallet.get_public_key() {
             return Err(CommandError::InvalidArgument("Participant address cannot be the same as the wallet address".to_string()));
         }
 
-        if !keys.insert(address.to_public_key()) {
+        if !keys.insert(address) {
             return Err(CommandError::InvalidArgument("Participant address already exists".to_string()));
         }
     }
 
     manager.message(format!("MultiSig payload ({} participants with threshold at {}):", participants, threshold));
     for key in keys.iter() {
-        manager.message(format!("- {}", key.as_address(mainnet)));
+        manager.message(format!("- {}", key));
     }
 
     if !args.get_flag("confirm")? && !prompt.ask_confirmation().await.context("Error while confirming action")? {
@@ -1634,7 +1644,7 @@ async fn multisig_setup(manager: &CommandManager, mut args: ArgumentManager) -> 
         let storage = wallet.get_storage().read().await;
         storage.get_multisig_state().await.context("Error while reading multisig state")?
     };
-    let payload = MultiSigPayload {
+    let payload = MultiSigBuilder {
         participants: keys,
         threshold
     };

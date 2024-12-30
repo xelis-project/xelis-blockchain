@@ -1,11 +1,9 @@
 mod providers;
 mod sled;
-mod versioned_type;
 
 pub use self::{
     sled::*,
-    providers::*,
-    versioned_type::*,
+    providers::*
 };
 
 use std::{collections::HashSet, sync::Arc};
@@ -17,6 +15,7 @@ use xelis_common::{
         BlockHeader,
         TopoHeight,
     },
+    contract::ContractProvider as ContractInfoProvider,
     crypto::Hash,
     transaction::Transaction,
 };
@@ -30,53 +29,13 @@ pub trait Storage:
     BlockExecutionOrderProvider + DagOrderProvider + PrunedTopoheightProvider
     + NonceProvider + AccountProvider + ClientProtocolProvider + BlockDagProvider
     + MerkleHashProvider + NetworkProvider + MultiSigProvider + TipsProvider
-    + CommitPointProvider + Sync + Send + 'static {
+    + CommitPointProvider + ContractProvider + ContractDataProvider + ContractOutputsProvider
+    + ContractInfoProvider + ContractBalanceProvider + VersionedProvider + Sync + Send + 'static {
     // Clear caches if exists
     async fn clear_caches(&mut self) -> Result<(), BlockchainError>;
 
     // delete block at topoheight, and all pointers (hash_at_topo, topo_by_hash, reward, supply, diff, cumulative diff...)
     async fn delete_block_at_topoheight(&mut self, topoheight: TopoHeight) -> Result<(Hash, Arc<BlockHeader>, Vec<(Hash, Arc<Transaction>)>), BlockchainError>;
-
-    // delete versioned balances at topoheight
-    async fn delete_versioned_balances_at_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError>;
-
-    // delete versioned nonces at topoheight
-    async fn delete_versioned_nonces_at_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError>;
-
-    // delete versioned multisig at topoheight
-    async fn delete_versioned_multisig_at_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError>;
-
-    // delete versioned balances above topoheight
-    async fn delete_versioned_balances_above_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError>;
-
-    // delete versioned multisig above topoheight
-    async fn delete_versioned_multisig_above_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError>;
-
-    // delete versioned nonces above topoheight
-    async fn delete_versioned_nonces_above_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError>;
-
-    // delete account registrations above topoheight
-    async fn delete_registrations_above_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError>;
-
-    // delete account registrations below topoheight
-    async fn delete_registrations_below_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError>;
-
-    // delete versioned balances below topoheight
-    async fn delete_versioned_balances_below_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError>;
-
-    // delete versioned nonces below topoheight
-    async fn delete_versioned_nonces_below_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError>;
-
-    // delete all versions of balances under the specified topoheight
-    // for those who don't have more recents, set it to the topoheight
-    // for those above it, cut the chain by deleting the previous topoheight when it's going under
-    async fn create_snapshot_balances_at_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError>;
-
-    // same as above but for nonces
-    async fn create_snapshot_nonces_at_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError>;
-
-    // same as above but for registrations
-    async fn create_snapshot_registrations_at_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError>;
 
     // Count is the number of blocks (topoheight) to rewind
     async fn pop_blocks(&mut self, mut height: u64, mut topoheight: TopoHeight, count: u64, stable_height: u64) -> Result<(u64, TopoHeight, Vec<(Hash, Arc<Transaction>)>), BlockchainError>;
@@ -110,4 +69,7 @@ pub trait Storage:
 
     // Get all the unexecuted transactions
     async fn get_unexecuted_transactions(&self) -> Result<IndexSet<Hash>, BlockchainError>;
+
+    // Estimate the size of the DB in bytes
+    async fn estimate_size(&self) -> Result<u64, BlockchainError>;
 }

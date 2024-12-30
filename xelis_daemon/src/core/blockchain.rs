@@ -12,8 +12,11 @@ use xelis_common::{
             StableHeightChangedEvent,
             StableTopoHeightChangedEvent,
             TransactionExecutedEvent,
-            TransactionResponse
+            TransactionResponse,
+            NewContractEvent,
+            InvokeContractEvent,
         },
+        RPCContractOutput,
         RPCTransaction
     },
     asset::AssetData,
@@ -59,8 +62,10 @@ use xelis_common::{
     },
     utils::{calculate_tx_fee, format_xelis},
     tokio::spawn_task,
-    varuint::VarUint
+    varuint::VarUint,
+    contract::build_environment,
 };
+use xelis_vm::Environment;
 use crate::{
     config::{
         get_genesis_block_hash, get_hex_genesis_block, get_minimum_difficulty,
@@ -133,6 +138,8 @@ pub struct Blockchain<S: Storage> {
     mempool: RwLock<Mempool>,
     // storage to retrieve/add blocks
     storage: RwLock<S>,
+    // Contract environment stdlib
+    environment: Environment,
     // P2p module
     p2p: RwLock<Option<Arc<P2pServer<S>>>>,
     // RPC module
@@ -158,9 +165,6 @@ pub struct Blockchain<S: Storage> {
     tip_work_score_cache: Mutex<LruCache<(Hash, Hash, u64), (HashSet<Hash>, CumulativeDifficulty)>>,
     // using base hash, current tip hash and base height, this cache is used to store the DAG order
     full_order_cache: Mutex<LruCache<(Hash, Hash, u64), IndexSet<Hash>>>,
-    // cache to store the sync blocks
-    // key is (hash, height), only sync blocks are stored
-    sync_blocks_cache: Mutex<LruCache<(Hash, u64), ()>>,
     // auto prune mode if enabled, will delete all blocks every N and keep only N top blocks (topoheight based)
     auto_prune_keep_n_blocks: Option<u64>
 }
@@ -207,6 +211,8 @@ impl<S: Storage> Blockchain<S> {
             (height, topoheight)
         } else { (0, 0) };
 
+        let environment = build_environment::<S>().build();
+
         info!("Initializing chain...");
         let blockchain = Self {
             height: AtomicU64::new(height),
@@ -215,6 +221,7 @@ impl<S: Storage> Blockchain<S> {
             stable_topoheight: AtomicU64::new(0),
             mempool: RwLock::new(Mempool::new(network)),
             storage: RwLock::new(storage),
+            environment,
             p2p: RwLock::new(None),
             rpc: RwLock::new(None),
             difficulty: Mutex::new(GENESIS_BLOCK_DIFFICULTY),
@@ -225,7 +232,6 @@ impl<S: Storage> Blockchain<S> {
             tip_work_score_cache: Mutex::new(LruCache::new(NonZeroUsize::new(1024).unwrap())),
             common_base_cache: Mutex::new(LruCache::new(NonZeroUsize::new(1024).unwrap())),
             full_order_cache: Mutex::new(LruCache::new(NonZeroUsize::new(1024).unwrap())),
-            sync_blocks_cache: Mutex::new(LruCache::new(NonZeroUsize::new(1024).unwrap())),
             auto_prune_keep_n_blocks: config.auto_prune_keep_n_blocks,
             skip_block_template_txs_verification: config.skip_block_template_txs_verification
         };
@@ -338,6 +344,11 @@ impl<S: Storage> Blockchain<S> {
         self.skip_pow_verification
     }
 
+    // get the environment stdlib for contract execution
+    pub fn get_contract_environment(&self) -> &Environment {
+        &self.environment
+    }
+
     // Stop all blockchain modules
     // Each module is stopped in its own context
     // So no deadlock occurs in case they are linked
@@ -379,7 +390,6 @@ impl<S: Storage> Blockchain<S> {
         self.tip_work_score_cache.lock().await.clear();
         self.common_base_cache.lock().await.clear();
         self.full_order_cache.lock().await.clear();
-        self.sync_blocks_cache.lock().await.clear();
         debug!("Caches are now cleared!");
     }
 
@@ -423,7 +433,11 @@ impl<S: Storage> Blockchain<S> {
 
         // register XELIS asset
         debug!("Registering XELIS asset: {} at topoheight 0", XELIS_ASSET);
-        storage.add_asset(&XELIS_ASSET, AssetData::new(0, COIN_DECIMALS)).await?;
+        storage.add_asset(
+            &XELIS_ASSET,
+            0,
+            AssetData::new(COIN_DECIMALS, "XELIS".to_owned(), Some(MAXIMUM_SUPPLY))
+        ).await?;
 
         let (genesis_block, genesis_hash) = if let Some(genesis_block) = get_hex_genesis_block(&self.network) {
             info!("De-serializing genesis block for network {}...", self.network);
@@ -518,28 +532,25 @@ impl<S: Storage> Blockchain<S> {
         }
 
         // find new stable point based on a sync block under the limit topoheight
+        let start = Instant::now();
         let located_sync_topoheight = self.locate_nearest_sync_block_for_topoheight(storage, topoheight, self.get_height()).await?;
-        debug!("Located sync topoheight found: {}", located_sync_topoheight);
+        debug!("Located sync topoheight found {} in {}ms", located_sync_topoheight, start.elapsed().as_millis());
 
         if located_sync_topoheight > last_pruned_topoheight {
-            // create snapshots of balances to located_sync_topoheight
-            storage.create_snapshot_balances_at_topoheight(located_sync_topoheight).await?;
-            storage.create_snapshot_nonces_at_topoheight(located_sync_topoheight).await?;
-            storage.create_snapshot_registrations_at_topoheight(located_sync_topoheight).await?;
-
             // delete all blocks until the new topoheight
+            let start = Instant::now();
             for topoheight in last_pruned_topoheight..located_sync_topoheight {
                 trace!("Pruning block at topoheight {}", topoheight);
                 // delete block
                 let _ = storage.delete_block_at_topoheight(topoheight).await?;
             }
+            debug!("Pruned blocks until topoheight {} in {}ms", located_sync_topoheight, start.elapsed().as_millis());
 
+            let start = Instant::now();
             // delete balances for all assets
-            storage.delete_versioned_balances_below_topoheight(located_sync_topoheight).await?;
-            // delete nonces versions
-            storage.delete_versioned_nonces_below_topoheight(located_sync_topoheight).await?;
-            // Also delete registrations
-            storage.delete_registrations_below_topoheight(located_sync_topoheight).await?;
+            // TODO: this is currently going through ALL data, we need to only detect changes made in last..located
+            storage.delete_versioned_data_below_topoheight(located_sync_topoheight, true).await?;
+            debug!("Pruned versioned data until topoheight {} in {}ms", located_sync_topoheight, start.elapsed().as_millis());
 
             // Update the pruned topoheight
             storage.set_pruned_topoheight(located_sync_topoheight).await?;
@@ -645,13 +656,6 @@ impl<S: Storage> Blockchain<S> {
         P: DifficultyProvider + DagOrderProvider + BlocksAtHeightProvider + PrunedTopoheightProvider
     {
         trace!("is sync block {} at height {}", hash, height);
-        let mut cache = self.sync_blocks_cache.lock().await;
-        let cache_key = (hash.clone(), height);
-        if cache.contains(&cache_key) {
-            trace!("cache hit for sync block {} at height {}", hash, height);
-            return Ok(true)
-        }
-
         let block_height = provider.get_height_for_block_hash(hash).await?;
         if block_height == 0 { // genesis block is a sync block
             trace!("Block {} at height {} is a sync block because it can only be the genesis block", hash, block_height);
@@ -668,9 +672,8 @@ impl<S: Storage> Blockchain<S> {
         if let Some(pruned_topo) = provider.get_pruned_topoheight().await? {
             let topoheight = provider.get_topo_height_for_hash(hash).await?;
             if pruned_topo == topoheight {
-                trace!("Block {} at height {} is not a sync block, it is pruned", hash, block_height);
-                cache.put(cache_key, ());
-
+                // We only prune at sync block, if block is pruned, it is a sync block
+                trace!("Block {} at height {} is a sync block, it is pruned", hash, block_height);
                 return Ok(true)
             }
         }
@@ -683,14 +686,10 @@ impl<S: Storage> Blockchain<S> {
         // }
 
         // if block is not alone at its height and they are ordered (not orphaned), it can't be a sync block
-        let mut blocks_in_main_chain = 0;
-        for hash in tips_at_height {
-            if provider.is_block_topological_ordered(&hash).await {
-                blocks_in_main_chain += 1;
-                if blocks_in_main_chain > 1 {
-                    trace!("Block {} at height {} is not a sync block, it has more than 1 block at its height", hash, block_height);
-                    return Ok(false)
-                }
+        for hash_at_height in tips_at_height {
+            if *hash != hash_at_height && provider.is_block_topological_ordered(&hash_at_height).await {
+                trace!("Block {} at height {} is not a sync block, it has more than 1 block at its height", hash, block_height);
+                return Ok(false)
             }
         }
 
@@ -722,9 +721,7 @@ impl<S: Storage> Blockchain<S> {
             }
         }
 
-        // save in cache
         trace!("block {} at height {} is a sync block", hash, block_height);
-        cache.put(cache_key, ());
 
         Ok(true)
     }
@@ -1316,7 +1313,7 @@ impl<S: Storage> Blockchain<S> {
             }
 
             let version = get_version_at_height(self.get_network(), self.get_height());
-            mempool.add_tx(storage, stable_topoheight, current_topoheight, hash.clone(), tx.clone(), tx_size, version).await?;
+            mempool.add_tx(storage, &self.environment, stable_topoheight, current_topoheight, hash.clone(), tx.clone(), tx_size, version).await?;
         }
 
         if broadcast {
@@ -1515,7 +1512,7 @@ impl<S: Storage> Blockchain<S> {
         let topoheight = self.get_topo_height();
 
         trace!("build chain state for block template");
-        let mut chain_state = ChainState::new(storage, stable_topoheight, topoheight, block.get_version());
+        let mut chain_state = ChainState::new(storage, &self.environment, stable_topoheight, topoheight, block.get_version());
 
         if !tx_selector.is_empty() {
             let mut failed_sources = HashSet::new();
@@ -1541,7 +1538,7 @@ impl<S: Storage> Blockchain<S> {
                         continue;
                     }
 
-                    if let Err(e) = tx.verify(&mut chain_state).await {
+                    if let Err(e) = tx.verify(&hash, &mut chain_state).await {
                         warn!("TX {} ({}) is not valid for mining: {}", hash, source.as_address(self.network.is_mainnet()), e);
                         failed_sources.insert(source);
                         continue;
@@ -1745,7 +1742,7 @@ impl<S: Storage> Blockchain<S> {
             }
 
             trace!("verifying {} TXs in block {}", txs_len, block_hash);
-            let mut chain_state = ChainState::new(storage, self.get_stable_topoheight(), current_topoheight, version);
+            let mut chain_state = ChainState::new(storage, &self.environment, self.get_stable_topoheight(), current_topoheight, version);
             // Cache to retrieve only one time all TXs hashes until stable height
             let mut all_parents_txs: Option<HashSet<Hash>> = None;
 
@@ -1815,11 +1812,11 @@ impl<S: Storage> Blockchain<S> {
                     }
                 }
 
-                batch.push(tx);
+                batch.push((tx, tx_hash));
             }
 
             if !batch.is_empty() {
-                debug!("proof verifications of TXs ({}) in block {}", batch.iter().map(|v| v.hash().to_string()).collect::<Vec<String>>().join(","), block_hash);
+                debug!("proof verifications of TXs ({}) in block {}", batch.iter().map(|(_, hash)| hash.to_string()).collect::<Vec<String>>().join(","), block_hash);
                 // Verify all valid transactions in one batch
                 Transaction::verify_batch(batch.as_slice(), &mut chain_state).await?;
             }
@@ -1928,7 +1925,8 @@ impl<S: Storage> Blockchain<S> {
                     for tx_hash in block.get_txs_hashes() {
                         if storage.is_tx_executed_in_block(tx_hash, &hash_at_topo)? {
                             trace!("Removing execution of {}", tx_hash);
-                            storage.remove_tx_executed(&tx_hash)?;
+                            storage.remove_tx_executed(tx_hash)?;
+                            storage.delete_contract_outputs_for_tx(tx_hash).await?;
 
                             if is_orphaned {
                                 orphaned_transactions.insert(tx_hash.clone());
@@ -1937,10 +1935,7 @@ impl<S: Storage> Blockchain<S> {
                     }
 
                     // Delete changes made by this block
-                    storage.delete_versioned_balances_at_topoheight(topoheight).await?;
-                    storage.delete_versioned_nonces_at_topoheight(topoheight).await?;
-                    storage.delete_versioned_multisig_at_topoheight(topoheight).await?;
-                    storage.delete_registrations_at_topoheight(topoheight).await?;
+                    storage.delete_versioned_data_at_topoheight(topoheight).await?;
 
                     topoheight += 1;
                 }
@@ -2015,9 +2010,17 @@ impl<S: Storage> Blockchain<S> {
                 let mut total_fees = 0;
                 // Chain State used for the verification
                 trace!("building chain state to execute TXs in block {}", block_hash);
-                let mut chain_state = ApplicableChainState::new(storage, base_topo_height, highest_topo, version);
+                let mut chain_state = ApplicableChainState::new(
+                    storage,
+                    &self.environment,
+                    base_topo_height,
+                    highest_topo,
+                    version,
+                    past_burned_supply,
+                    &hash,
+                    &block,
+                );
 
-                let mut burned_supply = past_burned_supply;
                 // compute rewards & execute txs
                 for (tx, tx_hash) in block.get_transactions().iter().zip(block.get_txs_hashes()) { // execute all txs
                     // Link the transaction hash to this block
@@ -2040,7 +2043,7 @@ impl<S: Storage> Blockchain<S> {
 
                         // Execute the transaction by applying changes in storage
                         debug!("Executing tx {} in block {} with nonce {}", tx_hash, hash, tx.get_nonce());
-                        if let Err(e) = tx.apply_with_partial_verify(chain_state.as_mut()).await {
+                        if let Err(e) = tx.apply_with_partial_verify(tx_hash, &mut chain_state).await {
                             warn!("Error while executing TX {} with current DAG org: {}", tx_hash, e);
                             // TX may be orphaned if not added again in good order in next blocks
                             orphaned_transactions.insert(tx_hash.clone());
@@ -2070,18 +2073,46 @@ impl<S: Storage> Blockchain<S> {
                             events.entry(NotifyEvent::TransactionExecuted).or_insert_with(Vec::new).push(value);
                         }
 
+                        match tx.get_data() {
+                            TransactionType::InvokeContract(payload) => {
+                                let event = NotifyEvent::InvokeContract {
+                                    contract: payload.contract.clone(),
+                                };
+                                if should_track_events.contains(&event) {
+                                    let is_mainnet = self.network.is_mainnet();
+
+                                    let contract_outputs = chain_state.get_storage()
+                                        .get_contract_outputs_for_tx(&tx_hash).await?
+                                        .into_iter()
+                                        .map(|output| RPCContractOutput::from_output(output, is_mainnet))
+                                        .collect::<Vec<_>>();
+
+                                    let value = json!(InvokeContractEvent {
+                                        tx_hash: Cow::Borrowed(&tx_hash),
+                                        block_hash: Cow::Borrowed(&hash),
+                                        topoheight: highest_topo,
+                                        contract_outputs,
+                                    });
+                                    events.entry(event).or_insert_with(Vec::new).push(value);
+                                }
+                            },
+                            TransactionType::DeployContract(_) => {
+                                if should_track_events.contains(&NotifyEvent::DeployContract) {
+                                    let value = json!(NewContractEvent {
+                                        contract: Cow::Borrowed(&tx_hash),
+                                        block_hash: Cow::Borrowed(&hash),
+                                        topoheight: highest_topo,
+                                    });
+                                    events.entry(NotifyEvent::DeployContract).or_insert_with(Vec::new).push(value);
+                                }
+                            }
+                            _ => {}
+                        }
+
                         // Increase total tx fees for miner
                         total_fees += tx.get_fee();
-                        // Increase burned supply
-                        if let Some(burn) = tx.get_burned_amount(&XELIS_ASSET) {
-                            burned_supply += burn;
-                        }
                     }
                 }
-
-                trace!("set burned supply to {} at {}", burned_supply, highest_topo);
-                chain_state.get_mut_storage()
-                    .set_burned_supply_at_topo_height(highest_topo, burned_supply)?;
 
                 let dev_fee_percentage = get_block_dev_fee(block.get_height());
                 // Dev fee are only applied on block reward
@@ -2093,7 +2124,9 @@ impl<S: Storage> Blockchain<S> {
                 }
                 
                 // reward the miner
-                chain_state.reward_miner(block.get_miner(), block_reward + total_fees).await?;
+                // Miner gets the block reward + total fees + gas fee
+                let gas_fee = chain_state.get_gas_fee();
+                chain_state.reward_miner(block.get_miner(), block_reward + total_fees + gas_fee).await?;
 
                 // apply changes from Chain State
                 chain_state.apply_changes().await?;
@@ -2161,9 +2194,12 @@ impl<S: Storage> Blockchain<S> {
                 // and that we can prune the chain using the config while respecting the safety limit
                 if current_topoheight % keep_only == 0 && current_topoheight - keep_only > 0 {
                     info!("Auto pruning chain until topoheight {} (keep only {} blocks)", current_topoheight - keep_only, keep_only);
+                    let start = Instant::now();
                     if let Err(e) = self.prune_until_topoheight_for_storage(current_topoheight - keep_only, storage).await {
                         warn!("Error while trying to auto prune chain: {}", e);
                     }
+
+                    info!("Auto pruning done in {}ms", start.elapsed().as_millis());
                 }
             }
         }
@@ -2222,7 +2258,7 @@ impl<S: Storage> Blockchain<S> {
             let mut mempool = self.mempool.write().await;
             debug!("mempool write mode ok");
             let version = get_version_at_height(self.get_network(), current_height);
-            mempool.clean_up(&*storage, base_topo_height, highest_topo, version).await
+            mempool.clean_up(&*storage, &self.environment, base_topo_height, highest_topo, version).await
         } else {
             Vec::new()
         };

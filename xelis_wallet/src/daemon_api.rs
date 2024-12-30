@@ -19,10 +19,7 @@ use xelis_common::{
     },
     transaction::Transaction,
     serializer::Serializer,
-    asset::{
-        AssetWithData,
-        AssetData
-    }
+    asset::RPCAssetData
 };
 use log::{debug, trace};
 
@@ -150,7 +147,7 @@ impl DaemonAPI {
         Ok(topoheight)
     }
 
-    pub async fn get_asset(&self, asset: &Hash) -> Result<AssetData> {
+    pub async fn get_asset(&self, asset: &Hash) -> Result<RPCAssetData<'static>> {
         trace!("get_asset");
         let assets = self.client.call_with("get_asset", &GetAssetParams {
             asset: Cow::Borrowed(asset)
@@ -172,7 +169,7 @@ impl DaemonAPI {
         Ok(count)
     }
 
-    pub async fn get_assets(&self, skip: Option<usize>, maximum: Option<usize>, minimum_topoheight: Option<u64>, maximum_topoheight: Option<u64>) -> Result<Vec<AssetWithData>> {
+    pub async fn get_assets(&self, skip: Option<usize>, maximum: Option<usize>, minimum_topoheight: Option<u64>, maximum_topoheight: Option<u64>) -> Result<Vec<RPCAssetData>> {
         trace!("get_assets");
         let assets = self.client.call_with("get_assets", &GetAssetsParams {
             maximum,
@@ -296,8 +293,7 @@ impl DaemonAPI {
     pub async fn has_multisig(&self, address: &Address) -> Result<bool> {
         trace!("has_multisig");
         let has_multisig = self.client.call_with("has_multisig", &HasMultisigParams {
-            address: Cow::Borrowed(address),
-            topoheight: None
+            address: Cow::Borrowed(address)
         }).await?;
         Ok(has_multisig)
     }

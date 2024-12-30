@@ -2,12 +2,13 @@ use std::{
     borrow::Cow,
     hash::{Hash as StdHash, Hasher}
 };
-use indexmap::IndexSet;
+use indexmap::{IndexMap, IndexSet};
 use log::debug;
 use xelis_common::{
-    account::{Nonce, AccountSummary, Balance},
-    asset::AssetWithData,
+    account::{AccountSummary, Balance, Nonce},
+    asset::AssetData,
     block::TopoHeight,
+    contract::ContractMetadata,
     crypto::{
         Hash,
         PublicKey
@@ -22,7 +23,9 @@ use xelis_common::{
         Serializer,
         Writer
     },
-    varuint::VarUint
+    transaction::MultiSigPayload,
+    varuint::VarUint,
+    versioned_type::State
 };
 use super::chain::{BlockId, CommonPoint};
 use crate::config::CHAIN_SYNC_REQUEST_MAX_BLOCKS;
@@ -43,6 +46,8 @@ pub struct BlockMetadata {
     pub hash: Hash,
     // Circulating supply
     pub supply: u64,
+    // Burned supply
+    pub burned_supply: u64,
     // Miner reward
     pub reward: u64,
     // Difficulty of the block
@@ -71,6 +76,7 @@ impl Serializer for BlockMetadata {
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
         let hash = reader.read_hash()?;
         let supply = reader.read_u64()?;
+        let burned_supply = reader.read_u64()?;
         let reward = reader.read_u64()?;
         let difficulty = Difficulty::read(reader)?;
         let cumulative_difficulty = CumulativeDifficulty::read(reader)?;
@@ -79,6 +85,7 @@ impl Serializer for BlockMetadata {
         Ok(Self {
             hash,
             supply,
+            burned_supply,
             reward,
             difficulty,
             cumulative_difficulty,
@@ -89,6 +96,7 @@ impl Serializer for BlockMetadata {
     fn write(&self, writer: &mut Writer) {
         writer.write_hash(&self.hash);
         writer.write_u64(&self.supply);
+        writer.write_u64(&self.burned_supply);
         writer.write_u64(&self.reward);
         self.difficulty.write(writer);
         self.cumulative_difficulty.write(writer);
@@ -98,6 +106,7 @@ impl Serializer for BlockMetadata {
     fn size(&self) -> usize {
         self.hash.size()
         + self.supply.size()
+        + self.burned_supply.size()
         + self.reward.size()
         + self.difficulty.size()
         + self.cumulative_difficulty.size()
@@ -110,8 +119,10 @@ pub enum StepKind {
     ChainInfo,
     Assets,
     Keys,
-    Nonces,
     Balances,
+    Nonces,
+    MultiSigs,
+    Contracts,
     BlocksMetadata
 }
 
@@ -122,7 +133,9 @@ impl StepKind {
             Self::Assets => Self::Keys,
             Self::Keys => Self::Balances,
             Self::Balances => Self::Nonces,
-            Self::Nonces => Self::BlocksMetadata,
+            Self::Nonces => Self::MultiSigs,
+            Self::MultiSigs => Self::Contracts,
+            Self::Contracts => Self::BlocksMetadata,
             Self::BlocksMetadata => return None
         })
     }
@@ -134,7 +147,7 @@ pub enum StepRequest<'a> {
     ChainInfo(IndexSet<BlockId>),
     // Min topoheight, Max topoheight, Pagination
     Assets(TopoHeight, TopoHeight, Option<u64>),
-    // Min topoheight, Max topoheight, Asset, pagination
+    // Min topoheight, Max topoheight, pagination
     Keys(TopoHeight, TopoHeight, Option<u64>),
     // Request the account summary of a public key
     // Can request up to 1024 keys per page
@@ -144,8 +157,17 @@ pub enum StepRequest<'a> {
     // Can request up to 1024 keys per page
     // Key, Asset, min topoheight, max topoheight (exclusive range)
     SpendableBalances(Cow<'a, PublicKey>, Cow<'a, Hash>, TopoHeight, TopoHeight),
-    // Max topoheight, Accounts
-    Nonces(TopoHeight, Cow<'a, IndexSet<PublicKey>>),
+    // Request the nonces of a list of public key
+    // min TopoHeight, max Topoheight, List of public keys
+    Nonces(TopoHeight, TopoHeight, Cow<'a, IndexSet<PublicKey>>),
+    // Request the multisigs of a list of public key
+    // min, max topo, keys
+    MultiSigs(TopoHeight, TopoHeight, Cow<'a, IndexSet<PublicKey>>),
+    // Min topoheight, Max topoheight, pagination
+    Contracts(TopoHeight, TopoHeight, Option<u64>),
+    // Request the contract module and its metadata
+    // min TopoHeight, max Topoheight, Hash of the contract
+    ContractMetadata(TopoHeight, TopoHeight, Cow<'a, Hash>),
     // Request blocks metadata starting topoheight
     BlocksMetadata(TopoHeight)
 }
@@ -158,7 +180,10 @@ impl<'a> StepRequest<'a> {
             Self::Keys(_, _, _) => StepKind::Keys,
             Self::Balances(_, _, _, _) => StepKind::Balances,
             Self::SpendableBalances(_, _, _, _) => StepKind::Balances,
-            Self::Nonces(_, _) => StepKind::Nonces,
+            Self::Nonces(_, _, _) => StepKind::Nonces,
+            Self::MultiSigs(_, _, _) => StepKind::MultiSigs,   
+            Self::Contracts(_, _, _) => StepKind::Contracts,
+            Self::ContractMetadata(_, _, _) => StepKind::Contracts,
             Self::BlocksMetadata(_) => StepKind::BlocksMetadata
         }
     }
@@ -168,7 +193,11 @@ impl<'a> StepRequest<'a> {
             Self::Assets(_, topo, _) => topo,
             Self::Keys(_, topo, _) => topo,
             Self::Balances(_, _, _, topo) => topo,
-            Self::Nonces(topo, _) => topo,
+            Self::SpendableBalances(_, _, _, topo) => topo,
+            Self::Nonces(_, topo, _) => topo,
+            Self::MultiSigs(_, topo, _) => topo,
+            Self::Contracts(_, topo, _) => topo,
+            Self::ContractMetadata(_, topo, _) => topo,
             Self::BlocksMetadata(topo) => topo,
             _ => return None,
         })
@@ -253,11 +282,36 @@ impl Serializer for StepRequest<'_> {
                 Self::SpendableBalances(key, asset, min, max)
             }
             5 => {
-                let topoheight = reader.read_u64()?;
-                let keys = Cow::<'_, IndexSet<PublicKey>>::read(reader)?;
-                Self::Nonces(topoheight, keys)
+                let min = reader.read_u64()?;
+                let max = reader.read_u64()?;
+                let keys = Cow::read(reader)?;
+                Self::Nonces(min, max, keys)
             },
             6 => {
+                let min = reader.read_u64()?;
+                let max = reader.read_u64()?;
+                let keys = Cow::<'_, IndexSet<PublicKey>>::read(reader)?;
+                Self::MultiSigs(min, max, keys)
+            }
+            7 => {
+                let min = reader.read_u64()?;
+                let max = reader.read_u64()?;
+                let page = Option::read(reader)?;
+                if let Some(page_number) = &page {
+                    if *page_number == 0 {
+                        debug!("Invalid page number (0) in Step Request");
+                        return Err(ReaderError::InvalidValue)
+                    }
+                }
+                Self::Contracts(min, max, page)
+            },
+            8 => {
+                let min = reader.read_u64()?;
+                let max = reader.read_u64()?;
+                let hash = Cow::read(reader)?;
+                Self::ContractMetadata(min, max, hash)
+            }
+            9 => {
                 Self::BlocksMetadata(reader.read_u64()?)
             },
             id => {
@@ -302,13 +356,32 @@ impl Serializer for StepRequest<'_> {
                 writer.write_u64(min);
                 writer.write_u64(max);
             },
-            Self::Nonces(topoheight, nonces) => {
+            Self::Nonces(min, max, nonces) => {
                 writer.write_u8(5);
-                writer.write_u64(topoheight);
+                writer.write_u64(min);
+                writer.write_u64(max);
                 nonces.write(writer);
             },
-            Self::BlocksMetadata(topoheight) => {
+            Self::MultiSigs(min, max, keys) => {
                 writer.write_u8(6);
+                writer.write_u64(min);
+                writer.write_u64(max);
+                keys.write(writer);
+            },
+            Self::Contracts(min, max, pagination) => {
+                writer.write_u8(7);
+                writer.write_u64(min);
+                writer.write_u64(max);
+                pagination.write(writer);
+            },
+            Self::ContractMetadata(min, max, hash) => {
+                writer.write_u8(8);
+                writer.write_u64(min);
+                writer.write_u64(max);
+                hash.write(writer);
+            },
+            Self::BlocksMetadata(topoheight) => {
+                writer.write_u8(9);
                 writer.write_u64(topoheight);
             },
         };
@@ -321,7 +394,10 @@ impl Serializer for StepRequest<'_> {
             Self::Keys(min, max, page) => min.size() + max.size() + page.size(),
             Self::Balances(keys, asset, min, max) => keys.size() + asset.size() + min.size() + max.size(),
             Self::SpendableBalances(key, asset, min, max) => key.size() + asset.size() + min.size() + max.size(),
-            Self::Nonces(topoheight, nonces) => topoheight.size() + nonces.size(),
+            Self::Nonces(min, max, nonces) => min.size() + max.size() + nonces.size(),
+            Self::MultiSigs(min, max, keys) => min.size() + max.size() + keys.size(),
+            Self::Contracts(min, max, pagination) => min.size() + max.size() + pagination.size(),
+            Self::ContractMetadata(min, max, hash) => min.size() + max.size() + hash.size(),
             Self::BlocksMetadata(topoheight) => topoheight.size()
         };
         // 1 for the id
@@ -334,7 +410,7 @@ pub enum StepResponse {
     // common point, topoheight of stable hash, stable height, stable hash
     ChainInfo(Option<CommonPoint>, u64, u64, Hash),
     // Set of assets, pagination
-    Assets(IndexSet<AssetWithData>, Option<u64>),
+    Assets(IndexMap<Hash, AssetData>, Option<u64>),
     // Set of keys, pagination
     Keys(IndexSet<PublicKey>, Option<u64>),
     // Account summary response
@@ -343,7 +419,14 @@ pub enum StepResponse {
     // TopoHeight is for the next max exclusive topoheight (if none, no more data)
     SpendableBalances(Vec<Balance>, Option<TopoHeight>),
     // Nonces for requested accounts
-    Nonces(Vec<Nonce>),
+    // It is optional in case the peer send us some keys
+    // that got deleted because he forked
+    Nonces(Vec<State<Nonce>>),
+    // All multisig configured for the requested accounts
+    MultiSigs(Vec<State<MultiSigPayload>>),
+    // Contracts hashes with pagination
+    Contracts(IndexSet<Hash>, Option<u64>),
+    ContractMetadata(State<ContractMetadata>),
     // top blocks metadata
     BlocksMetadata(IndexSet<BlockMetadata>),
 }
@@ -357,6 +440,9 @@ impl StepResponse {
             Self::Balances(_) => StepKind::Balances,
             Self::SpendableBalances(_, _) => StepKind::Balances,
             Self::Nonces(_) => StepKind::Nonces,
+            Self::MultiSigs(_) => StepKind::MultiSigs,
+            Self::Contracts(_, _) => StepKind::Contracts,
+            Self::ContractMetadata(_) => StepKind::Contracts,
             Self::BlocksMetadata(_) => StepKind::BlocksMetadata
         }
     }
@@ -374,7 +460,7 @@ impl Serializer for StepResponse {
                 Self::ChainInfo(common_point, topoheight, stable_height, hash)
             },
             1 => {
-                let assets = IndexSet::<AssetWithData>::read(reader)?;
+                let assets = IndexMap::read(reader)?;
                 let page = Option::read(reader)?;
                 if let Some(page_number) = &page {
                     if *page_number == 0 {
@@ -385,7 +471,7 @@ impl Serializer for StepResponse {
                 Self::Assets(assets, page)
             },
             2 => {
-                let keys = IndexSet::<PublicKey>::read(reader)?;
+                let keys = IndexSet::read(reader)?;
                 let page = Option::read(reader)?;
                 if let Some(page_number) = &page {
                     if *page_number == 0 {
@@ -395,16 +481,25 @@ impl Serializer for StepResponse {
                 }
                 Self::Keys(keys, page)
             },
-            3 => {
-                Self::Balances(Vec::read(reader)?)
+            3 => Self::Balances(Vec::read(reader)?),
+            4 => Self::SpendableBalances(Vec::read(reader)?, Option::read(reader)?),
+            5 => Self::Nonces(Vec::read(reader)?),
+            6 => Self::MultiSigs( Vec::read(reader)?),
+            7 => {
+                let contracts = IndexSet::<Hash>::read(reader)?;
+                let page = Option::read(reader)?;
+                if let Some(page_number) = &page {
+                    if *page_number == 0 {
+                        debug!("Invalid page number (0) in Step Response");
+                        return Err(ReaderError::InvalidValue)
+                    }
+                }
+                Self::Contracts(contracts, page)
             },
-            4 => {
-                Self::SpendableBalances(Vec::<Balance>::read(reader)?, Option::read(reader)?)
-            },
-            5 => {
-                Self::Nonces(Vec::<u64>::read(reader)?)
-            },
-            6 => {
+            8 => {
+                Self::ContractMetadata(State::read(reader)?)
+            }
+            9 => {
                 Self::BlocksMetadata(IndexSet::read(reader)?)
             },
             id => {
@@ -446,8 +541,21 @@ impl Serializer for StepResponse {
                 writer.write_u8(5);
                 nonces.write(writer);
             },
-            Self::BlocksMetadata(blocks) => {
+            Self::MultiSigs(multisigs) => {
                 writer.write_u8(6);
+                multisigs.write(writer);
+            },
+            Self::Contracts(contracts, page) => {
+                writer.write_u8(7);
+                contracts.write(writer);
+                page.write(writer);
+            },
+            Self::ContractMetadata(metadata) => {
+                writer.write_u8(8);
+                metadata.write(writer);
+            },
+            Self::BlocksMetadata(blocks) => {
+                writer.write_u8(9);
                 blocks.write(writer);
             }
         };
@@ -455,27 +563,16 @@ impl Serializer for StepResponse {
 
     fn size(&self) -> usize {
         let size = match self {
-            Self::ChainInfo(common_point, topoheight, stable_height, hash) => {
-                common_point.size() + topoheight.size() + stable_height.size() + hash.size()
-            },
-            Self::Assets(assets, page) => {
-                assets.size() + page.size()
-            },
-            Self::Keys(keys, page) => {
-                keys.size() + page.size()
-            },
-            Self::Balances(account) => {
-                account.size()
-            },
-            Self::SpendableBalances(balances, page) => {
-                balances.size() + page.size()
-            },
-            Self::Nonces(nonces) => {
-                nonces.size()
-            },
-            Self::BlocksMetadata(blocks) => {
-                blocks.size()
-            }
+            Self::ChainInfo(common_point, topoheight, stable_height, hash) => common_point.size() + topoheight.size() + stable_height.size() + hash.size(),
+            Self::Assets(assets, page) => assets.size() + page.size(),
+            Self::Keys(keys, page) => keys.size() + page.size(),
+            Self::Balances(account) => account.size(),
+            Self::SpendableBalances(balances, page) => balances.size() + page.size(),
+            Self::Nonces(nonces) => nonces.size(),
+            Self::MultiSigs(multisigs) => multisigs.size(),
+            Self::Contracts(contracts, page) => contracts.size() + page.size(),
+            Self::ContractMetadata(metadata) => metadata.size(),
+            Self::BlocksMetadata(blocks) => blocks.size()
         };
         // 1 for the id
         size + 1

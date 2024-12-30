@@ -243,7 +243,8 @@ impl Db {
     /// crashes. Returns the number of bytes flushed during
     /// this call.
     pub fn flush(&self) -> Result<usize> {
-        let mut writer = Writer::new();
+        let mut buffer = Vec::new();
+        let mut writer = Writer::new(&mut buffer);
         self.export(&mut writer)?;
         let total = writer.total_write();
 
@@ -258,7 +259,7 @@ impl Db {
                 .map_err(|_| DbError::LocalStorage)?
                 .ok_or(DbError::NoLocalStorage)?;
     
-            let encoded = STANDARD.encode(writer.bytes());
+            let encoded = STANDARD.encode(buffer);
 
             let db_name = format!("{}{}", PREFIX_DB_KEY, self.name());
             local_storage.set_item(db_name.as_str(), encoded.as_str())
@@ -549,14 +550,14 @@ mod tests {
         tree.insert("test", "test").unwrap();
         tree.insert("xelis", "silex").unwrap();
 
-        let mut writer = Writer::new();
+        let mut buffer = Vec::new();
+        let mut writer = Writer::new(&mut buffer);
         db.export(&mut writer).unwrap();
-        let bytes = writer.bytes();
 
         let db = open("test").unwrap();
         assert_eq!(db.name(), "test");
         assert!(db.tree_names().is_empty());
-        assert!(db.import(&bytes).is_ok());
+        assert!(db.import(&buffer).is_ok());
         assert_eq!(db.tree_names().len(), 1);
 
         let tree = db.open_tree("test").unwrap();

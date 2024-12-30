@@ -9,7 +9,7 @@ use crate::{
 };
 
 // SignatureId is a structure that holds the signature and the id of the signer
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, Eq)]
 pub struct SignatureId {
     // Signer id
     // This is the index of the signer in the transaction
@@ -66,8 +66,6 @@ impl PartialEq for SignatureId {
         self.id == other.id
     }
 }
-
-impl Eq for SignatureId {}
 
 impl Serializer for MultiSig {
     fn write(&self, writer: &mut Writer) {

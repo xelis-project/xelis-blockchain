@@ -510,12 +510,8 @@ impl Prompt {
         };
         prompt.setup_logger(level, dir_path, filename_log, disable_file_logging, disable_file_log_date_based, module_logs, file_level)?;
 
-        #[cfg(target_os = "windows")]
-        {
-            if let Err(e) = Self::adjust_win_console() {
-                error!("Error while adjusting windows console: {}", e);
-            }
-        }
+        // Logs all the panics into the log file
+        log_panics::init();
 
         #[cfg(feature = "tracing")]
         {
@@ -541,7 +537,7 @@ impl Prompt {
     }
 
     #[cfg(target_os = "windows")]
-    fn adjust_win_console() -> Result<(), Error> {
+    pub fn adjust_win_console(&self) -> Result<(), Error> {
         let console = win32console::console::WinConsole::input();
         let mut mode = console.get_mode()?;
         mode = (mode & !win32console::console::ConsoleMode::ENABLE_QUICK_EDIT_MODE)

@@ -22,12 +22,14 @@ use xelis_common::{
 };
 use human_bytes::human_bytes;
 
-#[derive(Error, Debug)]
+#[derive(Error, Debug, Clone, Copy)]
 pub enum DiskContext {
     #[error("data len")]
     DataLen,
     #[error("multisig")]
     Multisig,
+    #[error("get multisig at topoheight")]
+    MultisigAtTopoHeight,
     #[error("get top block")]
     GetTopBlock,
     #[error("get top metadata")]
@@ -52,6 +54,8 @@ pub enum DiskContext {
     BlockRewardAtTopoHeight,
     #[error("get supply at topoheight")]
     SupplyAtTopoHeight,
+    #[error("get burned supply at topoheight")]
+    BurnedSupplyAtTopoHeight,
     #[error("get blocks at height")]
     BlocksAtHeight,
     #[error("get block executor for tx")]
@@ -103,12 +107,34 @@ pub enum DiskContext {
     #[error("load optional data")]
     LoadOptionalData,
     #[error("search block position in order")]
-    SearchBlockPositionInOrder
+    SearchBlockPositionInOrder,
+    #[error("get contract topoheight")]
+    ContractTopoHeight,
+    #[error("get contract at topoheight")]
+    ContractAtTopoHeight,
+    #[error("contracts count")]
+    ContractsCount,
+    #[error("get contract data topoheight")]
+    ContractDataTopoHeight,
+    #[error("get contract data at topoheight")]
+    ContractDataAtTopoHeight,
+    #[error("get contract data")]
+    ContractData,
+    #[error("get contract output")]
+    ContractOutput,
+    #[error("get contract balance")]
+    ContractBalance,
 }
 
 #[repr(usize)]
 #[derive(Error, Debug)]
 pub enum BlockchainError {
+    #[error("No contract balance found")]
+    NoContractBalance,
+    #[error("Contract already exists")]
+    ContractAlreadyExists,
+    #[error("Contract not found: {}", _0)]
+    ContractNotFound(Hash),
     #[error("Invalid ip order for block {}, expected {}, got {}", _0, _1, _2)]
     InvalidTipsOrder(Hash, Hash, Hash),
     #[error("commit point already started")]
@@ -345,8 +371,12 @@ pub enum BlockchainError {
     MultiSigThreshold,
     #[error("Invalid transaction format")]
     InvalidTransactionFormat,
+    #[error("Invalid invoke contract")]
+    InvalidInvokeContract,
     #[error("MultiSig not found")]
-    MultiSigNotFound
+    MultiSigNotFound,
+    #[error("Error in module: {}", _0)]
+    ModuleError(String)
 }
 
 impl BlockchainError {
@@ -385,6 +415,10 @@ impl From<VerificationError<BlockchainError>> for BlockchainError {
             VerificationError::MultiSigThreshold => BlockchainError::MultiSigThreshold,
             VerificationError::InvalidFormat => BlockchainError::InvalidTransactionFormat,
             VerificationError::MultiSigNotFound => BlockchainError::MultiSigNotFound,
+            VerificationError::ModuleError(e) => BlockchainError::ModuleError(e),
+            VerificationError::AnyError(e) => BlockchainError::Any(e),
+            VerificationError::GasOverflow => BlockchainError::Overflow,
+            VerificationError::InvalidInvokeContract => BlockchainError::InvalidInvokeContract,
         }
     }
 }

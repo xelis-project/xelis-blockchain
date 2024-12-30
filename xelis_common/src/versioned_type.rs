@@ -1,5 +1,6 @@
 use log::debug;
-use xelis_common::{
+use serde::{Deserialize, Serialize};
+use crate::{
     block::TopoHeight,
     serializer::{Reader, ReaderError, Serializer, Writer}
 };
@@ -12,6 +13,58 @@ pub enum VersionedState {
     FetchedAt(TopoHeight),
     // Version was fetched at topoheight but got updated
     Updated(TopoHeight),
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum State<T: Serializer> {
+    // Clean, we don't have to do anything
+    // (It wasn't updated in the given range)
+    Clean,
+    // Need to update
+    Some(T),
+    // Not found in the given range
+    None,
+    // Versioned data is deleted
+    Deleted,
+}
+
+impl<T: Serializer> Serializer for State<T> {
+    fn write(&self, writer: &mut Writer) {
+        match self {
+            Self::Clean => {
+                writer.write_u8(0);
+            },
+            Self::Some(data) => {
+                writer.write_u8(1);
+                data.write(writer);
+            },
+            Self::None => {
+                writer.write_u8(2);
+            },
+            Self::Deleted => {
+                writer.write_u8(3);
+            },
+        }
+    }
+
+    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
+        Ok(match reader.read_u8()? {
+            0 => Self::Clean,
+            1 => Self::Some(T::read(reader)?),
+            2 => Self::None,
+            3 => Self::Deleted,
+            _ => return Err(ReaderError::InvalidValue),
+        })
+    }
+
+    fn size(&self) -> usize {
+        match self {
+            Self::Clean => 1,
+            Self::Some(data) => 1 + data.size(),
+            Self::None => 1,
+            Self::Deleted => 1,
+        }
+    }
 }
 
 impl VersionedState {
@@ -54,9 +107,12 @@ impl VersionedState {
 // A versioned data by topoheight data
 // In a blockDAG, a data can be updated by a new data at a certain topoheight
 // We must keep track of the previous data in case of reorgs that could occurs
+// For serializer, previous_topoheight is written before the data
+// So we can go through all the previous versions without reading the actual data
+#[derive(Serialize, Deserialize)]
 pub struct Versioned<T: Serializer> {
-    data: T,
     previous_topoheight: Option<TopoHeight>,
+    data: T,
 }
 
 impl<T: Serializer> Versioned<T> {
@@ -90,21 +146,21 @@ impl<T: Serializer> Versioned<T> {
 
 impl<T: Serializer> Serializer for Versioned<T> {
     fn write(&self, writer: &mut Writer) {
-        self.data.write(writer);
         self.previous_topoheight.write(writer);
+        self.data.write(writer);
     }
 
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let data = T::read(reader)?;
         let previous_topoheight = Option::read(reader)?;
+        let data = T::read(reader)?;
 
         Ok(Self {
+            previous_topoheight,
             data,
-            previous_topoheight
         })
     }
 
     fn size(&self) -> usize {
-        self.data.size() + if let Some(topoheight) = self.previous_topoheight { topoheight.size() } else { 0 }
+        self.previous_topoheight.size() + self.data.size()
     }
 }

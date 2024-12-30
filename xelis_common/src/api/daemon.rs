@@ -11,15 +11,17 @@ use serde::{
     Deserializer,
     de::Error
 };
+use xelis_vm::Constant;
 use crate::{
     account::{Nonce, CiphertextCache, VersionedBalance, VersionedNonce},
     block::{TopoHeight, Algorithm, BlockVersion, EXTRA_NONCE_SIZE},
     crypto::{Address, Hash},
     difficulty::{CumulativeDifficulty, Difficulty},
     network::Network,
-    time::{TimestampMillis, TimestampSeconds}
+    time::{TimestampMillis, TimestampSeconds},
+    transaction::extra_data::{SharedKey, UnknownExtraDataFormat},
 };
-use super::{default_true_value, DataElement, RPCTransaction};
+use super::{default_true_value, DataElement, RPCContractOutput, RPCTransaction};
 
 #[derive(Serialize, Deserialize, PartialEq, Eq)]
 pub enum BlockType {
@@ -424,7 +426,14 @@ pub enum AccountHistoryType {
     MultiSig {
         participants: Vec<Address>,
         threshold: u8,
-    }
+    },
+    InvokeContract {
+        contract: Hash,
+        chunk_id: u16,
+    },
+    // Contract hash is already stored
+    // by the parent struct
+    DeployContract,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -584,6 +593,12 @@ pub struct MakeIntegratedAddressParams<'a> {
 }
 
 #[derive(Serialize, Deserialize)]
+pub struct DecryptExtraDataParams<'a> {
+    pub shared_key: Cow<'a, SharedKey>,
+    pub extra_data: Cow<'a, UnknownExtraDataFormat>
+}
+
+#[derive(Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MultisigState {
     // If the user has deleted its multisig at requested topoheight
@@ -622,9 +637,57 @@ pub struct GetMultisigResult {
 
 #[derive(Serialize, Deserialize)]
 pub struct HasMultisigParams<'a> {
+    pub address: Cow<'a, Address>
+}
+
+
+#[derive(Serialize, Deserialize)]
+pub struct HasMultisigAtTopoHeightParams<'a> {
     pub address: Cow<'a, Address>,
-    #[serde(default)]
-    pub topoheight: Option<TopoHeight>
+    pub topoheight: TopoHeight
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct GetContractOutputsParams<'a> {
+    pub transaction: Cow<'a, Hash>
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct GetContractModuleParams<'a> {
+    pub contract: Cow<'a, Hash>
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct GetContractDataParams<'a> {
+    pub contract: Cow<'a, Hash>,
+    pub key: Cow<'a, Constant>
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct GetContractDataAtTopoHeightParams<'a> {
+    pub contract: Cow<'a, Hash>,
+    pub key: Cow<'a, Constant>,
+    pub topoheight: TopoHeight
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct GetContractBalanceParams<'a> {
+    pub contract: Cow<'a, Hash>,
+    pub asset: Cow<'a, Hash>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct GetContractBalanceAtTopoHeightParams<'a> {
+    pub contract: Cow<'a, Hash>,
+    pub asset: Cow<'a, Hash>,
+    pub topoheight: TopoHeight
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct RPCVersioned<T> {
+    pub topoheight: TopoHeight,
+    #[serde(flatten)]
+    pub version: T
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -654,9 +717,13 @@ pub enum NotifyEvent {
     // When a transaction has been included in a valid block & executed on chain
     // it contains TransactionExecutedEvent struct as value
     TransactionExecuted,
-    // When a registered TX SC Call hash has been executed by chain
-    // TODO: Smart Contracts
-    TransactionSCResult,
+    // When the contract has been invoked
+    // This allows to track all the contract invocations
+    InvokeContract {
+        contract: Hash
+    },
+    // When a new contract has been deployed
+    DeployContract,
     // When a new asset has been registered
     // TODO: Smart Contracts
     NewAsset,
@@ -752,4 +819,21 @@ pub struct PeerPeerDisconnectedEvent {
     pub peer_id: u64,
     // address of the peer that disconnected from him
     pub peer_addr: SocketAddr
+}
+
+// Value of NotifyEvent::InvokeContract
+#[derive(Serialize, Deserialize)]
+pub struct InvokeContractEvent<'a> {
+    pub block_hash: Cow<'a, Hash>,
+    pub tx_hash: Cow<'a, Hash>,
+    pub topoheight: TopoHeight,
+    pub contract_outputs: Vec<RPCContractOutput<'a>>
+}
+
+// Value of NotifyEvent::NewContract
+#[derive(Serialize, Deserialize)]
+pub struct NewContractEvent<'a> {
+    pub contract: Cow<'a, Hash>,
+    pub block_hash: Cow<'a, Hash>,
+    pub topoheight: TopoHeight,
 }

@@ -1,6 +1,7 @@
-use std::collections::HashMap;
+use std::{borrow::Cow, collections::HashMap};
 use async_trait::async_trait;
 use indexmap::IndexSet;
+use xelis_vm::{Environment, Module};
 use crate::{
     account::{Nonce, CiphertextCache},
     api::{DataElement, DataValue},
@@ -9,6 +10,7 @@ use crate::{
         elgamal::{Ciphertext, PedersenOpening},
         Address,
         Hash,
+        Hashable,
         KeyPair,
         PublicKey
     },
@@ -32,7 +34,8 @@ use super::{
         FeeHelper,
         TransactionBuilder,
         TransactionTypeBuilder,
-        TransferBuilder
+        TransferBuilder,
+        MultiSigBuilder
     },
     verify::BlockchainVerificationState,
     BurnPayload,
@@ -149,17 +152,17 @@ fn test_encrypt_decrypt_two_parties() {
     };
 
     let transfer = &transfers[0];
-    let cipher = transfer.extra_data.clone().unwrap();
+    let cipher = transfer.get_extra_data().clone().unwrap();
     // Verify the extra data from alice (sender)
     {
         let decrypted = cipher.decrypt_v2(&alice.keypair.get_private_key(), Role::Sender).unwrap();
-        assert_eq!(decrypted, payload);
+        assert_eq!(*decrypted.data(), payload);
     }
 
     // Verify the extra data from bob (receiver)
     {
         let decrypted = cipher.decrypt_v2(&bob.keypair.get_private_key(), Role::Receiver).unwrap();
-        assert_eq!(decrypted, payload);
+        assert_eq!(*decrypted.data(), payload);
     }
 
     // Verify the extra data from alice (sender) with the wrong key
@@ -209,7 +212,8 @@ async fn test_tx_verify() {
         });
     }
 
-    tx.verify(&mut state).await.unwrap();
+    let hash = tx.hash();
+    tx.verify(&hash, &mut state).await.unwrap();
 }
 
 #[tokio::test]
@@ -271,7 +275,8 @@ async fn test_burn_tx_verify() {
         });
     }
 
-    tx.verify(&mut state).await.unwrap();
+    let hash = tx.hash();
+    tx.verify(&hash, &mut state).await.unwrap();
 }
 
 #[tokio::test]
@@ -341,8 +346,8 @@ async fn test_max_transfers() {
             nonce: alice.nonce,
         });
     }
-
-    assert!(tx.verify(&mut state).await.is_ok());
+    let hash = tx.hash();
+    assert!(tx.verify(&hash, &mut state).await.is_ok());
 }
 
 #[tokio::test]
@@ -364,9 +369,9 @@ async fn test_multisig_setup() {
             },
         };
     
-        let data = TransactionTypeBuilder::MultiSig(MultiSigPayload {
+        let data = TransactionTypeBuilder::MultiSig(MultiSigBuilder {
             threshold: 2,
-            participants: IndexSet::from_iter(vec![bob.keypair.get_public_key().compress(), charlie.keypair.get_public_key().compress()]),
+            participants: IndexSet::from_iter(vec![bob.keypair.get_public_key().to_address(false), charlie.keypair.get_public_key().to_address(false)]),
         });
         let builder = TransactionBuilder::new(TxVersion::V1, alice.keypair.get_public_key().compress(), 0, data, FeeBuilder::Multiplier(1f64));
         let estimated_size = builder.estimate_size();
@@ -405,7 +410,8 @@ async fn test_multisig_setup() {
         });
     }
 
-    tx.verify(&mut state).await.unwrap();
+    let hash = tx.hash();
+    tx.verify(&hash, &mut state).await.unwrap();
 
     assert!(state.multisig.contains_key(&alice.keypair.get_public_key().compress()));
 }
@@ -483,7 +489,8 @@ async fn test_multisig() {
         participants: IndexSet::from_iter(vec![charlie.keypair.get_public_key().compress(), dave.keypair.get_public_key().compress()]),
     });
 
-    tx.verify(&mut state).await.unwrap();
+    let hash = tx.hash();
+    tx.verify(&hash, &mut state).await.unwrap();
 }
 
 #[async_trait]
@@ -500,10 +507,10 @@ impl<'a> BlockchainVerificationState<'a, ()> for ChainState {
     /// Get the balance ciphertext for a receiver account
     async fn get_receiver_balance<'b>(
         &'b mut self,
-        account: &'a PublicKey,
-        asset: &'a Hash,
+        account: Cow<'a, PublicKey>,
+        asset: Cow<'a, Hash>,
     ) -> Result<&'b mut Ciphertext, ()> {
-        self.accounts.get_mut(account).and_then(|account| account.balances.get_mut(asset)).ok_or(())
+        self.accounts.get_mut(&account).and_then(|account| account.balances.get_mut(&asset)).ok_or(())
     }
 
     /// Get the balance ciphertext used for verification of funds for the sender account
@@ -561,6 +568,32 @@ impl<'a> BlockchainVerificationState<'a, ()> for ChainState {
         account: &'a PublicKey
     ) -> Result<Option<&MultiSigPayload>, ()> {
         Ok(self.multisig.get(account))
+    }
+
+    async fn get_environment(&mut self) -> Result<&Environment, ()> {
+        unimplemented!()
+    }
+
+    async fn set_contract_module(
+        &mut self,
+        _: &'a Hash,
+        _: &'a Module
+    ) -> Result<(), ()> {
+        unimplemented!()
+    }
+
+    async fn load_contract_module(
+        &mut self,
+        _: &'a Hash
+    ) -> Result<(), ()> {
+        unimplemented!()
+    }
+
+    async fn get_contract_module_with_environment(
+        &self,
+        _: &'a Hash
+    ) -> Result<(&Module, &Environment), ()> {
+        unimplemented!()
     }
 }
 

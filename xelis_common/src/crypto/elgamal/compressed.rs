@@ -9,21 +9,6 @@ pub const RISTRETTO_COMPRESSED_SIZE: usize = 32;
 // Scalar size in bytes
 pub const SCALAR_SIZE: usize = 32;
 
-trait SerializableCompressedPoint {
-    fn from_compressed_point(point: CompressedRistretto) -> Self;
-    fn as_compressed_point(&self) -> &CompressedRistretto;
-}
-
-impl SerializableCompressedPoint for CompressedRistretto {
-    fn from_compressed_point(point: CompressedRistretto) -> Self {
-        point
-    }
-
-    fn as_compressed_point(&self) -> &CompressedRistretto {
-        self
-    }
-}
-
 #[derive(Error, Clone, Debug, Eq, PartialEq)]
 #[error("point decompression failed")]
 pub struct DecompressionError;
@@ -69,16 +54,6 @@ impl CompressedCommitment {
     }
 }
 
-impl SerializableCompressedPoint for CompressedCommitment {
-    fn from_compressed_point(point: CompressedRistretto) -> Self {
-        Self::new(point)
-    }
-
-    fn as_compressed_point(&self) -> &CompressedRistretto {
-        &self.0
-    }
-}
-
 impl CompressedHandle {
     // Create a new compressed handle
     pub fn new(point: CompressedRistretto) -> Self {
@@ -93,16 +68,6 @@ impl CompressedHandle {
     // Decompress it to a DecryptHandle
     pub fn decompress(&self) -> Result<DecryptHandle, DecompressionError> {
         self.0.decompress().map(DecryptHandle::from_point).ok_or(DecompressionError)
-    }
-}
-
-impl SerializableCompressedPoint for CompressedHandle {
-    fn from_compressed_point(point: CompressedRistretto) -> Self {
-        Self::new(point)
-    }
-
-    fn as_compressed_point(&self) -> &CompressedRistretto {
-        &self.0
     }
 }
 
@@ -175,29 +140,62 @@ impl CompressedPublicKey {
     }
 }
 
-impl SerializableCompressedPoint for CompressedPublicKey {
-    fn from_compressed_point(point: CompressedRistretto) -> Self {
-        Self::new(point)
-    }
-
-    fn as_compressed_point(&self) -> &CompressedRistretto {
-        &self.0
-    }
-}
-
-impl<T: SerializableCompressedPoint> Serializer for T {
+impl Serializer for CompressedRistretto {
     fn write(&self, writer: &mut Writer) {
-        writer.write_bytes(self.as_compressed_point().as_bytes());
+        writer.write_bytes(self.as_bytes());
     }
 
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let point = reader.read_bytes_ref(RISTRETTO_COMPRESSED_SIZE)?;
-        let compress = CompressedRistretto::from_slice(point)?;
-        Ok(Self::from_compressed_point(compress))
+        let bytes = reader.read_bytes_ref(RISTRETTO_COMPRESSED_SIZE)?;
+        let point = CompressedRistretto::from_slice(bytes)?;
+
+        Ok(point)
     }
 
     fn size(&self) -> usize {
         RISTRETTO_COMPRESSED_SIZE
+    }
+}
+
+impl Serializer for CompressedCommitment {
+    fn write(&self, writer: &mut Writer) {
+        self.0.write(writer);
+    }
+
+    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
+        CompressedRistretto::read(reader).map(CompressedCommitment::new)
+    }
+
+    fn size(&self) -> usize {
+        self.0.size()
+    }
+}
+
+impl Serializer for CompressedHandle {
+    fn write(&self, writer: &mut Writer) {
+        self.0.write(writer);
+    }
+
+    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
+        CompressedRistretto::read(reader).map(CompressedHandle::new)
+    }
+
+    fn size(&self) -> usize {
+        self.0.size()
+    }
+}
+
+impl Serializer for CompressedPublicKey {
+    fn write(&self, writer: &mut Writer) {
+        self.0.write(writer);
+    }
+
+    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
+        CompressedRistretto::read(reader).map(CompressedPublicKey::new)
+    }
+
+    fn size(&self) -> usize {
+        self.0.size()
     }
 }
 

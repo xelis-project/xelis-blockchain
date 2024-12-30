@@ -7,7 +7,9 @@ use std::borrow::Cow;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use bulletproofs::RangeProof;
+use xelis_vm::Module;
 use crate::{
+    account::Nonce,
     crypto::{
         elgamal::{CompressedCommitment, CompressedHandle},
         proofs::CiphertextValidityProof,
@@ -16,19 +18,20 @@ use crate::{
         Signature
     },
     serializer::Serializer,
+    contract::ContractOutput,
     transaction::{
         extra_data::UnknownExtraDataFormat,
         multisig::MultiSig,
         BurnPayload,
+        InvokeContractPayload,
+        MultiSigPayload,
         Reference,
         SourceCommitment,
         Transaction,
         TransactionType,
         TransferPayload,
         TxVersion,
-        MultiSigPayload,
-    },
-    account::Nonce,
+    }
 };
 pub use data::*;
 
@@ -81,7 +84,9 @@ impl<'a> From<RPCTransferPayload<'a>> for TransferPayload {
 pub enum RPCTransactionType<'a> {
     Transfers(Vec<RPCTransferPayload<'a>>),
     Burn(Cow<'a, BurnPayload>),
-    MultiSig(Cow<'a, MultiSigPayload>)
+    MultiSig(Cow<'a, MultiSigPayload>),
+    InvokeContract(Cow<'a, InvokeContractPayload>),
+    DeployContract(Cow<'a, Module>)
 }
 
 impl<'a> RPCTransactionType<'a> {
@@ -103,7 +108,9 @@ impl<'a> RPCTransactionType<'a> {
                 Self::Transfers(rpc_transfers)
             },
             TransactionType::Burn(burn) => Self::Burn(Cow::Borrowed(burn)),
-            TransactionType::MultiSig(payload) => Self::MultiSig(Cow::Borrowed(payload))
+            TransactionType::MultiSig(payload) => Self::MultiSig(Cow::Borrowed(payload)),
+            TransactionType::InvokeContract(payload) => Self::InvokeContract(Cow::Borrowed(payload)),
+            TransactionType::DeployContract(module) => Self::DeployContract(Cow::Borrowed(module))
         }
     }
 }
@@ -115,7 +122,9 @@ impl From<RPCTransactionType<'_>> for TransactionType {
                 TransactionType::Transfers(transfers.into_iter().map(|transfer| transfer.into()).collect::<Vec<TransferPayload>>())
             },
             RPCTransactionType::Burn(burn) => TransactionType::Burn(burn.into_owned()),
-            RPCTransactionType::MultiSig(payload) => TransactionType::MultiSig(payload.into_owned())
+            RPCTransactionType::MultiSig(payload) => TransactionType::MultiSig(payload.into_owned()),
+            RPCTransactionType::InvokeContract(payload) => TransactionType::InvokeContract(payload.into_owned()),
+            RPCTransactionType::DeployContract(module) => TransactionType::DeployContract(module.into_owned())
         }
     }
 }
@@ -206,6 +215,51 @@ pub struct SplitAddressResult {
     pub integrated_data: DataElement,
     // Integrated data size
     pub size: usize
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RPCContractOutput<'a> {
+    RefundGas {
+        amount: u64
+    },
+    Transfer {
+        amount: u64,
+        asset: Cow<'a, Hash>,
+        destination: Cow<'a, Address>
+    },
+    ExitCode(Option<u64>),
+    RefundDeposits
+}
+
+impl<'a> RPCContractOutput<'a> {
+    pub fn from_output(output: ContractOutput, mainnet: bool) -> Self {
+        match output {
+            ContractOutput::RefundGas { amount } => RPCContractOutput::RefundGas { amount },
+            ContractOutput::Transfer { amount, asset, destination } => RPCContractOutput::Transfer {
+                amount,
+                asset: Cow::Owned(asset),
+                destination: Cow::Owned(destination.to_address(mainnet))
+            },
+            ContractOutput::ExitCode(code) => RPCContractOutput::ExitCode(code),
+            ContractOutput::RefundDeposits => RPCContractOutput::RefundDeposits,
+        }
+    }
+}
+
+impl<'a> From<RPCContractOutput<'a>> for ContractOutput {
+    fn from(output: RPCContractOutput<'a>) -> Self {
+        match output {
+            RPCContractOutput::RefundGas { amount } => ContractOutput::RefundGas { amount },
+            RPCContractOutput::Transfer { amount, asset, destination } => ContractOutput::Transfer {
+                amount,
+                asset: asset.into_owned(),
+                destination: destination.into_owned().to_public_key()
+            },
+            RPCContractOutput::ExitCode(code) => ContractOutput::ExitCode(code),
+            RPCContractOutput::RefundDeposits => ContractOutput::RefundDeposits,
+        }
+    }
 }
 
 // :(

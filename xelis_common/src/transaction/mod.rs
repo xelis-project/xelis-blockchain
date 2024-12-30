@@ -1,32 +1,33 @@
+use serde::{Deserialize, Serialize};
+use xelis_vm::Module;
 use crate::{
     account::Nonce,
     crypto::{
         elgamal::{
-            CompressedCiphertext,
             CompressedCommitment,
-            CompressedHandle,
             CompressedPublicKey
         },
-        proofs::{CiphertextValidityProof, CommitmentEqProof},
+        proofs::CommitmentEqProof,
         Hash,
         Hashable,
         Signature,
     },
-    serializer::{Reader, ReaderError, Serializer, Writer}
+    serializer::*
 };
+
 use bulletproofs::RangeProof;
-use indexmap::IndexSet;
 use multisig::MultiSig;
-use serde::{Deserialize, Serialize};
-use self::extra_data::UnknownExtraDataFormat;
 
 pub mod builder;
 pub mod verify;
 pub mod extra_data;
 pub mod multisig;
+mod payload;
+
 mod reference;
 mod version;
 
+pub use payload::*;
 pub use reference::Reference;
 pub use version::TxVersion;
 
@@ -39,15 +40,25 @@ pub const EXTRA_DATA_LIMIT_SIZE: usize = 1024;
 pub const EXTRA_DATA_LIMIT_SUM_SIZE: usize = EXTRA_DATA_LIMIT_SIZE * 32;
 // Maximum number of transfers per transaction
 pub const MAX_TRANSFER_COUNT: usize = 255;
+// Maximum number of deposits per Invoke Call
+pub const MAX_DEPOSIT_PER_INVOKE_CALL: usize = 255;
 // Maximum number of participants in a multi signature account
 pub const MAX_MULTISIG_PARTICIPANTS: usize = 255;
 
+/// Simple enum to determine which DecryptHandle to use to craft a Ciphertext
+/// This allows us to store one time the commitment and only a decrypt handle for each.
+/// The DecryptHandle is used to decrypt the ciphertext and is selected based on the role in the transaction.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "snake_case")]
 pub enum Role {
     Sender,
     Receiver,
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+// SourceCommitment is a structure that holds the commitment and the equality proof
+// of the commitment to the asset
+// In a transaction, every spendings are summed up in a single commitment per asset
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct SourceCommitment {
     commitment: CompressedCommitment,
     proof: CommitmentEqProof,
@@ -80,43 +91,6 @@ impl SourceCommitment {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct TransferPayload {
-    asset: Hash,
-    destination: CompressedPublicKey,
-    // we can put whatever we want up to EXTRA_DATA_LIMIT_SIZE bytes
-    extra_data: Option<UnknownExtraDataFormat>,
-    /// Represents the ciphertext along with `sender_handle` and `receiver_handle`.
-    /// The opening is reused for both of the sender and receiver commitments.
-    commitment: CompressedCommitment,
-    sender_handle: CompressedHandle,
-    receiver_handle: CompressedHandle,
-    ct_validity_proof: CiphertextValidityProof,
-}
-
-// Burn is a public payload allowing to use it as a proof of burn
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct BurnPayload {
-    pub asset: Hash,
-    pub amount: u64
-}
-
-// MultiSigPayload is a public payload allowing to setup a multi signature account
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct MultiSigPayload {
-    // The threshold is the minimum number of signatures required to validate a transaction
-    pub threshold: u8,
-    // The participants are the public keys that can sign the transaction
-    pub participants: IndexSet<CompressedPublicKey>,
-}
-
-impl MultiSigPayload {
-    // Is the transaction a delete multisig transaction
-    pub fn is_delete(&self) -> bool {
-        self.threshold == 0 && self.participants.is_empty()
-    }
-}
-
 // this enum represent all types of transaction available on XELIS Network
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "snake_case")]
@@ -124,6 +98,8 @@ pub enum TransactionType {
     Transfers(Vec<TransferPayload>),
     Burn(BurnPayload),
     MultiSig(MultiSigPayload),
+    InvokeContract(InvokeContractPayload),
+    DeployContract(Module),
 }
 
 // Transaction to be sent over the network
@@ -151,71 +127,6 @@ pub struct Transaction {
     multisig: Option<MultiSig>,
     /// The signature of the source key
     signature: Signature,
-}
-
-impl TransferPayload {
-    // Create a new transfer payload
-    pub fn new(asset: Hash, destination: CompressedPublicKey, extra_data: Option<UnknownExtraDataFormat>, commitment: CompressedCommitment, sender_handle: CompressedHandle, receiver_handle: CompressedHandle, ct_validity_proof: CiphertextValidityProof) -> Self {
-        TransferPayload {
-            asset,
-            destination,
-            extra_data,
-            commitment,
-            sender_handle,
-            receiver_handle,
-            ct_validity_proof
-        }
-    }
-
-    // Get the destination key
-    pub fn get_destination(&self) -> &CompressedPublicKey {
-        &self.destination
-    }
-
-    // Get the asset hash spent in this transfer
-    pub fn get_asset(&self) -> &Hash {
-        &self.asset
-    }
-
-    // Get the extra data if any
-    pub fn get_extra_data(&self) -> &Option<UnknownExtraDataFormat> {
-        &self.extra_data
-    }
-
-    // Get the ciphertext commitment
-    pub fn get_commitment(&self) -> &CompressedCommitment {
-        &self.commitment
-    }
-
-    // Get the ciphertext decrypt handle for receiver
-    pub fn get_receiver_handle(&self) -> &CompressedHandle {
-        &self.receiver_handle
-    }
-
-    // Get the ciphertext decrypt handle for sender
-    pub fn get_sender_handle(&self) -> &CompressedHandle {
-        &self.sender_handle
-    }
-
-    // Get the validity proof
-    pub fn get_proof(&self) -> &CiphertextValidityProof {
-        &self.ct_validity_proof
-    }
-
-    // Get the ciphertext based on the role in the transaction
-    pub fn get_ciphertext(&self, role: Role) -> CompressedCiphertext {
-        let handle = match role {
-            Role::Receiver => self.receiver_handle.clone(),
-            Role::Sender => self.sender_handle.clone(),
-        };
-
-        CompressedCiphertext::new(self.commitment.clone(), handle)
-    }
-
-    // Take all data
-    pub fn consume(self) -> (Hash, CompressedPublicKey, Option<UnknownExtraDataFormat>, CompressedCommitment, CompressedHandle, CompressedHandle) {
-        (self.asset, self.destination, self.extra_data, self.commitment, self.sender_handle, self.receiver_handle)
-    }
 }
 
 impl Transaction {
@@ -348,69 +259,6 @@ impl Serializer for SourceCommitment {
     }
 }
 
-impl Serializer for TransferPayload {
-    fn write(&self, writer: &mut Writer) {
-        self.asset.write(writer);
-        self.destination.write(writer);
-        self.extra_data.write(writer);
-        self.commitment.write(writer);
-        self.sender_handle.write(writer);
-        self.receiver_handle.write(writer);
-        self.ct_validity_proof.write(writer);
-    }
-
-    fn read(reader: &mut Reader) -> Result<TransferPayload, ReaderError> {
-        let asset = Hash::read(reader)?;
-        let destination = CompressedPublicKey::read(reader)?;
-        let extra_data = Option::read(reader)?;
-
-        let commitment = CompressedCommitment::read(reader)?;
-        let sender_handle = CompressedHandle::read(reader)?;
-        let receiver_handle = CompressedHandle::read(reader)?;
-        let ct_validity_proof = CiphertextValidityProof::read(reader)?;
-
-        Ok(TransferPayload {
-            asset,
-            destination,
-            extra_data,
-            commitment,
-            sender_handle,
-            receiver_handle,
-            ct_validity_proof
-        })
-    }
-
-    fn size(&self) -> usize {
-        self.asset.size()
-        + self.destination.size()
-        + self.extra_data.size()
-        + self.commitment.size()
-        + self.sender_handle.size()
-        + self.receiver_handle.size()
-        + self.ct_validity_proof.size()
-    }
-}
-
-impl Serializer for BurnPayload {
-    fn write(&self, writer: &mut Writer) {
-        self.asset.write(writer);
-        self.amount.write(writer);
-    }
-
-    fn read(reader: &mut Reader) -> Result<BurnPayload, ReaderError> {
-        let asset = Hash::read(reader)?;
-        let amount = reader.read_u64()?;
-        Ok(BurnPayload {
-            asset,
-            amount
-        })
-    }
-
-    fn size(&self) -> usize {
-        self.asset.size() + self.amount.size()
-    }
-}
-
 impl Serializer for TransactionType {
     fn write(&self, writer: &mut Writer) {
         match self {
@@ -430,6 +278,14 @@ impl Serializer for TransactionType {
             TransactionType::MultiSig(payload) => {
                 writer.write_u8(2);
                 payload.write(writer);
+            },
+            TransactionType::InvokeContract(payload) => {
+                writer.write_u8(3);
+                payload.write(writer);
+            },
+            TransactionType::DeployContract(module) => {
+                writer.write_u8(4);
+                module.write(writer);
             }
         };
     }
@@ -455,7 +311,15 @@ impl Serializer for TransactionType {
             2 => {
                 let payload = MultiSigPayload::read(reader)?;
                 TransactionType::MultiSig(payload)
-            }
+            },
+            3 => {
+                let payload = InvokeContractPayload::read(reader)?;
+                TransactionType::InvokeContract(payload)
+            },
+            4 => {
+                let module = Module::read(reader)?;
+                TransactionType::DeployContract(module)
+            },
             _ => {
                 return Err(ReaderError::InvalidValue)
             }
@@ -463,13 +327,11 @@ impl Serializer for TransactionType {
     }
 
     fn size(&self) -> usize {
-        match self {
-            TransactionType::Burn(payload) => {
-                1 + payload.size()
-            },
+        1 + match self {
+            TransactionType::Burn(payload) => payload.size(),
             TransactionType::Transfers(txs) => {
                 // 1 byte for variant, 1 byte for count of transfers
-                let mut size = 1 + 1;
+                let mut size = 1;
                 for tx in txs {
                     size += tx.size();
                 }
@@ -477,8 +339,10 @@ impl Serializer for TransactionType {
             },
             TransactionType::MultiSig(payload) => {
                 // 1 byte for variant, 1 byte for threshold, 1 byte for count of participants
-                1 + 1 + 1 + payload.participants.iter().map(|p| p.size()).sum::<usize>()
-            }
+                1 + 1 + payload.participants.iter().map(|p| p.size()).sum::<usize>()
+            },
+            TransactionType::InvokeContract(payload) => payload.size(),
+            TransactionType::DeployContract(module) => module.size(),
         }
     }
 }
@@ -566,50 +430,6 @@ impl Serializer for Transaction {
         }
 
         size
-    }
-}
-
-impl Serializer for MultiSigPayload {
-    fn write(&self, writer: &mut Writer) {
-        writer.write_u8(self.threshold);
-        if self.threshold != 0 {
-            writer.write_u8(self.participants.len() as u8);
-            for participant in &self.participants {
-                participant.write(writer);
-            }
-        }
-    }
-
-    fn read(reader: &mut Reader) -> Result<MultiSigPayload, ReaderError> {
-        let threshold = reader.read_u8()?;
-        // Only 0 threshold is allowed for delete multisig
-        if threshold == 0 {
-            return Ok(MultiSigPayload {
-                threshold,
-                participants: IndexSet::new()
-            })
-        }
-
-        let participants_len = reader.read_u8()?;
-        if participants_len == 0 || participants_len > MAX_MULTISIG_PARTICIPANTS as u8 {
-            return Err(ReaderError::InvalidSize)
-        }
-
-        let mut participants = IndexSet::new();
-        for _ in 0..participants_len {
-            if !participants.insert(CompressedPublicKey::read(reader)?) {
-                return Err(ReaderError::InvalidValue)
-            }
-        }
-
-        Ok(MultiSigPayload {
-            threshold,
-            participants
-        })
-    }
-
-    fn size(&self) -> usize {
-        1 + 1 + self.participants.iter().map(|p| p.size()).sum::<usize>()
     }
 }
 

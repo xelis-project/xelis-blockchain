@@ -32,7 +32,7 @@ lazy_static! {
     pub static ref PC_GENS: PedersenGens = PedersenGens::default();
 }
 
-#[derive(Error, Debug)]
+#[derive(Error, Debug, Clone, Copy, Eq, PartialEq)]
 #[error("batch multiscalar mul returned non identity point")]
 pub struct MultiscalarMulVerificationError;
 
@@ -64,6 +64,8 @@ pub enum ProofVerificationError {
     Transcript(#[from] TranscriptError),
     #[error("invalid format")]
     Format,
+    #[error(transparent)]
+    BatchVerificationError(#[from] MultiscalarMulVerificationError),
 }
 
 
@@ -89,7 +91,7 @@ impl BatchCollector {
                 .chain(iter::once(PC_GENS.B_blinding)),
         );
 
-        if mega_check.is_identity().into() {
+        if mega_check.is_identity() {
             Ok(())
         } else {
             Err(MultiscalarMulVerificationError)

@@ -4,6 +4,7 @@ pub mod core;
 pub mod config;
 
 use config::{DEV_PUBLIC_KEY, STABLE_LIMIT};
+use human_bytes::human_bytes;
 use humantime::format_duration;
 use log::{trace, error, info, warn};
 use p2p::P2pServer;
@@ -283,6 +284,7 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
     command_manager.add_command(Command::new("list_unexecuted_transactions", "List all unexecuted transactions", CommandHandler::Async(async_handler!(list_unexecuted_transactions::<S>))))?;
     command_manager.add_command(Command::new("swap_blocks_executions_positions", "Swap the position of two blocks executions", CommandHandler::Async(async_handler!(swap_blocks_executions_positions::<S>))))?;
     command_manager.add_command(Command::new("print_balance", "Print the encrypted balance at a specific topoheight", CommandHandler::Async(async_handler!(print_balance::<S>))))?;
+    command_manager.add_command(Command::new("estimate_db_size", "Estimate the database total size", CommandHandler::Async(async_handler!(estimate_db_size::<S>))))?;
 
     // Don't keep the lock for ever
     let (p2p, getwork) = {
@@ -535,6 +537,16 @@ async fn print_balance<S: Storage>(manager: &CommandManager, _: ArgumentManager)
         .context("Error while retrieving balance")?;
 
     manager.message(format!("{}", balance));
+
+    Ok(())
+}
+
+async fn estimate_db_size<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
+    let context = manager.get_context().lock()?;
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    let storage = blockchain.get_storage().read().await;
+    let size = storage.estimate_size().await.context("Error while estimating size")?;
+    manager.message(format!("Estimated size: {}", human_bytes(size as f64)));
 
     Ok(())
 }
@@ -916,6 +928,7 @@ async fn status<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Res
     let transactions_count = storage.count_transactions().await.context("Error while counting transactions")?;
     let blocks_count = storage.count_blocks().await.context("Error while counting blocks")?;
     let assets = storage.count_assets().await.context("Error while counting assets")?;
+    let contracts = storage.count_contracts().await.context("Error while counting contracts")?;
     let pruned_topoheight = storage.get_pruned_topoheight().await.context("Error while retrieving pruned topoheight")?;
     let version = get_version_at_height(blockchain.get_network(), height);
 
@@ -931,7 +944,7 @@ async fn status<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Res
     manager.message(format!("Current Supply: {} XELIS", format_xelis(supply)));
     manager.message(format!("Burned Supply: {} XELIS", format_xelis(burned_supply)));
     manager.message(format!("Current Block Reward: {} XELIS", format_xelis(get_block_reward(supply))));
-    manager.message(format!("Stored accounts/transactions/blocks/assets: {}/{}/{}/{}", accounts_count, transactions_count, blocks_count, assets));
+    manager.message(format!("Accounts/Transactions/Blocks/Assets/Contracts: {}/{}/{}/{}/{}", accounts_count, transactions_count, blocks_count, assets, contracts));
     manager.message(format!("Block Version: {}", version));
     manager.message(format!("POW Algorithm: {}", get_pow_algorithm_for_version(version)));
 

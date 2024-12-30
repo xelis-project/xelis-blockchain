@@ -23,7 +23,7 @@ impl CommitPointProvider for SledStorage {
             return Err(BlockchainError::CommitPointAlreadyStarted);
         }
 
-        let snapshot = Snapshot::new(self.assets_count, self.accounts_count, self.transactions_count, self.blocks_count, self.blocks_execution_count);
+        let snapshot = Snapshot::new(self.assets_count, self.accounts_count, self.transactions_count, self.blocks_count, self.blocks_execution_count, self.contracts_count);
         self.snapshot = Some(snapshot);
         Ok(())
     }
@@ -39,6 +39,7 @@ impl CommitPointProvider for SledStorage {
             self.transactions_count = snapshot.transactions_count;
             self.blocks_count = snapshot.blocks_count;
             self.blocks_execution_count = snapshot.blocks_execution_count;
+            self.contracts_count = snapshot.contracts_count;
 
             for (tree, batch) in snapshot.finalize().into_iter() {
                 trace!("Applying batch to tree {:?}", tree);

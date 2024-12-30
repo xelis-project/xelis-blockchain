@@ -38,10 +38,22 @@ impl<T: Clone> AsRef<T> for Immutable<T> {
     }
 }
 
+impl<T: Clone> From<T> for Immutable<T> {
+    fn from(v: T) -> Self {
+        Immutable::Owned(v)
+    }
+}
+
+impl<T: Clone> From<Arc<T>> for Immutable<T> {
+    fn from(v: Arc<T>) -> Self {
+        Immutable::Arc(v)
+    }
+}
+
 impl<T: Clone> Deref for Immutable<T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
-        &self.get_inner()        
+        self.get_inner()        
     }
 }

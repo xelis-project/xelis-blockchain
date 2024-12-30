@@ -1,4 +1,4 @@
-use std::collections::{hash_map::Entry, HashMap};
+use std::{borrow::Cow, collections::{hash_map::Entry, HashMap}};
 use async_trait::async_trait;
 use xelis_common::{
     account::Nonce,
@@ -15,6 +15,8 @@ use xelis_common::{
         Transaction
     }
 };
+use xelis_environment::Environment;
+use xelis_vm::Module;
 use crate::core::{
     error::BlockchainError,
     mempool::Mempool,
@@ -41,11 +43,15 @@ pub struct MempoolState<'a, S: Storage> {
     mempool: &'a Mempool,
     // Storage in case sender balances aren't in mempool cache
     storage: &'a S,
+    // Contract environment
+    environment: &'a Environment,
     // Receiver balances
-    receiver_balances: HashMap<&'a PublicKey, HashMap<&'a Hash, Ciphertext>>,
+    receiver_balances: HashMap<Cow<'a, PublicKey>, HashMap<Cow<'a, Hash>, Ciphertext>>,
     // Sender accounts
     // This is used to verify ZK Proofs and store/update nonces
     accounts: HashMap<&'a PublicKey, Account<'a>>,
+    // Contract modules
+    contracts: HashMap<&'a Hash, Cow<'a, Module>>,
     // The current stable topoheight of the chain
     stable_topoheight: TopoHeight,
     // The current topoheight of the chain
@@ -55,13 +61,15 @@ pub struct MempoolState<'a, S: Storage> {
 }
 
 impl<'a, S: Storage> MempoolState<'a, S> {
-    pub fn new(mempool: &'a Mempool, storage: &'a S, stable_topoheight: TopoHeight, topoheight: TopoHeight, block_version: BlockVersion, mainnet: bool) -> Self {
+    pub fn new(mempool: &'a Mempool, storage: &'a S, environment: &'a Environment, stable_topoheight: TopoHeight, topoheight: TopoHeight, block_version: BlockVersion, mainnet: bool) -> Self {
         Self {
             mainnet,
             mempool,
             storage,
+            environment,
             receiver_balances: HashMap::new(),
             accounts: HashMap::new(),
+            contracts: HashMap::new(),
             stable_topoheight,
             topoheight,
             block_version,
@@ -77,11 +85,12 @@ impl<'a, S: Storage> MempoolState<'a, S> {
     // Retrieve the receiver balance
     // We never store the receiver balance in mempool, only outgoing balances
     // So we just get it from our internal cache or from storage
-    async fn internal_get_receiver_balance<'b>(&'b mut self, account: &'a PublicKey, asset: &'a Hash) -> Result<&'b mut Ciphertext, BlockchainError> {
-        match self.receiver_balances.entry(account).or_insert_with(HashMap::new).entry(asset) {
+    async fn internal_get_receiver_balance<'b>(&'b mut self, account: Cow<'a, PublicKey>, asset: Cow<'a, Hash>) -> Result<&'b mut Ciphertext, BlockchainError> {
+        // If its borrowed, it cost nothing to clone the Cow as it's just the reference being cloned
+        match self.receiver_balances.entry(account.clone()).or_insert_with(HashMap::new).entry(asset.clone()) {
             Entry::Occupied(entry) => Ok(entry.into_mut()),
             Entry::Vacant(entry) => {
-                let version = self.storage.get_new_versioned_balance(account, asset, self.topoheight).await?;
+                let version = self.storage.get_new_versioned_balance(&account, &asset, self.topoheight).await?;
                 Ok(entry.insert(version.take_balance().take_ciphertext()?))
             }
         }
@@ -200,8 +209,8 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for Mempoo
     /// Get the balance ciphertext for a receiver account
     async fn get_receiver_balance<'b>(
         &'b mut self,
-        account: &'a PublicKey,
-        asset: &'a Hash,
+        account: Cow<'a, PublicKey>,
+        asset: Cow<'a, Hash>,
     ) -> Result<&'b mut Ciphertext, BlockchainError> {
         self.internal_get_receiver_balance(account, asset).await
     }
@@ -274,5 +283,49 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for Mempoo
         self.accounts.get(account)
             .map(|a| a.multisig.as_ref())
             .ok_or_else(|| BlockchainError::AccountNotFound(account.as_address(self.storage.is_mainnet())))
+    }
+
+    /// Get the contract environment
+    async fn get_environment(&mut self) -> Result<&Environment, BlockchainError> {
+        Ok(self.environment)
+    }
+
+    /// Set the contract module
+    async fn set_contract_module(
+        &mut self,
+        hash: &'a Hash,
+        module: &'a Module
+    ) -> Result<(), BlockchainError> {
+        if self.contracts.insert(hash, Cow::Borrowed(module)).is_some() {
+            return Err(BlockchainError::ContractAlreadyExists);
+        }
+
+        Ok(())
+    }
+
+    async fn load_contract_module(
+        &mut self,
+        hash: &'a Hash
+    ) -> Result<(), BlockchainError> {
+        if !self.contracts.contains_key(hash) {
+            let module = self.storage.get_contract_at_maximum_topoheight_for(hash, self.topoheight).await?
+                .map(|(_, v)| v.take().map(|v| v.into_owned()))
+                .flatten()
+                .ok_or_else(|| BlockchainError::ContractNotFound(hash.clone()))?;
+
+            self.contracts.insert(hash, Cow::Owned(module));
+        }
+
+        Ok(())
+    }
+
+    async fn get_contract_module_with_environment(
+        &self,
+        hash: &'a Hash
+    ) -> Result<(&Module, &Environment), BlockchainError> {
+        let module = self.contracts.get(hash)
+            .ok_or_else(|| BlockchainError::ContractNotFound(hash.clone()))?;
+
+        Ok((module, self.environment))
     }
 }

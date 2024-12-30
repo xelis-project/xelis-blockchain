@@ -275,6 +275,10 @@ async fn main() -> Result<()> {
     let log = config.log;
     let prompt = Prompt::new(log.log_level, &log.logs_path, &log.filename_log, log.disable_file_logging, log.disable_file_log_date_based, log.disable_log_color, !log.disable_interactive_mode, log.logs_modules, log.file_log_level.unwrap_or(log.log_level))?;
 
+    // Prevent the user to block the program by selecting text in CLI
+    #[cfg(target_os = "windows")]
+    prompt.adjust_win_console()?;
+
     let detected_threads = match thread::available_parallelism() {
         Ok(value) => value.get() as u16,
         Err(e) => {

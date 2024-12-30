@@ -1,111 +1,80 @@
-use std::hash::{Hash as StdHash, Hasher};
+use std::borrow::Cow;
+use serde::{Deserialize, Serialize};
+
 use crate::{
-    serializer::{Serializer, Writer, Reader, ReaderError},
+    block::TopoHeight,
     crypto::Hash,
-    block::TopoHeight
+    serializer::{Reader, ReaderError, Serializer, Writer}
 };
 
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct AssetData {
-    // At which topoheight this asset is registered
-    topoheight: TopoHeight,
     // How many atomic units is needed for a full coin
     decimals: u8,
+    // The name of the asset
+    name: String,
+    // The total supply of the asset
+    max_supply: Option<u64>,
 }
 
 impl AssetData {
-    pub fn new(topoheight: TopoHeight, decimals: u8) -> Self {
+    pub fn new(decimals: u8, name: String, max_supply: Option<u64>) -> Self {
         Self {
-            topoheight,
-            decimals
+            decimals,
+            name,
+            max_supply
         }
-    }
-
-    pub fn get_topoheight(&self) -> TopoHeight {
-        self.topoheight
     }
 
     pub fn get_decimals(&self) -> u8 {
         self.decimals
     }
+
+    pub fn get_name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn set_name(&mut self, name: String) {
+        self.name = name;
+    }
+
+    pub fn get_max_supply(&self) -> Option<u64> {
+        self.max_supply
+    }
 }
 
 impl Serializer for AssetData {
     fn write(&self, writer: &mut Writer) {
-        self.topoheight.write(writer);
         self.decimals.write(writer);
+        self.name.write(writer);
+        self.max_supply.write(writer);
     }
 
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        Ok(
-            Self::new(TopoHeight::read(reader)?, reader.read_u8()?)
-        )
+        let decimals = reader.read()?;
+        let name = reader.read()?;
+        let max_supply = reader.read()?;
+
+        Ok(Self::new(decimals, name, max_supply))
     }
 
     fn size(&self) -> usize {
-        self.topoheight.size() + self.decimals.size()
+        self.decimals.size() + self.name.size() + self.max_supply.size()
     }
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
-pub struct AssetWithData {
-    asset: Hash,
-    #[serde(flatten)]
-    data: AssetData
+pub struct RPCAssetData<'a> {
+    // The asset hash
+    pub asset: Cow<'a, Hash>,
+    // At which topoheight was this asset created
+    pub topoheight: TopoHeight,
+    // How many atomic units is needed for a full coin
+    pub decimals: u8,
+    // The name of the asset
+    pub name: Cow<'a, str>,
+    // The total supply of the asset
+    pub max_supply: Option<u64>,
+    // The contract that created this asset
+    pub contract: Option<Cow<'a, Hash>>,
 }
-
-impl AssetWithData {
-    pub fn new(asset: Hash, data: AssetData) -> Self {
-        Self {
-            asset,
-            data
-        }
-    }
-
-    pub fn get_asset(&self) -> &Hash {
-        &self.asset
-    }
-
-    pub fn get_data(&self) -> &AssetData {
-        &self.data
-    }
-
-    pub fn to_asset(self) -> Hash {
-        self.asset
-    }
-
-    pub fn consume(self) -> (Hash, AssetData) {
-        (self.asset, self.data)
-    }
-}
-
-impl Serializer for AssetWithData {
-    fn write(&self, writer: &mut Writer) {
-        self.asset.write(writer);
-        self.data.write(writer);
-    }
-
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        Ok(
-            Self::new(reader.read_hash()?, AssetData::read(reader)?)
-        )
-    }
-
-    fn size(&self) -> usize {
-        self.asset.size() + self.data.size()
-    }
-}
-
-impl StdHash for AssetWithData {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.asset.hash(state);
-    }
-}
-
-impl PartialEq for AssetWithData {
-    fn eq(&self, other: &Self) -> bool {
-        self.asset == other.asset
-    }
-}
-
-impl Eq for AssetWithData {}

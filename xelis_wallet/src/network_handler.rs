@@ -6,6 +6,7 @@ use std::{
     sync::Arc,
     time::Duration
 };
+use indexmap::IndexMap;
 use thiserror::Error;
 use anyhow::Error;
 use log::{debug, error, info, trace, warn};
@@ -20,7 +21,7 @@ use xelis_common::{
         wallet::BalanceChanged,
         RPCTransactionType
     },
-    asset::AssetWithData,
+    asset::AssetData,
     config::XELIS_ASSET,
     crypto::{
         elgamal::Ciphertext,
@@ -34,7 +35,7 @@ use xelis_common::{
         task::{JoinError, JoinHandle},
         time::sleep
     },
-    transaction::{MultiSigPayload, Role},
+    transaction::{ContractDeposit, MultiSigPayload, Role},
     utils::sanitize_daemon_address
 };
 use crate::{
@@ -267,6 +268,11 @@ impl NetworkHandler {
         'main: for tx in block.transactions.into_iter() {
             trace!("Checking transaction {}", tx.hash);
             let is_owner = *tx.source.get_public_key() == *address.get_public_key();
+            if is_owner {
+                debug!("Transaction {} is from us", tx.hash);
+                assets_changed.insert(XELIS_ASSET);
+            }
+
             let entry: Option<EntryData> = match tx.data {
                 RPCTransactionType::Burn(payload) => {
                     let payload = payload.into_owned();
@@ -327,7 +333,7 @@ impl NetworkHandler {
                             };
 
                             let extra_data = if let Some(cipher) = transfer.extra_data.into_owned() {
-                                self.wallet.decrypt_extra_data(cipher, &handle, role).ok()
+                                self.wallet.decrypt_extra_data(cipher, role).ok()
                             } else {
                                 None
                             };
@@ -370,6 +376,47 @@ impl NetworkHandler {
                         None
                     }
                 },
+                RPCTransactionType::InvokeContract(payload) => {
+                    let payload = payload.into_owned();
+                    if is_owner {
+                        if self.has_tx_stored(&tx.hash).await? {
+                            debug!("Transaction invoke contract {} was already stored, skipping it", tx.hash);
+                            continue 'main;
+                        }
+
+                        let mut deposits = IndexMap::new();
+                        for (asset, deposit) in payload.deposits {
+                            assets_changed.insert(asset.clone());
+
+                            match deposit {
+                                ContractDeposit::Public(amount) => {
+                                    deposits.insert(asset, amount);
+                                },
+                                // ContractDeposit::Private(ct) => {
+                                //     let ct = ct.decompress()?;
+                                //     let amount = self.wallet.decrypt_ciphertext(ct).await?;
+                                //     deposits.insert(asset, amount);
+                                // }
+                            }
+                        }
+
+                        Some(EntryData::InvokeContract { contract: payload.contract, deposits, chunk_id: payload.chunk_id, fee: tx.fee, nonce: tx.nonce })
+                    } else {
+                        None
+                    }
+                },
+                RPCTransactionType::DeployContract(_) => {
+                    if is_owner {
+                        if self.has_tx_stored(&tx.hash).await? {
+                            debug!("Transaction deploy contract {} was already stored, skipping it", tx.hash);
+                            continue 'main;
+                        }
+
+                        Some(EntryData::DeployContract { fee: tx.fee, nonce: tx.nonce })
+                    } else {
+                        None
+                    }
+                }
             };
 
             if let Some(entry) = entry {
@@ -768,17 +815,12 @@ impl NetworkHandler {
                 // Add the asset to the storage
                 {
                     let mut storage = self.wallet.get_storage().write().await;
-                    let name = if *asset == XELIS_ASSET {
-                        Some("XELIS".to_string())
-                    } else {
-                        info!("New unnamed asset detected: {}", asset);
-                        None
-                    };
-                    storage.add_asset(&asset, name, data.get_decimals()).await?;
+                    let data = AssetData::new(data.decimals, data.name.as_ref().to_owned(), data.max_supply);
+                    storage.add_asset(&asset, data).await?;
                 }
 
                 // New asset added to the wallet, inform listeners
-                self.wallet.propagate_event(Event::NewAsset(AssetWithData::new(asset.clone(), data))).await;
+                self.wallet.propagate_event(Event::NewAsset(data)).await;
             }
 
             // get the balance for this asset
@@ -904,18 +946,19 @@ impl NetworkHandler {
             sync_new_blocks |= self.sync_head_state(&address, None, None, true).await?;
         }
 
+        // Update the topoheight and block hash for wallet
+        {
+            trace!("updating block reference in storage");
+            let mut storage = self.wallet.get_storage().write().await;
+            storage.set_synced_topoheight(daemon_topoheight)?;
+            storage.set_top_block_hash(&daemon_block_hash)?;
+        }
+
         // we have something that changed, sync transactions
         // prevent a double sync head state if history scan is disabled
         if sync_new_blocks && self.wallet.get_history_scan() {
             debug!("Syncing new blocks");
             self.sync_new_blocks(address, wallet_topoheight, true).await?;
-        }
-
-        // Update the topoheight and block hash for wallet
-        {
-            let mut storage = self.wallet.get_storage().write().await;
-            storage.set_synced_topoheight(daemon_topoheight)?;
-            storage.set_top_block_hash(&daemon_block_hash)?;
         }
 
         // Propagate the event
@@ -999,7 +1042,7 @@ impl NetworkHandler {
                         storage.delete_transaction(&tx.hash)?;
                     }
 
-                    if storage.get_tx_cache().is_some_and(|cache| cache.last_tx_hash_created == *tx.hash) {
+                    if storage.get_tx_cache().is_some_and(|cache| cache.last_tx_hash_created.as_ref() == Some(&tx.hash)) {
                         warn!("Transaction {} was orphaned, deleting it from cache", tx.hash);
                         storage.clear_tx_cache();
                     }
@@ -1040,6 +1083,8 @@ impl NetworkHandler {
                 error!("Error while syncing balance for asset {}: {}", asset, e);
             }
         }
+
+        self.wallet.propagate_event(Event::HistorySynced { topoheight: current_topoheight }).await;
 
         Ok(())
     }

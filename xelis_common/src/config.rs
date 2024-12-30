@@ -18,6 +18,28 @@ pub const FEE_PER_TRANSFER: u64 = 5000;
 // Each signature of a multisig has a overhead of 500 atomic units
 pub const FEE_PER_MULTISIG_SIGNATURE: u64 = 500;
 
+// 1 XEL per contract deployed
+// Each contract deployed has a overhead of 1 XEL
+// This amount is burned and is needed for safety of the chain
+// Otherwise people could bloat the chain by deploying contracts
+// And could make the chain unusable or slow
+// Note that if we depends on fees only, miners could do such attacks for free
+// by mining their own transactions and getting the fees back
+pub const BURN_PER_CONTRACT: u64 = COIN_VALUE;
+// 30% of the transaction fee is burned
+// This is to reduce the supply over time
+// and also to prevent spamming the network with low fee transactions
+// or free tx from miners
+// This should be enabled once Smart Contracts are released
+pub const TRANSACTION_FEE_BURN_PERCENT: u64 = 30;
+// Fee per store operation in a contract
+// Each store operation has a fixed cost of 0.000001 XEL
+pub const FEE_PER_STORE_CONTRACT: u64 = 100;
+// Fee per byte of data stored in a contract
+// Each byte of data stored (key + value) in a contract has a fixed cost
+// 0.00000005 XEL per byte
+pub const FEE_PER_BYTE_STORED_CONTRACT: u64 = 5;
+
 // 8 decimals numbers
 pub const COIN_DECIMALS: u8 = 8;
 // 100 000 000 to represent 1 XEL

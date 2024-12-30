@@ -5,7 +5,8 @@ use core::fmt;
 #[repr(u8)]
 pub enum TxVersion {
     V0,
-    V1
+    V1,
+    V2
 }
 
 impl Default for TxVersion {
@@ -21,6 +22,7 @@ impl TryFrom<u8> for TxVersion {
         match value {
             0 => Ok(TxVersion::V0),
             1 => Ok(TxVersion::V1),
+            2 => Ok(TxVersion::V2),
             _ => Err(()),
         }
     }
@@ -31,6 +33,7 @@ impl Into<u8> for TxVersion {
         match self {
             TxVersion::V0 => 0,
             TxVersion::V1 => 1,
+            TxVersion::V2 => 2,
         }
     }
 }
@@ -47,6 +50,7 @@ impl Serializer for TxVersion {
         match self {
             TxVersion::V0 => writer.write_u8(0),
             TxVersion::V1 => writer.write_u8(1),
+            TxVersion::V2 => writer.write_u8(2),
         }
     }
 
@@ -66,6 +70,7 @@ impl fmt::Display for TxVersion {
         match self {
             TxVersion::V0 => write!(f, "V0"),
             TxVersion::V1 => write!(f, "V1"),
+            TxVersion::V2 => write!(f, "V2"),
         }
     }
 }

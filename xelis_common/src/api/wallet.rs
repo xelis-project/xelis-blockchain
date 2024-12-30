@@ -1,13 +1,17 @@
 use std::{borrow::Cow, collections::HashMap};
+use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use crate::{
     account::CiphertextCache,
     block::TopoHeight,
-    crypto::{Address, Hash, PrivateKey},
+    crypto::{elgamal::CompressedCiphertext, Address, Hash, PrivateKey},
+    serializer::Hexable,
     transaction::{
         builder::{FeeBuilder, TransactionTypeBuilder, UnsignedTransaction},
+        extra_data::{PlaintextExtraData, UnknownExtraDataFormat},
         multisig::SignatureId,
         Reference,
+        Role,
         Transaction,
         TxVersion
     }
@@ -43,6 +47,7 @@ pub struct BuildTransactionParams {
     // By default, grab the version from wallet
     pub tx_version: Option<TxVersion>,
     // Cannot be broadcasted if set to false
+    #[serde(default = "default_true_value")]
     pub broadcast: bool,
     // Returns the TX in HEX format also
     #[serde(default = "default_false_value")]
@@ -101,11 +106,13 @@ pub struct BuildUnsignedTransactionParams {
 #[derive(Serialize, Deserialize)]
 pub struct FinalizeUnsignedTransactionParams {
     // Unsigned transaction to finalize
-    pub unsigned: UnsignedTransaction,
+    pub unsigned: Hexable<UnsignedTransaction>,
     // Signatures to append in the transaction
     // In case it wasn't added in the unsigned already
+    #[serde(default)]
     pub signatures: Vec<SignatureId>,
     // Cannot be broadcasted if set to false
+    #[serde(default = "default_true_value")]
     pub broadcast: bool,
     // Returns the TX in HEX format also
     #[serde(default = "default_false_value")]
@@ -264,6 +271,21 @@ pub struct QueryDBParams {
     pub return_on_first: bool
 }
 
+#[derive(Serialize, Deserialize)]
+pub struct DecryptExtraDataParams<'a> {
+    // Encrypted data to decrypt
+    pub extra_data: Cow<'a, UnknownExtraDataFormat>,
+    // The role we have in the transaction
+    // This is needed to select the correct handle
+    pub role: Role,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct DecryptCiphertextParams<'a> {
+    // Ciphertext with the correct handle to use
+    pub ciphertext: Cow<'a, CompressedCiphertext>
+}
+
 #[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NotifyEvent {
@@ -283,6 +305,9 @@ pub enum NotifyEvent {
     // When a rescan happened on the wallet
     // Contains a topoheight as value to indicate until which topoheight transactions got deleted
     Rescan,
+    // When the history has been synced again
+    // Contains current topoheight as value
+    HistorySynced,
     // When network state changed
     Online,
     // Same here
@@ -298,7 +323,7 @@ pub struct TransferOut {
     // Plaintext amount
     pub amount: u64,
     // extra data
-    pub extra_data: Option<DataElement>
+    pub extra_data: Option<PlaintextExtraData>
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -308,7 +333,7 @@ pub struct TransferIn {
     // Plaintext amount
     pub amount: u64,
     // extra data
-    pub extra_data: Option<DataElement>
+    pub extra_data: Option<PlaintextExtraData>
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -340,6 +365,24 @@ pub enum EntryType {
         participants: Vec<Address>,
         // Number of signatures required
         threshold: u8,
+        // Fee paid
+        fee: u64,
+        // Nonce used
+        nonce: u64
+    },
+    InvokeContract {
+        // Contract address
+        contract: Hash,
+        // Deposits made
+        deposits: IndexMap<Hash, u64>,
+        // Chunk id invoked
+        chunk_id: u16,
+        // Fee paid
+        fee: u64,
+        // Nonce used
+        nonce: u64
+    },
+    DeployContract {
         // Fee paid
         fee: u64,
         // Nonce used

@@ -56,7 +56,7 @@ impl BlockDagProvider for SledStorage {
 
     async fn get_burned_supply_at_topo_height(&self, topoheight: TopoHeight) -> Result<u64, BlockchainError> {
         trace!("get burned supply at topo height {}", topoheight);
-        self.load_from_disk(&self.burned_supply, &topoheight.to_be_bytes(), DiskContext::SupplyAtTopoHeight)
+        self.load_from_disk(&self.burned_supply, &topoheight.to_be_bytes(), DiskContext::BurnedSupplyAtTopoHeight)
     }
 
     fn set_block_reward_at_topo_height(&mut self, topoheight: TopoHeight, reward: u64) -> Result<(), BlockchainError> {

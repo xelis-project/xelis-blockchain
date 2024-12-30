@@ -4,6 +4,7 @@ pub mod transaction;
 pub mod block;
 pub mod account;
 pub mod api;
+pub mod contract;
 
 pub mod utils;
 pub mod config;
@@ -15,6 +16,7 @@ pub mod context;
 pub mod queue;
 pub mod varuint;
 pub mod time;
+pub mod versioned_type;
 
 #[cfg(feature = "tokio")]
 pub mod tokio;

@@ -99,7 +99,7 @@ impl NonceProvider for SledStorage {
 
     async fn delete_last_topoheight_for_nonce(&mut self, key: &PublicKey) -> Result<(), BlockchainError> {
         trace!("delete last topoheight for nonce {}", key.as_address(self.is_mainnet()));
-        let prev = Self::delete_data_without_reading(self.snapshot.as_mut(), &self.nonces, key.as_bytes())?;
+        let prev = Self::remove_from_disk_without_reading(self.snapshot.as_mut(), &self.nonces, key.as_bytes())?;
         if prev {
             self.store_accounts_count(self.count_accounts().await? - 1)?;
         }

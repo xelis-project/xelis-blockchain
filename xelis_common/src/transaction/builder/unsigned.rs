@@ -1,6 +1,5 @@
 use bulletproofs::RangeProof;
 use serde::{Deserialize, Serialize};
-
 use crate::{
     account::Nonce,
     crypto::{
@@ -101,9 +100,10 @@ impl UnsignedTransaction {
     // Get the hash of the transaction for the multi-signature
     // This hash must be signed by each participant of the multisig
     pub fn get_hash_for_multisig(&self) -> Hash {
-        let mut writer = Writer::new();
+        let mut buffer = Vec::new();
+        let mut writer = Writer::new(&mut buffer);
         self.write_no_signature(&mut writer);
-        hash(writer.as_bytes())
+        hash(&buffer)
     }
 
     // Sign the transaction for the multisig
@@ -142,9 +142,39 @@ impl Serializer for UnsignedTransaction {
         }
     }
 
-    // Should never be called
-    fn read(_: &mut Reader) -> Result<Self, ReaderError> {
-        Err(ReaderError::InvalidValue)
+    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
+        let version = TxVersion::read(reader)?;
+        let source = PublicKey::read(reader)?;
+        let data = TransactionType::read(reader)?;
+        let fee = reader.read_u64()?;
+        let nonce = Nonce::read(reader)?;
+
+        let source_commitments_len = reader.read_u8()?;
+        let mut source_commitments = Vec::with_capacity(source_commitments_len as usize);
+        for _ in 0..source_commitments_len {
+            source_commitments.push(SourceCommitment::read(reader)?);
+        }
+
+        let range_proof = RangeProof::read(reader)?;
+        let reference = Reference::read(reader)?;
+
+        let multisig = if version != TxVersion::V0 {
+            Some(MultiSig::read(reader)?)
+        } else {
+            None
+        };
+
+        Ok(Self {
+            version,
+            source,
+            data,
+            fee,
+            nonce,
+            source_commitments,
+            reference,
+            range_proof,
+            multisig,
+        })
     }
 
     fn size(&self) -> usize {

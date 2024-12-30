@@ -26,6 +26,7 @@ use xelis_common::{
     time::{get_current_time_in_seconds, TimestampSeconds},
     transaction::{Transaction, MultiSigPayload}
 };
+use xelis_vm::Environment;
 
 // Wrap a TX with its hash and size in bytes for faster access
 // size of tx can be heavy to compute, so we store it here
@@ -129,9 +130,9 @@ impl Mempool {
     }
 
     // All checks are made in Blockchain before calling this function
-    pub async fn add_tx<S: Storage>(&mut self, storage: &S, stable_topoheight: TopoHeight, topoheight: TopoHeight, hash: Hash, tx: Arc<Transaction>, size: usize, block_version: BlockVersion) -> Result<(), BlockchainError> {
-        let mut state = MempoolState::new(&self, storage, stable_topoheight, topoheight, block_version, self.mainnet);
-        tx.verify(&mut state).await?;
+    pub async fn add_tx<S: Storage>(&mut self, storage: &S, environment: &Environment, stable_topoheight: TopoHeight, topoheight: TopoHeight, hash: Hash, tx: Arc<Transaction>, size: usize, block_version: BlockVersion) -> Result<(), BlockchainError> {
+        let mut state = MempoolState::new(&self, storage, environment, stable_topoheight, topoheight, block_version, self.mainnet);
+        tx.verify(&hash, &mut state).await?;
 
         let (balances, multisig) = state.get_sender_cache(tx.get_source())
             .ok_or_else(|| BlockchainError::AccountNotFound(tx.get_source().as_address(self.mainnet)))?;
@@ -342,7 +343,7 @@ impl Mempool {
     // Because of DAG reorg, we can't only check updated keys from new block,
     // as a block could be orphaned and the nonce order would change
     // So we need to check all keys from mempool and compare it from storage
-    pub async fn clean_up<S: Storage>(&mut self, storage: &S, stable_topoheight: TopoHeight, topoheight: TopoHeight, block_version: BlockVersion) -> Vec<(Arc<Hash>, SortedTx)> {
+    pub async fn clean_up<S: Storage>(&mut self, storage: &S, environment: &Environment, stable_topoheight: TopoHeight, topoheight: TopoHeight, block_version: BlockVersion) -> Vec<(Arc<Hash>, SortedTx)> {
         trace!("Cleaning up mempool...");
 
         // All deleted sorted txs with their hashes
@@ -453,11 +454,9 @@ impl Mempool {
                 // Which mean, expected balances are still up to date with chain state
                 if !delete_cache {
                     let mut txs = Vec::with_capacity(cache.txs.len());
-                    let mut txs_hashes = Vec::with_capacity(cache.txs.len());
                     for tx_hash in &cache.txs {
                         if let Some(sorted_tx) = self.txs.get(tx_hash) {
-                            txs.push(sorted_tx.get_tx());
-                            txs_hashes.push(tx_hash);
+                            txs.push((sorted_tx.get_tx(), tx_hash));
                         } else {
                             // Shouldn't happen
                             warn!("TX {} not found in mempool while verifying, deleting whole cache", tx_hash);
@@ -472,11 +471,11 @@ impl Mempool {
                         // If one TX is invalid, all next TXs are invalid
                         // NOTE: this can be revert easily in case we are deleting valid TXs also,
                         // But will be slower during high traffic
-                        debug!("Verifying TXs ({}) for sender {} at topoheight {}", txs_hashes.iter().map(|hash| hash.to_string()).collect::<Vec<String>>().join(", "), key.as_address(self.mainnet), topoheight);
-                        let mut state = MempoolState::new(&self, storage, stable_topoheight, topoheight, block_version, self.mainnet);
+                        debug!("Verifying TXs ({}) for sender {} at topoheight {}", txs.iter().map(|(_, hash)| hash.to_string()).collect::<Vec<String>>().join(", "), key.as_address(self.mainnet), topoheight);
+                        let mut state = MempoolState::new(&self, storage, environment, stable_topoheight, topoheight, block_version, self.mainnet);
                         if let Err(e) = Transaction::verify_batch(txs.as_slice(), &mut state).await {
                             warn!("Error while verifying TXs for sender {}: {}", key.as_address(self.mainnet), e);
-                            for (hash, tx) in txs_hashes.iter().zip(txs) {
+                            for (tx, hash) in txs {
                                 warn!("- Deleting TX {} with {} and nonce {}", hash, tx.get_reference(), tx.get_nonce());
                                 debug!("TX hex: {}", tx.to_hex());
                             }
