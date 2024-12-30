@@ -6,7 +6,7 @@ mod registrations;
 mod asset;
 
 use async_trait::async_trait;
-use log::trace;
+use log::{debug, trace};
 use sled::Tree;
 use xelis_common::{
     block::TopoHeight,
@@ -70,6 +70,7 @@ pub trait VersionedProvider:
 
     // Delete versioned data above topoheight
     async fn delete_versioned_data_above_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError> {
+        debug!("Deleting versioned data above topoheight {}", topoheight);
         self.delete_versioned_balances_above_topoheight(topoheight).await?;
         self.delete_versioned_nonces_above_topoheight(topoheight).await?;
         self.delete_versioned_multisigs_above_topoheight(topoheight).await?;

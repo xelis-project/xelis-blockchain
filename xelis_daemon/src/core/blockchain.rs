@@ -1188,7 +1188,7 @@ impl<S: Storage> Blockchain<S> {
 
         // Simulator is enabled, don't calculate difficulty
         if height <= 1 || self.is_simulator_enabled() || has_hard_fork {
-            return Ok((get_minimum_difficulty(self.get_network()), difficulty::get_covariance_p(version)))
+            return Ok((get_minimum_difficulty(self.get_network(), version), difficulty::get_covariance_p(version)))
         }
 
         // Search the highest difficulty available
@@ -1205,7 +1205,7 @@ impl<S: Storage> Blockchain<S> {
         let p = provider.get_estimated_covariance_for_block_hash(best_tip).await?;
 
         // Get the minimum difficulty configured
-        let minimum_difficulty = get_minimum_difficulty(self.get_network());
+        let minimum_difficulty = get_minimum_difficulty(self.get_network(), version);
 
         let (difficulty, p_new) = difficulty::calculate_difficulty(parent_newest_tip_timestamp, newest_tip_timestamp, biggest_difficulty, p, minimum_difficulty, version);
         Ok((difficulty, p_new))
