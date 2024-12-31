@@ -194,7 +194,7 @@ mod tests {
 
         assert!(is_version_enabled_at_height(&Network::Mainnet, 435_000, BlockVersion::V1));
         // V2 is enabled
-        assert!(is_version_enabled_at_height(&Network::Mainnet, 1_375_000, BlockVersion::V2));
+        assert!(is_version_enabled_at_height(&Network::Mainnet, 1_376_000, BlockVersion::V2));
         assert!(is_version_enabled_at_height(&Network::Mainnet, 2_000_000, BlockVersion::V2));
 
         // V3 is not yet enabled
