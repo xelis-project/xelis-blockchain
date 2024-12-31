@@ -72,4 +72,7 @@ pub trait Storage:
 
     // Estimate the size of the DB in bytes
     async fn estimate_size(&self) -> Result<u64, BlockchainError>;
+
+    // Get the number of blocks orphaned in the DB
+    async fn count_orphaned_blocks(&self) -> Result<u64, BlockchainError>;
 }

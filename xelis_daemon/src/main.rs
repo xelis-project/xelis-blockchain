@@ -285,6 +285,7 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
     command_manager.add_command(Command::new("swap_blocks_executions_positions", "Swap the position of two blocks executions", CommandHandler::Async(async_handler!(swap_blocks_executions_positions::<S>))))?;
     command_manager.add_command(Command::new("print_balance", "Print the encrypted balance at a specific topoheight", CommandHandler::Async(async_handler!(print_balance::<S>))))?;
     command_manager.add_command(Command::new("estimate_db_size", "Estimate the database total size", CommandHandler::Async(async_handler!(estimate_db_size::<S>))))?;
+    command_manager.add_command(Command::new("count_orphaned_blocks", "Count how many orphaned blocks we currently hold", CommandHandler::Async(async_handler!(count_orphaned_blocks::<S>))))?;
 
     // Don't keep the lock for ever
     let (p2p, getwork) = {
@@ -547,6 +548,16 @@ async fn estimate_db_size<S: Storage>(manager: &CommandManager, _: ArgumentManag
     let storage = blockchain.get_storage().read().await;
     let size = storage.estimate_size().await.context("Error while estimating size")?;
     manager.message(format!("Estimated size: {}", human_bytes(size as f64)));
+
+    Ok(())
+}
+
+async fn count_orphaned_blocks<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
+    let context = manager.get_context().lock()?;
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    let storage = blockchain.get_storage().read().await;
+    let count = storage.count_orphaned_blocks().await.context("Error while counting orphaned blocks")?;
+    manager.message(format!("Orphaned blocks: {}", count));
 
     Ok(())
 }
