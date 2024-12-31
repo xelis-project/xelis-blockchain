@@ -724,27 +724,32 @@ impl Wallet {
                         let address = self.get_address();
                         for asset in used_assets.iter() {
                             debug!("Searching stable balance for asset {}", asset);
-                            let stable_point = network_handler.get_api().get_stable_balance(&address, &asset).await?;
+                            match network_handler.get_api().get_stable_balance(&address, &asset).await {
+                                Ok(stable_point) => {
+                                    // Store the stable balance version into unconfirmed balance
+                                    // So it will be fetch later by state
+                                    let mut ciphertext = stable_point.version.take_balance();
+                                    debug!("decrypting stable balance for asset {}", asset);
+                                    let amount = self.inner.decrypt_ciphertext(ciphertext.decompressed().map_err(|_| WalletError::CiphertextDecode)?)?;
+                                    let balance = Balance {
+                                        amount,
+                                        ciphertext
+                                    };
 
-                            // Store the stable balance version into unconfirmed balance
-                            // So it will be fetch later by state
-                            let mut ciphertext = stable_point.version.take_balance();
-                            debug!("decrypting stable balance for asset {}", asset);
-                            let amount = self.inner.decrypt_ciphertext(ciphertext.decompressed().map_err(|_| WalletError::CiphertextDecode)?)?;
-                            let balance = Balance {
-                                amount,
-                                ciphertext
-                            };
-
-                            debug!("Setting unconfirmed balance for asset {} ({}) with amount {}", asset, balance.ciphertext, balance.amount);
-                            storage.set_unconfirmed_balance_for((*asset).clone(), balance).await?;
-                            // Build the stable reference
-                            // We need to find the highest stable point
-                            if reference.is_none() || reference.as_ref().is_some_and(|r| r.topoheight < stable_point.stable_topoheight) {
-                                reference = Some(Reference {
-                                    topoheight: stable_point.stable_topoheight,
-                                    hash: stable_point.stable_block_hash
-                                });
+                                    debug!("Setting unconfirmed balance for asset {} ({}) with amount {}", asset, balance.ciphertext, balance.amount);
+                                    storage.set_unconfirmed_balance_for((*asset).clone(), balance).await?;
+                                    // Build the stable reference
+                                    // We need to find the highest stable point
+                                    if reference.is_none() || reference.as_ref().is_some_and(|r| r.topoheight < stable_point.stable_topoheight) {
+                                        reference = Some(Reference {
+                                            topoheight: stable_point.stable_topoheight,
+                                            hash: stable_point.stable_block_hash
+                                        });
+                                    }
+                                },
+                                Err(e) => {
+                                    warn!("Couldn't fetch stable balance for asset ({}), will try without: {}", asset, e);
+                                }
                             }
                         }
                     }
