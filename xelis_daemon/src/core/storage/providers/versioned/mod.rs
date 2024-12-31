@@ -85,8 +85,40 @@ pub trait VersionedProvider:
 impl VersionedProvider for SledStorage {}
 
 impl SledStorage {
+    fn delete_versioned_tree_at_topoheight(
+        snapshot: &mut Option<Snapshot>,
+        tree_pointer: &Tree,
+        tree_versioned: &Tree,
+        topoheight: u64,
+    ) -> Result<(), BlockchainError> {
+        trace!("delete versioned data at topoheight {}", topoheight);
+        for el in tree_versioned.scan_prefix(topoheight.to_be_bytes()).keys() {
+            let prefixed_key = el?;
+
+            // Delete this version from DB
+            // We read the previous topoheight to check if we need to delete the balance
+            let prev_topo = Self::remove_from_disk::<Option<TopoHeight>>(snapshot.as_mut(), tree_versioned, &prefixed_key)?
+                .ok_or(BlockchainError::CorruptedData)?;
+
+            // Key without the topoheight
+            let key = &prefixed_key[8..];
+            if let Some(topo_pointer) = Self::load_optional_from_disk_internal::<TopoHeight>(snapshot.as_ref(), tree_pointer, key)? {
+                if topo_pointer >= topoheight {
+                    if let Some(prev_topo) = prev_topo {
+                        Self::insert_into_disk(snapshot.as_mut(), tree_pointer, key, &prev_topo.to_be_bytes())?;
+                    } else {
+                        // No previous topoheight, we can delete the balance
+                        Self::remove_from_disk_without_reading(snapshot.as_mut(), tree_pointer, key)?;
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     fn delete_versioned_tree_above_topoheight(snapshot: &mut Option<Snapshot>, tree: &Tree, topoheight: u64) -> Result<(), BlockchainError> {
-        trace!("delete versioned nonces above topoheight {}", topoheight);
+        trace!("delete versioned data above topoheight {}", topoheight);
         for el in tree.iter().keys() {
             let key = el?;
             let topo = u64::from_bytes(&key[0..8])?;
@@ -105,7 +137,7 @@ impl SledStorage {
         keep_last: bool,
         context: DiskContext,
     ) -> Result<(), BlockchainError> {
-        trace!("delete versioned nonces below topoheight {}", topoheight);
+        trace!("delete versioned data below topoheight {}", topoheight);
         if keep_last {
             for el in tree_pointer.iter() {
                 let (key, value) = el?;

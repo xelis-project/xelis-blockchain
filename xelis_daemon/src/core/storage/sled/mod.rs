@@ -13,7 +13,7 @@ use xelis_common::{
     difficulty::{CumulativeDifficulty, Difficulty},
     immutable::Immutable,
     network::Network,
-    serializer::{Reader, Serializer},
+    serializer::Serializer,
     transaction::Transaction
 };
 use std::{
@@ -389,43 +389,32 @@ impl SledStorage {
             .ok_or(BlockchainError::NotFoundOnDisk(context))
     }
 
-    // Delete a key from the DB
-    pub(super) fn remove_from_disk<T: Serializer>(snapshot: Option<&mut Snapshot>, tree: &Tree, key: &[u8]) -> Result<Option<T>, BlockchainError> {
-        let data = if let Some(snapshot) = snapshot {
+    pub(super) fn remove_from_disk_internal(snapshot: Option<&mut Snapshot>, tree: &Tree, key: &[u8]) -> Result<Option<IVec>, BlockchainError> {
+        trace!("remove from disk internal");
+        if let Some(snapshot) = snapshot {
             let (value, load) = snapshot.remove(tree, key);
             if load {
-                tree.get(key)?
+                return Ok(tree.get(key)?);
             } else {
-                value
+                return Ok(value);
             }
-        } else {
-            tree.remove(key)?
-        };
-
-        match data {
-            Some(bytes) => {
-                let mut reader = Reader::new(&bytes);
-                let value = T::read(&mut reader)?;
-                Ok(Some(value))
-            },
-            None => Ok(None)
         }
+
+        Ok(tree.remove(key)?)
+    }
+
+    // Delete a key from the DB
+    pub(super) fn remove_from_disk<T: Serializer>(snapshot: Option<&mut Snapshot>, tree: &Tree, key: &[u8]) -> Result<Option<T>, BlockchainError> {
+        trace!("remove from disk");
+        let v = Self::remove_from_disk_internal(snapshot, tree, key)?;
+        Ok(v.map(|v| T::from_bytes(&v)).transpose()?)
     }
 
     // Delete a key from the DB without reading it
     pub(super) fn remove_from_disk_without_reading(snapshot: Option<&mut Snapshot>, tree: &Tree, key: &[u8]) -> Result<bool, BlockchainError> {
-        if let Some(snapshot) = snapshot {
-                let (v, load) = snapshot.remove(tree, key);
-                let res = if load {
-                    tree.contains_key(key)?
-                } else {
-                    v.is_some()
-                };
-                return Ok(res);
-        }
-
-        let v = tree.remove(key)?;
-        Ok(v.is_some())
+        trace!("remove from disk without reading");
+        Self::remove_from_disk_internal(snapshot, tree, key)
+            .map(|v| v.is_some())
     }
 
     // Insert a key into the DB
@@ -924,9 +913,6 @@ impl Storage for SledStorage {
 
         trace!("Cleaning versioned balances and nonces");
 
-        // now delete all versioned balances and nonces above the new topoheight
-        self.delete_versioned_data_above_topoheight(topoheight).await?;
-
         trace!("Cleaning caches");
         // Clear all caches to not have old data after rewind
         self.clear_caches().await?;
@@ -940,6 +926,10 @@ impl Storage for SledStorage {
         // Reduce the count of blocks stored
         let count = self.count_blocks().await? - done;
         Self::insert_into_disk(self.snapshot.as_mut(), &self.extra, BLOCKS_COUNT, &count.to_be_bytes())?;
+
+        warn!("deleting versioned data above topoheight {}", topoheight);
+        // now delete all versioned balances and nonces above the new topoheight
+        self.delete_versioned_data_above_topoheight(topoheight).await?;
 
         Ok((height, topoheight, txs))
     }
