@@ -1671,17 +1671,6 @@ impl<S: Storage> Blockchain<S> {
             return Err(BlockchainError::InvalidReachability)
         }
 
-        if version >= BlockVersion::V2 {
-            // Verify that the tips are well sorted by cumulative difficulty
-            let sorted_tips = blockdag::sort_tips(storage, block.get_tips().iter().cloned()).await?;
-            for (expected, got) in sorted_tips.iter().zip(block.get_tips().iter()) {
-                if expected != got {
-                    debug!("Invalid tips order, expected {} but got {} for this block {}", expected, got, block_hash);
-                    return Err(BlockchainError::InvalidTipsOrder(block_hash, expected.clone(), got.clone()))
-                }
-            }
-        }
-
         for hash in block.get_tips() {
             let previous_timestamp = storage.get_timestamp_for_block_hash(hash).await?;
             // block timestamp can't be less than previous block.
