@@ -1,6 +1,5 @@
 mod snapshot;
 
-use anyhow::Context;
 use async_trait::async_trait;
 use indexmap::IndexSet;
 use crate::{
@@ -9,7 +8,7 @@ use crate::{
 };
 use xelis_common::{
     block::{TopoHeight, Block, BlockHeader},
-    crypto::{Hash, PublicKey},
+    crypto::Hash,
     difficulty::{CumulativeDifficulty, Difficulty},
     immutable::Immutable,
     network::Network,
@@ -769,6 +768,8 @@ impl Storage for SledStorage {
 
             // Delete the hash at topoheight
             let (hash, block, block_txs) = self.delete_block_at_topoheight(topoheight).await?;
+            self.delete_versioned_data_at_topoheight(topoheight).await?;
+
             trace!("Block {} at topoheight {} deleted", hash, topoheight);
             txs.extend(block_txs);
 
@@ -803,115 +804,7 @@ impl Storage for SledStorage {
             done += 1;
         }
 
-        debug!("Blocks processed {}, new topoheight: {}, new height: {}, tips: {}", done, topoheight, height, tips.len());
-
-        trace!("Cleaning assets");
-
-        // All deleted assets
-        let mut deleted_assets = HashSet::new();
-
-        // clean all assets
-        for el in self.assets.iter() {
-            let (key, value) = el.context("error on asset iterator")?;
-            let registration_topoheight = TopoHeight::from_bytes(&value)?;
-            if registration_topoheight > topoheight {
-                let asset = Hash::from_bytes(&key)?;
-                trace!("Asset {} was registered at topoheight {}, deleting", asset, registration_topoheight);
-                // Delete it from registered assets
-                Self::remove_from_disk_without_reading(self.snapshot.as_mut(), &self.assets, &key)
-                    .context(format!("Error while deleting asset {asset} from registered assets"))?;
-
-                let key = Self::get_asset_key(&asset, registration_topoheight);
-                Self::remove_from_disk_without_reading(self.snapshot.as_mut(), &self.assets_prefixed, &key)
-                    .context(format!("Error while deleting asset {asset} from registered assets"))?;
-
-                self.store_assets_count(self.count_assets().await? - 1)?;
-
-                deleted_assets.insert(asset);
-            }
-        }
-
-        trace!("Cleaning nonces");
-        // now let's process nonces versions
-        // we set the new highest topoheight to the highest found under the new topoheight
-        for el in self.nonces.iter() {
-            let (key, value) = el?;
-            let topo_pointer = TopoHeight::from_bytes(&value)?;
-
-            if topo_pointer > topoheight {
-                let pkey = PublicKey::from_bytes(&key)?;
-                match self.get_nonce_at_maximum_topoheight(&pkey, topoheight).await? {
-                    Some((topo, _)) => {
-                        trace!("New highest version nonce for {} is at topoheight {}", pkey.as_address(self.is_mainnet()), topo);
-                        Self::insert_into_disk(self.snapshot.as_mut(), &self.nonces, &key, &topo.to_be_bytes())?;
-                    },
-                    None => {
-                        Self::remove_from_disk_without_reading(self.snapshot.as_mut(), &self.nonces, &key)?;
-                        self.store_accounts_count(self.count_accounts().await? - 1)?;
-                    }
-                }
-            }
-        }
-
-        trace!("Cleaning balances");
-        // do balances too
-        for el in self.balances.iter() {
-            let (key, value) = el?;
-            let asset = Hash::from_bytes(&key[32..64])?;
-            let mut delete = false;
-
-            // if the asset is not deleted, we can process it
-            if !deleted_assets.contains(&asset) {
-                let highest_topoheight = u64::from_bytes(&value)?;
-                // If the highest topoheight is above the new topoheight, we have to find the new highest version
-                if highest_topoheight > topoheight {
-                    // find the first version which is under topoheight
-                    let pkey = PublicKey::from_bytes(&key[0..32])?;
-                    trace!("Highest topoheight for balance {} is {}, above {}", pkey.as_address(self.is_mainnet()), highest_topoheight, topoheight);
-
-                    match self.get_balance_at_maximum_topoheight(&pkey, &asset, topoheight).await? {
-                        Some((topo, _)) => {
-                            // we find the new highest version which is under new topoheight
-                            trace!("New highest version balance for {} is at topoheight {}", pkey.as_address(self.is_mainnet()), topo);
-                            Self::insert_into_disk(self.snapshot.as_mut(), &self.balances, &key, &topo.to_be_bytes())?;
-                        },
-                        None => {
-                            delete = true;
-                        }
-                    }
-                }
-            } else {
-                delete = true;
-            }
-
-            if delete {
-                Self::remove_from_disk_without_reading(self.snapshot.as_mut(), &self.balances, &key)?;
-            }
-        }
-
-        // Clean the multisig
-        trace!("Cleaning multisig");
-        for el in self.multisig.iter() {
-            let (key, value) = el?;
-            let topo_pointer = TopoHeight::from_bytes(&value)?;
-
-            if topo_pointer > topoheight {
-                let pkey = PublicKey::from_bytes(&key)?;
-                match self.get_multisig_at_maximum_topoheight_for(&pkey, topoheight).await? {
-                    Some((topo, _)) => {
-                        trace!("New highest version multisig for {} is at topoheight {}", pkey.as_address(self.is_mainnet()), topo);
-                        Self::insert_into_disk(self.snapshot.as_mut(), &self.multisig, &key, &topo.to_be_bytes())?;
-                    },
-                    None => {
-                        Self::remove_from_disk_without_reading(self.snapshot.as_mut(), &self.multisig, &key)?;
-                    }
-                }
-            }
-        }
-
         warn!("Blocks rewinded: {}, new topoheight: {}, new height: {}", done, topoheight, height);
-
-        trace!("Cleaning versioned balances and nonces");
 
         trace!("Cleaning caches");
         // Clear all caches to not have old data after rewind
@@ -929,7 +822,7 @@ impl Storage for SledStorage {
 
         warn!("deleting versioned data above topoheight {}", topoheight);
         // now delete all versioned balances and nonces above the new topoheight
-        self.delete_versioned_data_above_topoheight(topoheight).await?;
+        // self.delete_versioned_data_above_topoheight(topoheight).await?;
 
         Ok((height, topoheight, txs))
     }
