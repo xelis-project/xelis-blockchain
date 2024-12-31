@@ -549,7 +549,7 @@ impl Serializer for TransactionEntry {
     }
 }
 
-
+#[derive(Debug)]
 pub enum Transfer<'a> {
     In(&'a mut TransferIn),
     Out(&'a mut TransferOut)

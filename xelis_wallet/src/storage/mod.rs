@@ -830,14 +830,17 @@ impl EncryptedStorage {
         for el in self.transactions.iter().values() {
             let value = el?;
             let mut entry = TransactionEntry::from_bytes(&self.cipher.decrypt_value(&value)?)?;
+            trace!("entry: {}", entry.get_hash());
             if let Some(topoheight) = min_topoheight {
                 if entry.get_topoheight() < topoheight {
+                    trace!("entry topoheight {} < min topoheight {}", entry.get_topoheight(), topoheight);
                     continue;
                 }
             }
 
             if let Some(topoheight) = max_topoheight {
                 if entry.get_topoheight() > topoheight {
+                    trace!("entry topoheight {} > max topoheight {}", entry.get_topoheight(), topoheight);
                     continue;
                 }
             }
@@ -848,6 +851,7 @@ impl EncryptedStorage {
                 EntryData::Burn { asset: burn_asset, .. } if accept_burn => {
                     if let Some(asset) = asset {
                         if *asset != *burn_asset {
+                            trace!("entry burn asset {} != requested asset {}", burn_asset, asset);
                             continue;
                         }
                     }
@@ -856,6 +860,7 @@ impl EncryptedStorage {
                     // Filter by address
                     if let Some(filter_key) = address {
                         if *from != *filter_key {
+                            trace!("entry from != requested address");
                             continue;
                         }
                     }
@@ -866,7 +871,6 @@ impl EncryptedStorage {
                     }
 
                     transfers = Some(t.iter_mut().map(|t| Transfer::In(t)).collect());
-
                 },
                 EntryData::Outgoing { transfers: t, .. } if accept_outgoing => {
                     // Filter by address
@@ -915,6 +919,7 @@ impl EncryptedStorage {
                     });
                 } else {
                     // Coinbase, burn, etc will be discarded always with such filter
+                    trace!("entry has no extra data, discarding");
                     continue;
                 }
             }
@@ -930,7 +935,9 @@ impl EncryptedStorage {
                     transactions.push(entry);
                 },
                 // All the left is discarded
-                _ => {}
+                e => {
+                    trace!("entry has no transfers, discarding {:?}", e);
+                }
             }
         }
 

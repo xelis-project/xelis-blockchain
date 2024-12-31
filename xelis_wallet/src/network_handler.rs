@@ -1071,7 +1071,7 @@ impl NetworkHandler {
             let storage = self.wallet.get_storage().read().await;
             storage.get_assets().await?
         };
-        
+
         debug!("Scanning history for each asset");
         // cache for all topoheight we already processed
         // this will prevent us to request more than one time the same topoheight
