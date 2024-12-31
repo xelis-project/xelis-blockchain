@@ -84,7 +84,7 @@ pub enum ApiError {
 }
 
 impl<S: Storage> DaemonRpcServer<S> {
-    pub async fn new(bind_address: String, blockchain: Arc<Blockchain<S>>, disable_getwork_server: bool) -> Result<SharedDaemonRpcServer<S>, BlockchainError> {
+    pub async fn new(bind_address: String, blockchain: Arc<Blockchain<S>>, disable_getwork_server: bool, threads: Option<usize>) -> Result<SharedDaemonRpcServer<S>, BlockchainError> {
         let getwork: Option<SharedGetWorkServer<S>> = if !disable_getwork_server {
             info!("Creating GetWork server...");
             Some(Arc::new(GetWorkServer::new(blockchain.clone())))
@@ -107,7 +107,7 @@ impl<S: Storage> DaemonRpcServer<S> {
 
         {
             let clone = Arc::clone(&server);
-            let http_server = HttpServer::new(move || {
+            let mut builder = HttpServer::new(move || {
                 let server = Arc::clone(&clone);
                 App::new().app_data(web::Data::from(server))
                     // Traditional HTTP
@@ -118,8 +118,18 @@ impl<S: Storage> DaemonRpcServer<S> {
                     .service(index)
             })
             .disable_signals()
-            .bind(&bind_address)?
-            .run();
+            .bind(&bind_address)?;
+
+            // set the number of threads if provided
+            if let Some(threads) = threads {
+                if threads == 0 {
+                    return Err(anyhow::anyhow!("The number of workers must be greater than 0").into());
+                }
+
+                builder = builder.workers(threads);
+            }
+
+            let http_server = builder.run();
 
             { // save the server handle to be able to stop it later
                 let handle = http_server.handle();

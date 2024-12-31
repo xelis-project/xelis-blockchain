@@ -36,7 +36,7 @@ pub trait BlocksAtHeightProvider {
 impl BlocksAtHeightProvider for SledStorage {
     async fn has_blocks_at_height(&self, height: u64) -> Result<bool, BlockchainError> {
         trace!("get blocks at height {}", height);
-        Ok(self.blocks_at_height.contains_key(&height.to_be_bytes())?)
+        self.contains_data(&self.blocks_at_height, &height.to_be_bytes())
     }
 
     async fn get_blocks_at_height(&self, height: u64) -> Result<IndexSet<Hash>, BlockchainError> {
@@ -47,7 +47,7 @@ impl BlocksAtHeightProvider for SledStorage {
 
     async fn set_blocks_at_height(&mut self, tips: IndexSet<Hash>, height: u64) -> Result<(), BlockchainError> {
         trace!("set {} blocks at height {}", tips.len(), height);
-        self.blocks_at_height.insert(height.to_be_bytes(), OrderedHashes(tips).to_bytes())?;
+        Self::insert_into_disk(self.snapshot.as_mut(), &self.blocks_at_height, &height.to_be_bytes(), OrderedHashes(tips).to_bytes())?;
         Ok(())
     }
 
@@ -73,7 +73,7 @@ impl BlocksAtHeightProvider for SledStorage {
 
         // Delete the height if there is no blocks present anymore
         if tips.is_empty() {
-            self.blocks_at_height.remove(&height.to_be_bytes())?;
+            Self::remove_from_disk_without_reading(self.snapshot.as_mut(), &self.blocks_at_height, &height.to_be_bytes())?;
         } else {
             self.set_blocks_at_height(tips, height).await?;
         }

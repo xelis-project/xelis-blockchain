@@ -50,6 +50,10 @@ impl Context {
     pub fn get<T: 'static>(&self) -> Result<&T> {
         self.get_optional().context("Requested type not found")
     }
+
+    pub fn get_copy<T: 'static + Copy>(&self) -> Result<T> {
+        self.get().map(|v| *v)
+    }
 }
 
 impl Default for Context {

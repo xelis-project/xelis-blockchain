@@ -1,38 +1,44 @@
 mod defaults;
 mod reader;
 mod writer;
+mod hexable;
 
-pub use reader::{Reader, ReaderError};
-pub use writer::Writer;
 use std::marker::Sized;
+pub use reader::*;
+pub use writer::Writer;
+pub use defaults::DEFAULT_MAX_ITEMS;
+pub use hexable::*;
 
 pub trait Serializer {
     fn write(&self, writer: &mut Writer);
 
     fn to_bytes(&self) -> Vec<u8> {
-        let mut writer = Writer::new();
+        let mut buffer = Vec::new();
+        let mut writer = Writer::new(&mut buffer);
         self.write(&mut writer);
-        writer.bytes()
+        buffer
     }
 
     fn to_hex(&self) -> String {
-        let mut writer = Writer::new();
+        let mut buffer = Vec::new();
+        let mut writer = Writer::new(&mut buffer);
         self.write(&mut writer);
-        hex::encode(writer.bytes())
+        hex::encode(buffer)
     }
 
     fn size(&self) -> usize {
-        let mut writer = Writer::new();
+        let mut buffer = Vec::new();
+        let mut writer = Writer::new(&mut buffer);
         self.write(&mut writer);
-        writer.total_write()
+        buffer.len()
     }
 
     fn read(reader: &mut Reader) -> Result<Self, ReaderError>
     where Self: Sized;
 
-    fn from_hex(hex: String) -> Result<Self, ReaderError>
+    fn from_hex(hex: &str) -> Result<Self, ReaderError>
     where Self: Sized {
-        match hex::decode(&hex) {
+        match hex::decode(hex) {
             Ok(bytes) => {
                 let mut reader = Reader::new(&bytes);
                 Self::read(&mut reader)

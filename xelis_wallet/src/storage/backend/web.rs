@@ -243,7 +243,8 @@ impl Db {
     /// crashes. Returns the number of bytes flushed during
     /// this call.
     pub fn flush(&self) -> Result<usize> {
-        let mut writer = Writer::new();
+        let mut buffer = Vec::new();
+        let mut writer = Writer::new(&mut buffer);
         self.export(&mut writer)?;
         let total = writer.total_write();
 
@@ -258,7 +259,7 @@ impl Db {
                 .map_err(|_| DbError::LocalStorage)?
                 .ok_or(DbError::NoLocalStorage)?;
     
-            let encoded = STANDARD.encode(writer.bytes());
+            let encoded = STANDARD.encode(buffer);
 
             let db_name = format!("{}{}", PREFIX_DB_KEY, self.name());
             local_storage.set_item(db_name.as_str(), encoded.as_str())
@@ -400,7 +401,8 @@ impl InnerTree {
     pub fn iter(self: &Tree) -> Iter {
         Iter {
             tree: self.clone(),
-            skip: 0
+            index: 0,
+            index_back: 0
         }
     }
 
@@ -440,7 +442,8 @@ impl InnerTree {
 // So, even if it get changed while we iter, we still have a reference to the old entries.
 pub struct Iter {
     tree: Tree,
-    skip: usize
+    index: usize,
+    index_back: usize
 }
 
 impl Iter {
@@ -468,9 +471,12 @@ impl Iterator for Iter {
             Err(_) => return Some(Err(DbError::Poisoned.into())),
         };
 
-        let skip = self.skip;
-        self.skip += 1;
-        let (k, v) = entries.iter().skip(skip).next()?;
+        if self.index >= entries.len() - self.index_back {
+            return None
+        }
+
+        let (k, v) = entries.iter().nth(self.index)?;
+        self.index += 1;
 
         Some(Ok((k.clone(), v.clone())))
     }
@@ -483,9 +489,14 @@ impl DoubleEndedIterator for Iter {
             Err(_) => return Some(Err(DbError::Poisoned.into())),
         };
 
-        let skip = self.skip;
-        self.skip += 1;
-        let (k, v) = entries.iter().rev().skip(skip).next()?;
+        // If we reach the other bound, we stop
+        if self.index >= entries.len() - self.index_back {
+            return None
+        }
+
+        let (k, v) = entries.iter().rev().nth(self.index_back)?;
+        self.index_back += 1;
+
         Some(Ok((k.clone(), v.clone())))
     }
 }
@@ -539,14 +550,14 @@ mod tests {
         tree.insert("test", "test").unwrap();
         tree.insert("xelis", "silex").unwrap();
 
-        let mut writer = Writer::new();
+        let mut buffer = Vec::new();
+        let mut writer = Writer::new(&mut buffer);
         db.export(&mut writer).unwrap();
-        let bytes = writer.bytes();
 
         let db = open("test").unwrap();
         assert_eq!(db.name(), "test");
         assert!(db.tree_names().is_empty());
-        assert!(db.import(&bytes).is_ok());
+        assert!(db.import(&buffer).is_ok());
         assert_eq!(db.tree_names().len(), 1);
 
         let tree = db.open_tree("test").unwrap();
@@ -582,6 +593,12 @@ mod tests {
         assert_eq!(iter.next_back().unwrap().unwrap(), b"666".into());
         assert_eq!(iter.next_back().unwrap().unwrap(), b"999".into());
 
+        let mut iter = tree.iter();
+        assert_eq!(iter.next().unwrap().unwrap(), (b"a".into(), b"999".into()));
+        assert_eq!(iter.next_back().unwrap().unwrap(), (b"c".into(), b"333".into()));
+        assert_eq!(iter.next().unwrap().unwrap(), (b"b".into(), b"666".into()));
         assert!(iter.next_back().is_none());
+        assert!(iter.next().is_none());
+
     }
 }

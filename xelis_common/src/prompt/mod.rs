@@ -43,13 +43,18 @@ use crossterm::{
 };
 use self::command::{CommandError, CommandManager};
 use anyhow::Error;
-use fern::colors::{ColoredLevelConfig, Color};
+use fern::colors::ColoredLevelConfig;
 use regex::Regex;
 use log::{info, error, Level, debug, LevelFilter, warn};
 use thiserror::Error;
+use serde::{Serialize, Deserialize};
+
+// Re-export fern and colors
+pub use fern::colors::Color;
 
 // used for launch param
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 #[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
 pub enum LogLevel {
     Off,
@@ -60,14 +65,20 @@ pub enum LogLevel {
     Trace
 }
 
-#[derive(Debug, Clone)]
+impl Default for LogLevel {
+    fn default() -> Self {
+        Self::Info
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModuleConfig {
     pub module: String,
     pub level: LogLevel
 }
 
 impl FromStr for ModuleConfig {
-    type Err = String;
+    type Err = &'static str;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let mut parts = s.split('=');
@@ -108,7 +119,7 @@ impl Display for LogLevel {
 }
 
 impl FromStr for LogLevel {
-    type Err = String;
+    type Err = &'static str;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Ok(match s {
@@ -117,13 +128,16 @@ impl FromStr for LogLevel {
             "info" => Self::Info,
             "debug" => Self::Debug,
             "trace" => Self::Trace,
-            _ => return Err("Invalid log level".into())
+            "off" => Self::Off,
+            _ => return Err("Invalid log level")
         })
     }
 }
 
 #[derive(Error, Debug)]
 pub enum PromptError {
+    #[error("Logs path is not a folder, it must ends with /")]
+    LogsPathNotFolder,
     #[error("Canceled read input")]
     Canceled,
     #[error("End of stream")]
@@ -473,8 +487,8 @@ type AsyncF<'a, T1, T2, R> = Box<dyn Fn(&'a T1, T2) -> LocalBoxFuture<'a, R> + '
 impl Prompt {
     pub fn new(
         level: LogLevel,
-        dir_path: &String,
-        filename_log: &String,
+        dir_path: &str,
+        filename_log: &str,
         disable_file_logging: bool,
         disable_file_log_date_based: bool,
         disable_colors: bool,
@@ -482,6 +496,10 @@ impl Prompt {
         module_logs: Vec<ModuleConfig>,
         file_level: LogLevel,
     ) -> Result<ShareablePrompt, PromptError> {
+        if !dir_path.ends_with("/") {
+            return Err(PromptError::LogsPathNotFolder);
+        }
+
         let (read_input_sender, read_input_receiver) = mpsc::channel(1);
         let prompt = Self {
             state: Arc::new(State::new(interactive)),
@@ -492,12 +510,8 @@ impl Prompt {
         };
         prompt.setup_logger(level, dir_path, filename_log, disable_file_logging, disable_file_log_date_based, module_logs, file_level)?;
 
-        #[cfg(target_os = "windows")]
-        {
-            if let Err(e) = Self::adjust_win_console() {
-                error!("Error while adjusting windows console: {}", e);
-            }
-        }
+        // Logs all the panics into the log file
+        log_panics::init();
 
         #[cfg(feature = "tracing")]
         {
@@ -523,7 +537,7 @@ impl Prompt {
     }
 
     #[cfg(target_os = "windows")]
-    fn adjust_win_console() -> Result<(), Error> {
+    pub fn adjust_win_console(&self) -> Result<(), Error> {
         let console = win32console::console::WinConsole::input();
         let mut mode = console.get_mode()?;
         mode = (mode & !win32console::console::ConsoleMode::ENABLE_QUICK_EDIT_MODE)
@@ -568,7 +582,7 @@ impl Prompt {
                         match command_manager.handle_command(input).await {
                             Err(CommandError::Exit) => break,
                             Err(e) => {
-                                error!("Error while executing command: {}", e);
+                                error!("Error while executing command: {:#}", e);
                             }
                             _ => {},
                         }
@@ -676,7 +690,7 @@ impl Prompt {
 
     pub async fn read_hash<S: ToString>(&self, prompt: S) -> Result<Hash, PromptError> {
         let hash_hex = self.read_input(prompt, false).await?;
-        Ok(Hash::from_hex(hash_hex)?)
+        Ok(Hash::from_hex(&hash_hex)?)
     }
 
     pub async fn cancel_read_input(&self) -> Result<(), Error> {
@@ -757,8 +771,8 @@ impl Prompt {
     fn setup_logger(
         &self,
         level: LogLevel,
-        dir_path: &String,
-        filename_log: &String,
+        dir_path: &str,
+        filename_log: &str,
         disable_file_logging: bool,
         disable_file_log_date_based: bool,
         module_logs: Vec<ModuleConfig>,

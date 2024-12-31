@@ -124,4 +124,9 @@ impl<'a> TxSelector<'a> {
 
         Some(entry)
     }
+
+    // Check if the selector is empty
+    pub fn is_empty(&self) -> bool {
+        self.queue.is_empty()
+    }
 }

@@ -1,59 +1,57 @@
 use std::fmt::{self, Display, Formatter};
 use serde::{Deserialize, Serialize};
-use crate::serializer::{
-    Reader,
-    ReaderError,
-    Serializer,
-    Writer
+use crate::{
+    block::TopoHeight,
+    serializer::{
+        Reader,
+        ReaderError,
+        Serializer,
+        Writer
+    }
 };
 
+pub type Nonce = u64;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct VersionedNonce {
-    nonce: u64,
-    previous_topoheight: Option<u64>,
+    nonce: Nonce,
+    previous_topoheight: Option<TopoHeight>,
 }
 
 impl VersionedNonce {
-    pub fn new(nonce: u64, previous_topoheight: Option<u64>) -> Self {
+    pub fn new(nonce: Nonce, previous_topoheight: Option<TopoHeight>) -> Self {
         Self {
             nonce,
             previous_topoheight
         }
     }
 
-    pub fn get_nonce(&self) -> u64 {
+    pub fn get_nonce(&self) -> Nonce {
         self.nonce
     }
 
-    pub fn set_nonce(&mut self, value: u64) {
+    pub fn set_nonce(&mut self, value: Nonce) {
         self.nonce = value;
     }
 
-    pub fn get_previous_topoheight(&self) -> Option<u64> {
+    pub fn get_previous_topoheight(&self) -> Option<TopoHeight> {
         self.previous_topoheight        
     }
 
-    pub fn set_previous_topoheight(&mut self, previous_topoheight: Option<u64>) {
+    pub fn set_previous_topoheight(&mut self, previous_topoheight: Option<TopoHeight>) {
         self.previous_topoheight = previous_topoheight;
     }
 }
 
 impl Serializer for VersionedNonce {
     fn write(&self, writer: &mut Writer) {
-        writer.write_u64(&self.nonce);
-        if let Some(topo) = &self.previous_topoheight {
-            writer.write_u64(topo);
-        }
+        self.previous_topoheight.write(writer);
+        self.nonce.write(writer);
     }
 
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let nonce = reader.read_u64()?;
-        let previous_topoheight = if reader.size() == 0 {
-            None
-        } else {
-            Some(reader.read_u64()?)
-        };
+        let previous_topoheight = Option::read(reader)?;
+        let nonce = Nonce::read(reader)?;
 
         Ok(Self {
             nonce,
@@ -62,7 +60,7 @@ impl Serializer for VersionedNonce {
     }
 
     fn size(&self) -> usize {
-        self.nonce.size() + if let Some(topoheight) = self.previous_topoheight { topoheight.size() } else { 0 }
+        self.nonce.size() + self.previous_topoheight.size()
     }
 }
 

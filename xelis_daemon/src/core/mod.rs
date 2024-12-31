@@ -1,3 +1,4 @@
+pub mod config;
 pub mod blockchain;
 pub mod mempool;
 pub mod error;

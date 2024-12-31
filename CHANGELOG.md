@@ -4,6 +4,38 @@ This file contains all the changelogs to ensure that changes can be tracked and 
 
 To see the full history and exact changes, please refer to the commits history directly.
 
+## v1.16.0
+
+Bug fixes for daemon & wallet, improvements & new features.
+
+Common:
+- Base for Smart Contracts
+- Ownership / Balance Proofs
+- Serializer improvements
+- Reorganize files
+- Multisig support
+- Launch options are now configurable in a JSON config file.
+
+Daemon:
+- Several optimizations, bug fixes, rpc methods
+- Database "schema" updated, require a full resync
+- New P2P Key Exchange system (DH)
+- New bootstrap (fast sync) system
+- MultiSig support
+- Smart Contracts testnet
+- Commit Point system to rollback all changes during a deep reorg
+
+Wallet:
+- new RPC methods
+- MultiSig support
+- Detect correct TX version to use
+- Fix bugs
+- Store the timestamp for each TX (need to resync)
+- Breaking changes in API and wallet storage
+
+Misc:
+- Add checksum of each precompiled binary in the release
+
 ## v1.15.0
 
 Bug fixes for daemon & wallet, improvements & new features.

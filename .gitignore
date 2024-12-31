@@ -17,3 +17,4 @@ perf.data.old
 # ignore generated files by XELIS
 difficulty_dataset.csv
 precomputed_tables_*.bin
+mainnet*

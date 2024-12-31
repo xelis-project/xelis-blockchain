@@ -1,9 +1,10 @@
 use crate::{block::Algorithm, serializer::{Reader, ReaderError, Serializer, Writer}};
 use std::{
-    fmt::{Display, Error, Formatter},
-    convert::TryInto,
-    hash::Hasher,
     borrow::Cow,
+    convert::TryInto,
+    fmt::{Display, Error, Formatter},
+    hash::Hasher,
+    str::FromStr
 };
 use serde::de::Error as SerdeError;
 use serde::{Deserialize, Serialize};
@@ -40,6 +41,16 @@ impl Hash {
 
     pub fn to_hex(&self) -> String {
         hex::encode(self.0)
+    }
+}
+
+impl FromStr for Hash {
+    type Err = &'static str;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let bytes = hex::decode(s).map_err(|_| "Invalid hex string")?;
+        let bytes: [u8; HASH_SIZE] = bytes.try_into().map_err(|_| "Invalid hash")?;
+        Ok(Hash::new(bytes))
     }
 }
 

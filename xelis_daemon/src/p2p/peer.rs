@@ -9,6 +9,7 @@ use crate::{
 };
 use xelis_common::{
     api::daemon::Direction,
+    block::TopoHeight,
     crypto::Hash,
     difficulty::CumulativeDifficulty,
     serializer::Serializer,
@@ -49,6 +50,7 @@ use std::{
     time::Duration
 };
 use tokio::{
+    select,
     sync::{broadcast, mpsc, oneshot::Sender, Mutex},
     time::timeout,
 };
@@ -156,7 +158,7 @@ pub struct Peer {
 }
 
 impl Peer {
-    pub fn new(connection: Connection, id: u64, node_tag: Option<String>, local_port: u16, version: String, top_hash: Hash, topoheight: u64, height: u64, pruned_topoheight: Option<u64>, priority: bool, cumulative_difficulty: CumulativeDifficulty, peer_list: SharedPeerList, peers_received: HashSet<SocketAddr>, sharable: bool) -> (Self, Rx) {
+    pub fn new(connection: Connection, id: u64, node_tag: Option<String>, local_port: u16, version: String, top_hash: Hash, topoheight: TopoHeight, height: u64, pruned_topoheight: Option<TopoHeight>, priority: bool, cumulative_difficulty: CumulativeDifficulty, peer_list: SharedPeerList, peers_received: HashSet<SocketAddr>, sharable: bool) -> (Self, Rx) {
         let mut outgoing_address = *connection.get_address();
         outgoing_address.set_port(local_port);
 
@@ -251,12 +253,12 @@ impl Peer {
     }
 
     // Get the topoheight of the peer
-    pub fn get_topoheight(&self) -> u64 {
+    pub fn get_topoheight(&self) -> TopoHeight {
         self.topoheight.load(Ordering::Acquire)
     }
 
     // Set the topoheight of the peer
-    pub fn set_topoheight(&self, topoheight: u64) {
+    pub fn set_topoheight(&self, topoheight: TopoHeight) {
         self.topoheight.store(topoheight, Ordering::Release);
     }
 
@@ -276,7 +278,7 @@ impl Peer {
     }
 
     // Get the pruned topoheight
-    pub fn get_pruned_topoheight(&self) -> Option<u64> {
+    pub fn get_pruned_topoheight(&self) -> Option<TopoHeight> {
         if self.is_pruned() {
             Some(self.pruned_topoheight.load(Ordering::Acquire))
         } else {
@@ -285,7 +287,7 @@ impl Peer {
     }
 
     // Update the pruned topoheight state
-    pub fn set_pruned_topoheight(&self, pruned_topoheight: Option<u64>) {
+    pub fn set_pruned_topoheight(&self, pruned_topoheight: Option<TopoHeight>) {
         if let Some(pruned_topoheight) = pruned_topoheight {
             self.is_pruned.store(true, Ordering::Release);
             self.pruned_topoheight.store(pruned_topoheight, Ordering::Release);
@@ -418,13 +420,18 @@ impl Peer {
             objects.insert(request.clone(), sender); // clone is necessary in case timeout has occured
             receiver
         };
-        let object = match timeout(Duration::from_millis(PEER_TIMEOUT_REQUEST_OBJECT), receiver).await {
-            Ok(res) => res?,
-            Err(e) => {
-                trace!("Requested data has timed out");
-                let mut objects = self.objects_requested.lock().await;
-                objects.remove(&request); // remove it from request list
-                return Err(P2pError::AsyncTimeOut(e));
+
+        let mut exit_channel = self.get_exit_receiver();
+        let object = select! {
+            _ = exit_channel.recv() => return Err(P2pError::Disconnected),
+            res = timeout(Duration::from_millis(PEER_TIMEOUT_REQUEST_OBJECT), receiver) => match res {
+                Ok(res) => res?,
+                Err(e) => {
+                    trace!("Requested data has timed out");
+                    let mut objects = self.objects_requested.lock().await;
+                    objects.remove(&request); // remove it from request list
+                    return Err(P2pError::AsyncTimeOut(e));
+                }
             }
         };
 
@@ -455,12 +462,15 @@ impl Peer {
         // send the packet
         self.send_packet(Packet::BootstrapChainRequest(BootstrapChainRequest::new(step))).await?;
 
-        // wait on the response
-        let response: StepResponse = match timeout(Duration::from_millis(PEER_TIMEOUT_BOOTSTRAP_STEP), receiver).await {
-            Ok(res) => res?,
-            Err(e) => {
-                debug!("Requested bootstrap chain step {:?} has timed out", step_kind);
-                return Err(P2pError::AsyncTimeOut(e));
+        let mut exit_channel = self.get_exit_receiver();
+        let response = select! {
+            _ = exit_channel.recv() => return Err(P2pError::Disconnected),
+            res = timeout(Duration::from_millis(PEER_TIMEOUT_BOOTSTRAP_STEP), receiver) => match res {
+                Ok(res) => res?,
+                Err(e) => {
+                    debug!("Requested bootstrap chain step {:?} has timed out", step_kind);
+                    return Err(P2pError::AsyncTimeOut(e));
+                }
             }
         };
 
@@ -486,11 +496,15 @@ impl Peer {
         self.send_packet(Packet::ChainRequest(request)).await?;
 
         trace!("waiting for chain response");
-        let response: ChainResponse = match timeout(Duration::from_secs(CHAIN_SYNC_TIMEOUT_SECS), receiver).await {
-            Ok(res) => res?,
-            Err(e) => {
-                debug!("Requested sync chain step timed out");
-                return Err(P2pError::AsyncTimeOut(e));
+        let mut exit_channel = self.get_exit_receiver();
+        let response = select! {
+            _ = exit_channel.recv() => return Err(P2pError::Disconnected),
+            res = timeout(Duration::from_secs(CHAIN_SYNC_TIMEOUT_SECS), receiver) => match res {
+                Ok(res) => res?,
+                Err(e) => {
+                    debug!("Requested sync chain has timed out");
+                    return Err(P2pError::AsyncTimeOut(e));
+                }
             }
         };
 

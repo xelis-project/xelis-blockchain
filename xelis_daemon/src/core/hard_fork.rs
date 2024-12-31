@@ -2,7 +2,8 @@ use anyhow::Result;
 use xelis_common::{
     api::daemon::HardFork,
     block::{Algorithm, BlockVersion},
-    network::Network
+    network::Network,
+    transaction::TxVersion
 };
 use crate::config::get_hard_forks;
 
@@ -38,7 +39,7 @@ pub fn get_version_at_height(network: &Network, height: u64) -> BlockVersion {
 pub fn get_pow_algorithm_for_version(version: BlockVersion) -> Algorithm {
     match version {
         BlockVersion::V0 => Algorithm::V1,
-        BlockVersion::V1 => Algorithm::V2
+        _ => Algorithm::V2
     }
 }
 
@@ -70,6 +71,24 @@ pub fn is_version_allowed_at_height(network: &Network, height: u64, version: &st
     Ok(true)
 }
 
+// Verify if the BlockVersion is/was enabled at a given height
+// Even if we are any version above the one requested, this function returns true
+pub fn is_version_enabled_at_height(network: &Network, height: u64, version: BlockVersion) -> bool {
+    for hard_fork in get_hard_forks(network) {
+        if hard_fork.height <= height && hard_fork.version == version {
+            return true;
+        }
+    }
+
+    false
+}
+
+// This function checks if a transaction version is allowed in a block version
+#[inline(always)]
+pub fn is_tx_version_allowed_in_block_version(tx_version: TxVersion, block_version: BlockVersion) -> bool {
+    block_version.is_tx_version_allowed(tx_version)
+}
+
 #[cfg(test)]
 mod tests {
     use xelis_common::config::VERSION;
@@ -87,7 +106,7 @@ mod tests {
     }
 
     #[test]
-    fn test_current_version_against_mainnet_hard_forks() {
+    fn test_current_software_version_hard_forks_requirements() {
         const VERSIONS: [&str; 3] = ["1.0.0", "1.0.0-abcdef", "1.0.0-abcdef999"];
 
         for version in VERSIONS {
@@ -100,13 +119,12 @@ mod tests {
         // Current version should always be valid on previous versions
         assert!(is_version_allowed_at_height(&Network::Mainnet, 0, &VERSION).unwrap());
 
-        // Should be invalid as we require 1.13.0
+        // Should be invalid as we require >=1.13.0
         for version in VERSIONS {
-            println!("Testing version: {}", version);
             assert!(!is_version_allowed_at_height(&Network::Mainnet, 435_000, version).unwrap());
         }
 
-        // Should be valid as we require 1.13.0
+        // Should be valid as we require >=1.13.0
         assert!(is_version_allowed_at_height(&Network::Mainnet, 435_000, "1.13.0").unwrap());
         assert!(is_version_allowed_at_height(&Network::Mainnet, 435_000, VERSION).unwrap());
     }
@@ -133,13 +151,66 @@ mod tests {
 
     #[test]
     fn test_get_version_at_height() {
+        // Mainnet
+        assert_eq!(get_version_at_height(&Network::Mainnet, 0), BlockVersion::V0);
+        assert_eq!(get_version_at_height(&Network::Mainnet, 435_000), BlockVersion::V1);
+        assert_eq!(get_version_at_height(&Network::Mainnet, 2_000_000), BlockVersion::V2);
+
+        // Testnet
         assert_eq!(get_version_at_height(&Network::Testnet, 0), BlockVersion::V0);
-        assert_eq!(get_version_at_height(&Network::Testnet, 100_000), BlockVersion::V1);
+        assert_eq!(get_version_at_height(&Network::Testnet, 6), BlockVersion::V1);
+        assert_eq!(get_version_at_height(&Network::Testnet, 10), BlockVersion::V2);
+        assert_eq!(get_version_at_height(&Network::Testnet, 50), BlockVersion::V3);
     }
 
     #[test]
     fn test_get_pow_algorithm_for_version() {
         assert_eq!(get_pow_algorithm_for_version(BlockVersion::V0), Algorithm::V1);
         assert_eq!(get_pow_algorithm_for_version(BlockVersion::V1), Algorithm::V2);
+    }
+
+    #[test]
+    fn test_is_tx_version_allowed_in_block_version() {
+        assert!(is_tx_version_allowed_in_block_version(TxVersion::V0, BlockVersion::V0));
+        assert!(!is_tx_version_allowed_in_block_version(TxVersion::V1, BlockVersion::V0));
+
+        assert!(is_tx_version_allowed_in_block_version(TxVersion::V0, BlockVersion::V1));
+        assert!(!is_tx_version_allowed_in_block_version(TxVersion::V1, BlockVersion::V1));
+
+        // TX V0 is not allowed in block V2
+        assert!(!is_tx_version_allowed_in_block_version(TxVersion::V0, BlockVersion::V2));
+        // TX V1 is allowed in block V2
+        assert!(is_tx_version_allowed_in_block_version(TxVersion::V1, BlockVersion::V2));
+        // But TX V2 is not allowed in block V2
+        assert!(!is_tx_version_allowed_in_block_version(TxVersion::V2, BlockVersion::V2));
+    }
+
+    #[test]
+    fn test_version_enabled() {
+        // Mainnet
+        assert!(is_version_enabled_at_height(&Network::Mainnet, 0, BlockVersion::V0));
+        assert!(!is_version_enabled_at_height(&Network::Mainnet, 0, BlockVersion::V1));
+        assert!(!is_version_enabled_at_height(&Network::Mainnet, 0, BlockVersion::V2));
+
+        assert!(is_version_enabled_at_height(&Network::Mainnet, 435_000, BlockVersion::V1));
+        // V2 is enabled
+        assert!(is_version_enabled_at_height(&Network::Mainnet, 1_375_000, BlockVersion::V2));
+        assert!(is_version_enabled_at_height(&Network::Mainnet, 2_000_000, BlockVersion::V2));
+
+        // V3 is not yet enabled
+        assert!(!is_version_enabled_at_height(&Network::Mainnet, 2_000_000, BlockVersion::V3));
+
+        // Testnet
+        assert!(is_version_enabled_at_height(&Network::Testnet, 0, BlockVersion::V0));
+        assert!(!is_version_enabled_at_height(&Network::Testnet, 0, BlockVersion::V1));
+        assert!(!is_version_enabled_at_height(&Network::Testnet, 0, BlockVersion::V2));
+
+        assert!(is_version_enabled_at_height(&Network::Testnet, 5, BlockVersion::V0));
+        assert!(is_version_enabled_at_height(&Network::Testnet, 5, BlockVersion::V1));
+        assert!(!is_version_enabled_at_height(&Network::Testnet, 5, BlockVersion::V2));
+
+        assert!(is_version_enabled_at_height(&Network::Testnet, 10, BlockVersion::V0));
+        assert!(is_version_enabled_at_height(&Network::Testnet, 10, BlockVersion::V1));
+        assert!(is_version_enabled_at_height(&Network::Testnet, 10, BlockVersion::V2));
     }
 }

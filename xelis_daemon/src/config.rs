@@ -87,12 +87,6 @@ pub const SIDE_BLOCK_REWARD_MIN_PERCENT: u64 = 5;
 // Emission speed factor for the emission curve
 // It is used to calculate based on the supply the block reward
 pub const EMISSION_SPEED_FACTOR: u64 = 20;
-// 30% of the transaction fee is burned
-// This is to reduce the supply over time
-// and also to prevent spamming the network with low fee transactions
-// or free tx from miners
-// This should be enabled once Smart Contracts are released
-pub const TRANSACTION_FEE_BURN_PERCENT: u64 = 30;
 
 // Developer address for paying dev fees until Smart Contracts integration
 // (testnet/mainnet format is converted lazily later)
@@ -182,7 +176,7 @@ pub const PEER_PACKET_CHANNEL_SIZE: usize = 1024;
 pub const PEER_SEND_BYTES_TIMEOUT: u64 = 3_000;
 
 // Hard Forks configured
-const HARD_FORKS: [HardFork; 2] = [
+const HARD_FORKS: [HardFork; 3] = [
     HardFork {
         height: 0,
         version: BlockVersion::V0,
@@ -190,15 +184,23 @@ const HARD_FORKS: [HardFork; 2] = [
         version_requirement: None
     },
     HardFork {
-        height: 434_100, // Expected date: 10/07/2024 12am UTC
+        // Expected date: 10/07/2024 12am UTC
+        height: 434_100,
         version: BlockVersion::V1,
         changelog: "xelis-hash v2",
         version_requirement: Some(">=1.13.0")
+    },
+    HardFork {
+        // Expected date: 30/12/2024 9pm UTC
+        height: 1_376_000,
+        version: BlockVersion::V2,
+        changelog: "MultiSig, P2P",
+        version_requirement: Some(">=1.16.0")
     }
 ];
 
 // Testnet / Devnet hard forks
-const TESTNET_HARD_FORKS: [HardFork; 2] = [
+const TESTNET_HARD_FORKS: [HardFork; 4] = [
     HardFork {
         height: 0,
         version: BlockVersion::V0,
@@ -210,6 +212,18 @@ const TESTNET_HARD_FORKS: [HardFork; 2] = [
         version: BlockVersion::V1,
         changelog: "xelis-hash v2",
         version_requirement: Some(">=1.13.0")
+    },
+    HardFork {
+        height: 10,
+        version: BlockVersion::V2,
+        changelog: "MultiSig, P2P",
+        version_requirement: Some(">=1.16.0")
+    },
+    HardFork {
+        height: 15,
+        version: BlockVersion::V3,
+        changelog: "Smart Contracts",
+        version_requirement: Some(">=1.16.0")
     }
 ];
 
@@ -284,9 +298,20 @@ pub const fn get_seed_nodes(network: &Network) -> &[&str] {
 // Get minimum difficulty based on the network
 // Mainnet has a minimum difficulty to prevent spamming the network
 // Testnet has a lower difficulty to allow faster block generation
-pub const fn get_minimum_difficulty(network: &Network) -> Difficulty {
+pub fn get_minimum_difficulty(network: &Network) -> Difficulty {
     match network {
         Network::Mainnet => MAINNET_MINIMUM_DIFFICULTY,
+        _ => OTHER_MINIMUM_DIFFICULTY,
+    }
+}
+
+pub fn get_difficulty_at_hard_fork(network: &Network, block_version: BlockVersion) -> Difficulty {
+    match network {
+        Network::Mainnet => match block_version {
+            BlockVersion::V0 | BlockVersion::V1 => MAINNET_MINIMUM_DIFFICULTY,
+            // 20 KH/s * 100 000 = 2 GH/s
+            _ => MAINNET_MINIMUM_DIFFICULTY * Difficulty::from_u64(100_000),
+        },
         _ => OTHER_MINIMUM_DIFFICULTY,
     }
 }

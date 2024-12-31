@@ -1,22 +1,35 @@
 # XELIS
-All rights reserved.
 
-A from scratch blockchain made in Rust and powered by Tokio, using account model. XELIS is based on an event-driven system combined with the native async/await and works with a unique and from scratch p2p system. This allow to be notified on any events happening on the network and to be able to react to them instead of checking periodically for updates.
+XELIS is the world's first **BlockDAG** with **Privacy**, **Speed**, **Scalability** and **Smart Contracts**.
 
-BlockDAG is enabled to improve the scalability and the security of the network. Homomorphic Encryption using ElGamal is used to provide privacy on transactions (transfered amounts) and balances.
+## Features
 
-ElGamal cryptosystem was choosen because it's a well known and studied encryption algorithm which has homomorphism features. ElGamal is fast and is used in combination with Ristretto255 curve to provide a good level of security (~128 bits of security). Homomorphic operations available using ElGamal are addition/subtraction between ciphertexts and/or plaintext and multiplication against plaintext value.
+The main features of XELIS are the following:
+- **BlockDAG**: enabled to improve the scalability and the security of the network by reducing orphaned blocks rate.
+- **Egalitarian PoW**: Unique PoW algorithm built to allow any CPU or GPU to mine XELIS easily using [xelis-hash](https://github.com/xelis-project/xelis-hash).
+- **Kalman Filter**: Difficulty adjustment algorithm using Kalman Filter to adjust the difficulty at each block instantly and smoothly to prevent any stuck-chain or dishonest miners mining at lower difficulty. 
+- **Privacy**: Homomorphic Encryption allows to have encrypted balances and encrypted transfered amounts.
+- **Smart Contracts**: allows to create unstoppable decentralized applications by deploying programs on the network, executed in our sandboxed environment [xelis-vm](https://github.com/xelis-project/xelis-vm).
+- **Confidential Asset**: Any asset deployed on XELIS network will have the same privacy and functionality like XELIS in any wallet.
+- **Event system**: every event happening on the network (daemon or wallet) can be detected and notified easily.
+- **Instant Synchronization**: Your wallet balances and history is synced in few seconds. No need to sync the whole chain to use your wallet.
+- **Pruning Mode**: Reduce the blockchain size by deleting blocks, transactions and versioned balances.
+- **Smart Contracts**: Create and deploy unstoppable decentralized applications.
+- **Extra Data**: Send extra data in a transaction to transfer easily data to a wallet. This is secure and encrypted, readable only by the parties of a transaction.
+- **Integrated addresses**: Auto-integrate extra-data in a transaction when using an integrated address.
+- **Easy to use**: We aims to provide the most easiest platform to build and use daily.
 
-Account Model allows to have a more flexible system than UTXO model and to have a better privacy because there is no need to link inputs and outputs, which provide real fungibility. It allows also the fast-sync feature to only download the last state of the blockchain instead of downloading all the history.
+For more, see the [full documentation](https://docs.xelis.io).
 
-Pruning system is also available to reduce the size of the blockchain by removing old blocks and transactions.
+## Networks
 
-We also aims to enabled Smart Contracts support in the future.
-
-We provide different built-in networks:
+For easy of use, we provide different built-in networks:
 - Mainnet: Released April 20, 2024.
 - Testnet: Running
 - Devnet: this network is used for local development purpose where you want to create your own local chain. It has no peers
+
+You can switch between networks by using the `--network` option.
+By default, the network is set to `mainnet`.
 
 ## Acknowledgments
 
@@ -30,31 +43,42 @@ We provide different built-in networks:
 
 Thank you to every people testing actively the code base, honest miners and every future contributors!
 
-## Main features
+## How to build
 
-The main features of XELIS are the following:
-- **BlockDAG**: reduce orphaned blocks rate.
-- **Egalitarian Mining**: any CPU or GPU can mine XELIS easily.
-- **Privacy**: Homomorphic Encryption allows to have encrypted balances and encrypted transfered amounts.
-- **Confidential Asset**: Any asset deployed on XELIS network will have the same privacy and functionality like XELIS. Not just a number in a Smart Contract.
-- **Event system**: every event happening on the network (daemon or wallet) can be detected and notified easily.
-- **Instant Sync**: Your wallet balances and history is synced in few seconds.
-- **Smart Contracts**: Create and deploy unstoppable decentralized applications.
-- **Integrated addresses**: introduce any data in your wallet address to share informations in a transaction.
-- **Easy to use**: We aims to provide the most easiest platform to build and use daily.
+Building this project requires a working [Rust](https://rustup.rs) (stable) toolchain.
 
-## Objectives
+It's expected to be cross-platform and guaranteed to work on Linux, Windows, MacOS platforms.
 
-The main objectives of XELIS are:
-- Provide privacy on transactions / balances.
-- Provide Smart Contracts support.
-- Secure and fast.
+### Build from sub project
 
-Others objectives in mind are:
-- Provide real custom assets working as the native coin.
-- Designed as CPU/GPU mining friendly to improve decentralization as possible.
-- Simple to use.
-- Community driven decisions.
+Go to one of following folder you want to build from source: `xelis_daemon`, `xelis_miner` or `xelis_wallet`.
+To build a release (optimized) version:
+`cargo build --release`
+
+### Build from workspace
+
+To build a specific binary from workspace (parent folder) directly, use the option `--bin` with `xelis_daemon`, `xelis_miner` or `xelis_wallet` as value.
+Example: `cargo build --release --bin xelis_miner`
+
+To build all at once just use `cargo build --release`
+
+You can also build a debug version (just remove `--release` option) or run it directly from cargo:
+`cargo run`
+
+### Build from Docker
+
+To build using Docker, use the following command, using the `app` build argument to chose which project to build:
+`docker build -t xelis-daemon:master --build-arg app=xelis_daemon .`
+
+## Funding
+
+XELIS is a community driven project and is not funded by any company or organization.
+To helps the development, the success and provide a better support of XELIS, we set a dev fee percentage starting at 10% on block reward.
+
+Current dev fee curve is as following:
+
+- 10% from block 0 to 3,250,000 (expected time is ~1.5 years with BlockDAG).
+- 5% from 3,250,001 until the project being developed is stable on major facets of the ecosystem in order to reduce it.
 
 ## Config
 
@@ -105,7 +129,13 @@ Longest chain is the one selected by nodes. But for tips branches conflicts, cum
 
 ## Homomorphic Encryption
 
-Homomorphic Encryption (HE) will allow to add privacy on transactions and accounts by doing computation while staying in encrypted form.
+ElGamal cryptosystem was choosen because it's a well known and studied encryption algorithm which has homomorphism features.
+We use a variant named "Twisted ElGamal" which give us a full integration with Pedersen commitments, useful for Bulletproofs compatibility and also saving space and time by avoiding an intermediate proof.
+
+Twisted ElGamal is fast and is used with the Ristretto group over the popular elliptic curve "Curve25519" to provide a good level of security (~128 bits of security).
+Homomorphic operations available using ElGamal are addition/subtraction between ciphertexts and/or plaintext and multiplication against plaintext value.
+
+Homomorphic Encryption (HE) through Twisted ElGamal is used to provide privacy on transactions (transferred amounts) and accounts balances by doing computation while in their encrypted form.
 Each balances, transaction assets values are in encrypted form and nobody can determine the real value of it except involved parties.
 
 ## Mining
@@ -162,15 +192,15 @@ This feature allows to accept others branch tips even if transactions are the sa
 ## Transaction
 
 Transaction types supported:
-- Transfer: possibility to send many assets to many addresses in the same TX (up to 255 outputs inside)
-- Burn: publicly burn amount of a specific asset and use this TX as proof of burn (coins are completely deleted from circulation)
-- Call Contract: call a Smart Contract with specific parameters and list of assets to deposit (WIP) (NOTE: Multi Call Contract in the same TX ?)
-- Deploy Contract: deploy a new (valid) Smart Contract on chain (WIP)
+- Transfer: possibility to send many assets to many addresses in the same TX (up to 255 outputs inside).
+- Burn: publicly burn amount of a specific asset and use this TX as proof of burn (coins are completely deleted from circulation).
+- Call Contract: call a Smart Contract with specific parameters and list of assets to deposit.
+- Deploy Contract: deploy a new (valid) Smart Contract on chain.
 
-At this moment, transactions are public and have the following data.
+At this moment, transactions have the following data.
 |   Field   |       Type      |                                   Comment                                  |
 |:---------:|:---------------:|:--------------------------------------------------------------------------:|
-|   owner   |    PublicKey    |                         Signer of this transaction                         |
+|   source  |    PublicKey    |                         Signer of this transaction                         |
 |    data   | TransactionType |                 Type with data included of this transaction                |
 |    fee    |     Integer     |             Fees to be paid by the owner for including this TX             |
 |   nonce   |     Integer     | Matching nonce of balance to be validated and prevent any replay TX attack |
@@ -184,9 +214,10 @@ After each TX, the nonce is incremented by 1.
 ## Integrated Address
 
 Integrated address are base address with custom data integrated.
-For example, you can integrate in it a unique identifier that will be integrated in the future transaction done using it. Its helpful to determine easily which account to link a transaction with an account/order on service side.
+For example, you can integrate in it a unique identifier that will be integrated in the future transaction done using it.
+Its helpful to determine easily which account to link a transaction with an account/order on service side.
 
-Maximum data allowed is 1KB (same as transaction payload).
+Maximum data allowed is 1KB (same as a transfer payload).
 
 Every data is integrated in the transaction payload when using an integrated address.
 
@@ -304,6 +335,8 @@ All theses data are saved in plaintext.
 |      topo_by_hash     |    Hash    |      Integer      |       Save a block hash at a specific topo height      |
 |      hash_by_topo     |   Integer  |        Hash       |      Save a topo height for a specific block hash      |
 | cumulative_difficulty |    Hash    |      Integer      |   Save the cumulative difficulty for each block hash   |
+| difficulty_covariance |    Hash    |      Integer      |   Save the difficulty covariance for each block hash   |
+| blocks_execution_order|    Hash    |      Integer      |Save the order by storing a position for each block hash|
 |         assets        |    Hash    |      Integer      |  Verify if an assets exist and its registration height |
 |        rewards        |   Integer  |      Integer      |                  Save the block reward                 |
 |         supply        |   Integer  |      Integer      |  Calculated supply (past + block reward) at each block |
@@ -369,7 +402,7 @@ Hash algorithm used is Blake3 for keys / tree names.
 The random salt generated is a 64 bytes length.
 This simple system prevent someone to read / use the data without the necessary secret key.
 
-### Data Type and Value
+### Extra Data
 
 This protocol allows to transfer data through a custom wallet address called `integrated address`.
 It will simply integrate encoded data in the wallet address which can be used to send specific data to the wallet when creating a transaction.
@@ -509,37 +542,3 @@ Otherwise, an error like this will be sent and the connection will be closed by 
     "jsonrpc": "2.0"
 }
 ```
-
-## How to build
-
-Building this project requires a working [Rust](https://rustup.rs) (stable) toolchain.
-
-It's expected to be cross-platform and guaranteed to work on Linux, Windows, MacOS platforms.
-
-### Build from sub project
-Go to one of following folder you want to build from source: `xelis_daemon`, `xelis_miner` or `xelis_wallet`.
-To build a release (optimized) version:
-`cargo build --release`
-
-### Build from workspace
-To build a specific binary from workspace (parent folder) directly, use the option `--bin` with `xelis_daemon`, `xelis_miner` or `xelis_wallet` as value.
-Example: `cargo build --release --bin xelis_miner`
-
-To build all at once just use `cargo build --release`
-
-You can also build a debug version (just remove `--release` option) or run it directly from cargo:
-`cargo run`
-
-### Build from Docker
-To build using Docker, use the following command, using the `app` build argument to chose which project to build:
-`docker build -t xelis-daemon:master --build-arg app=xelis_daemon .`
-
-## Funding
-
-XELIS is a community driven project and is not funded by any company or organization.
-To helps the development, the success and provide a better support of XELIS, we set a dev fee percentage starting at 10% on block reward.
-
-Current dev fee curve is as following:
-
-- 10% from block 0 to 3,250,000 (expected time is ~1.5 years with BlockDAG).
-- 5% from 3,250,001 until the project being developed is stable on major facets of the ecosystem in order to reduce it.

@@ -1,18 +1,26 @@
 //! This file represents the transactions without the proofs
 //! Not really a 'builder' per say
 //! Intended to be used when creating a transaction before making the associated proofs and signature
+mod state;
+mod fee;
+mod unsigned;
+mod payload;
+
+use indexmap::{IndexMap, IndexSet};
+pub use state::AccountState;
+pub use fee::{FeeHelper, FeeBuilder};
+pub use unsigned::UnsignedTransaction;
 
 use bulletproofs::RangeProof;
 use curve25519_dalek::Scalar;
 use serde::{Deserialize, Serialize};
+use xelis_vm::Module;
 use std::{
     collections::HashSet,
     iter,
 };
 use crate::{
-    account::CiphertextCache,
-    api::DataElement,
-    config::XELIS_ASSET,
+    config::{BURN_PER_CONTRACT, XELIS_ASSET},
     crypto::{
         elgamal::{
             Ciphertext,
@@ -33,20 +41,22 @@ use crate::{
             PC_GENS,
             BULLET_PROOF_SIZE,
         },
-        Address,
         Hash,
         ProtocolTranscript,
         HASH_SIZE,
         SIGNATURE_SIZE
     },
-    serializer::{Reader, ReaderError, Serializer, Writer},
+    serializer::Serializer,
     utils::calculate_tx_fee
 };
 use thiserror::Error;
 use super::{
     extra_data::{ExtraData, PlaintextData},
     BurnPayload,
-    Reference,
+    CompressedConstant,
+    ContractDeposit,
+    InvokeContractPayload,
+    MultiSigPayload,
     Role,
     SourceCommitment,
     Transaction,
@@ -55,8 +65,11 @@ use super::{
     TxVersion,
     EXTRA_DATA_LIMIT_SIZE,
     EXTRA_DATA_LIMIT_SUM_SIZE,
-    MAX_TRANSFER_COUNT
+    MAX_TRANSFER_COUNT,
+    MAX_MULTISIG_PARTICIPANTS
 };
+
+pub use payload::*;
 
 #[derive(Error, Debug, Clone)]
 pub enum GenerationError<T> {
@@ -78,58 +91,16 @@ pub enum GenerationError<T> {
     ExtraDataAndIntegratedAddress,
     #[error("Proof generation error: {0}")]
     Proof(#[from] ProofGenerationError),
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-#[serde(rename_all = "snake_case")]
-pub enum FeeBuilder {
-    // calculate tx fees based on its size and multiply by this value
-    Multiplier(f64),
-    Value(u64) // set a direct value of how much fees you want to pay
-}
-
-impl Default for FeeBuilder {
-    fn default() -> Self {
-        FeeBuilder::Multiplier(1f64)
-    }
-}
-
-pub trait FeeHelper {
-    type Error;
-
-    /// Get the fee multiplier from wallet if wanted
-    fn get_fee_multiplier(&self) -> f64 {
-        1f64
-    }
-
-    /// Verify if the account exists or if we should pay more fees for account creation
-    fn account_exists(&self, account: &CompressedPublicKey) -> Result<bool, Self::Error>;
-}
-
-/// If the returned balance and ct do not match, the build function will panic and/or
-/// the proof will be invalid.
-pub trait AccountState: FeeHelper {
-
-    /// Used to verify if the address is on the same chain
-    fn is_mainnet(&self) -> bool;
-
-    /// Get the balance from the source
-    fn get_account_balance(&self, asset: &Hash) -> Result<u64, Self::Error>;
-
-    /// Block topoheight at which the transaction is being built
-    fn get_reference(&self) -> Reference;
-
-    /// Get the balance ciphertext from the source
-    fn get_account_ciphertext(&self, asset: &Hash) -> Result<CiphertextCache, Self::Error>;
-
-    /// Update the balance and the ciphertext
-    fn update_account_balance(&mut self, asset: &Hash, new_balance: u64, ciphertext: Ciphertext) -> Result<(), Self::Error>;
-
-    /// Get the nonce of the account
-    fn get_nonce(&self) -> Result<u64, Self::Error>;
-
-    /// Update account nonce
-    fn update_nonce(&mut self, new_nonce: u64) -> Result<(), Self::Error>;
+    #[error("Invalid multisig participants count")]
+    MultiSigParticipants,
+    #[error("Invalid multisig threshold")]
+    MultiSigThreshold,
+    #[error("Cannot contains yourself in the multisig participants")]
+    MultiSigSelfParticipant,
+    #[error("Burn amount is zero")]
+    BurnZero,
+    #[error("Invalid module hexadecimal")]
+    InvalidModule,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -137,22 +108,17 @@ pub trait AccountState: FeeHelper {
 pub enum TransactionTypeBuilder {
     Transfers(Vec<TransferBuilder>),
     // We can use the same as final transaction
-    Burn(BurnPayload)
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct TransferBuilder {
-    pub asset: Hash,
-    pub amount: u64,
-    pub destination: Address,
-    // we can put whatever we want up to EXTRA_DATA_LIMIT_SIZE bytes
-    pub extra_data: Option<DataElement>,
+    Burn(BurnPayload),
+    MultiSig(MultiSigBuilder),
+    InvokeContract(InvokeContractBuilder),
+    DeployContract(String),
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct TransactionBuilder {
     version: TxVersion,
     source: CompressedPublicKey,
+    required_thresholds: u8,
     data: TransactionTypeBuilder,
     fee_builder: FeeBuilder
 }
@@ -179,7 +145,6 @@ impl TransferWithCommitment {
 }
 
 impl TransactionTypeBuilder {
-
     // Get the assets used in the transaction
     pub fn used_assets<'a>(&'a self) -> HashSet<&'a Hash> {
         let mut consumed = HashSet::new();
@@ -195,7 +160,11 @@ impl TransactionTypeBuilder {
             }
             TransactionTypeBuilder::Burn(payload) => {
                 consumed.insert(&payload.asset);
-            }
+            },
+            TransactionTypeBuilder::InvokeContract(payload) => {
+                consumed.extend(payload.deposits.keys());
+            },
+            _ => {},
         }
 
         consumed
@@ -211,50 +180,19 @@ impl TransactionTypeBuilder {
                     used_keys.insert(transfer.destination.get_public_key());
                 }
             }
-            TransactionTypeBuilder::Burn(_) => {}
+            _ => {},
         }
 
         used_keys
     }
 }
 
-// Used to build the final transaction
-// by signing it
-struct TransactionSigner {
-    version: TxVersion,
-    source: CompressedPublicKey,
-    data: TransactionType,
-    fee: u64,
-    nonce: u64,
-    source_commitments: Vec<SourceCommitment>,
-    reference: Reference,
-    range_proof: RangeProof,
-}
-
-impl TransactionSigner {
-    pub fn sign(self, keypair: &KeyPair) -> Transaction {
-        let bytes = self.to_bytes();
-        let signature = keypair.sign(&bytes);
-
-        Transaction {
-            version: self.version,
-            source: self.source,
-            data: self.data,
-            fee: self.fee,
-            nonce: self.nonce,
-            source_commitments: self.source_commitments,
-            range_proof: self.range_proof,
-            reference: self.reference,
-            signature,
-        }
-    }
-}
-
 impl TransactionBuilder {
-    pub fn new(version: TxVersion, source: CompressedPublicKey, data: TransactionTypeBuilder, fee_builder: FeeBuilder) -> Self {
+    pub fn new(version: TxVersion, source: CompressedPublicKey, required_thresholds: u8, data: TransactionTypeBuilder, fee_builder: FeeBuilder) -> Self {
         Self {
             version,
             source,
+            required_thresholds,
             data,
             fee_builder,
         }
@@ -285,7 +223,18 @@ impl TransactionBuilder {
         + SIGNATURE_SIZE
         ;
 
-        let transfers_count = match &self.data {
+        if self.version != TxVersion::V0 {
+            // 1 for optional multisig bool
+            size += 1;
+        }
+
+        if self.required_thresholds != 0 {
+            // 1 for Multisig participants count byte
+            size += 1 + (self.required_thresholds as usize * (SIGNATURE_SIZE + 1))
+        }
+
+        let mut transfers_count = 0;
+        match &self.data {
             TransactionTypeBuilder::Transfers(transfers) => {
                 // Transfers count byte
                 size += 1;
@@ -299,6 +248,11 @@ impl TransactionBuilder {
                     // Extra data byte flag
                     + 1;
 
+                    if self.version >= TxVersion::V1 {
+                        // Another point for Y_2
+                        size += RISTRETTO_COMPRESSED_SIZE;
+                    }
+
                     if let Some(extra_data) = transfer.extra_data.as_ref().or(transfer.destination.get_extra_data()) {
                         // 2 represents u16 length of AEADCipher in extra data
                         // 2 represents u16 length of UnknownExtraDataFormat
@@ -307,12 +261,40 @@ impl TransactionBuilder {
                         size += ExtraData::estimate_size(extra_data);
                     }
                 }
-                transfers.len()
+                transfers_count = transfers.len()
             }
             TransactionTypeBuilder::Burn(payload) => {
                 // Payload size
                 size += payload.size();
-                0
+            },
+            TransactionTypeBuilder::MultiSig(payload) => {
+                // Payload size
+                size += payload.threshold.size() + 1 + (payload.participants.len() * RISTRETTO_COMPRESSED_SIZE);
+            },
+            TransactionTypeBuilder::InvokeContract(payload) => {
+                let mut payload_size = payload.contract.size()
+                + payload.max_gas.size()
+                + payload.chunk_id.size()
+                + 1 // byte for params len
+                // 4 is for the compressed constant len
+                + payload.parameters.iter().map(|param| 4 + param.size()).sum::<usize>()
+                + 1; // byte for deposits len
+
+                for (asset, deposit) in &payload.deposits {
+                    // 1 is for the deposit variant
+                    payload_size += asset.size() + 1;
+                    if deposit.private {
+                        payload_size += RISTRETTO_COMPRESSED_SIZE;
+                    } else {
+                        payload_size += deposit.amount.size();
+                    }
+                }
+
+                size += payload_size;
+            },
+            TransactionTypeBuilder::DeployContract(module) => {
+                // Module size
+                size += module.size() / 2;
             }
         };
 
@@ -350,7 +332,7 @@ impl TransactionBuilder {
                     (0, 0)
                 };
 
-                let expected_fee = calculate_tx_fee(size, transfers, new_addresses);
+                let expected_fee = calculate_tx_fee(size, transfers, new_addresses, self.required_thresholds as usize);
                 (expected_fee as f64 * multiplier) as u64
             },
             // If the value is set, use it
@@ -360,6 +342,7 @@ impl TransactionBuilder {
         Ok(calculated_fee)
     }
 
+    // Compute the new source ciphertext
     fn get_new_source_ct(&self, mut ct: Ciphertext, fee: u64, asset: &Hash, transfers: &[TransferWithCommitment]) -> Ciphertext {
         if asset == &XELIS_ASSET {
             // Fees are applied to the native blockchain asset only.
@@ -378,7 +361,8 @@ impl TransactionBuilder {
                 if *asset == payload.asset {
                     ct -= Scalar::from(payload.amount)
                 }
-            }
+            },
+            _ => {}
         }
 
         ct
@@ -405,6 +389,21 @@ impl TransactionBuilder {
                 if *asset == payload.asset {
                     cost += payload.amount
                 }
+            },
+            TransactionTypeBuilder::MultiSig(_) => {},
+            TransactionTypeBuilder::InvokeContract(payload) => {
+                if let Some(deposit) = payload.deposits.get(asset) {
+                    cost += deposit.amount;
+                }
+
+                if *asset == XELIS_ASSET {
+                    cost += payload.max_gas;
+                }
+            },
+            TransactionTypeBuilder::DeployContract(_) => {
+                if *asset == XELIS_ASSET {
+                    cost += BURN_PER_CONTRACT;
+                }
             }
         }
 
@@ -412,10 +411,19 @@ impl TransactionBuilder {
     }
 
     pub fn build<B: AccountState>(
-        mut self,
+        self,
         state: &mut B,
         source_keypair: &KeyPair,
     ) -> Result<Transaction, GenerationError<B::Error>> {
+        let unsigned = self.build_unsigned(state, source_keypair)?;
+        Ok(unsigned.finalize(source_keypair))
+    }
+
+    pub fn build_unsigned<B: AccountState>(
+        mut self,
+        state: &mut B,
+        source_keypair: &KeyPair,
+    ) -> Result<UnsignedTransaction, GenerationError<B::Error>> {
         // Compute the fees
         let fee = self.estimate_fees(state)?;
 
@@ -536,6 +544,8 @@ impl TransactionBuilder {
                     .take_ciphertext()
                     .map_err(|err| GenerationError::Proof(err.into()))?;
 
+                let source_ct_compressed = source_current_ciphertext.compress();
+
                 let commitment =
                     PedersenCommitment::new_with_opening(source_new_balance, &new_source_opening)
                     .compress();
@@ -548,6 +558,10 @@ impl TransactionBuilder {
                 transcript.new_commitment_eq_proof_domain_separator();
                 transcript.append_hash(b"new_source_commitment_asset", &asset);
                 transcript.append_commitment(b"new_source_commitment", &commitment);
+
+                if self.version >= TxVersion::V1 {
+                    transcript.append_ciphertext(b"source_ct", &source_ct_compressed);
+                }
 
                 let proof = CommitmentEqProof::new(
                     &source_keypair,
@@ -588,8 +602,15 @@ impl TransactionBuilder {
                     transcript.append_handle(b"amount_sender_handle", &sender_handle);
                     transcript.append_handle(b"amount_receiver_handle", &receiver_handle);
 
+                    let source_pubkey = if self.version >= TxVersion::V1 {
+                        Some(source_keypair.get_public_key())
+                    } else {
+                        None
+                    };
+
                     let ct_validity_proof = CiphertextValidityProof::new(
                         &transfer.destination,
+                        source_pubkey,
                         transfer.inner.amount,
                         &transfer.amount_opening,
                         &mut transcript,
@@ -614,15 +635,15 @@ impl TransactionBuilder {
                         None
                     };
 
-                    Ok(TransferPayload {
-                        commitment,
-                        receiver_handle,
-                        sender_handle,
-                        destination: transfer.inner.destination.to_public_key(),
-                        asset: transfer.inner.asset,
-                        ct_validity_proof,
+                    Ok(TransferPayload::new(
+                        transfer.inner.asset,
+                        transfer.inner.destination.to_public_key(),
                         extra_data,
-                    })
+                        commitment,
+                        sender_handle,
+                        receiver_handle,
+                        ct_validity_proof,
+                    ))
                 })
                 .collect::<Result<Vec<_>, GenerationError<B::Error>>>()?;
 
@@ -648,7 +669,87 @@ impl TransactionBuilder {
 
         let data = match self.data {
             TransactionTypeBuilder::Transfers(_) => TransactionType::Transfers(transfers),
-            TransactionTypeBuilder::Burn(payload) => TransactionType::Burn(payload)
+            TransactionTypeBuilder::Burn(payload) => {
+                // Check if the burn amount is zero
+                // Burn of zero are useless and consume fees for nothing
+                if payload.amount == 0 {
+                    return Err(GenerationError::BurnZero);
+                }
+
+                if self.version >= TxVersion::V1 {
+                    transcript.burn_proof_domain_separator();
+                    transcript.append_hash(b"burn_asset", &payload.asset);
+                    transcript.append_u64(b"burn_amount", payload.amount);
+                }
+
+                TransactionType::Burn(payload)
+            },
+            TransactionTypeBuilder::MultiSig(payload) => {
+                if payload.participants.len() > MAX_MULTISIG_PARTICIPANTS {
+                    return Err(GenerationError::MultiSigParticipants);
+                }
+
+                if payload.threshold as usize > payload.participants.len() || (payload.threshold == 0 && !payload.participants.is_empty()) {
+                    return Err(GenerationError::MultiSigThreshold);
+                }
+
+                transcript.multisig_proof_domain_separator();
+                transcript.append_u64(b"multisig_threshold", payload.threshold as u64);
+
+                let mut keys = IndexSet::new();
+                for addr in payload.participants {
+                    let key = addr.to_public_key();
+                    transcript.append_public_key(b"multisig_participant", &key);
+                    keys.insert(key);
+                }
+
+                // You can't contains yourself in the participants
+                let pk = source_keypair.get_public_key().compress();
+                if keys.contains(&pk) {
+                    return Err(GenerationError::MultiSigSelfParticipant);
+                }
+
+                TransactionType::MultiSig(MultiSigPayload {
+                    participants: keys,
+                    threshold: payload.threshold,
+                })
+            },
+            TransactionTypeBuilder::InvokeContract(payload) => {
+                transcript.invoke_contract_proof_domain_separator();
+                transcript.append_hash(b"contract_hash", &payload.contract);
+                let mut deposits = IndexMap::new();
+                for (asset, deposit) in payload.deposits {
+                    transcript.append_hash(b"deposit_asset", &asset);
+                    if deposit.private {
+                        // TODO: handle private deposits
+                        todo!("Private deposits");
+                    } else {
+                        transcript.append_u64(b"deposit_plain", deposit.amount);
+                        deposits.insert(asset, ContractDeposit::Public(deposit.amount));
+                    }
+                }
+
+                let mut parameters = Vec::with_capacity(payload.parameters.len());
+                for param in payload.parameters {
+                    let compressed = CompressedConstant::new(&param);
+                    transcript.append_message(b"contract_param", compressed.as_bytes());
+
+                    parameters.push(compressed);
+                }
+
+                TransactionType::InvokeContract(InvokeContractPayload {
+                    contract: payload.contract,
+                    max_gas: payload.max_gas,
+                    chunk_id: payload.chunk_id,
+                    parameters,
+                    deposits,
+                })
+            },
+            TransactionTypeBuilder::DeployContract(module) => {
+                transcript.deploy_contract_proof_domain_separator();
+                let module = Module::from_hex(&module).map_err(|_| GenerationError::InvalidModule)?;
+                TransactionType::DeployContract(module)
+            }
         };
 
         // 3. Create the RangeProof
@@ -663,52 +764,28 @@ impl TransactionBuilder {
         )
         .map_err(ProofGenerationError::from)?;
 
-        let transaction = TransactionSigner {
-            version: self.version,
-            source: self.source,
+        let transaction = UnsignedTransaction::new(
+            self.version,
+            self.source,
             data,
             fee,
             nonce,
             source_commitments,
             reference,
             range_proof,
-        }.sign(source_keypair);
+        );
 
         Ok(transaction)
-    }
-}
-
-impl Serializer for TransactionSigner {
-    fn write(&self, writer: &mut Writer) {
-        self.version.write(writer);
-        self.source.write(writer);
-        self.data.write(writer);
-        self.fee.write(writer);
-        self.nonce.write(writer);
-
-        writer.write_u8(self.source_commitments.len() as u8);
-        for commitment in &self.source_commitments {
-            commitment.write(writer);
-        }
-
-        self.range_proof.write(writer);
-        self.reference.write(writer);
-    }
-
-    // Should never be called
-    fn read(_: &mut Reader) -> Result<Self, ReaderError> {
-        Err(ReaderError::InvalidValue)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use bulletproofs::RangeProof;
-
-    use crate::{crypto::{elgamal::{RISTRETTO_COMPRESSED_SIZE, SCALAR_SIZE}, proofs::BULLET_PROOF_SIZE}, serializer::Serializer};
+    use super::*;
 
     #[test]
-    fn estimate_range_proof_size() {
+    fn test_estimate_range_proof_size() {
         let proof_hex = b"cc15f1b1e654ffd25bb89f4069303245d3c477ce93abb380eb4941096c06000006141de8f618c3392c5071bc3b76467bea32bc0d8fbf9257a3c44a59b596825f9a09332365fffdb56060d4fdfba8a513cbab3f607c0812aefec7124914cf796caa1a4263cdc0d3488e3e6b5bd04d524667e2b49bb8f55cf418fd8af8cd23ef667bd574ab23bf8c71b1bf9a5f52a2ca5a9320bf43a6be8bb2cc864a6745e6de07931382c2b90873b690e7da04b6fd9ddd3f22c060aed621da691bd54e0b6e9f0b3283b6fc7bcaa4ba06a7f3151a49ba5082462b8ba76b93b2934b6c99fe9e730572e026e9a85930896d0120d06115e60cb68bc6bd18335288ca01f8591924da7e563ac102237e476357b37ecd834715272c5eb705c5bc3799602d922cfa153665565926daf7df42276e834afe1fa444fabf17e7596f09936bcc27f913053fac3906ce8a10dbe1caf1c1e02428d8f2773fc307ae7c7d2fe63102e605c89efa730a4e217dd6b2481f49803efdc44b25d80236e0c10ecab006136ba423ec75bbf7532286a1d063e16e13903104e8274666169288cb9f65a414a04e3dacb7d368931e647a149554f3c78e326e111e5da221cb4e8152d3525f0b32ff2b814b7352647674f1a36e49f8603e3d3996910f52154b871c72138e288b00b471026638646f201c0c0b358872fa6bc81a2ce1c2f068b4513828eda4def4ae1c2e9c02ef58043412dd31411c5cec7acd9bfdcf5f8ead03f13801bc4bc529726e6b25f85b80db23fc8659a09b8c590a51ec015065d437e77d84b0d3c3d529d1c6301441d2dd335042f64b1ced343c32b25416bd5d43e4ff02d4382cc18f1f5cfc0144decc51ac0d9863f1124589ec6f0fe388b464db7db4d5f16ff101da37a3efed71a4d4514915eccc94dc7832bf4c0b52165ac937e5b0dff2d0a2e7b68802a8759e4bae58815f6e2ec7683006561f27f1855ad8840036c580c81ebadf36ddfdf7470996068c05f186a67cefb751e33b5624d577357372486bae3fd509aea9b6d4c72296afdd05";
         let proof = RangeProof::from_bytes(&hex::decode(proof_hex).unwrap()).unwrap();
         let transfers: usize = 1;

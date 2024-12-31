@@ -2,9 +2,13 @@ use std::string::FromUtf8Error;
 
 use thiserror::Error;
 
-const CHARSET: &str = "qpzry9x8gf2tvdw0s3jn54khce6mua7l";
-const GENERATOR: [u32; 5] = [0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3];
-const SEPARATOR: char = ':';
+/// Bech32 constants.
+/// character set used in Bech32 encoding.
+pub const CHARSET: &str = "qpzry9x8gf2tvdw0s3jn54khce6mua7l";
+/// generator polynomial used in Bech32 encoding.
+pub const GENERATOR: [u32; 5] = [0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3];
+/// separator character used in Bech32 encoding.
+pub const SEPARATOR: char = ':';
 
 #[derive(Error, Debug)]
 pub enum Bech32Error {
@@ -36,6 +40,7 @@ pub enum Bech32Error {
     InvalidIndex(usize)
 }
 
+/// Compute a checksum for a vector of u8.
 fn polymod(values: &[u8]) -> u32 {
     let mut chk: u32 = 1;
     for value in values {
@@ -50,6 +55,7 @@ fn polymod(values: &[u8]) -> u32 {
     chk
 }
 
+/// Expand a human readable part into a vector of u8.
 fn hrp_expand(hrp: &String) -> Vec<u8> {
     let mut result: Vec<u8> = Vec::new();
     for c in hrp.bytes() {
@@ -63,12 +69,14 @@ fn hrp_expand(hrp: &String) -> Vec<u8> {
     result
 }
 
+/// Verify a checksum for a human readable part and data.
 pub fn verify_checksum(hrp: &String, data: &[u8]) -> bool {
     let mut vec = hrp_expand(hrp);
     vec.extend(data);
     return polymod(&vec) == 1;
 }
 
+/// Create a checksum for a human readable part and data.
 pub fn create_checksum(hrp: &String, data: &[u8]) -> [u8; 6] {
     let mut values: Vec<u8> = Vec::new();
     values.extend(hrp_expand(hrp));
@@ -84,6 +92,7 @@ pub fn create_checksum(hrp: &String, data: &[u8]) -> [u8; 6] {
     result
 }
 
+/// Convert bits from one range to another.
 pub fn convert_bits(data: &[u8], from: u16, to: u16, pad: bool) -> Result<Vec<u8>, Bech32Error> {
     let mut acc: u16 = 0;
     let mut bits: u16 = 0;
@@ -117,6 +126,7 @@ pub fn convert_bits(data: &[u8], from: u16, to: u16, pad: bool) -> Result<Vec<u8
     Ok(result)
 }
 
+/// Encode a human readable part and data into a bech32 string.
 pub fn encode(mut hrp: String, data: &[u8]) -> Result<String, Bech32Error> {
     if hrp.len() == 0 {
         return Err(Bech32Error::HrpEmpty)
@@ -153,7 +163,8 @@ pub fn encode(mut hrp: String, data: &[u8]) -> Result<String, Bech32Error> {
     Ok(string)
 }
 
-pub fn decode(bech: &String) -> Result<(String, Vec<u8>), Bech32Error> {
+/// Decode a bech32 string into a human readable part and data part.
+pub fn decode(bech: &str) -> Result<(String, Vec<u8>), Bech32Error> {
     if bech.to_uppercase() != *bech && bech.to_lowercase() != *bech {
         return Err(Bech32Error::HrpMixCase)
     }

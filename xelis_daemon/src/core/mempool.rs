@@ -1,6 +1,6 @@
 use super::{
-    state::MempoolState,
     error::BlockchainError,
+    state::MempoolState,
     storage::Storage
 };
 use std::{
@@ -13,8 +13,9 @@ use indexmap::IndexSet;
 use log::{debug, info, trace, warn};
 use xelis_common::{
     config::{BYTES_PER_KB, FEE_PER_KB},
+    account::Nonce,
     api::daemon::FeeRatesEstimated,
-    block::BlockVersion,
+    block::{BlockVersion, TopoHeight},
     crypto::{
         elgamal::Ciphertext,
         Hash,
@@ -23,8 +24,9 @@ use xelis_common::{
     network::Network,
     serializer::Serializer,
     time::{get_current_time_in_seconds, TimestampSeconds},
-    transaction::Transaction
+    transaction::{Transaction, MultiSigPayload}
 };
+use xelis_vm::Environment;
 
 // Wrap a TX with its hash and size in bytes for faster access
 // size of tx can be heavy to compute, so we store it here
@@ -43,14 +45,16 @@ pub struct SortedTx {
 #[derive(Serialize, Deserialize)]
 pub struct AccountCache {
     // lowest nonce used
-    min: u64,
+    min: Nonce,
     // highest nonce used
-    max: u64,
+    max: Nonce,
     // all txs for this user ordered by nonce
     txs: IndexSet<Arc<Hash>>,
     // Expected balances after all txs in this cache
     // This is also used to verify the validity of the TX spendings
-    balances: HashMap<Hash, Ciphertext>
+    balances: HashMap<Hash, Ciphertext>,
+    // Expected multisig after all txs in this cache
+    multisig: Option<MultiSigPayload>
 }
 
 // Mempool is used to store all TXs waiting to be included in a block
@@ -126,13 +130,14 @@ impl Mempool {
     }
 
     // All checks are made in Blockchain before calling this function
-    pub async fn add_tx<S: Storage>(&mut self, storage: &S, stable_topoheight: u64, topoheight: u64, hash: Hash, tx: Arc<Transaction>, size: usize, block_version: BlockVersion) -> Result<(), BlockchainError> {
-        let mut state = MempoolState::new(&self, storage, stable_topoheight, topoheight, block_version);
-        tx.verify(&mut state).await?;
+    pub async fn add_tx<S: Storage>(&mut self, storage: &S, environment: &Environment, stable_topoheight: TopoHeight, topoheight: TopoHeight, hash: Hash, tx: Arc<Transaction>, size: usize, block_version: BlockVersion) -> Result<(), BlockchainError> {
+        let mut state = MempoolState::new(&self, storage, environment, stable_topoheight, topoheight, block_version, self.mainnet);
+        tx.verify(&hash, &mut state).await?;
 
-        let balances = state.get_sender_balances(tx.get_source())
-            .ok_or_else(|| BlockchainError::AccountNotFound(tx.get_source().as_address(storage.is_mainnet())))?
-            .iter().map(|(asset, ciphertext)| (Hash::clone(*asset), ciphertext.clone())).collect();
+        let (balances, multisig) = state.get_sender_cache(tx.get_source())
+            .ok_or_else(|| BlockchainError::AccountNotFound(tx.get_source().as_address(self.mainnet)))?;
+
+        let balances = balances.into_iter().map(|(asset, ciphertext)| (asset.clone(), ciphertext)).collect();
 
         let hash = Arc::new(hash);
         let nonce = tx.get_nonce();
@@ -168,6 +173,7 @@ impl Mempool {
             }
             // Update re-computed balances
             cache.set_balances(balances);
+            cache.set_multisig(multisig);
         } else {
             let mut txs = IndexSet::new();
             txs.insert(hash.clone());
@@ -177,7 +183,8 @@ impl Mempool {
                 max: nonce,
                 min: nonce,
                 txs,
-                balances
+                balances,
+                multisig
             };
             self.caches.insert(tx.get_source().clone(), cache);
         }
@@ -336,7 +343,7 @@ impl Mempool {
     // Because of DAG reorg, we can't only check updated keys from new block,
     // as a block could be orphaned and the nonce order would change
     // So we need to check all keys from mempool and compare it from storage
-    pub async fn clean_up<S: Storage>(&mut self, storage: &S, stable_topoheight: u64, topoheight: u64, block_version: BlockVersion) -> Vec<(Arc<Hash>, SortedTx)> {
+    pub async fn clean_up<S: Storage>(&mut self, storage: &S, environment: &Environment, stable_topoheight: TopoHeight, topoheight: TopoHeight, block_version: BlockVersion) -> Vec<(Arc<Hash>, SortedTx)> {
         trace!("Cleaning up mempool...");
 
         // All deleted sorted txs with their hashes
@@ -447,11 +454,9 @@ impl Mempool {
                 // Which mean, expected balances are still up to date with chain state
                 if !delete_cache {
                     let mut txs = Vec::with_capacity(cache.txs.len());
-                    let mut txs_hashes = Vec::with_capacity(cache.txs.len());
                     for tx_hash in &cache.txs {
                         if let Some(sorted_tx) = self.txs.get(tx_hash) {
-                            txs.push(sorted_tx.get_tx());
-                            txs_hashes.push(tx_hash);
+                            txs.push((sorted_tx.get_tx(), tx_hash));
                         } else {
                             // Shouldn't happen
                             warn!("TX {} not found in mempool while verifying, deleting whole cache", tx_hash);
@@ -466,11 +471,11 @@ impl Mempool {
                         // If one TX is invalid, all next TXs are invalid
                         // NOTE: this can be revert easily in case we are deleting valid TXs also,
                         // But will be slower during high traffic
-                        debug!("Verifying TXs ({}) for sender {} at topoheight {}", txs_hashes.iter().map(|hash| hash.to_string()).collect::<Vec<String>>().join(", "), key.as_address(self.mainnet), topoheight);
-                        let mut state = MempoolState::new(&self, storage, stable_topoheight, topoheight, block_version);
+                        debug!("Verifying TXs ({}) for sender {} at topoheight {}", txs.iter().map(|(_, hash)| hash.to_string()).collect::<Vec<String>>().join(", "), key.as_address(self.mainnet), topoheight);
+                        let mut state = MempoolState::new(&self, storage, environment, stable_topoheight, topoheight, block_version, self.mainnet);
                         if let Err(e) = Transaction::verify_batch(txs.as_slice(), &mut state).await {
                             warn!("Error while verifying TXs for sender {}: {}", key.as_address(self.mainnet), e);
-                            for (hash, tx) in txs_hashes.iter().zip(txs) {
+                            for (tx, hash) in txs {
                                 warn!("- Deleting TX {} with {} and nonce {}", hash, tx.get_reference(), tx.get_nonce());
                                 debug!("TX hex: {}", tx.to_hex());
                             }
@@ -479,8 +484,9 @@ impl Mempool {
                             delete_cache = true;
                         } else {
                             // Update balances cache
-                            if let Some(balances) = state.get_sender_balances(&key) {
+                            if let Some((balances, multisig)) = state.get_sender_cache(&key) {
                                 cache.set_balances(balances.into_iter().map(|(asset, ciphertext)| (asset.clone(), ciphertext)).collect());
+                                cache.set_multisig(multisig);
                             }
                         }
                     }
@@ -556,18 +562,18 @@ impl SortedTx {
 
 impl AccountCache {
     // Get the lowest nonce for this cache
-    pub fn get_min(&self) -> u64 {
+    pub fn get_min(&self) -> Nonce {
         self.min
     }
 
     // Get the highest nonce for this cache
-    pub fn get_max(&self) -> u64 {
+    pub fn get_max(&self) -> Nonce {
         self.max
     }
 
     // Get the next nonce for this cache
     // This is necessary when we have several TXs
-    pub fn get_next_nonce(&self) -> u64 {
+    pub fn get_next_nonce(&self) -> Nonce {
         self.max + 1
     }
 
@@ -586,6 +592,16 @@ impl AccountCache {
         &self.balances
     }
 
+    // Set the multisig payload
+    pub fn set_multisig(&mut self, multisig: Option<MultiSigPayload>) {
+        self.multisig = multisig;
+    }
+
+    // Returns the expected multisig cache after the execution of all TXs
+    pub fn get_multisig(&self) -> &Option<MultiSigPayload> {
+        &self.multisig
+    }
+
     // Update the cache with a new TX
     fn update(&mut self, nonce: u64, hash: Arc<Hash>) {
         self.update_nonce_range(nonce);
@@ -593,7 +609,7 @@ impl AccountCache {
     }
 
     // Update the nonce range for this cache
-    fn update_nonce_range(&mut self, nonce: u64) {
+    fn update_nonce_range(&mut self, nonce: Nonce) {
         debug_assert!(self.min <= self.max);
 
         if nonce < self.min {
@@ -606,7 +622,7 @@ impl AccountCache {
     }
 
     // Verify if a TX is in cache using its nonce
-    pub fn has_tx_with_same_nonce(&self, nonce: u64) -> Option<&Arc<Hash>> {
+    pub fn has_tx_with_same_nonce(&self, nonce: Nonce) -> Option<&Arc<Hash>> {
         if nonce < self.min || nonce > self.max || self.txs.is_empty() {
             return None;
         }

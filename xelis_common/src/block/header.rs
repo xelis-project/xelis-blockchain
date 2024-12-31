@@ -317,8 +317,8 @@ mod tests {
 
     #[test]
     fn test_block_template_from_hex() {
-        let serialized = "00000000000000002d0000018f1cbd697000000000000000000eded85557e887b45989a727b6786e1bd250de65042d9381822fa73d01d2c4ff01d3a0154853dbb01dc28c9102e9d94bea355b8ee0d82c3e078ac80841445e86520000d67ad13934337b85c34985491c437386c95de0d97017131088724cfbedebdc55".to_owned();
-        let header = BlockHeader::from_hex(serialized.clone()).unwrap();
+        let serialized = "00000000000000002d0000018f1cbd697000000000000000000eded85557e887b45989a727b6786e1bd250de65042d9381822fa73d01d2c4ff01d3a0154853dbb01dc28c9102e9d94bea355b8ee0d82c3e078ac80841445e86520000d67ad13934337b85c34985491c437386c95de0d97017131088724cfbedebdc55";
+        let header = BlockHeader::from_hex(serialized).unwrap();
         assert!(header.to_hex() == serialized);
     }
 }

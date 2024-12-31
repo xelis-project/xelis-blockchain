@@ -6,7 +6,7 @@ use std::{
     fmt::{self, Display, Formatter}
 };
 pub use balance::{VersionedBalance, BalanceType, AccountSummary, Balance};
-pub use nonce::VersionedNonce;
+pub use nonce::{VersionedNonce, Nonce};
 use serde::{Serialize, Deserialize};
 use crate::{
         crypto::elgamal::{

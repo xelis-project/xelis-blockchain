@@ -158,13 +158,13 @@ impl Serializer for u8 {
     }
 }
 
-const MAX_ITEMS: usize = 1024;
+pub const DEFAULT_MAX_ITEMS: usize = 1024;
 
 impl<T: Serializer + std::hash::Hash + Ord> Serializer for BTreeSet<T> {
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
         let count = reader.read_u16()?;
-        if count > MAX_ITEMS as u16 {
-            warn!("Received {} while maximum is set to {}", count, MAX_ITEMS);
+        if count > DEFAULT_MAX_ITEMS as u16 {
+            warn!("Received {} while maximum is set to {}", count, DEFAULT_MAX_ITEMS);
             return Err(ReaderError::InvalidSize)
         }
 
@@ -198,8 +198,8 @@ impl<T: Serializer + std::hash::Hash + Ord> Serializer for BTreeSet<T> {
 impl<T: Serializer + std::hash::Hash + Eq> Serializer for IndexSet<T> {
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
         let count = reader.read_u16()?;
-        if count > MAX_ITEMS as u16 {
-            warn!("Received {} while maximum is set to {}", count, MAX_ITEMS);
+        if count > DEFAULT_MAX_ITEMS as u16 {
+            warn!("Received {} while maximum is set to {}", count, DEFAULT_MAX_ITEMS);
             return Err(ReaderError::InvalidSize)
         }
 
@@ -244,6 +244,20 @@ impl<T: Serializer + Clone> Serializer for Cow<'_, T> {
     }
 }
 
+impl Serializer for Cow<'_, str> {
+    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
+        Ok(Cow::Owned(reader.read_string()?))
+    }
+
+    fn write(&self, writer: &mut Writer) {
+        writer.write_string(self);
+    }
+
+    fn size(&self) -> usize {
+        self.len() + 1
+    }
+}
+
 impl<T: Serializer> Serializer for Option<T> {
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
         if reader.read_bool()? {
@@ -272,8 +286,8 @@ impl<T: Serializer> Serializer for Option<T> {
 impl<T: Serializer> Serializer for Vec<T> {
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
         let count = reader.read_u16()?;
-        if count > MAX_ITEMS as u16 {
-            warn!("Received {} while maximum is set to {}", count, MAX_ITEMS);
+        if count > DEFAULT_MAX_ITEMS as u16 {
+            warn!("Received {} while maximum is set to {}", count, DEFAULT_MAX_ITEMS);
             return Err(ReaderError::InvalidSize)
         }
 
@@ -371,6 +385,21 @@ impl<const N: usize> Serializer for [u8; N] {
         )
     }
 
+    fn to_bytes(&self) -> Vec<u8> {
+        self.to_vec()
+    }
+
+    fn from_bytes(bytes: &[u8]) -> Result<Self, ReaderError>
+        where Self: Sized {
+        if bytes.len() != N {
+            return Err(ReaderError::InvalidSize)
+        }
+
+        let mut array = [0; N];
+        array.copy_from_slice(bytes);
+        Ok(array)
+    }
+
     fn size(&self) -> usize {
         N
     }
@@ -435,6 +464,13 @@ impl Serializer for IpAddr {
                 writer.write_bytes(&addr.octets());
             }
         };
+    }
+
+    fn size(&self) -> usize {
+        match self {
+            IpAddr::V4(_) => 1 + 4,
+            IpAddr::V6(_) => 1 + 16
+        }
     }
 }
 
@@ -510,5 +546,19 @@ impl<K: Serializer + std::hash::Hash + Eq, V: Serializer> Serializer for IndexMa
             size += key.size() + value.size();
         }
         size
+    }
+}
+
+impl<T: Serializer> Serializer for Box<T> {
+    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
+        Ok(Box::new(T::read(reader)?))
+    }
+
+    fn write(&self, writer: &mut Writer) {
+        self.as_ref().write(writer);
+    }
+
+    fn size(&self) -> usize {
+        self.as_ref().size()
     }
 }

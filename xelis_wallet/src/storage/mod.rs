@@ -1,4 +1,5 @@
 mod backend;
+mod types;
 
 use std::{
     collections::{HashMap, HashSet, VecDeque},
@@ -7,7 +8,6 @@ use std::{
 use indexmap::IndexMap;
 use lru::LruCache;
 use xelis_common::{
-    account::CiphertextCache,
     api::{
         query::{
             Query,
@@ -16,6 +16,7 @@ use xelis_common::{
         DataElement,
         DataValue
     },
+    asset::AssetData,
     config::XELIS_ASSET,
     crypto::{
         elgamal::CompressedCiphertext,
@@ -26,12 +27,10 @@ use xelis_common::{
     network::Network,
     serializer::{
         Reader,
-        ReaderError,
         Serializer,
-        Writer
     },
     tokio::sync::Mutex,
-    transaction::Reference
+    transaction::TxVersion
 };
 use anyhow::{
     Context,
@@ -48,8 +47,11 @@ use crate::{
     },
     error::WalletError
 };
-use self::backend::{Db, Tree};
 use log::{trace, debug, error};
+
+use backend::{Db, Tree};
+
+pub use types::*;
 
 // keys used to retrieve from storage
 const NONCE_KEY: &[u8] = b"NONCE";
@@ -68,58 +70,20 @@ const TOP_BLOCK_HASH_KEY: &[u8] = b"TOPBH";
 const NETWORK: &[u8] = b"NET";
 // Last coinbase reward topoheight
 const LCRT: &[u8] = b"LCRT";
+// Key to store the multisig state
+const MULTISIG: &[u8] = b"MSIG";
+// TX version to determine which version of TX we need
+const TX_VERSION: &[u8] = b"TXV";
 
 // Default cache size
 const DEFAULT_CACHE_SIZE: usize = 100;
-
-#[derive(Debug, Clone)]
-pub struct Balance {
-    pub amount: u64,
-    pub ciphertext: CiphertextCache
-}
-
-impl Balance {
-    pub fn new(amount: u64, ciphertext: CiphertextCache) -> Self {
-        Self {
-            amount,
-            ciphertext
-        }
-    }
-}
-
-impl Serializer for Balance {
-    fn write(&self, writer: &mut Writer) {
-        self.amount.write(writer);
-        self.ciphertext.write(writer);
-    }
-
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let amount = u64::read(reader)?;
-        let ciphertext = CiphertextCache::read(reader)?;
-        Ok(Self {
-            amount,
-            ciphertext
-        })
-    }
-}
 
 // Use this struct to get access to non-encrypted keys (such as salt for KDF and encrypted master key)
 pub struct Storage {
     db: Db
 }
 
-#[derive(Debug, Clone)]
-pub struct TxCache {
-    // This is used to store the nonce used to create new transactions
-    pub nonce: u64,
-    // Last reference used to build a transaction
-    pub reference: Reference,
-    // Last transaction hash created
-    // This is used to determine if we should erase the last unconfirmed balance or not
-    pub last_tx_hash_created: Hash,
-}
-
-// Implement an encrypted storage system 
+// Implement an encrypted storage system
 pub struct EncryptedStorage {
     // cipher used to encrypt/decrypt/hash data
     cipher: Cipher,
@@ -142,15 +106,18 @@ pub struct EncryptedStorage {
     // so we can build several txs without having to wait for the confirmation
     // We store it in a VecDeque so for each TX we have an entry and can just retrieve it
     unconfirmed_balances_cache: Mutex<HashMap<Hash, VecDeque<Balance>>>,
+    // Temporary TX Cache used to build ordered TXs
     tx_cache: Option<TxCache>,
     // Cache for the assets with their decimals
-    assets_cache: Mutex<LruCache<Hash, u8>>,
+    assets_cache: Mutex<LruCache<Hash, AssetData>>,
     // Cache for the synced topoheight
     synced_topoheight: Option<u64>,
     // Topoheight of the last coinbase reward
     // This is used to determine if we should
     // use a stable balance or not
     last_coinbase_reward_topoheight: Option<u64>,
+    // Transaction version to use
+    tx_version: TxVersion
 }
 
 impl EncryptedStorage {
@@ -169,7 +136,8 @@ impl EncryptedStorage {
             tx_cache: None,
             assets_cache: Mutex::new(LruCache::new(NonZeroUsize::new(DEFAULT_CACHE_SIZE).unwrap())),
             synced_topoheight: None,
-            last_coinbase_reward_topoheight: None
+            last_coinbase_reward_topoheight: None,
+            tx_version: TxVersion::V0
         };
 
         if storage.has_network()? {
@@ -184,6 +152,11 @@ impl EncryptedStorage {
         // Load one-time the last coinbase reward topoheight
         if storage.contains_data(&storage.extra, LCRT)? {
             storage.last_coinbase_reward_topoheight = Some(storage.load_from_disk(&storage.extra, LCRT)?);
+        }
+
+        // Load one-time the transaction version
+        if storage.contains_data(&storage.extra, TX_VERSION)? {
+            storage.tx_version = storage.load_from_disk(&storage.extra, TX_VERSION)?;
         }
 
         Ok(storage)
@@ -205,19 +178,30 @@ impl EncryptedStorage {
     }
 
     // Key must be hashed or encrypted before calling this function
-    fn internal_load<V: Serializer>(&self, tree: &Tree, key: &[u8]) -> Result<V> {
+    fn internal_load<V: Serializer>(&self, tree: &Tree, key: &[u8]) -> Result<Option<V>> {
         trace!("internal load");
-        let data = tree.get(key)?.context(format!("load from disk: tree = {:?}, key = {}", tree.name(), String::from_utf8_lossy(key)))?;
-        let bytes = self.cipher.decrypt_value(&data).context("Error while decrypting value from disk")?;
-        let mut reader = Reader::new(&bytes);
-        Ok(V::read(&mut reader).context("Error while de-serializing value from disk")?)
+        let data = tree.get(key)?;
+        Ok(match data {
+            Some(data) => {
+                let bytes = self.cipher.decrypt_value(&data).context("Error while decrypting value from disk")?;
+                Some(V::from_bytes(&bytes).context("Error while de-serializing value from disk")?)
+            },
+            None => None
+        })
+    }
+
+    // load from disk using a hashed key, decrypt the value and deserialize it
+    fn load_from_disk_optional<V: Serializer>(&self, tree: &Tree, key: &[u8]) -> Result<Option<V>> {
+        trace!("load from disk optional");
+        let hashed_key = self.cipher.hash_key(key);
+        self.internal_load(tree, &hashed_key)
     }
 
     // load from disk using a hashed key, decrypt the value and deserialize it
     fn load_from_disk<V: Serializer>(&self, tree: &Tree, key: &[u8]) -> Result<V> {
         trace!("load from disk");
-        let hashed_key = self.cipher.hash_key(key);
-        self.internal_load(tree, &hashed_key)
+        self.load_from_disk_optional(tree, key)?
+            .context(format!("Error while loading data with hashed key {} from disk", String::from_utf8_lossy(key)))
     }
 
     // Because we can't predict the nonce used for encryption, we make it determistic
@@ -238,7 +222,8 @@ impl EncryptedStorage {
     fn load_from_disk_with_encrypted_key<V: Serializer>(&self, tree: &Tree, key: &[u8]) -> Result<V> {
         trace!("load from disk with encrypted key");
         let encrypted_key = self.create_encrypted_key(key)?;
-        self.internal_load(tree, &encrypted_key)
+        self.internal_load(tree, &encrypted_key)?
+            .context(format!("Error while loading data with encrypted key {} from disk", String::from_utf8_lossy(key)))
     }
 
     // Encrypt key, encrypt data and then save to disk
@@ -447,6 +432,51 @@ impl EncryptedStorage {
         Ok(count)
     }
 
+    // Set a multisig state
+    pub async fn set_multisig_state(&mut self, state: MultiSig) -> Result<()> {
+        trace!("set multisig state");
+        self.save_to_disk(&self.extra, MULTISIG, &state.to_bytes())?;
+        Ok(())
+    }
+
+    // Delete the multisig state
+    pub async fn delete_multisig_state(&mut self) -> Result<()> {
+        trace!("delete multisig state");
+        self.delete_from_disk(&self.extra, MULTISIG)?;
+        Ok(())
+    }
+
+    // Get the multisig state
+    pub async fn get_multisig_state(&self) -> Result<Option<MultiSig>> {
+        trace!("get multisig state");
+        if !self.contains_data(&self.extra, MULTISIG)? {
+            return Ok(None);
+        }
+
+        let state: MultiSig = self.load_from_disk(&self.extra, MULTISIG)?;
+        Ok(Some(state))
+    }
+
+    // Check if the wallet has a multisig state
+    pub async fn has_multi_sig_state(&self) -> Result<bool> {
+        trace!("has multisig state");
+        self.contains_data(&self.extra, MULTISIG)
+    }
+
+    // Set the TX Version
+    pub async fn set_tx_version(&mut self, version: TxVersion) -> Result<()> {
+        trace!("set tx version");
+        self.save_to_disk(&self.extra, TX_VERSION, &version.to_bytes())?;
+        self.tx_version = version;
+        Ok(())
+    }
+
+    // Get the TX Version
+    pub async fn get_tx_version(&self) -> Result<TxVersion> {
+        trace!("get tx version");
+        Ok(self.tx_version)
+    }
+
     // this function is specific because we save the key in encrypted form (and not hashed as others)
     // returns all saved assets
     pub async fn get_assets(&self) -> Result<HashSet<Hash>> {
@@ -464,43 +494,45 @@ impl EncryptedStorage {
             let mut reader = Reader::new(raw_key);
             let asset = Hash::read(&mut reader)?;
 
-            let decimals = if let Some(decimals) = cache.get(&asset) {
-                *decimals
-            } else {
+            if !cache.contains(&asset) {
                 let raw_value = &self.cipher.decrypt_value(&value)?;
                 let mut reader = Reader::new(raw_value);
-                u8::read(&mut reader)?
-            };
+                let a = AssetData::read(&mut reader)?;
+                cache.put(asset.clone(), a);
+            }
 
-            assets.insert(asset.clone());
-            cache.put(asset, decimals);
+            assets.insert(asset);
         }
 
         Ok(assets)
     }
 
-    // Retrieve all assets with their decimals
-    pub async fn get_assets_with_decimals(&self) -> Result<Vec<(Hash, u8)>> {
+    // Retrieve all assets with their data
+    pub async fn get_assets_with_data(&self) -> Result<Vec<(Hash, AssetData)>> {
         trace!("get assets with decimals");
         let mut cache = self.assets_cache.lock().await;
         if cache.len() == self.assets.len() {
-            return Ok(cache.iter().map(|(k, v)| (k.clone(), *v)).collect());
+            return Ok(cache.iter().map(|(k, v)| (k.clone(), v.clone())).collect());
         }
 
         let mut assets = Vec::new();
         for res in self.assets.iter() {
             let (key, value) = res?;
             let asset = Hash::from_bytes(&self.cipher.decrypt_value(&key)?)?;
-            let decimals = if let Some(decimals) = cache.get(&asset) {
-                *decimals
+            let data = if let Some(asset) = cache.get(&asset) {
+                asset.clone()
             } else {
                 let raw_value = &self.cipher.decrypt_value(&value)?;
                 let mut reader = Reader::new(raw_value);
-                u8::read(&mut reader)?
+                let data = AssetData::read(&mut reader)?;
+                if cache.cap().get() != cache.len() {
+                    cache.put(asset.clone(), data.clone());
+                }
+
+                data
             };
 
-            assets.push((asset.clone(), decimals));
-            cache.put(asset, decimals);
+            assets.push((asset, data));
         }
 
         Ok(assets)
@@ -520,23 +552,46 @@ impl EncryptedStorage {
     }
 
     // save asset with its corresponding decimals
-    pub async fn add_asset(&mut self, asset: &Hash, decimals: u8) -> Result<()> {
+    pub async fn add_asset(&mut self, asset: &Hash, data: AssetData) -> Result<()> {
         trace!("add asset");
         if self.contains_asset(asset).await? {
             return Err(WalletError::AssetAlreadyRegistered.into());
         }
 
-        self.save_to_disk_with_encrypted_key(&self.assets, asset.as_bytes(), &decimals.to_be_bytes())?;
+        self.save_to_disk_with_encrypted_key(&self.assets, asset.as_bytes(), &data.to_bytes())?;
 
         let mut cache = self.assets_cache.lock().await;
-        cache.put(asset.clone(), decimals);
+        cache.put(asset.clone(), data);
         Ok(())
     }
 
     // Retrieve the stored decimals for this asset for better display
-    pub fn get_asset_decimals(&self, asset: &Hash) -> Result<u8> {
-        trace!("get asset decimals");
-        self.load_from_disk_with_encrypted_key(&self.assets, asset.as_bytes())
+    pub async fn get_asset(&self, asset: &Hash) -> Result<AssetData> {
+        trace!("get asset");
+        let mut cache = self.assets_cache.lock().await;
+        if let Some(asset) = cache.get(asset) {
+            return Ok(asset.clone());
+        }
+
+        let data: AssetData = self.load_from_disk_with_encrypted_key(&self.assets, asset.as_bytes())?;
+        cache.put(asset.clone(), data.clone());
+
+        Ok(data)
+    }
+
+    // Set the asset name
+    pub async fn set_asset_name(&mut self, asset: &Hash, name: String) -> Result<()> {
+        trace!("set asset name");
+        let mut cache = self.assets_cache.lock().await;
+        if let Some(asset) = cache.get_mut(asset) {
+            asset.set_name(name.clone());
+        }
+
+        let data: AssetData = self.load_from_disk_with_encrypted_key(&self.assets, asset.as_bytes())?;
+        let mut data = data;
+        data.set_name(name);
+        self.save_to_disk_with_encrypted_key(&self.assets, asset.as_bytes(), &data.to_bytes())?;
+        Ok(())
     }
 
     // Retrieve the plaintext balance for this asset
@@ -582,6 +637,17 @@ impl EncryptedStorage {
 
         // Fallback
         self.get_balance_for(asset).await.map(|balance| (balance, false))
+    }
+
+    // Verify if we have any unconfirmed balance stored
+    pub async fn has_unconfirmed_balance_for(&self, asset: &Hash) -> Result<bool> {
+        trace!("has unconfirmed balance for {}", asset);
+        let cache = self.unconfirmed_balances_cache.lock().await;
+        if let Some(balances) = cache.get(asset) {
+            return Ok(!balances.is_empty());
+        }
+
+        Ok(false)
     }
 
     // Retrieve the unconfirmed balance decoded for this asset if present
@@ -689,6 +755,29 @@ impl EncryptedStorage {
         self.get_filtered_transactions(None, None, None, None, true, true, true, true, None)
     }
 
+    // Find the last outgoing transaction created
+    pub fn get_last_outgoing_transaction(&self) -> Result<Option<TransactionEntry>> {
+        trace!("get last transaction created");
+        let mut last_tx: Option<TransactionEntry> = None;
+        for res in self.transactions.iter().values() {
+            let value = res?;
+            let entry = TransactionEntry::from_bytes(&self.cipher.decrypt_value(&value)?)?;
+            if !entry.is_outgoing() {
+                continue;
+            }
+
+            if let Some(last) = last_tx.as_ref() {
+                if entry.get_topoheight() > last.get_topoheight() {
+                    last_tx = Some(entry);
+                }
+            } else {
+                last_tx = Some(entry);
+            }
+        }
+
+        Ok(last_tx)
+    }
+
     // delete all transactions above the specified topoheight
     // This will go through each transaction, deserialize it, check topoheight, and delete it if required
     pub fn delete_transactions_above_topoheight(&mut self, topoheight: u64) -> Result<()> {
@@ -753,18 +842,17 @@ impl EncryptedStorage {
                 }
             }
 
-            let mut transfers: Option<Vec<Transfer>> = match entry.get_mut_entry() {
-                EntryData::Coinbase { .. } if accept_coinbase && (asset.map(|a| *a == XELIS_ASSET).unwrap_or(true)) => None,
+            let mut transfers: Option<Vec<Transfer>> = None;
+            match entry.get_mut_entry() {
+                EntryData::Coinbase { .. } if accept_coinbase && (asset.map(|a| *a == XELIS_ASSET).unwrap_or(true)) => {},
                 EntryData::Burn { asset: burn_asset, .. } if accept_burn => {
                     if let Some(asset) = asset {
                         if *asset != *burn_asset {
                             continue;
                         }
                     }
-
-                    None
                 },
-                EntryData::Incoming { from, transfers } if accept_incoming => {
+                EntryData::Incoming { from, transfers: t } if accept_incoming => {
                     // Filter by address
                     if let Some(filter_key) = address {
                         if *from != *filter_key {
@@ -774,24 +862,44 @@ impl EncryptedStorage {
 
                     // Filter by asset
                     if let Some(asset) = asset {
-                        transfers.retain(|transfer| *transfer.get_asset() == *asset);
+                        t.retain(|transfer| *transfer.get_asset() == *asset);
                     }
 
-                    Some(transfers.iter_mut().map(|t| Transfer::In(t)).collect())
+                    transfers = Some(t.iter_mut().map(|t| Transfer::In(t)).collect());
+
                 },
-                EntryData::Outgoing { transfers, .. } if accept_outgoing => {
+                EntryData::Outgoing { transfers: t, .. } if accept_outgoing => {
                     // Filter by address
                     if let Some(filter_key) = address {
-                        transfers.retain(|transfer| *transfer.get_destination() == *filter_key);
+                        t.retain(|transfer| *transfer.get_destination() == *filter_key);
                     }
 
                     // Filter by asset
                     if let Some(asset) = asset {
-                        transfers.retain(|transfer| *transfer.get_asset() == *asset);
+                        t.retain(|transfer| *transfer.get_asset() == *asset);
                     }
 
-                    Some(transfers.iter_mut().map(|t| Transfer::Out(t)).collect())
+                    transfers = Some(t.iter_mut().map(|t| Transfer::Out(t)).collect());
                 },
+                EntryData::MultiSig { participants, .. } if accept_outgoing => {
+                    // Filter by address
+                    if let Some(filter_key) = address {
+                        if !participants.contains(filter_key) {
+                            continue;
+                        }
+                    }
+                },
+                EntryData::InvokeContract { deposits, .. } if accept_outgoing => {
+                    // Filter by asset
+                    if let Some(asset) = asset {
+                        if !deposits.contains_key(asset) {
+                            continue;
+                        }
+
+                        deposits.retain(|deposit, _| *deposit == *asset);
+                    }
+                },
+                EntryData::DeployContract { .. } if accept_outgoing => {},
                 _ => continue,
             };
 
@@ -800,7 +908,7 @@ impl EncryptedStorage {
                 if let Some(transfers) = transfers.as_mut() {
                     transfers.retain(|transfer| {
                         if let Some(element) = transfer.get_extra_data() {
-                            query.verify_element(element)
+                            query.verify_element(element.data())
                         } else {
                             false
                         }
@@ -879,7 +987,7 @@ impl EncryptedStorage {
     pub fn save_transaction(&mut self, hash: &Hash, transaction: &TransactionEntry) -> Result<()> {
         trace!("save transaction {}", hash);
 
-        if self.tx_cache.as_ref().is_some_and(|c| c.last_tx_hash_created == *hash) {
+        if self.tx_cache.as_ref().is_some_and(|c| c.last_tx_hash_created.as_ref() == Some(hash)) {
             debug!("Transaction {} has been executed, deleting cache", hash);
             self.tx_cache = None;
         }
@@ -896,7 +1004,8 @@ impl EncryptedStorage {
     // Retrieve the nonce used to create new transactions
     pub fn get_nonce(&self) -> Result<u64> {
         trace!("get nonce");
-        self.load_from_disk(&self.extra, NONCE_KEY)
+        Ok(self.load_from_disk_optional(&self.extra, NONCE_KEY)?
+            .unwrap_or(0))
     }
 
     // Get the unconfirmed nonce to use to build ordered TXs
@@ -1109,7 +1218,7 @@ impl EncryptedStorage {
 }
 
 impl Storage {
-    pub fn new(name: String) -> Result<Self> {
+    pub fn new(name: &str) -> Result<Self> {
         let db = backend::open(name)?;
 
         Ok(Self {

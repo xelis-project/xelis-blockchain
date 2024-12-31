@@ -2,7 +2,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use indexmap::{IndexMap, IndexSet};
 use xelis_common::{
-    block::BlockHeader,
+    block::{TopoHeight, BlockHeader},
     config::TIPS_LIMIT,
     crypto::Hash,
     difficulty::{
@@ -49,12 +49,12 @@ pub struct ChainValidator<'a, S: Storage> {
     blockchain: &'a Blockchain<S>,
     // This is used to compute the expected topoheight of each new block
     // It must be 1 topoheight above the common point
-    starting_topoheight: u64,
+    starting_topoheight: TopoHeight,
 }
 
 impl<'a, S: Storage> ChainValidator<'a, S> {
     // Starting topoheight must be 1 topoheight above the common point
-    pub fn new(blockchain: &'a Blockchain<S>, starting_topoheight: u64) -> Self {        
+    pub fn new(blockchain: &'a Blockchain<S>, starting_topoheight: TopoHeight) -> Self {        
         Self {
             blocks: IndexMap::new(),
             blocks_at_height: IndexMap::new(),
@@ -88,7 +88,7 @@ impl<'a, S: Storage> ChainValidator<'a, S> {
     // validate the basic chain structure
     // We expect that the block added is the next block ordered by topoheight
     pub async fn insert_block(&mut self, hash: Hash, header: BlockHeader) -> Result<(), BlockchainError> {
-        trace!("Inserting block {} into chain validator", hash);
+        debug!("Inserting block {} into chain validator", hash);
 
         if self.blocks.contains_key(&hash) {
             debug!("Block {} is already in validator chain!", hash);
@@ -152,7 +152,6 @@ impl<'a, S: Storage> ChainValidator<'a, S> {
         let (base, base_height) = self.blockchain.find_common_base(self, header.get_tips()).await?;
 
         trace!("Common base: {} at height {} and hash {}", base, base_height, hash);
-
 
         // Store the block in both maps
         // One is for blocks at height and the other is for the block data
@@ -252,9 +251,9 @@ impl<S: Storage> DifficultyProvider for ChainValidator<'_, S> {
 
 #[async_trait]
 impl<S: Storage> DagOrderProvider for ChainValidator<'_, S> {
-    async fn get_topo_height_for_hash(&self, hash: &Hash) -> Result<u64, BlockchainError> {
+    async fn get_topo_height_for_hash(&self, hash: &Hash) -> Result<TopoHeight, BlockchainError> {
         if let Some(index) = self.blocks.get_index_of(hash) {
-            return Ok(self.starting_topoheight + index as u64)
+            return Ok(self.starting_topoheight + index as TopoHeight)
         }
 
         let storage = self.blockchain.get_storage().read().await;
@@ -262,7 +261,7 @@ impl<S: Storage> DagOrderProvider for ChainValidator<'_, S> {
     }
 
     // This should never happen in our case
-    async fn set_topo_height_for_block(&mut self, _: &Hash, _: u64) -> Result<(), BlockchainError> {
+    async fn set_topo_height_for_block(&mut self, _: &Hash, _: TopoHeight) -> Result<(), BlockchainError> {
         Err(BlockchainError::UnsupportedOperation)
     }
 
@@ -275,7 +274,7 @@ impl<S: Storage> DagOrderProvider for ChainValidator<'_, S> {
         storage.is_block_topological_ordered(hash).await
     }
 
-    async fn get_hash_at_topo_height(&self, topoheight: u64) -> Result<Hash, BlockchainError> {
+    async fn get_hash_at_topo_height(&self, topoheight: TopoHeight) -> Result<Hash, BlockchainError> {
         if topoheight >= self.starting_topoheight {
             let index = (topoheight - self.starting_topoheight) as usize;
             return self.blocks.get_index(index).map(|(hash, _)| hash.clone()).ok_or(BlockchainError::BlockNotOrdered);
@@ -325,24 +324,24 @@ impl<S: Storage> BlocksAtHeightProvider for ChainValidator<'_, S> {
 
 #[async_trait]
 impl<S: Storage> PrunedTopoheightProvider for ChainValidator<'_, S> {
-    async fn get_pruned_topoheight(&self) -> Result<Option<u64>, BlockchainError> {
+    async fn get_pruned_topoheight(&self) -> Result<Option<TopoHeight>, BlockchainError> {
         let storage = self.blockchain.get_storage().read().await;
         storage.get_pruned_topoheight().await
     }
 
-    async fn set_pruned_topoheight(&mut self, _: u64) -> Result<(), BlockchainError> {
+    async fn set_pruned_topoheight(&mut self, _: TopoHeight) -> Result<(), BlockchainError> {
         Err(BlockchainError::UnsupportedOperation)
     }
 }
 
 #[async_trait]
 impl<S: Storage> MerkleHashProvider for ChainValidator<'_, S> {
-    async fn get_balances_merkle_hash_at_topoheight(&self, topoheight: u64) -> Result<Hash, BlockchainError> {
+    async fn get_balances_merkle_hash_at_topoheight(&self, topoheight: TopoHeight) -> Result<Hash, BlockchainError> {
         let storage = self.blockchain.get_storage().read().await;
         storage.get_balances_merkle_hash_at_topoheight(topoheight).await
     }
 
-    async fn set_balances_merkle_hash_at_topoheight(&mut self,  _: u64, _: &Hash) -> Result<(), BlockchainError> {
+    async fn set_balances_merkle_hash_at_topoheight(&mut self,  _: TopoHeight, _: &Hash) -> Result<(), BlockchainError> {
         Err(BlockchainError::UnsupportedOperation)
     }
 }

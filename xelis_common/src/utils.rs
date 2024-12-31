@@ -38,7 +38,7 @@ pub fn from_xelis(value: impl Into<String>) -> Option<u64> {
 // Convert a coin amount from string to a u64 based on the provided decimals
 pub fn from_coin(value: impl Into<String>, coin_decimals: u8) -> Option<u64> {
     let value = value.into();
-    let mut split = value.split('.');
+    let mut split = value.trim().split('.');
     let value: u64 = split.next()?.parse::<u64>().ok()?;
     let right_part = split.next().unwrap_or("0");
     let decimals: String = right_part.chars().chain(std::iter::repeat('0')).take(coin_decimals as usize).collect();
@@ -50,7 +50,8 @@ pub fn from_coin(value: impl Into<String>, coin_decimals: u8) -> Option<u64> {
 // the fee is calculated in atomic units for XEL
 // Sending to a newly created address will increase the fee
 // Each transfers output will also increase the fee
-pub fn calculate_tx_fee(tx_size: usize, output_count: usize, new_addresses: usize) -> u64 {
+// Each signature of a multisig add a small overhead due to the verfications
+pub fn calculate_tx_fee(tx_size: usize, output_count: usize, new_addresses: usize, multisig: usize) -> u64 {
     let mut size_in_kb = tx_size as u64 / BYTES_PER_KB as u64;
 
     // we consume a full kb for fee
@@ -61,6 +62,7 @@ pub fn calculate_tx_fee(tx_size: usize, output_count: usize, new_addresses: usiz
     size_in_kb * FEE_PER_KB
     + output_count as u64 * FEE_PER_TRANSFER
     + new_addresses as u64 * FEE_PER_ACCOUNT_CREATION
+    + multisig as u64 * FEE_PER_TRANSFER
 }
 
 const HASHRATE_FORMATS: [&str; 7] = ["H/s", "KH/s", "MH/s", "GH/s", "TH/s", "PH/s", "EH/s"];

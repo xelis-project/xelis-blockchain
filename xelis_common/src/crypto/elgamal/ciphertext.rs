@@ -1,4 +1,4 @@
-use std::ops::{Add, AddAssign, Sub, SubAssign};
+use std::ops::{Add, AddAssign, Mul, Sub, SubAssign};
 
 use curve25519_dalek::{traits::Identity, RistrettoPoint, Scalar};
 use serde::{Deserialize, Deserializer, Serialize};
@@ -190,6 +190,52 @@ impl Sub<&Scalar> for Ciphertext {
     }
 }
 
+// MUL TRAITS
+
+impl Mul<Scalar> for Ciphertext {
+    type Output = Self;
+
+    fn mul(self, rhs: Scalar) -> Self {
+        Self {
+            commitment: PedersenCommitment::from_point(self.commitment.as_point() * rhs),
+            handle: DecryptHandle::from_point(self.handle.as_point() * rhs),
+        }
+    }
+}
+
+impl Mul<&Scalar> for Ciphertext {
+    type Output = Self;
+
+    fn mul(self, rhs: &Scalar) -> Self {
+        Self {
+            commitment: PedersenCommitment::from_point(self.commitment.as_point() * rhs),
+            handle: DecryptHandle::from_point(self.handle.as_point() * rhs),
+        }
+    }
+}
+
+impl Mul<Scalar> for &Ciphertext {
+    type Output = Ciphertext;
+
+    fn mul(self, rhs: Scalar) -> Ciphertext {
+        Ciphertext {
+            commitment: PedersenCommitment::from_point(self.commitment.as_point() * rhs),
+            handle: DecryptHandle::from_point(self.handle.as_point() * rhs),
+        }
+    }
+}
+
+impl Mul<&Scalar> for &Ciphertext {
+    type Output = Ciphertext;
+
+    fn mul(self, rhs: &Scalar) -> Ciphertext {
+        Ciphertext {
+            commitment: PedersenCommitment::from_point(self.commitment.as_point() * rhs),
+            handle: DecryptHandle::from_point(self.handle.as_point() * rhs),
+        }
+    }
+}
+
 // SUB ASSIGN TRAITS
 
 impl SubAssign<u64> for Ciphertext {
@@ -240,5 +286,52 @@ impl<'a> Deserialize<'a> for Ciphertext {
     {
         let compressed = CompressedCiphertext::deserialize(deserializer)?;
         compressed.decompress().map_err(serde::de::Error::custom)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::crypto::{proofs::PC_GENS, KeyPair};
+    use super::*;
+
+    #[test]
+    fn test_add() {
+        let keypair = KeyPair::new();
+
+        let ct1 = keypair.get_public_key().encrypt(5000u64);
+        let ct2 = keypair.get_public_key().encrypt(1000u64);
+
+        let ct3 = ct1 + ct2;
+
+        let dec = keypair.decrypt_to_point(&ct3);
+
+        assert_eq!(dec, Scalar::from(6000u64) * PC_GENS.B);
+    }
+
+    #[test]
+    fn test_sub() {
+        let keypair = KeyPair::new();
+
+        let ct1 = keypair.get_public_key().encrypt(5000u64);
+        let ct2 = keypair.get_public_key().encrypt(1000u64);
+
+        let ct3 = ct1 - ct2;
+
+        let dec = keypair.decrypt_to_point(&ct3);
+
+        assert_eq!(dec, Scalar::from(4000u64) * PC_GENS.B);
+    }
+
+    #[test]
+    fn test_mul() {
+        let keypair = KeyPair::new();
+
+        let ct1 = keypair.get_public_key().encrypt(5000u64);
+
+        let ct2 = ct1 * Scalar::from(2u64);
+
+        let dec = keypair.decrypt_to_point(&ct2);
+
+        assert_eq!(dec, Scalar::from(10000u64) * PC_GENS.B);
     }
 }

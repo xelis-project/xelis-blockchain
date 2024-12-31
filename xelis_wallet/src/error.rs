@@ -15,6 +15,8 @@ use anyhow::Error;
 #[repr(usize)]
 #[derive(Error, Debug)]
 pub enum WalletError {
+    #[error("Invalid datetime")]
+    InvalidDatetime,
     #[error("Invalid builder state, tx hash not built")]
     TxNotBuilt,
     #[error("Transaction too big: {} bytes, max is {} bytes", _0, _1)]
@@ -87,7 +89,9 @@ pub enum WalletError {
     #[error(transparent)]
     AEADCipherFormatError(#[from] CipherFormatError),
     #[error("No network handler available")]
-    NoNetworkHandler
+    NoNetworkHandler,
+    #[error("Poison error")]
+    PoisonError,
 }
 
 impl WalletError {

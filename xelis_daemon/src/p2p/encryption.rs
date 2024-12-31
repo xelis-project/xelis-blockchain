@@ -1,5 +1,3 @@
-use std::sync::atomic::{AtomicBool, Ordering};
-
 use chacha20poly1305::{aead::AeadMut, ChaCha20Poly1305, KeyInit};
 use rand::rngs::OsRng;
 use thiserror::Error;
@@ -28,9 +26,24 @@ pub struct Encryption {
     our_cipher: Mutex<Option<CipherState>>,
     // Cipher using the peer key to decrypt packets
     peer_cipher: Mutex<Option<CipherState>>,
-    // This flag helps us to know if the encryption is ready
-    // In case we want to use it before the handshake is done
-    ready: AtomicBool,
+    // Is encryption mode ready
+    ready: bool
+}
+
+pub enum CipherSide {
+    Our,
+    Peer,
+    Both
+}
+
+impl CipherSide {
+    pub fn is_our(&self) -> bool {
+        matches!(self, Self::Our | Self::Both)
+    }
+
+    pub fn is_peer(&self) -> bool {
+        matches!(self, Self::Peer | Self::Both)
+    }
 }
 
 #[derive(Error, Debug)]
@@ -56,23 +69,28 @@ impl Encryption {
         Self {
             our_cipher: Mutex::new(None),
             peer_cipher: Mutex::new(None),
-            ready: AtomicBool::new(false),
+            ready: false
         }
     }
 
-    // Mark has ready because
-    pub fn mark_as_ready(&self) {
-        self.ready.store(true, Ordering::SeqCst);
+    // Enable encryption
+    pub fn mark_ready(&mut self) {
+        self.ready = true;
     }
 
-    // Check if the encryption is ready to write (encrypt)
-    pub async fn is_write_ready(&self) -> bool {
-        self.ready.load(Ordering::SeqCst) && self.our_cipher.lock().await.is_some()
+    // Is encryption mode ready
+    pub fn is_ready(&self) -> bool {
+        self.ready
     }
 
     // Check if the encryption is ready to read (decrypt)
     pub async fn is_read_ready(&self) -> bool {
         self.peer_cipher.lock().await.is_some()
+    }
+
+    // Check if the encryption is ready to write (encrypt)
+    pub async fn is_write_ready(&self) -> bool {
+        self.our_cipher.lock().await.is_some()
     }
 
     // Generate a new random key
@@ -101,7 +119,7 @@ impl Encryption {
     // Decrypt a packet using the shared symetric key
     pub async fn decrypt_packet(&self, buf: &[u8]) -> Result<Vec<u8>, EncryptionError> {
         let mut lock = self.peer_cipher.lock().await;
-        let cipher_state = lock.as_mut().ok_or(EncryptionError::WriteNotReady)?;
+        let cipher_state = lock.as_mut().ok_or(EncryptionError::ReadNotReady)?;
 
         // fill our buffer
         cipher_state.nonce_buffer[0..8].copy_from_slice(&cipher_state.nonce.to_be_bytes());
@@ -132,11 +150,13 @@ impl Encryption {
     }
 
     // Rotate the key with a new one
-    pub async fn rotate_key(&self, new_key: EncryptionKey, our: bool) -> Result<(), EncryptionError> {
-        if our {
+    pub async fn rotate_key(&self, new_key: EncryptionKey, side: CipherSide) -> Result<(), EncryptionError> {
+        if side.is_our() {
             let mut lock = self.our_cipher.lock().await;
             Self::create_or_update_state(&mut lock, new_key)?;
-        } else {
+        }
+
+        if side.is_peer() {
             let mut lock = self.peer_cipher.lock().await;
             Self::create_or_update_state(&mut lock, new_key)?;
         }

@@ -51,7 +51,7 @@ pub fn calculate_difficulty(parent_timestamp: TimestampMillis, timestamp: Timest
 
     match version {
         BlockVersion::V0 => v1::calculate_difficulty(solve_time, previous_difficulty, p, minimum_difficulty),
-        BlockVersion::V1 => v2::calculate_difficulty(solve_time, previous_difficulty, p, minimum_difficulty),
+        _ => v2::calculate_difficulty(solve_time, previous_difficulty, p, minimum_difficulty),
     }
 }
 
@@ -60,6 +60,6 @@ pub fn calculate_difficulty(parent_timestamp: TimestampMillis, timestamp: Timest
 pub fn get_covariance_p(version: BlockVersion) -> VarUint {
     match version {
         BlockVersion::V0 => v1::P,
-        BlockVersion::V1 => v2::P
+        _ => v2::P
     }
 }

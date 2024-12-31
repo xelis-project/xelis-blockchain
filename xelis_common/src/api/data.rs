@@ -732,6 +732,10 @@ mod tests {
                 self.is_active.write(writer);
                 self.friends.write(writer);
             }
+
+            fn size(&self) -> usize {
+                self.name.size() + self.age.size() + self.is_active.size() + self.friends.size()
+            }
         }
 
         let dummy = Dummy {

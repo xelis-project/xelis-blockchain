@@ -1,9 +1,8 @@
 use std::array::TryFromSliceError;
 use thiserror::Error;
 
-use crate::crypto::Hash;
-
-use super::Serializer;
+use crate::{context::Context, crypto::Hash};
+use super::{Serializer, Writer};
 
 #[derive(Error, Debug)]
 pub enum ReaderError {
@@ -18,22 +17,48 @@ pub enum ReaderError {
     #[error(transparent)]
     TryFromSliceError(#[from] TryFromSliceError),
     #[error(transparent)]
-    Any(anyhow::Error)
+    Any(#[from] anyhow::Error)
 }
 
 // Reader help us to read safely from bytes
 // Mostly used when de-serializing an object from Serializer trait 
 pub struct Reader<'a> {
-    bytes: &'a[u8], // bytes to read
-    total: usize // total read bytes
+    // bytes to read
+    bytes: &'a [u8],
+    // total read bytes
+    total: usize,
+    // Context if needed
+    context: Context
 }
 
 impl<'a> Reader<'a> {
     pub fn new(bytes: &'a [u8]) -> Self {
-        Reader {
+        Self::with_context(bytes, Context::default())
+    }
+
+    pub fn with_context(bytes: &'a [u8], context: Context) -> Self {
+        Self {
             bytes,
-            total: 0
+            total: 0,
+            context
         }
+    }
+
+    pub fn context_mut(&mut self) -> &mut Context {
+        &mut self.context
+    }
+
+    pub fn context(&self) -> &Context {
+        &self.context
+    }
+
+    pub fn skip(&mut self, n: usize) -> Result<(), ReaderError> {
+        if n > self.size() {
+            return Err(ReaderError::InvalidSize)
+        }
+
+        self.total += n;
+        Ok(())
     }
 
     pub fn read<T: Serializer>(&mut self) -> Result<T, ReaderError> {
@@ -170,5 +195,46 @@ impl<'a> Reader<'a> {
 
     pub fn total_read(&self) -> usize {
         self.total
+    }
+}
+
+// NoTransform is a serializer that does not transform the data
+// It keeps the data as it is
+pub struct NoTransform(pub Vec<u8>);
+
+impl Serializer for NoTransform {
+    fn write(&self, writer: &mut Writer) {
+        writer.write_bytes(&self.0);
+    }
+
+    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
+        Ok(NoTransform(reader.read_bytes(reader.size())?))
+    }
+}
+
+// Skip N bytes before reading the next value
+pub struct Skip<const N: usize, T>(pub T);
+
+impl<const N: usize, T: Serializer> Serializer for Skip<N, T> {
+    fn write(&self, _: &mut Writer) {}
+
+    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
+        reader.skip(N)?;
+        T::read(reader).map(Self)
+    }
+}
+
+// Same as `Skip` but only skip if the first bool read is true
+pub struct SkipIf<const N: usize, T>(pub T);
+
+impl<const N: usize, T: Serializer> Serializer for SkipIf<N, T> {
+    fn write(&self, _: &mut Writer) {}
+
+    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
+        if reader.read_bool()? {
+            reader.skip(N)?;
+        }
+
+        T::read(reader).map(Self)
     }
 }

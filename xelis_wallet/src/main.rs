@@ -1,25 +1,27 @@
 use std::{
     fs::File,
+    io::Write,
     ops::ControlFlow,
     path::Path,
     sync::Arc,
     time::Duration
 };
 use anyhow::{Result, Context};
-use fern::colors::Color;
+use indexmap::IndexSet;
 use log::{error, info};
 use clap::Parser;
+use serde::{Deserialize, Serialize};
 use xelis_common::{
     async_handler,
     config::{
-        COIN_DECIMALS,
         VERSION,
         XELIS_ASSET
     },
     crypto::{
         ecdlp,
         Address,
-        Hashable
+        Hashable,
+        Signature
     },
     network::Network,
     prompt::{
@@ -34,26 +36,35 @@ use xelis_common::{
             CommandHandler,
             CommandManager
         },
+        Color,
         LogLevel,
-        Prompt,
         ModuleConfig,
+        Prompt,
         PromptError
     },
     serializer::Serializer,
+    tokio,
     transaction::{
-        builder::{FeeBuilder, TransactionTypeBuilder, TransferBuilder},
+        builder::{FeeBuilder, MultiSigBuilder, TransactionTypeBuilder, TransferBuilder},
+        multisig::{MultiSig, SignatureId},
         BurnPayload,
-        Transaction
+        MultiSigPayload,
+        Transaction,
+        TxVersion
     },
     utils::{
         format_coin,
-        format_xelis
+        format_xelis,
+        from_coin
     }
 };
 use xelis_wallet::{
-    wallet::Wallet,
     config::DIR_PATH,
     precomputed_tables,
+    wallet::{
+        RecoverOption,
+        Wallet
+    }
 };
 
 #[cfg(feature = "network_handler")]
@@ -84,7 +95,7 @@ use {
 // In case we want to enable it instead of starting
 // the XSWD Server
 #[cfg(feature = "api_server")]
-#[derive(Debug, clap::Args)]
+#[derive(Debug, clap::Args, Serialize, Deserialize)]
 pub struct RPCConfig {
     /// RPC Server bind address
     #[clap(long)]
@@ -94,23 +105,63 @@ pub struct RPCConfig {
     rpc_username: Option<String>,
     /// password for RPC authentication
     #[clap(long)]
-    rpc_password: Option<String>
+    rpc_password: Option<String>,
+    /// Number of threads to use for the RPC Server
+    #[clap(long)]
+    rpc_threads: Option<usize>
 }
 
-#[derive(Parser)]
-#[clap(version = VERSION, about = "XELIS is an innovative cryptocurrency built from scratch with BlockDAG, Homomorphic Encryption, Zero-Knowledge Proofs, and Smart Contracts.")]
-#[command(styles = xelis_common::get_cli_styles())]
-pub struct Config {
+// Functions Helpers
+fn default_daemon_address() -> String {
+    DEFAULT_DAEMON_ADDRESS.to_owned()
+}
+
+fn default_precomputed_tables_l1() -> usize {
+    precomputed_tables::L1_FULL
+}
+
+fn default_log_filename() -> String {
+    String::from("xelis-wallet.log")
+}
+
+fn default_logs_path() -> String {
+    String::from("logs/")
+}
+
+#[derive(Debug, clap::Args, Serialize, Deserialize)]
+pub struct NetworkConfig {
     /// Daemon address to use
     #[cfg(feature = "network_handler")]
     #[clap(long, default_value_t = String::from(DEFAULT_DAEMON_ADDRESS))]
+    #[serde(default = "default_daemon_address")]
     daemon_address: String,
     /// Disable online mode
     #[cfg(feature = "network_handler")]
     #[clap(long)]
     offline_mode: bool,
+}
+
+#[derive(Debug, clap::Args, Serialize, Deserialize)]
+pub struct PrecomputedTablesConfig {
+    /// L1 size for precomputed tables
+    /// By default, it is set to 26 (L1_FULL)
+    /// At each increment of 1, the size of the table is doubled
+    /// L1_FULL = 26, L1_MEDIUM = 18, L1_LOW = 13
+    #[clap(long, default_value_t = precomputed_tables::L1_FULL)]
+    #[serde(default = "default_precomputed_tables_l1")]
+    precomputed_tables_l1: usize,
+    /// Set the path to use for precomputed tables
+    /// 
+    /// By default, it will be from current directory.
+    #[clap(long)]
+    precomputed_tables_path: Option<String>,
+}
+
+#[derive(Debug, clap::Args, Serialize, Deserialize)]
+pub struct LogConfig {
     /// Set log level
     #[clap(long, value_enum, default_value_t = LogLevel::Info)]
+    #[serde(default)]
     log_level: LogLevel,
     /// Set file log level
     /// By default, it will be the same as log level
@@ -118,17 +169,21 @@ pub struct Config {
     file_log_level: Option<LogLevel>,
     /// Disable the log file
     #[clap(long)]
+    #[serde(default)]
     disable_file_logging: bool,
     /// Disable the log filename date based
     /// If disabled, the log file will be named xelis-wallet.log instead of YYYY-MM-DD.xelis-wallet.log
     #[clap(long)]
+    #[serde(default)]
     disable_file_log_date_based: bool,
     /// Disable the usage of colors in log
     #[clap(long)]
+    #[serde(default)]
     disable_log_color: bool,
     /// Disable terminal interactive mode
     /// You will not be able to write CLI commands in it or to have an updated prompt
     #[clap(long)]
+    #[serde(default)]
     disable_interactive_mode: bool,
     /// Log filename
     /// 
@@ -136,24 +191,41 @@ pub struct Config {
     /// File will be stored in logs directory, this is only the filename, not the full path.
     /// Log file is rotated every day and has the format YYYY-MM-DD.xelis-wallet.log.
     #[clap(long, default_value_t = String::from("xelis-wallet.log"))]
+    #[serde(default = "default_log_filename")]
     filename_log: String,
     /// Logs directory
     /// 
     /// By default it will be logs/ of the current directory.
     /// It must end with a / to be a valid folder.
     #[clap(long, default_value_t = String::from("logs/"))]
+    #[serde(default = "default_logs_path")]
     logs_path: String,
     /// Module configuration for logs
     #[clap(long)]
+    #[serde(default)]
     logs_modules: Vec<ModuleConfig>,
+}
+
+#[derive(Parser, Serialize, Deserialize)]
+#[clap(version = VERSION, about = "XELIS is an innovative cryptocurrency built from scratch with BlockDAG, Homomorphic Encryption, Zero-Knowledge Proofs, and Smart Contracts.")]
+#[command(styles = xelis_common::get_cli_styles())]
+pub struct Config {
+    /// RPC Server configuration
+    #[cfg(feature = "api_server")]
+    #[structopt(flatten)]
+    rpc: RPCConfig,
+    /// Network Configuration
+    #[structopt(flatten)]
+    network_handler: NetworkConfig,
+    /// Precopmuted tables configuration
+    #[structopt(flatten)]
+    precomputed_tables: PrecomputedTablesConfig,
+    /// Log configuration
+    #[structopt(flatten)]
+    log: LogConfig,
     /// Set the path for wallet storage to open/create a wallet at this location
     #[clap(long)]
     wallet_path: Option<String>,
-    /// Set the path to use for precomputed tables
-    /// 
-    /// By default, it will be from current directory.
-    #[clap(long)]
-    precomputed_tables_path: Option<String>,
     /// Password used to open wallet
     #[clap(long)]
     password: Option<String>,
@@ -162,25 +234,35 @@ pub struct Config {
     seed: Option<String>,
     /// Network selected for chain
     #[clap(long, value_enum, default_value_t = Network::Mainnet)]
+    #[serde(default)]
     network: Network,
-    /// RPC Server configuration
-    #[cfg(feature = "api_server")]
-    #[structopt(flatten)]
-    rpc: RPCConfig,
     /// XSWD Server configuration
     #[cfg(feature = "api_server")]
     #[clap(long)]
+    #[serde(default)]
     enable_xswd: bool,
     /// Disable the history scan
     /// This will prevent syncing old TXs/blocks
     /// Only blocks / transactions caught by the network handler will be stored, not the old ones
     #[clap(long)]
+    #[serde(default)]
     disable_history_scan: bool,
     /// Force the wallet to use a stable balance only during transactions creation.
     /// This will prevent the wallet to use unstable balance and prevent any orphaned transaction due to DAG reorg.
     /// This is only working if the wallet is in online mode.
     #[clap(long)]
-    force_stable_balance: bool
+    #[serde(default)]
+    force_stable_balance: bool,
+    /// JSON File to load the configuration from
+    #[clap(long)]
+    #[serde(skip)]
+    #[serde(default)]
+    config_file: Option<String>,
+    /// Generate the template at the `config_file` path
+    #[clap(long)]
+    #[serde(skip)]
+    #[serde(default)]
+    generate_config_template: bool
 }
 
 /// This struct is used to log the progress of the table generation
@@ -193,10 +275,34 @@ impl ecdlp::ProgressTableGenerationReportFunction for LogProgressTableGeneration
     }
 }
 
+const ELEMENTS_PER_PAGE: usize = 10;
+
 #[tokio::main]
 async fn main() -> Result<()> {
-    let config: Config = Config::parse();
-    let prompt = Prompt::new(config.log_level, &config.logs_path, &config.filename_log, config.disable_file_logging, config.disable_file_log_date_based, config.disable_log_color, !config.disable_interactive_mode, config.logs_modules, config.file_log_level.unwrap_or(config.log_level))?;
+    let mut config: Config = Config::parse();
+    if let Some(path) = config.config_file.as_ref() {
+        if config.generate_config_template {
+            if Path::new(path).exists() {
+                eprintln!("Config file already exists at {}", path);
+                return Ok(());
+            }
+
+            let mut file = File::create(path).context("Error while creating config file")?;
+            let json = serde_json::to_string_pretty(&config).context("Error while serializing config file")?;
+            file.write_all(json.as_bytes()).context("Error while writing config file")?;
+            println!("Config file template generated at {}", path);
+            return Ok(());
+        }
+
+        let file = File::open(path).context("Error while opening config file")?;
+        config = serde_json::from_reader(file).context("Error while reading config file")?;
+    } else if config.generate_config_template {
+        eprintln!("Provided config file path is required to generate the template with --config-file");
+        return Ok(());
+    }
+
+    let log_config = &config.log;
+    let prompt = Prompt::new(log_config.log_level, &log_config.logs_path, &log_config.filename_log, log_config.disable_file_logging, log_config.disable_file_log_date_based, log_config.disable_log_color, !log_config.disable_interactive_mode, log_config.logs_modules.clone(), log_config.file_log_level.unwrap_or(log_config.log_level))?;
 
     #[cfg(feature = "api_server")]
     {
@@ -223,34 +329,34 @@ async fn main() -> Result<()> {
     let command_manager = CommandManager::new(prompt.clone());
     command_manager.store_in_context(config.network)?;
 
-    if let Some(path) = config.wallet_path {
+    if let Some(path) = config.wallet_path.as_ref() {
         // read password from option or ask him
-        let password = if let Some(password) = config.password {
-            password
+        let password = if let Some(password) = config.password.as_ref() {
+            password.clone()
         } else {
             prompt.read_input(format!("Enter Password for '{}': ", path), true).await?
         };
 
-        let precomputed_tables = precomputed_tables::read_or_generate_precomputed_tables(config.precomputed_tables_path, LogProgressTableGenerationReportFunction).await?;
-        let p = Path::new(&path);
+        let precomputed_tables = precomputed_tables::read_or_generate_precomputed_tables(config.precomputed_tables.precomputed_tables_path.as_deref(), config.precomputed_tables.precomputed_tables_l1, LogProgressTableGenerationReportFunction, true).await?;
+        let p = Path::new(path);
         let wallet = if p.exists() && p.is_dir() && Path::new(&format!("{}/db", path)).exists() {
             info!("Opening wallet {}", path);
-            Wallet::open(path, password, config.network, precomputed_tables)?
+            Wallet::open(path, &password, config.network, precomputed_tables)?
         } else {
             info!("Creating a new wallet at {}", path);
-            Wallet::create(path, password, config.seed, config.network, precomputed_tables)?
+            Wallet::create(path, &password, config.seed.as_deref().map(RecoverOption::Seed), config.network, precomputed_tables)?
         };
 
         command_manager.register_default_commands()?;
 
-        apply_config(&wallet, #[cfg(feature = "api_server")] &prompt).await;
+        apply_config(config, &wallet, #[cfg(feature = "api_server")] &prompt).await;
         setup_wallet_command_manager(wallet, &command_manager).await?;
     } else {
         register_default_commands(&command_manager).await?;
     }
 
     if let Err(e) = prompt.start(Duration::from_millis(1000), Box::new(async_handler!(prompt_message_builder)), Some(&command_manager)).await {
-        error!("Error while running prompt: {}", e);
+        error!("Error while running prompt: {:#}", e);
     }
 
     if let Ok(context) = command_manager.get_context().lock() {
@@ -265,7 +371,8 @@ async fn main() -> Result<()> {
 async fn register_default_commands(manager: &CommandManager) -> Result<(), CommandError> {
     manager.add_command(Command::new("open", "Open a wallet", CommandHandler::Async(async_handler!(open_wallet))))?;
     manager.add_command(Command::new("create", "Create a new wallet", CommandHandler::Async(async_handler!(create_wallet))))?;
-    manager.add_command(Command::new("recover", "Recover a wallet using a seed", CommandHandler::Async(async_handler!(recover_wallet))))?;
+    manager.add_command(Command::new("recover_seed", "Recover a wallet using a seed", CommandHandler::Async(async_handler!(recover_seed))))?;
+    manager.add_command(Command::new("recover_private_key", "Recover a wallet using a private key", CommandHandler::Async(async_handler!(recover_private_key))))?;
 
     manager.register_default_commands()?;
     // Display available commands
@@ -344,14 +451,12 @@ async fn xswd_handle_request_permission(prompt: &ShareablePrompt, app_state: App
 }
 
 // Apply the config passed in params
-async fn apply_config(wallet: &Arc<Wallet>, #[cfg(feature = "api_server")] prompt: &ShareablePrompt) {
-    let config: Config = Config::parse();
-
+async fn apply_config(config: Config, wallet: &Arc<Wallet>, #[cfg(feature = "api_server")] prompt: &ShareablePrompt) {
     #[cfg(feature = "network_handler")]
-    if !config.offline_mode {
-        info!("Trying to connect to daemon at '{}'", config.daemon_address);
-        if let Err(e) = wallet.set_online_mode(&config.daemon_address, true).await {
-            error!("Couldn't connect to daemon: {}", e);
+    if !config.network_handler.offline_mode {
+        info!("Trying to connect to daemon at '{}'", config.network_handler.daemon_address);
+        if let Err(e) = wallet.set_online_mode(&config.network_handler.daemon_address, true).await {
+            error!("Couldn't connect to daemon: {:#}", e);
             info!("You can activate online mode using 'online_mode [daemon_address]'");
         } else {
             info!("Online mode enabled");
@@ -379,8 +484,8 @@ async fn apply_config(wallet: &Arc<Wallet>, #[cfg(feature = "api_server")] promp
             };
 
             info!("Enabling RPC Server on {} {}", address, if auth_config.is_some() { "with authentication" } else { "without authentication" });
-            if let Err(e) = wallet.enable_rpc_server(address, auth_config).await {
-                error!("Error while enabling RPC Server: {}", e);
+            if let Err(e) = wallet.enable_rpc_server(address, auth_config, config.rpc.rpc_threads).await {
+                error!("Error while enabling RPC Server: {:#}", e);
             }
         } else if config.enable_xswd {
             match wallet.enable_xswd().await {
@@ -399,45 +504,191 @@ async fn apply_config(wallet: &Arc<Wallet>, #[cfg(feature = "api_server")] promp
 async fn setup_wallet_command_manager(wallet: Arc<Wallet>, command_manager: &CommandManager) -> Result<(), CommandError> {
     // Delete commands for opening a wallet
     command_manager.remove_command("open")?;
-    command_manager.remove_command("recover")?;
+    command_manager.remove_command("recover_seed")?;
+    command_manager.remove_command("recover_private_key")?;
     command_manager.remove_command("create")?;
 
     // Add wallet commands
-    command_manager.add_command(Command::new("change_password", "Set a new password to open your wallet", CommandHandler::Async(async_handler!(change_password))))?;
-    command_manager.add_command(Command::with_optional_arguments("transfer", "Send asset to a specified address", vec![Arg::new("asset", ArgType::Hash)], CommandHandler::Async(async_handler!(transfer))))?;
-    command_manager.add_command(Command::with_optional_arguments("transfer_all", "Send all your asset balance to a specified address", vec![Arg::new("asset", ArgType::Hash)], CommandHandler::Async(async_handler!(transfer_all))))?;
-    command_manager.add_command(Command::new("burn", "Burn amount of asset", CommandHandler::Async(async_handler!(burn))))?;
-    command_manager.add_command(Command::new("display_address", "Show your wallet address", CommandHandler::Async(async_handler!(display_address))))?;
-    command_manager.add_command(Command::with_optional_arguments("balance", "List all non-zero balances or show the selected one", vec![Arg::new("asset", ArgType::Hash)], CommandHandler::Async(async_handler!(balance))))?;
-    command_manager.add_command(Command::with_optional_arguments("history", "Show all your transactions", vec![Arg::new("page", ArgType::Number)], CommandHandler::Async(async_handler!(history))))?;
-    command_manager.add_command(Command::with_optional_arguments("seed", "Show seed of selected language", vec![Arg::new("language", ArgType::Number)], CommandHandler::Async(async_handler!(seed))))?;
-    command_manager.add_command(Command::new("nonce", "Show current nonce", CommandHandler::Async(async_handler!(nonce))))?;
-    command_manager.add_command(Command::new("set_nonce", "Set new nonce", CommandHandler::Async(async_handler!(set_nonce))))?;
-    command_manager.add_command(Command::new("logout", "Logout from existing wallet", CommandHandler::Async(async_handler!(logout))))?;
-    command_manager.add_command(Command::new("clear_tx_cache", "Clear the current TX cache", CommandHandler::Async(async_handler!(clear_tx_cache))))?;
-    command_manager.add_command(Command::with_required_arguments("export_transactions", "Export all your transactions in a CSV file", vec![Arg::new("filename", ArgType::String)], CommandHandler::Async(async_handler!(export_transactions_csv))))?;
+    command_manager.add_command(Command::new(
+        "change_password",
+        "Set a new password to open your wallet",
+        CommandHandler::Async(async_handler!(change_password))
+    ))?;
+    command_manager.add_command(Command::with_optional_arguments(
+        "transfer",
+        "Send asset to a specified address",
+        vec![
+            Arg::new("asset", ArgType::Hash),
+            Arg::new("address", ArgType::String),
+            Arg::new("amount", ArgType::String),
+            Arg::new("confirm", ArgType::Bool)
+        ],
+        CommandHandler::Async(async_handler!(transfer))
+    ))?;
+    command_manager.add_command(Command::with_optional_arguments(
+        "transfer_all",
+        "Send all your asset balance to a specified address",
+        vec![
+            Arg::new("asset", ArgType::Hash),
+            Arg::new("address", ArgType::String),
+            Arg::new("confirm", ArgType::Bool)
+        ],
+        CommandHandler::Async(async_handler!(transfer_all))
+    ))?;
+    command_manager.add_command(Command::with_optional_arguments(
+        "burn",
+        "Burn amount of asset",
+        vec![
+            Arg::new("asset", ArgType::Hash),
+            Arg::new("amount", ArgType::String),
+            Arg::new("confirm", ArgType::Bool)
+        ],    
+        CommandHandler::Async(async_handler!(burn))
+    ))?;
+    command_manager.add_command(Command::new(
+        "display_address",
+        "Show your wallet address",
+        CommandHandler::Async(async_handler!(display_address))
+    ))?;
+    command_manager.add_command(Command::with_optional_arguments(
+        "balance",
+        "List all non-zero balances or show the selected one",
+        vec![Arg::new("asset", ArgType::Hash)],
+        CommandHandler::Async(async_handler!(balance))
+    ))?;
+    command_manager.add_command(Command::with_optional_arguments(
+        "history",
+        "Show all your transactions",
+        vec![Arg::new("page", ArgType::Number)],
+        CommandHandler::Async(async_handler!(history))
+    ))?;
+    command_manager.add_command(Command::with_optional_arguments(
+        "seed",
+        "Show seed of selected language",
+        vec![Arg::new("language", ArgType::Number)],
+        CommandHandler::Async(async_handler!(seed))
+    ))?;
+    command_manager.add_command(Command::new(
+        "nonce",
+        "Show current nonce",
+        CommandHandler::Async(async_handler!(nonce))
+    ))?;
+    command_manager.add_command(Command::new(
+        "set_nonce",
+        "Set new nonce",
+        CommandHandler::Async(async_handler!(set_nonce))
+    ))?;
+    command_manager.add_command(Command::new(
+        "logout",
+        "Logout from existing wallet",
+        CommandHandler::Async(async_handler!(logout)))
+    )?;
+    command_manager.add_command(Command::new(
+        "clear_tx_cache",
+        "Clear the current TX cache",
+        CommandHandler::Async(async_handler!(clear_tx_cache))
+    ))?;
+    command_manager.add_command(Command::with_required_arguments(
+        "export_transactions",
+        "Export all your transactions in a CSV file",
+        vec![Arg::new("filename", ArgType::String)],
+        CommandHandler::Async(async_handler!(export_transactions_csv))
+    ))?;
+    command_manager.add_command(Command::with_required_arguments(
+        "set_asset_name",
+        "Set the name of an asset",
+        vec![Arg::new("asset", ArgType::Hash)],
+        CommandHandler::Async(async_handler!(set_asset_name))
+    ))?;
+    command_manager.add_command(Command::with_optional_arguments(
+        "list_assets",
+        "List all registered assets",
+        vec![Arg::new("page", ArgType::Number)],
+        CommandHandler::Async(async_handler!(list_assets))
+    ))?;
 
     #[cfg(feature = "network_handler")]
     {
-        command_manager.add_command(Command::with_optional_arguments("online_mode", "Set your wallet in online mode", vec![Arg::new("daemon_address", ArgType::String)], CommandHandler::Async(async_handler!(online_mode))))?;
-        command_manager.add_command(Command::new("offline_mode", "Set your wallet in offline mode", CommandHandler::Async(async_handler!(offline_mode))))?;
-        command_manager.add_command(Command::with_optional_arguments("rescan", "Rescan balance and transactions", vec![Arg::new("topoheight", ArgType::Number)], CommandHandler::Async(async_handler!(rescan))))?;
+        command_manager.add_command(Command::with_optional_arguments(
+            "online_mode",
+            "Set your wallet in online mode",
+            vec![Arg::new("daemon_address", ArgType::String)],
+            CommandHandler::Async(async_handler!(online_mode))
+        ))?;
+        command_manager.add_command(Command::new(
+            "offline_mode",
+            "Set your wallet in offline mode",
+            CommandHandler::Async(async_handler!(offline_mode))
+        ))?;
+        command_manager.add_command(Command::with_optional_arguments(
+            "rescan",
+            "Rescan balance and transactions",
+            vec![Arg::new("topoheight", ArgType::Number)],
+            CommandHandler::Async(async_handler!(rescan))
+        ))?;
     }
 
     #[cfg(feature = "api_server")]
     {
         // Unauthenticated RPC Server can only be created by launch arguments option
-        command_manager.add_command(Command::with_required_arguments("start_rpc_server", "Start the RPC Server", vec![
-            Arg::new("bind_address", ArgType::String),
-            Arg::new("username", ArgType::String),
-            Arg::new("password", ArgType::String)
-        ], CommandHandler::Async(async_handler!(start_rpc_server))))?;
+        command_manager.add_command(Command::with_required_arguments(
+            "start_rpc_server",
+            "Start the RPC Server",
+            vec![
+                Arg::new("bind_address", ArgType::String),
+                Arg::new("username", ArgType::String),
+                Arg::new("password", ArgType::String)
+            ], CommandHandler::Async(async_handler!(start_rpc_server))))?;
 
-        command_manager.add_command(Command::new("start_xswd", "Start the XSWD Server",  CommandHandler::Async(async_handler!(start_xswd))))?;
+        command_manager.add_command(Command::new(
+            "start_xswd",
+            "Start the XSWD Server",
+            CommandHandler::Async(async_handler!(start_xswd)))
+        )?;
 
         // Stop API Server (RPC or XSWD)
-        command_manager.add_command(Command::new("stop_api_server", "Stop the API (XSWD/RPC) Server", CommandHandler::Async(async_handler!(stop_api_server))))?;
+        command_manager.add_command(Command::new(
+            "stop_api_server",
+            "Stop the API (XSWD/RPC) Server",
+            CommandHandler::Async(async_handler!(stop_api_server)))
+        )?;
     }
+
+    // Also add multisig commands
+    command_manager.add_command(Command::with_optional_arguments(
+        "multisig_setup",
+        "Setup a multisig",
+        vec![
+            Arg::new("participants", ArgType::Number),
+            Arg::new("threshold", ArgType::Number),
+            Arg::new("confirm", ArgType::Bool)
+        ],
+        CommandHandler::Async(async_handler!(multisig_setup))
+    ))?;
+    command_manager.add_command(Command::with_optional_arguments(
+        "multisig_sign",
+        "Sign a multisig transaction",
+        vec![
+            Arg::new("tx_hash", ArgType::Hash)
+        ],
+        CommandHandler::Async(async_handler!(multisig_sign))
+    ))?;
+    command_manager.add_command(Command::new(
+        "multisig_show",
+        "Show the current state of multisig",
+        CommandHandler::Async(async_handler!(multisig_show))
+    ))?;
+
+    command_manager.add_command(Command::new(
+        "tx_version",
+        "See the current transaction version",
+        CommandHandler::Async(async_handler!(tx_version))
+    ))?;
+    command_manager.add_command(Command::new(
+        "set_tx_version",
+        "Set the transaction version",
+        CommandHandler::Async(async_handler!(set_tx_version))
+    ))?;
 
     let mut context = command_manager.get_context().lock()?;
     context.store(wallet);
@@ -507,15 +758,20 @@ async fn prompt_message_builder(prompt: &Prompt, command_manager: Option<&Comman
 // Open a wallet based on the wallet name and its password
 async fn open_wallet(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
     let prompt = manager.get_prompt();
-    let name = prompt.read_input("Wallet name: ", false)
-        .await.context("Error while reading wallet name")?;
+    let config: Config = Config::parse();
+    let dir = if let Some(path) = config.wallet_path.as_ref() {
+        path.clone()
+    } else {
+        let name = prompt.read_input("Wallet name: ", false)
+            .await.context("Error while reading wallet name")?;
 
-    if name.is_empty() {
-        manager.error("Wallet name cannot be empty");
-        return Ok(())
-    }
+        if name.is_empty() {
+            manager.error("Wallet name cannot be empty");
+            return Ok(())
+        }
+        format!("{}{}", DIR_PATH, name)
+    };
 
-    let dir = format!("{}{}", DIR_PATH, name);
     if !Path::new(&dir).is_dir() {
         manager.message("No wallet found with this name");
         return Ok(())
@@ -527,12 +783,12 @@ async fn open_wallet(manager: &CommandManager, _: ArgumentManager) -> Result<(),
     let wallet = {
         let context = manager.get_context().lock()?;
         let network = context.get::<Network>()?;
-        let precomputed_tables = precomputed_tables::read_or_generate_precomputed_tables(None, LogProgressTableGenerationReportFunction).await?;
-        Wallet::open(dir, password, *network, precomputed_tables)?
+        let precomputed_tables = precomputed_tables::read_or_generate_precomputed_tables(config.precomputed_tables.precomputed_tables_path.as_deref(), config.precomputed_tables.precomputed_tables_l1, LogProgressTableGenerationReportFunction, true).await?;
+        Wallet::open(&dir, &password, *network, precomputed_tables)?
     };
 
     manager.message("Wallet sucessfully opened");
-    apply_config(&wallet, #[cfg(feature = "api_server")] prompt).await;
+    apply_config(config, &wallet, #[cfg(feature = "api_server")] prompt).await;
 
     setup_wallet_command_manager(wallet, manager).await?;
 
@@ -542,19 +798,22 @@ async fn open_wallet(manager: &CommandManager, _: ArgumentManager) -> Result<(),
 // Create a wallet by requesting name, password
 async fn create_wallet(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
     let prompt = manager.get_prompt();
+    let config: Config = Config::parse();
+    let dir = if let Some(path) = config.wallet_path.as_ref() {
+        path.clone()
+    } else {
+        let name = prompt.read_input("Wallet name: ", false)
+            .await.context("Error while reading wallet name")?;
 
-    let name = prompt.read_input("Wallet name: ", false)
-        .await.context("Error while reading wallet name")?;
+        if name.is_empty() {
+            manager.error("Wallet name cannot be empty");
+            return Ok(())
+        }
+        format!("{}{}", DIR_PATH, name)
+    };
 
-    if name.is_empty() {
-        manager.error("Wallet name cannot be empty");
-        return Ok(())
-    }
-
-    let dir = format!("{}{}", DIR_PATH, name);
-    // check if it doesn't exists yet
     if Path::new(&dir).is_dir() {
-        manager.message("Wallet already exist with this name!");
+        manager.message("wallet already exists with this name");
         return Ok(())
     }
 
@@ -572,12 +831,12 @@ async fn create_wallet(manager: &CommandManager, _: ArgumentManager) -> Result<(
     let wallet = {
         let context = manager.get_context().lock()?;
         let network = context.get::<Network>()?;
-        let precomputed_tables = precomputed_tables::read_or_generate_precomputed_tables(None, LogProgressTableGenerationReportFunction).await?;
-        Wallet::create(dir, password, None, *network, precomputed_tables)?
+        let precomputed_tables = precomputed_tables::read_or_generate_precomputed_tables(config.precomputed_tables.precomputed_tables_path.as_deref(), precomputed_tables::L1_FULL, LogProgressTableGenerationReportFunction, true).await?;
+        Wallet::create(&dir, &password, None, *network, precomputed_tables)?
     };
  
     manager.message("Wallet sucessfully created");
-    apply_config(&wallet, #[cfg(feature = "api_server")] prompt).await;
+    apply_config(config, &wallet, #[cfg(feature = "api_server")] prompt).await;
 
     // Display the seed in prompt
     {
@@ -591,33 +850,48 @@ async fn create_wallet(manager: &CommandManager, _: ArgumentManager) -> Result<(
     Ok(())
 }
 
-// Recover a wallet by requesting its seed, name and password
-async fn recover_wallet(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
+// Recover a wallet by requesting its seed or private key, name and password
+async fn recover_wallet(manager: &CommandManager, _: ArgumentManager, seed: bool) -> Result<(), CommandError> {
     let prompt = manager.get_prompt();
+    let config: Config = Config::parse();
+    let dir = if let Some(path) = config.wallet_path.as_ref() {
+        path.clone()
+    } else {
+        let name = prompt.read_input("Wallet name: ", false)
+            .await.context("Error while reading wallet name")?;
 
-    let seed = prompt.read_input("Seed: ", false)
-        .await.context("Error while reading seed")?;
+        if name.is_empty() {
+            manager.error("Wallet name cannot be empty");
+            return Ok(())
+        }
+        format!("{}{}", DIR_PATH, name)
+    };
 
-    let words_count = seed.split_whitespace().count();
-    if words_count != 25 && words_count != 24 {
-        manager.error("Seed must be 24 or 25 (checksum) words long");
-        return Ok(())
-    }
-
-    let name = prompt.read_input("Wallet name: ", false)
-        .await.context("Error while reading wallet name")?;
-
-    if name.is_empty() {
-        manager.error("Wallet name cannot be empty");
-        return Ok(())
-    }
-
-    let dir = format!("{}{}", DIR_PATH, name);
-    // check if it doesn't exists yet
     if Path::new(&dir).is_dir() {
-        manager.message("Wallet already exist with this name!");
+        manager.message("Wallet already exists with this name");
         return Ok(())
     }
+
+    let content = if seed {
+        let seed = prompt.read_input("Seed: ", false)
+            .await.context("Error while reading seed")?;
+    
+        let words_count = seed.split_whitespace().count();
+        if words_count != 25 && words_count != 24 {
+            manager.error("Seed must be 24 or 25 (checksum) words long");
+            return Ok(())
+        }
+        seed
+    } else {
+        let private_key = prompt.read_input("Private Key: ", false)
+            .await.context("Error while reading private key")?;
+    
+        if private_key.len() != 64 {
+            manager.error("Private key must be 64 characters long");
+            return Ok(())
+        }
+        private_key
+    };
 
     // ask and verify password
     let password = prompt.read_input("Password: ", true)
@@ -630,18 +904,82 @@ async fn recover_wallet(manager: &CommandManager, _: ArgumentManager) -> Result<
         return Ok(())
     }
 
-
     let wallet = {
         let context = manager.get_context().lock()?;
         let network = context.get::<Network>()?;
-        let precomputed_tables = precomputed_tables::read_or_generate_precomputed_tables(None, LogProgressTableGenerationReportFunction).await?;
-        Wallet::create(dir, password, Some(seed), *network, precomputed_tables)?
+        let precomputed_tables = precomputed_tables::read_or_generate_precomputed_tables(config.precomputed_tables.precomputed_tables_path.as_deref(), config.precomputed_tables.precomputed_tables_l1, LogProgressTableGenerationReportFunction, true).await?;
+
+        let recover = if seed {
+            RecoverOption::Seed(&content)
+        } else {
+            RecoverOption::PrivateKey(&content)
+        };
+        Wallet::create(&dir, &password, Some(recover), *network, precomputed_tables)?
     };
 
     manager.message("Wallet sucessfully recovered");
-    apply_config(&wallet, #[cfg(feature = "api_server")] prompt).await;
+    apply_config(config, &wallet, #[cfg(feature = "api_server")] prompt).await;
 
     setup_wallet_command_manager(wallet, manager).await?;
+
+    Ok(())
+}
+
+async fn recover_seed(manager: &CommandManager, args: ArgumentManager) -> Result<(), CommandError> {
+    recover_wallet(manager, args, true).await
+}
+
+async fn recover_private_key(manager: &CommandManager, args: ArgumentManager) -> Result<(), CommandError> {
+    recover_wallet(manager, args, false).await
+}
+
+// Set the asset name
+async fn set_asset_name(manager: &CommandManager, mut args: ArgumentManager) -> Result<(), CommandError> {
+    let prompt = manager.get_prompt();
+    let context = manager.get_context().lock()?;
+    let wallet: &Arc<Wallet> = context.get()?;
+
+    let asset = args.get_value("asset")?.to_hash()?;
+    let name = prompt.read_input("Asset name: ", false)
+        .await.context("Error while reading asset name")?;
+
+    let mut storage = wallet.get_storage().write().await;
+    storage.set_asset_name(&asset, name).await?;
+    manager.message("Asset name has been set");
+    Ok(())
+}
+
+async fn list_assets(manager: &CommandManager, mut args: ArgumentManager) -> Result<(), CommandError> {
+    let context = manager.get_context().lock()?;
+    let wallet: &Arc<Wallet> = context.get()?;
+
+    let page = if args.has_argument("page") {
+        args.get_value("page")?.to_number()? as usize
+    } else {
+        0
+    };
+
+    let storage = wallet.get_storage().read().await;
+    let assets = storage.get_assets_with_data().await?;
+
+    if assets.is_empty() {
+        manager.message("No assets found");
+        return Ok(())
+    }
+
+    let mut max_pages = assets.len() / ELEMENTS_PER_PAGE;
+    if assets.len() % ELEMENTS_PER_PAGE != 0 {
+        max_pages += 1;
+    }
+
+    if page > max_pages {
+        return Err(CommandError::InvalidArgument(format!("Page must be less than maximum pages ({})", max_pages - 1)));
+    }
+
+    manager.message(format!("Assets (page {}/{}):", page, max_pages));
+    for (asset, data) in assets {
+        manager.message(format!("{} ({} decimals): {}", asset, data.get_decimals(), data.get_name()));
+    }
 
     Ok(())
 }
@@ -662,70 +1000,151 @@ async fn change_password(manager: &CommandManager, _: ArgumentManager) -> Result
         .context("Error while asking new password")?;
 
     manager.message("Changing password...");
-    wallet.set_password(old_password, new_password).await?;
+    wallet.set_password(&old_password, &new_password).await?;
     manager.message("Your password has been changed!");
     Ok(())
 }
 
+async fn create_transaction_with_multisig(manager: &CommandManager, prompt: &Prompt, wallet: &Wallet, tx_type: TransactionTypeBuilder, payload: MultiSigPayload) -> Result<Transaction, CommandError> {
+    manager.message(format!("Multisig detected, you need to sign the transaction with {} keys.", payload.threshold));
+
+    let mut storage = wallet.get_storage().write().await;
+    let fee = FeeBuilder::default();
+    let mut state = wallet.create_transaction_state_with_storage(&storage, &tx_type, &fee, None).await
+        .context("Error while creating transaction state")?;
+
+    let mut unsigned = wallet.create_unsigned_transaction(&mut state, payload.threshold, tx_type, fee, storage.get_tx_version().await?)
+        .context("Error while building unsigned transaction")?;
+
+    let mut multisig = MultiSig::new();
+    manager.message(format!("Transaction hash to sign: {}", unsigned.get_hash_for_multisig()));
+
+    if payload.threshold == 1 {
+        let signature = prompt.read_input("Enter signature hexadecimal: ", false).await
+            .context("Error while reading signature")?;
+        let signature = Signature::from_hex(&signature).context("Invalid signature")?;
+
+        let id = if payload.participants.len() == 1 {
+            0
+        } else {
+            prompt.read("Enter signer ID: ").await
+            .context("Error while reading signer id")?
+        };
+
+        if !multisig.add_signature(SignatureId {
+            id,
+            signature
+        }) {
+            return Err(CommandError::InvalidArgument("Invalid signature".to_string()));
+        }        
+    } else {
+        manager.message("Participants available:");
+        for (i, participant) in payload.participants.iter().enumerate() {
+            manager.message(format!("Participant #{}: {}", i, participant.as_address(wallet.get_network().is_mainnet())));
+        }
+        
+        manager.message("Please enter the signatures and signer IDs");
+        for i in 0..payload.threshold {
+            let signature = prompt.read_input(format!("Enter signature #{} hexadecimal: ", i), false).await
+                .context("Error while reading signature")?;
+            let signature = Signature::from_hex(&signature).context("Invalid signature")?;
+    
+            let id = prompt.read("Enter signer ID for signature: ").await
+                .context("Error while reading signer id")?;
+    
+            if !multisig.add_signature(SignatureId {
+                id,
+                signature
+            }) {
+                return Err(CommandError::InvalidArgument("Invalid signature".to_string()));
+            }
+        }
+    }
+
+    unsigned.set_multisig(multisig);
+
+    let tx = unsigned.finalize(wallet.get_keypair());
+    state.set_tx_hash_built(tx.hash());
+
+    state.apply_changes(&mut storage).await.context("Error while applying changes")?;
+
+    Ok(tx)
+}
+
 // Create a new transfer to a specified address
-async fn transfer(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
+async fn transfer(manager: &CommandManager, mut args: ArgumentManager) -> Result<(), CommandError> {
     let prompt = manager.get_prompt();
     let context = manager.get_context().lock()?;
     let wallet: &Arc<Wallet> = context.get()?;
 
     // read address
-    let str_address = prompt.read_input(
-        prompt.colorize_str(Color::Green, "Address: "),
-        false
-    ).await.context("Error while reading address")?;
+    let str_address = if args.has_argument("address") {
+        args.get_value("address")?.to_string_value()?
+    } else {
+        prompt.read_input(
+            prompt.colorize_str(Color::Green, "Address: "),
+            false
+        ).await.context("Error while reading address")?
+    };
     let address = Address::from_string(&str_address).context("Invalid address")?;
 
-    let asset = prompt.read_hash(
-        prompt.colorize_str(Color::Green, "Asset (default XELIS): ")
-    ).await.ok();
+    let asset = if args.has_argument("asset") {
+        args.get_value("asset")?.to_hash()?
+    } else {
+        prompt.read_hash(
+            prompt.colorize_str(Color::Green, "Asset (default XELIS): ")
+        ).await.unwrap_or(XELIS_ASSET)
+    };
 
-    let asset = asset.unwrap_or(XELIS_ASSET);
-
-    let (max_balance, decimals) = {
+    let (max_balance, decimals, multisig) = {
         let storage = wallet.get_storage().read().await;
         let balance = storage.get_plaintext_balance_for(&asset).await.unwrap_or(0);
-        let decimals = storage.get_asset_decimals(&asset).unwrap_or(COIN_DECIMALS);
-        (balance, decimals)
+        let decimals = storage.get_asset(&asset).await?.get_decimals();
+        let multisig = storage.get_multisig_state().await.context("Error while reading multisig state")?;
+        (balance, decimals, multisig)
     };
 
     // read amount
-    let float_amount: f64 = prompt.read(
-        prompt.colorize_string(Color::Green, &format!("Amount (max: {}): ", format_coin(max_balance, decimals)))
-    ).await.context("Error while reading amount")?;
+    let amount = if args.has_argument("amount") {
+        args.get_value("amount")?.to_string_value()?
+    } else {
+        prompt.read(
+            prompt.colorize_string(Color::Green, &format!("Amount (max: {}): ", format_coin(max_balance, decimals)))
+        ).await.context("Error while reading amount")?
+    };
 
-    let amount = (float_amount * 10u32.pow(decimals as u32) as f64) as u64;
+    let amount = from_coin(amount, decimals).context("Invalid amount")?;
     manager.message(format!("Sending {} of {} to {}", format_coin(amount, decimals), asset, address.to_string()));
 
-    if !prompt.ask_confirmation().await.context("Error while confirming action")? {
+    if !args.get_flag("confirm")? && !prompt.ask_confirmation().await.context("Error while confirming action")? {
         manager.message("Transaction has been aborted");
         return Ok(())
     }
 
     manager.message("Building transaction...");
-
     let transfer = TransferBuilder {
         destination: address,
         amount,
         asset,
         extra_data: None
     };
-    let tx = match wallet.create_transaction(TransactionTypeBuilder::Transfers(vec![transfer]), FeeBuilder::default()).await {
-        Ok(tx) => tx,
-        Err(e) => {
-            manager.error(&format!("Error while creating transaction: {}", e));
-            return Ok(())
+    let tx_type = TransactionTypeBuilder::Transfers(vec![transfer]);
+    let tx = if let Some(multisig) = multisig {
+        create_transaction_with_multisig(manager, prompt, wallet, tx_type, multisig.payload).await?
+    } else {
+        match wallet.create_transaction(tx_type, FeeBuilder::default()).await {
+            Ok(tx) => tx,
+            Err(e) => {
+                manager.error(&format!("Error while creating transaction: {}", e));
+                return Ok(())
+            }
         }
     };
+
 
     broadcast_tx(wallet, manager, tx).await;
     Ok(())
 }
-
 
 // Send the whole balance to a specified address
 async fn transfer_all(manager: &CommandManager, mut args: ArgumentManager) -> Result<(), CommandError> {
@@ -734,10 +1153,14 @@ async fn transfer_all(manager: &CommandManager, mut args: ArgumentManager) -> Re
     let wallet: &Arc<Wallet> = context.get()?;
 
     // read address
-    let str_address = prompt.read_input(
-        prompt.colorize_str(Color::Green, "Address: "),
-        false
-    ).await.context("Error while reading address")?;
+    let str_address = if args.has_argument("address") {
+        args.get_value("address")?.to_string_value()?
+    } else {
+        prompt.read_input(
+            prompt.colorize_str(Color::Green, "Address: "),
+            false
+        ).await.context("Error while reading address")?
+    };
     let address = Address::from_string(&str_address).context("Invalid address")?;
 
     let mut asset = args.get_value("asset").and_then(|v| v.to_hash()).ok();
@@ -748,11 +1171,13 @@ async fn transfer_all(manager: &CommandManager, mut args: ArgumentManager) -> Re
     }
 
     let asset = asset.unwrap_or(XELIS_ASSET);
-    let (mut amount, decimals) = {
+    let (mut amount, decimals, multisig) = {
         let storage = wallet.get_storage().read().await;
         let amount = storage.get_plaintext_balance_for(&asset).await.unwrap_or(0);
-        let decimals = storage.get_asset_decimals(&asset).unwrap_or(COIN_DECIMALS);
-        (amount, decimals)
+        let decimals = storage.get_asset(&asset).await?.get_decimals();
+        let multisig = storage.get_multisig_state().await
+            .context("Error while reading multisig state")?;
+        (amount, decimals, multisig)
     };
 
     let transfer = TransferBuilder {
@@ -765,16 +1190,17 @@ async fn transfer_all(manager: &CommandManager, mut args: ArgumentManager) -> Re
     let estimated_fees = wallet.estimate_fees(tx_type.clone()).await.context("Error while estimating fees")?;
 
     if asset == XELIS_ASSET {
-        amount -= estimated_fees;
+        amount = amount.checked_sub(estimated_fees).context("Insufficient balance to pay fees")?;
     }
 
     manager.message(format!("Sending {} of {} to {} (fees: {})", format_coin(amount, decimals), asset, address.to_string(), format_xelis(estimated_fees)));
-    
-    if !prompt.ask_confirmation().await.context("Error while confirming action")? {
+
+    if !args.get_flag("confirm")? && !prompt.ask_confirmation().await.context("Error while confirming action")? {
         manager.message("Transaction has been aborted");
         return Ok(())
     }
 
+    manager.message("Building transaction...");
     let transfer = TransferBuilder {
         destination: address,
         amount,
@@ -782,49 +1208,78 @@ async fn transfer_all(manager: &CommandManager, mut args: ArgumentManager) -> Re
         extra_data: None
     };
     let tx_type = TransactionTypeBuilder::Transfers(vec![transfer]);
-
-    manager.message("Building transaction...");
-
-    let tx = wallet.create_transaction(tx_type, FeeBuilder::default()).await
-        .context("Error while creating transaction")?;
+    let tx = if let Some(multisig) = multisig {
+        create_transaction_with_multisig(manager, prompt, wallet, tx_type, multisig.payload).await?
+    } else {
+        match wallet.create_transaction(tx_type, FeeBuilder::default()).await {
+            Ok(tx) => tx,
+            Err(e) => {
+                manager.error(&format!("Error while creating transaction: {}", e));
+                return Ok(())
+            }
+        }
+    };
 
     broadcast_tx(wallet, manager, tx).await;
     Ok(())
 }
 
-async fn burn(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
+async fn burn(manager: &CommandManager, mut args: ArgumentManager) -> Result<(), CommandError> {
     let prompt = manager.get_prompt();
     let context = manager.get_context().lock()?;
     let wallet: &Arc<Wallet> = context.get()?;
 
-    let asset = prompt.read_hash(
-        prompt.colorize_str(Color::Green, "Asset (default XELIS): ")
-    ).await.ok();
+    let asset = if args.has_argument("asset") {
+        args.get_value("asset")?.to_hash()?
+    } else {
+        prompt.read_hash(
+            prompt.colorize_str(Color::Green, "Asset (default XELIS): ")
+        ).await.unwrap_or(XELIS_ASSET)
+    };
 
-    let asset = asset.unwrap_or(XELIS_ASSET);
-
-    let (max_balance, decimals) = {
+    let (max_balance, decimals, multisig) = {
         let storage = wallet.get_storage().read().await;
         let balance = storage.get_plaintext_balance_for(&asset).await.unwrap_or(0);
-        let decimals = storage.get_asset_decimals(&asset).unwrap_or(COIN_DECIMALS);
-        (balance, decimals)
+        let decimals = storage.get_asset(&asset).await?.get_decimals();
+        let multisig = storage.get_multisig_state().await
+            .context("Error while reading multisig state")?;
+        (balance, decimals, multisig)
     };
 
     // read amount
-    let float_amount: f64 = prompt.read(
-        prompt.colorize_string(Color::Green, &format!("Amount (max: {}): ", format_coin(max_balance, decimals)))
-    ).await.context("Error while reading amount")?;
+    let amount = if args.has_argument("amount") {
+        args.get_value("amount")?.to_string_value()?
+    } else {
+        prompt.read(
+            prompt.colorize_string(Color::Green, &format!("Amount (max: {}): ", format_coin(max_balance, decimals)))
+        ).await.context("Error while reading amount")?
+    };
 
-    let amount = (float_amount * 10u32.pow(decimals as u32) as f64) as u64;
+    let amount = from_coin(amount, decimals).context("Invalid amount")?;
     manager.message(format!("Burning {} of {}", format_coin(amount, decimals), asset));
+    if !args.get_flag("confirm")? && !prompt.ask_confirmation().await.context("Error while confirming action")? {
+        manager.message("Transaction has been aborted");
+        return Ok(())
+    }
 
+    manager.message("Building transaction...");
     let payload = BurnPayload {
         amount,
         asset
     };
 
-    let tx = wallet.create_transaction(TransactionTypeBuilder::Burn(payload), FeeBuilder::Multiplier(1f64)).await
-        .context("Error while creating burn transaction")?;
+    let tx_type = TransactionTypeBuilder::Burn(payload);
+    let tx = if let Some(multisig) = multisig {
+        create_transaction_with_multisig(manager, prompt, wallet, tx_type, multisig.payload).await?
+    } else {
+        match wallet.create_transaction(tx_type, FeeBuilder::default()).await {
+            Ok(tx) => tx,
+            Err(e) => {
+                manager.error(&format!("Error while creating transaction: {}", e));
+                return Ok(())
+            }
+        }
+    };
 
     broadcast_tx(wallet, manager, tx).await;
     Ok(())
@@ -846,14 +1301,14 @@ async fn balance(manager: &CommandManager, mut arguments: ArgumentManager) -> Re
 
     if arguments.has_argument("asset") {
         let asset = arguments.get_value("asset")?.to_hash()?;
-        let balance = storage.get_plaintext_balance_for(&asset).await.unwrap_or(0);
-        let decimals = storage.get_asset_decimals(&asset).unwrap_or(0);
-        manager.message(format!("Balance for asset {}: {}", asset, format_coin(balance, decimals)));
+        let balance = storage.get_plaintext_balance_for(&asset).await?;
+        let data = storage.get_asset(&asset).await?;
+        manager.message(format!("Balance for asset {}: {}", asset, format_coin(balance, data.get_decimals())));
     } else {
-        for (asset, decimals) in storage.get_assets_with_decimals().await? {
+        for (asset, data) in storage.get_assets_with_data().await? {
             let balance = storage.get_plaintext_balance_for(&asset).await.unwrap_or(0);
             if balance > 0 {
-                manager.message(format!("Balance for asset {}: {}", asset, format_coin(balance, decimals)));
+                manager.message(format!("Balance for asset {}: {}", asset, format_coin(balance, data.get_decimals())));
             }
         }
     }
@@ -862,7 +1317,6 @@ async fn balance(manager: &CommandManager, mut arguments: ArgumentManager) -> Re
 }
 
 // Show all transactions
-const TXS_PER_PAGE: usize = 10;
 async fn history(manager: &CommandManager, mut arguments: ArgumentManager) -> Result<(), CommandError> {
     let page = if arguments.has_argument("page") {
         arguments.get_value("page")?.to_number()? as usize
@@ -887,8 +1341,8 @@ async fn history(manager: &CommandManager, mut arguments: ArgumentManager) -> Re
 
     // desc ordered
     transactions.sort_by(|a, b| b.get_topoheight().cmp(&a.get_topoheight()));
-    let mut max_pages = transactions.len() / TXS_PER_PAGE;
-    if transactions.len() % TXS_PER_PAGE != 0 {
+    let mut max_pages = transactions.len() / ELEMENTS_PER_PAGE;
+    if transactions.len() % ELEMENTS_PER_PAGE != 0 {
         max_pages += 1;
     }
 
@@ -897,8 +1351,8 @@ async fn history(manager: &CommandManager, mut arguments: ArgumentManager) -> Re
     }
 
     manager.message(format!("Transactions (total {}) page {}/{}:", transactions.len(), page, max_pages));
-    for tx in transactions.iter().skip((page - 1) * TXS_PER_PAGE).take(TXS_PER_PAGE) {
-        manager.message(format!("- {}", tx.summary(wallet.get_network().is_mainnet(), &*storage)?));
+    for tx in transactions.iter().skip((page - 1) * ELEMENTS_PER_PAGE).take(ELEMENTS_PER_PAGE) {
+        manager.message(format!("- {}", tx.summary(wallet.get_network().is_mainnet(), &*storage).await?));
     }
 
     Ok(())
@@ -912,7 +1366,7 @@ async fn export_transactions_csv(manager: &CommandManager, mut arguments: Argume
     let transactions = storage.get_transactions()?;
     let mut file = File::create(&filename).context("Error while creating CSV file")?;
 
-    wallet.export_transactions_in_csv(transactions, &mut file).context("Error while exporting transactions to CSV")?;
+    wallet.export_transactions_in_csv(&storage, transactions, &mut file).await.context("Error while exporting transactions to CSV")?;
 
     // writer.flush().context("Error while flushing CSV file")?;
     manager.message(format!("Transactions have been exported to {}", filename));
@@ -974,7 +1428,7 @@ async fn rescan(manager: &CommandManager, mut arguments: ArgumentManager) -> Res
     };
 
     if let Err(e) = wallet.rescan(topoheight, true).await {
-        manager.error(format!("Error while rescanning: {}", e));
+        manager.error(format!("Error while rescanning: {:#}", e));
     } else {
         manager.message("Network handler has been restarted!");
     }
@@ -989,7 +1443,7 @@ async fn seed(manager: &CommandManager, mut arguments: ArgumentManager) -> Resul
     let password = prompt.read_input("Password: ", true)
         .await.context("Error while reading password")?;
     // check if password is valid
-    wallet.is_valid_password(password).await?;
+    wallet.is_valid_password(&password).await?;
 
     let language = if arguments.has_argument("language") {
         arguments.get_value("language")?.to_number()?
@@ -1033,6 +1487,31 @@ async fn set_nonce(manager: &CommandManager, _: ArgumentManager) -> Result<(), C
     Ok(())
 }
 
+async fn tx_version(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
+    let context = manager.get_context().lock()?;
+    let wallet: &Arc<Wallet> = context.get()?;
+    let storage = wallet.get_storage().read().await;
+    let version = storage.get_tx_version().await?;
+    manager.message(format!("Transaction version: {}", version));
+    Ok(())
+}
+
+async fn set_tx_version(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
+    let value: u8 = manager.get_prompt().read("New Transaction Version: ".to_string()).await
+        .context("Error while reading new transaction version to set")?;
+
+    let tx_version = TxVersion::try_from(value)
+        .map_err(|_| CommandError::InvalidArgument("Invalid transaction version".to_string()))?;
+
+    let context = manager.get_context().lock()?;
+    let wallet: &Arc<Wallet> = context.get()?;
+    let mut storage = wallet.get_storage().write().await;
+    storage.set_tx_version(tx_version).await?;
+
+    manager.message(format!("New transaction version is: {}", value));
+    Ok(())
+}
+
 async fn logout(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
     {
         let context = manager.get_context().lock()?;
@@ -1071,7 +1550,7 @@ async fn start_rpc_server(manager: &CommandManager, mut arguments: ArgumentManag
         password
     });
 
-    wallet.enable_rpc_server(bind_address, auth_config).await.context("Error while enabling RPC Server")?;
+    wallet.enable_rpc_server(bind_address, auth_config, None).await.context("Error while enabling RPC Server")?;
     manager.message("RPC Server has been enabled");
     Ok(())
 }
@@ -1092,6 +1571,174 @@ async fn start_xswd(manager: &CommandManager, _: ArgumentManager) -> Result<(), 
     Ok(())
 }
 
+// Setup a multisig transaction (a multisig is present on chain, but this wallet is offline so can't sync it)
+async fn multisig_setup(manager: &CommandManager, mut args: ArgumentManager) -> Result<(), CommandError> {
+    let context = manager.get_context().lock()?;
+    let wallet: &Arc<Wallet> = context.get()?;
+    let prompt = manager.get_prompt();
+
+    let multisig = {
+        let storage = wallet.get_storage().read().await;
+        storage.get_multisig_state().await?
+    };
+
+    manager.warn("IMPORTANT: Make sure you have the correct participants and threshold before proceeding.");
+    manager.warn("If you are unsure, please cancel and verify the participants and threshold.");
+    manager.warn("An incorrect setup can lead to loss of funds.");
+    manager.warn("Do you want to continue?");
+
+    if !prompt.ask_confirmation().await.context("Error while confirming action")? {
+        manager.message("Transaction has been aborted");
+        return Ok(())
+    }
+
+    let participants: u8 = if args.has_argument("participants") {
+        args.get_value("participants")?.to_number()? as u8
+    } else {
+        let msg = if multisig.is_some() {
+            "Participants count (0 to delete): "
+        } else {
+            "Participants count (min. 1): "
+        };
+        prompt.read(msg)
+            .await.context("Error while reading participants count")?
+    };
+
+    if participants == 0 {
+        let Some(multisig) = multisig else {
+            return Err(CommandError::InvalidArgument("Participants count must be greater than 0".to_string()));
+        };
+
+        manager.warn("Participants count is 0, this will delete the multisig currently configured");
+        manager.warn("Do you want to continue?");
+        if !args.get_flag("confirm")? && !prompt.ask_confirmation().await.context("Error while confirming action")? {
+            manager.message("Transaction has been aborted");
+            return Ok(())
+        }
+
+        let payload = MultiSigBuilder {
+            participants: IndexSet::new(),
+            threshold: 0
+        };
+
+        let tx = create_transaction_with_multisig(manager, prompt, wallet, TransactionTypeBuilder::MultiSig(payload), multisig.payload).await?;
+
+        broadcast_tx(wallet, manager, tx).await;
+        return Ok(())
+    }
+
+    let threshold: u8 = if args.has_argument("threshold") {
+        args.get_value("threshold")?.to_number()? as u8
+    } else {
+        prompt.read("Threshold (min. 1): ")
+            .await.context("Error while reading threshold")?
+    };
+
+    if threshold == 0 {
+        return Err(CommandError::InvalidArgument("Threshold must be greater than 0".to_string()));
+    }
+
+    if threshold > participants {
+        return Err(CommandError::InvalidArgument("Threshold must be less or equal to participants count".to_string()));
+    }
+
+    let mainnet = wallet.get_network().is_mainnet();
+    let mut keys = IndexSet::with_capacity(participants as usize);
+    for i in 0..participants {
+        let address: Address = prompt.read(format!("Participant #{} address: ", i + 1))
+            .await.context("Error while reading participant address")?;
+
+        if address.is_mainnet() != mainnet {
+            return Err(CommandError::InvalidArgument("Participant address must be on the same network".to_string()));
+        }
+
+        if !address.is_normal() {
+            return Err(CommandError::InvalidArgument("Participant address must be a normal address".to_string()));
+        }
+
+        if address.get_public_key() == wallet.get_public_key() {
+            return Err(CommandError::InvalidArgument("Participant address cannot be the same as the wallet address".to_string()));
+        }
+
+        if !keys.insert(address) {
+            return Err(CommandError::InvalidArgument("Participant address already exists".to_string()));
+        }
+    }
+
+    manager.message(format!("MultiSig payload ({} participants with threshold at {}):", participants, threshold));
+    for key in keys.iter() {
+        manager.message(format!("- {}", key));
+    }
+
+    if !args.get_flag("confirm")? && !prompt.ask_confirmation().await.context("Error while confirming action")? {
+        manager.message("Transaction has been aborted");
+        return Ok(())
+    }
+
+    manager.message("Building transaction...");
+
+    let multisig = {
+        let storage = wallet.get_storage().read().await;
+        storage.get_multisig_state().await.context("Error while reading multisig state")?
+    };
+    let payload = MultiSigBuilder {
+        participants: keys,
+        threshold
+    };
+    let tx_type = TransactionTypeBuilder::MultiSig(payload);
+    let tx = if let Some(multisig) = multisig {
+        create_transaction_with_multisig(manager, prompt, wallet, tx_type, multisig.payload).await?
+    } else {
+        match wallet.create_transaction(tx_type, FeeBuilder::default()).await {
+            Ok(tx) => tx,
+            Err(e) => {
+                manager.error(&format!("Error while creating transaction: {}", e));
+                return Ok(())
+            }
+        }
+    };
+
+    broadcast_tx(wallet, manager, tx).await;
+
+    Ok(())
+}
+
+async fn multisig_sign(manager: &CommandManager, mut args: ArgumentManager) -> Result<(), CommandError> {
+    let context = manager.get_context().lock()?;
+    let wallet: &Arc<Wallet> = context.get()?;
+    let prompt = manager.get_prompt();
+
+    let tx_hash = if args.has_argument("tx_hash") {
+        args.get_value("tx_hash")?.to_hash()?
+    } else {
+        prompt.read("Transaction hash: ").await.context("Error while reading transaction hash")?
+    };
+
+    let signature = wallet.sign_data(tx_hash.as_bytes());
+    prompt.read_input(format!("Signature: {}\r\nPress ENTER to continue", signature.to_hex()), false).await
+        .context("Error while displaying seed")?;
+
+    Ok(())
+}
+
+async fn multisig_show(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
+    let context = manager.get_context().lock()?;
+    let wallet: &Arc<Wallet> = context.get()?;
+    let storage = wallet.get_storage().read().await;
+    let multisig = storage.get_multisig_state().await.context("Error while reading multisig state")?;
+
+    if let Some(multisig) = multisig {
+        manager.message(format!("MultiSig payload ({} participants with threshold at {}):", multisig.payload.participants.len(), multisig.payload.threshold));
+        for key in multisig.payload.participants.iter() {
+            manager.message(format!("- {}", key.as_address(wallet.get_network().is_mainnet())));
+        }
+    } else {
+        manager.message("No multisig configured");
+    }
+
+    Ok(())
+}
+
 // broadcast tx if possible
 // submit_transaction increase the local nonce in storage in case of success
 async fn broadcast_tx(wallet: &Wallet, manager: &CommandManager, tx: Transaction) {
@@ -1100,7 +1747,7 @@ async fn broadcast_tx(wallet: &Wallet, manager: &CommandManager, tx: Transaction
 
     if wallet.is_online().await {
         if let Err(e) = wallet.submit_transaction(&tx).await {
-            manager.error(format!("Couldn't submit transaction: {}", e));
+            manager.error(format!("Couldn't submit transaction: {:#}", e));
             manager.error("You can try to rescan your balance with the command 'rescan'");
 
             // Maybe cache is corrupted, clear it

@@ -1,6 +1,7 @@
 use crate::config::{PEER_TIMEOUT_DISCONNECT, PEER_TIMEOUT_INIT_CONNECTION, PEER_SEND_BYTES_TIMEOUT};
 use super::{
-    encryption::Encryption,
+    diffie_hellman,
+    encryption::{Encryption, CipherSide},
     error::P2pError,
     packet::Packet,
     EncryptionKey
@@ -32,17 +33,20 @@ use xelis_common::{
     time::{TimestampSeconds, get_current_time_in_seconds},
     serializer::{Reader, Serializer},
 };
-use bytes::Bytes;
 use log::{debug, error, trace, warn};
 
 type P2pResult<T> = Result<T, P2pError>;
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum State {
-    Pending, // connection is new, no handshake received
-    KeyExchange, // start exchanging keys
-    Handshake, // handshake received, not checked
-    Success // connection is ready
+    // connection is new, no handshake received
+    Pending,
+    // start exchanging keys
+    KeyExchange,
+    // handshake received, not checked
+    Handshake,
+    // connection is ready
+    Success
 }
 
 pub struct Connection {
@@ -60,8 +64,8 @@ pub struct Connection {
     bytes_in: AtomicUsize,
     // total bytes sent
     bytes_out: AtomicUsize,
-    // total bytes sent using current key
-    bytes_out_key: AtomicUsize,
+    // total bytes encrypted and sent using same encryption key
+    bytes_encrypted: AtomicUsize,
     // when the connection was established
     connected_on: TimestampSeconds,
     // if Connection#close() is called, close is set to true
@@ -89,7 +93,7 @@ impl Connection {
             connected_on: get_current_time_in_seconds(),
             bytes_in: AtomicUsize::new(0),
             bytes_out: AtomicUsize::new(0),
-            bytes_out_key: AtomicUsize::new(0),
+            bytes_encrypted: AtomicUsize::new(0),
             closed: AtomicBool::new(false),
             rotate_key_in: AtomicUsize::new(0),
             rotate_key_out: AtomicUsize::new(0),
@@ -97,18 +101,8 @@ impl Connection {
         }
     }
 
-    // Do a key exchange with the peer
-    // If we are the client, we send our key first in plaintext
-    // We wait for the peer to send its key
-    // If we are the server, we send back our key
-    // NOTE: This doesn't prevent any MITM at this point
-    // Because a MITM could intercept the key and send its own key to the peer
-    // and play the role as a proxy.
-    // Afaik, there is no way to have a decentralized way to prevent MITM without trusting a third party
-    // (That's what TLS/SSL does with the CA, but it's not decentralized and it's not trustless)
-    // A potential idea would be to hardcode seed nodes keys,
-    // and each nodes share the key of other along the socket address
-    pub async fn exchange_keys(&mut self, buffer: &mut [u8]) -> P2pResult<()> {
+    // Exchange keys in the old way for compatibility reasons
+    pub async fn exchange_keys_old(&mut self, buffer: &mut [u8]) -> P2pResult<()> {
         trace!("Exchanging keys with {}", self.addr);
 
         // Update our state
@@ -119,7 +113,7 @@ impl Connection {
             trace!("Sending our key to {}", self.addr);
             let packet = self.rotate_key_packet().await?;
             self.send_bytes(&packet).await?;
-            self.encryption.mark_as_ready();
+            self.encryption.mark_ready();
         }
 
         trace!("Waiting for key from {}", self.addr);
@@ -140,7 +134,7 @@ impl Connection {
             trace!("Replying with our key to {}", self.addr);
             let packet = self.rotate_key_packet().await?;
             self.send_bytes(&packet).await?;
-            self.encryption.mark_as_ready();
+            self.encryption.mark_ready();
         }
 
         trace!("Key exchange with {} successful", self.addr);
@@ -148,36 +142,128 @@ impl Connection {
         Ok(())
     }
 
+    // Do a key exchange with the peer
+    // We use the Diffie-Hellman key exchange to generate a shared secret
+    // The shared secret is used to encrypt the generated (symetric) encryption key
+    // The encryption key is then used to encrypt the packets
+    // Each party will have its own key
+    // NOTE: This doesn't prevent any MITM if there is not a strict verification of the DH key of the peer.
+    // Because a MITM could intercept the key and send its own key to the peer
+    // and play the role as a proxy.
+    // Afaik, there is no way to have a decentralized way to prevent MITM without trusting a third party
+    // (That's what TLS/SSL does with the CA, but it's not decentralized and it's not trustless)
+    // A potential idea would be to hardcode seed nodes keys,
+    // and each nodes share the key of other along the socket address
+    pub async fn exchange_keys(&mut self, keypair: &diffie_hellman::DHKeyPair, expected_key: Option<&diffie_hellman::PublicKey>, action: diffie_hellman::KeyVerificationAction, buffer: &mut [u8]) -> P2pResult<diffie_hellman::PublicKey> {
+        trace!("Exchanging keys with {}", self.addr);
+
+        // Update our state
+        self.set_state(State::KeyExchange);
+
+        // Send our DH key
+        {
+            trace!("Sending our DH key to {}", self.addr);
+            let pk_bytes = keypair.get_public_key().as_bytes();
+            let packet = Packet::KeyExchange(Cow::Borrowed(pk_bytes));
+            self.send_bytes(&packet.to_bytes()).await?;
+        }
+
+        // Wait for the peer to receive its key
+        let Packet::KeyExchange(peer_dh_key) = timeout(
+            Duration::from_millis(PEER_TIMEOUT_INIT_CONNECTION),
+            self.read_packet(buffer, 256)
+        ).await?? else {
+            error!("Expected KeyExchange packet");
+            return Err(P2pError::InvalidPacket);
+        };
+
+        trace!("Received DH key from {}", self.addr);
+
+        let peer_dh_key = diffie_hellman::PublicKey::from(peer_dh_key.into_owned());
+
+        // Verify the key of the peer
+        if let Some(expected_key) = expected_key {
+            if expected_key != &peer_dh_key {
+                match action {
+                    diffie_hellman::KeyVerificationAction::Warn => {
+                        warn!("Expected Diffie-Hellman key from {} is different from the received key, ignoring", self.addr);
+                    },
+                    diffie_hellman::KeyVerificationAction::Reject => {
+                        error!("Expected Diffie-Hellman key from {} is different from the received key", self.addr);
+                        return Err(P2pError::InvalidDHKey);
+                    },
+                    diffie_hellman::KeyVerificationAction::Ignore => {
+                        debug!("Expected Diffie-Hellman key from {} is different from the received key, ignoring", self.addr);
+                    }
+                }
+            }
+        }
+
+        // the secret generated is used to encrypt our newly generated encryption key
+        let secret = keypair.get_shared_secret(&peer_dh_key);
+
+        // Send our newly generated key if we initiated the connection
+        {
+            trace!("Sending our encryption key to {}", self.addr);
+            self.encryption.rotate_key(secret, CipherSide::Both).await?;
+            let packet = self.rotate_key_packet().await?;
+            self.send_bytes(&packet).await?;
+        }
+
+        // Mark the encryption as ready because we have shared our key
+        self.encryption.mark_ready();
+
+        trace!("Waiting for key from {}", self.addr);
+        // Wait for the shared key of the peer to receive
+        let Packet::KeyExchange(peer_key) = timeout(
+            Duration::from_millis(PEER_TIMEOUT_INIT_CONNECTION),
+            self.read_packet(buffer, 256)
+        ).await?? else {
+            error!("Expected KeyExchange packet");
+            return Err(P2pError::InvalidPacket);
+        };
+
+        trace!("Received encryption key from {}", self.addr);
+
+        // Now that we got the shared peer key, update our encryption state
+        self.encryption.rotate_key(peer_key.into_owned(), CipherSide::Peer).await?;
+
+        trace!("Key exchange with {} successful", self.addr);
+
+        Ok(peer_dh_key)
+    }
+
     // Verify if its a outgoing connection
     pub fn is_out(&self) -> bool {
         self.out
     }
 
-    // This will send to the peer a packet to rotate the key
-    async fn rotate_key_packet(&self) -> P2pResult<Bytes> {
+    // Generate a new key and rotate the current key
+    async fn rotate_key_packet(&self) -> P2pResult<Vec<u8>> {
         trace!("rotating our encryption key for peer {}", self.get_address());
         // Generate a new key to use
         let new_key = self.encryption.generate_key();
-        // Verify if we already have one set
-        
-        // Build the packet
-        let mut packet = Bytes::from(Packet::KeyExchange(Cow::Borrowed(&new_key)).to_bytes());
+        self.generate_rotate_key_packet(new_key).await
+    }
 
-        // This is used to determine if we need to encrypt the packet or not
-        // Check if we already had a key set, if so, encrypt it
+    // Rotate the current key with a new key and generate the packet
+    async fn generate_rotate_key_packet(&self, new_key: EncryptionKey) -> P2pResult<Vec<u8>> {
+        // Build the packet
+        let mut packet = Packet::KeyExchange(Cow::Borrowed(&new_key)).to_bytes();
+
         if self.encryption.is_write_ready().await {
             // Encrypt with the our previous key our new key
-            packet = self.encryption.encrypt_packet(&packet).await?.into();
+            packet = self.encryption.encrypt_packet(&packet).await?;
         }
 
         // Rotate the key in our encryption state
-        self.encryption.rotate_key(new_key, true).await?;
+        self.encryption.rotate_key(new_key, CipherSide::Our).await?;
 
         // Increment the key rotation counter
         self.rotate_key_out.fetch_add(1, Ordering::Relaxed);
 
         // Reset the counter
-        self.bytes_out_key.store(0, Ordering::Relaxed);
+        self.bytes_encrypted.store(0, Ordering::Relaxed);
 
         Ok(packet)
     }
@@ -189,7 +275,7 @@ impl Connection {
     // as all next packets will be encrypted with the new key and we have updated it before
     pub async fn rotate_peer_key(&self, key: EncryptionKey) -> P2pResult<()> {
         trace!("Rotating encryption key of peer {}", self.get_address());
-        self.encryption.rotate_key(key, false).await?;
+        self.encryption.rotate_key(key, CipherSide::Peer).await?;
         // Increment the key rotation counter
         self.rotate_key_in.fetch_add(1, Ordering::Relaxed);
         Ok(())
@@ -233,17 +319,19 @@ impl Connection {
         // Count the bytes sent
         self.bytes_out.fetch_add(packet.len(), Ordering::Relaxed);
 
-        if self.encryption.is_write_ready().await {
+        // We check if the encryption is enabled to manage it ourself here
+        if self.encryption.is_ready() {
             let buffer = self.encryption.encrypt_packet(packet).await?;
             // Send the bytes in encrypted format
             self.send_packet_bytes_internal(&mut stream, &buffer).await?;
 
             // Count the bytes sent with the current key
-            let bytes_out_key = self.bytes_out_key.fetch_add(packet.len(), Ordering::Relaxed);
+            let sum = self.bytes_encrypted.fetch_add(packet.len(), Ordering::Relaxed) + packet.len();
+            self.bytes_encrypted.store(sum, Ordering::Relaxed);
 
             // Rotate the key if necessary
-            if bytes_out_key > 0 && bytes_out_key >= ROTATE_EVERY_N_BYTES {
-                debug!("Rotating our key with peer {}", self.get_address());
+            if sum >= ROTATE_EVERY_N_BYTES {
+                debug!("Rotating our encryption key with peer {}", self.get_address());
                 let packet = self.rotate_key_packet().await?;
                 // Send the new key to the peer
                 self.send_packet_bytes_internal(&mut stream, &packet).await?;

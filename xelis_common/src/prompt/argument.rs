@@ -68,10 +68,19 @@ pub enum ArgType {
 impl ArgType {
     pub fn to_value(&self, value: &str) -> Result<ArgValue, ArgError> {
         Ok(match self {
-            ArgType::Bool => ArgValue::Bool(value.parse().map_err(|_| ArgError::InvalidType)?),
+            ArgType::Bool => {
+                let value = value.to_lowercase();
+                if ["true", "yes", "y", "1"].contains(&value.as_str()) {
+                    ArgValue::Bool(true)
+                } else if ["false", "no", "n", "0"].contains(&value.as_str()) {
+                    ArgValue::Bool(false)
+                } else {
+                    return Err(ArgError::InvalidType);
+                }
+            },
             ArgType::Number => ArgValue::Number(value.parse().map_err(|_| ArgError::InvalidType)?),
             ArgType::String => ArgValue::String(value.to_owned()),
-            ArgType::Hash => ArgValue::Hash(Hash::from_hex(value.to_string()).map_err(|_| ArgError::InvalidType)?),
+            ArgType::Hash => ArgValue::Hash(Hash::from_hex(value).map_err(|_| ArgError::InvalidType)?),
             ArgType::Array(value_type) => {
                 let values = value.split(",");
                 let mut array: Vec<ArgValue> = Vec::new();
@@ -128,6 +137,12 @@ impl ArgumentManager {
 
     pub fn has_argument(&self, name: &str) -> bool {
         self.arguments.contains_key(name)
+    }
+
+    // Get flag value
+    // If its not present, return false
+    pub fn get_flag(&mut self, name: &str) -> Result<bool, ArgError> {
+        self.arguments.remove(name).map(|value| value.to_bool()).unwrap_or(Ok(false))
     }
 
     pub fn size(&self) -> usize {

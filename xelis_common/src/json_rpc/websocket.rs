@@ -21,7 +21,7 @@ use tokio_tungstenite_wasm::{
     connect,
     Message
 };
-use log::{debug, error, warn};
+use log::{debug, error, info, trace, warn};
 use crate::{
     tokio::{
         sync::{broadcast, oneshot, Mutex, mpsc},
@@ -152,7 +152,7 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
 
     // Generate a new ID for a JSON-RPC request
     fn next_id(&self) -> usize {
-        self.count.fetch_add(1, Ordering::SeqCst)
+        self.count.fetch_add(1, Ordering::Relaxed)
     }
 
     // Notify a channel if we lose/gain the connection
@@ -201,17 +201,19 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
 
     // Set if the client should try to reconnect to the server if the connection is lost
     pub async fn set_auto_reconnect_delay(&self, duration: Option<Duration>) {
+        debug!("Setting auto reconnect delay to {:?}", duration);
         let mut reconnect = self.delay_auto_reconnect.lock().await;
         *reconnect = duration;
     }
 
     // Is the client online
     pub fn is_online(&self) -> bool {
-        self.online.load(Ordering::SeqCst)
+        self.online.load(Ordering::Relaxed)
     }
 
     // resubscribe to all events because of a reconnection
     async fn resubscribe_events(self: Arc<Self>) -> Result<(), JsonRPCError> {
+        trace!("Resubscribe events requested");
         let events = {
             let events = self.events_to_id.lock().await;
             events.clone()
@@ -242,16 +244,31 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
 
     // This will stop the task keeping the connection with the node
     pub async fn disconnect(&self) -> Result<(), Error> {
-        self.set_auto_reconnect_delay(None).await;
+        trace!("disconnect");
+        if !self.is_online() {
+            debug!("Already disconnected from the server");
+            return Ok(());
+        }
+
+        debug!("Disconnecting from the server '{}'", self.target);
         self.set_online(false).await;
         {
-
-            self.sender.lock().await.send(InternalMessage::Close).await?;
+            let sender = self.sender.lock().await;
+            if let Err(e) = sender.send(InternalMessage::Close).await {
+                error!("Error while sending close message to the background task: {:?}", e);
+            }
         }
+
         {
             let task = self.background_task.lock().await.take();
             if let Some(task) = task {
-                task.abort();
+                if task.is_finished() {
+                    if let Err(e) = task.await {
+                        error!("Error while waiting for the background task to finish: {:?}", e);
+                    }
+                } else {
+                    task.abort();
+                }
             }
         }
 
@@ -264,7 +281,8 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
 
     // Set the online status
     async fn set_online(&self, online: bool) {
-        let old = self.online.swap(online, Ordering::SeqCst);
+        debug!("Setting online status to {}", online);
+        let old = self.online.swap(online, Ordering::Relaxed);
         if old != online {
             if online {
                 self.notify_connection_channel(&self.online_channel).await;
@@ -276,15 +294,18 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
 
     // Reconnect by starting again the background task
     pub async fn reconnect(self: &Arc<Self>) -> Result<bool, Error> {
+        trace!("Reconnect requested: server '{}'", self.target);
         if self.is_online() {
             warn!("Already connected to the server");
             return Ok(false)
         }
 
+        trace!("Reconnecting to the server '{}'", self.target);
         let ws = connect(&self.target).await?;
         {
             let mut lock = self.background_task.lock().await;
             if let Some(handle) = lock.take() {
+                trace!("Task was still set while reconnecting, aborting it...");
                 handle.abort();
             }
         }
@@ -294,19 +315,22 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
             *lock = sender;
 
             let zelf = Arc::clone(&self);
+            trace!("Starting background task after reconnecting");
             zelf.start_background_task(receiver, ws).await?;
         }
-
 
         if let Err(e) = Arc::clone(&self).resubscribe_events().await {
             error!("Error while resubscribing to events: {:?}", e);
         }
+
+        info!("Reconnected to the server '{}' successfully", self.target);
 
         Ok(true)
     }
 
     // Clear all pending requests to notifier the caller that the connection is lost
     async fn clear_requests(&self) {
+        trace!("Clearing all pending requests");
         let mut requests = self.requests.lock().await;
         requests.clear();
     }
@@ -314,26 +338,35 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
     // Clear all events
     // Because they are all channels, they will returns error to the caller
     async fn clear_events(&self) {
+        trace!("Clearing all events");
         {
             let mut events = self.events_to_id.lock().await;
             events.clear();
         }
         {
+            trace!("Clearing all events handlers");
             let mut handlers = self.handler_by_id.lock().await;
             handlers.clear();
         }
     }
 
     async fn start_background_task(self: Arc<Self>, mut receiver: mpsc::Receiver<InternalMessage>, ws: WebSocketStream) -> Result<(), JsonRPCError> {
+        debug!("Starting background task");
+        self.set_online(true).await;
+
         let zelf = Arc::clone(&self);
         let handle = spawn_task("ws-background-task", async move {
+            debug!("Starting WS background task");
+
             let mut ws = Some(ws);
             while let Some(websocket) = ws.take() {
-                zelf.set_online(true).await;
+                debug!("Connected to the server '{}'", zelf.target);
 
                 match zelf.background_task(&mut receiver, websocket).await {
                     Ok(()) => {
                         debug!("Closing background task");
+                        zelf.set_online(false).await;
+
                         {
                             let mut lock = zelf.background_task.lock().await;
                             *lock = None;
@@ -350,10 +383,13 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
                     }
                 }
 
+                debug!("Connection lost to the server '{}'", zelf.target);
+                zelf.set_online(false).await;
+                debug!("Connection status set to offline");
+
                 // Clear all pending requests
                 zelf.clear_requests().await;
-
-                zelf.set_online(false).await;
+                debug!("Requests cleared");
 
                 // retry to connect until we are online or that it got disabled
                 while let Some(auto_reconnect) = { zelf.delay_auto_reconnect.lock().await.as_ref().cloned() } {
@@ -362,11 +398,15 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
 
                     match connect(&zelf.target).await {
                         Ok(websocket) => {
+                            zelf.set_online(true).await;
+                            info!("Reconnected to the server '{}'", zelf.target);
                             ws = Some(websocket);
 
                             // Register all events again
                             if let Err(e) = Arc::clone(&zelf).resubscribe_events().await {
                                 error!("Error while resubscribing to events due to reconnect: {:?}", e);
+                            } else {
+                                info!("Resubscribed to all events");
                             }
 
                             break;
@@ -379,6 +419,7 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
             }
 
             zelf.clear_events().await;
+            debug!("Events cleared, exiting background task");
         });
 
         {
@@ -405,6 +446,7 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
                             write.send(Message::Text(text)).await?;
                         },
                         InternalMessage::Close => {
+                            debug!("Closing the connection");
                             write.close().await?;
                             break;
                         }
@@ -440,6 +482,7 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
                             }
                         },
                         Message::Close(_) => {
+                            debug!("Received close message from the server");
                             break;
                         },
                         m => {
@@ -455,11 +498,13 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
 
     // Call a method without parameters
     pub async fn call<R: DeserializeOwned>(&self, method: &str) -> JsonRPCResult<R> {
+        trace!("Calling method '{}'", method);
         self.send(method, None, &Value::Null).await
     }
 
     // Call a method with parameters
     pub async fn call_with<P: Serialize, R: DeserializeOwned>(&self, method: &str, params: &P) -> JsonRPCResult<R> {
+        trace!("Calling method '{}' with params: {}", method, json!(params));
         self.send(method, None, params).await
     }
 
@@ -472,6 +517,7 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
     // Subscribe to an event
     // Capacity represents the number of events that can be stored in the channel
     pub async fn subscribe_event<T: DeserializeOwned>(&self, event: E, capacity: usize) -> JsonRPCResult<EventReceiver<T>> {
+        trace!("Subscribing to event {:?}", event);
         // Returns a Receiver for this event if already registered
         {
             let ids = self.events_to_id.lock().await;
@@ -508,7 +554,8 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
     }
 
     // Unsubscribe from an event
-    pub async fn unsubscribe_event(&self, event: &E) -> JsonRPCResult<()> {        
+    pub async fn unsubscribe_event(&self, event: &E) -> JsonRPCResult<()> {
+        trace!("Unsubscribing from event {:?}", event);
         // Retrieve the id for this event
         let id = {
             let mut ids = self.events_to_id.lock().await;
@@ -587,12 +634,14 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
 
     // Send a request to the server without waiting for the response
     pub async fn notify_with<P: Serialize>(&self, method: &str, params: &P) -> JsonRPCResult<()> {
+        trace!("Notifying method '{}' with {}", method, json!(params));
         self.send_message_internal(None, method, params).await?;
         Ok(())
     }
 
     // Send a request to the server without waiting for the response
     pub async fn notify<P: Serialize>(&self, method: &str) -> JsonRPCResult<()> {
+        trace!("Notifying method '{}'", method);
         self.notify_with(method, &Value::Null).await
     }
 }

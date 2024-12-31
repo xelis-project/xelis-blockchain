@@ -1,12 +1,11 @@
+use indexmap::{IndexMap, IndexSet};
 use xelis_common::{
-    api::{
-        DataElement,
-        wallet::{
-            TransactionEntry as RPCTransactionEntry,
-            EntryType as RPCEntryType,
-            TransferIn as RPCTransferIn,
-            TransferOut as RPCTransferOut
-        }
+    time::TimestampMillis,
+    api::wallet::{
+        TransactionEntry as RPCTransactionEntry,
+        EntryType as RPCEntryType,
+        TransferIn as RPCTransferIn,
+        TransferOut as RPCTransferOut
     },
     config::XELIS_ASSET,
     crypto::{
@@ -19,6 +18,7 @@ use xelis_common::{
         Serializer,
         Writer
     },
+    transaction::extra_data::PlaintextExtraData,
     utils::{
         format_coin,
         format_xelis
@@ -36,7 +36,7 @@ pub struct TransferOut {
     // Amount spent
     amount: u64,
     // Extra data with good format
-    extra_data: Option<DataElement>
+    extra_data: Option<PlaintextExtraData>
 }
 
 #[derive(Debug, Clone)]
@@ -46,11 +46,11 @@ pub struct TransferIn {
     // Amount spent
     amount: u64,
     // Extra data with good format
-    extra_data: Option<DataElement>
+    extra_data: Option<PlaintextExtraData>
 }
 
 impl TransferOut {
-    pub fn new(destination: PublicKey, asset: Hash, amount: u64, extra_data: Option<DataElement>) -> Self {
+    pub fn new(destination: PublicKey, asset: Hash, amount: u64, extra_data: Option<PlaintextExtraData>) -> Self {
         Self {
             destination,
             asset,
@@ -71,14 +71,14 @@ impl TransferOut {
         self.amount
     }
 
-    pub fn get_extra_data(&self) -> &Option<DataElement> {
+    pub fn get_extra_data(&self) -> &Option<PlaintextExtraData> {
         &self.extra_data
     }
 }
 
 
 impl TransferIn {
-    pub fn new(asset: Hash, amount: u64, extra_data: Option<DataElement>) -> Self {
+    pub fn new(asset: Hash, amount: u64, extra_data: Option<PlaintextExtraData>) -> Self {
         Self {
             asset,
             amount,
@@ -94,7 +94,7 @@ impl TransferIn {
         self.amount
     }
 
-    pub fn get_extra_data(&self) -> &Option<DataElement> {
+    pub fn get_extra_data(&self) -> &Option<PlaintextExtraData> {
         &self.extra_data
     }
 }
@@ -180,6 +180,34 @@ pub enum EntryData {
         fee: u64,
         // Nonce used
         nonce: u64
+    },
+    MultiSig {
+        // Public keys
+        participants: IndexSet<PublicKey>,
+        // Required signatures
+        threshold: u8,
+        // Fee paid for the TX
+        fee: u64,
+        // Nonce used
+        nonce: u64,
+    },
+    InvokeContract {
+        // Contract address
+        contract: Hash,
+        // Deposits made
+        deposits: IndexMap<Hash, u64>,
+        // Chunk id invoked
+        chunk_id: u16,
+        // Fee paid
+        fee: u64,
+        // Nonce used
+        nonce: u64
+    },
+    DeployContract {
+        // Fee paid
+        fee: u64,
+        // Nonce used
+        nonce: u64
     }
 }
 
@@ -196,7 +224,7 @@ impl Serializer for EntryData {
             },
             2 => {
                 let key = PublicKey::read(reader)?;
-                let size = reader.read_u16()? as usize;
+                let size = reader.read_u8()? as usize;
                 let mut transfers = Vec::new();
                 for _ in 0..size {
                     let transfer = TransferIn::read(reader)?;
@@ -205,7 +233,7 @@ impl Serializer for EntryData {
                 Self::Incoming { from: key, transfers }
             }
             3 => {
-                let size = reader.read_u16()? as usize;
+                let size = reader.read_u8()? as usize;
                 let mut transfers = Vec::new();
                 for _ in 0..size {
                     let transfer = TransferOut::read(reader)?;
@@ -216,13 +244,45 @@ impl Serializer for EntryData {
 
                 Self::Outgoing { transfers, fee, nonce }
             }
+            4 => {
+                let size = reader.read_u8()? as usize;
+                let mut participants = IndexSet::new();
+                for _ in 0..size {
+                    let key = PublicKey::read(reader)?;
+                    participants.insert(key);
+                }
+                let threshold = reader.read_u8()?;
+                let fee = reader.read_u64()?;
+                let nonce = reader.read_u64()?;
+                Self::MultiSig { participants, threshold, fee, nonce }
+            },
+            5 => {
+                let contract = reader.read_hash()?;
+                let chunk_id = reader.read_u16()?;
+                let deposits_size = reader.read_u8()? as usize;
+                let mut deposits = IndexMap::new();
+                for _ in 0..deposits_size {
+                    let asset = reader.read_hash()?;
+                    let amount = reader.read_u64()?;
+                    deposits.insert(asset, amount);
+                }
+
+                let fee = reader.read_u64()?;
+                let nonce = reader.read_u64()?;
+                Self::InvokeContract { contract, deposits, chunk_id, fee, nonce }
+            },
+            6 => {
+                let fee = reader.read_u64()?;
+                let nonce = reader.read_u64()?;
+                Self::DeployContract { fee, nonce }
+            }
             _ => return Err(ReaderError::InvalidValue)
         }) 
     }
 
     fn write(&self, writer: &mut Writer) {
         match &self {
-            Self::Coinbase{ reward } => {
+            Self::Coinbase { reward } => {
                 writer.write_u8(0);
                 writer.write_u64(reward);
             },
@@ -236,17 +296,47 @@ impl Serializer for EntryData {
             Self::Incoming { from, transfers } => {
                 writer.write_u8(2);
                 from.write(writer);
-                writer.write_u16(transfers.len() as u16);
+                // Transfers are maximum 255, so we can use u8
+                writer.write_u8(transfers.len() as u8);
                 for transfer in transfers {
                     transfer.write(writer);
                 }
             },
             Self::Outgoing { transfers, fee, nonce } => {
                 writer.write_u8(3);
-                writer.write_u16(transfers.len() as u16);
+                // Max 255 transfers per TX, so we can use u8
+                writer.write_u8(transfers.len() as u8);
                 for transfer in transfers {
                     transfer.write(writer);
                 }
+                writer.write_u64(fee);
+                writer.write_u64(nonce);
+            },
+            Self::MultiSig { participants: keys, threshold, fee, nonce } => {
+                writer.write_u8(4);
+                writer.write_u8(keys.len() as u8);
+                for key in keys {
+                    key.write(writer);
+                }
+                writer.write_u8(*threshold);
+                writer.write_u64(fee);
+                writer.write_u64(nonce);
+            },
+            Self::InvokeContract { contract, deposits, chunk_id, fee, nonce } => {
+                writer.write_u8(5);
+                writer.write_hash(contract);
+                writer.write_u16(*chunk_id);
+                writer.write_u8(deposits.len() as u8);
+                for (asset, amount) in deposits {
+                    asset.write(writer);
+                    amount.write(writer);
+                }
+
+                writer.write_u64(fee);
+                writer.write_u64(nonce);
+            },
+            Self::DeployContract { fee, nonce } => {
+                writer.write_u8(6);
                 writer.write_u64(fee);
                 writer.write_u64(nonce);
             }
@@ -258,10 +348,19 @@ impl Serializer for EntryData {
             Self::Coinbase { reward } => reward.size(),
             Self::Burn { asset, amount, fee, nonce } => asset.size() + amount.size() + fee.size() + nonce.size(),
             Self::Incoming { from, transfers } => {
-                from.size() + 2 + transfers.iter().map(|t| t.size()).sum::<usize>()
+                from.size() + 1 + transfers.iter().map(|t| t.size()).sum::<usize>()
             },
             Self::Outgoing { transfers, fee, nonce } => {
-                2 + transfers.iter().map(|t| t.size()).sum::<usize>() + fee.size() + nonce.size()
+                1 + transfers.iter().map(|t| t.size()).sum::<usize>() + fee.size() + nonce.size()
+            },
+            Self::MultiSig { participants, threshold, fee, nonce } => {
+                1 + participants.iter().map(|k| k.size()).sum::<usize>() + threshold.size() + fee.size() + nonce.size()
+            },
+            Self::InvokeContract { contract, deposits, chunk_id, fee, nonce } => {
+                contract.size() + 2 + deposits.iter().map(|(a, b)| a.size() + b.size()).sum::<usize>() + chunk_id.size() + fee.size() + nonce.size()
+            },
+            Self::DeployContract { fee, nonce } => {
+                fee.size() + nonce.size()
             }
         }
     }
@@ -269,34 +368,60 @@ impl Serializer for EntryData {
 
 #[derive(Debug, Clone)]
 pub struct TransactionEntry {
+    // Transaction hash
     hash: Hash,
+    // Block topoheight
     topoheight: u64,
+    // Block timestamp
+    timestamp: TimestampMillis,
+    // Entry data of the transaction
     entry: EntryData,
 }
 
 impl TransactionEntry {
-    pub fn new(hash: Hash, topoheight: u64, entry: EntryData) -> Self {
+    // Create a new transaction entry
+    pub const fn new(hash: Hash, topoheight: u64, timestamp: TimestampMillis, entry: EntryData) -> Self {
         Self {
             hash,
             topoheight,
+            timestamp,
             entry,
         }
     }
 
+    // Get the hash of the transaction
     pub fn get_hash(&self) -> &Hash {
         &self.hash
     }
 
+    // Get the topoheight at which the transaction was executed
     pub fn get_topoheight(&self) -> u64 {
         self.topoheight
     }
 
+    // Get the timestamp of the block
+    pub fn get_timestamp(&self) -> u64 {
+        self.timestamp
+    }
+
+    // Get the entry data of the transaction
     pub fn get_entry(&self) -> &EntryData {
         &self.entry
     }
 
+    // Get the mutable entry data of the transaction
     pub fn get_mut_entry(&mut self) -> &mut EntryData {
         &mut self.entry
+    }
+
+    // Is the transaction created by us
+    pub fn is_outgoing(&self) -> bool {
+        match &self.entry {
+            EntryData::Burn { .. } => true,
+            EntryData::Outgoing { .. } => true,
+            EntryData::MultiSig { .. } => true,
+            _ => false,
+        }
     }
 
     // Convert to RPC Transaction Entry
@@ -305,6 +430,7 @@ impl TransactionEntry {
         RPCTransactionEntry {
             hash: self.hash,
             topoheight: self.topoheight,
+            timestamp: self.timestamp,
             entry: match self.entry {
                 EntryData::Coinbase { reward } => RPCEntryType::Coinbase { reward },
                 EntryData::Burn { asset, amount, fee, nonce } => RPCEntryType::Burn { asset, amount, fee, nonce },
@@ -324,17 +450,27 @@ impl TransactionEntry {
                         extra_data: t.extra_data
                     }).collect();
                     RPCEntryType::Outgoing { transfers, fee, nonce }
+                },
+                EntryData::MultiSig { participants, threshold, fee, nonce } => {
+                    let participants = participants.into_iter().map(|p| p.to_address(mainnet)).collect();
+                    RPCEntryType::MultiSig { participants, threshold, fee, nonce }
+                },
+                EntryData::InvokeContract { contract, deposits, chunk_id, fee, nonce } => {
+                    RPCEntryType::InvokeContract { contract, deposits, chunk_id, fee, nonce }
+                },
+                EntryData::DeployContract { fee, nonce } => {
+                    RPCEntryType::DeployContract { fee, nonce }
                 }
             }
         }
     }
 
-    pub fn summary(&self, mainnet: bool, storage: &EncryptedStorage) -> Result<String> {
+    pub async fn summary(&self, mainnet: bool, storage: &EncryptedStorage) -> Result<String> {
         let entry_str = match self.get_entry() {
             EntryData::Coinbase { reward } => format!("Coinbase {} XELIS", format_xelis(*reward)),
             EntryData::Burn { asset, amount, fee, nonce } => {
-                let decimals = storage.get_asset_decimals(asset)?;
-                format!("Fee: {}, Nonce: {} Burn {} of {}", format_xelis(*fee), nonce, format_coin(*amount, decimals), asset)
+                let data = storage.get_asset(asset).await?;
+                format!("Fee: {}, Nonce: {} Burn {} of {}", format_xelis(*fee), nonce, format_coin(*amount, data.get_decimals()), asset)
             },
             EntryData::Incoming { from, transfers } => {
                 let mut str = String::new();
@@ -342,8 +478,8 @@ impl TransactionEntry {
                     if *transfer.get_asset() == XELIS_ASSET {
                         str.push_str(&format!("Received {} XELIS from {}", format_xelis(transfer.get_amount()), from.as_address(mainnet)));
                     } else {
-                        let decimals = storage.get_asset_decimals(transfer.get_asset())?;
-                        str.push_str(&format!("Received {} {} from {}", format_coin(transfer.get_amount(), decimals), transfer.get_asset(), from.as_address(mainnet)));
+                        let data = storage.get_asset(transfer.get_asset()).await?;
+                        str.push_str(&format!("Received {} {} from {}", format_coin(transfer.get_amount(), data.get_decimals()), transfer.get_asset(), from.as_address(mainnet)));
                     }
                 }
                 str
@@ -354,11 +490,31 @@ impl TransactionEntry {
                     if *transfer.get_asset() == XELIS_ASSET {
                         str.push_str(&format!("Sent {} XELIS to {}", format_xelis(transfer.get_amount()), transfer.get_destination().as_address(mainnet)));
                     } else {
-                        let decimals = storage.get_asset_decimals(transfer.get_asset())?;
-                        str.push_str(&format!("Sent {} {} to {}", format_coin(transfer.get_amount(), decimals), transfer.get_asset(), transfer.get_destination().as_address(mainnet)));
+                        let data = storage.get_asset(transfer.get_asset()).await?;
+                        str.push_str(&format!("Sent {} {} to {}", format_coin(transfer.get_amount(), data.get_decimals()), transfer.get_asset(), transfer.get_destination().as_address(mainnet)));
                     }
                 }
                 str
+            },
+            EntryData::MultiSig { participants, threshold, fee, nonce } => {
+                let mut str = format!("Fee: {}, Nonce: {} ", format_xelis(*fee), nonce);
+                str.push_str(&format!("MultiSig setup with threshold {} and {} participants", threshold, participants.len()));
+                for participant in participants {
+                    str.push_str(&format!("{}", participant.as_address(mainnet)));
+                }
+                str
+            },
+            EntryData::InvokeContract { contract, deposits, chunk_id, fee, nonce } => {
+                let mut str = format!("Fee: {}, Nonce: {} ", format_xelis(*fee), nonce);
+                str.push_str(&format!("Invoke contract {} with chunk id {}", contract, chunk_id));
+                for (asset, amount) in deposits {
+                    let data = storage.get_asset(&asset).await?;
+                    str.push_str(&format!("Deposit {} {} to contract", format_coin(*amount, data.get_decimals()), asset));
+                }
+                str
+            },
+            EntryData::DeployContract { fee, nonce } => {
+                format!("Fee: {}, Nonce: {} Deploy contract", format_xelis(*fee), nonce)
             }
         };
 
@@ -370,18 +526,21 @@ impl Serializer for TransactionEntry {
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
         let hash = reader.read_hash()?;
         let topoheight = reader.read_u64()?;
+        let timestamp = reader.read_u64()?;
         let entry = EntryData::read(reader)?;
 
-        Ok(Self {
+        Ok(Self::new(
             hash,
             topoheight,
+            timestamp,
             entry
-        })
+        ))
     }
 
     fn write(&self, writer: &mut Writer) {
         writer.write_hash(&self.hash);
         writer.write_u64(&self.topoheight);
+        writer.write_u64(&self.timestamp);
         self.entry.write(writer);
     }
 
@@ -411,7 +570,7 @@ impl<'a> Transfer<'a> {
         }
     }
 
-    pub fn get_extra_data(&self) -> &Option<DataElement> {
+    pub fn get_extra_data(&self) -> &Option<PlaintextExtraData> {
         match self {
             Transfer::In(t) => &t.extra_data,
             Transfer::Out(t) => &t.extra_data
