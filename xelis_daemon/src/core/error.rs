@@ -135,7 +135,7 @@ pub enum BlockchainError {
     ContractAlreadyExists,
     #[error("Contract not found: {}", _0)]
     ContractNotFound(Hash),
-    #[error("Invalid ip order for block {}, expected {}, got {}", _0, _1, _2)]
+    #[error("Invalid tip order for block {}, expected {}, got {}", _0, _1, _2)]
     InvalidTipsOrder(Hash, Hash, Hash),
     #[error("commit point already started")]
     CommitPointAlreadyStarted,
