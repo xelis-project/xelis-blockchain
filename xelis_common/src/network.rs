@@ -5,6 +5,7 @@ use crate::serializer::{Serializer, Reader, ReaderError, Writer};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
+#[serde(rename_all = "kebab-case")]
 pub enum Network {
     Mainnet,
     Testnet,
