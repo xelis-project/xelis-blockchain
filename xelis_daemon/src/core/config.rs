@@ -34,7 +34,7 @@ fn default_p2p_concurrency_task_count_limit() -> usize {
     P2P_DEFAULT_CONCURRENCY_TASK_COUNT_LIMIT
 }
 
-#[derive(Debug, clap::Args, Serialize, Deserialize)]
+#[derive(Debug, Clone, clap::Args, Serialize, Deserialize)]
 pub struct RPCConfig {
     /// Disable GetWork Server (WebSocket for miners).
     #[clap(long)]
@@ -55,7 +55,7 @@ pub struct RPCConfig {
     pub rpc_threads: Option<usize>
 }
 
-#[derive(Debug, clap::Args, Serialize, Deserialize)]
+#[derive(Debug, Clone, clap::Args, Serialize, Deserialize)]
 pub struct P2pConfig {
     /// Optional node tag
     #[clap(long)]
@@ -134,7 +134,7 @@ pub struct P2pConfig {
     pub p2p_private_key: Option<WrappedSecret>,
 }
 
-#[derive(Debug, clap::Args, Serialize, Deserialize)]
+#[derive(Debug, Clone, clap::Args, Serialize, Deserialize)]
 pub struct Config {
     /// RPC configuration
     #[clap(flatten)]

@@ -98,7 +98,7 @@ fn default_logs_path() -> String {
     "logs/".to_owned()
 }
 
-#[derive(Parser, Serialize, Deserialize)]
+#[derive(Debug, Clone, Parser, Serialize, Deserialize)]
 pub struct LogConfig {
     /// Set log level
     #[clap(long, value_enum, default_value_t = LogLevel::Info)]
@@ -206,7 +206,7 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
-    let blockchain_config = config.core;
+    let blockchain_config = &config.core;
     if let Some(path) = blockchain_config.dir_path.as_ref() {
         if !(path.ends_with("/") || path.ends_with("\\")) {
             return Err(anyhow::anyhow!("Path must end with / or \\"));
@@ -218,15 +218,15 @@ async fn main() -> Result<()> {
         }
     }
 
-    let log_config = config.log;
-    let prompt = Prompt::new(log_config.log_level, &log_config.logs_path, &log_config.filename_log, log_config.disable_file_logging, log_config.disable_file_log_date_based, log_config.disable_log_color, !log_config.disable_interactive_mode, log_config.logs_modules, log_config.file_log_level.unwrap_or(log_config.log_level))?;
-    info!("XELIS Blockchain running version: {}", VERSION);
-    info!("----------------------------------------------");
-
     if blockchain_config.simulator.is_some() && config.network != Network::Dev {
         config.network = Network::Dev;
         warn!("Switching automatically to network {} because of simulator enabled", config.network);
     }
+
+    let log_config = &config.log;
+    let prompt = Prompt::new(log_config.log_level, &log_config.logs_path, &log_config.filename_log, log_config.disable_file_logging, log_config.disable_file_log_date_based, log_config.disable_log_color, !log_config.disable_interactive_mode, log_config.logs_modules.clone(), log_config.file_log_level.unwrap_or(log_config.log_level))?;
+    info!("XELIS Blockchain running version: {}", VERSION);
+    info!("----------------------------------------------");
 
     let storage = {
         let use_cache = if blockchain_config.cache_size > 0 {
@@ -239,8 +239,8 @@ async fn main() -> Result<()> {
         SledStorage::new(dir_path, use_cache, config.network, config.internal_cache_size, config.internal_db_mode)?
     };
 
-    let blockchain = Blockchain::new(blockchain_config, config.network, storage).await?;
-    if let Err(e) = run_prompt(prompt, blockchain.clone(), config.network).await {
+    let blockchain = Blockchain::new(blockchain_config.clone(), config.network, storage).await?;
+    if let Err(e) = run_prompt(prompt, blockchain.clone(), config).await {
         error!("Error while running prompt: {}", e);
     }
 
@@ -248,9 +248,12 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockchain<S>>, network: Network) -> Result<(), PromptError> {
+async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockchain<S>>, config: CliConfig) -> Result<(), PromptError> {
+    let network = config.network;
+
     let mut context = Context::default();
     context.store(blockchain.clone());
+    context.store(config);
 
     let command_manager = CommandManager::with_context(context, prompt.clone());
     command_manager.register_default_commands()?;
@@ -286,6 +289,7 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
     command_manager.add_command(Command::new("print_balance", "Print the encrypted balance at a specific topoheight", CommandHandler::Async(async_handler!(print_balance::<S>))))?;
     command_manager.add_command(Command::new("estimate_db_size", "Estimate the database total size", CommandHandler::Async(async_handler!(estimate_db_size::<S>))))?;
     command_manager.add_command(Command::new("count_orphaned_blocks", "Count how many orphaned blocks we currently hold", CommandHandler::Async(async_handler!(count_orphaned_blocks::<S>))))?;
+    command_manager.add_command(Command::new("show_json_config", "Show the current config in JSON", CommandHandler::Async(async_handler!(show_json_config::<S>))))?;
 
     // Don't keep the lock for ever
     let (p2p, getwork) = {
@@ -558,6 +562,19 @@ async fn count_orphaned_blocks<S: Storage>(manager: &CommandManager, _: Argument
     let storage = blockchain.get_storage().read().await;
     let count = storage.count_orphaned_blocks().await.context("Error while counting orphaned blocks")?;
     manager.message(format!("Orphaned blocks: {}", count));
+
+    Ok(())
+}
+
+async fn show_json_config<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
+    let context = manager.get_context().lock()?;
+    let config: &CliConfig = context.get()?;
+    let json = serde_json::to_string_pretty(config)
+        .context("Error while serializing config")?;
+
+    for line in json.lines() {
+        manager.message(line);
+    }
 
     Ok(())
 }
