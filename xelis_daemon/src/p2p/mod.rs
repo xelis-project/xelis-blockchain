@@ -142,7 +142,7 @@ pub struct P2pServer<S: Storage> {
     // to boost the sync speed by allowing to request several blocks at same time
     allow_boost_sync_mode: bool,
     // max size of the chain response
-    // this is a configurable paramater for nodes to manage their resources
+    // this is a configurable parameter for nodes to manage their resources
     // Can be reduced for low devices, and increased for high end devices
     // You may sync faster or slower depending on this value
     max_chain_response_size: usize,

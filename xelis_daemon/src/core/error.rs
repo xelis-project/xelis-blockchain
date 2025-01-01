@@ -283,7 +283,7 @@ pub enum BlockchainError {
     UnsupportedOperation,
     #[error("Data not found on disk: {}", _0)]
     NotFoundOnDisk(DiskContext),
-    #[error("Invalid paramater: max chain response size isn't in range")]
+    #[error("Invalid parameter: max chain response size isn't in range")]
     ConfigMaxChainResponseSize,
     #[error("Invalid config sync mode")]
     ConfigSyncMode,
