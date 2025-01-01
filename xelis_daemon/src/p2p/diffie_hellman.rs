@@ -35,7 +35,7 @@ impl From<WrappedSecret> for DHKeyPair {
 
 /// The action to take when a key is different from the one stored locally
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "kebab-case")]
 pub enum KeyVerificationAction {
     /// Warn the user by logging a message
     Warn,
