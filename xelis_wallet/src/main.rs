@@ -176,6 +176,12 @@ pub struct LogConfig {
     #[clap(long)]
     #[serde(default)]
     disable_file_log_date_based: bool,
+    /// Enable the log file auto compression
+    /// If enabled, the log file will be compressed every day
+    /// This will only work if the log file is enabled
+    #[clap(long)]
+    #[serde(default)]
+    auto_compress_logs: bool,
     /// Disable the usage of colors in log
     #[clap(long)]
     #[serde(default)]
@@ -302,7 +308,18 @@ async fn main() -> Result<()> {
     }
 
     let log_config = &config.log;
-    let prompt = Prompt::new(log_config.log_level, &log_config.logs_path, &log_config.filename_log, log_config.disable_file_logging, log_config.disable_file_log_date_based, log_config.disable_log_color, !log_config.disable_interactive_mode, log_config.logs_modules.clone(), log_config.file_log_level.unwrap_or(log_config.log_level))?;
+    let prompt = Prompt::new(
+        log_config.log_level,
+        &log_config.logs_path,
+        &log_config.filename_log,
+        log_config.disable_file_logging,
+        log_config.disable_file_log_date_based,
+        log_config.disable_log_color,
+        log_config.auto_compress_logs,
+        !log_config.disable_interactive_mode,
+        log_config.logs_modules.clone(),
+        log_config.file_log_level.unwrap_or(log_config.log_level)
+    )?;
 
     #[cfg(feature = "api_server")]
     {
