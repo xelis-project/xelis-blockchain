@@ -876,7 +876,11 @@ async fn print_block<S: Storage>(manager: &CommandManager, mut arguments: Argume
     let storage = blockchain.get_storage().read().await;
     let hash = arguments.get_value("hash")?.to_hash()?;
     let response = get_block_response_for_hash(blockchain, &storage, &hash, false).await.context("Error while building block response")?;
-    manager.message(format!("{}", serde_json::to_string(&response).context("Error while serializing")?));
+    let json = serde_json::to_string_pretty(&response).context("Error while serializing")?;
+
+    for line in json.lines() {
+        manager.message(line);
+    }
 
     Ok(())
 }
@@ -887,7 +891,11 @@ async fn top_block<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> 
     let storage = blockchain.get_storage().read().await;
     let hash = blockchain.get_top_block_hash_for_storage(&storage).await.context("Error on top block hash")?;
     let response = get_block_response_for_hash(blockchain, &storage, &hash, false).await.context("Error while building block response")?;
-    manager.message(format!("{}", serde_json::to_string_pretty(&response).context("Error while serializing")?));
+    let json = serde_json::to_string_pretty(&response).context("Error while serializing")?;
+
+    for line in json.lines() {
+        manager.message(line);
+    }
 
     Ok(())
 }
