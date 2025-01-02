@@ -30,9 +30,9 @@ impl Network {
 impl Display for Network {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         let str = match &self {
-            Self::Mainnet => "Mainnet",
-            Self::Testnet => "Testnet",
-            Self::Dev => "Dev"
+            Self::Mainnet => "mainnet",
+            Self::Testnet => "testnet",
+            Self::Dev => "dev"
         };
         write!(f, "{}", str)
     }
