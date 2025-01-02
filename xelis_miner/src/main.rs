@@ -134,6 +134,12 @@ pub struct LogConfig {
     #[clap(long)]
     #[serde(default)]
     disable_file_log_date_based: bool,
+    /// Enable the log file auto compression
+    /// If enabled, the log file will be compressed every day
+    /// This will only work if the log file is enabled
+    #[clap(long)]
+    #[serde(default)]
+    auto_compress_logs: bool,
     /// Disable the usage of colors in log
     #[clap(long)]
     #[serde(default)]
@@ -273,7 +279,18 @@ async fn main() -> Result<()> {
     }
 
     let log = config.log;
-    let prompt = Prompt::new(log.log_level, &log.logs_path, &log.filename_log, log.disable_file_logging, log.disable_file_log_date_based, log.disable_log_color, !log.disable_interactive_mode, log.logs_modules, log.file_log_level.unwrap_or(log.log_level))?;
+    let prompt = Prompt::new(
+        log.log_level,
+        &log.logs_path,
+        &log.filename_log,
+        log.disable_file_logging,
+        log.disable_file_log_date_based,
+        log.disable_log_color,
+        log.auto_compress_logs,
+        !log.disable_interactive_mode,
+        log.logs_modules,
+        log.file_log_level.unwrap_or(log.log_level)
+    )?;
 
     // Prevent the user to block the program by selecting text in CLI
     #[cfg(target_os = "windows")]
