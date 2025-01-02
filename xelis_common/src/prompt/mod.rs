@@ -302,6 +302,10 @@ impl Prompt {
             }
         }
 
+        if let Some(handle) = self.compression_handle.as_ref() {
+            handle.abort();
+        }
+
         Ok(())
     }
 
