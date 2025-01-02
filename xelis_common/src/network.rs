@@ -3,9 +3,8 @@ use serde::{Serialize, Deserialize};
 
 use crate::serializer::{Serializer, Reader, ReaderError, Writer};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
-#[serde(rename_all = "kebab-case")]
 pub enum Network {
     Mainnet,
     Testnet,
@@ -27,6 +26,19 @@ impl Network {
     }
 }
 
+impl Serialize for Network {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error> where S: serde::Serializer {
+        serializer.serialize_str(self.to_string().as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for Network {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error> where D: serde::Deserializer<'de> {
+        let s = String::deserialize(deserializer)?;
+        s.parse().map_err(serde::de::Error::custom)
+    }
+}
+
 impl Display for Network {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         let str = match &self {
@@ -42,7 +54,7 @@ impl FromStr for Network {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Ok(match s {
+        Ok(match s.to_lowercase().as_str() {
             "mainnet" | "0" => Self::Mainnet,
             "testnet" | "1" => Self::Testnet,
             "dev" | "2" => Self::Dev,
