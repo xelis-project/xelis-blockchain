@@ -6,7 +6,7 @@ pub mod config;
 use config::{DEV_PUBLIC_KEY, STABLE_LIMIT};
 use human_bytes::human_bytes;
 use humantime::format_duration;
-use log::{trace, error, info, warn};
+use log::{debug, error, info, trace, warn};
 use p2p::P2pServer;
 use rpc::{
     getwork_server::SharedGetWorkServer,
@@ -966,12 +966,15 @@ async fn status<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Res
     let context = manager.get_context().lock()?;
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
 
+    debug!("Retrieving blockchain status");
+
     let height = blockchain.get_height();
     let topoheight = blockchain.get_topo_height();
     let stableheight = blockchain.get_stable_height();
     let stable_topoheight = blockchain.get_stable_topoheight();
     let difficulty = blockchain.get_difficulty().await;
 
+    debug!("Retrieving blockchain info from storage");
     let storage = blockchain.get_storage().read().await;
     let tips = storage.get_tips().await.context("Error while retrieving tips")?;
     let top_block_hash = blockchain.get_top_block_hash_for_storage(&storage).await.context("Error while retrieving top block hash")?;
