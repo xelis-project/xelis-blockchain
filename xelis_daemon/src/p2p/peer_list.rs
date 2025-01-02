@@ -102,12 +102,17 @@ impl PeerList {
     // Remove a peer from the list
     // We will notify all peers that have this peer in common
     pub async fn remove_peer(&self, peer_id: u64, notify: bool) -> Result<(), P2pError> {
+        trace!("removing peer {}, notify = {}", peer_id, notify);
+
         let (peer, peers) = {
             let mut peers = self.peers.write().await;
             let peer = peers.remove(&peer_id).ok_or(P2pError::PeerNotFoundById(peer_id))?;
             let peers = peers.values().cloned().collect::<Vec<Arc<Peer>>>();
             (peer, peers)
         };
+
+        trace!("Signaling exit of {}", peer);
+        peer.signal_exit().await?;
  
         // If peer allows us to share it, we have to notify all peers that have this peer in common
         if notify && peer.sharable() {
@@ -129,7 +134,7 @@ impl PeerList {
                         if let Err(e) = peer.send_bytes(packet.clone()).await {
                             error!("Error while trying to send PeerDisconnected packet to peer {}: {}", peer.get_connection().get_address(), e);
                         }
-    
+
                         // Maybe he only disconnected from us, delete it to stay synced
                         shared_peers.remove(addr);
                     }
