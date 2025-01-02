@@ -289,11 +289,11 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
     command_manager.add_command(Command::with_arguments("add_tx", "Add a TX in hex format in mempool", vec![Arg::new("hex", ArgType::String)], vec![Arg::new("broadcast", ArgType::Bool)], CommandHandler::Async(async_handler!(add_tx::<S>))))?;
     command_manager.add_command(Command::with_required_arguments("prune_chain", "Prune the chain until the specified topoheight", vec![Arg::new("topoheight", ArgType::Number)], CommandHandler::Async(async_handler!(prune_chain::<S>))))?;
     command_manager.add_command(Command::new("status", "Current daemon status", CommandHandler::Async(async_handler!(status::<S>))))?;
-    command_manager.add_command(Command::with_optional_arguments("blacklist", "View blacklist or add a peer address in it", vec![Arg::new("address", ArgType::String)], CommandHandler::Async(async_handler!(blacklist::<S>))))?;
-    command_manager.add_command(Command::with_optional_arguments("whitelist", "View whitelist or add a peer address in it", vec![Arg::new("address", ArgType::String)], CommandHandler::Async(async_handler!(whitelist::<S>))))?;
+    command_manager.add_command(Command::with_optional_arguments("blacklist", "View blacklist or add a peer ip in it", vec![Arg::new("ip", ArgType::String)], CommandHandler::Async(async_handler!(blacklist::<S>))))?;
+    command_manager.add_command(Command::with_optional_arguments("whitelist", "View whitelist or add a peer ip in it", vec![Arg::new("ip", ArgType::String)], CommandHandler::Async(async_handler!(whitelist::<S>))))?;
     command_manager.add_command(Command::with_optional_arguments("verify_chain", "Check chain supply", vec![Arg::new("topoheight", ArgType::Number)], CommandHandler::Async(async_handler!(verify_chain::<S>))))?;
     command_manager.add_command(Command::with_required_arguments("kick_peer", "Kick a peer using its ip:port", vec![Arg::new("address", ArgType::String)], CommandHandler::Async(async_handler!(kick_peer::<S>))))?;
-    command_manager.add_command(Command::with_required_arguments("temp_ban_address", "Temporarily ban an address", vec![Arg::new("address", ArgType::String), Arg::new("seconds", ArgType::Number)], CommandHandler::Async(async_handler!(temp_ban_address::<S>))))?;
+    command_manager.add_command(Command::with_required_arguments("temp_ban_address", "Temporarily ban an address in ip:port format", vec![Arg::new("address", ArgType::String), Arg::new("seconds", ArgType::Number)], CommandHandler::Async(async_handler!(temp_ban_address::<S>))))?;
     command_manager.add_command(Command::new("clear_caches", "Clear storage caches", CommandHandler::Async(async_handler!(clear_caches::<S>))))?;
     command_manager.add_command(Command::new("clear_rpc_connections", "Clear all WS connections from RPC", CommandHandler::Async(async_handler!(clear_rpc_connections::<S>))))?;
     command_manager.add_command(Command::new("clear_p2p_connections", "Clear all P2P connections", CommandHandler::Async(async_handler!(clear_p2p_connections::<S>))))?;
@@ -1088,8 +1088,8 @@ async fn blacklist<S: Storage>(manager: &CommandManager, mut arguments: Argument
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     match blockchain.get_p2p().read().await.as_ref() {
         Some(p2p) => {
-            if arguments.has_argument("address") {
-                let address: IpAddr = arguments.get_value("address")?.to_string_value()?.parse().context("Error while parsing socket address")?;
+            if arguments.has_argument("ip") {
+                let address: IpAddr = arguments.get_value("ip")?.to_string_value()?.parse().context("Error while parsing socket address")?;
                 let peer_list = p2p.get_peer_list();
                 if peer_list.is_blacklisted(&address).await.context("Error while checking if peer is blacklisted")? {
                     peer_list.set_graylist_for_peer(&address).await.context("Error while setting graylist")?;
@@ -1120,8 +1120,8 @@ async fn whitelist<S: Storage>(manager: &CommandManager, mut arguments: Argument
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     match blockchain.get_p2p().read().await.as_ref() {
         Some(p2p) => {
-            if arguments.has_argument("address") {
-                let address: IpAddr = arguments.get_value("address")?.to_string_value()?.parse().context("Error while parsing socket address")?;
+            if arguments.has_argument("ip") {
+                let address: IpAddr = arguments.get_value("ip")?.to_string_value()?.parse().context("Error while parsing socket address")?;
                 let peer_list = p2p.get_peer_list();
                 if peer_list.is_whitelisted(&address).await.context("Error while checking if peer is whitelisted")? {
                     peer_list.set_graylist_for_peer(&address).await.context("Error while setting graylist")?;

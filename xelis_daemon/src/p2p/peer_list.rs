@@ -375,6 +375,7 @@ impl PeerList {
             } else {
                 entry.set_state(PeerListEntryState::Graylist);
             }
+            self.cache.set_peerlist_entry(ip, entry)?;
         }
 
         Ok(())
