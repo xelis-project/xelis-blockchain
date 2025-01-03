@@ -43,6 +43,10 @@ pub trait ContractDataProvider {
     // If the version is None, it returns None
     async fn has_contract_data_at_topoheight(&self, contract: &Hash, key: &Constant, topoheight: TopoHeight) -> Result<bool, BlockchainError>;
 
+    // Check if we have a contract data version at a given topoheight
+    // It only checks if the topoheight exists
+    async fn has_contract_data_at_exact_topoheight(&self, contract: &Hash, key: &Constant, topoheight: TopoHeight) -> Result<bool, BlockchainError>;
+
     // Check if we have a contract data pointer
     async fn has_contract_data_pointer(&self, contract: &Hash, key: &Constant) -> Result<bool, BlockchainError>;
 
@@ -94,7 +98,12 @@ impl ContractDataProvider for SledStorage {
             return Ok(None)
         }
 
-        let topo = self.get_last_topoheight_for_contract_data(contract, key).await?;
+        let topo = if self.has_contract_data_at_exact_topoheight(contract, key, maximum_topoheight).await? {
+            maximum_topoheight
+        } else {
+            self.get_last_topoheight_for_contract_data(contract, key).await?
+        };
+
         let mut previous_topo = Some(topo);
         while let Some(topoheight) = previous_topo {
             if topoheight <= maximum_topoheight {
@@ -122,6 +131,11 @@ impl ContractDataProvider for SledStorage {
     async fn has_contract_data_at_topoheight(&self, contract: &Hash, key: &Constant, topoheight: TopoHeight) -> Result<bool, BlockchainError> {
         trace!("has contract data at topoheight {}", topoheight);
         self.get_contract_data_at_topoheight_for(contract, key, topoheight).await.map(|res| res.take().is_some())
+    }
+
+    async fn has_contract_data_at_exact_topoheight(&self, contract: &Hash, key: &Constant, topoheight: TopoHeight) -> Result<bool, BlockchainError> {
+        trace!("has contract data at exact topoheight {}", topoheight);
+        self.contains_data(&self.versioned_contracts_data, &self.get_versioned_contract_data_key(contract, key, topoheight))
     }
 
     async fn has_contract_data_pointer(&self, contract: &Hash, key: &Constant) -> Result<bool, BlockchainError> {

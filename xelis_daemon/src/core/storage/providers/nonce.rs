@@ -148,30 +148,24 @@ impl NonceProvider for SledStorage {
             return Ok(None)
         }
 
-        let (topo, mut version) = self.get_last_nonce(key).await?;
-        trace!("Last version of nonce for {} is at topoheight {}", key.as_address(self.is_mainnet()), topo);
-        // if it's the latest and its under the maximum topoheight
-        if topo <= topoheight {
-            trace!("Last version nonce (valid) found at {} (maximum topoheight = {})", topo, topoheight);
-            return Ok(Some((topo, version)))
-        }
+        // Fast path check
+        let topo = if self.has_nonce_at_exact_topoheight(key, topoheight).await? {
+            topoheight
+        } else {
+            self.get_last_topoheight_for_nonce(key).await?
+        };
 
         // otherwise, we have to go through the whole chain
-        while let Some(previous) = version.get_previous_topoheight() {
-            let previous_version = self.get_nonce_at_exact_topoheight(key, previous).await?;
+        let mut topo = Some(topo);
+        while let Some(previous) = topo {
             trace!("previous nonce version is at {}", previous);
             if previous <= topoheight {
                 trace!("Highest version nonce found at {} (maximum topoheight = {})", previous, topoheight);
-                return Ok(Some((previous, previous_version)))
+                let version = self.get_nonce_at_exact_topoheight(key, previous).await?;
+                return Ok(Some((previous, version)))
             }
 
-            if let Some(value) = previous_version.get_previous_topoheight() {
-                if value > previous {
-                    error!("FATAL ERROR: Previous topoheight ({}) should not be higher than current version ({})!", value, previous);
-                    return Err(BlockchainError::Unknown)
-                }
-            }
-            version = previous_version;
+            topo = self.load_from_disk(&self.versioned_nonces, &Self::get_versioned_key(key.as_bytes(), previous), DiskContext::LastNonce)?;
         }
 
         Ok(None)

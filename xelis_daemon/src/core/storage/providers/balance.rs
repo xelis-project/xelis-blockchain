@@ -195,7 +195,12 @@ impl BalanceProvider for SledStorage {
             return Ok(None)
         }
 
-        let topo = self.get_last_topoheight_for_balance(key, asset).await?;
+        let topo = if self.has_balance_at_exact_topoheight(key, asset, topoheight).await? {
+            topoheight
+        } else {
+            self.get_last_topoheight_for_balance(key, asset).await?
+        };
+
         let mut previous_topoheight = Some(topo);
         // otherwise, we have to go through the whole chain
         while let Some(topo) = previous_topoheight {
@@ -245,7 +250,12 @@ impl BalanceProvider for SledStorage {
             return Ok(None)
         }
 
-        let topo = self.get_last_topoheight_for_balance(key, asset).await?;
+        let topo = if self.has_balance_at_exact_topoheight(key, asset, topoheight).await? {
+            topoheight
+        } else {
+            self.get_last_topoheight_for_balance(key, asset).await?
+        };
+
         let mut next = Some(topo);
         while let Some(topo) = next {
             // We read the next topoheight (previous topo of the versioned balance) and its current balance type
@@ -268,7 +278,12 @@ impl BalanceProvider for SledStorage {
             return Ok(None)
         }
 
-        let topo = self.get_last_topoheight_for_balance(key, asset).await?;
+        let topo = if self.has_balance_at_exact_topoheight(key, asset, max_topoheight).await? {
+            max_topoheight
+        } else {
+            self.get_last_topoheight_for_balance(key, asset).await?
+        };
+
         let mut next = Some(topo);
         while let Some(topo) = next {
             if topo < min_topoheight {

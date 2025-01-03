@@ -64,6 +64,10 @@ pub trait ContractProvider {
     async fn has_contract_pointer(&self, hash: &Hash) -> Result<bool, BlockchainError>;
 
     // Check if a contract exists at a given topoheight
+    // If the version is None, it returns None
+    async fn has_contract_module_at_topoheight(&self, hash: &Hash, topoheight: TopoHeight) -> Result<bool, BlockchainError>;
+
+    // Check if a contract version exists at a given topoheight
     async fn has_contract_at_exact_topoheight(&self, hash: &Hash, topoheight: TopoHeight) -> Result<bool, BlockchainError>;
 
     // Count the number of contracts
@@ -113,7 +117,12 @@ impl ContractProvider for SledStorage {
             return Ok(None)
         }
 
-        let topo = self.get_last_topoheight_for_contract(hash).await?;
+        let topo = if self.has_contract_at_exact_topoheight(hash, maximum_topoheight).await? {
+            maximum_topoheight
+        } else {
+            self.get_last_topoheight_for_contract(hash).await?
+        };
+
         let mut previous_topo = Some(topo);
         while let Some(topoheight) = previous_topo {
             if topoheight <= maximum_topoheight {
@@ -203,13 +212,19 @@ impl ContractProvider for SledStorage {
     async fn has_contract(&self, hash: &Hash) -> Result<bool, BlockchainError> {
         trace!("Checking if contract {} exists", hash);
         let topoheight = self.get_last_topoheight_for_contract(hash).await?;
-        self.has_contract_at_exact_topoheight(hash, topoheight).await
+        self.has_contract_module_at_topoheight(hash, topoheight).await
+    }
+
+    async fn has_contract_module_at_topoheight(&self, hash: &Hash, topoheight: TopoHeight) -> Result<bool, BlockchainError> {
+        trace!("Checking if contract module {} exists at topoheight {}", hash, topoheight);
+        let contract = self.get_contract_at_topoheight_for(hash, topoheight).await?;
+        Ok(contract.get().is_some())
     }
 
     async fn has_contract_at_exact_topoheight(&self, hash: &Hash, topoheight: TopoHeight) -> Result<bool, BlockchainError> {
-        trace!("Checking if contract {} exists at topoheight {}", hash, topoheight);
-        let contract = self.get_contract_at_topoheight_for(hash, topoheight).await?;
-        Ok(contract.get().is_some())
+        trace!("Checking if contract {} exists at exact topoheight {}", hash, topoheight);
+        let key = self.get_versioned_contract_key(hash, topoheight);
+        self.contains_data(&self.versioned_contracts, &key)
     }
 
     async fn count_contracts(&self) -> Result<u64, BlockchainError> {
