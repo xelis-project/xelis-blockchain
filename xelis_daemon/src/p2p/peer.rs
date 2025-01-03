@@ -622,6 +622,7 @@ impl Peer {
     // Send a packet to the peer
     // This will transform the packet into bytes and send it to the peer
     pub async fn send_packet(&self, packet: Packet<'_>) -> Result<(), P2pError> {
+        trace!("Sending {:?}", packet);
         self.send_bytes(Bytes::from(packet.to_bytes())).await
     }
 

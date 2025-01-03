@@ -1738,6 +1738,7 @@ impl<S: Storage> P2pServer<S> {
                     Packet::NotifyInventoryResponse(NotifyInventoryResponse::new(next_page, Cow::Owned(txs))).to_bytes()
                 };
 
+                trace!("Sending inventory response to {}", peer);
                 peer.send_bytes(Bytes::from(packet)).await?
             },
             Packet::NotifyInventoryResponse(inventory) => {

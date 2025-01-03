@@ -7,7 +7,6 @@ use std::{
     },
     collections::HashMap
 };
-use bytes::Bytes;
 use tokio::{
     sync::{
         mpsc::{Sender, Receiver, self},
@@ -22,7 +21,6 @@ use tokio::{
 use xelis_common::{
     crypto::Hash,
     queue::Queue,
-    serializer::Serializer,
     tokio::spawn_task
 };
 use crate::{
@@ -557,13 +555,12 @@ impl ObjectTracker {
 
         let fail = if let Some(request) = queue.get_mut(&request_hash) {
             request.set_requested();
-            let packet = Bytes::from(Packet::ObjectRequest(Cow::Borrowed(request.get_object())).to_bytes());
             // send the packet to the Peer
             let peer = request.get_peer();
             if peer.get_connection().is_closed() {
                 warn!("Peer {} is disconnected but still has a pending request object {}", peer, request_hash);
                 Some((peer.get_id(), request.get_group_id().map(|v| (v, P2pError::Disconnected))))
-            } else if let Err(e) = peer.send_bytes(packet).await {
+            } else if let Err(e) = peer.send_packet(Packet::ObjectRequest(Cow::Borrowed(request.get_object()))).await {
                 warn!("Error while requesting object {} using Object Tracker: {}", request_hash, e);
                 Some((peer.get_id(), request.get_group_id().map(|v| (v, e))))
             } else {
