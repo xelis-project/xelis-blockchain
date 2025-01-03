@@ -2,6 +2,7 @@ use chacha20poly1305::{aead::AeadMut, ChaCha20Poly1305, KeyInit};
 use rand::rngs::OsRng;
 use thiserror::Error;
 use tokio::sync::Mutex;
+use log::trace;
 
 // This symetric key is used to encrypt/decrypt the data
 pub type EncryptionKey = [u8; 32];
@@ -58,8 +59,10 @@ pub enum EncryptionError {
     InvalidKey,
     #[error("Invalid nonce")]
     InvalidNonce,
-    #[error("Cipher error")]
-    CipherError,
+    #[error("Cipher error: encrypt")]
+    EncryptError,
+    #[error("Cipher error: decrypt")]
+    DecryptError,
     #[error("Not supported")]
     NotSupported,
 }
@@ -100,7 +103,10 @@ impl Encryption {
 
     // Encrypt a packet using the shared symetric key
     pub async fn encrypt_packet(&self, input: &[u8]) -> Result<Vec<u8>, EncryptionError> {
+        trace!("Encrypting packet");
         let mut lock = self.our_cipher.lock().await;
+
+        trace!("our cipher locked");
         let cipher_state = lock.as_mut().ok_or(EncryptionError::WriteNotReady)?;
 
         // fill our buffer
@@ -108,7 +114,7 @@ impl Encryption {
 
         // Encrypt the packet
         let res = cipher_state.cipher.encrypt(&cipher_state.nonce_buffer.into(), input)
-            .map_err(|_| EncryptionError::CipherError)?;
+            .map_err(|_| EncryptionError::EncryptError)?;
 
         // Increment the nonce so we don't use the same nonce twice
         cipher_state.nonce += 1;
@@ -118,7 +124,10 @@ impl Encryption {
 
     // Decrypt a packet using the shared symetric key
     pub async fn decrypt_packet(&self, buf: &[u8]) -> Result<Vec<u8>, EncryptionError> {
+        trace!("Decrypting packet");
         let mut lock = self.peer_cipher.lock().await;
+
+        trace!("peer cipher locked");
         let cipher_state = lock.as_mut().ok_or(EncryptionError::ReadNotReady)?;
 
         // fill our buffer
@@ -126,7 +135,7 @@ impl Encryption {
 
         // Decrypt packet
         let res = cipher_state.cipher.decrypt(&cipher_state.nonce_buffer.into(), buf.as_ref())
-            .map_err(|_| EncryptionError::CipherError)?;
+            .map_err(|_| EncryptionError::DecryptError)?;
 
         // Increment the nonce so we don't use the same nonce twice
         cipher_state.nonce += 1;
