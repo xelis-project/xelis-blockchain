@@ -976,6 +976,8 @@ async fn status<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Res
 
     debug!("Retrieving blockchain info from storage");
     let storage = blockchain.get_storage().read().await;
+    debug!("storage read lock acquired");
+
     let tips = storage.get_tips().await.context("Error while retrieving tips")?;
     let top_block_hash = blockchain.get_top_block_hash_for_storage(&storage).await.context("Error while retrieving top block hash")?;
     let avg_block_time = blockchain.get_average_block_time::<S>(&storage).await.context("Error while retrieving average block time")?;

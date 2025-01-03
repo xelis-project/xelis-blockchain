@@ -763,6 +763,7 @@ impl<S: Storage> P2pServer<S> {
     // build a ping packet with the current state of the blockchain
     // if a peer is given, we will check and update the peers list
     async fn build_generic_ping_packet_with_storage(&self, storage: &S) -> Ping<'_> {
+        debug!("building generic ping packet");
         let (cumulative_difficulty, block_top_hash, pruned_topoheight) = {
             let pruned_topoheight = match storage.get_pruned_topoheight().await {
                 Ok(pruned_topoheight) => pruned_topoheight,
@@ -789,8 +790,8 @@ impl<S: Storage> P2pServer<S> {
     // Build a generic ping packet
     // This will lock the storage for us
     async fn build_generic_ping_packet(&self) -> Ping<'_> {
-        let storage = self.blockchain.get_storage().read().await;
         debug!("locking storage to build generic ping packet");
+        let storage = self.blockchain.get_storage().read().await;
         self.build_generic_ping_packet_with_storage(&*storage).await
     }
 
@@ -1285,7 +1286,8 @@ impl<S: Storage> P2pServer<S> {
                 // all packets to be sent to the peer are received here
                 Some(bytes) = rx.recv() => {
                     // there is a overhead of 4 for each packet (packet size u32 4 bytes, packet id u8 is counted in the packet size)
-                    trace!("Sending packet with ID {}, size sent: {}, real size: {}", bytes[4], u32::from_be_bytes(bytes[0..4].try_into()?), bytes.len());
+                    trace!("Sending packet with real length: {}", bytes.len());
+                    trace!("Packet: {:?}", bytes);
                     peer.get_connection().send_bytes(&bytes).await?;
                     trace!("data sucessfully sent!");
                 }
