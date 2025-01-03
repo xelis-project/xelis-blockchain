@@ -103,7 +103,11 @@ pub (super) async fn search_versioned_balance_for_reference<S: DagOrderProvider 
     let version;
     // We must verify the last "output" balance for the asset
     // Search the last output balance
-    let last_output = storage.get_output_balance_at_maximum_topoheight(key, asset, current_topoheight).await?;
+    let min_topo = reference.topoheight
+        .min(reference_block_topo)
+        .min(current_topoheight);
+
+    let last_output = storage.get_output_balance_in_range(key, asset, min_topo, current_topoheight).await?;
     // We have a output balance
     if let Some((topo, v)) = last_output {
         trace!("Found output balance at topoheight {}", topo);

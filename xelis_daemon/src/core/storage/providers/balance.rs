@@ -48,6 +48,10 @@ pub trait BalanceProvider: AssetProvider + NetworkProvider {
     // Search the highest balance where we have a outgoing TX
     async fn get_output_balance_at_maximum_topoheight(&self, key: &PublicKey, asset: &Hash, topoheight: TopoHeight) -> Result<Option<(TopoHeight, VersionedBalance)>, BlockchainError>;
 
+    // Search the highest balance where we have a spending
+    // To short-circuit the search, we stop if we go below the reference topoheight
+    async fn get_output_balance_in_range(&self, key: &PublicKey, asset: &Hash, min_topoheight: TopoHeight, max_topoheight: TopoHeight) -> Result<Option<(TopoHeight, VersionedBalance)>, BlockchainError>;
+
     // Get the last balance of the account, this is based on the last topoheight (pointer) available
     async fn get_last_balance(&self, key: &PublicKey, asset: &Hash) -> Result<(TopoHeight, VersionedBalance), BlockchainError>;
 
@@ -247,6 +251,33 @@ impl BalanceProvider for SledStorage {
             // We read the next topoheight (previous topo of the versioned balance) and its current balance type
             let (prev_topo, balance_type): (Option<u64>, BalanceType) = self.load_from_disk(&self.versioned_balances, &self.get_versioned_balance_key(key, asset, topo), DiskContext::BalanceAtTopoHeight)?;
             if topo <= topoheight && balance_type.contains_output() {
+                let version = self.get_balance_at_exact_topoheight(key, asset, topo).await?;
+                return Ok(Some((topo, version)))
+            }
+
+            next = prev_topo;
+        }
+
+        Ok(None)
+    }
+
+    async fn get_output_balance_in_range(&self, key: &PublicKey, asset: &Hash, min_topoheight: TopoHeight, max_topoheight: TopoHeight) -> Result<Option<(TopoHeight, VersionedBalance)>, BlockchainError> {
+        trace!("get output balance {} for {} in range {} - {}", asset, key.as_address(self.is_mainnet()), min_topoheight, max_topoheight);
+        if !self.has_balance_for(key, asset).await? {
+            trace!("No balance {} found for {} in range {} - {}", asset, key.as_address(self.is_mainnet()), min_topoheight, max_topoheight);
+            return Ok(None)
+        }
+
+        let topo = self.get_last_topoheight_for_balance(key, asset).await?;
+        let mut next = Some(topo);
+        while let Some(topo) = next {
+            if topo < min_topoheight {
+                break;
+            }
+
+            // We read the next topoheight (previous topo of the versioned balance) and its current balance type
+            let (prev_topo, balance_type): (Option<u64>, BalanceType) = self.load_from_disk(&self.versioned_balances, &self.get_versioned_balance_key(key, asset, topo), DiskContext::BalanceAtTopoHeight)?;
+            if topo <= max_topoheight && balance_type.contains_output() {
                 let version = self.get_balance_at_exact_topoheight(key, asset, topo).await?;
                 return Ok(Some((topo, version)))
             }
