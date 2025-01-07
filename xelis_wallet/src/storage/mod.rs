@@ -508,14 +508,14 @@ impl EncryptedStorage {
     }
 
     // Retrieve all assets with their data
-    pub async fn get_assets_with_data(&self) -> Result<Vec<(Hash, AssetData)>> {
+    pub async fn get_assets_with_data(&self) -> Result<IndexMap<Hash, AssetData>> {
         trace!("get assets with decimals");
         let mut cache = self.assets_cache.lock().await;
         if cache.len() == self.assets.len() {
             return Ok(cache.iter().map(|(k, v)| (k.clone(), v.clone())).collect());
         }
 
-        let mut assets = Vec::new();
+        let mut assets = IndexMap::new();
         for res in self.assets.iter() {
             let (key, value) = res?;
             let asset = Hash::from_bytes(&self.cipher.decrypt_value(&key)?)?;
@@ -532,7 +532,7 @@ impl EncryptedStorage {
                 data
             };
 
-            assets.push((asset, data));
+            assets.insert(asset, data);
         }
 
         Ok(assets)
