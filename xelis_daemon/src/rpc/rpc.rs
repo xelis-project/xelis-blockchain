@@ -754,7 +754,7 @@ async fn get_assets<S: Storage>(context: &Context, body: Value) -> Result<Value,
         });
     }
 
-    Ok(json!(assets))
+    Ok(json!(response))
 }
 
 async fn count_assets<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
