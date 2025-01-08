@@ -5,6 +5,7 @@ use std::{
     num::NonZeroUsize,
     sync::{
         atomic::{
+            AtomicBool,
             AtomicU64,
             Ordering
         },
@@ -218,6 +219,8 @@ pub struct GetWorkServer<S: Storage> {
     last_header_hash: Mutex<Option<Hash>>,
     // used only when a new TX is received in mempool
     last_notify: AtomicU64,
+    // used to know if we can notify miners again
+    is_job_dirty: AtomicBool,
     notify_rate_limit_ms: u64
 }
 
@@ -229,7 +232,10 @@ impl<S: Storage> GetWorkServer<S> {
             mining_jobs: Mutex::new(LruCache::new(NonZeroUsize::new(STABLE_LIMIT as usize * TIPS_LIMIT).unwrap())),
             last_header_hash: Mutex::new(None),
             last_notify: AtomicU64::new(0),
-            notify_rate_limit_ms: 500 // maximum one time every 500ms
+            is_job_dirty: AtomicBool::new(false),
+            // maximum one time every 500ms
+            // TODO: configurable
+            notify_rate_limit_ms: 500
         }
     }
 
@@ -441,6 +447,7 @@ impl<S: Storage> GetWorkServer<S> {
         let (rate_limit_reached, now) = self.is_rate_limited();
         if rate_limit_reached {
             debug!("Rate limit reached, no need to notify miners");
+            self.is_job_dirty.store(true, Ordering::SeqCst);
             return Ok(());
         }
         self.last_notify.store(now, Ordering::SeqCst);
@@ -462,6 +469,7 @@ impl<S: Storage> GetWorkServer<S> {
             }
         }
     
+        self.is_job_dirty.store(false, Ordering::SeqCst);
         debug!("Notify all miners for a new job");
         let (header, difficulty) = {
             let storage = self.blockchain.get_storage().read().await;
