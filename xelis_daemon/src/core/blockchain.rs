@@ -316,7 +316,7 @@ impl<S: Storage> Blockchain<S> {
         // create RPC Server
         if !config.rpc.disable_rpc_server {
             info!("RPC Server will listen on: {}", config.rpc.rpc_bind_address);
-            match DaemonRpcServer::new(config.rpc.rpc_bind_address, Arc::clone(&arc), config.rpc.disable_getwork_server, config.rpc.rpc_threads).await {
+            match DaemonRpcServer::new(config.rpc.rpc_bind_address, Arc::clone(&arc), config.rpc.disable_getwork_server, config.rpc.getwork_rate_limit_ms, config.rpc.rpc_threads).await {
                 Ok(server) => *arc.rpc.write().await = Some(server),
                 Err(e) => error!("Error while starting RPC server: {}", e)
             };

@@ -45,7 +45,8 @@ use xelis_common::{
         RPCServerHandler,
         WebSocketServerHandler
     },
-    tokio::spawn_task,
+    time::TimestampMillis,
+    tokio::spawn_task
 };
 use std::{
     collections::HashSet,
@@ -84,10 +85,10 @@ pub enum ApiError {
 }
 
 impl<S: Storage> DaemonRpcServer<S> {
-    pub async fn new(bind_address: String, blockchain: Arc<Blockchain<S>>, disable_getwork_server: bool, threads: Option<usize>) -> Result<SharedDaemonRpcServer<S>, BlockchainError> {
+    pub async fn new(bind_address: String, blockchain: Arc<Blockchain<S>>, disable_getwork_server: bool, getwork_rate_limit_ms: TimestampMillis, threads: Option<usize>) -> Result<SharedDaemonRpcServer<S>, BlockchainError> {
         let getwork: Option<SharedGetWorkServer<S>> = if !disable_getwork_server {
             info!("Creating GetWork server...");
-            Some(Arc::new(GetWorkServer::new(blockchain.clone())))
+            Some(GetWorkServer::new(blockchain.clone(), getwork_rate_limit_ms))
         } else {
             None
         };

@@ -10,7 +10,8 @@ use std::{
             Ordering
         },
         Arc
-    }
+    },
+    time::Duration
 };
 use actix::{
     Actor,
@@ -35,7 +36,7 @@ use rand::{
 };
 use serde::Serialize;
 use serde_json::json;
-use tokio::sync::Mutex;
+use tokio::{sync::Mutex, time::sleep};
 use xelis_common::{
     config::TIPS_LIMIT,
     api::daemon::{
@@ -221,22 +222,37 @@ pub struct GetWorkServer<S: Storage> {
     last_notify: AtomicU64,
     // used to know if we can notify miners again
     is_job_dirty: AtomicBool,
-    notify_rate_limit_ms: u64
+    // We can only notify miners every N ms
+    notify_rate_limit_ms: TimestampMillis
 }
 
 impl<S: Storage> GetWorkServer<S> {
-    pub fn new(blockchain: Arc<Blockchain<S>>) -> Self {
-        Self {
+    pub fn new(blockchain: Arc<Blockchain<S>>, rate_limit_ms: TimestampMillis) -> Arc<Self> {
+        let server = Arc::new(Self {
             miners: Mutex::new(HashMap::new()),
             blockchain,
             mining_jobs: Mutex::new(LruCache::new(NonZeroUsize::new(STABLE_LIMIT as usize * TIPS_LIMIT).unwrap())),
             last_header_hash: Mutex::new(None),
             last_notify: AtomicU64::new(0),
             is_job_dirty: AtomicBool::new(false),
-            // maximum one time every 500ms
-            // TODO: configurable
-            notify_rate_limit_ms: 500
+            notify_rate_limit_ms: rate_limit_ms
+        });
+
+        if rate_limit_ms > 0 {
+            let zelf = Arc::clone(&server);
+            spawn_task("getwork-notify-new-job", async move {
+                loop {
+                    sleep(Duration::from_millis(rate_limit_ms)).await;
+                    if zelf.is_job_dirty.load(Ordering::SeqCst) {
+                        if let Err(e) = zelf.notify_new_job_rate_limited().await {
+                            error!("Error while notifying new job to miners: {}", e);
+                        }
+                    }
+                }
+            });
         }
+
+        server
     }
 
     // Returns the number of miners connected to the getwork server

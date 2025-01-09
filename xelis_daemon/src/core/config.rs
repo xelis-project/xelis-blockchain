@@ -34,12 +34,21 @@ fn default_p2p_concurrency_task_count_limit() -> usize {
     P2P_DEFAULT_CONCURRENCY_TASK_COUNT_LIMIT
 }
 
+fn default_getwork_rate_limit_ms() -> u64 {
+    0
+}
+
 #[derive(Debug, Clone, clap::Args, Serialize, Deserialize)]
 pub struct RPCConfig {
     /// Disable GetWork Server (WebSocket for miners).
     #[clap(long)]
     #[serde(default)]
     pub disable_getwork_server: bool,
+    /// Set the rate limit for GetWork server in milliseconds.
+    /// In case of high transactions added in mempool, new jobs are rate limited.
+    #[serde(default = "default_getwork_rate_limit_ms")]
+    #[clap(long, default_value_t = 0)]
+    pub getwork_rate_limit_ms: u64,
     /// Disable RPC Server
     /// This will also disable the GetWork Server as it is loaded on RPC server.
     #[clap(long)]
