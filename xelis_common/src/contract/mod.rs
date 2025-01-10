@@ -110,7 +110,6 @@ impl ContractCache {
 // Build the environment for the contract
 pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static> {
     debug!("Building environment for contract");
-    register_opaque_types();
 
     let mut env = EnvironmentBuilder::default();
 

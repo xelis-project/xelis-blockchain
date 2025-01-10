@@ -1,4 +1,4 @@
-use crate::crypto::Hash;
+use crate::{contract::register_opaque_types, crypto::Hash};
 
 pub const VERSION: &str = env!("BUILD_VERSION");
 pub const XELIS_ASSET: Hash = Hash::zero();
@@ -68,3 +68,9 @@ pub const MAX_BLOCK_SIZE: usize = (BYTES_PER_KB * BYTES_PER_KB) + (256 * BYTES_P
 
 // BlockDAG rules
 pub const TIPS_LIMIT: usize = 3; // maximum 3 TIPS per block
+
+// Initialize the configuration
+pub fn init() {
+    // register the opaque types
+    register_opaque_types();
+}

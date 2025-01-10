@@ -67,7 +67,6 @@ mod tests {
     use serde_json::json;
     use xelis_vm::OpaqueWrapper;
 
-
     #[test]
     fn test_address_serde() {
         register_opaque_types();
