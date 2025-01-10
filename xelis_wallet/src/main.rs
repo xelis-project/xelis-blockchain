@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use xelis_common::{
     async_handler,
     config::{
+        init,
         VERSION,
         XELIS_ASSET
     },
@@ -285,6 +286,8 @@ const ELEMENTS_PER_PAGE: usize = 10;
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    init();
+
     let mut config: Config = Config::parse();
     if let Some(path) = config.config_file.as_ref() {
         if config.generate_config_template {
