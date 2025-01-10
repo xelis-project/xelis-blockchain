@@ -35,6 +35,7 @@ pub use output::*;
 
 pub use opaque::ContractStorage;
 pub use provider::*;
+pub use opaque::register_opaque_types;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TransferOutput {
