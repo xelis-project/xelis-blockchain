@@ -261,6 +261,11 @@ pub struct DeleteParams {
 }
 
 #[derive(Serialize, Deserialize)]
+pub struct DeleteTreeEntriesParams {
+    pub tree: String
+}
+
+#[derive(Serialize, Deserialize)]
 pub struct QueryDBParams {
     pub tree: String,
     pub key: Option<Query>,
