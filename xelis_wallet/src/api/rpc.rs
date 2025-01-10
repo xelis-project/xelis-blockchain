@@ -721,7 +721,7 @@ async fn delete(context: &Context, body: Value) -> Result<Value, InternalRpcErro
 
 // Delete all entries in the requested tree
 async fn delete_tree_entries(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    let params: DeleteParams = parse_params(body)?;
+    let params: DeleteTreeEntriesParams = parse_params(body)?;
     let wallet: &Arc<Wallet> = context.get()?;
     let tree = get_tree_name(&context, params.tree).await?;
     let mut storage = wallet.get_storage().write().await;
