@@ -136,7 +136,6 @@ pub struct UnsignedTransactionResponse {
     // Multisig threshold, zero if not active
     pub threshold: u8,
     // Unsigned transaction in hex format
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub tx_as_hex: Option<String>
 }
 
@@ -171,7 +170,6 @@ pub struct ListTransactionsParams {
 pub struct TransactionResponse<'a> {
     #[serde(flatten)]
     pub inner: DataHash<'a, Transaction>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub tx_as_hex: Option<String>
 }
 

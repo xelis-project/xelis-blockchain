@@ -72,7 +72,6 @@ pub struct RPCBlockResponse<'a> {
     pub extra_nonce: Cow<'a, [u8; EXTRA_NONCE_SIZE]>,
     pub miner: Cow<'a, Address>,
     pub txs_hashes: Cow<'a, IndexSet<Hash>>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
     #[serde(default)]
     pub transactions: Vec<RPCTransaction<'a>>,
 }
@@ -389,7 +388,6 @@ pub struct TransactionResponse<'a> {
     // if it is in mempool
     pub in_mempool: bool,
     // if its a mempool tx, we add the timestamp when it was added
-    #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(default)]
     pub first_seen: Option<TimestampSeconds>,
     #[serde(flatten)]
