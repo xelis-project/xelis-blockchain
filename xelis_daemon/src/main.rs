@@ -15,7 +15,7 @@ use rpc::{
 use serde::{Deserialize, Serialize};
 use xelis_common::{
     async_handler,
-    config::{VERSION, XELIS_ASSET},
+    config::{init, VERSION, XELIS_ASSET},
     context::Context,
     crypto::{
         Address,Hashable
@@ -190,6 +190,8 @@ const BLOCK_TIME: Difficulty = Difficulty::from_u64(BLOCK_TIME_MILLIS / MILLIS_P
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    init();
+
     let mut config: CliConfig = CliConfig::parse();
     if let Some(path) = config.config_file.as_ref() {
         if config.generate_config_template {
