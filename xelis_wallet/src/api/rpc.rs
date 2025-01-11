@@ -52,6 +52,7 @@ pub fn register_methods(handler: &mut RPCHandler<Arc<Wallet>>) {
     handler.register_method("get_assets", async_handler!(get_assets));
     handler.register_method("get_asset", async_handler!(get_asset));
     handler.register_method("get_transaction", async_handler!(get_transaction));
+    handler.register_method("dump_transaction", async_handler!(dump_transaction));
     handler.register_method("build_transaction", async_handler!(build_transaction));
     handler.register_method("build_transaction_offline", async_handler!(build_transaction_offline));
     handler.register_method("build_unsigned_transaction", async_handler!(build_unsigned_transaction));
@@ -302,6 +303,17 @@ async fn get_transaction(context: &Context, body: Value) -> Result<Value, Intern
     let transaction = storage.get_transaction(&params.hash)?;
 
     Ok(json!(transaction.serializable(wallet.get_network().is_mainnet())))
+}
+
+// Dump the TX in hex format
+async fn dump_transaction(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
+    let params: GetTransactionParams = parse_params(body)?;
+
+    let wallet: &Arc<Wallet> = context.get()?;
+    let storage = wallet.get_storage().read().await;
+    let transaction = storage.get_transaction(&params.hash)?;
+
+    Ok(json!(transaction.to_hex()))
 }
 
 // Build a transaction and broadcast it if requested
