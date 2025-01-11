@@ -1,4 +1,6 @@
 use std::borrow::Cow;
+use anyhow::Error;
+
 use crate::{
     api::DataElement,
     crypto::{
@@ -8,7 +10,7 @@ use crate::{
     serializer::*,
     transaction::Role
 };
-use super::{derive_shared_key_from_handle, AEADCipherInner, CipherFormatError, ExtraData, PlaintextExtraData, SharedKey};
+use super::{derive_shared_key_from_handle, AEADCipherInner, ExtraData, PlaintextExtraData, SharedKey};
 
 // A wrapper around a Vec<u8>.
 // This is used for outside the wallet as we don't know what is used
@@ -18,26 +20,25 @@ pub struct UnknownExtraDataFormat(pub Vec<u8>);
 
 impl UnknownExtraDataFormat {
     // Decrypt the encrypted data using the shared key
-    pub fn decrypt_with_shared_key(&self, shared_key: &SharedKey) -> Result<DataElement, CipherFormatError> {
-        let e = ExtraData::from_bytes(&self.0).map_err(|_| CipherFormatError)?;
+    pub fn decrypt_with_shared_key(&self, shared_key: &SharedKey) -> Result<DataElement, Error> {
+        let e = ExtraData::from_bytes(&self.0)?;
         let plaintext = e.decrypt_with_shared_key(shared_key)?;
-        DataElement::from_bytes(&plaintext.0)
-            .map_err(|_| CipherFormatError)
+        let data = DataElement::from_bytes(&plaintext.0)?;
+        Ok(data)
     }
 
     // Decrypt the encrypted data using the V2 version which includes the decrypt handles for each role
-    pub fn decrypt_v2(&self, private_key: &PrivateKey, role: Role) -> Result<PlaintextExtraData, CipherFormatError> {
-        let e = ExtraData::from_bytes(&self.0).map_err(|_| CipherFormatError)?;
+    pub fn decrypt_v2(&self, private_key: &PrivateKey, role: Role) -> Result<PlaintextExtraData, Error> {
+        let e = ExtraData::from_bytes(&self.0)?;
 
         // Generate the shared key
         let handle = e.get_handle(role)
-            .decompress()
-            .map_err(|_| CipherFormatError)?;
+            .decompress()?;
 
         let shared_key = derive_shared_key_from_handle(private_key, &handle);
 
         let plaintext = e.decrypt_with_shared_key(&shared_key)?;
-        let data = DataElement::from_bytes(&plaintext.0).map_err(|_| CipherFormatError)?;
+        let data = DataElement::from_bytes(&plaintext.0)?;
 
         Ok(PlaintextExtraData::new(
             Some(shared_key),
@@ -47,15 +48,15 @@ impl UnknownExtraDataFormat {
 
     /// WARNING: This function is deprecated and should not be used.
     /// It is kept for compatibility reasons only.
-    pub fn decrypt_v1(&self, private_key: &PrivateKey, handle: &DecryptHandle) -> Result<DataElement, CipherFormatError> {
+    pub fn decrypt_v1(&self, private_key: &PrivateKey, handle: &DecryptHandle) -> Result<DataElement, Error> {
         let key = derive_shared_key_from_handle(private_key, handle);
         let plaintext = AEADCipherInner(Cow::Borrowed(&self.0)).decrypt(&key)?;
-        DataElement::from_bytes(&plaintext.0).map_err(|_| CipherFormatError)
+        DataElement::from_bytes(&plaintext.0).map_err(|e| e.into())
     }
 
     /// Decrypt the encrypted data by trying to determine which version to use.
     /// V2 should always be used if possible, but for retrocompatibility reasons, V1 is also supported.
-    pub fn decrypt(&self, private_key: &PrivateKey, handle: &DecryptHandle, role: Role) -> Result<PlaintextExtraData, CipherFormatError> {
+    pub fn decrypt(&self, private_key: &PrivateKey, handle: &DecryptHandle, role: Role) -> Result<PlaintextExtraData, Error> {
         // Try the new version
         // If it has 64 + 2 bytes of overhead at least, it may be a V2 
         if self.0.len() >= (RISTRETTO_COMPRESSED_SIZE * 2) + 2 {
