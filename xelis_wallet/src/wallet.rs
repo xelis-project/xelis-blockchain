@@ -26,7 +26,10 @@ use xelis_common::{
     },
     asset::RPCAssetData,
     crypto::{
-        elgamal::Ciphertext,
+        elgamal::{
+            Ciphertext,
+            DecryptHandle
+        },
         Address,
         Hashable,
         KeyPair,
@@ -622,9 +625,20 @@ impl Wallet {
     }
 
     // Decrypt the extra data from a transfer
-    pub fn decrypt_extra_data(&self, cipher: UnknownExtraDataFormat, role: Role) -> Result<PlaintextExtraData, WalletError> {
+    pub fn decrypt_extra_data(&self, cipher: UnknownExtraDataFormat, handle: Option<&DecryptHandle>, role: Role) -> Result<PlaintextExtraData, WalletError> {
         trace!("decrypt extra data");
-        let extra_data = cipher.decrypt_v2(&self.inner.keypair.get_private_key(), role)?;
+        let extra_data = match cipher.decrypt_v2(self.inner.keypair.get_private_key(), role) {
+            Ok(data) => data,
+            Err(e) => match handle {
+                Some(handle) => {
+                    cipher.decrypt_v1(self.inner.keypair.get_private_key(), handle).map(|data| {
+                        PlaintextExtraData::new(None, data)
+                    })?
+                },
+                None => return Err(e.into()),
+            }
+        };
+
         Ok(extra_data)
     }
 

@@ -333,7 +333,13 @@ impl NetworkHandler {
                             };
 
                             let extra_data = if let Some(cipher) = transfer.extra_data.into_owned() {
-                                self.wallet.decrypt_extra_data(cipher, role).ok()
+                                match self.wallet.decrypt_extra_data(cipher,  Some(&handle), role) {
+                                    Ok(e) => Some(e),
+                                    Err(e) => {
+                                        warn!("Error while decrypting extra data of TX {}: {}", tx.hash, e);
+                                        None
+                                    }
+                                }
                             } else {
                                 None
                             };

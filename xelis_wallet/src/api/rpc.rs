@@ -199,7 +199,7 @@ async fn decrypt_extra_data(context: &Context, body: Value) -> Result<Value, Int
     let params: DecryptExtraDataParams = parse_params(body)?;
 
     let wallet: &Arc<Wallet> = context.get()?;
-    let data = wallet.decrypt_extra_data(params.extra_data.into_owned(), params.role)
+    let data = wallet.decrypt_extra_data(params.extra_data.into_owned(), None, params.role)
         .context("Error while decrypting extra data")?;
 
     Ok(json!(data))
