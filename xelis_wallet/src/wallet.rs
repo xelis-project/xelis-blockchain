@@ -624,7 +624,8 @@ impl Wallet {
     // Decrypt the extra data from a transfer
     pub fn decrypt_extra_data(&self, cipher: UnknownExtraDataFormat, role: Role) -> Result<PlaintextExtraData, WalletError> {
         trace!("decrypt extra data");
-        cipher.decrypt_v2(&self.inner.keypair.get_private_key(), role).map_err(|_| WalletError::CiphertextDecode)
+        let extra_data = cipher.decrypt_v2(&self.inner.keypair.get_private_key(), role)?;
+        Ok(extra_data)
     }
 
     // Create a transaction with the given transaction type and fee
