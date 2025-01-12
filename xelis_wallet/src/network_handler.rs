@@ -744,10 +744,7 @@ impl NetworkHandler {
     // If nonce is not provided, we will fetch it from the daemon
     async fn sync_head_state(&self, address: &Address, assets: Option<HashSet<Hash>>, nonce: Option<u64>, sync_nonce: bool) -> Result<bool, Error> {
         trace!("syncing head state");
-        let new_nonce = if nonce.is_some() {
-            debug!("nonce provided, using it");
-            nonce
-        } else if sync_nonce {
+        let new_nonce = if sync_nonce {
             debug!("no nonce provided, fetching it from daemon");
             match self.api.get_nonce(&address).await.map(|v| v.version) {
                 Ok(v) => Some(v.get_nonce()),
@@ -759,6 +756,8 @@ impl NetworkHandler {
                             warn!("We have balances but we couldn't fetch the nonce, deleting all balances");
                             storage.delete_balances().await?;
                             storage.delete_assets().await?;
+                            storage.delete_multisig_state().await?;
+                            storage.delete_nonce().await?;
                         }
                     }
                     // Account is not registered, we can return safely here
@@ -766,7 +765,7 @@ impl NetworkHandler {
                 }
             }
         } else {
-            None
+            nonce
         };
 
         // Check if we have a multisig account
@@ -840,7 +839,7 @@ impl NetworkHandler {
         {
             if let Some(new_nonce) = new_nonce {
                 let mut storage = self.wallet.get_storage().write().await;
-                if storage.get_nonce().map(|n| n != new_nonce).unwrap_or(true) {
+                if storage.get_nonce()? != new_nonce {
                     // Store the new nonce
                     debug!("Storing new nonce {}", new_nonce);
                     storage.set_nonce(new_nonce)?;

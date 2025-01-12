@@ -670,7 +670,10 @@ impl Wallet {
     // Warning: this is locking the network handler to access to the daemon api
     pub async fn create_transaction_state_with_storage(&self, storage: &EncryptedStorage, transaction_type: &TransactionTypeBuilder, fee: &FeeBuilder, nonce: Option<u64>) -> Result<TransactionBuilderState, WalletError> {
         trace!("create transaction with storage");
-        let nonce = nonce.unwrap_or_else(|| storage.get_unconfirmed_nonce());
+        let nonce = match nonce {
+            Some(n) => n,
+            None => storage.get_unconfirmed_nonce()?
+        };
 
         // Build the state for the builder
         let used_assets = transaction_type.used_assets();

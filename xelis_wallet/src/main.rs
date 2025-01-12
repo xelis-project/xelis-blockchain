@@ -1484,7 +1484,7 @@ async fn nonce(manager: &CommandManager, _: ArgumentManager) -> Result<(), Comma
     let wallet: &Arc<Wallet> = context.get()?;
     let storage = wallet.get_storage().read().await;
     let nonce = storage.get_nonce()?;
-    let unconfirmed_nonce = storage.get_unconfirmed_nonce();
+    let unconfirmed_nonce = storage.get_unconfirmed_nonce()?;
     manager.message(format!("Nonce: {}", nonce));
     if nonce != unconfirmed_nonce {
         manager.message(format!("Unconfirmed nonce: {}", unconfirmed_nonce));

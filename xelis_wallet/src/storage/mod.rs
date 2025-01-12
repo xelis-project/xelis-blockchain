@@ -967,6 +967,14 @@ impl EncryptedStorage {
         Ok(())
     }
 
+    // Delete the nonce used to create new transactions
+    // This will reset the nonce to 0
+    pub async fn delete_nonce(&mut self) -> Result<()> {
+        trace!("delete nonce");
+        self.delete_from_disk(&self.extra, NONCE_KEY)?;
+        Ok(())
+    }
+
     // Delete all unconfirmed balances from this wallet
     pub async fn delete_unconfirmed_balances(&mut self) {
         trace!("delete unconfirmed balances");
@@ -1017,9 +1025,12 @@ impl EncryptedStorage {
 
     // Get the unconfirmed nonce to use to build ordered TXs
     // It will fallback to the real nonce if not set
-    pub fn get_unconfirmed_nonce(&self) -> u64 {
+    pub fn get_unconfirmed_nonce(&self) -> Result<u64> {
         trace!("get unconfirmed nonce");
-        self.tx_cache.as_ref().map(|c| c.nonce).unwrap_or_else(|| self.get_nonce().unwrap_or(0))
+        match self.tx_cache.as_ref().map(|c| c.nonce) {
+            Some(nonce) => Ok(nonce),
+            None => self.get_nonce()
+        }
     }
 
     // Set the TX cache to use it has reference for next txs
