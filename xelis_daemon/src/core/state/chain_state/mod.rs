@@ -172,7 +172,7 @@ impl<'a, S: Storage> ChainState<'a, S> {
 
     // Create a sender echange
     async fn create_sender_echange(storage: &S, key: &'a PublicKey, asset: &'a Hash, current_topoheight: TopoHeight, reference: &Reference) -> Result<Echange, BlockchainError> {
-        let (use_output_balance, new_version, version) = super::search_versioned_balance_for_reference(storage, key, asset, current_topoheight, reference).await?;
+        let (use_output_balance, new_version, version) = super::search_versioned_balance_for_reference(storage, key, asset, current_topoheight, reference, true).await?;
         Ok(Echange::new(use_output_balance, new_version,  version))
     }
 
@@ -201,7 +201,7 @@ impl<'a, S: Storage> ChainState<'a, S> {
         match self.receiver_balances.entry(key.clone()).or_insert_with(HashMap::new).entry(asset.clone()) {
             Entry::Occupied(o) => Ok(o.into_mut().get_mut_balance().computable()?),
             Entry::Vacant(e) => {
-                let version = self.storage.get_new_versioned_balance(&key, &asset, self.topoheight).await?;
+                let (version, _) = self.storage.get_new_versioned_balance(&key, &asset, self.topoheight).await?;
                 Ok(e.insert(version).get_mut_balance().computable()?)
             }
         }

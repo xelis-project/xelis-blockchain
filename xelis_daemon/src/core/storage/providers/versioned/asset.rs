@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use log::trace;
 use xelis_common::{
     block::TopoHeight,
+    crypto::Hash,
     serializer::Serializer
 };
 use crate::core::{
@@ -29,6 +30,12 @@ impl VersionedAssetProvider for SledStorage {
             // Delete this version from DB
             Self::remove_from_disk_without_reading(self.snapshot.as_mut(), &self.assets_prefixed, &key)?;
             Self::remove_from_disk_without_reading(self.snapshot.as_mut(), &self.assets, &key[8..])?;
+
+
+            if let Some(cache) = self.assets_cache.as_mut() {
+                let mut cache = cache.lock().await;
+                cache.pop(&Hash::from_bytes(&key[8..])?);
+            }
         }
 
         trace!("delete versioned assets at topoheight {} done!", topoheight);
@@ -43,6 +50,11 @@ impl VersionedAssetProvider for SledStorage {
             if topo > topoheight {
                 Self::remove_from_disk_without_reading(self.snapshot.as_mut(), &self.assets, &key[8..])?;
                 Self::remove_from_disk_without_reading(self.snapshot.as_mut(), &self.assets_prefixed, &key)?;
+
+                if let Some(cache) = self.assets_cache.as_mut() {
+                    let mut cache = cache.lock().await;
+                    cache.pop(&Hash::from_bytes(&key[8..])?);
+                }
             }
         }
 

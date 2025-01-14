@@ -150,7 +150,7 @@ pub struct SledStorage {
     // Cumulative difficulty cache
     pub(super) cumulative_difficulty_cache: Option<Mutex<LruCache<Hash, CumulativeDifficulty>>>,
     // Assets cache
-    pub(super) assets_cache: Option<Mutex<LruCache<Hash, ()>>>,
+    pub(super) assets_cache: Option<Mutex<LruCache<Hash, TopoHeight>>>,
     // Tips cache: current chain Tips
     pub(super) tips_cache: Tips,
     // Pruned topoheight cache

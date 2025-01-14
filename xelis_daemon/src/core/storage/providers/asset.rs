@@ -68,7 +68,7 @@ impl AssetProvider for SledStorage {
 
     async fn get_asset_topoheight(&self, hash: &Hash) -> Result<TopoHeight, BlockchainError> {
         trace!("get asset topoheight {}", hash);
-        self.load_from_disk(&self.assets, hash.as_bytes(), DiskContext::Asset)
+        self.get_cacheable_data(&self.assets, &self.assets_cache, hash, DiskContext::Asset).await
     }
 
     async fn get_asset_at_topoheight(&self, asset: &Hash, topoheight: TopoHeight) -> Result<AssetData, BlockchainError> {
@@ -185,7 +185,7 @@ impl AssetProvider for SledStorage {
 
         if let Some(cache) = &self.assets_cache {
             let mut cache = cache.lock().await;
-            cache.put(asset.clone(), ());
+            cache.put(asset.clone(), topoheight);
         }
         Ok(())
     }

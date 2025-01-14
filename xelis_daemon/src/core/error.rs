@@ -191,6 +191,8 @@ pub enum BlockchainError {
     InvalidReferenceHash,
     #[error("Transaction has an invalid reference: topoheight is too high")]
     InvalidReferenceTopoheight,
+    #[error("No previous balance found")]
+    NoPreviousBalanceFound,
     #[error("Transaction has an invalid reference: no balance version found in stable chain")]
     NoStableReferenceFound,
     #[error("Tx {} has too many output", _0)]

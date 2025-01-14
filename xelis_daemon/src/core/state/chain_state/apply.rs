@@ -369,7 +369,7 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
                         let version = if output_balance_used || !new_version {
                             // We must fetch again the version to sum it with the output
                             // This is necessary to build the final balance
-                            let mut new_version = self.inner.storage.get_new_versioned_balance(key, asset, self.inner.topoheight).await?;
+                            let (mut new_version, _) = self.inner.storage.get_new_versioned_balance(key, asset, self.inner.topoheight).await?;
                             // Substract the output sum
                             trace!("{} has no balance for {} at topoheight {}, substract output sum", key.as_address(self.inner.storage.is_mainnet()), asset, self.inner.topoheight);
                             *new_version.get_mut_balance().computable()? -= output_sum;

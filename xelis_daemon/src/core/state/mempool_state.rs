@@ -90,7 +90,7 @@ impl<'a, S: Storage> MempoolState<'a, S> {
         match self.receiver_balances.entry(account.clone()).or_insert_with(HashMap::new).entry(asset.clone()) {
             Entry::Occupied(entry) => Ok(entry.into_mut()),
             Entry::Vacant(entry) => {
-                let version = self.storage.get_new_versioned_balance(&account, &asset, self.topoheight).await?;
+                let (version, _) = self.storage.get_new_versioned_balance(&account, &asset, self.topoheight).await?;
                 Ok(entry.insert(version.take_balance().take_ciphertext()?))
             }
         }
@@ -98,7 +98,7 @@ impl<'a, S: Storage> MempoolState<'a, S> {
 
     // Retrieve the versioned balance based on the TX reference 
     async fn get_versioned_balance_for_reference(storage: &S, key: &PublicKey, asset: &Hash, current_topoheight: TopoHeight, reference: &Reference) -> Result<Ciphertext, BlockchainError> {
-        let (output, _, version) = super::search_versioned_balance_for_reference(storage, key, asset, current_topoheight, reference).await?;
+        let (output, _, version) = super::search_versioned_balance_for_reference(storage, key, asset, current_topoheight, reference, false).await?;
 
         Ok(version.take_balance_with(output).take_ciphertext()?)
     }
@@ -165,7 +165,11 @@ impl<'a, S: Storage> MempoolState<'a, S> {
                 match account.assets.entry(asset) {
                     Entry::Occupied(entry) => Ok(entry.into_mut()),
                     Entry::Vacant(entry) => {
-                        let version = self.storage.get_new_versioned_balance(key, asset, self.topoheight).await?;
+                        let (version, new) = self.storage.get_new_versioned_balance(key, asset, self.topoheight).await?;
+                        if new {
+                            return Err(BlockchainError::NoPreviousBalanceFound);
+                        }
+
                         Ok(entry.insert(version.take_balance().take_ciphertext()?))
                     }
                 }

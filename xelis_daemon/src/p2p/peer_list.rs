@@ -94,6 +94,11 @@ impl PeerList {
         Ok(())
     }
 
+    // Check if the peerlist is empty
+    pub async fn is_empty(&self) -> bool {
+        self.peers.read().await.is_empty()
+    }
+
     // Get the cache
     pub fn get_cache(&self) -> &DiskCache {
         &self.cache

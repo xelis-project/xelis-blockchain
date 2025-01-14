@@ -55,7 +55,7 @@ pub (super) async fn pre_verify_tx<P: AccountProvider + BalanceProvider>(provide
 // - If we should use the output balance for verification
 // - is it a new version created
 // - Versioned Balance to use for verification
-pub (super) async fn search_versioned_balance_for_reference<S: DagOrderProvider + BalanceProvider + PrunedTopoheightProvider>(storage: &S, key: &PublicKey, asset: &Hash, current_topoheight: TopoHeight, reference: &Reference) -> Result<(bool, bool, VersionedBalance), BlockchainError> {
+pub (super) async fn search_versioned_balance_for_reference<S: DagOrderProvider + BalanceProvider + PrunedTopoheightProvider>(storage: &S, key: &PublicKey, asset: &Hash, current_topoheight: TopoHeight, reference: &Reference, no_new: bool) -> Result<(bool, bool, VersionedBalance), BlockchainError> {
     trace!("search versioned balance for {} at topoheight {}, reference: {}", key.as_address(storage.is_mainnet()), current_topoheight, reference.topoheight);
     // Scenario A
     // TX A has reference topo 1000
@@ -140,7 +140,12 @@ pub (super) async fn search_versioned_balance_for_reference<S: DagOrderProvider 
     } else {
         // Scenario A
         debug!("Scenario A");
-        (true, storage.get_new_versioned_balance(key, asset, current_topoheight).await?)
+        let (version, new) = storage.get_new_versioned_balance(key, asset, current_topoheight).await?;
+        if new && no_new {
+            return Err(BlockchainError::NoPreviousBalanceFound);
+        }
+
+        (true, version)
     };
 
     Ok((use_output_balance, new_version,  version))

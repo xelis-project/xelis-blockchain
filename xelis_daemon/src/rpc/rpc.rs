@@ -1461,7 +1461,6 @@ async fn extract_key_from_address<S: Storage>(context: &Context, body: Value) ->
     }
 }
 
-
 // Split an integrated address into its address and data
 async fn split_address<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: SplitAddressParams = parse_params(body)?;

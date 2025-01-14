@@ -1013,6 +1013,12 @@ impl<S: Storage> P2pServer<S> {
                 break;
             }
 
+            // If peer list is empty, skip this iteration
+            if self.peer_list.is_empty().await {
+                debug!("Peer list is empty, skipping ping packet");
+                continue;
+            }
+
             let mut ping = self.build_generic_ping_packet().await;
             trace!("generic ping packet finished");
 
