@@ -583,6 +583,12 @@ async fn setup_wallet_command_manager(wallet: Arc<Wallet>, command_manager: &Com
         CommandHandler::Async(async_handler!(history))
     ))?;
     command_manager.add_command(Command::with_optional_arguments(
+        "transaction",
+        "Show a specific transaction",
+        vec![Arg::new("hash", ArgType::Hash)],
+        CommandHandler::Async(async_handler!(transaction))
+    ))?;
+    command_manager.add_command(Command::with_optional_arguments(
         "seed",
         "Show seed of selected language",
         vec![Arg::new("language", ArgType::Number)],
@@ -1375,6 +1381,16 @@ async fn history(manager: &CommandManager, mut arguments: ArgumentManager) -> Re
         manager.message(format!("- {}", tx.summary(wallet.get_network().is_mainnet(), &*storage).await?));
     }
 
+    Ok(())
+}
+
+async fn transaction(manager: &CommandManager, mut arguments: ArgumentManager) -> Result<(), CommandError> {
+    let context = manager.get_context().lock()?;
+    let wallet: &Arc<Wallet> = context.get()?;
+    let storage = wallet.get_storage().read().await;
+    let hash = arguments.get_value("hash")?.to_hash()?;
+    let tx = storage.get_transaction(&hash).context("Transaction not found")?;
+    manager.message(tx.summary(wallet.get_network().is_mainnet(), &*storage).await?);
     Ok(())
 }
 
