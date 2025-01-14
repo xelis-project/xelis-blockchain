@@ -1,44 +1,82 @@
+use std::hash::Hash as StdHash;
 use anyhow::Context as AnyhowContext;
-use blake3::hash;
 use xelis_vm::{
     traits::{JSONHelper, Serializable},
     Context,
     FnInstance,
     FnParams,
     FnReturnType,
-    Value
+    Value,
+    ValueCell
 };
-use crate::{config::COST_PER_TOKEN, contract::ChainState, crypto::{Hash, HASH_SIZE}};
+use crate::{
+    asset::AssetData,
+    contract::{from_context, get_balance_from_cache, ContractProvider},
+    crypto::Hash,
+    versioned_type::VersionedState
+};
 
 // Represent an Asset Manager type in the opaque context
-#[derive(Clone, Debug, Hash, PartialEq, Eq)]
-pub struct OpaqueAsset(pub Hash);
-
-impl Serializable for OpaqueAsset {}
-
-impl JSONHelper for OpaqueAsset {}
-
-// Create an instance of the Asset Manager opaque type
-// This will create the asset on chain if its not already created
-pub fn get_asset_by_id(_: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType {
-    let chain_state: &ChainState = context.get().context("chain state not found")?;
-    let id = params.remove(0).as_u64()?;
-    let contract = chain_state.contract;
-
-    // Generate a hash that combine the contract hash, and the asset id
-    let mut buffer = [0u8; 40];
-    buffer[..HASH_SIZE].copy_from_slice(contract.as_bytes());
-    buffer[HASH_SIZE..].copy_from_slice(&id.to_be_bytes());
-    let token_asset = Hash::new(hash(&buffer).into());
-
-    // If the asset was not yet registered, pay the cost to register it
-    context.increase_gas_usage(COST_PER_TOKEN)?;
-
-    Ok(Some(Value::Opaque(OpaqueAsset(contract.clone()).into()).into()))
+#[derive(Clone, Debug)]
+pub struct Asset {
+    pub hash: Hash,
+    pub data: AssetData,
 }
 
-// get hash from asset manager
-pub fn asset_manager_hash(zelf: FnInstance, _: FnParams, _: &mut Context) -> FnReturnType {
-    let asset_manager: &OpaqueAsset = zelf?.as_opaque_type()?;
-    Ok(Some(Value::Opaque(asset_manager.0.clone().into()).into()))
+impl StdHash for Asset {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.hash.hash(state);
+    }
+}
+
+impl PartialEq for Asset {
+    fn eq(&self, other: &Self) -> bool {
+        self.hash == other.hash
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct AssetManager;
+
+impl Serializable for Asset {}
+
+impl JSONHelper for Asset {}
+
+// Maximum supply set for this asset
+pub fn asset_get_max_supply(zelf: FnInstance, _: FnParams, _: &mut Context) -> FnReturnType {
+    let asset: &Asset = zelf?.as_opaque_type()?;
+    Ok(Some(ValueCell::Optional(asset.data.get_max_supply().map(|v| Value::U64(v).into()))))
+}
+
+// Get the self claimed asset name
+pub fn asset_get_name(zelf: FnInstance, _: FnParams, _: &mut Context) -> FnReturnType {
+    let asset: &Asset = zelf?.as_opaque_type()?;
+    Ok(Some(Value::String(asset.data.get_name().to_owned()).into()))
+}
+
+// Get the hash representation of the asset
+pub fn asset_get_hash(zelf: FnInstance, _: FnParams, _: &mut Context) -> FnReturnType {
+    let asset: &Asset = zelf?.as_opaque_type()?;
+    Ok(Some(Value::Opaque(asset.hash.clone().into()).into()))
+}
+
+pub fn asset_mint<P: ContractProvider>(zelf: FnInstance, params: FnParams, context: &mut Context) -> FnReturnType {
+    let asset: &Asset = zelf?.as_opaque_type()?;
+    if asset.data.get_max_supply().is_some() {
+        return Ok(Some(Value::Boolean(false).into()))
+    }
+
+    let amount = params[0].as_u64()?;
+    let (provider, chain_state) = from_context::<P>(context)?;
+    let (state, balance) = match get_balance_from_cache(provider, chain_state, asset.hash.clone())? {
+        Some((state, balance)) => (state, balance),
+        None => (VersionedState::New, 0),
+    };
+
+    let new_balance = balance.checked_add(amount)
+        .context("Overflow while minting balance")?;
+
+    chain_state.changes.balances.insert(asset.hash.clone(), Some((state, new_balance)));
+
+    Ok(None)
 }

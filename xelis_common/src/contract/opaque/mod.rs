@@ -61,7 +61,7 @@ impl_opaque!(
 );
 impl_opaque!(
     "Asset",
-    OpaqueAsset
+    Asset
 );
 
 // Injectable context data

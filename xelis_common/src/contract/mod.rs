@@ -126,6 +126,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static> {
     let random_type = Type::Opaque(env.register_opaque::<OpaqueRandom>("Random"));
     let block_type = Type::Opaque(env.register_opaque::<OpaqueBlock>("Block"));
     let storage_type = Type::Opaque(env.register_opaque::<OpaqueStorage>("Storage"));
+    let asset_type = Type::Opaque(env.register_opaque::<Asset>("Asset"));
 
     // Transaction
     {
@@ -477,6 +478,41 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static> {
         );
     }
 
+    // Asset
+    {
+        env.register_native_function(
+            "get_max_supply",
+            Some(asset_type.clone()),
+            vec![],
+            asset_get_max_supply,
+            5,
+            Some(Type::Optional(Box::new(Type::U64)))
+        );
+        env.register_native_function(
+            "get_name",
+            Some(asset_type.clone()),
+            vec![],
+            asset_get_name,
+            5,
+            Some(Type::String)
+        );
+        env.register_native_function(
+            "get_hash",
+            Some(asset_type.clone()),
+            vec![],
+            asset_get_hash,
+            5,
+            Some(hash_type.clone())
+        );
+        env.register_native_function(
+            "mint",
+            Some(asset_type.clone()),
+            vec![("amount", Type::U64)],
+            asset_mint::<P>,
+            500,
+            Some(Type::Bool)
+        );
+    }
     env
 }
 
@@ -585,8 +621,6 @@ fn get_balance_for_asset<P: ContractProvider>(_: FnInstance, mut params: FnParam
 }
 
 fn transfer<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType {
-    let (provider, state) = from_context::<P>(context)?;
-
     let amount = params.remove(2)
         .into_owned()
         .to_u64()?;
@@ -603,11 +637,17 @@ fn transfer<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &
         return Ok(Some(Value::Boolean(false).into()));
     }
 
+    {
+        let provider: &P = provider_from_context::<P>(context)?;
+        // verify that the address is well registered, otherwise: pay extra fees
+        if !provider.account_exists(destination.get_public_key(), 0)? {
+            context.increase_gas_usage(1000)?;
+        }
+    }
+    let (provider, state) = from_context::<P>(context)?;
     if destination.is_mainnet() != state.mainnet {
         return Ok(Some(Value::Boolean(false).into()));
     }
-
-    // TODO: verify that the address is well registered, otherwise: pay extra fees
 
     let Some((mut balance_state, mut balance)) = get_balance_from_cache(provider, state, asset.clone())? else {
         return Ok(Some(Value::Boolean(false).into()));
