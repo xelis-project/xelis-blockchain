@@ -4,11 +4,12 @@ mod address;
 mod random;
 mod block;
 mod storage;
+mod asset;
 
 use log::debug;
 use xelis_types::{
     register_opaque_json,
-    impl_opaque_json
+    impl_opaque
 };
 use xelis_vm::{tid, OpaqueWrapper};
 use crate::{
@@ -25,13 +26,43 @@ pub use random::*;
 pub use block::*;
 pub use storage::*;
 pub use address::*;
-
+pub use asset::*;
 
 pub const HASH_OPAQUE_ID: u8 = 0;
 pub const ADDRESS_OPAQUE_ID: u8 = 1;
 
-impl_opaque_json!("Hash", Hash);
-impl_opaque_json!("Address", Address);
+impl_opaque!(
+    "Hash",
+    Hash,
+    display,
+    json
+);
+impl_opaque!(
+    "Address",
+    Address,
+    display,
+    json
+);
+impl_opaque!(
+    "OpaqueTransaction",
+    OpaqueTransaction
+);
+impl_opaque!(
+    "OpaqueBlock",
+    OpaqueBlock
+);
+impl_opaque!(
+    "OpaqueRandom",
+    OpaqueRandom
+);
+impl_opaque!(
+    "OpaqueStorage",
+    OpaqueStorage
+);
+impl_opaque!(
+    "Asset",
+    OpaqueAsset
+);
 
 // Injectable context data
 tid!(ChainState<'_>);

@@ -1,6 +1,3 @@
-use core::fmt;
-use std::any::TypeId;
-
 use anyhow::Context as AnyhowContext;
 use xelis_vm::{
     traits::{JSONHelper, Serializable},
@@ -8,9 +5,9 @@ use xelis_vm::{
     FnInstance,
     FnParams,
     FnReturnType,
-    Opaque,
     OpaqueWrapper,
-    Value, ValueCell
+    Value,
+    ValueCell
 };
 
 use crate::{block::Block, contract::ChainState};
@@ -18,43 +15,9 @@ use crate::{block::Block, contract::ChainState};
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct OpaqueBlock;
 
-impl Serializable for OpaqueBlock {
-    fn get_size(&self) -> usize {
-        1
-    }
+impl JSONHelper for OpaqueBlock {}
 
-    fn is_serializable(&self) -> bool {
-        false
-    }
-}
-
-impl JSONHelper for OpaqueBlock {
-    fn get_type_name(&self) -> &'static str {
-        "Block"
-    }
-
-    fn serialize_json(&self) -> Result<serde_json::Value, anyhow::Error> {
-        Err(anyhow::anyhow!("Block serialization is not supported"))
-    }
-
-    fn is_json_supported(&self) -> bool {
-        false
-    }
-}
-
-impl Opaque for OpaqueBlock {
-    fn get_type(&self) -> TypeId {
-        TypeId::of::<OpaqueBlock>()
-    }
-
-    fn display(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Block")
-    }
-
-    fn clone_box(&self) -> Box<dyn Opaque> {
-        Box::new(self.clone())
-    }
-}
+impl Serializable for OpaqueBlock {}
 
 pub fn block(_: FnInstance, _: FnParams, _: &mut Context) -> FnReturnType {
     Ok(Some(Value::Opaque(OpaqueWrapper::new(OpaqueBlock)).into()))

@@ -1,6 +1,15 @@
-use std::any::TypeId;
 use xelis_builder::ConstFnParams;
-use xelis_vm::{traits::Serializable, Constant, Context, FnInstance, FnParams, FnReturnType, Opaque, OpaqueWrapper, Value, ValueCell};
+use xelis_vm::{
+    traits::Serializable,
+    Constant,
+    Context,
+    FnInstance,
+    FnParams,
+    FnReturnType,
+    OpaqueWrapper,
+    Value,
+    ValueCell
+};
 use crate::crypto::Address;
 
 use super::{Serializer, Writer, ADDRESS_OPAQUE_ID};
@@ -12,19 +21,13 @@ impl Serializable for Address {
         self.write(&mut writer);
         writer.total_write()
     }
-}
 
-impl Opaque for Address {
-    fn get_type(&self) -> TypeId {
-        TypeId::of::<Address>()
+    fn get_size(&self) -> usize {
+        1 + self.size()
     }
 
-    fn display(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "Address({})", self)
-    }
-
-    fn clone_box(&self) -> Box<dyn Opaque> {
-        Box::new(self.clone())
+    fn is_serializable(&self) -> bool {
+        true
     }
 }
 

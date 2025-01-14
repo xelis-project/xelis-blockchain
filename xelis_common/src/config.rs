@@ -26,6 +26,9 @@ pub const FEE_PER_MULTISIG_SIGNATURE: u64 = 500;
 // Note that if we depends on fees only, miners could do such attacks for free
 // by mining their own transactions and getting the fees back
 pub const BURN_PER_CONTRACT: u64 = COIN_VALUE;
+// 1 XEL per token created
+// This is to prevent spamming the network with tokens
+pub const COST_PER_TOKEN: u64 = COIN_VALUE;
 // 30% of the transaction fee is burned
 // This is to reduce the supply over time
 // and also to prevent spamming the network with low fee transactions

@@ -878,6 +878,7 @@ impl Transaction {
                 } else if !payload.deposits.is_empty() {
                     // It was not successful, we need to refund the deposits
                     for (asset, deposit) in payload.deposits.iter() {
+                        trace!("Refunding deposit {:?} for asset: {} to {}", deposit, asset, self.source.as_address(state.is_mainnet()));
                         match deposit {
                             ContractDeposit::Public(amount) => {
                                 let balance = state.get_receiver_balance(Cow::Borrowed(self.get_source()), Cow::Owned(asset.clone())).await

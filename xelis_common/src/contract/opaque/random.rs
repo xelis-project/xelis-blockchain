@@ -1,19 +1,16 @@
-use std::any::TypeId;
-
-use anyhow::{bail, Context as AnyhowContext};
+use anyhow::Context as AnyhowContext;
 use xelis_vm::{
     traits::{JSONHelper, Serializable},
     Context,
     FnInstance,
     FnParams,
     FnReturnType,
-    Opaque,
     OpaqueWrapper,
     Value,
     U256
 };
 
-use crate::contract::{ChainState, DeterministicRandom};
+use crate::contract::ChainState;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct OpaqueRandom;
@@ -24,29 +21,7 @@ impl Serializable for OpaqueRandom {
     }
 }
 
-impl Opaque for OpaqueRandom {
-    fn clone_box(&self) -> Box<dyn Opaque> {
-        Box::new(self.clone())
-    }
-
-    fn display(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "Random")
-    }
-
-    fn get_type(&self) -> TypeId {
-        TypeId::of::<DeterministicRandom>()
-    }
-}
-
 impl JSONHelper for OpaqueRandom {
-    fn get_type_name(&self) -> &'static str {
-        "Random"
-    }
-
-    fn serialize_json(&self) -> Result<serde_json::Value, anyhow::Error> {
-        bail!("not supported")
-    }
-
     fn is_json_supported(&self) -> bool {
         false
     }

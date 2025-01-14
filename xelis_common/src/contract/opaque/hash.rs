@@ -1,7 +1,16 @@
-use std::any::TypeId;
 use anyhow::Context as AnyhowContext;
 use xelis_builder::ConstFnParams;
-use xelis_vm::{traits::Serializable, Constant, Context, FnInstance, FnParams, FnReturnType, Opaque, OpaqueWrapper, Value, ValueCell};
+use xelis_vm::{
+    traits::Serializable,
+    Constant,
+    Context,
+    FnInstance,
+    FnParams,
+    FnReturnType,
+    OpaqueWrapper,
+    Value,
+    ValueCell
+};
 use crate::crypto::Hash;
 
 use super::{Serializer, Writer, HASH_OPAQUE_ID};
@@ -12,20 +21,6 @@ impl Serializable for Hash {
         writer.write_u8(HASH_OPAQUE_ID);
         self.write(&mut writer);
         writer.total_write()
-    }
-}
-
-impl Opaque for Hash {
-    fn get_type(&self) -> TypeId {
-        TypeId::of::<Hash>()
-    }
-
-    fn display(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "Hash({})", self)
-    }
-
-    fn clone_box(&self) -> Box<dyn Opaque> {
-        Box::new(self.clone())
     }
 }
 

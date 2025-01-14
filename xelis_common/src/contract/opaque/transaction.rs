@@ -1,45 +1,13 @@
-use std::{any::TypeId, fmt};
-
-use anyhow::{bail, Context as AnyhowContext};
-use xelis_vm::{traits::{JSONHelper, Serializable}, Context, FnInstance, FnParams, FnReturnType, Opaque, OpaqueWrapper, Value};
+use anyhow::Context as AnyhowContext;
+use xelis_vm::{traits::{JSONHelper, Serializable}, Context, FnInstance, FnParams, FnReturnType, OpaqueWrapper, Value};
 use crate::{contract::ChainState, transaction::Transaction};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct OpaqueTransaction;
 
-impl JSONHelper for OpaqueTransaction {
-    fn get_type_name(&self) -> &'static str {
-        "Transaction"
-    }
+impl JSONHelper for OpaqueTransaction {}
 
-    fn serialize_json(&self) -> Result<serde_json::Value, anyhow::Error> {
-        bail!("Transaction is not serializable")
-    }
-
-    fn is_json_supported(&self) -> bool {
-        false
-    }
-}
-
-impl Serializable for OpaqueTransaction {
-    fn is_serializable(&self) -> bool {
-        false
-    }
-}
-
-impl Opaque for OpaqueTransaction {
-    fn get_type(&self) -> TypeId {
-        TypeId::of::<OpaqueTransaction>()
-    }
-
-    fn clone_box(&self) -> Box<dyn Opaque> {
-        Box::new(self.clone())
-    }
-
-    fn display(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Transaction")
-    }
-}
+impl Serializable for OpaqueTransaction {}
 
 pub fn transaction(_: FnInstance, _: FnParams, _: &mut Context) -> FnReturnType {
     Ok(Some(Value::Opaque(OpaqueWrapper::new(OpaqueTransaction)).into()))
