@@ -17,6 +17,9 @@ pub trait AssetProvider {
     // Check if an asset exists
     async fn has_asset(&self, hash: &Hash) -> Result<bool, BlockchainError>;
 
+    // Check if asset is registered <= topoheight
+    async fn has_asset_at_topoheight(&self, hash: &Hash, topoheight: TopoHeight) -> Result<bool, BlockchainError>;
+
     // Get the asset topoheight at which it got registered
     async fn get_asset_topoheight(&self, hash: &Hash) -> Result<TopoHeight, BlockchainError>;
 
@@ -58,6 +61,16 @@ impl AssetProvider for SledStorage {
     async fn has_asset(&self, asset: &Hash) -> Result<bool, BlockchainError> {
         trace!("asset exist {}", asset);
         self.contains_data_cached(&self.assets, &self.assets_cache, asset).await
+    }
+
+    async fn has_asset_at_topoheight(&self, asset: &Hash, topoheight: TopoHeight) -> Result<bool, BlockchainError> {
+        trace!("asset exist at topoheight {}", asset);
+        if !self.has_asset(asset).await? {
+            return Ok(false);
+        }
+
+        let topo = self.get_asset_topoheight(asset).await?;
+        Ok(topo <= topoheight)
     }
 
     async fn get_asset(&self, hash: &Hash) -> Result<(TopoHeight, AssetData), BlockchainError> {
