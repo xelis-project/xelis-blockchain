@@ -28,13 +28,13 @@ pub const MAX_KEY_SIZE: usize = 256;
 
 pub trait ContractStorage {
     // load a value from the storage
-    fn load(&self, contract: &Hash, key: &Constant, topoheight: TopoHeight) -> Result<Option<(TopoHeight, Option<Constant>)>, anyhow::Error>;
+    fn load_data(&self, contract: &Hash, key: &Constant, topoheight: TopoHeight) -> Result<Option<(TopoHeight, Option<Constant>)>, anyhow::Error>;
 
     // load the latest topoheight from the storage
-    fn load_latest_topoheight(&self, contract: &Hash, key: &Constant, topoheight: TopoHeight) -> Result<Option<TopoHeight>, anyhow::Error>;
+    fn load_data_latest_topoheight(&self, contract: &Hash, key: &Constant, topoheight: TopoHeight) -> Result<Option<TopoHeight>, anyhow::Error>;
 
     // check if a key exists in the storage
-    fn has(&self, contract: &Hash, key: &Constant, topoheight: TopoHeight) -> Result<bool, anyhow::Error>;
+    fn has_data(&self, contract: &Hash, key: &Constant, topoheight: TopoHeight) -> Result<bool, anyhow::Error>;
 
     // Verify if an asset exists in the storage
     fn asset_exists(&self, asset: &Hash, topoheight: TopoHeight) -> Result<bool, anyhow::Error>;
@@ -58,7 +58,7 @@ pub fn storage_load<P: ContractProvider>(_: FnInstance, mut params: FnParams, co
 
     let value = match state.changes.storage.get(&key) {
         Some((_, value)) => value.clone(),
-        None => match storage.load(&state.contract, &key, state.topoheight)? {
+        None => match storage.load_data(&state.contract, &key, state.topoheight)? {
             Some((topoheight, constant)) => {
                 state.changes.storage.insert(key.clone(), (VersionedState::FetchedAt(topoheight), constant.clone()));
                 constant
@@ -80,7 +80,7 @@ pub fn storage_has<P: ContractProvider>(_: FnInstance, mut params: FnParams, con
 
     let contains = match state.changes.storage.get(&key) {
         Some((_, value)) => value.is_some(),
-        None => storage.has(state.contract, &key, state.topoheight)?
+        None => storage.has_data(state.contract, &key, state.topoheight)?
     };
 
     Ok(Some(Value::Boolean(contains).into()))
@@ -121,7 +121,7 @@ pub fn storage_store<P: ContractProvider>(_: FnInstance, mut params: FnParams, c
         },
         None => {
             // We need to retrieve the latest topoheight version
-            storage.load_latest_topoheight(&state.contract, &key, state.topoheight)?
+            storage.load_data_latest_topoheight(&state.contract, &key, state.topoheight)?
                 .map(|topoheight| VersionedState::Updated(topoheight))
                 .unwrap_or(VersionedState::New)
         }
@@ -151,7 +151,7 @@ pub fn storage_delete<P: ContractProvider>(_: FnInstance, mut params: FnParams, 
         },
         None => {
             // We need to retrieve the latest topoheight version
-            match storage.load_latest_topoheight(&state.contract, &key, state.topoheight)? {
+            match storage.load_data_latest_topoheight(&state.contract, &key, state.topoheight)? {
                 Some(topoheight) => VersionedState::Updated(topoheight),
                 None => return Ok(None),
             }
