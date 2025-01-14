@@ -24,6 +24,7 @@ use xelis_vm::{
 };
 use crate::{
     block::{Block, TopoHeight},
+    config::FEE_PER_ACCOUNT_CREATION,
     crypto::{Address, Hash, PublicKey},
     transaction::ContractDeposit,
     versioned_type::VersionedState
@@ -638,12 +639,13 @@ fn transfer<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &
     }
 
     {
-        let provider: &P = provider_from_context::<P>(context)?;
+        let (provider, chain_state) = from_context::<P>(context)?;
         // verify that the address is well registered, otherwise: pay extra fees
-        if !provider.account_exists(destination.get_public_key(), 0)? {
-            context.increase_gas_usage(1000)?;
+        if !provider.account_exists(destination.get_public_key(), chain_state.topoheight)? {
+            context.increase_gas_usage(FEE_PER_ACCOUNT_CREATION)?;
         }
     }
+
     let (provider, state) = from_context::<P>(context)?;
     if destination.is_mainnet() != state.mainnet {
         return Ok(Some(Value::Boolean(false).into()));

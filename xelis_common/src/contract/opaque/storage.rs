@@ -9,11 +9,10 @@ use xelis_vm::{
     Value, ValueCell
 };
 use crate::{
-    asset::AssetData,
     block::TopoHeight,
     config::{FEE_PER_BYTE_STORED_CONTRACT, FEE_PER_STORE_CONTRACT},
     contract::{from_context, ContractProvider},
-    crypto::{Hash, PublicKey},
+    crypto::Hash,
     versioned_type::VersionedState
 };
 use super::Serializer;
@@ -36,15 +35,6 @@ pub trait ContractStorage {
 
     // check if a key exists in the storage
     fn has_data(&self, contract: &Hash, key: &Constant, topoheight: TopoHeight) -> Result<bool, anyhow::Error>;
-
-    // Verify if an asset exists in the storage
-    fn asset_exists(&self, asset: &Hash, topoheight: TopoHeight) -> Result<bool, anyhow::Error>;
-
-    // Register the asset in the storage
-    fn register_asset(&mut self, asset: &Hash, topoheight: TopoHeight, data: AssetData) -> Result<(), anyhow::Error>;
-
-    // Verify if the address is well registered
-    fn account_exists(&self, key: &PublicKey, topoheight: TopoHeight) -> Result<bool, anyhow::Error>;
 }
 
 impl JSONHelper for OpaqueStorage {}
