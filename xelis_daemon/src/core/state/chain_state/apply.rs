@@ -458,7 +458,7 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
             }
 
             // Mark it as registered at this topoheight
-            if !self.inner.storage.is_account_registered_at_topoheight(&account, self.inner.topoheight).await? {
+            if !self.inner.storage.is_account_registered_for_topoheight(&account, self.inner.topoheight).await? {
                 self.inner.storage.set_account_registration_topoheight(&account, self.inner.topoheight).await?;
             }
         }

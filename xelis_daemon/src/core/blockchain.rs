@@ -2655,7 +2655,7 @@ pub async fn estimate_required_tx_fees<P: AccountProvider>(provider: &P, current
     if let TransactionType::Transfers(transfers) = tx.get_data() {
         output_count = transfers.len();
         for transfer in transfers {
-            if !provider.is_account_registered_at_topoheight(transfer.get_destination(), current_topoheight).await? {
+            if !provider.is_account_registered_for_topoheight(transfer.get_destination(), current_topoheight).await? {
                 processed_keys.insert(transfer.get_destination());
             }
         }

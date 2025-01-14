@@ -1,7 +1,7 @@
 use log::trace;
-use xelis_common::{block::TopoHeight, contract::{ContractProvider, ContractStorage}, crypto::Hash};
+use xelis_common::{asset::AssetData, block::TopoHeight, contract::{ContractProvider, ContractStorage}, crypto::{Hash, PublicKey}};
 use xelis_vm::Constant;
-use crate::core::storage::{AssetProvider, ContractBalanceProvider, ContractDataProvider, SledStorage};
+use crate::core::storage::{AccountProvider, AssetProvider, ContractBalanceProvider, ContractDataProvider, NetworkProvider, SledStorage};
 
 impl ContractStorage for SledStorage {
     fn load_data(&self, contract: &Hash, key: &Constant, topoheight: TopoHeight) -> Result<Option<(TopoHeight, Option<Constant>)>, anyhow::Error> {
@@ -28,12 +28,6 @@ impl ContractStorage for SledStorage {
         let res = futures::executor::block_on(self.get_contract_data_topoheight_at_maximum_topoheight_for(contract, &key, topoheight))?;
         Ok(res)
     }
-
-    fn asset_exists(&self, asset: &Hash, topoheight: TopoHeight) -> Result<bool, anyhow::Error> {
-        trace!("check if asset {} exists at topoheight {}", asset, topoheight);
-        let contains = futures::executor::block_on(self.has_asset_at_topoheight(asset, topoheight))?;
-        Ok(contains)
-    }
 }
 
 impl ContractProvider for SledStorage {
@@ -41,5 +35,24 @@ impl ContractProvider for SledStorage {
         trace!("get contract balance for contract {} asset {}", contract, asset);
         let res =futures::executor::block_on(self.get_contract_balance_at_maximum_topoheight(contract, asset, topoheight))?;
         Ok(res.map(|(topoheight, balance)| (topoheight, balance.take())))
+    }
+
+    fn asset_exists(&self, asset: &Hash, topoheight: TopoHeight) -> Result<bool, anyhow::Error> {
+        trace!("check if asset {} exists at topoheight {}", asset, topoheight);
+        let contains = futures::executor::block_on(self.has_asset_at_topoheight(asset, topoheight))?;
+        Ok(contains)
+    }
+
+    fn register_asset(&mut self, asset: &Hash, topoheight: TopoHeight, data: AssetData) -> Result<(), anyhow::Error> {
+        trace!("add asset {} at topoheight {}", asset, topoheight);
+        futures::executor::block_on(self.add_asset(asset, topoheight, data))?;
+        Ok(())
+    }
+
+    fn account_exists(&self, key: &PublicKey, topoheight: TopoHeight) -> Result<bool, anyhow::Error> {
+        trace!("check if account {} exists at topoheight {}", key.as_address(self.is_mainnet()), topoheight);
+
+        let contains = futures::executor::block_on(self.is_account_registered_for_topoheight(key, topoheight))?;
+        Ok(contains)
     }
 }

@@ -1342,7 +1342,7 @@ async fn is_account_registered<S: Storage>(context: &Context, body: Value) -> Re
     let storage = blockchain.get_storage().read().await;
     let key = params.address.get_public_key();
     let registered = if params.in_stable_height {
-        storage.is_account_registered_at_topoheight(key, blockchain.get_stable_topoheight()).await
+        storage.is_account_registered_for_topoheight(key, blockchain.get_stable_topoheight()).await
             .context("Error while checking if account is registered in stable height")?
     } else {
         storage.is_account_registered(key).await
