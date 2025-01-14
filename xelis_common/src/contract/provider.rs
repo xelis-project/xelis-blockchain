@@ -12,7 +12,11 @@ pub trait ContractProvider: ContractStorage + 'static {
     fn asset_exists(&self, asset: &Hash, topoheight: TopoHeight) -> Result<bool, anyhow::Error>;
 
     // Register the asset in the storage
+    // TODO: NOT HERE
     fn register_asset(&mut self, asset: &Hash, topoheight: TopoHeight, data: AssetData) -> Result<(), anyhow::Error>;
+
+    // Load the asset data from the storage
+    fn load_asset_data(&self, asset: &Hash, topoheight: TopoHeight) -> Result<Option<AssetData>, anyhow::Error>;
 
     // Verify if the address is well registered
     fn account_exists(&self, key: &PublicKey, topoheight: TopoHeight) -> Result<bool, anyhow::Error>;

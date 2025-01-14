@@ -5,6 +5,7 @@ mod random;
 mod block;
 mod storage;
 mod asset;
+mod asset_manager;
 
 use log::debug;
 use xelis_types::{
@@ -27,6 +28,7 @@ pub use block::*;
 pub use storage::*;
 pub use address::*;
 pub use asset::*;
+pub use asset_manager::*;
 
 pub const HASH_OPAQUE_ID: u8 = 0;
 pub const ADDRESS_OPAQUE_ID: u8 = 1;
@@ -62,6 +64,10 @@ impl_opaque!(
 impl_opaque!(
     "Asset",
     Asset
+);
+impl_opaque!(
+    "AssetManager",
+    AssetManager
 );
 
 // Injectable context data

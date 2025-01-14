@@ -128,6 +128,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static> {
     let block_type = Type::Opaque(env.register_opaque::<OpaqueBlock>("Block"));
     let storage_type = Type::Opaque(env.register_opaque::<OpaqueStorage>("Storage"));
     let asset_type = Type::Opaque(env.register_opaque::<Asset>("Asset"));
+    let asset_manager_type = Type::Opaque(env.register_opaque::<AssetManager>("AssetManager"));
 
     // Transaction
     {
@@ -512,6 +513,40 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static> {
             asset_mint::<P>,
             500,
             Some(Type::Bool)
+        );
+    }
+
+    // Asset Manager
+    {
+        env.register_native_function(
+            "asset_manager",
+            None,
+            vec![],
+            asset_manager,
+            5,
+            Some(asset_manager_type.clone())
+        );
+
+        env.register_native_function(
+            "get_by_id",
+            Some(asset_manager_type.clone()),
+            vec![("id", Type::U64)],
+            asset_manager_get_by_id::<P>,
+            500,
+            Some(Type::Optional(Box::new(asset_type.clone())))
+        );
+        env.register_native_function(
+            "create",
+            Some(asset_manager_type.clone()),
+            vec![
+                ("id", Type::U64),
+                ("name", Type::String),
+                ("decimals", Type::U8),
+                ("max_supply", Type::Optional(Box::new(Type::U64))),
+            ],
+            asset_manager_create::<P>,
+            1000,
+            Some(Type::Optional(Box::new(asset_type.clone())))
         );
     }
     env

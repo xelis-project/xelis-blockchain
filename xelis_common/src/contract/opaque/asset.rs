@@ -35,9 +35,6 @@ impl PartialEq for Asset {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct AssetManager;
-
 impl Serializable for Asset {}
 
 impl JSONHelper for Asset {}
