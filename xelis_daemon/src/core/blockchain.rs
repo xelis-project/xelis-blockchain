@@ -2067,7 +2067,8 @@ impl<S: Storage> Blockchain<S> {
                                 let event = NotifyEvent::InvokeContract {
                                     contract: payload.contract.clone(),
                                 };
-                                if should_track_events.contains(&event) {
+
+                                if should_track_events.contains(&event) && chain_state.get_storage().has_contract_outputs_for_tx(&tx_hash).await? {
                                     let is_mainnet = self.network.is_mainnet();
 
                                     let contract_outputs = chain_state.get_storage()
@@ -2111,7 +2112,7 @@ impl<S: Storage> Blockchain<S> {
                     chain_state.reward_miner(&DEV_PUBLIC_KEY, dev_fee_part).await?;
                     block_reward -= dev_fee_part;    
                 }
-                
+
                 // reward the miner
                 // Miner gets the block reward + total fees + gas fee
                 let gas_fee = chain_state.get_gas_fee();

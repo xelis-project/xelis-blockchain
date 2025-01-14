@@ -120,8 +120,8 @@ pub enum DiskContext {
     ContractDataAtTopoHeight,
     #[error("get contract data")]
     ContractData,
-    #[error("get contract output")]
-    ContractOutput,
+    #[error("get contract outputs")]
+    ContractOutputs,
     #[error("get contract balance")]
     ContractBalance,
 }
