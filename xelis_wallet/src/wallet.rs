@@ -448,7 +448,7 @@ impl Wallet {
     }
 
     // Get the stable balance flag
-    pub fn get_stable_balance(&self) -> bool {
+    pub fn should_force_stable_balance(&self) -> bool {
         self.force_stable_balance.load(Ordering::SeqCst)
     }
 
@@ -693,7 +693,7 @@ impl Wallet {
         // Lets prevent any front running due to mining
         #[cfg(feature = "network_handler")]
         {
-            let force_stable_balance = self.get_stable_balance();
+            let force_stable_balance = self.should_force_stable_balance();
             // Reference must be none in order to use the last stable balance
             // Otherwise that mean we're still waiting on a TX to be confirmed
             if reference.is_none() && (used_assets.contains(&XELIS_ASSET) || force_stable_balance) {
@@ -709,7 +709,7 @@ impl Wallet {
                         force_stable_balance
                     };
 
-                    if use_stable_balance {
+                    if use_stable_balance && !force_stable_balance {
                         // Verify that we don't have a pending TX with unconfirmed balance
                         for asset in used_assets.iter() {
                             if storage.has_unconfirmed_balance_for(asset).await? {
