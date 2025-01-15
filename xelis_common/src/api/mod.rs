@@ -233,15 +233,15 @@ pub enum RPCContractOutput<'a> {
 }
 
 impl<'a> RPCContractOutput<'a> {
-    pub fn from_output(output: ContractOutput, mainnet: bool) -> Self {
+    pub fn from_output(output: &'a ContractOutput, mainnet: bool) -> Self {
         match output {
-            ContractOutput::RefundGas { amount } => RPCContractOutput::RefundGas { amount },
+            ContractOutput::RefundGas { amount } => RPCContractOutput::RefundGas { amount: *amount },
             ContractOutput::Transfer { amount, asset, destination } => RPCContractOutput::Transfer {
-                amount,
-                asset: Cow::Owned(asset),
-                destination: Cow::Owned(destination.to_address(mainnet))
+                amount: *amount,
+                asset: Cow::Borrowed(asset),
+                destination: Cow::Owned(destination.as_address(mainnet))
             },
-            ContractOutput::ExitCode(code) => RPCContractOutput::ExitCode(code),
+            ContractOutput::ExitCode(code) => RPCContractOutput::ExitCode(code.clone()),
             ContractOutput::RefundDeposits => RPCContractOutput::RefundDeposits,
         }
     }
