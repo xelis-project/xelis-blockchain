@@ -55,4 +55,11 @@ impl ContractProvider for SledStorage {
         let contains = futures::executor::block_on(self.is_account_registered_for_topoheight(key, topoheight))?;
         Ok(contains)
     }
+
+    // Load the asset data from the storage
+    fn load_asset_data(&self, asset: &Hash, topoheight: TopoHeight) -> Result<Option<AssetData>, anyhow::Error> {
+        trace!("load asset data for asset {} at topoheight {}", asset, topoheight);
+        let res = futures::executor::block_on(self.get_asset_for_topoheight(asset, topoheight))?;
+        Ok(res)
+    }
 }
