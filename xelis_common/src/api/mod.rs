@@ -228,6 +228,14 @@ pub enum RPCContractOutput<'a> {
         asset: Cow<'a, Hash>,
         destination: Cow<'a, Address>
     },
+    Mint {
+        asset: Cow<'a, Hash>,
+        amount: u64
+    },
+    Burn {
+        asset: Cow<'a, Hash>,
+        amount: u64
+    },
     ExitCode(Option<u64>),
     RefundDeposits
 }
@@ -240,6 +248,14 @@ impl<'a> RPCContractOutput<'a> {
                 amount: *amount,
                 asset: Cow::Borrowed(asset),
                 destination: Cow::Owned(destination.as_address(mainnet))
+            },
+            ContractOutput::Mint { asset, amount } => RPCContractOutput::Mint {
+                asset: Cow::Borrowed(asset),
+                amount: *amount
+            },
+            ContractOutput::Burn { asset, amount } => RPCContractOutput::Burn {
+                asset: Cow::Borrowed(asset),
+                amount: *amount
             },
             ContractOutput::ExitCode(code) => RPCContractOutput::ExitCode(code.clone()),
             ContractOutput::RefundDeposits => RPCContractOutput::RefundDeposits,
@@ -255,6 +271,14 @@ impl<'a> From<RPCContractOutput<'a>> for ContractOutput {
                 amount,
                 asset: asset.into_owned(),
                 destination: destination.into_owned().to_public_key()
+            },
+            RPCContractOutput::Mint { asset, amount } => ContractOutput::Mint {
+                asset: asset.into_owned(),
+                amount
+            },
+            RPCContractOutput::Burn { asset, amount } => ContractOutput::Burn {
+                asset: asset.into_owned(),
+                amount
             },
             RPCContractOutput::ExitCode(code) => ContractOutput::ExitCode(code),
             RPCContractOutput::RefundDeposits => ContractOutput::RefundDeposits,
