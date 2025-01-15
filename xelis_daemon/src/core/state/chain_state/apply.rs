@@ -296,6 +296,11 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
         self.inner.storage.as_mut()
     }
 
+    // Get the contract outputs for TX
+    pub fn get_contract_outputs_for_tx(&self, tx_hash: &Hash) -> Option<&Vec<ContractOutput>> {
+        self.contracts_outputs.get(tx_hash)
+    }
+
     // This function is called after the verification of all needed transactions
     // This will consume ChainState and apply all changes to the storage
     // In case of incoming and outgoing transactions in same state, the final balance will be computed

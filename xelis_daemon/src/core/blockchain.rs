@@ -2068,22 +2068,22 @@ impl<S: Storage> Blockchain<S> {
                                     contract: payload.contract.clone(),
                                 };
 
-                                if should_track_events.contains(&event) && chain_state.get_storage().has_contract_outputs_for_tx(&tx_hash).await? {
+                                if should_track_events.contains(&event) {
                                     let is_mainnet = self.network.is_mainnet();
 
-                                    let contract_outputs = chain_state.get_storage()
-                                        .get_contract_outputs_for_tx(&tx_hash).await?
-                                        .into_iter()
+                                    if let Some(contract_outputs) = chain_state.get_contract_outputs_for_tx(&tx_hash) {
+                                        let contract_outputs = contract_outputs.into_iter()
                                         .map(|output| RPCContractOutput::from_output(output, is_mainnet))
                                         .collect::<Vec<_>>();
 
-                                    let value = json!(InvokeContractEvent {
-                                        tx_hash: Cow::Borrowed(&tx_hash),
-                                        block_hash: Cow::Borrowed(&hash),
-                                        topoheight: highest_topo,
-                                        contract_outputs,
-                                    });
-                                    events.entry(event).or_insert_with(Vec::new).push(value);
+                                        let value = json!(InvokeContractEvent {
+                                            tx_hash: Cow::Borrowed(&tx_hash),
+                                            block_hash: Cow::Borrowed(&hash),
+                                            topoheight: highest_topo,
+                                            contract_outputs,
+                                        });
+                                        events.entry(event).or_insert_with(Vec::new).push(value);
+                                    }
                                 }
                             },
                             TransactionType::DeployContract(_) => {

@@ -1580,13 +1580,15 @@ async fn get_contract_outputs<S: Storage>(context: &Context, body: Value) -> Res
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let is_mainnet = blockchain.get_network().is_mainnet();
     let storage = blockchain.get_storage().read().await;
-    let outputs = storage.get_contract_outputs_for_tx(&params.transaction).await
-        .context("Error while retrieving contract outputs")?
-        .into_iter()
-        .map(|output| RPCContractOutput::from_output(output, is_mainnet))
+    let outputs =  storage.get_contract_outputs_for_tx(&params.transaction).await
+        .context("Error while retrieving contract outputs")?;
+
+    let rpc_outputs = outputs
+        .iter()
+        .map(|output| RPCContractOutput::from_output(&output, is_mainnet))
         .collect::<Vec<_>>();
 
-    Ok(json!(outputs))
+    Ok(json!(rpc_outputs))
 }
 
 async fn get_contract_module<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
