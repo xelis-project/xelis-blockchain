@@ -208,6 +208,7 @@ impl<'a, S: Storage> BlockchainApplyState<'a, S, BlockchainError> for Applicable
             tx_hash,
             cache,
             changes: ContractCache::new(),
+            outputs: Vec::new(),
         };
 
         let contract_environment = ContractEnvironment {
