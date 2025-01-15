@@ -17,6 +17,16 @@ pub enum ContractOutput {
         /// The destination of the transfer
         destination: PublicKey
     },
+    // When a contract mint an asset
+    Mint {
+        asset: Hash,
+        amount: u64
+    },
+    // When a contract burn an asset
+    Burn {
+        asset: Hash,
+        amount: u64
+    },
     // Exit code returned by the Contract
     // If None, an error occurred
     // If Some(0), the contract executed successfully
@@ -39,12 +49,22 @@ impl Serializer for ContractOutput {
                 asset.write(writer);
                 destination.write(writer);
             },
-            ContractOutput::ExitCode(code) => {
+            ContractOutput::Mint { asset, amount } => {
                 writer.write_u8(2);
+                asset.write(writer);
+                amount.write(writer);
+            },
+            ContractOutput::Burn { asset, amount } => {
+                writer.write_u8(3);
+                asset.write(writer);
+                amount.write(writer);
+            },
+            ContractOutput::ExitCode(code) => {
+                writer.write_u8(4);
                 code.write(writer);
             },
             ContractOutput::RefundDeposits => {
-                writer.write_u8(3);
+                writer.write_u8(5);
             }
         }
     }
@@ -61,8 +81,18 @@ impl Serializer for ContractOutput {
                 let destination = PublicKey::read(reader)?;
                 Ok(ContractOutput::Transfer { amount, asset, destination })
             },
-            2 => Ok(ContractOutput::ExitCode(Option::read(reader)?)),
-            3 => Ok(ContractOutput::RefundDeposits),
+            2 => {
+                let asset = Hash::read(reader)?;
+                let amount = u64::read(reader)?;
+                Ok(ContractOutput::Mint { asset, amount })
+            },
+            3 => {
+                let asset = Hash::read(reader)?;
+                let amount = u64::read(reader)?;
+                Ok(ContractOutput::Burn { asset, amount })
+            },
+            4 => Ok(ContractOutput::ExitCode(Option::read(reader)?)),
+            5 => Ok(ContractOutput::RefundDeposits),
             _ => Err(ReaderError::InvalidValue)
         }
     }
@@ -71,6 +101,8 @@ impl Serializer for ContractOutput {
         match self {
             ContractOutput::RefundGas { amount } => 1 + amount.size(),
             ContractOutput::Transfer { amount, asset, destination } => 1 + amount.size() + asset.size() + destination.size(),
+            ContractOutput::Mint { asset, amount } => 1 + asset.size() + amount.size(),
+            ContractOutput::Burn { asset, amount } => 1 + asset.size() + amount.size(),
             ContractOutput::ExitCode(code) => 1 + code.size(),
             ContractOutput::RefundDeposits => 1
         }

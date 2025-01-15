@@ -861,35 +861,32 @@ impl Transaction {
                     (gas_usage, exit_code)
                 };
 
-                let mut outputs = Vec::new();
+                let mut outputs = chain_state.outputs;
+                // If the contract execution was successful, we need to merge the cache
                 if exit_code == Some(0) {
                     let cache = chain_state.changes;
-                    outputs = cache.transfers.iter().map(|transfer| {
-                        // Track the output
-                        ContractOutput::Transfer {
-                            destination: transfer.destination.clone(),
-                            asset: transfer.asset.clone(),
-                            amount: transfer.amount,
-                        }
-                    }).collect::<Vec<_>>();
-
                     state.merge_contract_cache(&payload.contract, cache).await
                         .map_err(VerificationError::State)?;
-                } else if !payload.deposits.is_empty() {
-                    // It was not successful, we need to refund the deposits
-                    for (asset, deposit) in payload.deposits.iter() {
-                        trace!("Refunding deposit {:?} for asset: {} to {}", deposit, asset, self.source.as_address(state.is_mainnet()));
-                        match deposit {
-                            ContractDeposit::Public(amount) => {
-                                let balance = state.get_receiver_balance(Cow::Borrowed(self.get_source()), Cow::Owned(asset.clone())).await
-                                    .map_err(VerificationError::State)?;
+                } else {
+                    // Otherwise, something was wrong, we delete the outputs made by the contract
+                    outputs.clear();
 
-                                *balance += Scalar::from(*amount);
-                            },
+                    if !payload.deposits.is_empty() {
+                        // It was not successful, we need to refund the deposits
+                        for (asset, deposit) in payload.deposits.iter() {
+                            trace!("Refunding deposit {:?} for asset: {} to {}", deposit, asset, self.source.as_address(state.is_mainnet()));
+                            match deposit {
+                                ContractDeposit::Public(amount) => {
+                                    let balance = state.get_receiver_balance(Cow::Borrowed(self.get_source()), Cow::Owned(asset.clone())).await
+                                        .map_err(VerificationError::State)?;
+
+                                    *balance += Scalar::from(*amount);
+                                },
+                            }
                         }
-                    }
 
-                    outputs.push(ContractOutput::RefundDeposits);
+                        outputs.push(ContractOutput::RefundDeposits);
+                    }
                 }
 
                 // Push the exit code to the outputs

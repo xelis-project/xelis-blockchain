@@ -75,6 +75,9 @@ pub struct ChainState<'a> {
     // The contract changes that occured during the execution
     // If the contract exit correctly, these changes are merged into above cache
     pub changes: ContractCache,
+    // The contract outputs
+    // This is similar to an event log
+    pub outputs: Vec<ContractOutput>,
 }
 
 // Contract cache containing all the changes/cache made by the contract
@@ -701,11 +704,15 @@ fn transfer<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &
 
     state.changes.balances.insert(asset.clone(), Some((balance_state, balance)));
 
+    let key = destination.to_public_key();
     state.changes.transfers.push(TransferOutput {
-        destination: destination.to_public_key(),
+        destination: key.clone(),
         amount,
-        asset,
+        asset: asset.clone(),
     });
+
+    // Add the output
+    state.outputs.push(ContractOutput::Transfer { destination: key, amount, asset });
 
     Ok(Some(Value::Boolean(true).into()))
 }
@@ -734,7 +741,10 @@ fn burn<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &mut 
     balance -= amount;
     balance_state.mark_updated();
 
-    state.changes.balances.insert(asset, Some((balance_state, balance)));
+    state.changes.balances.insert(asset.clone(), Some((balance_state, balance)));
+
+    // Add the output
+    state.outputs.push(ContractOutput::Burn { asset, amount });
 
     Ok(Some(Value::Boolean(true).into()))
 }

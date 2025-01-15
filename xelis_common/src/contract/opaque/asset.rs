@@ -11,7 +11,7 @@ use xelis_vm::{
 };
 use crate::{
     asset::AssetData,
-    contract::{from_context, get_balance_from_cache, ContractProvider},
+    contract::{from_context, get_balance_from_cache, ContractOutput, ContractProvider},
     crypto::Hash,
     versioned_type::VersionedState
 };
@@ -74,6 +74,12 @@ pub fn asset_mint<P: ContractProvider>(zelf: FnInstance, params: FnParams, conte
         .context("Overflow while minting balance")?;
 
     chain_state.changes.balances.insert(asset.hash.clone(), Some((state, new_balance)));
+
+    // Add to outputs
+    chain_state.outputs.push(ContractOutput::Mint {
+        asset: asset.hash.clone(),
+        amount,
+    });
 
     Ok(None)
 }
