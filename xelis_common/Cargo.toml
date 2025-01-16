@@ -50,7 +50,7 @@ chacha20 = "0.9.1"
 tokio-tungstenite-wasm = { version = "0.3.1", features = ["rustls-tls-webpki-roots"], optional = true }
 better_any = "0.2.0"
 log-panics = { version = "2", features = ["with-backtrace"]}
-zip = { version = "2.2.2", features = ["zstd"], default-features = false }
+zip = { version = "2.2.2", features = ["zstd"], default-features = false, optional = true }
 
 [target.'cfg(windows)'.dependencies]
 win32console = "0.1.5"
@@ -71,10 +71,9 @@ tokio = { version = "1.36", features = ["full"] }
 tokio = ["dep:tokio", "dep:tokio_with_wasm"]
 json_rpc = ["tokio", "dep:reqwest", "dep:futures-util", "dep:tokio-tungstenite-wasm"]
 clap = ["dep:clap"]
-prompt = ["clap", "tokio", "dep:crossterm", "dep:chrono"]
+prompt = ["clap", "tokio", "dep:crossterm", "dep:chrono", "dep:zip"]
 rpc_server = ["dep:actix-rt", "dep:actix-web", "dep:actix-ws", "dep:futures-util", "tokio", "dep:reqwest"]
 tracing = ["dep:console-subscriber", "tokio", "tokio/tracing"]
 tokio-multi-thread = ["tokio", "tokio/rt-multi-thread", "tokio_with_wasm/rt-multi-thread"]
-
 [lib]
 crate-type = ["cdylib", "rlib"]
