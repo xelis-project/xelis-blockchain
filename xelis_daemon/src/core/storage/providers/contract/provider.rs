@@ -43,12 +43,6 @@ impl ContractProvider for SledStorage {
         Ok(contains)
     }
 
-    fn register_asset(&mut self, asset: &Hash, topoheight: TopoHeight, data: AssetData) -> Result<(), anyhow::Error> {
-        trace!("add asset {} at topoheight {}", asset, topoheight);
-        futures::executor::block_on(self.add_asset(asset, topoheight, data))?;
-        Ok(())
-    }
-
     fn account_exists(&self, key: &PublicKey, topoheight: TopoHeight) -> Result<bool, anyhow::Error> {
         trace!("check if account {} exists at topoheight {}", key.as_address(self.is_mainnet()), topoheight);
 
@@ -57,9 +51,9 @@ impl ContractProvider for SledStorage {
     }
 
     // Load the asset data from the storage
-    fn load_asset_data(&self, asset: &Hash, topoheight: TopoHeight) -> Result<Option<AssetData>, anyhow::Error> {
+    fn load_asset_data(&self, asset: &Hash, topoheight: TopoHeight) -> Result<Option<(TopoHeight, AssetData)>, anyhow::Error> {
         trace!("load asset data for asset {} at topoheight {}", asset, topoheight);
-        let res = futures::executor::block_on(self.get_asset_for_topoheight(asset, topoheight))?;
+        let res = futures::executor::block_on(self.get_asset_with_topoheight(asset, topoheight))?;
         Ok(res)
     }
 }
