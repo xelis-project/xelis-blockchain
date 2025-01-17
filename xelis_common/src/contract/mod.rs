@@ -4,7 +4,10 @@ mod random;
 mod output;
 mod provider;
 
-use std::{any::TypeId, collections::{hash_map::Entry, HashMap}};
+use std::{
+    any::TypeId,
+    collections::{hash_map::Entry, HashMap}
+};
 use anyhow::Context as AnyhowContext;
 use better_any::Tid;
 use indexmap::IndexMap;
@@ -23,6 +26,7 @@ use xelis_vm::{
     ValueCell
 };
 use crate::{
+    asset::AssetData,
     block::{Block, TopoHeight},
     config::FEE_PER_ACCOUNT_CREATION,
     crypto::{Address, Hash, PublicKey},
@@ -92,6 +96,10 @@ pub struct ContractCache {
     // Those already present are loaded due to the deposits to be added
     // If its none, it means we don't have any balance yet
     pub balances: HashMap<Hash, Option<(VersionedState, u64)>>,
+    // Assets cache
+    // This either contains loaded assets, or registered
+    // If its none, it means we didn't found the asset in storage
+    pub assets: HashMap<Hash, Option<(VersionedState, AssetData)>>
 }
 
 impl ContractCache {
@@ -100,6 +108,7 @@ impl ContractCache {
             transfers: Vec::new(),
             storage: HashMap::new(),
             balances: HashMap::new(),
+            assets: HashMap::new()
         }
     }
 
@@ -108,6 +117,9 @@ impl ContractCache {
         self.transfers.extend(other.transfers);
         self.storage.extend(other.storage);
         self.balances.extend(other.balances);
+        for (key, value) in other.assets {
+            self.assets.insert(key, value);
+        }
     }
 }
 
@@ -599,6 +611,35 @@ pub fn get_balance_from_changes<'a, P: ContractProvider>(provider: &P, contract:
         Entry::Vacant(entry) => {
             let balance = provider.get_contract_balance_for_asset(contract, &asset, topoheight)?;
             entry.insert(balance.map(|(topoheight, balance)| (VersionedState::FetchedAt(topoheight), balance)))
+        }
+    })
+}
+
+pub fn get_asset_from_cache<'a, P: ContractProvider>(provider: &P, state: &'a mut ChainState, asset: &'a Hash) -> Result<Option<&'a (VersionedState, AssetData)>, anyhow::Error> {
+    match state.cache {
+        Some(cache) => match cache.assets.get(asset) {
+            Some(v) => Ok(v.as_ref()),
+            // Verify in changes
+            None => get_asset_from_changes(provider, &mut state.changes, state.topoheight, asset),
+        },
+        // No cache yet, lets check from changes
+        None => get_asset_from_changes(provider, &mut state.changes, state.topoheight, asset),
+    }
+}
+
+pub fn get_asset_from_changes<'a, P: ContractProvider>(provider: &P, cache: &'a mut ContractCache, topoheight: TopoHeight, asset: &Hash) -> Result<Option<&'a (VersionedState, AssetData)>, anyhow::Error> {
+    Ok(match cache.assets.entry(asset.clone()) {
+        Entry::Occupied(entry) => entry.into_mut().as_ref(),
+        Entry::Vacant(entry) => {
+            let res = provider.asset_exists(asset, topoheight)?;
+            if res {
+                // Load the asset in our cache in case
+                let asset = provider.load_asset_data(asset, topoheight)?;
+                entry.insert(asset.map(|(topoheight, data)| (VersionedState::FetchedAt(topoheight), data)))
+                    .as_ref()
+            } else {
+                None
+            }
         }
     })
 }

@@ -434,6 +434,14 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
                     }
                 }
             }
+
+            for (asset, data) in cache.assets {
+                if let Some((state, data)) = data {
+                    if state.should_be_stored() {
+                        self.inner.storage.add_asset(&asset, self.inner.topoheight, data).await?;
+                    }
+                }
+            }
         }
 
         // Also store the contracts updated

@@ -11,7 +11,7 @@ use xelis_vm::{
 };
 use crate::{
     asset::AssetData,
-    contract::{from_context, ContractProvider},
+    contract::{from_context, get_asset_from_cache, ContractProvider},
     crypto::{Hash, HASH_SIZE}, versioned_type::VersionedState
 };
 
@@ -50,15 +50,16 @@ pub fn asset_manager_create<P: ContractProvider>(_: FnInstance, mut params: FnPa
     buffer[HASH_SIZE..].copy_from_slice(&id.to_be_bytes());
 
     let asset_hash = Hash::new(hash(&buffer).into());
-    if provider.asset_exists(&asset_hash, chain_state.topoheight)? {
+    if get_asset_from_cache(provider, chain_state, &asset_hash)?.is_some() {
         return Ok(Some(ValueCell::Optional(None)));
     }
 
     let data = AssetData::new(decimals, name, max_supply);
-    provider.register_asset(&asset_hash, chain_state.topoheight, data.clone())?;
+    chain_state.changes.assets.insert(asset_hash.clone(), Some((VersionedState::New, data.clone())));
 
     // If we have a max supply, we need to mint it to the contract
     if let Some(max_supply) = max_supply {
+        // We don't bother to check if it already exists, because it shouldn't exist before we create it.
         chain_state.changes.balances.insert(asset_hash.clone(), Some((VersionedState::New, max_supply)));
     }
 
@@ -79,17 +80,15 @@ pub fn asset_manager_get_by_id<P: ContractProvider>(_: FnInstance, params: FnPar
     buffer[HASH_SIZE..].copy_from_slice(&id.to_be_bytes());
 
     let asset_hash = Hash::new(hash(&buffer).into());
-    let res = match provider.load_asset_data(&asset_hash, chain_state.topoheight)? {
-        Some(data) => {
+    let res = get_asset_from_cache(provider, chain_state, &asset_hash)?
+        .cloned()
+        .map(|(_, data)| {
             let asset = Asset {
                 hash: asset_hash,
                 data,
             };
-
-            Some(Value::Opaque(asset.into()).into())
-        }
-        None => None
-    };
+            Value::Opaque(asset.into()).into()
+        });
 
     Ok(Some(ValueCell::Optional(res)))
 }
