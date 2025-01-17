@@ -1,6 +1,5 @@
 use async_trait::async_trait;
 use xelis_common::{block::TopoHeight, crypto::{Hash, HASH_SIZE}, serializer::Serializer, versioned_type::Versioned};
-
 use crate::core::{error::{BlockchainError, DiskContext}, storage::SledStorage};
 
 pub type VersionedContractBalance = Versioned<u64>;

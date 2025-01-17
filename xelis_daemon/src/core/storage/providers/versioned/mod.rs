@@ -37,7 +37,8 @@ pub trait VersionedProvider:
     + VersionedRegistrationsProvider
     + VersionedContractDataProvider
     + VersionedContractBalanceProvider
-    + VersionedAssetProvider {
+    + VersionedAssetProvider
+    + VersionedSupplyProvider {
 
     // Delete versioned data at topoheight
     async fn delete_versioned_data_at_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError> {
@@ -47,6 +48,7 @@ pub trait VersionedProvider:
         self.delete_versioned_registrations_at_topoheight(topoheight).await?;
         self.delete_versioned_contracts_at_topoheight(topoheight).await?;
         self.delete_versioned_contract_data_at_topoheight(topoheight).await?;
+        self.delete_versioned_assets_supply_at_topoheight(topoheight).await?;
 
         if topoheight > 0 {
             self.delete_versioned_assets_at_topoheight(topoheight).await?;
@@ -64,6 +66,7 @@ pub trait VersionedProvider:
         self.delete_versioned_multisigs_below_topoheight(topoheight, keep_last).await?;
         self.delete_versioned_contracts_below_topoheight(topoheight, keep_last).await?;
         self.delete_versioned_contract_data_below_topoheight(topoheight, keep_last).await?;
+        self.delete_versioned_assets_supply_below_topoheight(topoheight, keep_last).await?;
 
         Ok(())
     }
@@ -78,6 +81,8 @@ pub trait VersionedProvider:
         self.delete_versioned_contracts_above_topoheight(topoheight).await?;
         self.delete_versioned_contract_data_above_topoheight(topoheight).await?;
         self.delete_versioned_assets_above_topoheight(topoheight).await?;
+        self.delete_versioned_assets_supply_above_topoheight(topoheight).await?;
+
         Ok(())
     }
 }

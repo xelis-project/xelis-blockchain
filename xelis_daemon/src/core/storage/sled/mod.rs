@@ -85,7 +85,16 @@ pub struct SledStorage {
     // block reward for each block topoheight
     pub(super) rewards: Tree,
     // supply for each block topoheight
+    // This is only used by XELIS due to the minting at EVERY block
+    // topoheight->supply
     pub(super) supply: Tree,
+    // Supply tracked for each asset
+    // This tree store the latest topoheight pointer
+    // asset->topoheight
+    pub(super) assets_supply: Tree,
+    // Versioned assets supply
+    // Key is topoheight+asset->Versioned supply
+    pub(super) versioned_assets_supply: Tree,
     // burned supply for each block topoheight
     pub(super) burned_supply: Tree,
     // difficulty for each block hash
@@ -267,6 +276,8 @@ impl SledStorage {
             contracts_balances: sled.open_tree("contracts_balances")?,
             versioned_contracts_balances: sled.open_tree("versioned_contracts_balances")?,
             contracts_outputs: sled.open_tree("contracts_outputs")?,
+            assets_supply: sled.open_tree("assets_supply")?,
+            versioned_assets_supply: sled.open_tree("versioned_assets_supply")?,
             db: sled,
             transactions_cache: init_cache!(cache_size),
             blocks_cache: init_cache!(cache_size),
