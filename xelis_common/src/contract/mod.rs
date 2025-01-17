@@ -506,6 +506,14 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static> {
             Some(Type::Optional(Box::new(Type::U64)))
         );
         env.register_native_function(
+            "get_supply",
+            Some(asset_type.clone()),
+            vec![],
+            asset_get_supply::<P>,
+            15,
+            Some(Type::U64)
+        );
+        env.register_native_function(
             "get_name",
             Some(asset_type.clone()),
             vec![],

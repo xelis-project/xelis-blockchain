@@ -66,6 +66,7 @@ pub fn asset_manager_create<P: ContractProvider>(_: FnInstance, mut params: FnPa
     let asset = Asset {
         hash: asset_hash,
         data,
+        supply: max_supply.map(|v| (VersionedState::New, v))
     };
 
     Ok(Some(ValueCell::Optional(Some(Value::Opaque(asset.into()).into()))))
@@ -86,6 +87,7 @@ pub fn asset_manager_get_by_id<P: ContractProvider>(_: FnInstance, params: FnPar
             let asset = Asset {
                 hash: asset_hash,
                 data,
+                supply: None
             };
             Value::Opaque(asset.into()).into()
         });
