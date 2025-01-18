@@ -19,6 +19,9 @@ pub trait SupplyProvider {
     // Get a versioned supply at a specific topoheight
     async fn get_asset_supply_at_topoheight(&self, asset: &Hash, topoheight: TopoHeight) -> Result<VersionedSupply, BlockchainError>;
 
+    // Get the supply at the maximum topoheight
+    async fn get_asset_supply_at_maximum_topoheight(&self, asset: &Hash, topoheight: TopoHeight) -> Result<Option<(TopoHeight, VersionedSupply)>, BlockchainError>;
+
     // Set the latest supply pointer for this asset and store the versioned data
     async fn set_last_supply_for_asset(&mut self, asset: &Hash, topoheight: TopoHeight, supply: &VersionedSupply) -> Result<(), BlockchainError>;
 
@@ -39,6 +42,29 @@ impl SupplyProvider for SledStorage {
     async fn get_last_topoheight_for_asset_supply(&self, asset: &Hash) -> Result<TopoHeight, BlockchainError> {
         trace!("get last topoheight for asset {} supply", asset);
         self.load_from_disk(&self.assets_supply, asset.as_bytes(), DiskContext::AssetSupplyTopoHeight)
+    }
+
+    async fn get_asset_supply_at_maximum_topoheight(&self, asset: &Hash, topoheight: TopoHeight) -> Result<Option<(TopoHeight, VersionedSupply)>, BlockchainError> {
+        trace!("get asset {} supply at maximum topoheight {}", asset, topoheight);
+
+        let mut topo = if self.has_asset_supply_at_exact_topoheight(asset, topoheight).await? {
+            Some(topoheight)
+        } else if self.has_supply_for_asset(asset).await? {
+            Some(self.get_last_topoheight_for_asset_supply(asset).await?)
+        } else {
+            None
+        };
+
+        while let Some(t) = topo {
+            if t < topoheight {
+                let supply = self.get_asset_supply_at_topoheight(asset, t).await?;
+                return Ok(Some((t, supply)));
+            }
+
+            topo = self.load_from_disk(&self.versioned_assets_supply, &Self::get_versioned_key(asset, topoheight), DiskContext::AssetSupplyTopoHeight)?;
+        }
+
+        Ok(None)
     }
 
     async fn has_asset_supply_at_exact_topoheight(&self, asset: &Hash, topoheight: TopoHeight) -> Result<bool, BlockchainError> {
