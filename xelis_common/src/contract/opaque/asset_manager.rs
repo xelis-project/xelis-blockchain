@@ -10,9 +10,7 @@ use xelis_vm::{
     ValueCell
 };
 use crate::{
-    asset::AssetData,
-    contract::{from_context, get_asset_from_cache, ContractProvider},
-    crypto::{Hash, HASH_SIZE}, versioned_type::VersionedState
+    asset::AssetData, config::COST_PER_TOKEN, contract::{from_context, get_asset_from_cache, AssetChanges, ContractProvider}, crypto::{Hash, HASH_SIZE}, versioned_type::VersionedState
 };
 
 use super::Asset;
@@ -50,12 +48,17 @@ pub fn asset_manager_create<P: ContractProvider>(_: FnInstance, mut params: FnPa
     buffer[HASH_SIZE..].copy_from_slice(&id.to_be_bytes());
 
     let asset_hash = Hash::new(hash(&buffer).into());
-    if get_asset_from_cache(provider, chain_state, &asset_hash)?.is_some() {
+    // We must be sure that we don't have this asset already
+    if get_asset_from_cache(provider, chain_state, asset_hash.clone())?.data.is_some() {
         return Ok(Some(ValueCell::Optional(None)));
     }
 
+
     let data = AssetData::new(decimals, name, max_supply);
-    chain_state.changes.assets.insert(asset_hash.clone(), Some((VersionedState::New, data.clone())));
+    chain_state.changes.assets.insert(asset_hash.clone(), AssetChanges {
+        data: Some((VersionedState::New, data)),
+        supply: None
+    });
 
     // If we have a max supply, we need to mint it to the contract
     if let Some(max_supply) = max_supply {
@@ -63,12 +66,10 @@ pub fn asset_manager_create<P: ContractProvider>(_: FnInstance, mut params: FnPa
         chain_state.changes.balances.insert(asset_hash.clone(), Some((VersionedState::New, max_supply)));
     }
 
-    let asset = Asset {
-        hash: asset_hash,
-        data,
-        supply: max_supply.map(|v| (VersionedState::New, v))
-    };
+    // Pay the cost for a new token
+    context.increase_gas_usage(COST_PER_TOKEN)?;
 
+    let asset = Asset(asset_hash);
     Ok(Some(ValueCell::Optional(Some(Value::Opaque(asset.into()).into()))))
 }
 
@@ -81,14 +82,11 @@ pub fn asset_manager_get_by_id<P: ContractProvider>(_: FnInstance, params: FnPar
     buffer[HASH_SIZE..].copy_from_slice(&id.to_be_bytes());
 
     let asset_hash = Hash::new(hash(&buffer).into());
-    let res = get_asset_from_cache(provider, chain_state, &asset_hash)?
-        .cloned()
-        .map(|(_, data)| {
-            let asset = Asset {
-                hash: asset_hash,
-                data,
-                supply: None
-            };
+    let res = get_asset_from_cache(provider, chain_state, asset_hash.clone())?
+        .data
+        .as_ref()
+        .map(|_| {
+            let asset = Asset(asset_hash);
             Value::Opaque(asset.into()).into()
         });
 

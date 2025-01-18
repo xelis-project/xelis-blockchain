@@ -16,7 +16,7 @@ use crate::{
 
 // Represent an Asset Manager type in the opaque context
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
-pub struct Asset(Hash);
+pub struct Asset(pub Hash);
 
 impl Serializable for Asset {}
 
