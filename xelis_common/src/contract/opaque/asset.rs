@@ -1,4 +1,3 @@
-use std::hash::Hash as StdHash;
 use anyhow::Context as AnyhowContext;
 use xelis_vm::{
     traits::{JSONHelper, Serializable},
@@ -10,122 +9,130 @@ use xelis_vm::{
     ValueCell
 };
 use crate::{
-    asset::AssetData,
-    contract::{from_context, get_balance_from_cache, ContractOutput, ContractProvider},
+    contract::{from_context, get_asset_from_cache, get_balance_from_cache, ContractOutput, ContractProvider},
     crypto::Hash,
     versioned_type::VersionedState
 };
 
 // Represent an Asset Manager type in the opaque context
-#[derive(Clone, Debug)]
-pub struct Asset {
-    pub hash: Hash,
-    // Stored data
-    pub data: AssetData,
-    pub supply: Option<(VersionedState, u64)>,
-}
-
-impl StdHash for Asset {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.hash.hash(state);
-    }
-}
-
-impl PartialEq for Asset {
-    fn eq(&self, other: &Self) -> bool {
-        self.hash == other.hash
-    }
-}
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+pub struct Asset(Hash);
 
 impl Serializable for Asset {}
 
 impl JSONHelper for Asset {}
 
 // Maximum supply set for this asset
-pub fn asset_get_max_supply(zelf: FnInstance, _: FnParams, _: &mut Context) -> FnReturnType {
+pub fn asset_get_max_supply<P: ContractProvider>(zelf: FnInstance, _: FnParams, context: &mut Context) -> FnReturnType {
     let asset: &Asset = zelf?.as_opaque_type()?;
-    Ok(Some(ValueCell::Optional(asset.data.get_max_supply().map(|v| Value::U64(v).into()))))
+
+    let (provider, state) = from_context::<P>(context)?;
+    let changes = get_asset_from_cache(provider, state, asset.0.clone())?;
+
+    let max_supply = changes.data.as_ref()
+        .and_then(|(_, d)| d.get_max_supply().map(|v| Value::U64(v).into()));
+    Ok(Some(ValueCell::Optional(max_supply)))
 }
 
 // Current supply for this asset
 pub fn asset_get_supply<P: ContractProvider>(zelf: FnInstance, _: FnParams, context: &mut Context) -> FnReturnType {
     let asset: &mut Asset = zelf?.as_opaque_type_mut()?;
-    let supply = match asset.data.get_max_supply() {
-        Some(v) => v,
-        None => match asset.supply {
-            Some((_, v)) => v,
-            None => {
-                // TODO: We need to fetch from cache, or from provider
-                let (provider, chain_state) = from_context::<P>(context)?;
-                let res = match provider.load_asset_supply(&asset.hash, chain_state.topoheight)? {
-                    Some((topo, v)) => (VersionedState::FetchedAt(topo), v),
-                    None => (VersionedState::New, 0)
-                };
 
-                asset.supply = Some(res);
-                res.1
+    let (provider, state) = from_context::<P>(context)?;
+    let topoheight = state.topoheight;
+    let changes = get_asset_from_cache(provider, state, asset.0.clone())?;
+    let max_supply = changes.data.as_ref()
+        .and_then(|(_, d)| d.get_max_supply());
+
+    let supply = match max_supply {
+        Some(s) => s,
+        None => match changes.supply {
+            Some((_, s)) => s,
+            None => {
+                let (state, supply) = provider.load_asset_supply(&asset.0, topoheight)?
+                    .map(|(topo, supply)| (VersionedState::FetchedAt(topo), supply))
+                    .unwrap_or((VersionedState::New, 0));
+
+                changes.supply = Some((state, supply));
+                supply
             }
         }
     };
+
     Ok(Some(Value::U64(supply).into()))
 }
 
 // Get the self claimed asset name
-pub fn asset_get_name(zelf: FnInstance, _: FnParams, _: &mut Context) -> FnReturnType {
+pub fn asset_get_name<P: ContractProvider>(zelf: FnInstance, _: FnParams, context: &mut Context) -> FnReturnType {
     let asset: &Asset = zelf?.as_opaque_type()?;
-    Ok(Some(Value::String(asset.data.get_name().to_owned()).into()))
+    let (provider, state) = from_context::<P>(context)?;
+    let changes = get_asset_from_cache(provider, state, asset.0.clone())?;
+
+    let name = changes.data.as_ref()
+        .map(|(_, d)| d.get_name().to_owned())
+        .context("Failed to get asset name")?;
+
+    Ok(Some(Value::String(name).into()))
 }
 
 // Get the hash representation of the asset
 pub fn asset_get_hash(zelf: FnInstance, _: FnParams, _: &mut Context) -> FnReturnType {
     let asset: &Asset = zelf?.as_opaque_type()?;
-    Ok(Some(Value::Opaque(asset.hash.clone().into()).into()))
+    Ok(Some(Value::Opaque(asset.0.clone().into()).into()))
 }
 
 pub fn asset_mint<P: ContractProvider>(zelf: FnInstance, params: FnParams, context: &mut Context) -> FnReturnType {
     let asset: &mut Asset = zelf?.as_opaque_type_mut()?;
-    if asset.data.get_max_supply().is_some() {
-        return Ok(Some(Value::Boolean(false).into()))
+    let (provider, chain_state) = from_context::<P>(context)?;
+    let amount = params[0].as_u64()?;
+
+    // Check that we don't have any max supply set
+    {
+        let topoheight = chain_state.topoheight;
+        let changes = get_asset_from_cache::<P>(provider, chain_state, asset.0.clone())?;
+        
+        let (_, data) = changes.data
+        .as_ref()
+        .context("failed to retrieve asset data")?;
+    
+        if data.get_max_supply().is_some() {
+            return Ok(Some(Value::Boolean(false).into()))
+        }
+
+        // Track supply changes
+        // Also update the asset supply
+        let (mut supply_state, supply) = match changes.supply {
+            Some((state, supply)) => (state, supply),
+            None => provider.load_asset_supply(&asset.0, topoheight)?
+                .map(|(topoheight, supply)| (VersionedState::FetchedAt(topoheight), supply))
+                // No supply yet, lets init it to zero
+                .unwrap_or((VersionedState::New, 0)),
+        };
+
+        // Update the supply
+        let new_supply = supply.checked_add(amount)
+            .context("Overflow while minting supply")?;
+        supply_state.mark_updated();
+        changes.supply = Some((supply_state, new_supply));
     }
 
-    let amount = params[0].as_u64()?;
-    let (provider, chain_state) = from_context::<P>(context)?;
-    let (state, balance) = match get_balance_from_cache(provider, chain_state, asset.hash.clone())? {
-        Some((state, balance)) => (state, balance),
-        None => (VersionedState::New, 0),
-    };
-
-    let new_balance = balance.checked_add(amount)
-        .context("Overflow while minting balance")?;
-
-    // Also update the asset supply
-    match asset.supply.as_mut() {
-        Some((state, supply)) => {
-            *supply = supply.checked_add(amount)
-                .context("Overflow while minting supply")?;
-
+    // Update the contract balance
+    match get_balance_from_cache(provider, chain_state, asset.0.clone())? {
+        Some((state, balance)) => {
+            let new_balance = balance.checked_add(amount)
+            .context("Overflow while minting balance")?;
             state.mark_updated();
+
+            *balance = new_balance;
         },
-        None => {
-            let res = match provider.load_asset_supply(&asset.hash, chain_state.topoheight)? {
-                Some((topo, mut supply)) => {
-                    supply = supply.checked_add(amount)
-                        .context("Overflow while minting supply")?;
-
-                    (VersionedState::Updated(topo), supply)
-                },
-                None => (VersionedState::New, amount)
-            };
-
-            asset.supply = Some(res);
-        }
+        v => {
+            *v = Some((VersionedState::New, amount))
+        },
     };
-
-    chain_state.changes.balances.insert(asset.hash.clone(), Some((state, new_balance)));
 
     // Add to outputs
     chain_state.outputs.push(ContractOutput::Mint {
-        asset: asset.hash.clone(),
+        asset: asset.0.clone(),
         amount,
     });
 

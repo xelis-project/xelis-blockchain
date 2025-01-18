@@ -84,6 +84,14 @@ pub struct ChainState<'a> {
     pub outputs: Vec<ContractOutput>,
 }
 
+#[derive(Debug, Clone)]
+pub struct AssetChanges {
+    // The asset data
+    pub data: Option<(VersionedState, AssetData)>,
+    // The supply of the asset
+    pub supply: Option<(VersionedState, u64)>,
+}
+
 // Contract cache containing all the changes/cache made by the contract
 #[derive(Debug, Clone)]
 pub struct ContractCache {
@@ -99,7 +107,7 @@ pub struct ContractCache {
     // Assets cache
     // This either contains loaded assets, or registered
     // If its none, it means we didn't found the asset in storage
-    pub assets: HashMap<Hash, Option<(VersionedState, AssetData)>>
+    pub assets: HashMap<Hash, AssetChanges>
 }
 
 impl ContractCache {
@@ -501,7 +509,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static> {
             "get_max_supply",
             Some(asset_type.clone()),
             vec![],
-            asset_get_max_supply,
+            asset_get_max_supply::<P>,
             5,
             Some(Type::Optional(Box::new(Type::U64)))
         );
@@ -517,7 +525,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static> {
             "get_name",
             Some(asset_type.clone()),
             vec![],
-            asset_get_name,
+            asset_get_name::<P>,
             5,
             Some(Type::String)
         );
@@ -603,52 +611,53 @@ pub fn from_context<'a, 'ty, 'r, P: ContractProvider>(context: &'a mut Context<'
 }
 
 // Function helper to get the balance for the given asset
-pub fn get_balance_from_cache<P: ContractProvider>(provider: &P, state: &mut ChainState, asset: Hash) -> Result<Option<(VersionedState, u64)>, anyhow::Error> {
-    Ok(match state.cache {
-        Some(cache) => match cache.balances.get(&asset) {
-            Some(v) => *v,
-            None => *get_balance_from_changes(provider, state.contract, &mut state.changes, state.topoheight, asset)?
-        },
-        None => *get_balance_from_changes(provider, state.contract, &mut state.changes, state.topoheight, asset)?
-    })
-}
-
-pub fn get_balance_from_changes<'a, P: ContractProvider>(provider: &P, contract: &Hash, cache: &'a mut ContractCache, topoheight: TopoHeight, asset: Hash) -> Result<&'a mut Option<(VersionedState, u64)>, anyhow::Error> {
-    Ok(match cache.balances.entry(asset.clone()) {
+// This will first check in our current changes, then in the previous execution cache
+pub fn get_balance_from_cache<'a, P: ContractProvider>(provider: &P, state: &'a mut ChainState, asset: Hash) -> Result<&'a mut Option<(VersionedState, u64)>, anyhow::Error> {
+    Ok(match state.changes.balances.entry(asset.clone()) {
         Entry::Occupied(entry) => entry.into_mut(),
         Entry::Vacant(entry) => {
-            let balance = provider.get_contract_balance_for_asset(contract, &asset, topoheight)?;
-            entry.insert(balance.map(|(topoheight, balance)| (VersionedState::FetchedAt(topoheight), balance)))
+            let v = match state.cache {
+                Some(cache) => match cache.balances.get(&asset) {
+                    Some(v) => v.clone(),
+                    None => get_balance_from_provider(provider, state.topoheight, state.contract, &asset)?
+                },
+                None => get_balance_from_provider(provider, state.topoheight, state.contract, &asset)?
+            };
+            entry.insert(v)
         }
     })
 }
 
-pub fn get_asset_from_cache<'a, P: ContractProvider>(provider: &P, state: &'a mut ChainState, asset: &'a Hash) -> Result<Option<&'a (VersionedState, AssetData)>, anyhow::Error> {
-    match state.cache {
-        Some(cache) => match cache.assets.get(asset) {
-            Some(v) => Ok(v.as_ref()),
-            // Verify in changes
-            None => get_asset_from_changes(provider, &mut state.changes, state.topoheight, asset),
-        },
-        // No cache yet, lets check from changes
-        None => get_asset_from_changes(provider, &mut state.changes, state.topoheight, asset),
-    }
+pub fn get_balance_from_provider<P: ContractProvider>(provider: &P, topoheight: TopoHeight, contract: &Hash, asset: &Hash) -> Result<Option<(VersionedState, u64)>, anyhow::Error> {
+    let balance = provider.get_contract_balance_for_asset(contract, asset, topoheight)?;
+    Ok(balance.map(|(topoheight, balance)| (VersionedState::FetchedAt(topoheight), balance)))
 }
 
-pub fn get_asset_from_changes<'a, P: ContractProvider>(provider: &P, cache: &'a mut ContractCache, topoheight: TopoHeight, asset: &Hash) -> Result<Option<&'a (VersionedState, AssetData)>, anyhow::Error> {
-    Ok(match cache.assets.entry(asset.clone()) {
-        Entry::Occupied(entry) => entry.into_mut().as_ref(),
+pub fn get_asset_from_cache<'a, P: ContractProvider>(provider: &P, state: &'a mut ChainState, asset: Hash) -> Result<&'a mut AssetChanges, anyhow::Error> {
+    Ok(match state.changes.assets.entry(asset.clone()) {
+        Entry::Occupied(entry) => entry.into_mut(),
         Entry::Vacant(entry) => {
-            let res = provider.asset_exists(asset, topoheight)?;
-            if res {
-                // Load the asset in our cache in case
-                let asset = provider.load_asset_data(asset, topoheight)?;
-                entry.insert(asset.map(|(topoheight, data)| (VersionedState::FetchedAt(topoheight), data)))
-                    .as_ref()
-            } else {
-                None
-            }
+            let v = match state.cache {
+                Some(cache) => match cache.assets.get(&asset) {
+                    Some(v) => v.clone(),
+                    None => get_asset_from_provider(provider, state.topoheight, &asset)?
+                },
+                None => get_asset_from_provider(provider, state.topoheight, &asset)?
+            };
+
+            entry.insert(v)
         }
+    })
+}
+
+
+pub fn get_asset_from_provider<P: ContractProvider>(provider: &P, topoheight: TopoHeight, asset: &Hash) -> Result<AssetChanges, anyhow::Error> {
+    let data = provider.load_asset_data(asset, topoheight)?
+        .map(|(topoheight, data)| (VersionedState::FetchedAt(topoheight), data));
+
+    Ok(AssetChanges {
+        data,
+        supply: None
     })
 }
 
