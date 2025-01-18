@@ -20,7 +20,7 @@ use xelis_common::{
 use xelis_vm::Environment;
 use crate::core::{
     error::BlockchainError,
-    storage::{Storage, VersionedContract, VersionedContractBalance, VersionedContractData, VersionedMultiSig}
+    storage::{Storage, VersionedContract, VersionedContractBalance, VersionedContractData, VersionedMultiSig, VersionedSupply}
 };
 
 use super::{ChainState, StorageReference, Echange};
@@ -435,10 +435,18 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
                 }
             }
 
-            for (asset, data) in cache.assets {
-                if let Some((state, data)) = data {
+            for (asset, changes) in cache.assets {
+                if let Some((state, data)) = changes.data {
                     if state.should_be_stored() {
+                        trace!("Saving asset {} at topoheight {}", asset, self.inner.topoheight);
                         self.inner.storage.add_asset(&asset, self.inner.topoheight, data).await?;
+                    }
+                }
+
+                if let Some((state, supply)) = changes.supply {
+                    if state.should_be_stored() {
+                        trace!("Saving supply {} for {} at topoheight {}", supply, asset, self.inner.topoheight);
+                        self.inner.storage.set_last_supply_for_asset(&asset, self.inner.topoheight, &VersionedSupply::new(supply, state.get_topoheight())).await?;
                     }
                 }
             }
