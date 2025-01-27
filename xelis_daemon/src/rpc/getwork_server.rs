@@ -40,7 +40,9 @@ use tokio::{sync::Mutex, time::sleep};
 use xelis_common::{
     config::TIPS_LIMIT,
     api::daemon::{
+        GetBlockTemplateResult,
         GetMinerWorkResult,
+        NotifyEvent,
         SubmitMinerWorkParams
     },
     block::{
@@ -477,20 +479,33 @@ impl<S: Storage> GetWorkServer<S> {
         trace!("notify new job");
         // Check that there is at least one miner connected
         // otherwise, no need to build a new job
-        {
+        let is_event_tracked = {
+            if let Some(rpc) = self.blockchain.get_rpc().read().await.as_ref() {
+                rpc.get_tracked_events().await
+                    .contains(&NotifyEvent::NewBlockTemplate)
+            } else {
+                false
+            }
+        };
+
+        let miners_empty = {
             let miners = self.miners.lock().await;
-            if miners.is_empty() {
+            let empty =  miners.is_empty();
+            if empty && !is_event_tracked {
                 debug!("No miners connected, no need to notify them");
                 return Ok(());
             }
-        }
-    
+            empty
+        };
+
         self.is_job_dirty.store(false, Ordering::SeqCst);
         debug!("Notify all miners for a new job");
         let (header, difficulty) = {
             let storage = self.blockchain.get_storage().read().await;
-            let header = self.blockchain.get_block_template_for_storage(&storage, DEV_PUBLIC_KEY.clone()).await.context("Error while retrieving block template when notifying new job")?;
-            let (difficulty, _) = self.blockchain.get_difficulty_at_tips(&*storage, header.get_tips().iter()).await.context("Error while retrieving difficulty at tips when notifying new job")?;
+            let header = self.blockchain.get_block_template_for_storage(&storage, DEV_PUBLIC_KEY.clone()).await
+                .context("Error while retrieving block template when notifying new job")?;
+            let (difficulty, _) = self.blockchain.get_difficulty_at_tips(&*storage, header.get_tips().iter()).await
+                .context("Error while retrieving difficulty at tips when notifying new job")?;
             (header, difficulty)
         };
 
@@ -507,38 +522,55 @@ impl<S: Storage> GetWorkServer<S> {
             mining_jobs.put(header_work_hash.clone(), (header, difficulty));
         }
 
-        // now let's send the job to every miner
-        let mut miners = self.miners.lock().await;
-        miners.retain(|addr, _| addr.connected());
-
         // get the algorithm for the current version
         let algorithm = get_pow_algorithm_for_version(version);
         // Also send the node topoheight to miners
         // This is for visual purposes only
         let topoheight = self.blockchain.get_topo_height();
 
-        for (addr, miner) in miners.iter() {
-            debug!("Notifying {} for new job", miner);
-            let addr = addr.clone();
+        if is_event_tracked {
+            let rpc = self.blockchain.get_rpc().read().await;
+            if let Some(rpc) = rpc.as_ref() {
+                let value = GetBlockTemplateResult {
+                    template: header.to_hex(),
+                    algorithm,
+                    height,
+                    topoheight,
+                    difficulty
+                };
 
-            job.set_miner(Cow::Borrowed(miner.get_public_key()));
-            OsRng.fill_bytes(job.get_extra_nonce());
-            let template = job.to_hex();
+                rpc.notify_clients_with(&NotifyEvent::NewBlockTemplate, value).await?;
+            }
+        }
 
-            // New task for each miner in case a miner is slow
-            // we don't want to wait for him
-            spawn_task("getwork-notify-new-job", async move {
-                match addr.send(Response::NewJob(GetMinerWorkResult { algorithm, miner_work: template, height, topoheight, difficulty })).await {
-                    Ok(request) => {
-                        if let Err(e) = request {
-                            warn!("Error while sending new job to addr {:?}: {}", addr, e);
+        if !miners_empty {
+            // now let's send the job to every miner
+            let mut miners = self.miners.lock().await;
+            miners.retain(|addr, _| addr.connected());
+    
+            for (addr, miner) in miners.iter() {
+                debug!("Notifying {} for new job", miner);
+                let addr = addr.clone();
+    
+                job.set_miner(Cow::Borrowed(miner.get_public_key()));
+                OsRng.fill_bytes(job.get_extra_nonce());
+                let template = job.to_hex();
+    
+                // New task for each miner in case a miner is slow
+                // we don't want to wait for him
+                spawn_task("getwork-notify-new-job", async move {
+                    match addr.send(Response::NewJob(GetMinerWorkResult { algorithm, miner_work: template, height, topoheight, difficulty })).await {
+                        Ok(request) => {
+                            if let Err(e) = request {
+                                warn!("Error while sending new job to addr {:?}: {}", addr, e);
+                            }
+                        },
+                        Err(e) => {
+                            warn!("Error while notifying new job to addr {:?}: {}", addr, e);
                         }
-                    },
-                    Err(e) => {
-                        warn!("Error while notifying new job to addr {:?}: {}", addr, e);
                     }
-                }
-            });
+                });
+            }
         }
         Ok(())
     }
