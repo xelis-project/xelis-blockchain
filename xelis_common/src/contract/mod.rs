@@ -152,6 +152,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static> {
     let storage_type = Type::Opaque(env.register_opaque::<OpaqueStorage>("Storage"));
     let asset_type = Type::Opaque(env.register_opaque::<Asset>("Asset"));
     let asset_manager_type = Type::Opaque(env.register_opaque::<AssetManager>("AssetManager"));
+    let signature_type = Type::Opaque(env.register_opaque::<OpaqueSignature>("Signature"));
 
     // Transaction
     {
@@ -194,6 +195,14 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static> {
             transaction_fee,
             5,
             Some(Type::U64)
+        );
+        env.register_native_function(
+            "signature",
+            Some(tx_type.clone()),
+            vec![],
+            transaction_signature,
+            5,
+            Some(signature_type.clone())
         );
     }
 
@@ -353,61 +362,6 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static> {
         );
     }
 
-    // Get the current contract hash
-    env.register_native_function(
-        "get_contract_hash",
-        None,
-        vec![],
-        get_contract_hash,
-        5,
-        Some(hash_type.clone())
-    );
-
-    // Retrieve the deposit for the given asset
-    env.register_native_function(
-        "get_deposit_for_asset",
-        None,
-        vec![("asset", hash_type.clone())],
-        get_deposit_for_asset,
-        5,
-        Some(Type::Optional(Box::new(Type::U64)))
-    );
-
-    // Retrieve the balance for the given asset
-    env.register_native_function(
-        "get_balance_for_asset",
-        None,
-        vec![("asset", hash_type.clone())],
-        get_balance_for_asset::<P>,
-        25,
-        Some(Type::U64)
-    );
-
-    env.register_native_function(
-        "transfer",
-        None,
-        vec![
-            ("destination", address_type.clone()),
-            ("amount", Type::U64),
-            ("asset", hash_type.clone()),
-        ],
-        transfer::<P>,
-        500,
-        Some(Type::Bool)
-    );
-
-    env.register_native_function(
-        "burn",
-        None,
-        vec![
-            ("amount", Type::U64),
-            ("asset", hash_type.clone()),
-        ],
-        burn::<P>,
-        500,
-        Some(Type::Bool)
-    );
-
     // Hash
     {
         env.register_native_function(
@@ -432,6 +386,24 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static> {
             hash_type.clone(),
             vec![("hex", Type::String)],
             hash_from_hex_fn,
+        );
+
+        env.register_native_function(
+            "blake3",
+            None,
+            vec![("input", Type::Array(Box::new(Type::U8)))],
+            blake3_fn,
+            2500,
+            Some(hash_type.clone())
+        );
+
+        env.register_native_function(
+            "sha256",
+            None,
+            vec![("input", Type::Array(Box::new(Type::U8)))],
+            sha256_fn,
+            5000,
+            Some(hash_type.clone())
         );
     }
 
@@ -580,6 +552,92 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static> {
             Some(Type::Optional(Box::new(asset_type.clone())))
         );
     }
+
+    // Asset related functions
+    {
+        // Get the current contract hash
+        env.register_native_function(
+            "get_contract_hash",
+            None,
+            vec![],
+            get_contract_hash,
+            5,
+            Some(hash_type.clone())
+        );
+
+        // Retrieve the deposit for the given asset
+        env.register_native_function(
+            "get_deposit_for_asset",
+            None,
+            vec![("asset", hash_type.clone())],
+            get_deposit_for_asset,
+            5,
+            Some(Type::Optional(Box::new(Type::U64)))
+        );
+
+        // Retrieve the balance for the given asset
+        env.register_native_function(
+            "get_balance_for_asset",
+            None,
+            vec![("asset", hash_type.clone())],
+            get_balance_for_asset::<P>,
+            25,
+            Some(Type::U64)
+        );
+
+        env.register_native_function(
+            "transfer",
+            None,
+            vec![
+                ("destination", address_type.clone()),
+                ("amount", Type::U64),
+                ("asset", hash_type.clone()),
+            ],
+            transfer::<P>,
+            500,
+            Some(Type::Bool)
+        );
+
+        env.register_native_function(
+            "burn",
+            None,
+            vec![
+                ("amount", Type::U64),
+                ("asset", hash_type.clone()),
+            ],
+            burn::<P>,
+            500,
+            Some(Type::Bool)
+        );
+    }
+
+    // Signature
+    {
+        env.register_native_function(
+            "verify",
+            Some(signature_type.clone()),
+            vec![
+                ("data", Type::Array(Box::new(Type::U8))),
+                ("address", address_type.clone()),
+            ],
+            verify_signature_fn,
+            500,
+            Some(Type::Bool)
+        );
+        // env.register_native_function(
+        //     "signature_from_bytes",
+        //     None,
+        //     vec![("bytes", Type::Array(Box::new(Type::U8)))],
+        //     signature_from_bytes_fn,
+        //     75,
+        //     Some(signature_type.clone())
+        // );
+    }
+
+    // Cryptography functions
+    {
+    }
+
     env
 }
 
@@ -649,7 +707,6 @@ pub fn get_asset_from_cache<'a, P: ContractProvider>(provider: &P, state: &'a mu
         }
     })
 }
-
 
 pub fn get_asset_from_provider<P: ContractProvider>(provider: &P, topoheight: TopoHeight, asset: &Hash) -> Result<AssetChanges, anyhow::Error> {
     let data = provider.load_asset_data(asset, topoheight)?

@@ -29,7 +29,7 @@ use super::{
     Signature
 };
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct PublicKey(RistrettoPoint);
 
 #[derive(Clone, Zeroize)]

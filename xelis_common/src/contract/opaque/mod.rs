@@ -1,11 +1,11 @@
 mod transaction;
-mod hash;
 mod address;
 mod random;
 mod block;
 mod storage;
 mod asset;
 mod asset_manager;
+mod crypto;
 
 use log::debug;
 use xelis_types::{
@@ -15,23 +15,25 @@ use xelis_types::{
 use xelis_vm::{tid, OpaqueWrapper};
 use crate::{
     block::Block,
-    crypto::{Address, Hash},
+    crypto::{Address, Hash, Signature},
     serializer::*,
     transaction::Transaction
 };
 use super::ChainState;
 
 pub use transaction::*;
-pub use hash::*;
 pub use random::*;
 pub use block::*;
 pub use storage::*;
 pub use address::*;
 pub use asset::*;
 pub use asset_manager::*;
+pub use crypto::*;
 
+// Unique IDs for opaque types serialization
 pub const HASH_OPAQUE_ID: u8 = 0;
 pub const ADDRESS_OPAQUE_ID: u8 = 1;
+pub const SIGNATURE_OPAQUE_ID: u8 = 2;
 
 impl_opaque!(
     "Hash",
@@ -91,6 +93,7 @@ impl Serializer for OpaqueWrapper {
         Ok(match reader.read_u8()? {
             HASH_OPAQUE_ID => OpaqueWrapper::new(Hash::read(reader)?),
             ADDRESS_OPAQUE_ID => OpaqueWrapper::new(Address::read(reader)?),
+            SIGNATURE_OPAQUE_ID => OpaqueWrapper::new(OpaqueSignature(Signature::read(reader)?)),
             _ => return Err(ReaderError::InvalidValue)
         })
     }

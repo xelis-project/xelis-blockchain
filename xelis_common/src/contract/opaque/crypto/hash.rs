@@ -1,4 +1,5 @@
 use anyhow::Context as AnyhowContext;
+use sha3::{Digest, Sha3_256};
 use xelis_builder::ConstFnParams;
 use xelis_vm::{
     traits::Serializable,
@@ -9,11 +10,14 @@ use xelis_vm::{
     FnReturnType,
     OpaqueWrapper,
     Value,
-    ValueCell
+    ValueCell,
+    ValueError
 };
-use crate::crypto::Hash;
-
-use super::{Serializer, Writer, HASH_OPAQUE_ID};
+use crate::{
+    contract::HASH_OPAQUE_ID,
+    crypto::{hash, Hash},
+    serializer::{Serializer, Writer}
+};
 
 impl Serializable for Hash {
     fn serialize(&self, buffer: &mut Vec<u8>) -> usize {
@@ -50,4 +54,28 @@ pub fn hash_from_hex_fn(params: ConstFnParams) -> Result<Constant, anyhow::Error
         .context("failed to create hash from hexadecimal")?;
 
     Ok(Constant::Default(Value::Opaque(OpaqueWrapper::new(hash))))
+}
+
+pub fn blake3_fn(_: FnInstance, mut params: FnParams, _: &mut Context) -> FnReturnType {
+    let input = params.remove(0)
+        .into_owned()
+        .to_vec()?
+        .into_iter()
+        .map(|v| v.borrow().as_u8())
+        .collect::<Result<Vec<u8>, ValueError>>()?;
+
+    let hash = hash(&input);
+    Ok(Some(Value::Opaque(OpaqueWrapper::new(hash)).into()))
+}
+
+pub fn sha256_fn(_: FnInstance, mut params: FnParams, _: &mut Context) -> FnReturnType {
+    let input = params.remove(0)
+        .into_owned()
+        .to_vec()?
+        .into_iter()
+        .map(|v| v.borrow().as_u8())
+        .collect::<Result<Vec<u8>, ValueError>>()?;
+
+    let hash = Hash::new(Sha3_256::digest(&input).into());
+    Ok(Some(Value::Opaque(OpaqueWrapper::new(hash)).into()))
 }
