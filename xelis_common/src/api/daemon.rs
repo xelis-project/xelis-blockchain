@@ -741,6 +741,8 @@ pub enum NotifyEvent {
     // and that he notified us
     // It contains PeerPeerDisconnectedEvent as value
     PeerPeerDisconnected,
+    // A new block template has been created
+    NewBlockTemplate,
 }
 
 // Value of NotifyEvent::NewBlock
