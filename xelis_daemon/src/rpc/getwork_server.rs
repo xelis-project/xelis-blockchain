@@ -513,15 +513,6 @@ impl<S: Storage> GetWorkServer<S> {
         let height = header.get_height();
         let version = header.get_version();
 
-        // save the header used for job in cache
-        {
-            let header_work_hash = job.get_header_work_hash();
-            let mut last_header_hash = self.last_header_hash.lock().await;
-            *last_header_hash = Some(header_work_hash.clone());
-            let mut mining_jobs = self.mining_jobs.lock().await;
-            mining_jobs.put(header_work_hash.clone(), (header, difficulty));
-        }
-
         // get the algorithm for the current version
         let algorithm = get_pow_algorithm_for_version(version);
         // Also send the node topoheight to miners
@@ -539,8 +530,17 @@ impl<S: Storage> GetWorkServer<S> {
                     difficulty
                 };
 
-                rpc.notify_clients_with(&NotifyEvent::NewBlockTemplate, value).await?;
+                rpc.notify_clients_with(&NotifyEvent::NewBlockTemplate, value).await;
             }
+        }
+
+        // save the header used for job in cache
+        {
+            let header_work_hash = job.get_header_work_hash();
+            let mut last_header_hash = self.last_header_hash.lock().await;
+            *last_header_hash = Some(header_work_hash.clone());
+            let mut mining_jobs = self.mining_jobs.lock().await;
+            mining_jobs.put(header_work_hash.clone(), (header, difficulty));
         }
 
         if !miners_empty {
