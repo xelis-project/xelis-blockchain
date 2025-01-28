@@ -136,5 +136,5 @@ pub fn asset_mint<P: ContractProvider>(zelf: FnInstance, params: FnParams, conte
         amount,
     });
 
-    Ok(None)
+    Ok(Some(Value::Boolean(true).into()))
 }
