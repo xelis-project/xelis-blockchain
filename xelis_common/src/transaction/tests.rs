@@ -1,5 +1,6 @@
 use std::{borrow::Cow, collections::HashMap};
 use async_trait::async_trait;
+use curve25519_dalek::Scalar;
 use indexmap::IndexSet;
 use xelis_vm::{Environment, Module};
 use crate::{
@@ -12,7 +13,8 @@ use crate::{
         Hash,
         Hashable,
         KeyPair,
-        PublicKey
+        PublicKey,
+        proofs::PC_GENS,
     },
     serializer::Serializer,
     transaction::{
@@ -214,15 +216,20 @@ async fn test_tx_verify() {
 
     let hash = tx.hash();
     tx.verify(&hash, &mut state).await.unwrap();
+
+    // Check Bob balance
+    let balance = bob.keypair.decrypt_to_point(&state.accounts[&bob.keypair.get_public_key().compress()].balances[&XELIS_ASSET]);    
+    assert_eq!(balance, Scalar::from(50u64) * PC_GENS.B);
+
+    // Check Alice balance
+    let balance = alice.keypair.decrypt_to_point(&state.accounts[&alice.keypair.get_public_key().compress()].balances[&XELIS_ASSET]);
+    assert_eq!(balance, Scalar::from((100u64 * COIN_VALUE) - (50 + tx.fee)) * PC_GENS.B);
 }
 
 #[tokio::test]
 async fn test_burn_tx_verify() {
     let mut alice = Account::new();
-    let mut bob = Account::new();
-
     alice.set_balance(XELIS_ASSET, 100 * COIN_VALUE);
-    bob.set_balance(XELIS_ASSET, 0);
 
     let tx = {
         let mut state = AccountStateImpl {
@@ -264,19 +271,12 @@ async fn test_burn_tx_verify() {
         });
     }
 
-    {
-        let mut balances = HashMap::new();
-        for (asset, balance) in &bob.balances {
-            balances.insert(asset.clone(), balance.ciphertext.clone().take_ciphertext().unwrap());
-        }
-        state.accounts.insert(bob.keypair.get_public_key().compress(), AccountChainState {
-            balances,
-            nonce: alice.nonce,
-        });
-    }
-
     let hash = tx.hash();
     tx.verify(&hash, &mut state).await.unwrap();
+
+    // Check Alice balance
+    let balance = alice.keypair.decrypt_to_point(&state.accounts[&alice.keypair.get_public_key().compress()].balances[&XELIS_ASSET]);
+    assert_eq!(balance, Scalar::from((100u64 * COIN_VALUE) - (50 * COIN_VALUE + tx.fee)) * PC_GENS.B);
 }
 
 #[tokio::test]
