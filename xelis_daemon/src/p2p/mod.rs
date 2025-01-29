@@ -1506,14 +1506,14 @@ impl<S: Storage> P2pServer<S> {
                 // verify that this block wasn't already sent by him
                 {
                     let mut blocks_propagation = peer.get_blocks_propagation().lock().await;
-                    if let Some(direction) = blocks_propagation.get_mut(&block_hash) {
+                    if let Some((direction, _)) = blocks_propagation.get_mut(&block_hash) {
                         if !direction.update(Direction::In) {
                             debug!("{} send us a block ({}) already tracked by him ({:?})", peer, block_hash, direction);
                             // return Err(P2pError::AlreadyTrackedBlock(block_hash, *direction))
                         }
                     } else {
                         debug!("Saving {} in blocks propagation cache for {}", block_hash, peer);
-                        blocks_propagation.put(block_hash.clone(),  Direction::In);
+                        blocks_propagation.put(block_hash.clone(),  (Direction::In, get_current_time_in_millis()));
                     }
                 }
 
@@ -1524,7 +1524,7 @@ impl<S: Storage> P2pServer<S> {
                     let mut blocks_propagation = common_peer.get_blocks_propagation().lock().await;
                     // Out allow to get "In" again, because it's a prediction, don't block it completely
                     if !blocks_propagation.contains(&block_hash) {
-                        blocks_propagation.put(block_hash.clone(), Direction::Out);
+                        blocks_propagation.put(block_hash.clone(), (Direction::Out, get_current_time_in_millis()));
                     }
                 }
 
@@ -2474,7 +2474,7 @@ impl<S: Storage> P2pServer<S> {
                 if !blocks_propagation.contains(hash) {
                     // we broadcasted to him, add it to the cache
                     // he should not send it back to us if it's a block found by us
-                    blocks_propagation.put(hash.clone(), if lock { Direction::Both } else { Direction::Out });
+                    blocks_propagation.put(hash.clone(), (if lock { Direction::Both } else { Direction::Out }, get_current_time_in_millis()));
 
                     debug!("Broadcast {} to {} (lock: {})", hash, peer, lock);
                     if let Err(e) = peer.send_bytes(packet_block_bytes.clone()).await {

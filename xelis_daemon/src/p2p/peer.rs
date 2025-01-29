@@ -14,8 +14,9 @@ use xelis_common::{
     difficulty::CumulativeDifficulty,
     serializer::Serializer,
     time::{
-        TimestampSeconds,
-        get_current_time_in_seconds
+        get_current_time_in_seconds,
+        TimestampMillis,
+        TimestampSeconds
     }
 };
 use super::{
@@ -130,7 +131,7 @@ pub struct Peer {
     // All transactions propagated from/to this peer
     txs_cache: Mutex<LruCache<Hash, Direction>>,
     // last blocks propagated to/from this peer
-    blocks_propagation: Mutex<LruCache<Hash, Direction>>,
+    blocks_propagation: Mutex<LruCache<Hash, (Direction, TimestampMillis)>>,
     // last time we got an inventory packet from this peer
     last_inventory: AtomicU64,
     // if we requested this peer to send us an inventory notification
@@ -223,7 +224,7 @@ impl Peer {
     }
 
     // Get all blocks propagated from/to this peer
-    pub fn get_blocks_propagation(&self) -> &Mutex<LruCache<Hash, Direction>> {
+    pub fn get_blocks_propagation(&self) -> &Mutex<LruCache<Hash, (Direction, TimestampMillis)>> {
         &self.blocks_propagation
     }
 
