@@ -398,11 +398,13 @@ impl NetworkHandler {
                                 ContractDeposit::Public(amount) => {
                                     deposits.insert(asset, amount);
                                 },
-                                // ContractDeposit::Private(ct) => {
-                                //     let ct = ct.decompress()?;
-                                //     let amount = self.wallet.decrypt_ciphertext(ct).await?;
-                                //     deposits.insert(asset, amount);
-                                // }
+                                ContractDeposit::Private { commitment, sender_handle, ..} => {
+                                    let commitment = commitment.decompress()?;
+                                    let handle = sender_handle.decompress()?;
+                                    let ciphertext = Ciphertext::new(commitment, handle);
+                                    let amount = self.wallet.decrypt_ciphertext(ciphertext).await?;
+                                    deposits.insert(asset, amount);
+                                }
                             }
                         }
 
