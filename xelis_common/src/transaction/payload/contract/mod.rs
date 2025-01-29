@@ -18,7 +18,11 @@ use xelis_vm::{
     U256
 };
 use crate::{
-    crypto::Hash,
+    crypto::{
+        elgamal::{CompressedCommitment, CompressedHandle},
+        proofs::CiphertextValidityProof,
+        Hash
+    },
     serializer::*
 };
 
@@ -33,14 +37,16 @@ pub enum ContractDeposit {
     Public(u64),
     // Private deposit
     // The ciphertext represents the amount of the asset deposited
-    // Private {
-    //     commitment: CompressedCommitment,
-    //     sender_handle: CompressedHandle,
-    //     receiver_handle: CompressedHandle,
-    //     // The proof is a proof that the amount is a valid encryption
-    //     // for the smart contract to be compatible with its encrypted balance.
-    //     proof: CiphertextValidityProof
-    // }
+    Private {
+        commitment: CompressedCommitment,
+        // Sender handle is used to decrypt the commitment
+        sender_handle: CompressedHandle,
+        // Same as above, but for receiver
+        receiver_handle: CompressedHandle,
+        // The proof is a proof that the amount is a valid encryption
+        // for the smart contract to be compatible with its encrypted balance.
+        ct_validity_proof: CiphertextValidityProof,
+    }
 }
 
 // InvokeContractPayload is a public payload allowing to call a smart contract
@@ -70,30 +76,30 @@ impl Serializer for ContractDeposit {
                 writer.write_u8(0);
                 writer.write_u64(amount);
             },
-            // ContractDeposit::Private {
-            //     commitment,
-            //     sender_handle,
-            //     receiver_handle,
-            //     proof
-            // } => {
-            //     writer.write_u8(1);
-            //     commitment.write(writer);
-            //     sender_handle.write(writer);
-            //     receiver_handle.write(writer);
-            //     proof.write(writer);
-            // }
+            ContractDeposit::Private {
+                commitment,
+                sender_handle,
+                receiver_handle,
+                ct_validity_proof
+            } => {
+                writer.write_u8(1);
+                commitment.write(writer);
+                sender_handle.write(writer);
+                receiver_handle.write(writer);
+                ct_validity_proof.write(writer);
+            }
         }
     }
 
     fn read(reader: &mut Reader) -> Result<ContractDeposit, ReaderError> {
         Ok(match reader.read_u8()? {
             0 => ContractDeposit::Public(reader.read_u64()?),
-            // 1 => ContractDeposit::Private {
-            //     commitment: CompressedCommitment::read(reader)?,
-            //     sender_handle: CompressedHandle::read(reader)?,
-            //     receiver_handle: CompressedHandle::read(reader)?,
-            //     proof: CiphertextValidityProof::read(reader)?
-            // },
+            1 => ContractDeposit::Private {
+                commitment: CompressedCommitment::read(reader)?,
+                sender_handle: CompressedHandle::read(reader)?,
+                receiver_handle: CompressedHandle::read(reader)?,
+                ct_validity_proof: CiphertextValidityProof::read(reader)?
+            },
             _ => return Err(ReaderError::InvalidValue)
         })
     }
@@ -101,14 +107,14 @@ impl Serializer for ContractDeposit {
     fn size(&self) -> usize {
         1 + match self {
             ContractDeposit::Public(amount) => amount.size(),
-            // ContractDeposit::Private {
-            //     commitment,
-            //     sender_handle,
-            //     receiver_handle,
-            //     proof
-            // } => {
-            //     commitment.size() + sender_handle.size() + receiver_handle.size() + proof.size()
-            // }
+            ContractDeposit::Private {
+                commitment,
+                sender_handle,
+                receiver_handle,
+                ct_validity_proof
+            } => {
+                commitment.size() + sender_handle.size() + receiver_handle.size() + ct_validity_proof.size()
+            }
         }
     }
 }

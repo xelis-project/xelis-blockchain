@@ -16,7 +16,7 @@ use curve25519_dalek::Scalar;
 use serde::{Deserialize, Serialize};
 use xelis_vm::Module;
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     iter,
 };
 use crate::{
@@ -134,6 +134,25 @@ struct TransferWithCommitment {
 }
 
 impl TransferWithCommitment {
+    fn get_ciphertext(&self, role: Role) -> Ciphertext {
+        let handle = match role {
+            Role::Receiver => self.receiver_handle.clone(),
+            Role::Sender => self.sender_handle.clone(),
+        };
+
+        Ciphertext::new(self.commitment.clone(), handle)
+    }
+}
+
+// Internal struct for build
+struct DepositWithCommitment {
+    commitment: PedersenCommitment,
+    sender_handle: DecryptHandle,
+    receiver_handle: DecryptHandle,
+    amount_opening: PedersenOpening,
+}
+
+impl DepositWithCommitment {
     fn get_ciphertext(&self, role: Role) -> Ciphertext {
         let handle = match role {
             Role::Receiver => self.receiver_handle.clone(),
@@ -284,7 +303,10 @@ impl TransactionBuilder {
                     // 1 is for the deposit variant
                     payload_size += asset.size() + 1;
                     if deposit.private {
-                        payload_size += RISTRETTO_COMPRESSED_SIZE;
+                        // Commitment, sender handle, receiver handle
+                        payload_size += RISTRETTO_COMPRESSED_SIZE * 3;
+                        // Ct validity proof
+                        payload_size += RISTRETTO_COMPRESSED_SIZE * 2 + SCALAR_SIZE * 2;
                     } else {
                         payload_size += deposit.amount.size();
                     }
@@ -343,7 +365,14 @@ impl TransactionBuilder {
     }
 
     // Compute the new source ciphertext
-    fn get_new_source_ct(&self, mut ct: Ciphertext, fee: u64, asset: &Hash, transfers: &[TransferWithCommitment]) -> Ciphertext {
+    fn get_new_source_ct(
+        &self,
+        mut ct: Ciphertext,
+        fee: u64,
+        asset: &Hash,
+        transfers: &[TransferWithCommitment],
+        deposits: &HashMap<Hash, DepositWithCommitment>,
+    ) -> Ciphertext {
         if asset == &XELIS_ASSET {
             // Fees are applied to the native blockchain asset only.
             ct -= Scalar::from(fee);
@@ -360,6 +389,15 @@ impl TransactionBuilder {
             TransactionTypeBuilder::Burn(payload) => {
                 if *asset == payload.asset {
                     ct -= Scalar::from(payload.amount)
+                }
+            },
+            TransactionTypeBuilder::InvokeContract(payload) => {
+                if let Some(deposit) = deposits.get(asset) {
+                    ct -= deposit.get_ciphertext(Role::Sender);
+                }
+
+                if *asset == XELIS_ASSET {
+                    ct -= Scalar::from(payload.max_gas);
                 }
             },
             _ => {}
@@ -434,77 +472,96 @@ impl TransactionBuilder {
         // 0.a Create the commitments
 
         // Data is mutable only to extract extra data
-        let transfers = if let TransactionTypeBuilder::Transfers(transfers) = &mut self.data {
-            if transfers.len() == 0 {
-                return Err(GenerationError::EmptyTransfers);
-            }
-
-            if transfers.len() > MAX_TRANSFER_COUNT {
-                return Err(GenerationError::MaxTransferCountReached);
-            }
-
-            let pk = source_keypair.get_public_key().compress();
-            let mut extra_data_size = 0;
-            for transfer in transfers.iter_mut() {
-                if *transfer.destination.get_public_key() == pk {
-                    return Err(GenerationError::SenderIsReceiver);
+        let mut transfers_commitments = Vec::new();
+        let mut deposits_commitments = HashMap::new();
+        match &mut self.data {
+            TransactionTypeBuilder::Transfers(transfers) => {
+                if transfers.len() == 0 {
+                    return Err(GenerationError::EmptyTransfers);
                 }
-
-                if state.is_mainnet() != transfer.destination.is_mainnet() {
-                    return Err(GenerationError::InvalidNetwork);
+    
+                if transfers.len() > MAX_TRANSFER_COUNT {
+                    return Err(GenerationError::MaxTransferCountReached);
                 }
-
-                // Either extra data provided or an integrated address, not both
-                if transfer.extra_data.is_some() && !transfer.destination.is_normal() {
-                    return Err(GenerationError::ExtraDataAndIntegratedAddress);
-                }
-
-                // Set the integrated data as extra data
-                if let Some(extra_data) = transfer.destination.extract_data_only() {
-                    transfer.extra_data = Some(extra_data);
-                }
-
-                if let Some(extra_data) = &transfer.extra_data {
-                    let size = extra_data.size();
-                    if size > EXTRA_DATA_LIMIT_SIZE {
-                        return Err(GenerationError::ExtraDataTooLarge);
+    
+                let pk = source_keypair.get_public_key().compress();
+                let mut extra_data_size = 0;
+                for transfer in transfers.iter_mut() {
+                    if *transfer.destination.get_public_key() == pk {
+                        return Err(GenerationError::SenderIsReceiver);
                     }
-                    extra_data_size += size;
+    
+                    if state.is_mainnet() != transfer.destination.is_mainnet() {
+                        return Err(GenerationError::InvalidNetwork);
+                    }
+    
+                    // Either extra data provided or an integrated address, not both
+                    if transfer.extra_data.is_some() && !transfer.destination.is_normal() {
+                        return Err(GenerationError::ExtraDataAndIntegratedAddress);
+                    }
+    
+                    // Set the integrated data as extra data
+                    if let Some(extra_data) = transfer.destination.extract_data_only() {
+                        transfer.extra_data = Some(extra_data);
+                    }
+    
+                    if let Some(extra_data) = &transfer.extra_data {
+                        let size = extra_data.size();
+                        if size > EXTRA_DATA_LIMIT_SIZE {
+                            return Err(GenerationError::ExtraDataTooLarge);
+                        }
+                        extra_data_size += size;
+                    }
                 }
-            }
-
-            if extra_data_size > EXTRA_DATA_LIMIT_SUM_SIZE {
-                return Err(GenerationError::ExtraDataTooLarge);
-            }
-
-            transfers
-                .iter()
-                .map(|transfer| {
-                    let destination = transfer
-                        .destination
-                        .get_public_key()
-                        .decompress()
-                        .map_err(|err| GenerationError::Proof(err.into()))?;
-
+    
+                if extra_data_size > EXTRA_DATA_LIMIT_SUM_SIZE {
+                    return Err(GenerationError::ExtraDataTooLarge);
+                }
+    
+                transfers_commitments = transfers
+                    .iter()
+                    .map(|transfer| {
+                        let destination = transfer
+                            .destination
+                            .get_public_key()
+                            .decompress()
+                            .map_err(|err| GenerationError::Proof(err.into()))?;
+    
+                        let amount_opening = PedersenOpening::generate_new();
+                        let commitment =
+                            PedersenCommitment::new_with_opening(transfer.amount, &amount_opening);
+                        let sender_handle =
+                            source_keypair.get_public_key().decrypt_handle(&amount_opening);
+                        let receiver_handle = destination.decrypt_handle(&amount_opening);
+    
+                        Ok(TransferWithCommitment {
+                            inner: transfer.clone(),
+                            commitment,
+                            sender_handle,
+                            receiver_handle,
+                            destination,
+                            amount_opening,
+                        })
+                    })
+                    .collect::<Result<Vec<_>, GenerationError<B::Error>>>()?;
+            },
+            TransactionTypeBuilder::InvokeContract(payload) => {
+                for (asset, deposit) in payload.deposits.iter().filter(|(_, deposit)| deposit.private) {
+                    let key = PublicKey::from_hash(&payload.contract);
                     let amount_opening = PedersenOpening::generate_new();
-                    let commitment =
-                        PedersenCommitment::new_with_opening(transfer.amount, &amount_opening);
-                    let sender_handle =
-                        source_keypair.get_public_key().decrypt_handle(&amount_opening);
-                    let receiver_handle = destination.decrypt_handle(&amount_opening);
+                    let commitment = PedersenCommitment::new_with_opening(deposit.amount, &amount_opening);
+                    let sender_handle = source_keypair.get_public_key().decrypt_handle(&amount_opening);
+                    let receiver_handle = key.decrypt_handle(&amount_opening);
 
-                    Ok(TransferWithCommitment {
-                        inner: transfer.clone(),
+                    deposits_commitments.insert(asset.clone(), DepositWithCommitment {
                         commitment,
                         sender_handle,
                         receiver_handle,
-                        destination,
                         amount_opening,
-                    })
-                })
-                .collect::<Result<Vec<_>, GenerationError<B::Error>>>()?
-        } else {
-            vec![]
+                    });
+                }
+            },
+            _ => {}
         };
 
         let reference = state.get_reference();
@@ -551,7 +608,7 @@ impl TransactionBuilder {
                     .compress();
 
                 let new_source_ciphertext =
-                    self.get_new_source_ct(source_current_ciphertext, fee, &asset, &transfers);
+                    self.get_new_source_ct(source_current_ciphertext, fee, &asset, &transfers_commitments, &deposits_commitments);
 
                 // 1. Make the CommitmentEqProof
 
@@ -584,76 +641,76 @@ impl TransactionBuilder {
             })
             .collect::<Result<Vec<_>, GenerationError<B::Error>>>()?;
 
-        let transfers = if let TransactionTypeBuilder::Transfers(_) = &mut self.data {
-            range_proof_values.reserve(transfers.len());
-            range_proof_openings.reserve(transfers.len());
+        let mut transfers = Vec::new();
+        match &mut self.data {
+            TransactionTypeBuilder::Transfers(_) => {
+                range_proof_values.reserve(transfers_commitments.len());
+                range_proof_openings.reserve(transfers_commitments.len());
 
-            let mut total_cipher_size = 0;
-            let transfers = transfers
-                .into_iter()
-                .map(|transfer| {
-                    let commitment = transfer.commitment.compress();
-                    let sender_handle = transfer.sender_handle.compress();
-                    let receiver_handle = transfer.receiver_handle.compress();
-
-                    transcript.transfer_proof_domain_separator();
-                    transcript.append_public_key(b"dest_pubkey", transfer.inner.destination.get_public_key());
-                    transcript.append_commitment(b"amount_commitment", &commitment);
-                    transcript.append_handle(b"amount_sender_handle", &sender_handle);
-                    transcript.append_handle(b"amount_receiver_handle", &receiver_handle);
-
-                    let source_pubkey = if self.version >= TxVersion::V1 {
-                        Some(source_keypair.get_public_key())
-                    } else {
-                        None
-                    };
-
-                    let ct_validity_proof = CiphertextValidityProof::new(
-                        &transfer.destination,
-                        source_pubkey,
-                        transfer.inner.amount,
-                        &transfer.amount_opening,
-                        &mut transcript,
-                    );
-
-                    range_proof_values.push(transfer.inner.amount);
-                    range_proof_openings.push(transfer.amount_opening.as_scalar());
-
-                    // Encrypt the extra data if it exists
-                    let extra_data = if let Some(extra_data) = transfer.inner.extra_data {
-                        let bytes = extra_data.to_bytes();
-                        let cipher = ExtraData::new(PlaintextData(bytes), source_keypair.get_public_key(), &transfer.destination);
-                        let cipher_size = cipher.size();
-                        if cipher_size > EXTRA_DATA_LIMIT_SIZE {
-                            return Err(GenerationError::EncryptedExtraDataTooLarge(cipher_size, EXTRA_DATA_LIMIT_SIZE));
-                        }
-
-                        total_cipher_size += cipher_size;
-
-                        Some(cipher.into())
-                    } else {
-                        None
-                    };
-
-                    Ok(TransferPayload::new(
-                        transfer.inner.asset,
-                        transfer.inner.destination.to_public_key(),
-                        extra_data,
-                        commitment,
-                        sender_handle,
-                        receiver_handle,
-                        ct_validity_proof,
-                    ))
-                })
-                .collect::<Result<Vec<_>, GenerationError<B::Error>>>()?;
-
-            if total_cipher_size > EXTRA_DATA_LIMIT_SUM_SIZE {
-                return Err(GenerationError::EncryptedExtraDataTooLarge(total_cipher_size, EXTRA_DATA_LIMIT_SUM_SIZE));
-            }
-
-            transfers
-        } else {
-            vec![]
+                let mut total_cipher_size = 0;
+                transfers = transfers_commitments
+                    .into_iter()
+                    .map(|transfer| {
+                        let commitment = transfer.commitment.compress();
+                        let sender_handle = transfer.sender_handle.compress();
+                        let receiver_handle = transfer.receiver_handle.compress();
+    
+                        transcript.transfer_proof_domain_separator();
+                        transcript.append_public_key(b"dest_pubkey", transfer.inner.destination.get_public_key());
+                        transcript.append_commitment(b"amount_commitment", &commitment);
+                        transcript.append_handle(b"amount_sender_handle", &sender_handle);
+                        transcript.append_handle(b"amount_receiver_handle", &receiver_handle);
+    
+                        let source_pubkey = if self.version >= TxVersion::V1 {
+                            Some(source_keypair.get_public_key())
+                        } else {
+                            None
+                        };
+    
+                        let ct_validity_proof = CiphertextValidityProof::new(
+                            &transfer.destination,
+                            source_pubkey,
+                            transfer.inner.amount,
+                            &transfer.amount_opening,
+                            &mut transcript,
+                        );
+    
+                        range_proof_values.push(transfer.inner.amount);
+                        range_proof_openings.push(transfer.amount_opening.as_scalar());
+    
+                        // Encrypt the extra data if it exists
+                        let extra_data = if let Some(extra_data) = transfer.inner.extra_data {
+                            let bytes = extra_data.to_bytes();
+                            let cipher = ExtraData::new(PlaintextData(bytes), source_keypair.get_public_key(), &transfer.destination);
+                            let cipher_size = cipher.size();
+                            if cipher_size > EXTRA_DATA_LIMIT_SIZE {
+                                return Err(GenerationError::EncryptedExtraDataTooLarge(cipher_size, EXTRA_DATA_LIMIT_SIZE));
+                            }
+    
+                            total_cipher_size += cipher_size;
+    
+                            Some(cipher.into())
+                        } else {
+                            None
+                        };
+    
+                        Ok(TransferPayload::new(
+                            transfer.inner.asset,
+                            transfer.inner.destination.to_public_key(),
+                            extra_data,
+                            commitment,
+                            sender_handle,
+                            receiver_handle,
+                            ct_validity_proof,
+                        ))
+                    })
+                    .collect::<Result<Vec<_>, GenerationError<B::Error>>>()?;
+    
+                if total_cipher_size > EXTRA_DATA_LIMIT_SUM_SIZE {
+                    return Err(GenerationError::EncryptedExtraDataTooLarge(total_cipher_size, EXTRA_DATA_LIMIT_SUM_SIZE));
+                }
+            },
+            _ => {}
         };
 
         let n_commitments = range_proof_values.len();
@@ -721,8 +778,7 @@ impl TransactionBuilder {
                 for (asset, deposit) in payload.deposits {
                     transcript.append_hash(b"deposit_asset", &asset);
                     if deposit.private {
-                        // TODO: handle private deposits
-                        todo!("Private deposits");
+                        
                     } else {
                         transcript.append_u64(b"deposit_plain", deposit.amount);
                         deposits.insert(asset, ContractDeposit::Public(deposit.amount));

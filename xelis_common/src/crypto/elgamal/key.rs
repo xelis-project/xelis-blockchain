@@ -5,6 +5,7 @@ use curve25519_dalek::{
 };
 use rand::rngs::OsRng;
 use serde::{Deserialize, Deserializer, Serialize};
+use sha3::Sha3_512;
 use zeroize::Zeroize;
 use crate::{
     api::DataElement,
@@ -12,7 +13,7 @@ use crate::{
     crypto::{
         proofs::PC_GENS,
         Address,
-        AddressType
+        AddressType, Hash
     },
     serializer::{
         Reader,
@@ -45,6 +46,12 @@ impl PublicKey {
     // Create a public key from a point
     pub fn from_point(p: RistrettoPoint) -> Self {
         Self(p)
+    }
+
+    // Create a public key from a 32 byte hash
+    // The hash will be hashed again to output a 64 byte hash
+    pub fn from_hash(hash: &Hash) -> Self {
+        Self(RistrettoPoint::hash_from_bytes::<Sha3_512>(hash.as_bytes()))
     }
 
     // Create a new public key from a private key

@@ -634,10 +634,6 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static> {
         // );
     }
 
-    // Cryptography functions
-    {
-    }
-
     env
 }
 
@@ -751,12 +747,8 @@ fn get_deposit_for_asset(_: FnInstance, params: FnParams, context: &mut Context)
     let chain_state: &ChainState = context.get().context("chain state not found")?;
 
     let mut opt = None;
-    if let Some(deposit) = chain_state.deposits.get(asset) {
-        match deposit {
-            ContractDeposit::Public(amount) => {
-                opt = Some(Value::U64(*amount).into());
-            }
-        }
+    if let Some(ContractDeposit::Public(amount)) = chain_state.deposits.get(asset) {
+        opt = Some(Value::U64(*amount).into());
     }
 
     Ok(Some(ValueCell::Optional(opt)))

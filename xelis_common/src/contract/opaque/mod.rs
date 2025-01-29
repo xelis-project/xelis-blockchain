@@ -34,6 +34,7 @@ pub use crypto::*;
 pub const HASH_OPAQUE_ID: u8 = 0;
 pub const ADDRESS_OPAQUE_ID: u8 = 1;
 pub const SIGNATURE_OPAQUE_ID: u8 = 2;
+pub const CIPHERTEXT_OPAQUE_ID: u8 = 3;
 
 impl_opaque!(
     "Hash",
