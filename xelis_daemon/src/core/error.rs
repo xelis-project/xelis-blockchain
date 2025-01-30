@@ -383,6 +383,8 @@ pub enum BlockchainError {
     InvalidTransactionFormat,
     #[error("Invalid invoke contract")]
     InvalidInvokeContract,
+    #[error("Deposit not found")]
+    DepositNotFound,
     #[error("MultiSig not found")]
     MultiSigNotFound,
     #[error("Error in module: {}", _0)]
@@ -429,6 +431,8 @@ impl From<VerificationError<BlockchainError>> for BlockchainError {
             VerificationError::AnyError(e) => BlockchainError::Any(e),
             VerificationError::GasOverflow => BlockchainError::Overflow,
             VerificationError::InvalidInvokeContract => BlockchainError::InvalidInvokeContract,
+            VerificationError::DepositNotFound => BlockchainError::DepositNotFound,
+            e => BlockchainError::Any(e.into())
         }
     }
 }
