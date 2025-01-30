@@ -99,6 +99,8 @@ pub enum GenerationError<T> {
     MultiSigSelfParticipant,
     #[error("Burn amount is zero")]
     BurnZero,
+    #[error("Deposit amount is zero")]
+    DepositZero,
     #[error("Invalid module hexadecimal")]
     InvalidModule,
 }
@@ -146,6 +148,7 @@ impl TransferWithCommitment {
 
 // Internal struct for build
 struct DepositWithCommitment {
+    amount: u64,
     commitment: PedersenCommitment,
     sender_handle: DecryptHandle,
     receiver_handle: DecryptHandle,
@@ -252,7 +255,7 @@ impl TransactionBuilder {
             size += 1 + (threshold as usize * (SIGNATURE_SIZE + 1))
         }
 
-        let mut transfers_count = 0;
+        let mut commitments_count = 0;
         match &self.data {
             TransactionTypeBuilder::Transfers(transfers) => {
                 // Transfers count byte
@@ -280,7 +283,7 @@ impl TransactionBuilder {
                         size += ExtraData::estimate_size(extra_data);
                     }
                 }
-                transfers_count = transfers.len()
+                commitments_count = transfers.len();
             }
             TransactionTypeBuilder::Burn(payload) => {
                 // Payload size
@@ -306,7 +309,11 @@ impl TransactionBuilder {
                         // Commitment, sender handle, receiver handle
                         payload_size += RISTRETTO_COMPRESSED_SIZE * 3;
                         // Ct validity proof
-                        payload_size += RISTRETTO_COMPRESSED_SIZE * 2 + SCALAR_SIZE * 2;
+                        payload_size += RISTRETTO_COMPRESSED_SIZE * 3 + SCALAR_SIZE * 2;
+
+                        // Increment the commitments count
+                        // Each deposit is a commitment
+                        commitments_count += 1;
                     } else {
                         payload_size += deposit.amount.size();
                     }
@@ -321,7 +328,7 @@ impl TransactionBuilder {
         };
 
         // Range Proof
-        let lg_n = (BULLET_PROOF_SIZE * (transfers_count + assets_used)).next_power_of_two().trailing_zeros() as usize;
+        let lg_n = (BULLET_PROOF_SIZE * (commitments_count + assets_used)).next_power_of_two().trailing_zeros() as usize;
         // Fixed size of the range proof
         size += RISTRETTO_COMPRESSED_SIZE * 4 + SCALAR_SIZE * 3
         // u16 bytes length
@@ -392,8 +399,14 @@ impl TransactionBuilder {
                 }
             },
             TransactionTypeBuilder::InvokeContract(payload) => {
-                if let Some(deposit) = deposits.get(asset) {
-                    ct -= deposit.get_ciphertext(Role::Sender);
+                if let Some(deposit) = payload.deposits.get(asset) {
+                    if deposit.private {
+                        if let Some(deposit) = deposits.get(asset) {
+                            ct -= deposit.get_ciphertext(Role::Sender);
+                        }
+                    } else {
+                        ct -= Scalar::from(deposit.amount);
+                    }
                 }
 
                 if *asset == XELIS_ASSET {
@@ -546,19 +559,26 @@ impl TransactionBuilder {
                     .collect::<Result<Vec<_>, GenerationError<B::Error>>>()?;
             },
             TransactionTypeBuilder::InvokeContract(payload) => {
-                for (asset, deposit) in payload.deposits.iter().filter(|(_, deposit)| deposit.private) {
-                    let key = PublicKey::from_hash(&payload.contract);
-                    let amount_opening = PedersenOpening::generate_new();
-                    let commitment = PedersenCommitment::new_with_opening(deposit.amount, &amount_opening);
-                    let sender_handle = source_keypair.get_public_key().decrypt_handle(&amount_opening);
-                    let receiver_handle = key.decrypt_handle(&amount_opening);
+                for (asset, deposit) in payload.deposits.iter() {
+                    if deposit.private {
+                        let key = PublicKey::from_hash(&payload.contract);
+                        let amount_opening = PedersenOpening::generate_new();
+                        let commitment = PedersenCommitment::new_with_opening(deposit.amount, &amount_opening);
+                        let sender_handle = source_keypair.get_public_key().decrypt_handle(&amount_opening);
+                        let receiver_handle = key.decrypt_handle(&amount_opening);
 
-                    deposits_commitments.insert(asset.clone(), DepositWithCommitment {
-                        commitment,
-                        sender_handle,
-                        receiver_handle,
-                        amount_opening,
-                    });
+                        deposits_commitments.insert(asset.clone(), DepositWithCommitment {
+                            amount: deposit.amount,
+                            commitment,
+                            sender_handle,
+                            receiver_handle,
+                            amount_opening,
+                        });
+                    } else {
+                        if deposit.amount == 0 {
+                            return Err(GenerationError::DepositZero);
+                        }
+                    }
                 }
             },
             _ => {}
@@ -642,6 +662,7 @@ impl TransactionBuilder {
             .collect::<Result<Vec<_>, GenerationError<B::Error>>>()?;
 
         let mut transfers = Vec::new();
+        let mut deposits = IndexMap::new();
         match &mut self.data {
             TransactionTypeBuilder::Transfers(_) => {
                 range_proof_values.reserve(transfers_commitments.len());
@@ -710,6 +731,51 @@ impl TransactionBuilder {
                     return Err(GenerationError::EncryptedExtraDataTooLarge(total_cipher_size, EXTRA_DATA_LIMIT_SUM_SIZE));
                 }
             },
+            TransactionTypeBuilder::InvokeContract(payload) => {
+                range_proof_values.reserve(deposits_commitments.len());
+                range_proof_openings.reserve(deposits_commitments.len());
+
+                // Build the private deposits
+                deposits = deposits_commitments
+                    .into_iter()
+                    .map(|(asset, deposit)| {
+                        let commitment = deposit.commitment.compress();
+                        let sender_handle = deposit.sender_handle.compress();
+                        let receiver_handle = deposit.receiver_handle.compress();
+
+                        transcript.deposit_proof_domain_separator();
+                        transcript.append_hash(b"deposit_asset", &asset);
+                        transcript.append_commitment(b"deposit_commitment", &commitment);
+                        transcript.append_handle(b"deposit_sender_handle", &sender_handle);
+                        transcript.append_handle(b"deposit_receiver_handle", &receiver_handle);
+
+                        let ct_validity_proof = CiphertextValidityProof::new(
+                            &PublicKey::from_hash(&payload.contract),
+                            Some(source_keypair.get_public_key()),
+                            deposit.amount,
+                            &deposit.amount_opening,
+                            &mut transcript,
+                        );
+
+                        range_proof_values.push(deposit.amount);
+                        range_proof_openings.push(deposit.amount_opening.as_scalar());
+
+                        Ok((
+                            asset,
+                            ContractDeposit::Private { commitment, sender_handle, receiver_handle, ct_validity_proof }
+                        ))
+                    })
+                    .collect::<Result<IndexMap<_, _>, GenerationError<B::Error>>>()?;
+
+                    // Now build the public ones
+                    for (asset, deposit) in payload.deposits.drain(..).filter(|(_, deposit)| !deposit.private) {
+                        transcript.deposit_proof_domain_separator();
+                        transcript.append_hash(b"deposit_asset", &asset);
+                        transcript.append_u64(b"deposit_plain", deposit.amount);
+
+                        deposits.insert(asset, ContractDeposit::Public(deposit.amount));
+                    }
+            },
             _ => {}
         };
 
@@ -774,16 +840,6 @@ impl TransactionBuilder {
             TransactionTypeBuilder::InvokeContract(payload) => {
                 transcript.invoke_contract_proof_domain_separator();
                 transcript.append_hash(b"contract_hash", &payload.contract);
-                let mut deposits = IndexMap::new();
-                for (asset, deposit) in payload.deposits {
-                    transcript.append_hash(b"deposit_asset", &asset);
-                    if deposit.private {
-                        
-                    } else {
-                        transcript.append_u64(b"deposit_plain", deposit.amount);
-                        deposits.insert(asset, ContractDeposit::Public(deposit.amount));
-                    }
-                }
 
                 let mut parameters = Vec::with_capacity(payload.parameters.len());
                 for param in payload.parameters {

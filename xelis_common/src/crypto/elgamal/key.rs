@@ -13,7 +13,8 @@ use crate::{
     crypto::{
         proofs::PC_GENS,
         Address,
-        AddressType, Hash
+        AddressType,
+        Hash
     },
     serializer::{
         Reader,

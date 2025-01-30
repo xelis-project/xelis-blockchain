@@ -2,28 +2,29 @@ use std::{borrow::Cow, collections::HashMap};
 use async_trait::async_trait;
 use curve25519_dalek::Scalar;
 use indexmap::IndexSet;
-use xelis_vm::{Environment, Module};
+use xelis_vm::{Chunk, Environment, Module};
 use crate::{
-    account::{Nonce, CiphertextCache},
+    account::{CiphertextCache, Nonce},
     api::{DataElement, DataValue},
+    block::BlockVersion,
     config::{COIN_VALUE, XELIS_ASSET},
     crypto::{
         elgamal::{Ciphertext, PedersenOpening},
+        proofs::PC_GENS,
         Address,
         Hash,
         Hashable,
         KeyPair,
-        PublicKey,
-        proofs::PC_GENS,
+        PublicKey
     },
     serializer::Serializer,
     transaction::{
+        builder::{ContractDepositBuilder, InvokeContractBuilder},
+        MultiSigPayload,
         TransactionType,
         TxVersion,
-        MultiSigPayload,
         MAX_TRANSFER_COUNT
-    },
-    block::BlockVersion
+    }
 };
 use super::{
     extra_data::{
@@ -54,6 +55,19 @@ struct AccountChainState {
 struct ChainState {
     accounts: HashMap<PublicKey, AccountChainState>,
     multisig: HashMap<PublicKey, MultiSigPayload>,
+    contracts: HashMap<Hash, Module>,
+    env: Environment,
+}
+
+impl ChainState {
+    fn new() -> Self {
+        Self {
+            accounts: HashMap::new(),
+            multisig: HashMap::new(),
+            contracts: HashMap::new(),
+            env: Environment::new(),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -186,10 +200,7 @@ async fn test_tx_verify() {
     // Alice account is cloned to not be updated as it is used for verification and need current state
     let tx = create_tx_for(alice.clone(), bob.address(), 50, None);
 
-    let mut state = ChainState {
-        accounts: HashMap::new(),
-        multisig: HashMap::new(),
-    };
+    let mut state = ChainState::new();
 
     // Create the chain state
     {
@@ -254,10 +265,7 @@ async fn test_burn_tx_verify() {
         tx
     };
 
-    let mut state = ChainState {
-        accounts: HashMap::new(),
-        multisig: HashMap::new(),
-    };
+    let mut state = ChainState::new();
 
     // Create the chain state
     {
@@ -277,6 +285,71 @@ async fn test_burn_tx_verify() {
     // Check Alice balance
     let balance = alice.keypair.decrypt_to_point(&state.accounts[&alice.keypair.get_public_key().compress()].balances[&XELIS_ASSET]);
     assert_eq!(balance, Scalar::from((100u64 * COIN_VALUE) - (50 * COIN_VALUE + tx.fee)) * PC_GENS.B);
+}
+
+#[tokio::test]
+async fn test_tx_invoke_contract() {
+    let mut alice = Account::new();
+
+    alice.set_balance(XELIS_ASSET, 100 * COIN_VALUE);
+
+    let tx = {
+        let mut state = AccountStateImpl {
+            balances: alice.balances.clone(),
+            nonce: alice.nonce,
+            reference: Reference {
+                topoheight: 0,
+                hash: Hash::zero(),
+            },
+        };
+
+        let data = TransactionTypeBuilder::InvokeContract(InvokeContractBuilder {
+            contract: Hash::zero(),
+            chunk_id: 0,
+            max_gas: 1000,
+            parameters: Vec::new(),
+            deposits: [
+                (XELIS_ASSET, ContractDepositBuilder {
+                    amount: 50 * COIN_VALUE,
+                    private: true
+                })
+            ].into_iter().collect()
+        });
+        let builder = TransactionBuilder::new(TxVersion::V2, alice.keypair.get_public_key().compress(), 0, data, FeeBuilder::Multiplier(1f64));
+        let estimated_size = builder.estimate_size();
+        let tx = builder.build(&mut state, &alice.keypair).unwrap();
+        assert!(estimated_size == tx.size());
+        assert!(tx.to_bytes().len() == estimated_size);
+
+        tx
+    };
+
+    let mut state = ChainState::new();
+    let mut module = Module::new();
+    module.add_entry_chunk(Chunk::new());
+    state.contracts.insert(Hash::zero(), module);
+
+    // Create the chain state
+    {
+        let mut balances = HashMap::new();
+        for (asset, balance) in &alice.balances {
+            balances.insert(asset.clone(), balance.ciphertext.clone().take_ciphertext().unwrap());
+        }
+        state.accounts.insert(alice.keypair.get_public_key().compress(), AccountChainState {
+            balances,
+            nonce: alice.nonce,
+        });
+    }
+
+    let hash = tx.hash();
+    tx.verify(&hash, &mut state).await.unwrap();
+
+    // Check Alice balance
+    let balance = alice.keypair.decrypt_to_point(&state.accounts[&alice.keypair.get_public_key().compress()].balances[&XELIS_ASSET]);
+    // 50 coins deposit + tx fee + 1000 gas fee
+    let total_spend = (50 * COIN_VALUE) + tx.fee + 1000;
+
+    assert_eq!(balance, Scalar::from((100 * COIN_VALUE) - total_spend) * PC_GENS.B);
 }
 
 #[tokio::test]
@@ -318,10 +391,7 @@ async fn test_max_transfers() {
     };
 
     // Create the chain state
-    let mut state = ChainState {
-        accounts: HashMap::new(),
-        multisig: HashMap::new(),
-    };
+    let mut state = ChainState::new();
 
     // Alice
     {
@@ -382,10 +452,7 @@ async fn test_multisig_setup() {
         tx
     };
 
-    let mut state = ChainState {
-        accounts: HashMap::new(),
-        multisig: HashMap::new(),
-    };
+    let mut state = ChainState::new();
 
     // Create the chain state
     {
@@ -454,10 +521,7 @@ async fn test_multisig() {
     };
 
     // Create the chain state
-    let mut state = ChainState {
-        accounts: HashMap::new(),
-        multisig: HashMap::new(),
-    };
+    let mut state = ChainState::new();
 
     // Alice
     {
@@ -571,29 +635,31 @@ impl<'a> BlockchainVerificationState<'a, ()> for ChainState {
     }
 
     async fn get_environment(&mut self) -> Result<&Environment, ()> {
-        unimplemented!()
+        Ok(&self.env)
     }
 
     async fn set_contract_module(
         &mut self,
-        _: &'a Hash,
-        _: &'a Module
+        hash: &'a Hash,
+        module: &'a Module
     ) -> Result<(), ()> {
-        unimplemented!()
+        self.contracts.insert(hash.clone(), module.clone());
+        Ok(())
     }
 
     async fn load_contract_module(
         &mut self,
         _: &'a Hash
     ) -> Result<(), ()> {
-        unimplemented!()
+        Ok(())
     }
 
     async fn get_contract_module_with_environment(
         &self,
-        _: &'a Hash
+        contract: &'a Hash
     ) -> Result<(&Module, &Environment), ()> {
-        unimplemented!()
+        let module = self.contracts.get(contract).ok_or(())?;
+        Ok((module, &self.env))
     }
 }
 

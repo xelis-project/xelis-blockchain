@@ -23,7 +23,8 @@ use crate::{
             CompressedPublicKey,
             DecompressionError,
             DecryptHandle,
-            PedersenCommitment
+            PedersenCommitment,
+            PublicKey
         },
         hash,
         proofs::{
@@ -76,6 +77,8 @@ pub enum VerificationError<T> {
     TransactionExtraDataSize,
     #[error("Transfer count is invalid")]
     TransferCount,
+    #[error("Deposit count is invalid")]
+    DepositCount,
     #[error("Invalid commitments assets")]
     Commitments,
     #[error("Invalid multisig participants count")]
@@ -355,7 +358,7 @@ impl Transaction {
         }
 
         let mut transfers_decompressed: Vec<_> = Vec::new();
-        let deposits_decompressed: HashMap<_, _> = HashMap::new();
+        let mut deposits_decompressed: HashMap<_, _> = HashMap::new();
         match &self.data {
             TransactionType::Transfers(transfers) => {
                 if transfers.len() > MAX_TRANSFER_COUNT || transfers.is_empty() {
@@ -434,28 +437,27 @@ impl Transaction {
             },
             TransactionType::InvokeContract(payload) => {
                 if payload.deposits.len() > MAX_DEPOSIT_PER_INVOKE_CALL {
-                    return Err(VerificationError::TransferCount);
+                    return Err(VerificationError::DepositCount);
                 }
 
-                for (_, deposit) in payload.deposits.iter() {
+                for (asset, deposit) in payload.deposits.iter() {
                     match deposit {
                         ContractDeposit::Public(amount) => {
                             if *amount == 0 {
                                 return Err(VerificationError::InvalidFormat);
                             }
                         },
-                        ContractDeposit::Private { /* commitment, sender_handle, receiver_handle, */ .. } => {
-                            return Err(VerificationError::InvalidFormat);
-                            // let decompressed = DecompressedDepositCt {
-                            //     commitment: commitment.decompress()
-                            //         .map_err(ProofVerificationError::from)?,
-                            //     sender_handle: sender_handle.decompress()
-                            //         .map_err(ProofVerificationError::from)?,
-                            //     receiver_handle: receiver_handle.decompress()
-                            //         .map_err(ProofVerificationError::from)?,
-                            // };
+                        ContractDeposit::Private { commitment, sender_handle, receiver_handle, .. } => {
+                            let decompressed = DecompressedDepositCt {
+                                commitment: commitment.decompress()
+                                    .map_err(ProofVerificationError::from)?,
+                                sender_handle: sender_handle.decompress()
+                                    .map_err(ProofVerificationError::from)?,
+                                receiver_handle: receiver_handle.decompress()
+                                    .map_err(ProofVerificationError::from)?,
+                            };
 
-                            // deposits_decompressed.insert(asset, decompressed);
+                            deposits_decompressed.insert(asset, decompressed);
                         }
                     }
                 }
@@ -604,14 +606,10 @@ impl Transaction {
 
         // Prepare the new source commitments at same time
         // Count the number of commitments
-        let mut n_commitments = self.source_commitments.len();
         let mut value_commitments: Vec<(RistrettoPoint, CompressedRistretto)> = Vec::new();
 
         match &self.data {
             TransactionType::Transfers(transfers) => {
-                // Count the number of transfers
-                n_commitments += transfers.len();
-
                 let source_decompressed = self.source.decompress()
                     .map_err(ProofVerificationError::from)?;
 
@@ -676,14 +674,13 @@ impl Transaction {
                 state.set_multisig_state(&self.source, payload).await
                     .map_err(VerificationError::State)?;
             },
-            TransactionType::InvokeContract(payload) => {
-                transcript.invoke_contract_proof_domain_separator();
-                transcript.append_hash(b"contract_hash", &payload.contract);
-
-                let source_decompressed = self.source.decompress()
+            TransactionType::InvokeContract(payload) => {                
+                let dest_pubkey = PublicKey::from_hash(&payload.contract);
+                let source_pubkey = self.source.decompress()
                     .map_err(ProofVerificationError::from)?;
 
                 for (asset, deposit) in &payload.deposits {
+                    transcript.deposit_proof_domain_separator();
                     transcript.append_hash(b"deposit_asset", asset);
                     match deposit {
                         ContractDeposit::Public(amount) => {
@@ -699,22 +696,27 @@ impl Transaction {
                             transcript.append_handle(b"deposit_sender_handle", sender_handle);
                             transcript.append_handle(b"deposit_receiver_handle", receiver_handle);
 
+                            let decompressed = deposits_decompressed.get(asset)
+                                .ok_or(VerificationError::DepositNotFound)?;
+
                             ct_validity_proof.pre_verify(
-                                &commitment.decompress()
-                                    .map_err(ProofVerificationError::from)?,
-                                &source_decompressed,
-                               & source_decompressed,
-                                &receiver_handle.decompress()
-                                    .map_err(ProofVerificationError::from)?,
-                                &sender_handle.decompress()
-                                    .map_err(ProofVerificationError::from)?,
+                                &decompressed.commitment,
+                                &dest_pubkey,
+                               &source_pubkey,
+                                &decompressed.receiver_handle,
+                                &decompressed.sender_handle,
                                 true,
                                 &mut transcript,
                                 sigma_batch_collector
                             )?;
+
+                            value_commitments.push((decompressed.commitment.as_point().clone(), commitment.as_point().clone()));
                         }
                     }
                 }
+
+                transcript.invoke_contract_proof_domain_separator();
+                transcript.append_hash(b"contract_hash", &payload.contract);
 
                 for param in payload.parameters.iter() {
                     transcript.append_message(b"contract_param", param.as_bytes());
@@ -731,6 +733,7 @@ impl Transaction {
         // Finalize the new source commitments
 
         // Create fake commitments to make `m` (party size) of the bulletproof a power of two.
+        let n_commitments = self.source_commitments.len() + value_commitments.len();
         let n_dud_commitments = n_commitments
             .checked_next_power_of_two()
             .ok_or(ProofVerificationError::Format)?
