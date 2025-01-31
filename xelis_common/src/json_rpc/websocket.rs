@@ -364,19 +364,22 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
 
                 match zelf.background_task(&mut receiver, websocket).await {
                     Ok(()) => {
-                        debug!("Closing background task");
-                        zelf.set_online(false).await;
-
-                        {
-                            let mut lock = zelf.background_task.lock().await;
-                            *lock = None;
+                        // If we don't have the auto reconnect enabled, we stop here
+                        if zelf.delay_auto_reconnect.lock().await.is_none() {
+                            debug!("Closing background task because no auto reconnect ");
+                            zelf.set_online(false).await;
+    
+                            {
+                                let mut lock = zelf.background_task.lock().await;
+                                *lock = None;
+                            }
+    
+                            // Do a clean up
+                            zelf.clear_requests().await;
+                            zelf.clear_events().await;
+    
+                            return;
                         }
-
-                        // Do a clean up
-                        zelf.clear_requests().await;
-                        zelf.clear_events().await;
-
-                        return;
                     },
                     Err(e) => {
                         error!("Error in the WebSocket client background task: {:?}", e);
