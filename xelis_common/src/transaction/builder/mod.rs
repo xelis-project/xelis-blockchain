@@ -492,15 +492,14 @@ impl TransactionBuilder {
                 if transfers.len() == 0 {
                     return Err(GenerationError::EmptyTransfers);
                 }
-    
+
                 if transfers.len() > MAX_TRANSFER_COUNT {
                     return Err(GenerationError::MaxTransferCountReached);
                 }
     
-                let pk = source_keypair.get_public_key().compress();
                 let mut extra_data_size = 0;
                 for transfer in transfers.iter_mut() {
-                    if *transfer.destination.get_public_key() == pk {
+                    if *transfer.destination.get_public_key() == self.source {
                         return Err(GenerationError::SenderIsReceiver);
                     }
     
@@ -827,8 +826,7 @@ impl TransactionBuilder {
                 }
 
                 // You can't contains yourself in the participants
-                let pk = source_keypair.get_public_key().compress();
-                if keys.contains(&pk) {
+                if keys.contains(&self.source) {
                     return Err(GenerationError::MultiSigSelfParticipant);
                 }
 
