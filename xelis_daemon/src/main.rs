@@ -312,6 +312,7 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
     command_manager.add_command(Command::new("estimate_db_size", "Estimate the database total size", CommandHandler::Async(async_handler!(estimate_db_size::<S>))))?;
     command_manager.add_command(Command::new("count_orphaned_blocks", "Count how many orphaned blocks we currently hold", CommandHandler::Async(async_handler!(count_orphaned_blocks::<S>))))?;
     command_manager.add_command(Command::new("show_json_config", "Show the current config in JSON", CommandHandler::Async(async_handler!(show_json_config::<S>))))?;
+    command_manager.add_command(Command::new("broadcast_txs", "Broadcast all TXs in mempool if not done", CommandHandler::Async(async_handler!(broadcast_txs::<S>))))?;
 
     // Don't keep the lock for ever
     let (p2p, getwork) = {
@@ -596,6 +597,29 @@ async fn show_json_config<S: Storage>(manager: &CommandManager, _: ArgumentManag
 
     for line in json.lines() {
         manager.message(line);
+    }
+
+    Ok(())
+}
+
+async fn broadcast_txs<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
+    let context = manager.get_context().lock()?;
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    let p2p = blockchain.get_p2p().read().await;
+    let p2p = match p2p.as_ref() {
+        Some(p2p) => p2p,
+        None => {
+            manager.error("P2P is not enabled");
+            return Ok(());
+        }
+    };
+
+    let mempool = blockchain.get_mempool().read().await;
+    let txs = mempool.get_txs();
+
+    for hash in txs.keys() {
+        info!("Broadcasting TX {}", hash);
+        p2p.broadcast_tx_hash(hash.as_ref().clone()).await;
     }
 
     Ok(())
