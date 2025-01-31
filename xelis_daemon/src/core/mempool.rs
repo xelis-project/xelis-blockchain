@@ -383,14 +383,15 @@ impl Mempool {
             // or, check and delete txs if the nonce is lower than the new nonce
             // otherwise the cache is still up to date
             if cache.get_min() > nonce {
-                debug!("All TXs for key {} are orphaned, deleting them", key.as_address(self.mainnet));
+                debug!("All TXs for key {} are orphaned, deleting them because cache min is {} and last nonce is {}", key.as_address(self.mainnet), cache.get_min(), nonce);
 
                 // Don't let ghost TXs in mempool
                 for tx in cache.txs.drain(..) {
                     if let Some(sorted_tx) = self.txs.remove(&tx) {
+                        debug!("Deleting ghost TX {} with {} and nonce {}", tx, sorted_tx.get_tx().get_reference(), sorted_tx.get_tx().get_nonce());
                         deleted_transactions.push((tx, sorted_tx));
                     } else {
-                        warn!("TX {} not found in mempool (orphaned due to nonce)", tx);
+                        warn!("Ghost TX {} not found in mempool (orphaned due to nonce)", tx);
                     }
                 }
 
@@ -465,7 +466,10 @@ impl Mempool {
                         }
                     }
 
-                    if !delete_cache {
+                    // If we have deleted a TX from this cache, we need to verify the rest of them
+                    // If we don't have to delete the cache, and we didn't have any nonce collision
+                    // We don't have to reverify each TXs. They must be valid
+                    if !delete_cache && !hashes.is_empty() {
                         // Instead of verifiying each TX one by one, we verify them all at once
                         // This is much faster and is basically the same because:
                         // If one TX is invalid, all next TXs are invalid
