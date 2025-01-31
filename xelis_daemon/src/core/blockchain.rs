@@ -1862,8 +1862,9 @@ impl<S: Storage> Blockchain<S> {
 
         // track all events to notify websocket
         let mut events: HashMap<NotifyEvent, Vec<Value>> = HashMap::new();
-        // Track all orphaned tranasctions
-        let mut orphaned_transactions = HashSet::new();
+        // Track all orphaned transactions
+        // We keep in order all orphaned txs to try to re-add them in the mempool
+        let mut orphaned_transactions = IndexSet::new();
 
         // order the DAG (up to TOP_HEIGHT - STABLE_LIMIT)
         let mut highest_topo = 0;
@@ -1913,11 +1914,12 @@ impl<S: Storage> Blockchain<S> {
                     // mark txs as unexecuted if it was executed in this block
                     for tx_hash in block.get_txs_hashes() {
                         if storage.is_tx_executed_in_block(tx_hash, &hash_at_topo)? {
-                            trace!("Removing execution of {}", tx_hash);
+                            debug!("Removing execution of {}", tx_hash);
                             storage.remove_tx_executed(tx_hash)?;
                             storage.delete_contract_outputs_for_tx(tx_hash).await?;
 
                             if is_orphaned {
+                                debug!("Tx {} is now marked as orphaned", tx_hash);
                                 orphaned_transactions.insert(tx_hash.clone());
                             }
                         }
@@ -2048,7 +2050,7 @@ impl<S: Storage> Blockchain<S> {
                         chain_state.get_mut_storage().set_tx_executed_in_block(tx_hash, &hash)?;
 
                         // Delete the transaction from  the list if it was marked as orphaned
-                        if orphaned_transactions.remove(&tx_hash) {
+                        if orphaned_transactions.shift_remove(tx_hash) {
                             trace!("Transaction {} was marked as orphaned, but got executed again", tx_hash);
                         }
 
@@ -2258,11 +2260,13 @@ impl<S: Storage> Blockchain<S> {
                 // Delete it from our orphaned transactions list
                 // This save some performances as it will not try to add it back and
                 // consume resources for verifying the ZK Proof if we already know the answer
-                if orphaned_transactions.remove(&tx_hash) {
-                    trace!("Transaction {} was marked as orphaned, but got deleted from mempool. Prevent adding it back", tx_hash);
+                if orphaned_transactions.shift_remove(tx_hash.as_ref()) {
+                    debug!("Transaction {} was marked as orphaned, but got deleted from mempool. Prevent adding it back", tx_hash);
                 }
+
                 // Verify that the TX was not executed in a block
                 if storage.is_tx_executed_in_a_block(&tx_hash)? {
+                    trace!("Transaction {} was executed in a block, skipping orphaned event", tx_hash);
                     continue;
                 }
 
@@ -2280,7 +2284,7 @@ impl<S: Storage> Blockchain<S> {
 
         // Now we can try to add back all transactions
         for tx_hash in orphaned_transactions {
-            debug!("Adding back orphaned tx {}", tx_hash);
+            debug!("Trying to add orphaned tx {} back in mempool", tx_hash);
             // It is verified in add_tx_to_mempool function too
             // But to prevent loading the TX from storage and to fire wrong event
             if !storage.is_tx_executed_in_a_block(&tx_hash)? {
