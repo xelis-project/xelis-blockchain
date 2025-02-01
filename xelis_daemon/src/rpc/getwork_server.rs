@@ -142,7 +142,12 @@ impl Miner {
 
 impl Display for Miner {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let valid_blocks = self.blocks_accepted.iter().map(|h| h.to_string()).collect::<Vec<_>>().join(",");
+        let valid_blocks = self.blocks_accepted.iter()
+            .take(8)
+            .map(|h| h.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+
         write!(f, "Miner[address={}, name={}, accepted={} ({}), rejected={}]", self.key.as_address(self.mainnet), self.name, self.blocks_accepted.len(), valid_blocks, self.blocks_rejected)
     }
 }
