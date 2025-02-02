@@ -661,6 +661,7 @@ async fn temp_ban_address<S: Storage>(manager: &CommandManager, mut args: Argume
             let peer_list = p2p.get_peer_list();
 
             peer_list.temp_ban_address(&addr, seconds).await.context("Error while banning address")?;
+            manager.message(format!("Address {} has been banned for {} seconds", addr, seconds));
         },
         None => {
             manager.error("P2P is not enabled");
