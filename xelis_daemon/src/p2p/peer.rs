@@ -590,7 +590,7 @@ impl Peer {
     pub async fn close_and_temp_ban(&self) -> Result<(), P2pError> {
         trace!("temp ban {}", self);
         if !self.is_priority() {
-            self.peer_list.temp_ban_address(&self.get_connection().get_address().ip(), PEER_TEMP_BAN_TIME).await?;
+            self.peer_list.temp_ban_address(&self.get_connection().get_address().ip(), PEER_TEMP_BAN_TIME, false).await?;
         } else {
             debug!("{} is a priority peer, closing only", self);
         }

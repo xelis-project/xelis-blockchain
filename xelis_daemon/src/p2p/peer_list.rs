@@ -433,13 +433,25 @@ impl PeerList {
     }
 
     // temp ban a peer address for a duration in seconds
-    pub async fn temp_ban_address(&self, ip: &IpAddr, seconds: u64) -> Result<(), P2pError> {
+    pub async fn temp_ban_address(&self, ip: &IpAddr, seconds: u64, close_peer: bool) -> Result<(), P2pError> {
+        trace!("temp banning {} for {} seconds", ip, seconds);
         if self.cache.has_peerlist_entry(ip)? {
             let mut entry = self.cache.get_peerlist_entry(ip)?;
             entry.set_temp_ban_until(Some(get_current_time_in_seconds() + seconds));
             self.cache.set_peerlist_entry(ip, entry)?;
         } else {
             self.cache.set_peerlist_entry(ip, PeerListEntry::new(None, PeerListEntryState::Graylist))?;
+        }
+
+        if close_peer {
+            trace!("Closing peer if present in peerlist");
+            let peers = self.peers.read().await;
+            for peer in peers.values() {
+                if peer.get_connection().get_address().ip() == *ip {
+                    debug!("Kicking {} due to temp ban", peer);
+                    peer.signal_exit().await?;
+                }
+            }
         }
 
         Ok(())
