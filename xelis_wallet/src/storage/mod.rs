@@ -93,7 +93,8 @@ pub struct EncryptedStorage {
     transactions: Tree,
     // All transactions hashes ordered by topoheight
     // Key is only a counter incremented by one for each new transaction
-    transactions_order: Tree,
+    // Value is the tx hash
+    transactions_indexes: Tree,
     // balances for each asset
     balances: Tree,
     // extra data (network, topoheight, etc)
@@ -132,7 +133,7 @@ impl EncryptedStorage {
         let cipher = Cipher::new(key, Some(salt))?;
         let mut storage = Self {
             transactions: inner.db.open_tree(&cipher.hash_key("transactions"))?,
-            transactions_order: inner.db.open_tree(&cipher.hash_key("transactions_order"))?,
+            transactions_indexes: inner.db.open_tree(&cipher.hash_key("transactions_indexes"))?,
             balances: inner.db.open_tree(&cipher.hash_key("balances"))?,
             extra: inner.db.open_tree(&cipher.hash_key("extra"))?,
             assets: inner.db.open_tree(&cipher.hash_key("assets"))?,
@@ -262,9 +263,9 @@ impl EncryptedStorage {
         self.save_to_disk_with_key(tree, &hashed_key, value)
     }
 
-    fn save_to_disk_with_key<V: Serializer>(&self, tree: &Tree, key: &[u8], value: &V) -> Result<()> {
+    fn save_to_disk_with_key(&self, tree: &Tree, key: &[u8], value: &[u8]) -> Result<()> {
         trace!("save to disk with key");
-        tree.insert(key, self.cipher.encrypt_value(&value.to_bytes())?)?;
+        tree.insert(key, self.cipher.encrypt_value(value)?)?;
         Ok(())
     }
 
@@ -790,19 +791,13 @@ impl EncryptedStorage {
     pub fn get_last_outgoing_transaction(&self) -> Result<Option<TransactionEntry>> {
         trace!("get last transaction created");
         let mut last_tx: Option<TransactionEntry> = None;
-        for res in self.transactions.iter().values() {
-            let value = res?;
-            let entry = TransactionEntry::from_bytes(&self.cipher.decrypt_value(&value)?)?;
-            if !entry.is_outgoing() {
-                continue;
-            }
 
-            if let Some(last) = last_tx.as_ref() {
-                if entry.get_topoheight() > last.get_topoheight() {
-                    last_tx = Some(entry);
-                }
-            } else {
+        for el in self.transactions_indexes.iter().values().rev() {
+            let tx_hash = el?;
+            let entry: TransactionEntry = self.load_from_disk_with_key(&self.transactions, &tx_hash)?;
+            if entry.is_outgoing() {
                 last_tx = Some(entry);
+                break;
             }
         }
 
@@ -814,22 +809,19 @@ impl EncryptedStorage {
     pub fn delete_transactions_above_topoheight(&mut self, topoheight: u64) -> Result<()> {
         trace!("delete transactions above topoheight {}", topoheight);
 
-        let mut topoheight_passed = false;
-        for el in self.transactions_order.iter() {
+        // TODO: optimize by doing a bisect search for the exact range
+        for el in self.transactions_indexes.iter() {
+            // tx hash is the value in its hashed form
             let (id, tx_hash) = el?;
 
-            if !topoheight_passed{
-                let entry: TransactionEntry = self.load_from_disk(&self.transactions, &tx_hash)?;
-                if entry.get_topoheight() > topoheight {
-                    topoheight_passed = true;
-                }
+            let entry: TransactionEntry = self.load_from_disk_with_key(&self.transactions, &tx_hash)?;
+            if entry.get_topoheight() <= topoheight {
+                break;
             }
 
-            if topoheight_passed {
-                // Topoheight is passed, we can delete the transaction
-                self.delete_from_disk_with_key(&self.transactions, &tx_hash)?;
-                self.delete_from_disk_with_key(&self.transactions_order, &id)?;
-            }
+            // Topoheight is passed, we can delete the transaction
+            self.delete_from_disk_with_key(&self.transactions, &tx_hash)?;
+            self.delete_from_disk_with_key(&self.transactions_indexes, &id)?;
         }
 
         Ok(())
@@ -838,12 +830,16 @@ impl EncryptedStorage {
     // delete all transactions at or above the specified topoheight
     pub fn delete_transactions_at_or_above_topoheight(&mut self, topoheight: u64) -> Result<()> {
         trace!("delete transactions at or above topoheight {}", topoheight);
-        for el in self.transactions.iter().values() {
-            let value = el?;
-            let entry = TransactionEntry::from_bytes(&self.cipher.decrypt_value(&value)?)?;
-            if entry.get_topoheight() >= topoheight {
-                self.delete_transaction(entry.get_hash())?;
+
+        for el in self.transactions_indexes.iter().rev() {
+            let (id, tx_hash) = el?;
+            let entry: TransactionEntry = self.load_from_disk_with_key(&self.transactions, &tx_hash)?;
+            if entry.get_topoheight() < topoheight {
+                break;
             }
+
+            self.delete_from_disk_with_key(&self.transactions, &tx_hash)?;
+            self.delete_from_disk_with_key(&self.transactions_indexes, &id)?;
         }
 
         Ok(())
@@ -851,14 +847,26 @@ impl EncryptedStorage {
 
     // delete all transactions at the specified topoheight
     // This will go through each transaction, deserialize it, check topoheight, and delete it if required
-    // Maybe we can optimize it by keeping a lookuptable of topoheight -> txs ?
     pub fn delete_transactions_at_topoheight(&mut self, topoheight: u64) -> Result<()> {
         trace!("delete transactions at topoheight {}", topoheight);
-        for el in self.transactions.iter().values() {
-            let value = el?;
-            let entry = TransactionEntry::from_bytes(&self.cipher.decrypt_value(&value)?)?;
-            if entry.get_topoheight() == topoheight {
-                self.delete_transaction(entry.get_hash())?;
+        let mut is_at_topoheight = false;
+
+        // TODO: bisect search for the exact range
+        for el in self.transactions_indexes.iter() {
+            let (id, tx_hash) = el?;
+            let entry: TransactionEntry = self.load_from_disk_with_key(&self.transactions, &tx_hash)?;
+            if is_at_topoheight {
+                if entry.get_topoheight() == topoheight {
+                    // We are at the topoheight we can delete
+                    self.delete_from_disk_with_key(&self.transactions, &tx_hash)?;
+                    self.delete_from_disk_with_key(&self.transactions_indexes, &id)?;
+                } else {
+                    // We are done
+                    break;
+                }
+            } else if entry.get_topoheight() == topoheight {
+                // We are at the topoheight we can delete
+                is_at_topoheight = true;
             }
         }
 
@@ -997,7 +1005,7 @@ impl EncryptedStorage {
     pub fn delete_transactions(&mut self) -> Result<()> {
         trace!("delete transactions");
         self.transactions.clear()?;
-        self.transactions_order.clear()?;
+        self.transactions_indexes.clear()?;
 
         self.transaction_counter = 0;
         self.save_to_disk(&self.extra, TX_COUNTER, &self.transaction_counter.to_be_bytes())?;
@@ -1066,7 +1074,7 @@ impl EncryptedStorage {
 
         let id = self.get_next_transaction_id()?;
         let key = self.cipher.hash_key(hash.as_bytes());
-        self.save_to_disk_with_key(&self.transactions_order, &id.to_be_bytes(), &key)?;
+        self.save_to_disk_with_key(&self.transactions_indexes, &id.to_be_bytes(), &key)?;
         self.save_to_disk_with_key(&self.transactions, &key, &transaction.to_bytes())
     }
 
