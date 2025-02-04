@@ -74,6 +74,8 @@ const LCRT: &[u8] = b"LCRT";
 const MULTISIG: &[u8] = b"MSIG";
 // TX version to determine which version of TX we need
 const TX_VERSION: &[u8] = b"TXV";
+// TX Counter
+const TX_COUNTER: &[u8] = b"TXC";
 
 // Default cache size
 const DEFAULT_CACHE_SIZE: usize = 100;
@@ -89,6 +91,9 @@ pub struct EncryptedStorage {
     cipher: Cipher,
     // All transactions where this wallet is part of
     transactions: Tree,
+    // All transactions hashes ordered by topoheight
+    // Key is only a counter incremented by one for each new transaction
+    transactions_order: Tree,
     // balances for each asset
     balances: Tree,
     // extra data (network, topoheight, etc)
@@ -99,6 +104,8 @@ pub struct EncryptedStorage {
     changes_topoheight: Tree,
     // The inner storage
     inner: Storage,
+    // Transaction Counter to keep track which id is next fir ordering
+    transaction_counter: u64,
     // Caches
     balances_cache: Mutex<LruCache<Hash, Balance>>,
     // this cache is used to store unconfirmed balances
@@ -125,10 +132,12 @@ impl EncryptedStorage {
         let cipher = Cipher::new(key, Some(salt))?;
         let mut storage = Self {
             transactions: inner.db.open_tree(&cipher.hash_key("transactions"))?,
+            transactions_order: inner.db.open_tree(&cipher.hash_key("transactions_order"))?,
             balances: inner.db.open_tree(&cipher.hash_key("balances"))?,
             extra: inner.db.open_tree(&cipher.hash_key("extra"))?,
             assets: inner.db.open_tree(&cipher.hash_key("assets"))?,
             changes_topoheight: inner.db.open_tree(&cipher.hash_key("changes_topoheight"))?,
+            transaction_counter: 0,
             cipher,
             inner,
             balances_cache: Mutex::new(LruCache::new(NonZeroUsize::new(DEFAULT_CACHE_SIZE).unwrap())),
@@ -157,6 +166,11 @@ impl EncryptedStorage {
         // Load one-time the transaction version
         if storage.contains_data(&storage.extra, TX_VERSION)? {
             storage.tx_version = storage.load_from_disk(&storage.extra, TX_VERSION)?;
+        }
+
+        // Load one-time the transaction counter
+        if storage.contains_data(&storage.extra, TX_COUNTER)? {
+            storage.transaction_counter = storage.load_from_disk(&storage.extra, TX_COUNTER)?;
         }
 
         Ok(storage)
@@ -204,6 +218,13 @@ impl EncryptedStorage {
             .context(format!("Error while loading data with hashed key {} from disk", String::from_utf8_lossy(key)))
     }
 
+    // Load from disk with key passed
+    fn load_from_disk_with_key<V: Serializer>(&self, tree: &Tree, key: &[u8]) -> Result<V> {
+        trace!("load from disk with key");
+        self.internal_load(tree, key)?
+            .context(format!("Error while loading data with key {} from disk", String::from_utf8_lossy(key)))
+    }
+
     // Because we can't predict the nonce used for encryption, we make it determistic
     fn create_encrypted_key(&self, key: &[u8]) -> Result<Vec<u8>> {
         trace!("create encrypted key");
@@ -231,16 +252,19 @@ impl EncryptedStorage {
     fn save_to_disk_with_encrypted_key(&self, tree: &Tree, key: &[u8], value: &[u8]) -> Result<()> {
         trace!("save to disk with encrypted key");
         let encrypted_key = self.create_encrypted_key(key)?;
-        let encrypted_value = self.cipher.encrypt_value(value)?;
-        tree.insert(encrypted_key, encrypted_value)?;
-        Ok(())
+        self.save_to_disk_with_key(tree, &encrypted_key, value)
     }
 
     // hash key, encrypt data and then save to disk 
     fn save_to_disk(&self, tree: &Tree, key: &[u8], value: &[u8]) -> Result<()> {
         trace!("save to disk");
         let hashed_key = self.cipher.hash_key(key);
-        tree.insert(hashed_key, self.cipher.encrypt_value(value)?)?;
+        self.save_to_disk_with_key(tree, &hashed_key, value)
+    }
+
+    fn save_to_disk_with_key<V: Serializer>(&self, tree: &Tree, key: &[u8], value: &V) -> Result<()> {
+        trace!("save to disk with key");
+        tree.insert(key, self.cipher.encrypt_value(&value.to_bytes())?)?;
         Ok(())
     }
 
@@ -249,6 +273,13 @@ impl EncryptedStorage {
         trace!("delete from disk");
         let hashed_key = self.cipher.hash_key(key);
         tree.remove(hashed_key)?;
+        Ok(())
+    }
+
+    // delete from disk using a the raw key
+    fn delete_from_disk_with_key(&self, tree: &Tree, key: &[u8]) -> Result<()> {
+        trace!("delete from disk with key");
+        tree.remove(key)?;
         Ok(())
     }
 
@@ -782,11 +813,22 @@ impl EncryptedStorage {
     // This will go through each transaction, deserialize it, check topoheight, and delete it if required
     pub fn delete_transactions_above_topoheight(&mut self, topoheight: u64) -> Result<()> {
         trace!("delete transactions above topoheight {}", topoheight);
-        for el in self.transactions.iter().values() {
-            let value = el?;
-            let entry = TransactionEntry::from_bytes(&self.cipher.decrypt_value(&value)?)?;
-            if entry.get_topoheight() > topoheight {
-                self.delete_transaction(entry.get_hash())?;
+
+        let mut topoheight_passed = false;
+        for el in self.transactions_order.iter() {
+            let (id, tx_hash) = el?;
+
+            if !topoheight_passed{
+                let entry: TransactionEntry = self.load_from_disk(&self.transactions, &tx_hash)?;
+                if entry.get_topoheight() > topoheight {
+                    topoheight_passed = true;
+                }
+            }
+
+            if topoheight_passed {
+                // Topoheight is passed, we can delete the transaction
+                self.delete_from_disk_with_key(&self.transactions, &tx_hash)?;
+                self.delete_from_disk_with_key(&self.transactions_order, &id)?;
             }
         }
 
@@ -955,6 +997,11 @@ impl EncryptedStorage {
     pub fn delete_transactions(&mut self) -> Result<()> {
         trace!("delete transactions");
         self.transactions.clear()?;
+        self.transactions_order.clear()?;
+
+        self.transaction_counter = 0;
+        self.save_to_disk(&self.extra, TX_COUNTER, &self.transaction_counter.to_be_bytes())?;
+
         Ok(())
     }
 
@@ -996,6 +1043,16 @@ impl EncryptedStorage {
         Ok(())
     }
 
+    // fetch the next transaction counter id to attribute to a new TX
+    fn get_next_transaction_id(&mut self) -> Result<u64> {
+        trace!("get next transaction counter id");
+        let id = self.transaction_counter;
+        self.save_to_disk(&self.extra, TX_COUNTER, &id.to_be_bytes())?;
+        self.transaction_counter += 1;
+
+        Ok(id)
+    }
+
     // Save the transaction with its TX hash as key
     // We hash the hash of the TX to use it as a key to not let anyone being able to see txs saved on disk
     // with no access to the decrypted master key
@@ -1007,7 +1064,10 @@ impl EncryptedStorage {
             self.tx_cache = None;
         }
 
-        self.save_to_disk(&self.transactions, hash.as_bytes(), &transaction.to_bytes())
+        let id = self.get_next_transaction_id()?;
+        let key = self.cipher.hash_key(hash.as_bytes());
+        self.save_to_disk_with_key(&self.transactions_order, &id.to_be_bytes(), &key)?;
+        self.save_to_disk_with_key(&self.transactions, &key, &transaction.to_bytes())
     }
 
     // Check if the transaction is stored in wallet
