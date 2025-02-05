@@ -1357,7 +1357,30 @@ async fn history(manager: &CommandManager, mut arguments: ArgumentManager) -> Re
     let context = manager.get_context().lock()?;
     let wallet: &Arc<Wallet> = context.get()?;
     let storage = wallet.get_storage().read().await;
-    let mut transactions = storage.get_transactions()?;
+
+    let txs_len = storage.get_transactions_count()?;
+    let mut max_pages = txs_len / ELEMENTS_PER_PAGE;
+    if txs_len % ELEMENTS_PER_PAGE != 0 {
+        max_pages += 1;
+    }
+
+    if page > max_pages {
+        return Err(CommandError::InvalidArgument(format!("Page must be less than maximum pages ({})", max_pages)));
+    }
+
+    let transactions = storage.get_filtered_transactions(
+        None,
+        None,
+        None,
+        None,
+        true,
+        true,
+        true,
+        true,
+        None,
+        Some(ELEMENTS_PER_PAGE),
+        Some((page - 1) * ELEMENTS_PER_PAGE)
+    )?;
 
     // if we don't have any txs, no need proceed further
     if transactions.is_empty() {
@@ -1365,19 +1388,8 @@ async fn history(manager: &CommandManager, mut arguments: ArgumentManager) -> Re
         return Ok(())
     }
 
-    // desc ordered
-    transactions.sort_by(|a, b| b.get_topoheight().cmp(&a.get_topoheight()));
-    let mut max_pages = transactions.len() / ELEMENTS_PER_PAGE;
-    if transactions.len() % ELEMENTS_PER_PAGE != 0 {
-        max_pages += 1;
-    }
-
-    if page > max_pages {
-        return Err(CommandError::InvalidArgument(format!("Page must be less than maximum pages ({})", max_pages - 1)));
-    }
-
     manager.message(format!("Transactions (total {}) page {}/{}:", transactions.len(), page, max_pages));
-    for tx in transactions.iter().skip((page - 1) * ELEMENTS_PER_PAGE).take(ELEMENTS_PER_PAGE) {
+    for tx in transactions {
         manager.message(format!("- {}", tx.summary(wallet.get_network().is_mainnet(), &*storage).await?));
     }
 

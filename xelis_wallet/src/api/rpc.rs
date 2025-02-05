@@ -608,6 +608,7 @@ async fn list_transactions(context: &Context, body: Value) -> Result<Value, Inte
         params.accept_burn,
         params.query.as_ref(),
         params.limit,
+        params.skip,
     )?
         .into_iter()
         .map(|tx| tx.serializable(mainnet))

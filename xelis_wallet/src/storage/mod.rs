@@ -775,7 +775,7 @@ impl EncryptedStorage {
     // read whole disk and returns all transactions
     pub fn get_transactions(&self) -> Result<Vec<TransactionEntry>> {
         trace!("get transactions");
-        self.get_filtered_transactions(None, None, None, None, true, true, true, true, None, None)
+        self.get_filtered_transactions(None, None, None, None, true, true, true, true, None, None, None)
     }
 
     // Find the last outgoing transaction created
@@ -793,6 +793,13 @@ impl EncryptedStorage {
         }
 
         Ok(last_tx)
+    }
+
+    // Count the number of transactions stored
+    // TODO: replace it by a cached value
+    pub fn get_transactions_count(&self) -> Result<usize> {
+        trace!("get transactions count");
+        Ok(self.transactions.len())
     }
 
     // delete all transactions above the specified topoheight
@@ -841,7 +848,7 @@ impl EncryptedStorage {
     // Search the lowest transaction id for the requested topoheight
     // We do a bisect search to find the first transaction with the requested topoheight
     fn search_transaction_id_for_topoheight(&self, topoheight: u64, left: Option<u64>, right: Option<u64>) -> Result<Option<u64>> {
-        trace!("search transaction id for topoheight {}", topoheight);
+        debug!("search transaction id for topoheight {}", topoheight);
 
         let mut right = match right {
             Some(right) => right,
@@ -896,17 +903,19 @@ impl EncryptedStorage {
         accept_coinbase: bool,
         accept_burn: bool,
         query: Option<&Query>,
-        max_entries: Option<usize>,
+        limit: Option<usize>,
+        skip: Option<usize>
     ) -> Result<Vec<TransactionEntry>> {
         trace!("get filtered transactions");
-        let mut transactions = Vec::new();
 
         // Search the correct range
         let iterator = match (min_topoheight, max_topoheight) {
             (Some(min), Some(max)) => {
-                let min = self.search_transaction_id_for_topoheight(min, None, None)?;
+                let min = self.search_transaction_id_for_topoheight(min, None, None)
+                    .context("Error while searching min id")?;
                 // + 1 so we find the lowest id of the next topoheight to be inclusive on the range
-                let max = self.search_transaction_id_for_topoheight(max + 1, min, None)?;
+                let max = self.search_transaction_id_for_topoheight(max + 1, min, None)
+                    .context("Error while searching max id")?;
 
                 if let Some(min) = min {
                     if let Some(max) = max {
@@ -923,7 +932,8 @@ impl EncryptedStorage {
                 }
             },
             (Some(min), None) => {
-                let min = self.search_transaction_id_for_topoheight(min, None, None)?;
+                let min = self.search_transaction_id_for_topoheight(min, None, None)
+                    .context("Error while searching min id only")?;
                 if let Some(min) = min {
                     self.transactions_indexes.range(min.to_be_bytes()..)
                 } else {
@@ -931,7 +941,8 @@ impl EncryptedStorage {
                 }
             },
             (None, Some(max)) => {
-                let max = self.search_transaction_id_for_topoheight(max + 1, None, None)?;
+                let max = self.search_transaction_id_for_topoheight(max + 1, None, None)
+                    .context("Error while searching max id only")?;
                 if let Some(max) = max {
                     self.transactions_indexes.range(..max.to_be_bytes())
                 } else {
@@ -941,7 +952,8 @@ impl EncryptedStorage {
             (None, None) => self.transactions_indexes.iter()
         };
 
-        for el in iterator.values().rev() {
+        let mut transactions = Vec::new();
+        for el in iterator.values().rev().skip(skip.unwrap_or(0)) {
             let tx_key = el?;
             let mut entry: TransactionEntry = self.load_from_disk_with_key(&self.transactions, &tx_key)?;
             trace!("entry: {}", entry.get_hash());
@@ -1041,7 +1053,7 @@ impl EncryptedStorage {
                 }
             }
 
-            if max_entries.is_some_and(|max| transactions.len() >= max) {
+            if limit.is_some_and(|max| transactions.len() >= max) {
                 trace!("max entries reached");
                 break;
             }
@@ -1133,7 +1145,9 @@ impl EncryptedStorage {
 
         let id = self.get_next_transaction_id()?;
         let key = self.cipher.hash_key(hash.as_bytes());
-        self.save_to_disk_with_key(&self.transactions_indexes, &id.to_be_bytes(), &key)?;
+        // We write in plaintext the id and the hashed key
+        // Attacker may be able to see the ordering of the TXs but not the real TXs.
+        self.transactions_indexes.insert(&id.to_be_bytes(), &key)?;
         self.save_to_disk_with_key(&self.transactions, &key, &transaction.to_bytes())
     }
 
