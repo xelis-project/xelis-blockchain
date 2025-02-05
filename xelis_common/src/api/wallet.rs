@@ -166,6 +166,8 @@ pub struct ListTransactionsParams {
     pub query: Option<Query>,
     // Limit the number of entries returned
     pub limit: Option<usize>,
+    // Skip the first N entries
+    pub skip: Option<usize>,
 }
 
 #[derive(Serialize, Deserialize)]
