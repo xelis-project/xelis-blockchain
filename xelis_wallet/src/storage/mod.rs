@@ -2,6 +2,7 @@ mod backend;
 mod types;
 
 use std::{
+    cmp::Ordering,
     collections::{HashMap, HashSet, VecDeque},
     num::NonZeroUsize
 };
@@ -74,8 +75,6 @@ const LCRT: &[u8] = b"LCRT";
 const MULTISIG: &[u8] = b"MSIG";
 // TX version to determine which version of TX we need
 const TX_VERSION: &[u8] = b"TXV";
-// TX Counter
-const TX_COUNTER: &[u8] = b"TXC";
 
 // Default cache size
 const DEFAULT_CACHE_SIZE: usize = 100;
@@ -105,8 +104,6 @@ pub struct EncryptedStorage {
     changes_topoheight: Tree,
     // The inner storage
     inner: Storage,
-    // Transaction Counter to keep track which id is next fir ordering
-    transaction_counter: u64,
     // Caches
     balances_cache: Mutex<LruCache<Hash, Balance>>,
     // this cache is used to store unconfirmed balances
@@ -138,7 +135,6 @@ impl EncryptedStorage {
             extra: inner.db.open_tree(&cipher.hash_key("extra"))?,
             assets: inner.db.open_tree(&cipher.hash_key("assets"))?,
             changes_topoheight: inner.db.open_tree(&cipher.hash_key("changes_topoheight"))?,
-            transaction_counter: 0,
             cipher,
             inner,
             balances_cache: Mutex::new(LruCache::new(NonZeroUsize::new(DEFAULT_CACHE_SIZE).unwrap())),
@@ -167,11 +163,6 @@ impl EncryptedStorage {
         // Load one-time the transaction version
         if storage.contains_data(&storage.extra, TX_VERSION)? {
             storage.tx_version = storage.load_from_disk(&storage.extra, TX_VERSION)?;
-        }
-
-        // Load one-time the transaction counter
-        if storage.contains_data(&storage.extra, TX_COUNTER)? {
-            storage.transaction_counter = storage.load_from_disk(&storage.extra, TX_COUNTER)?;
         }
 
         Ok(storage)
@@ -873,6 +864,44 @@ impl EncryptedStorage {
         Ok(())
     }
 
+    // Search the lowest transaction id for the requested topoheight
+    // We do a bisect search to find the first transaction with the requested topoheight
+    fn search_transaction_id_for_topoheight(&self, topoheight: u64) -> Result<Option<u64>> {
+        trace!("search transaction id for topoheight {}", topoheight);
+        let Some(mut right) = self.get_last_transaction_id()? else {
+            debug!("no transaction index found");
+            return Ok(None);
+        };
+        let mut left = 0;
+        let mut result = None;
+
+        while left < right {
+            let mid = left + (right - left) / 2;
+            let Some(tx_hash) = self.transactions_indexes.get(&mid.to_be_bytes())? else {
+                debug!("no transaction index found for {}", mid);
+                return Ok(None);
+            };
+
+            let entry: TransactionEntry = self.load_from_disk_with_key(&self.transactions, &tx_hash)?;
+            let ord = entry.get_topoheight().cmp(&topoheight);
+            match ord {
+                Ordering::Equal => {
+                    // We found a match, but we keep searching left to find the smallest ID
+                    result = Some(mid);
+                    right = mid;
+                },
+                Ordering::Less => {
+                    left = mid + 1;
+                },
+                Ordering::Greater => {
+                    right = mid;
+                }
+            }
+        }
+
+        Ok(result)
+    }
+
     // Filter when the data is deserialized to not load all transactions in memory
     pub fn get_filtered_transactions(
         &self,
@@ -889,23 +918,51 @@ impl EncryptedStorage {
     ) -> Result<Vec<TransactionEntry>> {
         trace!("get filtered transactions");
         let mut transactions = Vec::new();
-        for el in self.transactions_indexes.iter().values() {
+
+        // Search the correct range
+        let iterator = match (min_topoheight, max_topoheight) {
+            (Some(min), Some(max)) => {
+                let min = self.search_transaction_id_for_topoheight(min)?;
+                // + 1 so we find the lowest id of the next topoheight to be inclusive on the range
+                let max = self.search_transaction_id_for_topoheight(max + 1)?;
+
+                if let Some(min) = min {
+                    if let Some(max) = max {
+                        self.transactions_indexes.range(min.to_be_bytes()..max.to_be_bytes())
+                    } else {
+                        self.transactions_indexes.range(min.to_be_bytes()..)
+                    }
+                } else {
+                    if let Some(max) = max {
+                        self.transactions_indexes.range(..max.to_be_bytes())
+                    } else {
+                        self.transactions_indexes.iter()
+                    }
+                }
+            },
+            (Some(min), None) => {
+                let min = self.search_transaction_id_for_topoheight(min)?;
+                if let Some(min) = min {
+                    self.transactions_indexes.range(min.to_be_bytes()..)
+                } else {
+                    self.transactions_indexes.iter()
+                }
+            },
+            (None, Some(max)) => {
+                let max = self.search_transaction_id_for_topoheight(max + 1)?;
+                if let Some(max) = max {
+                    self.transactions_indexes.range(..max.to_be_bytes())
+                } else {
+                    self.transactions_indexes.iter()
+                }
+            },
+            (None, None) => self.transactions_indexes.iter()
+        };
+
+        for el in iterator.values().rev() {
             let tx_key = el?;
             let mut entry: TransactionEntry = self.load_from_disk_with_key(&self.transactions, &tx_key)?;
             trace!("entry: {}", entry.get_hash());
-            if let Some(topoheight) = min_topoheight {
-                if entry.get_topoheight() < topoheight {
-                    trace!("entry topoheight {} < min topoheight {}", entry.get_topoheight(), topoheight);
-                    continue;
-                }
-            }
-
-            if let Some(topoheight) = max_topoheight {
-                if entry.get_topoheight() > topoheight {
-                    trace!("entry topoheight {} > max topoheight {}", entry.get_topoheight(), topoheight);
-                    break;
-                }
-            }
 
             let mut transfers: Option<Vec<Transfer>> = None;
             match entry.get_mut_entry() {
@@ -1024,9 +1081,6 @@ impl EncryptedStorage {
         self.transactions.clear()?;
         self.transactions_indexes.clear()?;
 
-        self.transaction_counter = 0;
-        self.save_to_disk(&self.extra, TX_COUNTER, &self.transaction_counter.to_be_bytes())?;
-
         Ok(())
     }
 
@@ -1068,13 +1122,18 @@ impl EncryptedStorage {
         Ok(())
     }
 
+    fn get_last_transaction_id(&self) -> Result<Option<u64>> {
+        trace!("get last transaction id");
+        let last = self.transactions_indexes.last()?;
+        Ok(last.map(|(id, _)| u64::from_bytes(&id)).transpose()?)
+    }
+
     // fetch the next transaction counter id to attribute to a new TX
     fn get_next_transaction_id(&mut self) -> Result<u64> {
         trace!("get next transaction counter id");
-        let id = self.transaction_counter;
-        self.save_to_disk(&self.extra, TX_COUNTER, &id.to_be_bytes())?;
-        self.transaction_counter += 1;
-
+        let id = self.get_last_transaction_id()?
+            .map(|id| id + 1)
+            .unwrap_or(0);
         Ok(id)
     }
 
