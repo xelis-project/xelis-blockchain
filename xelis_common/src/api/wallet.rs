@@ -163,7 +163,9 @@ pub struct ListTransactionsParams {
     #[serde(default = "default_true_value")]
     pub accept_burn: bool,
     // Filter by extra data
-    pub query: Option<Query>
+    pub query: Option<Query>,
+    // Limit the number of entries returned
+    pub limit: Option<usize>,
 }
 
 #[derive(Serialize, Deserialize)]
