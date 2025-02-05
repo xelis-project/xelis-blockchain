@@ -536,6 +536,14 @@ impl NetworkHandler {
         // Determine if its the highest version of balance or not
         // This is used to save the latest balance
         let mut highest_version = true;
+
+        // Retrieve the last transaction ID
+        // We will need it to re-org all the TXs we have stored
+        let last_tx_id = {
+            let storage = self.wallet.get_storage().read().await;
+            storage.get_last_transaction_id()?
+        };
+
         loop {
             let (mut balance, _, _, previous_topoheight) = version.consume();
             // add this topoheight in cache to not re-process it (blocks are independant of asset to have faster sync)
@@ -573,7 +581,7 @@ impl NetworkHandler {
                         } else {
                             trace!("Decrypting balance for asset {}", asset);
                             let ciphertext = balance.decompressed()?;
-                            Arc::clone(&self.wallet).decrypt_ciphertext(ciphertext.clone()).await?
+                            self.wallet.decrypt_ciphertext(ciphertext.clone()).await?
                         };
                         
                         debug!("Storing balance from topoheight {} for asset {} ({}) {}", topoheight, asset, balance, plaintext_balance);
@@ -607,6 +615,10 @@ impl NetworkHandler {
             // Only first iteration is the highest one
             highest_version = false;
         }
+
+        // Re-org all the TXs we have stored
+        let mut storage = self.wallet.get_storage().write().await;
+        storage.reverse_transactions_indexes(last_tx_id)?;
 
         Ok(())
     }

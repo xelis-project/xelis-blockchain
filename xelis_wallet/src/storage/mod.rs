@@ -48,7 +48,7 @@ use crate::{
     },
     error::WalletError
 };
-use log::{trace, debug, error};
+use log::{debug, error, trace, warn};
 
 use backend::{Db, Tree};
 
@@ -800,15 +800,16 @@ impl EncryptedStorage {
     pub fn delete_transactions_above_topoheight(&mut self, topoheight: u64) -> Result<()> {
         trace!("delete transactions above topoheight {}", topoheight);
 
-        // TODO: optimize by doing a bisect search for the exact range
-        for el in self.transactions_indexes.iter() {
+        // We search lowest id for topo + 1 to make sure we delete all transactions above the requested topoheight
+        let min = self.search_transaction_id_for_topoheight(topoheight + 1, None, None)?;
+        let iterator = match min {
+            Some(min) => self.transactions_indexes.range(min.to_be_bytes()..),
+            None => self.transactions_indexes.iter()
+        };
+
+        for el in iterator {
             // tx hash is the value in its hashed form
             let (id, tx_hash) = el?;
-
-            let entry: TransactionEntry = self.load_from_disk_with_key(&self.transactions, &tx_hash)?;
-            if entry.get_topoheight() <= topoheight {
-                break;
-            }
 
             // Topoheight is passed, we can delete the transaction
             self.delete_from_disk_with_key(&self.transactions, &tx_hash)?;
@@ -822,13 +823,14 @@ impl EncryptedStorage {
     pub fn delete_transactions_at_or_above_topoheight(&mut self, topoheight: u64) -> Result<()> {
         trace!("delete transactions at or above topoheight {}", topoheight);
 
-        for el in self.transactions_indexes.iter().rev() {
-            let (id, tx_hash) = el?;
-            let entry: TransactionEntry = self.load_from_disk_with_key(&self.transactions, &tx_hash)?;
-            if entry.get_topoheight() < topoheight {
-                break;
-            }
+        let min = self.search_transaction_id_for_topoheight(topoheight, None, None)?;
+        let iterator = match min {
+            Some(min) => self.transactions_indexes.range(min.to_be_bytes()..),
+            None => self.transactions_indexes.iter()
+        };
 
+        for el in iterator.rev() {
+            let (id, tx_hash) = el?;
             self.delete_from_disk_with_key(&self.transactions, &tx_hash)?;
             self.delete_from_disk_with_key(&self.transactions_indexes, &id)?;
         }
@@ -836,43 +838,23 @@ impl EncryptedStorage {
         Ok(())
     }
 
-    // delete all transactions at the specified topoheight
-    // This will go through each transaction, deserialize it, check topoheight, and delete it if required
-    pub fn delete_transactions_at_topoheight(&mut self, topoheight: u64) -> Result<()> {
-        trace!("delete transactions at topoheight {}", topoheight);
-        let mut is_at_topoheight = false;
-
-        // TODO: bisect search for the exact range
-        for el in self.transactions_indexes.iter() {
-            let (id, tx_hash) = el?;
-            let entry: TransactionEntry = self.load_from_disk_with_key(&self.transactions, &tx_hash)?;
-            if is_at_topoheight {
-                if entry.get_topoheight() == topoheight {
-                    // We are at the topoheight we can delete
-                    self.delete_from_disk_with_key(&self.transactions, &tx_hash)?;
-                    self.delete_from_disk_with_key(&self.transactions_indexes, &id)?;
-                } else {
-                    // We are done
-                    break;
-                }
-            } else if entry.get_topoheight() == topoheight {
-                // We are at the topoheight we can delete
-                is_at_topoheight = true;
-            }
-        }
-
-        Ok(())
-    }
-
     // Search the lowest transaction id for the requested topoheight
     // We do a bisect search to find the first transaction with the requested topoheight
-    fn search_transaction_id_for_topoheight(&self, topoheight: u64) -> Result<Option<u64>> {
+    fn search_transaction_id_for_topoheight(&self, topoheight: u64, left: Option<u64>, right: Option<u64>) -> Result<Option<u64>> {
         trace!("search transaction id for topoheight {}", topoheight);
-        let Some(mut right) = self.get_last_transaction_id()? else {
-            debug!("no transaction index found");
-            return Ok(None);
+
+        let mut right = match right {
+            Some(right) => right,
+            None => {
+                if let Some(right) = self.get_last_transaction_id()? {
+                    right
+                } else {
+                    debug!("no transaction index found");
+                    return Ok(None);
+                }
+            }
         };
-        let mut left = 0;
+        let mut left = left.unwrap_or(0);
         let mut result = None;
 
         while left < right {
@@ -922,9 +904,9 @@ impl EncryptedStorage {
         // Search the correct range
         let iterator = match (min_topoheight, max_topoheight) {
             (Some(min), Some(max)) => {
-                let min = self.search_transaction_id_for_topoheight(min)?;
+                let min = self.search_transaction_id_for_topoheight(min, None, None)?;
                 // + 1 so we find the lowest id of the next topoheight to be inclusive on the range
-                let max = self.search_transaction_id_for_topoheight(max + 1)?;
+                let max = self.search_transaction_id_for_topoheight(max + 1, min, None)?;
 
                 if let Some(min) = min {
                     if let Some(max) = max {
@@ -941,7 +923,7 @@ impl EncryptedStorage {
                 }
             },
             (Some(min), None) => {
-                let min = self.search_transaction_id_for_topoheight(min)?;
+                let min = self.search_transaction_id_for_topoheight(min, None, None)?;
                 if let Some(min) = min {
                     self.transactions_indexes.range(min.to_be_bytes()..)
                 } else {
@@ -949,7 +931,7 @@ impl EncryptedStorage {
                 }
             },
             (None, Some(max)) => {
-                let max = self.search_transaction_id_for_topoheight(max + 1)?;
+                let max = self.search_transaction_id_for_topoheight(max + 1, None, None)?;
                 if let Some(max) = max {
                     self.transactions_indexes.range(..max.to_be_bytes())
                 } else {
@@ -1122,7 +1104,8 @@ impl EncryptedStorage {
         Ok(())
     }
 
-    fn get_last_transaction_id(&self) -> Result<Option<u64>> {
+    // Get the last transaction id
+    pub fn get_last_transaction_id(&self) -> Result<Option<u64>> {
         trace!("get last transaction id");
         let last = self.transactions_indexes.last()?;
         Ok(last.map(|(id, _)| u64::from_bytes(&id)).transpose()?)
@@ -1152,6 +1135,44 @@ impl EncryptedStorage {
         let key = self.cipher.hash_key(hash.as_bytes());
         self.save_to_disk_with_key(&self.transactions_indexes, &id.to_be_bytes(), &key)?;
         self.save_to_disk_with_key(&self.transactions, &key, &transaction.to_bytes())
+    }
+
+    // Reorg all the TXs written after a certain ID
+    // To reorg them, we only need to reverse the order written
+    pub fn reverse_transactions_indexes(&mut self, id: Option<u64>) -> Result<()> {
+        trace!("reverse transactions indexes after {:?}", id);
+        let Some(end_id) = self.get_last_transaction_id()? else {
+            debug!("no transactions indexes to reverse");
+            return Ok(());
+        };
+
+        // Start from the first ID to reverse
+        let mut low_id = id.map(|v| v + 1)
+            .unwrap_or(0);
+        // End at the last ID
+        let mut high_id = end_id;
+
+        while low_id < high_id {
+            // Load TX hashes for swapping
+            let Some(low_tx_hash) = self.transactions_indexes.get(&low_id.to_be_bytes())? else {
+                warn!("No transaction index found for low {}", low_id);
+                return Ok(());
+            };
+            let Some(high_tx_hash) = self.transactions_indexes.get(&high_id.to_be_bytes())? else {
+                warn!("No transaction index found for high {}", high_id);
+                return Ok(()); 
+            };
+
+            // Swap the transaction indexes on disk
+            self.transactions_indexes.insert(low_id.to_be_bytes(), high_tx_hash)?;
+            self.transactions_indexes.insert(high_id.to_be_bytes(), low_tx_hash)?;
+
+            // Move pointers inward
+            low_id += 1;
+            high_id -= 1;
+        }
+
+        Ok(())
     }
 
     // Check if the transaction is stored in wallet
