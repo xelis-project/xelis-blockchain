@@ -784,7 +784,7 @@ impl EncryptedStorage {
     // read whole disk and returns all transactions
     pub fn get_transactions(&self) -> Result<Vec<TransactionEntry>> {
         trace!("get transactions");
-        self.get_filtered_transactions(None, None, None, None, true, true, true, true, None)
+        self.get_filtered_transactions(None, None, None, None, true, true, true, true, None, None)
     }
 
     // Find the last outgoing transaction created
@@ -874,12 +874,24 @@ impl EncryptedStorage {
     }
 
     // Filter when the data is deserialized to not load all transactions in memory
-    pub fn get_filtered_transactions(&self, address: Option<&PublicKey>, asset: Option<&Hash>, min_topoheight: Option<u64>, max_topoheight: Option<u64>, accept_incoming: bool, accept_outgoing: bool, accept_coinbase: bool, accept_burn: bool, query: Option<&Query>) -> Result<Vec<TransactionEntry>> {
+    pub fn get_filtered_transactions(
+        &self,
+        address: Option<&PublicKey>,
+        asset: Option<&Hash>,
+        min_topoheight: Option<u64>,
+        max_topoheight: Option<u64>,
+        accept_incoming: bool,
+        accept_outgoing: bool,
+        accept_coinbase: bool,
+        accept_burn: bool,
+        query: Option<&Query>,
+        max_entries: Option<usize>,
+    ) -> Result<Vec<TransactionEntry>> {
         trace!("get filtered transactions");
         let mut transactions = Vec::new();
-        for el in self.transactions.iter().values() {
-            let value = el?;
-            let mut entry = TransactionEntry::from_bytes(&self.cipher.decrypt_value(&value)?)?;
+        for el in self.transactions_indexes.iter().values() {
+            let tx_key = el?;
+            let mut entry: TransactionEntry = self.load_from_disk_with_key(&self.transactions, &tx_key)?;
             trace!("entry: {}", entry.get_hash());
             if let Some(topoheight) = min_topoheight {
                 if entry.get_topoheight() < topoheight {
@@ -891,7 +903,7 @@ impl EncryptedStorage {
             if let Some(topoheight) = max_topoheight {
                 if entry.get_topoheight() > topoheight {
                     trace!("entry topoheight {} > max topoheight {}", entry.get_topoheight(), topoheight);
-                    continue;
+                    break;
                 }
             }
 
@@ -988,6 +1000,11 @@ impl EncryptedStorage {
                 e => {
                     trace!("entry has no transfers, discarding {:?}", e);
                 }
+            }
+
+            if max_entries.is_some_and(|max| transactions.len() >= max) {
+                trace!("max entries reached");
+                break;
             }
         }
 
