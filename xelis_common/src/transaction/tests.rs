@@ -115,7 +115,7 @@ fn create_tx_for(account: Account, destination: Address, amount: u64, extra_data
     }]);
 
 
-    let builder = TransactionBuilder::new(TxVersion::V1, account.keypair.get_public_key().compress(), 0, data, FeeBuilder::Multiplier(1f64));
+    let builder = TransactionBuilder::new(TxVersion::V1, account.keypair.get_public_key().compress(), None, data, FeeBuilder::Multiplier(1f64));
     let estimated_size = builder.estimate_size();
     let tx = builder.build(&mut state, &account.keypair).unwrap();
     assert!(estimated_size == tx.size(), "expected {} bytes got {} bytes", tx.size(), estimated_size);
@@ -245,7 +245,7 @@ async fn test_burn_tx_verify() {
             amount: 50 * COIN_VALUE,
             asset: XELIS_ASSET,
         });
-        let builder = TransactionBuilder::new(TxVersion::V0, alice.keypair.get_public_key().compress(), 0, data, FeeBuilder::Multiplier(1f64));
+        let builder = TransactionBuilder::new(TxVersion::V0, alice.keypair.get_public_key().compress(), None, data, FeeBuilder::Multiplier(1f64));
         let estimated_size = builder.estimate_size();
         let tx = builder.build(&mut state, &alice.keypair).unwrap();
         assert!(estimated_size == tx.size());
@@ -308,7 +308,7 @@ async fn test_max_transfers() {
         };
 
         let data = TransactionTypeBuilder::Transfers(transfers);
-        let builder = TransactionBuilder::new(TxVersion::V0, alice.keypair.get_public_key().compress(), 0, data, FeeBuilder::Multiplier(1f64));
+        let builder = TransactionBuilder::new(TxVersion::V0, alice.keypair.get_public_key().compress(), None, data, FeeBuilder::Multiplier(1f64));
         let estimated_size = builder.estimate_size();
         let tx = builder.build(&mut state, &alice.keypair).unwrap();
         assert!(estimated_size == tx.size());
@@ -373,7 +373,7 @@ async fn test_multisig_setup() {
             threshold: 2,
             participants: IndexSet::from_iter(vec![bob.keypair.get_public_key().to_address(false), charlie.keypair.get_public_key().to_address(false)]),
         });
-        let builder = TransactionBuilder::new(TxVersion::V1, alice.keypair.get_public_key().compress(), 0, data, FeeBuilder::Multiplier(1f64));
+        let builder = TransactionBuilder::new(TxVersion::V1, alice.keypair.get_public_key().compress(), None, data, FeeBuilder::Multiplier(1f64));
         let estimated_size = builder.estimate_size();
         let tx = builder.build(&mut state, &alice.keypair).unwrap();
         assert!(estimated_size == tx.size());
@@ -444,7 +444,7 @@ async fn test_multisig() {
             asset: XELIS_ASSET,
             extra_data: None,
         }]);
-        let builder = TransactionBuilder::new(TxVersion::V1, alice.keypair.get_public_key().compress(), 2, data, FeeBuilder::Multiplier(1f64));
+        let builder = TransactionBuilder::new(TxVersion::V1, alice.keypair.get_public_key().compress(), Some(2), data, FeeBuilder::Multiplier(1f64));
         let mut tx = builder.build_unsigned(&mut state, &alice.keypair).unwrap();
 
         tx.sign_multisig(&charlie.keypair, 0);
