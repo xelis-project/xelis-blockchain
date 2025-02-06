@@ -315,7 +315,7 @@ async fn test_tx_invoke_contract() {
                 })
             ].into_iter().collect()
         });
-        let builder = TransactionBuilder::new(TxVersion::V2, alice.keypair.get_public_key().compress(), 0, data, FeeBuilder::Multiplier(1f64));
+        let builder = TransactionBuilder::new(TxVersion::V2, alice.keypair.get_public_key().compress(), None, data, FeeBuilder::Multiplier(1f64));
         let estimated_size = builder.estimate_size();
         let tx = builder.build(&mut state, &alice.keypair).unwrap();
         assert!(estimated_size == tx.size());
