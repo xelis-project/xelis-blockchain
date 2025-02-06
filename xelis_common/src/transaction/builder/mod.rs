@@ -118,7 +118,7 @@ pub enum TransactionTypeBuilder {
 pub struct TransactionBuilder {
     version: TxVersion,
     source: CompressedPublicKey,
-    required_thresholds: u8,
+    required_thresholds: Option<u8>,
     data: TransactionTypeBuilder,
     fee_builder: FeeBuilder
 }
@@ -188,7 +188,7 @@ impl TransactionTypeBuilder {
 }
 
 impl TransactionBuilder {
-    pub fn new(version: TxVersion, source: CompressedPublicKey, required_thresholds: u8, data: TransactionTypeBuilder, fee_builder: FeeBuilder) -> Self {
+    pub fn new(version: TxVersion, source: CompressedPublicKey, required_thresholds: Option<u8>, data: TransactionTypeBuilder, fee_builder: FeeBuilder) -> Self {
         Self {
             version,
             source,
@@ -228,9 +228,9 @@ impl TransactionBuilder {
             size += 1;
         }
 
-        if self.required_thresholds != 0 {
+        if let Some(threshold) = self.required_thresholds {
             // 1 for Multisig participants count byte
-            size += 1 + (self.required_thresholds as usize * (SIGNATURE_SIZE + 1))
+            size += 1 + (threshold as usize * (SIGNATURE_SIZE + 1))
         }
 
         let mut transfers_count = 0;
@@ -332,7 +332,7 @@ impl TransactionBuilder {
                     (0, 0)
                 };
 
-                let expected_fee = calculate_tx_fee(size, transfers, new_addresses, self.required_thresholds as usize);
+                let expected_fee = calculate_tx_fee(size, transfers, new_addresses, self.required_thresholds.unwrap_or(0) as usize);
                 (expected_fee as f64 * multiplier) as u64
             },
             // If the value is set, use it
