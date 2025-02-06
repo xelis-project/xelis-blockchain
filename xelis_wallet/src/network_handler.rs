@@ -803,7 +803,7 @@ impl NetworkHandler {
             }
         } else {
             let mut storage = self.wallet.get_storage().write().await;
-            if storage.has_multi_sig_state().await? {
+            if storage.has_multisig_state().await? {
                 info!("No multisig account detected, deleting multisig state");
                 storage.delete_multisig_state().await?;
             }

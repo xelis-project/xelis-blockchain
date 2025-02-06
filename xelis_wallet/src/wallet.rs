@@ -322,7 +322,7 @@ impl Wallet {
         let encrypted_master_key = cipher.encrypt_value(&master_key)?;
         debug!("Save encrypted master key in public storage");
         inner.set_encrypted_master_key(&encrypted_master_key)?;
-        
+
         // generate the storage salt and save it in encrypted form
         let mut storage_salt = [0; SALT_SIZE];
         OsRng.fill_bytes(&mut storage_salt);
@@ -658,7 +658,10 @@ impl Wallet {
     pub async fn create_transaction_with_storage(&self, storage: &EncryptedStorage, transaction_type: TransactionTypeBuilder, fee: FeeBuilder) -> Result<(Transaction, TransactionBuilderState), WalletError> {
         trace!("create transaction with storage");
         let mut state = self.create_transaction_state_with_storage(&storage, &transaction_type, &fee, None).await?;
-        let transaction = self.create_transaction_with(&mut state, storage.get_tx_version().await?, transaction_type, fee)?;
+        let threshold = storage.get_multisig_state().await?
+            .map(|m| m.payload.threshold);
+        let tx_version = storage.get_tx_version().await?;
+        let transaction = self.create_transaction_with(&mut state, threshold, tx_version, transaction_type, fee)?;
 
         Ok((transaction, state))
     }
@@ -815,10 +818,9 @@ impl Wallet {
     }
 
     // Create the transaction with all needed parameters
-    pub fn create_transaction_with(&self, state: &mut TransactionBuilderState, tx_version: TxVersion, transaction_type: TransactionTypeBuilder, fee: FeeBuilder) -> Result<Transaction, WalletError> {
+    pub fn create_transaction_with(&self, state: &mut TransactionBuilderState, threshold: Option<u8>, tx_version: TxVersion, transaction_type: TransactionTypeBuilder, fee: FeeBuilder) -> Result<Transaction, WalletError> {
         // Create the transaction builder
-        // TODO: support multisig
-        let builder = TransactionBuilder::new(tx_version, self.get_public_key().clone(), 0, transaction_type, fee);
+        let builder = TransactionBuilder::new(tx_version, self.get_public_key().clone(), threshold, transaction_type, fee);
 
         // Build the final transaction
         let transaction = builder.build(state, &self.inner.keypair)
@@ -832,7 +834,7 @@ impl Wallet {
     }
 
     // Create an unsigned transaction with the given transaction type and fee
-    pub fn create_unsigned_transaction(&self, state: &mut TransactionBuilderState, threshold: u8, transaction_type: TransactionTypeBuilder, fee: FeeBuilder, tx_version: TxVersion) -> Result<UnsignedTransaction, WalletError> {
+    pub fn create_unsigned_transaction(&self, state: &mut TransactionBuilderState, threshold: Option<u8>, transaction_type: TransactionTypeBuilder, fee: FeeBuilder, tx_version: TxVersion) -> Result<UnsignedTransaction, WalletError> {
         trace!("create unsigned transaction");
         let builder = TransactionBuilder::new(tx_version, self.get_public_key().clone(), threshold, transaction_type, fee);
         let unsigned = builder.build_unsigned(state, &self.inner.keypair)
@@ -896,8 +898,15 @@ impl Wallet {
         #[cfg(feature = "network_handler")]
         self.add_registered_keys_for_fees_estimation(&mut state, &FeeBuilder::default(), &tx_type).await?;
 
-        // TODO: support multisig
-        let builder = TransactionBuilder::new(TxVersion::V0, self.get_public_key().clone(), 0, tx_type, FeeBuilder::default());
+        let (threshold, version) = {
+            let storage = self.storage.read().await;
+            let threshold = storage.get_multisig_state().await?
+                .map(|m| m.payload.threshold);
+            let version = storage.get_tx_version().await?;
+            (threshold, version)
+        };
+
+        let builder = TransactionBuilder::new(version, self.get_public_key().clone(), threshold, tx_type, FeeBuilder::default());
         let estimated_fees = builder.estimate_fees(&mut state)
             .map_err(|e| WalletError::Any(e.into()))?;
 

@@ -1039,7 +1039,7 @@ async fn create_transaction_with_multisig(manager: &CommandManager, prompt: &Pro
     let mut state = wallet.create_transaction_state_with_storage(&storage, &tx_type, &fee, None).await
         .context("Error while creating transaction state")?;
 
-    let mut unsigned = wallet.create_unsigned_transaction(&mut state, payload.threshold, tx_type, fee, storage.get_tx_version().await?)
+    let mut unsigned = wallet.create_unsigned_transaction(&mut state, Some(payload.threshold), tx_type, fee, storage.get_tx_version().await?)
         .context("Error while building unsigned transaction")?;
 
     let mut multisig = MultiSig::new();
@@ -1127,7 +1127,7 @@ async fn transfer(manager: &CommandManager, mut args: ArgumentManager) -> Result
         let balance = storage.get_plaintext_balance_for(&asset).await.unwrap_or(0);
         let decimals = storage.get_asset(&asset).await?.get_decimals();
         let multisig = storage.get_multisig_state().await.context("Error while reading multisig state")?;
-        (balance, decimals, multisig)
+        (balance, decimals, multisig.cloned())
     };
 
     // read amount
@@ -1203,7 +1203,7 @@ async fn transfer_all(manager: &CommandManager, mut args: ArgumentManager) -> Re
         let decimals = storage.get_asset(&asset).await?.get_decimals();
         let multisig = storage.get_multisig_state().await
             .context("Error while reading multisig state")?;
-        (amount, decimals, multisig)
+        (amount, decimals, multisig.cloned())
     };
 
     let transfer = TransferBuilder {
@@ -1269,7 +1269,7 @@ async fn burn(manager: &CommandManager, mut args: ArgumentManager) -> Result<(),
         let decimals = storage.get_asset(&asset).await?.get_decimals();
         let multisig = storage.get_multisig_state().await
             .context("Error while reading multisig state")?;
-        (balance, decimals, multisig)
+        (balance, decimals, multisig.cloned())
     };
 
     // read amount
@@ -1627,7 +1627,7 @@ async fn multisig_setup(manager: &CommandManager, mut args: ArgumentManager) -> 
 
     let multisig = {
         let storage = wallet.get_storage().read().await;
-        storage.get_multisig_state().await?
+        storage.get_multisig_state().await?.cloned()
     };
 
     manager.warn("IMPORTANT: Make sure you have the correct participants and threshold before proceeding.");
@@ -1728,6 +1728,7 @@ async fn multisig_setup(manager: &CommandManager, mut args: ArgumentManager) -> 
     let multisig = {
         let storage = wallet.get_storage().read().await;
         storage.get_multisig_state().await.context("Error while reading multisig state")?
+            .cloned()
     };
     let payload = MultiSigBuilder {
         participants: keys,

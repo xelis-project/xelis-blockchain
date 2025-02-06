@@ -4,7 +4,7 @@ mod types;
 use std::{
     cmp::Ordering,
     collections::{HashMap, HashSet, VecDeque},
-    num::NonZeroUsize
+    num::NonZeroUsize,
 };
 use indexmap::IndexMap;
 use lru::LruCache;
@@ -122,7 +122,9 @@ pub struct EncryptedStorage {
     // use a stable balance or not
     last_coinbase_reward_topoheight: Option<u64>,
     // Transaction version to use
-    tx_version: TxVersion
+    tx_version: TxVersion,
+    // Multisig state
+    multisig_state: Option<MultiSig>
 }
 
 impl EncryptedStorage {
@@ -143,7 +145,8 @@ impl EncryptedStorage {
             assets_cache: Mutex::new(LruCache::new(NonZeroUsize::new(DEFAULT_CACHE_SIZE).unwrap())),
             synced_topoheight: None,
             last_coinbase_reward_topoheight: None,
-            tx_version: TxVersion::V0
+            tx_version: TxVersion::V0,
+            multisig_state: None
         };
 
         if storage.has_network()? {
@@ -163,6 +166,11 @@ impl EncryptedStorage {
         // Load one-time the transaction version
         if storage.contains_data(&storage.extra, TX_VERSION)? {
             storage.tx_version = storage.load_from_disk(&storage.extra, TX_VERSION)?;
+        }
+
+        // Load one-time the multisig state
+        if storage.contains_data(&storage.extra, MULTISIG)? {
+            storage.multisig_state = Some(storage.load_from_disk(&storage.extra, MULTISIG)?);
         }
 
         Ok(storage)
@@ -459,6 +467,8 @@ impl EncryptedStorage {
     pub async fn set_multisig_state(&mut self, state: MultiSig) -> Result<()> {
         trace!("set multisig state");
         self.save_to_disk(&self.extra, MULTISIG, &state.to_bytes())?;
+        self.multisig_state = Some(state);
+
         Ok(())
     }
 
@@ -466,24 +476,20 @@ impl EncryptedStorage {
     pub async fn delete_multisig_state(&mut self) -> Result<()> {
         trace!("delete multisig state");
         self.delete_from_disk(&self.extra, MULTISIG)?;
+        self.multisig_state = None;
         Ok(())
     }
 
     // Get the multisig state
-    pub async fn get_multisig_state(&self) -> Result<Option<MultiSig>> {
+    pub async fn get_multisig_state(&self) -> Result<Option<&MultiSig>> {
         trace!("get multisig state");
-        if !self.contains_data(&self.extra, MULTISIG)? {
-            return Ok(None);
-        }
-
-        let state: MultiSig = self.load_from_disk(&self.extra, MULTISIG)?;
-        Ok(Some(state))
+        Ok(self.multisig_state.as_ref())
     }
 
     // Check if the wallet has a multisig state
-    pub async fn has_multi_sig_state(&self) -> Result<bool> {
+    pub async fn has_multisig_state(&self) -> Result<bool> {
         trace!("has multisig state");
-        self.contains_data(&self.extra, MULTISIG)
+        Ok(self.multisig_state.is_some())
     }
 
     // Set the TX Version

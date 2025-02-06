@@ -348,9 +348,9 @@ async fn build_transaction(context: &Context, body: Value) -> Result<Value, Inte
     let mut state = wallet.create_transaction_state_with_storage(&storage, &params.tx_type, &fee, params.nonce).await?;
 
     let tx = if params.signers.is_empty() {
-        wallet.create_transaction_with(&mut state, version, params.tx_type, fee)?
+        wallet.create_transaction_with(&mut state, None, version, params.tx_type, fee)?
     } else {
-        let builder = TransactionBuilder::new(version, wallet.get_public_key().clone(), params.signers.len() as u8, params.tx_type, fee);
+        let builder = TransactionBuilder::new(version, wallet.get_public_key().clone(), Some(params.signers.len() as u8), params.tx_type, fee);
         let mut unsigned = builder.build_unsigned(&mut state, wallet.get_keypair())
             .context("Error while building unsigned transaction")?;
 
@@ -423,9 +423,9 @@ async fn build_transaction_offline(context: &Context, body: Value) -> Result<Val
     };
 
     let tx = if params.signers.is_empty() {
-        wallet.create_transaction_with(&mut state, version, params.tx_type, params.fee)?
+        wallet.create_transaction_with(&mut state, None, version, params.tx_type, params.fee)?
     } else {
-        let builder = TransactionBuilder::new(version, wallet.get_public_key().clone(), params.signers.len() as u8, params.tx_type, params.fee);
+        let builder = TransactionBuilder::new(version, wallet.get_public_key().clone(), Some(params.signers.len() as u8), params.tx_type, params.fee);
         let mut unsigned = builder.build_unsigned(&mut state, wallet.get_keypair())
             .context("Error while building unsigned transaction")?;
 
@@ -463,13 +463,10 @@ async fn build_unsigned_transaction(context: &Context, body: Value) -> Result<Va
     let mut storage = wallet.get_storage().write().await;
     let fee = params.fee.unwrap_or_default();
     let mut state = wallet.create_transaction_state_with_storage(&storage, &params.tx_type, &fee, params.nonce).await?;
-    let version = storage.get_tx_version().await?;
 
-    let threshold = if let Some(state) = storage.get_multisig_state().await? {
-        state.payload.threshold
-    } else {
-        0
-    };
+    let version = storage.get_tx_version().await?;
+    let threshold = storage.get_multisig_state().await?
+        .map(|state| state.payload.threshold);
 
     // Generate the TX
     let builder = TransactionBuilder::new(version, wallet.get_public_key().clone(), threshold, params.tx_type, fee);
