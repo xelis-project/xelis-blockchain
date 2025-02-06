@@ -134,7 +134,7 @@ pub struct UnsignedTransactionResponse {
     // Unsigned TX hash for signing for multisig signers
     pub hash: Hash,
     // Multisig threshold, zero if not active
-    pub threshold: u8,
+    pub threshold: Option<u8>,
     // Unsigned transaction in hex format
     pub tx_as_hex: Option<String>
 }
