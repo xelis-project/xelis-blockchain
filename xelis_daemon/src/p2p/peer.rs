@@ -503,7 +503,9 @@ impl Peer {
             res = timeout(Duration::from_secs(CHAIN_SYNC_TIMEOUT_SECS), receiver) => match res {
                 Ok(res) => res?,
                 Err(e) => {
-                    debug!("Requested sync chain has timed out");
+                    // Clear the sync chain channel
+                    let contains = self.sync_chain.lock().await.take().is_some();
+                    debug!("Requested sync chain has timed out, contains: {}", contains);
                     return Err(P2pError::AsyncTimeOut(e));
                 }
             }
