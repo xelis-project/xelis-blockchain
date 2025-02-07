@@ -1,16 +1,13 @@
+mod error;
+mod types;
+
 use std::{
-    sync::{
-        Arc,
-        atomic::{
-            AtomicBool,
-            Ordering
-        }
-    },
+    borrow::Cow,
     collections::{
         HashMap,
         HashSet
     },
-    borrow::Cow
+    sync::Arc
 };
 use anyhow::Error;
 use async_trait::async_trait;
@@ -29,31 +26,17 @@ use actix_web::{
     dev::ServerHandle,
     HttpResponse
 };
-use indexmap::IndexMap;
 use serde_json::{
     Value,
     json
 };
-use thiserror::Error;
 use xelis_common::{
-    tokio::{
-        sync::{
-            Mutex,
-            RwLock,
-            Semaphore
-        },
-        spawn_task
-    },
     api::{
         wallet::NotifyEvent,
         EventResult
     },
     context::Context,
-    crypto::{
-        elgamal::PublicKey as DecompressedPublicKey,
-        Signature,
-        SIGNATURE_SIZE
-    },
+    crypto::elgamal::PublicKey as DecompressedPublicKey,
     rpc_server::{
         websocket::{
             WebSocketHandler,
@@ -67,20 +50,24 @@ use xelis_common::{
         RpcResponse,
         RpcResponseError
     },
-    serializer::{
-        Reader,
-        ReaderError,
-        Serializer,
-        Writer
+    tokio::{
+        spawn_task,
+        sync::{
+            Mutex,
+            RwLock,
+            Semaphore
+        }
     }
 };
-use serde::{Deserialize, Serialize};
 use crate::config::XSWD_BIND_ADDRESS;
 use log::{
     debug,
     info,
     error,
 };
+
+pub use error::XSWDError;
+pub use types::*;
 
 // XSWD Protocol (XELIS Secure WebSocket DApp)
 // is a way to communicate with the XELIS Wallet
@@ -105,44 +92,6 @@ where
     handle: ServerHandle
 }
 
-#[derive(Error, Debug, Clone, Copy)]
-pub enum XSWDError {
-    #[error("Permission denied")]
-    PermissionDenied,
-    #[error("Application not found")]
-    ApplicationNotFound,
-    #[error("Invalid application data")]
-    InvalidApplicationData,
-    #[error("Invalid application ID")]
-    InvalidApplicationId,
-    #[error("Application ID already used")]
-    ApplicationIdAlreadyUsed,
-    #[error("Invalid hexadecimal for application ID")]
-    InvalidHexaApplicationId,
-    #[error("Application name is too long")]
-    ApplicationNameTooLong,
-    #[error("Application description is too long")]
-    ApplicationDescriptionTooLong,
-    #[error("Invalid URL format")]
-    InvalidURLFormat,
-    #[error("Invalid origin")]
-    InvalidOrigin,
-    #[error("Too many permissions")]
-    TooManyPermissions,
-    #[error("Application permissions are not signed")]
-    ApplicationPermissionsNotSigned,
-    #[error("Invalid signature for application data")]
-    InvalidSignatureForApplicationData
-}
-
-impl From<XSWDError> for InternalRpcError {
-    fn from(e: XSWDError) -> Self {
-        let err = e.into();
-        let id = e as i16;
-        InternalRpcError::CustomAny(10 + id, err)
-    }
-}
-
 #[async_trait]
 pub trait XSWDPermissionHandler {
     // Handler function to request permission to user
@@ -156,151 +105,6 @@ pub trait XSWDPermissionHandler {
 #[async_trait]
 pub trait XSWDNodeMethodHandler {
     async fn call_node_with(&self, request: RpcRequest) -> Result<Value, RpcResponseError>;
-}
-
-pub struct AppState {
-    // Application ID in hexadecimal format
-    id: String,
-    // Name of the app
-    name: String,
-    // Small description of the app
-    description: String,
-    // URL of the app if exists
-    url: Option<String>,
-    // All permissions for each method
-    permissions: Mutex<IndexMap<String, Permission>>,
-    is_requesting: AtomicBool
-}
-
-pub type AppStateShared = Arc<AppState>;
-
-impl AppState {
-    pub fn new(data: ApplicationData) -> Self {
-        Self {
-            id: data.id,
-            name: data.name,
-            description: data.description,
-            url: data.url,
-            permissions: Mutex::new(data.permissions),
-            is_requesting: AtomicBool::new(false)
-        }
-    }
-
-    pub fn get_id(&self) -> &String {
-        &self.id
-    }
-
-    pub fn get_name(&self) -> &String {
-        &self.name
-    }
-
-    pub fn get_description(&self) -> &String {
-        &self.description
-    }
-
-    pub fn get_url(&self) -> &Option<String> {
-        &self.url
-    }
-
-    pub fn get_permissions(&self) -> &Mutex<IndexMap<String, Permission>> {
-        &self.permissions
-    }
-
-    pub fn is_requesting(&self) -> bool {
-        self.is_requesting.load(Ordering::SeqCst)
-    }
-
-    pub fn set_requesting(&self, value: bool) {
-        self.is_requesting.store(value, Ordering::SeqCst);
-    }
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct ApplicationData {
-    // Application ID in hexadecimal format
-    id: String,
-    // Name of the app
-    name: String,
-    // Small description of the app
-    description: String,
-    // URL of the app if exists
-    url: Option<String>,
-    // All permissions for each method
-    permissions: IndexMap<String, Permission>,
-    // signature of all data
-    signature: Option<Signature>,
-}
-
-impl ApplicationData {
-    pub fn get_id(&self) -> &String {
-        &self.id
-    }
-
-    pub fn get_name(&self) -> &String {
-        &self.name
-    }
-
-    pub fn get_description(&self) -> &String {
-        &self.description
-    }
-
-    pub fn get_url(&self) -> &Option<String> {
-        &self.url
-    }
-
-    pub fn get_permissions(&self) -> &IndexMap<String, Permission> {
-        &self.permissions
-    }
-
-    pub fn get_signature(&self) -> &Option<Signature> {
-        &self.signature
-    }
-}
-
-// This serializer is only used to sign/verify a signature!
-impl Serializer for ApplicationData {
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let id = reader.read_string()?;
-        let name = reader.read_string()?;
-        let description = reader.read_string()?;
-        let url = reader.read_optional_string()?;
-        let permissions_count = reader.read_u8()?;
-        let mut permissions = IndexMap::with_capacity(permissions_count as usize);
-        for _ in 0..permissions_count {
-            permissions.insert(reader.read_string()?, Permission::from_id(reader.read_u8()?).ok_or(ReaderError::InvalidValue)?);
-        }
-
-        Ok(Self {
-            id,
-            name,
-            description,
-            url,
-            permissions,
-            signature: None
-        })
-    }
-
-    fn write(&self, writer: &mut Writer) {
-        writer.write_string(&self.id);
-        writer.write_string(&self.name);
-        writer.write_string(&self.description);
-        writer.write_optional_string(&self.url);
-        writer.write_u8(self.permissions.len() as u8);
-
-        for (method, permission) in &self.permissions {
-            writer.write_string(method);
-            writer.write_u8(permission.get_id());
-        }
-    }
-
-    fn size(&self) -> usize {
-        self.id.size() +
-        self.name.size() +
-        self.description.size() +
-        self.url.size() +
-        1 +
-        self.permissions.iter().map(|(k, _)| k.size() + 1).sum::<usize>()
-    }
 }
 
 impl<W> XSWD<W>
@@ -341,55 +145,6 @@ where
         info!("Stopping XSWD...");
         self.handle.stop(false).await;
         info!("XSWD has been stopped !");
-    }
-}
-
-#[derive(Clone, Copy, Serialize, Deserialize, Debug)]
-#[serde(rename_all = "snake_case")]
-pub enum Permission {
-    Ask,
-    AcceptAlways,
-    DenyAlways
-}
-
-impl Permission {
-    pub fn get_id(&self) -> u8 {
-        match self {
-            Self::Ask => 0,
-            Self::AcceptAlways => 1,
-            Self::DenyAlways => 2
-        }
-    }
-
-    pub fn from_id(id: u8) -> Option<Self> {
-        Some(match id {
-            0 => Self::Ask,
-            1 => Self::AcceptAlways,
-            2 => Self::DenyAlways,
-            _ => return None
-        })
-    }
-}
-
-pub enum PermissionRequest<'a> {
-    // bool tell if it was already signed or not
-    Application(bool),
-    Request(&'a RpcRequest)
-}
-
-pub enum PermissionResult {
-    Allow,
-    Deny,
-    AlwaysAllow,
-    AlwaysDeny
-}
-
-impl PermissionResult {
-    pub fn is_positive(&self) -> bool {
-        match self {
-            Self::Allow | Self::AlwaysAllow => true,
-            _ => false
-        }
     }
 }
 
@@ -463,17 +218,23 @@ where
     async fn verify_permission_for_request(&self, app: &AppStateShared, request: &RpcRequest) -> Result<(), RpcResponseError> {
         let _permit = self.permission_handler_semaphore.acquire().await
             .map_err(|_| RpcResponseError::new(request.id.clone(), InternalRpcError::InternalError("Permission handler semaphore error")))?;
-        let mut permissions = app.permissions.lock().await;
+        let mut permissions = app.get_permissions().lock().await;
 
         // We acquired the lock, lets check that the app is still registered
-        if !self.has_app_with_id(&app.id).await {
+        if !self.has_app_with_id(app.get_id()).await {
             return Err(RpcResponseError::new(request.id.clone(), XSWDError::ApplicationNotFound))
         }
 
-        let permission = permissions.get(&request.method).map(|v| *v).unwrap_or(Permission::Ask);
+        let permission = permissions.get(&request.method)
+            .copied();
+
         match permission {
+            // User has already accepted this method
+            Some(Permission::AcceptAlways) => Ok(()),
+            // User has denied access to this method
+            Some(Permission::DenyAlways) => Err(RpcResponseError::new(request.id.clone(), XSWDError::PermissionDenied)),
             // Request permission from user
-            Permission::Ask => {
+            None => {
                 let result = self.handler.get_data()
                 .request_permission(app, PermissionRequest::Request(request)).await
                 .map_err(|err| RpcResponseError::new(request.id.clone(), InternalRpcError::CustomAny(0, err)))?;
@@ -491,10 +252,6 @@ where
                     }   
                 }
             }
-            // User has already accepted this method
-            Permission::AcceptAlways => Ok(()),
-            // User has denied access to this method
-            Permission::DenyAlways => Err(RpcResponseError::new(request.id.clone(), XSWDError::PermissionDenied))
         }
     }
 
@@ -503,22 +260,22 @@ where
     async fn add_application(&self, session: &WebSocketSessionShared<Self>, app_data: ApplicationData) -> Result<Value, RpcResponseError> {
         // Sanity check
         {
-            if app_data.id.len() != 64 {
+            if app_data.get_id().len() != 64 {
                 return Err(RpcResponseError::new(None, XSWDError::InvalidApplicationId))
             }
 
-            hex::decode(&app_data.id)
+            hex::decode(&app_data.get_id())
                 .map_err(|_| RpcResponseError::new(None, XSWDError::InvalidHexaApplicationId))?;
 
-            if app_data.name.len() > 32 {
+            if app_data.get_name().len() > 32 {
                 return Err(RpcResponseError::new(None, XSWDError::ApplicationNameTooLong))
             }
 
-            if app_data.description.len() > 255 {
+            if app_data.get_description().len() > 255 {
                 return Err(RpcResponseError::new(None, XSWDError::ApplicationDescriptionTooLong))
             }
 
-            if let Some(url) = &app_data.url {
+            if let Some(url) = &app_data.get_url() {
                 if url.len() > 255 {
                     return Err(RpcResponseError::new(None, XSWDError::InvalidURLFormat))
                 }
@@ -536,38 +293,16 @@ where
                 }
             }
 
-            if app_data.permissions.len() != 0 && app_data.signature.is_none() {
-                return Err(RpcResponseError::new(None, XSWDError::ApplicationPermissionsNotSigned))
-            }
-
-            if app_data.permissions.len() > 255 {
+            if app_data.get_permissions().len() > 255 {
                 return Err(RpcResponseError::new(None, XSWDError::TooManyPermissions))
             }
         }
 
-        let wallet = self.handler.get_data();
-        // Verify the signature of the app data to validate permissions previously set
-        if let Some(signature) = &app_data.signature {
-            let bytes = app_data.to_bytes();
-            // remove signature bytes for verification
-            let bytes = &bytes[0..bytes.len() - SIGNATURE_SIZE];
-            let key = wallet.get_public_key().await
-                .map_err(|e| {
-                    error!("error while retrieving public key: {}", e);
-                    RpcResponseError::new(None, InternalRpcError::InternalError("Error while retrieving wallet public key"))
-                })?;
-
-            if signature.verify(bytes, key) {
-                return Err(RpcResponseError::new(None, XSWDError::InvalidSignatureForApplicationData));
-            }
-        }
-
-        // Verify that this app ID is not already in use:
-        if self.has_app_with_id(&app_data.id).await {
+        // Verify that this app ID is not already in use
+        if self.has_app_with_id(&app_data.get_id()).await {
             return Err(RpcResponseError::new(None, XSWDError::ApplicationIdAlreadyUsed))
         }
 
-        let has_signature = app_data.signature.is_some();
         let state = Arc::new(AppState::new(app_data));
         {
             let mut applications = self.applications.write().await;
@@ -578,8 +313,9 @@ where
         let _permit = self.permission_handler_semaphore.acquire().await
             .map_err(|_| RpcResponseError::new(None, InternalRpcError::InternalError("Permission handler semaphore error")))?;
 
+        let wallet = self.handler.get_data();
         state.set_requesting(true);
-        let permission = match wallet.request_permission(&state, PermissionRequest::Application(has_signature)).await {
+        let permission = match wallet.request_permission(&state, PermissionRequest::Application).await {
             Ok(v) => v,
             Err(e) => {
                 debug!("Error while requesting permission: {}", e);
@@ -589,9 +325,11 @@ where
         state.set_requesting(false);
 
         if !permission.is_positive() {
+            // Permission was rejected, delete it from our list
             let mut applications = self.applications.write().await;
             applications.remove(session)
                 .ok_or_else(|| RpcResponseError::new(None, XSWDError::ApplicationNotFound))?;
+
             return Err(RpcResponseError::new(None, XSWDError::PermissionDenied))
         }
 
@@ -670,7 +408,7 @@ where
                 if !self.handler.has_method(&request.method) && !is_subscribe && !is_unsubscribe {
                     return Err(RpcResponseError::new(request.id, InternalRpcError::MethodNotFound(request.method)))
                 }
-    
+
                 // let's check the permission set by user for this method
                 app.set_requesting(true);
                 self.verify_permission_for_request(&app, &request).await?;
@@ -678,13 +416,14 @@ where
 
                 (request, is_subscribe, is_unsubscribe)
             } else {
-                let app_data: ApplicationData = serde_json::from_slice::<ApplicationData>(&message)
+                let app_data: ApplicationData = serde_json::from_slice(&message)
                     .map_err(|_| RpcResponseError::new(None, XSWDError::InvalidApplicationData))?;
 
                 // Application is not registered, register it
                 return match self.add_application(session, app_data).await {
                     Ok(v) => Ok(Some(v)),
                     Err(e) => {
+                        debug!("Error while adding application: {}", e);
                         if !session.is_closed().await {
                             // Send error message and then close the session
                             if let Err(e) = session.send_text(&e.to_json().to_string()).await {
@@ -732,9 +471,9 @@ where
     async fn on_close(&self, session: &WebSocketSessionShared<Self>) -> Result<(), anyhow::Error> {
         let mut applications = self.applications.write().await;
         if let Some(app) = applications.remove(session) {            
-            info!("Application {} has disconnected", app.name);
+            info!("Application {} has disconnected", app.get_name());
             if app.is_requesting() {
-                debug!("Application {} is requesting a permission, aborting...", app.name);
+                debug!("Application {} is requesting a permission, aborting...", app.get_name());
                 self.handler.get_data().cancel_request_permission(&app).await?;
             }
         }

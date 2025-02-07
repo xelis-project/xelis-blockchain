@@ -1152,8 +1152,7 @@ fn datetime_from_timestamp(timestamp: u64) -> Result<chrono::DateTime<chrono::Lo
 #[cfg(feature = "api_server")]
 pub enum XSWDEvent {
     RequestPermission(AppStateShared, RpcRequest, oneshot::Sender<Result<PermissionResult, Error>>),
-    // bool represents if it was signed or not
-    RequestApplication(AppStateShared, bool, oneshot::Sender<Result<PermissionResult, Error>>),
+    RequestApplication(AppStateShared, oneshot::Sender<Result<PermissionResult, Error>>),
     CancelRequest(AppStateShared, oneshot::Sender<Result<(), Error>>)
 }
 
@@ -1167,7 +1166,7 @@ impl XSWDPermissionHandler for Arc<Wallet> {
             // create a callback channel to receive the answer
             let (callback, receiver) = oneshot::channel();
             let event = match request {
-                PermissionRequest::Application(signed) => XSWDEvent::RequestApplication(app_state, signed, callback),
+                PermissionRequest::Application => XSWDEvent::RequestApplication(app_state, callback),
                 PermissionRequest::Request(request) => XSWDEvent::RequestPermission(app_state, request.clone(), callback)
             };
 

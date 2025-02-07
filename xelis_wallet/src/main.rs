@@ -412,10 +412,11 @@ async fn xswd_handler(mut receiver: UnboundedReceiver<XSWDEvent>, prompt: Sharea
                     error!("Error while sending cancel response back to XSWD");
                 }
             },
-            XSWDEvent::RequestApplication(app_state, signed, callback) => {
+            XSWDEvent::RequestApplication(app_state, callback) => {
                 let prompt = prompt.clone();
+                // TODO: only have one dedicated task for this
                 spawn_task("xswd-request", async move {
-                    let res = xswd_handle_request_application(&prompt, app_state, signed).await;
+                    let res = xswd_handle_request_application(&prompt, app_state).await;
                     if callback.send(res).is_err() {
                         error!("Error while sending application response back to XSWD");
                     }
@@ -432,10 +433,14 @@ async fn xswd_handler(mut receiver: UnboundedReceiver<XSWDEvent>, prompt: Sharea
 }
 
 #[cfg(feature = "api_server")]
-async fn xswd_handle_request_application(prompt: &ShareablePrompt, app_state: AppStateShared, signed: bool) -> Result<PermissionResult, Error> {
+async fn xswd_handle_request_application(prompt: &ShareablePrompt, app_state: AppStateShared) -> Result<PermissionResult, Error> {
     let mut message = format!("XSWD: Allow application {} ({}) to access your wallet\r\n(Y/N): ", app_state.get_name(), app_state.get_id());
-    if signed {
-        message = prompt.colorize_str(Color::BrightYellow, "NOTE: Application authorizaion was already approved previously.\r\n") + &message;
+    let permissions = app_state.get_permissions().lock().await;
+    if !permissions.is_empty() {
+        message += &format!("Permissions requested ({}):\r\n", permissions.len());
+        for (method, perm) in permissions.iter() {
+            message += &format!(" - {} = {}\r\n", method, perm);
+        }
     }
     let accepted = prompt.read_valid_str_value(prompt.colorize_string(Color::Blue, &message), vec!["y", "n"]).await? == "y";
     if accepted {
