@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::crypto::elgamal::CompressedPublicKey;
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, Copy)]
 #[serde(rename_all = "snake_case")]
 pub enum FeeBuilder {
     // calculate tx fees based on its size and multiply by this value
