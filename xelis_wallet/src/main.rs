@@ -1213,7 +1213,7 @@ async fn transfer_all(manager: &CommandManager, mut args: ArgumentManager) -> Re
         extra_data: None
     };
     let tx_type = TransactionTypeBuilder::Transfers(vec![transfer]);
-    let estimated_fees = wallet.estimate_fees(tx_type.clone()).await.context("Error while estimating fees")?;
+    let estimated_fees = wallet.estimate_fees(tx_type.clone(), FeeBuilder::default()).await.context("Error while estimating fees")?;
 
     if asset == XELIS_ASSET {
         amount = amount.checked_sub(estimated_fees).context("Insufficient balance to pay fees")?;

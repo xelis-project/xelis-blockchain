@@ -20,7 +20,7 @@ use xelis_common::{
     },
     serializer::Serializer,
     transaction::{
-        builder::TransactionBuilder,
+        builder::{FeeBuilder, TransactionBuilder},
         extra_data::ExtraData,
         multisig::{MultiSig, SignatureId}
     },
@@ -575,7 +575,7 @@ async fn clear_tx_cache(context: &Context, body: Value) -> Result<Value, Interna
 async fn estimate_fees(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: EstimateFeesParams = parse_params(body)?;
     let wallet: &Arc<Wallet> = context.get()?;
-    let fees = wallet.estimate_fees(params.tx_type).await?;
+    let fees = wallet.estimate_fees(params.tx_type, FeeBuilder::default()).await?;
 
     Ok(json!(fees))
 }

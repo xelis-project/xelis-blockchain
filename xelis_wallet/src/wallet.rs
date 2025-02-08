@@ -843,7 +843,6 @@ impl Wallet {
         Ok(unsigned)
     }
 
-
     // submit a transaction to the network through the connection to daemon
     // It will increase the local nonce by 1 if the TX is accepted by the daemon
     // returns error if the wallet is in offline mode or if the TX is rejected
@@ -891,12 +890,12 @@ impl Wallet {
 
     // Estimate fees for a given transaction type
     // Estimated fees returned are the minimum required to be valid on chain
-    pub async fn estimate_fees(&self, tx_type: TransactionTypeBuilder) -> Result<u64, WalletError> {
+    pub async fn estimate_fees(&self, tx_type: TransactionTypeBuilder, fee: FeeBuilder) -> Result<u64, WalletError> {
         trace!("estimate fees");
         let mut state = EstimateFeesState::new();
 
         #[cfg(feature = "network_handler")]
-        self.add_registered_keys_for_fees_estimation(&mut state, &FeeBuilder::default(), &tx_type).await?;
+        self.add_registered_keys_for_fees_estimation(&mut state, &fee, &tx_type).await?;
 
         let (threshold, version) = {
             let storage = self.storage.read().await;
@@ -906,7 +905,7 @@ impl Wallet {
             (threshold, version)
         };
 
-        let builder = TransactionBuilder::new(version, self.get_public_key().clone(), threshold, tx_type, FeeBuilder::default());
+        let builder = TransactionBuilder::new(version, self.get_public_key().clone(), threshold, tx_type, fee);
         let estimated_fees = builder.estimate_fees(&mut state)
             .map_err(|e| WalletError::Any(e.into()))?;
 
