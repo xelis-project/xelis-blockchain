@@ -775,13 +775,15 @@ fn get_balance_for_asset<P: ContractProvider>(_: FnInstance, mut params: FnParam
 }
 
 fn transfer<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType {
-    let amount = params.remove(2)
-        .into_owned()
-        .to_u64()?;
+    debug!("Transfer called {:?}", params);
 
-    let asset: Hash = params.remove(1)
+    let asset: Hash = params.remove(2)
         .into_owned()
         .into_opaque_type()?;
+
+    let amount = params.remove(1)
+        .into_owned()
+        .to_u64()?;
 
     let destination: Address = params.remove(0)
         .into_owned()

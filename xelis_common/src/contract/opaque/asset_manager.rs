@@ -53,7 +53,6 @@ pub fn asset_manager_create<P: ContractProvider>(_: FnInstance, mut params: FnPa
         return Ok(Some(ValueCell::Optional(None)));
     }
 
-
     let data = AssetData::new(decimals, name, max_supply);
     chain_state.changes.assets.insert(asset_hash.clone(), AssetChanges {
         data: Some((VersionedState::New, data)),

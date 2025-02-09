@@ -17,7 +17,7 @@ pub fn transaction(_: FnInstance, _: FnParams, _: &mut Context) -> FnReturnType 
 
 pub fn transaction_nonce(zelf: FnInstance, _: FnParams, context: &mut Context) -> FnReturnType {
     let _: &OpaqueTransaction = zelf?.as_opaque_type()?;
-    let tx: &Transaction = context.get().context("current transaction not found not found")?;
+    let tx: &Transaction = context.get().context("current transaction not found")?;
 
     Ok(Some(Value::U64(tx.get_nonce()).into()))
 }
@@ -31,7 +31,7 @@ pub fn transaction_hash(zelf: FnInstance, _: FnParams, context: &mut Context) ->
 
 pub fn transaction_source(zelf: FnInstance, _: FnParams, context: &mut Context) -> FnReturnType {
     let _: &OpaqueTransaction = zelf?.as_opaque_type()?;
-    let tx: &Transaction = context.get().context("current transaction not found not found")?;
+    let tx: &Transaction = context.get().context("current transaction not found")?;
     let state: &ChainState = context.get().context("chain state not found")?;
 
     let address = tx.get_source()
@@ -42,14 +42,14 @@ pub fn transaction_source(zelf: FnInstance, _: FnParams, context: &mut Context) 
 
 pub fn transaction_fee(zelf: FnInstance, _: FnParams, context: &mut Context) -> FnReturnType {
     let _: &OpaqueTransaction = zelf?.as_opaque_type()?;
-    let tx: &Transaction = context.get().context("current transaction not found not found")?;
+    let tx: &Transaction = context.get().context("current transaction not found")?;
 
     Ok(Some(Value::U64(tx.get_fee()).into()))
 }
 
 pub fn transaction_signature(zelf: FnInstance, _: FnParams, context: &mut Context) -> FnReturnType {
     let _: &OpaqueTransaction = zelf?.as_opaque_type()?;
-    let tx: &Transaction = context.get().context("current transaction not found not found")?;
+    let tx: &Transaction = context.get().context("current transaction not found")?;
 
     Ok(Some(Value::Opaque(OpaqueWrapper::new(OpaqueSignature(tx.get_signature().clone()))).into()))
 }

@@ -829,7 +829,7 @@ impl Transaction {
 
                     // Configure the context
                     // Note that the VM already include the environment in Context
-                    context.insert_ref(&self);
+                    context.insert_ref(self);
                     // insert the chain state separetly to avoid to give the S type
                     context.insert_mut(&mut chain_state);
                     // insert the storage through our wrapper
