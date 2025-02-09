@@ -386,6 +386,8 @@ pub enum EntryType {
         chunk_id: u16,
         // Fee paid
         fee: u64,
+        // Max gas allowed
+        max_gas: u64,
         // Nonce used
         nonce: u64
     },
