@@ -419,22 +419,7 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
                 }
             }
 
-            // Apply all the transfers
-            for transfer in cache.transfers {
-                trace!("Transfering {} {} to {} at topoheight {}", transfer.amount, transfer.asset, transfer.destination.as_address(self.inner.storage.is_mainnet()), self.inner.topoheight);
-                let receiver_balance = self.inner.internal_get_receiver_balance(Cow::Owned(transfer.destination), Cow::Owned(transfer.asset)).await?;
-                *receiver_balance += transfer.amount;
-            }
-
-            for (asset, data) in cache.balances {
-                if let Some((state, balance)) = data {
-                    if state.should_be_stored() {
-                        trace!("Saving contract balance {} for {} at topoheight {}", balance, asset, self.inner.topoheight);
-                        self.inner.storage.set_last_contract_balance_to(&contract, &asset, self.inner.topoheight, VersionedContractBalance::new(balance, state.get_topoheight())).await?;
-                    }
-                }
-            }
-
+            // Register assets changes
             for (asset, changes) in cache.assets {
                 if let Some((state, data)) = changes.data {
                     if state.should_be_stored() {
@@ -447,6 +432,22 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
                     if state.should_be_stored() {
                         trace!("Saving supply {} for {} at topoheight {}", supply, asset, self.inner.topoheight);
                         self.inner.storage.set_last_supply_for_asset(&asset, self.inner.topoheight, &VersionedSupply::new(supply, state.get_topoheight())).await?;
+                    }
+                }
+            }
+
+            // Apply all the transfers
+            for transfer in cache.transfers {
+                trace!("Transfering {} {} to {} at topoheight {}", transfer.amount, transfer.asset, transfer.destination.as_address(self.inner.storage.is_mainnet()), self.inner.topoheight);
+                let receiver_balance = self.inner.internal_get_receiver_balance(Cow::Owned(transfer.destination), Cow::Owned(transfer.asset)).await?;
+                *receiver_balance += transfer.amount;
+            }
+
+            for (asset, data) in cache.balances {
+                if let Some((state, balance)) = data {
+                    if state.should_be_stored() {
+                        trace!("Saving contract balance {} for {} at topoheight {}", balance, asset, self.inner.topoheight);
+                        self.inner.storage.set_last_contract_balance_to(&contract, &asset, self.inner.topoheight, VersionedContractBalance::new(balance, state.get_topoheight())).await?;
                     }
                 }
             }
