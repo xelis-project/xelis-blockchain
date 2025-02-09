@@ -408,7 +408,7 @@ impl NetworkHandler {
                             }
                         }
 
-                        Some(EntryData::InvokeContract { contract: payload.contract, deposits, chunk_id: payload.chunk_id, fee: tx.fee, nonce: tx.nonce })
+                        Some(EntryData::InvokeContract { contract: payload.contract, deposits, chunk_id: payload.chunk_id, fee: tx.fee, max_gas: payload.max_gas, nonce: tx.nonce })
                     } else {
                         None
                     }

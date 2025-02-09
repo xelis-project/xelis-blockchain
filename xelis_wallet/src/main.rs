@@ -1329,12 +1329,13 @@ async fn balance(manager: &CommandManager, mut arguments: ArgumentManager) -> Re
         let asset = arguments.get_value("asset")?.to_hash()?;
         let balance = storage.get_plaintext_balance_for(&asset).await?;
         let data = storage.get_asset(&asset).await?;
-        manager.message(format!("Balance for asset {}: {}", asset, format_coin(balance, data.get_decimals())));
+        manager.message(format!("Balance for asset {} ({}): {}", data.get_name(), asset, format_coin(balance, data.get_decimals())));
     } else {
         for (asset, data) in storage.get_assets_with_data().await? {
-            let balance = storage.get_plaintext_balance_for(&asset).await.unwrap_or(0);
+            let balance = storage.get_plaintext_balance_for(&asset).await
+                .context(format!("Error while retrieving balance for asset {asset}"))?;
             if balance > 0 {
-                manager.message(format!("Balance for asset {}: {}", asset, format_coin(balance, data.get_decimals())));
+                manager.message(format!("Balance for asset {} ({}): {}", data.get_name(), asset, format_coin(balance, data.get_decimals())));
             }
         }
     }
