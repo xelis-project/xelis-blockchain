@@ -493,6 +493,32 @@ impl SledStorage {
         Ok(value)
     }
 
+    pub(super) async fn get_optional_cacheable_data<K: Eq + StdHash + Serializer + Clone, V: Serializer + Clone>(&self, tree: &Tree, cache: &Option<Mutex<LruCache<K, V>>>, key: &K) -> Result<Option<V>, BlockchainError> {
+        let key_bytes = key.to_bytes();
+        let value = if let Some(cache) = cache.as_ref()
+            .filter(|_| self.snapshot.as_ref()
+                .map(|s| !s.contains_key(tree, &key_bytes))
+                .unwrap_or(true)
+            )
+        {
+            let mut cache = cache.lock().await;
+            if let Some(value) = cache.get(key) {
+                return Ok(Some(value.clone()));
+            }
+
+            let value: Option<V> = self.load_optional_from_disk(tree, &key_bytes)?;
+            if let Some(value) = value.clone() {
+                cache.put(key.clone(), value.clone());
+            }
+
+            value
+        } else {
+            self.load_optional_from_disk(tree, &key_bytes)?
+        };
+
+        Ok(value)
+    }
+
     // Load a value from the DB and cache it
     // This data is not cached behind an Arc, but is cloned at each access
     pub(super) async fn get_cacheable_data<K: Eq + StdHash + Serializer + Clone, V: Serializer + Clone>(&self, tree: &Tree, cache: &Option<Mutex<LruCache<K, V>>>, key: &K, context: DiskContext) -> Result<V, BlockchainError> {

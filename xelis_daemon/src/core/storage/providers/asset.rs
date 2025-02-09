@@ -103,8 +103,7 @@ impl AssetProvider for SledStorage {
 
     async fn get_asset_topoheight(&self, hash: &Hash) -> Result<Option<TopoHeight>, BlockchainError> {
         trace!("get asset topoheight {}", hash);
-        // TODO: use cache
-        self.load_optional_from_disk(&self.assets, hash.as_bytes())
+        self.get_optional_cacheable_data(&self.assets, &self.assets_cache, hash).await
     }
 
     async fn get_asset_at_topoheight(&self, asset: &Hash, topoheight: TopoHeight) -> Result<AssetData, BlockchainError> {
