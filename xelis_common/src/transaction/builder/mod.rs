@@ -345,7 +345,9 @@ impl TransactionBuilder {
     // Estimate the fees for this TX
     pub fn estimate_fees<B: FeeHelper>(&self, state: &mut B) -> Result<u64, GenerationError<B::Error>> {
         let calculated_fee = match self.fee_builder {
-            FeeBuilder::Multiplier(multiplier) => {
+            // If the value is set, use it
+            FeeBuilder::Value(value) => value,
+            _ => {
                 // Compute the size and transfers count
                 let size = self.estimate_size();
                 let (transfers, new_addresses) = if let TransactionTypeBuilder::Transfers(transfers) = &self.data {
@@ -362,10 +364,12 @@ impl TransactionBuilder {
                 };
 
                 let expected_fee = calculate_tx_fee(size, transfers, new_addresses, self.required_thresholds.unwrap_or(0) as usize);
-                (expected_fee as f64 * multiplier) as u64
+                match self.fee_builder {
+                    FeeBuilder::Multiplier(multiplier) => (expected_fee as f64 * multiplier) as u64,
+                    FeeBuilder::Boost(boost) => expected_fee + boost,
+                    _ => expected_fee,
+                }
             },
-            // If the value is set, use it
-            FeeBuilder::Value(value) => value
         };
 
         Ok(calculated_fee)

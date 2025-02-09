@@ -7,12 +7,15 @@ use crate::crypto::elgamal::CompressedPublicKey;
 pub enum FeeBuilder {
     // calculate tx fees based on its size and multiply by this value
     Multiplier(f64),
-    Value(u64) // set a direct value of how much fees you want to pay
+    // set a direct value of how much fees you want to pay exactly
+    Value(u64),
+    // how much we want to pay above the calculated/needed fees.
+    Boost(u64)
 }
 
 impl Default for FeeBuilder {
     fn default() -> Self {
-        FeeBuilder::Multiplier(1f64)
+        FeeBuilder::Boost(0)
     }
 }
 
