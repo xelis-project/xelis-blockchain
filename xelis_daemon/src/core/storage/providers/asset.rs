@@ -21,7 +21,7 @@ pub trait AssetProvider {
     async fn has_asset_at_topoheight(&self, hash: &Hash, topoheight: TopoHeight) -> Result<bool, BlockchainError>;
 
     // Get the asset topoheight at which it got registered
-    async fn get_asset_topoheight(&self, hash: &Hash) -> Result<TopoHeight, BlockchainError>;
+    async fn get_asset_topoheight(&self, hash: &Hash) -> Result<Option<TopoHeight>, BlockchainError>;
 
     // Get the asset data from its hash and topoheight at which it got registered
     async fn get_asset_at_topoheight(&self, hash: &Hash, topoheight: TopoHeight) -> Result<AssetData, BlockchainError>;
@@ -69,33 +69,42 @@ impl AssetProvider for SledStorage {
 
     async fn has_asset_at_topoheight(&self, asset: &Hash, topoheight: TopoHeight) -> Result<bool, BlockchainError> {
         trace!("asset exist at topoheight {}", asset);
-        if !self.has_asset(asset).await? {
-            return Ok(false);
-        }
 
         let topo = self.get_asset_topoheight(asset).await?;
-        Ok(topo <= topoheight)
+        match topo {
+            Some(topo) => Ok(topo <= topoheight),
+            None => Ok(false),
+        }
     }
 
     async fn get_asset_with_topoheight(&self, hash: &Hash, topoheight: TopoHeight) -> Result<Option<(TopoHeight, AssetData)>, BlockchainError> {
         trace!("get asset for topoheight {}", hash);
         let topo = self.get_asset_topoheight(hash).await?;
-        if topo <= topoheight {
-            Ok(Some((topo, self.get_asset_at_topoheight(hash, topo).await?)))
-        } else {
-            Ok(None)
+        match topo {
+            Some(topo) if topo <= topoheight => {
+                let data = self.get_asset_at_topoheight(hash, topo).await?;
+                Ok(Some((topo, data)))
+            },
+            _ => Ok(None),
         }
     }
 
     async fn get_asset(&self, hash: &Hash) -> Result<(TopoHeight, AssetData), BlockchainError> {
         trace!("get asset {}", hash);
         let topoheight = self.get_asset_topoheight(hash).await?;
-        Ok((topoheight, self.get_asset_at_topoheight(hash, topoheight).await?))
+        match topoheight {
+            Some(topoheight) => {
+                let data = self.get_asset_at_topoheight(hash, topoheight).await?;
+                Ok((topoheight, data))
+            },
+            None => Err(BlockchainError::AssetNotFound(hash.clone())).unwrap(),
+        }
     }
 
-    async fn get_asset_topoheight(&self, hash: &Hash) -> Result<TopoHeight, BlockchainError> {
+    async fn get_asset_topoheight(&self, hash: &Hash) -> Result<Option<TopoHeight>, BlockchainError> {
         trace!("get asset topoheight {}", hash);
-        self.get_cacheable_data(&self.assets, &self.assets_cache, hash, DiskContext::Asset).await
+        // TODO: use cache
+        self.load_optional_from_disk(&self.assets, hash.as_bytes())
     }
 
     async fn get_asset_at_topoheight(&self, asset: &Hash, topoheight: TopoHeight) -> Result<AssetData, BlockchainError> {
