@@ -59,7 +59,10 @@ impl OwnershipProof {
         }
 
         let left = balance.checked_sub(amount)
-            .ok_or(ProofGenerationError::InsufficientFunds)?;
+            .ok_or(ProofGenerationError::InsufficientFunds {
+                required: amount,
+                available: balance
+            })?;
         
         // We don't want to reveal the whole balance, so we create a new Commitment with a random opening.
         let opening = PedersenOpening::generate_new();

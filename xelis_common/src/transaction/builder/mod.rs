@@ -601,11 +601,16 @@ impl TransactionBuilder {
             .iter()
             .map(|asset| {
                 let cost = self.get_transaction_cost(fee, &asset);
-                let source_new_balance = state
-                    .get_account_balance(asset)
-                    .map_err(GenerationError::State)?
+                let current_balance = state
+                .get_account_balance(asset)
+                .map_err(GenerationError::State)?;
+
+                let source_new_balance = current_balance
                     .checked_sub(cost)
-                    .ok_or(ProofGenerationError::InsufficientFunds)?;
+                    .ok_or(ProofGenerationError::InsufficientFunds {
+                        required: cost,
+                        available: current_balance,
+                    })?;
 
                 Ok(source_new_balance)
             })
