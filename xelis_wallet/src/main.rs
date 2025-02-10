@@ -1331,7 +1331,13 @@ async fn balance(manager: &CommandManager, mut arguments: ArgumentManager) -> Re
         let data = storage.get_asset(&asset).await?;
         manager.message(format!("Balance for asset {} ({}): {}", data.get_name(), asset, format_coin(balance, data.get_decimals())));
     } else {
-        for (asset, data) in storage.get_assets_with_data().await? {
+        let assets = storage.get_assets_with_data().await?;
+        if assets.is_empty() {
+            manager.message("No assets found");
+            return Ok(())
+        }
+
+        for (asset, data) in assets {
             let balance = storage.get_plaintext_balance_for(&asset).await
                 .context(format!("Error while retrieving balance for asset {asset}"))?;
             if balance > 0 {
