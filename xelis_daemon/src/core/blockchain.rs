@@ -2125,22 +2125,43 @@ impl<S: Storage> Blockchain<S> {
                 {
                     let contracts_cache = chain_state.get_contracts_cache();
                     let is_mainnet = self.network.is_mainnet();
+
+                    // We want to only fire one event per key/hash pair
+                    let mut outputs: HashMap<&PublicKey, (NotifyEvent, HashMap<&Hash, u64>)> = HashMap::new();
+
                     for cache in contracts_cache.values() {
                         for (key, assets) in cache.transfers.iter() {
-                            let event = NotifyEvent::ContractTransfer { address: key.as_address(is_mainnet) };
-                            if should_track_events.contains(&event) {
-                                for (asset, amount) in assets.iter() {
-                                    let value = json!(ContractTransferEvent {
-                                        asset: Cow::Borrowed(&asset),
-                                        amount: *amount,
-                                        block_hash: Cow::Borrowed(&hash),
-                                        topoheight: highest_topo,
-                                    });
-                                    events.entry(event.clone())
-                                        .or_insert_with(Vec::new)
-                                        .push(value);
+                            let (_, outputs) = match outputs.entry(key) {
+                                Entry::Occupied(entry) => entry.into_mut(),
+                                Entry::Vacant(entry) => {
+                                    let event = NotifyEvent::ContractTransfer { address: key.as_address(is_mainnet) };
+                                    if !should_track_events.contains(&event) {
+                                        continue;
+                                    }
+
+                                    entry.insert((event, HashMap::new()))
                                 }
+                            };
+
+                            for (asset, amount) in assets.iter() {
+                                outputs.entry(asset)
+                                    .and_modify(|v| *v += amount)
+                                    .or_insert(*amount);
                             }
+                        }
+                    }
+
+                    for (_, (event, assets)) in outputs.into_iter() {
+                        for (asset, amount) in assets {
+                            let value = json!(ContractTransferEvent {
+                                asset: Cow::Borrowed(asset),
+                                amount,
+                                block_hash: Cow::Borrowed(&hash),
+                                topoheight: highest_topo,
+                            });
+                            events.entry(event.clone())
+                                .or_insert_with(Vec::new)
+                                .push(value);
                         }
                     }
                 }
