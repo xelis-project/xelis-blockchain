@@ -236,6 +236,9 @@ pub enum RPCContractOutput<'a> {
         asset: Cow<'a, Hash>,
         amount: u64
     },
+    NewAsset {
+        asset: Cow<'a, Hash>
+    },
     ExitCode(Option<u64>),
     RefundDeposits
 }
@@ -256,6 +259,9 @@ impl<'a> RPCContractOutput<'a> {
             ContractOutput::Burn { asset, amount } => RPCContractOutput::Burn {
                 asset: Cow::Borrowed(asset),
                 amount: *amount
+            },
+            ContractOutput::NewAsset { asset } => RPCContractOutput::NewAsset {
+                asset: Cow::Borrowed(asset)
             },
             ContractOutput::ExitCode(code) => RPCContractOutput::ExitCode(code.clone()),
             ContractOutput::RefundDeposits => RPCContractOutput::RefundDeposits,
@@ -279,6 +285,9 @@ impl<'a> From<RPCContractOutput<'a>> for ContractOutput {
             RPCContractOutput::Burn { asset, amount } => ContractOutput::Burn {
                 asset: asset.into_owned(),
                 amount
+            },
+            RPCContractOutput::NewAsset { asset } => ContractOutput::NewAsset {
+                asset: asset.into_owned()
             },
             RPCContractOutput::ExitCode(code) => ContractOutput::ExitCode(code),
             RPCContractOutput::RefundDeposits => ContractOutput::RefundDeposits,

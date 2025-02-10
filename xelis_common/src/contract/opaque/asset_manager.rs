@@ -10,7 +10,11 @@ use xelis_vm::{
     ValueCell
 };
 use crate::{
-    asset::AssetData, config::COST_PER_TOKEN, contract::{from_context, get_asset_from_cache, AssetChanges, ContractProvider}, crypto::{Hash, HASH_SIZE}, versioned_type::VersionedState
+    asset::AssetData,
+    config::COST_PER_TOKEN,
+    contract::{from_context, get_asset_from_cache, AssetChanges, ContractOutput, ContractProvider},
+    crypto::{Hash, HASH_SIZE},
+    versioned_type::VersionedState
 };
 
 use super::Asset;
@@ -64,6 +68,8 @@ pub fn asset_manager_create<P: ContractProvider>(_: FnInstance, mut params: FnPa
         // We don't bother to check if it already exists, because it shouldn't exist before we create it.
         chain_state.changes.balances.insert(asset_hash.clone(), Some((VersionedState::New, max_supply)));
     }
+
+    chain_state.outputs.push(ContractOutput::NewAsset { asset: asset_hash.clone() });
 
     // Pay the cost for a new token
     context.increase_gas_usage(COST_PER_TOKEN)?;

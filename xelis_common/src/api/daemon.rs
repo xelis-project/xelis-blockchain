@@ -720,10 +720,14 @@ pub enum NotifyEvent {
     InvokeContract {
         contract: Hash
     },
+    // When a contract has transfered any token
+    // to the receiver address
+    ContractTransfer {
+        address: Address
+    },
     // When a new contract has been deployed
     DeployContract,
     // When a new asset has been registered
-    // TODO: Smart Contracts
     NewAsset,
     // When a new peer has connected to us
     // It contains PeerConnectedEvent struct as value
