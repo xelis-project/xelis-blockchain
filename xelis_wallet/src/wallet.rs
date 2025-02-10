@@ -702,13 +702,6 @@ impl Wallet {
         #[cfg(feature = "network_handler")]
         self.add_registered_keys_for_fees_estimation(state.as_mut(), fee, transaction_type).await?;
 
-        // Used to inject it in the state
-        // So once the state is applied, we verify if the last coinbase reward topoheight is still valid
-        #[cfg(feature = "network_handler")]
-        let mut daemon_stable_topoheight = None;
-        #[cfg(not(feature = "network_handler"))]
-        let daemon_stable_topoheight = None;
-
         // Lets prevent any front running due to mining
         #[cfg(feature = "network_handler")]
         {
@@ -717,6 +710,7 @@ impl Wallet {
             // Otherwise that mean we're still waiting on a TX to be confirmed
             if generated && (used_assets.contains(&XELIS_ASSET) || force_stable_balance) {
                 if let Some(network_handler) = self.network_handler.lock().await.as_ref() {
+                    let mut daemon_stable_topoheight = None;
                     // Last mining reward is above stable topoheight, this may increase orphans rate
                     // To avoid this, we will use the last balance version in stable topoheight as reference
                     let mut use_stable_balance = if let Some(topoheight) = storage.get_last_coinbase_reward_topoheight().filter(|_| !force_stable_balance) {
@@ -793,12 +787,13 @@ impl Wallet {
                             }
                         }
                     }
+
+                    if let Some(topoheight) = daemon_stable_topoheight {
+                        debug!("Setting stable topoheight to {} for state", topoheight);
+                        state.set_stable_topoheight(topoheight);
+                    }
                 }
             }
-        }
-
-        if let Some(topoheight) = daemon_stable_topoheight {
-            state.set_stable_topoheight(topoheight);
         }
 
         // Get all balances used
