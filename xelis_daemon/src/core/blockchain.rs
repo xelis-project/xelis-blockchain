@@ -15,6 +15,7 @@ use xelis_common::{
             TransactionResponse,
             NewContractEvent,
             InvokeContractEvent,
+            ContractTransferEvent,
         },
         RPCContractOutput,
         RPCTransaction
@@ -2119,6 +2120,30 @@ impl<S: Storage> Blockchain<S> {
                 // Miner gets the block reward + total fees + gas fee
                 let gas_fee = chain_state.get_gas_fee();
                 chain_state.reward_miner(block.get_miner(), block_reward + total_fees + gas_fee).await?;
+
+                // Fire the contract transfer events
+                {
+                    let contracts_cache = chain_state.get_contracts_cache();
+                    let is_mainnet = self.network.is_mainnet();
+                    for cache in contracts_cache.values() {
+                        for (key, assets) in cache.transfers.iter() {
+                            let event = NotifyEvent::ContractTransfer { address: key.as_address(is_mainnet) };
+                            if should_track_events.contains(&event) {
+                                for (asset, amount) in assets.iter() {
+                                    let value = json!(ContractTransferEvent {
+                                        asset: Cow::Borrowed(&asset),
+                                        amount: *amount,
+                                        block_hash: Cow::Borrowed(&hash),
+                                        topoheight: highest_topo,
+                                    });
+                                    events.entry(event.clone())
+                                        .or_insert_with(Vec::new)
+                                        .push(value);
+                                }
+                            }
+                        }
+                    }
+                }
 
                 // apply changes from Chain State
                 chain_state.apply_changes().await?;

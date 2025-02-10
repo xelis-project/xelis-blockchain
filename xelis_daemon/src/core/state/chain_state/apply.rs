@@ -31,7 +31,7 @@ pub struct ApplicableChainState<'a, S: Storage> {
     block_hash: &'a Hash,
     block: &'a Block,
     contracts_outputs: HashMap<&'a Hash, Vec<ContractOutput>>,
-    contracts_cache: HashMap<&'a Hash, ContractCache>, 
+    contracts_cache: HashMap<&'a Hash, ContractCache>,
     burned_supply: u64,
 }
 
@@ -297,6 +297,11 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
         self.inner.storage.as_mut()
     }
 
+    // Get the contracts cache
+    pub fn get_contracts_cache(&self) -> &HashMap<&Hash, ContractCache> {
+        &self.contracts_cache
+    }
+
     // Get the contract outputs for TX
     pub fn get_contract_outputs_for_tx(&self, tx_hash: &Hash) -> Option<&Vec<ContractOutput>> {
         self.contracts_outputs.get(tx_hash)
@@ -437,10 +442,12 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
             }
 
             // Apply all the transfers
-            for transfer in cache.transfers {
-                trace!("Transfering {} {} to {} at topoheight {}", transfer.amount, transfer.asset, transfer.destination.as_address(self.inner.storage.is_mainnet()), self.inner.topoheight);
-                let receiver_balance = self.inner.internal_get_receiver_balance(Cow::Owned(transfer.destination), Cow::Owned(transfer.asset)).await?;
-                *receiver_balance += transfer.amount;
+            for (key, assets) in cache.transfers {
+                for (asset, amount) in assets {
+                    trace!("Transfering {} {} to {} at topoheight {}", amount, asset, key.as_address(self.inner.storage.is_mainnet()), self.inner.topoheight);
+                    let receiver_balance = self.inner.internal_get_receiver_balance(Cow::Owned(key.clone()), Cow::Owned(asset)).await?;
+                    *receiver_balance += amount;
+                }
             }
 
             for (asset, data) in cache.balances {
