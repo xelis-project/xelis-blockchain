@@ -722,6 +722,7 @@ pub enum NotifyEvent {
     },
     // When a contract has transfered any token
     // to the receiver address
+    // It contains ContractTransferEvent struct as value
     ContractTransfer {
         address: Address
     },
@@ -795,6 +796,15 @@ pub type TransactionOrphanedEvent = TransactionResponse<'static>;
 pub struct TransactionExecutedEvent<'a> {
     pub block_hash: Cow<'a, Hash>,
     pub tx_hash: Cow<'a, Hash>,
+    pub topoheight: TopoHeight,
+}
+
+// Value of NotifyEvent::ContractTransfer
+#[derive(Serialize, Deserialize)]
+pub struct ContractTransferEvent<'a> {
+    pub asset: Cow<'a, Hash>,
+    pub amount: u64,
+    pub block_hash: Cow<'a, Hash>,
     pub topoheight: TopoHeight,
 }
 
