@@ -681,10 +681,26 @@ impl Wallet {
         // Build the state for the builder
         let used_assets = transaction_type.used_assets();
 
-        let mut reference = None;
-         if let Some(cache) = storage.get_tx_cache() {
-            reference = Some(cache.reference.clone());
-        }
+        let mut generated = false;
+        let reference = if let Some(cache) = storage.get_tx_cache() {
+            cache.reference.clone()
+        } else {
+            generated = true;
+            Reference {
+                topoheight: storage.get_synced_topoheight()?,
+                hash: storage.get_top_block_hash()?
+            }
+        };
+
+        // state used to build the transaction
+        let mut state = TransactionBuilderState::new(
+            self.network.is_mainnet(),
+            reference,
+            nonce
+        );
+
+        #[cfg(feature = "network_handler")]
+        self.add_registered_keys_for_fees_estimation(state.as_mut(), fee, transaction_type).await?;
 
         // Used to inject it in the state
         // So once the state is applied, we verify if the last coinbase reward topoheight is still valid
@@ -699,7 +715,7 @@ impl Wallet {
             let force_stable_balance = self.should_force_stable_balance();
             // Reference must be none in order to use the last stable balance
             // Otherwise that mean we're still waiting on a TX to be confirmed
-            if reference.is_none() && (used_assets.contains(&XELIS_ASSET) || force_stable_balance) {
+            if generated && (used_assets.contains(&XELIS_ASSET) || force_stable_balance) {
                 if let Some(network_handler) = self.network_handler.lock().await.as_ref() {
                     // Last mining reward is above stable topoheight, this may increase orphans rate
                     // To avoid this, we will use the last balance version in stable topoheight as reference
@@ -757,15 +773,18 @@ impl Wallet {
                                         ciphertext
                                     };
 
-                                    debug!("Setting unconfirmed balance for asset {} ({}) with amount {}", asset, balance.ciphertext, balance.amount);
-                                    storage.set_unconfirmed_balance_for((*asset).clone(), balance).await?;
+                                    debug!("Using stable balance for asset {} ({}) with amount {}", asset, balance.ciphertext, balance.amount);
+                                    state.add_balance((*asset).clone(), balance);
+
                                     // Build the stable reference
                                     // We need to find the highest stable point
-                                    if reference.is_none() || reference.as_ref().is_some_and(|r| r.topoheight < stable_point.stable_topoheight) {
-                                        reference = Some(Reference {
+                                    if generated || state.get_reference().topoheight < stable_point.stable_topoheight {
+                                        debug!("Setting stable reference for TX creation at topoheight {} with hash {}", stable_point.stable_topoheight, stable_point.stable_block_hash);
+                                        state.set_reference(Reference {
                                             topoheight: stable_point.stable_topoheight,
                                             hash: stable_point.stable_block_hash
                                         });
+                                        generated = false;
                                     }
                                 },
                                 Err(e) => {
@@ -778,23 +797,6 @@ impl Wallet {
             }
         }
 
-        // Get the final reference to use
-        let reference = if let Some(reference) = reference {
-            reference
-        } else {
-            Reference {
-                topoheight: storage.get_synced_topoheight()?,
-                hash: storage.get_top_block_hash()?
-            }
-        };
-
-        // state used to build the transaction
-        let mut state = TransactionBuilderState::new(
-            self.network.is_mainnet(),
-            reference,
-            nonce
-        );
-
         if let Some(topoheight) = daemon_stable_topoheight {
             state.set_stable_topoheight(topoheight);
         }
@@ -802,6 +804,11 @@ impl Wallet {
         // Get all balances used
         for asset in used_assets {
             trace!("Checking balance for asset {}", asset);
+            if state.has_balance_for(&asset) {
+                trace!("Already have balance for asset {} in state", asset);
+                continue;
+            }
+
             if !storage.has_balance_for(&asset).await? {
                 return Err(WalletError::BalanceNotFound(asset.clone()));
             }
@@ -810,9 +817,6 @@ impl Wallet {
             debug!("Using balance (unconfirmed: {}) for asset {} with amount {}, ciphertext: {}", unconfirmed, asset, balance.amount, balance.ciphertext);
             state.add_balance(asset.clone(), balance);
         }
-
-        #[cfg(feature = "network_handler")]
-        self.add_registered_keys_for_fees_estimation(state.as_mut(), fee, transaction_type).await?;
 
         Ok(state)
     }

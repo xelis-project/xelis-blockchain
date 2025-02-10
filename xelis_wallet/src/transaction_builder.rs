@@ -74,6 +74,22 @@ impl TransactionBuilderState {
         }
     }
 
+    pub fn get_reference(&self) -> &Reference {
+        &self.reference
+    }
+
+    pub fn set_reference(&mut self, reference: Reference) {
+        self.reference = reference;
+    }
+
+    pub fn get_nonce(&self) -> u64 {
+        self.nonce
+    }
+
+    pub fn has_balance_for(&self, asset: &Hash) -> bool {
+        self.balances.contains_key(asset)
+    }
+
     pub async fn from_tx(storage: &EncryptedStorage, transaction: &Transaction, mainnet: bool) -> Result<Self, WalletError> {
         let mut state = Self::new(mainnet, transaction.get_reference().clone(), transaction.get_nonce());
         let ciphertexts = transaction.get_expected_sender_outputs()
