@@ -191,7 +191,9 @@ impl<'a, S: Storage> BlockchainApplyState<'a, S, BlockchainError> for Applicable
             )?;
 
         // Find the contract cache in our cache map
-        let cache = self.contracts_cache.get(&payload.contract);
+        let cache = self.contracts_cache.get(&payload.contract)
+            .cloned()
+            .unwrap_or_default();
 
         // Create a deterministic random for the contract
         let random = DeterministicRandom::new(&payload.contract, &self.block_hash, tx_hash);
@@ -207,7 +209,6 @@ impl<'a, S: Storage> BlockchainApplyState<'a, S, BlockchainError> for Applicable
             random,
             tx_hash,
             cache,
-            changes: ContractCache::new(),
             outputs: Vec::new(),
         };
 
@@ -228,7 +229,7 @@ impl<'a, S: Storage> BlockchainApplyState<'a, S, BlockchainError> for Applicable
         match self.contracts_cache.entry(hash) {
             Entry::Occupied(mut o) => {
                 let current = o.get_mut();
-                current.merge(cache);
+                *current = cache;
             },
             Entry::Vacant(e) => {
                 e.insert(cache);
