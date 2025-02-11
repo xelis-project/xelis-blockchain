@@ -32,6 +32,7 @@ pub struct ContractCache {
     pub assets: HashMap<Hash, AssetChanges>,
     // Memory Storage
     // This is shared between all executions of the same contract
+    pub memory: HashMap<Constant, Constant>,
 }
 
 impl ContractCache {
@@ -40,7 +41,8 @@ impl ContractCache {
             transfers: HashMap::new(),
             storage: HashMap::new(),
             balances: HashMap::new(),
-            assets: HashMap::new()
+            assets: HashMap::new(),
+            memory: HashMap::new(),
         }
     }
 
@@ -62,5 +64,41 @@ impl ContractCache {
         for (key, value) in other.assets {
             self.assets.insert(key, value);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::crypto::KeyPair;
+    use super::*;
+
+    #[test]
+    fn test_merge_cache() {
+        let mut cache1 = ContractCache::new();
+        cache1.balances.insert(Hash::zero(), Some((VersionedState::FetchedAt(0), 100)));
+
+        let mut cache2 = ContractCache::new();
+        cache2.balances.insert(Hash::zero(), Some((VersionedState::FetchedAt(0), 200)));
+
+        cache1.merge(cache2);
+
+        assert_eq!(cache1.balances.len(), 1);
+        assert_eq!(cache1.balances.get(&Hash::zero()), Some(&Some((VersionedState::FetchedAt(0), 200))));
+    }
+
+    #[test]
+    fn test_merge_transfers() {
+        let alice = KeyPair::new().get_public_key().compress();
+        let mut cache1 = ContractCache::new();
+        cache1.transfers.insert(alice.clone(), HashMap::new());
+
+        let mut cache2 = ContractCache::new();
+        let mut assets = HashMap::new();
+        assets.insert(Hash::zero(), 100);
+        cache2.transfers.insert(alice.clone(), assets);
+
+        cache1.merge(cache2);
+
+        assert_eq!(1, cache1.transfers[&alice].len());
     }
 }

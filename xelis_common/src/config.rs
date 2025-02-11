@@ -42,6 +42,9 @@ pub const FEE_PER_STORE_CONTRACT: u64 = 100;
 // Each byte of data stored (key + value) in a contract has a fixed cost
 // 0.00000005 XEL per byte
 pub const FEE_PER_BYTE_STORED_CONTRACT: u64 = 5;
+// Fee per byte of data stored in a contract memory
+// Each byte of data stored in the contract memory has a fixed cost
+pub const FEE_PER_BYTE_IN_CONTRACT_MEMORY: u64 = 1;
 
 // 8 decimals numbers
 pub const COIN_DECIMALS: u8 = 8;

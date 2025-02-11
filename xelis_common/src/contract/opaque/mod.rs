@@ -6,6 +6,7 @@ mod storage;
 mod asset;
 mod asset_manager;
 mod crypto;
+mod memory_storage;
 
 use log::debug;
 use xelis_types::{
@@ -29,6 +30,7 @@ pub use address::*;
 pub use asset::*;
 pub use asset_manager::*;
 pub use crypto::*;
+pub use memory_storage::*;
 
 // Unique IDs for opaque types serialization
 pub const HASH_OPAQUE_ID: u8 = 0;
@@ -63,6 +65,10 @@ impl_opaque!(
 impl_opaque!(
     "OpaqueStorage",
     OpaqueStorage
+);
+impl_opaque!(
+    "OpaqueMemoryStorage",
+    OpaqueMemoryStorage
 );
 impl_opaque!(
     "Asset",

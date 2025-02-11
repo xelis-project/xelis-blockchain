@@ -64,7 +64,7 @@ pub fn storage_load<P: ContractProvider>(_: FnInstance, mut params: FnParams, co
         }
     };
 
-    Ok(Some(ValueCell::Optional(value.map(|c| c.into())).into()))
+    Ok(Some(ValueCell::Optional(value.map(Constant::into))))
 }
 
 pub fn storage_has<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType {
@@ -124,9 +124,8 @@ pub fn storage_store<P: ContractProvider>(_: FnInstance, mut params: FnParams, c
         }
     };
 
-    state.changes.storage.insert(key, (data_state, Some(value)));
-
-    Ok(None)
+    let value = state.changes.storage.insert(key, (data_state, Some(value)));
+    Ok(Some(ValueCell::Optional(value.map(|(_, v)| v.map(Constant::into)).flatten())))
 }
 
 pub fn storage_delete<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType {
@@ -155,7 +154,6 @@ pub fn storage_delete<P: ContractProvider>(_: FnInstance, mut params: FnParams, 
         }
     };
 
-    state.changes.storage.insert(key, (data_state, None));
-
-    Ok(None)
+    let value = state.changes.storage.insert(key, (data_state, None));
+    Ok(Some(ValueCell::Optional(value.map(|(_, v)| v.map(Constant::into)).flatten())))
 }

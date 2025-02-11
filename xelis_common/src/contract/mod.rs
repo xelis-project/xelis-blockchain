@@ -103,6 +103,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static> {
     let random_type = Type::Opaque(env.register_opaque::<OpaqueRandom>("Random"));
     let block_type = Type::Opaque(env.register_opaque::<OpaqueBlock>("Block"));
     let storage_type = Type::Opaque(env.register_opaque::<OpaqueStorage>("Storage"));
+    let memory_storage_type = Type::Opaque(env.register_opaque::<OpaqueMemoryStorage>("MemoryStorage"));
     let asset_type = Type::Opaque(env.register_opaque::<Asset>("Asset"));
     let asset_manager_type = Type::Opaque(env.register_opaque::<AssetManager>("AssetManager"));
     let signature_type = Type::Opaque(env.register_opaque::<OpaqueSignature>("Signature"));
@@ -267,7 +268,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static> {
             vec![("key", Type::Any), ("value", Type::Any)],
             storage_store::<P>,
             50,
-            None
+            Some(Type::Optional(Box::new(Type::Any)))
         );
         env.register_native_function(
             "delete",
@@ -275,7 +276,51 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static> {
             vec![("key", Type::Any)],
             storage_delete::<P>,
             50,
-            None
+            Some(Type::Optional(Box::new(Type::Any)))
+        );
+    }
+
+    // Memory Storage
+    {
+        env.register_native_function(
+            "memory_storage",
+            None,
+            vec![],
+            memory_storage,
+            5,
+            Some(memory_storage_type.clone())
+        );
+        env.register_native_function(
+            "load",
+            Some(memory_storage_type.clone()),
+            vec![("key", Type::Any)],
+            memory_storage_load::<P>,
+            50,
+            Some(Type::Optional(Box::new(Type::Any)))
+        );
+        env.register_native_function(
+            "has",
+            Some(memory_storage_type.clone()),
+            vec![("key", Type::Any)],
+            memory_storage_has::<P>,
+            25,
+            Some(Type::Bool)
+        );
+        env.register_native_function(
+            "store",
+            Some(memory_storage_type.clone()),
+            vec![("key", Type::Any), ("value", Type::Any)],
+            memory_storage_store::<P>,
+            50,
+            Some(Type::Optional(Box::new(Type::Any)))
+        );
+        env.register_native_function(
+            "delete",
+            Some(memory_storage_type.clone()),
+            vec![("key", Type::Any)],
+            memory_storage_delete::<P>,
+            50,
+            Some(Type::Optional(Box::new(Type::Any)))
         );
     }
 
@@ -809,40 +854,4 @@ fn burn<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &mut 
     state.outputs.push(ContractOutput::Burn { asset, amount });
 
     Ok(Some(Value::Boolean(true).into()))
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::crypto::KeyPair;
-    use super::*;
-
-    #[test]
-    fn test_merge_cache() {
-        let mut cache1 = ContractCache::new();
-        cache1.balances.insert(Hash::zero(), Some((VersionedState::FetchedAt(0), 100)));
-
-        let mut cache2 = ContractCache::new();
-        cache2.balances.insert(Hash::zero(), Some((VersionedState::FetchedAt(0), 200)));
-
-        cache1.merge(cache2);
-
-        assert_eq!(cache1.balances.len(), 1);
-        assert_eq!(cache1.balances.get(&Hash::zero()), Some(&Some((VersionedState::FetchedAt(0), 200))));
-    }
-
-    #[test]
-    fn test_merge_transfers() {
-        let alice = KeyPair::new().get_public_key().compress();
-        let mut cache1 = ContractCache::new();
-        cache1.transfers.insert(alice.clone(), HashMap::new());
-
-        let mut cache2 = ContractCache::new();
-        let mut assets = HashMap::new();
-        assets.insert(Hash::zero(), 100);
-        cache2.transfers.insert(alice.clone(), assets);
-
-        cache1.merge(cache2);
-
-        assert_eq!(1, cache1.transfers[&alice].len());
-    }
 }
