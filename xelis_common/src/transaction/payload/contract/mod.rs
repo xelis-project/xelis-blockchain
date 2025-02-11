@@ -433,6 +433,7 @@ impl Serializer for Module {
 
         for structure in structs {
             writer.write_u16(structure.id());
+            writer.write_u8(structure.fields().len() as u8);
             for field in structure.fields() {
                 field.write(writer);
             }
@@ -443,8 +444,9 @@ impl Serializer for Module {
 
         for enum_type in enums {
             writer.write_u16(enum_type.id());
-            for (index, variant) in enum_type.variants().iter().enumerate() {
-                writer.write_u8(index as u8);
+            writer.write_u8(enum_type.variants().len() as u8);
+            for variant in enum_type.variants() {
+                writer.write_u8(variant.fields().len() as u8);
                 for field in variant.fields() {
                     field.write(writer);
                 }
@@ -484,7 +486,7 @@ impl Serializer for Module {
 
         for _ in 0..structs_len {
             let id = reader.read_u16()?;
-            let fields_len = reader.read_u16()?;
+            let fields_len = reader.read_u8()?;
             let mut fields = Vec::with_capacity(fields_len as usize);
 
             for _ in 0..fields_len {
@@ -504,8 +506,9 @@ impl Serializer for Module {
             let mut variants = Vec::with_capacity(variants_len as usize);
 
             for _ in 0..variants_len {
-                let mut fields = Vec::new();
-                for _ in 0..reader.read_u8()? {
+                let fields_len = reader.read_u8()?;
+                let mut fields = Vec::with_capacity(fields_len as usize);
+                for _ in 0..fields_len {
                     fields.push(decompress_type(reader, &structures, &enums)?);
                 }
 
