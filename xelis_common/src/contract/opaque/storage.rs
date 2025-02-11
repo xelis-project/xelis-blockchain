@@ -53,11 +53,11 @@ pub fn storage_load<P: ContractProvider>(_: FnInstance, mut params: FnParams, co
         .try_into()
         .map_err(|_| anyhow::anyhow!("Invalid key"))?;
 
-    let value = match state.changes.storage.get(&key) {
+    let value = match state.cache.storage.get(&key) {
         Some((_, value)) => value.clone(),
         None => match storage.load_data(&state.contract, &key, state.topoheight)? {
             Some((topoheight, constant)) => {
-                state.changes.storage.insert(key.clone(), (VersionedState::FetchedAt(topoheight), constant.clone()));
+                state.cache.storage.insert(key.clone(), (VersionedState::FetchedAt(topoheight), constant.clone()));
                 constant
             },
             None => None
@@ -75,7 +75,7 @@ pub fn storage_has<P: ContractProvider>(_: FnInstance, mut params: FnParams, con
         .try_into()
         .map_err(|_| anyhow::anyhow!("Invalid key"))?;
 
-    let contains = match state.changes.storage.get(&key) {
+    let contains = match state.cache.storage.get(&key) {
         Some((_, value)) => value.is_some(),
         None => storage.has_data(state.contract, &key, state.topoheight)?
     };
@@ -110,7 +110,7 @@ pub fn storage_store<P: ContractProvider>(_: FnInstance, mut params: FnParams, c
 
     let (storage, state) = from_context::<P>(context)?;
 
-    let data_state = match state.changes.storage.get(&key) {
+    let data_state = match state.cache.storage.get(&key) {
         Some((mut state, _)) => {
             state.mark_updated();
             state
@@ -123,7 +123,7 @@ pub fn storage_store<P: ContractProvider>(_: FnInstance, mut params: FnParams, c
         }
     };
 
-    let value = state.changes.storage.insert(key, (data_state, Some(value)));
+    let value = state.cache.storage.insert(key, (data_state, Some(value)));
     Ok(Some(ValueCell::Optional(value.map(|(_, v)| v.map(Constant::into)).flatten())))
 }
 
@@ -135,10 +135,10 @@ pub fn storage_delete<P: ContractProvider>(_: FnInstance, mut params: FnParams, 
         .try_into()
         .map_err(|_| anyhow::anyhow!("Invalid key"))?;
 
-    let data_state = match state.changes.storage.get(&key) {
+    let data_state = match state.cache.storage.get(&key) {
         Some((s, _)) => match s {
             VersionedState::New => {
-                let value = state.changes.storage.remove(&key);
+                let value = state.cache.storage.remove(&key);
                 return Ok((value.map(|(_, v)| v.map(Constant::into)).flatten()).into());
             },
             VersionedState::FetchedAt(topoheight) => VersionedState::Updated(*topoheight),
@@ -153,6 +153,6 @@ pub fn storage_delete<P: ContractProvider>(_: FnInstance, mut params: FnParams, 
         }
     };
 
-    let value = state.changes.storage.insert(key, (data_state, None));
+    let value = state.cache.storage.insert(key, (data_state, None));
     Ok(Some(ValueCell::Optional(value.map(|(_, v)| v.map(Constant::into)).flatten())))
 }

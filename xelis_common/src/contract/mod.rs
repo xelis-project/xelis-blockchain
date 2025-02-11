@@ -74,12 +74,9 @@ pub struct ChainState<'a> {
     // All deposits made by the caller
     pub deposits: &'a IndexMap<Hash, ContractDeposit>,
     // The contract cache
-    // If the contract was called already, we may have a cache
-    pub cache: Option<&'a ContractCache>,
-    // The contract changes that occured during the execution
-    // If the contract exit correctly, these changes are merged into above cache
-    pub changes: ContractCache,
-    // The contract outputs
+    // If the contract was called already, we may have a cache with data
+    pub cache: ContractCache,
+    // The contract outputss
     // This is similar to an event log
     pub outputs: Vec<ContractOutput>,
 }
@@ -665,16 +662,10 @@ pub fn from_context<'a, 'ty, 'r, P: ContractProvider>(context: &'a mut Context<'
 // Function helper to get the balance for the given asset
 // This will first check in our current changes, then in the previous execution cache
 pub fn get_balance_from_cache<'a, P: ContractProvider>(provider: &P, state: &'a mut ChainState, asset: Hash) -> Result<&'a mut Option<(VersionedState, u64)>, anyhow::Error> {
-    Ok(match state.changes.balances.entry(asset.clone()) {
+    Ok(match state.cache.balances.entry(asset.clone()) {
         Entry::Occupied(entry) => entry.into_mut(),
         Entry::Vacant(entry) => {
-            let v = match state.cache {
-                Some(cache) => match cache.balances.get(&asset) {
-                    Some(v) => v.clone(),
-                    None => get_balance_from_provider(provider, state.topoheight, state.contract, &asset)?
-                },
-                None => get_balance_from_provider(provider, state.topoheight, state.contract, &asset)?
-            };
+            let v = get_balance_from_provider(provider, state.topoheight, state.contract, &asset)?;
             entry.insert(v)
         }
     })
@@ -686,17 +677,10 @@ pub fn get_balance_from_provider<P: ContractProvider>(provider: &P, topoheight: 
 }
 
 pub fn get_asset_from_cache<'a, P: ContractProvider>(provider: &P, state: &'a mut ChainState, asset: Hash) -> Result<&'a mut AssetChanges, anyhow::Error> {
-    Ok(match state.changes.assets.entry(asset.clone()) {
+    Ok(match state.cache.assets.entry(asset.clone()) {
         Entry::Occupied(entry) => entry.into_mut(),
         Entry::Vacant(entry) => {
-            let v = match state.cache {
-                Some(cache) => match cache.assets.get(&asset) {
-                    Some(v) => v.clone(),
-                    None => get_asset_from_provider(provider, state.topoheight, &asset)?
-                },
-                None => get_asset_from_provider(provider, state.topoheight, &asset)?
-            };
-
+            let v = get_asset_from_provider(provider, state.topoheight, &asset)?;
             entry.insert(v)
         }
     })
@@ -809,10 +793,10 @@ fn transfer<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &
     balance -= amount;
     balance_state.mark_updated();
 
-    state.changes.balances.insert(asset.clone(), Some((balance_state, balance)));
+    state.cache.balances.insert(asset.clone(), Some((balance_state, balance)));
 
     let key = destination.to_public_key();
-    state.changes.transfers.entry(key.clone())
+    state.cache.transfers.entry(key.clone())
         .or_insert_with(HashMap::new)
         .entry(asset.clone())
         .and_modify(|v| *v += amount)
@@ -848,7 +832,7 @@ fn burn<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &mut 
     balance -= amount;
     balance_state.mark_updated();
 
-    state.changes.balances.insert(asset.clone(), Some((balance_state, balance)));
+    state.cache.balances.insert(asset.clone(), Some((balance_state, balance)));
 
     // Add the output
     state.outputs.push(ContractOutput::Burn { asset, amount });

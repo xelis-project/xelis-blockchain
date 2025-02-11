@@ -58,7 +58,7 @@ pub fn asset_manager_create<P: ContractProvider>(_: FnInstance, mut params: FnPa
     }
 
     let data = AssetData::new(decimals, name, max_supply);
-    chain_state.changes.assets.insert(asset_hash.clone(), AssetChanges {
+    chain_state.cache.assets.insert(asset_hash.clone(), AssetChanges {
         data: Some((VersionedState::New, data)),
         supply: None
     });
@@ -66,7 +66,7 @@ pub fn asset_manager_create<P: ContractProvider>(_: FnInstance, mut params: FnPa
     // If we have a max supply, we need to mint it to the contract
     if let Some(max_supply) = max_supply {
         // We don't bother to check if it already exists, because it shouldn't exist before we create it.
-        chain_state.changes.balances.insert(asset_hash.clone(), Some((VersionedState::New, max_supply)));
+        chain_state.cache.balances.insert(asset_hash.clone(), Some((VersionedState::New, max_supply)));
     }
 
     chain_state.outputs.push(ContractOutput::NewAsset { asset: asset_hash.clone() });

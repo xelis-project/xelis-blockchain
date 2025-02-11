@@ -883,7 +883,7 @@ impl Transaction {
                             balance += amount;
                             balance_state.mark_updated();
 
-                            chain_state.changes.balances.insert(asset.clone(), Some((balance_state, balance)));
+                            chain_state.cache.balances.insert(asset.clone(), Some((balance_state, balance)));
                         },
                         ContractDeposit::Private { .. } => {
                             // TODO: we need to add the private deposit to the balance
@@ -954,7 +954,7 @@ impl Transaction {
                 let mut outputs = chain_state.outputs;
                 // If the contract execution was successful, we need to merge the cache
                 if exit_code == Some(0) {
-                    let cache = chain_state.changes;
+                    let cache = chain_state.cache;
                     state.merge_contract_cache(&payload.contract, cache).await
                         .map_err(VerificationError::State)?;
                 } else {

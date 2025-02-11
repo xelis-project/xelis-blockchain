@@ -43,9 +43,8 @@ pub fn memory_storage_load<P: ContractProvider>(_: FnInstance, mut params: FnPar
         .try_into()
         .map_err(|_| anyhow::anyhow!("Invalid key"))?;
 
-    let value = state.changes.memory.get(&key)
-        .cloned()
-        .flatten();
+    let value = state.cache.memory.get(&key)
+        .cloned();
     Ok(Some(ValueCell::Optional(value.map(Constant::into))))
 }
 
@@ -58,7 +57,7 @@ pub fn memory_storage_has<P: ContractProvider>(_: FnInstance, mut params: FnPara
         .try_into()
         .map_err(|_| anyhow::anyhow!("Invalid key"))?;
 
-    let contains = state.changes.memory.contains_key(&key);
+    let contains = state.cache.memory.contains_key(&key);
     Ok(Some(Value::Boolean(contains).into()))
 }
 
@@ -89,9 +88,7 @@ pub fn memory_storage_store<P: ContractProvider>(_: FnInstance, mut params: FnPa
 
     let state: &mut ChainState = context.get_mut()
         .context("No chain state for memory storage")?;
-    let value = state.changes.memory.insert(key, Some(value))
-        .flatten();
-
+    let value = state.cache.memory.insert(key, value);
     Ok(Some(ValueCell::Optional(value.map(Constant::into))))
 }
 
@@ -104,8 +101,6 @@ pub fn memory_storage_delete<P: ContractProvider>(_: FnInstance, mut params: FnP
         .try_into()
         .map_err(|_| anyhow::anyhow!("Invalid key"))?;
 
-    let value = state.changes.memory.remove(&key)
-        .flatten();
-
+    let value = state.cache.memory.remove(&key);
     Ok(Some(ValueCell::Optional(value.map(Constant::into))))
 }

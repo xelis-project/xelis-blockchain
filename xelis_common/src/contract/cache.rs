@@ -32,7 +32,13 @@ pub struct ContractCache {
     pub assets: HashMap<Hash, AssetChanges>,
     // Memory Storage
     // This is shared between all executions of the same contract
-    pub memory: HashMap<Constant, Option<Constant>>,
+    pub memory: HashMap<Constant, Constant>,
+}
+
+impl Default for ContractCache {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ContractCache {
@@ -47,105 +53,105 @@ impl ContractCache {
     }
 
     // Merge the cache with another one
-    pub fn merge(&mut self, other: Self) {
-        for (key, assets) in other.transfers {
-            let left_assets = self.transfers.entry(key)
-                .or_insert_with(HashMap::new);
+    // pub fn merge(&mut self, other: Self) {
+    //     for (key, assets) in other.transfers {
+    //         let left_assets = self.transfers.entry(key)
+    //             .or_insert_with(HashMap::new);
 
-            for (hash, value) in assets {
-                left_assets.entry(hash)
-                    .and_modify(|v| *v += value)
-                    .or_insert(value);
-            }
-        }
+    //         for (hash, value) in assets {
+    //             left_assets.entry(hash)
+    //                 .and_modify(|v| *v += value)
+    //                 .or_insert(value);
+    //         }
+    //     }
 
-        // Support the deletion of entries
-        for (key, value) in other.memory {
-            if value.is_some() {
-                self.memory.insert(key, value);
-            } else {
-                self.memory.remove(&key);
-            }
-        }
+    //     // Support the deletion of entries
+    //     for (key, value) in other.memory {
+    //         if value.is_some() {
+    //             self.memory.insert(key, value);
+    //         } else {
+    //             self.memory.remove(&key);
+    //         }
+    //     }
 
-        self.storage.extend(other.storage);
-        self.balances.extend(other.balances);
-        self.assets.extend(other.assets);
-    }
+    //     self.storage.extend(other.storage);
+    //     self.balances.extend(other.balances);
+    //     self.assets.extend(other.assets);
+    // }
 }
 
-#[cfg(test)]
-mod tests {
-    use xelis_vm::Value;
-    use crate::crypto::KeyPair;
-    use super::*;
+// #[cfg(test)]
+// mod tests {
+//     use xelis_vm::Value;
+//     use crate::crypto::KeyPair;
+//     use super::*;
 
-    #[test]
-    fn test_merge_cache_balances() {
-        let mut cache1 = ContractCache::new();
-        cache1.balances.insert(Hash::zero(), Some((VersionedState::FetchedAt(0), 100)));
+//     #[test]
+//     fn test_merge_cache_balances() {
+//         let mut cache1 = ContractCache::new();
+//         cache1.balances.insert(Hash::zero(), Some((VersionedState::FetchedAt(0), 100)));
 
-        let mut cache2 = ContractCache::new();
-        cache2.balances.insert(Hash::zero(), Some((VersionedState::FetchedAt(0), 200)));
+//         let mut cache2 = ContractCache::new();
+//         cache2.balances.insert(Hash::zero(), Some((VersionedState::FetchedAt(0), 200)));
 
-        cache1.merge(cache2);
+//         cache1.merge(cache2);
 
-        assert_eq!(cache1.balances.len(), 1);
-        assert_eq!(cache1.balances.get(&Hash::zero()), Some(&Some((VersionedState::FetchedAt(0), 200))));
-    }
+//         assert_eq!(cache1.balances.len(), 1);
+//         assert_eq!(cache1.balances.get(&Hash::zero()), Some(&Some((VersionedState::FetchedAt(0), 200))));
+//     }
 
-    #[test]
-    fn test_merge_cache_storage() {
-        let mut cache1 = ContractCache::new();
-        let key: Constant = Value::String("test".to_owned()).into();
-        cache1.storage.insert(key.clone(), (VersionedState::FetchedAt(0), Some(key.clone())));
+//     #[test]
+//     fn test_merge_cache_storage() {
+//         let mut cache1 = ContractCache::new();
+//         let key: Constant = Value::String("test".to_owned()).into();
+//         cache1.storage.insert(key.clone(), (VersionedState::FetchedAt(0), Some(key.clone())));
 
-        let value: Constant = Value::String("test1".to_owned()).into();
-        let mut cache2 = ContractCache::new();
-        cache2.storage.insert(key.clone(), (VersionedState::Updated(0), Some(value.clone())));
+//         let value: Constant = Value::String("test1".to_owned()).into();
+//         let mut cache2 = ContractCache::new();
+//         cache2.storage.insert(key.clone(), (VersionedState::Updated(0), Some(value.clone())));
 
-        cache1.merge(cache2);
+//         cache1.merge(cache2);
 
-        assert_eq!(cache1.storage.len(), 1);
-        assert_eq!(cache1.storage.get(&key), Some(&(VersionedState::Updated(0), Some(value))));
+//         assert_eq!(cache1.storage.len(), 1);
+//         assert_eq!(cache1.storage.get(&key), Some(&(VersionedState::Updated(0), Some(value))));
 
-        // Support deleted values
-        let mut cache2 = ContractCache::new();
-        cache2.storage.insert(key.clone(), (VersionedState::Updated(0), None));
+//         // Support deleted values
+//         let mut cache2 = ContractCache::new();
+//         cache2.storage.insert(key.clone(), (VersionedState::Updated(0), None));
 
-        cache1.merge(cache2);
+//         cache1.merge(cache2);
 
-        assert_eq!(cache1.storage.len(), 1);
-        assert_eq!(cache1.storage.get(&key), Some(&(VersionedState::Updated(0), None)));
-    }
+//         assert_eq!(cache1.storage.len(), 1);
+//         assert_eq!(cache1.storage.get(&key), Some(&(VersionedState::Updated(0), None)));
+//     }
 
-    #[test]
-    fn test_merge_cache_memory_storage() {
-        let mut cache1 = ContractCache::new();
-        let key: Constant = Value::String("test".to_owned()).into();
-        let value: Constant = Value::String("test1".to_owned()).into();
-        cache1.memory.insert(key.clone(), Some(value.clone()));
+//     #[test]
+//     fn test_merge_cache_memory_storage() {
+//         let mut cache1 = ContractCache::new();
+//         let key: Constant = Value::String("test".to_owned()).into();
+//         let value: Constant = Value::String("test1".to_owned()).into();
+//         cache1.memory.insert(key.clone(), Some(value.clone()));
 
-        let mut cache2 = ContractCache::new();
-        cache2.memory.insert(key, None);
-        cache1.merge(cache2);
+//         let mut cache2 = ContractCache::new();
+//         cache2.memory.insert(key, None);
+//         cache1.merge(cache2);
 
-        assert_eq!(cache1.memory.len(), 0);
-    }
+//         assert_eq!(cache1.memory.len(), 0);
+//     }
 
-    #[test]
-    fn test_merge_transfers() {
-        let alice = KeyPair::new().get_public_key().compress();
-        let mut cache1 = ContractCache::new();
-        cache1.transfers.insert(alice.clone(), HashMap::new());
+//     #[test]
+//     fn test_merge_transfers() {
+//         let alice = KeyPair::new().get_public_key().compress();
+//         let mut cache1 = ContractCache::new();
+//         cache1.transfers.insert(alice.clone(), HashMap::new());
 
-        let mut cache2 = ContractCache::new();
-        let mut assets = HashMap::new();
-        assets.insert(Hash::zero(), 100);
-        cache2.transfers.insert(alice.clone(), assets);
+//         let mut cache2 = ContractCache::new();
+//         let mut assets = HashMap::new();
+//         assets.insert(Hash::zero(), 100);
+//         cache2.transfers.insert(alice.clone(), assets);
 
-        cache1.merge(cache2);
+//         cache1.merge(cache2);
 
-        assert_eq!(1, cache1.transfers[&alice].len());
-    }
-}
+//         assert_eq!(1, cache1.transfers[&alice].len());
+//     }
+// }
