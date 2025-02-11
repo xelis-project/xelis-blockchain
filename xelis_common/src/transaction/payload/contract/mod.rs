@@ -430,9 +430,7 @@ impl Serializer for Module {
     fn write(&self, writer: &mut Writer) {
         let structs = self.structs();
         writer.write_u16(structs.len() as u16);
-
         for structure in structs {
-            writer.write_u16(structure.id());
             writer.write_u8(structure.fields().len() as u8);
             for field in structure.fields() {
                 field.write(writer);
@@ -443,7 +441,6 @@ impl Serializer for Module {
         writer.write_u16(enums.len() as u16);
 
         for enum_type in enums {
-            writer.write_u16(enum_type.id());
             writer.write_u8(enum_type.variants().len() as u8);
             for variant in enum_type.variants() {
                 writer.write_u8(variant.fields().len() as u8);
@@ -484,8 +481,8 @@ impl Serializer for Module {
         let mut structures = IndexSet::with_capacity(structs_len as usize);
         let mut enums = IndexSet::new();
 
+        let mut id = 0;
         for _ in 0..structs_len {
-            let id = reader.read_u16()?;
             let fields_len = reader.read_u8()?;
             let mut fields = Vec::with_capacity(fields_len as usize);
 
@@ -497,11 +494,13 @@ impl Serializer for Module {
             if !structures.insert(structure) {
                 return Err(ReaderError::InvalidValue);
             }
+
+            id += 1;
         }
 
         let enums_len = reader.read_u16()?;
+        let mut id = 0;
         for _ in 0..enums_len {
-            let id = reader.read_u16()?;
             let variants_len = reader.read_u8()?;
             let mut variants = Vec::with_capacity(variants_len as usize);
 
@@ -519,6 +518,8 @@ impl Serializer for Module {
             if !enums.insert(enum_type) {
                 return Err(ReaderError::InvalidValue);
             }
+
+            id += 1;
         }
 
         let constants_len = reader.read_u16()?;
