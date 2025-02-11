@@ -82,6 +82,12 @@ impl DaemonAPI {
         self.client.on_connection().await
     }
 
+    // On reconnect event
+    pub async fn on_reconnect(&self) -> broadcast::Receiver<()> {
+        trace!("on_reconnect");
+        self.client.on_reconnect().await
+    }
+
     // On connection lost
     pub async fn on_connection_lost(&self) -> broadcast::Receiver<()> {
         trace!("on_connection_lost");
