@@ -754,8 +754,8 @@ impl NetworkHandler {
 
     // Sync the latest version of our balances and nonces and determine if we should parse all blocks
     // If assets are provided, we'll only sync these assets
-    // TODO: this may bug with Smart Contract integration as we could receive a new asset and not detect it
     // If nonce is not provided, we will fetch it from the daemon
+    // TODO: we should prevent to sync EVERY assets we receive, only sync the one accepted by the wallet
     async fn sync_head_state(&self, address: &Address, assets: Option<HashSet<Hash>>, nonce: Option<u64>, sync_nonce: bool) -> Result<bool, Error> {
         trace!("syncing head state");
         let new_nonce = if sync_nonce {
@@ -886,7 +886,7 @@ impl NetworkHandler {
                         cache
                     } else {
                         trace!("Decrypting balance for asset {}", asset);
-                        Arc::clone(&self.wallet).decrypt_ciphertext(ciphertext.decompressed()?.clone()).await?
+                        self.wallet.decrypt_ciphertext(ciphertext.decompressed()?.clone()).await?
                     };
 
                     // Inform the change of the balance
@@ -1007,6 +1007,9 @@ impl NetworkHandler {
         // This is rare event but may happen if someone try to do something shady
         let mut on_transaction_orphaned = self.api.on_transaction_orphaned_event().await?;
 
+        // Track also the contract transfers to our address
+        let mut on_contract_transfer = self.api.on_contract_transfer_event(address.clone()).await?;
+
         // Network events to detect if we are online or offline
         let mut on_connection = self.api.on_connection().await;
         let mut on_connection_lost = self.api.on_connection_lost().await;
@@ -1065,6 +1068,27 @@ impl NetworkHandler {
                         warn!("Transaction {} was orphaned, deleting it from cache", tx.hash);
                         storage.clear_tx_cache();
                     }
+                },
+                res = on_contract_transfer.next() => {
+                    let event = res?;
+                    debug!("on contract transfer event asset {} at topo {} {}", event.asset, event.topoheight, event.block_hash);
+
+                    let contains_asset = {
+                        let storage = self.wallet.get_storage().read().await;
+                        storage.contains_asset(&event.asset).await?
+                    };
+
+                    let sync_new_blocks = self.sync_head_state(&address, Some(HashSet::from_iter([event.asset.into_owned()])), None, false).await?;
+                    debug!("sync new blocks: {}, contains asset: {}", sync_new_blocks, contains_asset);
+                    // If we already contains the asset we can sync new blocks in case we missed any
+                    // If we didn't loaded it before, we have no reason to go through chain
+                    // because it would have been detected earlier
+                    if contains_asset && sync_new_blocks {
+                        self.sync_new_blocks(&address, event.topoheight, false).await?;
+                    }
+
+                    // let mut storage = self.wallet.get_storage().write().await;
+                    // TODO: we need to store this output as a transaction so it appears in history
                 },
                 // Detect network events
                 res = on_connection.recv() => {

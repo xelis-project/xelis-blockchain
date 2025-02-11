@@ -135,6 +135,12 @@ impl DaemonAPI {
         Ok(receiver)
     }
 
+    pub async fn on_contract_transfer_event(&self, address: Address) -> Result<EventReceiver<ContractTransferEvent>> {
+        trace!("on_contract_transfer_event");
+        let receiver = self.client.subscribe_event(NotifyEvent::ContractTransfer { address }, self.capacity).await?;
+        Ok(receiver)
+    }
+
     pub async fn get_version(&self) -> Result<String> {
         trace!("get_version");
         let version = self.client.call("get_version").await?;
