@@ -1,10 +1,22 @@
 use anyhow::Context;
+use log::warn;
 use indexmap::{IndexMap, IndexSet};
 use serde::{Deserialize, Serialize};
-use xelis_vm::{Constant, EnumType, EnumValueType, StructType, Type, TypeId, Value};
-
-use crate::serializer::{Reader, ReaderError, Serializer, Writer};
-
+use xelis_vm::{
+    Constant,
+    EnumType,
+    EnumValueType,
+    StructType,
+    Type,
+    TypeId,
+    Value
+};
+use crate::serializer::{
+    Reader,
+    ReaderError,
+    Serializer,
+    Writer
+};
 
 // CompressedConstant is a compressed version of a constant
 // Because we can't directly deserialize a constant as its dependent on a Module
@@ -254,7 +266,7 @@ pub fn decompress_type(reader: &mut Reader, structures: &IndexSet<StructType>, e
                             .context("enum type")?
                             .clone();
 
-                            values.push(Type::Enum(enum_type));
+                        values.push(Type::Enum(enum_type));
                     },
                     14 => {
                         stack.push(TypeStep::AssembleRange);
@@ -283,7 +295,8 @@ pub fn decompress_type(reader: &mut Reader, structures: &IndexSet<StructType>, e
         }
     }
 
-    if stack.len() != 1 {
+    if !stack.is_empty() {
+        warn!("Stack is not empty after reading type");
         return Err(ReaderError::InvalidSize);
     }
 
@@ -409,5 +422,19 @@ mod tests {
         let result = decompress_constant(&mut reader, &structures, &enums).unwrap();
 
         assert_eq!(result, struct_value);
+    }
+
+    #[test]
+    fn test_type() {
+        let type_ = Type::Array(Box::new(Type::Array(Box::new(Type::U32))));
+        let bytes = type_.to_bytes();
+        let len = bytes.len();
+        let mut reader = Reader::new(&bytes);
+
+        let structures = IndexSet::new();
+        let enums = IndexSet::new();
+        let result = decompress_type(&mut reader, &structures, &enums).unwrap();
+        assert_eq!(result, type_);
+        assert_eq!(result.size(), len);
     }
 }

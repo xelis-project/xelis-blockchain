@@ -399,15 +399,12 @@ impl Serializer for Type {
                     total += 2;
                 },
                 Type::Array(inner) => {
-                    total += 1;
                     stack.push(inner);
                 },
                 Type::Optional(inner) => {
-                    total += 1;
                     stack.push(inner);
                 },
                 Type::Map(key, value) => {
-                    total += 1;
                     stack.push(value);
                     stack.push(key);
                 },
@@ -415,7 +412,6 @@ impl Serializer for Type {
                     total += 2;
                 },
                 Type::Range(inner) => {
-                    total += 1;
                     stack.push(inner);
                 },
                 _ => {}
@@ -619,5 +615,18 @@ impl Serializer for InvokeContractPayload {
             size += parameter.size();
         }
         size
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_serde_struct() {
+        let hex = "0001010300000001000400000000000000000001000000100200000100001600000201000000001000010000";
+        let module = Module::from_hex(hex).unwrap();
+        assert_eq!(module.structs().len(), 1);
+        assert_eq!(module.chunks_entry_ids().len(), 1);
     }
 }
