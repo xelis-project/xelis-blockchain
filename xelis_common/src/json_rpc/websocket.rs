@@ -105,6 +105,8 @@ pub struct WebSocketJsonRPCClientImpl<E: Serialize + Hash + Eq + Send + Sync + C
     offline_channel: Mutex<Option<broadcast::Sender<()>>>,
     // This channel is called each time we connect
     online_channel: Mutex<Option<broadcast::Sender<()>>>,
+    // This channel is called each time we try to reconnect
+    reconnect_channel: Mutex<Option<broadcast::Sender<()>>>,
     // Background task that keep alive WS connection
     background_task: Mutex<Option<JoinHandle<()>>>,
     // Timeout for a request
@@ -132,6 +134,7 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
             online: AtomicBool::new(true),
             offline_channel: Mutex::new(None),
             online_channel: Mutex::new(None),
+            reconnect_channel: Mutex::new(None),
             background_task: Mutex::new(None),
             timeout_after: Duration::from_secs(5),
         });
@@ -193,7 +196,12 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
     pub async fn on_connection(&self) -> broadcast::Receiver<()> {
         self.register_to_connection_channel(&self.online_channel).await
     }
-    
+
+    // Call this function to be notified by a channel when we are trying to reconnect to the server
+    pub async fn on_reconnect(&self) -> broadcast::Receiver<()> {
+        self.register_to_connection_channel(&self.reconnect_channel).await
+    }
+
     // Should the client try to reconnect to the server if the connection is lost
     pub async fn should_auto_reconnect(&self) -> bool {
         self.delay_auto_reconnect.lock().await.is_some()
@@ -398,6 +406,9 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
                 while let Some(auto_reconnect) = { zelf.delay_auto_reconnect.lock().await.as_ref().cloned() } {
                     debug!("Reconnecting to the server in {} seconds...", auto_reconnect.as_secs());
                     sleep(auto_reconnect).await;
+
+                    // Notify that we are trying to reconnect
+                    zelf.notify_connection_channel(&zelf.reconnect_channel).await;
 
                     match connect(&zelf.target).await {
                         Ok(websocket) => {
