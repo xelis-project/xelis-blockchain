@@ -1,6 +1,14 @@
 use anyhow::Context as AnyhowContext;
 use xelis_vm::{
-    traits::{JSONHelper, Serializable}, Constant, Context, FnInstance, FnParams, FnReturnType, OpaqueWrapper, Value, ValueCell
+    traits::{JSONHelper, Serializable},
+    Constant,
+    Context,
+    FnInstance,
+    FnParams,
+    FnReturnType,
+    OpaqueWrapper,
+    Value,
+    ValueCell
 };
 use crate::{
     config::FEE_PER_BYTE_IN_CONTRACT_MEMORY,
@@ -8,6 +16,7 @@ use crate::{
 };
 use super::Serializer;
 
+// Shareable data across invoke call on the same Contract in the same Block
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct OpaqueMemoryStorage;
 
@@ -34,7 +43,9 @@ pub fn memory_storage_load<P: ContractProvider>(_: FnInstance, mut params: FnPar
         .try_into()
         .map_err(|_| anyhow::anyhow!("Invalid key"))?;
 
-    let value = state.changes.memory.get(&key).cloned();
+    let value = state.changes.memory.get(&key)
+        .cloned()
+        .flatten();
     Ok(Some(ValueCell::Optional(value.map(Constant::into))))
 }
 
@@ -78,7 +89,8 @@ pub fn memory_storage_store<P: ContractProvider>(_: FnInstance, mut params: FnPa
 
     let state: &mut ChainState = context.get_mut()
         .context("No chain state for memory storage")?;
-    let value = state.changes.memory.insert(key, value);
+    let value = state.changes.memory.insert(key, Some(value))
+        .flatten();
 
     Ok(Some(ValueCell::Optional(value.map(Constant::into))))
 }
@@ -92,7 +104,8 @@ pub fn memory_storage_delete<P: ContractProvider>(_: FnInstance, mut params: FnP
         .try_into()
         .map_err(|_| anyhow::anyhow!("Invalid key"))?;
 
-    let value = state.changes.memory.remove(&key);
+    let value = state.changes.memory.remove(&key)
+        .flatten();
 
     Ok(Some(ValueCell::Optional(value.map(Constant::into))))
 }

@@ -111,10 +111,9 @@ pub fn storage_store<P: ContractProvider>(_: FnInstance, mut params: FnParams, c
     let (storage, state) = from_context::<P>(context)?;
 
     let data_state = match state.changes.storage.get(&key) {
-        Some((state, _)) => match state {
-            VersionedState::New => VersionedState::New,
-            VersionedState::FetchedAt(topoheight) => VersionedState::Updated(*topoheight),
-            VersionedState::Updated(topoheight) => VersionedState::Updated(*topoheight),
+        Some((mut state, _)) => {
+            state.mark_updated();
+            state
         },
         None => {
             // We need to retrieve the latest topoheight version
@@ -139,8 +138,8 @@ pub fn storage_delete<P: ContractProvider>(_: FnInstance, mut params: FnParams, 
     let data_state = match state.changes.storage.get(&key) {
         Some((s, _)) => match s {
             VersionedState::New => {
-                state.changes.storage.remove(&key);
-                return Ok(None);
+                let value = state.changes.storage.remove(&key);
+                return Ok((value.map(|(_, v)| v.map(Constant::into)).flatten()).into());
             },
             VersionedState::FetchedAt(topoheight) => VersionedState::Updated(*topoheight),
             VersionedState::Updated(topoheight) => VersionedState::Updated(*topoheight),
@@ -149,7 +148,7 @@ pub fn storage_delete<P: ContractProvider>(_: FnInstance, mut params: FnParams, 
             // We need to retrieve the latest topoheight version
             match storage.load_data_latest_topoheight(&state.contract, &key, state.topoheight)? {
                 Some(topoheight) => VersionedState::Updated(topoheight),
-                None => return Ok(None),
+                None => return Ok(Some(ValueCell::Optional(None))),
             }
         }
     };
