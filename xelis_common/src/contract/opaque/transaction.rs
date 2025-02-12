@@ -2,8 +2,6 @@ use anyhow::Context as AnyhowContext;
 use xelis_vm::{traits::{JSONHelper, Serializable}, Context, FnInstance, FnParams, FnReturnType, OpaqueWrapper, Value};
 use crate::{contract::ChainState, transaction::Transaction};
 
-use super::OpaqueSignature;
-
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct OpaqueTransaction;
 
@@ -51,5 +49,5 @@ pub fn transaction_signature(zelf: FnInstance, _: FnParams, context: &mut Contex
     let _: &OpaqueTransaction = zelf?.as_opaque_type()?;
     let tx: &Transaction = context.get().context("current transaction not found")?;
 
-    Ok(Some(Value::Opaque(OpaqueWrapper::new(OpaqueSignature(tx.get_signature().clone()))).into()))
+    Ok(Some(Value::Opaque(OpaqueWrapper::new(tx.get_signature().clone())).into()))
 }

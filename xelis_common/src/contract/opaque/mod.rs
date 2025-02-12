@@ -101,7 +101,7 @@ impl Serializer for OpaqueWrapper {
         Ok(match reader.read_u8()? {
             HASH_OPAQUE_ID => OpaqueWrapper::new(Hash::read(reader)?),
             ADDRESS_OPAQUE_ID => OpaqueWrapper::new(Address::read(reader)?),
-            SIGNATURE_OPAQUE_ID => OpaqueWrapper::new(OpaqueSignature(Signature::read(reader)?)),
+            SIGNATURE_OPAQUE_ID => OpaqueWrapper::new(Signature::read(reader)?),
             _ => return Err(ReaderError::InvalidValue)
         })
     }

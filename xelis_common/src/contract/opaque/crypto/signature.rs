@@ -1,5 +1,4 @@
 use anyhow::Context as AnyhowContext;
-use serde::{Deserialize, Serialize};
 use xelis_vm::{
     impl_opaque,
     traits::Serializable,
@@ -17,22 +16,17 @@ use crate::{
     serializer::{Serializer, Writer}
 };
 
-// Represent a signature used by XELIS
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct OpaqueSignature(pub Signature);
-
 impl_opaque!(
     "Signature",
-    OpaqueSignature
+    Signature
 );
 impl_opaque!(
     "Signature",
-    OpaqueSignature,
+    Signature,
     json
 );
 
-impl Serializable for OpaqueSignature {
+impl Serializable for Signature {
     fn get_size(&self) -> usize {
         SIGNATURE_SIZE
     }
@@ -44,7 +38,7 @@ impl Serializable for OpaqueSignature {
     fn serialize(&self, buffer: &mut Vec<u8>) -> usize {
         let mut writer = Writer::new(buffer);
         writer.write_u8(SIGNATURE_OPAQUE_ID);
-        self.0.write(&mut writer);
+        self.write(&mut writer);
         writer.total_write()
     }
 }
@@ -67,7 +61,7 @@ impl Serializable for OpaqueSignature {
 // }
 
 pub fn verify_signature_fn(zelf: FnInstance, mut params: FnParams, _: &mut Context) -> FnReturnType {
-    let signature: &OpaqueSignature = zelf?.as_opaque_type()?;
+    let signature: &Signature = zelf?.as_opaque_type()?;
 
     let address: Address = params.remove(0)
         .into_inner()
@@ -83,7 +77,7 @@ pub fn verify_signature_fn(zelf: FnInstance, mut params: FnParams, _: &mut Conte
     let key = address.to_public_key()
         .decompress()
         .context("decompress key for signature")?;
-    Ok(Some(Value::Boolean(signature.0.verify(&data, &key)).into()))
+    Ok(Some(Value::Boolean(signature.verify(&data, &key)).into()))
 }
 
 #[cfg(test)]
@@ -94,12 +88,10 @@ mod tests {
     #[test]
     fn test_serde() {
         let signature = Signature::new(Scalar::from(1u64), Scalar::from(2u64));
-        let opaque = OpaqueSignature(signature.clone());
-        let v = serde_json::to_value(&opaque).unwrap();
+        let v = serde_json::to_value(&signature).unwrap();
 
-        let opaque: OpaqueSignature = serde_json::from_value(v)
+        let signature2: Signature = serde_json::from_value(v)
             .unwrap();
-        let signature2 = opaque.0;
 
         assert_eq!(signature, signature2);
     }

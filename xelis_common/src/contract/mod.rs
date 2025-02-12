@@ -28,7 +28,7 @@ use xelis_vm::{
 use crate::{
     block::{Block, TopoHeight},
     config::FEE_PER_ACCOUNT_CREATION,
-    crypto::{Address, Hash, PublicKey},
+    crypto::{Address, Hash, PublicKey, Signature},
     transaction::ContractDeposit,
     versioned_type::VersionedState
 };
@@ -103,7 +103,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static> {
     let memory_storage_type = Type::Opaque(env.register_opaque::<OpaqueMemoryStorage>("MemoryStorage"));
     let asset_type = Type::Opaque(env.register_opaque::<Asset>("Asset"));
     let asset_manager_type = Type::Opaque(env.register_opaque::<AssetManager>("AssetManager"));
-    let signature_type = Type::Opaque(env.register_opaque::<OpaqueSignature>("Signature"));
+    let signature_type = Type::Opaque(env.register_opaque::<Signature>("Signature"));
 
     // Transaction
     {
