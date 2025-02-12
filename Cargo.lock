@@ -3790,7 +3790,7 @@ dependencies = [
 [[package]]
 name = "xelis-ast"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#2049ee2a9b6a4b915690cfea4ee27489219ee54e"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#2ba8eeba6c9ab363b9705273c94c1e05867aeff4"
 dependencies = [
  "indexmap 2.7.1",
  "xelis-types",
@@ -3799,7 +3799,7 @@ dependencies = [
 [[package]]
 name = "xelis-builder"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#2049ee2a9b6a4b915690cfea4ee27489219ee54e"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#2ba8eeba6c9ab363b9705273c94c1e05867aeff4"
 dependencies = [
  "anyhow",
  "log",
@@ -3813,7 +3813,7 @@ dependencies = [
 [[package]]
 name = "xelis-bytecode"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#2049ee2a9b6a4b915690cfea4ee27489219ee54e"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#2ba8eeba6c9ab363b9705273c94c1e05867aeff4"
 dependencies = [
  "indexmap 2.7.1",
  "serde",
@@ -3823,7 +3823,7 @@ dependencies = [
 [[package]]
 name = "xelis-environment"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#2049ee2a9b6a4b915690cfea4ee27489219ee54e"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#2ba8eeba6c9ab363b9705273c94c1e05867aeff4"
 dependencies = [
  "anyhow",
  "better_any",
@@ -3849,7 +3849,7 @@ dependencies = [
 [[package]]
 name = "xelis-types"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#2049ee2a9b6a4b915690cfea4ee27489219ee54e"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#2ba8eeba6c9ab363b9705273c94c1e05867aeff4"
 dependencies = [
  "anyhow",
  "indexmap 2.7.1",
@@ -3862,7 +3862,7 @@ dependencies = [
 [[package]]
 name = "xelis-vm"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#2049ee2a9b6a4b915690cfea4ee27489219ee54e"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#2ba8eeba6c9ab363b9705273c94c1e05867aeff4"
 dependencies = [
  "thiserror 2.0.11",
  "xelis-bytecode",
