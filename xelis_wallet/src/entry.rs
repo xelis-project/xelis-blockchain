@@ -474,7 +474,7 @@ impl TransactionEntry {
             EntryData::Coinbase { reward } => format!("Coinbase {} XELIS", format_xelis(*reward)),
             EntryData::Burn { asset, amount, fee, nonce } => {
                 let data = storage.get_asset(asset).await?;
-                format!("Fee: {}, Nonce: {} Burn {} of {}", format_xelis(*fee), nonce, format_coin(*amount, data.get_decimals()), asset)
+                format!("Fee: {}, Nonce: {} Burn {} {} ({})", format_xelis(*fee), nonce, format_coin(*amount, data.get_decimals()), data.get_name(), asset)
             },
             EntryData::Incoming { from, transfers } => {
                 let mut str = String::new();
@@ -483,7 +483,7 @@ impl TransactionEntry {
                         str.push_str(&format!("Received {} XELIS from {}", format_xelis(transfer.get_amount()), from.as_address(mainnet)));
                     } else {
                         let data = storage.get_asset(transfer.get_asset()).await?;
-                        str.push_str(&format!("Received {} {} from {}", format_coin(transfer.get_amount(), data.get_decimals()), transfer.get_asset(), from.as_address(mainnet)));
+                        str.push_str(&format!("Received {} {} ({}) from {}", format_coin(transfer.get_amount(), data.get_decimals()), data.get_name(), transfer.get_asset(), from.as_address(mainnet)));
                     }
                 }
                 str
@@ -495,7 +495,7 @@ impl TransactionEntry {
                         str.push_str(&format!("Sent {} XELIS to {}", format_xelis(transfer.get_amount()), transfer.get_destination().as_address(mainnet)));
                     } else {
                         let data = storage.get_asset(transfer.get_asset()).await?;
-                        str.push_str(&format!("Sent {} {} to {}", format_coin(transfer.get_amount(), data.get_decimals()), transfer.get_asset(), transfer.get_destination().as_address(mainnet)));
+                        str.push_str(&format!("Sent {} {} ({}) to {}", format_coin(transfer.get_amount(), data.get_decimals()), data.get_name(), transfer.get_asset(), transfer.get_destination().as_address(mainnet)));
                     }
                 }
                 str
@@ -513,7 +513,7 @@ impl TransactionEntry {
                 str.push_str(&format!("Invoke contract {} with chunk id {} (max gas: {})", contract, chunk_id, format_xelis(*max_gas)));
                 for (asset, amount) in deposits {
                     let data = storage.get_asset(&asset).await?;
-                    str.push_str(&format!("Deposit {} {} to contract", format_coin(*amount, data.get_decimals()), asset));
+                    str.push_str(&format!("Deposit {} {} ({}) to contract", format_coin(*amount, data.get_decimals()), data.get_name(), asset));
                 }
                 str
             },
