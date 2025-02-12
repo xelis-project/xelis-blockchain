@@ -3,6 +3,7 @@ mod compressed;
 use anyhow::Context;
 use compressed::{decompress_constant, decompress_type};
 use indexmap::{IndexMap, IndexSet};
+use log::warn;
 use serde::{Deserialize, Serialize};
 use xelis_vm::{
     Chunk,
@@ -354,32 +355,38 @@ impl Serializer for Type {
             Type::Bool => writer.write_u8(6),
             Type::Blob => writer.write_u8(7),
             Type::String => writer.write_u8(8),
-            Type::Struct(struct_type) => {
-                writer.write_u8(9);
-                writer.write_u16(struct_type.id());
-            },
             Type::Array(inner) => {
-                writer.write_u8(10);
+                writer.write_u8(9);
                 inner.write(writer);
             },
             Type::Optional(inner) => {
-                writer.write_u8(11);
+                writer.write_u8(10);
                 inner.write(writer);
             },
             Type::Map(key, value) => {
-                writer.write_u8(12);
+                writer.write_u8(11);
                 key.write(writer);
                 value.write(writer);
             },
-            Type::Enum(enum_type) => {
-                writer.write_u8(13);
-                writer.write_u16(enum_type.id());
-            },
             Type::Range(inner) => {
-                writer.write_u8(14);
+                writer.write_u8(12);
                 inner.write(writer);
             },
-            _ => {}
+            Type::Struct(struct_type) => {
+                writer.write_u8(13);
+                writer.write_u16(struct_type.id());
+            },
+            Type::Enum(enum_type) => {
+                writer.write_u8(14);
+                writer.write_u16(enum_type.id());
+            },
+            Type::Opaque(opaque) => {
+                writer.write_u8(15);
+                writer.write_u16(opaque.id());
+            }
+            ty => {
+                warn!("unsupported type serialization: {:?}", ty);
+            }
         }        
     }
 

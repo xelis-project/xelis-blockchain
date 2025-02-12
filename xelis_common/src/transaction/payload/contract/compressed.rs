@@ -6,6 +6,7 @@ use xelis_vm::{
     Constant,
     EnumType,
     EnumValueType,
+    OpaqueType,
     StructType,
     Type,
     TypeId,
@@ -240,6 +241,23 @@ pub fn decompress_type(reader: &mut Reader, structures: &IndexSet<StructType>, e
                         values.push(Type::String);
                     },
                     9 => {
+                        stack.push(TypeStep::Array);
+                        stack.push(TypeStep::ReadType);
+                    },
+                    10 => {
+                        stack.push(TypeStep::AssembleOptional);
+                        stack.push(TypeStep::ReadType);
+                    },
+                    11 => {
+                        stack.push(TypeStep::AssembleMap);
+                        stack.push(TypeStep::ReadType);
+                        stack.push(TypeStep::ReadType);
+                    },
+                    12 => {
+                        stack.push(TypeStep::AssembleRange);
+                        stack.push(TypeStep::ReadType);
+                    },
+                    13 => {
                         let struct_id = reader.read_u16()?;
                         let struct_type = structures.get(&TypeId(struct_id))
                             .context("struct type")?
@@ -247,20 +265,7 @@ pub fn decompress_type(reader: &mut Reader, structures: &IndexSet<StructType>, e
 
                         values.push(Type::Struct(struct_type));
                     },
-                    10 => {
-                        stack.push(TypeStep::Array);
-                        stack.push(TypeStep::ReadType);
-                    },
-                    11 => {
-                        stack.push(TypeStep::AssembleOptional);
-                        stack.push(TypeStep::ReadType);
-                    },
-                    12 => {
-                        stack.push(TypeStep::AssembleMap);
-                        stack.push(TypeStep::ReadType);
-                        stack.push(TypeStep::ReadType);
-                    },
-                    13 => {
+                    14 => {
                         let enum_id = reader.read_u16()?;
                         let enum_type = enums.get(&TypeId(enum_id))
                             .context("enum type")?
@@ -268,9 +273,8 @@ pub fn decompress_type(reader: &mut Reader, structures: &IndexSet<StructType>, e
 
                         values.push(Type::Enum(enum_type));
                     },
-                    14 => {
-                        stack.push(TypeStep::AssembleRange);
-                        stack.push(TypeStep::ReadType);
+                    15 => {
+                        values.push(Type::Opaque(OpaqueType::new(reader.read_u16()?)));
                     }
                     _ => return Err(ReaderError::InvalidValue)
                 }

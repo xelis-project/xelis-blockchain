@@ -13,7 +13,7 @@ use xelis_types::{
     register_opaque_json,
     impl_opaque
 };
-use xelis_vm::{tid, OpaqueWrapper};
+use xelis_vm::{tid, traits::JSON_REGISTRY, OpaqueWrapper};
 use crate::{
     block::Block,
     crypto::{Address, Hash, Signature},
@@ -87,8 +87,9 @@ tid!(Block);
 
 pub fn register_opaque_types() {
     debug!("Registering opaque types");
-    register_opaque_json!("Hash", Hash);
-    register_opaque_json!("Address", Address);
+    let mut registry = JSON_REGISTRY.write().expect("Failed to lock JSON_REGISTRY");
+    register_opaque_json!(registry, "Hash", Hash);
+    register_opaque_json!(registry, "Address", Address);
 }
 
 impl Serializer for OpaqueWrapper {
