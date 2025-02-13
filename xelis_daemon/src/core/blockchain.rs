@@ -15,6 +15,7 @@ use xelis_common::{
             TransactionResponse,
             NewContractEvent,
             InvokeContractEvent,
+            NewAssetEvent,
             ContractTransferEvent,
         },
         RPCContractOutput,
@@ -2128,55 +2129,39 @@ impl<S: Storage> Blockchain<S> {
                 chain_state.reward_miner(block.get_miner(), block_reward + total_fees + gas_fee).await?;
 
                 // Fire all the contract events
-                // {
-                //     let contracts_cache = chain_state.get_contracts_cache();
-                //     let is_mainnet = self.network.is_mainnet();
+                {
+                    let contract_tracker = chain_state.get_contract_tracker();
+                    let is_mainnet = self.network.is_mainnet();
 
-                //     // We want to only fire one event per key/hash pair
-                //     let track_new_assets = should_track_events.contains(&NotifyEvent::NewAsset);
+                    // We want to only fire one event per key/hash pair
+                    if should_track_events.contains(&NotifyEvent::NewAsset) {
+                        for asset in contract_tracker.assets_created.iter() {
+                            let value = json!(NewAssetEvent {
+                                asset: Cow::Borrowed(asset),
+                                block_hash: Cow::Borrowed(&hash),
+                                topoheight: highest_topo,
+                            });
+                            events.entry(NotifyEvent::NewAsset).or_insert_with(Vec::new).push(value);
+                        }
+                    }
 
-                //     for cache in contracts_cache.values() {
-                //         // Check for contract transfers
-                //         for (key, assets) in cache.transfers.iter() {
-                //             let (_, outputs) = match outputs.entry(key) {
-                //                 Entry::Occupied(entry) => entry.into_mut(),
-                //                 Entry::Vacant(entry) => {
-                //                     let event = NotifyEvent::ContractTransfer { address: key.as_address(is_mainnet) };
-                //                     if !should_track_events.contains(&event) {
-                //                         continue;
-                //                     }
-
-                //                     entry.insert((event, HashMap::new()))
-                //                 }
-                //             };
-
-                //             for (asset, amount) in assets.iter() {
-                //                 outputs.entry(asset)
-                //                     .and_modify(|v| *v += amount)
-                //                     .or_insert(*amount);
-                //             }
-                //         }
-
-                //         // Also check for newly created assets
-                //         if track_new_assets {
-
-                //         }
-                //     }
-
-                //     for (_, (event, assets)) in outputs.into_iter() {
-                //         for (asset, amount) in assets {
-                //             let value = json!(ContractTransferEvent {
-                //                 asset: Cow::Borrowed(asset),
-                //                 amount,
-                //                 block_hash: Cow::Borrowed(&hash),
-                //                 topoheight: highest_topo,
-                //             });
-                //             events.entry(event.clone())
-                //                 .or_insert_with(Vec::new)
-                //                 .push(value);
-                //         }
-                //     }
-                // }
+                    for (key, assets) in contract_tracker.transfers.iter() {
+                        let event = NotifyEvent::ContractTransfer { address: key.as_address(is_mainnet) };
+                        if should_track_events.contains(&event) {
+                            for (asset, amount) in assets {
+                                let value = json!(ContractTransferEvent {
+                                    asset: Cow::Borrowed(asset),
+                                    amount: *amount,
+                                    block_hash: Cow::Borrowed(&hash),
+                                    topoheight: highest_topo,
+                                });
+                                events.entry(event.clone())
+                                    .or_insert_with(Vec::new)
+                                    .push(value);
+                            }
+                        }
+                    }
+                }
 
                 // apply changes from Chain State
                 chain_state.apply_changes().await?;
