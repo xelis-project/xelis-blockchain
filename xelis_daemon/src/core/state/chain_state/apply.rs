@@ -8,7 +8,7 @@ use log::{debug, trace};
 use xelis_common::{
     account::{BalanceType, Nonce, VersionedNonce},
     block::{Block, BlockVersion, TopoHeight},
-    contract::{ChainState as ContractChainState, ContractCache, ContractOutput, DeterministicRandom},
+    contract::{ChainState as ContractChainState, ContractCache, ContractEventTracker, ContractOutput, DeterministicRandom},
     crypto::{elgamal::Ciphertext, Hash, PublicKey},
     transaction::{
         verify::{BlockchainApplyState, BlockchainVerificationState, ContractEnvironment},
@@ -25,13 +25,18 @@ use crate::core::{
 
 use super::{ChainState, StorageReference, Echange};
 
+struct ContractManager<'a> {
+    outputs: HashMap<&'a Hash, Vec<ContractOutput>>,
+    caches: HashMap<&'a Hash, ContractCache>,
+    tracker: ContractEventTracker,
+}
+
 // Chain State that can be applied to the mutable storage
 pub struct ApplicableChainState<'a, S: Storage> {
     inner: ChainState<'a, S>,
     block_hash: &'a Hash,
     block: &'a Block,
-    contracts_outputs: HashMap<&'a Hash, Vec<ContractOutput>>,
-    contracts_cache: HashMap<&'a Hash, ContractCache>,
+    contract_manager: ContractManager<'a>,
     burned_supply: u64,
 }
 
@@ -168,7 +173,7 @@ impl<'a, S: Storage> BlockchainApplyState<'a, S, BlockchainError> for Applicable
         tx_hash: &'a Hash,
         outputs: Vec<ContractOutput>
     ) -> Result<(), BlockchainError> {
-        match self.contracts_outputs.entry(tx_hash) {
+        match self.contract_manager.outputs.entry(tx_hash) {
             Entry::Occupied(mut o) => {
                 o.get_mut().extend(outputs);
             },
@@ -191,7 +196,7 @@ impl<'a, S: Storage> BlockchainApplyState<'a, S, BlockchainError> for Applicable
             )?;
 
         // Find the contract cache in our cache map
-        let cache = self.contracts_cache.get(&payload.contract)
+        let cache = self.contract_manager.caches.get(&payload.contract)
             .cloned()
             .unwrap_or_default();
 
@@ -210,6 +215,7 @@ impl<'a, S: Storage> BlockchainApplyState<'a, S, BlockchainError> for Applicable
             tx_hash,
             cache,
             outputs: Vec::new(),
+            tracker: self.contract_manager.tracker.clone(),
         };
 
         let contract_environment = ContractEnvironment {
@@ -221,12 +227,13 @@ impl<'a, S: Storage> BlockchainApplyState<'a, S, BlockchainError> for Applicable
         Ok((contract_environment, state))
     }
 
-    async fn merge_contract_cache(
+    async fn merge_contract_changes(
         &mut self,
         hash: &'a Hash,
-        cache: ContractCache
+        cache: ContractCache,
+        tracker: ContractEventTracker
     ) -> Result<(), BlockchainError> {
-        match self.contracts_cache.entry(hash) {
+        match self.contract_manager.caches.entry(hash) {
             Entry::Occupied(mut o) => {
                 let current = o.get_mut();
                 *current = cache;
@@ -235,6 +242,8 @@ impl<'a, S: Storage> BlockchainApplyState<'a, S, BlockchainError> for Applicable
                 e.insert(cache);
             }
         };
+
+        self.contract_manager.tracker = tracker;
 
         Ok(())
     }
@@ -286,8 +295,11 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
                 block_version,
             ),
             burned_supply,
-            contracts_outputs: HashMap::new(),
-            contracts_cache: HashMap::new(),
+            contract_manager: ContractManager {
+                outputs: HashMap::new(),
+                caches: HashMap::new(),
+                tracker: ContractEventTracker::default(),
+            },
             block_hash,
             block
         }
@@ -300,12 +312,17 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
 
     // Get the contracts cache
     pub fn get_contracts_cache(&self) -> &HashMap<&Hash, ContractCache> {
-        &self.contracts_cache
+        &self.contract_manager.caches
     }
+
+    // Get the contract tracker
+    pub fn get_contract_tracker(&self) -> &ContractEventTracker {
+        &self.contract_manager.tracker
+    } 
 
     // Get the contract outputs for TX
     pub fn get_contract_outputs_for_tx(&self, tx_hash: &Hash) -> Option<&Vec<ContractOutput>> {
-        self.contracts_outputs.get(tx_hash)
+        self.contract_manager.outputs.get(tx_hash)
     }
 
     // This function is called after the verification of all needed transactions
@@ -416,7 +433,7 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
         }
 
         // Apply all the contract storage changes
-        for (contract, cache) in self.contracts_cache {
+        for (contract, cache) in self.contract_manager.caches {
             // Apply all storage changes
             for (key, (state, value)) in cache.storage {
                 if state.should_be_stored() {
@@ -442,15 +459,6 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
                 }
             }
 
-            // Apply all the transfers
-            for (key, assets) in cache.transfers {
-                for (asset, amount) in assets {
-                    trace!("Transfering {} {} to {} at topoheight {}", amount, asset, key.as_address(self.inner.storage.is_mainnet()), self.inner.topoheight);
-                    let receiver_balance = self.inner.internal_get_receiver_balance(Cow::Owned(key.clone()), Cow::Owned(asset)).await?;
-                    *receiver_balance += amount;
-                }
-            }
-
             for (asset, data) in cache.balances {
                 if let Some((state, balance)) = data {
                     if state.should_be_stored() {
@@ -458,6 +466,15 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
                         self.inner.storage.set_last_contract_balance_to(&contract, &asset, self.inner.topoheight, VersionedContractBalance::new(balance, state.get_topoheight())).await?;
                     }
                 }
+            }
+        }
+
+        // Apply all the transfers to the receiver accounts
+        for (key, assets) in self.contract_manager.tracker.transfers {
+            for (asset, amount) in assets {
+                trace!("Transfering {} {} to {} at topoheight {}", amount, asset, key.as_address(self.inner.storage.is_mainnet()), self.inner.topoheight);
+                let receiver_balance = self.inner.internal_get_receiver_balance(Cow::Owned(key.clone()), Cow::Owned(asset)).await?;
+                *receiver_balance += amount;
             }
         }
 
@@ -470,7 +487,7 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
         }
 
         // Apply all the contract outputs
-        for (key, outputs) in self.contracts_outputs {
+        for (key, outputs) in self.contract_manager.outputs {
             self.inner.storage.set_contract_outputs_for_tx(&key, outputs).await?;
         }
 
