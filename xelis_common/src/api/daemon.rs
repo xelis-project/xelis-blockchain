@@ -726,6 +726,13 @@ pub enum NotifyEvent {
     ContractTransfer {
         address: Address
     },
+    // When a contract fire an event
+    ContractEvent {
+        // Contract hash to track
+        contract: Hash,
+        // ID of the event that is fired from the contract
+        id: u64
+    },
     // When a new contract has been deployed
     DeployContract,
     // When a new asset has been registered
