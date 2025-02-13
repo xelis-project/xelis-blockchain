@@ -1,13 +1,6 @@
 use anyhow::Context as AnyhowContext;
 use xelis_vm::{
-    impl_opaque,
-    traits::Serializable,
-    Context,
-    FnInstance,
-    FnParams,
-    FnReturnType,
-    Value,
-    ValueError
+    impl_opaque, traits::Serializable, Context, EnvironmentError, FnInstance, FnParams, FnReturnType, Value, ValueError
 };
 
 use crate::{
@@ -43,24 +36,25 @@ impl Serializable for Signature {
     }
 }
 
-// pub fn signature_from_bytes_fn(_: FnInstance, mut params: FnParams, _: &mut Context) -> FnReturnType {
-//     let bytes = params.remove(0)
-//         .into_inner()
-//         .to_vec()?
-//         .into_iter()
-//         .map(|v| v.borrow().as_u8())
-//         .collect::<Result<Vec<_>, ValueError>>()?;
+pub fn signature_from_bytes_fn(_: FnInstance, mut params: FnParams, _: &mut Context) -> FnReturnType {
+    let param = params.remove(0)
+        .into_inner()
+        .to_vec()?;
+    
+    if param.len() != SIGNATURE_SIZE {
+        return Err(EnvironmentError::InvalidParameter);
+    }
 
-//     if bytes.len() != SIGNATURE_SIZE {
-//         return Err(EnvironmentError::InvalidParameter);
-//     }
+    let bytes = param.into_iter()
+        .map(|v| v.borrow().as_u8())
+        .collect::<Result<Vec<_>, ValueError>>()?;
 
-//     let signature = Signature::from_bytes(&bytes)
-//         .context("signature from bytes")?;
-//     Ok(Some(Value::Opaque(OpaqueWrapper::new(OpaqueSignature(signature))).into()))
-// }
+    let signature = Signature::from_bytes(&bytes)
+        .context("signature from bytes")?;
+    Ok(Some(Value::Opaque(signature.into()).into()))
+}
 
-pub fn verify_signature_fn(zelf: FnInstance, mut params: FnParams, _: &mut Context) -> FnReturnType {
+pub fn signature_verify_fn(zelf: FnInstance, mut params: FnParams, _: &mut Context) -> FnReturnType {
     let signature: &Signature = zelf?.as_opaque_type()?;
 
     let address: Address = params.remove(0)

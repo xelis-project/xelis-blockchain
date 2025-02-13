@@ -1,8 +1,7 @@
-use xelis_builder::ConstFnParams;
 use xelis_vm::{
     traits::Serializable,
-    Constant,
     Context,
+    EnvironmentError,
     FnInstance,
     FnParams,
     FnReturnType,
@@ -47,9 +46,13 @@ pub fn address_public_key_bytes(zelf: FnInstance, _: FnParams, _: &mut Context) 
     Ok(Some(ValueCell::Array(bytes)))
 }
 
-pub fn address_from_string(params: ConstFnParams) -> Result<Constant, anyhow::Error> {
-    let addr = params[0].as_string()?;
-    let addr = Address::from_string(addr)?;
+pub fn address_from_string(_: FnInstance, mut params: FnParams, _: &mut Context) -> FnReturnType {
+    let string = params.remove(0)
+        .into_owned()
+        .to_string()?;
 
-    Ok(Constant::Default(Value::Opaque(OpaqueWrapper::new(addr))))
+    let address = Address::from_string(&string)
+        .map_err(|_| EnvironmentError::InvalidParameter)?;
+
+    Ok(Some(Value::Opaque(OpaqueWrapper::new(address)).into()))
 }

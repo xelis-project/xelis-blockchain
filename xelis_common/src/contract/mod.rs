@@ -351,7 +351,6 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static> {
             5,
             Some(Type::Bool)
         );
-
         env.register_native_function(
             "to_public_key_bytes",
             Some(address_type.clone()),
@@ -360,12 +359,13 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static> {
             10,
             Some(Type::Array(Box::new(Type::U8)))
         );
-
-        env.register_const_function(
+        env.register_static_function(
             "from_string",
             address_type.clone(),
             vec![("address", Type::String)],
-            address_from_string
+            address_from_string,
+            75,
+            Some(address_type.clone())
         );
     }
 
@@ -379,37 +379,36 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static> {
             5,
             Some(Type::Array(Box::new(Type::U8)))
         );
-
-        // Const function
-        env.register_const_function(
+        env.register_static_function(
             "from_bytes",
             hash_type.clone(),
             vec![("bytes", Type::Array(Box::new(Type::U8)))],
             hash_from_bytes_fn,
+            75,
+            Some(hash_type.clone())
         );
-
-        env.register_const_function(
+        env.register_static_function(
             "from_hex",
             hash_type.clone(),
             vec![("hex", Type::String)],
             hash_from_hex_fn,
-        );
-
-        env.register_native_function(
-            "blake3",
-            None,
-            vec![("input", Type::Array(Box::new(Type::U8)))],
-            blake3_fn,
-            2500,
+            75,
             Some(hash_type.clone())
         );
-
-        env.register_native_function(
+        env.register_static_function(
+            "blake3",
+            hash_type.clone(),
+            vec![("input", Type::Array(Box::new(Type::U8)))],
+            blake3_fn,
+            3000,
+            Some(hash_type.clone())
+        );
+        env.register_static_function(
             "sha256",
-            None,
+            hash_type.clone(),
             vec![("input", Type::Array(Box::new(Type::U8)))],
             sha256_fn,
-            5000,
+            7500,
             Some(hash_type.clone())
         );
     }
@@ -627,18 +626,18 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static> {
                 ("data", Type::Array(Box::new(Type::U8))),
                 ("address", address_type.clone()),
             ],
-            verify_signature_fn,
+            signature_verify_fn,
             500,
             Some(Type::Bool)
         );
-        // env.register_native_function(
-        //     "signature_from_bytes",
-        //     None,
-        //     vec![("bytes", Type::Array(Box::new(Type::U8)))],
-        //     signature_from_bytes_fn,
-        //     75,
-        //     Some(signature_type.clone())
-        // );
+        env.register_static_function(
+            "from_bytes",
+            signature_type.clone(),
+            vec![("bytes", Type::Array(Box::new(Type::U8)))],
+            signature_from_bytes_fn,
+            75,
+            Some(signature_type.clone())
+        );
     }
 
     env
