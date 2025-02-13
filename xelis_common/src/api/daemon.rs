@@ -729,6 +729,7 @@ pub enum NotifyEvent {
     // When a new contract has been deployed
     DeployContract,
     // When a new asset has been registered
+    // It contains NewAssetEvent struct as value
     NewAsset,
     // When a new peer has connected to us
     // It contains PeerConnectedEvent struct as value
@@ -796,6 +797,14 @@ pub type TransactionOrphanedEvent = TransactionResponse<'static>;
 pub struct TransactionExecutedEvent<'a> {
     pub block_hash: Cow<'a, Hash>,
     pub tx_hash: Cow<'a, Hash>,
+    pub topoheight: TopoHeight,
+}
+
+// Value of NotifyEvent::NewAsset
+#[derive(Serialize, Deserialize)]
+pub struct NewAssetEvent<'a> {
+    pub asset: Cow<'a, Hash>,
+    pub block_hash: Cow<'a, Hash>,
     pub topoheight: TopoHeight,
 }
 
