@@ -17,6 +17,7 @@ use opaque::*;
 use xelis_builder::EnvironmentBuilder;
 use xelis_vm::{
     Context,
+    EnvironmentError,
     FnInstance,
     FnParams,
     FnReturnType,
@@ -640,6 +641,18 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static> {
         );
     }
 
+    env.register_native_function(
+        "fire_event",
+        None,
+        vec![
+            ("id", Type::U64),
+            ("data", Type::Any)
+        ],
+        fire_event_fn,
+        50,
+        None
+    );
+
     env
 }
 
@@ -705,6 +718,24 @@ pub fn get_asset_from_provider<P: ContractProvider>(provider: &P, topoheight: To
         data,
         supply: None
     })
+}
+
+fn fire_event_fn(_: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType {
+    let state: &mut ChainState = context.get_mut().context("chain state not found")?;
+
+    let data = params.remove(1);
+    let id = params.remove(0)
+        .as_u64()?;
+
+    let entry = state.cache.events.entry(id)
+        .or_insert_with(Vec::new);
+    let constant = data.into_owned()
+        .try_into()
+        .map_err(|_| EnvironmentError::InvalidParameter)?;
+
+    entry.push(constant);
+
+    Ok(None)
 }
 
 fn println_fn(_: FnInstance, params: FnParams, context: &mut Context) -> FnReturnType {
