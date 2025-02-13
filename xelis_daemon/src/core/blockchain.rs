@@ -239,7 +239,7 @@ impl<S: Storage> Blockchain<S> {
 
         // include genesis block
         if !on_disk {
-            blockchain.create_genesis_block().await?;
+            blockchain.create_genesis_block(config.genesis_block_hex.as_deref()).await?;
         } else {
             debug!("Retrieving tips for computing current difficulty");
             let storage = blockchain.get_storage().read().await;
@@ -429,7 +429,7 @@ impl<S: Storage> Blockchain<S> {
     }
 
     // function to include the genesis block and register the public dev key.
-    async fn create_genesis_block(&self) -> Result<(), BlockchainError> {
+    async fn create_genesis_block(&self, genesis_hex: Option<&str>) -> Result<(), BlockchainError> {
         let mut storage = self.storage.write().await;
 
         // register XELIS asset
@@ -443,16 +443,12 @@ impl<S: Storage> Blockchain<S> {
         let (genesis_block, genesis_hash) = if let Some(genesis_block) = get_hex_genesis_block(&self.network) {
             info!("De-serializing genesis block for network {}...", self.network);
             let genesis = Block::from_hex(genesis_block)?;
-            if *genesis.get_miner() != *DEV_PUBLIC_KEY {
-                return Err(BlockchainError::GenesisBlockMiner)
-            }
-
             let expected_hash = genesis.hash();
-            let genesis_hash = get_genesis_block_hash(&self.network);
-            if *genesis_hash != expected_hash {
-                error!("Genesis block hash is invalid! Expected: {}, got: {}", expected_hash, genesis_hash);
-                return Err(BlockchainError::InvalidGenesisHash)
-            }
+            (genesis, expected_hash)
+        } else if let Some(hex) = genesis_hex {
+            info!("De-serializing genesis block hex from config...");
+            let genesis = Block::from_hex(hex)?;
+            let expected_hash = genesis.hash();
 
             (genesis, expected_hash)
         } else {
@@ -465,10 +461,20 @@ impl<S: Storage> Blockchain<S> {
             (block, block_hash)
         };
 
+        if *genesis_block.get_miner() != *DEV_PUBLIC_KEY {
+            return Err(BlockchainError::GenesisBlockMiner)
+        }
+
+        if let Some(expected_hash) = get_genesis_block_hash(&self.network) {
+            if genesis_hash != *expected_hash {
+                error!("Genesis block hash is invalid! Expected: {}, got: {}", expected_hash, genesis_hash);
+                return Err(BlockchainError::InvalidGenesisHash)
+            }
+        }
         debug!("Adding genesis block '{}' to chain", genesis_hash);
 
         // hardcode genesis block topoheight
-        storage.set_topo_height_for_block(&genesis_block.hash(), 0).await?;
+        storage.set_topo_height_for_block(&genesis_hash, 0).await?;
         storage.set_top_height(0)?;
 
         self.add_new_block_for_storage(&mut *storage, genesis_block, false, false).await?;

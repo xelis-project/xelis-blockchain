@@ -591,7 +591,17 @@ impl<S: Storage> P2pServer<S> {
             return Err(P2pError::PeerIdAlreadyUsed(handshake.get_peer_id()));
         }
 
-        if *handshake.get_block_genesis_hash() != *get_genesis_block_hash(self.blockchain.get_network()) {
+        let genesis_hash = match get_genesis_block_hash(self.blockchain.get_network()) {
+            Some(hash) => Cow::Borrowed(hash),
+            None => {
+                trace!("no hardcoded genesis block hash found, using the one from the storage");
+                let storage = self.blockchain.get_storage().read().await;
+                let hash = storage.get_hash_at_topo_height(0).await?;
+                Cow::Owned(hash)
+            }
+        };
+
+        if *handshake.get_block_genesis_hash() != *genesis_hash {
             debug!("Invalid genesis block hash {}", handshake.get_block_genesis_hash());
             return Err(P2pError::InvalidHandshake)
         }
@@ -619,9 +629,15 @@ impl<S: Storage> P2pServer<S> {
         let (block, top_hash) = storage.get_top_block_header().await?;
         let topoheight = self.blockchain.get_topo_height();
         let pruned_topoheight = storage.get_pruned_topoheight().await?;
-        let cumulative_difficulty = storage.get_cumulative_difficulty_for_block_hash(&top_hash).await.unwrap_or_else(|_| CumulativeDifficulty::zero());
-        let genesis_block = get_genesis_block_hash(self.blockchain.get_network());
-        let handshake = Handshake::new(Cow::Owned(VERSION.to_owned()), *self.blockchain.get_network(), Cow::Borrowed(self.get_tag()), Cow::Borrowed(&NETWORK_ID), self.get_peer_id(), self.bind_address.port(), get_current_time_in_seconds(), topoheight, block.get_height(), pruned_topoheight, Cow::Borrowed(&top_hash), Cow::Borrowed(genesis_block), Cow::Borrowed(&cumulative_difficulty), self.sharable);
+        let cumulative_difficulty = storage.get_cumulative_difficulty_for_block_hash(&top_hash).await?;
+        let genesis_block = match get_genesis_block_hash(self.blockchain.get_network()) {
+            Some(hash) => Cow::Borrowed(hash),
+            None => {
+                trace!("no hardcoded genesis block hash found, using the one from the storage");
+                Cow::Owned(storage.get_hash_at_topo_height(0).await?)
+            }
+        };
+        let handshake = Handshake::new(Cow::Owned(VERSION.to_owned()), *self.blockchain.get_network(), Cow::Borrowed(self.get_tag()), Cow::Borrowed(&NETWORK_ID), self.get_peer_id(), self.bind_address.port(), get_current_time_in_seconds(), topoheight, block.get_height(), pruned_topoheight, Cow::Borrowed(&top_hash), genesis_block, Cow::Borrowed(&cumulative_difficulty), self.sharable);
         Ok(Packet::Handshake(Cow::Owned(handshake)).to_bytes())
     }
 
@@ -762,34 +778,23 @@ impl<S: Storage> P2pServer<S> {
 
     // build a ping packet with the current state of the blockchain
     // if a peer is given, we will check and update the peers list
-    async fn build_generic_ping_packet_with_storage(&self, storage: &S) -> Ping<'_> {
+    async fn build_generic_ping_packet_with_storage(&self, storage: &S) -> Result<Ping<'_>, P2pError> {
         debug!("building generic ping packet");
         let (cumulative_difficulty, block_top_hash, pruned_topoheight) = {
-            let pruned_topoheight = match storage.get_pruned_topoheight().await {
-                Ok(pruned_topoheight) => pruned_topoheight,
-                Err(e) => {
-                    error!("Couldn't get the pruned topoheight from storage for generic ping packet: {}", e);
-                    None
-                }
-            };
-
-            match storage.get_top_block_hash().await {
-                Err(e) => {
-                    error!("Couldn't get the top block hash from storage for generic ping packet: {}", e);
-                    (CumulativeDifficulty::zero(), get_genesis_block_hash(self.blockchain.get_network()).clone(), pruned_topoheight)
-                },
-                Ok(hash) => (storage.get_cumulative_difficulty_for_block_hash(&hash).await.unwrap_or_else(|_| CumulativeDifficulty::zero()), hash, pruned_topoheight)
-            }
+            let pruned_topoheight = storage.get_pruned_topoheight().await?;
+            let top_block_hash = storage.get_top_block_hash().await?;
+            let cumulative_difficulty = storage.get_cumulative_difficulty_for_block_hash(&top_block_hash).await?;
+            (cumulative_difficulty, top_block_hash, pruned_topoheight)
         };
         let highest_topo_height = self.blockchain.get_topo_height();
         let highest_height = self.blockchain.get_height();
         let new_peers = IndexSet::new();
-        Ping::new(Cow::Owned(block_top_hash), highest_topo_height, highest_height, pruned_topoheight, cumulative_difficulty, new_peers)
+        Ok(Ping::new(Cow::Owned(block_top_hash), highest_topo_height, highest_height, pruned_topoheight, cumulative_difficulty, new_peers))
     }
 
     // Build a generic ping packet
     // This will lock the storage for us
-    async fn build_generic_ping_packet(&self) -> Ping<'_> {
+    async fn build_generic_ping_packet(&self) -> Result<Ping<'_>, P2pError> {
         debug!("locking storage to build generic ping packet");
         let storage = self.blockchain.get_storage().read().await;
         self.build_generic_ping_packet_with_storage(&*storage).await
@@ -1019,7 +1024,14 @@ impl<S: Storage> P2pServer<S> {
                 continue;
             }
 
-            let mut ping = self.build_generic_ping_packet().await;
+            let mut ping = match self.build_generic_ping_packet().await {
+                Ok(ping) => ping,
+                Err(e) => {
+                    error!("Error while building generic ping packet: {}", e);
+                    // We will retry later
+                    continue;
+                }
+            };
             trace!("generic ping packet finished");
 
             // Get all connected peers
@@ -1786,7 +1798,7 @@ impl<S: Storage> P2pServer<S> {
                 if next_page.is_some() {
                     trace!("Requesting next page of inventory from {}", peer);
                     let packet = Cow::Owned(NotifyInventoryRequest::new(next_page));
-                    let ping = Cow::Owned(self.build_generic_ping_packet().await);
+                    let ping = Cow::Owned(self.build_generic_ping_packet().await?);
                     peer.set_requested_inventory(true);
                     peer.send_packet(Packet::NotifyInventoryRequest(PacketWrapper::new(packet, ping))).await?;
                 }
@@ -2411,7 +2423,13 @@ impl<S: Storage> P2pServer<S> {
     // We simply share its hash to nodes and others nodes can check if they have it already or not
     pub async fn broadcast_tx_hash(&self, tx: Hash) {
         debug!("Broadcasting tx hash {}", tx);
-        let ping = self.build_generic_ping_packet().await;
+        let ping = match self.build_generic_ping_packet().await {
+            Ok(ping) => ping,
+            Err(e) => {
+                error!("Error while building generic ping packet for tx broadcast: {}", e);
+                return
+            }
+        };
         debug!("Ping packet has been generated for tx broadcast");
         let current_topoheight = ping.get_topoheight();
         let packet = Packet::TransactionPropagation(PacketWrapper::new(Cow::Borrowed(&tx), Cow::Owned(ping)));
@@ -2533,7 +2551,7 @@ impl<S: Storage> P2pServer<S> {
     async fn request_inventory_of(&self, peer: &Arc<Peer>) -> Result<(), BlockchainError> {
         debug!("Requesting inventory of {}", peer);
         let packet = Cow::Owned(NotifyInventoryRequest::new(None));
-        let ping = Cow::Owned(self.build_generic_ping_packet().await);
+        let ping = Cow::Owned(self.build_generic_ping_packet().await?);
         peer.set_requested_inventory(true);
         peer.send_packet(Packet::NotifyInventoryRequest(PacketWrapper::new(packet, ping))).await?;
         Ok(())
@@ -2555,7 +2573,7 @@ impl<S: Storage> P2pServer<S> {
             let storage = self.blockchain.get_storage().read().await;
             let request = ChainRequest::new(self.build_list_of_blocks_id(&*storage).await?, requested_max_size as u16);
             trace!("Built a chain request with {} blocks", request.size());
-            let ping = self.build_generic_ping_packet_with_storage(&*storage).await;
+            let ping = self.build_generic_ping_packet_with_storage(&*storage).await?;
             PacketWrapper::new(Cow::Owned(request), Cow::Owned(ping))
         };
 

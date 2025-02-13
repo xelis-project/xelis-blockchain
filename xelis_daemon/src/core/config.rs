@@ -176,5 +176,9 @@ pub struct Config {
     /// Skip the TXs verification when building a block template.
     #[clap(long)]
     #[serde(default)]
-    pub skip_block_template_txs_verification: bool
+    pub skip_block_template_txs_verification: bool,
+    /// Use the hexadecimal representation of the genesis block for the dev mode.
+    /// This is useful for testing and development.
+    #[clap(long)]
+    pub genesis_block_hex: Option<String>,
 }

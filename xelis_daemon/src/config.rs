@@ -278,11 +278,11 @@ lazy_static! {
 }
 
 // Genesis block hash based on network selected
-pub fn get_genesis_block_hash(network: &Network) -> &'static Hash {
+pub fn get_genesis_block_hash(network: &Network) -> Option<&'static Hash> {
     match network {
-        Network::Mainnet => &MAINNET_GENESIS_BLOCK_HASH,
-        Network::Testnet => &TESTNET_GENESIS_BLOCK_HASH,
-        Network::Dev => panic!("Dev network has no fix genesis block hash"),
+        Network::Mainnet => Some(&MAINNET_GENESIS_BLOCK_HASH),
+        Network::Testnet => Some(&TESTNET_GENESIS_BLOCK_HASH),
+        Network::Dev => None
     }
 }
 
