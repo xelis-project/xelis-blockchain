@@ -955,7 +955,8 @@ impl Transaction {
                 // If the contract execution was successful, we need to merge the cache
                 if exit_code == Some(0) {
                     let cache = chain_state.cache;
-                    state.merge_contract_cache(&payload.contract, cache).await
+                    let tracker = chain_state.tracker;
+                    state.merge_contract_changes(&payload.contract, cache, tracker).await
                         .map_err(VerificationError::State)?;
                 } else {
                     // Otherwise, something was wrong, we delete the outputs made by the contract

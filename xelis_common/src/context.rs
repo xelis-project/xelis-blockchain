@@ -3,7 +3,7 @@ use std::{hash::{Hasher, BuildHasherDefault}, any::{TypeId, Any}, collections::H
 use anyhow::{Result, Context as AnyContext};
 
 // A hasher for `TypeId`s that takes advantage of its known characteristics.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone, Copy)]
 pub struct NoOpHasher(u64);
 
 impl Hasher for NoOpHasher {
