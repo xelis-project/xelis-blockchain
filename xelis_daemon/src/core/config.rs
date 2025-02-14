@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-
+use xelis_common::crypto::Hash;
 use crate::{
     config::{
         DEFAULT_CACHE_SIZE,
@@ -8,7 +8,8 @@ use crate::{
         P2P_DEFAULT_CONCURRENCY_TASK_COUNT_LIMIT,
         P2P_DEFAULT_MAX_PEERS
     },
-    p2p::diffie_hellman::{KeyVerificationAction, WrappedSecret}};
+    p2p::diffie_hellman::{KeyVerificationAction, WrappedSecret}
+};
 
 use super::simulator::Simulator;
 
@@ -181,4 +182,8 @@ pub struct Config {
     /// This is useful for testing and development.
     #[clap(long)]
     pub genesis_block_hex: Option<String>,
+    /// Blocks hahes checkpoints
+    /// No rewind can go below any of those checkpoints
+    #[serde(default)]
+    pub checkpoints: Vec<Hash>
 }

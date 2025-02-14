@@ -169,7 +169,10 @@ pub struct Blockchain<S: Storage> {
     // using base hash, current tip hash and base height, this cache is used to store the DAG order
     full_order_cache: Mutex<LruCache<(Hash, Hash, u64), IndexSet<Hash>>>,
     // auto prune mode if enabled, will delete all blocks every N and keep only N top blocks (topoheight based)
-    auto_prune_keep_n_blocks: Option<u64>
+    auto_prune_keep_n_blocks: Option<u64>,
+    // Blocks hashes checkpoints
+    // No rewind can be done below these blocks
+    checkpoints: HashSet<Hash>
 }
 
 impl<S: Storage> Blockchain<S> {
@@ -236,7 +239,8 @@ impl<S: Storage> Blockchain<S> {
             common_base_cache: Mutex::new(LruCache::new(NonZeroUsize::new(1024).unwrap())),
             full_order_cache: Mutex::new(LruCache::new(NonZeroUsize::new(1024).unwrap())),
             auto_prune_keep_n_blocks: config.auto_prune_keep_n_blocks,
-            skip_block_template_txs_verification: config.skip_block_template_txs_verification
+            skip_block_template_txs_verification: config.skip_block_template_txs_verification,
+            checkpoints: config.checkpoints.into_iter().collect()
         };
 
         // include genesis block
@@ -2604,12 +2608,23 @@ impl<S: Storage> Blockchain<S> {
         let current_height = self.get_height();
         let current_topoheight = self.get_topo_height();
         warn!("Rewind chain with count = {}, height = {}, topoheight = {}", count, current_height, current_topoheight);
-        let until = if stop_at_stable_height {
-            self.get_stable_height()
+        let mut until_topo_height = if stop_at_stable_height {
+            self.get_stable_topoheight()
         } else {
             0
         };
-        let (new_height, new_topoheight, mut txs) = storage.pop_blocks(current_height, current_topoheight, count, until).await?;
+
+        for hash in self.checkpoints.iter() {
+            if storage.is_block_topological_ordered(hash).await {
+                let topo = storage.get_topo_height_for_hash(hash).await?;
+                if until_topo_height <= topo {
+                    info!("Configured checkpoint {} is at topoheight {}. Prevent to rewind below", hash, topo);
+                    until_topo_height = topo;
+                }
+            }
+        }
+
+        let (new_height, new_topoheight, mut txs) = storage.pop_blocks(current_height, current_topoheight, count, until_topo_height).await?;
         debug!("New topoheight: {} (diff: {})", new_topoheight, current_topoheight - new_topoheight);
 
         // Clean mempool from old txs if the DAG has been updated
