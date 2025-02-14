@@ -17,6 +17,7 @@ use xelis_common::{
             InvokeContractEvent,
             NewAssetEvent,
             ContractTransferEvent,
+            ContractEvent,
         },
         RPCContractOutput,
         RPCTransaction
@@ -2130,24 +2131,32 @@ impl<S: Storage> Blockchain<S> {
 
                 // Fire all the contract events
                 {
+                    let start = Instant::now();
                     let contract_tracker = chain_state.get_contract_tracker();
                     let is_mainnet = self.network.is_mainnet();
 
                     // We want to only fire one event per key/hash pair
                     if should_track_events.contains(&NotifyEvent::NewAsset) {
+                        let entry = events.entry(NotifyEvent::NewAsset)
+                            .or_insert_with(Vec::new);
+
                         for asset in contract_tracker.assets_created.iter() {
                             let value = json!(NewAssetEvent {
                                 asset: Cow::Borrowed(asset),
                                 block_hash: Cow::Borrowed(&hash),
                                 topoheight: highest_topo,
                             });
-                            events.entry(NotifyEvent::NewAsset).or_insert_with(Vec::new).push(value);
+
+                            entry.push(value);
                         }
                     }
 
                     for (key, assets) in contract_tracker.transfers.iter() {
                         let event = NotifyEvent::ContractTransfer { address: key.as_address(is_mainnet) };
                         if should_track_events.contains(&event) {
+                            let entry = events.entry(event)
+                                .or_insert_with(Vec::new);
+
                             for (asset, amount) in assets {
                                 let value = json!(ContractTransferEvent {
                                     asset: Cow::Borrowed(asset),
@@ -2155,12 +2164,34 @@ impl<S: Storage> Blockchain<S> {
                                     block_hash: Cow::Borrowed(&hash),
                                     topoheight: highest_topo,
                                 });
-                                events.entry(event.clone())
-                                    .or_insert_with(Vec::new)
-                                    .push(value);
+                                
+                                entry.push(value);
                             }
                         }
                     }
+
+                    let caches = chain_state.get_contracts_cache();
+                    for (contract, cache) in caches {
+                        for (id, elements) in cache.events.iter() {
+                            let event = NotifyEvent::ContractEvent {
+                                contract: (*contract).clone(),
+                                id: *id
+                            };
+
+                            if should_track_events.contains(&event) {
+                                let entry = events.entry(event)
+                                    .or_insert_with(Vec::new);
+
+                                for el in elements {
+                                    entry.push(json!(ContractEvent {
+                                        data: Cow::Borrowed(el)
+                                    }));
+                                }
+                            }
+                        }
+                    }
+
+                    debug!("Processed contracts events in {}ms", start.elapsed().as_millis());
                 }
 
                 // apply changes from Chain State
