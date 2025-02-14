@@ -236,14 +236,14 @@ impl InnerAccount {
         })
     }
 
-    pub fn decrypt_ciphertext(&self, ciphertext: &Ciphertext) -> Result<u64, WalletError> {
+    pub fn decrypt_ciphertext(&self, ciphertext: &Ciphertext) -> Result<Option<u64>, WalletError> {
         trace!("decrypt ciphertext");
         let lock = self.precomputed_tables.read()
             .map_err(|_| WalletError::PoisonError)?;
         let view = lock.view();
-        self.keypair.get_private_key()
-            .decrypt(&view, &ciphertext)
-            .ok_or(WalletError::CiphertextDecode)
+
+        Ok(self.keypair.get_private_key()
+            .decrypt(&view, &ciphertext))
     }
 }
 
@@ -601,7 +601,7 @@ impl Wallet {
     }
 
     // Wallet has to be under a Arc to be shared to the spawn_blocking function
-    pub async fn decrypt_ciphertext(&self, ciphertext: Ciphertext) -> Result<u64, WalletError> {
+    pub async fn decrypt_ciphertext(&self, ciphertext: Ciphertext) -> Result<Option<u64>, WalletError> {
         // TODO: is it still useful to spawn a task for that ?
         #[cfg(not(all(
             target_arch = "wasm32",
@@ -761,7 +761,15 @@ impl Wallet {
                                     // So it will be fetch later by state
                                     let mut ciphertext = stable_point.version.take_balance();
                                     debug!("decrypting stable balance for asset {}", asset);
-                                    let amount = self.inner.decrypt_ciphertext(ciphertext.decompressed().map_err(|_| WalletError::CiphertextDecode)?)?;
+                                    let decompressed = ciphertext.decompressed()
+                                        .map_err(|_| WalletError::CiphertextDecode)?;
+                                    let amount = match self.inner.decrypt_ciphertext(decompressed)? {
+                                        Some(amount) => amount,
+                                        None => {
+                                            warn!("Couldn't decrypt the ciphertext for asset {}: no result found, skipping this stable balance", asset);
+                                            continue;
+                                        }
+                                    };
                                     let balance = Balance {
                                         amount,
                                         ciphertext

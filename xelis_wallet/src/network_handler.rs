@@ -8,7 +8,7 @@ use std::{
 };
 use indexmap::IndexMap;
 use thiserror::Error;
-use anyhow::Error;
+use anyhow::{Context, Error};
 use log::{debug, error, info, trace, warn};
 use xelis_common::{
     account::CiphertextCache,
@@ -294,7 +294,7 @@ impl NetworkHandler {
 
                     // Used to check only once if we have processed this TX already
                     let mut checked = false;
-                    for transfer in txs {
+                    for (i, transfer) in txs.into_iter().enumerate() {
                         let destination = transfer.destination.to_public_key();
                         if is_owner || destination == *address.get_public_key() {
                             // Check only once if we have processed this TX already
@@ -344,11 +344,17 @@ impl NetworkHandler {
                                 None
                             };
 
-                            debug!("Decrypting amount from TX {}", tx.hash);
-                            let ciphertext = Ciphertext::new(commitment, handle);
-                            let amount = Arc::clone(&self.wallet).decrypt_ciphertext(ciphertext).await?;
-
                             let asset = transfer.asset.into_owned();
+                            debug!("Decrypting amount from TX {} of asset {}", tx.hash, asset);
+                            let ciphertext = Ciphertext::new(commitment, handle);
+                            let amount = match self.wallet.decrypt_ciphertext(ciphertext).await? {
+                                Some(v) => v,
+                                None => {
+                                    warn!("Couldn't decrypt the ciphertext of transfer #{} for asset {} in TX {}. Skipping it", i, asset, tx.hash);
+                                    continue;
+                                }
+                            };
+
                             assets_changed.insert(asset.clone());
 
                             if is_owner {
@@ -402,7 +408,13 @@ impl NetworkHandler {
                                     let commitment = commitment.decompress()?;
                                     let handle = sender_handle.decompress()?;
                                     let ciphertext = Ciphertext::new(commitment, handle);
-                                    let amount = self.wallet.decrypt_ciphertext(ciphertext).await?;
+                                    let amount = match self.wallet.decrypt_ciphertext(ciphertext).await? {
+                                        Some(v) => v,
+                                        None => {
+                                            warn!("Couldn't decrypt deposit ciphertext for asset {}. Skipping it", asset);
+                                            continue;
+                                        }
+                                    };
                                     deposits.insert(asset, amount);
                                 }
                             }
@@ -584,6 +596,7 @@ impl NetworkHandler {
                             trace!("Decrypting balance for asset {}", asset);
                             let ciphertext = balance.decompressed()?;
                             self.wallet.decrypt_ciphertext(ciphertext.clone()).await?
+                                .context(format!("Couldn't decrypt the ciphertext for {} at topoheight {}", asset, topoheight))?
                         };
                         
                         debug!("Storing balance from topoheight {} for asset {} ({}) {}", topoheight, asset, balance, plaintext_balance);
@@ -886,7 +899,14 @@ impl NetworkHandler {
                         cache
                     } else {
                         trace!("Decrypting balance for asset {}", asset);
-                        self.wallet.decrypt_ciphertext(ciphertext.decompressed()?.clone()).await?
+                        let decompressed = ciphertext.decompressed()?.clone();
+                        match self.wallet.decrypt_ciphertext(decompressed).await? {
+                            Some(v) => v,
+                            None => {
+                                warn!("Couldn't decrypt ciphertext for asset {}, skipping it", asset);
+                                continue;
+                            }
+                        }
                     };
 
                     // Inform the change of the balance

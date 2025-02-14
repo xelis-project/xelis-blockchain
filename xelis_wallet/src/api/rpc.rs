@@ -402,8 +402,10 @@ async fn build_transaction_offline(context: &Context, body: Value) -> Result<Val
     let mut state = TransactionBuilderState::new(wallet.get_network().is_mainnet(), params.reference, params.nonce);
 
     for (hash, mut ciphertext) in params.balances {
-        let compressed = ciphertext.decompressed().context(format!("Error decompressing ciphertext {}", hash))?;
-        let amount = wallet.decrypt_ciphertext(compressed.clone()).await?;
+        let compressed = ciphertext.decompressed()
+            .context(format!("Error decompressing ciphertext {}", hash))?;
+        let amount = wallet.decrypt_ciphertext(compressed.clone()).await?
+            .context(format!("Couldn't decrypt ciphertext for asset {}", hash))?;
 
         state.add_balance(hash, Balance {
             amount,
