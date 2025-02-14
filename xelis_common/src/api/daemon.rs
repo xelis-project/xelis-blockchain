@@ -727,6 +727,7 @@ pub enum NotifyEvent {
         address: Address
     },
     // When a contract fire an event
+    // It contains ContractEvent struct as value
     ContractEvent {
         // Contract hash to track
         contract: Hash,
@@ -822,6 +823,12 @@ pub struct ContractTransferEvent<'a> {
     pub amount: u64,
     pub block_hash: Cow<'a, Hash>,
     pub topoheight: TopoHeight,
+}
+
+// Value of NotifyEvent::ContractEvent
+#[derive(Serialize, Deserialize)]
+pub struct ContractEvent<'a> {
+    pub data: Cow<'a, Constant>
 }
 
 // Value of NotifyEvent::PeerConnected

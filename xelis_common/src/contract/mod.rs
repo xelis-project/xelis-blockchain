@@ -24,14 +24,19 @@ use xelis_vm::{
     OpaqueWrapper,
     Type,
     Value,
-    ValueCell
+    ValueCell,
+    Constant
 };
 use crate::{
     block::{Block, TopoHeight},
-    config::FEE_PER_ACCOUNT_CREATION,
+    config::{
+        FEE_PER_ACCOUNT_CREATION,
+        FEE_PER_BYTE_OF_EVENT_DATA
+    },
     crypto::{Address, Hash, PublicKey, Signature},
     transaction::ContractDeposit,
-    versioned_type::VersionedState
+    versioned_type::VersionedState,
+    serializer::Serializer
 };
 
 pub use metadata::ContractMetadata;
@@ -649,7 +654,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static> {
             ("data", Type::Any)
         ],
         fire_event_fn,
-        50,
+        250,
         None
     );
 
@@ -721,17 +726,21 @@ pub fn get_asset_from_provider<P: ContractProvider>(provider: &P, topoheight: To
 }
 
 fn fire_event_fn(_: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType {
-    let state: &mut ChainState = context.get_mut().context("chain state not found")?;
-
     let data = params.remove(1);
     let id = params.remove(0)
         .as_u64()?;
 
-    let entry = state.cache.events.entry(id)
-        .or_insert_with(Vec::new);
-    let constant = data.into_owned()
+    let constant: Constant = data.into_owned()
         .try_into()
         .map_err(|_| EnvironmentError::InvalidParameter)?;
+
+    let size = constant.size();
+    let cost = FEE_PER_BYTE_OF_EVENT_DATA * size as u64;
+    context.increase_gas_usage(cost)?;
+
+    let state: &mut ChainState = context.get_mut().context("chain state not found")?;
+    let entry = state.cache.events.entry(id)
+        .or_insert_with(Vec::new);
 
     entry.push(constant);
 

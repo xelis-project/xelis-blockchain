@@ -18,6 +18,7 @@ pub const FEE_PER_TRANSFER: u64 = 5000;
 // Each signature of a multisig has a overhead of 500 atomic units
 pub const FEE_PER_MULTISIG_SIGNATURE: u64 = 500;
 
+// Contracts rules
 // 1 XEL per contract deployed
 // Each contract deployed has a overhead of 1 XEL
 // This amount is burned and is needed for safety of the chain
@@ -45,6 +46,9 @@ pub const FEE_PER_BYTE_STORED_CONTRACT: u64 = 5;
 // Fee per byte of data stored in a contract memory
 // Each byte of data stored in the contract memory has a fixed cost
 pub const FEE_PER_BYTE_IN_CONTRACT_MEMORY: u64 = 1;
+// Fee per byte of data used to emit an event
+// Data is not stored, but only exposed to websocket listeners
+pub const FEE_PER_BYTE_OF_EVENT_DATA: u64 = 2;
 
 // 8 decimals numbers
 pub const COIN_DECIMALS: u8 = 8;
