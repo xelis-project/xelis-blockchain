@@ -623,39 +623,32 @@ impl SledStorage {
 #[async_trait]
 impl Storage for SledStorage {
     async fn clear_caches(&mut self) -> Result<(), BlockchainError> {
-        if let Some(cache) = self.transactions_cache.as_ref() {
-            let mut cache = cache.lock().await;
-            cache.clear();
+        if let Some(cache) = self.transactions_cache.as_mut() {
+            cache.get_mut().clear();
         }
 
-        if let Some(cache) = self.blocks_cache.as_ref() {
-            let mut cache = cache.lock().await;
-            cache.clear();
+        if let Some(cache) = self.blocks_cache.as_mut() {
+            cache.get_mut().clear();
         }
 
-        if let Some(cache) = self.past_blocks_cache.as_ref() {
-            let mut cache = cache.lock().await;
-            cache.clear();
+        if let Some(cache) = self.past_blocks_cache.as_mut() {
+            cache.get_mut().clear();
         }
 
-        if let Some(cache) = self.topo_by_hash_cache.as_ref() {
-            let mut cache = cache.lock().await;
-            cache.clear();
+        if let Some(cache) = self.topo_by_hash_cache.as_mut() {
+            cache.get_mut().clear();
         }
 
-        if let Some(cache) = self.hash_at_topo_cache.as_ref() {
-            let mut cache = cache.lock().await;
-            cache.clear();
+        if let Some(cache) = self.hash_at_topo_cache.as_mut() {
+            cache.get_mut().clear();
         }
 
-        if let Some(cache) = self.cumulative_difficulty_cache.as_ref() {
-            let mut cache = cache.lock().await;
-            cache.clear();
+        if let Some(cache) = self.cumulative_difficulty_cache.as_mut() {
+            cache.get_mut().clear();
         }
 
-        if let Some(cache) = self.assets_cache.as_ref() {
-            let mut cache = cache.lock().await;
-            cache.clear();
+        if let Some(cache) = self.assets_cache.as_mut() {
+            cache.get_mut().clear();
         }
 
         // also load the atomic counters from disk
