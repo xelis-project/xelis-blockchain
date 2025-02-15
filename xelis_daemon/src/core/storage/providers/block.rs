@@ -126,7 +126,7 @@ impl BlockProvider for SledStorage {
         debug!("Deleting block with hash: {}", hash);
 
         // Delete block header
-        let header = Self::delete_arc_cacheable_data(self.snapshot.as_mut(), &self.blocks, &self.blocks_cache, &hash).await?;
+        let header = Self::delete_arc_cacheable_data(self.snapshot.as_mut(), &self.blocks, self.blocks_cache.as_mut(), &hash).await?;
 
         // Decrease blocks count
         self.store_blocks_count(self.count_blocks().await? - 1)?;

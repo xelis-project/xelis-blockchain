@@ -33,8 +33,7 @@ impl VersionedAssetProvider for SledStorage {
 
 
             if let Some(cache) = self.assets_cache.as_mut() {
-                let mut cache = cache.lock().await;
-                cache.pop(&Hash::from_bytes(&key[8..])?);
+                cache.get_mut().pop(&Hash::from_bytes(&key[8..])?);
             }
         }
 
@@ -52,8 +51,7 @@ impl VersionedAssetProvider for SledStorage {
                 Self::remove_from_disk_without_reading(self.snapshot.as_mut(), &self.assets_prefixed, &key)?;
 
                 if let Some(cache) = self.assets_cache.as_mut() {
-                    let mut cache = cache.lock().await;
-                    cache.pop(&Hash::from_bytes(&key[8..])?);
+                    cache.get_mut().pop(&Hash::from_bytes(&key[8..])?);
                 }
             }
         }

@@ -545,15 +545,14 @@ impl SledStorage {
         Ok(value)
     }
 
-    pub(super) async fn delete_cacheable_data<K: Eq + StdHash + Serializer + Clone, V: Serializer>(snapshot: Option<&mut Snapshot>, tree: &Tree, cache: &Option<Mutex<LruCache<K, V>>>, key: &K) -> Result<V, BlockchainError> {
+    pub(super) async fn delete_cacheable_data<K: Eq + StdHash + Serializer + Clone, V: Serializer>(snapshot: Option<&mut Snapshot>, tree: &Tree, cache: Option<&mut Mutex<LruCache<K, V>>>, key: &K) -> Result<V, BlockchainError> {
         let value = match Self::remove_from_disk::<V>(snapshot, tree, &key.to_bytes())? {
             Some(data) => data,
             None => return Err(BlockchainError::NotFoundOnDisk(DiskContext::DeleteData))
         };
 
         if let Some(cache) = cache {
-            let mut cache = cache.lock().await;
-            if let Some(value) = cache.pop(key) {
+            if let Some(value) = cache.get_mut().pop(key) {
                 return Ok(value);
             }
         }
@@ -562,15 +561,14 @@ impl SledStorage {
     }
 
     // Delete a cacheable data from disk and cache behind a Arc
-    pub(super) async fn delete_arc_cacheable_data<K: Eq + StdHash + Serializer + Clone, V: Serializer>(snapshot: Option<&mut Snapshot>, tree: &Tree, cache: &Option<Mutex<LruCache<K, Arc<V>>>>, key: &K) -> Result<Arc<V>, BlockchainError> {
+    pub(super) async fn delete_arc_cacheable_data<K: Eq + StdHash + Serializer + Clone, V: Serializer>(snapshot: Option<&mut Snapshot>, tree: &Tree, cache: Option<&mut Mutex<LruCache<K, Arc<V>>>>, key: &K) -> Result<Arc<V>, BlockchainError> {
         let value = match Self::remove_from_disk::<V>(snapshot, tree, &key.to_bytes())? {
             Some(data) => data,
             None => return Err(BlockchainError::NotFoundOnDisk(DiskContext::DeleteData))
         };
 
         if let Some(cache) = cache {
-            let mut cache = cache.lock().await;
-            if let Some(value) = cache.pop(key) {
+            if let Some(value) = cache.get_mut().pop(key) {
                 return Ok(value);
             }
         }
@@ -671,36 +669,36 @@ impl Storage for SledStorage {
         trace!("Delete block at topoheight {topoheight}");
 
         // delete topoheight<->hash pointers
-        let hash = Self::delete_cacheable_data(self.snapshot.as_mut(), &self.hash_at_topo, &self.hash_at_topo_cache, &topoheight).await?;
+        let hash = Self::delete_cacheable_data(self.snapshot.as_mut(), &self.hash_at_topo, self.hash_at_topo_cache.as_mut(), &topoheight).await?;
 
         trace!("Deleting block execution order");
         Self::remove_from_disk_without_reading(self.snapshot.as_mut(), &self.blocks_execution_order, hash.as_bytes())?;
 
         trace!("Hash is {hash} at topo {topoheight}");
 
-        Self::delete_cacheable_data::<Hash, u64>(self.snapshot.as_mut(), &self.topo_by_hash, &self.topo_by_hash_cache, &hash).await?;
+        Self::delete_cacheable_data::<Hash, u64>(self.snapshot.as_mut(), &self.topo_by_hash, self.topo_by_hash_cache.as_mut(), &hash).await?;
 
         trace!("deleting block header {}", hash);
-        let block = Self::delete_arc_cacheable_data(self.snapshot.as_mut(), &self.blocks, &self.blocks_cache, &hash).await?;
+        let block = Self::delete_arc_cacheable_data(self.snapshot.as_mut(), &self.blocks, self.blocks_cache.as_mut(), &hash).await?;
         trace!("block header deleted successfully");
 
         trace!("Deleting supply");
-        let supply: u64 = Self::delete_cacheable_data(self.snapshot.as_mut(), &self.supply, &None, &topoheight).await?;
+        let supply: u64 = Self::delete_cacheable_data(self.snapshot.as_mut(), &self.supply, None, &topoheight).await?;
         trace!("Supply was {}", supply);
 
         trace!("Deleting burned supply");
-        let burned_supply: u64 = Self::delete_cacheable_data(self.snapshot.as_mut(), &self.burned_supply, &None, &topoheight).await?;
+        let burned_supply: u64 = Self::delete_cacheable_data(self.snapshot.as_mut(), &self.burned_supply, None, &topoheight).await?;
         trace!("Burned supply was {}", burned_supply);
 
         trace!("Deleting rewards");
-        let reward: u64 = Self::delete_cacheable_data(self.snapshot.as_mut(), &self.rewards, &None, &topoheight).await?;
+        let reward: u64 = Self::delete_cacheable_data(self.snapshot.as_mut(), &self.rewards, None, &topoheight).await?;
         trace!("Reward for block {} was: {}", hash, reward);
 
         trace!("Deleting difficulty");
-        let _: Difficulty = Self::delete_cacheable_data(self.snapshot.as_mut(), &self.difficulty, &None, &hash).await?;
+        let _: Difficulty = Self::delete_cacheable_data(self.snapshot.as_mut(), &self.difficulty, None, &hash).await?;
 
         trace!("Deleting cumulative difficulty");
-        let cumulative_difficulty: CumulativeDifficulty = Self::delete_cacheable_data(self.snapshot.as_mut(), &self.cumulative_difficulty, &self.cumulative_difficulty_cache, &hash).await?;
+        let cumulative_difficulty: CumulativeDifficulty = Self::delete_cacheable_data(self.snapshot.as_mut(), &self.cumulative_difficulty, self.cumulative_difficulty_cache.as_mut(), &hash).await?;
         trace!("Cumulative difficulty deleted: {}", cumulative_difficulty);
 
         let mut txs = Vec::new();
@@ -708,7 +706,7 @@ impl Storage for SledStorage {
             // Should we delete the tx too or only unlink it
             let mut should_delete = true;
             if self.has_tx_blocks(tx_hash)? {
-                let mut blocks: Tips = Self::delete_cacheable_data(self.snapshot.as_mut(), &self.tx_blocks, &None, tx_hash).await?;
+                let mut blocks: Tips = Self::delete_cacheable_data(self.snapshot.as_mut(), &self.tx_blocks, None, tx_hash).await?;
                 let blocks_len =  blocks.len();
                 blocks.remove(&hash);
                 should_delete = blocks.is_empty();
@@ -726,7 +724,7 @@ impl Storage for SledStorage {
             // which allow multiple time the same txs in differents blocks
             if should_delete && self.contains_data_cached(&self.transactions, &self.transactions_cache, tx_hash).await? {
                 trace!("Deleting TX {} in block {}", tx_hash, hash);
-                let tx: Arc<Transaction> = Self::delete_arc_cacheable_data(self.snapshot.as_mut(), &self.transactions, &self.transactions_cache, tx_hash).await?;
+                let tx: Arc<Transaction> = Self::delete_arc_cacheable_data(self.snapshot.as_mut(), &self.transactions, self.transactions_cache.as_mut(), tx_hash).await?;
                 txs.push((tx_hash.clone(), tx));
             }
         }
@@ -737,9 +735,8 @@ impl Storage for SledStorage {
         }
 
         // Delete cache of past blocks
-        if let Some(cache) = &self.past_blocks_cache {
-            let mut cache = cache.lock().await;
-            cache.pop(&hash);
+        if let Some(cache) = self.past_blocks_cache.as_mut() {
+            cache.get_mut().pop(&hash);
         }
 
         Ok((hash, block, txs))
