@@ -97,7 +97,7 @@ impl SledStorage {
         topoheight: u64,
     ) -> Result<(), BlockchainError> {
         trace!("delete versioned data at topoheight {}", topoheight);
-        for el in tree_versioned.scan_prefix(topoheight.to_be_bytes()).keys() {
+        for el in Self::scan_prefix(snapshot.as_ref(), tree_versioned, &topoheight.to_be_bytes()) {
             let prefixed_key = el?;
 
             // Delete this version from DB

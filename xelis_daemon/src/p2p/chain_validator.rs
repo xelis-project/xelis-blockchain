@@ -257,7 +257,7 @@ impl<S: Storage> DagOrderProvider for ChainValidator<'_, S> {
         }
 
         let storage = self.blockchain.get_storage().read().await;
-        Ok(storage.get_topo_height_for_hash(hash).await?)
+        storage.get_topo_height_for_hash(hash).await
     }
 
     // This should never happen in our case
@@ -281,7 +281,18 @@ impl<S: Storage> DagOrderProvider for ChainValidator<'_, S> {
         }
 
         let storage = self.blockchain.get_storage().read().await;
-        Ok(storage.get_hash_at_topo_height(topoheight).await?)
+        storage.get_hash_at_topo_height(topoheight).await
+    }
+
+    async fn has_hash_at_topoheight(&self, topoheight: TopoHeight) -> Result<bool, BlockchainError> {
+        trace!("has hash at topoheight {}", topoheight);
+        if topoheight >= self.starting_topoheight {
+            let index = (topoheight - self.starting_topoheight) as usize;
+            return Ok(self.blocks.get_index(index).is_some())
+        }
+
+        let storage = self.blockchain.get_storage().read().await;
+        storage.has_hash_at_topoheight(topoheight).await
     }
 }
 

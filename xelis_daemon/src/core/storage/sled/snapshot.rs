@@ -1,5 +1,5 @@
-use std::{collections::{hash_map::{Entry, IntoIter}, HashMap}, iter};
-use itertools::Either;
+use std::collections::{hash_map::{Entry, IntoIter}, HashMap};
+use itertools::{Either, Itertools};
 use sled::{IVec, Tree};
 use xelis_common::serializer::Serializer;
 
@@ -116,14 +116,16 @@ impl Snapshot {
 
     // Contains a key in the snapshot with a value
     // If its deleted, it should return false
-    // If its empty, return None
+    // If its not touched, return None
     pub fn contains_key_with_value(&self, tree: &Tree, key: &[u8]) -> Option<bool> {
         self.trees.get(&tree.name())
             .and_then(|batch| {
                 batch.as_ref()
-                    .and_then(|batch| batch.writes.get(key))
+                    .and_then(|batch|
+                        batch.writes.get(key)
+                            .map(|v| v.is_some())
+                    )
             })
-            .map(|value| value.is_some())
     }
 
     // Read from our snapshot
@@ -189,13 +191,29 @@ impl Snapshot {
         BatchApply { trees: self.trees }
     }
 
-    pub fn scan_prefix<'a>(&'a self, tree: &'a Tree, prefix: &'a [u8]) -> impl Iterator<Item = sled::Result<IVec>> + 'a {
+    pub fn scan_prefix(&self, tree: &Tree, prefix: &[u8]) -> impl Iterator<Item = sled::Result<IVec>> {
         match self.trees.get(&tree.name()) {
-            Some(Some(entries)) => Either::Left(entries.writes.iter()
-                .filter(|(k, v)| v.is_some() && k.starts_with(prefix))
-                .map(|(k, _)| Ok(k.clone()))
-            ),
-            _ => Either::Right(iter::empty())
+            Some(Some(entries)) => {
+                let original =  tree.scan_prefix(prefix)
+                    .keys()
+                    .filter_map_ok(|v| {
+                        if !entries.writes.contains_key(&v) {
+                            Some(v)
+                        } else {
+                            None
+                        }
+                    });
+
+                let changes = entries.writes.iter()
+                    .filter(|(k, v)| v.is_some() && k.starts_with(prefix))
+                    .map(|(k, _)| Ok(k.clone()))
+                    .chain(original)
+                    .collect::<Vec<_>>()
+                    .into_iter();
+
+                Either::Left(changes)
+            },
+            _ => Either::Right(tree.scan_prefix(prefix).keys())
         }
     }
 }

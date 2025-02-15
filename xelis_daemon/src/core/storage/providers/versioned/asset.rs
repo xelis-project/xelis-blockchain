@@ -23,8 +23,7 @@ pub trait VersionedAssetProvider {
 impl VersionedAssetProvider for SledStorage {
     async fn delete_versioned_assets_at_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError> {
         trace!("delete versioned assets at topoheight {}", topoheight);
-        // TODO: scan prefix support snapshot
-        for el in self.assets_prefixed.scan_prefix(&topoheight.to_be_bytes()).keys() {
+        for el in Self::scan_prefix(self.snapshot.as_ref(), &self.assets_prefixed, &topoheight.to_be_bytes()) {
             let key = el?;
 
             // Delete this version from DB

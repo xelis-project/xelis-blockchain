@@ -186,7 +186,7 @@ impl AssetProvider for SledStorage {
 
     // Returns all assets that the key has
     async fn get_assets_for(&self, key: &PublicKey) -> Result<Vec<Hash>, BlockchainError> {
-        self.balances.scan_prefix(key.as_bytes()).keys().map(|res| {
+        Self::scan_prefix(self.snapshot.as_ref(), &self.balances, key.as_bytes()).map(|res| {
             let key = res?;
             // Keys are stored like this: [public key (32 bytes)][asset hash (32 bytes)]
             // See Self::get_balance_key_for

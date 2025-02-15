@@ -401,8 +401,8 @@ impl SledStorage {
     }
 
     // Scan prefix
-    pub(super) fn scan_prefix<'a>(&'a self, tree: &'a Tree, prefix: &'a [u8]) -> impl Iterator<Item = sled::Result<IVec>> + 'a {
-        match self.snapshot.as_ref() {
+    pub(super) fn scan_prefix(snapshot: Option<&Snapshot>, tree: &Tree, prefix: &[u8]) -> impl Iterator<Item = sled::Result<IVec>> {
+        match snapshot {
             Some(snapshot) => Either::Left(snapshot.scan_prefix(tree, prefix)),
             None => Either::Right(tree.scan_prefix(prefix).into_iter().keys())
         }
@@ -797,7 +797,7 @@ impl Storage for SledStorage {
         let mut done = 0;
         'main: loop {
             // stop rewinding if its genesis block or if we reached the lowest topo
-            if topoheight <= lowest_topo || topoheight <= until_topo_height || height == 0 { // prevent removing genesis block
+            if topoheight <= lowest_topo || topoheight <= until_topo_height || topoheight == 0 { // prevent removing genesis block
                 trace!("Done: {done}, count: {count}, height: {height}, topoheight: {topoheight}, lowest topo: {lowest_topo}, stable topo: {until_topo_height}");
                 break 'main;
             }
