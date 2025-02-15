@@ -404,7 +404,11 @@ impl<S: Storage> Blockchain<S> {
     // Clear the mempool also in case of not being up-to-date
     pub async fn reload_from_disk(&self) -> Result<(), BlockchainError> {
         trace!("Reloading chain from disk");
-        let storage = self.storage.write().await;
+        let mut storage = self.storage.write().await;
+        self.reload_from_disk_with_storage(&mut *storage).await
+    }
+
+    pub async fn reload_from_disk_with_storage(&self, storage: &mut S) -> Result<(), BlockchainError> {
         let topoheight = storage.get_top_topoheight()?;
         let height = storage.get_top_height()?;
         self.topoheight.store(topoheight, Ordering::SeqCst);

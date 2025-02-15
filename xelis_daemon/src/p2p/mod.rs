@@ -2213,9 +2213,15 @@ impl<S: Storage> P2pServer<S> {
                 let res = self.handle_chain_validator_with_rewind(peer, pop_count, chain_validator).await;
                 {
                     info!("Ending commit point for chain validator");
+                    let apply = res.is_ok();
                     let mut storage = self.blockchain.get_storage().write().await;
-                    storage.end_commit_point(res.is_ok()).await?;
-                    info!("Commit point ended for chain validator: {}", res.is_ok());
+                    storage.end_commit_point(apply).await?;
+                    info!("Commit point ended for chain validator, apply: {}", apply);
+
+                    if !apply {
+                        debug!("Reloading chain caches from disk due to invalidation of commit point");
+                        self.blockchain.reload_from_disk_with_storage(&mut *storage).await?;
+                    }
                 }
 
                 res?;
