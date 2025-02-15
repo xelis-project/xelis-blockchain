@@ -2,6 +2,7 @@ mod snapshot;
 
 use async_trait::async_trait;
 use indexmap::IndexSet;
+use itertools::Either;
 use crate::{
     config::PRUNE_SAFETY_LIMIT,
     core::error::{BlockchainError, DiskContext}
@@ -397,6 +398,14 @@ impl SledStorage {
         trace!("load from disk");
         self.load_optional_from_disk(tree, key)?
             .ok_or(BlockchainError::NotFoundOnDisk(context))
+    }
+
+    // Scan prefix
+    pub(super) fn scan_prefix<'a>(&'a self, tree: &'a Tree, prefix: &'a [u8]) -> impl Iterator<Item = sled::Result<IVec>> + 'a {
+        match self.snapshot.as_ref() {
+            Some(snapshot) => Either::Left(snapshot.scan_prefix(tree, prefix)),
+            None => Either::Right(tree.scan_prefix(prefix).into_iter().keys())
+        }
     }
 
     pub(super) fn remove_from_disk_internal(snapshot: Option<&mut Snapshot>, tree: &Tree, key: &[u8]) -> Result<Option<IVec>, BlockchainError> {

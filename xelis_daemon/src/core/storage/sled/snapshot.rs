@@ -1,4 +1,5 @@
-use std::collections::{hash_map::{Entry, IntoIter}, HashMap};
+use std::{collections::{hash_map::{Entry, IntoIter}, HashMap}, iter};
+use itertools::Either;
 use sled::{IVec, Tree};
 use xelis_common::serializer::Serializer;
 
@@ -186,6 +187,16 @@ impl Snapshot {
     // Transforms the snapshot into a BatchApply
     pub fn finalize(self) -> BatchApply {
         BatchApply { trees: self.trees }
+    }
+
+    pub fn scan_prefix<'a>(&'a self, tree: &'a Tree, prefix: &'a [u8]) -> impl Iterator<Item = sled::Result<IVec>> + 'a {
+        match self.trees.get(&tree.name()) {
+            Some(Some(entries)) => Either::Left(entries.writes.iter()
+                .filter(|(k, v)| v.is_some() && k.starts_with(prefix))
+                .map(|(k, _)| Ok(k.clone()))
+            ),
+            _ => Either::Right(iter::empty())
+        }
     }
 }
 

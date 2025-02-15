@@ -103,7 +103,7 @@ impl AccountProvider for SledStorage {
 
     async fn delete_registrations_at_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError> {
         trace!("delete registrations at topoheight: {}", topoheight);
-        for el in self.registrations_prefixed.scan_prefix(topoheight.to_bytes()).keys() {
+        for el in self.scan_prefix(&self.registrations_prefixed, &topoheight.to_bytes()) {
             let k = el?;
             Self::remove_from_disk_without_reading(self.snapshot.as_mut(), &self.registrations_prefixed, &k)?;
 
