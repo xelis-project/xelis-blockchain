@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use log::trace;
+use log::{debug, trace};
 use crate::core::{
     error::BlockchainError,
     storage::{SledStorage, Snapshot, Storage}
@@ -30,8 +30,8 @@ impl CommitPointProvider for SledStorage {
 
     async fn end_commit_point(&mut self, apply: bool) -> Result<(), BlockchainError> {
         trace!("end commit point");
-
-        let snapshot = self.snapshot.take().ok_or(BlockchainError::CommitPointNotStarted)?;
+        let snapshot = self.snapshot.take()
+            .ok_or(BlockchainError::CommitPointNotStarted)?;
 
         if apply {
             self.assets_count = snapshot.assets_count;
@@ -59,7 +59,8 @@ impl CommitPointProvider for SledStorage {
                     }
                 };
             }
-    
+        } else {
+            debug!("Clearing caches due to invalidation of the commit point");
             self.clear_caches().await?;
         }
 
