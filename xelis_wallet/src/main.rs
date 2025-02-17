@@ -1134,12 +1134,12 @@ async fn transfer(manager: &CommandManager, mut args: ArgumentManager) -> Result
         }
     };
 
-    let (max_balance, decimals, multisig) = {
+    let (max_balance, asset_data, multisig) = {
         let storage = wallet.get_storage().read().await;
         let balance = storage.get_plaintext_balance_for(&asset).await.unwrap_or(0);
-        let decimals = storage.get_asset(&asset).await?.get_decimals();
+        let asset = storage.get_asset(&asset).await?;
         let multisig = storage.get_multisig_state().await.context("Error while reading multisig state")?;
-        (balance, decimals, multisig.cloned())
+        (balance, asset, multisig.cloned())
     };
 
     // read amount
@@ -1147,12 +1147,12 @@ async fn transfer(manager: &CommandManager, mut args: ArgumentManager) -> Result
         args.get_value("amount")?.to_string_value()?
     } else {
         prompt.read(
-            prompt.colorize_string(Color::Green, &format!("Amount (max: {}): ", format_coin(max_balance, decimals)))
+            prompt.colorize_string(Color::Green, &format!("Amount (max: {}): ", format_coin(max_balance, asset_data.get_decimals())))
         ).await.context("Error while reading amount")?
     };
 
-    let amount = from_coin(amount, decimals).context("Invalid amount")?;
-    manager.message(format!("Sending {} of {} to {}", format_coin(amount, decimals), asset, address.to_string()));
+    let amount = from_coin(amount, asset_data.get_decimals()).context("Invalid amount")?;
+    manager.message(format!("Sending {} of {} ({}) to {}", format_coin(amount, asset_data.get_decimals()), asset_data.get_name(), asset, address.to_string()));
 
     if !args.get_flag("confirm")? && !prompt.ask_confirmation().await.context("Error while confirming action")? {
         manager.message("Transaction has been aborted");
@@ -1209,13 +1209,13 @@ async fn transfer_all(manager: &CommandManager, mut args: ArgumentManager) -> Re
     }
 
     let asset = asset.unwrap_or(XELIS_ASSET);
-    let (mut amount, decimals, multisig) = {
+    let (mut amount, asset_data, multisig) = {
         let storage = wallet.get_storage().read().await;
         let amount = storage.get_plaintext_balance_for(&asset).await.unwrap_or(0);
-        let decimals = storage.get_asset(&asset).await?.get_decimals();
+        let data = storage.get_asset(&asset).await?;
         let multisig = storage.get_multisig_state().await
             .context("Error while reading multisig state")?;
-        (amount, decimals, multisig.cloned())
+        (amount, data, multisig.cloned())
     };
 
     let transfer = TransferBuilder {
@@ -1231,7 +1231,7 @@ async fn transfer_all(manager: &CommandManager, mut args: ArgumentManager) -> Re
         amount = amount.checked_sub(estimated_fees).context("Insufficient balance to pay fees")?;
     }
 
-    manager.message(format!("Sending {} of {} to {} (fees: {})", format_coin(amount, decimals), asset, address.to_string(), format_xelis(estimated_fees)));
+    manager.message(format!("Sending {} of {} ({}) to {} (fees: {})", format_coin(amount, asset_data.get_decimals()), asset_data.get_name(), asset, address, format_xelis(estimated_fees)));
 
     if !args.get_flag("confirm")? && !prompt.ask_confirmation().await.context("Error while confirming action")? {
         manager.message("Transaction has been aborted");
@@ -1275,13 +1275,13 @@ async fn burn(manager: &CommandManager, mut args: ArgumentManager) -> Result<(),
         ).await.unwrap_or(XELIS_ASSET)
     };
 
-    let (max_balance, decimals, multisig) = {
+    let (max_balance, asset_data, multisig) = {
         let storage = wallet.get_storage().read().await;
         let balance = storage.get_plaintext_balance_for(&asset).await.unwrap_or(0);
-        let decimals = storage.get_asset(&asset).await?.get_decimals();
+        let data = storage.get_asset(&asset).await?;
         let multisig = storage.get_multisig_state().await
             .context("Error while reading multisig state")?;
-        (balance, decimals, multisig.cloned())
+        (balance, data, multisig.cloned())
     };
 
     // read amount
@@ -1289,12 +1289,12 @@ async fn burn(manager: &CommandManager, mut args: ArgumentManager) -> Result<(),
         args.get_value("amount")?.to_string_value()?
     } else {
         prompt.read(
-            prompt.colorize_string(Color::Green, &format!("Amount (max: {}): ", format_coin(max_balance, decimals)))
+            prompt.colorize_string(Color::Green, &format!("Amount (max: {}): ", format_coin(max_balance, asset_data.get_decimals())))
         ).await.context("Error while reading amount")?
     };
 
-    let amount = from_coin(amount, decimals).context("Invalid amount")?;
-    manager.message(format!("Burning {} of {}", format_coin(amount, decimals), asset));
+    let amount = from_coin(amount, asset_data.get_decimals()).context("Invalid amount")?;
+    manager.message(format!("Burning {} of {} ({})", format_coin(amount, asset_data.get_decimals()), asset_data.get_name(), asset));
     if !args.get_flag("confirm")? && !prompt.ask_confirmation().await.context("Error while confirming action")? {
         manager.message("Transaction has been aborted");
         return Ok(())
