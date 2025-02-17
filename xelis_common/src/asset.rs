@@ -76,8 +76,16 @@ impl AssetData {
         &self.name
     }
 
+    pub fn get_ticker(&self) -> &str {
+        &self.ticker
+    }
+
     pub fn set_name(&mut self, name: String) {
         self.name = name;
+    }
+
+    pub fn set_ticker(&mut self, ticker: String) {
+        self.ticker = ticker;
     }
 
     pub fn get_max_supply(&self) -> Option<u64> {
