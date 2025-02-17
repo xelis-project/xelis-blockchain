@@ -710,14 +710,11 @@ async fn get_asset<S: Storage>(context: &Context, body: Value) -> Result<Value, 
     let params: GetAssetParams = parse_params(body)?;
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let storage = blockchain.get_storage().read().await;
-    let (topoheight, data) = storage.get_asset(&params.asset).await.context("Asset was not found")?;
+    let (topoheight, inner) = storage.get_asset(&params.asset).await.context("Asset was not found")?;
     Ok(json!(RPCAssetData {
         asset: Cow::Borrowed(&params.asset),
         topoheight,
-        contract: None,
-        decimals: data.get_decimals(),
-        max_supply: data.get_max_supply(),
-        name: Cow::Borrowed(data.get_name())
+        inner
     }))
 }
 
@@ -742,15 +739,11 @@ async fn get_assets<S: Storage>(context: &Context, body: Value) -> Result<Value,
         .context("Error while retrieving registered assets")?;
 
     let mut response = Vec::with_capacity(assets.len());
-    for (asset, (topoheight, data)) in assets.iter() {
+    for (asset, (topoheight, inner)) in assets {
         response.push(RPCAssetData {
-            asset: Cow::Borrowed(asset),
-            topoheight: *topoheight,
-            // TODO
-            contract: None,
-            decimals: data.get_decimals(),
-            max_supply: data.get_max_supply(),
-            name: Cow::Borrowed(data.get_name())
+            asset: Cow::Owned(asset),
+            topoheight,
+            inner
         });
     }
 
