@@ -13,8 +13,8 @@ hex = "0.4.3"
 serde = { version = "1", features = ["derive", "rc"] }
 serde_json = "1"
 rand = "0.8.5"
-bulletproofs = { git = "https://github.com/xelis-project/bulletproofs", branch = "main", version = "5.0.2" }
-curve25519-dalek = { version = "4.1.1", features = ["digest", "group", "rand_core", "serde", "ecdlp"], git = "https://github.com/xelis-project/curve25519-dalek", branch = "main" }
+bulletproofs = { git = "https://github.com/xelis-project/bulletproofs", branch = "master", version = "5.0.2" }
+curve25519-dalek = { version = "4.1.1", features = ["digest", "group", "rand_core", "serde", "ecdlp"], git = "https://github.com/xelis-project/curve25519-dalek", branch = "master" }
 merlin = "3.0.0"
 zeroize = "1.7.0"
 lazy_static = "1.4.0"
