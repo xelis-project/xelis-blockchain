@@ -673,10 +673,10 @@ dependencies = [
 [[package]]
 name = "bulletproofs"
 version = "5.0.2"
-source = "git+https://github.com/xelis-project/bulletproofs?branch=main#d950e30eec804e27bf7bbb1853158c788acb3deb"
+source = "git+https://github.com/xelis-project/bulletproofs?branch=master#76dfc93a84bbff0c4b5daa06d4e3ef9648d4072b"
 dependencies = [
  "byteorder",
- "curve25519-dalek 4.1.3 (git+https://github.com/xelis-project/curve25519-dalek?branch=main)",
+ "curve25519-dalek 4.1.3 (git+https://github.com/xelis-project/curve25519-dalek?branch=master)",
  "digest 0.10.7",
  "group",
  "merlin",
@@ -745,9 +745,9 @@ dependencies = [
 
 [[package]]
 name = "cc"
-version = "1.2.13"
+version = "1.2.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c7777341816418c02e033934a09f20dc0ccaf65a5201ef8a450ae0105a573fda"
+checksum = "0c3d1b2e905a3a7b00a6141adb0e4c0bb941d11caf55349d863942a1cc44e3c9"
 dependencies = [
  "jobserver",
  "libc",
@@ -1078,12 +1078,12 @@ dependencies = [
 [[package]]
 name = "curve25519-dalek"
 version = "4.1.3"
-source = "git+https://github.com/xelis-project/curve25519-dalek?branch=main#cfcef48b85ee9b8e6c25ee1581c57dbb2bd8f846"
+source = "git+https://github.com/xelis-project/curve25519-dalek?branch=master#6f84be9670c49ad464bf170e8ee3846baeb617bf"
 dependencies = [
  "bytemuck",
  "cfg-if",
  "cpufeatures",
- "curve25519-dalek-derive 0.1.1 (git+https://github.com/xelis-project/curve25519-dalek?branch=main)",
+ "curve25519-dalek-derive 0.1.1 (git+https://github.com/xelis-project/curve25519-dalek?branch=master)",
  "digest 0.10.7",
  "fiat-crypto",
  "group",
@@ -1108,7 +1108,7 @@ dependencies = [
 [[package]]
 name = "curve25519-dalek-derive"
 version = "0.1.1"
-source = "git+https://github.com/xelis-project/curve25519-dalek?branch=main#cfcef48b85ee9b8e6c25ee1581c57dbb2bd8f846"
+source = "git+https://github.com/xelis-project/curve25519-dalek?branch=master#6f84be9670c49ad464bf170e8ee3846baeb617bf"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1225,9 +1225,9 @@ dependencies = [
 
 [[package]]
 name = "equivalent"
-version = "1.0.1"
+version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5443807d6dff69373d433ab9ef5378ad8df50ca6298caf15de6e52e24aaf54d5"
+checksum = "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f"
 
 [[package]]
 name = "fern"
@@ -2558,15 +2558,14 @@ dependencies = [
 
 [[package]]
 name = "ring"
-version = "0.17.8"
+version = "0.17.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c17fa4cb658e3583423e915b9f3acc01cceaee1860e33d59ebae66adc3a2dc0d"
+checksum = "e75ec5e92c4d8aede845126adc388046234541629e76029599ed35a003c7ed24"
 dependencies = [
  "cc",
  "cfg-if",
  "getrandom 0.2.15",
  "libc",
- "spin",
  "untrusted",
  "windows-sys 0.52.0",
 ]
@@ -2867,9 +2866,9 @@ dependencies = [
 
 [[package]]
 name = "smallvec"
-version = "1.13.2"
+version = "1.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3c5e1a9a646d36c3599cd173a41282daf47c44583ad367b8e6837255952e5c67"
+checksum = "7fcf8323ef1faaee30a44a340193b1ac6814fd9b7b4e88e9d4519a3e4abe1cfd"
 
 [[package]]
 name = "socket2"
@@ -2880,12 +2879,6 @@ dependencies = [
  "libc",
  "windows-sys 0.52.0",
 ]
-
-[[package]]
-name = "spin"
-version = "0.9.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6980e8d7511241f8acf4aebddbb1ff938df5eebe98691418c4468d0b72a96a67"
 
 [[package]]
 name = "stable_deref_trait"
@@ -3897,7 +3890,7 @@ dependencies = [
  "clap",
  "console-subscriber",
  "crossterm",
- "curve25519-dalek 4.1.3 (git+https://github.com/xelis-project/curve25519-dalek?branch=main)",
+ "curve25519-dalek 4.1.3 (git+https://github.com/xelis-project/curve25519-dalek?branch=master)",
  "fern",
  "futures-util",
  "getrandom 0.2.15",
