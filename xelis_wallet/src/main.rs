@@ -21,8 +21,10 @@ use xelis_common::{
     crypto::{
         ecdlp,
         Address,
+        Hash,
         Hashable,
-        Signature
+        Signature,
+        HASH_SIZE
     },
     network::Network,
     prompt::{
@@ -1117,9 +1119,19 @@ async fn transfer(manager: &CommandManager, mut args: ArgumentManager) -> Result
     let asset = if args.has_argument("asset") {
         args.get_value("asset")?.to_hash()?
     } else {
-        prompt.read_hash(
-            prompt.colorize_str(Color::Green, "Asset (default XELIS): ")
-        ).await.unwrap_or(XELIS_ASSET)
+        let asset_name = prompt.read_input(
+            prompt.colorize_str(Color::Green, "Asset (default XELIS): "),
+            false
+        ).await?;
+        if asset_name.is_empty() {
+            XELIS_ASSET
+        } else if asset_name.len() == HASH_SIZE * 2 {
+            Hash::from_hex(&asset_name).context("Error while reading hash from hex")?
+        } else {
+            let storage = wallet.get_storage().read().await;
+            storage.get_asset_by_name(&asset_name).await?
+                .context("No asset registered with given name")?
+        }
     };
 
     let (max_balance, decimals, multisig) = {

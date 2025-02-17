@@ -225,6 +225,13 @@ impl EncryptedStorage {
             .context(format!("Error while loading data with key {} from disk", String::from_utf8_lossy(key)))
     }
 
+    // Parse encrypted data
+    fn parse_encrypted_data<V: Serializer>(&self, data: &[u8]) -> Result<V> {
+        trace!("parse encrypted data");
+        let decrypted = self.cipher.decrypt_value(data)?;
+        Ok(V::from_bytes(&decrypted)?)
+    }
+
     // Because we can't predict the nonce used for encryption, we make it determistic
     fn create_encrypted_key(&self, key: &[u8]) -> Result<Vec<u8>> {
         trace!("create encrypted key");
@@ -606,6 +613,34 @@ impl EncryptedStorage {
         cache.put(asset.clone(), data.clone());
 
         Ok(data)
+    }
+
+    // Search an asset by name
+    pub async fn get_asset_by_name(&self, name: &str) -> Result<Option<Hash>> {
+        trace!("get asset by name");
+        let cache = self.assets_cache.lock().await;
+        let mut res = None;
+        for (asset, data) in cache.iter() {
+            if data.get_name() == name {
+                res = Some(asset.clone());
+                break;
+            }
+        }
+
+        if res.is_none() {
+            // Check in the DB
+            for el in self.assets.iter() {
+                let (key, value) = el?;
+                let data: AssetData = self.parse_encrypted_data(&value)?;
+                if data.get_name() == name {
+                    let asset: Hash = self.parse_encrypted_data(&key)?;
+                    res = Some(asset);
+                    break;
+                }
+            }
+        }
+
+        Ok(res)
     }
 
     // Set the asset name
