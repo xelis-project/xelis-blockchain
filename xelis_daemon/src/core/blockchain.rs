@@ -444,10 +444,15 @@ impl<S: Storage> Blockchain<S> {
 
         // register XELIS asset
         debug!("Registering XELIS asset: {} at topoheight 0", XELIS_ASSET);
+        let ticker = match self.network {
+            Network::Mainnet => "XEL".to_owned(),
+            _ => "XET".to_owned(),
+        };
+
         storage.add_asset(
             &XELIS_ASSET,
             0,
-            AssetData::new(COIN_DECIMALS, "XELIS".to_owned(), Some(MAXIMUM_SUPPLY))
+            AssetData::new(COIN_DECIMALS, "XELIS".to_owned(), ticker, Some(MAXIMUM_SUPPLY), None)
         ).await?;
 
         let (genesis_block, genesis_hash) = if let Some(genesis_block) = get_hex_genesis_block(&self.network) {
