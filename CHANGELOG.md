@@ -4,6 +4,45 @@ This file contains all the changelogs to ensure that changes can be tracked and 
 
 To see the full history and exact changes, please refer to the commits history directly.
 
+## v1.17.0
+
+Bug fixes for daemon & wallet, improvements & new features.
+
+Common:
+- Improve Contract Environment
+- Rework Asset
+- Auto zip logs if enabled
+- New events types (new_block_template, )
+- Auto reconnect to websocket api
+- Improve RPC params structs
+- Rework builder for better multisig support
+- Boost fee builder variant
+- Rework contract deposits verification
+- Optimize contracts events tracking
+- Fix serialization for Module / Type / Constant
+- Contract emit events and assets
+- Contract Memory Storage shared across differents TX executions in same block
+- WIP private deposits for Smart Contracts
+
+Daemon:
+- Optimize reorganization of blocks
+- Optimize data deletion at exact topoheight
+- Refactoring
+- `show_json_config` cli command
+- P2p bugfix peer on exit signal
+- Optimization for fetching source balance during TX verification (fixed range)
+- Fix `get_assets` rpc method
+- Limit rate for getwork server improved: re broadcast a new job later if dirty and was previously rate limited
+- Smart Contracts improvements
+- Optimization / Bug fix for mempool cleaning during high usage
+- Track orphaned transactions in correct order to ensure the validity during adding back to mempool
+- Configurable genesis block hexadecimal in devnet
+- Fix commit point for full compatibility during a whole chain swap
+
+Wallet:
+- Keep transactions ordered based on topoheight
+- Fail silently during a ciphertext decode error
+
 ## v1.16.0
 
 Bug fixes for daemon & wallet, improvements & new features.
