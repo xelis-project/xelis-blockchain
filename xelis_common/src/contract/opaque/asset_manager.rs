@@ -10,7 +10,7 @@ use xelis_vm::{
     ValueCell
 };
 use crate::{
-    asset::AssetData,
+    asset::{AssetData, AssetOwner},
     config::COST_PER_TOKEN,
     contract::{from_context, get_asset_from_cache, AssetChanges, ContractOutput, ContractProvider},
     crypto::{Hash, HASH_SIZE},
@@ -18,6 +18,9 @@ use crate::{
 };
 
 use super::Asset;
+
+// Maximum size for the ticker
+pub const TICKER_LEN: usize = 6;
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
 pub struct AssetManager;
@@ -36,15 +39,31 @@ pub fn asset_manager(_: FnInstance, _: FnParams, _: &mut Context) -> FnReturnTyp
 pub fn asset_manager_create<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType {
     let (provider, chain_state) = from_context::<P>(context)?;
 
-    let max_supply = match params.remove(3).into_inner().take_as_optional() {
+    let max_supply = match params.remove(4).into_inner().take_as_optional() {
         Some(v) => Some(v.to_u64()?),
         _ => None,
     };
-    let decimals = params.remove(2).into_inner().to_u8()?;
+    let decimals = params.remove(3).into_inner().to_u8()?;
+    let ticker = params.remove(2).into_inner().to_string()?;
+    if ticker.len() > TICKER_LEN {
+        return Err(EnvironmentError::Expect("Asset ticker is too long".to_owned()).into());
+    }
+
+    // Ticker can be ASCII & upper case only
+    if !ticker.chars().all(|c| c.is_ascii() && c.is_uppercase()) {
+        return Err(EnvironmentError::Expect("Asset ticker must be ASCII only".to_owned()).into());
+    }
+
     let name = params.remove(1).into_inner().to_string()?;
     if name.len() > u8::MAX as usize {
-        return Err(EnvironmentError::Expect("Asset name is too long".to_string()).into());
+        return Err(EnvironmentError::Expect("Asset name is too long".to_owned()).into());
     }
+
+    // Name can be ASCII only
+    if !name.chars().all(|c| c.is_ascii()) {
+        return Err(EnvironmentError::Expect("Asset name must be ASCII only".to_owned()).into());
+    }
+
     let id = params.remove(0).as_u64()?;
 
     let mut buffer = [0u8; 40];
@@ -57,7 +76,7 @@ pub fn asset_manager_create<P: ContractProvider>(_: FnInstance, mut params: FnPa
         return Ok(Some(ValueCell::Optional(None)));
     }
 
-    let data = AssetData::new(decimals, name, max_supply);
+    let data = AssetData::new(decimals, name, ticker, max_supply, Some(AssetOwner::new(chain_state.contract.clone(), id)));
     chain_state.cache.assets.insert(asset_hash.clone(), AssetChanges {
         data: Some((VersionedState::New, data)),
         supply: None

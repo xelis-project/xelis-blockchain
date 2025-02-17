@@ -556,6 +556,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static> {
             vec![
                 ("id", Type::U64),
                 ("name", Type::String),
+                ("ticker", Type::String),
                 ("decimals", Type::U8),
                 ("max_supply", Type::Optional(Box::new(Type::U64))),
             ],
