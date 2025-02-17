@@ -502,7 +502,7 @@ impl Transaction {
             .collect::<Result<Vec<_>, DecompressionError>>()
             .map_err(ProofVerificationError::from)?;
 
-        let owner = self
+        let source_decompressed = self
             .source
             .decompress()
             .map_err(|err| VerificationError::Proof(err.into()))?;
@@ -511,7 +511,7 @@ impl Transaction {
 
         // 0.a Verify Signature
         let bytes = self.to_bytes();
-        if !self.signature.verify(&bytes[..bytes.len() - SIGNATURE_SIZE], &owner) {
+        if !self.signature.verify(&bytes[..bytes.len() - SIGNATURE_SIZE], &source_decompressed) {
             debug!("transaction signature is invalid");
             return Err(VerificationError::InvalidSignature);
         }
@@ -584,7 +584,7 @@ impl Transaction {
             }
 
             commitment.proof.pre_verify(
-                &owner,
+                &source_decompressed,
                 &source_verification_ciphertext,
                 &new_source_commitment,
                 &mut transcript,
@@ -610,9 +610,6 @@ impl Transaction {
 
         match &self.data {
             TransactionType::Transfers(transfers) => {
-                let source_decompressed = self.source.decompress()
-                    .map_err(ProofVerificationError::from)?;
-
                 // Prepare the new commitments
                 for (transfer, decompressed) in transfers.iter().zip(&transfers_decompressed) {
                     let receiver = transfer
