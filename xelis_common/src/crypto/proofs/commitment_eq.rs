@@ -7,13 +7,21 @@ use curve25519_dalek::{
 use merlin::Transcript;
 use rand::rngs::OsRng;
 use zeroize::Zeroize;
-use crate::{crypto::{
-    elgamal::{
-        Ciphertext, PedersenCommitment, PedersenOpening, PublicKey, RISTRETTO_COMPRESSED_SIZE, SCALAR_SIZE
+use crate::{
+    crypto::{
+        elgamal::{
+            Ciphertext,
+            PedersenCommitment,
+            PedersenOpening,
+            PublicKey,
+            RISTRETTO_COMPRESSED_SIZE,
+            SCALAR_SIZE
+        },
+        KeyPair,
+        ProtocolTranscript
     },
-    KeyPair,
-    ProtocolTranscript
-}, serializer::{Reader, ReaderError, Serializer, Writer}};
+    serializer::{Reader, ReaderError, Serializer, Writer}
+};
 use super::{BatchCollector, ProofVerificationError, PC_GENS};
 
 /// Proof that a commitment and ciphertext are equal.
