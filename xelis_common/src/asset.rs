@@ -115,12 +115,7 @@ pub struct RPCAssetData<'a> {
     pub asset: Cow<'a, Hash>,
     // At which topoheight was this asset created
     pub topoheight: TopoHeight,
-    // How many atomic units is needed for a full coin
-    pub decimals: u8,
-    // The name of the asset
-    pub name: Cow<'a, str>,
-    // The total supply of the asset
-    pub max_supply: Option<u64>,
-    // The contract that created this asset
-    pub contract: Option<Cow<'a, Hash>>,
+    // Inner data
+    #[serde(flatten)]
+    pub inner: AssetData
 }
