@@ -1798,7 +1798,10 @@ impl<S: Storage> Blockchain<S> {
             let mut all_parents_txs: Option<HashSet<Hash>> = None;
 
             // All transactions to be verified in one batch
-            let mut batch = Vec::with_capacity(block.get_txs_count());
+            let mut txs_batch = Vec::with_capacity(block.get_txs_count());
+            // All transactions grouped per source key
+            // used for multi threading
+            let mut txs_grouped = HashMap::new();
             let mut total_outputs = 0;
             let is_v2_enabled = version >= BlockVersion::V2;
             for (tx, hash) in block.get_transactions().iter().zip(block.get_txs_hashes()) {
@@ -1865,24 +1868,19 @@ impl<S: Storage> Blockchain<S> {
                 }
 
                 total_outputs += tx.get_outputs_count();
-                batch.push((tx, tx_hash));
+                txs_batch.push((tx, hash));
+                txs_grouped.entry(tx.get_source())
+                    .or_insert_with(Vec::new)
+                    .push((tx, hash));
             }
 
-            if !batch.is_empty() {
-                debug!("proof verifications of {} TXs with {} outputs ({}) in block {}", batch.len(), total_outputs, batch.iter().map(|(_, hash)| hash.to_string()).collect::<Vec<String>>().join(","), block_hash);
-                // If multi thread is enabled
-                if let Some(n_threads) = self.txs_threads_count {
-                    // Group TXs per source key
-                    let mut grouped = HashMap::new();
-                    for (tx, hash) in batch {
-                        grouped.entry(tx.get_source())
-                            .or_insert_with(Vec::new)
-                            .push((tx, hash));
-                    }
-
-                    let batches_count = grouped.len().min(n_threads);
+            if !txs_batch.is_empty() {
+                debug!("proof verifications of {} TXs with {} outputs ({}) in block {}", txs_batch.len(), total_outputs, txs_batch.iter().map(|(_, hash)| hash.to_string()).collect::<Vec<String>>().join(","), block_hash);
+                // If multi thread is enabled and we have more than one source
+                if let Some(n_threads) = self.txs_threads_count.filter(|_| txs_grouped.len() > 1) {
+                    let batches_count = txs_grouped.len().min(n_threads);
                     let mut batches = vec![Vec::new(); batches_count];
-                    let mut queue: VecDeque<_> = grouped.into_values().collect();
+                    let mut queue: VecDeque<_> = txs_grouped.into_values().collect();
 
                     let mut i = 0;
                     // TODO: load balance more!
@@ -1916,7 +1914,7 @@ impl<S: Storage> Blockchain<S> {
                 } else {
                     // Verify all valid transactions in one batch
                     let mut chain_state = ChainState::new(storage, &self.environment, self.get_stable_topoheight(), current_topoheight, version);
-                    Transaction::verify_batch(batch.as_slice(), &mut chain_state).await?;
+                    Transaction::verify_batch(txs_batch.as_slice(), &mut chain_state).await?;
                 }
             }
         }
