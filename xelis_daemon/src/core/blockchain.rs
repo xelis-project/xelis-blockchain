@@ -1753,6 +1753,8 @@ impl<S: Storage> Blockchain<S> {
             }
 
             trace!("verifying {} TXs in block {}", txs_len, block_hash);
+            // Copy the reference
+            let storage = &*storage;
             let mut chain_state = ChainState::new(storage, &self.environment, self.get_stable_topoheight(), current_topoheight, version);
             // Cache to retrieve only one time all TXs hashes until stable height
             let mut all_parents_txs: Option<HashSet<Hash>> = None;
@@ -1775,11 +1777,11 @@ impl<S: Storage> Blockchain<S> {
 
                 debug!("Verifying TX {}", tx_hash);
                 // check that the TX included is not executed in stable height
-                let is_executed = chain_state.get_storage().is_tx_executed_in_a_block(hash)?;
+                let is_executed = storage.is_tx_executed_in_a_block(hash)?;
                 if is_executed {
-                    let block_executor = chain_state.get_storage().get_block_executor_for_tx(hash)?;
+                    let block_executor = storage.get_block_executor_for_tx(hash)?;
                     debug!("Tx {} was executed in {}", hash, block_executor);
-                    let block_executor_height = chain_state.get_storage().get_height_for_block_hash(&block_executor).await?;
+                    let block_executor_height = storage.get_height_for_block_hash(&block_executor).await?;
                     // if the tx was executed below stable height, reject whole block!
                     if block_executor_height <= stable_height {
                         debug!("Block {} contains a dead tx {} from stable height {}", block_hash, tx_hash, stable_height);
@@ -1796,7 +1798,7 @@ impl<S: Storage> Blockchain<S> {
                     if all_parents_txs.is_none() {
                         debug!("Loading all TXs until height {} for block {} (executed only: {})", stable_height, block_hash, !is_v2_enabled);
                         let txs = self.get_all_txs_until_height(
-                            chain_state.get_storage(),
+                            storage,
                             stable_height,
                             block.get_tips().iter().cloned(),
                             !is_v2_enabled
