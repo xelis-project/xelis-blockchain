@@ -1537,9 +1537,13 @@ impl<S: Storage> Blockchain<S> {
 
         if !tx_selector.is_empty() {
             let mut failed_sources = HashSet::new();
+            // Search all txs that were processed in tips
+            // This help us to determine if a TX was already included or not based on our DAG
+            // Hopefully, this should never be triggered because the mempool is cleaned based on our state
             let processed_txs = self.get_all_txs_until_height(storage, stable_height, block.get_tips().iter().cloned(), false).await?;
             while let Some(TxSelectorEntry { size, hash, tx }) = tx_selector.next() {
-                if block_size + total_txs_size + size >= MAX_BLOCK_SIZE {
+                if block_size + total_txs_size + size >= MAX_BLOCK_SIZE || block.txs_hashes.len() >= u16::MAX as usize {
+                    debug!("Stopping to include new TXs in this block, final size: {}, count: {}", human_bytes::human_bytes((block_size + total_txs_size) as f64), block.txs_hashes.len());
                     break;
                 }
 
