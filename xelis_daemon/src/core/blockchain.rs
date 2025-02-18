@@ -114,7 +114,8 @@ use std::{
         atomic::{AtomicBool, AtomicU64, Ordering},
         Arc
     },
-    time::Instant
+    time::Instant,
+    thread
 };
 use tokio::{sync::{Mutex, RwLock}, net::lookup_host};
 use log::{info, error, debug, warn, trace};
@@ -172,7 +173,10 @@ pub struct Blockchain<S: Storage> {
     auto_prune_keep_n_blocks: Option<u64>,
     // Blocks hashes checkpoints
     // No rewind can be done below these blocks
-    checkpoints: HashSet<Hash>
+    checkpoints: HashSet<Hash>,
+    // Best threads count to use for multi threading
+    // If none, its disabled
+    txs_threads_count: Option<usize>,
 }
 
 impl<S: Storage> Blockchain<S> {
@@ -219,6 +223,27 @@ impl<S: Storage> Blockchain<S> {
 
         let environment = build_environment::<S>().build();
 
+        let txs_threads_count = if let Some(n) = config.txs_threads_count {
+            if n == 0 {
+                error!("TXs threads count cannot be set to zero!");
+                return Err(BlockchainError::InvalidConfig.into());
+            }
+            Some(n)
+        } else if !config.disable_multi_threads_txs {
+            Some(match thread::available_parallelism() {
+                Ok(n) => {
+                    info!("Detected {} threads for TXs multi-threading", n);
+                    n.get()
+                },
+                Err(e) => {
+                    warn!("Error while detecting best threads count for TXs: {}, fallback to 1 only", e);
+                    1
+                }
+            })
+        } else {
+            None
+        };
+
         info!("Initializing chain...");
         let blockchain = Self {
             height: AtomicU64::new(height),
@@ -240,7 +265,8 @@ impl<S: Storage> Blockchain<S> {
             full_order_cache: Mutex::new(LruCache::new(NonZeroUsize::new(1024).unwrap())),
             auto_prune_keep_n_blocks: config.auto_prune_keep_n_blocks,
             skip_block_template_txs_verification: config.skip_block_template_txs_verification,
-            checkpoints: config.checkpoints.into_iter().collect()
+            checkpoints: config.checkpoints.into_iter().collect(),
+            txs_threads_count
         };
 
         // include genesis block
@@ -354,6 +380,11 @@ impl<S: Storage> Blockchain<S> {
     // get the environment stdlib for contract execution
     pub fn get_contract_environment(&self) -> &Environment {
         &self.environment
+    }
+
+    // Get the configured threads count for TXS
+    pub fn get_threads_count_for_txs(&self) -> Option<usize> {
+        self.txs_threads_count
     }
 
     // Stop all blockchain modules
@@ -1839,8 +1870,8 @@ impl<S: Storage> Blockchain<S> {
 
             if !batch.is_empty() {
                 debug!("proof verifications of {} TXs with {} outputs ({}) in block {}", batch.len(), total_outputs, batch.iter().map(|(_, hash)| hash.to_string()).collect::<Vec<String>>().join(","), block_hash);
-                // If multi thread is enabled and we have more than 128 outputs
-                if /*total_outputs > 128*/ true {
+                // If multi thread is enabled
+                if let Some(n_threads) = self.txs_threads_count {
                     // Group TXs per source key
                     let mut grouped = HashMap::new();
                     for (tx, hash) in batch {
@@ -1849,17 +1880,29 @@ impl<S: Storage> Blockchain<S> {
                             .push((tx, hash));
                     }
 
-                    // TODO: Multi-threading here based on min(n_threads, grouped)
+                    let batches_count = grouped.len().min(n_threads);
+                    let mut batches = vec![Vec::new(); batches_count];
+                    let mut queue: VecDeque<_> = grouped.into_values().collect();
+
+                    let mut i = 0;
+                    // TODO: load balance more!
+                    while let Some(group) = queue.pop_front() {
+                        batches[i % batches_count].extend(group);
+                        i += 1;
+                    }
+
+                    // Flag to determine if any batch failed
                     let failed = Arc::new(AtomicBool::new(false));
-                    tokio_scoped::scope(|scope: &mut tokio_scoped::Scope<'_>| {
+                    tokio_scoped::scope(|scope| {
                         let storage = &*storage;
-                        for (i, (_, group)) in grouped.into_iter().enumerate() {
+                        let stable_topoheight = self.get_stable_topoheight();
+                        for (i, batch) in batches.into_iter().enumerate() {
                             let failed = Arc::clone(&failed);
                             scope.spawn(async move {
                                 if !failed.load(Ordering::SeqCst) {
-                                    let mut chain_state = ChainState::new(storage, &self.environment, self.get_stable_topoheight(), current_topoheight, version);
-                                    if let Err(e) = Transaction::verify_batch(group.as_slice(), &mut chain_state).await {
-                                        error!("Error while verifying group #{}: {}", i, e);
+                                    let mut chain_state = ChainState::new(storage, &self.environment, stable_topoheight, current_topoheight, version);
+                                    if let Err(e) = Transaction::verify_batch(batch.as_slice(), &mut chain_state).await {
+                                        error!("Error while verifying batch #{}: {}", i, e);
                                         failed.store(true, Ordering::SeqCst);
                                     }
                                 }

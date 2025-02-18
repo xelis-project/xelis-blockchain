@@ -135,6 +135,8 @@ pub enum DiskContext {
 #[repr(usize)]
 #[derive(Error, Debug)]
 pub enum BlockchainError {
+    #[error("Invalid configuration provided")]
+    InvalidConfig,
     #[error("Invalid data on disk: corrupted")]
     CorruptedData,
     #[error("No contract balance found")]

@@ -185,5 +185,14 @@ pub struct Config {
     /// Blocks hahes checkpoints
     /// No rewind can go below any of those checkpoints
     #[serde(default)]
-    pub checkpoints: Vec<Hash>
+    pub checkpoints: Vec<Hash>,
+    /// Disable multi-threading for TXs verifications
+    #[clap(long)]
+    #[serde(default)]
+    pub disable_multi_threads_txs: bool,
+    /// Set the multi-threading threads count to use during TXs verifications.
+    /// By default, will detect the best value.
+    /// Unused if multi-thread is disabled.
+    #[clap(long)]
+    pub txs_threads_count: Option<usize>
 }
