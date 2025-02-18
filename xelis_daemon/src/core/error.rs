@@ -201,36 +201,14 @@ pub enum BlockchainError {
     NoPreviousBalanceFound,
     #[error("Transaction has an invalid reference: no balance version found in stable chain")]
     NoStableReferenceFound,
-    #[error("Tx {} has too many output", _0)]
-    TooManyOutputInTx(Hash),
     #[error("Tx {} is already in block", _0)]
     TxAlreadyInBlock(Hash),
-    #[error("Duplicate registration tx for address '{}' found in same block", _0)]
-    DuplicateRegistration(Address), // address
     #[error("Invalid Tx fee, expected at least {}, got {}", format_xelis(*_0), format_xelis(*_1))]
     InvalidTxFee(u64, u64),
     #[error("Fees are lower for this TX than the overrided TX, expected at least {}, got {}", format_xelis(*_0), format_xelis(*_1))]
     FeesToLowToOverride(u64, u64),
     #[error("No account found for {}", _0)]
     AccountNotFound(Address),
-    #[error("Address {} is not registered", _0)]
-    AddressNotRegistered(Address),
-    #[error("Address {} is already registered", _0)]
-    AddressAlreadyRegistered(Address),
-    #[error("Address {} should have {} for {} but have {}", _0, _2, _1, _3)]
-    NotEnoughFunds(Address, Hash, u64, u64), // address, asset, balance, expected
-    #[error("Coinbase Tx not allowed: {}", _0)]
-    CoinbaseTxNotAllowed(Hash),
-    #[error("Invalid block reward, expected {}, got {}", _0, _1)]
-    InvalidBlockReward(u64, u64),
-    #[error("Invalid fee reward for this block, expected {}, got {}", _0, _1)]
-    InvalidFeeReward(u64, u64),
-    #[error("Invalid circulating supply, expected {}, got {} coins generated!", _0, _1)]
-    InvalidCirculatingSupply(u64, u64),
-    #[error("Invalid tx registration PoW: {}", _0)]
-    InvalidTxRegistrationPoW(Hash),
-    #[error("Invalid tx registration, tx has a signature: {}", _0)]
-    InvalidTxRegistrationSignature(Hash),
     #[error("Invalid transaction nonce: {}, account nonce is: {}", _0, _1)]
     InvalidTransactionNonce(Nonce, Nonce),
     #[error("Invalid transaction, sender trying to send coins to himself: {}", _0)]
@@ -267,10 +245,6 @@ pub enum BlockchainError {
     IsSyncing,
     #[error("Invalid transaction signature")]
     InvalidTransactionSignature,
-    #[error("Found a signature on the transaction, but its not required")]
-    UnexpectedTransactionSignature,
-    #[error("Invalid miner transaction in the block, only coinbase tx is allowed")]
-    InvalidMinerTx,
     #[error("Genesis block is not mined by dev address!")]
     GenesisBlockMiner,
     #[error("Invalid genesis block")]
@@ -329,16 +303,12 @@ pub enum BlockchainError {
     NoBalanceChanges(Address, TopoHeight, Hash),
     #[error("No nonce found on disk for {}", _0)]
     NoNonce(Address),
-    #[error("No nonce changes for {} at specific topoheight", _0)]
-    NoNonceChanges(Address),
     #[error("Overflow detected")]
     Overflow,
     #[error("Error, block {} include a dead tx {} from stable height {} executed in block {}", _0, _1, _2, _3)]
     DeadTxFromStableHeight(Hash, Hash, u64, Hash),
     #[error("Error, block {} include a dead tx from tips {}", _0, _1)]
     DeadTxFromTips(Hash, Hash),
-    #[error("A non-zero value is required for burn")]
-    NoValueForBurn,
     #[error("TX {} is already in blockchain", _0)]
     TxAlreadyInBlockchain(Hash),
     #[error("Cannot prune, not enough blocks")]  
