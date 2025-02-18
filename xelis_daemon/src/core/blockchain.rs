@@ -1748,8 +1748,15 @@ impl<S: Storage> Blockchain<S> {
             let hashes_len = block.get_txs_hashes().len();
             let txs_len = block.get_transactions().len();
             if  hashes_len != txs_len {
-                debug!("Block {} has an invalid block header, transaction count mismatch (expected {} got {})!", block_hash, txs_len, hashes_len);
+                debug!("Block {} has an invalid block header, transactions count mismatch (expected {} got {})!", block_hash, txs_len, hashes_len);
                 return Err(BlockchainError::InvalidBlockTxs(hashes_len, txs_len));
+            }
+
+            // Serializer support only up to u16::MAX txs per block
+            let limit = u16::MAX as usize;
+            if txs_len > limit {
+                debug!("Block {} has an invalid block header, transactions count is bigger than limit (expected max {} got {})!", block_hash, limit, hashes_len);
+                return Err(BlockchainError::InvalidBlockTxs(limit, txs_len));
             }
 
             trace!("verifying {} TXs in block {}", txs_len, block_hash);
