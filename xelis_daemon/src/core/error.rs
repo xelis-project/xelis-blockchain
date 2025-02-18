@@ -358,7 +358,9 @@ pub enum BlockchainError {
     #[error("MultiSig not found")]
     MultiSigNotFound,
     #[error("Error in module: {}", _0)]
-    ModuleError(String)
+    ModuleError(String),
+    #[error("Invalid transaction in block while verifying in multi-thread mode")]
+    InvalidTransactionMultiThread,
 }
 
 impl BlockchainError {

@@ -111,7 +111,7 @@ use std::{
     net::SocketAddr,
     num::NonZeroUsize,
     sync::{
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc
     },
     time::Instant
@@ -1763,14 +1763,12 @@ impl<S: Storage> Blockchain<S> {
             }
 
             trace!("verifying {} TXs in block {}", txs_len, block_hash);
-            // Copy the reference
-            let storage = &*storage;
-            let mut chain_state = ChainState::new(storage, &self.environment, self.get_stable_topoheight(), current_topoheight, version);
             // Cache to retrieve only one time all TXs hashes until stable height
             let mut all_parents_txs: Option<HashSet<Hash>> = None;
 
             // All transactions to be verified in one batch
             let mut batch = Vec::with_capacity(block.get_txs_count());
+            let mut total_outputs = 0;
             let is_v2_enabled = version >= BlockVersion::V2;
             for (tx, hash) in block.get_transactions().iter().zip(block.get_txs_hashes()) {
                 let tx_size = tx.size();
@@ -1835,13 +1833,48 @@ impl<S: Storage> Blockchain<S> {
                     }
                 }
 
+                total_outputs += tx.get_outputs_count();
                 batch.push((tx, tx_hash));
             }
 
             if !batch.is_empty() {
-                debug!("proof verifications of TXs ({}) in block {}", batch.iter().map(|(_, hash)| hash.to_string()).collect::<Vec<String>>().join(","), block_hash);
-                // Verify all valid transactions in one batch
-                Transaction::verify_batch(batch.as_slice(), &mut chain_state).await?;
+                debug!("proof verifications of {} TXs with {} outputs ({}) in block {}", batch.len(), total_outputs, batch.iter().map(|(_, hash)| hash.to_string()).collect::<Vec<String>>().join(","), block_hash);
+                // If multi thread is enabled and we have more than 128 outputs
+                if /*total_outputs > 128*/ true {
+                    // Group TXs per source key
+                    let mut grouped = HashMap::new();
+                    for (tx, hash) in batch {
+                        grouped.entry(tx.get_source())
+                            .or_insert_with(Vec::new)
+                            .push((tx, hash));
+                    }
+
+                    // TODO: Multi-threading here based on min(n_threads, grouped)
+                    let failed = Arc::new(AtomicBool::new(false));
+                    tokio_scoped::scope(|scope: &mut tokio_scoped::Scope<'_>| {
+                        let storage = &*storage;
+                        for (i, (_, group)) in grouped.into_iter().enumerate() {
+                            let failed = Arc::clone(&failed);
+                            scope.spawn(async move {
+                                if !failed.load(Ordering::SeqCst) {
+                                    let mut chain_state = ChainState::new(storage, &self.environment, self.get_stable_topoheight(), current_topoheight, version);
+                                    if let Err(e) = Transaction::verify_batch(group.as_slice(), &mut chain_state).await {
+                                        error!("Error while verifying group #{}: {}", i, e);
+                                        failed.store(true, Ordering::SeqCst);
+                                    }
+                                }
+                            });
+                        }
+                    });
+
+                    if failed.load(Ordering::SeqCst) {
+                        return Err(BlockchainError::InvalidTransactionMultiThread)
+                    }
+                } else {
+                    // Verify all valid transactions in one batch
+                    let mut chain_state = ChainState::new(storage, &self.environment, self.get_stable_topoheight(), current_topoheight, version);
+                    Transaction::verify_batch(batch.as_slice(), &mut chain_state).await?;
+                }
             }
         }
 
