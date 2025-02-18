@@ -1509,7 +1509,9 @@ impl<S: Storage> Blockchain<S> {
 
         // use the mempool cache to get all availables txs grouped by account
         let caches = mempool.get_caches();
-        let mut entries: Vec<Vec<TxSelectorEntry>> = Vec::with_capacity(caches.len());
+
+        // Build the tx selector using the mempool
+        let mut tx_selector = TxSelector::with_capacity(caches.len());
         for cache in caches.values() {
             let cache_txs = cache.get_txs();
             let mut txs = Vec::with_capacity(cache_txs.len());
@@ -1518,11 +1520,8 @@ impl<S: Storage> Blockchain<S> {
                 let sorted_tx = mempool.get_sorted_tx(tx_hash)?;
                 txs.push(TxSelectorEntry { size: sorted_tx.get_size(), hash: tx_hash, tx: sorted_tx.get_tx() });
             }
-            entries.push(txs);
+            tx_selector.push_group(txs);
         }
-
-        // Build the tx selector using the mempool
-        let mut tx_selector = TxSelector::grouped(entries.into_iter());
 
         // size of block
         let mut block_size = block.size();
