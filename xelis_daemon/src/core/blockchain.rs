@@ -111,13 +111,13 @@ use std::{
     net::SocketAddr,
     num::NonZeroUsize,
     sync::{
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        atomic::{AtomicU64, Ordering},
         Arc
     },
     time::Instant,
     thread
 };
-use tokio::{sync::{Mutex, RwLock}, net::lookup_host};
+use tokio::{net::lookup_host, sync::{broadcast, Mutex, RwLock}};
 use log::{info, error, debug, warn, trace};
 use rand::Rng;
 
@@ -1875,9 +1875,11 @@ impl<S: Storage> Blockchain<S> {
             }
 
             if !txs_batch.is_empty() {
-                debug!("proof verifications of {} TXs with {} outputs ({}) in block {}", txs_batch.len(), total_outputs, txs_batch.iter().map(|(_, hash)| hash.to_string()).collect::<Vec<String>>().join(","), block_hash);
+                debug!("proof verifications of {} TXs from {} sources with {} outputs ({}) in block {}", txs_batch.len(), txs_grouped.len(), total_outputs, txs_batch.iter().map(|(_, hash)| hash.to_string()).collect::<Vec<String>>().join(","), block_hash);
                 // If multi thread is enabled and we have more than one source
+                // Otherwise its not worth-it to move it on another thread
                 if let Some(n_threads) = self.txs_threads_count.filter(|_| txs_grouped.len() > 1) {
+                    debug!("using multi-threading mode to verify the transactions");
                     let batches_count = txs_grouped.len().min(n_threads);
                     let mut batches = vec![Vec::new(); batches_count];
                     let mut queue: VecDeque<_> = txs_grouped.into_values().collect();
@@ -1889,27 +1891,48 @@ impl<S: Storage> Blockchain<S> {
                         i += 1;
                     }
 
-                    // Flag to determine if any batch failed
-                    let failed = Arc::new(AtomicBool::new(false));
-                    tokio_scoped::scope(|scope| {
+                    // Channel to be notified of any batch failing
+                    let (sender, _) = broadcast::channel::<()>(1);
+                    let (_, results) = async_scoped::TokioScope::scope_and_block(|scope| {
                         let storage = &*storage;
                         let stable_topoheight = self.get_stable_topoheight();
                         for (i, batch) in batches.into_iter().enumerate() {
-                            let failed = Arc::clone(&failed);
+                            let sender = &sender;
+                            let mut receiver = sender.subscribe();
+
                             scope.spawn(async move {
-                                if !failed.load(Ordering::SeqCst) {
-                                    let mut chain_state = ChainState::new(storage, &self.environment, stable_topoheight, current_topoheight, version);
-                                    if let Err(e) = Transaction::verify_batch(batch.as_slice(), &mut chain_state).await {
-                                        error!("Error while verifying batch #{}: {}", i, e);
-                                        failed.store(true, Ordering::SeqCst);
+                                let mut chain_state = ChainState::new(storage, &self.environment, stable_topoheight, current_topoheight, version);
+                                tokio::select! {
+                                    res = Transaction::verify_batch(batch.as_slice(), &mut chain_state) => {
+                                        if let Err(e) = &res {
+                                            if sender.send(()).is_err() {
+                                                error!("Error while notifying others tasks about batch #{} failing with error: {}", i, e);
+                                            }
+                                        }
+
+                                        res
+                                    },
+                                    _ = receiver.recv() => {
+                                        info!("Exiting batch task #{} due to exit signal received", i);
+                                        Ok(())
                                     }
                                 }
                             });
                         }
                     });
 
-                    if failed.load(Ordering::SeqCst) {
-                        return Err(BlockchainError::InvalidTransactionMultiThread)
+                    for (i, result) in results.into_iter().enumerate() {
+                        match result {
+                            Ok(Ok(())) => {},
+                            Ok(Err(e)) => {
+                                error!("Error on batch #{}: {}", i, e);
+                                return Err(e.into());
+                            },
+                            Err(e) => {
+                                error!("Error while joining batch task #{}: {} ", i, e);
+                                return Err(BlockchainError::InvalidTransactionMultiThread)
+                            }
+                        };
                     }
                 } else {
                     // Verify all valid transactions in one batch
