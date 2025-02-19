@@ -463,6 +463,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "async-scoped"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4042078ea593edffc452eef14e99fdb2b120caa4ad9618bcdeabc4a023b98740"
+dependencies = [
+ "futures",
+ "pin-project",
+ "tokio",
+]
+
+[[package]]
 name = "async-stream"
 version = "0.3.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3111,16 +3122,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tokio-scoped"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e4beb8ba13bc53ac53ce1d52b42f02e5d8060f0f42138862869beb769722b256"
-dependencies = [
- "tokio",
- "tokio-stream",
-]
-
-[[package]]
 name = "tokio-stream"
 version = "0.1.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3940,6 +3941,7 @@ dependencies = [
  "actix-web-actors",
  "anyhow",
  "async-recursion",
+ "async-scoped",
  "async-trait",
  "bytes",
  "chacha20poly1305",
@@ -3961,7 +3963,6 @@ dependencies = [
  "sled",
  "thiserror 1.0.69",
  "tokio",
- "tokio-scoped",
  "x25519-dalek",
  "xelis-environment",
  "xelis-vm",
