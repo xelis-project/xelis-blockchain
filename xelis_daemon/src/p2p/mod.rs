@@ -370,18 +370,10 @@ impl<S: Storage> P2pServer<S> {
                         let peer = Arc::new(peer);
                         match self.handle_new_peer(&peer, rx).await {
                             Ok(_) => {},
-                            Err(e) => match e {
-                                P2pError::PeerListFull => {
-                                    debug!("Peer list is full, we can't accept new connections");
-                                    if let Err(e) = peer.get_connection().close().await {
-                                        debug!("Error while closing unhandled connection: {}", e);
-                                    }
-                                },
-                                _ => {
-                                    error!("Error while handling new connection: {}", e);
-                                    if let Err(e) = peer.get_connection().close().await {
-                                        debug!("Error while closing unhandled connection: {}", e);
-                                    }
+                            Err(e) => {
+                                error!("Error while handling new connection: {}", e);
+                                if let Err(e) = peer.get_connection().close().await {
+                                    debug!("Error while closing unhandled connection: {}", e);
                                 }
                             }
                         }
@@ -1378,6 +1370,7 @@ impl<S: Storage> P2pServer<S> {
                 // clean shutdown
                 rx.close();
 
+                debug!("Closing {} from write task", peer);
                 if let Err(e) = peer.close().await {
                     debug!("Error while closing connection for {} from write task: {}", peer, e);
                 }
@@ -1396,7 +1389,7 @@ impl<S: Storage> P2pServer<S> {
                 let addr = *peer.get_connection().get_address();
                 trace!("Handle connection read side task for {} has been started", addr);
                 if let Err(e) = zelf.handle_connection_read_side(&peer, write_task).await {
-                    debug!("Error while running read part from peer {}: {}", peer, e);
+                    debug!("Error while running read part from {}: {}", peer, e);
 
                     peer.set_read_task_state(TaskState::Exiting).await;
 
@@ -1458,7 +1451,7 @@ impl<S: Storage> P2pServer<S> {
         match packet {
             Packet::Handshake(_) => {
                 error!("{} sent us handshake packet (not valid!)", peer);
-                peer.get_connection().close().await?;
+                peer.close().await?;
                 return Err(P2pError::InvalidPacket)
             },
             Packet::KeyExchange(key) => {

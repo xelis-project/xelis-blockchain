@@ -2,7 +2,7 @@ use std::{sync::Arc, time::Instant};
 
 use tokio::sync::broadcast;
 use xelis_common::crypto::Hash;
-use log::error;
+use log::debug;
 use crate::p2p::{packet::object::{ObjectRequest, OwnedObjectResponse}, peer::Peer};
 use super::ResponseBlocker;
 
@@ -93,7 +93,7 @@ impl Drop for Request {
     fn drop(&mut self) {
         if let Some(sender) = self.sender.take() {
             if sender.send(()).is_err() {
-                error!("Error while sending notification for {}", self.get_object());
+                debug!("Couldn't send notification for {}", self.get_object());
             }
         }
     }

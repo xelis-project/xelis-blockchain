@@ -99,7 +99,7 @@ pub struct ObjectTracker {
 }
 
 // How many requests can be queued in the channel
-const REQUESTER_CHANNEL_BUFFER: usize = 128;
+const REQUESTER_CHANNEL_BUFFER: usize = 8;
 // How many responses can be queued in the channel
 // It is set to 1 by default to not be spammed by the peer
 const HANDLER_CHANNEL_BUFFER: usize = 16;
@@ -199,6 +199,7 @@ impl ObjectTracker {
             select! {
                 biased;
                 _ = server_exit.recv() => {
+                    debug!("Exiting handler task due to server exit");
                     break;
                 },
                 response = handler_receiver.recv() => {
@@ -208,9 +209,12 @@ impl ObjectTracker {
                         let mut queue = self.queue.write().await;
                         if let Some(request) = queue.get_mut(object) {
                             request.set_response(response);
+                        } else {
+                            warn!("Request not found in queue for {}", object);
                         }
                     } else {
                         // channel closed
+                        warn!("Handler channel seems closed, exiting task");
                         break;
                     }
                 },
@@ -272,12 +276,14 @@ impl ObjectTracker {
             select! {
                 biased;
                 _ = server_exit.recv() => {
+                    debug!("Exiting requester task due to server exit");
                     break;
                 },
                 hash = request_receiver.recv() => {
                     if let Some(hash) = hash {
                         self.request_object_from_peer_internal(hash).await;
                     } else {
+                        warn!("Request channel seems to be closed, exiting requester task");
                         // channel closed
                         break;
                     }
@@ -302,6 +308,7 @@ impl ObjectTracker {
     // This function is called from P2p Server when a peer sends an object response that we requested
     // It will pass the response to the handler task loop
     pub async fn handle_object_response(&self, response: OwnedObjectResponse) -> Result<(), P2pError> {
+        trace!("handle object response {}", response.get_hash());
         {
             let queue = self.queue.read().await;
             if let Some(request) = queue.get(response.get_hash()) {

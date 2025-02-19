@@ -7,6 +7,7 @@ use crate::{
     },
     p2p::packet::PacketWrapper
 };
+use anyhow::Context;
 use xelis_common::{
     api::daemon::Direction,
     block::TopoHeight,
@@ -617,7 +618,10 @@ impl Peer {
         let res = self.peer_list.remove_peer(self.get_id(), true).await;
 
         trace!("Closing connection internal with {}", self);
-        self.get_connection().close().await?;
+        self.get_connection()
+            .close()
+            .await
+            .context("Error while closing internal connection")?;
 
         res
     }

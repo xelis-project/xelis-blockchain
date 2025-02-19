@@ -2,6 +2,7 @@ use crate::{
     core::error::BlockchainError,
     config::{CHAIN_SYNC_RESPONSE_MAX_BLOCKS, CHAIN_SYNC_RESPONSE_MIN_BLOCKS}
 };
+use anyhow::Error;
 use tokio::{
     sync::{
         AcquireError,
@@ -184,6 +185,8 @@ pub enum P2pError {
     SemaphoreAcquireError(#[from] AcquireError),
     #[error(transparent)]
     EncryptionError(#[from] EncryptionError),
+    #[error(transparent)]
+    Any(#[from] Error)
 }
 
 impl From<BlockchainError> for P2pError {
