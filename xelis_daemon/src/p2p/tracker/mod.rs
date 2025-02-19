@@ -1,34 +1,31 @@
+mod request;
+mod group;
+
 use std::{
     borrow::Cow,
     time::{Duration, Instant},
-    sync::{
-        Arc,
-        atomic::{AtomicU64, Ordering}
-    },
+    sync::Arc,
     collections::HashMap
 };
 use tokio::{
     sync::{
         mpsc::{Sender, Receiver, self},
         RwLock,
-        oneshot,
         Mutex,
         broadcast
     },
     select,
     time::interval
 };
+use log::{
+    trace,
+    debug,
+    warn,
+};
 use xelis_common::{
     crypto::Hash,
     queue::Queue,
     tokio::spawn_task
-};
-use crate::{
-    core::{
-        blockchain::Blockchain,
-        storage::Storage
-    },
-    config::PEER_TIMEOUT_REQUEST_OBJECT
 };
 use super::{
     packet::{
@@ -41,148 +38,18 @@ use super::{
     error::P2pError,
     peer::Peer
 };
-use log::{
-    trace,
-    debug,
-    warn,
-    error,
+use crate::{
+    core::{
+        blockchain::Blockchain,
+        storage::Storage
+    },
+    config::PEER_TIMEOUT_REQUEST_OBJECT
 };
-    
+use request::*;
+use group::*;
+
 pub type SharedObjectTracker = Arc<ObjectTracker>;
 pub type ResponseBlocker = broadcast::Receiver<()>;
-
-// Element of the queue for this Object Tracker
-struct Request {
-    // The object requested
-    request: ObjectRequest,
-    // The peer from which it has to be requested
-    peer: Arc<Peer>,
-    // Channel sender to be notified of success/timeout
-    sender: Option<broadcast::Sender<()>>,
-    // Response received from the peer
-    response: Option<OwnedObjectResponse>,
-    // Timestamp when it got requested
-    requested_at: Option<Instant>,
-    // If it linked to a group
-    group_id: Option<u64>,
-    // If it has to be broadcast on handling or not
-    broadcast: bool
-}
-
-impl Request {
-    pub fn new(request: ObjectRequest, peer: Arc<Peer>, group_id: Option<u64>, broadcast: bool) -> Self {
-        Self {
-            request,
-            peer,
-            sender: None,
-            response: None,
-            requested_at: None,
-            group_id,
-            broadcast
-        }
-    }
-
-    pub fn get_object(&self) -> &ObjectRequest {
-        &self.request
-    }
-
-    pub fn get_peer(&self) -> &Arc<Peer> {
-        &self.peer
-    }
-
-    pub fn set_response(&mut self, response: OwnedObjectResponse) {
-        self.response = Some(response);
-    }
-
-    pub fn take_response(&mut self) -> Option<OwnedObjectResponse> {
-        self.response.take()
-    }
-
-    pub fn get_group_id(&self) -> Option<u64> {
-        self.group_id
-    }
-
-    pub fn set_requested(&mut self) {
-        self.requested_at = Some(Instant::now());
-    }
-
-    pub fn get_requested(&self) -> &Option<Instant> {
-        &self.requested_at
-    }
-
-    pub fn is_requested(&self) -> bool {
-        self.requested_at.is_some()
-    }
-
-    pub fn get_hash(&self) -> &Hash {
-        self.request.get_hash()
-    }
-
-    pub fn listen(&mut self) -> ResponseBlocker {
-        if let Some(sender) = &self.sender {
-            sender.subscribe()
-        } else {
-            let (sender, receiver) = broadcast::channel(1);
-            self.sender = Some(sender);
-            receiver
-        }
-    }
-
-    pub fn broadcast(&self) -> bool {
-        self.broadcast
-    }
-}
-
-impl Drop for Request {
-    fn drop(&mut self) {
-        if let Some(sender) = self.sender.take() {
-            if sender.send(()).is_err() {
-                error!("Error while sending notification for {}", self.get_object());
-            }
-        }
-    }
-}
-
-pub struct GroupManager {
-    // This is used to have unique id for each group of requests
-    group_id: AtomicU64,
-    groups: Mutex<HashMap<u64, oneshot::Sender<P2pError>>>
-}
-
-impl GroupManager {
-    pub fn new() -> Self {
-        Self {
-            group_id: AtomicU64::new(0),
-            groups: Mutex::new(HashMap::new())
-        }
-    }
-
-    // Generate a new group id
-    pub async fn next_group_id(&self) -> (u64, oneshot::Receiver<P2pError>) {
-        let mut groups = self.groups.lock().await;
-        let id = self.group_id.fetch_add(1, Ordering::SeqCst);
-
-        let (sender, receiver) = oneshot::channel();
-        groups.insert(id, sender);
-        (id, receiver)
-    }
-
-    // Unregister an existing group id by removing it
-    pub async fn unregister_group(&self, group_id: u64) {
-        let mut groups = self.groups.lock().await;
-        groups.remove(&group_id);
-    }
-
-    // Notify the requester about the failure
-    pub async fn notify_group(&self, group_id: u64, err: P2pError) {
-        let mut groups = self.groups.lock().await;
-        if let Some(sender) = groups.remove(&group_id) {
-            if sender.send(err).is_err() {
-                warn!("Error while sending group error");
-            }
-        }
-    }
-}
 
 struct ExpirableCache {
     cache: Mutex<HashMap<Hash, Instant>>
@@ -213,7 +80,7 @@ impl ExpirableCache {
     }
 }
 
-// this ObjectTracker is a unique sender allows to create a queue system in one task only
+// this ObjectTracker is a unique sender that allows to create a queue system in one task only
 // currently used to fetch in order all txs propagated by the network
 pub struct ObjectTracker {
     // This is used to send the request to the requester task loop
