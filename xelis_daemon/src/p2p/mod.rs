@@ -192,7 +192,7 @@ impl<S: Storage> P2pServer<S> {
 
         // Channel used to broadcast the stop message
         let (exit_sender, exit_receiver) = broadcast::channel(1);
-        let object_tracker = ObjectTracker::new(blockchain.clone(), exit_receiver);
+        let object_tracker = ObjectTracker::new(exit_receiver);
 
         let (sender, event_receiver) = channel::<Arc<Peer>>(max_peers); 
         let peer_list = PeerList::new(max_peers, format!("{}peerlist-{}", dir_path.unwrap_or_default(), blockchain.get_network().to_string().to_lowercase()), Some(sender))?;
