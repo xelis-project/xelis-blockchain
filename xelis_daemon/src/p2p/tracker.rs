@@ -42,34 +42,14 @@ use super::{
     peer::Peer
 };
 use log::{
-    debug,
     trace,
-    warn
+    debug,
+    warn,
+    error,
 };
     
 pub type SharedObjectTracker = Arc<ObjectTracker>;
 pub type ResponseBlocker = broadcast::Receiver<()>;
-
-// This is used to take out the sender from Request if it exists
-struct Listener {
-    sender: Option<broadcast::Sender<()>>
-}
-
-impl Listener {
-    pub fn new(sender: Option<broadcast::Sender<()>>) -> Self {
-        Self {
-            sender
-        }
-    }
-
-    pub fn notify(self) {
-        if let Some(sender) = self.sender {
-            if let Err(e) = sender.send(()) {
-                debug!("Error while sending notification: {}", e);
-            }
-        }
-    }
-}
 
 // Element of the queue for this Object Tracker
 struct Request {
@@ -138,7 +118,7 @@ impl Request {
         self.request.get_hash()
     }
 
-    pub fn get_response_blocker(&mut self) -> ResponseBlocker {
+    pub fn listen(&mut self) -> ResponseBlocker {
         if let Some(sender) = &self.sender {
             sender.subscribe()
         } else {
@@ -151,15 +131,15 @@ impl Request {
     pub fn broadcast(&self) -> bool {
         self.broadcast
     }
-
-    fn to_listener(&mut self) -> Listener {
-        Listener::new(self.sender.take())
-    }
 }
 
 impl Drop for Request {
     fn drop(&mut self) {
-        self.to_listener().notify();
+        if let Some(sender) = self.sender.take() {
+            if sender.send(()).is_err() {
+                error!("Error while sending notification for {}", self.get_object());
+            }
+        }
     }
 }
 
@@ -449,7 +429,7 @@ impl ObjectTracker {
     pub async fn get_response_blocker_for_requested_object(&self, object_hash: &Hash) -> Option<ResponseBlocker> {
         let mut queue = self.queue.write().await;
         let request = queue.get_mut(object_hash)?;
-        Some(request.get_response_blocker())
+        Some(request.listen())
     }
 
     // This function is called from P2p Server when a peer sends an object response that we requested
@@ -489,7 +469,7 @@ impl ObjectTracker {
             let mut req = Request::new(request, peer, group_id, broadcast);
 
             let listener = if blocker {
-                Some(req.get_response_blocker())
+                Some(req.listen())
             } else {
                 None
             };
