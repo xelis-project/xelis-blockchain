@@ -1875,12 +1875,14 @@ impl<S: Storage> Blockchain<S> {
             }
 
             if !txs_batch.is_empty() {
-                debug!("proof verifications of {} TXs from {} sources with {} outputs ({}) in block {}", txs_batch.len(), txs_grouped.len(), total_outputs, txs_batch.iter().map(|(_, hash)| hash.to_string()).collect::<Vec<String>>().join(","), block_hash);
+                debug!("proof verifications of {} TXs from {} sources with {} outputs in block {}", txs_batch.len(), txs_grouped.len(), total_outputs, block_hash);
+                // Track how much time it takes to verify them all
+                let start = Instant::now();
                 // If multi thread is enabled and we have more than one source
                 // Otherwise its not worth-it to move it on another thread
                 if let Some(n_threads) = self.txs_threads_count.filter(|_| txs_grouped.len() > 1) {
-                    debug!("using multi-threading mode to verify the transactions");
                     let batches_count = txs_grouped.len().min(n_threads);
+                    debug!("using multi-threading mode to verify the transactions in {} batches", batches_count);
                     let mut batches = vec![Vec::new(); batches_count];
                     let mut queue: VecDeque<_> = txs_grouped.into_values().collect();
 
@@ -1939,6 +1941,7 @@ impl<S: Storage> Blockchain<S> {
                     let mut chain_state = ChainState::new(storage, &self.environment, self.get_stable_topoheight(), current_topoheight, version);
                     Transaction::verify_batch(txs_batch.as_slice(), &mut chain_state).await?;
                 }
+                debug!("Verified {} transactions in {}ms", txs_batch.len(), start.elapsed().as_millis());
             }
         }
 

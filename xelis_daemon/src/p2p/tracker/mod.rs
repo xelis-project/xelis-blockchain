@@ -164,10 +164,6 @@ impl ObjectTracker {
         }
     }
 
-    pub async fn is_ignored_request_hash(&self, hash: &Hash) -> bool {
-        self.cache.remove(hash).await
-    }
-
     // Returns the group manager used
     pub fn get_group_manager(&self) -> &GroupManager {
         &self.group
@@ -292,12 +288,6 @@ impl ObjectTracker {
         }
     }
 
-    // Check if the object is already requested
-    pub async fn has_requested_object(&self, object_hash: &Hash) -> bool {
-        let queue = self.queue.read().await;
-        queue.has(object_hash)
-    }
-
     // Get the response blocker for the requested object
     pub async fn get_response_blocker_for_requested_object(&self, object_hash: &Hash) -> Option<ResponseBlocker> {
         let mut queue = self.queue.write().await;
@@ -307,8 +297,9 @@ impl ObjectTracker {
 
     // This function is called from P2p Server when a peer sends an object response that we requested
     // It will pass the response to the handler task loop
-    pub async fn handle_object_response(&self, response: OwnedObjectResponse) -> Result<(), P2pError> {
+    pub async fn handle_object_response(&self, response: OwnedObjectResponse) -> Result<bool, P2pError> {
         trace!("handle object response {}", response.get_hash());
+        let mut handled = false;
         {
             let queue = self.queue.read().await;
             if let Some(request) = queue.get(response.get_hash()) {
@@ -316,16 +307,21 @@ impl ObjectTracker {
                     debug!("Invalid object hash in ObjectTracker: expected {}, got {}", request.get_hash(), response.get_hash());
                     return Err(P2pError::InvalidObjectHash(request.get_hash().clone(), response.get_hash().clone()));
                 }
-            } else {
-                let request = response.get_request();
-                debug!("Object not requested in ObjectTracker: {}", request);
-                return Err(P2pError::ObjectNotRequested(request));
+
+                handled = true;
             }
+        }
+
+        if !handled && !self.cache.remove(response.get_hash()).await {
+            // Check that its not an ignored request
+            let request = response.get_request();
+            debug!("Object not requested in ObjectTracker: {}", request);
+            return Ok(false)
         }
 
         self.handler_sender.send(response).await?;
 
-        Ok(())
+        Ok(true)
     }
 
     // Request the object from the peer or return false if it is already requested

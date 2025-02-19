@@ -1702,7 +1702,8 @@ impl<S: Storage> P2pServer<S> {
                 let response = response.to_owned();
                 trace!("Object response received is {}", response.get_hash());
 
-                // check if we requested it from this peer
+                // check if we requested it from this peer directly
+                // or that we requested it through the object tracker
                 let request = response.get_request();
                 if peer.has_requested_object(&request).await {
                     let sender = peer.remove_object_request(request).await?;
@@ -1710,13 +1711,7 @@ impl<S: Storage> P2pServer<S> {
                     if sender.send(response).is_err() {
                         error!("Error while sending object response to sender!");
                     }
-                // check if the Object Tracker has requested this object
-                } else if self.object_tracker.has_requested_object(request.get_hash()).await {
-                    trace!("Object Tracker requested it, handling it");
-                    self.object_tracker.handle_object_response(response).await?;
-                } else if self.object_tracker.is_ignored_request_hash(request.get_hash()).await {
-                    debug!("Object {} was ignored by Object Tracker, ignoring response", request.get_hash());
-                } else {
+                } else if !self.object_tracker.handle_object_response(response).await? {
                     return Err(P2pError::ObjectNotRequested(request))
                 }
             },
