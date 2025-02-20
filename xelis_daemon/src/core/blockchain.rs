@@ -1881,7 +1881,12 @@ impl<S: Storage> Blockchain<S> {
                 // If multi thread is enabled and we have more than one source
                 // Otherwise its not worth-it to move it on another thread
                 if let Some(n_threads) = self.txs_threads_count.filter(|_| txs_grouped.len() > 1) {
-                    let batches_count = txs_grouped.len().min(n_threads);
+                    let mut batches_count = txs_grouped.len();
+                    if batches_count > n_threads {
+                        debug!("Batches count ({}) is above configured threads ({}), capping it", batches_count, n_threads);
+                        batches_count = n_threads;
+                    }
+
                     debug!("using multi-threading mode to verify the transactions in {} batches", batches_count);
                     let mut batches = vec![Vec::new(); batches_count];
                     let mut queue: VecDeque<_> = txs_grouped.into_values().collect();
