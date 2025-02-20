@@ -179,7 +179,7 @@ impl ObjectTracker {
                     // For this, we need to check if the first element has a response and so on
                     // If we don't have a response during too much time, we remove the request from the queue as it is probably timed out
                     let mut queue = self.queue.write().await;
-                    while let Some((_, request)) = queue.peek_mut() {
+                    while let Some(request) = queue.peek_mut() {
                         if let Some(requested_at) = request.get_requested() {
                             // check if the request is timed out
                             if requested_at.elapsed() > TIME_OUT {
@@ -236,7 +236,7 @@ impl ObjectTracker {
         trace!("handle object response {}", response.get_hash());
         {
             let mut queue = self.queue.write().await;
-            if let Some((_, request)) = queue.remove(response.get_hash()) {
+            if let Some(request) = queue.remove(response.get_hash()) {
                 request.notify(response);
                 return Ok(true)
             }
@@ -278,7 +278,8 @@ impl ObjectTracker {
 
     // Clean the queue from all requests from the given peer or from the group if it is specified
     async fn clean_queue(&self, queue: &mut Queue<Hash, Request>, peer_id: u64, group: Option<(u64, P2pError)>) {
-        let iter = queue.extract_if(|(_, request)| {
+        trace!("clean queue");
+        let iter = queue.extract_if(|_, request| {
             if let (Some((failed_group, _)), Some(request_group)) = (group.as_ref(), request.get_group_id()) {
                 if *failed_group == request_group {
                     return true;
@@ -297,15 +298,9 @@ impl ObjectTracker {
             }
 
             false
-        }).filter_map(|(hash, request)| {
-            if request.is_requested() {
-                Some(Arc::try_unwrap(hash).unwrap())
-            } else {
-                None
-            }
         });
 
-        for hash in iter {
+        for (hash, _) in iter {
             debug!("Adding requested object with hash {} in expirable cache", hash);
             self.cache.insert(hash).await;
         }
