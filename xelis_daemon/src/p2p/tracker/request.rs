@@ -1,6 +1,6 @@
 use std::{sync::Arc, time::Instant};
 
-use tokio::sync::oneshot;
+use tokio::sync::broadcast;
 use log::error;
 use xelis_common::crypto::Hash;
 use crate::p2p::{
@@ -8,8 +8,8 @@ use crate::p2p::{
     peer::Peer
 };
 
-pub type RequestCallback = oneshot::Sender<OwnedObjectResponse>;
-pub type RequestResponse = oneshot::Receiver<OwnedObjectResponse>;
+pub type RequestCallback = broadcast::Sender<OwnedObjectResponse>;
+pub type RequestResponse = broadcast::Receiver<OwnedObjectResponse>;
 
 // Element of the queue for this Object pub Tracker
 pub struct Request {
@@ -28,7 +28,7 @@ pub struct Request {
 
 impl Request {
     pub fn new(request: ObjectRequest, peer: Arc<Peer>, group_id: Option<u64>) -> (Self, RequestResponse) {
-        let (callback, receiver) = oneshot::channel();
+        let (callback, receiver) = broadcast::channel(1);
         (Self {
             request,
             peer,
@@ -46,6 +46,10 @@ impl Request {
         &self.peer
     }
 
+    pub fn listen(&self) -> RequestResponse {
+        self.callback.subscribe()
+    }
+
     pub fn get_group_id(&self) -> Option<u64> {
         self.group_id
     }
@@ -56,10 +60,6 @@ impl Request {
 
     pub fn get_requested(&self) -> &Option<Instant> {
         &self.requested_at
-    }
-
-    pub fn is_requested(&self) -> bool {
-        self.requested_at.is_some()
     }
 
     pub fn get_hash(&self) -> &Hash {

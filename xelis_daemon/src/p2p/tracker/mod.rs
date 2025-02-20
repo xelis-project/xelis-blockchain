@@ -43,7 +43,6 @@ use request::*;
 use group::*;
 
 pub type SharedObjectTracker = Arc<ObjectTracker>;
-pub type ResponseBlocker = broadcast::Receiver<()>;
 
 struct ExpirableCache {
     cache: Mutex<HashMap<Hash, Instant>>
@@ -92,9 +91,6 @@ pub struct ObjectTracker {
 
 // How many requests can be queued in the channel
 const REQUESTER_CHANNEL_BUFFER: usize = 8;
-// How many responses can be queued in the channel
-// It is set to 1 by default to not be spammed by the peer
-const HANDLER_CHANNEL_BUFFER: usize = 16;
 
 // Duration constant for timeout instead of building it at each iteration
 const TIME_OUT: Duration = Duration::from_millis(PEER_TIMEOUT_REQUEST_OBJECT);
@@ -249,24 +245,19 @@ impl ObjectTracker {
         Ok(false)
     }
 
-    // Request the object from the peer or return false if it is already requested
-    pub async fn request_object_from_peer(&self, peer: Arc<Peer>, request: ObjectRequest) -> Result<bool, P2pError> {
-        self.request_object_from_peer_with(peer, request, None).await?;
-        Ok(true)
-    }
-
     // Request the object from the peer and returns the response blocker
-    pub async fn request_object_from_peer_with(&self, peer: Arc<Peer>, request: ObjectRequest, group_id: Option<u64>) -> Result<RequestResponse, P2pError> {
+    pub async fn request_object_from_peer_with_or_get_notified(&self, peer: Arc<Peer>, request: ObjectRequest, group_id: Option<u64>) -> Result<RequestResponse, P2pError> {
         trace!("Requesting object {} from {}", request.get_hash(), peer);
         let (listener, hash) = {
             let mut queue = self.queue.write().await;
+            if let Some(request) = queue.get(request.get_hash()) {
+                return Ok(request.listen())
+            }
+
             let hash = request.get_hash().clone();
             let (req, receiver) = Request::new(request, peer, group_id);
 
-            if !queue.push(hash.clone(), req) {
-                debug!("Object already requested in ObjectTracker: {}", hash);
-                // TODO
-            }
+            queue.push(hash.clone(), req);
 
             (receiver, hash)
         };
