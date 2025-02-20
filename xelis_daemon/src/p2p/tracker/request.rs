@@ -1,11 +1,15 @@
 use std::{sync::Arc, time::Instant};
 
 use tokio::sync::broadcast;
+use log::error;
 use xelis_common::crypto::Hash;
-use log::debug;
-use crate::p2p::{packet::object::{ObjectRequest, OwnedObjectResponse}, peer::Peer};
-use super::ResponseBlocker;
+use crate::p2p::{
+    packet::object::{ObjectRequest, OwnedObjectResponse},
+    peer::Peer
+};
 
+pub type RequestCallback = broadcast::Sender<OwnedObjectResponse>;
+pub type RequestResponse = broadcast::Receiver<OwnedObjectResponse>;
 
 // Element of the queue for this Object pub Tracker
 pub struct Request {
@@ -13,29 +17,25 @@ pub struct Request {
     request: ObjectRequest,
     // The peer from which it has to be requested
     peer: Arc<Peer>,
-    // Channel sender to be notified of success/timeout
-    sender: Option<broadcast::Sender<()>>,
-    // Response received from the peer
-    response: Option<OwnedObjectResponse>,
     // Timestamp when it got requested
     requested_at: Option<Instant>,
     // If it linked to a group
     group_id: Option<u64>,
-    // If it has to be broadcast on handling or not
-    broadcast: bool
+    // Channel used as a callback to give the response
+    // If None is sent, it means it got timed out / something went wrong
+    callback: RequestCallback
 }
 
 impl Request {
-    pub fn new(request: ObjectRequest, peer: Arc<Peer>, group_id: Option<u64>, broadcast: bool) -> Self {
-        Self {
+    pub fn new(request: ObjectRequest, peer: Arc<Peer>, group_id: Option<u64>) -> (Self, RequestResponse) {
+        let (callback, receiver) = broadcast::channel(1);
+        (Self {
             request,
             peer,
-            sender: None,
-            response: None,
             requested_at: None,
             group_id,
-            broadcast
-        }
+            callback
+        }, receiver)
     }
 
     pub fn get_object(&self) -> &ObjectRequest {
@@ -46,12 +46,8 @@ impl Request {
         &self.peer
     }
 
-    pub fn set_response(&mut self, response: OwnedObjectResponse) {
-        self.response = Some(response);
-    }
-
-    pub fn take_response(&mut self) -> Option<OwnedObjectResponse> {
-        self.response.take()
+    pub fn listen(&self) -> RequestResponse {
+        self.callback.subscribe()
     }
 
     pub fn get_group_id(&self) -> Option<u64> {
@@ -66,35 +62,13 @@ impl Request {
         &self.requested_at
     }
 
-    pub fn is_requested(&self) -> bool {
-        self.requested_at.is_some()
-    }
-
     pub fn get_hash(&self) -> &Hash {
         self.request.get_hash()
     }
 
-    pub fn listen(&mut self) -> ResponseBlocker {
-        if let Some(sender) = &self.sender {
-            sender.subscribe()
-        } else {
-            let (sender, receiver) = broadcast::channel(1);
-            self.sender = Some(sender);
-            receiver
-        }
-    }
-
-    pub fn broadcast(&self) -> bool {
-        self.broadcast
-    }
-}
-
-impl Drop for Request {
-    fn drop(&mut self) {
-        if let Some(sender) = self.sender.take() {
-            if sender.send(()).is_err() {
-                debug!("Couldn't send notification for {}", self.get_object());
-            }
+    pub fn notify(self, msg: OwnedObjectResponse) {
+        if self.callback.send(msg).is_err() {
+            error!("Error while notifying about request {}: channel seems closed", self.request.get_hash());
         }
     }
 }
