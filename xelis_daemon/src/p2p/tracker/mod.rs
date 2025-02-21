@@ -7,6 +7,7 @@ use std::{
     sync::Arc,
     collections::HashMap
 };
+use bytes::Bytes;
 use tokio::{
     sync::{
         mpsc::{Sender, Receiver, self},
@@ -25,6 +26,7 @@ use log::{
 use xelis_common::{
     crypto::Hash,
     queue::Queue,
+    serializer::Serializer,
     tokio::spawn_task
 };
 use super::{
@@ -310,23 +312,38 @@ impl ObjectTracker {
         let mut queue = self.queue.write().await;
         debug!("queue locked");
 
-        let fail = if let Some(request) = queue.get_mut(&request_hash) {
-            request.set_requested();
-            // send the packet to the Peer
-            let peer = request.get_peer();
+        let mut request = None;
+        if let Some(req) = queue.get_mut(&request_hash) {
+            req.set_requested();
+            let packet = Bytes::from(Packet::ObjectRequest(Cow::Borrowed(req.get_object())).to_bytes());
+            request = Some((req.get_peer().clone(), packet, req.get_group_id()));
+        } else {
+            debug!("Object {} not requested anymore", request_hash);
+        };
+
+        let mut fail = None;
+        if let Some((peer, packet, group_id)) = request {
+            debug!("requesting object from {} internal", peer);
+
+            // Make sure its not closed
             if peer.get_connection().is_closed() {
                 warn!("Peer {} is disconnected but still has a pending request object {}", peer, request_hash);
-                Some((peer.get_id(), request.get_group_id().map(|v| (v, P2pError::Disconnected))))
-            } else if let Err(e) = peer.send_packet(Packet::ObjectRequest(Cow::Borrowed(request.get_object()))).await {
-                warn!("Error while requesting object {} using Object Tracker: {}", request_hash, e);
-                Some((peer.get_id(), request.get_group_id().map(|v| (v, e))))
+                fail = Some((peer.get_id(), group_id.map(|v| (v, P2pError::Disconnected))));
             } else {
-                None
+                let mut peer_exit = peer.get_exit_receiver();
+                tokio::select! {
+                    _ = peer_exit.recv() => {
+                        fail = Some((peer.get_id(), group_id.map(|id| (id, P2pError::Disconnected))));
+                    }
+                    res = peer.send_bytes(packet) => {
+                        if let Err(e) = res {
+                            debug!("failed to request object from {}: {}", peer, e);
+                            fail = Some((peer.get_id(), group_id.map(|id| (id, e))));
+                        }
+                    }
+                };
             }
-        } else {
-            trace!("Object {} not requested anymore", request_hash);
-            None
-        };
+        }
 
         if let Some((peer_id, group)) = fail {
             warn!("cleaning queue because of failure");
