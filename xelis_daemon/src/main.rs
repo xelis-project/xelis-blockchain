@@ -335,12 +335,16 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
     let closure = |_: &_, _: _| async {
         trace!("Retrieving P2P peers and median topoheight");
         let topoheight = blockchain.get_topo_height();
-        let (peers, median) = match &p2p {
+        let (peers, median, syncing_rate) = match &p2p {
             Some(p2p) => {
                 let peer_list = p2p.get_peer_list();
-                (peer_list.size().await, peer_list.get_median_topoheight(Some(topoheight)).await)
+                (
+                    peer_list.size().await,
+                    peer_list.get_median_topoheight(Some(topoheight)).await,
+                    p2p.get_syncing_rate_bps(),
+                )
             },
-            None => (0, blockchain.get_topo_height())
+            None => (0, blockchain.get_topo_height(), None)
         };
 
         trace!("Retrieving RPC connections count");
@@ -375,7 +379,8 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
                 rpc_count,
                 miners,
                 mempool,
-                network
+                network,
+                syncing_rate
             )
         )
     };
@@ -383,7 +388,18 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
     prompt.start(Duration::from_secs(1), Box::new(async_handler!(closure)), Some(&command_manager)).await
 }
 
-fn build_prompt_message(prompt: &ShareablePrompt, topoheight: u64, median_topoheight: u64, network_hashrate: f64, peers_count: usize, rpc_count: usize, miners_count: usize, mempool: usize, network: Network) -> String {
+fn build_prompt_message(
+    prompt: &ShareablePrompt,
+    topoheight: u64,
+    median_topoheight: u64,
+    network_hashrate: f64,
+    peers_count: usize,
+    rpc_count: usize,
+    miners_count: usize,
+    mempool: usize,
+    network: Network,
+    syncing_rate: Option<u64>
+) -> String {
     let topoheight_str = format!(
         "{}: {}/{}",
         prompt.colorize_str(Color::Yellow, "TopoHeight"),
@@ -401,30 +417,43 @@ fn build_prompt_message(prompt: &ShareablePrompt, topoheight: u64, median_topohe
         prompt.colorize_string(Color::Green, &format!("{}", mempool))
     );
     let peers_str = format!(
-        "{}: {}",
+        "{}: {} ",
         prompt.colorize_str(Color::Yellow, "Peers"),
         prompt.colorize_string(Color::Green, &format!("{}", peers_count))
     );
-    let rpc_str = format!(
-        "{}: {}",
-        prompt.colorize_str(Color::Yellow, "RPC"),
-        prompt.colorize_string(Color::Green, &format!("{}", rpc_count))
-    );
-    let miners_str = format!(
-        "{}: {}",
-        prompt.colorize_str(Color::Yellow, "Miners"),
-        prompt.colorize_string(Color::Green, &format!("{}", miners_count))
-    );
+    let rpc_str = if rpc_count > 0 {
+        format!(
+            "| {}: {}",
+            prompt.colorize_str(Color::Yellow, "RPC"),
+            prompt.colorize_string(Color::Green, &format!("{}", rpc_count))
+        )
+    } else { "".to_owned() };
+
+    let miners_str = if miners_count > 0 {
+        format!(
+            "| {}: {} ",
+            prompt.colorize_str(Color::Yellow, "Miners"),
+            prompt.colorize_string(Color::Green, &format!("{}", miners_count))
+        )
+    } else { "".to_owned() };
 
     let network_str = if !network.is_mainnet() {
         format!(
-            "{} ",
+            "| {} ",
             prompt.colorize_string(Color::Red, &network.to_string())
         )
-    } else { "".into() };
+    } else { "".to_owned() };
+
+    let syncing_str = if let Some(rate) = syncing_rate {
+        format!(
+            "| {}: {} ",
+            prompt.colorize_str(Color::Yellow, "Sync"),
+            prompt.colorize_string(Color::Green, &format!("{} bps", rate))
+        )
+    } else { "".to_owned() };
 
     format!(
-        "{} | {} | {} | {} | {} | {} | {} {}{} ",
+        "{} | {} | {} | {} | {}{}{}{}{}{} ",
         prompt.colorize_str(Color::Blue, "XELIS"),
         topoheight_str,
         network_hashrate_str,
@@ -432,8 +461,9 @@ fn build_prompt_message(prompt: &ShareablePrompt, topoheight: u64, median_topohe
         peers_str,
         rpc_str,
         miners_str,
+        syncing_str,
         network_str,
-        prompt.colorize_str(Color::BrightBlack, ">>")
+        prompt.colorize_str(Color::BrightBlack, ">>"),
     )
 }
 

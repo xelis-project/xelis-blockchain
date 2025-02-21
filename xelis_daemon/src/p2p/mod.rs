@@ -102,10 +102,10 @@ use std::{
     net::{IpAddr, SocketAddr},
     num::NonZeroUsize,
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc
     },
-    time::Duration
+    time::{Duration, Instant}
 };
 use bytes::Bytes;
 use rand::{seq::IteratorRandom, Rng};
@@ -165,6 +165,8 @@ pub struct P2pServer<S: Storage> {
     outgoing_connections_disabled: AtomicBool,
     // Are we syncing the chain with another peer
     is_syncing: AtomicBool,
+    // Current syncing rate in BPS
+    syncing_rate_bps: AtomicU64,
     // Exit channel to notify all tasks to stop
     exit_sender: broadcast::Sender<()>,
     // Diffie-Hellman keypair
@@ -226,6 +228,7 @@ impl<S: Storage> P2pServer<S> {
             exclusive_nodes: IndexSet::from_iter(exclusive_nodes.into_iter()),
             sharable,
             is_syncing: AtomicBool::new(false),
+            syncing_rate_bps: AtomicU64::new(0),
             outgoing_connections_disabled: AtomicBool::new(disable_outgoing_connections),
             exit_sender,
             dh_keypair: dh_keypair.unwrap_or_else(diffie_hellman::DHKeyPair::new),
@@ -255,7 +258,7 @@ impl<S: Storage> P2pServer<S> {
     // Stop the p2p module by closing all connections
     pub async fn stop(&self) {
         info!("Stopping P2p Server...");
-        self.is_running.store(false, Ordering::Release);
+        self.is_running.store(false, Ordering::SeqCst);
 
         info!("Waiting for all peers to be closed...");
         self.peer_list.close_all().await;
@@ -268,15 +271,15 @@ impl<S: Storage> P2pServer<S> {
 
     // Verify if we are still running
     pub fn is_running(&self) -> bool {
-        self.is_running.load(Ordering::Acquire)
+        self.is_running.load(Ordering::SeqCst)
     }
 
     pub fn is_outgoing_connections_disabled(&self) -> bool {
-        self.outgoing_connections_disabled.load(Ordering::Acquire)
+        self.outgoing_connections_disabled.load(Ordering::SeqCst)
     }
 
     pub fn set_disable_outgoing_connections(&self, disable: bool) {
-        self.outgoing_connections_disabled.store(disable, Ordering::Release);
+        self.outgoing_connections_disabled.store(disable, Ordering::SeqCst);
     }
 
     // every 10 seconds, verify and connect if necessary to a random node
@@ -816,6 +819,7 @@ impl<S: Storage> P2pServer<S> {
     async fn build_generic_ping_packet(&self) -> Result<Ping<'_>, P2pError> {
         debug!("locking storage to build generic ping packet");
         let storage = self.blockchain.get_storage().read().await;
+        debug!("storage is locked for generic ping packet");
         self.build_generic_ping_packet_with_storage(&*storage).await
     }
 
@@ -929,12 +933,26 @@ impl<S: Storage> P2pServer<S> {
 
     // Set the chain syncing state
     fn set_chain_syncing(&self, syncing: bool) {
-        self.is_syncing.store(syncing, Ordering::Release);
+        self.is_syncing.store(syncing, Ordering::SeqCst);
     }
 
     // Check if we are syncing the chain
     pub fn is_syncing_chain(&self) -> bool {
-        self.is_syncing.load(Ordering::Acquire)
+        self.is_syncing.load(Ordering::SeqCst)
+    }
+
+    // Set the chain syncing rate bps
+    fn set_chain_sync_rate_bps(&self, rate: u64) {
+        self.syncing_rate_bps.store(rate, Ordering::SeqCst);
+    }
+
+    // Get the current syncing rate if its syncing
+    pub fn get_syncing_rate_bps(&self) -> Option<u64> {
+        if self.is_syncing_chain() && self.allow_boost_sync() {
+            Some(self.syncing_rate_bps.load(Ordering::SeqCst))
+        } else {
+            None
+        }
     }
 
     // This a infinite task that is running every CHAIN_SYNC_DELAY seconds
@@ -989,6 +1007,7 @@ impl<S: Storage> P2pServer<S> {
             if let Some(peer) = peer_selected {
                 debug!("Selected for chain sync is {}", peer);
                 // We are syncing the chain
+                self.set_chain_sync_rate_bps(0);
                 self.set_chain_syncing(true);
 
                 // check if we can maybe fast sync first
@@ -2321,7 +2340,8 @@ impl<S: Storage> P2pServer<S> {
         } else {
             // no rewind are needed, process normally
             // it will first add blocks to sync, and then all alt-tips blocks if any (top blocks)
-            let mut total_requested: usize = 0;
+            let mut total_requested = 0;
+            let start = Instant::now();
             if self.allow_boost_sync() {
                 debug!("Requesting needed blocks in boost sync mode");
                 let mut futures = FuturesOrdered::new();
@@ -2338,7 +2358,7 @@ impl<S: Storage> P2pServer<S> {
                                 _ => Err(P2pError::ExpectedBlock)
                             }
                         } else {
-                            trace!("Block {} is already in chain, verify if its in DAG", hash);
+                            debug!("Block {} is already in chain, verify if its in DAG", hash);
                             let mut storage = self.blockchain.get_storage().write().await;
                             if !storage.is_block_topological_ordered(&hash).await {
                                 match storage.delete_block_with_hash(&hash).await {
@@ -2360,11 +2380,18 @@ impl<S: Storage> P2pServer<S> {
                 }
 
                 let mut exit_signal = self.exit_sender.subscribe();
+                let mut internal_bps = interval(Duration::from_secs(1));
+                let mut blocks_processed = 0;
                 'main: loop {
                     tokio::select! {
                         _ = exit_signal.recv() => {
                             debug!("Stopping chain sync due to exit signal");
                             break 'main;
+                        },
+                        _ = internal_bps.tick() => {
+                            self.set_chain_sync_rate_bps(blocks_processed);
+                            total_requested += blocks_processed;
+                            blocks_processed = 0;
                         },
                         next = futures.next() => {
                             let Some(res) = next else {
@@ -2374,6 +2401,7 @@ impl<S: Storage> P2pServer<S> {
 
                             match res {
                                 Ok(Some(block)) => {
+                                    blocks_processed += 1;
                                     if let Err(e) = self.blockchain.add_new_block(block, false, false).await {
                                         self.object_tracker.get_group_manager().unregister_group(group_id).await;
                                         return Err(e)
@@ -2390,7 +2418,6 @@ impl<S: Storage> P2pServer<S> {
                     };
                 }
                 self.object_tracker.get_group_manager().unregister_group(group_id).await;
-
             } else {
                 debug!("Requesting needed blocks in normal mode");
                 for hash in blocks {
@@ -2432,7 +2459,13 @@ impl<S: Storage> P2pServer<S> {
                 }
             }
 
-            info!("we've synced {} on {} blocks and {} top blocks from {}", total_requested, blocks_len, top_len, peer);
+            let elapsed = start.elapsed().as_secs();
+            let bps = if elapsed > 0 {
+                total_requested / elapsed
+            } else {
+                0
+            };
+            info!("we've synced {} on {} blocks and {} top blocks in {} ({} bps) from {}", total_requested, blocks_len, top_len, elapsed, bps, peer);
         }
 
         let peer_topoheight = peer.get_topoheight();
@@ -2692,6 +2725,7 @@ impl<S: Storage> P2pServer<S> {
         };
 
         let response = peer.request_sync_chain(packet).await?;
+        debug!("Received a chain response of {} blocks", response.blocks_size());
 
         // Check that the peer followed our requirements
         if response.blocks_size() > requested_max_size {

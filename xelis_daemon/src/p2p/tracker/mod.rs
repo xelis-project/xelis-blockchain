@@ -308,6 +308,7 @@ impl ObjectTracker {
     async fn request_object_from_peer_internal(&self, request_hash: Hash) {
         debug!("Requesting object with hash {}", request_hash);
         let mut queue = self.queue.write().await;
+        debug!("queue locked");
 
         let fail = if let Some(request) = queue.get_mut(&request_hash) {
             request.set_requested();
@@ -331,5 +332,7 @@ impl ObjectTracker {
             warn!("cleaning queue because of failure");
             self.clean_queue(&mut queue, peer_id, group).await;
         }
+
+        debug!("end peer internal");
     }
 }

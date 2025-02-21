@@ -662,7 +662,7 @@ impl Display for Peer {
         // update fail counter to have up-to-date data to display
         self.update_fail_count_default();
         let peers = if let Ok(peers) = self.get_peers().try_lock() {
-            if log_enabled!(Level::Debug) {
+            if log_enabled!(Level::Trace) {
                 format!("{:?}", peers)
             } else {
                 format!("{}", peers.len())
