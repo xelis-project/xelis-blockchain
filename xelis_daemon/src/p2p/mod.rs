@@ -838,8 +838,9 @@ impl<S: Storage> P2pServer<S> {
 
         // Search our cumulative difficulty
         let our_cumulative_difficulty = {
-            trace!("locking storage to search our cumulative difficulty");
+            debug!("locking storage to search our cumulative difficulty");
             let storage = self.blockchain.get_storage().read().await;
+            debug!("storage locked for cumulative difficulty");
             let hash = storage.get_hash_at_topo_height(our_topoheight).await?;
             storage.get_cumulative_difficulty_for_block_hash(&hash).await?
         };
@@ -1062,6 +1063,7 @@ impl<S: Storage> P2pServer<S> {
                 continue;
             }
 
+            debug!("Building ping packet from ping task");
             let mut ping = match self.build_generic_ping_packet().await {
                 Ok(ping) => ping,
                 Err(e) => {
@@ -2043,6 +2045,7 @@ impl<S: Storage> P2pServer<S> {
     async fn handle_chain_request(self: &Arc<Self>, peer: &Arc<Peer>, blocks: IndexSet<BlockId>, accepted_response_size: usize) -> Result<(), BlockchainError> {
         debug!("handle chain request for {} with {} blocks", peer, blocks.len());
         let storage = self.blockchain.get_storage().read().await;
+        debug!("storage locked for chain request");
         // blocks hashes sent for syncing (topoheight ordered)
         let mut response_blocks = IndexSet::new();
         let mut top_blocks = IndexSet::new();
@@ -2360,6 +2363,7 @@ impl<S: Storage> P2pServer<S> {
                         } else {
                             debug!("Block {} is already in chain, verify if its in DAG", hash);
                             let mut storage = self.blockchain.get_storage().write().await;
+                            debug!("storage write lock acquired for potential block {} deletion", hash);
                             if !storage.is_block_topological_ordered(&hash).await {
                                 match storage.delete_block_with_hash(&hash).await {
                                     Ok(block) => Ok(Some(block)),
@@ -2390,7 +2394,6 @@ impl<S: Storage> P2pServer<S> {
                         },
                         _ = internal_bps.tick() => {
                             self.set_chain_sync_rate_bps(blocks_processed);
-                            total_requested += blocks_processed;
                             blocks_processed = 0;
                         },
                         next = futures.next() => {
@@ -2402,6 +2405,7 @@ impl<S: Storage> P2pServer<S> {
                             match res {
                                 Ok(Some(block)) => {
                                     blocks_processed += 1;
+                                    total_requested += 1;
                                     if let Err(e) = self.blockchain.add_new_block(block, false, false).await {
                                         self.object_tracker.get_group_manager().unregister_group(group_id).await;
                                         return Err(e)
@@ -2465,7 +2469,7 @@ impl<S: Storage> P2pServer<S> {
             } else {
                 0
             };
-            info!("we've synced {} on {} blocks and {} top blocks in {} ({} bps) from {}", total_requested, blocks_len, top_len, elapsed, bps, peer);
+            info!("we've synced {} on {} blocks and {} top blocks in {}s ({} bps) from {}", total_requested, blocks_len, top_len, elapsed, bps, peer);
         }
 
         let peer_topoheight = peer.get_topoheight();
@@ -2717,7 +2721,9 @@ impl<S: Storage> P2pServer<S> {
         let requested_max_size = self.max_chain_response_size;
 
         let packet = {
+            debug!("locking storage for sync chain request");
             let storage = self.blockchain.get_storage().read().await;
+            debug!("locked storage for sync chain request");
             let request = ChainRequest::new(self.build_list_of_blocks_id(&*storage).await?, requested_max_size as u16);
             trace!("Built a chain request with {} blocks", request.size());
             let ping = self.build_generic_ping_packet_with_storage(&*storage).await?;

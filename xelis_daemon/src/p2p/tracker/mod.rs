@@ -11,7 +11,6 @@ use bytes::Bytes;
 use tokio::{
     sync::{
         mpsc::{Sender, Receiver, self},
-        RwLock,
         Mutex,
         broadcast
     },
@@ -82,7 +81,7 @@ pub struct ObjectTracker {
     // it is a bounded channel, so if the queue is full, it will block the sender
     request_sender: Sender<Hash>,
     // queue of requests with preserved order
-    queue: RwLock<Queue<Hash, Request>>,
+    queue: Mutex<Queue<Hash, Request>>,
     // Group Manager for batched requests
     // If one fail, all the group is removed
     group: GroupManager,
@@ -103,7 +102,7 @@ impl ObjectTracker {
 
         let zelf: Arc<ObjectTracker> = Arc::new(Self {
             request_sender,
-            queue: RwLock::new(Queue::new()),
+            queue: Mutex::new(Queue::new()),
             group: GroupManager::new(),
             cache: ExpirableCache::new()
         });
@@ -176,7 +175,7 @@ impl ObjectTracker {
                     // Loop through the queue in a ordered way to handle correctly the responses
                     // For this, we need to check if the first element has a response and so on
                     // If we don't have a response during too much time, we remove the request from the queue as it is probably timed out
-                    let mut queue = self.queue.write().await;
+                    let mut queue = self.queue.lock().await;
                     while let Some(request) = queue.peek_mut() {
                         if let Some(requested_at) = request.get_requested() {
                             // check if the request is timed out
@@ -201,7 +200,7 @@ impl ObjectTracker {
         }
 
         debug!("Clearing tracker queue");
-        let mut queue = self.queue.write().await;
+        let mut queue = self.queue.lock().await;
         queue.clear();
     }
 
@@ -233,7 +232,7 @@ impl ObjectTracker {
     pub async fn handle_object_response(&self, response: OwnedObjectResponse) -> Result<bool, P2pError> {
         trace!("handle object response {}", response.get_hash());
         {
-            let mut queue = self.queue.write().await;
+            let mut queue = self.queue.lock().await;
             if let Some(request) = queue.remove(response.get_hash()) {
                 request.notify(response);
                 return Ok(true)
@@ -251,7 +250,7 @@ impl ObjectTracker {
     pub async fn request_object_from_peer_with_or_get_notified(&self, peer: Arc<Peer>, request: ObjectRequest, group_id: Option<u64>) -> Result<RequestResponse, P2pError> {
         trace!("Requesting object {} from {}", request.get_hash(), peer);
         let (listener, hash) = {
-            let mut queue = self.queue.write().await;
+            let mut queue = self.queue.lock().await;
             if let Some(request) = queue.get(request.get_hash()) {
                 return Ok(request.listen())
             }
@@ -309,7 +308,7 @@ impl ObjectTracker {
     // This is called from the requester task loop
     async fn request_object_from_peer_internal(&self, request_hash: Hash) {
         debug!("Requesting object with hash {}", request_hash);
-        let mut queue = self.queue.write().await;
+        let mut queue = self.queue.lock().await;
         debug!("queue locked");
 
         let mut request = None;
