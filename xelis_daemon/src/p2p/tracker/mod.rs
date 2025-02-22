@@ -1,11 +1,10 @@
 mod request;
-mod group;
 
 use std::{
     borrow::Cow,
-    time::{Duration, Instant},
-    sync::Arc,
-    collections::HashMap
+    collections::HashMap,
+    sync::{atomic::{AtomicU64, Ordering}, Arc},
+    time::{Duration, Instant}
 };
 use bytes::Bytes;
 use tokio::{
@@ -41,7 +40,6 @@ use super::{
 };
 use crate::config::PEER_TIMEOUT_REQUEST_OBJECT;
 use request::*;
-use group::*;
 
 pub type SharedObjectTracker = Arc<ObjectTracker>;
 
@@ -82,9 +80,8 @@ pub struct ObjectTracker {
     request_sender: Sender<Hash>,
     // queue of requests with preserved order
     queue: Mutex<Queue<Hash, Request>>,
-    // Group Manager for batched requests
-    // If one fail, all the group is removed
-    group: GroupManager,
+    // Next group id available
+    group_id: AtomicU64,
     // Requests that should be ignored
     // They got canceled but already requested
     cache: ExpirableCache
@@ -103,7 +100,7 @@ impl ObjectTracker {
         let zelf: Arc<ObjectTracker> = Arc::new(Self {
             request_sender,
             queue: Mutex::new(Queue::new()),
-            group: GroupManager::new(),
+            group_id: AtomicU64::new(0),
             cache: ExpirableCache::new()
         });
 
@@ -135,6 +132,10 @@ impl ObjectTracker {
         zelf
     }
 
+    pub fn next_group_id(&self) -> u64 {
+        self.group_id.fetch_add(1, Ordering::SeqCst)
+    }
+
     // Task to clean the expired cache
     async fn task_clean_cache(&self, mut on_exit: broadcast::Receiver<()>) {
         let mut interval = interval(Duration::from_secs(5));
@@ -149,11 +150,6 @@ impl ObjectTracker {
                 }
             }
         }
-    }
-
-    // Returns the group manager used
-    pub fn get_group_manager(&self) -> &GroupManager {
-        &self.group
     }
 
     // Task loop to handle all responses in order
@@ -182,10 +178,9 @@ impl ObjectTracker {
                             if requested_at.elapsed() > TIME_OUT {
                                 warn!("Request timed out for object {}", request.get_hash());
                                 let peer_id = request.get_peer().get_id();
-                                let group_id = request.get_group_id()
-                                    .map(|v| (v, P2pError::TrackerRequestExpired));
+                                let group_id = request.get_group_id();
 
-                                self.clean_queue(&mut queue, peer_id, group_id).await;
+                                self.clean_queue(&mut queue, Some(peer_id), group_id).await;
                             } else {
                                 break;
                             }
@@ -225,6 +220,12 @@ impl ObjectTracker {
                 }
             }
         }
+    }
+
+    pub async fn mark_group_as_fail(&self, group_id: u64) {
+        trace!("mark group as fail");
+        let mut queue = self.queue.lock().await;
+        self.clean_queue(&mut queue, None, Some(group_id)).await;
     }
 
     // This function is called from P2p Server when a peer sends an object response that we requested
@@ -269,17 +270,17 @@ impl ObjectTracker {
     }
 
     // Clean the queue from all requests from the given peer or from the group if it is specified
-    async fn clean_queue(&self, queue: &mut Queue<Hash, Request>, peer_id: u64, group: Option<(u64, P2pError)>) {
+    async fn clean_queue(&self, queue: &mut Queue<Hash, Request>, peer_id: Option<u64>, group: Option<u64>) {
         trace!("clean queue");
         let iter = queue.extract_if(|_, request| {
-            if let (Some((failed_group, _)), Some(request_group)) = (group.as_ref(), request.get_group_id()) {
+            if let (Some(failed_group), Some(request_group)) = (group.as_ref(), request.get_group_id()) {
                 if *failed_group == request_group {
                     return true;
                 }
             }
 
             let peer = request.get_peer();
-            if peer.get_id() == peer_id || peer.get_connection().is_closed() {
+            if Some(peer.get_id()) == peer_id || peer.get_connection().is_closed() {
                 return true;
             }
 
@@ -295,12 +296,6 @@ impl ObjectTracker {
         for (hash, _) in iter {
             debug!("Adding requested object with hash {} in expirable cache", hash);
             self.cache.insert(hash).await;
-        }
-
-        // Delete all from the same group if one of them failed
-        if let Some((group, err)) = group {
-            debug!("Group {} failed", group);
-            self.group.notify_group(group, err).await;
         }
     }
 
@@ -327,17 +322,17 @@ impl ObjectTracker {
             // Make sure its not closed
             if peer.get_connection().is_closed() {
                 warn!("Peer {} is disconnected but still has a pending request object {}", peer, request_hash);
-                fail = Some((peer.get_id(), group_id.map(|v| (v, P2pError::Disconnected))));
+                fail = Some((peer.get_id(), group_id));
             } else {
                 let mut peer_exit = peer.get_exit_receiver();
                 tokio::select! {
                     _ = peer_exit.recv() => {
-                        fail = Some((peer.get_id(), group_id.map(|id| (id, P2pError::Disconnected))));
+                        fail = Some((peer.get_id(), group_id));
                     }
                     res = peer.send_bytes(packet) => {
                         if let Err(e) = res {
                             debug!("failed to request object from {}: {}", peer, e);
-                            fail = Some((peer.get_id(), group_id.map(|id| (id, e))));
+                            fail = Some((peer.get_id(), group_id));
                         }
                     }
                 };
@@ -346,7 +341,7 @@ impl ObjectTracker {
 
         if let Some((peer_id, group)) = fail {
             warn!("cleaning queue because of failure");
-            self.clean_queue(&mut queue, peer_id, group).await;
+            self.clean_queue(&mut queue, Some(peer_id), group).await;
         }
 
         debug!("end peer internal");

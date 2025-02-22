@@ -1874,7 +1874,7 @@ impl<S: Storage> P2pServer<S> {
                         return Err(P2pError::InvalidInventoryPagination)
                     }
                 }
-                let (group_id, _) = self.object_tracker.get_group_manager().next_group_id().await;
+                let group_id = self.object_tracker.next_group_id();
                 let mut requests = FuturesOrdered::new();
                 for hash in txs.into_owned() {
                     // Verify that we don't already have it
@@ -1896,12 +1896,12 @@ impl<S: Storage> P2pServer<S> {
                     match response {
                         Ok((tx, hash)) => {
                             if let Err(e) = self.blockchain.add_tx_to_mempool_with_hash(tx, hash, false).await {
-                                self.object_tracker.get_group_manager().unregister_group(group_id).await;
+                                self.object_tracker.mark_group_as_fail(group_id).await;
                                 return Err(e.into())
                             }
                         },
                         Err(e) => {
-                            self.object_tracker.get_group_manager().unregister_group(group_id).await;
+                            self.object_tracker.mark_group_as_fail(group_id).await;
                             return Err(e)
                         }
                     };
@@ -2348,7 +2348,7 @@ impl<S: Storage> P2pServer<S> {
             if self.allow_boost_sync() {
                 debug!("Requesting needed blocks in boost sync mode");
                 let mut futures = FuturesOrdered::new();
-                let (group_id, _) = self.object_tracker.get_group_manager().next_group_id().await;
+                let group_id = self.object_tracker.next_group_id();
                 for hash in blocks {
                     let fut = async move {
                         if !self.blockchain.has_block(&hash).await? {
@@ -2407,21 +2407,20 @@ impl<S: Storage> P2pServer<S> {
                                     blocks_processed += 1;
                                     total_requested += 1;
                                     if let Err(e) = self.blockchain.add_new_block(block, false, false).await {
-                                        self.object_tracker.get_group_manager().unregister_group(group_id).await;
+                                        self.object_tracker.mark_group_as_fail(group_id).await;
                                         return Err(e)
                                     }
                                 },
                                 Ok(None) => {},
                                 Err(e) => {
                                     debug!("Unregistering group id {} due to error {}", group_id, e);
-                                    self.object_tracker.get_group_manager().unregister_group(group_id).await;
+                                    self.object_tracker.mark_group_as_fail(group_id).await;
                                     return Err(e.into())
                                 }
                             };
                         }
                     };
                 }
-                self.object_tracker.get_group_manager().unregister_group(group_id).await;
             } else {
                 debug!("Requesting needed blocks in normal mode");
                 for hash in blocks {
