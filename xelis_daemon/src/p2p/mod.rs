@@ -2407,6 +2407,9 @@ impl<S: Storage> P2pServer<S> {
                                     blocks_processed += 1;
                                     total_requested += 1;
                                     if let Err(e) = self.blockchain.add_new_block(block, false, false).await {
+                                        // We need to drop the future before in case we have any future holding a mutex guard
+                                        drop(futures);
+
                                         self.object_tracker.mark_group_as_fail(group_id).await;
                                         return Err(e)
                                     }
@@ -2414,6 +2417,9 @@ impl<S: Storage> P2pServer<S> {
                                 Ok(None) => {},
                                 Err(e) => {
                                     debug!("Unregistering group id {} due to error {}", group_id, e);
+                                    // Same as above
+                                    drop(futures);
+
                                     self.object_tracker.mark_group_as_fail(group_id).await;
                                     return Err(e.into())
                                 }
