@@ -17,7 +17,6 @@ use opaque::*;
 use xelis_builder::EnvironmentBuilder;
 use xelis_vm::{
     Context,
-    EnvironmentError,
     FnInstance,
     FnParams,
     FnReturnType,
@@ -731,9 +730,8 @@ fn fire_event_fn(_: FnInstance, mut params: FnParams, context: &mut Context) -> 
     let id = params.remove(0)
         .as_u64()?;
 
-    let constant: Constant = data.into_owned()
-        .try_into()
-        .map_err(|_| EnvironmentError::InvalidParameter)?;
+    let constant: Constant = data.into_inner()
+        .try_into()?;
 
     let size = constant.size();
     let cost = FEE_PER_BYTE_OF_EVENT_DATA * size as u64;
@@ -792,7 +790,7 @@ fn get_balance_for_asset<P: ContractProvider>(_: FnInstance, mut params: FnParam
     let (provider, state) = from_context::<P>(context)?;
 
     let asset: Hash = params.remove(0)
-        .into_owned()
+        .into_inner()
         .into_opaque_type()?;
 
     let balance = get_balance_from_cache(provider, state, asset)?;
@@ -804,15 +802,15 @@ fn transfer<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &
     debug!("Transfer called {:?}", params);
 
     let asset: Hash = params.remove(2)
-        .into_owned()
+        .into_inner()
         .into_opaque_type()?;
 
     let amount = params.remove(1)
-        .into_owned()
+        .into_inner()
         .to_u64()?;
 
     let destination: Address = params.remove(0)
-        .into_owned()
+        .into_inner()
         .into_opaque_type()?;
 
     if !destination.is_normal() {
@@ -864,10 +862,10 @@ fn burn<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &mut 
     let (provider, state) = from_context::<P>(context)?;
 
     let asset: Hash = params.remove(1)
-        .into_owned()
+        .into_inner()
         .into_opaque_type()?;
     let amount = params.remove(0)
-        .into_owned()
+        .into_inner()
         .to_u64()?;
 
     let Some((mut balance_state, mut balance)) = get_balance_from_cache(provider, state, asset.clone())? else {

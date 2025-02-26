@@ -49,9 +49,8 @@ pub fn storage_load<P: ContractProvider>(_: FnInstance, mut params: FnParams, co
     let (storage, state) = from_context::<P>(context)?;
 
     let key = params.remove(0)
-        .into_owned()
-        .try_into()
-        .map_err(|_| anyhow::anyhow!("Invalid key"))?;
+        .into_inner()
+        .try_into()?;
 
     let value = match state.cache.storage.get(&key) {
         Some((_, value)) => value.clone(),
@@ -71,9 +70,8 @@ pub fn storage_has<P: ContractProvider>(_: FnInstance, mut params: FnParams, con
     let (storage, state) = from_context::<P>(context)?;
 
     let key = params.remove(0)
-        .into_owned()
-        .try_into()
-        .map_err(|_| anyhow::anyhow!("Invalid key"))?;
+        .into_inner()
+        .try_into()?;
 
     let contains = match state.cache.storage.get(&key) {
         Some((_, value)) => value.is_some(),
@@ -85,9 +83,8 @@ pub fn storage_has<P: ContractProvider>(_: FnInstance, mut params: FnParams, con
 
 pub fn storage_store<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType {
     let key: Constant = params.remove(0)
-        .into_owned()
-        .try_into()
-        .map_err(|_| anyhow::anyhow!("Invalid key"))?;
+        .into_inner()
+        .try_into()?;
 
     let key_size = key.size();
     if key_size > MAX_KEY_SIZE {
@@ -95,9 +92,8 @@ pub fn storage_store<P: ContractProvider>(_: FnInstance, mut params: FnParams, c
     }
 
     let value: Constant = params.remove(0)
-        .into_owned()
-        .try_into()
-        .map_err(|_| anyhow::anyhow!("Invalid value"))?;
+        .into_inner()
+        .try_into()?;
 
     let value_size = value.size();
     if value_size > MAX_VALUE_SIZE {
@@ -131,9 +127,8 @@ pub fn storage_delete<P: ContractProvider>(_: FnInstance, mut params: FnParams, 
     let (storage, state) = from_context::<P>(context)?;
 
     let key = params.remove(0)
-        .into_owned()
-        .try_into()
-        .map_err(|_| anyhow::anyhow!("Invalid key"))?;
+        .into_inner()
+        .try_into()?;
 
     let data_state = match state.cache.storage.get(&key) {
         Some((s, _)) => match s {
