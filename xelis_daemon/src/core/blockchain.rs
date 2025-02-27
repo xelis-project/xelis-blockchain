@@ -114,9 +114,10 @@ use std::{
         atomic::{AtomicU64, Ordering},
         Arc
     },
-    time::Instant
+    time::Instant,
+    thread
 };
-use tokio::{sync::{Mutex, RwLock}, net::lookup_host};
+use tokio::{net::lookup_host, sync::{broadcast, Mutex, RwLock}};
 use log::{info, error, debug, warn, trace};
 use rand::Rng;
 
@@ -172,7 +173,10 @@ pub struct Blockchain<S: Storage> {
     auto_prune_keep_n_blocks: Option<u64>,
     // Blocks hashes checkpoints
     // No rewind can be done below these blocks
-    checkpoints: HashSet<Hash>
+    checkpoints: HashSet<Hash>,
+    // Best threads count to use for multi threading
+    // If none, its disabled
+    txs_threads_count: Option<usize>,
 }
 
 impl<S: Storage> Blockchain<S> {
@@ -219,6 +223,27 @@ impl<S: Storage> Blockchain<S> {
 
         let environment = build_environment::<S>().build();
 
+        let txs_threads_count = if let Some(n) = config.txs_threads_count {
+            if n == 0 {
+                error!("TXs threads count cannot be set to zero!");
+                return Err(BlockchainError::InvalidConfig.into());
+            }
+            Some(n)
+        } else if !config.disable_multi_threads_txs {
+            Some(match thread::available_parallelism() {
+                Ok(n) => {
+                    info!("Detected {} threads for TXs multi-threading", n);
+                    n.get()
+                },
+                Err(e) => {
+                    warn!("Error while detecting best threads count for TXs: {}, fallback to 1 only", e);
+                    1
+                }
+            })
+        } else {
+            None
+        };
+
         info!("Initializing chain...");
         let blockchain = Self {
             height: AtomicU64::new(height),
@@ -240,7 +265,8 @@ impl<S: Storage> Blockchain<S> {
             full_order_cache: Mutex::new(LruCache::new(NonZeroUsize::new(1024).unwrap())),
             auto_prune_keep_n_blocks: config.auto_prune_keep_n_blocks,
             skip_block_template_txs_verification: config.skip_block_template_txs_verification,
-            checkpoints: config.checkpoints.into_iter().collect()
+            checkpoints: config.checkpoints.into_iter().collect(),
+            txs_threads_count
         };
 
         // include genesis block
@@ -356,12 +382,18 @@ impl<S: Storage> Blockchain<S> {
         &self.environment
     }
 
+    // Get the configured threads count for TXS
+    pub fn get_threads_count_for_txs(&self) -> Option<usize> {
+        self.txs_threads_count
+    }
+
     // Stop all blockchain modules
     // Each module is stopped in its own context
     // So no deadlock occurs in case they are linked
     pub async fn stop(&self) {
         info!("Stopping modules...");
         {
+            debug!("stopping p2p module");
             let mut p2p = self.p2p.write().await;
             if let Some(p2p) = p2p.take() {
                 p2p.stop().await;
@@ -369,6 +401,7 @@ impl<S: Storage> Blockchain<S> {
         }
 
         {
+            debug!("stopping rpc module");
             let mut rpc = self.rpc.write().await;
             if let Some(rpc) = rpc.take() {
                 rpc.stop().await;
@@ -376,6 +409,7 @@ impl<S: Storage> Blockchain<S> {
         }
 
         {
+            debug!("stopping storage module");
             let mut storage = self.storage.write().await;
             if let Err(e) = storage.stop().await {
                 error!("Error while stopping storage: {}", e);
@@ -383,6 +417,7 @@ impl<S: Storage> Blockchain<S> {
         }
 
         {
+            debug!("stopping mempool module");
             let mut mempool = self.mempool.write().await;
             mempool.stop().await;
         }
@@ -529,6 +564,7 @@ impl<S: Storage> Blockchain<S> {
     // Prune the chain until topoheight
     // This will delete all blocks / versioned balances / txs until topoheight in param
     pub async fn prune_until_topoheight(&self, topoheight: TopoHeight) -> Result<TopoHeight, BlockchainError> {
+        trace!("prune until topoheight {}", topoheight);
         let mut storage = self.storage.write().await;
         self.prune_until_topoheight_for_storage(topoheight, &mut *storage).await
     }
@@ -632,21 +668,27 @@ impl<S: Storage> Blockchain<S> {
 
     // Get the current emitted supply of XELIS at current topoheight
     pub async fn get_supply(&self) -> Result<u64, BlockchainError> {
-        self.storage.read().await.get_supply_at_topo_height(self.get_topo_height()).await
+        trace!("get supply");
+        let storage = self.storage.read().await;
+        storage.get_supply_at_topo_height(self.get_topo_height()).await
     }
 
     // Get the current burned supply of XELIS at current topoheight
     pub async fn get_burned_supply(&self) -> Result<u64, BlockchainError> {
-        self.storage.read().await.get_burned_supply_at_topo_height(self.get_topo_height()).await
+        trace!("get burned supply");
+        let storage = self.storage.read().await;
+        storage.get_burned_supply_at_topo_height(self.get_topo_height()).await
     }
 
     // Get the count of transactions available in the mempool
     pub async fn get_mempool_size(&self) -> usize {
+        trace!("get mempool size");
         self.mempool.read().await.size()
     }
 
     // Get the current top block hash in chain
     pub async fn get_top_block_hash(&self) -> Result<Hash, BlockchainError> {
+        trace!("get top block hash");
         let storage = self.storage.read().await;
         self.get_top_block_hash_for_storage(&storage).await
     }
@@ -660,6 +702,7 @@ impl<S: Storage> Blockchain<S> {
 
     // Verify if we have the current block in storage by locking it ourself
     pub async fn has_block(&self, hash: &Hash) -> Result<bool, BlockchainError> {
+        trace!("has block {} in chain", hash);
         let storage = self.storage.read().await;
         storage.has_block_with_hash(hash).await
     }
@@ -1291,6 +1334,7 @@ impl<S: Storage> Blockchain<S> {
 
     // Add a tx to the mempool with the given hash, it is not computed and the TX is transformed into an Arc
     pub async fn add_tx_to_mempool_with_hash(&self, tx: Transaction, hash: Hash, broadcast: bool) -> Result<(), BlockchainError> {
+        trace!("add tx to mempool with hash");
         let storage = self.storage.read().await;
         self.add_tx_to_mempool_with_storage_and_hash(&storage, Arc::new(tx), hash, broadcast).await
     }
@@ -1386,12 +1430,14 @@ impl<S: Storage> Blockchain<S> {
 
     // Get a block template for the new block work (mining)
     pub async fn get_block_template(&self, address: PublicKey) -> Result<BlockHeader, BlockchainError> {
+        trace!("get block template");
         let storage = self.storage.read().await;
         self.get_block_template_for_storage(&storage, address).await
     }
 
     // check that the TX Hash is present in mempool or in chain disk
     pub async fn has_tx(&self, hash: &Hash) -> Result<bool, BlockchainError> {
+        trace!("has tx {}", hash);
         // check in mempool first
         // if its present, returns it
         {
@@ -1402,6 +1448,7 @@ impl<S: Storage> Blockchain<S> {
         }
 
         // check in storage now
+        trace!("has tx {} storage", hash);
         let storage = self.storage.read().await;
         storage.has_transaction(hash).await
     }
@@ -1421,12 +1468,16 @@ impl<S: Storage> Blockchain<S> {
         }
 
         // check in storage now
+        debug!("get tx {} lock", hash);
         let storage = self.storage.read().await;
+        debug!("get tx {} lock acquired", hash);
         storage.get_transaction(hash).await
     }
 
     pub async fn get_block_header_template(&self, address: PublicKey) -> Result<BlockHeader, BlockchainError> {
+        debug!("get block header template");
         let storage = self.storage.read().await;
+        debug!("get block header template lock acquired");
         self.get_block_header_template_for_storage(&storage, address).await
     }
 
@@ -1586,7 +1637,6 @@ impl<S: Storage> Blockchain<S> {
         trace!("Searching TXs for block at height {}", header.get_height());
         let mut transactions: Vec<Immutable<Transaction>> = Vec::with_capacity(header.get_txs_count());
         let storage = self.storage.read().await;
-        trace!("Locking mempool for building block from header");
         let mempool = self.mempool.read().await;
         trace!("Mempool lock acquired for building block from header");
         for hash in header.get_txs_hashes() {
@@ -1606,7 +1656,9 @@ impl<S: Storage> Blockchain<S> {
 
     // Add a new block in chain
     pub async fn add_new_block(&self, block: Block, broadcast: bool, mining: bool) -> Result<(), BlockchainError> {
+        debug!("locking storage to add a new block in chain");
         let mut storage = self.storage.write().await;
+        debug!("storage lock acquired for new block to add");
         self.add_new_block_for_storage(&mut storage, block, broadcast, mining).await
     }
 
@@ -1763,14 +1815,15 @@ impl<S: Storage> Blockchain<S> {
             }
 
             trace!("verifying {} TXs in block {}", txs_len, block_hash);
-            // Copy the reference
-            let storage = &*storage;
-            let mut chain_state = ChainState::new(storage, &self.environment, self.get_stable_topoheight(), current_topoheight, version);
             // Cache to retrieve only one time all TXs hashes until stable height
             let mut all_parents_txs: Option<HashSet<Hash>> = None;
 
             // All transactions to be verified in one batch
-            let mut batch = Vec::with_capacity(block.get_txs_count());
+            let mut txs_batch = Vec::with_capacity(block.get_txs_count());
+            // All transactions grouped per source key
+            // used for multi threading
+            let mut txs_grouped = HashMap::new();
+            let mut total_outputs = 0;
             let is_v2_enabled = version >= BlockVersion::V2;
             for (tx, hash) in block.get_transactions().iter().zip(block.get_txs_hashes()) {
                 let tx_size = tx.size();
@@ -1835,13 +1888,86 @@ impl<S: Storage> Blockchain<S> {
                     }
                 }
 
-                batch.push((tx, tx_hash));
+                total_outputs += tx.get_outputs_count();
+                txs_batch.push((tx, hash));
+                txs_grouped.entry(tx.get_source())
+                    .or_insert_with(Vec::new)
+                    .push((tx, hash));
             }
 
-            if !batch.is_empty() {
-                debug!("proof verifications of TXs ({}) in block {}", batch.iter().map(|(_, hash)| hash.to_string()).collect::<Vec<String>>().join(","), block_hash);
-                // Verify all valid transactions in one batch
-                Transaction::verify_batch(batch.as_slice(), &mut chain_state).await?;
+            if !txs_batch.is_empty() {
+                debug!("proof verifications of {} TXs from {} sources with {} outputs in block {}", txs_batch.len(), txs_grouped.len(), total_outputs, block_hash);
+                // Track how much time it takes to verify them all
+                let start = Instant::now();
+                // If multi thread is enabled and we have more than one source
+                // Otherwise its not worth-it to move it on another thread
+                if let Some(n_threads) = self.txs_threads_count.filter(|_| txs_grouped.len() > 1) {
+                    let mut batches_count = txs_grouped.len();
+                    if batches_count > n_threads {
+                        debug!("Batches count ({}) is above configured threads ({}), capping it", batches_count, n_threads);
+                        batches_count = n_threads;
+                    }
+
+                    debug!("using multi-threading mode to verify the transactions in {} batches", batches_count);
+                    let mut batches = vec![Vec::new(); batches_count];
+                    let mut queue: VecDeque<_> = txs_grouped.into_values().collect();
+
+                    let mut i = 0;
+                    // TODO: load balance more!
+                    while let Some(group) = queue.pop_front() {
+                        batches[i % batches_count].extend(group);
+                        i += 1;
+                    }
+
+                    // Channel to be notified of any batch failing
+                    let (sender, _) = broadcast::channel::<()>(1);
+                    let (_, results) = async_scoped::TokioScope::scope_and_block(|scope| {
+                        let storage = &*storage;
+                        let stable_topoheight = self.get_stable_topoheight();
+                        for (i, batch) in batches.into_iter().enumerate() {
+                            let sender = &sender;
+                            let mut receiver = sender.subscribe();
+
+                            scope.spawn(async move {
+                                let mut chain_state = ChainState::new(storage, &self.environment, stable_topoheight, current_topoheight, version);
+                                tokio::select! {
+                                    res = Transaction::verify_batch(batch.as_slice(), &mut chain_state) => {
+                                        if let Err(e) = &res {
+                                            if sender.send(()).is_err() {
+                                                error!("Error while notifying others tasks about batch #{} failing with error: {}", i, e);
+                                            }
+                                        }
+
+                                        res
+                                    },
+                                    _ = receiver.recv() => {
+                                        info!("Exiting batch task #{} due to exit signal received", i);
+                                        Ok(())
+                                    }
+                                }
+                            });
+                        }
+                    });
+
+                    for (i, result) in results.into_iter().enumerate() {
+                        match result {
+                            Ok(Ok(())) => {},
+                            Ok(Err(e)) => {
+                                error!("Error on batch #{}: {}", i, e);
+                                return Err(e.into());
+                            },
+                            Err(e) => {
+                                error!("Error while joining batch task #{}: {} ", i, e);
+                                return Err(BlockchainError::InvalidTransactionMultiThread)
+                            }
+                        };
+                    }
+                } else {
+                    // Verify all valid transactions in one batch
+                    let mut chain_state = ChainState::new(storage, &self.environment, self.get_stable_topoheight(), current_topoheight, version);
+                    Transaction::verify_batch(txs_batch.as_slice(), &mut chain_state).await?;
+                }
+                debug!("Verified {} transactions in {}ms", txs_batch.len(), start.elapsed().as_millis());
             }
         }
 
@@ -2619,6 +2745,7 @@ impl<S: Storage> Blockchain<S> {
 
     // Rewind the chain by removing N blocks from the top
     pub async fn rewind_chain(&self, count: u64, until_stable_height: bool) -> Result<TopoHeight, BlockchainError> {
+        trace!("rewind chain of {} blocks (stable height: {})", count, until_stable_height);
         let mut storage = self.storage.write().await;
         self.rewind_chain_for_storage(&mut storage, count, until_stable_height).await
     }

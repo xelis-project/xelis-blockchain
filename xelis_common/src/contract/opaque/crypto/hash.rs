@@ -55,7 +55,7 @@ pub fn hash_from_bytes_fn(_: FnInstance, mut params: FnParams, _: &mut Context) 
 
 pub fn hash_from_hex_fn(_: FnInstance, mut params: FnParams, _: &mut Context) -> FnReturnType {
     let hex = params.remove(0)
-        .into_owned()
+        .into_inner()
         .to_string()?;
 
     if hex.len() != HASH_SIZE * 2 {
@@ -70,7 +70,7 @@ pub fn hash_from_hex_fn(_: FnInstance, mut params: FnParams, _: &mut Context) ->
 
 pub fn blake3_fn(_: FnInstance, mut params: FnParams, _: &mut Context) -> FnReturnType {
     let input = params.remove(0)
-        .into_owned()
+        .into_inner()
         .to_vec()?
         .into_iter()
         .map(|v| v.borrow().as_u8())
@@ -82,7 +82,7 @@ pub fn blake3_fn(_: FnInstance, mut params: FnParams, _: &mut Context) -> FnRetu
 
 pub fn sha256_fn(_: FnInstance, mut params: FnParams, _: &mut Context) -> FnReturnType {
     let input = params.remove(0)
-        .into_owned()
+        .into_inner()
         .to_vec()?
         .into_iter()
         .map(|v| v.borrow().as_u8())

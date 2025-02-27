@@ -117,7 +117,7 @@ impl PeerList {
         };
 
         trace!("Signaling exit of {}", peer);
-        peer.signal_exit().await?;
+        let res = peer.signal_exit().await;
  
         // If peer allows us to share it, we have to notify all peers that have this peer in common
         if notify && peer.sharable() {
@@ -159,7 +159,7 @@ impl PeerList {
             }
         }
 
-        Ok(())
+        res
     }
 
     // Add a new peer to the list

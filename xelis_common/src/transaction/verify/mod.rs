@@ -784,7 +784,11 @@ impl Transaction {
                 .map(|((tx, _), (transcript, commitments))| {
                     tx.as_ref()
                         .range_proof
-                        .verification_view(transcript, commitments, 64)
+                        .verification_view(
+                            transcript,
+                            commitments,
+                            BULLET_PROOF_SIZE
+                        )
                 }),
             &BP_GENS,
             &PC_GENS,

@@ -7,6 +7,7 @@ use crate::{
     },
     p2p::packet::PacketWrapper
 };
+use anyhow::Context;
 use xelis_common::{
     api::daemon::Direction,
     block::TopoHeight,
@@ -255,33 +256,33 @@ impl Peer {
 
     // Get the topoheight of the peer
     pub fn get_topoheight(&self) -> TopoHeight {
-        self.topoheight.load(Ordering::Acquire)
+        self.topoheight.load(Ordering::SeqCst)
     }
 
     // Set the topoheight of the peer
     pub fn set_topoheight(&self, topoheight: TopoHeight) {
-        self.topoheight.store(topoheight, Ordering::Release);
+        self.topoheight.store(topoheight, Ordering::SeqCst);
     }
 
     // Get the height of the peer
     pub fn get_height(&self) -> u64 {
-        self.height.load(Ordering::Acquire)
+        self.height.load(Ordering::SeqCst)
     }
 
     // Set the height of the peer
     pub fn set_height(&self, height: u64) {
-        self.height.store(height, Ordering::Release);
+        self.height.store(height, Ordering::SeqCst);
     }
 
     // Is the peer running a pruned chain
     pub fn is_pruned(&self) -> bool {
-        self.is_pruned.load(Ordering::Acquire)
+        self.is_pruned.load(Ordering::SeqCst)
     }
 
     // Get the pruned topoheight
     pub fn get_pruned_topoheight(&self) -> Option<TopoHeight> {
         if self.is_pruned() {
-            Some(self.pruned_topoheight.load(Ordering::Acquire))
+            Some(self.pruned_topoheight.load(Ordering::SeqCst))
         } else {
             None
         }
@@ -290,10 +291,10 @@ impl Peer {
     // Update the pruned topoheight state
     pub fn set_pruned_topoheight(&self, pruned_topoheight: Option<TopoHeight>) {
         if let Some(pruned_topoheight) = pruned_topoheight {
-            self.is_pruned.store(true, Ordering::Release);
-            self.pruned_topoheight.store(pruned_topoheight, Ordering::Release);
+            self.is_pruned.store(true, Ordering::SeqCst);
+            self.pruned_topoheight.store(pruned_topoheight, Ordering::SeqCst);
         } else {
-            self.is_pruned.store(false, Ordering::Release);
+            self.is_pruned.store(false, Ordering::SeqCst);
         }
     }
 
@@ -336,17 +337,17 @@ impl Peer {
 
     // Get the last time we got a fail from the peer
     pub fn get_last_fail_count(&self) -> u64 {
-        self.last_fail_count.load(Ordering::Acquire)
+        self.last_fail_count.load(Ordering::SeqCst)
     }
 
     // Set the last fail count of the peer
     pub fn set_last_fail_count(&self, value: u64) {
-        self.last_fail_count.store(value, Ordering::Release);
+        self.last_fail_count.store(value, Ordering::SeqCst);
     }
 
     // Get the fail count of the peer
     pub fn get_fail_count(&self) -> u8 {
-        self.fail_count.load(Ordering::Acquire)
+        self.fail_count.load(Ordering::SeqCst)
     }
 
     // Update the fail count of the peer
@@ -362,7 +363,7 @@ impl Peer {
         let reset = last_fail + PEER_FAIL_TIME_RESET < current_time;
         if reset {
             // reset counter
-            self.fail_count.store(to_store, Ordering::Release);
+            self.fail_count.store(to_store, Ordering::SeqCst);
         }
         reset
     }
@@ -375,7 +376,7 @@ impl Peer {
         // if its long time we didn't get a fail, reset the fail count to 1 (because of current fail)
         // otherwise, add 1
         if !self.update_fail_count(current_time, 1) {
-            self.fail_count.fetch_add(1, Ordering::Release);
+            self.fail_count.fetch_add(1, Ordering::SeqCst);
         }
         self.set_last_fail_count(current_time);
     }
@@ -383,12 +384,12 @@ impl Peer {
     // Get the last time we got a chain sync request
     // This is used to prevent spamming the chain sync packet
     pub fn get_last_chain_sync(&self) -> TimestampSeconds {
-        self.last_chain_sync.load(Ordering::Acquire)
+        self.last_chain_sync.load(Ordering::SeqCst)
     }
 
     // Store the last time we got a chain sync request
     pub fn set_last_chain_sync(&self, time: TimestampSeconds) {
-        self.last_chain_sync.store(time, Ordering::Release);
+        self.last_chain_sync.store(time, Ordering::SeqCst);
     }
 
     // Get all objects requested from this peer
@@ -533,53 +534,53 @@ impl Peer {
 
     // Get the last time we got a peer list
     pub fn get_last_peer_list(&self) -> TimestampSeconds {
-        self.last_peer_list.load(Ordering::Acquire)
+        self.last_peer_list.load(Ordering::SeqCst)
     }
 
     // Track the last time we got a peer list
     // This is used to prevent spamming the peer list
     pub fn set_last_peer_list(&self, value: TimestampSeconds) {
-        self.last_peer_list.store(value, Ordering::Release)
+        self.last_peer_list.store(value, Ordering::SeqCst)
     }
 
     // Get the last time we got a ping packet from this peer
     pub fn get_last_ping(&self) -> TimestampSeconds {
-        self.last_ping.load(Ordering::Acquire)
+        self.last_ping.load(Ordering::SeqCst)
     }
 
     // Track the last time we got a ping packet from this peer
     pub fn set_last_ping(&self, value: TimestampSeconds) {
-        self.last_ping.store(value, Ordering::Release)
+        self.last_ping.store(value, Ordering::SeqCst)
     }
 
     // Get the last time we sent a ping packet to this peer
     pub fn get_last_ping_sent(&self) -> TimestampSeconds {
-        self.last_ping_sent.load(Ordering::Acquire)
+        self.last_ping_sent.load(Ordering::SeqCst)
     }
 
     // Track the last time we sent a ping packet to this peer
     pub fn set_last_ping_sent(&self, value: TimestampSeconds) {
-        self.last_ping.store(value, Ordering::Release)
+        self.last_ping.store(value, Ordering::SeqCst)
     }
 
     // Get the last time a inventory has been requested
     pub fn get_last_inventory(&self) -> TimestampSeconds {
-        self.last_inventory.load(Ordering::Acquire)
+        self.last_inventory.load(Ordering::SeqCst)
     }
 
     // Set the last inventory time
     pub fn set_last_inventory(&self, value: TimestampSeconds) {
-        self.last_inventory.store(value, Ordering::Release)
+        self.last_inventory.store(value, Ordering::SeqCst)
     }
 
     // Get the requested inventory flag
     pub fn has_requested_inventory(&self) -> bool {
-        self.requested_inventory.load(Ordering::Acquire)
+        self.requested_inventory.load(Ordering::SeqCst)
     }
 
     // Set the requested inventory flag
     pub fn set_requested_inventory(&self, value: bool) {
-        self.requested_inventory.store(value, Ordering::Release)
+        self.requested_inventory.store(value, Ordering::SeqCst)
     }
 
     // Get the outgoing address of the peer
@@ -617,7 +618,10 @@ impl Peer {
         let res = self.peer_list.remove_peer(self.get_id(), true).await;
 
         trace!("Closing connection internal with {}", self);
-        self.get_connection().close().await?;
+        self.get_connection()
+            .close()
+            .await
+            .context("Error while closing internal connection")?;
 
         res
     }
@@ -658,7 +662,7 @@ impl Display for Peer {
         // update fail counter to have up-to-date data to display
         self.update_fail_count_default();
         let peers = if let Ok(peers) = self.get_peers().try_lock() {
-            if log_enabled!(Level::Debug) {
+            if log_enabled!(Level::Trace) {
                 format!("{:?}", peers)
             } else {
                 format!("{}", peers.len())

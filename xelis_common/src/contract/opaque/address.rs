@@ -48,7 +48,7 @@ pub fn address_public_key_bytes(zelf: FnInstance, _: FnParams, _: &mut Context) 
 
 pub fn address_from_string(_: FnInstance, mut params: FnParams, _: &mut Context) -> FnReturnType {
     let string = params.remove(0)
-        .into_owned()
+        .into_inner()
         .to_string()?;
 
     let address = Address::from_string(&string)

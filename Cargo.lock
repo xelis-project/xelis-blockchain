@@ -463,6 +463,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "async-scoped"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4042078ea593edffc452eef14e99fdb2b120caa4ad9618bcdeabc4a023b98740"
+dependencies = [
+ "futures",
+ "pin-project",
+ "tokio",
+]
+
+[[package]]
 name = "async-stream"
 version = "0.3.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3792,7 +3803,7 @@ dependencies = [
 [[package]]
 name = "xelis-ast"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#43c44fa24e6a92b7c01ef56d0780ea87e0e49c5f"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#11c4ce0abe9b8ba3ab7f321afdd292944878776a"
 dependencies = [
  "indexmap 2.7.1",
  "xelis-types",
@@ -3801,7 +3812,7 @@ dependencies = [
 [[package]]
 name = "xelis-builder"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#43c44fa24e6a92b7c01ef56d0780ea87e0e49c5f"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#11c4ce0abe9b8ba3ab7f321afdd292944878776a"
 dependencies = [
  "anyhow",
  "log",
@@ -3815,7 +3826,7 @@ dependencies = [
 [[package]]
 name = "xelis-bytecode"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#43c44fa24e6a92b7c01ef56d0780ea87e0e49c5f"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#11c4ce0abe9b8ba3ab7f321afdd292944878776a"
 dependencies = [
  "indexmap 2.7.1",
  "serde",
@@ -3825,7 +3836,7 @@ dependencies = [
 [[package]]
 name = "xelis-environment"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#43c44fa24e6a92b7c01ef56d0780ea87e0e49c5f"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#11c4ce0abe9b8ba3ab7f321afdd292944878776a"
 dependencies = [
  "anyhow",
  "better_any",
@@ -3851,7 +3862,7 @@ dependencies = [
 [[package]]
 name = "xelis-types"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#43c44fa24e6a92b7c01ef56d0780ea87e0e49c5f"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#11c4ce0abe9b8ba3ab7f321afdd292944878776a"
 dependencies = [
  "anyhow",
  "indexmap 2.7.1",
@@ -3864,7 +3875,7 @@ dependencies = [
 [[package]]
 name = "xelis-vm"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#43c44fa24e6a92b7c01ef56d0780ea87e0e49c5f"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#11c4ce0abe9b8ba3ab7f321afdd292944878776a"
 dependencies = [
  "thiserror 2.0.11",
  "xelis-bytecode",
@@ -3930,6 +3941,7 @@ dependencies = [
  "actix-web-actors",
  "anyhow",
  "async-recursion",
+ "async-scoped",
  "async-trait",
  "bytes",
  "chacha20poly1305",

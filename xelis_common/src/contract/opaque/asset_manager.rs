@@ -39,7 +39,7 @@ pub fn asset_manager(_: FnInstance, _: FnParams, _: &mut Context) -> FnReturnTyp
 pub fn asset_manager_create<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType {
     let (provider, chain_state) = from_context::<P>(context)?;
 
-    let max_supply = match params.remove(4).into_inner().take_as_optional() {
+    let max_supply = match params.remove(4).into_inner().take_as_optional()? {
         Some(v) => Some(v.to_u64()?),
         _ => None,
     };

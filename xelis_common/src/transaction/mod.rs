@@ -229,6 +229,17 @@ impl Transaction {
         }
     }
 
+    // Get the total outputs count per TX
+    // default is 1
+    // Transfers / Deposits are their own len
+    pub fn get_outputs_count(&self) -> usize {
+        match &self.data {
+            TransactionType::Transfers(transfers) => transfers.len(),
+            TransactionType::InvokeContract(payload) => payload.deposits.len().max(1),
+            _ => 1
+        }
+    }
+
     // Consume the transaction by returning the source public key and the transaction type
     pub fn consume(self) -> (CompressedPublicKey, TransactionType) {
         (self.source, self.data)

@@ -2,6 +2,7 @@ use crate::{
     core::error::BlockchainError,
     config::{CHAIN_SYNC_RESPONSE_MAX_BLOCKS, CHAIN_SYNC_RESPONSE_MIN_BLOCKS}
 };
+use anyhow::Error;
 use tokio::{
     sync::{
         AcquireError,
@@ -151,7 +152,7 @@ pub enum P2pError {
     #[error("Object not requested {}", _0)]
     ObjectNotRequested(ObjectRequest),
     #[error("Object requested {} is not present any more in queue", _0)]
-    ObjectHashNotPresentInQueue(Hash),
+    ObjectNotPresentInQueue(Hash),
     #[error("Object requested {} already requested", _0)]
     ObjectAlreadyRequested(ObjectRequest),
     #[error("Invalid object response for request, received hash: {}", _0)]
@@ -184,6 +185,8 @@ pub enum P2pError {
     SemaphoreAcquireError(#[from] AcquireError),
     #[error(transparent)]
     EncryptionError(#[from] EncryptionError),
+    #[error(transparent)]
+    Any(#[from] Error)
 }
 
 impl From<BlockchainError> for P2pError {
