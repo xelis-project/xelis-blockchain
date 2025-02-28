@@ -2290,24 +2290,46 @@ impl<S: Storage> P2pServer<S> {
                 // request all blocks header and verify basic chain structure
                 // Starting topoheight must be the next topoheight after common block
                 // Blocks in chain response must be ordered by topoheight otherwise it will give incorrect results 
-                let mut chain_validator = ChainValidator::new(&self.blockchain, common_topoheight + 1);
+                let mut futures = FuturesOrdered::new();
                 for hash in blocks {
                     trace!("Request block header for chain validator: {}", hash);
 
-                    // check if we already have the block to not request it
-                    if self.blockchain.has_block(&hash).await? {
-                        trace!("We already have block {}, skipping", hash);
-                        continue;
-                    }
+                    let fut = async {
+                        // check if we already have the block to not request it
+                        if self.blockchain.has_block(&hash).await? {
+                            trace!("We already have block {}, skipping", hash);
+                            return Ok(None)
+                        }
+    
+                        let response = peer.request_blocking_object(ObjectRequest::BlockHeader(hash)).await?;
+                        match response {
+                            OwnedObjectResponse::BlockHeader(header, hash) => Ok(Some((header, hash))),
+                            _ => Err(P2pError::ExpectedBlock)
+                        }
+                    };
 
-                    let response = peer.request_blocking_object(ObjectRequest::BlockHeader(hash)).await?;
-                    if let OwnedObjectResponse::BlockHeader(header, hash) = response {
-                        trace!("Received {} with hash {}", header, hash);
-                        chain_validator.insert_block(hash, header).await?;
-                    } else {
-                        error!("{} sent us an invalid object response", peer);
-                        return Err(P2pError::ExpectedBlock.into())
-                    }
+                    futures.push_back(fut);
+                }
+
+                let mut chain_validator = ChainValidator::new(&self.blockchain, common_topoheight + 1);
+                let mut exit_signal = self.exit_sender.subscribe();
+                'main: loop {
+                    tokio::select! {
+                        _ = exit_signal.recv() => {
+                            debug!("Stopping chain validator due to exit signal");
+                            break 'main;
+                        },
+                        next = futures.next() => {
+                            let Some(res) = next else {
+                                debug!("No more items in futures for chain validator");
+                                break 'main;
+                            };
+
+                            if let Some((block, hash)) = res? {
+                                chain_validator.insert_block(hash, block).await?;
+                            }
+                        }
+                    };
                 }
 
                 // Verify that it has a higher cumulative difficulty than us
