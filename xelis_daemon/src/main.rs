@@ -423,7 +423,7 @@ fn build_prompt_message(
     );
     let rpc_str = if rpc_count > 0 {
         format!(
-            "| {}: {}",
+            "| {}: {} ",
             prompt.colorize_str(Color::Yellow, "RPC"),
             prompt.colorize_string(Color::Green, &format!("{}", rpc_count))
         )
