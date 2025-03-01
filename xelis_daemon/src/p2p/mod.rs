@@ -1343,7 +1343,7 @@ impl<S: Storage> P2pServer<S> {
 
                     debug!("Adding propagated tx {} from {} to mempool", hash, peer);
                     if let Err(e) = self.blockchain.add_tx_to_mempool_with_hash(transaction, hash, true).await {
-                        error!("Error while adding new block from {}: {}", peer, e);
+                        error!("Error while adding new TX in mempool from {}: {}", peer, e);
                         peer.increment_fail_count();
                     }
                 }
@@ -1850,7 +1850,7 @@ impl<S: Storage> P2pServer<S> {
                 };
 
                 trace!("Sending inventory response to {}", peer);
-                peer.send_bytes(Bytes::from(packet)).await?
+                peer.send_bytes(Bytes::from(packet)).await?;
             },
             Packet::NotifyInventoryResponse(inventory) => {
                 debug!("Received a notify inventory from {}: {} txs", peer, inventory.len());
@@ -2374,7 +2374,9 @@ impl<S: Storage> P2pServer<S> {
                 for hash in blocks {
                     let fut = async move {
                         if !self.blockchain.has_block(&hash).await? {
-                            let mut receiver = self.object_tracker.request_object_from_peer_with_or_get_notified(Arc::clone(peer), ObjectRequest::Block(hash), Some(group_id)).await?;
+                            debug!("Requesting boost sync block {}", hash);
+                            let mut receiver = self.object_tracker.request_object_from_peer_with_or_get_notified(Arc::clone(peer), ObjectRequest::Block(hash.clone()), Some(group_id)).await?;
+                            debug!("Waiting boost sync block response {}", hash);
                             let response = receiver.recv().await
                                 .context("Error while receiving response for block while syncing")?;
 
@@ -2386,19 +2388,22 @@ impl<S: Storage> P2pServer<S> {
                             debug!("Block {} is already in chain, verify if its in DAG", hash);
                             let mut storage = self.blockchain.get_storage().write().await;
                             debug!("storage write lock acquired for potential block {} deletion", hash);
-                            if !storage.is_block_topological_ordered(&hash).await {
+                            let block = if !storage.is_block_topological_ordered(&hash).await {
                                 match storage.delete_block_with_hash(&hash).await {
-                                    Ok(block) => Ok(Some(block)),
+                                    Ok(block) => Some(block),
                                     Err(e) => {
                                         // This shouldn't happen, but in case
                                         error!("Error while deleting block {} from storage to re-execute it for chain sync: {}", hash, e);
-                                        Ok(None)
+                                        None
                                     }
                                 }
                             } else {
                                 trace!("Block {} is already in DAG, skipping it", hash);
-                                Ok(None)
-                            }
+                                None
+                            };
+                            debug!("storage write lock released for block {} deletion: {}", hash, block.is_some());
+
+                            Ok(block)
                         }
                     };
 
