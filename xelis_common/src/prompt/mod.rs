@@ -7,6 +7,7 @@ mod state;
 
 use crate::{
     tokio::{
+        spawn_task,
         sync::{
             mpsc::{
                 self,
@@ -547,7 +548,7 @@ impl Prompt {
                 // Start a thread to compress the log file
                 if enable_auto_compress_logs {
                     let dir_path = dir_path.to_string();
-                    let handle = tokio::spawn(async move {
+                    let handle = spawn_task("loop-compress-log", async move {
                         if let Err(e) = Self::loop_compress_log_file(dir_path, suffix).await {
                             error!("Error while compressing log file: {}", e);
                         }
