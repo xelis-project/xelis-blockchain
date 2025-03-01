@@ -797,6 +797,7 @@ impl<S: Storage> Blockchain<S> {
     {
         debug!("Finding tip base for {} at height {}", hash, height);
         let mut cache = self.tip_base_cache.lock().await;
+        debug!("tip base cache locked for {} at height {}", hash, height);
 
         let mut stack: VecDeque<Hash> = VecDeque::new();
         stack.push_back(hash.clone());
@@ -888,6 +889,8 @@ impl<S: Storage> Blockchain<S> {
     {
         debug!("Searching for common base for tips {}", tips.into_iter().map(|h| h.to_string()).collect::<Vec<String>>().join(", "));
         let mut cache = self.common_base_cache.lock().await;
+        debug!("common base cache locked");
+
         let combined_tips = get_combined_hash_for_tips(tips.into_iter());
         if let Some((hash, height)) = cache.get(&combined_tips) {
             debug!("Common base found in cache: {} at height {}", hash, height);
