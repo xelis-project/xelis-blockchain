@@ -1378,6 +1378,12 @@ async fn history(manager: &CommandManager, mut arguments: ArgumentManager) -> Re
     let storage = wallet.get_storage().read().await;
 
     let txs_len = storage.get_transactions_count()?;
+    // if we don't have any txs, no need proceed further
+    if txs_len == 0 {
+        manager.message("No transactions available");
+        return Ok(())
+    }
+
     let mut max_pages = txs_len / ELEMENTS_PER_PAGE;
     if txs_len % ELEMENTS_PER_PAGE != 0 {
         max_pages += 1;
@@ -1400,12 +1406,6 @@ async fn history(manager: &CommandManager, mut arguments: ArgumentManager) -> Re
         Some(ELEMENTS_PER_PAGE),
         Some((page - 1) * ELEMENTS_PER_PAGE)
     )?;
-
-    // if we don't have any txs, no need proceed further
-    if transactions.is_empty() {
-        manager.message("No transactions available");
-        return Ok(())
-    }
 
     manager.message(format!("Transactions (total {}) page {}/{}:", transactions.len(), page, max_pages));
     for tx in transactions {
@@ -1435,7 +1435,6 @@ async fn export_transactions_csv(manager: &CommandManager, mut arguments: Argume
 
     wallet.export_transactions_in_csv(&storage, transactions, &mut file).await.context("Error while exporting transactions to CSV")?;
 
-    // writer.flush().context("Error while flushing CSV file")?;
     manager.message(format!("Transactions have been exported to {}", filename));
     Ok(())
 }
