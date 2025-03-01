@@ -177,7 +177,7 @@ where
     }
 
     async fn on_message(&self, session: &WebSocketSessionShared<Self>, message: Bytes) -> Result<(), anyhow::Error> {
-        debug!("new message received on websocket");
+        trace!("new message received on websocket");
         let response: Value = match self.on_message_internal(session, message).await {
             Ok(result) => result,
             Err(e) => e.to_json(),
