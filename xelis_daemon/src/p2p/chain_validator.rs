@@ -78,7 +78,9 @@ impl<'a, S: Storage> ChainValidator<'a, S> {
 
         // Retrieve the current cumulative difficulty
         let current_cumulative_difficulty = {
+            debug!("locking storage for cumulative difficulty");
             let storage = self.blockchain.get_storage().read().await;
+            debug!("storage lock acquired for cumulative difficulty");
             let top_block_hash = self.blockchain.get_top_block_hash_for_storage(&storage).await?;
             storage.get_cumulative_difficulty_for_block_hash(&top_block_hash).await?
         };

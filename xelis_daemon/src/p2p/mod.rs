@@ -647,7 +647,9 @@ impl<S: Storage> P2pServer<S> {
     // Build a handshake packet
     // We feed the packet with all chain data
     async fn build_handshake(&self) -> Result<Vec<u8>, P2pError> {
+        debug!("locking storage for building handshake");
         let storage = self.blockchain.get_storage().read().await;
+        debug!("storage lock acquired for building handshake");
         let (block, top_hash) = storage.get_top_block_header().await?;
         let topoheight = self.blockchain.get_topo_height();
         let pruned_topoheight = storage.get_pruned_topoheight().await?;
@@ -1327,6 +1329,21 @@ impl<S: Storage> P2pServer<S> {
                         break 'main;
                     };
 
+                    // We may have lagged by waiting on previous request, lets double check that its not in chain already
+                    let has_tx = match self.blockchain.has_tx(&hash).await {
+                        Ok(v) => v,
+                        Err(e) => {
+                            error!("Error while double checking if TX {} was already included: {}", hash, e);
+                            continue;
+                        }
+                    };
+
+                    if has_tx {
+                        debug!("TX {} is already in chain, mostly due to lag on previous request, skipping it", hash);
+                        continue;
+                    }
+
+                    debug!("Requesting from txs processing task tx {}", hash);
                     let (transaction, hash) = match peer.request_blocking_object(ObjectRequest::Transaction(hash)).await {
                         Ok(OwnedObjectResponse::Transaction(tx, hash)) => (tx, hash),
                         Ok(res) => {
@@ -1343,8 +1360,16 @@ impl<S: Storage> P2pServer<S> {
 
                     debug!("Adding propagated tx {} from {} to mempool", hash, peer);
                     if let Err(e) = self.blockchain.add_tx_to_mempool_with_hash(transaction, hash, true).await {
-                        error!("Error while adding new TX in mempool from {}: {}", peer, e);
-                        peer.increment_fail_count();
+                        match e {
+                            // This can happen if we get a block while we were waiting for the blocking object request above
+                            BlockchainError::TxAlreadyInBlockchain(hash) => {
+                                debug!("Couldn't add processed TX {}: was already in blockchain", hash);
+                            },
+                            _ => {
+                                error!("Error while adding new TX in mempool from {}: {}", peer, e);
+                                peer.increment_fail_count();
+                            }
+                        };
                     }
                 }
             }
@@ -1600,6 +1625,7 @@ impl<S: Storage> P2pServer<S> {
 
                 let peer = Arc::clone(peer);
                 // This will block the task if the bounded channel is full
+                debug!("Pushing TX {} in txs processor channel", hash);
                 if let Err(e) = self.txs_processor.send((peer, hash)).await {
                     error!("Error while sending block propagated to blocks processor task: {}", e);
                 }
@@ -2371,43 +2397,51 @@ impl<S: Storage> P2pServer<S> {
                 debug!("Requesting needed blocks in boost sync mode");
                 let mut futures = FuturesOrdered::new();
                 let group_id = self.object_tracker.next_group_id();
-                for hash in blocks {
-                    let fut = async move {
-                        if !self.blockchain.has_block(&hash).await? {
-                            debug!("Requesting boost sync block {}", hash);
-                            let mut receiver = self.object_tracker.request_object_from_peer_with_or_get_notified(Arc::clone(peer), ObjectRequest::Block(hash.clone()), Some(group_id)).await?;
-                            debug!("Waiting boost sync block response {}", hash);
-                            let response = receiver.recv().await
-                                .context("Error while receiving response for block while syncing")?;
 
-                            match response {
-                                OwnedObjectResponse::Block(block, _) => Ok(Some(block)),
-                                _ => Err(P2pError::ExpectedBlock)
-                            }
-                        } else {
-                            debug!("Block {} is already in chain, verify if its in DAG", hash);
-                            let mut storage = self.blockchain.get_storage().write().await;
-                            debug!("storage write lock acquired for potential block {} deletion", hash);
-                            let block = if !storage.is_block_topological_ordered(&hash).await {
-                                match storage.delete_block_with_hash(&hash).await {
-                                    Ok(block) => Some(block),
-                                    Err(e) => {
-                                        // This shouldn't happen, but in case
-                                        error!("Error while deleting block {} from storage to re-execute it for chain sync: {}", hash, e);
-                                        None
-                                    }
+                {
+                    // Lock one time only
+                    let storage = self.blockchain.get_storage().read().await;
+                    for hash in blocks {
+                        debug!("processing block request {}", hash);
+                        let request_block = storage.has_block_with_hash(&hash).await?;
+                        debug!("request block: {}", hash);
+                        let fut = async move {
+                            if !request_block {
+                                debug!("Requesting boost sync block {}", hash);
+                                let mut receiver = self.object_tracker.request_object_from_peer_with_or_get_notified(Arc::clone(peer), ObjectRequest::Block(hash.clone()), Some(group_id)).await?;
+                                debug!("Waiting boost sync block response {}", hash);
+                                let response = receiver.recv().await
+                                    .context("Error while receiving response for block while syncing")?;
+    
+                                match response {
+                                    OwnedObjectResponse::Block(block, _) => Ok(Some(block)),
+                                    _ => Err(P2pError::ExpectedBlock)
                                 }
                             } else {
-                                trace!("Block {} is already in DAG, skipping it", hash);
-                                None
-                            };
-                            debug!("storage write lock released for block {} deletion: {}", hash, block.is_some());
-
-                            Ok(block)
-                        }
-                    };
-
-                    futures.push_back(fut);
+                                debug!("Block {} is already in chain, verify if its in DAG", hash);
+                                let mut storage = self.blockchain.get_storage().write().await;
+                                debug!("storage write lock acquired for potential block {} deletion", hash);
+                                let block = if !storage.is_block_topological_ordered(&hash).await {
+                                    match storage.delete_block_with_hash(&hash).await {
+                                        Ok(block) => Some(block),
+                                        Err(e) => {
+                                            // This shouldn't happen, but in case
+                                            error!("Error while deleting block {} from storage to re-execute it for chain sync: {}", hash, e);
+                                            None
+                                        }
+                                    }
+                                } else {
+                                    trace!("Block {} is already in DAG, skipping it", hash);
+                                    None
+                                };
+                                debug!("storage write lock released for block {} deletion: {}", hash, block.is_some());
+    
+                                Ok(block)
+                            }
+                        };
+    
+                        futures.push_back(fut);
+                    }
                 }
 
                 let mut exit_signal = self.exit_sender.subscribe();
