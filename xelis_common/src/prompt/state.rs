@@ -240,7 +240,7 @@ impl State {
         self.mask_input.load(Ordering::SeqCst)
     }
 
-    pub fn count_lines(&self, value: &String) -> usize {
+    pub fn count_lines(&self, value: &str) -> usize {
         let width = self.width.load(Ordering::SeqCst);
 
         let mut lines = 0;
@@ -263,7 +263,7 @@ impl State {
         lines
     }
 
-    pub fn show_with_prompt_and_input(&self, prompt: &String, input: &String) -> Result<(), PromptError> {
+    pub fn show_with_prompt_and_input(&self, prompt: &str, input: &str) -> Result<(), PromptError> {
         // if not interactive, we don't need to show anything
         if !self.is_interactive() {
             return Ok(())
@@ -287,7 +287,7 @@ impl State {
         Ok(())
     }
 
-    pub fn show_input(&self, input: &String) -> Result<(), PromptError> {
+    pub fn show_input(&self, input: &str) -> Result<(), PromptError> {
         let default_value = String::with_capacity(0);
         let lock = self.prompt.lock()?;
         let prompt = lock.as_ref().unwrap_or(&default_value);

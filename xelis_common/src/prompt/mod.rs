@@ -361,7 +361,7 @@ impl Prompt {
 
     pub async fn ask_confirmation(&self) -> Result<bool, PromptError> {
         let res = self.read_valid_str_value(
-            self.colorize_str(Color::Green, "Confirm ? (Y/N): "),
+            self.colorize_string(Color::Green, "Confirm ? (Y/N): "),
             vec!["y", "n"]
         ).await?;
         Ok(res == "y")
@@ -641,17 +641,7 @@ impl Prompt {
 
     // colorize a string with a specific color
     // if colors are disabled, the message is returned as is
-    pub fn colorize_string(&self, color: Color, message: &String) -> String {
-        if self.disable_colors {
-            return message.to_string();
-        }
-
-        format!("\x1B[{}m{}\x1B[0m", color.to_fg_str(), message)
-    }
-
-    // colorize a string with a specific color
-    // No color is set if colors are disabled
-    pub fn colorize_str(&self, color: Color, message: &str) -> String {
+    pub fn colorize_string(&self, color: Color, message: &str) -> String {
         if self.disable_colors {
             return message.to_string();
         }

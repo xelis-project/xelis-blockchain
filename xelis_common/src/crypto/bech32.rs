@@ -56,7 +56,7 @@ fn polymod(values: &[u8]) -> u32 {
 }
 
 /// Expand a human readable part into a vector of u8.
-fn hrp_expand(hrp: &String) -> Vec<u8> {
+fn hrp_expand(hrp: &str) -> Vec<u8> {
     let mut result: Vec<u8> = Vec::new();
     for c in hrp.bytes() {
         result.push(c >> 5);
@@ -70,14 +70,14 @@ fn hrp_expand(hrp: &String) -> Vec<u8> {
 }
 
 /// Verify a checksum for a human readable part and data.
-pub fn verify_checksum(hrp: &String, data: &[u8]) -> bool {
+pub fn verify_checksum(hrp: &str, data: &[u8]) -> bool {
     let mut vec = hrp_expand(hrp);
     vec.extend(data);
     return polymod(&vec) == 1;
 }
 
 /// Create a checksum for a human readable part and data.
-pub fn create_checksum(hrp: &String, data: &[u8]) -> [u8; 6] {
+pub fn create_checksum(hrp: &str, data: &[u8]) -> [u8; 6] {
     let mut values: Vec<u8> = Vec::new();
     values.extend(hrp_expand(hrp));
     values.extend(data);
