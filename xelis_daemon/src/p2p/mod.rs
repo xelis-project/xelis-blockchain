@@ -135,12 +135,12 @@ pub struct P2pServer<S: Storage> {
     // used to check if the server is running or not in tasks
     is_running: AtomicBool,
     // Synced cache to prevent concurrent tasks adding the block
-    blocks_propagation_queue: Mutex<LruCache<Hash, ()>>,
+    blocks_propagation_queue: Mutex<LruCache<Hash, TimestampMillis>>,
     // Sender for the blocks processing task to have an ordered queue
     blocks_processor: Sender<(Arc<Peer>, BlockHeader, Hash)>,
     // Sender for the transactions propagated
     // Synced cache to prevent concurrent tasks adding the block
-    txs_propagation_queue: Mutex<LruCache<Hash, ()>>,
+    txs_propagation_queue: Mutex<LruCache<Hash, TimestampMillis>>,
     // Sender for the txs processing task to have an ordered queue
     txs_processor: Sender<(Arc<Peer>, Hash)>,
     // allow fast syncing (only balances / assets / Smart Contracts changes)
@@ -1315,6 +1315,7 @@ impl<S: Storage> P2pServer<S> {
     async fn txs_processing_task(self: Arc<Self>, mut receiver: Receiver<(Arc<Peer>, Hash)>) {
         debug!("Starting txs processing task");
         let mut server_exit = self.exit_sender.subscribe();
+        let mut futures = FuturesOrdered::new();
 
         'main: loop {
             select! {
@@ -1323,12 +1324,7 @@ impl<S: Storage> P2pServer<S> {
                     debug!("Exit message received, stopping txs processing task");
                     break 'main;
                 }
-                msg = receiver.recv() => {
-                    let Some((peer, hash)) = msg else {
-                        debug!("No more txs to process, stopping txs processing task");
-                        break 'main;
-                    };
-
+                Some((peer, hash)) = receiver.recv() => {
                     // We may have lagged by waiting on previous request, lets double check that its not in chain already
                     let has_tx = match self.blockchain.has_tx(&hash).await {
                         Ok(v) => v,
@@ -1343,33 +1339,39 @@ impl<S: Storage> P2pServer<S> {
                         continue;
                     }
 
-                    debug!("Requesting from txs processing task tx {}", hash);
-                    let (transaction, hash) = match peer.request_blocking_object(ObjectRequest::Transaction(hash)).await {
-                        Ok(OwnedObjectResponse::Transaction(tx, hash)) => (tx, hash),
-                        Ok(res) => {
-                            error!("Error while requesting tx propagated from {}, invalid response we got {:?}", peer, res);
-                            peer.increment_fail_count();
-                            continue;
-                        },
-                        Err(e) => {
-                            error!("Error while requesting tx propagated from {}: {}", peer, e);
-                            peer.increment_fail_count();
-                            continue;
-                        }
-                    };
+                    debug!("Adding TX {} from {} to futures queue", hash, peer);
 
-                    debug!("Adding propagated tx {} from {} to mempool", hash, peer);
-                    if let Err(e) = self.blockchain.add_tx_to_mempool_with_hash(transaction, hash, true).await {
-                        match e {
-                            // This can happen if we get a block while we were waiting for the blocking object request above
-                            BlockchainError::TxAlreadyInBlockchain(hash) => {
-                                debug!("Couldn't add processed TX {}: was already in blockchain", hash);
-                            },
-                            _ => {
-                                error!("Error while adding new TX in mempool from {}: {}", peer, e);
+                    let future = async move {
+                        debug!("Requesting from txs processing task tx {}", hash);
+                        let (transaction, hash) = match peer.request_blocking_object(ObjectRequest::Transaction(hash)).await {
+                            Ok(OwnedObjectResponse::Transaction(tx, hash)) => (tx, hash),
+                            Ok(_) => {
+                                warn!("Received invalid object type response from {}", peer);
                                 peer.increment_fail_count();
+                                return Err(P2pError::ExpectedTransaction)
+                            },
+                            Err(e) => {
+                                peer.increment_fail_count();
+                                return Err(e)
                             }
                         };
+
+                        Ok((transaction, hash))
+                    };
+
+                    futures.push_back(future);
+                },
+                Some(res) = futures.next() => {
+                    match res {
+                        Ok((transaction, hash)) => {
+                            debug!("Adding TX to mempool from processing TX task: {}", hash);
+                            if let Err(e) = self.blockchain.add_tx_to_mempool_with_hash(transaction, hash.clone(), true).await {
+                                warn!("Couldn't add processed TX {}: {}", hash, e);
+                            }
+                        },
+                        Err(e) => {
+                            error!("Error while handling TX: {}", e);
+                        }
                     }
                 }
             }
@@ -1620,7 +1622,7 @@ impl<S: Storage> P2pServer<S> {
                         debug!("TX {} propagated is already in processing from another peer", hash);
                         return Ok(())
                     }
-                    txs_propagation_queue.put(hash.clone(), ());
+                    txs_propagation_queue.put(hash.clone(), get_current_time_in_millis());
                 }
 
                 let peer = Arc::clone(peer);
@@ -1680,7 +1682,7 @@ impl<S: Storage> P2pServer<S> {
                         debug!("Block {} propagated is already in processing from another peer", block_hash);
                         return Ok(())
                     }
-                    blocks_propagation_queue.put(block_hash.clone(), ());
+                    blocks_propagation_queue.put(block_hash.clone(), get_current_time_in_millis());
                 }
 
                 let block_height = header.get_height();
@@ -1900,37 +1902,34 @@ impl<S: Storage> P2pServer<S> {
                         return Err(P2pError::InvalidInventoryPagination)
                     }
                 }
-                let group_id = self.object_tracker.next_group_id();
-                let mut requests = FuturesOrdered::new();
-                for hash in txs.into_owned() {
-                    // Verify that we don't already have it
-                    if !self.blockchain.has_tx(&hash).await? {
-                        trace!("Requesting TX {} from inventory response", hash);
-                        let future = async move {
-                            let mut listener = self.object_tracker.request_object_from_peer_with_or_get_notified(Arc::clone(peer), ObjectRequest::Transaction(hash.into_owned()), Some(group_id)).await?;
-                            let res = listener.recv().await.context("Error while waiting on tx response for inventory")?;
-                            match res {
-                                OwnedObjectResponse::Transaction(tx, hash) => Ok((tx, hash)),
-                                _ => Err(P2pError::ExpectedTransaction)
-                            }
-                        };
-                        requests.push_back(future);
-                    }
-                }
 
-                while let Some(response) = requests.next().await {
-                    match response {
-                        Ok((tx, hash)) => {
-                            if let Err(e) = self.blockchain.add_tx_to_mempool_with_hash(tx, hash, false).await {
-                                self.object_tracker.mark_group_as_fail(group_id).await;
-                                return Err(e.into())
-                            }
-                        },
-                        Err(e) => {
-                            self.object_tracker.mark_group_as_fail(group_id).await;
-                            return Err(e)
+                // Process the response
+                for tx in txs.into_owned() {
+                    let tx = tx.into_owned();
+
+                    // Check that the tx is not in mempool or on disk already
+                    if self.blockchain.has_tx(&tx).await? {
+                        debug!("TX {} from inventory response is already in chain", tx);
+                        continue;
+                    }
+
+                    // Check current cache
+                    // We lock each time in case we're blocked by the channel below
+                    {
+                        let mut cache = self.txs_propagation_queue.lock().await;
+                        if cache.contains(&tx) {
+                            debug!("Skipping TX {} from being requested as its in propagation queue already", tx);
+                            continue;
                         }
-                    };
+
+                        cache.put(tx.clone(), get_current_time_in_millis());
+                    }
+
+                    if let Err(e) = self.txs_processor.send((Arc::clone(peer), tx)).await {
+                        error!("Error while sending to TXs processor task from inventory response of {}: {}", peer, e);
+                        peer.increment_fail_count();
+                        return Ok(())
+                    }
                 }
 
                 // request the next page
