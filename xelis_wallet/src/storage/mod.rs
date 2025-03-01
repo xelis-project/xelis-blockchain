@@ -414,7 +414,7 @@ impl EncryptedStorage {
     }
 
     // Get all keys from the custom
-    pub fn get_custom_tree_keys(&self, tree: &String, query: &Option<Query>) -> Result<Vec<DataValue>> {
+    pub fn get_custom_tree_keys(&self, tree: &str, query: &Option<Query>) -> Result<Vec<DataValue>> {
         trace!("get custom tree keys");
         let tree = self.get_custom_tree(tree)?;
         let mut keys = Vec::new();
@@ -435,7 +435,7 @@ impl EncryptedStorage {
 
     // Count entries from a tree
     // A query is possible to filter on keys
-    pub fn count_custom_tree_entries(&self, tree: &String, query_key: &Option<Query>, query_value: &Option<Query>) -> Result<usize> {
+    pub fn count_custom_tree_entries(&self, tree: &str, query_key: &Option<Query>, query_value: &Option<Query>) -> Result<usize> {
         trace!("count custom tree entries");
         let tree = self.get_custom_tree(tree)?;
         let count = if query_key.is_some() || query_value.is_some() {

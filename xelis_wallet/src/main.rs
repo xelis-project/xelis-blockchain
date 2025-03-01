@@ -437,7 +437,7 @@ async fn xswd_handler(mut receiver: UnboundedReceiver<XSWDEvent>, prompt: Sharea
 async fn xswd_handle_request_application(prompt: &ShareablePrompt, app_state: AppStateShared, signed: bool) -> Result<PermissionResult, Error> {
     let mut message = format!("XSWD: Allow application {} ({}) to access your wallet\r\n(Y/N): ", app_state.get_name(), app_state.get_id());
     if signed {
-        message = prompt.colorize_str(Color::BrightYellow, "NOTE: Application authorizaion was already approved previously.\r\n") + &message;
+        message = prompt.colorize_string(Color::BrightYellow, "NOTE: Application authorizaion was already approved previously.\r\n") + &message;
     }
     let accepted = prompt.read_valid_str_value(prompt.colorize_string(Color::Blue, &message), vec!["y", "n"]).await? == "y";
     if accepted {
@@ -733,24 +733,24 @@ async fn prompt_message_builder(prompt: &Prompt, command_manager: Option<&Comman
 
             let addr_str = {
                 let addr = &wallet.get_address().to_string()[..8];
-                prompt.colorize_str(Color::Yellow, addr)
+                prompt.colorize_string(Color::Yellow, addr)
             };
     
             let storage = wallet.get_storage().read().await;
             let topoheight_str = format!(
                 "{}: {}",
-                prompt.colorize_str(Color::Yellow, "TopoHeight"),
+                prompt.colorize_string(Color::Yellow, "TopoHeight"),
                 prompt.colorize_string(Color::Green, &format!("{}", storage.get_synced_topoheight().unwrap_or(0)))
             );
             let balance = format!(
                 "{}: {}",
-                prompt.colorize_str(Color::Yellow, "Balance"),
+                prompt.colorize_string(Color::Yellow, "Balance"),
                 prompt.colorize_string(Color::Green, &format_xelis(storage.get_plaintext_balance_for(&XELIS_ASSET).await.unwrap_or(0))),
             );
             let status = if wallet.is_online().await {
-                prompt.colorize_str(Color::Green, "Online")
+                prompt.colorize_string(Color::Green, "Online")
             } else {
-                prompt.colorize_str(Color::Red, "Offline")
+                prompt.colorize_string(Color::Red, "Offline")
             };
             let network_str = if !network.is_mainnet() {
                 format!(
@@ -762,13 +762,13 @@ async fn prompt_message_builder(prompt: &Prompt, command_manager: Option<&Comman
             return Ok(
                 format!(
                     "{} | {} | {} | {} | {} {}{} ",
-                    prompt.colorize_str(Color::Blue, "XELIS Wallet"),
+                    prompt.colorize_string(Color::Blue, "XELIS Wallet"),
                     addr_str,
                     topoheight_str,
                     balance,
                     status,
                     network_str,
-                    prompt.colorize_str(Color::BrightBlack, ">>")
+                    prompt.colorize_string(Color::BrightBlack, ">>")
                 )
             )
         }
@@ -777,8 +777,8 @@ async fn prompt_message_builder(prompt: &Prompt, command_manager: Option<&Comman
     Ok(
         format!(
             "{} {} ",
-            prompt.colorize_str(Color::Blue, "XELIS Wallet"),
-            prompt.colorize_str(Color::BrightBlack, ">>")
+            prompt.colorize_string(Color::Blue, "XELIS Wallet"),
+            prompt.colorize_string(Color::BrightBlack, ">>")
         )
     )
 }
@@ -1019,11 +1019,11 @@ async fn change_password(manager: &CommandManager, _: ArgumentManager) -> Result
 
     let prompt = manager.get_prompt();
 
-    let old_password = prompt.read_input(prompt.colorize_str(Color::BrightRed, "Current Password: "), true)
+    let old_password = prompt.read_input(prompt.colorize_string(Color::BrightRed, "Current Password: "), true)
         .await
         .context("Error while asking old password")?;
 
-    let new_password = prompt.read_input(prompt.colorize_str(Color::BrightRed, "New Password: "), true)
+    let new_password = prompt.read_input(prompt.colorize_string(Color::BrightRed, "New Password: "), true)
         .await
         .context("Error while asking new password")?;
 
@@ -1110,7 +1110,7 @@ async fn transfer(manager: &CommandManager, mut args: ArgumentManager) -> Result
         args.get_value("address")?.to_string_value()?
     } else {
         prompt.read_input(
-            prompt.colorize_str(Color::Green, "Address: "),
+            prompt.colorize_string(Color::Green, "Address: "),
             false
         ).await.context("Error while reading address")?
     };
@@ -1120,7 +1120,7 @@ async fn transfer(manager: &CommandManager, mut args: ArgumentManager) -> Result
         args.get_value("asset")?.to_hash()?
     } else {
         let asset_name = prompt.read_input(
-            prompt.colorize_str(Color::Green, "Asset (default XELIS): "),
+            prompt.colorize_string(Color::Green, "Asset (default XELIS): "),
             false
         ).await?;
         if asset_name.is_empty() {
@@ -1195,7 +1195,7 @@ async fn transfer_all(manager: &CommandManager, mut args: ArgumentManager) -> Re
         args.get_value("address")?.to_string_value()?
     } else {
         prompt.read_input(
-            prompt.colorize_str(Color::Green, "Address: "),
+            prompt.colorize_string(Color::Green, "Address: "),
             false
         ).await.context("Error while reading address")?
     };
@@ -1204,7 +1204,7 @@ async fn transfer_all(manager: &CommandManager, mut args: ArgumentManager) -> Re
     let mut asset = args.get_value("asset").and_then(|v| v.to_hash()).ok();
     if asset.is_none() {
         asset = prompt.read_hash(
-           prompt.colorize_str(Color::Green, "Asset (default XELIS): ")
+           prompt.colorize_string(Color::Green, "Asset (default XELIS): ")
        ).await.ok();
     }
 
@@ -1271,7 +1271,7 @@ async fn burn(manager: &CommandManager, mut args: ArgumentManager) -> Result<(),
         args.get_value("asset")?.to_hash()?
     } else {
         prompt.read_hash(
-            prompt.colorize_str(Color::Green, "Asset (default XELIS): ")
+            prompt.colorize_string(Color::Green, "Asset (default XELIS): ")
         ).await.unwrap_or(XELIS_ASSET)
     };
 
