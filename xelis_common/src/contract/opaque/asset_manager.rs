@@ -20,7 +20,7 @@ use crate::{
 use super::Asset;
 
 // Maximum size for the ticker
-pub const TICKER_LEN: usize = 6;
+pub const TICKER_LEN: usize = 8;
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
 pub struct AssetManager;
@@ -32,6 +32,28 @@ impl JSONHelper for AssetManager {}
 // Constructor for AssetManager
 pub fn asset_manager(_: FnInstance, _: FnParams, _: &mut Context) -> FnReturnType {
     Ok(Some(Value::Opaque(AssetManager.into()).into()))
+}
+
+// Verify if the asset str is valid
+fn is_valid_str_for_asset(name: &str, whitespace: bool, uppercase_only: bool) -> bool {
+    if whitespace {
+        if name.starts_with(" ") || name.ends_with(" ") {
+            return false
+        }
+    }
+
+    name.chars().all(|c| is_valid_char_for_asset(c, whitespace, uppercase_only))
+}
+
+// Check if the char for an asset is valid
+fn is_valid_char_for_asset(c: char, whitespace: bool, uppercase_only: bool) -> bool {
+    match c {
+        'A'..='Z'
+        | '0'..='9' => true,
+        | 'a'..='z' if !uppercase_only => true,
+        | ' ' if whitespace => true,
+        _ => false
+    }
 }
 
 // Create a new asset
@@ -50,7 +72,8 @@ pub fn asset_manager_create<P: ContractProvider>(_: FnInstance, mut params: FnPa
     }
 
     // Ticker can be ASCII & upper case only
-    if !ticker.chars().all(|c| c.is_ascii() && c.is_uppercase()) {
+    // No whitespace is allowed in it
+    if !is_valid_str_for_asset(&ticker, false, true) {
         return Err(EnvironmentError::Expect("Asset ticker must be ASCII only".to_owned()).into());
     }
 
@@ -60,7 +83,7 @@ pub fn asset_manager_create<P: ContractProvider>(_: FnInstance, mut params: FnPa
     }
 
     // Name can be ASCII only
-    if !name.chars().all(|c| c.is_ascii()) {
+    if !is_valid_str_for_asset(&name, true, false) {
         return Err(EnvironmentError::Expect("Asset name must be ASCII only".to_owned()).into());
     }
 
@@ -115,4 +138,24 @@ pub fn asset_manager_get_by_id<P: ContractProvider>(_: FnInstance, params: FnPar
         });
 
     Ok(Some(ValueCell::Optional(res)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_various_asset_names() {
+        assert!(is_valid_str_for_asset("XELIS", true, false));
+        assert!(is_valid_str_for_asset("XELISAI99", true, false));
+        assert!(is_valid_str_for_asset("XELIS POW 123", true, false));
+        assert!(is_valid_str_for_asset("ZZZZZZ", true, true));
+
+        // check only uppercase
+        assert!(!is_valid_str_for_asset("ZZZZZZzzzZ", true, true));
+
+        // check whitespaces
+        assert!(!is_valid_str_for_asset(" XELIS", true, false));
+        assert!(!is_valid_str_for_asset("XELIS   ", true, false));
+    }
 }
