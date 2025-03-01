@@ -274,7 +274,7 @@ pub fn get_hex_genesis_block(network: &Network) -> Option<&str> {
 
 lazy_static! {
     // Developer public key is lazily converted from address to support any network
-    pub static ref DEV_PUBLIC_KEY: PublicKey = Address::from_string(&DEV_ADDRESS.to_owned()).unwrap().to_public_key();
+    pub static ref DEV_PUBLIC_KEY: PublicKey = Address::from_string(&DEV_ADDRESS).unwrap().to_public_key();
 }
 
 // Genesis block hash based on network selected

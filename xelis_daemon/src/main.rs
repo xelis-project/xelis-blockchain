@@ -402,29 +402,29 @@ fn build_prompt_message(
 ) -> String {
     let topoheight_str = format!(
         "{}: {}/{}",
-        prompt.colorize_str(Color::Yellow, "TopoHeight"),
+        prompt.colorize_string(Color::Yellow, "TopoHeight"),
         prompt.colorize_string(Color::Green, &format!("{}", topoheight)),
         prompt.colorize_string(Color::Green, &format!("{}", median_topoheight))
     );
     let network_hashrate_str = format!(
         "{}: {}",
-        prompt.colorize_str(Color::Yellow, "Network"),
+        prompt.colorize_string(Color::Yellow, "Network"),
         prompt.colorize_string(Color::Green, &format!("{}", format_hashrate(network_hashrate))),
     );
     let mempool_str = format!(
         "{}: {}",
-        prompt.colorize_str(Color::Yellow, "Mempool"),
+        prompt.colorize_string(Color::Yellow, "Mempool"),
         prompt.colorize_string(Color::Green, &format!("{}", mempool))
     );
     let peers_str = format!(
         "{}: {} ",
-        prompt.colorize_str(Color::Yellow, "Peers"),
+        prompt.colorize_string(Color::Yellow, "Peers"),
         prompt.colorize_string(Color::Green, &format!("{}", peers_count))
     );
     let rpc_str = if rpc_count > 0 {
         format!(
             "| {}: {} ",
-            prompt.colorize_str(Color::Yellow, "RPC"),
+            prompt.colorize_string(Color::Yellow, "RPC"),
             prompt.colorize_string(Color::Green, &format!("{}", rpc_count))
         )
     } else { "".to_owned() };
@@ -432,7 +432,7 @@ fn build_prompt_message(
     let miners_str = if miners_count > 0 {
         format!(
             "| {}: {} ",
-            prompt.colorize_str(Color::Yellow, "Miners"),
+            prompt.colorize_string(Color::Yellow, "Miners"),
             prompt.colorize_string(Color::Green, &format!("{}", miners_count))
         )
     } else { "".to_owned() };
@@ -447,14 +447,14 @@ fn build_prompt_message(
     let syncing_str = if let Some(rate) = syncing_rate {
         format!(
             "| {}: {} ",
-            prompt.colorize_str(Color::Yellow, "Sync"),
+            prompt.colorize_string(Color::Yellow, "Sync"),
             prompt.colorize_string(Color::Green, &format!("{} bps", rate))
         )
     } else { "".to_owned() };
 
     format!(
         "{} | {} | {} | {} | {}{}{}{}{}{} ",
-        prompt.colorize_str(Color::Blue, "XELIS"),
+        prompt.colorize_string(Color::Blue, "XELIS"),
         topoheight_str,
         network_hashrate_str,
         mempool_str,
@@ -463,7 +463,7 @@ fn build_prompt_message(
         miners_str,
         syncing_str,
         network_str,
-        prompt.colorize_str(Color::BrightBlack, ">>"),
+        prompt.colorize_string(Color::BrightBlack, ">>"),
     )
 }
 
@@ -878,14 +878,14 @@ async fn show_balance<S: Storage>(manager: &CommandManager, mut arguments: Argum
     let prompt = manager.get_prompt();
     // read address
     let str_address = prompt.read_input(
-        prompt.colorize_str(Color::Green, "Address: "),
+        prompt.colorize_string(Color::Green, "Address: "),
         false
     ).await.context("Error while reading address")?;
     let address = Address::from_string(&str_address).context("Invalid address")?;
 
     // Read asset
     let asset = prompt.read_hash(
-        prompt.colorize_str(Color::Green, "Asset (default XELIS): ")
+        prompt.colorize_string(Color::Green, "Asset (default XELIS): ")
     ).await.ok();
 
     let asset = asset.unwrap_or(XELIS_ASSET);
