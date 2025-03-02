@@ -281,7 +281,7 @@ impl<S: Storage> P2pServer<S> {
                                 our_topoheight - common_point.get_topoheight()
                             };
                             warn!("We need to pop {} blocks for fast sync", pop_count);
-                            our_topoheight = self.blockchain.rewind_chain_for_storage(&mut *storage, pop_count, !peer.is_priority()).await?;
+                            (our_topoheight, _) = self.blockchain.rewind_chain_for_storage(&mut *storage, pop_count, !peer.is_priority()).await?;
                             debug!("New topoheight after rewind is now {}", our_topoheight);
                         }
                     } else {

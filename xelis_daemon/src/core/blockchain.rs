@@ -2747,14 +2747,14 @@ impl<S: Storage> Blockchain<S> {
     }
 
     // Rewind the chain by removing N blocks from the top
-    pub async fn rewind_chain(&self, count: u64, until_stable_height: bool) -> Result<TopoHeight, BlockchainError> {
+    pub async fn rewind_chain(&self, count: u64, until_stable_height: bool) -> Result<(TopoHeight, Vec<(Hash, Arc<Transaction>)>), BlockchainError> {
         trace!("rewind chain of {} blocks (stable height: {})", count, until_stable_height);
         let mut storage = self.storage.write().await;
         self.rewind_chain_for_storage(&mut storage, count, until_stable_height).await
     }
 
     // Rewind the chain by removing N blocks from the top
-    pub async fn rewind_chain_for_storage(&self, storage: &mut S, count: u64, stop_at_stable_height: bool) -> Result<TopoHeight, BlockchainError> {
+    pub async fn rewind_chain_for_storage(&self, storage: &mut S, count: u64, stop_at_stable_height: bool) -> Result<(TopoHeight, Vec<(Hash, Arc<Transaction>)>), BlockchainError> {
         trace!("rewind chain with count = {}", count);
         let current_height = self.get_height();
         let current_topoheight = self.get_topo_height();
@@ -2787,11 +2787,13 @@ impl<S: Storage> Blockchain<S> {
         // Try to add all txs back to mempool if possible
         // We try to prevent lost/to be orphaned
         // We try to add back all txs already in mempool just in case
+        let mut orphaned_txs = Vec::new();
         {
             for (hash, tx) in txs {
                 debug!("Trying to add TX {} to mempool again", hash);
-                if let Err(e) = self.add_tx_to_mempool_with_storage_and_hash(storage, tx, hash, false).await {
-                    debug!("TX rewinded is not compatible anymore: {}", e);
+                if let Err(e) = self.add_tx_to_mempool_with_storage_and_hash(storage, tx.clone(), hash.clone(), false).await {
+                    debug!("TX {} rewinded is not compatible anymore: {}", hash, e);
+                    orphaned_txs.push((hash, tx));
                 }
             }
         }
@@ -2847,7 +2849,7 @@ impl<S: Storage> Blockchain<S> {
 
         self.clear_caches().await;
 
-        Ok(new_topoheight)
+        Ok((new_topoheight, orphaned_txs))
     }
 
     // Calculate the average block time on the last 50 blocks
