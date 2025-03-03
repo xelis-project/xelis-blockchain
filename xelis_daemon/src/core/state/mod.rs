@@ -43,7 +43,7 @@ pub (super) async fn pre_verify_tx<P: AccountProvider + BalanceProvider>(provide
     // Verify that it is not a fake topoheight
     if topoheight < reference.topoheight {
         debug!("Invalid reference: topoheight {} is higher than chain {}", reference.topoheight, topoheight);
-        return Err(BlockchainError::InvalidReferenceTopoheight);
+        return Err(BlockchainError::InvalidReferenceTopoheight(reference.topoheight, topoheight));
     }
 
     Ok(())
