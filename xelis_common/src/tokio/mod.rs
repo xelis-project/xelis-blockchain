@@ -25,6 +25,7 @@ pub use tokio::*;
     target_vendor = "unknown",
     target_os = "unknown"
 )))]
+#[track_caller]
 pub fn spawn_task<Fut, S: Into<String>>(name: S, future: Fut) -> task::JoinHandle<Fut::Output>
 where
     Fut: std::future::Future + Send + 'static,
