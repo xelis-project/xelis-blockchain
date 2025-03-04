@@ -117,7 +117,11 @@ use std::{
     time::Instant,
     thread
 };
-use tokio::{net::lookup_host, sync::{broadcast, Mutex, RwLock}};
+use tokio::{
+    net::lookup_host,
+    runtime::{Handle, RuntimeFlavor},
+    sync::{broadcast, Mutex, RwLock}
+};
 use log::{info, error, debug, warn, trace};
 use rand::Rng;
 
@@ -1904,7 +1908,7 @@ impl<S: Storage> Blockchain<S> {
                 let start = Instant::now();
                 // If multi thread is enabled and we have more than one source
                 // Otherwise its not worth-it to move it on another thread
-                if let Some(n_threads) = self.txs_threads_count.filter(|_| txs_grouped.len() > 1) {
+                if let Some(n_threads) = self.txs_threads_count.filter(|_| txs_grouped.len() > 1 && is_multi_threads_supported()) {
                     let mut batches_count = txs_grouped.len();
                     if batches_count > n_threads {
                         debug!("Batches count ({}) is above configured threads ({}), capping it", batches_count, n_threads);
@@ -2948,6 +2952,17 @@ pub fn get_block_dev_fee(height: u64) -> u64 {
     }
 
     percentage
+}
+
+// Verify if the multi thread is supported by the caller
+pub fn is_multi_threads_supported() -> bool {
+    trace!("is multi thread supported");
+    let supported = Handle::try_current()
+        .map(|v| matches!(v.runtime_flavor(), RuntimeFlavor::MultiThread))
+        .unwrap_or(false);
+    debug!("multi threads supported: {}", supported);
+
+    supported
 }
 
 #[cfg(test)]
