@@ -511,12 +511,12 @@ impl SledStorage {
             )
         {
             let mut cache = cache.lock().await;
-            if let Some(value) = cache.get(key) {
-                return Ok(Some(value.clone()));
+            if let Some(value) = cache.get(key).cloned() {
+                return Ok(Some(value));
             }
 
             let value: Option<V> = self.load_optional_from_disk(tree, &key_bytes)?;
-            if let Some(value) = value.clone() {
+            if let Some(value) = value.as_ref() {
                 cache.put(key.clone(), value.clone());
             }
 
