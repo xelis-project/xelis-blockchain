@@ -569,12 +569,16 @@ impl Prompt {
             .level_for("actix_server", log::LevelFilter::Warn)
             .level_for("actix_web", log::LevelFilter::Off)
             .level_for("actix_http", log::LevelFilter::Off)
-            .level_for("tracing", log::LevelFilter::Off)
-            .level_for("runtime", log::LevelFilter::Off)
-            .level_for("tokio", log::LevelFilter::Off)
             .level_for("mio", log::LevelFilter::Warn)
             .level_for("tokio_tungstenite", log::LevelFilter::Warn)
             .level_for("tungstenite", log::LevelFilter::Warn);
+
+        #[cfg(not(feature = "tracing"))]
+        {
+            base = base.level_for("tracing", log::LevelFilter::Warn)
+                .level_for("runtime", log::LevelFilter::Warn)
+                .level_for("tokio", log::LevelFilter::Warn);
+        }
 
         for m in module_logs {
             base = base.level_for(m.module, m.level.into());
