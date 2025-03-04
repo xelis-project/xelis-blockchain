@@ -62,10 +62,10 @@ tokio_with_wasm = { version = "0.7.2", features = ["macros", "sync", "time", "rt
 
 # dependencies for non-WASM
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-tokio = { version = "1.36", default-features = false, features = ["macros", "signal", "time", "sync", "rt"], optional = true }
+tokio = { version = "1", default-features = false, features = ["macros", "signal", "time", "sync", "rt"], optional = true }
 
 [dev-dependencies]
-tokio = { version = "1.36", features = ["full"] }
+tokio = { version = "1", features = ["full"] }
 
 [features]
 tokio = ["dep:tokio", "dep:tokio_with_wasm"]
@@ -75,5 +75,6 @@ prompt = ["clap", "tokio", "dep:crossterm", "dep:chrono", "dep:zip"]
 rpc_server = ["dep:actix-rt", "dep:actix-web", "dep:actix-ws", "dep:futures-util", "tokio", "dep:reqwest"]
 tracing = ["dep:console-subscriber", "tokio", "tokio/tracing"]
 tokio-multi-thread = ["tokio", "tokio/rt-multi-thread", "tokio_with_wasm/rt-multi-thread"]
+
 [lib]
 crate-type = ["cdylib", "rlib"]
