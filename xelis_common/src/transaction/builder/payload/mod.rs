@@ -6,6 +6,10 @@ use crate::{
     crypto::{Address, Hash}
 };
 
+fn default_bool_true() -> bool {
+    true
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct TransferBuilder {
     pub asset: Hash,
@@ -13,6 +17,10 @@ pub struct TransferBuilder {
     pub destination: Address,
     // we can put whatever we want up to EXTRA_DATA_LIMIT_SIZE bytes
     pub extra_data: Option<DataElement>,
+    // Encrypt the extra data by default
+    // Set to false if you want to keep it public
+    #[serde(default = "default_bool_true")]
+    pub encrypt_extra_data: bool
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]

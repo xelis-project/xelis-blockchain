@@ -8,7 +8,13 @@ use crate::{
     transaction::Role
 };
 use super::{
-    derive_shared_key_from_handle, derive_shared_key_from_opening, Cipher, CipherFormatError, PlaintextData, SharedKey, UnknownExtraDataFormat
+    derive_shared_key_from_handle,
+    derive_shared_key_from_opening,
+    Cipher,
+    CipherFormatError,
+    PlaintextData,
+    SharedKey,
+    UnknownExtraDataFormat
 };
 
 // New version of Extra Data due to the issue of commitment randomness reuse

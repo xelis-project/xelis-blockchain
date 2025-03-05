@@ -2,6 +2,7 @@ mod plaintext;
 mod shared_key;
 mod unknown;
 mod extra_data;
+mod typed;
 
 use std::borrow::Cow;
 
@@ -36,10 +37,11 @@ use crate::{
     }
 };
 
-pub use plaintext::PlaintextExtraData;
+pub use plaintext::{PlaintextExtraData, PlaintextFlag};
 pub use shared_key::SharedKey;
 pub use unknown::UnknownExtraDataFormat;
 pub use extra_data::ExtraData;
+pub use typed::ExtraDataType;
 
 // Key Derivation Function used to derive the shared key
 type KDF = sha3::Sha3_256;
@@ -126,24 +128,6 @@ impl Cipher {
             .map_err(|_| CipherFormatError)?;
 
         Ok(PlaintextData(self.0))
-    }
-}
-
-impl From<AEADCipher> for UnknownExtraDataFormat {
-    fn from(value: AEADCipher) -> Self {
-        Self(value.0)
-    }
-}
-
-impl From<Cipher> for UnknownExtraDataFormat {
-    fn from(value: Cipher) -> Self {
-        Self(value.0)
-    }
-}
-
-impl From<ExtraData> for UnknownExtraDataFormat {
-    fn from(value: ExtraData) -> Self {
-        Self(value.to_bytes())
     }
 }
 

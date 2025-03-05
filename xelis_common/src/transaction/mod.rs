@@ -48,7 +48,7 @@ pub const MAX_MULTISIG_PARTICIPANTS: usize = 255;
 /// Simple enum to determine which DecryptHandle to use to craft a Ciphertext
 /// This allows us to store one time the commitment and only a decrypt handle for each.
 /// The DecryptHandle is used to decrypt the ciphertext and is selected based on the role in the transaction.
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug)]
 #[serde(rename_all = "snake_case")]
 pub enum Role {
     Sender,

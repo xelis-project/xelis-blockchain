@@ -51,7 +51,12 @@ use crate::{
 };
 use thiserror::Error;
 use super::{
-    extra_data::{ExtraData, PlaintextData},
+    extra_data::{
+        ExtraData,
+        ExtraDataType,
+        PlaintextData,
+        UnknownExtraDataFormat
+    },
     BurnPayload,
     CompressedConstant,
     ContractDeposit,
@@ -65,8 +70,8 @@ use super::{
     TxVersion,
     EXTRA_DATA_LIMIT_SIZE,
     EXTRA_DATA_LIMIT_SUM_SIZE,
-    MAX_TRANSFER_COUNT,
-    MAX_MULTISIG_PARTICIPANTS
+    MAX_MULTISIG_PARTICIPANTS,
+    MAX_TRANSFER_COUNT
 };
 
 pub use payload::*;
@@ -280,7 +285,11 @@ impl TransactionBuilder {
                         // 2 represents u16 length of UnknownExtraDataFormat
                         // We have both length has we move one in the other
                         // This mean new ExtraData version has 2 + 2 + 32 (sender) + 32 (receiver) bytes of overhead.
-                        size += ExtraData::estimate_size(extra_data);
+                        if self.version >= TxVersion::V2 {
+                            size += ExtraDataType::estimate_size(extra_data, transfer.encrypt_extra_data);
+                        } else {
+                            size += ExtraData::estimate_size(extra_data);
+                        }
                     }
                 }
                 commitments_count = transfers.len();
@@ -710,7 +719,25 @@ impl TransactionBuilder {
                         // Encrypt the extra data if it exists
                         let extra_data = if let Some(extra_data) = transfer.inner.extra_data {
                             let bytes = extra_data.to_bytes();
-                            let cipher = ExtraData::new(PlaintextData(bytes), source_keypair.get_public_key(), &transfer.destination);
+
+                            let cipher: UnknownExtraDataFormat = if self.version >= TxVersion::V2 {
+                                if transfer.inner.encrypt_extra_data {
+                                    ExtraDataType::Private(ExtraData::new(
+                                        PlaintextData(bytes),
+                                        source_keypair.get_public_key(),
+                                        &transfer.destination)
+                                    )
+                                } else {
+                                    ExtraDataType::Public(PlaintextData(bytes))
+                                }.into()
+                            } else {
+                                ExtraData::new(
+                                    PlaintextData(bytes),
+                                    source_keypair.get_public_key(),
+                                    &transfer.destination
+                                ).into()
+                            };
+
                             let cipher_size = cipher.size();
                             if cipher_size > EXTRA_DATA_LIMIT_SIZE {
                                 return Err(GenerationError::EncryptedExtraDataTooLarge(cipher_size, EXTRA_DATA_LIMIT_SIZE));
@@ -718,7 +745,7 @@ impl TransactionBuilder {
     
                             total_cipher_size += cipher_size;
     
-                            Some(cipher.into())
+                            Some(cipher)
                         } else {
                             None
                         };

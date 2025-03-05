@@ -126,6 +126,7 @@ fn create_tx_for(account: Account, destination: Address, amount: u64, extra_data
         destination,
         asset: XELIS_ASSET,
         extra_data,
+        encrypt_extra_data: true,
     }]);
 
 
@@ -171,19 +172,19 @@ fn test_encrypt_decrypt_two_parties() {
     let cipher = transfer.get_extra_data().clone().unwrap();
     // Verify the extra data from alice (sender)
     {
-        let decrypted = cipher.decrypt_v2(&alice.keypair.get_private_key(), Role::Sender).unwrap();
-        assert_eq!(*decrypted.data(), payload);
+        let decrypted = cipher.decrypt(&alice.keypair.get_private_key(), None, Role::Sender).unwrap();
+        assert_eq!(decrypted.data(), Some(&payload));
     }
 
     // Verify the extra data from bob (receiver)
     {
-        let decrypted = cipher.decrypt_v2(&bob.keypair.get_private_key(), Role::Receiver).unwrap();
-        assert_eq!(*decrypted.data(), payload);
+        let decrypted = cipher.decrypt(&bob.keypair.get_private_key(), None, Role::Receiver).unwrap();
+        assert_eq!(decrypted.data(), Some(&payload));
     }
 
     // Verify the extra data from alice (sender) with the wrong key
     {
-        let decrypted = cipher.decrypt_v2(&bob.keypair.get_private_key(), Role::Sender);
+        let decrypted = cipher.decrypt(&bob.keypair.get_private_key(), None, Role::Sender);
         assert!(decrypted.is_err());
     }
 }
@@ -368,6 +369,7 @@ async fn test_max_transfers() {
                 destination: bob.address(),
                 asset: XELIS_ASSET,
                 extra_data: None,
+                encrypt_extra_data: true,
             });
         }
 
@@ -510,6 +512,7 @@ async fn test_multisig() {
             destination: bob.address(),
             asset: XELIS_ASSET,
             extra_data: None,
+            encrypt_extra_data: true,
         }]);
         let builder = TransactionBuilder::new(TxVersion::V1, alice.keypair.get_public_key().compress(), Some(2), data, FeeBuilder::default());
         let mut tx = builder.build_unsigned(&mut state, &alice.keypair).unwrap();
