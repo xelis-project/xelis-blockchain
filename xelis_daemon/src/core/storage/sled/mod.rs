@@ -195,7 +195,7 @@ macro_rules! init_cache {
 }
 
 #[derive(Clone, Copy, clap::ValueEnum, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
+#[serde(rename_all = "snake_case")]
 pub enum StorageMode {
     HighThroughput,
     LowSpace
