@@ -1164,7 +1164,8 @@ async fn transfer(manager: &CommandManager, mut args: ArgumentManager) -> Result
         destination: address,
         amount,
         asset,
-        extra_data: None
+        extra_data: None,
+        encrypt_extra_data: true
     };
     let tx_type = TransactionTypeBuilder::Transfers(vec![transfer]);
     let tx = if let Some(multisig) = multisig {
@@ -1222,7 +1223,8 @@ async fn transfer_all(manager: &CommandManager, mut args: ArgumentManager) -> Re
         destination: address.clone(),
         amount,
         asset: asset.clone(),
-        extra_data: None
+        extra_data: None,
+        encrypt_extra_data: true
     };
     let tx_type = TransactionTypeBuilder::Transfers(vec![transfer]);
     let estimated_fees = wallet.estimate_fees(tx_type.clone(), FeeBuilder::default()).await.context("Error while estimating fees")?;
@@ -1243,7 +1245,8 @@ async fn transfer_all(manager: &CommandManager, mut args: ArgumentManager) -> Re
         destination: address,
         amount,
         asset,
-        extra_data: None
+        extra_data: None,
+        encrypt_extra_data: true
     };
     let tx_type = TransactionTypeBuilder::Transfers(vec![transfer]);
     let tx = if let Some(multisig) = multisig {

@@ -1065,8 +1065,8 @@ impl EncryptedStorage {
             if let Some(query) = query {
                 if let Some(transfers) = transfers.as_mut() {
                     transfers.retain(|transfer| {
-                        if let Some(element) = transfer.get_extra_data() {
-                            query.verify_element(element.data())
+                        if let Some(element) = transfer.get_extra_data().as_ref().and_then(|v| v.data()) {
+                            query.verify_element(element)
                         } else {
                             false
                         }

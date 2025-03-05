@@ -34,7 +34,12 @@ use xelis_common::{
         task::{JoinError, JoinHandle},
         time::sleep
     },
-    transaction::{ContractDeposit, MultiSigPayload, Role},
+    transaction::{
+        extra_data::{PlaintextExtraData, PlaintextFlag},
+        ContractDeposit,
+        MultiSigPayload,
+        Role
+    },
     utils::sanitize_daemon_address
 };
 use crate::{
@@ -336,7 +341,7 @@ impl NetworkHandler {
                                     Ok(e) => Some(e),
                                     Err(e) => {
                                         warn!("Error while decrypting extra data of TX {}: {}", tx.hash, e);
-                                        None
+                                        Some(PlaintextExtraData::new(None, None, PlaintextFlag::Failed))
                                     }
                                 }
                             } else {
