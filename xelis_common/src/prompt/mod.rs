@@ -200,7 +200,10 @@ impl Prompt {
         #[cfg(feature = "tracing")]
         {
             info!("Tracing enabled");
-            console_subscriber::init();
+            console_subscriber::Builder::default()
+                .event_buffer_capacity(console_subscriber::ConsoleLayer::DEFAULT_EVENT_BUFFER_CAPACITY * 2000)
+                .client_buffer_capacity(console_subscriber::ConsoleLayer::DEFAULT_CLIENT_BUFFER_CAPACITY * 2000)
+                .init();
         }
 
         if prompt.state.is_interactive() {
