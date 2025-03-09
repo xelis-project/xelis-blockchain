@@ -1,7 +1,20 @@
 use log::trace;
-use xelis_common::{asset::AssetData, block::TopoHeight, contract::{ContractProvider, ContractStorage}, crypto::{Hash, PublicKey}};
+use xelis_common::{
+    asset::AssetData,
+    block::TopoHeight,
+    contract::{ContractProvider, ContractStorage},
+    crypto::{Hash, PublicKey}
+};
 use xelis_vm::Constant;
-use crate::core::storage::{AccountProvider, AssetProvider, ContractBalanceProvider, ContractDataProvider, NetworkProvider, SledStorage, SupplyProvider};
+use crate::core::storage::{
+    AccountProvider,
+    AssetProvider,
+    ContractBalanceProvider,
+    ContractDataProvider,
+    NetworkProvider,
+    SledStorage,
+    SupplyProvider
+};
 
 impl ContractStorage for SledStorage {
     fn load_data(&self, contract: &Hash, key: &Constant, topoheight: TopoHeight) -> Result<Option<(TopoHeight, Option<Constant>)>, anyhow::Error> {
