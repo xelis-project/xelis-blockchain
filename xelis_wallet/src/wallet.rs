@@ -7,14 +7,17 @@ use anyhow::{Error, Context};
 use chrono::TimeZone;
 use serde::Serialize;
 use xelis_common::{
-    tokio::sync::{
-        broadcast::{
-            Sender as BroadcastSender,
-            Receiver as BroadcastReceiver
+    tokio::{
+        sync::{
+            broadcast::{
+                Sender as BroadcastSender,
+                Receiver as BroadcastReceiver
+            },
+            Mutex,
+            RwLock,
+            broadcast,
         },
-        Mutex,
-        RwLock,
-        broadcast,
+        task::block_in_place
     },
     api::{
         wallet::{
@@ -130,13 +133,6 @@ use {
     }
 };
 
-#[cfg(not(all(
-    target_arch = "wasm32",
-    target_vendor = "unknown",
-    target_os = "unknown"
-)))]
-use xelis_common::tokio::task::spawn_blocking;
-
 // Recover option for wallet creation
 pub enum RecoverOption<'a> {
     Seed(&'a str),
@@ -197,7 +193,7 @@ pub struct Wallet {
     storage: RwLock<EncryptedStorage>,
     // Inner account with keys and precomputed tables
     // so it can be shared to another thread for decrypting ciphertexts
-    inner: Arc<InnerAccount>,
+    inner: InnerAccount,
     // network handler for online mode to keep wallet synced
     #[cfg(feature = "network_handler")]
     network_handler: Mutex<Option<SharedNetworkHandler>>,
@@ -228,12 +224,12 @@ struct InnerAccount {
 }
 
 impl InnerAccount {
-    fn new(precomputed_tables: PrecomputedTablesShared, keypair: KeyPair) -> Arc<Self> {
-        Arc::new(Self {
+    fn new(precomputed_tables: PrecomputedTablesShared, keypair: KeyPair) -> Self {
+        Self {
             precomputed_tables,
             public_key: keypair.get_public_key().compress(),
             keypair,
-        })
+        }
     }
 
     pub fn decrypt_ciphertext(&self, ciphertext: &Ciphertext) -> Result<Option<u64>, WalletError> {
@@ -602,26 +598,10 @@ impl Wallet {
 
     // Wallet has to be under a Arc to be shared to the spawn_blocking function
     pub async fn decrypt_ciphertext(&self, ciphertext: Ciphertext) -> Result<Option<u64>, WalletError> {
-        // TODO: is it still useful to spawn a task for that ?
-        #[cfg(not(all(
-            target_arch = "wasm32",
-            target_vendor = "unknown",
-            target_os = "unknown"
-        )))]
-        {
-            trace!("decrypt ciphertext with a spawn blocking task");
-            let account = Arc::clone(&self.inner);
-            spawn_blocking(move || account.decrypt_ciphertext(&ciphertext)).await.context("Error while decrypting ciphertext")?
-        }
-        #[cfg(all(
-            target_arch = "wasm32",
-            target_vendor = "unknown",
-            target_os = "unknown"
-        ))]
-        {
-            trace!("decrypt ciphertext without spawn blocking task");
+        trace!("decrypt ciphertext");
+        block_in_place(|| {
             self.inner.decrypt_ciphertext(&ciphertext)
-        }
+        })
     }
 
     // Decrypt the extra data from a transfer
