@@ -893,7 +893,7 @@ impl Transaction {
                 }
 
                 // Total used gas by the VM
-                let (used_gas, exit_code) = {
+                let (used_gas, exit_code) = tokio::task::block_in_place::<_, Result<_, anyhow::Error>>(|| {
                     // Create the VM
                     let module = contract_environment.module;
                     let mut vm = VM::new(module, contract_environment.environment);
@@ -949,8 +949,8 @@ impl Transaction {
                         }
                     };
 
-                    (gas_usage, exit_code)
-                };
+                    Ok((gas_usage, exit_code))
+                })?;
 
                 let mut outputs = chain_state.outputs;
                 // If the contract execution was successful, we need to merge the cache
@@ -1009,7 +1009,7 @@ impl Transaction {
 
                     state.add_gas_fee(gas_fee).await
                         .map_err(VerificationError::State)?;
-    
+
                     if refund_gas > 0 {
                         // If we have some funds to refund, we add it to the sender balance
                         // But to prevent any front running, we add to the sender balance by considering him as a receiver.
