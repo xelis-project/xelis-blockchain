@@ -17,7 +17,7 @@ use xelis_common::{
             RwLock,
             broadcast,
         },
-        task::block_in_place
+        block_in_place_safe
     },
     api::{
         wallet::{
@@ -599,9 +599,7 @@ impl Wallet {
     // Wallet has to be under a Arc to be shared to the spawn_blocking function
     pub async fn decrypt_ciphertext(&self, ciphertext: Ciphertext) -> Result<Option<u64>, WalletError> {
         trace!("decrypt ciphertext");
-        block_in_place(|| {
-            self.inner.decrypt_ciphertext(&ciphertext)
-        })
+        block_in_place_safe(|| self.inner.decrypt_ciphertext(&ciphertext))
     }
 
     // Decrypt the extra data from a transfer
