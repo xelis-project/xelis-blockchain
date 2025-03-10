@@ -64,7 +64,7 @@ use xelis_common::{
         TransactionType
     },
     utils::{calculate_tx_fee, format_xelis},
-    tokio::spawn_task,
+    tokio::{spawn_task, is_multi_threads_supported},
     varuint::VarUint,
     contract::build_environment,
 };
@@ -119,7 +119,6 @@ use std::{
 };
 use tokio::{
     net::lookup_host,
-    runtime::{Handle, RuntimeFlavor},
     sync::{broadcast, Mutex, RwLock}
 };
 use log::{info, error, debug, warn, trace};
@@ -2952,17 +2951,6 @@ pub fn get_block_dev_fee(height: u64) -> u64 {
     }
 
     percentage
-}
-
-// Verify if the multi thread is supported by the caller
-pub fn is_multi_threads_supported() -> bool {
-    trace!("is multi thread supported");
-    let supported = Handle::try_current()
-        .map(|v| matches!(v.runtime_flavor(), RuntimeFlavor::MultiThread))
-        .unwrap_or(false);
-    debug!("multi threads supported: {}", supported);
-
-    supported
 }
 
 #[cfg(test)]
