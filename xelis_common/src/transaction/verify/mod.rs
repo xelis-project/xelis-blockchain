@@ -774,26 +774,28 @@ impl Transaction {
             prepared.push((transcript, commitments));
         }
 
-        sigma_batch_collector
-            .verify()
-            .map_err(|_| ProofVerificationError::GenericProof)?;
-
-        RangeProof::verify_batch(
-            txs.iter()
-                .zip(&mut prepared)
-                .map(|((tx, _), (transcript, commitments))| {
-                    tx.as_ref()
-                        .range_proof
-                        .verification_view(
-                            transcript,
-                            commitments,
-                            BULLET_PROOF_SIZE
-                        )
-                }),
-            &BP_GENS,
-            &PC_GENS,
-        )
-        .map_err(ProofVerificationError::from)?;
+        tokio::task::block_in_place(|| {
+            sigma_batch_collector
+                .verify()
+                .map_err(|_| ProofVerificationError::GenericProof)?;
+    
+            RangeProof::verify_batch(
+                txs.iter()
+                    .zip(&mut prepared)
+                    .map(|((tx, _), (transcript, commitments))| {
+                        tx.as_ref()
+                            .range_proof
+                            .verification_view(
+                                transcript,
+                                commitments,
+                                BULLET_PROOF_SIZE
+                            )
+                    }),
+                &BP_GENS,
+                &PC_GENS,
+            )
+            .map_err(ProofVerificationError::from)
+        })?;
 
         Ok(())
     }
@@ -807,22 +809,24 @@ impl Transaction {
         let mut sigma_batch_collector = BatchCollector::default();
         let (mut transcript, commitments) = self.pre_verify(tx_hash, state, &mut sigma_batch_collector).await?;
 
-        trace!("Verifying sigma proofs");
-        sigma_batch_collector
+        tokio::task::block_in_place(|| {
+            trace!("Verifying sigma proofs");
+            sigma_batch_collector
             .verify()
             .map_err(|_| ProofVerificationError::GenericProof)?;
 
-        trace!("Verifying range proof");
-        RangeProof::verify_multiple(
-            &self.range_proof,
-            &BP_GENS,
-            &PC_GENS,
-            &mut transcript,
-            &commitments,
-            BULLET_PROOF_SIZE,
-        )
-        .map_err(ProofVerificationError::from)?;
-
+            trace!("Verifying range proof");
+            RangeProof::verify_multiple(
+                &self.range_proof,
+                &BP_GENS,
+                &PC_GENS,
+                &mut transcript,
+                &commitments,
+                BULLET_PROOF_SIZE,
+            )
+            .map_err(ProofVerificationError::from)
+        })?;
+    
         Ok(())
     }
 
