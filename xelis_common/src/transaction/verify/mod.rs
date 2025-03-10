@@ -14,6 +14,7 @@ use log::{debug, trace};
 use merlin::Transcript;
 use xelis_vm::{ConstantWrapper, ModuleValidator, VM};
 use crate::{
+    tokio::block_in_place_safe,
     account::Nonce,
     config::{BURN_PER_CONTRACT, TRANSACTION_FEE_BURN_PERCENT, XELIS_ASSET},
     contract::{get_balance_from_cache, ContractOutput, ContractProvider, ContractProviderWrapper},
@@ -774,7 +775,7 @@ impl Transaction {
             prepared.push((transcript, commitments));
         }
 
-        tokio::task::block_in_place(|| {
+        block_in_place_safe(|| {
             sigma_batch_collector
                 .verify()
                 .map_err(|_| ProofVerificationError::GenericProof)?;
@@ -809,7 +810,7 @@ impl Transaction {
         let mut sigma_batch_collector = BatchCollector::default();
         let (mut transcript, commitments) = self.pre_verify(tx_hash, state, &mut sigma_batch_collector).await?;
 
-        tokio::task::block_in_place(|| {
+        block_in_place_safe(|| {
             trace!("Verifying sigma proofs");
             sigma_batch_collector
             .verify()
@@ -897,7 +898,7 @@ impl Transaction {
                 }
 
                 // Total used gas by the VM
-                let (used_gas, exit_code) = tokio::task::block_in_place::<_, Result<_, anyhow::Error>>(|| {
+                let (used_gas, exit_code) = block_in_place_safe::<_, Result<_, anyhow::Error>>(|| {
                     // Create the VM
                     let module = contract_environment.module;
                     let mut vm = VM::new(module, contract_environment.environment);
