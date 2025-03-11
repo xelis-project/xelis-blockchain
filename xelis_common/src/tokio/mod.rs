@@ -1,5 +1,6 @@
 mod thread_pool;
 
+use std::future::Future;
 use log::trace;
 
 pub use thread_pool::ThreadPool;
@@ -29,10 +30,10 @@ use runtime::{Handle, RuntimeFlavor};
     target_os = "unknown"
 )))]
 #[track_caller]
-pub fn spawn_task<Fut, S: Into<String>>(name: S, future: Fut) -> task::JoinHandle<Fut::Output>
+pub fn spawn_task<F, S: Into<String>>(name: S, future: F) -> task::JoinHandle<F::Output>
 where
-    Fut: std::future::Future + Send + 'static,
-    Fut::Output: Send + 'static,
+    F: Future + Send + 'static,
+    F::Output: Send + 'static,
 {
     let name_str = name.into();
     trace!("Spawning task: {}", name_str);
@@ -54,10 +55,10 @@ where
     target_vendor = "unknown",
     target_os = "unknown"
 ))]
-pub fn spawn_task<Fut, S: Into<String>>(name: S, future: Fut) -> task::JoinHandle<Fut::Output>
+pub fn spawn_task<F, S: Into<String>>(name: S, future: F) -> task::JoinHandle<F::Output>
 where
-    Fut: std::future::Future + 'static,
-    Fut::Output: 'static,
+    F: Future + 'static,
+    F::Output: 'static,
 {
     let name_str = name.into();
     log::trace!("Spawning wasm task: {}", name_str);
@@ -73,6 +74,14 @@ pub fn is_multi_threads_supported() -> bool {
     trace!("multi threads supported: {}", supported);
 
     supported
+}
+
+// Try blocking on using the current executor available for the thread
+// If the current executor is not available, return an error
+pub fn try_block_on<F: Future>(future: F) -> Result<F::Output, anyhow::Error> {
+    trace!("try block on");
+    let handle = Handle::try_current()?;
+    Ok(handle.block_on(future))
 }
 
 // Block in place if multi thread is supported
