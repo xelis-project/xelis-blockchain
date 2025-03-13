@@ -12,7 +12,7 @@ use curve25519_dalek::{
 };
 use log::{debug, trace};
 use merlin::Transcript;
-use xelis_vm::{ConstantWrapper, ModuleValidator, VM};
+use xelis_vm::{ModuleValidator, VM};
 use crate::{
     tokio::block_in_place_safe,
     account::Nonce,
@@ -476,13 +476,7 @@ impl Transaction {
 
                 let validator = ModuleValidator::new(module, environment);
                 for constant in payload.parameters.iter() {
-                    let decompressed = constant.decompress(module.structs(), module.enums())
-                        .context("decompress param")?;
-
-                    // For safety, we wrap it in our custom type in case of a potential stackoverflow attack
-                    let wrapped = ConstantWrapper(decompressed);
-
-                    validator.verify_constant(&wrapped.0)
+                    validator.verify_constant(&constant)
                         .map_err(|err| VerificationError::ModuleError(format!("{:#}", err)))?;
                 }
             },
@@ -717,7 +711,7 @@ impl Transaction {
                 transcript.append_hash(b"contract_hash", &payload.contract);
 
                 for param in payload.parameters.iter() {
-                    transcript.append_message(b"contract_param", param.as_bytes());
+                    transcript.append_message(b"contract_param", &param.to_bytes());
                 }
             },
             TransactionType::DeployContract(module) => {
@@ -905,11 +899,8 @@ impl Transaction {
 
                     // We need to push it in reverse order because the VM will pop them in reverse order
                     for constant in payload.parameters.iter().rev() {
-                        let decompressed = constant.decompress(module.structs(), module.enums())
-                            .context("decompress param")?;
-
-                        trace!("Pushing constant: {}", decompressed);
-                        vm.push_stack(decompressed)
+                        trace!("Pushing constant: {}", constant);
+                        vm.push_stack(constant.clone())
                             .context("push param")?;
                     }
 

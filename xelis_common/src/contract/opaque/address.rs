@@ -6,7 +6,7 @@ use xelis_vm::{
     FnParams,
     FnReturnType,
     OpaqueWrapper,
-    Value,
+    Primitive,
     ValueCell
 };
 use crate::crypto::Address;
@@ -32,27 +32,32 @@ impl Serializable for Address {
 
 pub fn address_is_mainnet(zelf: FnInstance, _: FnParams, _: &mut Context) -> FnReturnType {
     let address: &Address = zelf?.as_opaque_type()?;
-    Ok(Some(Value::Boolean(address.is_mainnet()).into()))
+    Ok(Some(Primitive::Boolean(address.is_mainnet()).into()))
 }
 
 pub fn address_is_normal(zelf: FnInstance, _: FnParams, _: &mut Context) -> FnReturnType {
     let address: &Address = zelf?.as_opaque_type()?;
-    Ok(Some(Value::Boolean(address.is_normal()).into()))
+    Ok(Some(Primitive::Boolean(address.is_normal()).into()))
 }
 
 pub fn address_public_key_bytes(zelf: FnInstance, _: FnParams, _: &mut Context) -> FnReturnType {
     let address: &Address = zelf?.as_opaque_type()?;
-    let bytes = address.get_public_key().as_bytes().into_iter().map(|b| Value::U8(*b).into()).collect();
+    let bytes = address.get_public_key()
+        .as_bytes()
+        .into_iter()
+        .map(|b| Primitive::U8(*b).into())
+        .collect();
+
     Ok(Some(ValueCell::Array(bytes)))
 }
 
 pub fn address_from_string(_: FnInstance, mut params: FnParams, _: &mut Context) -> FnReturnType {
-    let string = params.remove(0)
-        .into_inner()
-        .to_string()?;
+    let param = params.remove(0)
+        .into_owned()?;
+    let string = param.as_string()?;
 
-    let address = Address::from_string(&string)
+    let address = Address::from_string(string)
         .map_err(|_| EnvironmentError::InvalidParameter)?;
 
-    Ok(Some(Value::Opaque(OpaqueWrapper::new(address)).into()))
+    Ok(Some(Primitive::Opaque(OpaqueWrapper::new(address)).into()))
 }

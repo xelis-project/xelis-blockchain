@@ -11,7 +11,7 @@ use serde::{
     Deserializer,
     de::Error
 };
-use xelis_vm::Constant;
+use xelis_vm::ValueCell;
 use crate::{
     account::{Nonce, CiphertextCache, VersionedBalance, VersionedNonce},
     block::{TopoHeight, Algorithm, BlockVersion, EXTRA_NONCE_SIZE},
@@ -658,13 +658,13 @@ pub struct GetContractModuleParams<'a> {
 #[derive(Serialize, Deserialize)]
 pub struct GetContractDataParams<'a> {
     pub contract: Cow<'a, Hash>,
-    pub key: Cow<'a, Constant>
+    pub key: Cow<'a, ValueCell>
 }
 
 #[derive(Serialize, Deserialize)]
 pub struct GetContractDataAtTopoHeightParams<'a> {
     pub contract: Cow<'a, Hash>,
-    pub key: Cow<'a, Constant>,
+    pub key: Cow<'a, ValueCell>,
     pub topoheight: TopoHeight
 }
 
@@ -828,7 +828,7 @@ pub struct ContractTransferEvent<'a> {
 // Value of NotifyEvent::ContractEvent
 #[derive(Serialize, Deserialize)]
 pub struct ContractEvent<'a> {
-    pub data: Cow<'a, Constant>
+    pub data: Cow<'a, ValueCell>
 }
 
 // Value of NotifyEvent::PeerConnected

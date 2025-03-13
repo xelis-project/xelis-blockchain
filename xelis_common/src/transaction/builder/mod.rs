@@ -58,7 +58,6 @@ use super::{
         UnknownExtraDataFormat
     },
     BurnPayload,
-    CompressedConstant,
     ContractDeposit,
     InvokeContractPayload,
     MultiSigPayload,
@@ -875,19 +874,15 @@ impl TransactionBuilder {
                 transcript.invoke_contract_proof_domain_separator();
                 transcript.append_hash(b"contract_hash", &payload.contract);
 
-                let mut parameters = Vec::with_capacity(payload.parameters.len());
-                for param in payload.parameters {
-                    let compressed = CompressedConstant::new(&param);
-                    transcript.append_message(b"contract_param", compressed.as_bytes());
-
-                    parameters.push(compressed);
+                for param in payload.parameters.iter() {
+                    transcript.append_message(b"contract_param", &param.to_bytes());
                 }
 
                 TransactionType::InvokeContract(InvokeContractPayload {
                     contract: payload.contract,
                     max_gas: payload.max_gas,
                     chunk_id: payload.chunk_id,
-                    parameters,
+                    parameters: payload.parameters,
                     deposits,
                 })
             },

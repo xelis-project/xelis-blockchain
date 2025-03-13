@@ -6,7 +6,7 @@ use xelis_vm::{
     FnParams,
     FnReturnType,
     OpaqueWrapper,
-    Value,
+    Primitive,
     U256
 };
 
@@ -28,7 +28,7 @@ impl JSONHelper for OpaqueRandom {
 }
 
 pub fn random_fn(_: FnInstance, _: FnParams, _: &mut Context) -> FnReturnType {
-    Ok(Some(Value::Opaque(OpaqueWrapper::new(OpaqueRandom)).into()))
+    Ok(Some(Primitive::Opaque(OpaqueWrapper::new(OpaqueRandom)).into()))
 }
 
 pub fn random_u8(zelf: FnInstance, _: FnParams, context: &mut Context) -> FnReturnType {
@@ -43,7 +43,7 @@ pub fn random_u8(zelf: FnInstance, _: FnParams, context: &mut Context) -> FnRetu
 
     let value = buffer[0];
 
-    Ok(Some(Value::U8(value).into()))
+    Ok(Some(Primitive::U8(value).into()))
 }
 
 pub fn random_u16(zelf: FnInstance, _: FnParams, context: &mut Context) -> FnReturnType {
@@ -58,7 +58,7 @@ pub fn random_u16(zelf: FnInstance, _: FnParams, context: &mut Context) -> FnRet
 
     let value = u16::from_le_bytes(buffer);
 
-    Ok(Some(Value::U16(value).into()))
+    Ok(Some(Primitive::U16(value).into()))
 }
 
 pub fn random_u32(zelf: FnInstance, _: FnParams, context: &mut Context) -> FnReturnType {
@@ -73,7 +73,7 @@ pub fn random_u32(zelf: FnInstance, _: FnParams, context: &mut Context) -> FnRet
 
     let value = u32::from_le_bytes(buffer);
 
-    Ok(Some(Value::U32(value).into()))
+    Ok(Some(Primitive::U32(value).into()))
 }
 
 pub fn random_u64(zelf: FnInstance, _: FnParams, context: &mut Context) -> FnReturnType {
@@ -88,7 +88,7 @@ pub fn random_u64(zelf: FnInstance, _: FnParams, context: &mut Context) -> FnRet
 
     let value = u64::from_le_bytes(buffer);
 
-    Ok(Some(Value::U64(value).into()))
+    Ok(Some(Primitive::U64(value).into()))
 }
 
 pub fn random_u128(zelf: FnInstance, _: FnParams, context: &mut Context) -> FnReturnType {
@@ -103,7 +103,7 @@ pub fn random_u128(zelf: FnInstance, _: FnParams, context: &mut Context) -> FnRe
 
     let value = u128::from_le_bytes(buffer);
 
-    Ok(Some(Value::U128(value).into()))
+    Ok(Some(Primitive::U128(value).into()))
 }
 
 pub fn random_u256(zelf: FnInstance, _: FnParams, context: &mut Context) -> FnReturnType {
@@ -117,7 +117,7 @@ pub fn random_u256(zelf: FnInstance, _: FnParams, context: &mut Context) -> FnRe
     state.random.fill(&mut buffer).context("filling random buffer")?;
 
     let value = U256::from_le_bytes(buffer);
-    Ok(Some(Value::U256(value).into()))
+    Ok(Some(Primitive::U256(value).into()))
 }
 
 pub fn random_bool(zelf: FnInstance, _: FnParams, context: &mut Context) -> FnReturnType {
@@ -132,5 +132,5 @@ pub fn random_bool(zelf: FnInstance, _: FnParams, context: &mut Context) -> FnRe
 
     let value = buffer[0] & 1 == 1;
 
-    Ok(Some(Value::Boolean(value).into()))
+    Ok(Some(Primitive::Boolean(value).into()))
 }

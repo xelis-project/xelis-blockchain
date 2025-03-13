@@ -8,7 +8,7 @@ use xelis_vm::{
     FnParams,
     FnReturnType,
     OpaqueWrapper,
-    Value,
+    Primitive,
     ValueCell,
     ValueError
 };
@@ -29,65 +29,66 @@ impl Serializable for Hash {
 
 pub fn hash_as_bytes_fn(_: FnInstance, _: FnParams, context: &mut Context) -> FnReturnType {
     let hash: &Hash = context.get().context("hash not found")?;
-    let bytes = hash.as_bytes().into_iter().map(|b| Value::U8(*b).into()).collect();
+    let bytes = hash.as_bytes().into_iter().map(|b| Primitive::U8(*b).into()).collect();
     Ok(Some(ValueCell::Array(bytes)))
 }
 
 pub fn hash_from_bytes_fn(_: FnInstance, mut params: FnParams, _: &mut Context) -> FnReturnType {
-    let values = params.remove(0).into_inner()
-        .to_vec()?;
+    let param = params.remove(0)
+        .into_owned()?;
+    let values = param.as_vec()?;
+
     if values.len() != HASH_SIZE {
         return Err(EnvironmentError::InvalidParameter);
     }
 
     let mut bytes = Vec::with_capacity(HASH_SIZE);
     for value in values {
-        let byte = value.borrow()
-            .as_u8()?;
+        let byte = value.as_u8()?;
         bytes.push(byte);
     }
 
     let hash = Hash::from_bytes(&bytes)
         .context("failed to create hash from bytes")?;
 
-    Ok(Some(Value::Opaque(OpaqueWrapper::new(hash)).into()))
+    Ok(Some(Primitive::Opaque(OpaqueWrapper::new(hash)).into()))
 }
 
 pub fn hash_from_hex_fn(_: FnInstance, mut params: FnParams, _: &mut Context) -> FnReturnType {
-    let hex = params.remove(0)
-        .into_inner()
-        .to_string()?;
+    let param = params.remove(0)
+        .into_owned()?;
+    let hex = param.as_string()?;
 
     if hex.len() != HASH_SIZE * 2 {
         return Err(EnvironmentError::InvalidParameter);
     }
 
-    let hash = Hash::from_hex(&hex)
+    let hash = Hash::from_hex(hex)
         .context("failed to create hash from hex")?;
 
-    Ok(Some(Value::Opaque(OpaqueWrapper::new(hash)).into()))
+    Ok(Some(Primitive::Opaque(OpaqueWrapper::new(hash)).into()))
 }
 
 pub fn blake3_fn(_: FnInstance, mut params: FnParams, _: &mut Context) -> FnReturnType {
     let input = params.remove(0)
-        .into_inner()
-        .to_vec()?
-        .into_iter()
-        .map(|v| v.borrow().as_u8())
+        .into_owned()?
+        .as_vec()?
+        .iter()
+        .map(|v| v.as_u8())
         .collect::<Result<Vec<u8>, ValueError>>()?;
 
     let hash = hash(&input);
-    Ok(Some(Value::Opaque(OpaqueWrapper::new(hash)).into()))
+    Ok(Some(Primitive::Opaque(OpaqueWrapper::new(hash)).into()))
 }
 
 pub fn sha256_fn(_: FnInstance, mut params: FnParams, _: &mut Context) -> FnReturnType {
     let input = params.remove(0)
-        .into_inner()
-        .to_vec()?
+        .into_owned()?
+        .as_vec()?
         .into_iter()
-        .map(|v| v.borrow().as_u8())
+        .map(|v| v.as_u8())
         .collect::<Result<Vec<u8>, ValueError>>()?;
 
     let hash = Hash::new(Sha3_256::digest(&input).into());
-    Ok(Some(Value::Opaque(OpaqueWrapper::new(hash)).into()))
+    Ok(Some(Primitive::Opaque(OpaqueWrapper::new(hash)).into()))
 }

@@ -1,21 +1,12 @@
-mod compressed;
-
 use anyhow::Context;
-use compressed::{decompress_constant, decompress_type};
 use indexmap::{IndexMap, IndexSet};
-use log::warn;
 use serde::{Deserialize, Serialize};
 use xelis_vm::{
     Chunk,
-    Constant,
-    ConstantWrapper,
-    EnumType,
-    EnumVariant,
     Module,
     OpaqueWrapper,
-    StructType,
-    Type,
-    Value,
+    Primitive,
+    ValueCell,
     U256
 };
 use crate::{
@@ -26,8 +17,6 @@ use crate::{
     },
     serializer::*
 };
-
-pub use compressed::CompressedConstant;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "snake_case")]
@@ -67,7 +56,7 @@ pub struct InvokeContractPayload {
     // is still accepted by nodes but the contract execution is stopped
     pub max_gas: u64,
     // The parameters to call the contract
-    pub parameters: Vec<CompressedConstant>
+    pub parameters: Vec<ValueCell>
 }
 
 impl Serializer for ContractDeposit {
@@ -134,83 +123,77 @@ impl Serializer for U256 {
     }
 }
 
-impl Serializer for Value {
+impl Serializer for Primitive {
     fn write(&self, writer: &mut Writer) {
         match self {
-            Value::Null => writer.write_u8(0),
-            Value::U8(value) => {
+            Primitive::Null => writer.write_u8(0),
+            Primitive::U8(value) => {
                 writer.write_u8(1);
                 writer.write_u8(*value);
             },
-            Value::U16(value) => {
+            Primitive::U16(value) => {
                 writer.write_u8(2);
                 writer.write_u16(*value);
             },
-            Value::U32(value) => {
+            Primitive::U32(value) => {
                 writer.write_u8(3);
                 writer.write_u32(value);
             },
-            Value::U64(value) => {
+            Primitive::U64(value) => {
                 writer.write_u8(4);
                 writer.write_u64(value);
             },
-            Value::U128(value) => {
+            Primitive::U128(value) => {
                 writer.write_u8(5);
                 writer.write_u128(value);
             },
-            Value::U256(value) => {
+            Primitive::U256(value) => {
                 writer.write_u8(6);
                 value.write(writer);
             },
-            Value::Boolean(value) => {
+            Primitive::Boolean(value) => {
                 writer.write_u8(7);
                 writer.write_bool(*value);
             },
-            Value::Blob(value) => {
+            Primitive::String(value) => {
                 writer.write_u8(8);
-                let len = value.len() as u32;
-                writer.write_u32(&len);
-                writer.write_bytes(value);
-            },
-            Value::String(value) => {
-                writer.write_u8(9);
-                // TODO support > 255 length strings
-                writer.write_string(value);
+                let bytes = value.as_bytes();
+                writer.write_u16(bytes.len() as u16);
+                writer.write_bytes(bytes);
             }
-            Value::Range(left, right, _) => {
-                writer.write_u8(10);
-                left.write(writer);
-                right.write(writer);
+            Primitive::Range(range) => {
+                writer.write_u8(9);
+                range.0.write(writer);
+                range.1.write(writer);
             },
-            Value::Opaque(opaque) => {
-                writer.write_u8(11);
+            Primitive::Opaque(opaque) => {
+                writer.write_u8(10);
                 opaque.write(writer);
             }
         }
     }
 
-    fn read(reader: &mut Reader) -> Result<Value, ReaderError> {
+    fn read(reader: &mut Reader) -> Result<Primitive, ReaderError> {
         Ok(match reader.read_u8()? {
-            0 => Value::Null,
-            1 => Value::U8(reader.read_u8()?),
-            2 => Value::U16(reader.read_u16()?),
-            3 => Value::U32(reader.read_u32()?),
-            4 => Value::U64(reader.read_u64()?),
-            5 => Value::U128(reader.read_u128()?),
-            6 => Value::U256(U256::read(reader)?),
-            7 => Value::Boolean(reader.read_bool()?),
+            0 => Primitive::Null,
+            1 => Primitive::U8(reader.read_u8()?),
+            2 => Primitive::U16(reader.read_u16()?),
+            3 => Primitive::U32(reader.read_u32()?),
+            4 => Primitive::U64(reader.read_u64()?),
+            5 => Primitive::U128(reader.read_u128()?),
+            6 => Primitive::U256(U256::read(reader)?),
+            7 => Primitive::Boolean(reader.read_bool()?),
             8 => {
-                let len = reader.read_u32()? as usize;
-                Value::Blob(reader.read_bytes(len)?)
-            }
-            9 => Value::String(reader.read_string()?),
+                let len = reader.read_u16()? as usize;
+                Primitive::String(reader.read_string_with_size(len)?)
+            },
             10 => {
-                let left = Value::read(reader)?;
+                let left = Primitive::read(reader)?;
                 if !left.is_number() {
                     return Err(ReaderError::InvalidValue);
                 }
 
-                let right = Value::read(reader)?;
+                let right = Primitive::read(reader)?;
                 if !right.is_number() {
                     return Err(ReaderError::InvalidValue);
                 }
@@ -221,74 +204,60 @@ impl Serializer for Value {
                     return Err(ReaderError::InvalidValue);
                 }
 
-                Value::Range(Box::new(left), Box::new(right), right_type)
+                Primitive::Range(Box::new((left, right)))
             },
-            11 => Value::Opaque(OpaqueWrapper::read(reader)?),
+            11 => Primitive::Opaque(OpaqueWrapper::read(reader)?),
             _ => return Err(ReaderError::InvalidValue)
         })
     }
 
     fn size(&self) -> usize {
         1 + match self {
-            Value::Null => 0,
-            Value::U8(_) => 1,
-            Value::U16(_) => 2,
-            Value::U32(_) => 4,
-            Value::U64(_) => 8,
-            Value::U128(_) => 16,
-            Value::U256(value) => value.size(),
-            Value::Boolean(_) => 1,
-            Value::Blob(value) => 4 + value.len(),
-            Value::String(value) => 1 + value.len(),
-            Value::Range(left, right, _) => left.size() + right.size(),
-            Value::Opaque(opaque) => opaque.size()
+            Primitive::Null => 0,
+            Primitive::U8(_) => 1,
+            Primitive::U16(_) => 2,
+            Primitive::U32(_) => 4,
+            Primitive::U64(_) => 8,
+            Primitive::U128(_) => 16,
+            Primitive::U256(value) => value.size(),
+            Primitive::Boolean(_) => 1,
+            Primitive::String(value) => 2 + value.as_bytes().len(),
+            Primitive::Range(range) => range.0.size() + range.1.size(),
+            Primitive::Opaque(opaque) => opaque.size()
         }
     }
 }
 
-impl Serializer for Constant {
-    // Serialize a constant
-    // Constant with more than one value are serialized in reverse order
+impl Serializer for ValueCell {
+    // Serialize a value cell
+    // ValueCell with more than one value are serialized in reverse order
     // This help us to save a reverse operation when deserializing
     fn write(&self, writer: &mut Writer) {
         match self {
-            Constant::Default(value) => {
+            ValueCell::Default(value) => {
                 writer.write_u8(0);
                 value.write(writer);
             },
-            Constant::Struct(values, struct_type) => {
+            ValueCell::Bytes(bytes) => {
                 writer.write_u8(1);
-                writer.write_u16(struct_type.id());
-                for value in values.iter().rev() {
-                    value.write(writer);
-                }
-            },
-            Constant::Array(values) => {
+                let len = bytes.len() as u32;
+                writer.write_u32(&len);
+                writer.write_bytes(bytes);
+            }
+            ValueCell::Array(values) => {
                 writer.write_u8(2);
                 let len = values.len() as u32;
                 writer.write_u32(&len);
-                for value in values.iter().rev() {
+                for value in values.iter() {
                     value.write(writer);
                 }
             },
-            Constant::Optional(opt) => {
+            ValueCell::Map(map) => {
                 writer.write_u8(3);
-                opt.write(writer);
-            },
-            Constant::Map(map) => {
-                writer.write_u8(4);
                 let len = map.len() as u32;
                 writer.write_u32(&len);
-                for (key, value) in map.iter().rev() {
+                for (key, value) in map.iter() {
                     key.write(writer);
-                    value.write(writer);
-                }
-            },
-            Constant::Enum(values, enum_type) => {
-                writer.write_u8(5);
-                writer.write_u16(enum_type.id());
-                writer.write_u8(enum_type.variant_id());
-                for value in values.iter().rev() {
                     value.write(writer);
                 }
             }
@@ -296,132 +265,65 @@ impl Serializer for Constant {
     }
 
     // No deserialization can occurs here as we're missing context
-    fn read(reader: &mut Reader) -> Result<Constant, ReaderError> {
-        decompress_constant(reader, &IndexSet::new(), &IndexSet::new())
+    fn read(reader: &mut Reader) -> Result<ValueCell, ReaderError> {
+        // TODO: make it iterative and not recursive to prevent stack overflow attacks!!!!
+        Ok(match reader.read_u8()? {
+            0 => ValueCell::Default(Primitive::read(reader)?),
+            1 => {
+                let len = reader.read_u32()? as usize;
+                ValueCell::Bytes(reader.read_bytes(len)?)
+            },
+            2 => {
+                let len = reader.read_u32()? as usize;
+                let mut values = Vec::new();
+                for _ in 0..len {
+                    values.push(ValueCell::read(reader)?);
+                }
+                ValueCell::Array(values)
+            },
+            3 => {
+                let len = reader.read_u32()? as usize;
+                let mut map = IndexMap::new();
+                for _ in 0..len {
+                    let key = ValueCell::read(reader)?;
+                    let value = ValueCell::read(reader)?;
+                    map.insert(key, value);
+                }
+                ValueCell::Map(map)
+            },
+            _ => return Err(ReaderError::InvalidValue)
+        })
     }
 
     fn size(&self) -> usize {
         let mut total = 0;
         let mut stack = vec![self];
 
-        while let Some(constant) = stack.pop() {
+        while let Some(cell) = stack.pop() {
+            // variant id
             total += 1;
-            match constant {
-                Constant::Default(value) => total += value.size(),
-                Constant::Struct(values, _) => {
-                    total += 2;
-                    for value in values {
-                        stack.push(value);
-                    }
+            match cell {
+                ValueCell::Default(value) => total += value.size(),
+                ValueCell::Bytes(bytes) => {
+                    // u32 len
+                    total += 4;
+                    total += bytes.len();
                 },
-                Constant::Array(values) => {
+                ValueCell::Array(values) => {
+                    // u32 len
                     total += 4;
                     for value in values {
                         stack.push(value);
                     }
                 },
-                Constant::Optional(opt) => {
-                    total += opt.size();
-                },
-                Constant::Map(map) => {
+                ValueCell::Map(map) => {
+                    // u32 len
                     total += 4;
                     for (key, value) in map {
                         stack.push(value);
                         stack.push(key);
                     }
-                },
-                Constant::Enum(values, _) => {
-                    total += 3;
-                    for value in values {
-                        stack.push(value);
-                    }
                 }
-            }
-        }
-
-        total
-    }
-}
-
-impl Serializer for Type {
-    fn write(&self, writer: &mut Writer) {
-        match self {
-            Type::U8 => writer.write_u8(0),
-            Type::U16 => writer.write_u8(1),
-            Type::U32 => writer.write_u8(2),
-            Type::U64 => writer.write_u8(3),
-            Type::U128 => writer.write_u8(4),
-            Type::U256 => writer.write_u8(5),
-            Type::Bool => writer.write_u8(6),
-            Type::Blob => writer.write_u8(7),
-            Type::String => writer.write_u8(8),
-            Type::Array(inner) => {
-                writer.write_u8(9);
-                inner.write(writer);
-            },
-            Type::Optional(inner) => {
-                writer.write_u8(10);
-                inner.write(writer);
-            },
-            Type::Map(key, value) => {
-                writer.write_u8(11);
-                key.write(writer);
-                value.write(writer);
-            },
-            Type::Range(inner) => {
-                writer.write_u8(12);
-                inner.write(writer);
-            },
-            Type::Struct(struct_type) => {
-                writer.write_u8(13);
-                writer.write_u16(struct_type.id());
-            },
-            Type::Enum(enum_type) => {
-                writer.write_u8(14);
-                writer.write_u16(enum_type.id());
-            },
-            Type::Opaque(opaque) => {
-                writer.write_u8(15);
-                writer.write_u16(opaque.id());
-            }
-            ty => {
-                warn!("unsupported type serialization: {:?}", ty);
-            }
-        }        
-    }
-
-    fn read(_: &mut Reader) -> Result<Self, ReaderError> {
-        // Read is not supported as we need a specific Context to read correct types
-        Err(ReaderError::InvalidValue)
-    }
-
-    fn size(&self) -> usize {
-        let mut total = 0;
-        let mut stack = vec![self];
-
-        while let Some(ty) = stack.pop() {
-            total += 1;
-            match ty {
-                Type::Struct(_) => {
-                    total += 2;
-                },
-                Type::Array(inner) => {
-                    stack.push(inner);
-                },
-                Type::Optional(inner) => {
-                    stack.push(inner);
-                },
-                Type::Map(key, value) => {
-                    stack.push(value);
-                    stack.push(key);
-                },
-                Type::Enum(_) => {
-                    total += 2;
-                },
-                Type::Range(inner) => {
-                    stack.push(inner);
-                },
-                _ => {}
             }
         }
 
@@ -431,32 +333,10 @@ impl Serializer for Type {
 
 impl Serializer for Module {
     fn write(&self, writer: &mut Writer) {
-        let structs = self.structs();
-        writer.write_u16(structs.len() as u16);
-        for structure in structs {
-            writer.write_u8(structure.fields().len() as u8);
-            for field in structure.fields() {
-                field.write(writer);
-            }
-        }
-
-        let enums = self.enums();
-        writer.write_u16(enums.len() as u16);
-
-        for enum_type in enums {
-            writer.write_u8(enum_type.variants().len() as u8);
-            for variant in enum_type.variants() {
-                writer.write_u8(variant.fields().len() as u8);
-                for field in variant.fields() {
-                    field.write(writer);
-                }
-            }
-        }
-
         let constants = self.constants();
         writer.write_u16(constants.len() as u16);
         for constant in constants {
-            constant.0.write(writer);
+            constant.write(writer);
         }
 
         let chunks = self.chunks();
@@ -480,57 +360,12 @@ impl Serializer for Module {
     }
 
     fn read(reader: &mut Reader) -> Result<Module, ReaderError> {
-        let structs_len = reader.read_u16()?;
-        let mut structures = IndexSet::with_capacity(structs_len as usize);
-        let mut enums = IndexSet::new();
-
-        let mut id = 0;
-        for _ in 0..structs_len {
-            let fields_len = reader.read_u8()?;
-            let mut fields = Vec::with_capacity(fields_len as usize);
-
-            for _ in 0..fields_len {
-                fields.push(decompress_type(reader, &structures, &enums)?);
-            }
-
-            let structure = StructType::new(id, fields);
-            if !structures.insert(structure) {
-                return Err(ReaderError::InvalidValue);
-            }
-
-            id += 1;
-        }
-
-        let enums_len = reader.read_u16()?;
-        let mut id = 0;
-        for _ in 0..enums_len {
-            let variants_len = reader.read_u8()?;
-            let mut variants = Vec::with_capacity(variants_len as usize);
-
-            for _ in 0..variants_len {
-                let fields_len = reader.read_u8()?;
-                let mut fields = Vec::with_capacity(fields_len as usize);
-                for _ in 0..fields_len {
-                    fields.push(decompress_type(reader, &structures, &enums)?);
-                }
-
-                variants.push(EnumVariant::new(fields));
-            }
-
-            let enum_type = EnumType::new(id, variants);
-            if !enums.insert(enum_type) {
-                return Err(ReaderError::InvalidValue);
-            }
-
-            id += 1;
-        }
-
         let constants_len = reader.read_u16()?;
         let mut constants = IndexSet::with_capacity(constants_len as usize);
 
         for _ in 0..constants_len {
-            let c = decompress_constant(reader, &structures, &enums)?;
-            if !constants.insert(ConstantWrapper(c)) {
+            let c = ValueCell::read(reader)?;
+            if !constants.insert(c) {
                 return Err(ReaderError::InvalidValue);
             }
         }
@@ -561,7 +396,7 @@ impl Serializer for Module {
             }
         }
 
-        Ok(Module::with(constants, chunks, entry_ids, structures, enums))
+        Ok(Module::with(constants, chunks, entry_ids))
     }
 }
 
@@ -601,7 +436,7 @@ impl Serializer for InvokeContractPayload {
         let len = reader.read_u8()? as usize;
         let mut parameters = Vec::with_capacity(len);
         for _ in 0..len {
-            parameters.push(CompressedConstant::read(reader)?);
+            parameters.push(ValueCell::read(reader)?);
         }
         Ok(InvokeContractPayload { contract, deposits, chunk_id, max_gas, parameters })
     }
@@ -633,7 +468,6 @@ mod tests {
     fn test_serde_struct() {
         let hex = "0001010300000001000400000000000000000001000000100200000100001600000201000000001000010000";
         let module = Module::from_hex(hex).unwrap();
-        assert_eq!(module.structs().len(), 1);
         assert_eq!(module.chunks_entry_ids().len(), 1);
     }
 }

@@ -6,8 +6,7 @@ use xelis_vm::{
     FnInstance,
     FnParams,
     FnReturnType,
-    Value,
-    ValueCell
+    Primitive
 };
 use crate::{
     asset::{AssetData, AssetOwner},
@@ -31,7 +30,7 @@ impl JSONHelper for AssetManager {}
 
 // Constructor for AssetManager
 pub fn asset_manager(_: FnInstance, _: FnParams, _: &mut Context) -> FnReturnType {
-    Ok(Some(Value::Opaque(AssetManager.into()).into()))
+    Ok(Some(Primitive::Opaque(AssetManager.into()).into()))
 }
 
 // Verify if the asset str is valid
@@ -61,12 +60,18 @@ fn is_valid_char_for_asset(c: char, whitespace: bool, uppercase_only: bool) -> b
 pub fn asset_manager_create<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType {
     let (provider, chain_state) = from_context::<P>(context)?;
 
-    let max_supply = match params.remove(4).into_inner().take_as_optional()? {
+    let max_supply = match params.remove(4).into_owned()?.take_as_optional()? {
         Some(v) => Some(v.to_u64()?),
         _ => None,
     };
-    let decimals = params.remove(3).into_inner().to_u8()?;
-    let ticker = params.remove(2).into_inner().to_string()?;
+    let decimals = params.remove(3)
+        .into_owned()?
+        .to_u8()?;
+
+    let ticker = params.remove(2)
+        .into_owned()?
+        .into_string()?;
+
     if ticker.len() > TICKER_LEN {
         return Err(EnvironmentError::Expect("Asset ticker is too long".to_owned()).into());
     }
@@ -77,7 +82,9 @@ pub fn asset_manager_create<P: ContractProvider>(_: FnInstance, mut params: FnPa
         return Err(EnvironmentError::Expect("Asset ticker must be ASCII only".to_owned()).into());
     }
 
-    let name = params.remove(1).into_inner().to_string()?;
+    let name = params.remove(1)
+        .into_owned()?
+        .into_string()?;
     if name.len() > u8::MAX as usize {
         return Err(EnvironmentError::Expect("Asset name is too long".to_owned()).into());
     }
@@ -96,7 +103,7 @@ pub fn asset_manager_create<P: ContractProvider>(_: FnInstance, mut params: FnPa
     let asset_hash = Hash::new(hash(&buffer).into());
     // We must be sure that we don't have this asset already
     if get_asset_from_cache(provider, chain_state, asset_hash.clone())?.data.is_some() {
-        return Ok(Some(ValueCell::Optional(None)));
+        return Ok(Some(Primitive::Null.into()));
     }
 
     let data = AssetData::new(decimals, name, ticker, max_supply, Some(AssetOwner::new(chain_state.contract.clone(), id)));
@@ -117,7 +124,7 @@ pub fn asset_manager_create<P: ContractProvider>(_: FnInstance, mut params: FnPa
     context.increase_gas_usage(COST_PER_TOKEN)?;
 
     let asset = Asset(asset_hash);
-    Ok(Some(ValueCell::Optional(Some(Value::Opaque(asset.into()).into()))))
+    Ok(Some(Primitive::Opaque(asset.into()).into()))
 }
 
 pub fn asset_manager_get_by_id<P: ContractProvider>(_: FnInstance, params: FnParams, context: &mut Context) -> FnReturnType {
@@ -134,10 +141,10 @@ pub fn asset_manager_get_by_id<P: ContractProvider>(_: FnInstance, params: FnPar
         .as_ref()
         .map(|_| {
             let asset = Asset(asset_hash);
-            Value::Opaque(asset.into()).into()
+            Primitive::Opaque(asset.into()).into()
         });
 
-    Ok(Some(ValueCell::Optional(res)))
+    Ok(Some(res.unwrap_or_default()))
 }
 
 #[cfg(test)]

@@ -22,9 +22,7 @@ use xelis_vm::{
     FnReturnType,
     OpaqueWrapper,
     Type,
-    Value,
-    ValueCell,
-    Constant
+    Primitive
 };
 use crate::{
     block::{Block, TopoHeight},
@@ -730,8 +728,7 @@ fn fire_event_fn(_: FnInstance, mut params: FnParams, context: &mut Context) -> 
     let id = params.remove(0)
         .as_u64()?;
 
-    let constant: Constant = data.into_inner()
-        .try_into()?;
+    let constant = data.into_owned()?;
 
     let size = constant.size();
     let cost = FEE_PER_BYTE_OF_EVENT_DATA * size as u64;
@@ -749,7 +746,7 @@ fn fire_event_fn(_: FnInstance, mut params: FnParams, context: &mut Context) -> 
 fn println_fn(_: FnInstance, params: FnParams, context: &mut Context) -> FnReturnType {
     let state: &ChainState = context.get().context("chain state not found")?;
     if state.debug_mode {
-        info!("[{}]: {}", state.contract, params[0].as_ref());
+        info!("[{}]: {}", state.contract, params[0].as_ref()?);
     }
 
     Ok(None)
@@ -758,7 +755,7 @@ fn println_fn(_: FnInstance, params: FnParams, context: &mut Context) -> FnRetur
 fn debug_fn(_: FnInstance, params: FnParams, context: &mut Context) -> FnReturnType {
     let state: &ChainState = context.get().context("chain state not found")?;
     if state.debug_mode {
-        debug!("{:?}", params[0].as_ref().as_value());
+        debug!("{:?}", params[0].as_ref()?);
     }
 
     Ok(None)
@@ -766,55 +763,56 @@ fn debug_fn(_: FnInstance, params: FnParams, context: &mut Context) -> FnReturnT
 
 fn get_contract_hash(_: FnInstance, _: FnParams, context: &mut Context) -> FnReturnType {
     let state: &ChainState = context.get().context("chain state not found")?;
-    Ok(Some(Value::Opaque(OpaqueWrapper::new(state.contract.clone())).into()))
+    Ok(Some(Primitive::Opaque(OpaqueWrapper::new(state.contract.clone())).into()))
 }
 
 fn get_deposit_for_asset(_: FnInstance, params: FnParams, context: &mut Context) -> FnReturnType {
-    let param = params[0].as_ref();
+    let param = params[0].as_ref()?;
     let asset: &Hash = param
-        .as_value()
         .as_opaque_type()
         .context("invalid asset")?;
 
     let chain_state: &ChainState = context.get().context("chain state not found")?;
 
-    let mut opt = None;
-    if let Some(ContractDeposit::Public(amount)) = chain_state.deposits.get(asset) {
-        opt = Some(Value::U64(*amount).into());
-    }
+    let value = match chain_state.deposits.get(asset) {
+        Some(ContractDeposit::Public(amount)) => Primitive::U64(*amount).into(),
+        _ => Default::default()
+    };
 
-    Ok(Some(ValueCell::Optional(opt)))
+    Ok(Some(value))
 }
 
 fn get_balance_for_asset<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType {
     let (provider, state) = from_context::<P>(context)?;
 
     let asset: Hash = params.remove(0)
-        .into_inner()
+        .into_owned()?
         .into_opaque_type()?;
 
-    let balance = get_balance_from_cache(provider, state, asset)?;
+    let balance = get_balance_from_cache(provider, state, asset)?
+        .map(|(_, v)| Primitive::U64(v).into())
+        .unwrap_or_default();
 
-    Ok(Some(ValueCell::Optional(balance.map(|(_, v)| Value::U64(v).into()))))
+    Ok(Some(balance))
 }
 
 fn transfer<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType {
     debug!("Transfer called {:?}", params);
 
     let asset: Hash = params.remove(2)
-        .into_inner()
+        .into_owned()?
         .into_opaque_type()?;
 
     let amount = params.remove(1)
-        .into_inner()
+        .into_owned()?
         .to_u64()?;
 
     let destination: Address = params.remove(0)
-        .into_inner()
+        .into_owned()?
         .into_opaque_type()?;
 
     if !destination.is_normal() {
-        return Ok(Some(Value::Boolean(false).into()));
+        return Ok(Some(Primitive::Boolean(false).into()));
     }
 
     {
@@ -827,16 +825,16 @@ fn transfer<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &
 
     let (provider, state) = from_context::<P>(context)?;
     if destination.is_mainnet() != state.mainnet {
-        return Ok(Some(Value::Boolean(false).into()));
+        return Ok(Some(Primitive::Boolean(false).into()));
     }
 
     let Some((mut balance_state, mut balance)) = get_balance_from_cache(provider, state, asset.clone())? else {
-        return Ok(Some(Value::Boolean(false).into()));
+        return Ok(Some(Primitive::Boolean(false).into()));
     };
 
     // We have to check if the contract has enough balance to transfer
     if balance < amount || amount == 0 {
-        return Ok(Some(Value::Boolean(false).into()));
+        return Ok(Some(Primitive::Boolean(false).into()));
     }
 
     // Update the balance
@@ -855,26 +853,26 @@ fn transfer<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &
     // Add the output
     state.outputs.push(ContractOutput::Transfer { destination: key, amount, asset });
 
-    Ok(Some(Value::Boolean(true).into()))
+    Ok(Some(Primitive::Boolean(true).into()))
 }
 
 fn burn<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType {
     let (provider, state) = from_context::<P>(context)?;
 
     let asset: Hash = params.remove(1)
-        .into_inner()
+        .into_owned()?
         .into_opaque_type()?;
     let amount = params.remove(0)
-        .into_inner()
+        .into_owned()?
         .to_u64()?;
 
     let Some((mut balance_state, mut balance)) = get_balance_from_cache(provider, state, asset.clone())? else {
-        return Ok(Some(Value::Boolean(false).into()));
+        return Ok(Some(Primitive::Boolean(false).into()));
     };
 
     // We have to check if the contract has enough balance to transfer
     if balance < amount || amount == 0 {
-        return Ok(Some(Value::Boolean(false).into()));
+        return Ok(Some(Primitive::Boolean(false).into()));
     }
 
     // Update the balance
@@ -887,5 +885,5 @@ fn burn<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &mut 
     // Add the output
     state.outputs.push(ContractOutput::Burn { asset, amount });
 
-    Ok(Some(Value::Boolean(true).into()))
+    Ok(Some(Primitive::Boolean(true).into()))
 }

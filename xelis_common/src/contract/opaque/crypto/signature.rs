@@ -1,6 +1,14 @@
 use anyhow::Context as AnyhowContext;
 use xelis_vm::{
-    impl_opaque, traits::Serializable, Context, EnvironmentError, FnInstance, FnParams, FnReturnType, Value, ValueError
+    impl_opaque,
+    traits::Serializable,
+    Context,
+    EnvironmentError,
+    FnInstance,
+    FnParams,
+    FnReturnType,
+    Primitive,
+    ValueError
 };
 
 use crate::{
@@ -38,40 +46,40 @@ impl Serializable for Signature {
 
 pub fn signature_from_bytes_fn(_: FnInstance, mut params: FnParams, _: &mut Context) -> FnReturnType {
     let param = params.remove(0)
-        .into_inner()
-        .to_vec()?;
-    
+        .into_owned()?;
+    let param = param.as_vec()?;
+
     if param.len() != SIGNATURE_SIZE {
         return Err(EnvironmentError::InvalidParameter);
     }
 
-    let bytes = param.into_iter()
-        .map(|v| v.borrow().as_u8())
+    let bytes = param.iter()
+        .map(|v| v.as_u8())
         .collect::<Result<Vec<_>, ValueError>>()?;
 
     let signature = Signature::from_bytes(&bytes)
         .context("signature from bytes")?;
-    Ok(Some(Value::Opaque(signature.into()).into()))
+    Ok(Some(Primitive::Opaque(signature.into()).into()))
 }
 
 pub fn signature_verify_fn(zelf: FnInstance, mut params: FnParams, _: &mut Context) -> FnReturnType {
     let signature: &Signature = zelf?.as_opaque_type()?;
 
     let address: Address = params.remove(0)
-        .into_inner()
+        .into_owned()?
         .into_opaque_type()?;
 
-    let data = params.remove(0)
-        .into_inner()
-        .to_vec()?
-        .into_iter()
-        .map(|v| v.borrow().as_u8())
+    let param = params.remove(0)
+        .into_owned()?;
+    let data = param.as_vec()?
+        .iter()
+        .map(|v| v.as_u8())
         .collect::<Result<Vec<_>, ValueError>>()?;
 
     let key = address.to_public_key()
         .decompress()
         .context("decompress key for signature")?;
-    Ok(Some(Value::Boolean(signature.verify(&data, &key)).into()))
+    Ok(Some(Primitive::Boolean(signature.verify(&data, &key)).into()))
 }
 
 #[cfg(test)]
