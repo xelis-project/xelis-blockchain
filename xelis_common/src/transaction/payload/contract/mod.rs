@@ -187,7 +187,7 @@ impl Serializer for Primitive {
                 let len = reader.read_u16()? as usize;
                 Primitive::String(reader.read_string_with_size(len)?)
             },
-            10 => {
+            9 => {
                 let left = Primitive::read(reader)?;
                 if !left.is_number() {
                     return Err(ReaderError::InvalidValue);
@@ -206,7 +206,7 @@ impl Serializer for Primitive {
 
                 Primitive::Range(Box::new((left, right)))
             },
-            11 => Primitive::Opaque(OpaqueWrapper::read(reader)?),
+            10 => Primitive::Opaque(OpaqueWrapper::read(reader)?),
             _ => return Err(ReaderError::InvalidValue)
         })
     }
@@ -466,8 +466,9 @@ mod tests {
 
     #[test]
     fn test_serde_struct() {
-        let hex = "0001010300000001000400000000000000000001000000100200000100001600000201000000001000010000";
+        let hex = "032000208011721011081081113287111114108100200012000604000000000400000001040000000204000000030400000004040000000508051041011081081110400000000010003324116000200000210100010110241190127020200100";
         let module = Module::from_hex(hex).unwrap();
         assert_eq!(module.chunks_entry_ids().len(), 1);
+        assert_eq!(module.constants().len(), 3);
     }
 }
