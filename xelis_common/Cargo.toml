@@ -51,6 +51,7 @@ tokio-tungstenite-wasm = { version = "0.3.1", features = ["rustls-tls-webpki-roo
 better_any = "0.2.0"
 log-panics = { version = "2", features = ["with-backtrace"]}
 zip = { version = "2.2.2", features = ["zstd"], default-features = false, optional = true }
+futures = { version = "0.3.31", optional = true }
 
 [target.'cfg(windows)'.dependencies]
 win32console = "0.1.5"
@@ -68,7 +69,7 @@ tokio = { version = "1", default-features = false, features = ["macros", "signal
 tokio = { version = "1", features = ["full"] }
 
 [features]
-tokio = ["dep:tokio", "dep:tokio_with_wasm"]
+tokio = ["dep:tokio", "dep:tokio_with_wasm", "dep:futures"]
 json_rpc = ["tokio", "dep:reqwest", "dep:futures-util", "dep:tokio-tungstenite-wasm"]
 clap = ["dep:clap"]
 prompt = ["clap", "tokio", "dep:crossterm", "dep:chrono", "dep:zip"]
