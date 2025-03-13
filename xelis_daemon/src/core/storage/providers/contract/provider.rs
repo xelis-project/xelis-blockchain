@@ -6,7 +6,7 @@ use xelis_common::{
     crypto::{Hash, PublicKey},
     tokio::try_block_on
 };
-use xelis_vm::Constant;
+use xelis_vm::ValueCell;
 use crate::core::storage::{
     AccountProvider,
     AssetProvider,
@@ -18,7 +18,7 @@ use crate::core::storage::{
 };
 
 impl ContractStorage for SledStorage {
-    fn load_data(&self, contract: &Hash, key: &Constant, topoheight: TopoHeight) -> Result<Option<(TopoHeight, Option<Constant>)>, anyhow::Error> {
+    fn load_data(&self, contract: &Hash, key: &ValueCell, topoheight: TopoHeight) -> Result<Option<(TopoHeight, Option<ValueCell>)>, anyhow::Error> {
         trace!("load contract {} key {} data at topoheight {}", contract, key, topoheight);
         let res = try_block_on(self.get_contract_data_at_maximum_topoheight_for(contract, &key, topoheight))??;
 
@@ -31,13 +31,13 @@ impl ContractStorage for SledStorage {
         }
     }
 
-    fn has_data(&self, contract: &Hash, key: &Constant, topoheight: TopoHeight) -> Result<bool, anyhow::Error> {
+    fn has_data(&self, contract: &Hash, key: &ValueCell, topoheight: TopoHeight) -> Result<bool, anyhow::Error> {
         trace!("check if contract {} key {} data exists at topoheight {}", contract, key, topoheight);
         let contains = try_block_on(self.has_contract_data_at_topoheight(contract, &key, topoheight))??;
         Ok(contains)
     }
 
-    fn load_data_latest_topoheight(&self, contract: &Hash, key: &Constant, topoheight: TopoHeight) -> Result<Option<TopoHeight>, anyhow::Error> {
+    fn load_data_latest_topoheight(&self, contract: &Hash, key: &ValueCell, topoheight: TopoHeight) -> Result<Option<TopoHeight>, anyhow::Error> {
         trace!("load data latest topoheight for contract {} key {} at topoheight {}", contract, key, topoheight);
         let res = try_block_on(self.get_contract_data_topoheight_at_maximum_topoheight_for(contract, &key, topoheight))??;
         Ok(res)
