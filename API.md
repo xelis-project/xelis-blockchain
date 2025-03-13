@@ -2944,7 +2944,7 @@ Retrieve the contract data with the requested key.
 |    Name    |     Type    | Required |                         Note                         |
 |:----------:|:-----------:|:--------:|:----------------------------------------------------:|
 |  contract  |   Address   | Required |       Contract address to search for the key         |
-|     key    |   Constant  | Required |        Constant value representing the key           |
+|     key    |  ValueCell  | Required |           ValueCell representing the key             |
 
 ##### Request
 ```json
@@ -2993,7 +2993,7 @@ Retrieve the contract data with the requested key at a specific topoheight.
 |    Name    |     Type    | Required |                         Note                         |
 |:----------:|:-----------:|:--------:|:----------------------------------------------------:|
 |  contract  |   Address   | Required |       Contract address to search for the key         |
-|     key    |   Constant  | Required |        Constant value representing the key           |
+|     key    |   ValueCell | Required |           ValueCell representing the key             |
 | topoheight |   Integer   | Required |           Topoheight to retrieve the data            |
 
 ##### Request
@@ -3043,7 +3043,7 @@ Retrieve the contract balance
 |    Name    |     Type    | Required |                         Note                         |
 |:----------:|:-----------:|:--------:|:----------------------------------------------------:|
 |  contract  |   Address   | Required |       Contract address to search for the key         |
-|    asset   |   Constant  | Required |   The asset ID to determine which balance to fetch   |
+|    asset   |  ValueCell  | Required |   The asset ID to determine which balance to fetch   |
 
 ##### Request
 ```json
@@ -3080,7 +3080,7 @@ Retrieve the contract balance at a specific topoheight.
 |    Name    |     Type    | Required |                         Note                         |
 |:----------:|:-----------:|:--------:|:----------------------------------------------------:|
 |  contract  |   Address   | Required |       Contract address to search for the key         |
-|    asset   |   Constant  | Required |   The asset ID to determine which balance to fetch   |
+|    asset   |     Hash    | Required |   The asset ID to determine which balance to fetch   |
 | topoheight |   Integer   | Required |           Topoheight to retrieve the data            |
 
 ##### Request
