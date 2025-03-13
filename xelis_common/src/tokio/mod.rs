@@ -95,16 +95,16 @@ pub fn is_multi_threads_supported() -> bool {
 
 // Try blocking on using the current executor available for the thread
 // If the current executor is not available, return an error
-pub fn try_block_on<F: Future>(future: F) -> Result<F::Output, anyhow::Error> {
+pub fn try_block_on<F: Future>(_future: F) -> Result<F::Output, anyhow::Error> {
     trace!("try block on");
     #[cfg(feature = "tokio")]
     {
         let handle = Handle::try_current()?;
         if matches!(handle.runtime_flavor(), RuntimeFlavor::CurrentThread) {
             trace!("runtime is current thread and may not support blocking, fallback on futures executor");
-            Ok(futures::executor::block_on(future))
+            Ok(futures::executor::block_on(_future))
         } else {
-            Ok(handle.block_on(future))
+            Ok(handle.block_on(_future))
         }
     }
     #[cfg(not(feature = "tokio"))]
