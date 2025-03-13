@@ -123,7 +123,14 @@ where
 {
     trace!("block in place if multi thread is supported");
     if is_multi_threads_supported() {
-        tokio::task::block_in_place(f)
+        #[cfg(feature = "tokio")]
+        {
+            tokio::task::block_in_place(f)
+        }
+        #[cfg(not(feature = "tokio"))]
+        {
+            f()
+        }
     } else {
         f()
     }
