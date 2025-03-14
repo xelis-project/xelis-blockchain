@@ -491,6 +491,8 @@ mod tests {
         test_serde_cell(ValueCell::Default(Primitive::U256(42u64.into())));
         test_serde_cell(ValueCell::Default(Primitive::Range(Box::new((Primitive::U128(42), Primitive::U128(420))))));
         test_serde_cell(ValueCell::Default(Primitive::String("hello world!!!".to_owned())));
+
+        test_serde_cell(ValueCell::Default(Primitive::Opaque(OpaqueWrapper::new(Hash::zero()))));
     }
 
     #[test]
