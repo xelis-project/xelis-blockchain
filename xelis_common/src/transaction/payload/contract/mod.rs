@@ -465,10 +465,46 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_serde_struct() {
-        let hex = "032000208011721011081081113287111114108100200012000604000000000400000001040000000204000000030400000004040000000508051041011081081110400000000010003324116000200000210100010110241190127020200100";
+    fn test_serde_module() {
+        let hex = "000302000000020008000b48656c6c6f20576f726c64020000000102000000060004000000000000000000040000000000000001000400000000000000020004000000000000000300040000000000000004000400000000000000050008000568656c6c6f0004000000000000000000010000002118740000000200000000000201000100000001000101001877000102070002001400010000";
         let module = Module::from_hex(hex).unwrap();
         assert_eq!(module.chunks_entry_ids().len(), 1);
         assert_eq!(module.constants().len(), 3);
+    }
+
+    #[track_caller]
+    fn test_serde_cell(cell: ValueCell) {
+        let bytes = cell.to_bytes();
+        let v = ValueCell::from_bytes(&bytes).unwrap();
+
+        assert_eq!(v, cell);
+    }
+
+    #[test]
+    fn test_serde_primitive() {
+        test_serde_cell(ValueCell::Default(Primitive::Null));
+        test_serde_cell(ValueCell::Default(Primitive::Boolean(false)));
+        test_serde_cell(ValueCell::Default(Primitive::U8(42)));
+        test_serde_cell(ValueCell::Default(Primitive::U32(42)));
+        test_serde_cell(ValueCell::Default(Primitive::U64(42)));
+        test_serde_cell(ValueCell::Default(Primitive::U128(42)));
+        test_serde_cell(ValueCell::Default(Primitive::U256(42u64.into())));
+        test_serde_cell(ValueCell::Default(Primitive::Range(Box::new((Primitive::U128(42), Primitive::U128(420))))));
+        test_serde_cell(ValueCell::Default(Primitive::String("hello world!!!".to_owned())));
+    }
+
+    #[test]
+    fn test_serde_value_cell() {
+        test_serde_cell(ValueCell::Bytes(vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]));
+        test_serde_cell(ValueCell::Array(vec![
+            ValueCell::Default(Primitive::U64(42)),
+            ValueCell::Default(Primitive::U64(42)),
+            ValueCell::Default(Primitive::U64(42)),
+            ValueCell::Default(Primitive::U64(42)),
+            ValueCell::Default(Primitive::U64(42))
+        ]));
+        test_serde_cell(ValueCell::Map([
+            (ValueCell::Default(Primitive::U64(42)), ValueCell::Default(Primitive::String("Hello World!".to_owned())),)
+        ].into_iter().collect()));
     }
 }
