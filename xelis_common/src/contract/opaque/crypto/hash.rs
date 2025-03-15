@@ -69,6 +69,16 @@ pub fn hash_from_hex_fn(_: FnInstance, mut params: FnParams, _: &mut Context) ->
     Ok(Some(Primitive::Opaque(OpaqueWrapper::new(hash)).into()))
 }
 
+pub fn hash_zero_fn(_: FnInstance, _: FnParams, _: &mut Context) -> FnReturnType {
+    let hash = Hash::zero();
+    Ok(Some(Primitive::Opaque(OpaqueWrapper::new(hash)).into()))
+}
+
+pub fn hash_max_fn(_: FnInstance, _: FnParams, _: &mut Context) -> FnReturnType {
+    let hash = Hash::max();
+    Ok(Some(Primitive::Opaque(OpaqueWrapper::new(hash)).into()))
+}
+
 pub fn blake3_fn(_: FnInstance, mut params: FnParams, _: &mut Context) -> FnReturnType {
     let input = params.remove(0)
         .into_owned()?

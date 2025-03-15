@@ -414,6 +414,22 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static> {
             7500,
             Some(hash_type.clone())
         );
+        env.register_static_function(
+            "zero",
+            hash_type.clone(),
+            vec![],
+            hash_zero_fn,
+            5,
+            Some(hash_type.clone())
+        );
+        env.register_static_function(
+            "max",
+            hash_type.clone(),
+            vec![],
+            hash_max_fn,
+            5,
+            Some(hash_type.clone())
+        );
     }
 
     // Random number generator
