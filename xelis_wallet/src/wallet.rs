@@ -33,6 +33,7 @@ use xelis_common::{
             Ciphertext,
             DecryptHandle
         },
+        Hash,
         Address,
         Hashable,
         KeyPair,
@@ -232,14 +233,18 @@ impl InnerAccount {
         }
     }
 
-    pub fn decrypt_ciphertext(&self, ciphertext: &Ciphertext) -> Result<Option<u64>, WalletError> {
-        trace!("decrypt ciphertext");
+    pub fn decrypt_ciphertext(&self, ciphertext: &Ciphertext, max_supply: u64) -> Result<Option<u64>, WalletError> {
+        trace!("decrypt ciphertext with max supply {}", max_supply);
+        let point = self.keypair.get_private_key()
+            .decrypt_to_point(ciphertext);
+
         let lock = self.precomputed_tables.read()
             .map_err(|_| WalletError::PoisonError)?;
         let view = lock.view();
 
         Ok(self.keypair.get_private_key()
-            .decrypt(&view, &ciphertext))
+            .decode_point_within_range(&view, point, 0, max_supply as i64)
+        )
     }
 }
 
@@ -597,9 +602,18 @@ impl Wallet {
     }
 
     // Wallet has to be under a Arc to be shared to the spawn_blocking function
-    pub async fn decrypt_ciphertext(&self, ciphertext: Ciphertext) -> Result<Option<u64>, WalletError> {
-        trace!("decrypt ciphertext");
-        block_in_place_safe(|| self.inner.decrypt_ciphertext(&ciphertext))
+    // This will read the max supply from the storage
+    pub async fn decrypt_ciphertext_of_asset(&self, ciphertext: &Ciphertext, asset: &Hash) -> Result<Option<u64>, WalletError> {
+        trace!("decrypt ciphertext of asset {}", asset);
+        let storage = self.storage.read().await;
+        let max_supply = storage.get_asset(asset).await?
+            .get_max_supply();
+        self.decrypt_ciphertext_with(ciphertext, max_supply).await
+    }
+
+    pub async fn decrypt_ciphertext_with(&self, ciphertext: &Ciphertext, max_supply: Option<u64>) -> Result<Option<u64>, WalletError> {
+        trace!("decrypt ciphertext with max supply {:?}", max_supply);
+        block_in_place_safe(|| self.inner.decrypt_ciphertext(ciphertext, max_supply.unwrap_or(i64::MAX as _)))
     }
 
     // Decrypt the extra data from a transfer
@@ -730,7 +744,12 @@ impl Wallet {
                                     debug!("decrypting stable balance for asset {}", asset);
                                     let decompressed = ciphertext.decompressed()
                                         .map_err(|_| WalletError::CiphertextDecode)?;
-                                    let amount = match self.inner.decrypt_ciphertext(decompressed)? {
+
+                                    // Retrieve the max supply for this asset
+                                    let max_supply = storage.get_asset(asset).await?
+                                        .get_max_supply();
+
+                                    let amount = match self.decrypt_ciphertext_with(decompressed, max_supply).await? {
                                         Some(amount) => amount,
                                         None => {
                                             warn!("Couldn't decrypt the ciphertext for asset {}: no result found, skipping this stable balance", asset);

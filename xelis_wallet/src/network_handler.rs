@@ -351,7 +351,7 @@ impl NetworkHandler {
                             let asset = transfer.asset.into_owned();
                             debug!("Decrypting amount from TX {} of asset {}", tx.hash, asset);
                             let ciphertext = Ciphertext::new(commitment, handle);
-                            let amount = match self.wallet.decrypt_ciphertext(ciphertext).await? {
+                            let amount = match self.wallet.decrypt_ciphertext_of_asset(&ciphertext, &asset).await? {
                                 Some(v) => v,
                                 None => {
                                     warn!("Couldn't decrypt the ciphertext of transfer #{} for asset {} in TX {}. Skipping it", i, asset, tx.hash);
@@ -412,7 +412,7 @@ impl NetworkHandler {
                                     let commitment = commitment.decompress()?;
                                     let handle = sender_handle.decompress()?;
                                     let ciphertext = Ciphertext::new(commitment, handle);
-                                    let amount = match self.wallet.decrypt_ciphertext(ciphertext).await? {
+                                    let amount = match self.wallet.decrypt_ciphertext_of_asset(&ciphertext, &asset).await? {
                                         Some(v) => v,
                                         None => {
                                             warn!("Couldn't decrypt deposit ciphertext for asset {}. Skipping it", asset);
@@ -599,7 +599,10 @@ impl NetworkHandler {
                         } else {
                             trace!("Decrypting balance for asset {}", asset);
                             let ciphertext = balance.decompressed()?;
-                            self.wallet.decrypt_ciphertext(ciphertext.clone()).await?
+                            let max_supply = storage.get_asset(asset).await?
+                                .get_max_supply();
+
+                            self.wallet.decrypt_ciphertext_with(&ciphertext, max_supply).await?
                                 .context(format!("Couldn't decrypt the ciphertext for {} at topoheight {}", asset, topoheight))?
                         };
                         
@@ -878,7 +881,7 @@ impl NetworkHandler {
             }
 
             for (asset, (mut ciphertext, topoheight)) in balances {
-                let (must_update, balance_cache) = {
+                let (must_update, balance_cache, max_supply) = {
                     let storage = self.wallet.get_storage().read().await;
                     let must_update = match storage.get_balance_for(&asset).await {
                         Ok(mut previous) => previous.ciphertext.compressed() != ciphertext.compressed(),
@@ -893,7 +896,10 @@ impl NetworkHandler {
                         None
                     };
 
-                    (must_update, balance_cache)
+                    let max_supply = storage.get_asset(asset).await?
+                        .get_max_supply();
+
+                    (must_update, balance_cache, max_supply)
                 };
 
                 if must_update {
@@ -902,8 +908,8 @@ impl NetworkHandler {
                         cache
                     } else {
                         trace!("Decrypting balance for asset {}", asset);
-                        let decompressed = ciphertext.decompressed()?.clone();
-                        match self.wallet.decrypt_ciphertext(decompressed).await? {
+                        let decompressed = ciphertext.decompressed()?;
+                        match self.wallet.decrypt_ciphertext_with(decompressed, max_supply).await? {
                             Some(v) => v,
                             None => {
                                 warn!("Couldn't decrypt ciphertext for asset {}, skipping it", asset);
