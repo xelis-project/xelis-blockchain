@@ -131,7 +131,20 @@ impl PrivateKey {
 
     // Decode a point to a u64 with precomputed tables
     pub fn decode_point(&self, precomputed_tables: &ECDLPTablesFileView, point: RistrettoPoint) -> Option<u64> {
-        ecdlp::decode(precomputed_tables, point, ECDLPArguments::new_with_range(0, MAXIMUM_SUPPLY as i64))
+        self.decode_point_within_range(precomputed_tables, point, 0, MAXIMUM_SUPPLY as _)
+    }
+
+    // Decode a point to a u64 with precomputed tables within the requested range
+    pub fn decode_point_within_range(
+        &self,
+        precomputed_tables: &ECDLPTablesFileView,
+        point: RistrettoPoint,
+        range_min: i64,
+        range_max: i64
+    ) -> Option<u64> {
+        let args = ECDLPArguments::new_with_range(range_min, range_max);
+
+        ecdlp::decode(precomputed_tables, point, args)
             .map(|x| x as u64)
     }
 
