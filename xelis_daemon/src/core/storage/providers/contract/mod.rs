@@ -72,6 +72,9 @@ pub trait ContractProvider {
     // Check if a contract version exists at a given topoheight
     async fn has_contract_at_exact_topoheight(&self, hash: &Hash, topoheight: TopoHeight) -> Result<bool, BlockchainError>;
 
+    // Check if a contract version exists at a maximum given topoheight
+    async fn has_contract_at_maximum_topoheight(&self, hash: &Hash, topoheight: TopoHeight) -> Result<bool, BlockchainError>;
+
     // Count the number of contracts
     async fn count_contracts(&self) -> Result<u64, BlockchainError>;
 }
@@ -141,6 +144,33 @@ impl ContractProvider for SledStorage {
         }
 
         Ok(None)
+    }
+
+    async fn has_contract_at_maximum_topoheight(&self, hash: &Hash, maximum_topoheight: TopoHeight) -> Result<bool, BlockchainError> {
+        trace!("has contract {} at maximum topoheight {}", hash, maximum_topoheight);
+        if !self.has_contract_pointer(hash).await? {
+            trace!("Contract {} does not exist", hash);
+            return Ok(false)
+        }
+
+        if self.has_contract_at_exact_topoheight(hash, maximum_topoheight).await? {
+            return Ok(true)
+        }
+
+        let mut previous_topo = Some(self.get_last_topoheight_for_contract(hash).await?);
+        while let Some(topoheight) = previous_topo {
+            if topoheight <= maximum_topoheight {
+                return Ok(true)
+            }
+
+            previous_topo = self.load_from_disk(
+                &self.versioned_contracts,
+                &self.get_versioned_contract_key(hash, topoheight),
+                DiskContext::ContractTopoHeight
+            )?;
+        }
+
+        Ok(false)
     }
 
     async fn get_contracts(&self, maximum: usize, skip: usize, minimum_topoheight: TopoHeight, maximum_topoheight: TopoHeight) -> Result<IndexSet<Hash>, BlockchainError> {

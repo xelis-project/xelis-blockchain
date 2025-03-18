@@ -12,6 +12,7 @@ use crate::core::storage::{
     AssetProvider,
     ContractBalanceProvider,
     ContractDataProvider,
+    ContractProvider as _,
     NetworkProvider,
     SledStorage,
     SupplyProvider
@@ -40,6 +41,12 @@ impl ContractStorage for SledStorage {
     fn load_data_latest_topoheight(&self, contract: &Hash, key: &ValueCell, topoheight: TopoHeight) -> Result<Option<TopoHeight>, anyhow::Error> {
         trace!("load data latest topoheight for contract {} key {} at topoheight {}", contract, key, topoheight);
         let res = try_block_on(self.get_contract_data_topoheight_at_maximum_topoheight_for(contract, &key, topoheight))??;
+        Ok(res)
+    }
+
+    fn has_contract(&self, contract: &Hash, topoheight: TopoHeight) -> Result<bool, anyhow::Error> {
+        trace!("has contract {} at topoheight {}", contract, topoheight);
+        let res = try_block_on(self.has_contract_at_maximum_topoheight(contract, topoheight))??;
         Ok(res)
     }
 }
