@@ -396,7 +396,7 @@ impl Serializer for Module {
             }
         }
 
-        Ok(Module::with(constants, chunks, entry_ids))
+        Ok(Module::with(constants, chunks, entry_ids, Default::default()))
     }
 }
 
