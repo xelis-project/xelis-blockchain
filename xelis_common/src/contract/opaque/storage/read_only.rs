@@ -25,7 +25,7 @@ pub fn read_only_storage<P: ContractProvider>(_: FnInstance, mut parameters: FnP
         .into_owned()?
         .into_opaque_type()?;
 
-    if !storage.has_contract(&hash, state.topoheight)? {
+    if !state.global_caches.contains_key(&hash) && !storage.has_contract(&hash, state.topoheight)? {
         return Ok(Some(Primitive::Null.into()))
     }
 
@@ -40,9 +40,14 @@ pub fn read_only_storage_load<P: ContractProvider>(zelf: FnInstance, mut params:
     let key = params.remove(0)
         .into_owned()?;
 
-    let value = storage.load_data(&zelf.0, &key, state.topoheight)?
-        .map(|(_, v)| v)
-        .flatten();
+    // Read from global cache first, then fallback to provider
+    let value = match state.global_caches.get(&zelf.0)
+        .and_then(|cache| cache.storage.get(&key).map(|(_, v)| v)) {
+            Some(v) => v.clone(),
+            None => storage.load_data(&zelf.0, &key, state.topoheight)?
+                .map(|(_, v)| v)
+                .flatten()
+    };
 
     Ok(Some(value.unwrap_or_default()))
 }
@@ -55,6 +60,12 @@ pub fn read_only_storage_has<P: ContractProvider>(zelf: FnInstance, mut params: 
     let key = params.remove(0)
         .into_owned()?;
 
-    let contains = storage.has_data(&zelf.0, &key, state.topoheight)?;
+    // Read from global cache first, then fallback to provider
+    let contains = match state.global_caches.get(&zelf.0)
+        .and_then(|cache| cache.storage.get(&key).map(|(_, v)| v)) {
+            Some(v) => v.is_some(),
+            None => storage.has_data(&zelf.0, &key, state.topoheight)?
+    };
+
     Ok(Some(Primitive::Boolean(contains).into()))
 }
