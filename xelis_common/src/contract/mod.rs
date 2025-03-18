@@ -542,6 +542,14 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static> {
             500,
             Some(Type::Bool)
         );
+        env.register_native_function(
+            "is_read_only",
+            Some(asset_type.clone()),
+            vec![],
+            asset_is_read_only,
+            1,
+            Some(Type::Bool)
+        );
     }
 
     // Asset Manager
@@ -575,6 +583,17 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static> {
             ],
             asset_manager_create::<P>,
             1000,
+            Some(Type::Optional(Box::new(asset_type.clone())))
+        );
+
+        // Read only
+        // An asset returned by this function can't be used to mint
+        env.register_native_function(
+            "get_by_hash",
+            Some(asset_manager_type.clone()),
+            vec![("hash", hash_type.clone())],
+            asset_manager_get_by_hash::<P>,
+            50,
             Some(Type::Optional(Box::new(asset_type.clone())))
         );
     }

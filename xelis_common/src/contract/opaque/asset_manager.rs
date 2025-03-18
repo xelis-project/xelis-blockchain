@@ -123,7 +123,10 @@ pub fn asset_manager_create<P: ContractProvider>(_: FnInstance, mut params: FnPa
     // Pay the cost for a new token
     context.increase_gas_usage(COST_PER_TOKEN)?;
 
-    let asset = Asset(asset_hash);
+    let asset = Asset {
+        hash: asset_hash,
+        mintable: true
+    };
     Ok(Some(Primitive::Opaque(asset.into()).into()))
 }
 
@@ -140,7 +143,31 @@ pub fn asset_manager_get_by_id<P: ContractProvider>(_: FnInstance, params: FnPar
         .data
         .as_ref()
         .map(|_| {
-            let asset = Asset(asset_hash);
+            let asset = Asset {
+                hash: asset_hash,
+                mintable: true
+            };
+            Primitive::Opaque(asset.into()).into()
+        });
+
+    Ok(Some(res.unwrap_or_default()))
+}
+
+pub fn asset_manager_get_by_hash<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType {
+    let hash: Hash = params.remove(0)
+        .into_owned()?
+        .into_opaque_type()?;
+
+    let (provider, chain_state) = from_context::<P>(context)?;
+
+    let res = get_asset_from_cache(provider, chain_state, hash.clone())?
+        .data
+        .as_ref()
+        .map(|_| {
+            let asset = Asset {
+                hash,
+                mintable: false
+            };
             Primitive::Opaque(asset.into()).into()
         });
 

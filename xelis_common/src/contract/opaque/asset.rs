@@ -15,7 +15,10 @@ use crate::{
 
 // Represent an Asset Manager type in the opaque context
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
-pub struct Asset(pub Hash);
+pub struct Asset {
+    pub hash: Hash,
+    pub mintable: bool
+}
 
 impl Serializable for Asset {}
 
@@ -26,7 +29,7 @@ pub fn asset_get_max_supply<P: ContractProvider>(zelf: FnInstance, _: FnParams, 
     let asset: &Asset = zelf?.as_opaque_type()?;
 
     let (provider, state) = from_context::<P>(context)?;
-    let changes = get_asset_from_cache(provider, state, asset.0.clone())?;
+    let changes = get_asset_from_cache(provider, state, asset.hash.clone())?;
 
     let max_supply = changes.data.as_ref()
         .and_then(|(_, d)| d.get_max_supply().map(|v| Primitive::U64(v).into()))
@@ -41,7 +44,7 @@ pub fn asset_get_supply<P: ContractProvider>(zelf: FnInstance, _: FnParams, cont
 
     let (provider, state) = from_context::<P>(context)?;
     let topoheight = state.topoheight;
-    let changes = get_asset_from_cache(provider, state, asset.0.clone())?;
+    let changes = get_asset_from_cache(provider, state, asset.hash.clone())?;
     let max_supply = changes.data.as_ref()
         .and_then(|(_, d)| d.get_max_supply());
 
@@ -50,7 +53,7 @@ pub fn asset_get_supply<P: ContractProvider>(zelf: FnInstance, _: FnParams, cont
         None => match changes.supply {
             Some((_, s)) => s,
             None => {
-                let (state, supply) = provider.load_asset_supply(&asset.0, topoheight)?
+                let (state, supply) = provider.load_asset_supply(&asset.hash, topoheight)?
                     .map(|(topo, supply)| (VersionedState::FetchedAt(topo), supply))
                     .unwrap_or((VersionedState::New, 0));
 
@@ -67,7 +70,7 @@ pub fn asset_get_supply<P: ContractProvider>(zelf: FnInstance, _: FnParams, cont
 pub fn asset_get_name<P: ContractProvider>(zelf: FnInstance, _: FnParams, context: &mut Context) -> FnReturnType {
     let asset: &Asset = zelf?.as_opaque_type()?;
     let (provider, state) = from_context::<P>(context)?;
-    let changes = get_asset_from_cache(provider, state, asset.0.clone())?;
+    let changes = get_asset_from_cache(provider, state, asset.hash.clone())?;
 
     let name = changes.data.as_ref()
         .map(|(_, d)| d.get_name().to_owned())
@@ -79,18 +82,28 @@ pub fn asset_get_name<P: ContractProvider>(zelf: FnInstance, _: FnParams, contex
 // Get the hash representation of the asset
 pub fn asset_get_hash(zelf: FnInstance, _: FnParams, _: &mut Context) -> FnReturnType {
     let asset: &Asset = zelf?.as_opaque_type()?;
-    Ok(Some(Primitive::Opaque(asset.0.clone().into()).into()))
+    Ok(Some(Primitive::Opaque(asset.hash.clone().into()).into()))
+}
+
+// Get the hash representation of the asset
+pub fn asset_is_read_only(zelf: FnInstance, _: FnParams, _: &mut Context) -> FnReturnType {
+    let asset: &Asset = zelf?.as_opaque_type()?;
+    Ok(Some(Primitive::Boolean(!asset.mintable).into()))
 }
 
 pub fn asset_mint<P: ContractProvider>(zelf: FnInstance, params: FnParams, context: &mut Context) -> FnReturnType {
     let asset: &mut Asset = zelf?.as_opaque_type_mut()?;
+    if !asset.mintable {
+        return Ok(Some(Primitive::Boolean(false).into()))
+    }
+
     let (provider, chain_state) = from_context::<P>(context)?;
     let amount = params[0].as_u64()?;
 
     // Check that we don't have any max supply set
     {
         let topoheight = chain_state.topoheight;
-        let changes = get_asset_from_cache::<P>(provider, chain_state, asset.0.clone())?;
+        let changes = get_asset_from_cache::<P>(provider, chain_state, asset.hash.clone())?;
         
         let (_, data) = changes.data
         .as_ref()
@@ -104,7 +117,7 @@ pub fn asset_mint<P: ContractProvider>(zelf: FnInstance, params: FnParams, conte
         // Also update the asset supply
         let (mut supply_state, supply) = match changes.supply {
             Some((state, supply)) => (state, supply),
-            None => provider.load_asset_supply(&asset.0, topoheight)?
+            None => provider.load_asset_supply(&asset.hash, topoheight)?
                 .map(|(topoheight, supply)| (VersionedState::FetchedAt(topoheight), supply))
                 // No supply yet, lets init it to zero
                 .unwrap_or((VersionedState::New, 0)),
@@ -118,7 +131,7 @@ pub fn asset_mint<P: ContractProvider>(zelf: FnInstance, params: FnParams, conte
     }
 
     // Update the contract balance
-    match get_balance_from_cache(provider, chain_state, asset.0.clone())? {
+    match get_balance_from_cache(provider, chain_state, asset.hash.clone())? {
         Some((state, balance)) => {
             let new_balance = balance.checked_add(amount)
             .context("Overflow while minting balance")?;
@@ -133,7 +146,7 @@ pub fn asset_mint<P: ContractProvider>(zelf: FnInstance, params: FnParams, conte
 
     // Add to outputs
     chain_state.outputs.push(ContractOutput::Mint {
-        asset: asset.0.clone(),
+        asset: asset.hash.clone(),
         amount,
     });
 
