@@ -216,6 +216,7 @@ impl<'a, S: Storage> BlockchainApplyState<'a, S, BlockchainError> for Applicable
             cache,
             outputs: Vec::new(),
             tracker: self.contract_manager.tracker.clone(),
+            global_caches: &self.contract_manager.caches
         };
 
         let contract_environment = ContractEnvironment {
