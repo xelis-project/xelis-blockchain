@@ -1,3 +1,5 @@
+mod read_only;
+
 use xelis_vm::{
     traits::{JSONHelper, Serializable},
     Context,
@@ -17,6 +19,8 @@ use crate::{
 };
 use super::Serializer;
 
+pub use read_only::*;
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct OpaqueStorage;
 
@@ -35,6 +39,9 @@ pub trait ContractStorage {
 
     // check if a key exists in the storage
     fn has_data(&self, contract: &Hash, key: &ValueCell, topoheight: TopoHeight) -> Result<bool, anyhow::Error>;
+
+    // check if a contract hash exists in the storage
+    fn has_contract(&self, contract: &Hash, topoheight: TopoHeight) -> Result<bool, anyhow::Error>;
 }
 
 impl JSONHelper for OpaqueStorage {}

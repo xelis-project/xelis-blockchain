@@ -115,6 +115,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static> {
     let random_type = Type::Opaque(env.register_opaque::<OpaqueRandom>("Random"));
     let block_type = Type::Opaque(env.register_opaque::<OpaqueBlock>("Block"));
     let storage_type = Type::Opaque(env.register_opaque::<OpaqueStorage>("Storage"));
+    let read_only_storage_type = Type::Opaque(env.register_opaque::<OpaqueReadOnlyStorage>("ReadOnlyStorage"));
     let memory_storage_type = Type::Opaque(env.register_opaque::<OpaqueMemoryStorage>("MemoryStorage"));
     let asset_type = Type::Opaque(env.register_opaque::<Asset>("Asset"));
     let asset_manager_type = Type::Opaque(env.register_opaque::<AssetManager>("AssetManager"));
@@ -289,6 +290,34 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static> {
             storage_delete::<P>,
             50,
             Some(Type::Optional(Box::new(Type::Any)))
+        );
+    }
+
+    // Read Only Storage
+    {
+        env.register_native_function(
+            "read_only_storage",
+            None,
+            vec![("contract", hash_type.clone())],
+            read_only_storage::<P>,
+            15,
+            Some(Type::Optional(Box::new(read_only_storage_type.clone())))
+        );
+        env.register_native_function(
+            "load",
+            Some(read_only_storage_type.clone()),
+            vec![("key", Type::Any)],
+            read_only_storage_load::<P>,
+            50,
+            Some(Type::Optional(Box::new(Type::Any)))
+        );
+        env.register_native_function(
+            "has",
+            Some(read_only_storage_type.clone()),
+            vec![("key", Type::Any)],
+            read_only_storage_has::<P>,
+            25,
+            Some(Type::Bool)
         );
     }
 

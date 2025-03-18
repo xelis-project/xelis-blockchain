@@ -67,6 +67,10 @@ impl_opaque!(
     OpaqueStorage
 );
 impl_opaque!(
+    "OpaqueReadOnlyStorage",
+    OpaqueReadOnlyStorage
+);
+impl_opaque!(
     "OpaqueMemoryStorage",
     OpaqueMemoryStorage
 );
