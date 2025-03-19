@@ -2405,11 +2405,16 @@ impl<S: Storage> P2pServer<S> {
                             debug!("Applying back orphaned {} TXs", txs.len());
                             for (hash, tx) in txs.drain(..) {
                                 debug!("Trying to apply orphaned TX {}", hash);
-                                if !self.blockchain.has_tx(&hash).await? {
+                                if !storage.has_transaction(&hash).await? && {
+                                    let mempool = self.blockchain.get_mempool().read().await;
+                                    !mempool.contains_tx(&hash)
+                                } {
                                     debug!("TX is not in chain, adding it to mempool");
                                     if let Err(e) = self.blockchain.add_tx_to_mempool_with_storage_and_hash(&storage, tx, hash, false).await {
                                         debug!("Couldn't add back to mempool after commit point rollbacked: {}", e);
                                     }
+                                } else {
+                                    debug!("TX {} is already in chain, skipping", hash);
                                 }
                             }
                         }
