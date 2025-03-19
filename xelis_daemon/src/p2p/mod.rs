@@ -2402,9 +2402,11 @@ impl<S: Storage> P2pServer<S> {
                         // Try to apply any orphaned TX back to our chain
                         // We want to prevent any loss
                         if let Ok((ref mut txs, _)) = res.as_mut() {
-                            debug!("Applying back orphaned TXs");
+                            debug!("Applying back orphaned {} TXs", txs.len());
                             for (hash, tx) in txs.drain(..) {
+                                debug!("Trying to apply orphaned TX {}", hash);
                                 if !self.blockchain.has_tx(&hash).await? {
+                                    debug!("TX is not in chain, adding it to mempool");
                                     if let Err(e) = self.blockchain.add_tx_to_mempool_with_storage_and_hash(&storage, tx, hash, false).await {
                                         debug!("Couldn't add back to mempool after commit point rollbacked: {}", e);
                                     }
