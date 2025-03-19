@@ -711,9 +711,9 @@ dependencies = [
 
 [[package]]
 name = "bytemuck_derive"
-version = "1.9.1"
+version = "1.9.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9d35fadd3de6c82a550b136427123552b401efdab9859130f1cf485fbdea40af"
+checksum = "2ff22c2722516255d1823ce3cc4bc0b154dbc9364be5c905d6baa6eccbbc8774"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3864,7 +3864,7 @@ dependencies = [
 [[package]]
 name = "xelis-ast"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#45877966fe3b1b5c55f17f792edad38be4a6b0fa"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#3e81ff0efe0cc6c46797ca14c13bdaa1afb7f2bf"
 dependencies = [
  "indexmap 2.8.0",
  "xelis-types",
@@ -3873,7 +3873,7 @@ dependencies = [
 [[package]]
 name = "xelis-builder"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#45877966fe3b1b5c55f17f792edad38be4a6b0fa"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#3e81ff0efe0cc6c46797ca14c13bdaa1afb7f2bf"
 dependencies = [
  "anyhow",
  "log",
@@ -3887,7 +3887,7 @@ dependencies = [
 [[package]]
 name = "xelis-bytecode"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#45877966fe3b1b5c55f17f792edad38be4a6b0fa"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#3e81ff0efe0cc6c46797ca14c13bdaa1afb7f2bf"
 dependencies = [
  "indexmap 2.8.0",
  "serde",
@@ -3897,7 +3897,7 @@ dependencies = [
 [[package]]
 name = "xelis-environment"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#45877966fe3b1b5c55f17f792edad38be4a6b0fa"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#3e81ff0efe0cc6c46797ca14c13bdaa1afb7f2bf"
 dependencies = [
  "anyhow",
  "better_any",
@@ -3923,7 +3923,7 @@ dependencies = [
 [[package]]
 name = "xelis-types"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#45877966fe3b1b5c55f17f792edad38be4a6b0fa"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#3e81ff0efe0cc6c46797ca14c13bdaa1afb7f2bf"
 dependencies = [
  "anyhow",
  "indexmap 2.8.0",
@@ -3937,7 +3937,7 @@ dependencies = [
 [[package]]
 name = "xelis-vm"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#45877966fe3b1b5c55f17f792edad38be4a6b0fa"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#3e81ff0efe0cc6c46797ca14c13bdaa1afb7f2bf"
 dependencies = [
  "indexmap 2.8.0",
  "log",
