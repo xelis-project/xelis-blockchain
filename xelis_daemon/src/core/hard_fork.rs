@@ -46,7 +46,7 @@ pub fn get_pow_algorithm_for_version(version: BlockVersion) -> Algorithm {
 // This function checks if a version is matching the requirements
 // it split the version if it contains a `-` and only takes the first part
 // to support our git commit hash
-fn is_version_matching_requirement(version: &str, req: &str) -> Result<bool> {
+pub fn is_version_matching_requirement(version: &str, req: &str) -> Result<bool> {
     let r = semver::VersionReq::parse(req)?;
     let str_version = match version.split_once('-') {
         Some((v, _)) => v,

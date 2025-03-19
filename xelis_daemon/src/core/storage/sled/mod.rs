@@ -1,4 +1,5 @@
 mod snapshot;
+mod migrations;
 
 use async_trait::async_trait;
 use indexmap::IndexSet;
@@ -27,7 +28,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 use lru::LruCache;
 use sled::{IVec, Tree};
-use log::{debug, trace, warn, info};
+use log::{debug, trace, warn, info, error};
 
 pub use snapshot::Snapshot;
 
@@ -50,6 +51,7 @@ pub(super) const ASSETS_COUNT: &[u8; 4] = b"CAST";
 pub(super) const BLOCKS_COUNT: &[u8; 4] = b"CBLK";
 pub(super) const BLOCKS_EXECUTION_ORDER_COUNT: &[u8; 4] = b"EBLK";
 pub(super) const CONTRACTS_COUNT: &[u8; 4] = b"CCON";
+pub(super) const DB_VERSION: &[u8; 4] = b"VRSN";
 
 pub struct SledStorage {
     // Network used by the storage
@@ -308,6 +310,10 @@ impl SledStorage {
             }
         } else {
             storage.set_network(&network)?;
+        }
+
+        if let Err(e) = storage.handle_migrations() {
+            error!("Error while migrating database: {}", e);
         }
 
         storage.load_cache();
