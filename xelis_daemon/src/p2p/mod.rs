@@ -1268,7 +1268,7 @@ impl<S: Storage> P2pServer<S> {
                                 let response = listener.recv().await.context("Error while reading transaction for block")?;
                                 match response {
                                     OwnedObjectResponse::Transaction(tx, _) => Ok(tx),
-                                    _ => Err(P2pError::ExpectedTransaction)
+                                    _ => Err(P2pError::ExpectedTransaction(response))
                                 }
                             };
                             futures.push_back(fut);
@@ -1346,10 +1346,10 @@ impl<S: Storage> P2pServer<S> {
                         debug!("Requesting from txs processing task tx {}", hash);
                         let (transaction, hash) = match peer.request_blocking_object(ObjectRequest::Transaction(hash)).await {
                             Ok(OwnedObjectResponse::Transaction(tx, hash)) => (tx, hash),
-                            Ok(_) => {
+                            Ok(response) => {
                                 warn!("Received invalid object type response from {}", peer);
                                 peer.increment_fail_count();
-                                return Err(P2pError::ExpectedTransaction)
+                                return Err(P2pError::ExpectedTransaction(response))
                             },
                             Err(e) => {
                                 peer.increment_fail_count();
@@ -2186,7 +2186,7 @@ impl<S: Storage> P2pServer<S> {
                             let response = peer.request_blocking_object(ObjectRequest::Transaction(tx_hash.clone())).await?;
                             match response {
                                 OwnedObjectResponse::Transaction(tx, _) => Ok(Immutable::Owned(tx)),
-                                _ => Err(P2pError::ExpectedTransaction)
+                                _ => Err(P2pError::ExpectedTransaction(response))
                             }
                         }
                     };
@@ -2342,7 +2342,7 @@ impl<S: Storage> P2pServer<S> {
                         let response = peer.request_blocking_object(ObjectRequest::BlockHeader(hash)).await?;
                         match response {
                             OwnedObjectResponse::BlockHeader(header, hash) => Ok(Some((header, hash))),
-                            _ => Err(P2pError::ExpectedBlock)
+                            _ => Err(P2pError::ExpectedBlock(response))
                         }
                     };
 
@@ -2444,7 +2444,7 @@ impl<S: Storage> P2pServer<S> {
     
                                 match response {
                                     OwnedObjectResponse::Block(block, _) => Ok(Some(block)),
-                                    _ => Err(P2pError::ExpectedBlock)
+                                    _ => Err(P2pError::ExpectedBlock(response))
                                 }
                             } else {
                                 debug!("Block {} is already in chain, verify if its in DAG", hash);
@@ -2529,7 +2529,7 @@ impl<S: Storage> P2pServer<S> {
                             self.blockchain.add_new_block(block, false, false).await?;
                         } else {
                             error!("{} sent us an invalid block response", peer);
-                            return Err(P2pError::ExpectedBlock.into())
+                            return Err(P2pError::ExpectedBlock(response).into())
                         }
                         total_requested += 1;
                     } else {

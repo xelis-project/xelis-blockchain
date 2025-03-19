@@ -31,7 +31,7 @@ use super::{
     encryption::EncryptionError,
     packet::{
         bootstrap_chain::StepKind,
-        object::ObjectRequest,
+        object::{ObjectRequest, OwnedObjectResponse},
     }
 };
 
@@ -165,10 +165,10 @@ pub enum P2pError {
     BoostSyncModeBlockerError,
     #[error("Boost sync mode failed: {}", _0)]
     BoostSyncModeFailed(Box<P2pError>),
-    #[error("Expected a block type")]
-    ExpectedBlock,
-    #[error("Expected a transaction type")]
-    ExpectedTransaction,
+    #[error("Expected a block type got {0}")]
+    ExpectedBlock(OwnedObjectResponse),
+    #[error("Expected a transaction type got {0}")]
+    ExpectedTransaction(OwnedObjectResponse),
     #[error("Peer sent us a peerlist faster than protocol rules, expected to wait {} seconds more", _0)]
     PeerInvalidPeerListCountdown(u64),
     #[error("Peer sent us a ping packet faster than protocol rules")]

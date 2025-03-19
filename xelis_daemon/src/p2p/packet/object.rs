@@ -187,3 +187,14 @@ impl<'a> Serializer for ObjectResponse<'a> {
         }
     }
 }
+
+impl Display for OwnedObjectResponse {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Block(block, hash) => write!(f, "OwnedObjectResponse({}, {})", block, hash),
+            Self::BlockHeader(block, hash) => write!(f, "OwnedObjectResponse({}, {})", block, hash),
+            Self::Transaction(_, hash) => write!(f, "OwnedObjectResponse(Transaction({}))", hash),
+            Self::NotFound(request) => write!(f, "OwnedObjectResponse(NotFound({}))", request),
+        }
+    }
+}
