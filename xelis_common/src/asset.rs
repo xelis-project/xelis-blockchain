@@ -22,6 +22,14 @@ impl AssetOwner {
             id
         }
     }
+
+    pub fn get_contract(&self) -> &Hash {
+        &self.contract
+    }
+
+    pub fn get_id(&self) -> u64 {
+        self.id
+    }
 }
 
 impl Serializer for AssetOwner {
@@ -90,6 +98,10 @@ impl AssetData {
 
     pub fn get_max_supply(&self) -> Option<u64> {
         self.max_supply
+    }
+
+    pub fn get_owner(&self) -> &Option<AssetOwner> {
+        &self.owner
     }
 }
 

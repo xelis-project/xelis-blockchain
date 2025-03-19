@@ -1,6 +1,5 @@
 use blake3::hash;
 use xelis_vm::{
-    traits::{JSONHelper, Serializable},
     Context,
     EnvironmentError,
     FnInstance,
@@ -15,23 +14,10 @@ use crate::{
     crypto::{Hash, HASH_SIZE},
     versioned_type::VersionedState
 };
-
 use super::Asset;
 
 // Maximum size for the ticker
 pub const TICKER_LEN: usize = 8;
-
-#[derive(Debug, PartialEq, Eq, Hash, Clone)]
-pub struct AssetManager;
-
-impl Serializable for AssetManager {}
-
-impl JSONHelper for AssetManager {}
-
-// Constructor for AssetManager
-pub fn asset_manager(_: FnInstance, _: FnParams, _: &mut Context) -> FnReturnType {
-    Ok(Some(Primitive::Opaque(AssetManager.into()).into()))
-}
 
 // Verify if the asset str is valid
 fn is_valid_str_for_asset(name: &str, whitespace: bool, uppercase_only: bool) -> bool {
@@ -57,7 +43,7 @@ fn is_valid_char_for_asset(c: char, whitespace: bool, uppercase_only: bool) -> b
 
 // Create a new asset
 // Return None if the asset already exists
-pub fn asset_manager_create<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType {
+pub fn asset_create<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType {
     let (provider, chain_state) = from_context::<P>(context)?;
 
     let max_supply = match params.remove(4).into_owned()?.take_as_optional()? {
@@ -108,7 +94,7 @@ pub fn asset_manager_create<P: ContractProvider>(_: FnInstance, mut params: FnPa
 
     let data = AssetData::new(decimals, name, ticker, max_supply, Some(AssetOwner::new(chain_state.contract.clone(), id)));
     chain_state.cache.assets.insert(asset_hash.clone(), AssetChanges {
-        data: Some((VersionedState::New, data)),
+        data: Some((VersionedState::New, data.clone())),
         supply: None
     });
 
@@ -125,12 +111,15 @@ pub fn asset_manager_create<P: ContractProvider>(_: FnInstance, mut params: FnPa
 
     let asset = Asset {
         hash: asset_hash,
-        mintable: true
+        data,
+        // Because we create this asset
+        // We now that the supply is either max or zero
+        supply: Some(max_supply.unwrap_or(0))
     };
     Ok(Some(Primitive::Opaque(asset.into()).into()))
 }
 
-pub fn asset_manager_get_by_id<P: ContractProvider>(_: FnInstance, params: FnParams, context: &mut Context) -> FnReturnType {
+pub fn asset_get_by_id<P: ContractProvider>(_: FnInstance, params: FnParams, context: &mut Context) -> FnReturnType {
     let id = params[0].as_u64()?;
     let (provider, chain_state) = from_context::<P>(context)?;
 
@@ -142,10 +131,11 @@ pub fn asset_manager_get_by_id<P: ContractProvider>(_: FnInstance, params: FnPar
     let res = get_asset_from_cache(provider, chain_state, asset_hash.clone())?
         .data
         .as_ref()
-        .map(|_| {
+        .map(|(_, data)| {
             let asset = Asset {
                 hash: asset_hash,
-                mintable: true
+                data: data.clone(),
+                supply: None
             };
             Primitive::Opaque(asset.into()).into()
         });
@@ -153,7 +143,7 @@ pub fn asset_manager_get_by_id<P: ContractProvider>(_: FnInstance, params: FnPar
     Ok(Some(res.unwrap_or_default()))
 }
 
-pub fn asset_manager_get_by_hash<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType {
+pub fn asset_get_by_hash<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType {
     let hash: Hash = params.remove(0)
         .into_owned()?
         .into_opaque_type()?;
@@ -163,10 +153,11 @@ pub fn asset_manager_get_by_hash<P: ContractProvider>(_: FnInstance, mut params:
     let res = get_asset_from_cache(provider, chain_state, hash.clone())?
         .data
         .as_ref()
-        .map(|_| {
+        .map(|(_, data)| {
             let asset = Asset {
                 hash,
-                mintable: false
+                data: data.clone(),
+                supply: None
             };
             Primitive::Opaque(asset.into()).into()
         });

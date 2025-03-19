@@ -43,12 +43,9 @@ pub fn address_is_normal(zelf: FnInstance, _: FnParams, _: &mut Context) -> FnRe
 pub fn address_public_key_bytes(zelf: FnInstance, _: FnParams, _: &mut Context) -> FnReturnType {
     let address: &Address = zelf?.as_opaque_type()?;
     let bytes = address.get_public_key()
-        .as_bytes()
-        .into_iter()
-        .map(|b| Primitive::U8(*b).into())
-        .collect();
+        .as_bytes();
 
-    Ok(Some(ValueCell::Array(bytes)))
+    Ok(Some(ValueCell::Bytes(bytes.into())))
 }
 
 pub fn address_from_string(_: FnInstance, mut params: FnParams, _: &mut Context) -> FnReturnType {

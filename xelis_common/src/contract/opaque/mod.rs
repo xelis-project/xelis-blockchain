@@ -4,7 +4,6 @@ mod random;
 mod block;
 mod storage;
 mod asset;
-mod asset_manager;
 mod crypto;
 mod memory_storage;
 
@@ -28,7 +27,6 @@ pub use block::*;
 pub use storage::*;
 pub use address::*;
 pub use asset::*;
-pub use asset_manager::*;
 pub use crypto::*;
 pub use memory_storage::*;
 
@@ -77,10 +75,6 @@ impl_opaque!(
 impl_opaque!(
     "Asset",
     Asset
-);
-impl_opaque!(
-    "AssetManager",
-    AssetManager
 );
 
 // Injectable context data

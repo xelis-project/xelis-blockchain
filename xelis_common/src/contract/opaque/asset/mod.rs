@@ -1,3 +1,5 @@
+mod manager;
+
 use anyhow::Context as AnyhowContext;
 use xelis_vm::{
     traits::{JSONHelper, Serializable},
@@ -8,34 +10,77 @@ use xelis_vm::{
     Primitive
 };
 use crate::{
-    contract::{from_context, get_asset_from_cache, get_balance_from_cache, ContractOutput, ContractProvider},
+    asset::AssetData,
+    contract::{
+        from_context,
+        get_asset_from_cache,
+        get_balance_from_cache,
+        ChainState,
+        ContractOutput,
+        ContractProvider
+    },
     crypto::Hash,
     versioned_type::VersionedState
 };
 
+pub use manager::*;
+
 // Represent an Asset Manager type in the opaque context
-#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub struct Asset {
     pub hash: Hash,
-    pub mintable: bool
+    pub data: AssetData,
+    pub supply: Option<u64>
 }
+
+impl std::hash::Hash for Asset {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.hash.hash(state);
+    }
+}
+
+impl PartialEq for Asset {
+    fn eq(&self, other: &Self) -> bool {
+        self.hash.eq(&other.hash)
+    }
+}
+
+impl Eq for Asset {}
 
 impl Serializable for Asset {}
 
 impl JSONHelper for Asset {}
 
 // Maximum supply set for this asset
-pub fn asset_get_max_supply<P: ContractProvider>(zelf: FnInstance, _: FnParams, context: &mut Context) -> FnReturnType {
+pub fn asset_get_max_supply<P: ContractProvider>(zelf: FnInstance, _: FnParams, _: &mut Context) -> FnReturnType {
     let asset: &Asset = zelf?.as_opaque_type()?;
-
-    let (provider, state) = from_context::<P>(context)?;
-    let changes = get_asset_from_cache(provider, state, asset.hash.clone())?;
-
-    let max_supply = changes.data.as_ref()
-        .and_then(|(_, d)| d.get_max_supply().map(|v| Primitive::U64(v).into()))
+    let value = asset.data.get_max_supply()
+        .map(|v| Primitive::U64(v).into())
         .unwrap_or_default();
 
-    Ok(Some(max_supply))
+    Ok(Some(value))
+}
+
+// Contract hash that created this asset
+pub fn asset_get_contract_hash<P: ContractProvider>(zelf: FnInstance, _: FnParams, _: &mut Context) -> FnReturnType {
+    let asset: &Asset = zelf?.as_opaque_type()?;
+    let hash = asset.data.get_owner()
+        .as_ref()
+        .map(|v| Primitive::Opaque(v.get_contract().clone().into()))
+        .unwrap_or_default();
+
+    Ok(Some(hash.into()))
+}
+
+// Contract hash that created this asset
+pub fn asset_get_contract_id<P: ContractProvider>(zelf: FnInstance, _: FnParams, _: &mut Context) -> FnReturnType {
+    let asset: &Asset = zelf?.as_opaque_type()?;
+    let id = asset.data.get_owner()
+        .as_ref()
+        .map(|v| Primitive::U64(v.get_id()))
+        .unwrap_or_default();
+
+    Ok(Some(id.into()))
 }
 
 // Current supply for this asset
@@ -43,6 +88,20 @@ pub fn asset_get_supply<P: ContractProvider>(zelf: FnInstance, _: FnParams, cont
     let asset: &mut Asset = zelf?.as_opaque_type_mut()?;
 
     let (provider, state) = from_context::<P>(context)?;
+
+    // In case the user create several assets instance, to keep the supply in sync
+    // We fetch it first from our shared cache
+    if let Some(changes) = state.cache.assets.get(&asset.hash) {
+        if let Some((_, supply)) = changes.supply {
+            return Ok(Some(Primitive::U64(supply).into()))
+        }
+    }
+
+    // Otherwise fetch it from local type cache
+    if let Some(supply) = asset.supply {
+        return Ok(Some(Primitive::U64(supply).into()))
+    }
+
     let topoheight = state.topoheight;
     let changes = get_asset_from_cache(provider, state, asset.hash.clone())?;
     let max_supply = changes.data.as_ref()
@@ -62,6 +121,8 @@ pub fn asset_get_supply<P: ContractProvider>(zelf: FnInstance, _: FnParams, cont
             }
         }
     };
+
+    asset.supply = Some(supply);
 
     Ok(Some(Primitive::U64(supply).into()))
 }
@@ -86,18 +147,30 @@ pub fn asset_get_hash(zelf: FnInstance, _: FnParams, _: &mut Context) -> FnRetur
 }
 
 // Get the hash representation of the asset
-pub fn asset_is_read_only(zelf: FnInstance, _: FnParams, _: &mut Context) -> FnReturnType {
+pub fn asset_is_read_only(zelf: FnInstance, _: FnParams, context: &mut Context) -> FnReturnType {
     let asset: &Asset = zelf?.as_opaque_type()?;
-    Ok(Some(Primitive::Boolean(!asset.mintable).into()))
+    let state: &ChainState = context.get()
+        .context("Chain state not found")?;
+
+    let read_only = asset.data.get_owner()
+        .as_ref()
+        .map(|v| v.get_contract()) != Some(state.contract);
+
+    Ok(Some(Primitive::Boolean(read_only).into()))
 }
 
 pub fn asset_mint<P: ContractProvider>(zelf: FnInstance, params: FnParams, context: &mut Context) -> FnReturnType {
     let asset: &mut Asset = zelf?.as_opaque_type_mut()?;
-    if !asset.mintable {
+    let (provider, chain_state) = from_context::<P>(context)?;
+
+    let read_only = asset.data.get_owner()
+        .as_ref()
+        .map(|v| v.get_contract()) != Some(chain_state.contract);
+
+    if read_only {
         return Ok(Some(Primitive::Boolean(false).into()))
     }
 
-    let (provider, chain_state) = from_context::<P>(context)?;
     let amount = params[0].as_u64()?;
 
     // Check that we don't have any max supply set
@@ -128,6 +201,7 @@ pub fn asset_mint<P: ContractProvider>(zelf: FnInstance, params: FnParams, conte
             .context("Overflow while minting supply")?;
         supply_state.mark_updated();
         changes.supply = Some((supply_state, new_supply));
+        asset.supply = Some(new_supply);
     }
 
     // Update the contract balance

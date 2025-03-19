@@ -120,14 +120,14 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static> {
     let read_only_storage_type = Type::Opaque(env.register_opaque::<OpaqueReadOnlyStorage>("ReadOnlyStorage"));
     let memory_storage_type = Type::Opaque(env.register_opaque::<OpaqueMemoryStorage>("MemoryStorage"));
     let asset_type = Type::Opaque(env.register_opaque::<Asset>("Asset"));
-    let asset_manager_type = Type::Opaque(env.register_opaque::<AssetManager>("AssetManager"));
     let signature_type = Type::Opaque(env.register_opaque::<Signature>("Signature"));
 
     // Transaction
     {
-        env.register_native_function(
-            "transaction",
-            None,
+        // Transaction::current()
+        env.register_static_function(
+            "current",
+            tx_type.clone(),
             vec![],
             transaction,
             5,
@@ -177,9 +177,10 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static> {
 
     // Block
     {
-        env.register_native_function(
-            "block",
-            None,
+        // Block::current()
+        env.register_static_function(
+            "current",
+            block_type.clone(),
             vec![],
             block,
             5,
@@ -253,9 +254,10 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static> {
 
     // Storage
     {
-        env.register_native_function(
-            "storage",
-            None,
+        // Storage::new()
+        env.register_static_function(
+            "new",
+            storage_type.clone(),
             vec![],
             storage,
             5,
@@ -297,9 +299,10 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static> {
 
     // Read Only Storage
     {
-        env.register_native_function(
-            "read_only_storage",
-            None,
+        // ReadOnlyStorage::new(<hash>)
+        env.register_static_function(
+            "new",
+            read_only_storage_type.clone(),
             vec![("contract", hash_type.clone())],
             read_only_storage::<P>,
             15,
@@ -325,9 +328,10 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static> {
 
     // Memory Storage
     {
-        env.register_native_function(
-            "memory_storage",
-            None,
+        // MemoryStorage::new()
+        env.register_static_function(
+            "new",
+            memory_storage_type.clone(),
             vec![],
             memory_storage,
             5,
@@ -391,7 +395,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static> {
             vec![],
             address_public_key_bytes,
             10,
-            Some(Type::Array(Box::new(Type::U8)))
+            Some(Type::Bytes)
         );
         env.register_static_function(
             "from_string",
@@ -465,9 +469,10 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static> {
 
     // Random number generator
     {
-        env.register_native_function(
-            "random",
-            None,
+        // Random::new()
+        env.register_static_function(
+            "new",
+            random_type.clone(),
             vec![],
             random_fn,
             5,
@@ -533,6 +538,36 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static> {
 
     // Asset
     {
+        env.register_static_function(
+            "get_by_id",
+            asset_type.clone(),
+            vec![("id", Type::U64)],
+            asset_get_by_id::<P>,
+            1000,
+            Some(Type::Optional(Box::new(asset_type.clone())))
+        );
+        env.register_static_function(
+            "create",
+            asset_type.clone(),
+            vec![
+                ("id", Type::U64),
+                ("name", Type::String),
+                ("ticker", Type::String),
+                ("decimals", Type::U8),
+                ("max_supply", Type::Optional(Box::new(Type::U64))),
+            ],
+            asset_create::<P>,
+            2500,
+            Some(Type::Optional(Box::new(asset_type.clone())))
+        );
+        env.register_static_function(
+            "get_by_hash",
+            asset_type.clone(),
+            vec![("hash", hash_type.clone())],
+            asset_get_by_hash::<P>,
+            500,
+            Some(Type::Optional(Box::new(asset_type.clone())))
+        );
         env.register_native_function(
             "get_max_supply",
             Some(asset_type.clone()),
@@ -578,54 +613,24 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static> {
             Some(asset_type.clone()),
             vec![],
             asset_is_read_only,
-            1,
+            5,
             Some(Type::Bool)
         );
-    }
-
-    // Asset Manager
-    {
         env.register_native_function(
-            "asset_manager",
-            None,
+            "get_contract_hash",
+            Some(asset_type.clone()),
             vec![],
-            asset_manager,
+            asset_get_contract_hash::<P>,
             5,
-            Some(asset_manager_type.clone())
-        );
-
-        env.register_native_function(
-            "get_by_id",
-            Some(asset_manager_type.clone()),
-            vec![("id", Type::U64)],
-            asset_manager_get_by_id::<P>,
-            500,
-            Some(Type::Optional(Box::new(asset_type.clone())))
+            Some(Type::Optional(Box::new(hash_type.clone())))
         );
         env.register_native_function(
-            "create",
-            Some(asset_manager_type.clone()),
-            vec![
-                ("id", Type::U64),
-                ("name", Type::String),
-                ("ticker", Type::String),
-                ("decimals", Type::U8),
-                ("max_supply", Type::Optional(Box::new(Type::U64))),
-            ],
-            asset_manager_create::<P>,
-            1000,
-            Some(Type::Optional(Box::new(asset_type.clone())))
-        );
-
-        // Read only
-        // An asset returned by this function can't be used to mint
-        env.register_native_function(
-            "get_by_hash",
-            Some(asset_manager_type.clone()),
-            vec![("hash", hash_type.clone())],
-            asset_manager_get_by_hash::<P>,
-            50,
-            Some(Type::Optional(Box::new(asset_type.clone())))
+            "get_id",
+            Some(asset_type.clone()),
+            vec![],
+            asset_get_contract_id::<P>,
+            5,
+            Some(Type::Optional(Box::new(Type::U64)))
         );
     }
 
