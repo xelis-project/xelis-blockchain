@@ -588,7 +588,15 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static> {
             "get_name",
             Some(asset_type.clone()),
             vec![],
-            asset_get_name::<P>,
+            asset_get_name,
+            5,
+            Some(Type::String)
+        );
+        env.register_native_function(
+            "get_ticker",
+            Some(asset_type.clone()),
+            vec![],
+            asset_get_ticker,
             5,
             Some(Type::String)
         );

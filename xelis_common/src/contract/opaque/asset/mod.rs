@@ -128,16 +128,9 @@ pub fn asset_get_supply<P: ContractProvider>(zelf: FnInstance, _: FnParams, cont
 }
 
 // Get the self claimed asset name
-pub fn asset_get_name<P: ContractProvider>(zelf: FnInstance, _: FnParams, context: &mut Context) -> FnReturnType {
+pub fn asset_get_name(zelf: FnInstance, _: FnParams, _: &mut Context) -> FnReturnType {
     let asset: &Asset = zelf?.as_opaque_type()?;
-    let (provider, state) = from_context::<P>(context)?;
-    let changes = get_asset_from_cache(provider, state, asset.hash.clone())?;
-
-    let name = changes.data.as_ref()
-        .map(|(_, d)| d.get_name().to_owned())
-        .context("Failed to get asset name")?;
-
-    Ok(Some(Primitive::String(name).into()))
+    Ok(Some(Primitive::String(asset.data.get_name().to_owned()).into()))
 }
 
 // Get the hash representation of the asset
@@ -147,6 +140,12 @@ pub fn asset_get_hash(zelf: FnInstance, _: FnParams, _: &mut Context) -> FnRetur
 }
 
 // Get the hash representation of the asset
+pub fn asset_get_ticker(zelf: FnInstance, _: FnParams, _: &mut Context) -> FnReturnType {
+    let asset: &Asset = zelf?.as_opaque_type()?;
+    Ok(Some(Primitive::String(asset.data.get_ticker().to_owned()).into()))
+}
+
+// are we the owner of this or not
 pub fn asset_is_read_only(zelf: FnInstance, _: FnParams, context: &mut Context) -> FnReturnType {
     let asset: &Asset = zelf?.as_opaque_type()?;
     let state: &ChainState = context.get()
