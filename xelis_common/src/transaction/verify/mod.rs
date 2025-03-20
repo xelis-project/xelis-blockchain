@@ -480,11 +480,11 @@ impl Transaction {
                         .map_err(|err| VerificationError::ModuleError(format!("{:#}", err)))?;
                 }
             },
-            TransactionType::DeployContract(module) => {
+            TransactionType::DeployContract(payload) => {
                 let environment = state.get_environment().await
                     .map_err(VerificationError::State)?;
 
-                let validator = ModuleValidator::new(module, environment);
+                let validator = ModuleValidator::new(&payload.module, environment);
                 validator.verify()
                     .map_err(|err| VerificationError::ModuleError(format!("{:#}", err)))?;
             }
@@ -714,10 +714,10 @@ impl Transaction {
                     transcript.append_message(b"contract_param", &param.to_bytes());
                 }
             },
-            TransactionType::DeployContract(module) => {
+            TransactionType::DeployContract(payload) => {
                 transcript.deploy_contract_proof_domain_separator();
 
-                state.set_contract_module(tx_hash, module).await
+                state.set_contract_module(tx_hash, &payload.module).await
                     .map_err(VerificationError::State)?;
             }
         }
@@ -1024,8 +1024,8 @@ impl Transaction {
                 state.set_contract_outputs(tx_hash, outputs).await
                     .map_err(VerificationError::State)?;
             },
-            TransactionType::DeployContract(module) => {
-                state.set_contract_module(tx_hash, module).await
+            TransactionType::DeployContract(payload) => {
+                state.set_contract_module(tx_hash, &payload.module).await
                     .map_err(VerificationError::State)?;
             }
         }

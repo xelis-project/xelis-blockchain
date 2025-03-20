@@ -7,7 +7,6 @@ use std::borrow::Cow;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use bulletproofs::RangeProof;
-use xelis_vm::Module;
 use crate::{
     account::Nonce,
     crypto::{
@@ -24,6 +23,7 @@ use crate::{
         multisig::MultiSig,
         BurnPayload,
         InvokeContractPayload,
+        DeployContractPayload,
         MultiSigPayload,
         Reference,
         SourceCommitment,
@@ -86,7 +86,7 @@ pub enum RPCTransactionType<'a> {
     Burn(Cow<'a, BurnPayload>),
     MultiSig(Cow<'a, MultiSigPayload>),
     InvokeContract(Cow<'a, InvokeContractPayload>),
-    DeployContract(Cow<'a, Module>)
+    DeployContract(Cow<'a, DeployContractPayload>)
 }
 
 impl<'a> RPCTransactionType<'a> {
@@ -110,7 +110,7 @@ impl<'a> RPCTransactionType<'a> {
             TransactionType::Burn(burn) => Self::Burn(Cow::Borrowed(burn)),
             TransactionType::MultiSig(payload) => Self::MultiSig(Cow::Borrowed(payload)),
             TransactionType::InvokeContract(payload) => Self::InvokeContract(Cow::Borrowed(payload)),
-            TransactionType::DeployContract(module) => Self::DeployContract(Cow::Borrowed(module))
+            TransactionType::DeployContract(payload) => Self::DeployContract(Cow::Borrowed(payload))
         }
     }
 }
@@ -124,7 +124,7 @@ impl From<RPCTransactionType<'_>> for TransactionType {
             RPCTransactionType::Burn(burn) => TransactionType::Burn(burn.into_owned()),
             RPCTransactionType::MultiSig(payload) => TransactionType::MultiSig(payload.into_owned()),
             RPCTransactionType::InvokeContract(payload) => TransactionType::InvokeContract(payload.into_owned()),
-            RPCTransactionType::DeployContract(module) => TransactionType::DeployContract(module.into_owned())
+            RPCTransactionType::DeployContract(payload) => TransactionType::DeployContract(payload.into_owned())
         }
     }
 }

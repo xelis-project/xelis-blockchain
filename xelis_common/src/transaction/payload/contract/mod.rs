@@ -1,3 +1,5 @@
+mod deploy;
+
 use anyhow::Context;
 use indexmap::{IndexMap, IndexSet};
 use serde::{Deserialize, Serialize};
@@ -17,6 +19,8 @@ use crate::{
     },
     serializer::*
 };
+
+pub use deploy::*;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "snake_case")]

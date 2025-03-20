@@ -59,6 +59,7 @@ use super::{
     },
     BurnPayload,
     ContractDeposit,
+    DeployContractPayload,
     InvokeContractPayload,
     MultiSigPayload,
     Role,
@@ -889,7 +890,9 @@ impl TransactionBuilder {
             TransactionTypeBuilder::DeployContract(module) => {
                 transcript.deploy_contract_proof_domain_separator();
                 let module = Module::from_hex(&module).map_err(|_| GenerationError::InvalidModule)?;
-                TransactionType::DeployContract(module)
+                TransactionType::DeployContract(DeployContractPayload {
+                    module
+                })
             }
         };
 

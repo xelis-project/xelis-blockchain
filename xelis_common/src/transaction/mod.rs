@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use xelis_vm::Module;
 use crate::{
     account::Nonce,
     crypto::{
@@ -99,7 +98,7 @@ pub enum TransactionType {
     Burn(BurnPayload),
     MultiSig(MultiSigPayload),
     InvokeContract(InvokeContractPayload),
-    DeployContract(Module),
+    DeployContract(DeployContractPayload),
 }
 
 // Transaction to be sent over the network
@@ -319,18 +318,9 @@ impl Serializer for TransactionType {
                 }
                 TransactionType::Transfers(txs)
             },
-            2 => {
-                let payload = MultiSigPayload::read(reader)?;
-                TransactionType::MultiSig(payload)
-            },
-            3 => {
-                let payload = InvokeContractPayload::read(reader)?;
-                TransactionType::InvokeContract(payload)
-            },
-            4 => {
-                let module = Module::read(reader)?;
-                TransactionType::DeployContract(module)
-            },
+            2 => TransactionType::MultiSig(MultiSigPayload::read(reader)?),
+            3 => TransactionType::InvokeContract(InvokeContractPayload::read(reader)?),
+            4 => TransactionType::DeployContract(DeployContractPayload::read(reader)?),
             _ => {
                 return Err(ReaderError::InvalidValue)
             }
