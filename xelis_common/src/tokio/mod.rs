@@ -2,6 +2,7 @@
 mod thread_pool;
 
 use std::future::Future;
+use cfg_if::cfg_if;
 use log::trace;
 
 
@@ -25,9 +26,6 @@ pub use tokio_with_wasm::*;
     ))
 ))]
 pub use tokio::*;
-
-#[cfg(feature = "tokio")]
-use runtime::{Handle, RuntimeFlavor};
 
 // Spawn a new task with a name
 // If the tokio_unstable feature is enabled, the task will be named
@@ -80,36 +78,51 @@ where
 // Verify if the multi thread is supported by the caller
 pub fn is_multi_threads_supported() -> bool {
     trace!("is multi thread supported");
-    #[cfg(feature = "tokio")]
-    {
-        let supported = Handle::try_current()
-            .map(|v| matches!(v.runtime_flavor(), RuntimeFlavor::MultiThread))
-            .unwrap_or(false);
-        trace!("multi threads supported: {}", supported);
-    
-        supported
+    cfg_if! {
+        if #[cfg(all(
+            feature = "tokio",
+            not(all(
+                target_arch = "wasm32",
+                target_vendor = "unknown",
+                target_os = "unknown"
+            ))
+        ))] {
+            let supported = runtime::Handle::try_current()
+                .map(|v| matches!(v.runtime_flavor(), runtime::RuntimeFlavor::MultiThread))
+                .unwrap_or(false);
+            trace!("multi threads supported: {}", supported);
+        
+            supported
+        } else {
+            false
+        }
     }
-    #[cfg(not(feature = "tokio"))]
-    false
 }
 
 // Try blocking on using the current executor available for the thread
 // If the current executor is not available, return an error
 pub fn try_block_on<F: Future>(_future: F) -> Result<F::Output, anyhow::Error> {
     trace!("try block on");
-    #[cfg(feature = "tokio")]
-    {
-        let handle = Handle::try_current()?;
-        if matches!(handle.runtime_flavor(), RuntimeFlavor::CurrentThread) {
-            trace!("runtime is current thread and may not support blocking, fallback on futures executor");
+    cfg_if! {
+        if #[cfg(all(
+            feature = "tokio",
+            target_arch = "wasm32",
+            target_vendor = "unknown",
+            target_os = "unknown"
+        ))] {
+            // WASM32 use the futures executor directly
             Ok(futures::executor::block_on(_future))
+        } else if #[cfg(feature = "tokio")] {
+            let handle = runtime::Handle::try_current()?;
+            if matches!(handle.runtime_flavor(), runtime::RuntimeFlavor::CurrentThread) {
+                trace!("runtime is current thread and may not support blocking, fallback on futures executor");
+                Ok(futures::executor::block_on(_future))
+            } else {
+                Ok(handle.block_on(_future))
+            }
         } else {
-            Ok(handle.block_on(_future))
+            Err(anyhow::anyhow!("Tokio feature is not enabled"))
         }
-    }
-    #[cfg(not(feature = "tokio"))]
-    {
-        Err(anyhow::anyhow!("Tokio feature is not enabled"))
     }
 }
 
@@ -121,17 +134,12 @@ pub fn block_in_place_safe<F, R>(f: F) -> R
 where
     F: FnOnce() -> R,
 {
-    trace!("block in place if multi thread is supported");
+    #[cfg(feature = "tokio")]
     if is_multi_threads_supported() {
-        #[cfg(feature = "tokio")]
-        {
-            tokio::task::block_in_place(f)
-        }
-        #[cfg(not(feature = "tokio"))]
-        {
-            f()
-        }
-    } else {
-        f()
+        trace!("tokio block in place");
+        return tokio::task::block_in_place(f)
     }
+
+    trace!("direct call block in place");
+    f()
 }

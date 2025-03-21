@@ -52,6 +52,7 @@ better_any = "0.2.0"
 log-panics = { version = "2", features = ["with-backtrace"]}
 zip = { version = "2.2.2", features = ["zstd"], default-features = false, optional = true }
 futures = { version = "0.3.31", optional = true }
+cfg-if = "1.0.0"
 
 [target.'cfg(windows)'.dependencies]
 win32console = "0.1.5"
