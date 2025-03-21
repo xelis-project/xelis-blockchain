@@ -7,14 +7,7 @@ use xelis_common::{api::wallet::NotifyEvent, rpc_server::WebSocketServerHandler}
 
 pub use self::{
     rpc_server::{WalletRpcServer, WalletRpcServerShared, AuthConfig},
-    xswd::{
-        XSWD,
-        AppStateShared,
-        PermissionResult,
-        PermissionRequest,
-        XSWDPermissionHandler,
-        XSWDNodeMethodHandler
-    },
+    xswd::*,
     rpc::register_methods as register_rpc_methods
 };
 
