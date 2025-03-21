@@ -118,7 +118,7 @@ pub enum TransactionTypeBuilder {
     Burn(BurnPayload),
     MultiSig(MultiSigBuilder),
     InvokeContract(InvokeContractBuilder),
-    DeployContract(String),
+    DeployContract(DeployContractBuilder),
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -330,9 +330,8 @@ impl TransactionBuilder {
 
                 size += payload_size;
             },
-            TransactionTypeBuilder::DeployContract(module) => {
-                // Module size
-                size += module.size() / 2;
+            TransactionTypeBuilder::DeployContract(payload) => {
+                size += payload.module.len() / 2;
             }
         };
 
@@ -887,9 +886,10 @@ impl TransactionBuilder {
                     deposits,
                 })
             },
-            TransactionTypeBuilder::DeployContract(module) => {
+            TransactionTypeBuilder::DeployContract(payload) => {
                 transcript.deploy_contract_proof_domain_separator();
-                let module = Module::from_hex(&module).map_err(|_| GenerationError::InvalidModule)?;
+                let module = Module::from_hex(&payload.module)
+                    .map_err(|_| GenerationError::InvalidModule)?;
                 TransactionType::DeployContract(DeployContractPayload {
                     module
                 })

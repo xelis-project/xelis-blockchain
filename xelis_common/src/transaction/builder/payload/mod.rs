@@ -46,6 +46,23 @@ pub struct InvokeContractBuilder {
     pub deposits: IndexMap<Hash, ContractDepositBuilder>,
 }
 
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct DeployContractBuilder {
+    // Module to deploy
+    pub module: String,
+    // Inner invoke during the deploy
+    pub invoke: Option<DeployContractInvokeBuilder>
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct DeployContractInvokeBuilder {
+    pub max_gas: u64,
+    pub chunk_id: u16,
+    pub parameters: Vec<ValueCell>,
+    #[serde(default)]
+    pub deposits: IndexMap<Hash, ContractDepositBuilder>,
+}
+
 #[cfg(test)]
 mod tests {
     use indexmap::indexmap;

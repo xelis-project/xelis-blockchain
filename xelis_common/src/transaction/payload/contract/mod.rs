@@ -474,6 +474,8 @@ mod tests {
         let module = Module::from_hex(hex).unwrap();
         assert_eq!(module.chunks_entry_ids().len(), 1);
         assert_eq!(module.constants().len(), 3);
+
+        assert_eq!(hex.len() / 2, module.size());
     }
 
     #[track_caller]
