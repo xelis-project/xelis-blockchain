@@ -5,6 +5,8 @@ use xelis_common::rpc_server::InternalRpcError;
 pub enum XSWDError {
     #[error("Permission denied")]
     PermissionDenied,
+    #[error("Permission invalid: method wasn't mentionned during handshake")]
+    PermissionInvalid,
     #[error("Application not found")]
     ApplicationNotFound,
     #[error("Invalid application data")]
@@ -25,6 +27,8 @@ pub enum XSWDError {
     InvalidOrigin,
     #[error("Too many permissions")]
     TooManyPermissions,
+    #[error("Unknown method requested in permissions list")]
+    UnknownMethodInPermissionsList,
     #[error("Application permissions are not signed")]
     ApplicationPermissionsNotSigned,
     #[error("Invalid signature for application data")]

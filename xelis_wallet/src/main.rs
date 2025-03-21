@@ -436,19 +436,21 @@ async fn xswd_handler(mut receiver: UnboundedReceiver<XSWDEvent>, prompt: Sharea
 
 #[cfg(feature = "api_server")]
 async fn xswd_handle_request_application(prompt: &ShareablePrompt, app_state: AppStateShared) -> Result<PermissionResult, Error> {
-    let mut message = format!("XSWD: Allow application {} ({}) to access your wallet\r\n(Y/N): ", app_state.get_name(), app_state.get_id());
+    let mut message = format!("XSWD: Application {} ({}) request access to your wallet", app_state.get_name(), app_state.get_id());
     let permissions = app_state.get_permissions().lock().await;
     if !permissions.is_empty() {
-        message += &format!("Permissions requested ({}):\r\n", permissions.len());
-        for (method, perm) in permissions.iter() {
-            message += &format!(" - {} = {}\r\n", method, perm);
+        message += &format!("\r\nPermissions ({}):", permissions.len());
+        for perm in permissions.keys() {
+            message += &format!("\r\n- {}", perm);
         }
     }
+
+    message += "\r\n(Y/N): ";
     let accepted = prompt.read_valid_str_value(prompt.colorize_string(Color::Blue, &message), vec!["y", "n"]).await? == "y";
     if accepted {
-        Ok(PermissionResult::Allow)
+        Ok(PermissionResult::Accept)
     } else {
-        Ok(PermissionResult::Deny)
+        Ok(PermissionResult::Reject)
     }
 }
 
@@ -469,10 +471,10 @@ async fn xswd_handle_request_permission(prompt: &ShareablePrompt, app_state: App
 
     let answer = prompt.read_valid_str_value(prompt.colorize_string(Color::Blue, &message), vec!["a", "d", "aa", "ad"]).await?;
     Ok(match answer.as_str() {
-        "a" => PermissionResult::Allow,
-        "d" => PermissionResult::Deny,
-        "aa" => PermissionResult::AlwaysAllow,
-        "ad" => PermissionResult::AlwaysDeny,
+        "a" => PermissionResult::Accept,
+        "d" => PermissionResult::Reject,
+        "aa" => PermissionResult::AlwaysAccept,
+        "ad" => PermissionResult::AlwaysReject,
         _ => unreachable!()
     })
 }

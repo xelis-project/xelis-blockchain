@@ -229,25 +229,28 @@ where
             .copied();
 
         match permission {
+            // If the permission wasn't mentionned at AppState creation
+            // It is directly rejected
+            None =>  Err(RpcResponseError::new(request.id.clone(), XSWDError::PermissionInvalid)),
             // User has already accepted this method
-            Some(Permission::AcceptAlways) => Ok(()),
+            Some(Permission::Allow) => Ok(()),
             // User has denied access to this method
-            Some(Permission::DenyAlways) => Err(RpcResponseError::new(request.id.clone(), XSWDError::PermissionDenied)),
+            Some(Permission::Reject) => Err(RpcResponseError::new(request.id.clone(), XSWDError::PermissionDenied)),
             // Request permission from user
-            None => {
+            Some(Permission::Ask) => {
                 let result = self.handler.get_data()
                 .request_permission(app, PermissionRequest::Request(request)).await
                 .map_err(|err| RpcResponseError::new(request.id.clone(), InternalRpcError::CustomAny(0, err)))?;
 
                 match result {
-                    PermissionResult::Allow => Ok(()),
-                    PermissionResult::Deny => Err(RpcResponseError::new(request.id.clone(), XSWDError::PermissionDenied)),
-                    PermissionResult::AlwaysAllow => {
-                        permissions.insert(request.method.clone(), Permission::AcceptAlways);
+                    PermissionResult::Accept => Ok(()),
+                    PermissionResult::Reject => Err(RpcResponseError::new(request.id.clone(), XSWDError::PermissionDenied)),
+                    PermissionResult::AlwaysAccept => {
+                        permissions.insert(request.method.clone(), Permission::Allow);
                         Ok(())
                     },
-                    PermissionResult::AlwaysDeny => {
-                        permissions.insert(request.method.clone(), Permission::AcceptAlways);
+                    PermissionResult::AlwaysReject => {
+                        permissions.insert(request.method.clone(), Permission::Allow);
                         Err(RpcResponseError::new(request.id.clone(), XSWDError::PermissionDenied))
                     }   
                 }
@@ -259,6 +262,7 @@ where
     // if the application is already registered, it will return an error
     async fn add_application(&self, session: &WebSocketSessionShared<Self>, app_data: ApplicationData) -> Result<Value, RpcResponseError> {
         // Sanity check
+        debug!("sanity check for add application");
         {
             if app_data.get_id().len() != 64 {
                 return Err(RpcResponseError::new(None, XSWDError::InvalidApplicationId))
@@ -296,6 +300,13 @@ where
             if app_data.get_permissions().len() > 255 {
                 return Err(RpcResponseError::new(None, XSWDError::TooManyPermissions))
             }
+
+            for perm in app_data.get_permissions() {
+                if !self.handler.has_method(perm) {
+                    debug!("Permission '{}' is unknown", perm);
+                    return Err(RpcResponseError::new(None, XSWDError::UnknownMethodInPermissionsList))
+                }
+            }
         }
 
         // Verify that this app ID is not already in use
@@ -319,7 +330,7 @@ where
             Ok(v) => v,
             Err(e) => {
                 debug!("Error while requesting permission: {}", e);
-                PermissionResult::Deny
+                PermissionResult::Reject
             }
         };
         state.set_requesting(false);

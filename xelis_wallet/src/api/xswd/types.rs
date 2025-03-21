@@ -1,4 +1,4 @@
-use indexmap::IndexMap;
+use indexmap::{IndexMap, IndexSet};
 use serde::{Serialize, Deserialize};
 use std::{
     sync::{
@@ -20,7 +20,7 @@ pub struct AppState {
     description: String,
     // URL of the app if exists
     url: Option<String>,
-    // All permissions for each method
+    // All permissions for each method based on user config
     permissions: Mutex<IndexMap<String, Permission>>,
     // Do we have a pending request?
     is_requesting: AtomicBool
@@ -35,7 +35,18 @@ impl AppState {
             name: data.name,
             description: data.description,
             url: data.url,
-            permissions: Mutex::new(data.permissions),
+            permissions: Mutex::new(data.permissions.into_iter().map(|k| (k, Permission::Ask)).collect()),
+            is_requesting: AtomicBool::new(false)
+        }
+    }
+
+    pub fn with_permissions(data: ApplicationData, permissions: IndexMap<String, Permission>) -> Self {
+        Self {
+            id: data.id,
+            name: data.name,
+            description: data.description,
+            url: data.url,
+            permissions: Mutex::new(permissions),
             is_requesting: AtomicBool::new(false)
         }
     }
@@ -82,7 +93,7 @@ pub struct ApplicationData {
     // Permissions per RPC method
     // This is useful to request in one time all permissions
     #[serde(default)]
-    permissions: IndexMap<String, Permission>
+    permissions: IndexSet<String>
 }
 
 impl ApplicationData {
@@ -102,7 +113,7 @@ impl ApplicationData {
         &self.url
     }
 
-    pub fn get_permissions(&self) -> &IndexMap<String, Permission> {
+    pub fn get_permissions(&self) -> &IndexSet<String> {
         &self.permissions
     }
 }
@@ -110,15 +121,17 @@ impl ApplicationData {
 #[derive(Clone, Copy, Serialize, Deserialize, Debug)]
 #[serde(rename_all = "snake_case")]
 pub enum Permission {
-    AcceptAlways,
-    DenyAlways
+    Allow,
+    Reject,
+    Ask
 }
 
 impl fmt::Display for Permission {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::AcceptAlways => write!(f, "accept_always"),
-            Self::DenyAlways => write!(f, "deny_always")
+            Self::Allow => write!(f, "allow"),
+            Self::Reject => write!(f, "reject"),
+            Self::Ask => write!(f, "ask"),
         }
     }
 }
@@ -129,16 +142,16 @@ pub enum PermissionRequest<'a> {
 }
 
 pub enum PermissionResult {
-    Allow,
-    Deny,
-    AlwaysAllow,
-    AlwaysDeny
+    Accept,
+    Reject,
+    AlwaysAccept,
+    AlwaysReject
 }
 
 impl PermissionResult {
     pub fn is_positive(&self) -> bool {
         match self {
-            Self::Allow | Self::AlwaysAllow => true,
+            Self::Accept | Self::AlwaysAccept => true,
             _ => false
         }
     }
