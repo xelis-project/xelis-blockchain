@@ -507,7 +507,8 @@ XSWD also have the ability to sends JSON-RPC requests to the daemon directly.
 For this, set the prefix `node.` in front of daemon requests, it will not be requested to the user as it's public on-chain data.
 For wallets RPC methods, set the prefix `wallet.` which will requests/use the permission set by the user.
 
-DApp can also request to sign the `ApplicationData` to persist the configured permissions on its side and then provide it when user would reconnect later.
+You must provide the list of wallet RPC methods that your app would use during the whole connection lifetime.
+Any other RPC method will be **rejected** directly if not provided at the registration step.
 
 First JSON message from the dApp must be in following format to identify the application:
 ```json
@@ -516,13 +517,13 @@ First JSON message from the dApp must be in following format to identify the app
     "name": "XELIS Example",
     "description": "Description example of up to 255 characters",
     "url": "https://xelis.io",
-    "permissions": {}
+    "permissions": [
+        "get_balance",
+    ]
 }
 ```
 
-You can also add `signature` field and provide signed permissions if your dApp requested a signature from wallet in previous connection.
-
-If dApp is accepted by user through XSWD, you will receive the following response:
+If the connection is accepted by user through XSWD, you will receive the following response:
 ```json
 {
     "id": null,
