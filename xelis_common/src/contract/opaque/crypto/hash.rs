@@ -27,13 +27,38 @@ impl Serializable for Hash {
     }
 }
 
-pub fn hash_as_bytes_fn(_: FnInstance, _: FnParams, context: &mut Context) -> FnReturnType {
-    let hash: &Hash = context.get().context("hash not found")?;
-    let bytes = hash.as_bytes().into_iter().map(|b| Primitive::U8(*b).into()).collect();
+pub fn hash_to_bytes_fn(zelf: FnInstance, _: FnParams, _: &mut Context) -> FnReturnType {
+    let hash: &Hash = zelf?.as_opaque_type()?;
+    let bytes = ValueCell::Bytes(hash.as_bytes().into());
+    Ok(Some(bytes))
+}
+
+pub fn hash_to_array_fn(zelf: FnInstance, _: FnParams, _: &mut Context) -> FnReturnType {
+    let hash: &Hash = zelf?.as_opaque_type()?;
+    let bytes = hash.as_bytes()
+        .into_iter()
+        .map(|b| Primitive::U8(*b).into())
+        .collect();
+
     Ok(Some(ValueCell::Array(bytes)))
 }
 
 pub fn hash_from_bytes_fn(_: FnInstance, mut params: FnParams, _: &mut Context) -> FnReturnType {
+    let param = params.remove(0)
+        .into_owned()?;
+    let bytes = param.as_bytes()?;
+
+    if bytes.len() != HASH_SIZE {
+        return Err(EnvironmentError::InvalidParameter);
+    }
+
+    let hash = Hash::from_bytes(&bytes)
+        .context("failed to create hash from bytes")?;
+
+    Ok(Some(Primitive::Opaque(OpaqueWrapper::new(hash)).into()))
+}
+
+pub fn hash_from_array_fn(_: FnInstance, mut params: FnParams, _: &mut Context) -> FnReturnType {
     let param = params.remove(0)
         .into_owned()?;
     let values = param.as_vec()?;

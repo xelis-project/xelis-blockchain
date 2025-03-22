@@ -410,18 +410,34 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static> {
     // Hash
     {
         env.register_native_function(
-            "as_bytes",
+            "to_bytes",
             Some(hash_type.clone()),
             vec![],
-            hash_as_bytes_fn,
+            hash_to_bytes_fn,
+            5,
+            Some(Type::Bytes)
+        );
+        env.register_native_function(
+            "to_array",
+            Some(hash_type.clone()),
+            vec![],
+            hash_to_array_fn,
             5,
             Some(Type::Array(Box::new(Type::U8)))
         );
         env.register_static_function(
             "from_bytes",
             hash_type.clone(),
-            vec![("bytes", Type::Array(Box::new(Type::U8)))],
+            vec![("bytes", Type::Bytes)],
             hash_from_bytes_fn,
+            75,
+            Some(hash_type.clone())
+        );
+        env.register_static_function(
+            "from_array",
+            hash_type.clone(),
+            vec![("bytes", Type::Array(Box::new(Type::U8)))],
+            hash_from_array_fn,
             75,
             Some(hash_type.clone())
         );
@@ -454,7 +470,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static> {
             hash_type.clone(),
             vec![],
             hash_zero_fn,
-            5,
+            1,
             Some(hash_type.clone())
         );
         env.register_static_function(
@@ -462,7 +478,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static> {
             hash_type.clone(),
             vec![],
             hash_max_fn,
-            5,
+            1,
             Some(hash_type.clone())
         );
     }
