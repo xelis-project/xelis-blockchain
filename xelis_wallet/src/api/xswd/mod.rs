@@ -218,15 +218,17 @@ where
     async fn verify_permission_for_request(&self, app: &AppStateShared, request: &RpcRequest) -> Result<(), RpcResponseError> {
         let _permit = self.permission_handler_semaphore.acquire().await
             .map_err(|_| RpcResponseError::new(request.id.clone(), InternalRpcError::InternalError("Permission handler semaphore error")))?;
-        let mut permissions = app.get_permissions().lock().await;
 
         // We acquired the lock, lets check that the app is still registered
         if !self.has_app_with_id(app.get_id()).await {
             return Err(RpcResponseError::new(request.id.clone(), XSWDError::ApplicationNotFound))
         }
 
-        let permission = permissions.get(&request.method)
-            .copied();
+        let permission = {
+            let permissions = app.get_permissions().lock().await;
+            permissions.get(&request.method)
+                .copied()
+        };
 
         match permission {
             // If the permission wasn't mentionned at AppState creation
@@ -246,10 +248,12 @@ where
                     PermissionResult::Accept => Ok(()),
                     PermissionResult::Reject => Err(RpcResponseError::new(request.id.clone(), XSWDError::PermissionDenied)),
                     PermissionResult::AlwaysAccept => {
+                        let mut permissions = app.get_permissions().lock().await;
                         permissions.insert(request.method.clone(), Permission::Allow);
                         Ok(())
                     },
                     PermissionResult::AlwaysReject => {
+                        let mut permissions = app.get_permissions().lock().await;
                         permissions.insert(request.method.clone(), Permission::Allow);
                         Err(RpcResponseError::new(request.id.clone(), XSWDError::PermissionDenied))
                     }   
