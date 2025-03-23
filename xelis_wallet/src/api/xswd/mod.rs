@@ -86,30 +86,33 @@ pub use types::*;
 // but will keep already-configured permissions.
 pub struct XSWD<W>
 where
-    W: Clone + Send + Sync + XSWDPermissionHandler + XSWDNodeMethodHandler + 'static
+    W: Clone + Send + Sync + XSWDHandler + 'static
 {
     websocket: Arc<WebSocketServer<XSWDWebSocketHandler<W>>>,
     handle: ServerHandle
 }
 
 #[async_trait]
-pub trait XSWDPermissionHandler {
+pub trait XSWDHandler {
     // Handler function to request permission to user
     async fn request_permission(&self, app_state: &AppStateShared, request: PermissionRequest<'_>) -> Result<PermissionResult, Error>;
+
     // Handler function to cancel the request permission from app (app has disconnected)
     async fn cancel_request_permission(&self, app_state: &AppStateShared) -> Result<(), Error>;
+
     // Public key to use to verify the signature
     async fn get_public_key(&self) -> Result<&DecompressedPublicKey, Error>;
-}
 
-#[async_trait]
-pub trait XSWDNodeMethodHandler {
+    // Call a node RPC method through the wallet current connection
     async fn call_node_with(&self, request: RpcRequest) -> Result<Value, RpcResponseError>;
+
+    // When an application has disconnected
+    async fn on_app_disconnect(&self, app_state: &AppStateShared) -> Result<(), Error>;
 }
 
 impl<W> XSWD<W>
 where
-    W: Clone + Send + Sync + XSWDPermissionHandler + XSWDNodeMethodHandler + 'static
+    W: Clone + Send + Sync + XSWDHandler + 'static
 {
     pub fn new(rpc_handler: RPCHandler<W>) -> Result<Self, anyhow::Error> {
         info!("Starting XSWD Server...");
@@ -150,7 +153,7 @@ where
 
 pub struct XSWDWebSocketHandler<W>
 where
-    W: Clone + Send + Sync + XSWDPermissionHandler + XSWDNodeMethodHandler + 'static
+    W: Clone + Send + Sync + XSWDHandler + 'static
 {
     // RPC handler for methods
     handler: RPCHandler<W>,
@@ -164,7 +167,7 @@ where
 
 impl<W> XSWDWebSocketHandler<W>
 where
-    W: Clone + Send + Sync + XSWDPermissionHandler + XSWDNodeMethodHandler + 'static
+    W: Clone + Send + Sync + XSWDHandler + 'static
 {
     pub fn new(handler: RPCHandler<W>) -> Self {
         Self {
@@ -481,20 +484,28 @@ where
 #[async_trait]
 impl<W> WebSocketHandler for XSWDWebSocketHandler<W>
 where
-    W: Clone + Send + Sync + XSWDPermissionHandler + XSWDNodeMethodHandler + 'static
+    W: Clone + Send + Sync + XSWDHandler + 'static
 {
     async fn on_close(&self, session: &WebSocketSessionShared<Self>) -> Result<(), anyhow::Error> {
-        let mut applications = self.applications.write().await;
-        if let Some(app) = applications.remove(session) {            
+        let app = {
+            let mut applications = self.applications.write().await;
+            applications.remove(session)
+        };
+
+        {
+            let mut listeners = self.listeners.lock().await;
+            listeners.remove(session);
+        }
+
+        if let Some(app) = app {
             info!("Application {} has disconnected", app.get_name());
             if app.is_requesting() {
                 debug!("Application {} is requesting a permission, aborting...", app.get_name());
                 self.handler.get_data().cancel_request_permission(&app).await?;
             }
-        }
 
-        let mut listeners = self.listeners.lock().await;
-        listeners.remove(session);
+            self.handler.get_data().on_app_disconnect(&app).await?;
+        }
 
         Ok(())
     }
@@ -520,7 +531,7 @@ async fn index() -> Result<impl Responder, actix_web::Error> {
 
 async fn endpoint<W>(server: Data<WebSocketServer<XSWDWebSocketHandler<W>>>, request: HttpRequest, body: Payload) -> Result<impl Responder, actix_web::Error>
 where
-    W: Clone + Send + Sync + XSWDPermissionHandler + XSWDNodeMethodHandler + 'static
+    W: Clone + Send + Sync + XSWDHandler + 'static
 {
     let response = server.handle_connection(request, body).await?;
     Ok(response)

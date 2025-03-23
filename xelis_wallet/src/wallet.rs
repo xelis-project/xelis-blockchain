@@ -103,7 +103,6 @@ use {
     serde_json::{json, Value},
     async_trait::async_trait,
     crate::api::{
-        XSWDNodeMethodHandler,
         register_rpc_methods,
         XSWD,
         WalletRpcServer,
@@ -112,7 +111,7 @@ use {
         AppStateShared,
         PermissionResult,
         PermissionRequest,
-        XSWDPermissionHandler
+        XSWDHandler
     },
     xelis_common::{
         rpc_server::{
@@ -1153,7 +1152,7 @@ pub enum XSWDEvent {
 
 #[cfg(feature = "api_server")]
 #[async_trait]
-impl XSWDPermissionHandler for Arc<Wallet> {
+impl XSWDHandler for Arc<Wallet> {
     async fn request_permission(&self, app_state: &AppStateShared, request: PermissionRequest<'_>) -> Result<PermissionResult, Error> {
         if let Some(sender) = self.xswd_channel.read().await.as_ref() {
             // no other way ?
@@ -1193,11 +1192,7 @@ impl XSWDPermissionHandler for Arc<Wallet> {
     async fn get_public_key(&self) -> Result<&DecompressedPublicKey, Error> {
         Ok(self.inner.keypair.get_public_key())
     }
-}
 
-#[cfg(feature = "api_server")]
-#[async_trait]
-impl XSWDNodeMethodHandler for Arc<Wallet> {
     async fn call_node_with(&self, request: RpcRequest) -> Result<Value, RpcResponseError> {
         let network_handler = self.network_handler.lock().await;
         let id = request.id;
@@ -1215,5 +1210,9 @@ impl XSWDNodeMethodHandler for Arc<Wallet> {
         }
 
         Err(RpcResponseError::new(id, WalletError::NotOnlineMode))
+    }
+
+    async fn on_app_disconnect(&self, _: &AppStateShared) -> Result<(), Error> {
+        Ok(())
     }
 }
