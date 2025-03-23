@@ -241,8 +241,8 @@ where
             // Request permission from user
             Some(Permission::Ask) => {
                 let result = self.handler.get_data()
-                .request_permission(app, PermissionRequest::Request(request)).await
-                .map_err(|err| RpcResponseError::new(request.id.clone(), InternalRpcError::CustomAny(0, err)))?;
+                    .request_permission(app, PermissionRequest::Request(request)).await
+                    .map_err(|err| RpcResponseError::new(request.id.clone(), InternalRpcError::CustomAny(0, err)))?;
 
                 match result {
                     PermissionResult::Accept => Ok(()),
