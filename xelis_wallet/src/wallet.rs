@@ -1147,7 +1147,8 @@ fn datetime_from_timestamp(timestamp: u64) -> Result<chrono::DateTime<chrono::Lo
 pub enum XSWDEvent {
     RequestPermission(AppStateShared, RpcRequest, oneshot::Sender<Result<PermissionResult, Error>>),
     RequestApplication(AppStateShared, oneshot::Sender<Result<PermissionResult, Error>>),
-    CancelRequest(AppStateShared, oneshot::Sender<Result<(), Error>>)
+    CancelRequest(AppStateShared, oneshot::Sender<Result<(), Error>>),
+    AppDisconnect(AppStateShared)
 }
 
 #[cfg(feature = "api_server")]
@@ -1212,7 +1213,14 @@ impl XSWDHandler for Arc<Wallet> {
         Err(RpcResponseError::new(id, WalletError::NotOnlineMode))
     }
 
-    async fn on_app_disconnect(&self, _: &AppStateShared) -> Result<(), Error> {
-        Ok(())
+    async fn on_app_disconnect(&self, app: AppStateShared) -> Result<(), Error> {
+        if let Some(sender) = self.xswd_channel.read().await.as_ref() {
+            // Send XSWD Message
+            sender.send(XSWDEvent::AppDisconnect(app))?;
+
+            return Ok(())
+        }
+
+        Err(WalletError::NoHandlerAvailable.into())
     }
 }

@@ -107,7 +107,7 @@ pub trait XSWDHandler {
     async fn call_node_with(&self, request: RpcRequest) -> Result<Value, RpcResponseError>;
 
     // When an application has disconnected
-    async fn on_app_disconnect(&self, app_state: &AppStateShared) -> Result<(), Error>;
+    async fn on_app_disconnect(&self, app_state: AppStateShared) -> Result<(), Error>;
 }
 
 impl<W> XSWD<W>
@@ -504,7 +504,7 @@ where
                 self.handler.get_data().cancel_request_permission(&app).await?;
             }
 
-            self.handler.get_data().on_app_disconnect(&app).await?;
+            self.handler.get_data().on_app_disconnect(app).await?;
         }
 
         Ok(())

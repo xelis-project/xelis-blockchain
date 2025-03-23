@@ -426,7 +426,8 @@ async fn xswd_handler(mut receiver: UnboundedReceiver<XSWDEvent>, prompt: Sharea
                 if callback.send(res).is_err() {
                     error!("Error while sending permission response back to XSWD");
                 }
-            }
+            },
+            XSWDEvent::AppDisconnect(_) => {}
         };
     }
 }
