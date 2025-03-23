@@ -416,13 +416,10 @@ async fn xswd_handler(mut receiver: UnboundedReceiver<XSWDEvent>, prompt: Sharea
             },
             XSWDEvent::RequestApplication(app_state, callback) => {
                 let prompt = prompt.clone();
-                // TODO: only have one dedicated task for this
-                spawn_task("xswd-request", async move {
-                    let res = xswd_handle_request_application(&prompt, app_state).await;
-                    if callback.send(res).is_err() {
-                        error!("Error while sending application response back to XSWD");
-                    }
-                });
+                let res = xswd_handle_request_application(&prompt, app_state).await;
+                if callback.send(res).is_err() {
+                    error!("Error while sending application response back to XSWD");
+                }
             },
             XSWDEvent::RequestPermission(app_state, request, callback) => {
                 let res = xswd_handle_request_permission(&prompt, app_state, request).await;
