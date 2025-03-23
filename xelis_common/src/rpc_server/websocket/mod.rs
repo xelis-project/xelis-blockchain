@@ -271,7 +271,15 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static {
             debug!("Session #{} has been inserted into sessions: {}", id, res);
         }
 
-        actix_rt::spawn(Arc::clone(self).handle_ws_internal(session, stream.max_frame_size(MAX_BLOCK_SIZE).aggregate_continuations(), rx));
+        actix_rt::spawn(
+            Arc::clone(self)
+                .handle_ws_internal(
+                    session,
+                    stream.max_frame_size(MAX_BLOCK_SIZE)
+                        .aggregate_continuations(),
+                    rx
+                )
+        );
         Ok(response)
     }
 
