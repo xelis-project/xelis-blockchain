@@ -10,7 +10,7 @@ use xelis_vm::{
 use crate::{
     asset::{AssetData, AssetOwner},
     config::COST_PER_TOKEN,
-    contract::{from_context, get_asset_from_cache, AssetChanges, ContractOutput, ContractProvider},
+    contract::{from_context, get_optional_asset_from_cache, AssetChanges, ContractOutput, ContractProvider},
     crypto::{Hash, HASH_SIZE},
     versioned_type::VersionedState
 };
@@ -88,15 +88,15 @@ pub fn asset_create<P: ContractProvider>(_: FnInstance, mut params: FnParams, co
 
     let asset_hash = Hash::new(hash(&buffer).into());
     // We must be sure that we don't have this asset already
-    if get_asset_from_cache(provider, chain_state, asset_hash.clone())?.data.is_some() {
+    if get_optional_asset_from_cache(provider, chain_state, asset_hash.clone())?.is_some() {
         return Ok(Some(Primitive::Null.into()));
     }
 
     let data = AssetData::new(decimals, name, ticker, max_supply, Some(AssetOwner::new(chain_state.contract.clone(), id)));
-    chain_state.cache.assets.insert(asset_hash.clone(), AssetChanges {
-        data: Some((VersionedState::New, data.clone())),
+    chain_state.assets.insert(asset_hash.clone(), Some(AssetChanges {
+        data: (VersionedState::New, data.clone()),
         supply: None
-    });
+    }));
 
     // If we have a max supply, we need to mint it to the contract
     if let Some(max_supply) = max_supply {
@@ -110,11 +110,7 @@ pub fn asset_create<P: ContractProvider>(_: FnInstance, mut params: FnParams, co
     context.increase_gas_usage(COST_PER_TOKEN)?;
 
     let asset = Asset {
-        hash: asset_hash,
-        data,
-        // Because we create this asset
-        // We now that the supply is either max or zero
-        supply: Some(max_supply.unwrap_or(0))
+        hash: asset_hash
     };
     Ok(Some(Primitive::Opaque(asset.into()).into()))
 }
@@ -128,19 +124,14 @@ pub fn asset_get_by_id<P: ContractProvider>(_: FnInstance, params: FnParams, con
     buffer[HASH_SIZE..].copy_from_slice(&id.to_be_bytes());
 
     let asset_hash = Hash::new(hash(&buffer).into());
-    let res = get_asset_from_cache(provider, chain_state, asset_hash.clone())?
-        .data
-        .as_ref()
-        .map(|(_, data)| {
-            let asset = Asset {
-                hash: asset_hash,
-                data: data.clone(),
-                supply: None
-            };
-            Primitive::Opaque(asset.into()).into()
-        });
+    if get_optional_asset_from_cache(provider, chain_state, asset_hash.clone())?.is_none() {
+        return Ok(Some(Primitive::Null.into()))
+    }
 
-    Ok(Some(res.unwrap_or_default()))
+    let asset = Asset {
+        hash: asset_hash
+    };
+    Ok(Some(Primitive::Opaque(asset.into()).into()))
 }
 
 pub fn asset_get_by_hash<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType {
@@ -150,19 +141,14 @@ pub fn asset_get_by_hash<P: ContractProvider>(_: FnInstance, mut params: FnParam
 
     let (provider, chain_state) = from_context::<P>(context)?;
 
-    let res = get_asset_from_cache(provider, chain_state, hash.clone())?
-        .data
-        .as_ref()
-        .map(|(_, data)| {
-            let asset = Asset {
-                hash,
-                data: data.clone(),
-                supply: None
-            };
-            Primitive::Opaque(asset.into()).into()
-        });
+    if get_optional_asset_from_cache(provider, chain_state, hash.clone())?.is_none() {
+        return Ok(Some(Primitive::Null.into()))
+    }
 
-    Ok(Some(res.unwrap_or_default()))
+    let asset = Asset {
+        hash
+    };
+    Ok(Some(Primitive::Opaque(asset.into()).into()))
 }
 
 #[cfg(test)]

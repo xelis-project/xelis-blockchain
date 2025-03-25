@@ -1260,7 +1260,7 @@ async fn difficulty_dataset<S: Storage>(manager: &CommandManager, mut arguments:
         let difficulty = storage.get_difficulty_for_block_hash(&hash).await.context("Error while retrieving difficulty")?;
 
         let solve_time = if topoheight == 0 {
-            0            
+            0
         } else {
     
             // Retrieve best tip timestamp

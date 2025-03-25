@@ -10,7 +10,7 @@ use crate::{
 #[derive(Debug, Clone)]
 pub struct AssetChanges {
     // The asset data
-    pub data: Option<(VersionedState, AssetData)>,
+    pub data: (VersionedState, AssetData),
     // The supply of the asset
     pub supply: Option<(VersionedState, u64)>,
 }
@@ -25,10 +25,6 @@ pub struct ContractCache {
     // Those already present are loaded due to the deposits to be added
     // If its none, it means we don't have any balance yet
     pub balances: HashMap<Hash, Option<(VersionedState, u64)>>,
-    // Assets cache
-    // This either contains loaded assets, or registered
-    // If its none, it means we didn't found the asset in storage
-    pub assets: HashMap<Hash, AssetChanges>,
     // Memory Storage
     // This is shared between all executions of the same contract
     pub memory: HashMap<ValueCell, ValueCell>,
@@ -47,7 +43,6 @@ impl ContractCache {
         Self {
             storage: HashMap::new(),
             balances: HashMap::new(),
-            assets: HashMap::new(),
             memory: HashMap::new(),
             events: HashMap::default()
         }

@@ -12,6 +12,10 @@ pub struct AssetOwner {
     // Contract hash
     contract: Hash,
     // Id used to create this asset
+    // This is the original inner ID
+    // used by the smart contract
+    // This may be invalid if the asset
+    // is transfered
     id: u64
 }
 
@@ -25,6 +29,10 @@ impl AssetOwner {
 
     pub fn get_contract(&self) -> &Hash {
         &self.contract
+    }
+
+    pub fn set_contract(&mut self, contract: Hash) {
+        self.contract = contract;
     }
 
     pub fn get_id(&self) -> u64 {
@@ -102,6 +110,10 @@ impl AssetData {
 
     pub fn get_owner(&self) -> &Option<AssetOwner> {
         &self.owner
+    }
+
+    pub fn get_owner_mut(&mut self) -> Option<&mut AssetOwner> {
+        self.owner.as_mut()
     }
 }
 
