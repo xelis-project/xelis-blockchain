@@ -1,11 +1,18 @@
-use std::borrow::Cow;
+use std::{borrow::Cow, collections::HashMap};
 
 use async_trait::async_trait;
 use xelis_vm::{Environment, Module};
 use crate::{
     account::Nonce,
     block::{Block, BlockVersion},
-    contract::{ChainState, ContractCache, ContractEventTracker, ContractOutput, ContractProvider},
+    contract::{
+        AssetChanges,
+        ChainState,
+        ContractCache,
+        ContractEventTracker,
+        ContractOutput,
+        ContractProvider
+    },
     crypto::{
         elgamal::{
             Ciphertext,
@@ -159,6 +166,7 @@ pub trait BlockchainApplyState<'a, P: ContractProvider, E>: BlockchainVerificati
         &mut self,
         hash: &'a Hash,
         cache: ContractCache,
-        tracker: ContractEventTracker
+        tracker: ContractEventTracker,
+        assets: HashMap<Hash, Option<AssetChanges>>
     ) -> Result<(), E>;
 }
