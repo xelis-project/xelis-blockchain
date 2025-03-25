@@ -44,6 +44,8 @@ pub enum DiskContext {
     AccountRegistrationTopoHeight,
     #[error("get asset")]
     Asset,
+    #[error("get asset at topoheight")]
+    AssetAtTopoHeight,
     #[error("get last balance")]
     LastBalance,
     #[error("get balance at topoheight")]

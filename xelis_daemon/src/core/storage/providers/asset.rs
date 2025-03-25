@@ -20,8 +20,8 @@ pub trait AssetProvider {
     // Check if an asset exists
     async fn has_asset(&self, hash: &Hash) -> Result<bool, BlockchainError>;
 
-    // Check if asset is registered <= topoheight
-    async fn has_asset_at_topoheight(&self, hash: &Hash, topoheight: TopoHeight) -> Result<bool, BlockchainError>;
+    // Check if an asset version exists at exact topoheight
+    async fn has_asset_at_exact_topoheight(&self, hash: &Hash, topoheight: TopoHeight) -> Result<bool, BlockchainError>;
 
     // Get the asset topoheight at which it got registered
     async fn get_asset_topoheight(&self, hash: &Hash) -> Result<Option<TopoHeight>, BlockchainError>;
@@ -29,9 +29,12 @@ pub trait AssetProvider {
     // Get the asset data from its hash and topoheight at which it got registered
     async fn get_asset_at_topoheight(&self, hash: &Hash, topoheight: TopoHeight) -> Result<VersionedAssetData, BlockchainError>;
 
+    // Check that the asset has been registered <= maximum topoheight  
+    async fn is_asset_registered_at_maximum_topoheight(&self, hash: &Hash, topoheight: TopoHeight) -> Result<bool, BlockchainError>;
+
     // Get asset data for topoheight
     // This check that asset topoheight is <= requested topoheight
-    async fn get_asset_with_topoheight_at_maximum_topoheight(&self, hash: &Hash, topoheight: TopoHeight) -> Result<Option<(TopoHeight, VersionedAssetData)>, BlockchainError>;
+    async fn get_asset_at_maximum_topoheight(&self, hash: &Hash, topoheight: TopoHeight) -> Result<Option<(TopoHeight, VersionedAssetData)>, BlockchainError>;
 
     // Get the asset data from its hash and topoheight at which it got registered
     async fn get_asset(&self, hash: &Hash) -> Result<(TopoHeight, VersionedAssetData), BlockchainError>;
@@ -70,26 +73,44 @@ impl AssetProvider for SledStorage {
         self.contains_data_cached(&self.assets, &self.assets_cache, asset).await
     }
 
-    async fn has_asset_at_topoheight(&self, asset: &Hash, topoheight: TopoHeight) -> Result<bool, BlockchainError> {
-        trace!("asset exist at topoheight {}", asset);
+    async fn has_asset_at_exact_topoheight(&self, asset: &Hash, topoheight: TopoHeight) -> Result<bool, BlockchainError> {
+        trace!("has asset {} at exact topoheight {}", asset, topoheight);
 
-        let topo = self.get_asset_topoheight(asset).await?;
-        match topo {
-            Some(topo) => Ok(topo <= topoheight),
-            None => Ok(false),
+        if !self.has_asset(asset).await? {
+            return Ok(false)
+        }
+
+        let key = Self::get_asset_key(asset, topoheight);
+        self.contains_data(&self.versioned_assets, &key)
+    }
+
+    async fn is_asset_registered_at_maximum_topoheight(&self, hash: &Hash, maximum_topoheight: TopoHeight) -> Result<bool, BlockchainError> {
+        trace!("is asset {} registered at maximum topoheight {}", hash, maximum_topoheight);
+        let topoheight = self.get_asset_topoheight(hash).await?;
+        match topoheight {
+            Some(topo) if topo <= maximum_topoheight => Ok(true),
+            _ => Ok(false)
         }
     }
 
-    async fn get_asset_with_topoheight_at_maximum_topoheight(&self, hash: &Hash, topoheight: TopoHeight) -> Result<Option<(TopoHeight, VersionedAssetData)>, BlockchainError> {
-        trace!("get asset for topoheight {}", hash);
-        let topo = self.get_asset_topoheight(hash).await?;
-        match topo {
-            Some(topo) if topo <= topoheight => {
-                let data = self.get_asset_at_topoheight(hash, topo).await?;
-                Ok(Some((topo, data)))
-            },
-            _ => Ok(None),
+    async fn get_asset_at_maximum_topoheight(&self, hash: &Hash, topoheight: TopoHeight) -> Result<Option<(TopoHeight, VersionedAssetData)>, BlockchainError> {
+        trace!("get asset {} at maximum topoheight {}", hash, topoheight);
+        let mut topo = if self.has_asset_at_exact_topoheight(hash, topoheight).await? {
+            Some(topoheight)
+        } else {
+            self.get_asset_topoheight(hash).await?
+        };
+
+        while let Some(previous) = topo {
+            if previous <= topoheight {
+                let data = self.get_asset_at_topoheight(hash, previous).await?;
+                return Ok(Some((previous, data)))
+            }
+
+            topo = self.load_from_disk(&self.versioned_assets, &Self::get_asset_key(hash, previous), DiskContext::AssetAtTopoHeight)?;
         }
+
+        Ok(None)
     }
 
     async fn get_asset(&self, hash: &Hash) -> Result<(TopoHeight, VersionedAssetData), BlockchainError> {

@@ -60,7 +60,7 @@ impl ContractProvider for SledStorage {
 
     fn asset_exists(&self, asset: &Hash, topoheight: TopoHeight) -> Result<bool, anyhow::Error> {
         trace!("check if asset {} exists at topoheight {}", asset, topoheight);
-        let contains = try_block_on(self.has_asset_at_topoheight(asset, topoheight))??;
+        let contains = try_block_on(self.is_asset_registered_at_maximum_topoheight(asset, topoheight))??;
         Ok(contains)
     }
 
@@ -74,7 +74,7 @@ impl ContractProvider for SledStorage {
     // Load the asset data from the storage
     fn load_asset_data(&self, asset: &Hash, topoheight: TopoHeight) -> Result<Option<(TopoHeight, AssetData)>, anyhow::Error> {
         trace!("load asset data for asset {} at topoheight {}", asset, topoheight);
-        let res = try_block_on(self.get_asset_with_topoheight_at_maximum_topoheight(asset, topoheight))??;
+        let res = try_block_on(self.get_asset_at_maximum_topoheight(asset, topoheight))??;
         Ok(res.map(|(topo, v)| (topo, v.take())))
     }
 

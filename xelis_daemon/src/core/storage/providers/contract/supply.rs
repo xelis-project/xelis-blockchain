@@ -56,7 +56,7 @@ impl SupplyProvider for SledStorage {
         };
 
         while let Some(t) = topo {
-            if t < topoheight {
+            if t <= topoheight {
                 let supply = self.get_asset_supply_at_topoheight(asset, t).await?;
                 return Ok(Some((t, supply)));
             }
