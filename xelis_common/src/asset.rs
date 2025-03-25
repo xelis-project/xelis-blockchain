@@ -4,7 +4,8 @@ use serde::{Deserialize, Serialize};
 use crate::{
     block::TopoHeight,
     crypto::Hash,
-    serializer::{Reader, ReaderError, Serializer, Writer}
+    serializer::{Reader, ReaderError, Serializer, Writer},
+    versioned_type::Versioned
 };
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -57,6 +58,8 @@ impl Serializer for AssetOwner {
         self.contract.size() + self.id.size()
     }
 }
+
+pub type VersionedAssetData = Versioned<AssetData>;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct AssetData {

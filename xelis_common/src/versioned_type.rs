@@ -109,10 +109,16 @@ impl VersionedState {
 // We must keep track of the previous data in case of reorgs that could occurs
 // For serializer, previous_topoheight is written before the data
 // So we can go through all the previous versions without reading the actual data
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Versioned<T: Serializer> {
     previous_topoheight: Option<TopoHeight>,
     data: T,
+}
+
+impl<T: Serializer + Clone> Clone for Versioned<T> {
+    fn clone(&self) -> Self {
+        Self { previous_topoheight: self.previous_topoheight, data: self.data.clone() }
+    }
 }
 
 impl<T: Serializer> Versioned<T> {
