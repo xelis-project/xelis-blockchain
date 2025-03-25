@@ -20,7 +20,7 @@ mod db;
 mod contract;
 mod versioned;
 
-pub use asset::AssetProvider;
+pub use asset::{AssetProvider, VersionedAssetData};
 pub use blocks_at_height::BlocksAtHeightProvider;
 pub use dag_order::DagOrderProvider;
 pub use difficulty::DifficultyProvider;

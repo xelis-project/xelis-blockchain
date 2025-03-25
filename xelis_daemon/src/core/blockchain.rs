@@ -85,7 +85,7 @@ use crate::{
         mempool::Mempool,
         nonce_checker::NonceChecker,
         simulator::Simulator,
-        storage::{DagOrderProvider, DifficultyProvider, Storage},
+        storage::{DagOrderProvider, DifficultyProvider, Storage, VersionedAssetData},
         tx_selector::{TxSelector, TxSelectorEntry},
         state::{ChainState, ApplicableChainState},
         hard_fork::*
@@ -490,7 +490,10 @@ impl<S: Storage> Blockchain<S> {
         storage.add_asset(
             &XELIS_ASSET,
             0,
-            AssetData::new(COIN_DECIMALS, "XELIS".to_owned(), ticker, Some(MAXIMUM_SUPPLY), None)
+            VersionedAssetData::new(
+                AssetData::new(COIN_DECIMALS, "XELIS".to_owned(), ticker, Some(MAXIMUM_SUPPLY), None),
+                None
+            )
         ).await?;
 
         let (genesis_block, genesis_hash) = if let Some(genesis_block) = get_hex_genesis_block(&self.network) {

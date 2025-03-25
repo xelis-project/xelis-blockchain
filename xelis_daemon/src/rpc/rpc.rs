@@ -714,7 +714,7 @@ async fn get_asset<S: Storage>(context: &Context, body: Value) -> Result<Value, 
     Ok(json!(RPCAssetData {
         asset: Cow::Borrowed(&params.asset),
         topoheight,
-        inner
+        inner: inner.take()
     }))
 }
 

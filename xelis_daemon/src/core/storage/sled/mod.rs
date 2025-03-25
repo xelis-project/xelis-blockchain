@@ -82,7 +82,7 @@ pub struct SledStorage {
     pub(super) assets: Tree,
     // Key is prefixed by the topoheight for easier deletion
     // Value is the asset data
-    pub(super) assets_prefixed: Tree,
+    pub(super) versioned_assets: Tree,
     // account nonces to prevent TX replay attack
     pub(super) nonces: Tree,
     // block reward for each block topoheight
@@ -257,7 +257,7 @@ impl SledStorage {
             cumulative_difficulty: sled.open_tree("cumulative_difficulty")?,
             difficulty_covariance: sled.open_tree("difficulty_covariance")?,
             assets: sled.open_tree("assets")?,
-            assets_prefixed: sled.open_tree("assets_prefixed")?,
+            versioned_assets: sled.open_tree("versioned_assets")?,
             nonces: sled.open_tree("nonces")?,
             rewards: sled.open_tree("rewards")?,
             supply: sled.open_tree("supply")?,

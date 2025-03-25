@@ -1,6 +1,6 @@
 use log::{debug, warn};
 use xelis_common::{
-    asset::AssetData,
+    asset::{AssetData, VersionedAssetData},
     config::{COIN_DECIMALS, MAXIMUM_SUPPLY, VERSION, XELIS_ASSET},
     network::Network,
     serializer::Serializer
@@ -26,7 +26,7 @@ impl SledStorage {
             let data = AssetData::new(COIN_DECIMALS, "XELIS".to_owned(), ticker, Some(MAXIMUM_SUPPLY), None);
             let key = Self::get_asset_key(&XELIS_ASSET, 0);
 
-            self.assets_prefixed.insert(&key, data.to_bytes())?;
+            self.versioned_assets.insert(&key, VersionedAssetData::new(data, None).to_bytes())?;
         }
 
         debug!("set DB version to {}", VERSION);

@@ -74,8 +74,8 @@ impl ContractProvider for SledStorage {
     // Load the asset data from the storage
     fn load_asset_data(&self, asset: &Hash, topoheight: TopoHeight) -> Result<Option<(TopoHeight, AssetData)>, anyhow::Error> {
         trace!("load asset data for asset {} at topoheight {}", asset, topoheight);
-        let res = try_block_on(self.get_asset_with_topoheight(asset, topoheight))??;
-        Ok(res)
+        let res = try_block_on(self.get_asset_with_topoheight_at_maximum_topoheight(asset, topoheight))??;
+        Ok(res.map(|(topo, v)| (topo, v.take())))
     }
 
     fn load_asset_supply(&self, asset: &Hash, topoheight: TopoHeight) -> Result<Option<(TopoHeight, u64)>, anyhow::Error> {
