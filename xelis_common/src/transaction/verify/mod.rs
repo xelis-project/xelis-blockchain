@@ -16,7 +16,7 @@ use xelis_vm::{ModuleValidator, VM};
 use crate::{
     tokio::block_in_place_safe,
     account::Nonce,
-    config::{BURN_PER_CONTRACT, TRANSACTION_FEE_BURN_PERCENT, XELIS_ASSET},
+    config::{BURN_PER_CONTRACT, MAX_GAS_USAGE_PER_TX, TX_GAS_BURN_PERCENT, XELIS_ASSET},
     contract::{get_balance_from_cache, ContractOutput, ContractProvider, ContractProviderWrapper},
     crypto::{
         elgamal::{
@@ -102,6 +102,8 @@ pub enum VerificationError<T> {
     GasOverflow,
     #[error("Deposit decompressed not found")]
     DepositNotFound,
+    #[error("Configured max gas is above the network limit")]
+    MaxGasReached,
 }
 
 struct DecompressedTransferCt {
@@ -439,6 +441,10 @@ impl Transaction {
             TransactionType::InvokeContract(payload) => {
                 if payload.deposits.len() > MAX_DEPOSIT_PER_INVOKE_CALL {
                     return Err(VerificationError::DepositCount);
+                }
+
+                if payload.max_gas > MAX_GAS_USAGE_PER_TX {
+                    return Err(VerificationError::MaxGasReached.into())
                 }
 
                 for (asset, deposit) in payload.deposits.iter() {
@@ -991,7 +997,7 @@ impl Transaction {
 
                 if used_gas > 0 {
                     // Part of the gas is burned
-                    let burned_gas = used_gas * TRANSACTION_FEE_BURN_PERCENT / 100;
+                    let burned_gas = used_gas * TX_GAS_BURN_PERCENT / 100;
                     // Part of the gas is given to the miners as fees
                     let gas_fee = used_gas.checked_sub(burned_gas)
                         .ok_or(VerificationError::GasOverflow)?;

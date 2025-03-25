@@ -35,7 +35,7 @@ pub const COST_PER_TOKEN: u64 = COIN_VALUE;
 // and also to prevent spamming the network with low fee transactions
 // or free tx from miners
 // This should be enabled once Smart Contracts are released
-pub const TRANSACTION_FEE_BURN_PERCENT: u64 = 30;
+pub const TX_GAS_BURN_PERCENT: u64 = 30;
 // Fee per store operation in a contract
 // Each store operation has a fixed cost of 0.000001 XEL
 pub const FEE_PER_STORE_CONTRACT: u64 = 100;
@@ -49,6 +49,9 @@ pub const FEE_PER_BYTE_IN_CONTRACT_MEMORY: u64 = 1;
 // Fee per byte of data used to emit an event
 // Data is not stored, but only exposed to websocket listeners
 pub const FEE_PER_BYTE_OF_EVENT_DATA: u64 = 2;
+// Max gas usage available per block
+// Currently, set to 3 XEL per transaction
+pub const MAX_GAS_USAGE_PER_TX: u64 = COIN_VALUE * 3;
 
 // 8 decimals numbers
 pub const COIN_DECIMALS: u8 = 8;

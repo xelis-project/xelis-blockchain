@@ -20,7 +20,7 @@ use std::{
     iter,
 };
 use crate::{
-    config::{BURN_PER_CONTRACT, XELIS_ASSET},
+    config::{BURN_PER_CONTRACT, MAX_GAS_USAGE_PER_TX, XELIS_ASSET},
     crypto::{
         elgamal::{
             Ciphertext,
@@ -108,6 +108,8 @@ pub enum GenerationError<T> {
     DepositZero,
     #[error("Invalid module hexadecimal")]
     InvalidModule,
+    #[error("Configured max gas is above the network limit")]
+    MaxGasReached,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -570,6 +572,10 @@ impl TransactionBuilder {
                     .collect::<Result<Vec<_>, GenerationError<B::Error>>>()?;
             },
             TransactionTypeBuilder::InvokeContract(payload) => {
+                if payload.max_gas > MAX_GAS_USAGE_PER_TX {
+                    return Err(GenerationError::MaxGasReached.into())
+                }
+
                 for (asset, deposit) in payload.deposits.iter() {
                     if deposit.private {
                         let key = PublicKey::from_hash(&payload.contract);
