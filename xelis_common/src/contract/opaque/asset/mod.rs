@@ -166,6 +166,7 @@ pub fn asset_transfer_ownership<P: ContractProvider>(zelf: FnInstance, mut param
     Ok(Some(match changes.data.1.get_owner_mut() {
         Some(data) if *data.get_contract() == contract => {
             data.set_contract(param);
+            changes.data.0.mark_updated();
             Primitive::Boolean(true)
         },
         _ => Primitive::Boolean(false)
