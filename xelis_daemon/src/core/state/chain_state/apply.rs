@@ -8,7 +8,14 @@ use log::{debug, trace};
 use xelis_common::{
     account::{BalanceType, Nonce, VersionedNonce},
     block::{Block, BlockVersion, TopoHeight},
-    contract::{ChainState as ContractChainState, ContractCache, ContractEventTracker, ContractOutput, DeterministicRandom},
+    contract::{
+        AssetChanges,
+        ChainState as ContractChainState,
+        ContractCache,
+        ContractEventTracker,
+        ContractOutput,
+        DeterministicRandom
+    },
     crypto::{elgamal::Ciphertext, Hash, PublicKey},
     transaction::{
         verify::{BlockchainApplyState, BlockchainVerificationState, ContractEnvironment},
@@ -28,6 +35,8 @@ use super::{ChainState, StorageReference, Echange};
 struct ContractManager<'a> {
     outputs: HashMap<&'a Hash, Vec<ContractOutput>>,
     caches: HashMap<&'a Hash, ContractCache>,
+    // global assets cache
+    assets: HashMap<Hash, Option<AssetChanges>>,
     tracker: ContractEventTracker,
 }
 
@@ -216,6 +225,7 @@ impl<'a, S: Storage> BlockchainApplyState<'a, S, BlockchainError> for Applicable
             cache,
             outputs: Vec::new(),
             tracker: self.contract_manager.tracker.clone(),
+            assets: self.contract_manager.assets.clone(),
             global_caches: &self.contract_manager.caches
         };
 
@@ -232,7 +242,8 @@ impl<'a, S: Storage> BlockchainApplyState<'a, S, BlockchainError> for Applicable
         &mut self,
         hash: &'a Hash,
         cache: ContractCache,
-        tracker: ContractEventTracker
+        tracker: ContractEventTracker,
+        assets: HashMap<Hash, Option<AssetChanges>>
     ) -> Result<(), BlockchainError> {
         match self.contract_manager.caches.entry(hash) {
             Entry::Occupied(mut o) => {
@@ -245,6 +256,7 @@ impl<'a, S: Storage> BlockchainApplyState<'a, S, BlockchainError> for Applicable
         };
 
         self.contract_manager.tracker = tracker;
+        self.contract_manager.assets = assets;
 
         Ok(())
     }
@@ -299,6 +311,7 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
             contract_manager: ContractManager {
                 outputs: HashMap::new(),
                 caches: HashMap::new(),
+                assets: HashMap::new(),
                 tracker: ContractEventTracker::default(),
             },
             block_hash,
@@ -433,23 +446,13 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
             }
         }
 
-        // Apply all the contract storage changes
-        for (contract, cache) in self.contract_manager.caches {
-            // Apply all storage changes
-            for (key, (state, value)) in cache.storage {
+        // Apply the assets
+        for (asset, changes) in self.contract_manager.assets {
+            if let Some(changes) = changes {
+                let (state, data) = changes.data;
                 if state.should_be_stored() {
-                    trace!("Saving contract data {} key {} at topoheight {}", contract, key, self.inner.topoheight);
-                    self.inner.storage.set_last_contract_data_to(&contract, &key, self.inner.topoheight, VersionedContractData::new(value, state.get_topoheight())).await?;
-                }
-            }
-
-            // Register assets changes
-            for (asset, changes) in cache.assets {
-                if let Some((state, data)) = changes.data {
-                    if state.should_be_stored() {
-                        trace!("Saving asset {} at topoheight {}", asset, self.inner.topoheight);
-                        self.inner.storage.add_asset(&asset, self.inner.topoheight, data).await?;
-                    }
+                    trace!("Saving asset {} at topoheight {}", asset, self.inner.topoheight);
+                    self.inner.storage.add_asset(&asset, self.inner.topoheight, data).await?;
                 }
 
                 if let Some((state, supply)) = changes.supply {
@@ -457,6 +460,17 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
                         trace!("Saving supply {} for {} at topoheight {}", supply, asset, self.inner.topoheight);
                         self.inner.storage.set_last_supply_for_asset(&asset, self.inner.topoheight, &VersionedSupply::new(supply, state.get_topoheight())).await?;
                     }
+                }
+            }
+        }
+
+        // Apply all the contract storage changes
+        for (contract, cache) in self.contract_manager.caches {
+            // Apply all storage changes
+            for (key, (state, value)) in cache.storage {
+                if state.should_be_stored() {
+                    trace!("Saving contract data {} key {} at topoheight {}", contract, key, self.inner.topoheight);
+                    self.inner.storage.set_last_contract_data_to(&contract, &key, self.inner.topoheight, VersionedContractData::new(value, state.get_topoheight())).await?;
                 }
             }
 
