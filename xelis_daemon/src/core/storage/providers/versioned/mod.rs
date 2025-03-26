@@ -4,6 +4,7 @@ mod multisig;
 mod nonce;
 mod registrations;
 mod asset;
+mod cache;
 
 use async_trait::async_trait;
 use log::{debug, trace};
@@ -26,6 +27,7 @@ use multisig::VersionedMultiSigProvider;
 use nonce::VersionedNonceProvider;
 use registrations::VersionedRegistrationsProvider;
 use asset::VersionedAssetProvider;
+use cache::VersionedCacheProvider;
 
 // Every versioned key should start with the topoheight in order to be able to delete them easily
 #[async_trait]
@@ -38,7 +40,8 @@ pub trait VersionedProvider:
     + VersionedContractDataProvider
     + VersionedContractBalanceProvider
     + VersionedAssetProvider
-    + VersionedSupplyProvider {
+    + VersionedSupplyProvider
+    + VersionedCacheProvider {
 
     // Delete versioned data at topoheight
     async fn delete_versioned_data_at_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError> {
@@ -72,7 +75,7 @@ pub trait VersionedProvider:
         self.delete_versioned_assets_supply_below_topoheight(topoheight, keep_last).await?;
         self.delete_versioned_assets_below_topoheight(topoheight, keep_last).await?;
 
-        Ok(())
+        self.clear_versioned_data_caches().await
     }
 
     // Delete versioned data above topoheight
@@ -87,7 +90,7 @@ pub trait VersionedProvider:
         self.delete_versioned_assets_supply_above_topoheight(topoheight).await?;
         self.delete_versioned_assets_above_topoheight(topoheight).await?;
 
-        Ok(())
+        self.clear_versioned_data_caches().await
     }
 }
 

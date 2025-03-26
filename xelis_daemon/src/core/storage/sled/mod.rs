@@ -316,12 +316,13 @@ impl SledStorage {
             error!("Error while migrating database: {}", e);
         }
 
-        storage.load_cache();
+        storage.load_cache_from_disk();
 
         Ok(storage)
     }
 
-    fn load_cache(&mut self) {
+    // Load all the needed cache and counters in memory from disk 
+    pub fn load_cache_from_disk(&mut self) {
         // Load tips from disk if available
         if let Ok(tips) = self.load_from_disk::<Tips>(&self.extra, TIPS, DiskContext::Tips) {
             debug!("Found tips: {}", tips.len());
@@ -637,41 +638,6 @@ impl SledStorage {
 
 #[async_trait]
 impl Storage for SledStorage {
-    async fn clear_caches(&mut self) -> Result<(), BlockchainError> {
-        if let Some(cache) = self.transactions_cache.as_mut() {
-            cache.get_mut().clear();
-        }
-
-        if let Some(cache) = self.blocks_cache.as_mut() {
-            cache.get_mut().clear();
-        }
-
-        if let Some(cache) = self.past_blocks_cache.as_mut() {
-            cache.get_mut().clear();
-        }
-
-        if let Some(cache) = self.topo_by_hash_cache.as_mut() {
-            cache.get_mut().clear();
-        }
-
-        if let Some(cache) = self.hash_at_topo_cache.as_mut() {
-            cache.get_mut().clear();
-        }
-
-        if let Some(cache) = self.cumulative_difficulty_cache.as_mut() {
-            cache.get_mut().clear();
-        }
-
-        if let Some(cache) = self.assets_cache.as_mut() {
-            cache.get_mut().clear();
-        }
-
-        // also load the atomic counters from disk
-        self.load_cache();
-
-        Ok(())
-    }
-
     // Delete the whole block using its topoheight
     async fn delete_block_at_topoheight(&mut self, topoheight: u64) -> Result<(Hash, Arc<BlockHeader>, Vec<(Hash, Arc<Transaction>)>), BlockchainError> {
         trace!("Delete block at topoheight {topoheight}");

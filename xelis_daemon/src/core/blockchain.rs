@@ -2099,6 +2099,11 @@ impl<S: Storage> Blockchain<S> {
 
                     topoheight += 1;
                 }
+
+                // Only clear the versioned data caches if we delete any data
+                if is_written {
+                    storage.clear_versioned_data_caches().await?;
+                }
             }
 
             // This is used to verify that each nonce is used only one time

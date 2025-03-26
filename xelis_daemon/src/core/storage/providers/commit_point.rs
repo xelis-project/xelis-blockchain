@@ -2,8 +2,9 @@ use async_trait::async_trait;
 use log::{debug, trace};
 use crate::core::{
     error::BlockchainError,
-    storage::{SledStorage, Snapshot, Storage}
+    storage::{SledStorage, Snapshot, CacheProvider}
 };
+
 #[async_trait]
 pub trait CommitPointProvider {
     // Start a commit point

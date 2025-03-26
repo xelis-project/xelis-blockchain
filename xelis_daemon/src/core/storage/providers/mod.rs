@@ -19,6 +19,7 @@ mod tips_provider;
 mod db;
 mod contract;
 mod versioned;
+mod cache;
 
 pub use asset::{AssetProvider, VersionedAssetData};
 pub use blocks_at_height::BlocksAtHeightProvider;
@@ -41,3 +42,4 @@ pub use tips_provider::TipsProvider;
 pub use db::DBProvider;
 pub use contract::*;
 pub use versioned::VersionedProvider;
+pub use cache::CacheProvider;
