@@ -22,7 +22,7 @@ use xelis_common::{
         RPCContractOutput,
         RPCTransaction
     },
-    asset::AssetData,
+    asset::{AssetData, VersionedAssetData},
     block::{
         Block,
         BlockHeader,
@@ -85,7 +85,7 @@ use crate::{
         mempool::Mempool,
         nonce_checker::NonceChecker,
         simulator::Simulator,
-        storage::{DagOrderProvider, DifficultyProvider, Storage, VersionedAssetData},
+        storage::{DagOrderProvider, DifficultyProvider, Storage},
         tx_selector::{TxSelector, TxSelectorEntry},
         state::{ChainState, ApplicableChainState},
         hard_fork::*

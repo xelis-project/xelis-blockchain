@@ -2,18 +2,15 @@ use async_trait::async_trait;
 use indexmap::{IndexMap, IndexSet};
 use log::trace;
 use xelis_common::{
-    asset::AssetData,
+    asset::{AssetData, VersionedAssetData},
     block::TopoHeight,
     crypto::{elgamal::RISTRETTO_COMPRESSED_SIZE, Hash, PublicKey},
-    serializer::Serializer,
-    versioned_type::Versioned
+    serializer::Serializer
 };
 use crate::core::{
     error::{BlockchainError, DiskContext},
     storage::SledStorage,
 };
-
-pub type VersionedAssetData = Versioned<AssetData>;
 
 #[async_trait]
 pub trait AssetProvider {

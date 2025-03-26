@@ -8,6 +8,7 @@ use xelis_common::{
     crypto::{Hash, PublicKey},
     immutable::Immutable,
     versioned_type::State,
+    asset::VersionedAssetData,
 };
 
 use crate::{
@@ -17,8 +18,7 @@ use crate::{
         storage::{
             Storage,
             VersionedContract,
-            VersionedMultiSig,
-            VersionedAssetData
+            VersionedMultiSig
         }
     },
     p2p::{

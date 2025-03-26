@@ -16,6 +16,7 @@ use xelis_common::{
         ContractOutput,
         DeterministicRandom
     },
+    asset::VersionedAssetData,
     crypto::{elgamal::Ciphertext, Hash, PublicKey},
     transaction::{
         verify::{BlockchainApplyState, BlockchainVerificationState, ContractEnvironment},
@@ -33,8 +34,7 @@ use crate::core::{
         VersionedContractBalance,
         VersionedContractData,
         VersionedMultiSig,
-        VersionedSupply,
-        VersionedAssetData
+        VersionedSupply
     }
 };
 
