@@ -61,7 +61,9 @@ pub struct ChainState<'a> {
     pub debug_mode: bool,
     // The random number generator
     // It is deterministic so we can replay the contract
-    pub random: DeterministicRandom,
+    // If none, it means no Random was initiated / needed yetc
+    // Lazy init using the Option
+    pub random: Option<DeterministicRandom>,
     // Are we in mainnet
     pub mainnet: bool,
     // The contract hash

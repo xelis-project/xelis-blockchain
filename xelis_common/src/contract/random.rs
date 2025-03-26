@@ -28,7 +28,8 @@ impl DeterministicRandom {
     }
 
     pub fn fill(&mut self, buffer: &mut [u8]) -> Result<(), anyhow::Error> {
-        let pos = self.reader.position().checked_add(buffer.len() as u64)
+        let pos = self.reader.position()
+            .checked_add(buffer.len() as u64)
             .context("overflow")?;
 
         if pos >= u64::MAX - 1 {
