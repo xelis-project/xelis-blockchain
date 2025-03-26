@@ -1,5 +1,4 @@
 use std::{sync::Arc, ops::Deref};
-
 use serde::{Serialize, Deserialize};
 
 #[derive(Clone, Serialize, Deserialize, Debug, Eq, Hash, PartialEq)]
@@ -24,8 +23,19 @@ impl<T: Clone> Immutable<T> {
         }
     }
 
+    pub fn into_arc(&mut self) -> Arc<T> {
+        match self {
+            Immutable::Owned(v) => {
+                let arced = Arc::new(v.clone());
+                *self = Immutable::Arc(arced.clone());
+                arced
+            },
+            Immutable::Arc(v) => v.clone()
+        }
+    }
+
     pub fn as_arc(&self) -> Arc<T> {
-        match &self {
+        match self {
             Immutable::Owned(v) => Arc::new(v.clone()),
             Immutable::Arc(v) => v.clone()
         }

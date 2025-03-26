@@ -3,8 +3,7 @@ mod state;
 use std::{
     borrow::Cow,
     collections::HashMap,
-    iter,
-    sync::Arc,
+    iter
 };
 use thiserror::Error;
 use anyhow::{Context as AnyContext, Error as AnyError};
@@ -839,7 +838,7 @@ impl Transaction {
     // Apply the transaction to the state
     // Arc is required around Self to be shared easily into the VM if needed
     async fn apply<'a, P: ContractProvider, E, B: BlockchainApplyState<'a, P, E>>(
-        self: &'a Arc<Self>,
+        &'a self,
         tx_hash: &'a Hash,
         state: &mut B,
         decompressed_deposits: &HashMap<&Hash, DecompressedDepositCt>,
@@ -1053,7 +1052,7 @@ impl Transaction {
 
     /// Assume the tx is valid, apply it to `state`. May panic if a ciphertext is ill-formed.
     pub async fn apply_without_verify<'a, P: ContractProvider, E, B: BlockchainApplyState<'a, P, E>>(
-        self: &'a Arc<Self>,
+        &'a self,
         tx_hash: &'a Hash,
         state: &mut B,
     ) -> Result<(), VerificationError<E>> {
@@ -1120,7 +1119,7 @@ impl Transaction {
     /// Then apply ciphertexts to the state
     /// Checks done are: commitment eq proofs only
     pub async fn apply_with_partial_verify<'a, P: ContractProvider, E, B: BlockchainApplyState<'a, P, E>>(
-        self: &'a Arc<Self>,
+        &'a self,
         tx_hash: &'a Hash,
         state: &mut B
     ) -> Result<(), VerificationError<E>> {

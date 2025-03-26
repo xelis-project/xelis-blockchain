@@ -9,7 +9,11 @@ use xelis_vm::{
     OpaqueWrapper,
     Primitive
 };
-use crate::{contract::ChainState, crypto::Hash, transaction::Transaction};
+use crate::{
+    contract::ChainState,
+    crypto::Hash,
+    transaction::Transaction
+};
 
 #[derive(Clone, Debug)]
 pub struct OpaqueTransaction {
@@ -36,13 +40,15 @@ impl JSONHelper for OpaqueTransaction {}
 impl Serializable for OpaqueTransaction {}
 
 pub fn transaction(_: FnInstance, _: FnParams, context: &mut Context) -> FnReturnType {
-    let tx: &Arc<Transaction> = context.get()
+    let tx: &Transaction = context.get()
         .context("current transaction not found")?;
     let state: &ChainState = context.get()
         .context("chain state not found")?;
 
     Ok(Some(Primitive::Opaque(OpaqueWrapper::new(OpaqueTransaction {
-        inner: tx.clone(),
+        // TODO: maybe instead of cloning it, we can do a inner enum
+        // and if its Inner::Current we retrieve it from context for each function
+        inner: Arc::new(tx.clone()),
         hash: state.tx_hash.clone()
     })).into()))
 }
