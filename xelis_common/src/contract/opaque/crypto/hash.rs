@@ -10,7 +10,8 @@ use xelis_vm::{
     OpaqueWrapper,
     Primitive,
     ValueCell,
-    ValueError
+    ValueError,
+    U256
 };
 use crate::{
     contract::HASH_OPAQUE_ID,
@@ -77,6 +78,27 @@ pub fn hash_from_array_fn(_: FnInstance, mut params: FnParams, _: &mut Context) 
         .context("failed to create hash from bytes")?;
 
     Ok(Some(Primitive::Opaque(OpaqueWrapper::new(hash)).into()))
+}
+
+pub fn hash_from_u256_fn(_: FnInstance, mut params: FnParams, _: &mut Context) -> FnReturnType {
+    let param = params.remove(0)
+        .into_owned()?;
+
+    let value = param.as_u256()?;
+    let hash = Hash::from_bytes(&value.to_be_bytes())
+        .context("failed to create hash from u256 be bytes")?;
+
+    Ok(Some(Primitive::Opaque(OpaqueWrapper::new(hash)).into()))
+}
+
+pub fn hash_to_u256_fn(zelf: FnInstance, _: FnParams, _: &mut Context) -> FnReturnType {
+    let hash: &Hash = zelf?.as_opaque_type()?;
+    Ok(Some(Primitive::U256(U256::from_be_bytes(*hash.as_bytes())).into()))
+}
+
+pub fn hash_to_hex_fn(zelf: FnInstance, _: FnParams, _: &mut Context) -> FnReturnType {
+    let hash: &Hash = zelf?.as_opaque_type()?;
+    Ok(Some(Primitive::String(hex::encode(hash.as_bytes())).into()))
 }
 
 pub fn hash_from_hex_fn(_: FnInstance, mut params: FnParams, _: &mut Context) -> FnReturnType {

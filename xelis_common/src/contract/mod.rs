@@ -186,7 +186,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static> {
             "current",
             block_type.clone(),
             vec![],
-            block,
+            block_current,
             5,
             Some(block_type.clone())
         );
@@ -253,6 +253,30 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static> {
             block_tips,
             5,
             Some(Type::Array(Box::new(hash_type.clone())))
+        );
+        env.register_native_function(
+            "transactions_hashes",
+            Some(block_type.clone()),
+            vec![],
+            block_transactions_hashes,
+            50,
+            Some(Type::Array(Box::new(hash_type.clone())))
+        );
+        env.register_native_function(
+            "transactions",
+            Some(block_type.clone()),
+            vec![],
+            block_transactions,
+            250,
+            Some(Type::Array(Box::new(tx_type.clone())))
+        );
+        env.register_native_function(
+            "transactions_count",
+            Some(block_type.clone()),
+            vec![],
+            block_transactions_count,
+            1,
+            Some(Type::U32)
         );
     }
 
@@ -429,6 +453,22 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static> {
             5,
             Some(Type::Array(Box::new(Type::U8)))
         );
+        env.register_native_function(
+            "to_u256",
+            Some(hash_type.clone()),
+            vec![],
+            hash_to_u256_fn,
+            5,
+            Some(Type::U256)
+        );
+        env.register_native_function(
+            "to_hex",
+            Some(hash_type.clone()),
+            vec![],
+            hash_to_hex_fn,
+            20,
+            Some(Type::String)
+        );
         env.register_static_function(
             "from_bytes",
             hash_type.clone(),
@@ -442,6 +482,14 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static> {
             hash_type.clone(),
             vec![("bytes", Type::Array(Box::new(Type::U8)))],
             hash_from_array_fn,
+            75,
+            Some(hash_type.clone())
+        );
+        env.register_static_function(
+            "from_u256",
+            hash_type.clone(),
+            vec![("value", Type::U256)],
+            hash_from_u256_fn,
             75,
             Some(hash_type.clone())
         );

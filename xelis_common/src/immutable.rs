@@ -24,10 +24,20 @@ impl<T: Clone> Immutable<T> {
         }
     }
 
+    pub fn as_arc(&self) -> Arc<T> {
+        match &self {
+            Immutable::Owned(v) => Arc::new(v.clone()),
+            Immutable::Arc(v) => v.clone()
+        }
+    }
+
     pub fn into_owned(self) -> T {
         match self {
             Immutable::Owned(v) => v,
-            Immutable::Arc(v) => v.as_ref().clone()
+            Immutable::Arc(v) => match Arc::try_unwrap(v) {
+                Ok(v) => v,
+                Err(v) => v.as_ref().clone()
+            }
         }
     }
 }
