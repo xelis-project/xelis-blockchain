@@ -13,8 +13,7 @@ use xelis_common::{
         ChainState as ContractChainState,
         ContractCache,
         ContractEventTracker,
-        ContractOutput,
-        DeterministicRandom
+        ContractOutput
     },
     asset::VersionedAssetData,
     crypto::{elgamal::Ciphertext, Hash, PublicKey},
@@ -217,9 +216,6 @@ impl<'a, S: Storage> BlockchainApplyState<'a, S, BlockchainError> for Applicable
             .cloned()
             .unwrap_or_default();
 
-        // Create a deterministic random for the contract
-        let random = DeterministicRandom::new(&payload.contract, &self.block_hash, tx_hash);
-
         let state = ContractChainState {
             debug_mode: true,
             mainnet: self.inner.storage.is_mainnet(),
@@ -228,7 +224,7 @@ impl<'a, S: Storage> BlockchainApplyState<'a, S, BlockchainError> for Applicable
             block_hash: self.block_hash,
             block: self.block,
             deposits: &payload.deposits,
-            random,
+            random: None,
             tx_hash,
             cache,
             outputs: Vec::new(),
