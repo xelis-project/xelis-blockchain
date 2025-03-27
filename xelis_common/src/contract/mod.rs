@@ -700,7 +700,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static> {
             vec![],
             asset_get_contract_hash::<P>,
             5,
-            Some(Type::Optional(Box::new(hash_type.clone())))
+            Some(hash_type.clone())
         );
         env.register_native_function(
             "get_id",
