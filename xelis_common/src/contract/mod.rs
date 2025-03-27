@@ -713,7 +713,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static> {
         env.register_native_function(
             "transfer_ownership",
             Some(asset_type.clone()),
-            vec![],
+            vec![("contract", hash_type.clone())],
             asset_transfer_ownership::<P>,
             250,
             Some(Type::Bool)
