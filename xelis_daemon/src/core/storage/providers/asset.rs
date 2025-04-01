@@ -104,7 +104,7 @@ impl AssetProvider for SledStorage {
                 return Ok(Some((previous, data)))
             }
 
-            topo = self.load_from_disk(&self.versioned_assets, &Self::get_asset_key(hash, previous), DiskContext::AssetAtTopoHeight)?;
+            topo = self.load_from_disk(&self.versioned_assets, &Self::get_asset_key(hash, previous), DiskContext::AssetAtTopoHeight(previous))?;
         }
 
         Ok(None)

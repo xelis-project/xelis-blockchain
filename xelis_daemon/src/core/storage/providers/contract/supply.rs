@@ -36,7 +36,7 @@ pub trait SupplyProvider {
 impl SupplyProvider for SledStorage {
     async fn get_asset_supply_at_topoheight(&self, asset: &Hash, topoheight: TopoHeight) -> Result<VersionedSupply, BlockchainError> {
         trace!("get asset {} supply at topoheight {}", asset, topoheight);
-        self.load_from_disk(&self.versioned_assets_supply, &Self::get_versioned_key(asset, topoheight), DiskContext::AssetSupplyAtTopoHeight)
+        self.load_from_disk(&self.versioned_assets_supply, &Self::get_versioned_key(asset, topoheight), DiskContext::AssetSupplyAtTopoHeight(topoheight))
     }
 
     async fn get_last_topoheight_for_asset_supply(&self, asset: &Hash) -> Result<TopoHeight, BlockchainError> {

@@ -137,7 +137,7 @@ impl NonceProvider for SledStorage {
         trace!("get nonce at topoheight {} for {}", topoheight, key.as_address(self.is_mainnet()));
 
         let key = self.get_versioned_nonce_key(key, topoheight);
-        self.load_from_disk(&self.versioned_nonces, &key, DiskContext::NonceAtTopoHeight)
+        self.load_from_disk(&self.versioned_nonces, &key, DiskContext::NonceAtTopoHeight(topoheight))
     }
 
     // topoheight is inclusive bounds

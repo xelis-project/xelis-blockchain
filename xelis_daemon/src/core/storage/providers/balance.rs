@@ -170,7 +170,7 @@ impl BalanceProvider for SledStorage {
         }
 
         let disk_key = self.get_versioned_balance_key(key, asset, topoheight);
-        self.get_cacheable_data(&self.versioned_balances, &None, &disk_key, DiskContext::BalanceAtTopoHeight).await
+        self.get_cacheable_data(&self.versioned_balances, &None, &disk_key, DiskContext::BalanceAtTopoHeight(topoheight)).await
             .map_err(|_| BlockchainError::NoBalanceChanges(key.as_address(self.is_mainnet()), topoheight, asset.clone()))
     }
 
@@ -210,7 +210,7 @@ impl BalanceProvider for SledStorage {
                 return Ok(Some((topo, version)))
             }
 
-            previous_topoheight = self.load_from_disk(&self.versioned_balances, &self.get_versioned_balance_key(key, asset, topo), DiskContext::BalanceAtTopoHeight)?;
+            previous_topoheight = self.load_from_disk(&self.versioned_balances, &self.get_versioned_balance_key(key, asset, topo), DiskContext::BalanceAtTopoHeight(topo))?;
         }
 
         Ok(None)
@@ -258,7 +258,7 @@ impl BalanceProvider for SledStorage {
         let mut next = Some(topo);
         while let Some(topo) = next {
             // We read the next topoheight (previous topo of the versioned balance) and its current balance type
-            let (prev_topo, balance_type): (Option<u64>, BalanceType) = self.load_from_disk(&self.versioned_balances, &self.get_versioned_balance_key(key, asset, topo), DiskContext::BalanceAtTopoHeight)?;
+            let (prev_topo, balance_type): (Option<u64>, BalanceType) = self.load_from_disk(&self.versioned_balances, &self.get_versioned_balance_key(key, asset, topo), DiskContext::BalanceAtTopoHeight(topo))?;
             if topo <= topoheight && balance_type.contains_output() {
                 let version = self.get_balance_at_exact_topoheight(key, asset, topo).await?;
                 return Ok(Some((topo, version)))
@@ -290,7 +290,7 @@ impl BalanceProvider for SledStorage {
             }
 
             // We read the next topoheight (previous topo of the versioned balance) and its current balance type
-            let (prev_topo, balance_type): (Option<u64>, BalanceType) = self.load_from_disk(&self.versioned_balances, &self.get_versioned_balance_key(key, asset, topo), DiskContext::BalanceAtTopoHeight)?;
+            let (prev_topo, balance_type): (Option<u64>, BalanceType) = self.load_from_disk(&self.versioned_balances, &self.get_versioned_balance_key(key, asset, topo), DiskContext::BalanceAtTopoHeight(topo))?;
             if topo <= max_topoheight && balance_type.contains_output() {
                 let version = self.get_balance_at_exact_topoheight(key, asset, topo).await?;
                 return Ok(Some((topo, version)))

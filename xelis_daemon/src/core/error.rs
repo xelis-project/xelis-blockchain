@@ -28,8 +28,8 @@ pub enum DiskContext {
     DataLen,
     #[error("multisig")]
     Multisig,
-    #[error("get multisig at topoheight")]
-    MultisigAtTopoHeight,
+    #[error("get multisig at topoheight {0}")]
+    MultisigAtTopoHeight(TopoHeight),
     #[error("get top block")]
     GetTopBlock,
     #[error("get top metadata")]
@@ -44,22 +44,22 @@ pub enum DiskContext {
     AccountRegistrationTopoHeight,
     #[error("get asset")]
     Asset,
-    #[error("get asset at topoheight")]
-    AssetAtTopoHeight,
+    #[error("get asset at topoheight {0}")]
+    AssetAtTopoHeight(TopoHeight),
     #[error("get last balance")]
     LastBalance,
-    #[error("get balance at topoheight")]
-    BalanceAtTopoHeight,
+    #[error("get balance at topoheight {0}")]
+    BalanceAtTopoHeight(TopoHeight),
     #[error("get last topoheight for balance")]
     LastTopoHeightForBalance,
-    #[error("get block reward at topoheight")]
-    BlockRewardAtTopoHeight,
-    #[error("get supply at topoheight")]
-    SupplyAtTopoHeight,
-    #[error("get burned supply at topoheight")]
-    BurnedSupplyAtTopoHeight,
-    #[error("get blocks at height")]
-    BlocksAtHeight,
+    #[error("get block reward at topoheight {0}")]
+    BlockRewardAtTopoHeight(TopoHeight),
+    #[error("get supply at topoheight {0}")]
+    SupplyAtTopoHeight(TopoHeight),
+    #[error("get burned supply at topoheight {0}")]
+    BurnedSupplyAtTopoHeight(TopoHeight),
+    #[error("get blocks at height {0}")]
+    BlocksAtHeight(u64),
     #[error("get block executor for tx")]
     BlockExecutorForTx,
     #[error("get blocks for tx")]
@@ -72,14 +72,14 @@ pub enum DiskContext {
     GetBlockHeaderByHash,
     #[error("get estimated covariance for block hash")]
     EstimatedCovarianceForBlockHash,
-    #[error("get balances merkle hash at topoheight")]
-    BalancesMerkleHashAtTopoHeight,
+    #[error("get balances merkle hash at topoheight {0}")]
+    BalancesMerkleHashAtTopoHeight(TopoHeight),
     #[error("get last topoheight for nonce")]
     LastTopoheightForNonce,
     #[error("get last nonce")]
     LastNonce,
-    #[error("get nonce at topoheight")]
-    NonceAtTopoHeight,
+    #[error("get nonce at topoheight {0}")]
+    NonceAtTopoHeight(TopoHeight),
     // Extra
     #[error("get network")]
     Network,
@@ -112,14 +112,14 @@ pub enum DiskContext {
     SearchBlockPositionInOrder,
     #[error("get contract topoheight")]
     ContractTopoHeight,
-    #[error("get contract at topoheight")]
-    ContractAtTopoHeight,
+    #[error("get contract at topoheight {0}")]
+    ContractAtTopoHeight(TopoHeight),
     #[error("contracts count")]
     ContractsCount,
     #[error("get contract data topoheight")]
     ContractDataTopoHeight,
-    #[error("get contract data at topoheight")]
-    ContractDataAtTopoHeight,
+    #[error("get contract data at topoheight {0}")]
+    ContractDataAtTopoHeight(TopoHeight),
     #[error("get contract data")]
     ContractData,
     #[error("get contract outputs")]
@@ -128,10 +128,22 @@ pub enum DiskContext {
     ContractBalance,
     #[error("get asset supply")]
     AssetSupply,
-    #[error("get asset supply at topoheight")]
-    AssetSupplyAtTopoHeight,
+    #[error("get asset supply at topoheight {0}")]
+    AssetSupplyAtTopoHeight(TopoHeight),
     #[error("get asset supply topoheight")]
-    AssetSupplyTopoHeight
+    AssetSupplyTopoHeight,
+
+    // Variants used by versioned data deletions
+    #[error("versioned contract")]
+    VersionedContract,
+    #[error("versioned contract data")]
+    VersionedContractData,
+    #[error("versioned nonce")]
+    VersionedNonce,
+    #[error("versioned multisig")]
+    VersionedMultisig,
+    #[error("versioned balance")]
+    VersionedBalance,
 }
 
 #[repr(usize)]

@@ -28,7 +28,7 @@ pub trait MerkleHashProvider {
 impl MerkleHashProvider for SledStorage {
     async fn get_balances_merkle_hash_at_topoheight(&self, topoheight: TopoHeight) -> Result<Hash, BlockchainError> {
         trace!("get merkle hash at topoheight {}", topoheight);
-        self.load_from_disk(&self.merkle_hashes, &topoheight.to_bytes(), DiskContext::BalancesMerkleHashAtTopoHeight)
+        self.load_from_disk(&self.merkle_hashes, &topoheight.to_bytes(), DiskContext::BalancesMerkleHashAtTopoHeight(topoheight))
     }
 
     async fn set_balances_merkle_hash_at_topoheight(&mut self, topoheight: TopoHeight, merkle_proof: &Hash) -> Result<(), BlockchainError> {
