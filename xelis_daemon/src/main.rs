@@ -473,12 +473,16 @@ async fn verify_chain<S: Storage>(manager: &CommandManager, mut args: ArgumentMa
 
     let storage = blockchain.get_storage().read().await;
     let mut pruned_topoheight = storage.get_pruned_topoheight().await.context("Error on pruned topoheight")?.unwrap_or(0);
-    let mut expected_supply = if pruned_topoheight > 0 {
-        let supply = storage.get_supply_at_topo_height(pruned_topoheight).await.context("Error while retrieving starting expected supply")?;
+    let (mut expected_supply, mut expected_burned_supply) = if pruned_topoheight > 0 {
+        let supply = storage.get_supply_at_topo_height(pruned_topoheight).await
+            .context("Error while retrieving starting expected supply")?;
+        let burned_supply = storage.get_burned_supply_at_topo_height(pruned_topoheight).await
+            .context("Error while retrieving starting expected supply")?;
         pruned_topoheight += 1;
-        supply
+
+        (supply, burned_supply)
     } else {
-        0
+        (0, 0)
     };
 
     let topoheight = if args.has_argument("topoheight") {
@@ -505,12 +509,14 @@ async fn verify_chain<S: Storage>(manager: &CommandManager, mut args: ArgumentMa
             storage.get_block_reward_at_topo_height(topo).context("Error while retrieving block reward for pruned topo")?
         };
 
-        let supply = storage.get_supply_at_topo_height(topo).await.context("Error while retrieving supply at topoheight")?;
+        let supply = storage.get_supply_at_topo_height(topo).await
+            .with_context(|| format!("Error while retrieving supply at topoheight {topo}"))?;
+
         expected_supply += block_reward;
 
         // Verify the supply at block
         if supply != expected_supply {
-            manager.error(format!("Error for block {} at topoheight {}, expected {} found {}", hash_at_topo, topo, expected_supply, supply));
+            manager.error(format!("Error for block {} at topoheight {}, expected supply {} found {}", hash_at_topo, topo, format_xelis(expected_supply), format_xelis(supply)));
             return Ok(())
         }
 
@@ -521,9 +527,11 @@ async fn verify_chain<S: Storage>(manager: &CommandManager, mut args: ArgumentMa
             return Ok(())
         }
 
+        let mut burned_sum = 0;
         for tx_hash in header.get_transactions() {
             if storage.is_tx_executed_in_block(tx_hash, &hash_at_topo).context("Error while checking if tx is executed in block")? {
-                let transaction = storage.get_transaction(tx_hash).await.context("Error while retrieving transaction")?;
+                let transaction = storage.get_transaction(tx_hash).await
+                    .context("Error while retrieving transaction")?;
 
                 if !storage.has_nonce_at_exact_topoheight(transaction.get_source(), topo).await.context("Error while checking the tx source nonce version")? {
                     manager.error(format!("No nonce version found for source {} at topoheight {}", transaction.get_source().as_address(blockchain.get_network().is_mainnet()), topo));
@@ -536,7 +544,23 @@ async fn verify_chain<S: Storage>(manager: &CommandManager, mut args: ArgumentMa
                         return Ok(())
                     }
                 }
+
+                // TODO: with upcoming smart contracts, this may be biased due to the gas fee
+                if let Some(burned) = transaction.get_burned_amount(&XELIS_ASSET) {
+                    burned_sum += burned;
+                }
             }
+        }
+
+        // Verify the burned supply
+        let burned_supply = storage.get_burned_supply_at_topo_height(topo).await
+            .with_context(|| format!("Error while retrieving burned supply at topoheight {topo}"))?;
+
+        expected_burned_supply += burned_sum;
+
+        if burned_supply != expected_burned_supply {
+            manager.error(format!("Error for block {} at topoheight {}, expected burned supply {} found {}", hash_at_topo, topo, format_xelis(expected_burned_supply), format_xelis(burned_supply)));
+            return Ok(())
         }
     }
     manager.message("Supply is valid");
