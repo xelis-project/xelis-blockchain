@@ -277,10 +277,14 @@ impl<S: Storage> Blockchain<S> {
             blockchain.create_genesis_block(config.genesis_block_hex.as_deref()).await?;
         } else {
             debug!("Retrieving tips for computing current difficulty");
-            let storage = blockchain.get_storage().read().await;
+            let mut storage = blockchain.get_storage().write().await;
             let tips_set = storage.get_tips().await?;
             let (difficulty, _) = blockchain.get_difficulty_at_tips(&*storage, tips_set.iter()).await?;
             blockchain.set_difficulty(difficulty).await;
+
+            // also do some clean up in case of DB corruption
+            debug!("Cleaning data above topoheight {} in case of potential DB corruption", topoheight);
+            storage.delete_versioned_data_above_topoheight(topoheight).await?;
         }
 
         // now compute the stable height
@@ -2020,6 +2024,7 @@ impl<S: Storage> Blockchain<S> {
         // generate a full order until base_topo_height
         let mut full_order = self.generate_full_order(storage, &best_tip, &base_hash, base_height, base_topo_height).await?;
         debug!("Generated full order size: {}, with base ({}) topo height: {}", full_order.len(), base_hash, base_topo_height);
+        trace!("Full order: {}", full_order.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(", "));
 
         // rpc server lock
         let rpc_server = self.rpc.read().await;

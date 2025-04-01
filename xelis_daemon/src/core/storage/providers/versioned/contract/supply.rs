@@ -21,7 +21,7 @@ impl VersionedSupplyProvider for SledStorage {
 
     async fn delete_versioned_assets_supply_above_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError> {
         trace!("delete versioned assets supply above topoheight {}", topoheight);
-        Self::delete_versioned_tree_above_topoheight(&mut self.snapshot, &self.versioned_assets_supply, topoheight)
+        Self::delete_versioned_tree_above_topoheight(&mut self.snapshot, &self.assets_supply, &self.versioned_assets_supply, topoheight, DiskContext::AssetSupply)
     }
 
     async fn delete_versioned_assets_supply_below_topoheight(&mut self, topoheight: TopoHeight, keep_last: bool) -> Result<(), BlockchainError> {

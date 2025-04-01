@@ -27,7 +27,7 @@ impl VersionedNonceProvider for SledStorage {
 
     async fn delete_versioned_nonces_above_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError> {
         trace!("delete versioned nonces above topoheight {}!", topoheight);
-        Self::delete_versioned_tree_above_topoheight(&mut self.snapshot, &self.versioned_nonces, topoheight)
+        Self::delete_versioned_tree_above_topoheight(&mut self.snapshot, &self.nonces, &self.versioned_nonces, topoheight, DiskContext::VersionedNonce)
     }
 
     async fn delete_versioned_nonces_below_topoheight(&mut self, topoheight: u64, keep_last: bool) -> Result<(), BlockchainError> {

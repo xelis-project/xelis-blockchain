@@ -27,7 +27,7 @@ impl VersionedMultiSigProvider for SledStorage {
 
     async fn delete_versioned_multisigs_above_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError> {
         trace!("delete versioned multisigs above topoheight {}!", topoheight);
-        Self::delete_versioned_tree_above_topoheight(&mut self.snapshot, &self.versioned_multisigs, topoheight)
+        Self::delete_versioned_tree_above_topoheight(&mut self.snapshot, &self.multisig, &self.versioned_multisigs, topoheight, DiskContext::VersionedMultisig)
     }
 
     async fn delete_versioned_multisigs_below_topoheight(&mut self, topoheight: u64, keep_last: bool) -> Result<(), BlockchainError> {

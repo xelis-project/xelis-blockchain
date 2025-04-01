@@ -5,6 +5,7 @@ mod nonce;
 mod registrations;
 mod asset;
 mod cache;
+mod dag_order;
 
 use async_trait::async_trait;
 use log::{debug, trace};
@@ -28,6 +29,7 @@ use nonce::VersionedNonceProvider;
 use registrations::VersionedRegistrationsProvider;
 use asset::VersionedAssetProvider;
 use cache::VersionedCacheProvider;
+use dag_order::VersionedDagOrderProvider;
 
 // Every versioned key should start with the topoheight in order to be able to delete them easily
 #[async_trait]
@@ -41,7 +43,8 @@ pub trait VersionedProvider:
     + VersionedContractBalanceProvider
     + VersionedAssetProvider
     + VersionedSupplyProvider
-    + VersionedCacheProvider {
+    + VersionedCacheProvider
+    + VersionedDagOrderProvider {
 
     // Delete versioned data at topoheight
     async fn delete_versioned_data_at_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError> {
@@ -90,6 +93,9 @@ pub trait VersionedProvider:
         self.delete_versioned_assets_supply_above_topoheight(topoheight).await?;
         self.delete_versioned_assets_above_topoheight(topoheight).await?;
 
+        // Special case, delete hashes / topo pointers
+        self.delete_dag_order_above_topoheight(topoheight).await?;
+
         self.clear_versioned_data_caches().await
     }
 }
@@ -129,15 +135,54 @@ impl SledStorage {
         Ok(())
     }
 
-    fn delete_versioned_tree_above_topoheight(snapshot: &mut Option<Snapshot>, tree: &Tree, topoheight: u64) -> Result<(), BlockchainError> {
+    fn delete_versioned_tree_above_topoheight(
+        snapshot: &mut Option<Snapshot>,
+        tree_pointer: &Tree,
+        tree_versioned: &Tree,
+        topoheight: u64,
+        context: DiskContext,
+    ) -> Result<(), BlockchainError> {
         trace!("delete versioned data above topoheight {}", topoheight);
-        for el in tree.iter().keys() {
-            let key = el?;
-            let topo = u64::from_bytes(&key[0..8])?;
+        for el in tree_pointer.iter() {
+            let (key, value) = el?;
+            let topo = u64::from_bytes(&value)?;
+
             if topo > topoheight {
-                Self::remove_from_disk_without_reading(snapshot.as_mut(), tree, &key)?;
+                debug!("found pointer at {} above the requested topoheight {} with context {}", topo, topoheight, context);
+
+                // We fetch the last version to take its previous topoheight
+                // And we loop on it to delete them all until the end of the chained data
+                let mut prev_version = Self::remove_from_disk::<Option<u64>>(snapshot.as_mut(), tree_versioned, &Self::get_versioned_key(&key, topo))?
+                    .ok_or(BlockchainError::NotFoundOnDisk(context))?;
+
+                // While we are above the threshold, we must delete versions to rewrite the correct topoheight
+                let mut new_topo_pointer = None;
+                while let Some(prev_topo) = prev_version {
+                    if prev_topo <= topoheight {
+                        new_topo_pointer = Some(prev_topo);
+                        break;
+                    }
+
+                    trace!("deleting versioned data at topoheight {}", prev_topo);
+                    let key = Self::get_versioned_key(&key, prev_topo);
+                    prev_version = Self::remove_from_disk::<Option<u64>>(snapshot.as_mut(), tree_versioned, &key)?
+                        .ok_or(BlockchainError::NotFoundOnDisk(context))?;
+                }
+
+                // If we don't have any previous versioned data, delete the pointer
+                match new_topo_pointer {
+                    Some(topo) => {
+                        trace!("overwriting the topo pointer");
+                        Self::insert_into_disk(snapshot.as_mut(), tree_pointer, key, topo.to_bytes())?;
+                    },
+                    None => {
+                        trace!("no new topo pointer to set, deleting the pointer from tree");
+                        Self::remove_from_disk_internal(snapshot.as_mut(), tree_pointer, &key)?;
+                    }
+                };
             }
         }
+
         Ok(())
     }
 

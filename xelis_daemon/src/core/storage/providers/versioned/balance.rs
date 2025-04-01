@@ -33,7 +33,7 @@ impl VersionedBalanceProvider for SledStorage {
 
     async fn delete_versioned_balances_above_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError> {
         trace!("delete versioned balances above topoheight {}!", topoheight);
-        Self::delete_versioned_tree_above_topoheight(&mut self.snapshot, &self.versioned_balances, topoheight)
+        Self::delete_versioned_tree_above_topoheight(&mut self.snapshot, &self.balances, &self.versioned_balances, topoheight, DiskContext::VersionedBalance)
     }
 
     async fn delete_versioned_balances_below_topoheight(&mut self, topoheight: u64, keep_last: bool) -> Result<(), BlockchainError> {
