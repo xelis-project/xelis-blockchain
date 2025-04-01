@@ -134,7 +134,14 @@ pub fn block_in_place_safe<F, R>(f: F) -> R
 where
     F: FnOnce() -> R,
 {
-    #[cfg(feature = "tokio")]
+    #[cfg(all(
+        feature = "tokio",
+        not(all(
+            target_arch = "wasm32",
+            target_vendor = "unknown",
+            target_os = "unknown"
+        ))
+    ))]
     if is_multi_threads_supported() {
         trace!("tokio block in place");
         return tokio::task::block_in_place(f)
