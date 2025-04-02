@@ -275,28 +275,28 @@ impl<S: Storage> Blockchain<S> {
         // include genesis block
         if !on_disk {
             blockchain.create_genesis_block(config.genesis_block_hex.as_deref()).await?;
-        } else {
+        } else if !config.recovery_mode {
             debug!("Retrieving tips for computing current difficulty");
             let mut storage = blockchain.get_storage().write().await;
-            let tips_set = storage.get_tips().await?;
-            let (difficulty, _) = blockchain.get_difficulty_at_tips(&*storage, tips_set.iter()).await?;
+            let tips = storage.get_tips().await?;
+            let (difficulty, _) = blockchain.get_difficulty_at_tips(&*storage, tips.iter()).await?;
             blockchain.set_difficulty(difficulty).await;
 
-            // also do some clean up in case of DB corruption
-            debug!("Cleaning data above topoheight {} in case of potential DB corruption", topoheight);
-            storage.delete_versioned_data_above_topoheight(topoheight).await?;
-        }
-
-        // now compute the stable height
-        {
+            // now compute the stable height
             debug!("Retrieving tips for computing current stable height");
-            let storage = blockchain.get_storage().read().await;
-            let tips = storage.get_tips().await?;
             let (stable_hash, stable_height) = blockchain.find_common_base::<S, _>(&storage, &tips).await?;
             blockchain.stable_height.store(stable_height, Ordering::SeqCst);
             // Search the stable topoheight
             let stable_topoheight = storage.get_topo_height_for_hash(&stable_hash).await?;
             blockchain.stable_topoheight.store(stable_topoheight, Ordering::SeqCst);
+
+            // also do some clean up in case of DB corruption
+            if config.check_db_integrity {
+                info!("Cleaning data above topoheight {} in case of potential DB corruption", topoheight);
+                storage.delete_versioned_data_above_topoheight(topoheight).await?;
+            }
+        } else {
+            warn!("Recovery mode enabled, required pre-computed data have been skipped.");
         }
 
         let arc = Arc::new(blockchain);

@@ -194,5 +194,19 @@ pub struct Config {
     /// By default, will detect the best value.
     /// Unused if multi-thread is disabled.
     #[clap(long)]
-    pub txs_threads_count: Option<usize>
+    pub txs_threads_count: Option<usize>,
+    /// Enable the DB integrity check that happen on chain initialization.
+    /// This may take some times on huge DB as it's iterating through all versioned data
+    /// to verify that no pointer or version is above our current topoheight.
+    /// Please note that if the recovery mode is enabled, this will be skipped.
+    /// By default, it is disabled.
+    #[clap(long)]
+    #[serde(default)]
+    pub check_db_integrity: bool,
+    /// Enable the recovery mode of the daemon.
+    /// No DB integrity check or pre-computations will occurs
+    /// such as difficulty for tips, stable height, etc.
+    #[clap(long)]
+    #[serde(default)]
+    pub recovery_mode: bool
 }
