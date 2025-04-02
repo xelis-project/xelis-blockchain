@@ -233,16 +233,22 @@ impl<S: Storage> Blockchain<S> {
             }
             Some(n)
         } else if !config.disable_multi_threads_txs {
-            Some(match thread::available_parallelism() {
+            match thread::available_parallelism() {
                 Ok(n) => {
                     info!("Detected {} threads for TXs multi-threading", n);
-                    n.get()
+                    let v = n.get();
+                    if v > 1 {
+                        Some(v)
+                    } else {
+                        warn!("fallback to single thread mode");
+                        None
+                    }
                 },
                 Err(e) => {
-                    warn!("Error while detecting best threads count for TXs: {}, fallback to 1 only", e);
-                    1
+                    warn!("Error while detecting best threads count for TXs: {}, fallback to single thread mode", e);
+                    None
                 }
-            })
+            }
         } else {
             None
         };
