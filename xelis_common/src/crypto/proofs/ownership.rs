@@ -1,3 +1,4 @@
+use bulletproofs::RangeProof;
 use curve25519_dalek::Scalar;
 use merlin::Transcript;
 use crate::{
@@ -23,7 +24,10 @@ use super::{
     BatchCollector,
     CommitmentEqProof,
     ProofGenerationError,
-    ProofVerificationError
+    ProofVerificationError,
+    BP_GENS,
+    PC_GENS,
+    BULLET_PROOF_SIZE
 };
 
 /// Prove that the prover owns a certain amount (N > 0) of a given asset.
@@ -34,6 +38,8 @@ pub struct OwnershipProof {
     commitment: CompressedCommitment,
     /// The commitment proof.
     commitment_eq_proof: CommitmentEqProof,
+    /// The range proof to prove that commitment is >= 0
+    range_proof: RangeProof,
 }
 
 impl OwnershipProof {
@@ -42,8 +48,8 @@ impl OwnershipProof {
     const OPENING: PedersenOpening = PedersenOpening::from_scalar(Scalar::ONE);
 
     /// Create a new ownership proof.
-    pub fn from(amount: u64, commitment: CompressedCommitment, commitment_eq_proof: CommitmentEqProof) -> Self {
-        Self { amount, commitment, commitment_eq_proof }
+    pub fn from(amount: u64, commitment: CompressedCommitment, commitment_eq_proof: CommitmentEqProof, range_proof: RangeProof) -> Self {
+        Self { amount, commitment, commitment_eq_proof, range_proof }
     }
 
     /// Create a new ownership proof with default transcript
@@ -81,7 +87,11 @@ impl OwnershipProof {
         // Generate the proof that the final balance is ? minus N after applying the commitment.
         let commitment_eq_proof = CommitmentEqProof::new(keypair, &ct_left, &opening, left, transcript);
 
-        Ok(Self::from(amount, left_commitment, commitment_eq_proof))
+        // Create a range proof to prove that whats left is >= 0
+        let (range_proof, range_commitment) = RangeProof::prove_single(&BP_GENS, &PC_GENS, transcript, left, &opening.as_scalar(), BULLET_PROOF_SIZE)?;
+        assert_eq!(&range_commitment, left_commitment.as_point());
+
+        Ok(Self::from(amount, left_commitment, commitment_eq_proof, range_proof))
     }
 
     /// Verify the ownership proof.
@@ -104,6 +114,8 @@ impl OwnershipProof {
 
         self.commitment_eq_proof.pre_verify(public_key, &balance_left, &commitment, transcript, batch_collector)?;
 
+        self.range_proof.verify_single(&BP_GENS, &PC_GENS, transcript, &(commitment.as_point().clone(), self.commitment.as_point().clone()), BULLET_PROOF_SIZE)?;
+
         Ok(())
     }
 
@@ -121,20 +133,23 @@ impl Serializer for OwnershipProof {
         self.amount.write(writer);
         self.commitment.write(writer);
         self.commitment_eq_proof.write(writer);
+        self.range_proof.write(writer);
     }
 
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
         let amount = u64::read(reader)?;
         let commitment = CompressedCommitment::read(reader)?;
         let commitment_eq_proof = CommitmentEqProof::read(reader)?;
+        let range_proof = RangeProof::read(reader)?;
 
-        Ok(Self::from(amount, commitment, commitment_eq_proof))
+        Ok(Self::from(amount, commitment, commitment_eq_proof, range_proof))
     }
 
     fn size(&self) -> usize {
         self.amount.size()
             + self.commitment.size()
             + self.commitment_eq_proof.size()
+            + self.range_proof.size()
     }
 }
 
@@ -244,11 +259,15 @@ mod tests {
 
         let commitment_eq_proof = CommitmentEqProof::new_with_scalar(&keypair, &ct_left, &opening, left_scalar, &mut transcript);
 
+        // Range proof prevent such exploit by making sure our balance left commitment is >= 0
+        let (range_proof, _) = RangeProof::prove_single(&BP_GENS, &PC_GENS, &mut transcript, left, &opening.as_scalar(), BULLET_PROOF_SIZE).unwrap();
+
         // Create proof
         let proof = OwnershipProof {
             commitment: left_commitment,
             amount: amount + inflate,
-            commitment_eq_proof
+            commitment_eq_proof,
+            range_proof
         };
 
         assert!(proof.verify(keypair.get_public_key(), balance_ct).is_err());
