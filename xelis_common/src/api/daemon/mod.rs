@@ -1,3 +1,5 @@
+mod direction;
+
 use std::{
     borrow::Cow,
     collections::{HashSet, HashMap},
@@ -22,6 +24,8 @@ use crate::{
     transaction::extra_data::{SharedKey, UnknownExtraDataFormat},
 };
 use super::{default_true_value, DataElement, RPCContractOutput, RPCTransaction};
+
+pub use direction::*;
 
 #[derive(Serialize, Deserialize, PartialEq, Eq)]
 pub enum BlockType {
@@ -288,40 +292,6 @@ pub struct GetTransactionExecutorResult<'a> {
     pub block_hash: Cow<'a, Hash>
 }
 
-// Direction is used for cache to knows from which context it got added
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Direction {
-    // We don't update it because it's In, we won't send back
-    In,
-    // Out can be updated with In to be transformed to Both
-    // Because of desync, we may receive the object while sending it
-    Out,
-    // Cannot be updated
-    Both
-}
-
-impl Direction {
-    pub fn update(&mut self, direction: Direction) -> bool {
-        match self {
-            Self::Out => match direction {
-                Self::In => {
-                    *self = Self::Both;
-                    true
-                },
-                _ => false
-            },
-            Self::In => match direction {
-                Self::Out => {
-                    *self = Self::Both;
-                    true
-                },
-                _ => false
-            },
-            _ => false
-        }
-    }
-}
-
 #[derive(Serialize, Deserialize)]
 pub struct GetPeersResponse<'a> {
     // Peers that are connected and allows to be displayed
@@ -344,7 +314,7 @@ pub struct PeerEntry<'a> {
     pub height: u64,
     pub last_ping: TimestampSeconds,
     pub pruned_topoheight: Option<TopoHeight>,
-    pub peers: Cow<'a, HashMap<SocketAddr, Direction>>,
+    pub peers: Cow<'a, HashMap<SocketAddr, TimedDirection>>,
     pub cumulative_difficulty: Cow<'a, CumulativeDifficulty>,
     pub connected_on: TimestampSeconds,
     pub bytes_sent: usize,
@@ -686,6 +656,17 @@ pub struct RPCVersioned<T> {
     pub topoheight: TopoHeight,
     #[serde(flatten)]
     pub version: T
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct P2pBlockPropagationResult {
+    // peer id => entry
+    pub peers: HashMap<u64, TimedDirection>
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct GetP2pBlockPropagation<'a> {
+    pub block_hash: Cow<'a, Hash>
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
