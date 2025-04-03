@@ -210,8 +210,11 @@ mod tests {
     fn test_fake_commitment_ownership_proof() {
         let keypair = KeyPair::new();
         // Generate the balance
-        let balance = 100u64;
+        let balance = 10u64;
+
+        // How much we want to prove as ownership
         let amount = 10u64;
+        // By how much we want to inflate it
         let inflate = 10u64;
 
         // Current balance on chain
