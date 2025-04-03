@@ -60,6 +60,14 @@ impl TimedDirection {
         matches!(self, Self::Both { .. })
     }
 
+    pub fn is_in(&self) -> bool {
+        matches!(self, Self::In { .. })
+    }
+
+    pub fn is_out(&self) -> bool {
+        matches!(self, Self::Out { .. })
+    }
+
     pub fn update(&mut self, direction: TimedDirection) -> bool {
         match *self {
             Self::Out { sent_at } => match direction {
