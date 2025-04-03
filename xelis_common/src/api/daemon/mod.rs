@@ -661,7 +661,11 @@ pub struct RPCVersioned<T> {
 #[derive(Serialize, Deserialize)]
 pub struct P2pBlockPropagationResult {
     // peer id => entry
-    pub peers: HashMap<u64, TimedDirection>
+    pub peers: HashMap<u64, TimedDirection>,
+    // When was the first time we saw this block
+    pub first_seen: Option<TimestampMillis>,
+    // At which time we started to process it
+    pub processing_at: Option<TimestampMillis>,
 }
 
 #[derive(Serialize, Deserialize)]
