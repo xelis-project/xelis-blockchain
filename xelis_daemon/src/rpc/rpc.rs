@@ -1660,7 +1660,7 @@ async fn get_p2p_block_propagation<S: Storage>(context: &Context, body: Value) -
     let mut peers = HashMap::new();
     for peer in p2p.get_peer_list().get_cloned_peers().await {
         let blocks_propagation = peer.get_blocks_propagation().lock().await;
-        if let Some(timed_direction) = blocks_propagation.peek(&params.block_hash).copied() {
+        if let Some(timed_direction) = blocks_propagation.peek(&params.hash).copied() {
             peers.insert(peer.get_id(), timed_direction);
         }
     }
