@@ -20,7 +20,8 @@ use xelis_common::{
     api::daemon::{
         Direction,
         NotifyEvent,
-        PeerPeerDisconnectedEvent
+        PeerPeerDisconnectedEvent,
+        TimedDirection
     },
     block::{
         Block,
@@ -98,7 +99,6 @@ use tokio::{
 use log::{info, warn, error, debug, trace};
 use std::{
     borrow::Cow,
-    collections::hash_map::Entry,
     io,
     net::{IpAddr, SocketAddr},
     num::NonZeroUsize,
@@ -1116,10 +1116,14 @@ impl<S: Storage> P2pServer<S> {
                             continue;
                         }
 
-                        let send = match shared_peers.entry(*addr) {
-                            Entry::Occupied(mut e) => e.get_mut().update(Direction::Out),
-                            Entry::Vacant(e) => {
-                                e.insert(Direction::Out);
+                        let direction = TimedDirection::Out {
+                            sent_at: get_current_time_in_millis()
+                        };
+
+                        let send = match shared_peers.get_mut(addr) {
+                            Some(e) => e.update(direction),
+                            None => {
+                                shared_peers.put(*addr, direction);
                                 true
                             }
                         };
@@ -1551,7 +1555,7 @@ impl<S: Storage> P2pServer<S> {
         trace!("locked peers received (common peers)");
 
         let mut common_peers = Vec::new();
-        for (common_peer_addr, _) in peer_peers.iter().filter(|(_, direction)| **direction == Direction::Both) {
+        for (common_peer_addr, _) in peer_peers.iter().filter(|(_, direction)| direction.is_both()) {
             // if we have a common peer with him
             if let Some(common_peer) = self.peer_list.get_peer_by_addr(common_peer_addr).await {
                 if peer.get_id() != common_peer.get_id() {
@@ -1643,16 +1647,20 @@ impl<S: Storage> P2pServer<S> {
                 let block_hash = header.hash();
 
                 // verify that this block wasn't already sent by him
+                let direction = TimedDirection::In {
+                    received_at: get_current_time_in_millis()
+                };
+
                 {
                     let mut blocks_propagation = peer.get_blocks_propagation().lock().await;
-                    if let Some((direction, _)) = blocks_propagation.get_mut(&block_hash) {
-                        if !direction.update(Direction::In) {
-                            debug!("{} send us a block ({}) already tracked by him ({:?})", peer, block_hash, direction);
+                    if let Some(origin) = blocks_propagation.get_mut(&block_hash) {
+                        if !origin.update(direction) {
+                            debug!("{} send us a block ({}) already tracked by him ({:?})", peer, block_hash, origin);
                             // return Err(P2pError::AlreadyTrackedBlock(block_hash, *direction))
                         }
                     } else {
                         debug!("Saving {} in blocks propagation cache for {}", block_hash, peer);
-                        blocks_propagation.put(block_hash.clone(),  (Direction::In, get_current_time_in_millis()));
+                        blocks_propagation.put(block_hash.clone(),  direction);
                     }
                 }
 
@@ -1663,7 +1671,7 @@ impl<S: Storage> P2pServer<S> {
                     let mut blocks_propagation = common_peer.get_blocks_propagation().lock().await;
                     // Out allow to get "In" again, because it's a prediction, don't block it completely
                     if !blocks_propagation.contains(&block_hash) {
-                        blocks_propagation.put(block_hash.clone(), (Direction::Out, get_current_time_in_millis()));
+                        blocks_propagation.put(block_hash.clone(), direction);
                     }
                 }
 
@@ -1964,10 +1972,7 @@ impl<S: Storage> P2pServer<S> {
                 debug!("{} disconnected from {}", addr, peer);
                 {
                     let mut shared_peers = peer.get_peers().lock().await;
-                    if shared_peers.contains_key(&addr) {
-                        // Delete the peer received
-                        shared_peers.remove(&addr);
-                    } else {
+                    if shared_peers.pop(&addr).is_none() {
                         debug!("{} disconnected from {} but its not in our shared peer, maybe it disconnected from us too", addr, peer.get_outgoing_address());
                         return Ok(())
                     }
@@ -2745,7 +2750,19 @@ impl<S: Storage> P2pServer<S> {
                 if !blocks_propagation.contains(hash) {
                     // we broadcasted to him, add it to the cache
                     // he should not send it back to us if it's a block found by us
-                    blocks_propagation.put(hash.clone(), (if lock { Direction::Both } else { Direction::Out }, get_current_time_in_millis()));
+                    // Because only us is aware of this block
+                    let direction = if lock {
+                        TimedDirection::Both {
+                            sent_at: get_current_time_in_millis(),
+                            // Never received, but locked
+                            received_at: 0
+                        }
+                    } else {
+                        TimedDirection::Out {
+                            sent_at: get_current_time_in_millis()
+                        }
+                    };
+                    blocks_propagation.put(hash.clone(), direction);
 
                     debug!("Broadcast {} to {} (lock: {})", hash, peer, lock);
                     if let Err(e) = peer.send_bytes(packet_block_bytes.clone()).await {

@@ -23,7 +23,6 @@ use serde::{Serialize, Deserialize};
 use tokio::sync::{mpsc::Sender, RwLock};
 use x25519_dalek::PublicKey;
 use xelis_common::{
-    api::daemon::Direction,
     block::TopoHeight,
     serializer::{Reader, ReaderError, Serializer, Writer},
     time::{get_current_time_in_seconds, TimestampSeconds}
@@ -131,17 +130,14 @@ impl PeerList {
 
                 // check if it was a common peer (we sent it and we received it)
                 // Because its a common peer, we can expect that he will send us the same packet
-                if let Some(direction) = shared_peers.get(addr) {
+                if let Some(direction) = shared_peers.pop(addr) {
                     // If its a outgoing direction, send a packet to notify that the peer disconnected
-                    if *direction != Direction::In {
-                        trace!("Sending PeerDisconnected packet to peer {} for {}", peer.get_outgoing_address(), addr);
+                    if !direction.is_in() {
+                        debug!("Sending PeerDisconnected packet to peer {} for {}", peer.get_outgoing_address(), addr);
                         // we send the packet to notify the peer that we don't have it in common anymore
                         if let Err(e) = peer.send_bytes(packet.clone()).await {
                             error!("Error while trying to send PeerDisconnected packet to peer {}: {}", peer.get_connection().get_address(), e);
                         }
-
-                        // Maybe he only disconnected from us, delete it to stay synced
-                        shared_peers.remove(addr);
                     }
                 }
             }

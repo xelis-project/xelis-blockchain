@@ -12,7 +12,7 @@ use tokio::{
     time::error::Elapsed
 };
 use xelis_common::{
-    api::daemon::Direction,
+    api::daemon::{Direction, TimedDirection},
     crypto::Hash,
     serializer::ReaderError,
 };
@@ -72,7 +72,7 @@ pub enum P2pError {
     #[error("Invalid merkle hash")]
     InvalidMerkleHash,
     #[error("Duplicated peer {} received from {} received in ping packet (direction = {:?})", _0, _1, _2)]
-    DuplicatedPeer(SocketAddr, SocketAddr, Direction),
+    DuplicatedPeer(SocketAddr, SocketAddr, TimedDirection),
     #[error("Pruned topoheight {} is greater than topoheight {} in ping packet", _0, _1)]
     InvalidPrunedTopoHeight(u64, u64),
     #[error("Pruned topoheight {} is less than old pruned topoheight {} in ping packet", _0, _1)]

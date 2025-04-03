@@ -64,7 +64,7 @@ use xelis_common::{
 use anyhow::Context as AnyContext;
 use human_bytes::human_bytes;
 use serde_json::{json, Value};
-use std::{sync::Arc, borrow::Cow};
+use std::{borrow::Cow, collections::HashMap, sync::Arc};
 use log::{info, debug, trace};
 
 // Get the block type using the block hash and the blockchain current state
@@ -276,7 +276,7 @@ pub async fn get_peer_entry(peer: &Peer) -> PeerEntry {
         topoheight: peer.get_topoheight(),
         height: peer.get_height(),
         last_ping: peer.get_last_ping(),
-        peers: Cow::Owned(peers),
+        peers: Cow::Owned(peers.into_iter().collect()),
         pruned_topoheight: peer.get_pruned_topoheight(),
         cumulative_difficulty: Cow::Owned(cumulative_difficulty),
         connected_on: peer.get_connection().connected_on(),
@@ -369,6 +369,9 @@ pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>
     handler.register_method("get_contract_data_at_topoheight", async_handler!(get_contract_data_at_topoheight::<S>));
     handler.register_method("get_contract_balance", async_handler!(get_contract_balance::<S>));
     handler.register_method("get_contract_balance_at_topoheight", async_handler!(get_contract_balance_at_topoheight::<S>));
+
+    // P2p
+    handler.register_method("get_p2p_block_propagation", async_handler!(get_p2p_block_propagation::<S>));
 
     if allow_mining_methods {
         handler.register_method("get_block_template", async_handler!(get_block_template::<S>));
@@ -1645,4 +1648,24 @@ async fn get_contract_balance_at_topoheight<S: Storage>(context: &Context, body:
         .context("Error while retrieving contract balance")?;
 
     Ok(json!(version))
+}
+
+async fn get_p2p_block_propagation<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
+    let params: GetP2pBlockPropagation = parse_params(body)?;
+
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    let p2p = { blockchain.get_p2p().read().await.clone() }
+        .ok_or(InternalRpcError::InvalidParamsAny(ApiError::NoP2p.into()))?;
+
+    let mut peers = HashMap::new();
+    for peer in p2p.get_peer_list().get_cloned_peers().await {
+        let blocks_propagation = peer.get_blocks_propagation().lock().await;
+        if let Some(timed_direction) = blocks_propagation.peek(&params.block_hash).copied() {
+            peers.insert(peer.get_id(), timed_direction);
+        }
+    }
+
+    Ok(json!(P2pBlockPropagationResult {
+        peers
+    }))
 }

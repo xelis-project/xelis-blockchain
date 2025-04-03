@@ -3,20 +3,19 @@ use crate::{
         PEER_FAIL_TIME_RESET, PEER_BLOCK_CACHE_SIZE, PEER_TX_CACHE_SIZE,
         PEER_TEMP_BAN_TIME, PEER_TIMEOUT_BOOTSTRAP_STEP,
         PEER_TIMEOUT_REQUEST_OBJECT, CHAIN_SYNC_TIMEOUT_SECS,
-        PEER_PACKET_CHANNEL_SIZE
+        PEER_PACKET_CHANNEL_SIZE, PEER_PEERS_CACHE_SIZE
     },
     p2p::packet::PacketWrapper
 };
 use anyhow::Context;
 use xelis_common::{
-    api::daemon::Direction,
+    api::daemon::{Direction, TimedDirection},
     block::TopoHeight,
     crypto::Hash,
     difficulty::CumulativeDifficulty,
     serializer::Serializer,
     time::{
         get_current_time_in_seconds,
-        TimestampMillis,
         TimestampSeconds
     }
 };
@@ -44,7 +43,7 @@ use super::{
 use std::{
     num::NonZeroUsize,
     borrow::Cow,
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     fmt::{Display, Error, Formatter},
     hash::{Hash as StdHash, Hasher},
     net::{IpAddr, SocketAddr},
@@ -120,7 +119,7 @@ pub struct Peer {
     // map of requested objects from this peer
     objects_requested: Mutex<RequestedObjects>,
     // all peers sent/received
-    peers: Mutex<HashMap<SocketAddr, Direction>>,
+    peers: Mutex<LruCache<SocketAddr, TimedDirection>>,
     // last time we received a peerlist from this peer
     last_peer_list: AtomicU64,
     // last time we got a ping packet from this peer
@@ -132,7 +131,7 @@ pub struct Peer {
     // All transactions propagated from/to this peer
     txs_cache: Mutex<LruCache<Hash, Direction>>,
     // last blocks propagated to/from this peer
-    blocks_propagation: Mutex<LruCache<Hash, (Direction, TimestampMillis)>>,
+    blocks_propagation: Mutex<LruCache<Hash, TimedDirection>>,
     // last time we got an inventory packet from this peer
     last_inventory: AtomicU64,
     // if we requested this peer to send us an inventory notification
@@ -160,14 +159,9 @@ pub struct Peer {
 }
 
 impl Peer {
-    pub fn new(connection: Connection, id: u64, node_tag: Option<String>, local_port: u16, version: String, top_hash: Hash, topoheight: TopoHeight, height: u64, pruned_topoheight: Option<TopoHeight>, priority: bool, cumulative_difficulty: CumulativeDifficulty, peer_list: SharedPeerList, peers_received: HashSet<SocketAddr>, sharable: bool) -> (Self, Rx) {
+    pub fn new(connection: Connection, id: u64, node_tag: Option<String>, local_port: u16, version: String, top_hash: Hash, topoheight: TopoHeight, height: u64, pruned_topoheight: Option<TopoHeight>, priority: bool, cumulative_difficulty: CumulativeDifficulty, peer_list: SharedPeerList, sharable: bool) -> (Self, Rx) {
         let mut outgoing_address = *connection.get_address();
         outgoing_address.set_port(local_port);
-
-        let mut peers = HashMap::new();
-        for peer in peers_received {
-            peers.insert(peer, Direction::In);
-        }
 
         let (exit_channel, _) = broadcast::channel(1);
         let (tx, rx) = mpsc::channel(PEER_PACKET_CHANNEL_SIZE);
@@ -187,7 +181,7 @@ impl Peer {
             last_chain_sync: AtomicU64::new(0),
             peer_list,
             objects_requested: Mutex::new(HashMap::new()),
-            peers: Mutex::new(peers),
+            peers: Mutex::new(LruCache::new(NonZeroUsize::new(PEER_PEERS_CACHE_SIZE).unwrap())),
             last_peer_list: AtomicU64::new(0),
             last_ping: AtomicU64::new(0),
             last_ping_sent: AtomicU64::new(0),
@@ -225,7 +219,7 @@ impl Peer {
     }
 
     // Get all blocks propagated from/to this peer
-    pub fn get_blocks_propagation(&self) -> &Mutex<LruCache<Hash, (Direction, TimestampMillis)>> {
+    pub fn get_blocks_propagation(&self) -> &Mutex<LruCache<Hash, TimedDirection>> {
         &self.blocks_propagation
     }
 
@@ -528,7 +522,7 @@ impl Peer {
     }
 
     // Get all shared peers between this peer and us
-    pub fn get_peers(&self) -> &Mutex<HashMap<SocketAddr, Direction>> {
+    pub fn get_peers(&self) -> &Mutex<LruCache<SocketAddr, TimedDirection>> {
         &self.peers
     }
 

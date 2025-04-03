@@ -167,6 +167,8 @@ pub const PEER_MAX_PACKET_SIZE: u32 = MAX_BLOCK_SIZE as u32 + 16;
 // Peer TX cache size
 // This is how many elements are stored in the LRU cache at maximum
 pub const PEER_TX_CACHE_SIZE: usize = 10240;
+// How many peers propagated are stored per peer in the LRU cache at maximum
+pub const PEER_PEERS_CACHE_SIZE: usize = 1024;
 // Peer Block cache size
 pub const PEER_BLOCK_CACHE_SIZE: usize = 1024;
 // Peer packet channel size

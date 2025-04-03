@@ -1,6 +1,6 @@
 use indexmap::IndexSet;
 use xelis_common::{
-    api::daemon::{Direction, NotifyEvent, PeerPeerListUpdatedEvent},
+    api::daemon::{NotifyEvent, PeerPeerListUpdatedEvent, TimedDirection},
     crypto::Hash,
     difficulty::CumulativeDifficulty,
     serializer::{
@@ -8,7 +8,8 @@ use xelis_common::{
         ReaderError,
         Serializer,
         Writer
-    }
+    },
+    time::get_current_time_in_millis
 };
 use crate::{
     config::P2P_PING_PEER_LIST_LIMIT,
@@ -105,14 +106,19 @@ impl<'a> Ping<'a> {
                 }
 
                 debug!("Adding {} for {} in ping packet", addr, peer.get_outgoing_address());
-                if let Some(direction) = shared_peers.get_mut(addr) {
-                    if !direction.update(Direction::In) {
-                        let d = *direction;
+                let direction = TimedDirection::In {
+                    received_at: get_current_time_in_millis()
+                };
+
+                if let Some(origin) = shared_peers.get_mut(addr) {
+                    if !origin.update(direction) {
+                        // prevent holding the lock below
+                        let origin = *origin;
                         debug!("Received peer list: {:?}, our peerlist is: {:?}", self.peer_list, shared_peers);
-                        return Err(P2pError::DuplicatedPeer(*addr, *peer.get_outgoing_address(), d))
+                        return Err(P2pError::DuplicatedPeer(*addr, *peer.get_outgoing_address(), origin))
                     }
                 } else {
-                    shared_peers.insert(*addr, Direction::In);
+                    shared_peers.put(*addr, direction);
                 }
             }
 
