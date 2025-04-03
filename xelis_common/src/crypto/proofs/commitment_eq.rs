@@ -46,6 +46,17 @@ impl CommitmentEqProof {
         amount: u64,
         transcript: &mut Transcript,
     ) -> Self {
+        Self::new_with_scalar(source_keypair, source_ciphertext, opening, Scalar::from(amount), transcript)
+    }
+
+    // warning: caller must make sure not to forget to hash the public key, ciphertext, commitment in the transcript as it is not done here
+    pub fn new_with_scalar(
+        source_keypair: &KeyPair,
+        source_ciphertext: &Ciphertext,
+        opening: &PedersenOpening,
+        x: Scalar,
+        transcript: &mut Transcript,
+    ) -> Self {
         transcript.equality_proof_domain_separator();
 
         // extract the relevant scalar and Ristretto points from the inputs
@@ -53,7 +64,6 @@ impl CommitmentEqProof {
         let D_source = source_ciphertext.handle().as_point();
 
         let s = source_keypair.get_private_key().as_scalar();
-        let x = Scalar::from(amount);
         let r = opening.as_scalar();
 
         // generate random masking factors that also serves as nonces
@@ -76,7 +86,7 @@ impl CommitmentEqProof {
 
         // compute the masked values
         let z_s = &(&c * s) + &y_s;
-        let z_x = &(&c * &x) + &y_x;
+        let z_x = &(&c * x) + &y_x;
         let z_r = &(&c * r) + &y_r;
 
         // zeroize random scalars
