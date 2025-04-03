@@ -666,7 +666,7 @@ pub struct P2pBlockPropagationResult {
 
 #[derive(Serialize, Deserialize)]
 pub struct GetP2pBlockPropagation<'a> {
-    pub block_hash: Cow<'a, Hash>
+    pub hash: Cow<'a, Hash>
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
