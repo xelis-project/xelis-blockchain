@@ -1658,14 +1658,31 @@ async fn get_p2p_block_propagation<S: Storage>(context: &Context, body: Value) -
         .ok_or(InternalRpcError::InvalidParamsAny(ApiError::NoP2p.into()))?;
 
     let mut peers = HashMap::new();
+    let mut first_seen = None;
     for peer in p2p.get_peer_list().get_cloned_peers().await {
         let blocks_propagation = peer.get_blocks_propagation().lock().await;
-        if let Some(timed_direction) = blocks_propagation.peek(&params.hash).copied() {
-            peers.insert(peer.get_id(), timed_direction);
+        if let Some((timed_direction, is_common)) = blocks_propagation.peek(&params.hash).copied() {
+            // We don't count common peers
+            // Because we haven't really sent them it
+            if !is_common {
+                peers.insert(peer.get_id(), timed_direction);
+
+                match timed_direction {
+                    TimedDirection::In { received_at } | TimedDirection::Both { received_at, .. } => {
+                        if first_seen.map(|v| v > received_at).unwrap_or(true) {
+                            first_seen = Some(received_at);
+                        }
+                    },
+                    _ => {}
+                }
+            }
         }
     }
 
+    let processing_at = p2p.get_block_propagation_timestamp(&params.hash).await;
     Ok(json!(P2pBlockPropagationResult {
-        peers
+        peers,
+        first_seen,
+        processing_at
     }))
 }

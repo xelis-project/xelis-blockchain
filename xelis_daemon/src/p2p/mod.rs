@@ -136,7 +136,8 @@ pub struct P2pServer<S: Storage> {
     // used to check if the server is running or not in tasks
     is_running: AtomicBool,
     // Synced cache to prevent concurrent tasks adding the block
-    blocks_propagation_queue: Mutex<LruCache<Hash, TimestampMillis>>,
+    // Timestamp is None if block is not yet executed
+    blocks_propagation_queue: Mutex<LruCache<Hash, Option<TimestampMillis>>>,
     // Sender for the blocks processing task to have an ordered queue
     blocks_processor: Sender<(Arc<Peer>, BlockHeader, Hash)>,
     // Sender for the transactions propagated
@@ -173,7 +174,7 @@ pub struct P2pServer<S: Storage> {
     // Diffie-Hellman keypair
     dh_keypair: diffie_hellman::DHKeyPair,
     // Diffie-Hellman key verification action
-    dh_action: diffie_hellman::KeyVerificationAction
+    dh_action: diffie_hellman::KeyVerificationAction,
 }
 
 impl<S: Storage> P2pServer<S> {
@@ -1302,6 +1303,20 @@ impl<S: Storage> P2pServer<S> {
                         }
                     }
 
+                    // Mark the timestamp of when its being added
+                    {
+                        debug!("Locking blocks propagation queue to mark the execution timestamp for {}", block_hash);
+                        let mut blocks_propagation_queue = self.blocks_propagation_queue.lock().await;
+                        match blocks_propagation_queue.peek_mut(&block_hash) {
+                            Some(v) => {
+                                *v = Some(get_current_time_in_millis());
+                            },
+                            None => {
+                                warn!("Block propagation {} not found in queue, are we overloaded?", block_hash);
+                            }
+                        }
+                    }
+
                     // add immediately the block to chain as we are synced with
                     let block = Block::new(Immutable::Owned(header), txs);
                     debug!("Adding received block {} from {} to chain", block_hash, peer);
@@ -1653,14 +1668,14 @@ impl<S: Storage> P2pServer<S> {
 
                 {
                     let mut blocks_propagation = peer.get_blocks_propagation().lock().await;
-                    if let Some(origin) = blocks_propagation.get_mut(&block_hash) {
-                        if !origin.update(direction) {
-                            debug!("{} send us a block ({}) already tracked by him ({:?})", peer, block_hash, origin);
-                            // return Err(P2pError::AlreadyTrackedBlock(block_hash, *direction))
+                    if let Some((origin, is_common)) = blocks_propagation.get_mut(&block_hash) {
+                        if !origin.update(direction) && !*is_common {
+                            warn!("{} send us a block ({}) already tracked by him ({:?} {})", peer, block_hash, origin, is_common);
+                            return Err(P2pError::AlreadyTrackedBlock(block_hash, *origin))
                         }
                     } else {
                         debug!("Saving {} in blocks propagation cache for {}", block_hash, peer);
-                        blocks_propagation.put(block_hash.clone(),  direction);
+                        blocks_propagation.put(block_hash.clone(),  (direction, false));
                     }
                 }
 
@@ -1671,7 +1686,7 @@ impl<S: Storage> P2pServer<S> {
                     let mut blocks_propagation = common_peer.get_blocks_propagation().lock().await;
                     // Out allow to get "In" again, because it's a prediction, don't block it completely
                     if !blocks_propagation.contains(&block_hash) {
-                        blocks_propagation.put(block_hash.clone(), direction);
+                        blocks_propagation.put(block_hash.clone(), (direction, true));
                     }
                 }
 
@@ -1691,7 +1706,7 @@ impl<S: Storage> P2pServer<S> {
                         debug!("Block {} propagated is already in processing from another peer", block_hash);
                         return Ok(())
                     }
-                    blocks_propagation_queue.put(block_hash.clone(), get_current_time_in_millis());
+                    blocks_propagation_queue.put(block_hash.clone(), None);
                 }
 
                 let block_height = header.get_height();
@@ -2676,6 +2691,14 @@ impl<S: Storage> P2pServer<S> {
         &self.peer_list
     }
 
+    // Retrieve at which timestamp the block got finally started to be finally executed
+    pub async fn get_block_propagation_timestamp(&self, hash: &Hash) -> Option<TimestampMillis> {
+        let blocks_propagation_queue = self.blocks_propagation_queue.lock().await;
+        blocks_propagation_queue.peek(hash)
+            .copied()
+            .flatten()
+    }
+
     // Broadcast a new transaction hash using propagation packet
     // This is used so we don't overload the network during spam or high transactions count
     // We simply share its hash to nodes and others nodes can check if they have it already or not
@@ -2762,7 +2785,7 @@ impl<S: Storage> P2pServer<S> {
                             sent_at: get_current_time_in_millis()
                         }
                     };
-                    blocks_propagation.put(hash.clone(), direction);
+                    blocks_propagation.put(hash.clone(), (direction, false));
 
                     debug!("Broadcast {} to {} (lock: {})", hash, peer, lock);
                     if let Err(e) = peer.send_bytes(packet_block_bytes.clone()).await {

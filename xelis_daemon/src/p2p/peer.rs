@@ -131,7 +131,7 @@ pub struct Peer {
     // All transactions propagated from/to this peer
     txs_cache: Mutex<LruCache<Hash, Direction>>,
     // last blocks propagated to/from this peer
-    blocks_propagation: Mutex<LruCache<Hash, TimedDirection>>,
+    blocks_propagation: Mutex<LruCache<Hash, (TimedDirection, bool)>>,
     // last time we got an inventory packet from this peer
     last_inventory: AtomicU64,
     // if we requested this peer to send us an inventory notification
@@ -219,7 +219,7 @@ impl Peer {
     }
 
     // Get all blocks propagated from/to this peer
-    pub fn get_blocks_propagation(&self) -> &Mutex<LruCache<Hash, TimedDirection>> {
+    pub fn get_blocks_propagation(&self) -> &Mutex<LruCache<Hash, (TimedDirection, bool)>> {
         &self.blocks_propagation
     }
 
