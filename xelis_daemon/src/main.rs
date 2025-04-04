@@ -200,15 +200,22 @@ async fn main() -> Result<()> {
                 return Ok(());
             }
 
-            let mut file = File::create(path).context("Error while creating config file")?;
-            let json = serde_json::to_string_pretty(&config).context("Error while serializing config file")?;
-            file.write_all(json.as_bytes()).context("Error while writing config file")?;
+            let mut file = File::create(path)
+                .context("Error while creating config file")?;
+            let json = serde_json::to_string_pretty(&config)
+                .context("Error while serializing config file")?;
+
+            file.write_all(json.as_bytes())
+                .context("Error while writing config file")?;
+
             println!("Config file template generated at {}", path);
             return Ok(());
         }
 
-        let file = File::open(path).context("Error while opening config file")?;
-        config = serde_json::from_reader(file).context("Error while reading config file")?;
+        let file = File::open(path)
+            .context("Error while opening config file")?;
+        config = serde_json::from_reader(file)
+            .context("Error while reading config file")?;
     } else if config.generate_config_template {
         eprintln!("Provided config file path is required to generate the template with --config-file");
         return Ok(());

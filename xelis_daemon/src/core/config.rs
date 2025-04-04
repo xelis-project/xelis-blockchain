@@ -1,3 +1,4 @@
+use std::thread;
 use serde::{Deserialize, Serialize};
 use xelis_common::crypto::Hash;
 use crate::{
@@ -37,6 +38,16 @@ fn default_p2p_concurrency_task_count_limit() -> usize {
 
 fn default_getwork_rate_limit_ms() -> u64 {
     0
+}
+
+fn default_txs_threads_count() -> usize {
+    match thread::available_parallelism() {
+        Ok(n) => {
+            let v = n.get();
+            v
+        },
+        Err(_) => 1
+    }
 }
 
 #[derive(Debug, Clone, clap::Args, Serialize, Deserialize)]
@@ -182,19 +193,16 @@ pub struct Config {
     /// This is useful for testing and development.
     #[clap(long)]
     pub genesis_block_hex: Option<String>,
-    /// Blocks hahes checkpoints
+    /// Blocks hashes checkpoints
     /// No rewind can go below any of those checkpoints
     #[serde(default)]
     pub checkpoints: Vec<Hash>,
-    /// Disable multi-threading for TXs verifications
-    #[clap(long)]
-    #[serde(default)]
-    pub disable_multi_threads_txs: bool,
-    /// Set the multi-threading threads count to use during TXs verifications.
+    /// Set the threads count to use during TXs verifications.
     /// By default, will detect the best value.
-    /// Unused if multi-thread is disabled.
-    #[clap(long)]
-    pub txs_threads_count: Option<usize>,
+    /// If set to 1, it will use the main thread.
+    #[clap(long, default_value_t = default_txs_threads_count())]
+    #[serde(default = "default_txs_threads_count")]
+    pub txs_verification_threads_count: usize,
     /// Enable the DB integrity check that happen on chain initialization.
     /// This may take some times on huge DB as it's iterating through all versioned data
     /// to verify that no pointer or version is above our current topoheight.

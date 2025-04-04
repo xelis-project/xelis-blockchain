@@ -114,8 +114,7 @@ use std::{
         atomic::{AtomicU64, Ordering},
         Arc
     },
-    time::Instant,
-    thread
+    time::Instant
 };
 use tokio::{
     net::lookup_host,
@@ -177,9 +176,11 @@ pub struct Blockchain<S: Storage> {
     // Blocks hashes checkpoints
     // No rewind can be done below these blocks
     checkpoints: HashSet<Hash>,
-    // Best threads count to use for multi threading
-    // If none, its disabled
-    txs_threads_count: Option<usize>,
+    // Threads count to use during a block verification
+    // If more than one thread is used, it will use batch TXs
+    // in differents groups and will verify them in parallel
+    // If set to one, it will use the main thread directly
+    txs_verification_threads_count: usize,
 }
 
 impl<S: Storage> Blockchain<S> {
@@ -213,6 +214,13 @@ impl<S: Storage> Blockchain<S> {
             if config.skip_pow_verification {
                 warn!("PoW verification is disabled! This is dangerous in production!");
             }
+
+            if config.txs_verification_threads_count == 0 {
+                error!("TXs threads count must be above 0");
+                return Err(BlockchainError::InvalidConfig.into());
+            } else {
+                info!("Will use {} threads for TXs verification", config.txs_verification_threads_count);
+            }
         }
 
         let on_disk = storage.has_blocks().await;
@@ -225,33 +233,6 @@ impl<S: Storage> Blockchain<S> {
         } else { (0, 0) };
 
         let environment = build_environment::<S>().build();
-
-        let txs_threads_count = if let Some(n) = config.txs_threads_count {
-            if n == 0 {
-                error!("TXs threads count cannot be set to zero!");
-                return Err(BlockchainError::InvalidConfig.into());
-            }
-            Some(n)
-        } else if !config.disable_multi_threads_txs {
-            match thread::available_parallelism() {
-                Ok(n) => {
-                    info!("Detected {} threads for TXs multi-threading", n);
-                    let v = n.get();
-                    if v > 1 {
-                        Some(v)
-                    } else {
-                        warn!("fallback to single thread mode");
-                        None
-                    }
-                },
-                Err(e) => {
-                    warn!("Error while detecting best threads count for TXs: {}, fallback to single thread mode", e);
-                    None
-                }
-            }
-        } else {
-            None
-        };
 
         info!("Initializing chain...");
         let blockchain = Self {
@@ -275,7 +256,7 @@ impl<S: Storage> Blockchain<S> {
             auto_prune_keep_n_blocks: config.auto_prune_keep_n_blocks,
             skip_block_template_txs_verification: config.skip_block_template_txs_verification,
             checkpoints: config.checkpoints.into_iter().collect(),
-            txs_threads_count
+            txs_verification_threads_count: config.txs_verification_threads_count
         };
 
         // include genesis block
@@ -396,8 +377,8 @@ impl<S: Storage> Blockchain<S> {
     }
 
     // Get the configured threads count for TXS
-    pub fn get_threads_count_for_txs(&self) -> Option<usize> {
-        self.txs_threads_count
+    pub fn get_txs_verification_threads_count(&self) -> usize {
+        self.txs_verification_threads_count
     }
 
     // Stop all blockchain modules
@@ -1920,11 +1901,11 @@ impl<S: Storage> Blockchain<S> {
                 let start = Instant::now();
                 // If multi thread is enabled and we have more than one source
                 // Otherwise its not worth-it to move it on another thread
-                if let Some(n_threads) = self.txs_threads_count.filter(|_| txs_grouped.len() > 1 && is_multi_threads_supported()) {
+                if self.txs_verification_threads_count > 1 && is_multi_threads_supported() {
                     let mut batches_count = txs_grouped.len();
-                    if batches_count > n_threads {
-                        debug!("Batches count ({}) is above configured threads ({}), capping it", batches_count, n_threads);
-                        batches_count = n_threads;
+                    if batches_count > self.txs_verification_threads_count {
+                        debug!("Batches count ({}) is above configured threads ({}), capping it", batches_count, self.txs_verification_threads_count);
+                        batches_count = self.txs_verification_threads_count;
                     }
 
                     debug!("using multi-threading mode to verify the transactions in {} batches", batches_count);
