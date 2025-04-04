@@ -178,12 +178,28 @@ pub struct P2pServer<S: Storage> {
 }
 
 impl<S: Storage> P2pServer<S> {
-    pub fn new(concurrency: usize, dir_path: Option<String>, tag: Option<String>, max_peers: usize, bind_address: String, blockchain: Arc<Blockchain<S>>, use_peerlist: bool, exclusive_nodes: Vec<SocketAddr>, allow_fast_sync_mode: bool, allow_boost_sync_mode: bool, max_chain_response_size: Option<usize>, sharable: bool, disable_outgoing_connections: bool, dh_keypair: Option<diffie_hellman::DHKeyPair>, dh_action: diffie_hellman::KeyVerificationAction) -> Result<Arc<Self>, P2pError> {
+    pub fn new(
+        concurrency: usize,
+        dir_path: Option<String>,
+        tag: Option<String>,
+        max_peers: usize,
+        bind_address: String,
+        blockchain: Arc<Blockchain<S>>,
+        use_peerlist: bool,
+        exclusive_nodes: Vec<SocketAddr>,
+        allow_fast_sync_mode: bool,
+        allow_boost_sync_mode: bool,
+        max_chain_response_size: usize,
+        sharable: bool,
+        disable_outgoing_connections: bool,
+        dh_keypair: Option<diffie_hellman::DHKeyPair>,
+        dh_action: diffie_hellman::KeyVerificationAction
+    ) -> Result<Arc<Self>, P2pError> {
         if tag.as_ref().is_some_and(|tag| tag.len() == 0 || tag.len() > 16) {
             return Err(P2pError::InvalidTag);
         }
 
-        if max_chain_response_size.is_some_and(|size| size < CHAIN_SYNC_RESPONSE_MIN_BLOCKS || size > CHAIN_SYNC_RESPONSE_MAX_BLOCKS) {
+        if max_chain_response_size < CHAIN_SYNC_RESPONSE_MIN_BLOCKS || max_chain_response_size > CHAIN_SYNC_RESPONSE_MAX_BLOCKS {
             return Err(P2pError::InvalidMaxChainResponseSize);
         }
 
@@ -226,7 +242,7 @@ impl<S: Storage> P2pServer<S> {
             txs_processor,
             allow_fast_sync_mode,
             allow_boost_sync_mode,
-            max_chain_response_size: max_chain_response_size.unwrap_or(CHAIN_SYNC_DEFAULT_RESPONSE_BLOCKS),
+            max_chain_response_size,
             exclusive_nodes: IndexSet::from_iter(exclusive_nodes.into_iter()),
             sharable,
             is_syncing: AtomicBool::new(false),

@@ -7,7 +7,8 @@ use crate::{
         DEFAULT_P2P_BIND_ADDRESS,
         DEFAULT_RPC_BIND_ADDRESS,
         P2P_DEFAULT_CONCURRENCY_TASK_COUNT_LIMIT,
-        P2P_DEFAULT_MAX_PEERS
+        P2P_DEFAULT_MAX_PEERS,
+        CHAIN_SYNC_DEFAULT_RESPONSE_BLOCKS
     },
     p2p::diffie_hellman::{KeyVerificationAction, WrappedSecret}
 };
@@ -36,6 +37,10 @@ fn default_p2p_concurrency_task_count_limit() -> usize {
     P2P_DEFAULT_CONCURRENCY_TASK_COUNT_LIMIT
 }
 
+fn default_chain_sync_response_blocks() -> usize {
+    CHAIN_SYNC_DEFAULT_RESPONSE_BLOCKS
+}
+
 fn default_getwork_rate_limit_ms() -> u64 {
     0
 }
@@ -59,7 +64,7 @@ pub struct RPCConfig {
     /// Set the rate limit for GetWork server in milliseconds.
     /// In case of high transactions added in mempool, new jobs are rate limited.
     #[serde(default = "default_getwork_rate_limit_ms")]
-    #[clap(long, default_value_t = 0)]
+    #[clap(long, default_value_t = default_getwork_rate_limit_ms())]
     pub getwork_rate_limit_ms: u64,
     /// Disable RPC Server
     /// This will also disable the GetWork Server as it is loaded on RPC server.
@@ -67,7 +72,7 @@ pub struct RPCConfig {
     #[serde(default)]
     pub disable_rpc_server: bool,
     /// Rpc bind address to listen for HTTP requests
-    #[clap(long, default_value_t = String::from(DEFAULT_RPC_BIND_ADDRESS))]
+    #[clap(long, default_value_t = default_rpc_bind_address())]
     #[serde(default = "default_rpc_bind_address")]
     pub rpc_bind_address: String,
     /// Number of workers to spawn for the HTTP server.
@@ -82,11 +87,11 @@ pub struct P2pConfig {
     #[clap(long)]
     pub tag: Option<String>,
     /// P2p bind address to listen for incoming connections
-    #[clap(long, default_value_t = String::from(DEFAULT_P2P_BIND_ADDRESS))]
+    #[clap(long, default_value_t = default_p2p_bind_address())]
     #[serde(default = "default_p2p_bind_address")]
     pub p2p_bind_address: String,
     /// Number of maximums peers allowed
-    #[clap(long, default_value_t = P2P_DEFAULT_MAX_PEERS)]
+    #[clap(long, default_value_t = default_max_peers())]
     #[serde(default = "default_max_peers")]
     pub max_peers: usize,
     /// Add a priority node to connect when P2p is started.
@@ -125,8 +130,9 @@ pub struct P2pConfig {
     /// 
     /// This is useful for low devices who want to reduce resources usage
     /// and for high-end devices who want to (or help others to) sync faster.
-    #[clap(long)]
-    pub max_chain_response_size: Option<usize>,
+    #[clap(long, default_value_t = default_chain_sync_response_blocks())]
+    #[serde(default = "default_chain_sync_response_blocks")]
+    pub max_chain_response_size: usize,
     /// Ask peers to not share our IP to others and/or through API.
     /// 
     /// This is useful for people that don't want that their IP is revealed in RPC API
@@ -143,7 +149,7 @@ pub struct P2pConfig {
     #[serde(default)]
     pub disable_p2p_outgoing_connections: bool,
     /// Limit of concurrent tasks accepting new incoming connections.
-    #[clap(long, default_value_t = P2P_DEFAULT_CONCURRENCY_TASK_COUNT_LIMIT)]
+    #[clap(long, default_value_t = default_p2p_concurrency_task_count_limit())]
     #[serde(default = "default_p2p_concurrency_task_count_limit")]
     pub p2p_concurrency_task_count_limit: usize,
     /// Execute a specific action when the P2p Diffie-Hellman Key of a peer is different from our stored one.

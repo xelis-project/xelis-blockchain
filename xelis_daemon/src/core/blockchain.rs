@@ -72,8 +72,7 @@ use xelis_vm::Environment;
 use crate::{
     config::{
         get_genesis_block_hash, get_hex_genesis_block, get_minimum_difficulty, get_difficulty_at_hard_fork,
-        BLOCK_TIME_MILLIS, CHAIN_SYNC_RESPONSE_MAX_BLOCKS, CHAIN_SYNC_RESPONSE_MIN_BLOCKS,
-        DEV_FEES, DEV_PUBLIC_KEY, EMISSION_SPEED_FACTOR, GENESIS_BLOCK_DIFFICULTY,
+        BLOCK_TIME_MILLIS, DEV_FEES, DEV_PUBLIC_KEY, EMISSION_SPEED_FACTOR, GENESIS_BLOCK_DIFFICULTY,
         MILLIS_PER_SECOND, SIDE_BLOCK_REWARD_MAX_BLOCKS, PRUNE_SAFETY_LIMIT,
         SIDE_BLOCK_REWARD_PERCENT, SIDE_BLOCK_REWARD_MIN_PERCENT, STABLE_LIMIT, TIMESTAMP_IN_FUTURE_LIMIT,
     },
@@ -199,13 +198,6 @@ impl<S: Storage> Blockchain<S> {
                 }
             }
 
-            if let Some(size) = config.p2p.max_chain_response_size {
-                if size < CHAIN_SYNC_RESPONSE_MIN_BLOCKS || size > CHAIN_SYNC_RESPONSE_MAX_BLOCKS {
-                    error!("Max chain response size should be in inclusive range of [{}-{}]", CHAIN_SYNC_RESPONSE_MIN_BLOCKS, CHAIN_SYNC_RESPONSE_MAX_BLOCKS);
-                    return Err(BlockchainError::ConfigMaxChainResponseSize.into())
-                }
-            }
-
             if config.p2p.allow_boost_sync && config.p2p.allow_fast_sync {
                 error!("Boost sync and fast sync can't be enabled at the same time!");
                 return Err(BlockchainError::ConfigSyncMode.into())
@@ -307,7 +299,23 @@ impl<S: Storage> Blockchain<S> {
                 }
             }
 
-            match P2pServer::new(config.p2p_concurrency_task_count_limit, dir_path, config.tag, config.max_peers, config.p2p_bind_address, Arc::clone(&arc), exclusive_nodes.is_empty(), exclusive_nodes, config.allow_fast_sync, config.allow_boost_sync, config.max_chain_response_size, !config.disable_ip_sharing, config.disable_p2p_outgoing_connections, config.p2p_private_key.map(|v| v.into()), config.p2p_on_dh_key_change) {
+            match P2pServer::new(
+                config.p2p_concurrency_task_count_limit,
+                dir_path,
+                config.tag,
+                config.max_peers,
+                config.p2p_bind_address,
+                Arc::clone(&arc),
+                exclusive_nodes.is_empty(),
+                exclusive_nodes,
+                config.allow_fast_sync,
+                config.allow_boost_sync,
+                config.max_chain_response_size,
+                !config.disable_ip_sharing,
+                config.disable_p2p_outgoing_connections,
+                config.p2p_private_key.map(|v| v.into()),
+                config.p2p_on_dh_key_change
+            ) {
                 Ok(p2p) => {
                     // connect to priority nodes
                     for addr in config.priority_nodes {
