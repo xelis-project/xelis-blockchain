@@ -2754,6 +2754,12 @@ impl<S: Storage> P2pServer<S> {
         let packet_block_bytes = Bytes::from(block_packet.to_bytes());
         let packet_ping_bytes = Bytes::from(Packet::Ping(Cow::Owned(ping)).to_bytes());
 
+        // Lock the block from being handled again as we are broadcasting it
+        if lock {
+            let mut blocks_propagation_queue = self.blocks_propagation_queue.lock().await;
+            blocks_propagation_queue.put(hash.clone(), Some(get_current_time_in_millis()));
+        }
+
         trace!("Locking peer list for broadcasting block {}", hash);
         trace!("start broadcasting block {} to all peers", hash);
         for peer in self.peer_list.get_cloned_peers().await {
