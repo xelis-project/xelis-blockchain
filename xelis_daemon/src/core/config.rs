@@ -175,7 +175,7 @@ pub struct Config {
     #[clap(long)]
     pub dir_path: Option<String>,
     /// Set LRUCache size (0 = disabled).
-    #[clap(long, default_value_t = DEFAULT_CACHE_SIZE)]
+    #[clap(long, default_value_t = default_cache_size())]
     #[serde(default = "default_cache_size")]
     pub cache_size: usize,
     /// Enable the simulator (skip PoW verification, generate a new block for every BLOCK_TIME).
