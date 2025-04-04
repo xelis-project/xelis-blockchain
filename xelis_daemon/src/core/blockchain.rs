@@ -1982,12 +1982,16 @@ impl<S: Storage> Blockchain<S> {
         // Save transactions & block
         let (block, txs) = block.split();
         let block = block.to_arc();
+
         debug!("Saving block {} on disk", block_hash);
         // Add block to chain
         storage.save_block(block.clone(), &txs, difficulty, p, block_hash.clone()).await?;
         storage.add_block_execution_to_order(&block_hash).await?;
 
+        debug!("Block {} saved on disk, compute cumulative difficulty", block_hash);
+
         // Compute cumulative difficulty for block
+        // We retrieve it to pass it as a param below for p2p broadcast
         let cumulative_difficulty = {
             let cumulative_difficulty: CumulativeDifficulty = if tips_count == 0 {
                 GENESIS_BLOCK_DIFFICULTY.into()
@@ -2002,6 +2006,31 @@ impl<S: Storage> Blockchain<S> {
             debug!("Cumulative difficulty for block {}: {}", block_hash, cumulative_difficulty);
             cumulative_difficulty
         };
+
+        // Broadcast to p2p nodes the block asap as its valid
+        if broadcast {
+            debug!("Broadcasting block");
+            if let Some(p2p) = self.p2p.read().await.as_ref() {
+                trace!("P2p locked, broadcasting in new task");
+                let p2p = p2p.clone();
+                let pruned_topoheight = storage.get_pruned_topoheight().await?;
+                let block = block.clone();
+                let block_hash = block_hash.clone();
+                spawn_task("broadcast-block", async move {
+                    p2p.broadcast_block(
+                        &block,
+                        cumulative_difficulty,
+                        current_topoheight,
+                        current_height,
+                        pruned_topoheight,
+                        &block_hash,
+                        mining
+                    ).await;
+                });
+            }
+        } else {
+            debug!("Not broadcasting block {} because broadcast is disabled", block_hash);
+        }
 
         let mut tips = storage.get_tips().await?;
         tips.insert(block_hash.clone());
@@ -2559,21 +2588,6 @@ impl<S: Storage> Blockchain<S> {
         }
 
         info!("Processed block {} at height {} in {}ms with {} txs (DAG: {})", block_hash, block.get_height(), start.elapsed().as_millis(), block.get_txs_count(), block_is_ordered);
-
-        // Broadcast to p2p nodes
-        if broadcast {
-            trace!("Broadcasting block");
-            if let Some(p2p) = self.p2p.read().await.as_ref() {
-                trace!("P2p locked, broadcasting in new task");
-                let p2p = p2p.clone();
-                let pruned_topoheight = storage.get_pruned_topoheight().await?;
-                let block = block.clone();
-                let block_hash = block_hash.clone();
-                spawn_task("broadcast-block", async move {
-                    p2p.broadcast_block(&block, cumulative_difficulty, current_topoheight, current_height, pruned_topoheight, &block_hash, mining).await;
-                });
-            }
-        }
 
         // broadcast to websocket new block
         if let Some(rpc) = rpc_server.as_ref() {
