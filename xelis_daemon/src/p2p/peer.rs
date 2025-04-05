@@ -423,9 +423,10 @@ impl Peer {
             res = timeout(Duration::from_millis(PEER_TIMEOUT_REQUEST_OBJECT), receiver) => match res {
                 Ok(res) => res?,
                 Err(e) => {
-                    trace!("Requested data has timed out");
+                    warn!("Requested data {} has timed out", request);
                     let mut objects = self.objects_requested.lock().await;
-                    objects.remove(&request); // remove it from request list
+                    // remove it from request list
+                    objects.remove(&request);
                     return Err(P2pError::AsyncTimeOut(e));
                 }
             }
