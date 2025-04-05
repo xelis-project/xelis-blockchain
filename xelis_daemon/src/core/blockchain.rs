@@ -2565,14 +2565,9 @@ impl<S: Storage> Blockchain<S> {
                     }
                 };
 
-                // Clone only if its necessary
-                if !orphan_event_tracked {
-                    if let Err(e) = self.add_tx_to_mempool_with_storage_and_hash(storage, tx, tx_hash, false).await {
-                        warn!("Error while adding back orphaned tx: {}", e);
-                    }
-                } else {
-                    if let Err(e) = self.add_tx_to_mempool_with_storage_and_hash(storage, tx.clone(), tx_hash.clone(), false).await {
-                        warn!("Error while adding back orphaned tx: {}, broadcasting event", e);
+                if let Err(e) = self.add_tx_to_mempool_with_storage_and_hash(storage, tx.clone(), tx_hash.clone(), false).await {
+                    warn!("Error while adding back orphaned tx {}: {}", tx_hash, e);
+                    if !orphan_event_tracked {
                         // We couldn't add it back to mempool, let's notify this event
                         let data = RPCTransaction::from_tx(&tx, &tx_hash, storage.is_mainnet());
                         let data = TransactionResponse {
