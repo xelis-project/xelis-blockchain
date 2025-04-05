@@ -126,6 +126,16 @@ pub struct P2pConfig {
     #[clap(long)]
     #[serde(default)]
     pub allow_boost_sync: bool,
+    /// Allow blocks coming from priority nodes to be fast forwarded to our peers.
+    /// 
+    /// Propagate a new block to our peers as soon as we receive it from a priority node before verifying it ourself.
+    /// This reduces the time to propagate a new block to our peers.
+    /// Useful for pools operating having several nodes across the world to propagate their blocks faster.
+    /// 
+    /// By default, this is disabled.
+    #[clap(long)]
+    #[serde(default)]
+    pub allow_priority_blocks: bool,
     /// Configure the maximum chain response size.
     /// 
     /// This is useful for low devices who want to reduce resources usage

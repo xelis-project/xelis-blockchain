@@ -169,6 +169,12 @@ pub struct P2pServer<S: Storage> {
     // Do we try to connect to others nodes
     // If this is enabled, only way to have peers is to let them connect to us
     outgoing_connections_disabled: AtomicBool,
+    // Should we propagate the blocks from priority nodes
+    // before checking them
+    // This is useful for faster propagation through the network
+    // if we trust a peer and want to propagate its blocks asap
+    // Example: pools having several nodes want to propagate them faster
+    allow_priority_blocks: bool,
     // Are we syncing the chain with another peer
     is_syncing: AtomicBool,
     // Current syncing rate in BPS
@@ -193,6 +199,7 @@ impl<S: Storage> P2pServer<S> {
         exclusive_nodes: Vec<SocketAddr>,
         allow_fast_sync_mode: bool,
         allow_boost_sync_mode: bool,
+        allow_priority_blocks: bool,
         max_chain_response_size: usize,
         sharable: bool,
         disable_outgoing_connections: bool,
@@ -249,6 +256,7 @@ impl<S: Storage> P2pServer<S> {
             max_chain_response_size,
             exclusive_nodes: IndexSet::from_iter(exclusive_nodes.into_iter()),
             sharable,
+            allow_priority_blocks,
             is_syncing: AtomicBool::new(false),
             syncing_rate_bps: AtomicU64::new(0),
             outgoing_connections_disabled: AtomicBool::new(disable_outgoing_connections),
@@ -1729,9 +1737,35 @@ impl<S: Storage> P2pServer<S> {
                     blocks_propagation_queue.put(block_hash.clone(), None);
                 }
 
-                let block_height = header.get_height();
-                debug!("Received block at height {} from {}", block_height, peer);
+                debug!("Received block at height {} from {}", header.get_height(), peer);
+                if self.allow_priority_blocks && peer.is_priority() {
+                    debug!("fast propagating block {} from {}", block_hash, peer);
+
+                    let zelf = Arc::clone(self);
+                    let block_hash = block_hash.clone();
+                    let header = header.clone();
+
+                    spawn_task("p2p-broadcast-priority-block", async move {
+                        debug!("building generic ping packet for priority block");
+                        match zelf.build_generic_ping_packet().await {
+                            Ok(ping) => {
+                                debug!("broadcasting priority block {} with ping packet to all peers", block_hash);
+                                zelf.broadcast_block_with_ping(
+                                    &header,
+                                    ping,
+                                    &block_hash,
+                                    false
+                                ).await;
+                            },
+                            Err(e) => {
+                                error!("Error while trying to broadcast priority block {}: {}", block_hash, e);
+                            }
+                        }
+                    });
+                }
+
                 let peer = Arc::clone(peer);
+
                 // This will block the task if the bounded channel is full
                 if let Err(e) = self.blocks_processor.send((peer, header, block_hash)).await {
                     error!("Error while sending block propagated to blocks processor task: {}", e);

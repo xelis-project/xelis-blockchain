@@ -310,6 +310,7 @@ impl<S: Storage> Blockchain<S> {
                 exclusive_nodes,
                 config.allow_fast_sync,
                 config.allow_boost_sync,
+                config.allow_priority_blocks,
                 config.max_chain_response_size,
                 !config.disable_ip_sharing,
                 config.disable_p2p_outgoing_connections,
