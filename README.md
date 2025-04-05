@@ -362,7 +362,7 @@ Current overhead per block:
 - Tree `difficulty` saving Difficulty value of a block (up to 33 bytes) using Hash (32 bytes) key.
 - Tree `cumulative_difficulty` saving the cumulative difficulty value (up to 33 bytes) of a topoheight (8 bytes).
 - Tree `rewards` saving block reward value (8 bytes) using topoheight (8 bytes) key.
-- Tree `supply` saving current circulating supply value (8 bytes) using topoheight (8 bytes) key.
+- Tree `supply` saving current emitted supply value (8 bytes) using topoheight (8 bytes) key.
 - Tree `versioned_balances` is updated at each block (for miner rewards), and also for each account that had interactions (transactions): 72 bytes for key and 16 bytes for value.
 - Tree `versioned_nonces` is updated for each account that send at least one TX per topoheight: 40 bytes for key and 16 bytes for value
 
