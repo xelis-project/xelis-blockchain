@@ -1095,7 +1095,7 @@ async fn status<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Res
     let tips = storage.get_tips().await.context("Error while retrieving tips")?;
     let top_block_hash = blockchain.get_top_block_hash_for_storage(&storage).await.context("Error while retrieving top block hash")?;
     let avg_block_time = blockchain.get_average_block_time::<S>(&storage).await.context("Error while retrieving average block time")?;
-    let supply = storage.get_supply_at_topo_height(topoheight).await.context("Error while retrieving supply")?;
+    let emitted_supply = storage.get_supply_at_topo_height(topoheight).await.context("Error while retrieving supply")?;
     let burned_supply = storage.get_burned_supply_at_topo_height(topoheight).await.context("Error while retrieving burned supply")?;
     let accounts_count = storage.count_accounts().await.context("Error while counting accounts")?;
     let transactions_count = storage.count_transactions().await.context("Error while counting transactions")?;
@@ -1114,9 +1114,10 @@ async fn status<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Res
     manager.message(format!("Top block hash: {}", top_block_hash));
     manager.message(format!("Average Block Time: {:.2}s", avg_block_time as f64 / MILLIS_PER_SECOND as f64));
     manager.message(format!("Target Block Time: {:.2}s", BLOCK_TIME_MILLIS as f64 / MILLIS_PER_SECOND as f64));
-    manager.message(format!("Current Supply: {} XELIS", format_xelis(supply)));
+    manager.message(format!("Emitted Supply: {} XELIS", format_xelis(emitted_supply)));
     manager.message(format!("Burned Supply: {} XELIS", format_xelis(burned_supply)));
-    manager.message(format!("Current Block Reward: {} XELIS", format_xelis(get_block_reward(supply))));
+    manager.message(format!("Circulating Supply: {} XELIS", format_xelis(emitted_supply - burned_supply)));
+    manager.message(format!("Current Block Reward: {} XELIS", format_xelis(get_block_reward(emitted_supply))));
     manager.message(format!("Accounts/Transactions/Blocks/Assets/Contracts: {}/{}/{}/{}/{}", accounts_count, transactions_count, blocks_count, assets, contracts));
     manager.message(format!("Block Version: {}", version));
     manager.message(format!("POW Algorithm: {}", get_pow_algorithm_for_version(version)));

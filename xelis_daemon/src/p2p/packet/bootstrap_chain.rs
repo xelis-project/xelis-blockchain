@@ -44,7 +44,7 @@ pub const MAX_ITEMS_PER_PAGE: usize = 1024;
 pub struct BlockMetadata {
     // Hash of the block
     pub hash: Hash,
-    // Circulating supply
+    // Emitted supply
     pub supply: u64,
     // Burned supply
     pub burned_supply: u64,

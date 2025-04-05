@@ -2952,7 +2952,7 @@ pub fn side_block_reward_percentage(side_blocks: u64) -> u64 {
     side_block_percent
 }
 
-// Calculate the block reward based on the current supply
+// Calculate the block reward based on the emitted supply
 pub fn get_block_reward(supply: u64) -> u64 {
     // Prevent any overflow
     if supply >= MAXIMUM_SUPPLY {
