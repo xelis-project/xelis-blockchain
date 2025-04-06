@@ -61,7 +61,7 @@ where
     pub async fn new(bind_address: String, rpc_handler: RPCHandler<W>, auth_config: Option<AuthConfig>, threads: Option<usize>) -> Result<WalletRpcServerShared<W>> {
         let server = Arc::new(Self {
             handle: Mutex::new(None),
-            websocket: WebSocketServer::new(EventWebSocketHandler::new(rpc_handler)),
+            websocket: WebSocketServer::new(EventWebSocketHandler::new(rpc_handler, 0)),
             auth_config
         });
 
