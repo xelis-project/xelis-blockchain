@@ -15,6 +15,7 @@ pub use encryption::EncryptionKey;
 
 use futures::{
     stream::{self, FuturesOrdered},
+    Stream,
     StreamExt,
     TryStreamExt
 };
@@ -1596,23 +1597,24 @@ impl<S: Storage> P2pServer<S> {
     // But they may not already shared their peerlist about us so they don't know we are
     // a common peer between them two, which result in false positive in our case and they send
     // us both the same object
-    async fn get_common_peers_for(&self, peer: &Arc<Peer>) -> Vec<Arc<Peer>> {
+    async fn get_common_peers_for<'a>(&'a self, peer: &'a Arc<Peer>) -> impl Stream<Item = Arc<Peer>> + 'a {
         debug!("get common peers for {}", peer);
         trace!("locked peer_list, locking peers received (common peers)");
-        let peer_peers = peer.get_peers().lock().await;
+        let peer_peers = {
+            let lock = peer.get_peers().lock().await;
+            lock.clone()
+        };
         trace!("locked peers received (common peers)");
 
-        let mut common_peers = Vec::new();
-        for (common_peer_addr, _) in peer_peers.iter().filter(|(_, direction)| direction.is_both()) {
-            // if we have a common peer with him
-            if let Some(common_peer) = self.peer_list.get_peer_by_addr(common_peer_addr).await {
-                if peer.get_id() != common_peer.get_id() {
-                    common_peers.push(common_peer);
+        let peer_id = peer.get_id();
+        stream::iter(peer_peers)
+            .filter_map(move |(addr, _)| {
+                let peer_list = Arc::clone(&self.peer_list);
+                async move {
+                    peer_list.get_peer_by_addr(&addr).await
+                        .filter(|peer| peer.get_id() != peer_id)
                 }
-            }
-        }
-
-        common_peers
+            })
     }
 
     // Main function used by every nodes connections
@@ -1655,7 +1657,7 @@ impl<S: Storage> P2pServer<S> {
                 // Avoid sending the TX propagated to a common peer
                 // because we track peerlist of each peers, we can try to determinate it
                 // iterate over all common peers of this peer broadcaster
-                stream::iter(self.get_common_peers_for(&peer).await)
+                self.get_common_peers_for(&peer).await
                     .for_each_concurrent(self.stream_concurrency, |common_peer| {
                         let hash = hash.clone();
                         async move {
@@ -1718,7 +1720,7 @@ impl<S: Storage> P2pServer<S> {
 
                 // Avoid sending the same block to a common peer that may have already got it
                 // because we track peerlist of each peers, we can try to determinate it
-                stream::iter(self.get_common_peers_for(&peer).await)
+                self.get_common_peers_for(&peer).await
                     .for_each_concurrent(self.stream_concurrency, |common_peer| {
                         let block_hash = block_hash.clone();
                         async move {
