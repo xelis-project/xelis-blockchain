@@ -778,7 +778,7 @@ impl Storage for SledStorage {
             let (hash, block, block_txs) = self.delete_block_at_topoheight(topoheight).await?;
             self.delete_versioned_data_at_topoheight(topoheight).await?;
 
-            trace!("Block {} at topoheight {} deleted", hash, topoheight);
+            debug!("Block {} at topoheight {} deleted", hash, topoheight);
             txs.extend(block_txs);
 
             // generate new tips

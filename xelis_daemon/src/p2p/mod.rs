@@ -1664,8 +1664,11 @@ impl<S: Storage> P2pServer<S> {
                         async move {
                             debug!("{} is a common peer with {}, adding TX {} to its cache", common_peer, peer, hash);
                             let mut txs_cache = common_peer.get_txs_cache().lock().await;
-                            // Set it as Out so we don't send it anymore but we can get it one time in case of bad common peer prediction
-                            txs_cache.put(hash.clone(), (Direction::In, true));
+                            if !txs_cache.contains(&hash) {
+                                debug!("Adding TX {} to common peer {} cache", hash, common_peer);
+                                // Set it as Out so we don't send it anymore but we can get it one time in case of bad common peer prediction
+                                txs_cache.put(hash.clone(), (Direction::In, true));
+                            }
                         }
                     }).await;
 
@@ -1729,8 +1732,11 @@ impl<S: Storage> P2pServer<S> {
                         async move {
                             debug!("{} is a common peer with {}, adding block {} to its cache", common_peer, peer, block_hash);
                             let mut blocks_propagation = common_peer.get_blocks_propagation().lock().await;
-                            // Out allow to get "In" again, because it's a prediction, don't block it completely
-                            blocks_propagation.put(block_hash, (direction, true));
+                            if !blocks_propagation.contains(&block_hash) {
+                                debug!("Adding block {} to common peer {} cache", block_hash, common_peer);
+                                // Out allow to get "In" again, because it's a prediction, don't block it completely
+                                blocks_propagation.put(block_hash, (direction, true));
+                            }
                         }
                     }).await;
 
