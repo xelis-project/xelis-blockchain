@@ -144,6 +144,10 @@ impl<'a> Ping<'a> {
         self.height
     }
 
+    pub fn set_height(&mut self, height: u64) {
+        self.height = height;
+    }
+
     pub fn get_topoheight(&self) -> u64 {
         self.topoheight
     }

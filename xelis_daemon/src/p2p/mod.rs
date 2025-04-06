@@ -1700,6 +1700,8 @@ impl<S: Storage> P2pServer<S> {
                 let header = header.into_owned();
                 let block_hash = header.hash();
 
+                trace!("Received block {}", block_hash);
+
                 // verify that this block wasn't already sent by him
                 let direction = TimedDirection::In {
                     received_at: get_current_time_in_millis()
@@ -1761,7 +1763,10 @@ impl<S: Storage> P2pServer<S> {
                     spawn_task("p2p-broadcast-priority-block", async move {
                         debug!("building generic ping packet for priority block");
                         match zelf.build_generic_ping_packet().await {
-                            Ok(ping) => {
+                            Ok(mut ping) => {
+                                // We provide the highest height available
+                                ping.set_height(header.get_height().max(ping.get_height()));
+
                                 debug!("broadcasting priority block {} with ping packet to all peers", block_hash);
                                 zelf.broadcast_block_with_ping(
                                     &header,

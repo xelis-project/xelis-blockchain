@@ -2046,7 +2046,7 @@ impl<S: Storage> Blockchain<S> {
                         &block,
                         cumulative_difficulty,
                         current_topoheight,
-                        current_height,
+                        current_height.max(block.get_height()),
                         pruned_topoheight,
                         &block_hash,
                         mining
