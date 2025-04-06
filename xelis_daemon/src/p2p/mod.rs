@@ -185,6 +185,9 @@ pub struct P2pServer<S: Storage> {
     dh_keypair: diffie_hellman::DHKeyPair,
     // Diffie-Hellman key verification action
     dh_action: diffie_hellman::KeyVerificationAction,
+    // Current stream concurrency to use
+    // This is used to limit the number of concurrency tasks in a stream
+    stream_concurrency: usize,
 }
 
 impl<S: Storage> P2pServer<S> {
@@ -262,7 +265,8 @@ impl<S: Storage> P2pServer<S> {
             outgoing_connections_disabled: AtomicBool::new(disable_outgoing_connections),
             exit_sender,
             dh_keypair: dh_keypair.unwrap_or_else(diffie_hellman::DHKeyPair::new),
-            dh_action
+            dh_action,
+            stream_concurrency: 8
         };
 
         let arc = Arc::new(server);
@@ -1651,12 +1655,16 @@ impl<S: Storage> P2pServer<S> {
                 // Avoid sending the TX propagated to a common peer
                 // because we track peerlist of each peers, we can try to determinate it
                 // iterate over all common peers of this peer broadcaster
-                for common_peer in self.get_common_peers_for(&peer).await {
-                    debug!("{} is a common peer with {}, adding TX {} to its cache", common_peer, peer, hash);
-                    let mut txs_cache = common_peer.get_txs_cache().lock().await;
-                    // Set it as Out so we don't send it anymore but we can get it one time in case of bad common peer prediction
-                    txs_cache.put(hash.clone(), Direction::Out);
-                }
+                stream::iter(self.get_common_peers_for(&peer).await)
+                    .for_each_concurrent(self.stream_concurrency, |common_peer| {
+                        let hash = hash.clone();
+                        async move {
+                            debug!("{} is a common peer with {}, adding TX {} to its cache", common_peer, peer, hash);
+                            let mut txs_cache = common_peer.get_txs_cache().lock().await;
+                            // Set it as Out so we don't send it anymore but we can get it one time in case of bad common peer prediction
+                            txs_cache.put(hash.clone(), Direction::Out);
+                        }
+                    }).await;
 
                 // Check that the tx is not in mempool or on disk already
                 if self.blockchain.has_tx(&hash).await? {
@@ -1710,14 +1718,16 @@ impl<S: Storage> P2pServer<S> {
 
                 // Avoid sending the same block to a common peer that may have already got it
                 // because we track peerlist of each peers, we can try to determinate it
-                for common_peer in self.get_common_peers_for(&peer).await {
-                    debug!("{} is a common peer with {}, adding block {} to its propagation cache", common_peer, peer, block_hash);
-                    let mut blocks_propagation = common_peer.get_blocks_propagation().lock().await;
-                    // Out allow to get "In" again, because it's a prediction, don't block it completely
-                    if !blocks_propagation.contains(&block_hash) {
-                        blocks_propagation.put(block_hash.clone(), (direction, true));
-                    }
-                }
+                stream::iter(self.get_common_peers_for(&peer).await)
+                    .for_each_concurrent(self.stream_concurrency, |common_peer| {
+                        let block_hash = block_hash.clone();
+                        async move {
+                            debug!("{} is a common peer with {}, adding block {} to its cache", common_peer, peer, block_hash);
+                            let mut blocks_propagation = common_peer.get_blocks_propagation().lock().await;
+                            // Out allow to get "In" again, because it's a prediction, don't block it completely
+                            blocks_propagation.put(block_hash, (direction, true));
+                        }
+                    }).await;
 
                 // check that we don't have this block in our chain
                 {
@@ -2279,7 +2289,7 @@ impl<S: Storage> P2pServer<S> {
                     match storage.delete_block_with_hash(&hash).await {
                         Ok(block) => {
                             warn!("Block {} is already in chain but not in DAG, re-executing it", hash);
-                            self.blockchain.add_new_block(block, false, false).await?;
+                            self.blockchain.add_new_block_for_storage(&mut storage, block, false, false).await?;
                         },
                         Err(e) => {
                             // This shouldn't happen, but in case
@@ -2775,7 +2785,7 @@ impl<S: Storage> P2pServer<S> {
         let peers = self.peer_list.get_cloned_peers().await;
         trace!("Lock acquired for tx broadcast");
 
-        stream::iter(peers).for_each_concurrent(8, |peer| {
+        stream::iter(peers).for_each_concurrent(self.stream_concurrency, |peer| {
             let bytes = bytes.clone();
             let tx = tx.clone();
             async move {
@@ -2841,7 +2851,7 @@ impl<S: Storage> P2pServer<S> {
         trace!("start broadcasting block {} to all peers", hash);
         // Prepare all the futures to execute them in parallel
         stream::iter(self.peer_list.get_cloned_peers().await)
-            .for_each_concurrent(8, |peer| {
+            .for_each_concurrent(self.stream_concurrency, |peer| {
                 // We can't move them, but we can copy them as Bytes is cheap
                 let packet_block_bytes = packet_block_bytes.clone();
                 let packet_ping_bytes = packet_ping_bytes.clone();
