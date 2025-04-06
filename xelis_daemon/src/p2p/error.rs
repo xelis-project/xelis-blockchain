@@ -12,7 +12,7 @@ use tokio::{
     time::error::Elapsed
 };
 use xelis_common::{
-    api::daemon::TimedDirection,
+    api::daemon::{TimedDirection, Direction},
     crypto::Hash,
     serializer::ReaderError,
 };
@@ -91,8 +91,8 @@ pub enum P2pError {
     BlockPropagatedUnderStableHeight(Hash, u64),
     #[error("Block {} propagated is already tracked with direction {:?}", _0, _1)]
     AlreadyTrackedBlock(Hash, TimedDirection),
-    #[error("Transaction {} propagated is already tracked", _0)]
-    AlreadyTrackedTx(Hash),
+    #[error("Transaction {} propagated is already tracked with {:?}", _0, _1)]
+    AlreadyTrackedTx(Hash, Direction),
     #[error("Malformed chain request, received {} blocks id", _0)]
     MalformedChainRequest(usize),
     #[error("Received a unrequested chain response")]

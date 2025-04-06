@@ -1644,13 +1644,13 @@ impl<S: Storage> P2pServer<S> {
                 {
                     let mut txs_cache = peer.get_txs_cache().lock().await;
 
-                    if let Some(direction) = txs_cache.get_mut(&hash) {
-                        if !direction.update(Direction::In) {
-                            debug!("{} send us a transaction ({}) already tracked by him ({:?})", peer, hash, direction);
-                            // return Err(P2pError::AlreadyTrackedTx(hash))
+                    if let Some((direction, is_common)) = txs_cache.get_mut(&hash) {
+                        if !direction.update(Direction::In) && !*is_common {
+                            warn!("{} send us a transaction ({}) already tracked by him ({:?})", peer, hash, direction);
+                            return Err(P2pError::AlreadyTrackedTx(hash.as_ref().clone(), *direction))
                         }
                     } else {
-                        txs_cache.put(hash.clone(), Direction::In);
+                        txs_cache.put(hash.clone(), (Direction::In, false));
                     }
                 }
 
@@ -1664,7 +1664,7 @@ impl<S: Storage> P2pServer<S> {
                             debug!("{} is a common peer with {}, adding TX {} to its cache", common_peer, peer, hash);
                             let mut txs_cache = common_peer.get_txs_cache().lock().await;
                             // Set it as Out so we don't send it anymore but we can get it one time in case of bad common peer prediction
-                            txs_cache.put(hash.clone(), Direction::Out);
+                            txs_cache.put(hash.clone(), (Direction::In, true));
                         }
                     }).await;
 
@@ -2805,8 +2805,8 @@ impl<S: Storage> P2pServer<S> {
                         // check that we didn't already send this tx to this peer or that he don't already have it
                         if send {
                             trace!("Adding tx hash {} to cache for {}", tx, peer);
-                            // Set it as "In" so we can't get it back as we are the sender of it
-                            txs_cache.put(tx.clone(), Direction::In);
+                            // Set it as outgoing
+                            txs_cache.put(tx.clone(), (Direction::Out, false));
                         } else {
                             trace!("Peer {} already has tx hash {}, don't send it", peer, tx);
                         }
