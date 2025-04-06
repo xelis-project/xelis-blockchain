@@ -293,14 +293,26 @@ impl<S: Storage> Blockchain<S> {
             let mut exclusive_nodes: Vec<SocketAddr> = Vec::with_capacity(config.exclusive_nodes.len());
             for peer in config.exclusive_nodes {
                 for peer in peer.split(",") {
-                    let addr: SocketAddr = match peer.parse() {
-                        Ok(addr) => addr,
+                    match peer.parse() {
+                        Ok(addr) => {
+                            exclusive_nodes.push(addr);
+                        }
                         Err(e) => {
-                            error!("Error while parsing exclusive node address: {}", e);
+                            match lookup_host(&peer).await {
+                                Ok(it) => {
+                                    info!("Valid host found for {}", peer);
+                                    for addr in it {
+                                        info!("IP from DNS resolution: {}", addr);
+                                        exclusive_nodes.push(addr);
+                                    }
+                                },
+                                Err(e2) => {
+                                    error!("Error while parsing {} as exclusive node address: {}, {}", peer, e, e2);
+                                }
+                            };
                             continue;
                         }
                     };
-                    exclusive_nodes.push(addr);
                 }
             }
 
@@ -338,7 +350,7 @@ impl<S: Storage> Blockchain<S> {
                                             }
                                         },
                                         Err(e2) => {
-                                            error!("Error while parsing priority node address: {}, {}", e, e2);
+                                            error!("Error while parsing {} as priority node address: {}, {}", addr, e, e2);
                                         }
                                     };
                                     continue;

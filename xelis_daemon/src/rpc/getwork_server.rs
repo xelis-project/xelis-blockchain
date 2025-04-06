@@ -230,7 +230,10 @@ pub struct GetWorkServer<S: Storage> {
     last_notify: AtomicU64,
     // used to know if we can notify miners again
     is_job_dirty: AtomicBool,
-    // We can only notify miners every N ms
+    // We can only notify miners every N ms when a new job is available
+    // (When a new TX is received in mempool)
+    // This is used to avoid flooding the miners with notifications
+    // If the rate limit is set to 0, we can notify miners every time
     notify_rate_limit_ms: TimestampMillis,
     // Current limit for the number of miners to notify at the same time
     notify_job_concurrency: usize,
@@ -251,19 +254,24 @@ impl<S: Storage> GetWorkServer<S> {
 
         if notify_rate_limit_ms > 0 {
             let zelf = Arc::clone(&server);
-            spawn_task("getwork-notify-new-job", async move {
-                loop {
-                    sleep(Duration::from_millis(notify_rate_limit_ms)).await;
-                    if zelf.is_job_dirty.load(Ordering::SeqCst) {
-                        if let Err(e) = zelf.notify_new_job_rate_limited().await {
-                            error!("Error while notifying new job to miners: {}", e);
-                        }
-                    }
-                }
-            });
+            spawn_task("getwork-notifier", zelf.task_notifier());
         }
 
         server
+    }
+
+    // This function is used to notify miners every N ms
+    // It will check if the job is dirty, and if so, it will notify miners
+    // This is used to avoid flooding the miners with notifications
+    async fn task_notifier(self: Arc<Self>) {
+        loop {
+            sleep(Duration::from_millis(self.notify_rate_limit_ms)).await;
+            if self.is_job_dirty.load(Ordering::SeqCst) {
+                if let Err(e) = self.notify_new_job().await {
+                    error!("Error while notifying new job to miners: {}", e);
+                }
+            }
+        }
     }
 
     // Returns the number of miners connected to the getwork server
@@ -288,7 +296,7 @@ impl<S: Storage> GetWorkServer<S> {
             let (version, job, height, difficulty);
             // if we have a job in cache, and we are rate limited, we can send it
             // otherwise, we generate a new job
-            if let Some(hash) = hash.as_ref().filter(|_| self.is_rate_limited().0) {
+            if let Some(hash) = hash.as_ref().filter(|_| self.is_rate_limited()) {
                 let (header, diff) = mining_jobs.peek(hash).ok_or_else(|| {
                     error!("No mining job found! How is it possible ?");
                     InternalRpcError::InternalError("No mining job found")
@@ -477,22 +485,21 @@ impl<S: Storage> GetWorkServer<S> {
     // check if the last notify is older than the rate limit
     // if it's the case, we can notify miners
     // Returns a tuple with a boolean indicating if the rate limit is reached, and the current timestamp
-    fn is_rate_limited(&self) -> (bool, TimestampMillis) {
+    fn is_rate_limited(&self) -> bool {
         let now = get_current_time_in_millis();
         let last_notify = self.last_notify.load(Ordering::SeqCst);
-        (now - last_notify < self.notify_rate_limit_ms, now)
+        now - last_notify < self.notify_rate_limit_ms
     }
 
     // notify every miners connected to the getwork server
     // each miner have his own task so nobody wait on other
     pub async fn notify_new_job_rate_limited(&self) -> Result<(), InternalRpcError> {
-        let (rate_limit_reached, now) = self.is_rate_limited();
+        let rate_limit_reached = self.is_rate_limited();
         if rate_limit_reached {
             debug!("Rate limit reached, no need to notify miners");
             self.is_job_dirty.store(true, Ordering::SeqCst);
             return Ok(());
         }
-        self.last_notify.store(now, Ordering::SeqCst);
 
         self.notify_new_job().await
     }
@@ -522,6 +529,7 @@ impl<S: Storage> GetWorkServer<S> {
             empty
         };
 
+        self.last_notify.store(get_current_time_in_millis(), Ordering::SeqCst);
         self.is_job_dirty.store(false, Ordering::SeqCst);
         debug!("Notify all miners for a new job");
         let (header, difficulty) = {
