@@ -70,7 +70,7 @@ impl BlockProvider for SledStorage {
     }
 
     async fn save_block(&mut self, block: Arc<BlockHeader>, txs: &Vec<Immutable<Transaction>>, difficulty: Difficulty, p: VarUint, hash: Hash) -> Result<(), BlockchainError> {
-        debug!("Storing new {} with hash: {}, difficulty: {}", block, hash, difficulty);
+        debug!("Storing new {} with hash: {}, difficulty: {}, snapshot mode: {}", block, hash, difficulty, self.snapshot.is_some());
 
         // Store transactions
         let mut txs_count = 0;
