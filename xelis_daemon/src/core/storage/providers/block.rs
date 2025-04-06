@@ -101,9 +101,8 @@ impl BlockProvider for SledStorage {
 
         self.add_block_hash_at_height(hash.clone(), block.get_height()).await?;
 
-        if let Some(cache) = &self.blocks_cache {
-            let mut cache = cache.lock().await;
-            cache.put(hash, block);
+        if let Some(cache) = self.blocks_cache.as_mut() {
+            cache.get_mut().put(hash, block);
         }
 
         Ok(())
