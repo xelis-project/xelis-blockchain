@@ -42,14 +42,24 @@ fn default_chain_sync_response_blocks() -> usize {
 }
 
 fn default_getwork_rate_limit_ms() -> u64 {
-    0
+    500
 }
 
 fn default_getwork_notify_job_concurrency() -> usize {
-    8
+    detect_parallelism()
 }
 
 fn default_txs_threads_count() -> usize {
+    detect_parallelism()
+}
+
+
+fn default_rpc_threads() -> usize {
+    detect_parallelism()
+}
+
+
+fn detect_parallelism() -> usize {
     match thread::available_parallelism() {
         Ok(n) => {
             let v = n.get();
@@ -60,36 +70,53 @@ fn default_txs_threads_count() -> usize {
 }
 
 #[derive(Debug, Clone, clap::Args, Serialize, Deserialize)]
-pub struct RPCConfig {
+pub struct GetWorkConfig {
     /// Disable GetWork Server (WebSocket for miners).
     #[clap(long)]
     #[serde(default)]
+    #[serde(rename = "disable")]
     pub disable_getwork_server: bool,
     /// Set the rate limit for GetWork server in milliseconds.
     /// In case of high transactions added in mempool, new jobs are rate limited.
+    /// If is set to 0 (no limit), any new job will be sent to miners directly.
     #[serde(default = "default_getwork_rate_limit_ms")]
     #[clap(long, default_value_t = default_getwork_rate_limit_ms())]
+    #[serde(rename = "rate_limit_ms")]
     pub getwork_rate_limit_ms: u64,
     /// Set the concurrency for GetWork server during a new job notification.
     /// Notify concurrently to N miners at a time.
     /// Set to 0 means no limit and will process as one task per miner.
-    /// Default is set to 8.
+    /// Default is detected based on available parallelism.
     #[serde(default = "default_getwork_notify_job_concurrency")]
-    #[clap(long, default_value_t = default_getwork_notify_job_concurrency())] 
+    #[clap(long, default_value_t = default_getwork_notify_job_concurrency())]
+    #[serde(rename = "notify_job_concurrency")]
     pub getwork_notify_job_concurrency: usize,
+}
+
+#[derive(Debug, Clone, clap::Args, Serialize, Deserialize)]
+pub struct RPCConfig {
+    /// GetWork configuration
+    /// This is used to configure the GetWork server.
+    /// Only available if the RPC is enabled
+    #[clap(flatten)]
+    pub getwork: GetWorkConfig,
     /// Disable RPC Server
     /// This will also disable the GetWork Server as it is loaded on RPC server.
     #[clap(long)]
     #[serde(default)]
+    #[serde(rename = "disable")]
     pub disable_rpc_server: bool,
-    /// Rpc bind address to listen for HTTP requests
+    /// RPC bind address to listen for HTTP requests
     #[clap(long, default_value_t = default_rpc_bind_address())]
     #[serde(default = "default_rpc_bind_address")]
+    #[serde(rename = "bind_address")]
     pub rpc_bind_address: String,
     /// Number of workers to spawn for the HTTP server.
-    /// If not provided, it will use the default value from Actix.
-    #[clap(long)]
-    pub rpc_threads: Option<usize>
+    /// If not provided, it will use the available paralellism.
+    #[clap(long, default_value_t = default_rpc_threads())]
+    #[serde(default = "default_rpc_threads")]
+    #[serde(rename = "threads")]
+    pub rpc_threads: usize
 }
 
 #[derive(Debug, Clone, clap::Args, Serialize, Deserialize)]

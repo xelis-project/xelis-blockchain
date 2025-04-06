@@ -3,9 +3,10 @@ pub mod getwork_server;
 
 use crate::{
     core::{
-        storage::Storage,
+        blockchain::Blockchain,
+        config::RPCConfig,
         error::BlockchainError,
-        blockchain::Blockchain
+        storage::Storage
     },
     rpc::getwork_server::GetWorkServer,
 };
@@ -45,7 +46,6 @@ use xelis_common::{
         RPCServerHandler,
         WebSocketServerHandler
     },
-    time::TimestampMillis,
     tokio::spawn_task
 };
 use std::{
@@ -86,23 +86,23 @@ pub enum ApiError {
 
 impl<S: Storage> DaemonRpcServer<S> {
     pub async fn new(
-        bind_address: String,
         blockchain: Arc<Blockchain<S>>,
-        disable_getwork_server: bool,
-        getwork_rate_limit_ms: TimestampMillis,
-        getwork_notify_job_concurrency: usize,
-        threads: Option<usize>,
+        config: RPCConfig
     ) -> Result<SharedDaemonRpcServer<S>, BlockchainError> {
-        let getwork: Option<SharedGetWorkServer<S>> = if !disable_getwork_server {
+        let getwork: Option<SharedGetWorkServer<S>> = if !config.getwork.disable_getwork_server {
             info!("Creating GetWork server...");
-            Some(GetWorkServer::new(blockchain.clone(), getwork_rate_limit_ms, getwork_notify_job_concurrency))
+            Some(GetWorkServer::new(
+                blockchain.clone(),
+                config.getwork.getwork_rate_limit_ms,
+                config.getwork.getwork_notify_job_concurrency
+            ))
         } else {
             None
         };
 
         // create the RPC Handler which will register and contains all available methods
         let mut rpc_handler = RPCHandler::new(blockchain);
-        rpc::register_methods(&mut rpc_handler, !disable_getwork_server);
+        rpc::register_methods(&mut rpc_handler, !config.getwork.disable_getwork_server);
 
         // create the default websocket server (support event & rpc methods)
         let ws = WebSocketServer::new(EventWebSocketHandler::new(rpc_handler));
@@ -115,7 +115,7 @@ impl<S: Storage> DaemonRpcServer<S> {
 
         {
             let clone = Arc::clone(&server);
-            let mut builder = HttpServer::new(move || {
+            let builder = HttpServer::new(move || {
                 let server = Arc::clone(&clone);
                 App::new().app_data(web::Data::from(server))
                     // Traditional HTTP
@@ -126,18 +126,9 @@ impl<S: Storage> DaemonRpcServer<S> {
                     .service(index)
             })
             .disable_signals()
-            .bind(&bind_address)?;
+            .bind(&config.rpc_bind_address)?;
 
-            // set the number of threads if provided
-            if let Some(threads) = threads {
-                if threads == 0 {
-                    return Err(anyhow::anyhow!("The number of workers must be greater than 0").into());
-                }
-
-                builder = builder.workers(threads);
-            }
-
-            let http_server = builder.run();
+            let http_server = builder.workers(config.rpc_threads).run();
 
             { // save the server handle to be able to stop it later
                 let handle = http_server.handle();

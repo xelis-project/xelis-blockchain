@@ -213,6 +213,11 @@ impl<S: Storage> Blockchain<S> {
             } else {
                 info!("Will use {} threads for TXs verification", config.txs_verification_threads_count);
             }
+
+            if config.rpc.rpc_threads == 0 {
+                error!("RPC threads count must be above 0");
+                return Err(BlockchainError::InvalidConfig.into())
+            }
         }
 
         let on_disk = storage.has_blocks().await;
@@ -353,12 +358,8 @@ impl<S: Storage> Blockchain<S> {
         if !config.rpc.disable_rpc_server {
             info!("RPC Server will listen on: {}", config.rpc.rpc_bind_address);
             match DaemonRpcServer::new(
-                config.rpc.rpc_bind_address,
                 Arc::clone(&arc),
-                config.rpc.disable_getwork_server,
-                config.rpc.getwork_rate_limit_ms,
-                config.rpc.getwork_notify_job_concurrency,
-                config.rpc.rpc_threads
+                config.rpc
             ).await {
                 Ok(server) => *arc.rpc.write().await = Some(server),
                 Err(e) => error!("Error while starting RPC server: {}", e)
