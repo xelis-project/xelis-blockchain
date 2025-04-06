@@ -49,6 +49,10 @@ fn default_getwork_notify_job_concurrency() -> usize {
     detect_parallelism()
 }
 
+fn default_rpc_notify_events_concurrency() -> usize {
+    detect_parallelism()
+}
+
 fn default_txs_threads_count() -> usize {
     detect_parallelism()
 }
@@ -116,7 +120,16 @@ pub struct RPCConfig {
     #[clap(long, default_value_t = default_rpc_threads())]
     #[serde(default = "default_rpc_threads")]
     #[serde(rename = "threads")]
-    pub rpc_threads: usize
+    pub rpc_threads: usize,
+    /// RPC Server notification events concurrency
+    /// This is used to configure the number of concurrent tasks
+    /// that will be used to notify the events to the clients.
+    /// By default, it will use the available parallelism.
+    /// If set to 0, it will be unlimited.
+    #[clap(long, default_value_t = default_rpc_notify_events_concurrency())]
+    #[serde(default = "default_rpc_notify_events_concurrency")]
+    #[serde(rename = "notify_events_concurrency")]
+    pub rpc_notify_events_concurrency: usize,
 }
 
 #[derive(Debug, Clone, clap::Args, Serialize, Deserialize)]

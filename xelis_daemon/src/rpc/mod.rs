@@ -105,7 +105,7 @@ impl<S: Storage> DaemonRpcServer<S> {
         rpc::register_methods(&mut rpc_handler, !config.getwork.disable_getwork_server);
 
         // create the default websocket server (support event & rpc methods)
-        let ws = WebSocketServer::new(EventWebSocketHandler::new(rpc_handler));
+        let ws = WebSocketServer::new(EventWebSocketHandler::new(rpc_handler, config.rpc_notify_events_concurrency));
 
         let server = Arc::new(Self {
             handle: Mutex::new(None),
