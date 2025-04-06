@@ -319,7 +319,7 @@ impl<S: Storage> Blockchain<S> {
                 config.max_chain_response_size,
                 !config.disable_ip_sharing,
                 config.disable_p2p_outgoing_connections,
-                config.p2p_private_key.map(|v| v.into()),
+                config.p2p_dh_private_key.map(|v| v.into()),
                 config.p2p_on_dh_key_change
             ) {
                 Ok(p2p) => {

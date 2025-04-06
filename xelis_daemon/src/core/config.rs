@@ -122,11 +122,13 @@ pub struct RPCConfig {
 #[derive(Debug, Clone, clap::Args, Serialize, Deserialize)]
 pub struct P2pConfig {
     /// Optional node tag
+    /// This is used to identify the node in the network.
     #[clap(long)]
     pub tag: Option<String>,
     /// P2p bind address to listen for incoming connections
     #[clap(long, default_value_t = default_p2p_bind_address())]
     #[serde(default = "default_p2p_bind_address")]
+    #[serde(rename = "bind_address")]
     pub p2p_bind_address: String,
     /// Number of maximums peers allowed
     #[clap(long, default_value_t = default_max_peers())]
@@ -142,9 +144,12 @@ pub struct P2pConfig {
     #[clap(long)]
     #[serde(default)]
     pub exclusive_nodes: Vec<String>,
-    /// Disable the p2p connections.
+    /// Disable the P2P Server.
+    /// No connections will be accepted.
+    /// Node will not be able to communicate the network.
     #[clap(long)]
     #[serde(default)]
+    #[serde(rename = "disable")]
     pub disable_p2p_server: bool,
     /// Allow fast sync mode.
     /// 
@@ -195,18 +200,30 @@ pub struct P2pConfig {
     /// This is useful for seed nodes under heavy load or for nodes that don't want to connect to others.
     #[clap(long)]
     #[serde(default)]
+    #[serde(rename = "disable_outgoing_connections")]
     pub disable_p2p_outgoing_connections: bool,
     /// Limit of concurrent tasks accepting new incoming connections.
     #[clap(long, default_value_t = default_p2p_concurrency_task_count_limit())]
     #[serde(default = "default_p2p_concurrency_task_count_limit")]
+    #[serde(rename = "concurrency_task_count_limit")]
     pub p2p_concurrency_task_count_limit: usize,
     /// Execute a specific action when the P2p Diffie-Hellman Key of a peer is different from our stored one.
     /// By default, it will ignore the key change and update it.
     #[clap(long, value_enum, default_value_t = KeyVerificationAction::Ignore)]
     #[serde(default)]
+    #[serde(rename = "on_dh_key_change")]
     pub p2p_on_dh_key_change: KeyVerificationAction,
     /// P2p DH private key to use.
-    pub p2p_private_key: Option<WrappedSecret>,
+    /// By default, a newly generated key will be used.
+    /// Reusing the same private key will allow to keep the same public key
+    /// and avoid the need to re-verify the key with our peers.
+    /// This is useful for nodes that want to keep the same public key
+    /// across several restarts.
+    /// Note that reusing the same key may allow to track your node
+    /// across your IP changes.
+    #[clap(long)]
+    #[serde(rename = "dh_private_key")]
+    pub p2p_dh_private_key: Option<WrappedSecret>,
 }
 
 #[derive(Debug, Clone, clap::Args, Serialize, Deserialize)]
