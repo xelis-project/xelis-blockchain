@@ -1767,7 +1767,8 @@ impl<S: Storage> P2pServer<S> {
                                     &header,
                                     ping,
                                     &block_hash,
-                                    false
+                                    false,
+                                    false,
                                 ).await;
                             },
                             Err(e) => {
@@ -2831,11 +2832,11 @@ impl<S: Storage> P2pServer<S> {
         // we build the ping packet ourself this time (we have enough data for it)
         // because this function can be call from Blockchain, which would lead to a deadlock
         let ping = Ping::new(Cow::Borrowed(hash), our_topoheight, our_height, pruned_topoheight, cumulative_difficulty, IndexSet::new());
-        self.broadcast_block_with_ping(block, ping, hash, lock).await;
+        self.broadcast_block_with_ping(block, ping, hash, lock, true).await;
     }
 
     // Broadcast a block with a pre-built ping packet
-    pub async fn broadcast_block_with_ping(&self, block: &BlockHeader, ping: Ping<'_>, hash: &Hash, lock: bool) {
+    pub async fn broadcast_block_with_ping(&self, block: &BlockHeader, ping: Ping<'_>, hash: &Hash, lock: bool, send_ping: bool) {
         debug!("Broadcasting block {} at height {}", hash, block.get_height());
 
         // Build the block propagation packet
@@ -2898,23 +2899,31 @@ impl<S: Storage> P2pServer<S> {
 
                         if send_block {
                             debug!("Broadcast {} to {}", hash, peer);
-                            if let Err(e) = peer.send_bytes(packet_block_bytes.clone()).await {
+                            if let Err(e) = peer.send_bytes(packet_block_bytes).await {
                                 debug!("Error on broadcast block {} to {}: {}", hash, peer, e);
                             }
                             trace!("{} has been broadcasted to {}", hash, peer);
-                        } else {
+                        } else if send_ping {
                             debug!("{} contains {}, don't broadcast block to him", peer, hash);
                             // But we can notify him with a ping packet that we got the block
-                            if let Err(e) = peer.send_bytes(packet_ping_bytes.clone()).await {
+                            if let Err(e) = peer.send_bytes(packet_ping_bytes).await {
                                 debug!("Error on sending ping for notifying that we accepted the block {} to {}: {}", hash, peer, e);
                             } else {
                                 trace!("{} has been notified that we have the block {}", peer, hash);
                                 peer.set_last_ping_sent(get_current_time_in_seconds());
                             }
                         }
+                    } else if send_ping && peer_height >= block.get_height() {
+                        // Peer is above us, send him a ping packet to inform him we got a block propagated
+                        if let Err(e) = peer.send_bytes(packet_ping_bytes).await {
+                            debug!("Error on sending ping to peer for notifying that we got the block {} to {}: {}", hash, peer, e);
+                        } else {
+                            trace!("{} has been notified that we received the block {}", peer, hash);
+                            peer.set_last_ping_sent(get_current_time_in_seconds());
+                        }
                     } else {
                         // Peer is too far, don't send the block and neither the ping packet
-                        trace!("Cannot broadcast {} at height {} to {}, too far", hash, block.get_height(), peer);
+                        debug!("Cannot broadcast {} at height {} to {}, too far", hash, block.get_height(), peer);
                     }
                 }
         }).await;
