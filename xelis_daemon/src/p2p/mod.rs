@@ -208,7 +208,8 @@ impl<S: Storage> P2pServer<S> {
         sharable: bool,
         disable_outgoing_connections: bool,
         dh_keypair: Option<diffie_hellman::DHKeyPair>,
-        dh_action: diffie_hellman::KeyVerificationAction
+        dh_action: diffie_hellman::KeyVerificationAction,
+        stream_concurrency: usize,
     ) -> Result<Arc<Self>, P2pError> {
         if tag.as_ref().is_some_and(|tag| tag.len() == 0 || tag.len() > 16) {
             return Err(P2pError::InvalidTag);
@@ -267,7 +268,7 @@ impl<S: Storage> P2pServer<S> {
             exit_sender,
             dh_keypair: dh_keypair.unwrap_or_else(diffie_hellman::DHKeyPair::new),
             dh_action,
-            stream_concurrency: 8
+            stream_concurrency
         };
 
         let arc = Arc::new(server);

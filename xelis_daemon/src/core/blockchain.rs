@@ -332,7 +332,8 @@ impl<S: Storage> Blockchain<S> {
                 !config.disable_ip_sharing,
                 config.disable_p2p_outgoing_connections,
                 config.p2p_dh_private_key.map(|v| v.into()),
-                config.p2p_on_dh_key_change
+                config.p2p_on_dh_key_change,
+                config.p2p_stream_concurrency,
             ) {
                 Ok(p2p) => {
                     // connect to priority nodes
