@@ -47,7 +47,10 @@ use std::{
     fmt::{Display, Error, Formatter},
     hash::{Hash as StdHash, Hasher},
     net::{IpAddr, SocketAddr},
-    sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering},
+    sync::{
+        atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering},
+        Arc
+    },
     time::Duration
 };
 use tokio::{
@@ -129,7 +132,7 @@ pub struct Peer {
     // cumulative difficulty of peer chain
     cumulative_difficulty: Mutex<CumulativeDifficulty>,
     // All transactions propagated from/to this peer
-    txs_cache: Mutex<LruCache<Hash, Direction>>,
+    txs_cache: Mutex<LruCache<Arc<Hash>, Direction>>,
     // last blocks propagated to/from this peer
     blocks_propagation: Mutex<LruCache<Hash, (TimedDirection, bool)>>,
     // last time we got an inventory packet from this peer
@@ -214,7 +217,7 @@ impl Peer {
     }
 
     // Get all transactions propagated from/to this peer
-    pub fn get_txs_cache(&self) -> &Mutex<LruCache<Hash, Direction>> {
+    pub fn get_txs_cache(&self) -> &Mutex<LruCache<Arc<Hash>, Direction>> {
         &self.txs_cache
     }
 

@@ -130,7 +130,7 @@ impl Mempool {
     }
 
     // All checks are made in Blockchain before calling this function
-    pub async fn add_tx<S: Storage>(&mut self, storage: &S, environment: &Environment, stable_topoheight: TopoHeight, topoheight: TopoHeight, hash: Hash, tx: Arc<Transaction>, size: usize, block_version: BlockVersion) -> Result<(), BlockchainError> {
+    pub async fn add_tx<S: Storage>(&mut self, storage: &S, environment: &Environment, stable_topoheight: TopoHeight, topoheight: TopoHeight, hash: Arc<Hash>, tx: Arc<Transaction>, size: usize, block_version: BlockVersion) -> Result<(), BlockchainError> {
         let mut state = MempoolState::new(&self, storage, environment, stable_topoheight, topoheight, block_version, self.mainnet);
         tx.verify(&hash, &mut state).await?;
 
@@ -139,7 +139,6 @@ impl Mempool {
 
         let balances = balances.into_iter().map(|(asset, ciphertext)| (asset.clone(), ciphertext)).collect();
 
-        let hash = Arc::new(hash);
         let nonce = tx.get_nonce();
         // update the cache for this owner
         let mut must_update = true;

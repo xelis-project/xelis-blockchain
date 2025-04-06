@@ -1358,16 +1358,15 @@ impl<S: Storage> Blockchain<S> {
 
     // Add a tx to the mempool with the given hash, it will verify the TX and check that it is not already in mempool or in blockchain
     // and its validity (nonce, balance, etc...)
-    pub async fn add_tx_to_mempool_with_storage_and_hash(&self, storage: &S, tx: Arc<Transaction>, hash: Hash, broadcast: bool) -> Result<(), BlockchainError>
-    {
+    pub async fn add_tx_to_mempool_with_storage_and_hash(&self, storage: &S, tx: Arc<Transaction>, hash: Hash, broadcast: bool) -> Result<(), BlockchainError> {
         let tx_size = tx.size();
         if tx_size > MAX_TRANSACTION_SIZE {
             return Err(BlockchainError::TxTooBig(tx_size, MAX_TRANSACTION_SIZE))
         }
 
-        {
+        let hash = {
             let mut mempool = self.mempool.write().await;
-    
+
             if mempool.contains_tx(&hash) {
                 return Err(BlockchainError::TxAlreadyInMempool(hash))
             }
@@ -1395,9 +1394,14 @@ impl<S: Storage> Blockchain<S> {
                 }
             }
 
+            // Put the hash behind an Arc to share it cheaply
+            let hash = Arc::new(hash);
+
             let version = get_version_at_height(self.get_network(), self.get_height());
             mempool.add_tx(storage, &self.environment, stable_topoheight, current_topoheight, hash.clone(), tx.clone(), tx_size, version).await?;
-        }
+
+            hash
+        };
 
         if broadcast {
             // P2p broadcast to others peers

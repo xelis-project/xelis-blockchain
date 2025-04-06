@@ -680,7 +680,7 @@ async fn broadcast_txs<S: Storage>(manager: &CommandManager, _: ArgumentManager)
 
     for hash in txs.keys() {
         info!("Broadcasting TX {}", hash);
-        p2p.broadcast_tx_hash(hash.as_ref().clone()).await;
+        p2p.broadcast_tx_hash(hash.clone()).await;
     }
 
     Ok(())

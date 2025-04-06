@@ -146,9 +146,9 @@ pub struct P2pServer<S: Storage> {
     blocks_processor: Sender<(Arc<Peer>, BlockHeader, Hash)>,
     // Sender for the transactions propagated
     // Synced cache to prevent concurrent tasks adding the block
-    txs_propagation_queue: Mutex<LruCache<Hash, TimestampMillis>>,
+    txs_propagation_queue: Mutex<LruCache<Arc<Hash>, TimestampMillis>>,
     // Sender for the txs processing task to have an ordered queue
-    txs_processor: Sender<(Arc<Peer>, Hash)>,
+    txs_processor: Sender<(Arc<Peer>, Arc<Hash>)>,
     // allow fast syncing (only balances / assets / Smart Contracts changes)
     // without syncing the history
     allow_fast_sync_mode: bool,
@@ -362,7 +362,7 @@ impl<S: Storage> P2pServer<S> {
         self: &Arc<Self>,
         receiver: Receiver<(SocketAddr, bool)>,
         blocks_processor_receiver: Receiver<(Arc<Peer>, BlockHeader, Hash)>,
-        txs_processor_receiver: Receiver<(Arc<Peer>, Hash)>,
+        txs_processor_receiver: Receiver<(Arc<Peer>, Arc<Hash>)>,
         event_receiver: Receiver<Arc<Peer>>,
         use_peerlist: bool,
         concurrency: usize
@@ -1360,7 +1360,7 @@ impl<S: Storage> P2pServer<S> {
     }
 
     // Task for all transactions propagation
-    async fn txs_processing_task(self: Arc<Self>, mut receiver: Receiver<(Arc<Peer>, Hash)>) {
+    async fn txs_processing_task(self: Arc<Self>, mut receiver: Receiver<(Arc<Peer>, Arc<Hash>)>) {
         debug!("Starting txs processing task");
         let mut server_exit = self.exit_sender.subscribe();
         let mut futures = FuturesOrdered::new();
@@ -1391,7 +1391,8 @@ impl<S: Storage> P2pServer<S> {
 
                     let future = async move {
                         debug!("Requesting from txs processing task tx {}", hash);
-                        let (transaction, hash) = match peer.request_blocking_object(ObjectRequest::Transaction(hash)).await {
+                        // TODO
+                        let (transaction, hash) = match peer.request_blocking_object(ObjectRequest::Transaction(hash.as_ref().clone())).await {
                             Ok(OwnedObjectResponse::Transaction(tx, hash)) => (tx, hash),
                             Ok(response) => {
                                 warn!("Received invalid object type response from {}", peer);
@@ -1628,7 +1629,7 @@ impl<S: Storage> P2pServer<S> {
             Packet::TransactionPropagation(packet_wrapper) => {
                 trace!("{}: Transaction Propagation packet", peer);
                 let (hash, ping) = packet_wrapper.consume();
-                let hash = hash.into_owned();
+                let hash = Arc::new(hash.into_owned());
 
                 ping.into_owned().update_peer(peer, &self.blockchain).await?;
 
@@ -1983,7 +1984,7 @@ impl<S: Storage> P2pServer<S> {
 
                 // Process the response
                 for tx in txs.into_owned() {
-                    let tx = tx.into_owned();
+                    let tx = Arc::new(tx.into_owned());
 
                     // Check that the tx is not in mempool or on disk already
                     if self.blockchain.has_tx(&tx).await? {
@@ -2756,7 +2757,7 @@ impl<S: Storage> P2pServer<S> {
     // Broadcast a new transaction hash using propagation packet
     // This is used so we don't overload the network during spam or high transactions count
     // We simply share its hash to nodes and others nodes can check if they have it already or not
-    pub async fn broadcast_tx_hash(&self, tx: Hash) {
+    pub async fn broadcast_tx_hash(&self, tx: Arc<Hash>) {
         debug!("Broadcasting tx hash {}", tx);
         let ping = match self.build_generic_ping_packet().await {
             Ok(ping) => ping,
@@ -2774,28 +2775,42 @@ impl<S: Storage> P2pServer<S> {
         let peers = self.peer_list.get_cloned_peers().await;
         trace!("Lock acquired for tx broadcast");
 
-        for peer in peers {
-            // check that the peer is not too far from us
-            // otherwise we may spam him for nothing
-            let peer_topoheight = peer.get_topoheight();
-            if (peer_topoheight >= current_topoheight && peer_topoheight - current_topoheight < STABLE_LIMIT) || (current_topoheight >= peer_topoheight && current_topoheight - peer_topoheight < STABLE_LIMIT) {
-                trace!("Peer {} is not too far from us, checking cache for tx hash {}", peer, tx);
-                let mut txs_cache = peer.get_txs_cache().lock().await;
-                trace!("Cache locked for tx hash {}", tx);
-                // check that we didn't already send this tx to this peer or that he don't already have it
-                if !txs_cache.contains(&tx) {
-                    trace!("Broadcasting tx hash {} to {}", tx, peer);
-                    if let Err(e) = peer.send_bytes(bytes.clone()).await {
-                        error!("Error while broadcasting tx hash {} to {}: {}", tx, peer, e);
+        stream::iter(peers).for_each_concurrent(8, |peer| {
+            let bytes = bytes.clone();
+            let tx = tx.clone();
+            async move {
+                // check that the peer is not too far from us
+                // otherwise we may spam him for nothing
+                let peer_topoheight = peer.get_topoheight();
+                if (peer_topoheight >= current_topoheight && peer_topoheight - current_topoheight < STABLE_LIMIT) || (current_topoheight >= peer_topoheight && current_topoheight - peer_topoheight < STABLE_LIMIT) {
+                    trace!("Peer {} is not too far from us, checking cache for tx hash {}", peer, tx);
+
+                    // Do not keep the txs cache lock while sending the packet
+                    let send = {
+                        let mut txs_cache = peer.get_txs_cache().lock().await;
+                        trace!("Cache locked for tx hash {}", tx);
+                        let send = !txs_cache.contains(&tx);
+                        // check that we didn't already send this tx to this peer or that he don't already have it
+                        if send {
+                            trace!("Adding tx hash {} to cache for {}", tx, peer);
+                            // Set it as "In" so we can't get it back as we are the sender of it
+                            txs_cache.put(tx.clone(), Direction::In);
+                        } else {
+                            trace!("Peer {} already has tx hash {}, don't send it", peer, tx);
+                        }
+
+                        send
+                    };
+
+                    if send {
+                        trace!("Broadcasting tx hash {} to {}", tx, peer);
+                        if let Err(e) = peer.send_bytes(bytes.clone()).await {
+                            error!("Error while broadcasting tx hash {} to {}: {}", tx, peer, e);
+                        }
                     }
-                    trace!("Adding tx hash {} to cache for {}", tx, peer);
-                    // Set it as "In" so we can't get it back as we are the sender of it
-                    txs_cache.put(tx.clone(), Direction::In);
-                } else {
-                    trace!("{} have tx hash {} in cache, skipping", peer, tx);
                 }
             }
-        }
+        }).await;
     }
 
     // broadcast block to all peers that can accept directly this new block
@@ -2841,28 +2856,36 @@ impl<S: Storage> P2pServer<S> {
                     // (block height is always + 1 above the highest tip height, so we can just check that peer height is not above block height + 1, it's enough in 90% of time)
                     // chain can accept old blocks (up to STABLE_LIMIT) but new blocks only N+1
                     if (peer_height >= block.get_height() && peer_height - block.get_height() <= STABLE_LIMIT) || (peer_height <= block.get_height() && block.get_height() - peer_height <= 1) {
-                        trace!("locking blocks propagation for peer {}", peer);
-                        let mut blocks_propagation = peer.get_blocks_propagation().lock().await;
-                        trace!("end locking blocks propagation for peer {}", peer);
-                        // check that this block was never shared with this peer
-                        if !blocks_propagation.contains(hash) {
-                            // we broadcasted to him, add it to the cache
-                            // he should not send it back to us if it's a block found by us
-                            // Because only us is aware of this block
-                            let direction = if lock {
-                                TimedDirection::Both {
-                                    sent_at: get_current_time_in_millis(),
-                                    // Never received, but locked
-                                    received_at: 0
-                                }
-                            } else {
-                                TimedDirection::Out {
-                                    sent_at: get_current_time_in_millis()
-                                }
-                            };
-                            blocks_propagation.put(hash.clone(), (direction, false));
+                        // Don't lock the blocks propagation while sending the packet
+                        let send_block = {
+                            trace!("locking blocks propagation for peer {}", peer);
+                            let mut blocks_propagation = peer.get_blocks_propagation().lock().await;
+                            trace!("end locking blocks propagation for peer {}", peer);
+                            let send = !blocks_propagation.contains(hash);
+                            // check that this block was never shared with this peer
+                            if send {
+                                // we broadcasted to him, add it to the cache
+                                // he should not send it back to us if it's a block found by us
+                                // Because only us is aware of this block
+                                let direction = if lock {
+                                    TimedDirection::Both {
+                                        sent_at: get_current_time_in_millis(),
+                                        // Never received, but locked
+                                        received_at: 0
+                                    }
+                                } else {
+                                    TimedDirection::Out {
+                                        sent_at: get_current_time_in_millis()
+                                    }
+                                };
+                                blocks_propagation.put(hash.clone(), (direction, false));
+                            }
 
-                            debug!("Broadcast {} to {} (lock: {})", hash, peer, lock);
+                            send
+                        };
+
+                        if send_block {
+                            debug!("Broadcast {} to {}", hash, peer);
                             if let Err(e) = peer.send_bytes(packet_block_bytes.clone()).await {
                                 debug!("Error on broadcast block {} to {}: {}", hash, peer, e);
                             }
@@ -2878,6 +2901,7 @@ impl<S: Storage> P2pServer<S> {
                             }
                         }
                     } else {
+                        // Peer is too far, don't send the block and neither the ping packet
                         trace!("Cannot broadcast {} at height {} to {}, too far", hash, block.get_height(), peer);
                     }
                 }
