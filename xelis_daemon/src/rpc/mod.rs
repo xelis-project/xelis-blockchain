@@ -85,10 +85,17 @@ pub enum ApiError {
 }
 
 impl<S: Storage> DaemonRpcServer<S> {
-    pub async fn new(bind_address: String, blockchain: Arc<Blockchain<S>>, disable_getwork_server: bool, getwork_rate_limit_ms: TimestampMillis, threads: Option<usize>) -> Result<SharedDaemonRpcServer<S>, BlockchainError> {
+    pub async fn new(
+        bind_address: String,
+        blockchain: Arc<Blockchain<S>>,
+        disable_getwork_server: bool,
+        getwork_rate_limit_ms: TimestampMillis,
+        getwork_notify_job_concurrency: usize,
+        threads: Option<usize>,
+    ) -> Result<SharedDaemonRpcServer<S>, BlockchainError> {
         let getwork: Option<SharedGetWorkServer<S>> = if !disable_getwork_server {
             info!("Creating GetWork server...");
-            Some(GetWorkServer::new(blockchain.clone(), getwork_rate_limit_ms))
+            Some(GetWorkServer::new(blockchain.clone(), getwork_rate_limit_ms, getwork_notify_job_concurrency))
         } else {
             None
         };

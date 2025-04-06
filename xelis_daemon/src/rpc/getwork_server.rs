@@ -27,6 +27,7 @@ use actix_web_actors::ws::{
     WebsocketContext
 };
 use anyhow::Context;
+use futures::{stream, StreamExt};
 use indexmap::IndexSet;
 use log::{debug, error, trace, warn};
 use lru::LruCache;
@@ -230,11 +231,13 @@ pub struct GetWorkServer<S: Storage> {
     // used to know if we can notify miners again
     is_job_dirty: AtomicBool,
     // We can only notify miners every N ms
-    notify_rate_limit_ms: TimestampMillis
+    notify_rate_limit_ms: TimestampMillis,
+    // Current limit for the number of miners to notify at the same time
+    notify_job_concurrency: usize,
 }
 
 impl<S: Storage> GetWorkServer<S> {
-    pub fn new(blockchain: Arc<Blockchain<S>>, rate_limit_ms: TimestampMillis) -> Arc<Self> {
+    pub fn new(blockchain: Arc<Blockchain<S>>, notify_rate_limit_ms: TimestampMillis, notify_job_concurrency: usize) -> Arc<Self> {
         let server = Arc::new(Self {
             miners: Mutex::new(HashMap::new()),
             blockchain,
@@ -242,14 +245,15 @@ impl<S: Storage> GetWorkServer<S> {
             last_header_hash: Mutex::new(None),
             last_notify: AtomicU64::new(0),
             is_job_dirty: AtomicBool::new(false),
-            notify_rate_limit_ms: rate_limit_ms
+            notify_rate_limit_ms,
+            notify_job_concurrency
         });
 
-        if rate_limit_ms > 0 {
+        if notify_rate_limit_ms > 0 {
             let zelf = Arc::clone(&server);
             spawn_task("getwork-notify-new-job", async move {
                 loop {
-                    sleep(Duration::from_millis(rate_limit_ms)).await;
+                    sleep(Duration::from_millis(notify_rate_limit_ms)).await;
                     if zelf.is_job_dirty.load(Ordering::SeqCst) {
                         if let Err(e) = zelf.notify_new_job_rate_limited().await {
                             error!("Error while notifying new job to miners: {}", e);
@@ -276,7 +280,7 @@ impl<S: Storage> GetWorkServer<S> {
 
     // retrieve last mining job and set random extra nonce and miner public key
     // then, send it
-    async fn send_new_job(self: Arc<Self>, addr: Addr<GetWorkWebSocketHandler<S>>, key: PublicKey) -> Result<(), InternalRpcError> {
+    async fn send_new_job(self: &Arc<Self>, addr: Addr<GetWorkWebSocketHandler<S>>, key: PublicKey) -> Result<(), InternalRpcError> {
         debug!("Sending new job to miner");
         let (mut job, version, height, difficulty) = {
             let mut hash = self.last_header_hash.lock().await;
@@ -320,10 +324,16 @@ impl<S: Storage> GetWorkServer<S> {
         let algorithm = get_pow_algorithm_for_version(version);
         let topoheight = self.blockchain.get_topo_height();
         debug!("Sending job to new miner");
-        addr.send(Response::NewJob(GetMinerWorkResult { algorithm, miner_work: job.to_hex(), height, topoheight, difficulty })).await.context("error while sending block template")??;
+        addr.send(Response::NewJob(GetMinerWorkResult { algorithm, miner_work: job.to_hex(), height, topoheight, difficulty })).await
+            .context("error while sending block template")??;
+
+        debug!("Job sent to miner");
+
         Ok(())
     }
 
+    // Add a new miner to the list of miners
+    // We use the address of the websocket connection to identify the miner
     pub async fn add_miner(self: &Arc<Self>, addr: Addr<GetWorkWebSocketHandler<S>>, key: PublicKey, worker: String) {
         trace!("add miner");
         {
@@ -334,6 +344,8 @@ impl<S: Storage> GetWorkServer<S> {
         }
 
         // notify the new miner so he can work ASAP
+        // We are forced to create a task because
+        // we would basically block forever
         let zelf = Arc::clone(&self);
         spawn_task("getwork-new-job", async move {
             if let Err(e) = zelf.send_new_job(addr, key).await {
@@ -342,11 +354,14 @@ impl<S: Storage> GetWorkServer<S> {
         });
     }
 
+    // Delete a miner from the list of miners
     pub async fn delete_miner(&self, addr: &Addr<GetWorkWebSocketHandler<S>>) {
         debug!("Trying to delete miner...");
         let mut miners = self.miners.lock().await;
         if let Some(miner) = miners.remove(addr) {
             debug!("{} deleted", miner);
+        } else {
+            debug!("Miner {:?} not found in the list of miners!", addr);
         }
     }
 
@@ -405,6 +420,7 @@ impl<S: Storage> GetWorkServer<S> {
         };
 
         // update miner stats
+        let mut resend_job = false;
         {
             let mut miners = self.miners.lock().await;
             if let Some(miner) = miners.get_mut(&addr) {
@@ -418,22 +434,25 @@ impl<S: Storage> GetWorkServer<S> {
                         debug!("Miner {} sent an invalid block", miner);
                         miner.blocks_rejected += 1;
                         miner.last_invalid_block = get_current_time_in_millis();
+                        resend_job = true;
                     },
                     _ => {}
                 }
             }
         }
 
+        // We need to spawn a task to reply to the miner
+        // because we are in the context of the (actor) miner
+        // and we would block forever
         spawn_task("getwork-reply", async move {
-            let resend_job = match response {
-                Response::BlockRejected(_) => true,
-                _ => false
-            };
             debug!("Sending response to the miner");
             if let Err(e) = addr.send(response).await {
                 error!("Error while sending block rejected response: {}", e);
             }
 
+            // Job was rejected, we need to resend it
+            // We only resend on failure because if block was accepted
+            // It would trigger a notify to all miners anyway
             if resend_job {
                 debug!("Resending job to the miner");
                 let key = {
@@ -514,7 +533,7 @@ impl<S: Storage> GetWorkServer<S> {
             (header, difficulty)
         };
 
-        let mut job = MinerWork::new(header.get_work_hash(), header.timestamp);
+        let job = MinerWork::new(header.get_work_hash(), header.timestamp);
         let height = header.get_height();
         let version = header.get_version();
 
@@ -552,30 +571,31 @@ impl<S: Storage> GetWorkServer<S> {
             // now let's send the job to every miner
             let mut miners = self.miners.lock().await;
             miners.retain(|addr, _| addr.connected());
-    
-            for (addr, miner) in miners.iter() {
-                debug!("Notifying {} for new job", miner);
-                let addr = addr.clone();
-    
-                job.set_miner(Cow::Borrowed(miner.get_public_key()));
-                OsRng.fill_bytes(job.get_extra_nonce());
-                let template = job.to_hex();
-    
-                // New task for each miner in case a miner is slow
-                // we don't want to wait for him
-                spawn_task("getwork-notify-new-job", async move {
-                    match addr.send(Response::NewJob(GetMinerWorkResult { algorithm, miner_work: template, height, topoheight, difficulty })).await {
-                        Ok(request) => {
-                            if let Err(e) = request {
-                                warn!("Error while sending new job to addr {:?}: {}", addr, e);
+
+            debug!("Notifying {} miners for new job", miners.len());
+            stream::iter(miners.iter())
+                .for_each_concurrent(self.notify_job_concurrency, |(addr, miner)| {
+                    let mut job = job.clone();
+                    async move {
+                        debug!("Notifying {} for new job", miner);
+                        let addr = addr.clone();
+        
+                        job.set_miner(Cow::Borrowed(miner.get_public_key()));
+                        OsRng.fill_bytes(job.get_extra_nonce());
+                        let template = job.to_hex();
+        
+                        match addr.send(Response::NewJob(GetMinerWorkResult { algorithm, miner_work: template, height, topoheight, difficulty })).await {
+                            Ok(request) => {
+                                if let Err(e) = request {
+                                    warn!("Error while sending new job to addr {:?}: {}", addr, e);
+                                }
+                            },
+                            Err(e) => {
+                                warn!("Error while notifying new job to addr {:?}: {}", addr, e);
                             }
-                        },
-                        Err(e) => {
-                            warn!("Error while notifying new job to addr {:?}: {}", addr, e);
                         }
                     }
-                });
-            }
+                }).await;
         }
         Ok(())
     }

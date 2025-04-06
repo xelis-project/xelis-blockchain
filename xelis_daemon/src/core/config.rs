@@ -45,6 +45,10 @@ fn default_getwork_rate_limit_ms() -> u64 {
     0
 }
 
+fn default_getwork_notify_job_concurrency() -> usize {
+    8
+}
+
 fn default_txs_threads_count() -> usize {
     match thread::available_parallelism() {
         Ok(n) => {
@@ -66,6 +70,13 @@ pub struct RPCConfig {
     #[serde(default = "default_getwork_rate_limit_ms")]
     #[clap(long, default_value_t = default_getwork_rate_limit_ms())]
     pub getwork_rate_limit_ms: u64,
+    /// Set the concurrency for GetWork server during a new job notification.
+    /// Notify concurrently to N miners at a time.
+    /// Set to 0 means no limit and will process as one task per miner.
+    /// Default is set to 8.
+    #[serde(default = "default_getwork_notify_job_concurrency")]
+    #[clap(long, default_value_t = default_getwork_notify_job_concurrency())] 
+    pub getwork_notify_job_concurrency: usize,
     /// Disable RPC Server
     /// This will also disable the GetWork Server as it is loaded on RPC server.
     #[clap(long)]
