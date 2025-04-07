@@ -1359,11 +1359,11 @@ impl<S: Storage> Blockchain<S> {
     // Add a tx to the mempool, its hash will be computed
     pub async fn add_tx_to_mempool(&self, tx: Transaction, broadcast: bool) -> Result<(), BlockchainError> {
         let hash = tx.hash();
-        self.add_tx_to_mempool_with_hash(tx, hash, broadcast).await
+        self.add_tx_to_mempool_with_hash(tx, Immutable::Owned(hash), broadcast).await
     }
 
     // Add a tx to the mempool with the given hash, it is not computed and the TX is transformed into an Arc
-    pub async fn add_tx_to_mempool_with_hash(&self, tx: Transaction, hash: Hash, broadcast: bool) -> Result<(), BlockchainError> {
+    pub async fn add_tx_to_mempool_with_hash(&self, tx: Transaction, hash: Immutable<Hash>, broadcast: bool) -> Result<(), BlockchainError> {
         trace!("add tx to mempool with hash");
         let storage = self.storage.read().await;
         self.add_tx_to_mempool_with_storage_and_hash(&storage, Arc::new(tx), hash, broadcast).await
@@ -1371,7 +1371,7 @@ impl<S: Storage> Blockchain<S> {
 
     // Add a tx to the mempool with the given hash, it will verify the TX and check that it is not already in mempool or in blockchain
     // and its validity (nonce, balance, etc...)
-    pub async fn add_tx_to_mempool_with_storage_and_hash(&self, storage: &S, tx: Arc<Transaction>, hash: Hash, broadcast: bool) -> Result<(), BlockchainError> {
+    pub async fn add_tx_to_mempool_with_storage_and_hash(&self, storage: &S, tx: Arc<Transaction>, hash: Immutable<Hash>, broadcast: bool) -> Result<(), BlockchainError> {
         let tx_size = tx.size();
         if tx_size > MAX_TRANSACTION_SIZE {
             return Err(BlockchainError::TxTooBig(tx_size, MAX_TRANSACTION_SIZE))
@@ -1381,12 +1381,12 @@ impl<S: Storage> Blockchain<S> {
             let mut mempool = self.mempool.write().await;
 
             if mempool.contains_tx(&hash) {
-                return Err(BlockchainError::TxAlreadyInMempool(hash))
+                return Err(BlockchainError::TxAlreadyInMempool(hash.into_owned()))
             }
-    
+
             // check that the TX is not already in blockchain
             if storage.is_tx_executed_in_a_block(&hash)? {
-                return Err(BlockchainError::TxAlreadyInBlockchain(hash))
+                return Err(BlockchainError::TxAlreadyInBlockchain(hash.into_owned()))
             }
 
             let stable_topoheight = self.get_stable_topoheight();
@@ -1408,7 +1408,7 @@ impl<S: Storage> Blockchain<S> {
             }
 
             // Put the hash behind an Arc to share it cheaply
-            let hash = Arc::new(hash);
+            let hash = hash.to_arc();
 
             let version = get_version_at_height(self.get_network(), self.get_height());
             mempool.add_tx(storage, &self.environment, stable_topoheight, current_topoheight, hash.clone(), tx.clone(), tx_size, version).await?;
@@ -2590,7 +2590,7 @@ impl<S: Storage> Blockchain<S> {
                     }
                 };
 
-                if let Err(e) = self.add_tx_to_mempool_with_storage_and_hash(storage, tx.clone(), tx_hash.clone(), false).await {
+                if let Err(e) = self.add_tx_to_mempool_with_storage_and_hash(storage, tx.clone(), Immutable::Owned(tx_hash.clone()), false).await {
                     warn!("Error while adding back orphaned tx {}: {}", tx_hash, e);
                     if !orphan_event_tracked {
                         // We couldn't add it back to mempool, let's notify this event
@@ -2837,7 +2837,7 @@ impl<S: Storage> Blockchain<S> {
         {
             for (hash, tx) in txs {
                 debug!("Trying to add TX {} to mempool again", hash);
-                if let Err(e) = self.add_tx_to_mempool_with_storage_and_hash(storage, tx.clone(), hash.clone(), false).await {
+                if let Err(e) = self.add_tx_to_mempool_with_storage_and_hash(storage, tx.clone(), Immutable::Owned(hash.clone()), false).await {
                     debug!("TX {} rewinded is not compatible anymore: {}", hash, e);
                     orphaned_txs.push((hash, tx));
                 }

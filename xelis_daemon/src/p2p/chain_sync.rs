@@ -425,8 +425,8 @@ impl<S: Storage> P2pServer<S> {
                                     let mempool = self.blockchain.get_mempool().read().await;
                                     !mempool.contains_tx(&hash)
                                 } {
-                                    debug!("TX is not in chain, adding it to mempool");
-                                    if let Err(e) = self.blockchain.add_tx_to_mempool_with_storage_and_hash(&storage, tx, hash, false).await {
+                                    debug!("TX {} is not in chain, adding it to mempool", hash);
+                                    if let Err(e) = self.blockchain.add_tx_to_mempool_with_storage_and_hash(&storage, tx, Immutable::Owned(hash), false).await {
                                         debug!("Couldn't add back to mempool after commit point rollbacked: {}", e);
                                     }
                                 } else {
