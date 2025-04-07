@@ -1116,15 +1116,12 @@ impl<S: Storage> P2pServer<S> {
             if current_time > last_peerlist_update + P2P_PING_PEER_LIST_DELAY {
                 trace!("Sending ping packet with peerlist...");
 
-                // Wrap it into a Arc to share it between tasks
-                let all_peers = Arc::new(all_peers);
                 stream::iter(all_peers.iter())
                     .for_each_concurrent(self.stream_concurrency, |peer| {
                         // Clone the ping packet for each peer
                         // We need to update the shared peers in it
                         let mut ping = ping.clone();
-                        let all_peers = all_peers.clone();
-
+                        let all_peers = &all_peers;
                         async move {
                             if peer.get_connection().is_closed() {
                                 debug!("{} is closed, skipping ping packet", peer);
@@ -1201,12 +1198,12 @@ impl<S: Storage> P2pServer<S> {
                 // broadcast directly the ping packet asap to all peers
                 stream::iter(all_peers)
                     .for_each_concurrent(self.stream_concurrency, |peer| {
-                        // Cheap clone of the packet
-                        let bytes = bytes.clone();
+                        // Move the reference only
+                        let bytes = &bytes;
                         async move {
                             if current_time - peer.get_last_ping_sent() > P2P_PING_DELAY && !peer.get_connection().is_closed() {
                                 trace!("broadcast generic ping packet to {}", peer);
-                                if let Err(e) = peer.send_bytes(bytes).await {
+                                if let Err(e) = peer.send_bytes(bytes.clone()).await {
                                     error!("Error while trying to send ping packet to {}: {}", peer, e);
                                 } else {
                                     peer.set_last_ping_sent(current_time);
@@ -1674,11 +1671,11 @@ impl<S: Storage> P2pServer<S> {
                 // iterate over all common peers of this peer broadcaster
                 self.get_common_peers_for(&peer).await
                     .for_each_concurrent(self.stream_concurrency, |common_peer| {
-                        let hash = hash.clone();
+                        let hash = &hash;
                         async move {
                             debug!("{} is a common peer with {}, adding TX {} to its cache", common_peer, peer, hash);
                             let mut txs_cache = common_peer.get_txs_cache().lock().await;
-                            if !txs_cache.contains(&hash) {
+                            if !txs_cache.contains(hash) {
                                 debug!("Adding TX {} to common peer {} cache", hash, common_peer);
                                 // Set it as Out so we don't send it anymore but we can get it one time in case of bad common peer prediction
                                 txs_cache.put(hash.clone(), (Direction::In, true));
@@ -1742,14 +1739,14 @@ impl<S: Storage> P2pServer<S> {
                 // because we track peerlist of each peers, we can try to determinate it
                 self.get_common_peers_for(&peer).await
                     .for_each_concurrent(self.stream_concurrency, |common_peer| {
-                        let block_hash = block_hash.clone();
+                        let block_hash = &block_hash;
                         async move {
                             debug!("{} is a common peer with {}, adding block {} to its cache", common_peer, peer, block_hash);
                             let mut blocks_propagation = common_peer.get_blocks_propagation().lock().await;
-                            if !blocks_propagation.contains(&block_hash) {
+                            if !blocks_propagation.contains(block_hash) {
                                 debug!("Adding block {} to common peer {} cache", block_hash, common_peer);
                                 // Out allow to get "In" again, because it's a prediction, don't block it completely
-                                blocks_propagation.put(block_hash, (direction, true));
+                                blocks_propagation.put(block_hash.clone(), (direction, true));
                             }
                         }
                     }).await;
@@ -2291,8 +2288,10 @@ impl<S: Storage> P2pServer<S> {
         trace!("Lock acquired for tx broadcast");
 
         stream::iter(peers).for_each_concurrent(self.stream_concurrency, |peer| {
-            let bytes = bytes.clone();
-            let tx = tx.clone();
+            // Move the references only
+            let bytes = &bytes;
+            let tx = &tx;
+
             async move {
                 // check that the peer is not too far from us
                 // otherwise we may spam him for nothing
@@ -2304,7 +2303,7 @@ impl<S: Storage> P2pServer<S> {
                     let send = {
                         let mut txs_cache = peer.get_txs_cache().lock().await;
                         trace!("Cache locked for tx hash {}", tx);
-                        let send = !txs_cache.contains(&tx);
+                        let send = !txs_cache.contains(tx);
                         // check that we didn't already send this tx to this peer or that he don't already have it
                         if send {
                             trace!("Adding tx hash {} to cache for {}", tx, peer);
@@ -2358,8 +2357,8 @@ impl<S: Storage> P2pServer<S> {
         stream::iter(self.peer_list.get_cloned_peers().await)
             .for_each_concurrent(self.stream_concurrency, |peer| {
                 // We can't move them, but we can copy them as Bytes is cheap
-                let packet_block_bytes = packet_block_bytes.clone();
-                let packet_ping_bytes = packet_ping_bytes.clone();
+                let packet_block_bytes = &packet_block_bytes;
+                let packet_ping_bytes = &packet_ping_bytes;
 
                 async move {
                     // if the peer can directly accept this new block, send it
@@ -2401,14 +2400,14 @@ impl<S: Storage> P2pServer<S> {
 
                         if send_block {
                             debug!("Broadcast {} to {}", hash, peer);
-                            if let Err(e) = peer.send_bytes(packet_block_bytes).await {
+                            if let Err(e) = peer.send_bytes(packet_block_bytes.clone()).await {
                                 debug!("Error on broadcast block {} to {}: {}", hash, peer, e);
                             }
                             trace!("{} has been broadcasted to {}", hash, peer);
                         } else if send_ping {
                             debug!("{} contains {}, don't broadcast block to him", peer, hash);
                             // But we can notify him with a ping packet that we got the block
-                            if let Err(e) = peer.send_bytes(packet_ping_bytes).await {
+                            if let Err(e) = peer.send_bytes(packet_ping_bytes.clone()).await {
                                 debug!("Error on sending ping for notifying that we accepted the block {} to {}: {}", hash, peer, e);
                             } else {
                                 trace!("{} has been notified that we have the block {}", peer, hash);
@@ -2417,7 +2416,7 @@ impl<S: Storage> P2pServer<S> {
                         }
                     } else if send_ping && peer_height >= block.get_height() {
                         // Peer is above us, send him a ping packet to inform him we got a block propagated
-                        if let Err(e) = peer.send_bytes(packet_ping_bytes).await {
+                        if let Err(e) = peer.send_bytes(packet_ping_bytes.clone()).await {
                             debug!("Error on sending ping to peer for notifying that we got the block {} to {}: {}", hash, peer, e);
                         } else {
                             trace!("{} has been notified that we received the block {}", peer, hash);
