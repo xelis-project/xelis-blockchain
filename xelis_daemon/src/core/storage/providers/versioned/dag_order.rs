@@ -21,7 +21,7 @@ impl VersionedDagOrderProvider for SledStorage {
     async fn delete_dag_order_above_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError> {
         trace!("delete dag order above topoheight {}", topoheight);
 
-        for el in self.hash_at_topo.iter() {
+        for el in Self::iter(self.snapshot.as_ref(), &self.hash_at_topo) {
             let (key, value) = el?;
             let topo = TopoHeight::from_bytes(&key)?;
             if topo > topoheight {

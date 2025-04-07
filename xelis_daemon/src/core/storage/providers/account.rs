@@ -124,7 +124,7 @@ impl AccountProvider for SledStorage {
         // so we skip until it
         let mut local_index = 0;
         let mut current_topo = 0;
-        for el in self.registrations_prefixed.iter().keys() {
+        for el in Self::iter_keys(self.snapshot.as_ref(), &self.registrations_prefixed) {
             let key = el?;
             let topo = TopoHeight::from_bytes(&key[0..8])?;
 

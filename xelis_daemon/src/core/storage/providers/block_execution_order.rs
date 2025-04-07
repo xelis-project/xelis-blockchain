@@ -32,8 +32,7 @@ pub trait BlockExecutionOrderProvider {
 #[async_trait]
 impl BlockExecutionOrderProvider for SledStorage {
     async fn get_blocks_execution_order(&self, skip: usize, count: usize) -> Result<IndexSet<Hash>, BlockchainError> {
-        let order = self.blocks_execution_order.iter()
-            .keys()
+        let order = Self::iter_keys(self.snapshot.as_ref(), &self.blocks_execution_order)
             .skip(skip)
             .take(count)
             .map(|x| Ok(Hash::from_bytes(&x?)?))

@@ -45,7 +45,7 @@ impl VersionedBalanceProvider for SledStorage {
             // And we delete everything below it
 
             // We check one account at a time
-            for el in self.balances.iter() {
+            for el in Self::iter(self.snapshot.as_ref(), &self.balances) {
                 let (k, value) = el?;
                 let topo = TopoHeight::from_bytes(&value)?;
 

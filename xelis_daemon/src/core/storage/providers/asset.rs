@@ -137,7 +137,7 @@ impl AssetProvider for SledStorage {
     async fn get_assets(&self) -> Result<Vec<Hash>, BlockchainError> {
         trace!("get assets");
 
-        self.assets.iter().keys().map(|res| {
+        Self::iter_keys(self.snapshot.as_ref(), &self.assets).map(|res| {
             let key = res?;
             Ok(Hash::from_bytes(&key)?)
         }).collect()
@@ -147,7 +147,7 @@ impl AssetProvider for SledStorage {
         trace!("get partial assets with topoheight with maximum {} and skip {}", maximum, skip);
         let mut assets = IndexMap::new();
         let mut skip_count = 0;
-        for el in self.assets.iter() {
+        for el in Self::iter(self.snapshot.as_ref(), &self.assets) {
             let (key, value) = el?;
             let topo = u64::from_bytes(&value)?;
             // check that we have a registered asset before the maximum topoheight
@@ -173,7 +173,7 @@ impl AssetProvider for SledStorage {
         trace!("get partial assets with maximum {} and skip {}", maximum, skip);
         let mut assets = IndexMap::new();
         let mut skip_count = 0;
-        for el in self.assets.iter() {
+        for el in Self::iter(self.snapshot.as_ref(), &self.assets) {
             let (key, value) = el?;
             let topo = u64::from_bytes(&value)?;
             // check that we have a registered asset before the maximum topoheight
@@ -197,7 +197,7 @@ impl AssetProvider for SledStorage {
 
     async fn get_chunked_assets(&self, maximum: usize, skip: usize) -> Result<IndexSet<Hash>, BlockchainError> {
         let mut assets = IndexSet::with_capacity(maximum);
-        for el in self.assets.iter().keys().skip(skip).take(maximum) {
+        for el in Self::iter_keys(self.snapshot.as_ref(), &self.assets).skip(skip).take(maximum) {
             let key = el?;
             let asset = Hash::from_bytes(&key)?;
             assets.insert(asset);

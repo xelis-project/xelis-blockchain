@@ -143,7 +143,7 @@ impl SledStorage {
         context: DiskContext,
     ) -> Result<(), BlockchainError> {
         trace!("delete versioned data above topoheight {}", topoheight);
-        for el in tree_pointer.iter() {
+        for el in Self::iter(snapshot.as_ref(), tree_pointer) {
             let (key, value) = el?;
             let topo = u64::from_bytes(&value)?;
 
@@ -196,7 +196,7 @@ impl SledStorage {
     ) -> Result<(), BlockchainError> {
         trace!("delete versioned data below topoheight {}", topoheight);
         if keep_last {
-            for el in tree_pointer.iter() {
+            for el in Self::iter(snapshot.as_ref(), tree_pointer) {
                 let (key, value) = el?;
                 let topo = u64::from_bytes(&value)?;
 
@@ -224,7 +224,7 @@ impl SledStorage {
                 }
             }
         } else {
-            for el in tree_versioned.iter().keys() {
+            for el in Self::iter_keys(snapshot.as_ref(), tree_versioned) {
                 let key = el?;
                 let topo = u64::from_bytes(&key[0..8])?;
                 if topo < topoheight {

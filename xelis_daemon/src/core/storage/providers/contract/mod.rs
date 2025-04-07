@@ -181,7 +181,7 @@ impl ContractProvider for SledStorage {
         // Unlike the keys, we don't prefix them with a topoheight at which they got registered
         // Because we allow contracts code to be updated, we need to get the latest version of the contract
         // We can't do a fast path with the skip checking, we need to process them all
-        for el in self.contracts.iter() {
+        for el in Self::iter(self.snapshot.as_ref(), &self.contracts) {
             let (key, value) = el?;
             let topoheight = TopoHeight::from_bytes(&value)?;
             let hash = Hash::from_bytes(&key)?;

@@ -216,6 +216,55 @@ impl Snapshot {
             _ => Either::Right(tree.scan_prefix(prefix).keys())
         }
     }
+
+    pub fn iter(&self, tree: &Tree) -> impl Iterator<Item = sled::Result<(IVec, IVec)>> {
+        match self.trees.get(&tree.name()) {
+            Some(Some(entries)) => {
+                let original = tree.iter()
+                    .filter_map_ok(|(k, v)| {
+                        if !entries.writes.contains_key(&k) {
+                            Some((k, v))
+                        } else {
+                            None
+                        }
+                    });
+
+                let changes = entries.writes.iter()
+                    .filter_map(|(k, v)| v.clone().map(|v| Ok((k.clone(), v))))
+                    .chain(original)
+                    .collect::<Vec<_>>()
+                    .into_iter();
+
+                Either::Left(changes)
+            },
+            _ => Either::Right(tree.iter())
+        }
+    }
+
+    pub fn iter_keys(&self, tree: &Tree) -> impl Iterator<Item = sled::Result<IVec>> {
+        match self.trees.get(&tree.name()) {
+            Some(Some(entries)) => {
+                let original = tree.iter()
+                    .keys()
+                    .filter_map_ok(|k| {
+                        if !entries.writes.contains_key(&k) {
+                            Some(k)
+                        } else {
+                            None
+                        }
+                    });
+
+                let changes = entries.writes.iter()
+                    .filter_map(|(k, v)| v.as_ref().map(|_| Ok(k.clone())))
+                    .chain(original)
+                    .collect::<Vec<_>>()
+                    .into_iter();
+
+                Either::Left(changes)
+            },
+            _ => Either::Right(tree.iter().keys())
+        }
+    }
 }
 
 impl IntoIterator for BatchApply {

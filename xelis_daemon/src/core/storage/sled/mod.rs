@@ -415,6 +415,22 @@ impl SledStorage {
         }
     }
 
+    // Iter over a tree entries
+    pub(super) fn iter(snapshot: Option<&Snapshot>, tree: &Tree) -> impl Iterator<Item = sled::Result<(IVec, IVec)>> {
+        match snapshot {
+            Some(snapshot) => Either::Left(snapshot.iter(tree)),
+            None => Either::Right(tree.iter())
+        }
+    }
+
+    // Iter over a tree keys
+    pub(super) fn iter_keys(snapshot: Option<&Snapshot>, tree: &Tree) -> impl Iterator<Item = sled::Result<IVec>> {
+        match snapshot {
+            Some(snapshot) => Either::Left(snapshot.iter_keys(tree)),
+            None => Either::Right(tree.iter().keys())
+        }
+    }
+
     pub(super) fn remove_from_disk_internal(snapshot: Option<&mut Snapshot>, tree: &Tree, key: &[u8]) -> Result<Option<IVec>, BlockchainError> {
         trace!("remove from disk internal");
         if let Some(snapshot) = snapshot {
@@ -897,7 +913,7 @@ impl Storage for SledStorage {
     async fn get_unexecuted_transactions(&self) -> Result<IndexSet<Hash>, BlockchainError> {
         trace!("get unexecuted transactions");
         let mut txs = IndexSet::new();
-        for el in self.transactions.iter().keys() {
+        for el in Self::iter_keys(self.snapshot.as_ref(), &self.transactions) {
             let key = el?;
             let tx_hash = Hash::from_bytes(&key)?;
             if !self.is_tx_executed_in_a_block(&tx_hash)? {
@@ -915,7 +931,7 @@ impl Storage for SledStorage {
         for tree in self.db.tree_names() {
             let tree = self.db.open_tree(tree)?;
             debug!("Estimating size for tree {}", String::from_utf8_lossy(&tree.name()));
-            for el in tree.iter() {
+            for el in Self::iter(self.snapshot.as_ref(), &tree) {
                 let (key, value) = el?;
                 size += key.len() + value.len();
             }
@@ -927,7 +943,7 @@ impl Storage for SledStorage {
     async fn count_orphaned_blocks(&self) -> Result<u64, BlockchainError> {
         trace!("Counting orphaned blocks");
         let mut count = 0;
-        for el in self.blocks.iter().keys() {
+        for el in Self::iter_keys(self.snapshot.as_ref(), &self.blocks) {
             let hash = Hash::from_bytes(&el?)?;
             if !self.is_block_topological_ordered(&hash).await {
                 count += 1;
