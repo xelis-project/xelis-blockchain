@@ -156,8 +156,8 @@ impl<'a> Ping<'a> {
         &self.peer_list
     }
 
-    pub fn get_mut_peers(&mut self) -> &mut IndexSet<SocketAddr> {
-        &mut self.peer_list
+    pub fn add_peer(&mut self, addr: SocketAddr) -> bool {
+        self.peer_list.insert(addr)
     }
 }
 

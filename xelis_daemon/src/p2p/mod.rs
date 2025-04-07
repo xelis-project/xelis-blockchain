@@ -1098,7 +1098,7 @@ impl<S: Storage> P2pServer<S> {
             }
 
             debug!("Building ping packet from ping task");
-            let mut ping = match self.build_generic_ping_packet().await {
+            let ping = match self.build_generic_ping_packet().await {
                 Ok(ping) => ping,
                 Err(e) => {
                     error!("Error while building generic ping packet: {}", e);
@@ -1115,71 +1115,79 @@ impl<S: Storage> P2pServer<S> {
             // check if its time to send our peerlist
             if current_time > last_peerlist_update + P2P_PING_PEER_LIST_DELAY {
                 trace!("Sending ping packet with peerlist...");
-                for peer in all_peers.iter() {
-                    let new_peers = ping.get_mut_peers();
-                    new_peers.clear();
 
-                    if peer.get_connection().is_closed() {
-                        debug!("{} is closed, skipping ping packet", peer);
-                        continue;
-                    }
+                // Wrap it into a Arc to share it between tasks
+                let all_peers = Arc::new(all_peers);
+                stream::iter(all_peers.iter())
+                    .for_each_concurrent(self.stream_concurrency, |peer| {
+                        // Clone the ping packet for each peer
+                        // We need to update the shared peers in it
+                        let mut ping = ping.clone();
+                        let all_peers = all_peers.clone();
 
-                    // Is it a peer from our local network
-                    let is_local_peer = is_local_address(peer.get_connection().get_address());
-
-                    // all the peers we already shared with this peer
-                    let mut shared_peers = peer.get_peers().lock().await;
-
-                    // iterate through our peerlist to determinate which peers we have to send
-                    for p in all_peers.iter() {
-                        // don't send him itself
-                        // and don't share a peer that don't want to be shared
-                        if p.get_id() == peer.get_id() || !p.sharable() {
-                            continue;
-                        }
-
-                        // if we haven't send him this peer addr and that he don't have him already, insert it
-                        let addr = p.get_outgoing_address();
-
-                        // Don't share local network addresses if it's external peer
-                        if (is_local_address(addr) && !is_local_peer) || !is_valid_address(addr) {
-                            debug!("{} is a local address but peer is external, skipping", addr);
-                            continue;
-                        }
-
-                        let direction = TimedDirection::Out {
-                            sent_at: get_current_time_in_millis()
-                        };
-
-                        let send = match shared_peers.get_mut(addr) {
-                            Some(e) => e.update(direction),
-                            None => {
-                                shared_peers.put(*addr, direction);
-                                true
+                        async move {
+                            if peer.get_connection().is_closed() {
+                                debug!("{} is closed, skipping ping packet", peer);
+                                return;
                             }
-                        };
 
-                        if send {
-                            // add it in our side to not re send it again
-                            trace!("{} didn't received {} yet, adding it to peerlist in ping packet", peer.get_outgoing_address(), addr);
-
-                            // add it to new list to send it
-                            new_peers.insert(*addr);
-                            if new_peers.len() >= P2P_PING_PEER_LIST_LIMIT {
-                                break;
+                            // Is it a peer from our local network
+                            let is_local_peer = is_local_address(peer.get_connection().get_address());
+        
+                            // all the peers we already shared with this peer
+                            let mut shared_peers = peer.get_peers().lock().await;
+        
+                            // iterate through our peerlist to determinate which peers we have to send
+                            for p in all_peers.iter() {
+                                // don't send him itself
+                                // and don't share a peer that don't want to be shared
+                                if p.get_id() == peer.get_id() || !p.sharable() {
+                                    continue;
+                                }
+        
+                                // if we haven't send him this peer addr and that he don't have him already, insert it
+                                let addr = p.get_outgoing_address();
+        
+                                // Don't share local network addresses if it's external peer
+                                if (is_local_address(addr) && !is_local_peer) || !is_valid_address(addr) {
+                                    debug!("{} is a local address but peer is external, skipping", addr);
+                                    continue;
+                                }
+        
+                                let direction = TimedDirection::Out {
+                                    sent_at: get_current_time_in_millis()
+                                };
+        
+                                let send = match shared_peers.get_mut(addr) {
+                                    Some(e) => e.update(direction),
+                                    None => {
+                                        shared_peers.put(*addr, direction);
+                                        true
+                                    }
+                                };
+        
+                                if send {
+                                    // add it in our side to not re send it again
+                                    trace!("{} didn't received {} yet, adding it to peerlist in ping packet", peer.get_outgoing_address(), addr);
+        
+                                    // add it to new list to send it
+                                    ping.add_peer(*addr);
+                                    if ping.get_peers().len() >= P2P_PING_PEER_LIST_LIMIT {
+                                        break;
+                                    }
+                                }
+                            }
+        
+                            // update the ping packet with the new peers
+                            debug!("Set peers: {:?}, going to {}", ping.get_peers(), peer.get_outgoing_address());
+                            // send the ping packet to the peer
+                            if let Err(e) = peer.send_packet(Packet::Ping(Cow::Borrowed(&ping))).await {
+                                debug!("Error sending specific ping packet to {}: {}", peer, e);
+                            } else {
+                                peer.set_last_ping_sent(current_time);
                             }
                         }
-                    }
-
-                    // update the ping packet with the new peers
-                    debug!("Set peers: {:?}, going to {}", new_peers, peer.get_outgoing_address());
-                    // send the ping packet to the peer
-                    if let Err(e) = peer.send_packet(Packet::Ping(Cow::Borrowed(&ping))).await {
-                        debug!("Error sending specific ping packet to {}: {}", peer, e);
-                    } else {
-                        peer.set_last_ping_sent(current_time);
-                    }
-                }
+                    }).await;
 
                 // update the last time we sent our peerlist
                 // We don't use previous current_time variable because it may have been
