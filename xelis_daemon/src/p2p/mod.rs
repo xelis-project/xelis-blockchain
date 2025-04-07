@@ -2303,6 +2303,12 @@ impl<S: Storage> P2pServer<S> {
                 if !storage.is_block_topological_ordered(&hash).await {
                     match storage.delete_block_with_hash(&hash).await {
                         Ok(block) => {
+                            let mut tips = storage.get_tips().await?;
+                            if tips.remove(&hash) {
+                                debug!("Block {} was a tip, removing it from tips", hash);
+                                storage.store_tips(&tips)?;
+                            }
+
                             warn!("Block {} is already in chain but not in DAG, re-executing it", hash);
                             self.blockchain.add_new_block_for_storage(&mut storage, block, false, false).await?;
                         },
@@ -2559,7 +2565,15 @@ impl<S: Storage> P2pServer<S> {
                                 debug!("storage write lock acquired for potential block {} deletion", hash);
                                 let block = if !storage.is_block_topological_ordered(&hash).await {
                                     match storage.delete_block_with_hash(&hash).await {
-                                        Ok(block) => Some(block),
+                                        Ok(block) => {
+                                            let mut tips = storage.get_tips().await?;
+                                            if tips.remove(&hash) {
+                                                debug!("Block {} was a tip, removing it from tips", hash);
+                                                storage.store_tips(&tips)?;
+                                            }
+
+                                            Some(block)
+                                        },
                                         Err(e) => {
                                             // This shouldn't happen, but in case
                                             error!("Error while deleting block {} from storage to re-execute it for chain sync: {}", hash, e);
@@ -2646,7 +2660,15 @@ impl<S: Storage> P2pServer<S> {
                             let mut storage = self.blockchain.get_storage().write().await;
                             if !storage.is_block_topological_ordered(&hash).await {
                                 match storage.delete_block_with_hash(&hash).await {
-                                    Ok(block) => block,
+                                    Ok(block) => {
+                                        let mut tips = storage.get_tips().await?;
+                                        if tips.remove(&hash) {
+                                            debug!("Block {} was a tip, removing it from tips", hash);
+                                            storage.store_tips(&tips)?;
+                                        }
+
+                                        block
+                                    },
                                     Err(e) => {
                                         // This shouldn't happen, but in case
                                         error!("Error while deleting block {} from storage to re-execute it for chain sync: {}", hash, e);
