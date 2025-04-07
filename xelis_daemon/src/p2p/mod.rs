@@ -1189,19 +1189,27 @@ impl<S: Storage> P2pServer<S> {
                 trace!("Sending generic ping packet...");
                 let packet = Packet::Ping(Cow::Owned(ping));
                 let bytes = Bytes::from(packet.to_bytes());
+
                 // broadcast directly the ping packet asap to all peers
-                for peer in all_peers {
-                    if current_time - peer.get_last_ping_sent() > P2P_PING_DELAY && !peer.get_connection().is_closed() {
-                        trace!("broadcast generic ping packet to {}", peer);
-                        if let Err(e) = peer.send_bytes(bytes.clone()).await {
-                            error!("Error while trying to send ping packet to {}: {}", peer, e);
-                        } else {
-                            peer.set_last_ping_sent(current_time);
+                stream::iter(all_peers)
+                    .for_each_concurrent(self.stream_concurrency, |peer| {
+                        // Cheap clone of the packet
+                        let bytes = bytes.clone();
+                        async move {
+                            if current_time - peer.get_last_ping_sent() > P2P_PING_DELAY && !peer.get_connection().is_closed() {
+                                trace!("broadcast generic ping packet to {}", peer);
+                                if let Err(e) = peer.send_bytes(bytes).await {
+                                    error!("Error while trying to send ping packet to {}: {}", peer, e);
+                                } else {
+                                    peer.set_last_ping_sent(current_time);
+                                }
+                            } else {
+                                trace!("we already sent a ping packet to {}, skipping", peer);
+                            }
                         }
-                    } else {
-                        trace!("we already sent a ping packet to {}, skipping", peer);
-                    }
-                }
+                    }).await;
+
+                trace!("generic ping packet sent to all peers");
             }
         }
     }
@@ -1394,7 +1402,7 @@ impl<S: Storage> P2pServer<S> {
                     let future = async move {
                         debug!("Requesting from txs processing task tx {}", hash);
                         // TODO
-                        let (transaction, hash) = match peer.request_blocking_object(ObjectRequest::Transaction(hash.as_ref().clone())).await {
+                        let (transaction, hash2) = match peer.request_blocking_object(ObjectRequest::Transaction(hash.as_ref().clone())).await {
                             Ok(OwnedObjectResponse::Transaction(tx, hash)) => (tx, hash),
                             Ok(response) => {
                                 warn!("Received invalid object type response from {}", peer);
@@ -1407,6 +1415,8 @@ impl<S: Storage> P2pServer<S> {
                             }
                         };
 
+                        debug_assert!(hash.as_ref() == &hash2, "Hash mismatch between request and response");
+
                         Ok((transaction, hash))
                     };
 
@@ -1416,7 +1426,7 @@ impl<S: Storage> P2pServer<S> {
                     match res {
                         Ok((transaction, hash)) => {
                             debug!("Adding TX to mempool from processing TX task: {}", hash);
-                            if let Err(e) = self.blockchain.add_tx_to_mempool_with_hash(transaction, hash.clone(), true).await {
+                            if let Err(e) = self.blockchain.add_tx_to_mempool_with_hash(transaction, Immutable::Arc(hash.clone()), true).await {
                                 warn!("Couldn't add processed TX {}: {}", hash, e);
                             }
                         },
