@@ -1,4 +1,4 @@
-use std::{sync::Arc, ops::Deref};
+use std::{fmt::{self, Display}, ops::Deref, sync::Arc};
 use serde::{Serialize, Deserialize};
 
 #[derive(Clone, Serialize, Deserialize, Debug, Eq, Hash, PartialEq)]
@@ -75,5 +75,14 @@ impl<T: Clone> Deref for Immutable<T> {
 
     fn deref(&self) -> &Self::Target {
         self.get_inner()        
+    }
+}
+
+impl<T: fmt::Display + Clone> Display for Immutable<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Immutable::Owned(v) => write!(f, "{}", v),
+            Immutable::Arc(v) => write!(f, "{}", v)
+        }
     }
 }
