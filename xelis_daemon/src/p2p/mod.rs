@@ -924,12 +924,11 @@ impl<S: Storage> P2pServer<S> {
                 }
             }
 
-            if !(p.get_height() > our_height || peer_topoheight > our_topoheight) {
-                trace!("Peer {} has a lower height/topoheight than us, skipping...", p);
-                continue;
+            // check if this peer may have a block we don't have
+            if p.get_height() > our_height || peer_topoheight > our_topoheight {
+                debug!("Peer {} is a candidate for chain sync, our topoheight: {}, our height: {}", p, our_topoheight, our_height);
+                peers.insert(p);
             }
-
-            peers.insert(p);
         }
 
         // Try to not reuse the same peer between each sync
