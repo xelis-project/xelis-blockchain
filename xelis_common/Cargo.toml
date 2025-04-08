@@ -68,6 +68,7 @@ tokio = { version = "1", default-features = false, features = ["macros", "signal
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }
+criterion = "0.5.1"
 
 [features]
 tokio = ["dep:tokio", "dep:tokio_with_wasm", "dep:futures"]
@@ -80,3 +81,7 @@ tokio-multi-thread = ["tokio", "tokio/rt-multi-thread", "tokio_with_wasm/rt-mult
 
 [lib]
 crate-type = ["cdylib", "rlib"]
+
+[[bench]]
+name = "proofs"
+harness = false
