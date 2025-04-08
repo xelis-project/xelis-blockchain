@@ -1,12 +1,12 @@
 mod state;
+mod error;
 
 use std::{
     borrow::Cow,
     collections::HashMap,
     iter
 };
-use thiserror::Error;
-use anyhow::{Context as AnyContext, Error as AnyError};
+use anyhow::Context as AnyContext;
 use bulletproofs::RangeProof;
 use curve25519_dalek::{
     ristretto::CompressedRistretto,
@@ -63,52 +63,7 @@ use super::{
 };
 
 pub use state::*;
-
-#[derive(Error, Debug)]
-pub enum VerificationError<T> {
-    #[error("State error: {0}")]
-    State(T),
-    #[error("Invalid nonce, got {} expected {}", _0, _1)]
-    InvalidNonce(Nonce, Nonce),
-    #[error("Sender is receiver")]
-    SenderIsReceiver,
-    #[error("Invalid signature")]
-    InvalidSignature,
-    #[error("Proof verification error: {0}")]
-    Proof(#[from] ProofVerificationError),
-    #[error("Extra Data is too big in transfer")]
-    TransferExtraDataSize,
-    #[error("Extra Data is too big in transaction")]
-    TransactionExtraDataSize,
-    #[error("Transfer count is invalid")]
-    TransferCount,
-    #[error("Deposit count is invalid")]
-    DepositCount,
-    #[error("Invalid commitments assets")]
-    Commitments,
-    #[error("Invalid multisig participants count")]
-    MultiSigParticipants,
-    #[error("Invalid multisig threshold")]
-    MultiSigThreshold,
-    #[error("MultiSig not configured")]
-    MultiSigNotConfigured,
-    #[error("MultiSig not found")]
-    MultiSigNotFound,
-    #[error("Invalid format")]
-    InvalidFormat,
-    #[error("Module error: {0}")]
-    ModuleError(String),
-    #[error(transparent)]
-    AnyError(#[from] AnyError),
-    #[error("Invalid invoke contract")]
-    InvalidInvokeContract,
-    #[error("overflow during gas calculation")]
-    GasOverflow,
-    #[error("Deposit decompressed not found")]
-    DepositNotFound,
-    #[error("Configured max gas is above the network limit")]
-    MaxGasReached,
-}
+pub use error::*;
 
 struct DecompressedTransferCt {
     commitment: PedersenCommitment,
@@ -233,7 +188,6 @@ impl Transaction {
 
     /// Get the new output ciphertext for the sender
     pub fn get_expected_sender_outputs<'a>(&'a self) -> Result<Vec<(&'a Hash, Ciphertext)>, DecompressionError> {
-        let mut balances = Vec::new();
         let mut decompressed_transfers = Vec::new();
         let mut decompressed_deposits = HashMap::new();
         match &self.data {
@@ -262,13 +216,14 @@ impl Transaction {
             _ => {}
         }
 
-        for commitment in self.source_commitments.iter() {
-            let ciphertext = self.get_sender_output_ct(commitment.get_asset(), &decompressed_transfers, &decompressed_deposits)?;
+        let outputs = self.source_commitments.iter()
+            .map(|commitment| {
+                let ciphertext = self.get_sender_output_ct(commitment.get_asset(), &decompressed_transfers, &decompressed_deposits)?;
+                Ok((commitment.get_asset(), ciphertext))
+            })
+            .collect::<Result<Vec<_>, DecompressionError>>()?;
 
-            balances.push((commitment.get_asset(), ciphertext));
-        }
-
-        Ok(balances)
+        Ok(outputs)
     }
 
     pub(crate) fn prepare_transcript(
