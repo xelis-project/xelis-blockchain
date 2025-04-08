@@ -110,6 +110,9 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static> {
 
     let mut env = EnvironmentBuilder::default();
 
+    // Register the constructor hook
+    env.register_hook("constructor", vec![], None);
+
     env.get_mut_function("println", None, vec![Type::Any])
         .set_on_call(println_fn);
 
