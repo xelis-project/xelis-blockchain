@@ -57,8 +57,6 @@ pub struct DeployContractBuilder {
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct DeployContractInvokeBuilder {
     pub max_gas: u64,
-    pub chunk_id: u16,
-    pub parameters: Vec<ValueCell>,
     #[serde(default)]
     pub deposits: IndexMap<Hash, ContractDepositBuilder>,
 }

@@ -6,11 +6,12 @@ mod fee;
 mod unsigned;
 mod payload;
 
-use indexmap::{IndexMap, IndexSet};
 pub use state::AccountState;
 pub use fee::{FeeHelper, FeeBuilder};
 pub use unsigned::UnsignedTransaction;
 
+use indexmap::{IndexMap, IndexSet};
+use merlin::Transcript;
 use bulletproofs::RangeProof;
 use curve25519_dalek::Scalar;
 use serde::{Deserialize, Serialize};
@@ -60,6 +61,7 @@ use super::{
     BurnPayload,
     ContractDeposit,
     DeployContractPayload,
+    InvokeConstructorPayload,
     InvokeContractPayload,
     MultiSigPayload,
     Role,
@@ -80,6 +82,10 @@ pub use payload::*;
 pub enum GenerationError<T> {
     #[error("Error in the state: {0}")]
     State(T),
+    #[error("Invalid constructor invoke on deploy")]
+    InvalidConstructorInvoke,
+    #[error("No contract key provided for private deposits")]
+    MissingContractKey,
     #[error("Empty transfers")]
     EmptyTransfers,
     #[error("Max transfer count reached")]
@@ -465,14 +471,116 @@ impl TransactionBuilder {
                     cost += payload.max_gas;
                 }
             },
-            TransactionTypeBuilder::DeployContract(_) => {
+            TransactionTypeBuilder::DeployContract(payload) => {
                 if *asset == XELIS_ASSET {
                     cost += BURN_PER_CONTRACT;
+                }
+
+                if let Some(invoke) = payload.invoke.as_ref() {
+                    if let Some(deposit) = invoke.deposits.get(asset) {
+                        cost += deposit.amount;
+                    }
+
+                    if *asset == XELIS_ASSET {
+                        cost += invoke.max_gas;
+                    }
                 }
             }
         }
 
         cost
+    }
+
+    // Build the deposits commitments for the contract
+    fn build_deposits_commitments<E>(
+        deposits: &IndexMap<Hash, ContractDepositBuilder>,
+        public_key: &PublicKey,
+        contract_key: &Option<PublicKey>,
+    ) -> Result<HashMap<Hash, DepositWithCommitment>, GenerationError<E>> {
+        let mut deposits_commitments = HashMap::new();
+        for (asset, deposit) in deposits.iter() {
+            if deposit.private {
+                let amount_opening = PedersenOpening::generate_new();
+                let commitment = PedersenCommitment::new_with_opening(deposit.amount, &amount_opening);
+                let sender_handle = public_key.decrypt_handle(&amount_opening);
+                let receiver_handle = contract_key
+                    .as_ref()
+                    .ok_or(GenerationError::MissingContractKey)?
+                    .decrypt_handle(&amount_opening);
+
+                deposits_commitments.insert(asset.clone(), DepositWithCommitment {
+                    amount: deposit.amount,
+                    commitment,
+                    sender_handle,
+                    receiver_handle,
+                    amount_opening,
+                });
+                todo!("support private deposits")
+            } else {
+                if deposit.amount == 0 {
+                    return Err(GenerationError::DepositZero);
+                }
+            }
+        }
+
+        Ok(deposits_commitments)
+    }
+
+    // Finalize the deposits commitments
+    // Public & private variants are built here
+    fn finalize_deposits_commitments(
+        transcript: &mut Transcript,
+        range_proof_values: &mut Vec<u64>,
+        range_proof_openings: &mut Vec<Scalar>,
+        payload_deposits: &mut IndexMap<Hash, ContractDepositBuilder>,
+        deposits_commitments: HashMap<Hash, DepositWithCommitment>,
+        source_keypair: &KeyPair,
+        contract_key: &Option<PublicKey>,
+    ) -> IndexMap<Hash, ContractDeposit> {
+        range_proof_openings.reserve(deposits_commitments.len());
+        range_proof_values.reserve(deposits_commitments.len());
+
+        // Build the private deposits
+        let mut deposits = deposits_commitments
+            .into_iter()
+            .map(|(asset, deposit)| {
+                let commitment = deposit.commitment.compress();
+                let sender_handle = deposit.sender_handle.compress();
+                let receiver_handle = deposit.receiver_handle.compress();
+
+                transcript.deposit_proof_domain_separator();
+                transcript.append_hash(b"deposit_asset", &asset);
+                transcript.append_commitment(b"deposit_commitment", &commitment);
+                transcript.append_handle(b"deposit_sender_handle", &sender_handle);
+                transcript.append_handle(b"deposit_receiver_handle", &receiver_handle);
+
+                let ct_validity_proof = CiphertextValidityProof::new(
+                    contract_key.as_ref().expect("Contract key is required"),
+                    Some(source_keypair.get_public_key()),
+                    deposit.amount,
+                    &deposit.amount_opening,
+                    transcript,
+                );
+
+                range_proof_values.push(deposit.amount);
+                range_proof_openings.push(deposit.amount_opening.as_scalar());
+
+                (
+                    asset,
+                    ContractDeposit::Private { commitment, sender_handle, receiver_handle, ct_validity_proof }
+                )
+            }).collect::<IndexMap<_, _>>();
+
+            // Now build the public ones
+            for (asset, deposit) in payload_deposits.drain(..).filter(|(_, deposit)| !deposit.private) {
+                transcript.deposit_proof_domain_separator();
+                transcript.append_hash(b"deposit_asset", &asset);
+                transcript.append_u64(b"deposit_plain", deposit.amount);
+
+                deposits.insert(asset, ContractDeposit::Public(deposit.amount));
+            }
+
+            deposits
     }
 
     pub fn build<B: AccountState>(
@@ -576,34 +684,29 @@ impl TransactionBuilder {
                     return Err(GenerationError::MaxGasReached.into())
                 }
 
-                for (asset, deposit) in payload.deposits.iter() {
-                    if deposit.private {
-                        let key = PublicKey::from_hash(&payload.contract);
-                        let amount_opening = PedersenOpening::generate_new();
-                        let commitment = PedersenCommitment::new_with_opening(deposit.amount, &amount_opening);
-                        let sender_handle = source_keypair.get_public_key().decrypt_handle(&amount_opening);
-                        let receiver_handle = key.decrypt_handle(&amount_opening);
-
-                        deposits_commitments.insert(asset.clone(), DepositWithCommitment {
-                            amount: deposit.amount,
-                            commitment,
-                            sender_handle,
-                            receiver_handle,
-                            amount_opening,
-                        });
-                    } else {
-                        if deposit.amount == 0 {
-                            return Err(GenerationError::DepositZero);
-                        }
+                deposits_commitments = Self::build_deposits_commitments::<B::Error>(
+                    &payload.deposits,
+                    source_keypair.get_public_key(),
+                    &None
+                )?;
+            },
+            TransactionTypeBuilder::DeployContract(payload) => {
+                if let Some(invoke) = payload.invoke.as_ref() {
+                    if invoke.max_gas > MAX_GAS_USAGE_PER_TX {
+                        return Err(GenerationError::MaxGasReached.into())
                     }
+
+                    deposits_commitments = Self::build_deposits_commitments::<B::Error>(
+                        &invoke.deposits,
+                        source_keypair.get_public_key(),
+                        &None
+                    )?;
                 }
             },
             _ => {}
         };
 
         let reference = state.get_reference();
-        let mut transcript = Transaction::prepare_transcript(self.version, &self.source, fee, nonce);
-
         let used_assets = self.data.used_assets();
 
         let mut range_proof_openings: Vec<_> =
@@ -629,6 +732,9 @@ impl TransactionBuilder {
                 Ok(source_new_balance)
             })
             .collect::<Result<Vec<_>, GenerationError<B::Error>>>()?;
+
+        // Prepare the transcript used for proofs
+        let mut transcript = Transaction::prepare_transcript(self.version, &self.source, fee, nonce);
 
         let source_commitments = used_assets
             .into_iter()
@@ -768,50 +874,29 @@ impl TransactionBuilder {
                 }
             },
             TransactionTypeBuilder::InvokeContract(payload) => {
-                range_proof_values.reserve(deposits_commitments.len());
-                range_proof_openings.reserve(deposits_commitments.len());
-
-                // Build the private deposits
-                deposits = deposits_commitments
-                    .into_iter()
-                    .map(|(asset, deposit)| {
-                        let commitment = deposit.commitment.compress();
-                        let sender_handle = deposit.sender_handle.compress();
-                        let receiver_handle = deposit.receiver_handle.compress();
-
-                        transcript.deposit_proof_domain_separator();
-                        transcript.append_hash(b"deposit_asset", &asset);
-                        transcript.append_commitment(b"deposit_commitment", &commitment);
-                        transcript.append_handle(b"deposit_sender_handle", &sender_handle);
-                        transcript.append_handle(b"deposit_receiver_handle", &receiver_handle);
-
-                        let ct_validity_proof = CiphertextValidityProof::new(
-                            &PublicKey::from_hash(&payload.contract),
-                            Some(source_keypair.get_public_key()),
-                            deposit.amount,
-                            &deposit.amount_opening,
-                            &mut transcript,
-                        );
-
-                        range_proof_values.push(deposit.amount);
-                        range_proof_openings.push(deposit.amount_opening.as_scalar());
-
-                        Ok((
-                            asset,
-                            ContractDeposit::Private { commitment, sender_handle, receiver_handle, ct_validity_proof }
-                        ))
-                    })
-                    .collect::<Result<IndexMap<_, _>, GenerationError<B::Error>>>()?;
-
-                    // Now build the public ones
-                    for (asset, deposit) in payload.deposits.drain(..).filter(|(_, deposit)| !deposit.private) {
-                        transcript.deposit_proof_domain_separator();
-                        transcript.append_hash(b"deposit_asset", &asset);
-                        transcript.append_u64(b"deposit_plain", deposit.amount);
-
-                        deposits.insert(asset, ContractDeposit::Public(deposit.amount));
-                    }
+                deposits = Self::finalize_deposits_commitments(
+                    &mut transcript,
+                    &mut range_proof_values,
+                    &mut range_proof_openings,
+                    &mut payload.deposits,
+                    deposits_commitments,
+                    source_keypair,
+                    &None
+                );
             },
+            TransactionTypeBuilder::DeployContract(payload) => {
+                if let Some(invoke) = payload.invoke.as_mut() {
+                    deposits = Self::finalize_deposits_commitments(
+                        &mut transcript,
+                        &mut range_proof_values,
+                        &mut range_proof_openings,
+                        &mut invoke.deposits,
+                        deposits_commitments,
+                        source_keypair,
+                        &None
+                    );
+                }
+            }
             _ => {}
         };
 
@@ -875,6 +960,7 @@ impl TransactionBuilder {
             TransactionTypeBuilder::InvokeContract(payload) => {
                 transcript.invoke_contract_proof_domain_separator();
                 transcript.append_hash(b"contract_hash", &payload.contract);
+                transcript.append_u64(b"max_gas", payload.max_gas);
 
                 for param in payload.parameters.iter() {
                     transcript.append_message(b"contract_param", &param.to_bytes());
@@ -890,10 +976,25 @@ impl TransactionBuilder {
             },
             TransactionTypeBuilder::DeployContract(payload) => {
                 transcript.deploy_contract_proof_domain_separator();
+
                 let module = Module::from_hex(&payload.module)
                     .map_err(|_| GenerationError::InvalidModule)?;
+
+                if payload.invoke.is_none() != module.get_chunk_id_of_hook(0).is_none() {
+                    return Err(GenerationError::InvalidConstructorInvoke);
+                }
+
                 TransactionType::DeployContract(DeployContractPayload {
-                    module
+                    module,
+                    invoke: payload.invoke.map(|invoke| {
+                        transcript.invoke_constructor_proof_domain_separator();
+                        transcript.append_u64(b"max_gas", invoke.max_gas);
+
+                        InvokeConstructorPayload {
+                            max_gas: invoke.max_gas,
+                            deposits
+                        }
+                    }),
                 })
             }
         };

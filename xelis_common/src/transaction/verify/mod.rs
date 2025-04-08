@@ -15,6 +15,7 @@ use curve25519_dalek::{
     RistrettoPoint,
     Scalar
 };
+use indexmap::IndexMap;
 use log::{debug, trace};
 use merlin::Transcript;
 use xelis_vm::ModuleValidator;
@@ -284,6 +285,96 @@ impl Transaction {
         }
     }
 
+    // Verify the format of invoke contract
+    fn verify_invoke_contract<'a, E>(
+        &self,
+        deposits_decompressed: &mut HashMap<&'a Hash, DecompressedDepositCt>,
+        deposits: &'a IndexMap<Hash, ContractDeposit>,
+        max_gas: u64
+    ) -> Result<(), VerificationError<E>> {
+        if deposits.len() > MAX_DEPOSIT_PER_INVOKE_CALL {
+            return Err(VerificationError::DepositCount);
+        }
+
+        if max_gas > MAX_GAS_USAGE_PER_TX {
+            return Err(VerificationError::MaxGasReached.into())
+        }
+
+        for (asset, deposit) in deposits.iter() {
+            match deposit {
+                ContractDeposit::Public(amount) => {
+                    if *amount == 0 {
+                        return Err(VerificationError::InvalidFormat);
+                    }
+                },
+                ContractDeposit::Private { commitment, sender_handle, receiver_handle, .. } => {
+                    let decompressed = DecompressedDepositCt {
+                        commitment: commitment.decompress()
+                            .map_err(ProofVerificationError::from)?,
+                        sender_handle: sender_handle.decompress()
+                            .map_err(ProofVerificationError::from)?,
+                        receiver_handle: receiver_handle.decompress()
+                            .map_err(ProofVerificationError::from)?,
+                    };
+
+                    deposits_decompressed.insert(asset, decompressed);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn verify_contract_deposits<E>(
+        &self,
+        transcript: &mut Transcript,
+        value_commitments: &mut Vec<(RistrettoPoint, CompressedRistretto)>,
+        sigma_batch_collector: &mut BatchCollector,
+        source_decompressed: &PublicKey,
+        dest_pubkey: &PublicKey,
+        deposits_decompressed: &HashMap<&Hash, DecompressedDepositCt>,
+        deposits: &IndexMap<Hash, ContractDeposit>,
+    ) -> Result<(), VerificationError<E>> {
+
+        for (asset, deposit) in deposits {
+            transcript.deposit_proof_domain_separator();
+            transcript.append_hash(b"deposit_asset", asset);
+            match deposit {
+                ContractDeposit::Public(amount) => {
+                    transcript.append_u64(b"deposit_plain", *amount);
+                },
+                ContractDeposit::Private {
+                    commitment,
+                    sender_handle,
+                    receiver_handle,
+                    ct_validity_proof
+                } => {
+                    transcript.append_commitment(b"deposit_commitment", commitment);
+                    transcript.append_handle(b"deposit_sender_handle", sender_handle);
+                    transcript.append_handle(b"deposit_receiver_handle", receiver_handle);
+
+                    let decompressed = deposits_decompressed.get(asset)
+                        .ok_or(VerificationError::DepositNotFound)?;
+
+                    ct_validity_proof.pre_verify(
+                        &decompressed.commitment,
+                        &dest_pubkey,
+                       &source_decompressed,
+                        &decompressed.receiver_handle,
+                        &decompressed.sender_handle,
+                        true,
+                        transcript,
+                        sigma_batch_collector
+                    )?;
+
+                    value_commitments.push((decompressed.commitment.as_point().clone(), commitment.as_point().clone()));
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     // internal, does not verify the range proof
     // returns (transcript, commitments for range proof)
     async fn pre_verify<'a, E, B: BlockchainVerificationState<'a, E>>(
@@ -399,35 +490,11 @@ impl Transaction {
                 }
             },
             TransactionType::InvokeContract(payload) => {
-                if payload.deposits.len() > MAX_DEPOSIT_PER_INVOKE_CALL {
-                    return Err(VerificationError::DepositCount);
-                }
-
-                if payload.max_gas > MAX_GAS_USAGE_PER_TX {
-                    return Err(VerificationError::MaxGasReached.into())
-                }
-
-                for (asset, deposit) in payload.deposits.iter() {
-                    match deposit {
-                        ContractDeposit::Public(amount) => {
-                            if *amount == 0 {
-                                return Err(VerificationError::InvalidFormat);
-                            }
-                        },
-                        ContractDeposit::Private { commitment, sender_handle, receiver_handle, .. } => {
-                            let decompressed = DecompressedDepositCt {
-                                commitment: commitment.decompress()
-                                    .map_err(ProofVerificationError::from)?,
-                                sender_handle: sender_handle.decompress()
-                                    .map_err(ProofVerificationError::from)?,
-                                receiver_handle: receiver_handle.decompress()
-                                    .map_err(ProofVerificationError::from)?,
-                            };
-
-                            deposits_decompressed.insert(asset, decompressed);
-                        }
-                    }
-                }
+                self.verify_invoke_contract(
+                    &mut deposits_decompressed,
+                    &payload.deposits,
+                    payload.max_gas
+                )?;
 
                 // We need to load the contract module if not already in cache
                 state.load_contract_module(&payload.contract).await
@@ -447,6 +514,14 @@ impl Transaction {
                 }
             },
             TransactionType::DeployContract(payload) => {
+                if let Some(invoke) = payload.invoke.as_ref() {
+                    self.verify_invoke_contract(
+                        &mut deposits_decompressed,
+                        &invoke.deposits,
+                        invoke.max_gas
+                    )?;
+                }
+
                 let environment = state.get_environment().await
                     .map_err(VerificationError::State)?;
 
@@ -634,47 +709,19 @@ impl Transaction {
             },
             TransactionType::InvokeContract(payload) => {                
                 let dest_pubkey = PublicKey::from_hash(&payload.contract);
-                let source_pubkey = self.source.decompress()
-                    .map_err(ProofVerificationError::from)?;
-
-                for (asset, deposit) in &payload.deposits {
-                    transcript.deposit_proof_domain_separator();
-                    transcript.append_hash(b"deposit_asset", asset);
-                    match deposit {
-                        ContractDeposit::Public(amount) => {
-                            transcript.append_u64(b"deposit_plain", *amount);
-                        },
-                        ContractDeposit::Private {
-                            commitment,
-                            sender_handle,
-                            receiver_handle,
-                            ct_validity_proof
-                        } => {
-                            transcript.append_commitment(b"deposit_commitment", commitment);
-                            transcript.append_handle(b"deposit_sender_handle", sender_handle);
-                            transcript.append_handle(b"deposit_receiver_handle", receiver_handle);
-
-                            let decompressed = deposits_decompressed.get(asset)
-                                .ok_or(VerificationError::DepositNotFound)?;
-
-                            ct_validity_proof.pre_verify(
-                                &decompressed.commitment,
-                                &dest_pubkey,
-                               &source_pubkey,
-                                &decompressed.receiver_handle,
-                                &decompressed.sender_handle,
-                                true,
-                                &mut transcript,
-                                sigma_batch_collector
-                            )?;
-
-                            value_commitments.push((decompressed.commitment.as_point().clone(), commitment.as_point().clone()));
-                        }
-                    }
-                }
+                self.verify_contract_deposits(
+                    &mut transcript,
+                    &mut value_commitments,
+                    sigma_batch_collector,
+                    &source_decompressed,
+                    &dest_pubkey,
+                    &deposits_decompressed,
+                    &payload.deposits,
+                )?;
 
                 transcript.invoke_contract_proof_domain_separator();
                 transcript.append_hash(b"contract_hash", &payload.contract);
+                transcript.append_u64(b"max_gas", payload.max_gas);
 
                 for param in payload.parameters.iter() {
                     transcript.append_message(b"contract_param", &param.to_bytes());
@@ -682,6 +729,27 @@ impl Transaction {
             },
             TransactionType::DeployContract(payload) => {
                 transcript.deploy_contract_proof_domain_separator();
+
+                // Verify that if we have a constructor, we must have an invoke, and vice-versa
+                if payload.invoke.is_none() != payload.module.get_chunk_id_of_hook(0).is_none() {
+                    return Err(VerificationError::InvalidFormat);
+                }
+
+                if let Some(invoke) = payload.invoke.as_ref() {
+                    let dest_pubkey = PublicKey::from_hash(&tx_hash);
+                    self.verify_contract_deposits(
+                        &mut transcript,
+                        &mut value_commitments,
+                        sigma_batch_collector,
+                        &source_decompressed,
+                        &dest_pubkey,
+                        &deposits_decompressed,
+                        &invoke.deposits,
+                    )?;
+
+                    transcript.invoke_constructor_proof_domain_separator();
+                    transcript.append_u64(b"max_gas", invoke.max_gas);
+                }
 
                 state.set_contract_module(tx_hash, &payload.module).await
                     .map_err(VerificationError::State)?;
@@ -840,7 +908,7 @@ impl Transaction {
                     decompressed_deposits,
                     &payload.contract,
                     &payload.deposits,
-                    &payload.parameters,
+                    payload.parameters.iter().cloned(),
                     payload.max_gas,
                     InvokeContract::Entry(payload.chunk_id)
                 ).await?;
@@ -849,18 +917,18 @@ impl Transaction {
                 state.set_contract_module(tx_hash, &payload.module).await
                     .map_err(VerificationError::State)?;
 
-                // TODO
-                let _ = InvokeContract::Hook(0);
-                // self.invoke_contract(
-                //     tx_hash,
-                //     state,
-                //     decompressed_deposits,
-                //     &payload.contract,
-                //     &payload.deposits,
-                //     &payload.parameters,
-                //     payload.max_gas,
-                //     InvokeContract::Hook(0)
-                // ).await?;
+                if let Some(invoke) = payload.invoke.as_ref() {
+                    self.invoke_contract(
+                        tx_hash,
+                        state,
+                        decompressed_deposits,
+                        tx_hash,
+                        &invoke.deposits,
+                        iter::empty(),
+                        invoke.max_gas,
+                        InvokeContract::Hook(0)
+                    ).await?;
+                }
             }
         }
 

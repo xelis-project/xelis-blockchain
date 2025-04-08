@@ -33,7 +33,7 @@ impl Transaction {
         decompressed_deposits: &HashMap<&Hash, DecompressedDepositCt>,
         contract: &'a Hash,
         deposits: &IndexMap<Hash, ContractDeposit>,
-        parameters: &[ValueCell],
+        parameters: impl DoubleEndedIterator<Item = ValueCell>,
         max_gas: u64,
         invoke: InvokeContract,
     ) -> Result<(), VerificationError<E>> {
@@ -66,14 +66,7 @@ impl Transaction {
             // Create the VM
             let module = contract_environment.module;
             let mut vm = VM::new(module, contract_environment.environment);
-    
-            // We need to push it in reverse order because the VM will pop them in reverse order
-            for constant in parameters.iter().rev() {
-                trace!("Pushing constant: {}", constant);
-                vm.push_stack(constant.clone())
-                    .context("push param")?;
-            }
-    
+
             // Invoke the needed chunk
             // This is the first chunk to be called
             match invoke {
@@ -82,11 +75,20 @@ impl Transaction {
                         .context("invoke entry chunk")?;
                 },
                 InvokeContract::Hook(hook) => {
-                    vm.invoke_hook_id(hook)
-                        .context("invoke hook")?;
+                    if !vm.invoke_hook_id(hook).context("invoke hook")? {
+                        debug!("Invoke contract {} from TX {} hook {} not found", contract, tx_hash, hook);
+                        return Ok((0, None))
+                    }
                 }
             }
  
+            // We need to push it in reverse order because the VM will pop them in reverse order
+            for constant in parameters.rev() {
+                trace!("Pushing constant: {}", constant);
+                vm.push_stack(constant)
+                    .context("push param")?;
+            }
+
             let context = vm.context_mut();
     
             // Set the gas limit for the VM
