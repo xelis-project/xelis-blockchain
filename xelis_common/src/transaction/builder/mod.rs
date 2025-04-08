@@ -675,11 +675,7 @@ impl TransactionBuilder {
                     .update_account_balance(&asset, source_new_balance, new_source_ciphertext)
                     .map_err(GenerationError::State)?;
 
-                Ok(SourceCommitment {
-                    asset: asset.clone(),
-                    commitment,
-                    proof,
-                })
+                Ok(SourceCommitment::new(commitment, proof, asset.clone()))
             })
             .collect::<Result<Vec<_>, GenerationError<B::Error>>>()?;
 

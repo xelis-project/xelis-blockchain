@@ -263,9 +263,9 @@ impl Transaction {
         }
 
         for commitment in self.source_commitments.iter() {
-            let ciphertext = self.get_sender_output_ct(&commitment.asset, &decompressed_transfers, &decompressed_deposits)?;
+            let ciphertext = self.get_sender_output_ct(commitment.get_asset(), &decompressed_transfers, &decompressed_deposits)?;
 
-            balances.push((&commitment.asset, ciphertext));
+            balances.push((commitment.get_asset(), ciphertext));
         }
 
         Ok(balances)
@@ -290,7 +290,7 @@ impl Transaction {
         let has_commitment_for_asset = |asset| {
             self.source_commitments
                 .iter()
-                .any(|c| &c.asset == asset)
+                .any(|c| c.get_asset() == asset)
         };
 
         // XELIS_ASSET is always required for fees
@@ -308,7 +308,7 @@ impl Transaction {
                 self.source_commitments
                     .iter()
                     .enumerate()
-                    .any(|(i2, c2)| i != i2 && &c.asset == &c2.asset)
+                    .any(|(i2, c2)| i != i2 && c.get_asset() == c2.get_asset())
             })
         {
             return false;
@@ -503,7 +503,7 @@ impl Transaction {
         let new_source_commitments_decompressed = self
             .source_commitments
             .iter()
-            .map(|commitment| commitment.commitment.decompress())
+            .map(|commitment| commitment.get_commitment().decompress())
             .collect::<Result<Vec<_>, DecompressionError>>()
             .map_err(ProofVerificationError::from)?;
 
@@ -567,12 +567,12 @@ impl Transaction {
             .zip(&new_source_commitments_decompressed)
         {
             // Ciphertext containing all the funds spent for this commitment
-            let output = self.get_sender_output_ct(&commitment.asset, &transfers_decompressed, &deposits_decompressed)
+            let output = self.get_sender_output_ct(commitment.get_asset(), &transfers_decompressed, &deposits_decompressed)
                 .map_err(ProofVerificationError::from)?;
 
             // Retrieve the balance of the sender
             let source_verification_ciphertext = state
-                .get_sender_balance(&self.source, &commitment.asset, &self.reference).await
+                .get_sender_balance(&self.source, commitment.get_asset(), &self.reference).await
                 .map_err(VerificationError::State)?;
 
             let source_ct_compressed = source_verification_ciphertext.compress();
@@ -580,15 +580,15 @@ impl Transaction {
             // Compute the new final balance for account
             *source_verification_ciphertext -= &output;
             transcript.new_commitment_eq_proof_domain_separator();
-            transcript.append_hash(b"new_source_commitment_asset", &commitment.asset);
+            transcript.append_hash(b"new_source_commitment_asset", commitment.get_asset());
             transcript
-                .append_commitment(b"new_source_commitment", &commitment.commitment);
+                .append_commitment(b"new_source_commitment", commitment.get_commitment());
 
             if self.version >= TxVersion::V1 {
                 transcript.append_ciphertext(b"source_ct", &source_ct_compressed);
             }
 
-            commitment.proof.pre_verify(
+            commitment.get_proof().pre_verify(
                 &source_decompressed,
                 &source_verification_ciphertext,
                 &new_source_commitment,
@@ -600,7 +600,7 @@ impl Transaction {
             state
                 .add_sender_output(
                     &self.source,
-                    &commitment.asset,
+                    commitment.get_asset(),
                     output,
                 ).await
                 .map_err(VerificationError::State)?;
@@ -744,11 +744,11 @@ impl Transaction {
         let final_commitments = self
             .source_commitments
             .iter()
-            .zip(&new_source_commitments_decompressed)
+            .zip(new_source_commitments_decompressed)
             .map(|(commitment, new_source_commitment)| {
                 (
-                    new_source_commitment.as_point().clone(),
-                    commitment.commitment.as_point().clone(),
+                    new_source_commitment.to_point(),
+                    commitment.get_commitment().as_point().clone(),
                 )
             })
             .chain(value_commitments.into_iter())
@@ -853,7 +853,7 @@ impl Transaction {
             TransactionType::Transfers(transfers) => {
                 for transfer in transfers {
                     // Update receiver balance
-                    let current_bal = state
+                    let current_balance = state
                         .get_receiver_balance(
                             Cow::Borrowed(transfer.get_destination()),
                             Cow::Borrowed(transfer.get_asset()),
@@ -865,7 +865,7 @@ impl Transaction {
                         .decompress()
                         .map_err(ProofVerificationError::from)?;
     
-                    *current_bal += receiver_ct;
+                    *current_balance += receiver_ct;
                 }
             },
             TransactionType::Burn(payload) => {
@@ -1090,8 +1090,8 @@ impl Transaction {
 
         // We don't verify any proof, we just apply the transaction
         for commitment in &self.source_commitments {
-            let asset = &commitment.asset;
-            let current_bal_sender = state
+            let asset = commitment.get_asset();
+            let current_source_balance = state
                 .get_sender_balance(
                     &self.source,
                     asset,
@@ -1102,12 +1102,12 @@ impl Transaction {
                 .map_err(ProofVerificationError::from)?;
 
             // Compute the new final balance for account
-            *current_bal_sender -= &output;
+            *current_source_balance -= &output;
 
             // Update source balance
             state.add_sender_output(
                 &self.source,
-                &commitment.asset,
+                commitment.get_asset(),
                 output,
             ).await.map_err(VerificationError::State)?;
         }
@@ -1161,7 +1161,7 @@ impl Transaction {
         let new_source_commitments_decompressed = self
             .source_commitments
             .iter()
-            .map(|commitment| commitment.commitment.decompress())
+            .map(|commitment| commitment.get_commitment().decompress())
             .collect::<Result<Vec<_>, DecompressionError>>()
             .map_err(ProofVerificationError::from)?;
 
@@ -1183,12 +1183,12 @@ impl Transaction {
             .zip(&new_source_commitments_decompressed)
         {
             // Ciphertext containing all the funds spent for this commitment
-            let output = self.get_sender_output_ct(&commitment.asset, &transfers_decompressed, &deposits_decompressed)
+            let output = self.get_sender_output_ct(commitment.get_asset(), &transfers_decompressed, &deposits_decompressed)
                 .map_err(ProofVerificationError::from)?;
 
             // Retrieve the balance of the sender
             let mut source_verification_ciphertext = state
-                .get_sender_balance(&self.source, &commitment.asset, &self.reference).await
+                .get_sender_balance(&self.source, commitment.get_asset(), &self.reference).await
                 .map_err(VerificationError::State)?
                 .clone();
 
@@ -1197,15 +1197,15 @@ impl Transaction {
             // Compute the new final balance for account
             source_verification_ciphertext -= &output;
             transcript.new_commitment_eq_proof_domain_separator();
-            transcript.append_hash(b"new_source_commitment_asset", &commitment.asset);
+            transcript.append_hash(b"new_source_commitment_asset", commitment.get_asset());
             transcript
-                .append_commitment(b"new_source_commitment", &commitment.commitment);
+                .append_commitment(b"new_source_commitment", &commitment.get_commitment());
 
             if self.version >= TxVersion::V1 {
                 transcript.append_ciphertext(b"source_ct", &source_ct_compressed);
             }
 
-            commitment.proof.pre_verify(
+            commitment.get_proof().pre_verify(
                 &owner,
                 &source_verification_ciphertext,
                 &new_source_commitment,
@@ -1213,7 +1213,7 @@ impl Transaction {
                 &mut sigma_batch_collector,
             )?;
 
-            commitments_changes.push((source_verification_ciphertext, output, &commitment.asset));
+            commitments_changes.push((source_verification_ciphertext, output, commitment.get_asset()));
         }
 
         trace!("Verifying sigma proofs");

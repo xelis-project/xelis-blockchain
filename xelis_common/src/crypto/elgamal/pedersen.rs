@@ -55,6 +55,10 @@ impl PedersenCommitment {
         &self.0
     }
 
+    pub fn to_point(self) -> RistrettoPoint {
+        self.0
+    }
+
     // Compress the PedersenCommitment
     pub fn compress(&self) -> CompressedCommitment {
         CompressedCommitment::new(self.0.compress())
