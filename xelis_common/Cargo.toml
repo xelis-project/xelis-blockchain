@@ -85,3 +85,7 @@ crate-type = ["cdylib", "rlib"]
 [[bench]]
 name = "proofs"
 harness = false
+
+[[bench]]
+name = "homomorphic_encryption"
+harness = false

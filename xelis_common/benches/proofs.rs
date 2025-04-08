@@ -147,11 +147,11 @@ fn bench_range_proof(c: &mut Criterion) {
                 &PC_GENS,
                 &mut Transcript::new(b"test"),
                 &(decompressed_commitment.clone(), commitment.clone()),
-                BULLET_PROOF_SIZE).expect("Failed to verify proof");
+                BULLET_PROOF_SIZE
+            ).expect("Failed to verify proof");
         })
     });
 }
-
 
 criterion_group!(
     proofs_benches,
