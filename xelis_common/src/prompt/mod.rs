@@ -600,7 +600,8 @@ impl Prompt {
     
         let log_file_data = fs::read(log_file_path)?;
         let options = zip::write::SimpleFileOptions::default()
-            .compression_method(zip::CompressionMethod::Zstd);
+            .compression_method(zip::CompressionMethod::Zstd)
+            .large_file(true);
 
         zip.start_file(log_file_path, options)?;
         zip.write_all(&log_file_data)?;
