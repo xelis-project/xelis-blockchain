@@ -1,6 +1,7 @@
 use std::{borrow::Cow, collections::HashMap};
 
 use async_trait::async_trait;
+use indexmap::IndexMap;
 use xelis_vm::{Environment, Module};
 use crate::{
     account::Nonce,
@@ -21,7 +22,7 @@ use crate::{
         Hash
     },
     transaction::{
-        InvokeContractPayload,
+        ContractDeposit,
         MultiSigPayload,
         Reference,
         Transaction
@@ -157,7 +158,8 @@ pub trait BlockchainApplyState<'a, P: ContractProvider, E>: BlockchainVerificati
     /// Get the contract environment
     async fn get_contract_environment_for<'b>(
         &'b mut self,
-        payload: &'b InvokeContractPayload,
+        contract: &'b Hash,
+        deposits: &'b IndexMap<Hash, ContractDeposit>,
         tx_hash: &'b Hash
     ) -> Result<(ContractEnvironment<'b, P>, ChainState<'b>), E>;
 

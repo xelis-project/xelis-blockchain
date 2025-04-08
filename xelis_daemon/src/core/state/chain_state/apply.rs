@@ -5,8 +5,10 @@ use std::{
 };
 use async_trait::async_trait;
 use log::{debug, trace};
+use indexmap::IndexMap;
 use xelis_common::{
     account::{BalanceType, Nonce, VersionedNonce},
+    asset::VersionedAssetData,
     block::{Block, BlockVersion, TopoHeight},
     contract::{
         AssetChanges,
@@ -15,11 +17,10 @@ use xelis_common::{
         ContractEventTracker,
         ContractOutput
     },
-    asset::VersionedAssetData,
     crypto::{elgamal::Ciphertext, Hash, PublicKey},
     transaction::{
         verify::{BlockchainApplyState, BlockchainVerificationState, ContractEnvironment},
-        InvokeContractPayload,
+        ContractDeposit,
         MultiSigPayload,
         Reference
     }
@@ -201,29 +202,29 @@ impl<'a, S: Storage> BlockchainApplyState<'a, S, BlockchainError> for Applicable
         Ok(())
     }
 
-    async fn get_contract_environment_for<'b>(&'b mut self, payload: &'b InvokeContractPayload, tx_hash: &'b Hash) -> Result<(ContractEnvironment<'b, S>, ContractChainState<'b>), BlockchainError> {
+    async fn get_contract_environment_for<'b>(&'b mut self, contract: &'b Hash, deposits: &'b IndexMap<Hash, ContractDeposit>, tx_hash: &'b Hash) -> Result<(ContractEnvironment<'b, S>, ContractChainState<'b>), BlockchainError> {
         // Find the contract module in our cache
         // We don't use the function `get_contract_module_with_environment` because we need to return the mutable storage
-        let module = self.inner.contracts.get(&payload.contract)
-            .ok_or_else(|| BlockchainError::ContractNotFound(payload.contract.clone()))
+        let module = self.inner.contracts.get(contract)
+            .ok_or_else(|| BlockchainError::ContractNotFound(contract.clone()))
             .and_then(|(_, module)| module.as_ref()
                 .map(|m| m.as_ref())
-                .ok_or_else(|| BlockchainError::ContractNotFound(payload.contract.clone()))
+                .ok_or_else(|| BlockchainError::ContractNotFound(contract.clone()))
             )?;
 
         // Find the contract cache in our cache map
-        let cache = self.contract_manager.caches.get(&payload.contract)
+        let cache = self.contract_manager.caches.get(contract)
             .cloned()
             .unwrap_or_default();
 
         let state = ContractChainState {
             debug_mode: true,
             mainnet: self.inner.storage.is_mainnet(),
-            contract: &payload.contract,
+            contract,
             topoheight: self.inner.topoheight,
             block_hash: self.block_hash,
             block: self.block,
-            deposits: &payload.deposits,
+            deposits,
             random: None,
             tx_hash,
             cache,
