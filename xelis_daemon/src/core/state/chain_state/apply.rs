@@ -265,6 +265,13 @@ impl<'a, S: Storage> BlockchainApplyState<'a, S, BlockchainError> for Applicable
 
         Ok(())
     }
+
+    async fn remove_contract_module(
+        &mut self,
+        hash: &'a Hash
+    ) -> Result<(), BlockchainError> {
+        self.remove_contract_module_internal(hash).await
+    }
 }
 
 impl<'a, S: Storage> Deref for ApplicableChainState<'a, S> {
@@ -342,6 +349,17 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
     // Get the contract outputs for TX
     pub fn get_contract_outputs_for_tx(&self, tx_hash: &Hash) -> Option<&Vec<ContractOutput>> {
         self.contract_manager.outputs.get(tx_hash)
+    }
+
+    async fn remove_contract_module_internal(
+        &mut self,
+        hash: &'a Hash
+    ) -> Result<(), BlockchainError> {
+        self.inner.contracts.remove(hash)
+            .ok_or_else(|| BlockchainError::ContractNotFound(hash.clone()))
+            .and_then(|(_, module)| module.ok_or_else(|| BlockchainError::ContractNotFound(hash.clone())))?;
+
+        Ok(())
     }
 
     // This function is called after the verification of all needed transactions
