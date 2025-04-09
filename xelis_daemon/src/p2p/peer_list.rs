@@ -18,6 +18,7 @@ use std::{
     net::{IpAddr, SocketAddr},
     time::Duration
 };
+use futures::{stream, StreamExt};
 use humantime::format_duration;
 use serde::{Serialize, Deserialize};
 use tokio::sync::{mpsc::Sender, RwLock};
@@ -45,7 +46,10 @@ pub struct PeerList {
     peer_disconnect_channel: Option<Sender<Arc<Peer>>>,
     // We only keep one "peer" per address in case the peer changes multiple
     // times its local port
-    cache: DiskCache
+    cache: DiskCache,
+    // Same as P2P Server
+    // How many concurrent tasks at same time 
+    stream_concurrency: usize
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Eq, Debug)]
@@ -76,12 +80,13 @@ pub struct PeerListEntry {
 }
 
 impl PeerList {
-    pub fn new(capacity: usize, filename: String, peer_disconnect_channel: Option<Sender<Arc<Peer>>>) -> Result<SharedPeerList, P2pError> {
+    pub fn new(capacity: usize, stream_concurrency: usize, filename: String, peer_disconnect_channel: Option<Sender<Arc<Peer>>>) -> Result<SharedPeerList, P2pError> {
         Ok(Arc::new(
             Self {
                 peers: RwLock::new(HashMap::with_capacity(capacity)),
                 peer_disconnect_channel,
-                cache: DiskCache::new(filename)?
+                cache: DiskCache::new(filename)?,
+                stream_concurrency,
             }
         ))
     }
@@ -123,24 +128,29 @@ impl PeerList {
             // now remove this peer from all peers that tracked it
             let addr = peer.get_outgoing_address();
             let packet = Bytes::from(Packet::PeerDisconnected(PacketPeerDisconnected::new(*addr)).to_bytes());
-            for peer in peers {
-                trace!("Locking shared peers for {}", peer.get_connection().get_address());
-                let mut shared_peers = peer.get_peers().lock().await;
-                trace!("locked shared peers for {}", peer.get_connection().get_address());
+            stream::iter(peers.iter())
+                .for_each_concurrent(self.stream_concurrency, |peer| {
+                    // move the reference only
+                    let packet = &packet;
+                    async move {
+                        trace!("Locking shared peers for {}", peer.get_connection().get_address());
+                        let mut shared_peers = peer.get_peers().lock().await;
+                        trace!("locked shared peers for {}", peer.get_connection().get_address());
 
-                // check if it was a common peer (we sent it and we received it)
-                // Because its a common peer, we can expect that he will send us the same packet
-                if let Some(direction) = shared_peers.pop(addr) {
-                    // If its a outgoing direction, send a packet to notify that the peer disconnected
-                    if !direction.is_in() {
-                        debug!("Sending PeerDisconnected packet to peer {} for {}", peer.get_outgoing_address(), addr);
-                        // we send the packet to notify the peer that we don't have it in common anymore
-                        if let Err(e) = peer.send_bytes(packet.clone()).await {
-                            error!("Error while trying to send PeerDisconnected packet to peer {}: {}", peer.get_connection().get_address(), e);
+                        // check if it was a common peer (we sent it and we received it)
+                        // Because its a common peer, we can expect that he will send us the same packet
+                        if let Some(direction) = shared_peers.pop(addr) {
+                            // If its a outgoing direction, send a packet to notify that the peer disconnected
+                            if !direction.is_in() {
+                                debug!("Sending PeerDisconnected packet to peer {} for {}", peer.get_outgoing_address(), addr);
+                                // we send the packet to notify the peer that we don't have it in common anymore
+                                if let Err(e) = peer.send_bytes(packet.clone()).await {
+                                    error!("Error while trying to send PeerDisconnected packet to peer {}: {}", peer.get_connection().get_address(), e);
+                                }
+                            }
                         }
                     }
-                }
-            }
+                }).await;
         }
 
         info!("Peer disconnected: {}", peer);

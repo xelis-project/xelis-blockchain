@@ -236,7 +236,12 @@ impl<S: Storage> P2pServer<S> {
         let object_tracker = ObjectTracker::new(exit_receiver);
 
         let (sender, event_receiver) = channel::<Arc<Peer>>(max_peers); 
-        let peer_list = PeerList::new(max_peers, format!("{}peerlist-{}", dir_path.unwrap_or_default(), blockchain.get_network().to_string().to_lowercase()), Some(sender))?;
+        let peer_list = PeerList::new(
+            max_peers,
+            stream_concurrency,
+            format!("{}peerlist-{}", dir_path.unwrap_or_default(), blockchain.get_network().to_string().to_lowercase()),
+            Some(sender)
+        )?;
 
         let server = Self {
             peer_id,
