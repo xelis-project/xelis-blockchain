@@ -113,12 +113,15 @@ pub fn try_block_on<F: Future>(_future: F) -> Result<F::Output, anyhow::Error> {
             // WASM32 use the futures executor directly
             Ok(futures::executor::block_on(_future))
         } else if #[cfg(feature = "tokio")] {
-            let handle = runtime::Handle::try_current()?;
-            if matches!(handle.runtime_flavor(), runtime::RuntimeFlavor::CurrentThread) {
+            if is_multi_threads_supported() {
+                let handle = runtime::Handle::try_current()?;
+                Ok(tokio::task::block_in_place(|| {
+                    trace!("tokio block in place");
+                    handle.block_on(_future)
+                }))
+            } else {
                 trace!("runtime is current thread and may not support blocking, fallback on futures executor");
                 Ok(futures::executor::block_on(_future))
-            } else {
-                Ok(handle.block_on(_future))
             }
         } else {
             Err(anyhow::anyhow!("Tokio feature is not enabled"))
