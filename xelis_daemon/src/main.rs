@@ -328,7 +328,7 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
     command_manager.add_command(Command::new("estimate_db_size", "Estimate the database total size", CommandHandler::Async(async_handler!(estimate_db_size::<S>))))?;
     command_manager.add_command(Command::new("count_orphaned_blocks", "Count how many orphaned blocks we currently hold", CommandHandler::Async(async_handler!(count_orphaned_blocks::<S>))))?;
     command_manager.add_command(Command::new("show_json_config", "Show the current config in JSON", CommandHandler::Async(async_handler!(show_json_config::<S>))))?;
-    command_manager.add_command(Command::new("export_json_config", "Export the current config in JSON", CommandHandler::Async(async_handler!(export_json_config::<S>))))?;
+    command_manager.add_command(Command::with_optional_arguments("export_json_config", "Export the current config in JSON", vec![Arg::new("filename", ArgType::String)], CommandHandler::Async(async_handler!(export_json_config::<S>))))?;
     command_manager.add_command(Command::new("broadcast_txs", "Broadcast all TXs in mempool if not done", CommandHandler::Async(async_handler!(broadcast_txs::<S>))))?;
 
     // Don't keep the lock for ever
@@ -673,15 +673,19 @@ async fn show_json_config<S: Storage>(manager: &CommandManager, _: ArgumentManag
     Ok(())
 }
 
-async fn export_json_config<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
+async fn export_json_config<S: Storage>(manager: &CommandManager, mut args: ArgumentManager) -> Result<(), CommandError> {
     let context = manager.get_context().lock()?;
     let config: &CliConfig = context.get()?;
     let json = serde_json::to_string_pretty(config)
         .context("Error while serializing config")?;
 
-    let path = manager.get_prompt()
-        .read_input("Path to export the config: ", false).await
-        .context("Error while reading path")?;
+    let path = if args.has_argument("filename") {
+        args.get_value("filename")?.to_string_value()?
+    } else {
+        manager.get_prompt()
+            .read_input("Path to export the config: ", false).await
+            .context("Error while reading path")?
+    };
 
     let mut file = File::create(&path)
         .context("Error while creating config file")?;
