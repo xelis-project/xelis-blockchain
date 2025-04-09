@@ -884,52 +884,56 @@ impl<S: Storage> P2pServer<S> {
         // search for peers which are greater than us
         // and that are pruned but before our height so we can sync correctly
         let available_peers = self.peer_list.get_cloned_peers().await;
-        // IndexSet is used to select by random index
-        let mut peers: IndexSet<Arc<Peer>> = IndexSet::with_capacity(available_peers.len());
-
-        for p in available_peers {
-            // Avoid selecting peers that have a weaker cumulative difficulty than us
-            {
-                let cumulative_difficulty = p.get_cumulative_difficulty().lock().await;
-                if *cumulative_difficulty <= our_cumulative_difficulty {
-                    trace!("Peer {} has a lower cumulative difficulty than us, skipping...", p);
-                    continue;
-                }
-            }
-
-            let peer_topoheight = p.get_topoheight();
-            if fast_sync {
-                // if we want to fast sync, but this peer is not compatible, we skip it
-                // for this we check that the peer topoheight is not less than the prune safety limit
-                if peer_topoheight < PRUNE_SAFETY_LIMIT || our_topoheight + PRUNE_SAFETY_LIMIT > peer_topoheight {
-                    trace!("Peer {} has a topoheight less than the prune safety limit, skipping...", p);
-                    continue;
-                }
-                if let Some(pruned_topoheight) = p.get_pruned_topoheight() {
-                    // This shouldn't be possible if following the protocol,
-                    // But we may never know if a peer is not following the protocol strictly
-                    if peer_topoheight - pruned_topoheight < PRUNE_SAFETY_LIMIT {
-                        trace!("Peer {} has a pruned topoheight {} less than the prune safety limit, skipping...", p, pruned_topoheight);
-                        continue;
+        let mut peers = stream::iter(available_peers)
+            .map(|p| async move {
+                // Avoid selecting peers that have a weaker cumulative difficulty than us
+                {
+                    let cumulative_difficulty = p.get_cumulative_difficulty().lock().await;
+                    if *cumulative_difficulty <= our_cumulative_difficulty {
+                        trace!("Peer {} has a lower cumulative difficulty than us, skipping...", p);
+                        return None;
                     }
                 }
-            } else {
-                // check that the pruned topoheight is less than our topoheight to sync
-                // so we can sync chain from pruned chains
-                if let Some(pruned_topoheight) = p.get_pruned_topoheight() {
-                    if pruned_topoheight > our_topoheight {
-                        trace!("Peer {} has a pruned topoheight {} higher than our topoheight {}, skipping...", p, pruned_topoheight, our_topoheight);
-                        continue;
+
+                let peer_topoheight = p.get_topoheight();
+                if fast_sync {
+                    // if we want to fast sync, but this peer is not compatible, we skip it
+                    // for this we check that the peer topoheight is not less than the prune safety limit
+                    if peer_topoheight < PRUNE_SAFETY_LIMIT || our_topoheight + PRUNE_SAFETY_LIMIT > peer_topoheight {
+                        trace!("Peer {} has a topoheight less than the prune safety limit, skipping...", p);
+                        return None;
+                    }
+                    if let Some(pruned_topoheight) = p.get_pruned_topoheight() {
+                        // This shouldn't be possible if following the protocol,
+                        // But we may never know if a peer is not following the protocol strictly
+                        if peer_topoheight - pruned_topoheight < PRUNE_SAFETY_LIMIT {
+                            trace!("Peer {} has a pruned topoheight {} less than the prune safety limit, skipping...", p, pruned_topoheight);
+                            return None;
+                        }
+                    }
+                } else {
+                    // check that the pruned topoheight is less than our topoheight to sync
+                    // so we can sync chain from pruned chains
+                    if let Some(pruned_topoheight) = p.get_pruned_topoheight() {
+                        if pruned_topoheight > our_topoheight {
+                            trace!("Peer {} has a pruned topoheight {} higher than our topoheight {}, skipping...", p, pruned_topoheight, our_topoheight);
+                            return None;
+                        }
                     }
                 }
-            }
 
-            // check if this peer may have a block we don't have
-            if p.get_height() > our_height || peer_topoheight > our_topoheight {
-                debug!("Peer {} is a candidate for chain sync, our topoheight: {}, our height: {}", p, our_topoheight, our_height);
-                peers.insert(p);
-            }
-        }
+                // check if this peer may have a block we don't have
+                if p.get_height() > our_height || peer_topoheight > our_topoheight {
+                    debug!("Peer {} is a candidate for chain sync, our topoheight: {}, our height: {}", p, our_topoheight, our_height);
+                    Some(p)
+                } else {
+                    None
+                }
+            })
+            .buffer_unordered(self.stream_concurrency)
+            .filter_map(|x| async move { x })
+            .collect::<IndexSet<_>>()
+            .await;
 
         // Try to not reuse the same peer between each sync
         if let Some((previous_peer, priority, err)) = previous_peer {
