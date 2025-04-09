@@ -4,11 +4,29 @@ use serde::{Serialize, Deserialize};
 use crate::serializer::{Serializer, Reader, ReaderError, Writer};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
 pub enum Network {
     Mainnet,
     Testnet,
     Dev
+}
+
+#[cfg(feature = "clap")]
+impl clap::ValueEnum for Network {
+    fn value_variants<'a>() -> &'a [Self] {
+        &[Self::Mainnet, Self::Testnet, Self::Dev]
+    }
+
+    fn to_possible_value(&self) -> Option<clap::builder::PossibleValue> {
+        match self {
+            Self::Mainnet => Some(clap::builder::PossibleValue::new("mainnet").alias("Mainnet")),
+            Self::Testnet => Some(clap::builder::PossibleValue::new("testnet").alias("Testnet")),
+            Self::Dev => Some(clap::builder::PossibleValue::new("dev").alias("Dev"))
+        }
+    }
+
+    fn from_str(input: &str, _: bool) -> Result<Self, String> {
+        input.parse().map_err(|_| format!("Invalid network: {}", input))
+    }
 }
 
 impl Default for Network {
@@ -42,9 +60,9 @@ impl<'de> Deserialize<'de> for Network {
 impl Display for Network {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         let str = match &self {
-            Self::Mainnet => "Mainnet",
-            Self::Testnet => "Testnet",
-            Self::Dev => "Dev"
+            Self::Mainnet => "mainnet",
+            Self::Testnet => "testnet",
+            Self::Dev => "dev"
         };
         write!(f, "{}", str)
     }
