@@ -99,6 +99,13 @@ fn default_logs_path() -> String {
     "logs/".to_owned()
 }
 
+// Default cache size
+const DEFAULT_DB_CACHE_CAPACITY: u64 = 16 * 1024 * 1024; // 16 MB
+
+fn default_db_cache_size() -> u64 {
+    DEFAULT_DB_CACHE_CAPACITY
+}
+
 #[derive(Debug, Clone, Parser, Serialize, Deserialize)]
 pub struct LogConfig {
     /// Set log level
@@ -169,8 +176,9 @@ pub struct CliConfig {
     #[serde(default)]
     network: Network,
     /// DB cache size in bytes
-    #[clap(long)]
-    internal_cache_size: Option<u64>,
+    #[clap(long, default_value_t = DEFAULT_DB_CACHE_CAPACITY)]
+    #[serde(default = "default_db_cache_size")]
+    internal_cache_size: u64,
     /// Internal DB mode to use
     #[clap(long, value_enum, default_value_t = StorageMode::LowSpace)]
     #[serde(default)]
