@@ -256,17 +256,19 @@ impl PeerList {
         };
 
         info!("Closing {} peers", peers.len());
-        for (_, peer) in peers {
-            debug!("Closing {}", peer);
+        stream::iter(peers)
+            .for_each_concurrent(self.stream_concurrency, |(_, peer)| async move {
+                debug!("Closing {}", peer);
 
-            if let Err(e) = peer.signal_exit().await {
-                error!("Error while trying to signal exit to {}: {}", peer, e);
-            }
-
-            if let Err(e) = self.update_peer(&peer).await {
-                error!("Error while updating peer {}: {}", peer, e);
-            }
-        }
+                if let Err(e) = peer.signal_exit().await {
+                    error!("Error while trying to signal exit to {}: {}", peer, e);
+                }
+    
+                if let Err(e) = self.update_peer(&peer).await {
+                    error!("Error while updating peer {}: {}", peer, e);
+                }
+            })
+            .await;
 
         if let Err(e) = self.cache.flush().await {
             error!("Error while flushing cache to disk: {}", e);
