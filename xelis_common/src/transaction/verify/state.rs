@@ -171,4 +171,10 @@ pub trait BlockchainApplyState<'a, P: ContractProvider, E>: BlockchainVerificati
         tracker: ContractEventTracker,
         assets: HashMap<Hash, Option<AssetChanges>>
     ) -> Result<(), E>;
+
+    /// Remove the contract module
+    async fn remove_contract_module(
+        &mut self,
+        hash: &'a Hash
+    ) -> Result<(), E>;
 }

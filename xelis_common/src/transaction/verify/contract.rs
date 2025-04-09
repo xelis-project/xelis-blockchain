@@ -36,7 +36,7 @@ impl Transaction {
         parameters: impl DoubleEndedIterator<Item = ValueCell>,
         max_gas: u64,
         invoke: InvokeContract,
-    ) -> Result<(), VerificationError<E>> {
+    ) -> Result<bool, VerificationError<E>> {
         state.load_contract_module(&contract).await
             .map_err(VerificationError::State)?;
     
@@ -128,9 +128,10 @@ impl Transaction {
             Ok((gas_usage, exit_code))
         })?;
     
+        let is_success = exit_code == Some(0);
         let mut outputs = chain_state.outputs;
         // If the contract execution was successful, we need to merge the cache
-        if exit_code == Some(0) {
+        if is_success {
             let cache = chain_state.cache;
             let tracker = chain_state.tracker;
             let assets = chain_state.assets;
@@ -210,6 +211,6 @@ impl Transaction {
         state.set_contract_outputs(tx_hash, outputs).await
             .map_err(VerificationError::State)?;
 
-        Ok(())
+        Ok(is_success)
     }
 }
