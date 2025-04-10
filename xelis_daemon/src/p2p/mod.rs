@@ -185,6 +185,10 @@ pub struct P2pServer<S: Storage> {
     // Current stream concurrency to use
     // This is used to limit the number of concurrency tasks in a stream
     stream_concurrency: usize,
+    // Time in seconds to ban a peer
+    temp_ban_time: u64,
+    // Fail count threshold to ban a peer
+    fail_count_limit: u8
 }
 
 impl<S: Storage> P2pServer<S> {
@@ -206,6 +210,8 @@ impl<S: Storage> P2pServer<S> {
         dh_keypair: Option<diffie_hellman::DHKeyPair>,
         dh_action: diffie_hellman::KeyVerificationAction,
         stream_concurrency: usize,
+        temp_ban_time: u64,
+        fail_count_limit: u8,
     ) -> Result<Arc<Self>, P2pError> {
         if tag.as_ref().is_some_and(|tag| tag.len() == 0 || tag.len() > 16) {
             return Err(P2pError::InvalidTag);
@@ -217,6 +223,14 @@ impl<S: Storage> P2pServer<S> {
 
         if max_peers == 0 {
             return Err(P2pError::InvalidMaxPeers);
+        }
+
+        if temp_ban_time == 0 {
+            return Err(P2pError::InvalidTempBanTime);
+        }
+
+        if fail_count_limit == 0 {
+            return Err(P2pError::InvalidFailCount);
         }
 
         // set channel to communicate with listener thread
@@ -269,7 +283,9 @@ impl<S: Storage> P2pServer<S> {
             exit_sender,
             dh_keypair: dh_keypair.unwrap_or_else(diffie_hellman::DHKeyPair::new),
             dh_action,
-            stream_concurrency
+            stream_concurrency,
+            temp_ban_time,
+            fail_count_limit
         };
 
         let arc = Arc::new(server);
@@ -1524,9 +1540,9 @@ impl<S: Storage> P2pServer<S> {
                     // check that we don't have too many fails
                     // otherwise disconnect peer
                     // Priority nodes are not disconnected
-                    if peer.get_fail_count() >= PEER_FAIL_LIMIT && !peer.is_priority() {
+                    if peer.get_fail_count() >= self.fail_count_limit && !peer.is_priority() {
                         warn!("High fail count detected for {}! Closing connection...", peer);
-                        if let Err(e) = peer.close_and_temp_ban().await {
+                        if let Err(e) = peer.close_and_temp_ban(self.temp_ban_time).await {
                             error!("Error while trying to close connection with {} due to high fail count: {}", peer, e);
                         }
                         break;

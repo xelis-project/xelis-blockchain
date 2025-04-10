@@ -1,14 +1,17 @@
-use std::thread;
+use std::{thread, time::Duration};
+use humantime::Duration as HumanDuration;
 use serde::{Deserialize, Serialize};
 use xelis_common::crypto::Hash;
 use crate::{
     config::{
+        CHAIN_SYNC_DEFAULT_RESPONSE_BLOCKS,
         DEFAULT_CACHE_SIZE,
         DEFAULT_P2P_BIND_ADDRESS,
         DEFAULT_RPC_BIND_ADDRESS,
         P2P_DEFAULT_CONCURRENCY_TASK_COUNT_LIMIT,
         P2P_DEFAULT_MAX_PEERS,
-        CHAIN_SYNC_DEFAULT_RESPONSE_BLOCKS
+        PEER_FAIL_LIMIT,
+        PEER_TEMP_BAN_TIME
     },
     p2p::diffie_hellman::{KeyVerificationAction, WrappedSecret}
 };
@@ -45,6 +48,14 @@ fn default_getwork_rate_limit_ms() -> u64 {
     500
 }
 
+fn default_p2p_on_temp_ban_time() -> HumanDuration {
+    HumanDuration::from(Duration::from_secs(PEER_TEMP_BAN_TIME))
+}
+
+fn default_p2p_fail_count_limit() -> u8 {
+    PEER_FAIL_LIMIT
+}
+
 fn detect_parallelism() -> usize {
     match thread::available_parallelism() {
         Ok(n) => {
@@ -59,23 +70,26 @@ fn detect_parallelism() -> usize {
 pub struct GetWorkConfig {
     /// Disable GetWork Server (WebSocket for miners).
     #[clap(long)]
-    #[serde(default)]
-    #[serde(rename = "disable")]
+    #[serde(rename = "disable", default)]
     pub disable_getwork_server: bool,
     /// Set the rate limit for GetWork server in milliseconds.
     /// In case of high transactions added in mempool, new jobs are rate limited.
     /// If is set to 0 (no limit), any new job will be sent to miners directly.
-    #[serde(default = "default_getwork_rate_limit_ms")]
     #[clap(long, default_value_t = default_getwork_rate_limit_ms())]
-    #[serde(rename = "rate_limit_ms")]
+    #[serde(
+        rename = "rate_limit_ms",
+        default = "default_getwork_rate_limit_ms"
+    )]
     pub getwork_rate_limit_ms: u64,
     /// Set the concurrency for GetWork server during a new job notification.
     /// Notify concurrently to N miners at a time.
     /// Set to 0 means no limit and will process as one task per miner.
     /// Default is detected based on available parallelism.
-    #[serde(default = "detect_parallelism")]
     #[clap(long, default_value_t = detect_parallelism())]
-    #[serde(rename = "notify_job_concurrency")]
+    #[serde(
+        rename = "notify_job_concurrency",
+        default = "detect_parallelism"
+    )]
     pub getwork_notify_job_concurrency: usize,
 }
 
@@ -89,19 +103,22 @@ pub struct RPCConfig {
     /// Disable RPC Server
     /// This will also disable the GetWork Server as it is loaded on RPC server.
     #[clap(long)]
-    #[serde(default)]
-    #[serde(rename = "disable")]
+    #[serde(rename = "disable", default)]
     pub disable_rpc_server: bool,
     /// RPC bind address to listen for HTTP requests
     #[clap(long, default_value_t = default_rpc_bind_address())]
-    #[serde(default = "default_rpc_bind_address")]
-    #[serde(rename = "bind_address")]
+    #[serde(
+        rename = "bind_address",
+        default = "default_rpc_bind_address"
+    )]
     pub rpc_bind_address: String,
     /// Number of workers to spawn for the HTTP server.
     /// If not provided, it will use the available paralellism.
     #[clap(long, default_value_t = detect_parallelism())]
-    #[serde(default = "detect_parallelism")]
-    #[serde(rename = "threads")]
+    #[serde(
+        rename = "threads",
+        default = "detect_parallelism"
+    )]
     pub rpc_threads: usize,
     /// RPC Server notification events concurrency
     /// This is used to configure the number of concurrent tasks
@@ -109,8 +126,10 @@ pub struct RPCConfig {
     /// By default, it will use the available parallelism.
     /// If set to 0, it will be unlimited.
     #[clap(long, default_value_t = detect_parallelism())]
-    #[serde(default = "detect_parallelism")]
-    #[serde(rename = "notify_events_concurrency")]
+    #[serde(
+        rename = "notify_events_concurrency",
+        default = "detect_parallelism"
+    )]
     pub rpc_notify_events_concurrency: usize,
 }
 
@@ -122,8 +141,10 @@ pub struct P2pConfig {
     pub tag: Option<String>,
     /// P2p bind address to listen for incoming connections
     #[clap(long, default_value_t = default_p2p_bind_address())]
-    #[serde(default = "default_p2p_bind_address")]
-    #[serde(rename = "bind_address")]
+    #[serde(
+        rename = "bind_address",
+        default = "default_p2p_bind_address"
+    )]
     pub p2p_bind_address: String,
     /// Number of maximums peers allowed
     #[clap(long, default_value_t = default_max_peers())]
@@ -143,8 +164,7 @@ pub struct P2pConfig {
     /// No connections will be accepted.
     /// Node will not be able to communicate the network.
     #[clap(long)]
-    #[serde(default)]
-    #[serde(rename = "disable")]
+    #[serde(rename = "disable", default)]
     pub disable_p2p_server: bool,
     /// Allow fast sync mode.
     /// 
@@ -194,19 +214,22 @@ pub struct P2pConfig {
     /// 
     /// This is useful for seed nodes under heavy load or for nodes that don't want to connect to others.
     #[clap(long)]
-    #[serde(default)]
-    #[serde(rename = "disable_outgoing_connections")]
+    #[serde(
+        rename = "disable_outgoing_connections",
+        default
+    )]
     pub disable_p2p_outgoing_connections: bool,
     /// Limit of concurrent tasks accepting new incoming connections.
     #[clap(long, default_value_t = default_p2p_concurrency_task_count_limit())]
-    #[serde(default = "default_p2p_concurrency_task_count_limit")]
-    #[serde(rename = "concurrency_task_count_limit")]
+    #[serde(
+        rename = "concurrency_task_count_limit",
+        default = "default_p2p_concurrency_task_count_limit"
+    )]
     pub p2p_concurrency_task_count_limit: usize,
     /// Execute a specific action when the P2p Diffie-Hellman Key of a peer is different from our stored one.
     /// By default, it will ignore the key change and update it.
     #[clap(long, value_enum, default_value_t = KeyVerificationAction::Ignore)]
-    #[serde(default)]
-    #[serde(rename = "on_dh_key_change")]
+    #[serde(default, rename = "on_dh_key_change")]
     pub p2p_on_dh_key_change: KeyVerificationAction,
     /// P2p DH private key to use.
     /// By default, a newly generated key will be used.
@@ -225,9 +248,30 @@ pub struct P2pConfig {
     /// By default, it will use the available parallelism.
     /// If set to 0, it will be unlimited.
     #[clap(long, default_value_t = detect_parallelism())]
-    #[serde(default = "detect_parallelism")]
-    #[serde(rename = "stream_concurrency")]
+    #[serde(
+        rename = "stream_concurrency",
+        default = "detect_parallelism"
+    )]
     pub p2p_stream_concurrency: usize,
+    /// P2P Time to set when banning a peer temporarily due to the fail count limit reached.
+    /// This is used to configure the time to wait before unbanning the peer.
+    /// By default, it will be set to 15 minutes.
+    #[clap(long, default_value_t = default_p2p_on_temp_ban_time())]
+    #[serde(
+        with = "humantime_serde",
+        rename = "on_temp_ban_time",
+        default = "default_p2p_on_temp_ban_time"
+    )]
+    pub p2p_on_temp_ban_time: HumanDuration,
+    /// P2P Fail count limit to ban a peer temporarily.
+    /// This is used to configure the number of failed requests
+    /// before banning the peer temporarily.
+    #[clap(long, default_value_t = default_p2p_fail_count_limit())]
+    #[serde(
+        rename = "fail_count_limit",
+        default = "default_p2p_fail_count_limit"
+    )]
+    pub p2p_fail_count_limit: u8,
 }
 
 #[derive(Debug, Clone, clap::Args, Serialize, Deserialize)]
@@ -292,4 +336,24 @@ pub struct Config {
     #[clap(long)]
     #[serde(default)]
     pub recovery_mode: bool
+}
+
+mod humantime_serde {
+    use super::*;
+    use serde::{Deserializer, Serializer};
+
+    pub fn serialize<S>(value: &HumanDuration, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&value.to_string())
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<HumanDuration, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        s.parse::<HumanDuration>().map_err(serde::de::Error::custom)
+    }
 }

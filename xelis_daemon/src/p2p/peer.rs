@@ -1,7 +1,7 @@
 use crate::{
     config::{
-        PEER_FAIL_TIME_RESET, PEER_BLOCK_CACHE_SIZE, PEER_TX_CACHE_SIZE,
-        PEER_TEMP_BAN_TIME, PEER_TIMEOUT_BOOTSTRAP_STEP,
+        PEER_FAIL_TIME_RESET, PEER_BLOCK_CACHE_SIZE,
+        PEER_TX_CACHE_SIZE, PEER_TIMEOUT_BOOTSTRAP_STEP,
         PEER_TIMEOUT_REQUEST_OBJECT, CHAIN_SYNC_TIMEOUT_SECS,
         PEER_PACKET_CHANNEL_SIZE, PEER_PEERS_CACHE_SIZE
     },
@@ -588,10 +588,10 @@ impl Peer {
     }
 
     // Close the peer connection and remove it from the peer list
-    pub async fn close_and_temp_ban(&self) -> Result<(), P2pError> {
+    pub async fn close_and_temp_ban(&self, seconds: u64) -> Result<(), P2pError> {
         trace!("temp ban {}", self);
         if !self.is_priority() {
-            self.peer_list.temp_ban_address(&self.get_connection().get_address().ip(), PEER_TEMP_BAN_TIME, false).await?;
+            self.peer_list.temp_ban_address(&self.get_connection().get_address().ip(), seconds, false).await?;
         } else {
             debug!("{} is a priority peer, closing only", self);
         }

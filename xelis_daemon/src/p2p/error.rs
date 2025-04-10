@@ -37,6 +37,10 @@ use super::{
 
 #[derive(Error, Debug)]
 pub enum P2pError {
+    #[error("Invalid temporary ban time, it must be greater than 0")]
+    InvalidTempBanTime,
+    #[error("Invalid fail count, it must be greater than 0")]
+    InvalidFailCount,
     #[error("Invalid Diffie-Hellman key")]
     InvalidDHKey,
     #[error("Invalid local port, it must be greater than 0")]
