@@ -1318,29 +1318,36 @@ async fn difficulty_dataset<S: Storage>(manager: &CommandManager, mut arguments:
     
     let context = manager.get_context().lock()?;
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
-    let storage = blockchain.get_storage().read().await;
 
     manager.message("Creating difficulty dataset...");
     for topoheight in 0..=blockchain.get_topo_height() {
         // Retrieve block hash and header
-        let (hash, header) = storage.get_block_header_at_topoheight(topoheight).await.context("Error while retrieving hash at topo")?;
+        let (solve_time, difficulty) = {
+            let storage = blockchain.get_storage().read().await;
+            let (hash, header) = storage.get_block_header_at_topoheight(topoheight).await
+                .context("Error while retrieving hash at topo")?;
 
-        // Block difficulty
-        let difficulty = storage.get_difficulty_for_block_hash(&hash).await.context("Error while retrieving difficulty")?;
+            let difficulty = storage.get_difficulty_for_block_hash(&hash).await
+                .context("Error while retrieving difficulty")?;
 
-        let solve_time = if topoheight == 0 {
-            0
-        } else {
-    
-            // Retrieve best tip timestamp
-            let (_, tip_timestamp) = blockdag::find_newest_tip_by_timestamp::<S, _>(&storage, header.get_tips().iter()).await.context("Error while finding best tip")?;
-            let solve_time = header.get_timestamp() - tip_timestamp;
-    
-            solve_time
+            let solve_time = if topoheight == 0 {
+                0
+            } else {
+        
+                // Retrieve best tip timestamp
+                let (_, tip_timestamp) = blockdag::find_newest_tip_by_timestamp::<S, _>(&storage, header.get_tips().iter()).await
+                    .context("Error while finding best tip")?;
+                let solve_time = header.get_timestamp() - tip_timestamp;
+        
+                solve_time
+            };
+
+            (solve_time, difficulty)
         };
 
         // Write to file
-        file.write(format!("{},{},{}\n", topoheight, solve_time, difficulty).as_bytes()).context("Error while writing to file")?;
+        file.write(format!("{},{},{}\n", topoheight, solve_time, difficulty).as_bytes())
+            .context("Error while writing to file")?;
     }
 
     manager.message("Flushing file...");
