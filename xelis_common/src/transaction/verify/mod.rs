@@ -16,7 +16,7 @@ use curve25519_dalek::{
     Scalar
 };
 use indexmap::IndexMap;
-use log::{warn, debug, trace};
+use log::{debug, trace};
 use merlin::Transcript;
 use xelis_vm::ModuleValidator;
 use crate::{
@@ -915,7 +915,11 @@ impl Transaction {
                         InvokeContract::Entry(payload.chunk_id)
                     ).await?;
                 } else {
-                    warn!("Contract {} invoked from {} not available", payload.contract, tx_hash);
+                    debug!("Contract {} invoked from {} not available", payload.contract, tx_hash);
+
+                    // Nothing was spent, we must refund the gas and deposits
+                    self.handle_gas(state, 0, payload.max_gas).await?;
+                    self.refund_deposits(state, &payload.deposits, decompressed_deposits).await?;
                 }
             },
             TransactionType::DeployContract(payload) => {

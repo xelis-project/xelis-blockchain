@@ -45,7 +45,7 @@ impl Transaction {
         state: &mut B,
         decompressed_deposits: &HashMap<&Hash, DecompressedDepositCt>,
         contract: &'a Hash,
-        deposits: &IndexMap<Hash, ContractDeposit>,
+        deposits: &'a IndexMap<Hash, ContractDeposit>,
         parameters: impl DoubleEndedIterator<Item = ValueCell>,
         max_gas: u64,
         invoke: InvokeContract,
@@ -140,69 +140,88 @@ impl Transaction {
     
             if !deposits.is_empty() {
                 // It was not successful, we need to refund the deposits
-                for (asset, deposit) in deposits.iter() {
-                    trace!("Refunding deposit {:?} for asset: {} to {}", deposit, asset, self.source.as_address(state.is_mainnet()));
-                    match deposit {
-                        ContractDeposit::Public(amount) => {
-                            let balance = state.get_receiver_balance(Cow::Borrowed(self.get_source()), Cow::Owned(asset.clone())).await
-                                .map_err(VerificationError::State)?;
-    
-                            *balance += Scalar::from(*amount);
-                        },
-                        ContractDeposit::Private { .. } => {
-                            let ct = decompressed_deposits.get(asset)
-                                .ok_or(VerificationError::DepositNotFound)?;
-    
-                            let balance = state.get_receiver_balance(Cow::Borrowed(self.get_source()), Cow::Owned(asset.clone())).await
-                            .map_err(VerificationError::State)?;
-    
-                            *balance += Ciphertext::new(ct.commitment.clone(), ct.receiver_handle.clone());
-                        }
-                    }
-                }
-    
+                self.refund_deposits(state, deposits, decompressed_deposits).await?;
+
                 outputs.push(ContractOutput::RefundDeposits);
             }
         }
-    
+
         // Push the exit code to the outputs
         outputs.push(ContractOutput::ExitCode(exit_code));
-    
-        if used_gas > 0 {
-            // Part of the gas is burned
-            let burned_gas = used_gas * TX_GAS_BURN_PERCENT / 100;
-            // Part of the gas is given to the miners as fees
-            let gas_fee = used_gas.checked_sub(burned_gas)
-                .ok_or(VerificationError::GasOverflow)?;
-            // The remaining gas is refunded to the sender
-            let refund_gas = max_gas.checked_sub(used_gas)
-                .ok_or(VerificationError::GasOverflow)?;
 
-            debug!("Invoke contract used gas: {}, burned: {}, fee: {}, refund: {}", used_gas, burned_gas, gas_fee, refund_gas);
-            state.add_burned_coins(burned_gas).await
-                .map_err(VerificationError::State)?;
-
-            state.add_gas_fee(gas_fee).await
-                .map_err(VerificationError::State)?;
-    
-            if refund_gas > 0 {
-                // If we have some funds to refund, we add it to the sender balance
-                // But to prevent any front running, we add to the sender balance by considering him as a receiver.
-                let balance = state.get_receiver_balance(Cow::Borrowed(self.get_source()), Cow::Owned(XELIS_ASSET)).await
-                    .map_err(VerificationError::State)?;
-    
-                *balance += Scalar::from(refund_gas);
-    
-                // Track the refund
-                let output = ContractOutput::RefundGas { amount: refund_gas };
-                outputs.push(output);
-            }
+        // We must refund all the gas not used by the contract
+        let refund_gas = self.handle_gas(state, used_gas, max_gas).await?;
+        if refund_gas > 0 {
+            outputs.push(ContractOutput::RefundGas { amount: refund_gas });
         }
-    
+
         // Track the outputs
         state.set_contract_outputs(tx_hash, outputs).await
             .map_err(VerificationError::State)?;
 
         Ok(is_success)
+    }
+
+    pub(super) async fn handle_gas<'a, P: ContractProvider, E, B: BlockchainApplyState<'a, P, E>>(
+        &'a self,
+        state: &mut B,
+        used_gas: u64,
+        max_gas: u64
+    ) -> Result<u64, VerificationError<E>> {
+        // Part of the gas is burned
+        let burned_gas = used_gas * TX_GAS_BURN_PERCENT / 100;
+        // Part of the gas is given to the miners as fees
+        let gas_fee = used_gas.checked_sub(burned_gas)
+            .ok_or(VerificationError::GasOverflow)?;
+        // The remaining gas is refunded to the sender
+        let refund_gas = max_gas.checked_sub(used_gas)
+            .ok_or(VerificationError::GasOverflow)?;
+
+        debug!("Invoke contract used gas: {}, burned: {}, fee: {}, refund: {}", used_gas, burned_gas, gas_fee, refund_gas);
+        state.add_burned_coins(burned_gas).await
+            .map_err(VerificationError::State)?;
+
+        state.add_gas_fee(gas_fee).await
+            .map_err(VerificationError::State)?;
+
+        if refund_gas > 0 {
+            // If we have some funds to refund, we add it to the sender balance
+            // But to prevent any front running, we add to the sender balance by considering him as a receiver.
+            let balance = state.get_receiver_balance(Cow::Borrowed(self.get_source()), Cow::Owned(XELIS_ASSET)).await
+                .map_err(VerificationError::State)?;
+
+            *balance += Scalar::from(refund_gas);
+        }
+
+        Ok(refund_gas)
+    }
+
+    // Refund the deposits made by the user to the contract
+    pub(super) async fn refund_deposits<'a, P: ContractProvider, E, B: BlockchainApplyState<'a, P, E>>(
+        &'a self,
+        state: &mut B,
+        deposits: &'a IndexMap<Hash, ContractDeposit>,
+        decompressed_deposits: &HashMap<&Hash, DecompressedDepositCt>,
+    ) -> Result<(), VerificationError<E>> {
+        for (asset, deposit) in deposits.iter() {
+            trace!("Refunding deposit {:?} for asset: {} to {}", deposit, asset, self.source.as_address(state.is_mainnet()));
+
+            let balance = state.get_receiver_balance(Cow::Borrowed(self.get_source()), Cow::Borrowed(asset)).await
+                .map_err(VerificationError::State)?;
+
+            match deposit {
+                ContractDeposit::Public(amount) => {
+                    *balance += Scalar::from(*amount);
+                },
+                ContractDeposit::Private { .. } => {
+                    let ct = decompressed_deposits.get(asset)
+                        .ok_or(VerificationError::DepositNotFound)?;
+
+                    *balance += Ciphertext::new(ct.commitment.clone(), ct.sender_handle.clone());
+                }
+            }
+        }
+
+        Ok(())
     }
 }
