@@ -334,7 +334,7 @@ impl<S: Storage> Blockchain<S> {
                 config.p2p_dh_private_key.map(|v| v.into()),
                 config.p2p_on_dh_key_change,
                 config.p2p_stream_concurrency,
-                config.p2p_on_temp_ban_time.as_secs(),
+                config.p2p_temp_ban_duration.as_secs(),
                 config.p2p_fail_count_limit
             ) {
                 Ok(p2p) => {

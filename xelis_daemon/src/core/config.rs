@@ -48,7 +48,7 @@ fn default_getwork_rate_limit_ms() -> u64 {
     500
 }
 
-fn default_p2p_on_temp_ban_time() -> HumanDuration {
+fn default_p2p_temp_ban_duration() -> HumanDuration {
     HumanDuration::from(Duration::from_secs(PEER_TEMP_BAN_TIME))
 }
 
@@ -256,13 +256,13 @@ pub struct P2pConfig {
     /// P2P Time to set when banning a peer temporarily due to the fail count limit reached.
     /// This is used to configure the time to wait before unbanning the peer.
     /// By default, it will be set to 15 minutes.
-    #[clap(long, default_value_t = default_p2p_on_temp_ban_time())]
+    #[clap(long, default_value_t = default_p2p_temp_ban_duration())]
     #[serde(
         with = "humantime_serde",
-        rename = "on_temp_ban_time",
-        default = "default_p2p_on_temp_ban_time"
+        rename = "temp_ban_duration",
+        default = "default_p2p_temp_ban_duration"
     )]
-    pub p2p_on_temp_ban_time: HumanDuration,
+    pub p2p_temp_ban_duration: HumanDuration,
     /// P2P Fail count limit to ban a peer temporarily.
     /// This is used to configure the number of failed requests
     /// before banning the peer temporarily.
