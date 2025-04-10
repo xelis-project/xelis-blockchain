@@ -16,7 +16,7 @@ use curve25519_dalek::{
     Scalar
 };
 use indexmap::IndexMap;
-use log::{debug, trace};
+use log::{warn, debug, trace};
 use merlin::Transcript;
 use xelis_vm::ModuleValidator;
 use crate::{
@@ -497,8 +497,9 @@ impl Transaction {
                 )?;
 
                 // We need to load the contract module if not already in cache
-                state.load_contract_module(&payload.contract).await
-                    .map_err(VerificationError::State)?;
+                if !self.is_contract_available(state, &payload.contract).await? {
+                    return Err(VerificationError::ContractNotFound);
+                }
 
                 let (module, environment) = state.get_contract_module_with_environment(&payload.contract).await
                     .map_err(VerificationError::State)?;
@@ -902,16 +903,20 @@ impl Transaction {
                 state.set_multisig_state(&self.source, payload).await.map_err(VerificationError::State)?;
             },
             TransactionType::InvokeContract(payload) => {
-                self.invoke_contract(
-                    tx_hash,
-                    state,
-                    decompressed_deposits,
-                    &payload.contract,
-                    &payload.deposits,
-                    payload.parameters.iter().cloned(),
-                    payload.max_gas,
-                    InvokeContract::Entry(payload.chunk_id)
-                ).await?;
+                if self.is_contract_available(state, &payload.contract).await? {
+                    self.invoke_contract(
+                        tx_hash,
+                        state,
+                        decompressed_deposits,
+                        &payload.contract,
+                        &payload.deposits,
+                        payload.parameters.iter().cloned(),
+                        payload.max_gas,
+                        InvokeContract::Entry(payload.chunk_id)
+                    ).await?;
+                } else {
+                    warn!("Contract {} invoked from {} not available", payload.contract, tx_hash);
+                }
             },
             TransactionType::DeployContract(payload) => {
                 state.set_contract_module(tx_hash, &payload.module).await

@@ -109,10 +109,11 @@ pub trait BlockchainVerificationState<'a, E> {
 
     /// Load in the cache the contract module
     /// This is called before `get_contract_module_with_environment`
+    /// Returns true if the module is available
     async fn load_contract_module(
         &mut self,
         hash: &'a Hash
-    ) -> Result<(), E>;
+    ) -> Result<bool, E>;
 
     /// Get the contract module with the environment
     /// This is used to verify that all parameters are correct

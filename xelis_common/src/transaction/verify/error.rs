@@ -50,4 +50,6 @@ pub enum VerificationError<T> {
     DepositNotFound,
     #[error("Configured max gas is above the network limit")]
     MaxGasReached,
+    #[error("Contract not found")]
+    ContractNotFound,
 }

@@ -17,7 +17,7 @@ use crate::{
     transaction::{ContractDeposit, Transaction}
 };
 
-use super::{BlockchainApplyState, DecompressedDepositCt, VerificationError};
+use super::{BlockchainApplyState, BlockchainVerificationState, DecompressedDepositCt, VerificationError};
 
 pub enum InvokeContract {
     Entry(u16),
@@ -25,6 +25,20 @@ pub enum InvokeContract {
 }
 
 impl Transaction {
+    // Load and check if a contract is available
+    // This is needed in case a contract has been removed or wasn't deployed due to the constructor error
+    pub(super) async fn is_contract_available<'a, E, B: BlockchainVerificationState<'a, E>>(
+        &'a self,
+        state: &mut B,
+        contract: &'a Hash,
+    ) -> Result<bool, VerificationError<E>> {
+        state.load_contract_module(&contract).await
+            .map_err(VerificationError::State)
+    }
+
+    // Invoke a contract from a transaction
+    // Note that the contract must be already loaded by calling
+    // `is_contract_available`
     pub(super) async fn invoke_contract<'a, P: ContractProvider, E, B: BlockchainApplyState<'a, P, E>>(
         &'a self,
         tx_hash: &'a Hash,
@@ -36,9 +50,6 @@ impl Transaction {
         max_gas: u64,
         invoke: InvokeContract,
     ) -> Result<bool, VerificationError<E>> {
-        state.load_contract_module(&contract).await
-            .map_err(VerificationError::State)?;
-
         let (contract_environment, mut chain_state) = state.get_contract_environment_for(contract, deposits, tx_hash).await
             .map_err(VerificationError::State)?;
     
@@ -166,11 +177,11 @@ impl Transaction {
             // The remaining gas is refunded to the sender
             let refund_gas = max_gas.checked_sub(used_gas)
                 .ok_or(VerificationError::GasOverflow)?;
-    
+
             debug!("Invoke contract used gas: {}, burned: {}, fee: {}, refund: {}", used_gas, burned_gas, gas_fee, refund_gas);
             state.add_burned_coins(burned_gas).await
                 .map_err(VerificationError::State)?;
-    
+
             state.add_gas_fee(gas_fee).await
                 .map_err(VerificationError::State)?;
     

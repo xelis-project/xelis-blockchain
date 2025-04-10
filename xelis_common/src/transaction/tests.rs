@@ -653,8 +653,8 @@ impl<'a> BlockchainVerificationState<'a, ()> for ChainState {
     async fn load_contract_module(
         &mut self,
         _: &'a Hash
-    ) -> Result<(), ()> {
-        Ok(())
+    ) -> Result<bool, ()> {
+        Ok(false)
     }
 
     async fn get_contract_module_with_environment(
