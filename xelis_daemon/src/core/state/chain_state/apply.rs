@@ -148,7 +148,7 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for Applic
     async fn load_contract_module(
         &mut self,
         hash: &'a Hash
-    ) -> Result<(), BlockchainError> {
+    ) -> Result<bool, BlockchainError> {
         self.inner.load_contract_module(hash).await
     }
 

@@ -293,17 +293,18 @@ impl<'a, S: Storage> ChainState<'a, S> {
     }
 
     // Load a contract from the storage if its not already loaded
-    async fn load_versioned_contract(&mut self, hash: &'a Hash) -> Result<(), BlockchainError> {
+    async fn load_versioned_contract(&mut self, hash: &'a Hash) -> Result<bool, BlockchainError> {
         trace!("Loading contract {} at topoheight {}", hash, self.topoheight);
-        if !self.contracts.contains_key(hash) {
-            let contract = self.storage.get_contract_at_maximum_topoheight_for(hash, self.topoheight).await?
-                .map(|(topo, contract)| (VersionedState::FetchedAt(topo), contract.take()))
-                .unwrap_or((VersionedState::New, None));
+        match self.contracts.entry(hash) {
+            Entry::Occupied(o) => Ok(o.get().1.is_some()),
+            Entry::Vacant(e) => {
+                let contract = self.storage.get_contract_at_maximum_topoheight_for(hash, self.topoheight).await?
+                    .map(|(topo, contract)| (VersionedState::FetchedAt(topo), contract.take()))
+                    .unwrap_or((VersionedState::New, None));
 
-            self.contracts.insert(hash, contract);
+                Ok(e.insert(contract).1.is_some())
+            }
         }
-
-        Ok(())
     }
 
     // Get the contract module from our cache
@@ -439,7 +440,7 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for ChainS
     async fn load_contract_module(
         &mut self,
         hash: &'a Hash
-    ) -> Result<(), BlockchainError> {
+    ) -> Result<bool, BlockchainError> {
         self.load_versioned_contract(hash).await
     }
 

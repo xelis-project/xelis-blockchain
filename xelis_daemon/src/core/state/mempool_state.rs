@@ -310,17 +310,20 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for Mempoo
     async fn load_contract_module(
         &mut self,
         hash: &'a Hash
-    ) -> Result<(), BlockchainError> {
-        if !self.contracts.contains_key(hash) {
-            let module = self.storage.get_contract_at_maximum_topoheight_for(hash, self.topoheight).await?
-                .map(|(_, v)| v.take().map(|v| v.into_owned()))
-                .flatten()
-                .ok_or_else(|| BlockchainError::ContractNotFound(hash.clone()))?;
+    ) -> Result<bool, BlockchainError> {
+        match self.contracts.entry(hash) {
+            Entry::Occupied(_) => Ok(true),
+            Entry::Vacant(v) => {
+                let module = self.storage.get_contract_at_maximum_topoheight_for(hash, self.topoheight).await?
+                    .map(|(_, v)| v.take().map(|v| v.into_owned()))
+                    .flatten()
+                    .ok_or_else(|| BlockchainError::ContractNotFound(hash.clone()))?;
 
-            self.contracts.insert(hash, Cow::Owned(module));
+                v.insert(Cow::Owned(module));
+
+                Ok(true)
+            }
         }
-
-        Ok(())
     }
 
     async fn get_contract_module_with_environment(
