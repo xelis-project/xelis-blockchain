@@ -1,10 +1,12 @@
 #[cfg(feature = "tokio")]
 mod thread_pool;
 
-use std::future::Future;
+use std::{
+    future::Future,
+    cell::Cell
+};
 use cfg_if::cfg_if;
 use log::trace;
-
 
 #[cfg(feature = "tokio")]
 pub use thread_pool::ThreadPool;
@@ -26,6 +28,10 @@ pub use tokio_with_wasm::*;
     ))
 ))]
 pub use tokio::*;
+
+thread_local! {
+    static IN_BLOCK_IN_PLACE: Cell<bool> = Cell::new(false);
+}
 
 // Spawn a new task with a name
 // If the tokio_unstable feature is enabled, the task will be named
@@ -113,15 +119,15 @@ pub fn try_block_on<F: Future>(_future: F) -> Result<F::Output, anyhow::Error> {
             // WASM32 use the futures executor directly
             Ok(futures::executor::block_on(_future))
         } else if #[cfg(feature = "tokio")] {
-            if is_multi_threads_supported() {
-                let handle = runtime::Handle::try_current()?;
-                Ok(tokio::task::block_in_place(|| {
+            let handle = runtime::Handle::try_current()?;
+            if is_in_block_in_place() {
+                trace!("tokio block on directly");
+                Ok(handle.block_on(_future))
+            } else {
+                Ok(block_in_place_internal(|| {
                     trace!("tokio block in place");
                     handle.block_on(_future)
                 }))
-            } else {
-                trace!("runtime is current thread and may not support blocking, fallback on futures executor");
-                Ok(futures::executor::block_on(_future))
             }
         } else {
             Err(anyhow::anyhow!("Tokio feature is not enabled"))
@@ -146,10 +152,31 @@ where
         ))
     ))]
     if is_multi_threads_supported() {
-        trace!("tokio block in place");
-        return tokio::task::block_in_place(f)
+        return block_in_place_internal(f)
     }
 
     trace!("direct call block in place");
     f()
+}
+
+fn block_in_place_internal<F, R>(f: F) -> R
+where
+    F: FnOnce() -> R,
+{
+    trace!("tokio block in place internal");
+    set_in_block_in_place(true);
+    let res = tokio::task::block_in_place(f);
+    set_in_block_in_place(false);
+
+    res
+}
+
+#[inline(always)]
+fn is_in_block_in_place() -> bool {
+    IN_BLOCK_IN_PLACE.with(|flag| flag.get())
+}
+
+#[inline(always)]
+fn set_in_block_in_place(value: bool) {
+    IN_BLOCK_IN_PLACE.with(|flag| flag.set(value));
 }
