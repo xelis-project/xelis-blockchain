@@ -23,7 +23,8 @@ use xelis_common::{
         ContractDeposit,
         MultiSigPayload,
         Reference
-    }
+    },
+    versioned_type::VersionedState
 };
 use xelis_vm::Environment;
 use crate::core::{
@@ -213,9 +214,38 @@ impl<'a, S: Storage> BlockchainApplyState<'a, S, BlockchainError> for Applicable
             )?;
 
         // Find the contract cache in our cache map
-        let cache = self.contract_manager.caches.get(contract)
+        let mut cache = self.contract_manager.caches.get(contract)
             .cloned()
             .unwrap_or_default();
+
+        // We need to add the deposits to the balances
+        for (asset, deposit) in deposits.iter() {
+            match deposit {
+                ContractDeposit::Public(amount) => match cache.balances.entry(asset.clone()) {
+                    Entry::Occupied(mut o) => match o.get_mut() {
+                        Some((mut state, balance)) => {
+                            state.mark_updated();
+                            *balance += amount;
+                        },
+                        None => {
+                            // Balance was already fetched and we didn't had any balance before
+                            o.insert(Some((VersionedState::New, *amount)));
+                        }
+                    },
+                    Entry::Vacant(e) => {
+                        let (mut state, balance) = self.storage.get_contract_balance_at_maximum_topoheight(contract, asset, self.topoheight).await?
+                            .map(|(topo, balance)| (VersionedState::FetchedAt(topo), balance.take()))
+                            .unwrap_or((VersionedState::New, 0));
+
+                        state.mark_updated();
+                        e.insert(Some((state, balance + amount)));
+                    }
+                },
+                ContractDeposit::Private { .. } => {
+                    // TODO: we need to add the private deposit to the balance
+                }
+            }
+        }
 
         let state = ContractChainState {
             debug_mode: true,
@@ -229,8 +259,11 @@ impl<'a, S: Storage> BlockchainApplyState<'a, S, BlockchainError> for Applicable
             tx_hash,
             cache,
             outputs: Vec::new(),
+            // Event trackers
             tracker: self.contract_manager.tracker.clone(),
+            // Assets cache owned by this contract
             assets: self.contract_manager.assets.clone(),
+            // Global caches (all contracts)
             global_caches: &self.contract_manager.caches
         };
 
