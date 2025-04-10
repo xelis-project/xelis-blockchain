@@ -156,6 +156,8 @@ pub trait BlockchainApplyState<'a, P: ContractProvider, E>: BlockchainVerificati
     ) -> Result<(), E>;
 
     /// Get the contract environment
+    /// Implementation should take care of deposits by applying them
+    /// to the chain state
     async fn get_contract_environment_for<'b>(
         &'b mut self,
         contract: &'b Hash,

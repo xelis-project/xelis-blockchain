@@ -5,17 +5,16 @@ use std::{
 
 use anyhow::Context;
 use curve25519_dalek::Scalar;
-use log::{debug, trace};
+use log::{debug, trace, warn};
 use indexmap::IndexMap;
 use xelis_vm::{ValueCell, VM};
 
 use crate::{
     config::{TX_GAS_BURN_PERCENT, XELIS_ASSET},
-    contract::{get_balance_from_cache, ContractOutput, ContractProvider, ContractProviderWrapper},
+    contract::{ContractOutput, ContractProvider, ContractProviderWrapper},
     crypto::{elgamal::Ciphertext, Hash},
     tokio::block_in_place_safe,
-    transaction::{ContractDeposit, Transaction},
-    versioned_type::VersionedState
+    transaction::{ContractDeposit, Transaction}
 };
 
 use super::{BlockchainApplyState, DecompressedDepositCt, VerificationError};
@@ -39,27 +38,9 @@ impl Transaction {
     ) -> Result<bool, VerificationError<E>> {
         state.load_contract_module(&contract).await
             .map_err(VerificationError::State)?;
-    
+
         let (contract_environment, mut chain_state) = state.get_contract_environment_for(contract, deposits, tx_hash).await
             .map_err(VerificationError::State)?;
-    
-        // We need to add the deposits to the balances
-        for (asset, deposit) in deposits.iter() {
-            match deposit {
-                ContractDeposit::Public(amount) => {
-                    let (mut balance_state, mut balance) = get_balance_from_cache(contract_environment.provider, &mut chain_state, asset.clone())?
-                        .unwrap_or((VersionedState::New, 0));
-    
-                    balance += amount;
-                    balance_state.mark_updated();
-    
-                    chain_state.cache.balances.insert(asset.clone(), Some((balance_state, balance)));
-                },
-                ContractDeposit::Private { .. } => {
-                    // TODO: we need to add the private deposit to the balance
-                }
-            }
-        }
     
         // Total used gas by the VM
         let (used_gas, exit_code) = block_in_place_safe::<_, Result<_, anyhow::Error>>(|| {
@@ -76,7 +57,7 @@ impl Transaction {
                 },
                 InvokeContract::Hook(hook) => {
                     if !vm.invoke_hook_id(hook).context("invoke hook")? {
-                        debug!("Invoke contract {} from TX {} hook {} not found", contract, tx_hash, hook);
+                        warn!("Invoke contract {} from TX {} hook {} not found", contract, tx_hash, hook);
                         return Ok((0, None))
                     }
                 }
