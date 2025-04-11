@@ -21,6 +21,7 @@ pub use commitment_eq::CommitmentEqProof;
 pub use ciphertext_validity::CiphertextValidityProof;
 pub use balance::BalanceProof;
 pub use ownership::OwnershipProof;
+pub use range_proof::RangeProof;
 
 // We are using 64 bits for the bulletproofs
 pub const BULLET_PROOF_SIZE: usize = 64;
