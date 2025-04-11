@@ -94,7 +94,7 @@ impl ContractDataProvider for SledStorage {
     async fn get_contract_data_topoheight_at_maximum_topoheight_for<'a>(&self, contract: &Hash, key: &ValueCell, maximum_topoheight: TopoHeight) -> Result<Option<TopoHeight>, BlockchainError> {
         trace!("get contract data topoheight at maximum topoheight {}", maximum_topoheight);
         if !self.has_contract_data_pointer(contract, key).await? {
-            trace!("Contract {} does not exist", contract);
+            trace!("Contract {} data {} does not exist", contract, key);
             return Ok(None)
         }
 
