@@ -159,6 +159,7 @@ where
     f()
 }
 
+#[cfg(feature = "tokio")]
 fn block_in_place_internal<F, R>(f: F) -> R
 where
     F: FnOnce() -> R,
