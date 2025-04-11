@@ -19,6 +19,7 @@ use crate::{
 
 use super::{BlockchainApplyState, BlockchainVerificationState, DecompressedDepositCt, VerificationError};
 
+#[derive(Debug)]
 pub enum InvokeContract {
     Entry(u16),
     Hook(u8),
@@ -50,6 +51,7 @@ impl Transaction {
         max_gas: u64,
         invoke: InvokeContract,
     ) -> Result<bool, VerificationError<E>> {
+        debug!("Invoking contract {} from TX {}: {:?}", contract, tx_hash, invoke);
         let (contract_environment, mut chain_state) = state.get_contract_environment_for(contract, deposits, tx_hash).await
             .map_err(VerificationError::State)?;
     
@@ -151,6 +153,7 @@ impl Transaction {
 
         // We must refund all the gas not used by the contract
         let refund_gas = self.handle_gas(state, used_gas, max_gas).await?;
+        debug!("used gas: {}, refund gas: {}", used_gas, refund_gas);
         if refund_gas > 0 {
             outputs.push(ContractOutput::RefundGas { amount: refund_gas });
         }
