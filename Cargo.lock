@@ -4106,7 +4106,7 @@ dependencies = [
 [[package]]
 name = "xelis-ast"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#a8198084b4ab091fe603e9f389daee79cfa6c2ab"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#1952a4ac18d967abe465f8429161e2dfb664f0e3"
 dependencies = [
  "indexmap 2.9.0",
  "xelis-types",
@@ -4115,7 +4115,7 @@ dependencies = [
 [[package]]
 name = "xelis-builder"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#a8198084b4ab091fe603e9f389daee79cfa6c2ab"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#1952a4ac18d967abe465f8429161e2dfb664f0e3"
 dependencies = [
  "anyhow",
  "log",
@@ -4129,7 +4129,7 @@ dependencies = [
 [[package]]
 name = "xelis-bytecode"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#a8198084b4ab091fe603e9f389daee79cfa6c2ab"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#1952a4ac18d967abe465f8429161e2dfb664f0e3"
 dependencies = [
  "indexmap 2.9.0",
  "serde",
@@ -4139,7 +4139,7 @@ dependencies = [
 [[package]]
 name = "xelis-environment"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#a8198084b4ab091fe603e9f389daee79cfa6c2ab"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#1952a4ac18d967abe465f8429161e2dfb664f0e3"
 dependencies = [
  "anyhow",
  "better_any",
@@ -4165,7 +4165,7 @@ dependencies = [
 [[package]]
 name = "xelis-types"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#a8198084b4ab091fe603e9f389daee79cfa6c2ab"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#1952a4ac18d967abe465f8429161e2dfb664f0e3"
 dependencies = [
  "anyhow",
  "indexmap 2.9.0",
@@ -4179,7 +4179,7 @@ dependencies = [
 [[package]]
 name = "xelis-vm"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#a8198084b4ab091fe603e9f389daee79cfa6c2ab"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#1952a4ac18d967abe465f8429161e2dfb664f0e3"
 dependencies = [
  "indexmap 2.9.0",
  "log",
