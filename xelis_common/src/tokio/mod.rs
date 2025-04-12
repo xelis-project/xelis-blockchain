@@ -1,10 +1,7 @@
 #[cfg(feature = "tokio")]
 mod thread_pool;
 
-use std::{
-    future::Future,
-    cell::Cell
-};
+use std::future::Future;
 use cfg_if::cfg_if;
 use log::trace;
 
@@ -29,6 +26,10 @@ pub use tokio_with_wasm::*;
 ))]
 pub use tokio::*;
 
+#[cfg(feature = "tokio")]
+use std::cell::Cell;
+
+#[cfg(feature = "tokio")]
 thread_local! {
     static IN_BLOCK_IN_PLACE: Cell<bool> = Cell::new(false);
 }
@@ -172,12 +173,15 @@ where
     res
 }
 
+/// Check if we are in a block in place closure
 #[inline(always)]
-fn is_in_block_in_place() -> bool {
+#[cfg(feature = "tokio")]
+pub fn is_in_block_in_place() -> bool {
     IN_BLOCK_IN_PLACE.with(|flag| flag.get())
 }
 
 #[inline(always)]
+#[cfg(feature = "tokio")]
 fn set_in_block_in_place(value: bool) {
     IN_BLOCK_IN_PLACE.with(|flag| flag.set(value));
 }
