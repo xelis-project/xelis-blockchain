@@ -51,10 +51,12 @@ impl PedersenCommitment {
         Self(PC_GENS.commit(x, r))
     }
 
+    #[inline(always)]
     pub fn as_point(&self) -> &RistrettoPoint {
         &self.0
     }
 
+    #[inline(always)]
     pub fn to_point(self) -> RistrettoPoint {
         self.0
     }
@@ -82,6 +84,11 @@ impl DecryptHandle {
     // Get the point
     pub fn as_point(&self) -> &RistrettoPoint {
         &self.0
+    }
+
+    // Get the inner point
+    pub fn to_point(self) -> RistrettoPoint {
+        self.0
     }
 
     // Compress the DecryptHandle
