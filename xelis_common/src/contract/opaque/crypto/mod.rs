@@ -4,4 +4,4 @@ mod ciphertext;
 
 pub use hash::*;
 pub use signature::*;
-// pub use ciphertext::*;
+pub use ciphertext::*;

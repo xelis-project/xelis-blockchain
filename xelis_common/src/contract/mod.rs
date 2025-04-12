@@ -25,6 +25,7 @@ use xelis_vm::{
     Primitive
 };
 use crate::{
+    account::CiphertextCache,
     block::{Block, TopoHeight},
     config::{
         FEE_PER_ACCOUNT_CREATION,
@@ -130,6 +131,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static> {
     let memory_storage_type = Type::Opaque(env.register_opaque::<OpaqueMemoryStorage>("MemoryStorage"));
     let asset_type = Type::Opaque(env.register_opaque::<Asset>("Asset"));
     let signature_type = Type::Opaque(env.register_opaque::<Signature>("Signature"));
+    let ciphertext_type = Type::Opaque(env.register_opaque::<CiphertextCache>("Ciphertext"));
 
     // Transaction
     {
@@ -815,6 +817,50 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static> {
         250,
         None
     );
+
+    // Ciphertext
+    {
+        env.register_native_function(
+            "add",
+            Some(ciphertext_type.clone()),
+            vec![
+                ("value", Type::U64)
+            ],
+            ciphertext_add_plaintext,
+            500,
+            None
+        );
+        env.register_native_function(
+            "sub",
+            Some(ciphertext_type.clone()),
+            vec![
+                ("value", Type::U64)
+            ],
+            ciphertext_sub_plaintext,
+            500,
+            None
+        );
+        env.register_native_function(
+            "mul",
+            Some(ciphertext_type.clone()),
+            vec![
+                ("value", Type::U64)
+            ],
+            ciphertext_mul_plaintext,
+            1000,
+            None
+        );
+        env.register_native_function(
+            "div",
+            Some(ciphertext_type.clone()),
+            vec![
+                ("value", Type::U64)
+            ],
+            ciphertext_div_plaintext,
+            5000,
+            None
+        );
+    }
 
     env
 }

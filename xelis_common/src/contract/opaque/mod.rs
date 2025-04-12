@@ -14,6 +14,7 @@ use xelis_types::{
 };
 use xelis_vm::{tid, traits::JSON_REGISTRY, OpaqueWrapper};
 use crate::{
+    account::CiphertextCache,
     block::Block,
     crypto::{Address, Hash, Signature},
     serializer::*,
@@ -88,6 +89,8 @@ pub fn register_opaque_types() {
     let mut registry = JSON_REGISTRY.write().expect("Failed to lock JSON_REGISTRY");
     register_opaque_json!(registry, "Hash", Hash);
     register_opaque_json!(registry, "Address", Address);
+    register_opaque_json!(registry, "Signature", Signature);
+    register_opaque_json!(registry, "Ciphertext", CiphertextCache);
 }
 
 impl Serializer for OpaqueWrapper {
@@ -100,6 +103,7 @@ impl Serializer for OpaqueWrapper {
             HASH_OPAQUE_ID => OpaqueWrapper::new(Hash::read(reader)?),
             ADDRESS_OPAQUE_ID => OpaqueWrapper::new(Address::read(reader)?),
             SIGNATURE_OPAQUE_ID => OpaqueWrapper::new(Signature::read(reader)?),
+            CIPHERTEXT_OPAQUE_ID => OpaqueWrapper::new(CiphertextCache::read(reader)?),
             _ => return Err(ReaderError::InvalidValue)
         })
     }

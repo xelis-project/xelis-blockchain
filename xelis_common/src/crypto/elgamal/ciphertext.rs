@@ -135,6 +135,12 @@ impl AddAssign<&Scalar> for Ciphertext {
     }
 }
 
+impl AddAssign<Scalar> for &mut Ciphertext {
+    fn add_assign(&mut self, rhs: Scalar) {
+        self.commitment += rhs;
+    }
+}
+
 // SUB TRAITS
 
 impl Sub<u64> for Ciphertext {
@@ -266,6 +272,13 @@ impl SubAssign<Scalar> for Ciphertext {
 
 impl SubAssign<&Scalar> for Ciphertext {
     fn sub_assign(&mut self, rhs: &Scalar) {
+        self.commitment -= rhs;
+    }
+}
+
+
+impl SubAssign<Scalar> for &mut Ciphertext {
+    fn sub_assign(&mut self, rhs: Scalar) {
         self.commitment -= rhs;
     }
 }
