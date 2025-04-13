@@ -60,9 +60,9 @@ impl<'de> Deserialize<'de> for Network {
 impl Display for Network {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         let str = match &self {
-            Self::Mainnet => "mainnet",
-            Self::Testnet => "testnet",
-            Self::Dev => "dev"
+            Self::Mainnet => "Mainnet",
+            Self::Testnet => "Testnet",
+            Self::Dev => "Dev"
         };
         write!(f, "{}", str)
     }
