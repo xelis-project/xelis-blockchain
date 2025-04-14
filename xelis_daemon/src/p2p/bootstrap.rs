@@ -1,4 +1,4 @@
-use std::{borrow::Cow, collections::HashSet, sync::Arc};
+use std::{borrow::Cow, collections::HashSet, sync::Arc, time::Instant};
 
 use futures::{stream, StreamExt, TryStreamExt};
 use indexmap::IndexSet;
@@ -243,6 +243,7 @@ impl<S: Storage> P2pServer<S> {
     // reload blockchain cache from disk, and we're ready to sync the rest of the chain
     // NOTE: it could be even faster without retrieving each TXs, but we do it in case user don't enable pruning
     pub(super) async fn bootstrap_chain(&self, peer: &Arc<Peer>) -> Result<(), BlockchainError> {
+        let start = Instant::now();
         info!("Starting fast sync with {}", peer);
 
         let mut our_topoheight = self.blockchain.get_topo_height();
@@ -375,32 +376,35 @@ impl<S: Storage> P2pServer<S> {
                 },
                 StepResponse::Contracts(contracts, page) => {
                     info!("Requesting contract metadata for {} contracts #{}", contracts.len(), page.unwrap_or(0));
-                    for contract in contracts {
-                        debug!("Requesting contract metadata for {}", contract);
-                        let StepResponse::ContractMetadata(metadata) = peer.request_boostrap_chain(StepRequest::ContractMetadata(our_topoheight, stable_topoheight, Cow::Borrowed(&contract))).await? else {
-                            // shouldn't happen
-                            error!("Received an invalid StepResponse (how ?) while fetching contract metadata");
-                            return Err(P2pError::InvalidPacket.into())
-                        };
+                    stream::iter(contracts.into_iter().map(Ok::<_, BlockchainError>))
+                        .try_for_each_concurrent(self.stream_concurrency, |contract| async move {
+                            debug!("Requesting contract metadata for {}", contract);
+                            let StepResponse::ContractMetadata(metadata) = peer.request_boostrap_chain(StepRequest::ContractMetadata(our_topoheight, stable_topoheight, Cow::Borrowed(&contract))).await? else {
+                                // shouldn't happen
+                                error!("Received an invalid StepResponse (how ?) while fetching contract metadata");
+                                return Err(P2pError::InvalidPacket.into())
+                            };
 
-                        let mut storage = self.blockchain.get_storage().write().await;
-                        match metadata {
-                            // It wasn't found on their side or was deleted
-                            State::None | State::Deleted => {
-                                debug!("contract metadata for {}", contract);
-                                storage.delete_last_topoheight_for_contract(&contract).await?;
-                            },
-                            State::Clean => {
-                                debug!("contract {} didn't changed", contract);
-                            },
-                            State::Some(metadata) => {
-                                debug!("Saving contract metadata for {}", contract);
-                                let module = &metadata.module;
-                                let versioned = VersionedContract::new(Some(Cow::Borrowed(module)), None);
-                                storage.set_last_contract_to(&contract, stable_topoheight, versioned).await?;
-                            },
-                        };
-                    }
+                            let mut storage = self.blockchain.get_storage().write().await;
+                            match metadata {
+                                // It wasn't found on their side or was deleted
+                                State::None | State::Deleted => {
+                                    debug!("contract metadata for {}", contract);
+                                    storage.delete_last_topoheight_for_contract(&contract).await?;
+                                },
+                                State::Clean => {
+                                    debug!("contract {} didn't changed", contract);
+                                },
+                                State::Some(metadata) => {
+                                    debug!("Saving contract metadata for {}", contract);
+                                    let module = &metadata.module;
+                                    let versioned = VersionedContract::new(Some(Cow::Borrowed(module)), None);
+                                    storage.set_last_contract_to(&contract, stable_topoheight, versioned).await?;
+                                },
+                            };
+
+                            Ok(())
+                        }).await?;
 
                     if page.is_some() {
                         Some(StepRequest::Contracts(our_topoheight, stable_topoheight, page))
@@ -416,57 +420,60 @@ impl<S: Storage> P2pServer<S> {
                         return Err(P2pError::InvalidPacket.into())
                     }
 
-                    let mut lowest_topoheight = stable_topoheight;
-                    for (i, metadata) in blocks.into_iter().enumerate() {
-                        let topoheight = stable_topoheight - i as u64;
-                        trace!("Processing block metadata {} at topoheight {}", metadata.hash, topoheight);
-                        // check that we don't already have this block in storage
-                        if self.blockchain.has_block(&metadata.hash).await? {
-                            warn!("Block {} at topo {} already in storage, skipping", metadata.hash, topoheight);
-                            continue;
-                        }
+                    let lowest_topoheight = stable_topoheight - blocks.len() as u64 + 1;
 
-                        lowest_topoheight = topoheight;
-                        debug!("Saving block metadata {}", metadata.hash);
-                        let OwnedObjectResponse::BlockHeader(header, hash) = peer.request_blocking_object(ObjectRequest::BlockHeader(metadata.hash)).await? else {
-                            error!("Received an invalid requested object while fetching blocks metadata");
-                            return Err(P2pError::InvalidPacket.into())
-                        };
+                    stream::iter(blocks.into_iter().enumerate().map(Ok))
+                        .try_for_each_concurrent(self.stream_concurrency, |(i, metadata)| async move {
+                            let topoheight = stable_topoheight - i as u64;
+                            trace!("Processing block metadata {} at topoheight {}", metadata.hash, topoheight);
+                            // check that we don't already have this block in storage
+                            if self.blockchain.has_block(&metadata.hash).await? {
+                                warn!("Block {} at topo {} already in storage, skipping", metadata.hash, topoheight);
+                                return Ok::<(), BlockchainError>(());
+                            }
 
-                        let mut txs = Vec::with_capacity(header.get_txs_hashes().len());
-                        debug!("Retrieving {} txs for block {}", header.get_txs_count(), hash);
-                        for tx_hash in header.get_txs_hashes() {
-                            trace!("Retrieving TX {} for block {}", tx_hash, hash);
-                            let tx = if self.blockchain.has_tx(tx_hash).await? {
-                                Immutable::Arc(self.blockchain.get_tx(tx_hash).await?)
-                            } else {
-                                let OwnedObjectResponse::Transaction(tx, _) = peer.request_blocking_object(ObjectRequest::Transaction(tx_hash.clone())).await? else {
-                                    error!("Received an invalid requested object while fetching block transaction {}", tx_hash);
-                                    return Err(P2pError::InvalidObjectResponseType.into())
-                                };
-                                Immutable::Owned(tx)
+                            debug!("Saving block metadata {}", metadata.hash);
+                            let OwnedObjectResponse::BlockHeader(header, hash) = peer.request_blocking_object(ObjectRequest::BlockHeader(metadata.hash)).await? else {
+                                error!("Received an invalid requested object while fetching blocks metadata");
+                                return Err(P2pError::InvalidPacket.into())
                             };
-                            trace!("TX {} ok", tx_hash);
-                            txs.push(tx);
-                        }
 
-                        // link its TX to the block
-                        let mut storage = self.blockchain.get_storage().write().await;
-                        for tx_hash in header.get_txs_hashes() {
-                            storage.add_block_for_tx(tx_hash, &hash)?;
-                        }
+                            let mut txs = Vec::with_capacity(header.get_txs_hashes().len());
+                            debug!("Retrieving {} txs for block {}", header.get_txs_count(), hash);
+                            for tx_hash in header.get_txs_hashes() {
+                                trace!("Retrieving TX {} for block {}", tx_hash, hash);
+                                let tx = if self.blockchain.has_tx(tx_hash).await? {
+                                    Immutable::Arc(self.blockchain.get_tx(tx_hash).await?)
+                                } else {
+                                    let OwnedObjectResponse::Transaction(tx, _) = peer.request_blocking_object(ObjectRequest::Transaction(tx_hash.clone())).await? else {
+                                        error!("Received an invalid requested object while fetching block transaction {}", tx_hash);
+                                        return Err(P2pError::InvalidObjectResponseType.into())
+                                    };
+                                    Immutable::Owned(tx)
+                                };
+                                trace!("TX {} ok", tx_hash);
+                                txs.push(tx);
+                            }
+    
+                            // link its TX to the block
+                            let mut storage = self.blockchain.get_storage().write().await;
+                            for tx_hash in header.get_txs_hashes() {
+                                storage.add_block_for_tx(tx_hash, &hash)?;
+                            }
+    
+                            // save metadata of this block
+                            storage.set_supply_at_topo_height(topoheight, metadata.supply)?;
+                            storage.set_burned_supply_at_topo_height(topoheight, metadata.burned_supply)?;
+                            storage.set_block_reward_at_topo_height(topoheight, metadata.reward)?;
+                            storage.set_topo_height_for_block(&hash, topoheight).await?;
+    
+                            storage.set_cumulative_difficulty_for_block_hash(&hash, metadata.cumulative_difficulty).await?;
+    
+                            // save the block with its transactions, difficulty
+                            storage.save_block(Arc::new(header), &txs, metadata.difficulty, metadata.p, hash).await?;
 
-                        // save metadata of this block
-                        storage.set_supply_at_topo_height(lowest_topoheight, metadata.supply)?;
-                        storage.set_burned_supply_at_topo_height(lowest_topoheight, metadata.burned_supply)?;
-                        storage.set_block_reward_at_topo_height(lowest_topoheight, metadata.reward)?;
-                        storage.set_topo_height_for_block(&hash, lowest_topoheight).await?;
-
-                        storage.set_cumulative_difficulty_for_block_hash(&hash, metadata.cumulative_difficulty).await?;
-
-                        // save the block with its transactions, difficulty
-                        storage.save_block(Arc::new(header), &txs, metadata.difficulty, metadata.p, hash).await?;
-                    }
+                            Ok(())
+                        }).await?;
 
                     let mut storage = self.blockchain.get_storage().write().await;
 
@@ -487,7 +494,7 @@ impl<S: Storage> P2pServer<S> {
             };
         }
         self.blockchain.reload_from_disk().await?;
-        info!("Fast sync done with {}", peer);
+        info!("Fast sync done with {}, took {}", peer, humantime::format_duration(start.elapsed()));
 
         Ok(())
     }
