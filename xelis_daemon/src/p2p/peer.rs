@@ -43,7 +43,7 @@ use super::{
 use std::{
     num::NonZeroUsize,
     borrow::Cow,
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     fmt::{Display, Error, Formatter},
     hash::{Hash as StdHash, Hasher},
     net::{IpAddr, SocketAddr},
@@ -145,7 +145,10 @@ pub struct Peer {
     // cannot be set to false if its already to true (protocol rules)
     is_pruned: AtomicBool,
     // used for await on bootstrap chain packets
-    bootstrap_chain: Mutex<Option<Sender<StepResponse>>>,
+    // Because we are in a TCP stream, we know that all our
+    // requests will be answered in the order we sent them
+    // So we can use a queue to store the senders and pop them
+    bootstrap_chain: Mutex<VecDeque<Sender<StepResponse>>>,
     // used to wait on chain response when syncing chain
     sync_chain: Mutex<Option<Sender<ChainResponse>>>,
     // IP address with local port
@@ -195,7 +198,7 @@ impl Peer {
             requested_inventory: AtomicBool::new(false),
             pruned_topoheight: AtomicU64::new(pruned_topoheight.unwrap_or(0)),
             is_pruned: AtomicBool::new(pruned_topoheight.is_some()),
-            bootstrap_chain: Mutex::new(None),
+            bootstrap_chain: Mutex::new(VecDeque::new()),
             sync_chain: Mutex::new(None),
             outgoing_address,
             sharable,
@@ -455,8 +458,8 @@ impl Peer {
         let step_kind = step.kind();
         let (sender, receiver) = tokio::sync::oneshot::channel();
         {
-            let mut sender_lock = self.bootstrap_chain.lock().await;
-            *sender_lock = Some(sender);
+            let mut senders = self.bootstrap_chain.lock().await;
+            senders.push_back(sender);
         }
 
         // send the packet
@@ -468,6 +471,12 @@ impl Peer {
             res = timeout(Duration::from_millis(PEER_TIMEOUT_BOOTSTRAP_STEP), receiver) => match res {
                 Ok(res) => res?,
                 Err(e) => {
+                    // Clear the bootstrap chain channel to preserve the order
+                    {
+                        let mut senders = self.bootstrap_chain.lock().await;
+                        senders.pop_front();
+                    }
+
                     debug!("Requested bootstrap chain step {:?} has timed out", step_kind);
                     return Err(P2pError::AsyncTimeOut(e));
                 }
@@ -515,7 +524,7 @@ impl Peer {
 
     // Get the bootstrap chain channel
     // Like the sync chain channel, but for bootstrap (fast sync) syncing
-    pub fn get_bootstrap_chain_channel(&self) -> &Mutex<Option<Sender<StepResponse>>> {
+    pub fn get_bootstrap_chain_channel(&self) -> &Mutex<VecDeque<Sender<StepResponse>>> {
         &self.bootstrap_chain
     }
 

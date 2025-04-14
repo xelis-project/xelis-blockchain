@@ -2085,7 +2085,7 @@ impl<S: Storage> P2pServer<S> {
             },
             Packet::BootstrapChainResponse(response) => {
                 debug!("Received a bootstrap chain response ({:?}) from {}", response.kind(), peer);
-                if let Some(sender) = peer.get_bootstrap_chain_channel().lock().await.take() {
+                if let Some(sender) = peer.get_bootstrap_chain_channel().lock().await.pop_front() {
                     trace!("Sending bootstrap chain response ({:?})", response.kind());
                     let response = response.response();
                     if let Err(e) = sender.send(response) {
