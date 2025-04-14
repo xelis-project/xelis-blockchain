@@ -188,7 +188,9 @@ pub struct P2pServer<S: Storage> {
     // Time in seconds to ban a peer
     temp_ban_time: u64,
     // Fail count threshold to ban a peer
-    fail_count_limit: u8
+    fail_count_limit: u8,
+    // Sender used to notify the ping loop
+    notify_ping_loop: Sender<()>,
 }
 
 impl<S: Storage> P2pServer<S> {
@@ -249,6 +251,8 @@ impl<S: Storage> P2pServer<S> {
         let (exit_sender, exit_receiver) = broadcast::channel(1);
         let object_tracker = ObjectTracker::new(exit_receiver);
 
+        let (ping_sender, ping_receiver) = mpsc::channel(1);
+
         let (sender, event_receiver) = channel::<Arc<Peer>>(max_peers); 
         let peer_list = PeerList::new(
             max_peers,
@@ -285,7 +289,8 @@ impl<S: Storage> P2pServer<S> {
             dh_action,
             stream_concurrency,
             temp_ban_time,
-            fail_count_limit
+            fail_count_limit,
+            notify_ping_loop: ping_sender,
         };
 
         let arc = Arc::new(server);
@@ -296,6 +301,7 @@ impl<S: Storage> P2pServer<S> {
                     connections_receiver,
                     blocks_processor_receiver,
                     txs_processor_receiver,
+                    ping_receiver,
                     event_receiver,
                     use_peerlist,
                     concurrency
@@ -386,6 +392,7 @@ impl<S: Storage> P2pServer<S> {
         receiver: Receiver<(SocketAddr, bool)>,
         blocks_processor_receiver: Receiver<(Arc<Peer>, BlockHeader, Hash)>,
         txs_processor_receiver: Receiver<(Arc<Peer>, Arc<Hash>)>,
+        ping_receiver: Receiver<()>,
         event_receiver: Receiver<Arc<Peer>>,
         use_peerlist: bool,
         concurrency: usize
@@ -415,7 +422,7 @@ impl<S: Storage> P2pServer<S> {
         spawn_task("p2p-chain-sync", Arc::clone(&self).chain_sync_loop());
 
         // start another task for ping loop
-        spawn_task("p2p-ping", Arc::clone(&self).ping_loop());
+        spawn_task("p2p-ping", Arc::clone(&self).ping_loop(ping_receiver));
 
         // start the blocks processing task to have a queued handler
         spawn_task("p2p-blocks", Arc::clone(&self).blocks_processing_task(blocks_processor_receiver));
@@ -1097,18 +1104,35 @@ impl<S: Storage> P2pServer<S> {
         }
     }
 
+    // Send a ping packet to all peers
+    // Used to notify our peers asap
+    pub async fn ping_peers(&self) {
+        debug!("Sending ping signal to all peers");
+        if let Err(e) = self.notify_ping_loop.send(()).await {
+            error!("Error while sending ping signal: {}", e);
+        }
+    }
+
     // broadcast generic ping packet every 10s
     // if we have to send our peerlist to all peers, we calculate the ping for each peer
     // instead of being done in each write task of peer, we do it one time so we don't have
     // several lock on the chain and on peerlist
-    async fn ping_loop(self: Arc<Self>) {
+    async fn ping_loop(self: Arc<Self>, mut ping_receiver: Receiver<()>) {
         debug!("Starting ping loop...");
 
         let mut last_peerlist_update = get_current_time_in_seconds();
         let duration = Duration::from_secs(P2P_PING_DELAY);
         loop {
             trace!("Waiting for ping delay...");
-            sleep(duration).await;
+            select! {
+                biased;
+                _ = ping_receiver.recv() => {
+                    debug!("Received ping signal, going to send ping packet");
+                },
+                _ = sleep(duration) => {
+                    debug!("Ping delay finished, going to send ping packet");
+                }
+            }
 
             if !self.is_running() {
                 debug!("Ping loop task is stopped!");

@@ -2612,6 +2612,14 @@ impl<S: Storage> Blockchain<S> {
 
         info!("Processed block {} at height {} in {}ms with {} txs (DAG: {})", block_hash, block.get_height(), start.elapsed().as_millis(), block.get_txs_count(), block_is_ordered);
 
+        if let Some(p2p) = self.p2p.read().await.as_ref().filter(|_| broadcast) {
+            trace!("P2p locked, ping peers");
+            let p2p = p2p.clone();
+            spawn_task("notify-ping-peers", async move {
+                p2p.ping_peers().await;
+            });
+        }
+
         // broadcast to websocket new block
         if let Some(rpc) = rpc_server.as_ref() {
             // if we have a getwork server, and that its not from syncing, notify miners
