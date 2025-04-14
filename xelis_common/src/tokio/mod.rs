@@ -111,24 +111,23 @@ pub fn is_multi_threads_supported() -> bool {
 pub fn try_block_on<F: Future>(_future: F) -> Result<F::Output, anyhow::Error> {
     trace!("try block on");
     cfg_if! {
-        if #[cfg(all(
-            feature = "tokio",
-            target_arch = "wasm32",
-            target_vendor = "unknown",
-            target_os = "unknown"
-        ))] {
-            // WASM32 use the futures executor directly
-            Ok(futures::executor::block_on(_future))
-        } else if #[cfg(feature = "tokio")] {
-            let handle = runtime::Handle::try_current()?;
-            if is_in_block_in_place() {
-                trace!("tokio block on directly");
-                Ok(handle.block_on(_future))
+        if #[cfg(feature = "tokio")] {
+            if is_multi_threads_supported() {
+                let handle = runtime::Handle::try_current()?;
+                if is_in_block_in_place() {
+                    trace!("tokio block on directly");
+                    Ok(handle.block_on(_future))
+                } else {
+                    Ok(block_in_place_internal(|| {
+                        trace!("tokio block in place");
+                        handle.block_on(_future)
+                    }))
+                }
             } else {
-                Ok(block_in_place_internal(|| {
-                    trace!("tokio block in place");
-                    handle.block_on(_future)
-                }))
+                // use the futures executor directly
+                // This is required because if we are in a Actix
+                // context, we can't block on using its executor
+                Ok(futures::executor::block_on(_future))
             }
         } else {
             Err(anyhow::anyhow!("Tokio feature is not enabled"))
