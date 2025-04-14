@@ -1,6 +1,6 @@
 use std::{borrow::Cow, collections::HashSet, sync::Arc};
 
-use futures::{stream, TryStreamExt};
+use futures::{stream, StreamExt, TryStreamExt};
 use indexmap::IndexSet;
 use log::{debug, error, info, trace, warn};
 use xelis_common::{
@@ -90,18 +90,24 @@ impl<S: Storage> P2pServer<S> {
                 };
                 StepResponse::Assets(assets, page)
             },
-            StepRequest::Balances(key, asset, min, max) => {
+            StepRequest::Balances(keys, asset, min, max) => {
                 if min > max {
                     warn!("Invalid range for account balance");
                     return Err(P2pError::InvalidPacket.into())
                 }
 
-                let mut balances = Vec::with_capacity(MAX_ITEMS_PER_PAGE);
-                for key in key.iter() {
-                    trace!("Requesting balance for {} requested by {} for bootstrap chain", key.as_address(true), peer);
-                    let balance = storage.get_account_summary_for(&key, &asset, min, max).await?;
-                    balances.push(balance);
-                }
+                // move references only
+                let asset = &asset;
+                let storage = &storage;
+
+                let balances: Vec<Option<_>> = stream::iter(keys.into_owned())
+                    .map(|key| async move {
+                            storage.get_account_summary_for(&key, asset, min, max).await
+                        }
+                    )
+                    .buffered(self.stream_concurrency)
+                    .try_collect()
+                    .await?;
 
                 trace!("Sending {} balances to {}", balances.len(), peer);
                 StepResponse::Balances(balances)
@@ -126,21 +132,24 @@ impl<S: Storage> P2pServer<S> {
                     return Err(P2pError::InvalidPacket.into())
                 }
 
-                let mut nonces = Vec::with_capacity(keys.len());
-                for key in keys.iter() {
-                    let state = match storage.get_nonce_at_maximum_topoheight(key, max).await? {
-                        Some((topo, v)) => {
-                            if topo < min {
-                                State::Clean
-                            } else {
-                                State::Some(v.get_nonce())
-                            }
-                        },
-                        None => State::None,
-                    };
+                // move references only
+                let storage = &storage;
 
-                    nonces.push(state);
-                }
+                let nonces: Vec<State<u64>> = stream::iter(keys.into_owned())
+                    .map(|key| async move {
+                            storage.get_nonce_at_maximum_topoheight(&key, max).await
+                                .map(|v| v.map(|(topo, v)| {
+                                    if topo < min {
+                                        State::Clean
+                                    } else {
+                                        State::Some(v.get_nonce())
+                                    }
+                                }).unwrap_or(State::None))
+                    })
+                    .buffered(self.stream_concurrency)
+                    .try_collect()
+                    .await?;
+
                 StepResponse::Nonces(nonces)
             },
             StepRequest::Keys(min, max, page) => {
