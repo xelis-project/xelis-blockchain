@@ -176,6 +176,8 @@ pub trait BlockchainApplyState<'a, P: ContractProvider, E>: BlockchainVerificati
     ) -> Result<(), E>;
 
     /// Remove the contract module
+    /// This will mark the contract
+    /// as a None version
     async fn remove_contract_module(
         &mut self,
         hash: &'a Hash
