@@ -165,7 +165,7 @@ impl Prompt {
         module_logs: Vec<ModuleConfig>,
         file_level: LogLevel,
     ) -> Result<ShareablePrompt, PromptError> {
-        if !dir_path.ends_with("/") {
+        if !(dir_path.ends_with("/") || dir_path.ends_with("\\")) {
             return Err(PromptError::LogsPathNotFolder);
         }
 
