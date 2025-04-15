@@ -408,9 +408,9 @@ dependencies = [
 
 [[package]]
 name = "anyhow"
-version = "1.0.97"
+version = "1.0.98"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dcfed56ad506cb2c684a14971b8861fdc3baaaae314b9e5f9bb532cbe3ba7a4f"
+checksum = "e16d2d3311acee920a9eb8d33b8cbc1787ce4a264e85f964c2404b969bdcd487"
 
 [[package]]
 name = "arbitrary"
@@ -848,9 +848,9 @@ dependencies = [
 
 [[package]]
 name = "clap"
-version = "4.5.35"
+version = "4.5.36"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d8aa86934b44c19c50f87cc2790e19f54f7a67aedb64101c2e1a2e5ecfb73944"
+checksum = "2df961d8c8a0d08aa9945718ccf584145eee3f3aa06cddbeac12933781102e04"
 dependencies = [
  "clap_builder",
  "clap_derive",
@@ -858,9 +858,9 @@ dependencies = [
 
 [[package]]
 name = "clap_builder"
-version = "4.5.35"
+version = "4.5.36"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2414dbb2dd0695280da6ea9261e327479e9d37b0630f6b53ba2a11c60c679fd9"
+checksum = "132dbda40fb6753878316a489d5a1242a8ef2f0d9e47ba01c951ea8aa7d013a5"
 dependencies = [
  "anstream",
  "anstyle",
@@ -1194,9 +1194,9 @@ dependencies = [
 
 [[package]]
 name = "data-encoding"
-version = "2.8.0"
+version = "2.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "575f75dfd25738df5b91b8e43e14d44bda14637a58fae779fd2b064f8bf3e010"
+checksum = "2a2330da5de22e8a3cb63252ce2abb30116bf5265e89c0e01bc17015ce30a476"
 
 [[package]]
 name = "deranged"
@@ -2067,9 +2067,9 @@ checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
 
 [[package]]
 name = "libc"
-version = "0.2.171"
+version = "0.2.172"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c19937216e9d3aa9956d9bb8dfc0b0c8beb6058fc4f7a4dc4d850edf86a237d6"
+checksum = "d750af042f7ef4f724306de029d18836c26c1765a54a6a3f094cbd23a7267ffa"
 
 [[package]]
 name = "litemap"
@@ -4106,7 +4106,7 @@ dependencies = [
 [[package]]
 name = "xelis-ast"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#1952a4ac18d967abe465f8429161e2dfb664f0e3"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#468618f9d44598a6fb9d99d4a0903c3f0cc00a27"
 dependencies = [
  "indexmap 2.9.0",
  "xelis-types",
@@ -4115,7 +4115,7 @@ dependencies = [
 [[package]]
 name = "xelis-builder"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#1952a4ac18d967abe465f8429161e2dfb664f0e3"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#468618f9d44598a6fb9d99d4a0903c3f0cc00a27"
 dependencies = [
  "anyhow",
  "log",
@@ -4129,7 +4129,7 @@ dependencies = [
 [[package]]
 name = "xelis-bytecode"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#1952a4ac18d967abe465f8429161e2dfb664f0e3"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#468618f9d44598a6fb9d99d4a0903c3f0cc00a27"
 dependencies = [
  "indexmap 2.9.0",
  "serde",
@@ -4139,7 +4139,7 @@ dependencies = [
 [[package]]
 name = "xelis-environment"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#1952a4ac18d967abe465f8429161e2dfb664f0e3"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#468618f9d44598a6fb9d99d4a0903c3f0cc00a27"
 dependencies = [
  "anyhow",
  "better_any",
@@ -4165,7 +4165,7 @@ dependencies = [
 [[package]]
 name = "xelis-types"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#1952a4ac18d967abe465f8429161e2dfb664f0e3"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#468618f9d44598a6fb9d99d4a0903c3f0cc00a27"
 dependencies = [
  "anyhow",
  "indexmap 2.9.0",
@@ -4179,7 +4179,7 @@ dependencies = [
 [[package]]
 name = "xelis-vm"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#1952a4ac18d967abe465f8429161e2dfb664f0e3"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#468618f9d44598a6fb9d99d4a0903c3f0cc00a27"
 dependencies = [
  "indexmap 2.9.0",
  "log",
