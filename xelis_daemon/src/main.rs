@@ -233,7 +233,7 @@ async fn main() -> Result<()> {
     let blockchain_config = &config.core;
     if let Some(path) = blockchain_config.dir_path.as_ref() {
         if !(path.ends_with("/") || path.ends_with("\\")) {
-            return Err(anyhow::anyhow!("Path must end with / or \\"));
+            return Err(anyhow::anyhow!("Path must ends with / or \\"));
         }
 
         // If logs path is default, we will change it to be in the same directory as the blockchain
