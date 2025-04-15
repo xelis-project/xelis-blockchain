@@ -311,35 +311,29 @@ impl TransactionBuilder {
                 size += payload.threshold.size() + 1 + (payload.participants.len() * RISTRETTO_COMPRESSED_SIZE);
             },
             TransactionTypeBuilder::InvokeContract(payload) => {
-                let mut payload_size = payload.contract.size()
+                let payload_size = payload.contract.size()
                 + payload.max_gas.size()
                 + payload.chunk_id.size()
                 + 1 // byte for params len
                 // 4 is for the compressed constant len
-                + payload.parameters.iter().map(|param| 4 + param.size()).sum::<usize>()
-                + 1; // byte for deposits len
-
-                for (asset, deposit) in &payload.deposits {
-                    // 1 is for the deposit variant
-                    payload_size += asset.size() + 1;
-                    if deposit.private {
-                        // Commitment, sender handle, receiver handle
-                        payload_size += RISTRETTO_COMPRESSED_SIZE * 3;
-                        // Ct validity proof
-                        payload_size += RISTRETTO_COMPRESSED_SIZE * 3 + SCALAR_SIZE * 2;
-
-                        // Increment the commitments count
-                        // Each deposit is a commitment
-                        commitments_count += 1;
-                    } else {
-                        payload_size += deposit.amount.size();
-                    }
-                }
+                + payload.parameters.iter().map(|param| 4 + param.size()).sum::<usize>();
 
                 size += payload_size;
+
+                let (commitments, deposits_size) = self.estimate_deposits_size(&payload.deposits);
+                commitments_count += commitments;
+                size += deposits_size;
             },
             TransactionTypeBuilder::DeployContract(payload) => {
-                size += payload.module.len() / 2;
+                // Module is in hex format, so we need to divide by 2 for its bytes size
+                // + 1 for the invoke option
+                size += payload.module.len() / 2 + 1;
+                if let Some(invoke) = payload.invoke.as_ref() {
+                    let (commitments, deposits_size) = self.estimate_deposits_size(&invoke.deposits);
+
+                    commitments_count += commitments;
+                    size += deposits_size + invoke.max_gas.size();
+                }
             }
         };
 
@@ -356,6 +350,30 @@ impl TransactionBuilder {
         + 2 * RISTRETTO_COMPRESSED_SIZE * lg_n;
 
         size
+    }
+
+    fn estimate_deposits_size(&self, deposits: &IndexMap<Hash, ContractDepositBuilder>) -> (usize, usize) {
+        let mut commitments_count = 0;
+        // Init to 1 for the deposits len
+        let mut size = 1;
+        for (asset, deposit) in deposits {
+            // 1 is for the deposit variant
+            size += asset.size() + 1;
+            if deposit.private {
+                // Commitment, sender handle, receiver handle
+                size += RISTRETTO_COMPRESSED_SIZE * 3;
+                // Ct validity proof
+                size += RISTRETTO_COMPRESSED_SIZE * 3 + SCALAR_SIZE * 2;
+
+                // Increment the commitments count
+                // Each deposit is a commitment
+                commitments_count += 1;
+            } else {
+                size += deposit.amount.size();
+            }
+        }
+
+        (commitments_count, size)
     }
 
     // Estimate the fees for this TX
@@ -418,6 +436,7 @@ impl TransactionBuilder {
                     ct -= Scalar::from(payload.amount)
                 }
             },
+            TransactionTypeBuilder::MultiSig(_) => {},
             TransactionTypeBuilder::InvokeContract(payload) => {
                 if let Some(deposit) = payload.deposits.get(asset) {
                     if deposit.private {
@@ -433,7 +452,27 @@ impl TransactionBuilder {
                     ct -= Scalar::from(payload.max_gas);
                 }
             },
-            _ => {}
+            TransactionTypeBuilder::DeployContract(payload) => {
+                if let Some(invoke) = payload.invoke.as_ref() {
+                    if let Some(deposit) = invoke.deposits.get(asset) {
+                        if deposit.private {
+                            if let Some(deposit) = deposits.get(asset) {
+                                ct -= deposit.get_ciphertext(Role::Sender);
+                            }
+                        } else {
+                            ct -= Scalar::from(deposit.amount);
+                        }
+                    }
+
+                    if *asset == XELIS_ASSET {
+                        ct -= Scalar::from(invoke.max_gas);
+                    }
+                }
+
+                if *asset == XELIS_ASSET {
+                    ct -= Scalar::from(BURN_PER_CONTRACT);
+                }
+            }
         }
 
         ct

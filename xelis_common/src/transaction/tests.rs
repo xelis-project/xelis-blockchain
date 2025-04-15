@@ -7,7 +7,7 @@ use crate::{
     account::{CiphertextCache, Nonce},
     api::{DataElement, DataValue},
     block::BlockVersion,
-    config::{COIN_VALUE, XELIS_ASSET},
+    config::{BURN_PER_CONTRACT, COIN_VALUE, XELIS_ASSET},
     crypto::{
         elgamal::{Ciphertext, PedersenOpening},
         proofs::PC_GENS,
@@ -19,7 +19,7 @@ use crate::{
     },
     serializer::Serializer,
     transaction::{
-        builder::{ContractDepositBuilder, InvokeContractBuilder},
+        builder::{ContractDepositBuilder, DeployContractBuilder, InvokeContractBuilder},
         MultiSigPayload,
         TransactionType,
         TxVersion,
@@ -349,6 +349,63 @@ async fn test_tx_invoke_contract() {
     let balance = alice.keypair.decrypt_to_point(&state.accounts[&alice.keypair.get_public_key().compress()].balances[&XELIS_ASSET]);
     // 50 coins deposit + tx fee + 1000 gas fee
     let total_spend = (50 * COIN_VALUE) + tx.fee + 1000;
+
+    assert_eq!(balance, Scalar::from((100 * COIN_VALUE) - total_spend) * PC_GENS.B);
+}
+
+
+#[tokio::test]
+async fn test_tx_deploy_contract() {
+    let mut alice = Account::new();
+
+    alice.set_balance(XELIS_ASSET, 100 * COIN_VALUE);
+
+    let tx = {
+        let mut state = AccountStateImpl {
+            balances: alice.balances.clone(),
+            nonce: alice.nonce,
+            reference: Reference {
+                topoheight: 0,
+                hash: Hash::zero(),
+            },
+        };
+
+        let mut module = Module::new();
+        module.add_chunk(Chunk::new());
+        let data = TransactionTypeBuilder::DeployContract(DeployContractBuilder {
+            module: module.to_hex(),
+            invoke: None
+        });
+        let builder = TransactionBuilder::new(TxVersion::V2, alice.keypair.get_public_key().compress(), None, data, FeeBuilder::default());
+        let estimated_size = builder.estimate_size();
+        let tx = builder.build(&mut state, &alice.keypair).unwrap();
+        assert!(estimated_size == tx.size(), "expected {} bytes got {} bytes", tx.size(), estimated_size);
+        assert!(tx.to_bytes().len() == estimated_size);
+
+        tx
+    };
+
+    let mut state = ChainState::new();
+
+    // Create the chain state
+    {
+        let mut balances = HashMap::new();
+        for (asset, balance) in &alice.balances {
+            balances.insert(asset.clone(), balance.ciphertext.clone().take_ciphertext().unwrap());
+        }
+        state.accounts.insert(alice.keypair.get_public_key().compress(), AccountChainState {
+            balances,
+            nonce: alice.nonce,
+        });
+    }
+
+    let hash = tx.hash();
+    tx.verify(&hash, &mut state).await.unwrap();
+
+    // Check Alice balance
+    let balance = alice.keypair.decrypt_to_point(&state.accounts[&alice.keypair.get_public_key().compress()].balances[&XELIS_ASSET]);
+    // 1 XEL for contract deploy, tx fee
+    let total_spend = BURN_PER_CONTRACT + tx.fee;
 
     assert_eq!(balance, Scalar::from((100 * COIN_VALUE) - total_spend) * PC_GENS.B);
 }
