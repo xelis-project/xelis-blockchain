@@ -137,14 +137,14 @@ impl<S: Storage> P2pServer<S> {
 
                 let nonces: Vec<State<u64>> = stream::iter(keys.into_owned())
                     .map(|key| async move {
-                            storage.get_nonce_at_maximum_topoheight(&key, max).await
-                                .map(|v| v.map(|(topo, v)| {
-                                    if topo < min {
-                                        State::Clean
-                                    } else {
-                                        State::Some(v.get_nonce())
-                                    }
-                                }).unwrap_or(State::None))
+                        storage.get_nonce_at_maximum_topoheight(&key, max).await
+                            .map(|v| v.map(|(topo, v)| {
+                                if topo < min {
+                                    State::Clean
+                                } else {
+                                    State::Some(v.get_nonce())
+                                }
+                            }).unwrap_or(State::None))
                     })
                     .buffered(self.stream_concurrency)
                     .try_collect()
@@ -210,7 +210,6 @@ impl<S: Storage> P2pServer<S> {
                 StepResponse::ContractMetadata(state)
             },
             StepRequest::BlocksMetadata(topoheight) => {
-                let mut blocks = IndexSet::with_capacity(PRUNE_SAFETY_LIMIT as usize);
                 // go from the lowest available point until the requested stable topoheight
                 let lower = if topoheight - PRUNE_SAFETY_LIMIT <= pruned_topoheight {
                     pruned_topoheight + 1
@@ -218,17 +217,23 @@ impl<S: Storage> P2pServer<S> {
                     topoheight - PRUNE_SAFETY_LIMIT
                 };
 
-                for topoheight in (lower..=topoheight).rev() {
-                    let hash = storage.get_hash_at_topo_height(topoheight).await?;
-                    let supply = storage.get_supply_at_topo_height(topoheight).await?;
-                    let burned_supply = storage.get_burned_supply_at_topo_height(topoheight).await?;
-                    let reward = storage.get_block_reward_at_topo_height(topoheight)?;
-                    let difficulty = storage.get_difficulty_for_block_hash(&hash).await?;
-                    let cumulative_difficulty = storage.get_cumulative_difficulty_for_block_hash(&hash).await?;
-                    let p = storage.get_estimated_covariance_for_block_hash(&hash).await?;
+                let storage = &storage;
+                let blocks: IndexSet<BlockMetadata> = stream::iter(lower..=topoheight)
+                    .map(|topoheight| async move {
+                        let hash = storage.get_hash_at_topo_height(topoheight).await?;
+                        let supply = storage.get_supply_at_topo_height(topoheight).await?;
+                        let burned_supply = storage.get_burned_supply_at_topo_height(topoheight).await?;
+                        let reward = storage.get_block_reward_at_topo_height(topoheight)?;
+                        let difficulty = storage.get_difficulty_for_block_hash(&hash).await?;
+                        let cumulative_difficulty = storage.get_cumulative_difficulty_for_block_hash(&hash).await?;
+                        let p = storage.get_estimated_covariance_for_block_hash(&hash).await?;
 
-                    blocks.insert(BlockMetadata { hash, supply, burned_supply, reward, difficulty, cumulative_difficulty, p });
-                }
+                        Ok::<_, BlockchainError>(BlockMetadata { hash, supply, burned_supply, reward, difficulty, cumulative_difficulty, p })
+                    })
+                    .buffered(self.stream_concurrency)
+                    .try_collect()
+                    .await?;
+
                 StepResponse::BlocksMetadata(blocks)
             },
         };
