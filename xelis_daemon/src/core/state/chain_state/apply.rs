@@ -388,9 +388,11 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
         &mut self,
         hash: &'a Hash
     ) -> Result<(), BlockchainError> {
-        self.inner.contracts.remove(hash)
-            .ok_or_else(|| BlockchainError::ContractNotFound(hash.clone()))
-            .and_then(|(_, module)| module.ok_or_else(|| BlockchainError::ContractNotFound(hash.clone())))?;
+        let (state, contract) = self.inner.contracts.get_mut(hash)
+            .ok_or_else(|| BlockchainError::ContractNotFound(hash.clone()))?;
+
+        state.mark_updated();
+        *contract = None;
 
         Ok(())
     }
