@@ -177,7 +177,27 @@ impl Transaction {
                     }
                 }
             },
-            TransactionType::DeployContract(_) => {
+            TransactionType::DeployContract(payload) => {
+                if let Some(invoke) = payload.invoke.as_ref() {
+                    if *asset == XELIS_ASSET {
+                        output += Scalar::from(invoke.max_gas);
+                    }
+
+                    if let Some(deposit) = invoke.deposits.get(asset) {
+                        match deposit {
+                            ContractDeposit::Public(amount) => {
+                                output += Scalar::from(*amount);
+                            },
+                            ContractDeposit::Private { .. } => {
+                                let decompressed = decompressed_deposits.get(asset)
+                                    .ok_or(DecompressionError)?;
+
+                                output += Ciphertext::new(decompressed.commitment.clone(), decompressed.sender_handle.clone())
+                            }
+                        }
+                    }
+                }
+
                 // Burn a full coin for each contract deployed
                 if *asset == XELIS_ASSET {
                     output += Scalar::from(BURN_PER_CONTRACT);
