@@ -342,6 +342,15 @@ impl Serializer for Module {
         for entry_id in entry_ids {
             writer.write_u16(*entry_id as u16);
         }
+
+        let hooks = self.hook_chunk_ids();
+        // We have only up to 255 hooks
+        writer.write_u8(hooks.len() as u8);
+
+        for (hook, chunk) in hooks {
+            writer.write_u8(*hook);
+            writer.write_u16(*chunk as u16);
+        }
     }
 
     fn read(reader: &mut Reader) -> Result<Module, ReaderError> {
@@ -381,7 +390,19 @@ impl Serializer for Module {
             }
         }
 
-        Ok(Module::with(constants, chunks, entry_ids, Default::default()))
+        let hooks_len = reader.read_u8()?;
+        let mut hooks = IndexMap::with_capacity(hooks_len as usize);
+        for _ in 0..hooks_len {
+            let hook_id = reader.read_u8()?;
+            let chunk_id = reader.read_u16()?;
+
+            // Hook can be registered one time only
+            if hooks.insert(hook_id, chunk_id as usize).is_some() {
+                return Err(ReaderError::InvalidValue);
+            }
+        }
+
+        Ok(Module::with(constants, chunks, entry_ids, hooks))
     }
 }
 
@@ -392,7 +413,7 @@ mod tests {
 
     #[test]
     fn test_serde_module() {
-        let hex = "000302000000020008000b48656c6c6f20576f726c64020000000102000000060004000000000000000000040000000000000001000400000000000000020004000000000000000300040000000000000004000400000000000000050008000568656c6c6f0004000000000000000000010000002118740000000200000000000201000100000001000101001877000102070002001400010000";
+        let hex = "000302000000020008000b48656c6c6f20576f726c64020000000102000000060004000000000000000000040000000000000001000400000000000000020004000000000000000300040000000000000004000400000000000000050008000568656c6c6f000400000000000000000001000000211874000000020000000000020100010000000100010100187700010207000200140001000000";
         let module = Module::from_hex(hex).unwrap();
         assert_eq!(module.chunks_entry_ids().len(), 1);
         assert_eq!(module.constants().len(), 3);
