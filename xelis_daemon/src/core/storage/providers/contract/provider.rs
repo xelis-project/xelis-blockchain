@@ -3,6 +3,7 @@ use xelis_common::{
     asset::AssetData,
     block::TopoHeight,
     contract::{ContractProvider, ContractStorage},
+    account::CiphertextCache,
     crypto::{Hash, PublicKey},
     tokio::try_block_on
 };
@@ -10,6 +11,7 @@ use xelis_vm::ValueCell;
 use crate::core::storage::{
     AccountProvider,
     AssetProvider,
+    BalanceProvider,
     ContractBalanceProvider,
     ContractDataProvider,
     ContractProvider as _,
@@ -82,5 +84,11 @@ impl ContractProvider for SledStorage {
         trace!("load asset supply for asset {} at topoheight {}", asset, topoheight);
         let res = try_block_on(self.get_asset_supply_at_maximum_topoheight(asset, topoheight))??;
         Ok(res.map(|(topoheight, supply)| (topoheight, supply.take())))
+    }
+
+    fn get_account_balance_for_asset(&self, key: &PublicKey, asset: &Hash, topoheight: TopoHeight) -> Result<Option<(TopoHeight, CiphertextCache)>, anyhow::Error> {
+        trace!("get account {} balance for asset {} at topoheight {}", key.as_address(self.is_mainnet()), asset, topoheight);
+        let res = try_block_on(self.get_balance_at_maximum_topoheight(key, asset, topoheight))??;
+        Ok(res.map(|(topoheight, balance)| (topoheight, balance.take_balance())))
     }
 }
