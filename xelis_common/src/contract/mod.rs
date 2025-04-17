@@ -21,8 +21,9 @@ use xelis_vm::{
     FnParams,
     FnReturnType,
     OpaqueWrapper,
+    Primitive,
     Type,
-    Primitive
+    ValueCell
 };
 use crate::{
     account::CiphertextCache,
@@ -31,10 +32,16 @@ use crate::{
         FEE_PER_ACCOUNT_CREATION,
         FEE_PER_BYTE_OF_EVENT_DATA
     },
-    crypto::{Address, Hash, PublicKey, Signature},
+    crypto::{
+        proofs::CiphertextValidityProof,
+        Address,
+        Hash,
+        PublicKey,
+        Signature
+    },
+    serializer::Serializer,
     transaction::ContractDeposit,
-    versioned_type::VersionedState,
-    serializer::Serializer
+    versioned_type::VersionedState
 };
 
 pub use metadata::ContractMetadata;
@@ -131,7 +138,11 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static> {
     let memory_storage_type = Type::Opaque(env.register_opaque::<OpaqueMemoryStorage>("MemoryStorage"));
     let asset_type = Type::Opaque(env.register_opaque::<Asset>("Asset"));
     let signature_type = Type::Opaque(env.register_opaque::<Signature>("Signature"));
+
+    // Crypto
     let ciphertext_type = Type::Opaque(env.register_opaque::<CiphertextCache>("Ciphertext"));
+    let _ = Type::Opaque(env.register_opaque::<CiphertextValidityProof>("CiphertextValidityProof"));
+    let _ = Type::Opaque(env.register_opaque::<RangeProofWrapper>("RangeProof"));
 
     // Transaction
     {
@@ -860,6 +871,32 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static> {
             5000,
             None
         );
+        env.register_static_function(
+            "new",
+            ciphertext_type.clone(),
+            vec![
+                ("address", address_type.clone()),
+                ("amount", Type::U64)
+            ],
+            ciphertext_new,
+            1000,
+            Some(ciphertext_type.clone())
+        );
+    }
+
+    // Misc
+    {
+        env.register_native_function(
+            "get_account_balance_of",
+            None,
+            vec![
+                ("address", address_type.clone()),
+                ("asset", hash_type.clone())
+            ],
+            get_account_balance_of::<P>,
+            1000,
+            Some(Type::Optional(Box::new(Type::Tuples(vec![Type::U64, ciphertext_type.clone()]))))
+        );
     }
 
     env
@@ -1117,4 +1154,25 @@ fn burn<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &mut 
     state.outputs.push(ContractOutput::Burn { asset, amount });
 
     Ok(Some(Primitive::Boolean(true).into()))
+}
+
+fn get_account_balance_of<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType {
+    let (provider, state) = from_context::<P>(context)?;
+
+    let asset: Hash = params.remove(1)
+        .into_owned()?
+        .into_opaque_type()?;
+
+    let address: Address = params.remove(0)
+        .into_owned()?
+        .into_opaque_type()?;
+
+    let balance = provider.get_account_balance_for_asset(address.get_public_key(), &asset, state.topoheight)?
+        .map(|(topoheight, ciphertext)| ValueCell::Array(vec![
+            Primitive::U64(topoheight).into(),
+            Primitive::Opaque(ciphertext.into()).into()
+        ]))
+        .unwrap_or_default();
+
+    Ok(Some(balance))
 }

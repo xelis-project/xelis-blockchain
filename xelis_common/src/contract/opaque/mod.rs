@@ -7,6 +7,7 @@ mod asset;
 mod crypto;
 mod memory_storage;
 
+use bulletproofs::RangeProof;
 use log::debug;
 use xelis_types::{
     register_opaque_json,
@@ -16,7 +17,7 @@ use xelis_vm::{tid, traits::JSON_REGISTRY, OpaqueWrapper};
 use crate::{
     account::CiphertextCache,
     block::Block,
-    crypto::{Address, Hash, Signature},
+    crypto::{proofs::CiphertextValidityProof, Address, Hash, Signature},
     serializer::*,
     transaction::Transaction
 };
@@ -36,6 +37,8 @@ pub const HASH_OPAQUE_ID: u8 = 0;
 pub const ADDRESS_OPAQUE_ID: u8 = 1;
 pub const SIGNATURE_OPAQUE_ID: u8 = 2;
 pub const CIPHERTEXT_OPAQUE_ID: u8 = 3;
+pub const CIPHERTEXT_VALIDITY_PROOF_OPAQUE_ID: u8 = 4;
+pub const RANGE_PROOF_OPAQUE_ID: u8 = 5;
 
 impl_opaque!(
     "Hash",
@@ -91,6 +94,8 @@ pub fn register_opaque_types() {
     register_opaque_json!(registry, "Address", Address);
     register_opaque_json!(registry, "Signature", Signature);
     register_opaque_json!(registry, "Ciphertext", CiphertextCache);
+    register_opaque_json!(registry, "CiphertextValidityProof", CiphertextValidityProof);
+    register_opaque_json!(registry, "RangeProof", RangeProofWrapper);
 }
 
 impl Serializer for OpaqueWrapper {
@@ -104,6 +109,8 @@ impl Serializer for OpaqueWrapper {
             ADDRESS_OPAQUE_ID => OpaqueWrapper::new(Address::read(reader)?),
             SIGNATURE_OPAQUE_ID => OpaqueWrapper::new(Signature::read(reader)?),
             CIPHERTEXT_OPAQUE_ID => OpaqueWrapper::new(CiphertextCache::read(reader)?),
+            CIPHERTEXT_VALIDITY_PROOF_OPAQUE_ID => OpaqueWrapper::new(CiphertextValidityProof::read(reader)?),
+            RANGE_PROOF_OPAQUE_ID => OpaqueWrapper::new(RangeProofWrapper(RangeProof::read(reader)?)),
             _ => return Err(ReaderError::InvalidValue)
         })
     }

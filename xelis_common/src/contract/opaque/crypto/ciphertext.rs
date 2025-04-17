@@ -2,11 +2,11 @@ use std::hash::Hasher;
 
 use anyhow::Context as AnyhowContext;
 use curve25519_dalek::Scalar;
-use xelis_vm::{impl_opaque, traits::{DynHash, Serializable}, Context, FnInstance, FnParams, FnReturnType};
+use xelis_vm::{impl_opaque, traits::{DynHash, Serializable}, Context, FnInstance, FnParams, FnReturnType, Primitive};
 use crate::{
     account::CiphertextCache,
     contract::CIPHERTEXT_OPAQUE_ID,
-    crypto::elgamal::RISTRETTO_COMPRESSED_SIZE,
+    crypto::{elgamal::RISTRETTO_COMPRESSED_SIZE, Address},
     serializer::{Serializer, Writer}
 };
 
@@ -97,4 +97,20 @@ pub fn ciphertext_sub_plaintext(zelf: FnInstance, mut params: FnParams, _: &mut 
     computable -= Scalar::from(value);
 
     Ok(None)
+}
+
+pub fn ciphertext_new(_: FnInstance, mut params: FnParams, _: &mut Context) -> FnReturnType {
+    let amount = params.remove(1)
+        .into_owned()?
+        .as_u64()?;
+    let address: Address = params.remove(0)
+        .into_owned()?
+        .into_opaque_type()?;
+
+    let key = address.get_public_key()
+        .decompress()
+        .context("Invalid public key")?;
+
+    let ciphertext = CiphertextCache::Decompressed(key.encrypt(amount));
+    Ok(Some(Primitive::Opaque(ciphertext.into()).into()))
 }
