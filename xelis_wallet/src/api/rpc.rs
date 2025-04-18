@@ -694,7 +694,7 @@ async fn get_matching_keys(context: &Context, body: Value) -> Result<Value, Inte
     let wallet: &Arc<Wallet> = context.get()?;
     let tree = get_tree_name(&context, params.tree).await?;
     let storage = wallet.get_storage().read().await;
-    let keys = storage.get_custom_tree_keys(&tree, &params.query)?;
+    let keys = storage.get_custom_tree_keys(&tree, &params.query, params.limit, params.skip)?;
 
     Ok(json!(keys))
 }
@@ -774,6 +774,6 @@ async fn query_db(context: &Context, body: Value) -> Result<Value, InternalRpcEr
     let wallet: &Arc<Wallet> = context.get()?;
     let tree = get_tree_name(&context, params.tree).await?;
     let storage = wallet.get_storage().read().await;
-    let result = storage.query_db(&tree, params.key, params.value, params.return_on_first)?;
+    let result = storage.query_db(&tree, params.key, params.value, params.limit, params.skip)?;
     Ok(json!(result))
 }

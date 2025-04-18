@@ -360,11 +360,18 @@ impl EncryptedStorage {
 
     // Search all entries with requested query_key/query_value
     // It has to go through the whole tree elements, decrypt each key/value and verify them against the query filter set
-    pub fn query_db(&self, tree: impl Into<String>, query_key: Option<Query>, query_value: Option<Query>, return_on_first: bool) -> Result<QueryResult> {
+    pub fn query_db(
+        &self,
+        tree: impl Into<String>,
+        query_key: Option<Query>,
+        query_value: Option<Query>,
+        limit: Option<usize>,
+        skip: Option<usize>
+    ) -> Result<QueryResult> {
         trace!("query db");
         let tree = self.get_custom_tree(tree)?;
         let mut entries: IndexMap<DataValue, DataElement> = IndexMap::new();
-        for res in tree.iter() {
+        for res in tree.iter().skip(skip.unwrap_or(0)) {
             let (k, v) = res?;
             let mut key = None;
             let mut value = None;
@@ -402,7 +409,9 @@ impl EncryptedStorage {
             };
 
             entries.insert(key, value);
-            if return_on_first {
+
+            if limit.is_some_and(|max| entries.len() >= max) {
+                trace!("max entries reached");
                 break;
             }
         }
@@ -414,11 +423,17 @@ impl EncryptedStorage {
     }
 
     // Get all keys from the custom
-    pub fn get_custom_tree_keys(&self, tree: &str, query: &Option<Query>) -> Result<Vec<DataValue>> {
+    pub fn get_custom_tree_keys(
+        &self,
+        tree: &str,
+        query: &Option<Query>,
+        limit: Option<usize>,
+        skip: Option<usize>
+    ) -> Result<Vec<DataValue>> {
         trace!("get custom tree keys");
         let tree = self.get_custom_tree(tree)?;
         let mut keys = Vec::new();
-        for e in tree.iter() {
+        for e in tree.iter().skip(skip.unwrap_or(0)) {
             let (key, _) = e?;
             let decrypted = self.cipher.decrypt_value(&key)?;
             let k = DataValue::from_bytes(&decrypted)?;
@@ -428,6 +443,11 @@ impl EncryptedStorage {
                 }
             }
             keys.push(k);
+
+            if limit.is_some_and(|max| keys.len() >= max) {
+                trace!("custom tree keys entries limit reached");
+                break;
+            }
         }
 
         Ok(keys)
