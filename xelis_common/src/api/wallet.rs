@@ -241,7 +241,9 @@ pub struct HasKeyParams {
 #[derive(Serialize, Deserialize)]
 pub struct GetMatchingKeysParams {
     pub tree: String,
-    pub query: Option<Query>
+    pub query: Option<Query>,
+    pub limit: Option<usize>,
+    pub skip: Option<usize>
 }
 
 #[derive(Serialize, Deserialize)]
@@ -274,8 +276,8 @@ pub struct QueryDBParams {
     pub tree: String,
     pub key: Option<Query>,
     pub value: Option<Query>,
-    #[serde(default = "default_false_value")]
-    pub return_on_first: bool
+    pub limit: Option<usize>,
+    pub skip: Option<usize>
 }
 
 #[derive(Serialize, Deserialize)]
