@@ -55,7 +55,7 @@ use std::{
 };
 use tokio::{
     select,
-    sync::{broadcast, mpsc, oneshot::Sender, Mutex},
+    sync::{broadcast, mpsc, oneshot, Mutex},
     time::timeout,
 };
 use lru::LruCache;
@@ -70,7 +70,7 @@ use log::{
 
 // A RequestedObjects is a map of all objects requested from a peer
 // This is done to be awaitable with a timeout
-pub type RequestedObjects = HashMap<ObjectRequest, Sender<OwnedObjectResponse>>;
+pub type RequestedObjects = HashMap<ObjectRequest, broadcast::Sender<OwnedObjectResponse>>;
 
 pub type Tx = mpsc::Sender<Bytes>;
 pub type Rx = mpsc::Receiver<Bytes>;
@@ -148,9 +148,9 @@ pub struct Peer {
     // Because we are in a TCP stream, we know that all our
     // requests will be answered in the order we sent them
     // So we can use a queue to store the senders and pop them
-    bootstrap_chain: Mutex<VecDeque<Sender<StepResponse>>>,
+    bootstrap_chain: Mutex<VecDeque<oneshot::Sender<StepResponse>>>,
     // used to wait on chain response when syncing chain
-    sync_chain: Mutex<Option<Sender<ChainResponse>>>,
+    sync_chain: Mutex<Option<oneshot::Sender<ChainResponse>>>,
     // IP address with local port
     outgoing_address: SocketAddr,
     // Determine if this peer allows to be shared to others and/or through API
@@ -404,7 +404,7 @@ impl Peer {
     }
 
     // Remove a requested object from the requested list
-    pub async fn remove_object_request(&self, request: ObjectRequest) -> Result<Sender<OwnedObjectResponse>, P2pError> {
+    pub async fn remove_object_request(&self, request: ObjectRequest) -> Result<broadcast::Sender<OwnedObjectResponse>, P2pError> {
         let mut objects = self.objects_requested.lock().await;
         objects.remove(&request).ok_or(P2pError::ObjectNotFound(request))
     }
@@ -412,22 +412,24 @@ impl Peer {
     // Request a object from this peer and wait on it until we receive it or until timeout 
     pub async fn request_blocking_object(&self, request: ObjectRequest) -> Result<OwnedObjectResponse, P2pError> {
         trace!("Requesting {} from {}", request, self);
-        let receiver = {
+        let mut receiver = {
             let mut objects = self.objects_requested.lock().await;
-            if objects.contains_key(&request) {
-                return Err(P2pError::ObjectAlreadyRequested(request));
+            if let Some(sender) = objects.get(&request) {
+                debug!("{} was already sent to {}, subscribing to the same channel", request, self);
+                sender.subscribe()
+            } else {
+                self.send_packet(Packet::ObjectRequest(Cow::Borrowed(&request))).await?;
+                let (sender, receiver) = broadcast::channel(1);
+                objects.insert(request.clone(), sender); // clone is necessary in case timeout has occured
+                receiver
             }
-            self.send_packet(Packet::ObjectRequest(Cow::Borrowed(&request))).await?;
-            let (sender, receiver) = tokio::sync::oneshot::channel();
-            objects.insert(request.clone(), sender); // clone is necessary in case timeout has occured
-            receiver
         };
 
         let mut exit_channel = self.get_exit_receiver();
         let object = select! {
             _ = exit_channel.recv() => return Err(P2pError::Disconnected),
-            res = timeout(Duration::from_millis(PEER_TIMEOUT_REQUEST_OBJECT), receiver) => match res {
-                Ok(res) => res?,
+            res = timeout(Duration::from_millis(PEER_TIMEOUT_REQUEST_OBJECT), receiver.recv()) => match res {
+                Ok(res) => res.context("Error on blocking object response")?,
                 Err(e) => {
                     warn!("Requested data {} has timed out", request);
                     let mut objects = self.objects_requested.lock().await;
@@ -524,13 +526,13 @@ impl Peer {
 
     // Get the bootstrap chain channel
     // Like the sync chain channel, but for bootstrap (fast sync) syncing
-    pub fn get_bootstrap_chain_channel(&self) -> &Mutex<VecDeque<Sender<StepResponse>>> {
+    pub fn get_bootstrap_chain_channel(&self) -> &Mutex<VecDeque<oneshot::Sender<StepResponse>>> {
         &self.bootstrap_chain
     }
 
     // Get the sync chain channel
     // This is used for chain sync requests to be fully awaited
-    pub fn get_sync_chain_channel(&self) -> &Mutex<Option<Sender<ChainResponse>>> {
+    pub fn get_sync_chain_channel(&self) -> &Mutex<Option<oneshot::Sender<ChainResponse>>> {
         &self.sync_chain
     }
 
