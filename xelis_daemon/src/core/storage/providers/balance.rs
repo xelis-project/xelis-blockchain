@@ -395,7 +395,7 @@ impl BalanceProvider for SledStorage {
         let mut balances = Vec::new();
 
         let mut fetch_topoheight = Some(max_topoheight);
-        while let Some(topo) = fetch_topoheight.take().filter(|&t| t > min_topoheight && balances.len() < DEFAULT_MAX_ITEMS) {
+        while let Some(topo) = fetch_topoheight.take().filter(|&t| t >= min_topoheight && balances.len() < DEFAULT_MAX_ITEMS) {
             let version = self.get_balance_at_exact_topoheight(key, asset, topo).await?;
             let has_output = version.contains_output();
             let previous_topoheight = version.get_previous_topoheight();
