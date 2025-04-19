@@ -312,7 +312,7 @@ async fn test_tx_invoke_contract() {
             deposits: [
                 (XELIS_ASSET, ContractDepositBuilder {
                     amount: 50 * COIN_VALUE,
-                    private: true
+                    private: false
                 })
             ].into_iter().collect()
         });
@@ -709,9 +709,9 @@ impl<'a> BlockchainVerificationState<'a, ()> for ChainState {
 
     async fn load_contract_module(
         &mut self,
-        _: &'a Hash
+        hash: &'a Hash
     ) -> Result<bool, ()> {
-        Ok(false)
+        Ok(self.contracts.contains_key(hash))
     }
 
     async fn get_contract_module_with_environment(
