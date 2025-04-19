@@ -1,6 +1,6 @@
-FROM lukemathwalker/cargo-chef:0.1.66-rust-1.77.1-slim-bookworm AS chef
+FROM lukemathwalker/cargo-chef:0.1.71-rust-1.86-slim-bookworm AS chef
 
-ENV BUILD_DIR /tmp/xelis-build
+ENV BUILD_DIR=/tmp/xelis-build
 
 RUN mkdir -p $BUILD_DIR
 WORKDIR $BUILD_DIR
@@ -36,9 +36,9 @@ FROM gcr.io/distroless/cc-debian12
 
 ARG app
 
-ENV APP_DIR /var/run/xelis
-ENV DATA_DIR $APP_DIR/data
-ENV BINARY $APP_DIR/xelis
+ENV APP_DIR=/var/run/xelis
+ENV DATA_DIR=$APP_DIR/data
+ENV BINARY=$APP_DIR/xelis
 
 LABEL org.opencontainers.image.authors="Slixe <slixeprivate@gmail.com>"
 
