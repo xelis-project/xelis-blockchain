@@ -12,7 +12,7 @@ Common:
 - Improve Contract Environment
 - Rework Asset
 - Auto zip logs if enabled
-- New events types (new_block_template, )
+- New events types (new_block_template, and others)
 - Auto reconnect to websocket api
 - Improve RPC params structs
 - Rework builder for better multisig support
@@ -22,11 +22,18 @@ Common:
 - Fix serialization for Module / Type / Constant
 - Contract emit events and assets
 - Contract Memory Storage shared across differents TX executions in same block
+- Contract constructor hook
+- Contract Homomorphic Encryption + ZK Proofs environment
+- Fix prompt bugs
 - WIP private deposits for Smart Contracts
 
 Daemon:
+- Optimize fast sync
 - Optimize reorganization of blocks
 - Optimize data deletion at exact topoheight
+- Concurrency to leverage all the CPU cores
+- New configurations available for concurrency management and more
+- Boost sync mode stabilized 
 - Refactoring
 - `show_json_config` cli command
 - P2p bugfix peer on exit signal
