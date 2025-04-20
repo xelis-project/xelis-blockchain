@@ -420,16 +420,16 @@ impl<S: Storage> P2pServer<S> {
                 },
                 StepResponse::BlocksMetadata(blocks) => {
                     // Last N blocks + stable block
-                    if blocks.len() != PRUNE_SAFETY_LIMIT as usize + 1 {
+                    if blocks.len() != PRUNE_SAFETY_LIMIT as usize + 1{
                         error!("Received {} blocks metadata while expecting {}", blocks.len(), PRUNE_SAFETY_LIMIT + 1);
                         return Err(P2pError::InvalidPacket.into())
                     }
 
-                    let lowest_topoheight = stable_topoheight - blocks.len() as u64 + 1;
+                    let lowest_topoheight = stable_topoheight - PRUNE_SAFETY_LIMIT;
 
                     stream::iter(blocks.into_iter().enumerate().map(Ok))
                         .try_for_each_concurrent(self.stream_concurrency, |(i, metadata)| async move {
-                            let topoheight = stable_topoheight - i as u64;
+                            let topoheight = lowest_topoheight + i as u64;
                             trace!("Processing block metadata {} at topoheight {}", metadata.hash, topoheight);
                             // check that we don't already have this block in storage
                             if self.blockchain.has_block(&metadata.hash).await? {
