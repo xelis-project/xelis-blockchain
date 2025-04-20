@@ -461,11 +461,12 @@ impl Peer {
         let (sender, receiver) = tokio::sync::oneshot::channel();
         {
             let mut senders = self.bootstrap_chain.lock().await;
+
+            // send the packet while holding the lock so we ensure the correct order
+            self.send_packet(Packet::BootstrapChainRequest(BootstrapChainRequest::new(step))).await?;
+
             senders.push_back(sender);
         }
-
-        // send the packet
-        self.send_packet(Packet::BootstrapChainRequest(BootstrapChainRequest::new(step))).await?;
 
         let mut exit_channel = self.get_exit_receiver();
         let response = select! {
