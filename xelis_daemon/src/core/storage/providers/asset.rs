@@ -53,8 +53,7 @@ pub trait AssetProvider {
     async fn get_chunked_assets(&self, maximum: usize, skip: usize) -> Result<IndexSet<Hash>, BlockchainError>;
 
     // Get all assets for a specific key
-    // TODO: replace with impl Iterator<Item = Result<Hash, BlockchainError>> when async trait methods are stable
-    async fn get_assets_for(&self, key: &PublicKey) -> Result<Vec<Hash>, BlockchainError>;
+    async fn get_assets_for(&self, key: &PublicKey) -> impl Iterator<Item = Result<Hash, BlockchainError>>;
 
     // Count the number of assets stored
     async fn count_assets(&self) -> Result<u64, BlockchainError>;
@@ -206,13 +205,13 @@ impl AssetProvider for SledStorage {
     }
 
     // Returns all assets that the key has
-    async fn get_assets_for(&self, key: &PublicKey) -> Result<Vec<Hash>, BlockchainError> {
+    async fn get_assets_for(&self, key: &PublicKey) -> impl Iterator<Item = Result<Hash, BlockchainError>> {
         Self::scan_prefix(self.snapshot.as_ref(), &self.balances, key.as_bytes()).map(|res| {
             let key = res?;
             // Keys are stored like this: [public key (32 bytes)][asset hash (32 bytes)]
             // See Self::get_balance_key_for
             Ok(Hash::from_bytes(&key[RISTRETTO_COMPRESSED_SIZE..])?)
-        }).collect()
+        })
     }
 
     // count assets in storage

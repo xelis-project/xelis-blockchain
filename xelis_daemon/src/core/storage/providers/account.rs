@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use indexmap::IndexSet;
-use log::trace;
+use log::{trace, error};
 use xelis_common::{
     crypto::PublicKey,
     serializer::Serializer,
@@ -11,8 +11,10 @@ use crate::core::{
     storage::SledStorage
 };
 
+use super::{AssetProvider, BalanceProvider, NetworkProvider, NonceProvider};
+
 #[async_trait]
-pub trait AccountProvider {
+pub trait AccountProvider: NonceProvider + BalanceProvider + NetworkProvider + AssetProvider {
     // first time we saw this account on chain
     async fn get_account_registration_topoheight(&self, key: &PublicKey) -> Result<TopoHeight, BlockchainError>;
 
@@ -35,6 +37,11 @@ pub trait AccountProvider {
     // Get registered accounts supporting pagination and filtering by topoheight
     // Returned keys must have a nonce or a balance updated in the range given
     async fn get_registered_keys(&self, maximum: usize, skip: usize, minimum_topoheight: TopoHeight, maximum_topoheight: TopoHeight) -> Result<(IndexSet<PublicKey>, usize), BlockchainError>;
+
+    // Check if the account has a nonce updated in the range given
+    // It will also check balances if no nonce found
+    async fn has_key_updated_in_range(&self, key: &PublicKey, minimum_topoheight: TopoHeight, maximum_topoheight: TopoHeight) -> Result<bool, BlockchainError>;
+
 }
 
 fn prefixed_db_key(topoheight: TopoHeight, key: &PublicKey) -> [u8; 40] {
@@ -153,5 +160,83 @@ impl AccountProvider for SledStorage {
         }
 
         Ok((keys, local_index))
+    }
+
+    async fn has_key_updated_in_range(&self, key: &PublicKey, minimum_topoheight: TopoHeight, maximum_topoheight: TopoHeight) -> Result<bool, BlockchainError> {
+        trace!("has key {} updated in range min topoheight {} and max topoheight {}", key.as_address(self.is_mainnet()), minimum_topoheight, maximum_topoheight);
+        // check first that this address has nonce, if no returns None
+        if !self.has_nonce(key).await? {
+            return Ok(false)
+        }
+
+        // fast path check the latest nonce
+        let (topo, mut version) = self.get_last_nonce(key).await?;
+        trace!("Last version of nonce for {} is at topoheight {}", key.as_address(self.is_mainnet()), topo);
+
+        // if it's the latest and its under the maximum topoheight and above minimum topoheight
+        if topo >= minimum_topoheight && topo <= maximum_topoheight {
+            trace!("Last version nonce (valid) found at {} (maximum topoheight = {})", topo, maximum_topoheight);
+            return Ok(true)
+        }
+
+        // otherwise, we have to go through the whole chain
+        while let Some(previous) = version.get_previous_topoheight() {
+            // we are under the minimum topoheight, we can stop
+            if previous < minimum_topoheight {
+                break;
+            }
+
+            let previous_version = self.get_nonce_at_exact_topoheight(key, previous).await?;
+            trace!("previous nonce version is at {}", previous);
+            if previous <= maximum_topoheight {
+                trace!("Highest version nonce found at {} (maximum topoheight = {})", previous, maximum_topoheight);
+                return Ok(true)
+            }
+
+            // security in case of DB corruption
+            if let Some(value) = previous_version.get_previous_topoheight() {
+                if value > previous {
+                    error!("FATAL ERROR: Previous topoheight ({}) should not be higher than current version ({})!", value, previous);
+                    return Err(BlockchainError::Unknown)
+                }
+            }
+            version = previous_version;
+        }
+
+        // if we are here, we didn't find any nonce in the range
+        // it start to be more and more heavy...
+        // lets check on balances now...
+
+        // check that we have a VersionedBalance between range given
+        for res in self.get_assets_for(key).await {
+            let asset = res?;
+            let (topo, mut version) = self.get_last_balance(key, &asset).await?;
+            if topo >= minimum_topoheight && topo <= maximum_topoheight {
+                return Ok(true)
+            }
+
+            while let Some(previous) = version.get_previous_topoheight() {
+                // we are under the minimum topoheight, we can stop
+                if previous < minimum_topoheight {
+                    break;
+                }
+
+                let previous_version = self.get_balance_at_exact_topoheight(key, &asset, previous).await?;
+                if previous <= maximum_topoheight {
+                    return Ok(true)
+                }
+
+                // security in case of DB corruption
+                if let Some(value) = previous_version.get_previous_topoheight() {
+                    if value > previous {
+                        error!("FATAL ERROR: Previous topoheight for balance ({}) should not be higher than current version of balance ({})!", value, previous);
+                        return Err(BlockchainError::Unknown)
+                    }
+                }
+                version = previous_version;
+            }
+        }
+
+        Ok(false)
     }
 }

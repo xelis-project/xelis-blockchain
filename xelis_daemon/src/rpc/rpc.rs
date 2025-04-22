@@ -1280,7 +1280,9 @@ async fn get_account_assets<S: Storage>(context: &Context, body: Value) -> Resul
 
     let key = params.address.get_public_key();
     let storage = blockchain.get_storage().read().await;
-    let assets = storage.get_assets_for(key).await.context("Error while retrieving assets for account")?;
+    let assets: Vec<_> = storage.get_assets_for(key).await
+        .collect::<Result<_, BlockchainError>>()
+        .context("Error while retrieving assets for account")?;
     Ok(json!(assets))
 }
 
