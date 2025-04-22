@@ -835,7 +835,8 @@ impl NetworkHandler {
             assets
         } else {
             trace!("no assets provided, fetching all assets");
-            self.api.get_account_assets(address).await?
+            // TODO: Fetch all available assets
+            self.api.get_account_assets(address, None, None).await?
         };
 
         trace!("assets: {}", assets.len());

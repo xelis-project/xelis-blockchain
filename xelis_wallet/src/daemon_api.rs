@@ -167,10 +167,12 @@ impl DaemonAPI {
         Ok(assets)
     }
 
-    pub async fn get_account_assets(&self, address: &Address) -> Result<HashSet<Hash>> {
+    pub async fn get_account_assets(&self, address: &Address, maximum: Option<usize>, skip: Option<usize>) -> Result<HashSet<Hash>> {
         trace!("get_account_assets");
         let assets = self.client.call_with("get_account_assets", &GetAccountAssetsParams {
-            address: Cow::Borrowed(address)
+            address: Cow::Borrowed(address),
+            maximum,
+            skip
         }).await?;
         Ok(assets)
     }
