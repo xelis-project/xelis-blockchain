@@ -2261,7 +2261,9 @@ Retrieve all assets for an account
 ##### Parameters
 |   Name  |   Type  | Required |                Note               |
 |:-------:|:-------:|:--------:|:---------------------------------:|
-| address | Address | Required | Valid address registered on chain |
+| address | Address | Required |     Valid address registered on chain      |
+|  skip   | Integer | Optional |         How many accounts to skip          |
+| maximum | Integer | Optional | Maximum accounts to fetch (limited to 100) |
 
 ##### Request
 ```json
