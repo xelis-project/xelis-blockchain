@@ -26,10 +26,24 @@ pub use tokio_with_wasm::*;
 ))]
 pub use tokio::*;
 
-#[cfg(feature = "tokio")]
+#[cfg(all(
+    feature = "tokio",
+    not(all(
+        target_arch = "wasm32",
+        target_vendor = "unknown",
+        target_os = "unknown"
+    ))
+))]
 use std::cell::Cell;
 
-#[cfg(feature = "tokio")]
+#[cfg(all(
+    feature = "tokio",
+    not(all(
+        target_arch = "wasm32",
+        target_vendor = "unknown",
+        target_os = "unknown"
+    ))
+))]
 thread_local! {
     static IN_BLOCK_IN_PLACE: Cell<bool> = Cell::new(false);
 }
@@ -113,22 +127,30 @@ pub fn try_block_on<F: Future>(_future: F) -> Result<F::Output, anyhow::Error> {
     cfg_if! {
         if #[cfg(feature = "tokio")] {
             if is_multi_threads_supported() {
-                let handle = runtime::Handle::try_current()?;
-                if is_in_block_in_place() {
-                    trace!("tokio block on directly");
-                    Ok(handle.block_on(_future))
-                } else {
-                    Ok(block_in_place_internal(|| {
-                        trace!("tokio block in place");
-                        handle.block_on(_future)
-                    }))
+                cfg_if! {
+                    if #[cfg(not(all(
+                        target_arch = "wasm32",
+                        target_vendor = "unknown",
+                        target_os = "unknown"
+                    )))] {
+                        let handle = runtime::Handle::try_current()?;
+                        return if is_in_block_in_place() {
+                            trace!("tokio block on directly");
+                            Ok(handle.block_on(_future))
+                        } else {
+                            Ok(block_in_place_internal(|| {
+                                trace!("tokio block in place");
+                                handle.block_on(_future)
+                            }))
+                        }
+                    }
                 }
-            } else {
-                // use the futures executor directly
-                // This is required because if we are in a Actix
-                // context, we can't block on using its executor
-                Ok(futures::executor::block_on(_future))
             }
+
+            // use the futures executor directly
+            // This is required because if we are in a Actix
+            // context, we can't block on using its executor
+            Ok(futures::executor::block_on(_future))
         } else {
             Err(anyhow::anyhow!("Tokio feature is not enabled"))
         }
@@ -159,7 +181,14 @@ where
     f()
 }
 
-#[cfg(feature = "tokio")]
+#[cfg(all(
+    feature = "tokio",
+    not(all(
+        target_arch = "wasm32",
+        target_vendor = "unknown",
+        target_os = "unknown"
+    ))
+))]
 fn block_in_place_internal<F, R>(f: F) -> R
 where
     F: FnOnce() -> R,
@@ -174,13 +203,27 @@ where
 
 /// Check if we are in a block in place closure
 #[inline(always)]
-#[cfg(feature = "tokio")]
+#[cfg(all(
+    feature = "tokio",
+    not(all(
+        target_arch = "wasm32",
+        target_vendor = "unknown",
+        target_os = "unknown"
+    ))
+))]
 pub fn is_in_block_in_place() -> bool {
     IN_BLOCK_IN_PLACE.with(|flag| flag.get())
 }
 
 #[inline(always)]
-#[cfg(feature = "tokio")]
+#[cfg(all(
+    feature = "tokio",
+    not(all(
+        target_arch = "wasm32",
+        target_vendor = "unknown",
+        target_os = "unknown"
+    ))
+))]
 fn set_in_block_in_place(value: bool) {
     IN_BLOCK_IN_PLACE.with(|flag| flag.set(value));
 }
