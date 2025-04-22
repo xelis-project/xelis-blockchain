@@ -876,7 +876,10 @@ async fn list_assets<S: Storage>(manager: &CommandManager, mut arguments: Argume
     let context = manager.get_context().lock()?;
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let storage = blockchain.get_storage().read().await;
-    let assets = storage.get_assets().await.context("Error while retrieving assets")?;
+    let assets = storage.get_assets().await
+        .collect::<Result<Vec<_>, _>>()
+        .context("Error while retrieving assets")?;
+
     if assets.is_empty() {
         manager.message("No assets registered");
         return Ok(());

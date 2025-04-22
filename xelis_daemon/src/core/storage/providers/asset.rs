@@ -37,15 +37,13 @@ pub trait AssetProvider {
     async fn get_asset(&self, hash: &Hash) -> Result<(TopoHeight, VersionedAssetData), BlockchainError>;
 
     // Get all available assets
-    // TODO: replace with impl Iterator<Item = Result<Hash, BlockchainError>> when async trait methods are stable
-    async fn get_assets(&self) -> Result<Vec<Hash>, BlockchainError>;
+    async fn get_assets(&self) -> impl Iterator<Item = Result<Hash, BlockchainError>>;
 
     // Get a partial list of assets supporting pagination and filtering by topoheight
     // TODO: replace with impl Iterator<Item = Result<Hash, BlockchainError>> when async trait methods are stable
     async fn get_partial_assets_with_topoheight(&self, maximum: usize, skip: usize, minimum_topoheight: TopoHeight, maximum_topoheight: TopoHeight) -> Result<IndexMap<Hash, (TopoHeight, AssetData)>, BlockchainError>;
 
     // Get a partial list of assets supporting pagination and filtering by topoheight
-    // TODO: replace with impl Iterator<Item = Result<Hash, BlockchainError>> when async trait methods are stable
     async fn get_partial_assets(&self, maximum: usize, skip: usize, minimum_topoheight: TopoHeight, maximum_topoheight: TopoHeight) -> Result<IndexMap<Hash, AssetData>, BlockchainError>;
 
     // Get chunked assets
@@ -133,13 +131,13 @@ impl AssetProvider for SledStorage {
     }
 
     // we are forced to read from disk directly because cache may don't have all assets in memory
-    async fn get_assets(&self) -> Result<Vec<Hash>, BlockchainError> {
+    async fn get_assets(&self) -> impl Iterator<Item = Result<Hash, BlockchainError>> {
         trace!("get assets");
 
         Self::iter_keys(self.snapshot.as_ref(), &self.assets).map(|res| {
             let key = res?;
             Ok(Hash::from_bytes(&key)?)
-        }).collect()
+        })
     }
 
     async fn get_partial_assets_with_topoheight(&self, maximum: usize, skip: usize, minimum_topoheight: TopoHeight, maximum_topoheight: TopoHeight) -> Result<IndexMap<Hash, (TopoHeight, AssetData)>, BlockchainError> {

@@ -1278,9 +1278,21 @@ async fn get_account_assets<S: Storage>(context: &Context, body: Value) -> Resul
         return Err(InternalRpcError::InvalidParamsAny(BlockchainError::InvalidNetwork.into()))
     }
 
+    let maximum = if let Some(maximum) = params.maximum {
+        if maximum > MAX_ACCOUNTS {
+            return Err(InternalRpcError::InvalidJSONRequest).context(format!("Maximum accounts requested cannot be greater than {}", MAX_ACCOUNTS))?
+        }
+        maximum
+    } else {
+        MAX_ACCOUNTS
+    };
+    let skip = params.skip.unwrap_or(0);
+
     let key = params.address.get_public_key();
     let storage = blockchain.get_storage().read().await;
     let assets: Vec<_> = storage.get_assets_for(key).await
+        .skip(skip)
+        .take(maximum)
         .collect::<Result<_, BlockchainError>>()
         .context("Error while retrieving assets for account")?;
     Ok(json!(assets))
