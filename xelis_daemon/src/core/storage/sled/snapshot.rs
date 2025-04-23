@@ -1,17 +1,17 @@
-use std::collections::{hash_map::{Entry, IntoIter}, HashMap};
+use std::collections::{btree_map::{Entry, IntoIter}, BTreeMap};
 use itertools::{Either, Itertools};
 use sled::{IVec, Tree};
 use xelis_common::serializer::Serializer;
 
-use crate::core::{error::BlockchainError, storage::Tips};
+use crate::core::{error::BlockchainError, storage::cache::StorageCache};
 
 pub struct Batch {
-    writes: HashMap<IVec, Option<IVec>>,
+    writes: BTreeMap<IVec, Option<IVec>>,
 }
 
 impl Default for Batch {
     fn default() -> Self {
-        Self { writes: HashMap::new() }
+        Self { writes: BTreeMap::new() }
     }
 }
 
@@ -53,55 +53,25 @@ impl IntoIterator for Batch {
 // We track all the changes made to the DB since the snapshot was created
 // So we can apply them to the DB or rollback them
 pub struct Snapshot {
-    trees: HashMap<IVec, Option<Batch>>,
-    pub(crate) assets_count: u64,
-    // Count of accounts
-    pub(crate) accounts_count: u64,
-    // Count of transactions
-    pub(crate) transactions_count: u64,
-    // Count of blocks
-    pub(crate) blocks_count: u64,
-    // Count of blocks added in chain
-    pub(crate) blocks_execution_count: u64,
-    // Count of contracts
-    pub(crate) contracts_count: u64,
-    // Tips cache
-    pub(crate) tips_cache: Tips
-}
-
-// This is the final struct to get rid of the borrowed Storage
-// to be able to borrow it again mutably and apply changes
-pub struct BatchApply {
-    trees: HashMap<IVec, Option<Batch>>
+    pub trees: BTreeMap<IVec, Option<Batch>>,
+    pub cache: StorageCache
 }
 
 impl Default for Snapshot {
     fn default() -> Self {
         Self {
-            trees: HashMap::new(),
-            assets_count: 0,
-            accounts_count: 0,
-            transactions_count: 0,
-            blocks_count: 0,
-            blocks_execution_count: 0,
-            contracts_count: 0,
-            tips_cache: Tips::new(),
+            trees: BTreeMap::new(),
+            cache: StorageCache::default()
         }
     }
 }
 
 impl Snapshot {
     // Create a new snapshot with current counts
-    pub fn new(assets_count: u64, accounts_count: u64, transactions_count: u64, blocks_count: u64, blocks_execution_count: u64, contracts_count: u64, tips_cache: Tips) -> Self {
+    pub fn new(cache: StorageCache) -> Self {
         Self {
-            trees: HashMap::new(),
-            assets_count,
-            accounts_count,
-            transactions_count,
-            blocks_count,
-            blocks_execution_count,
-            contracts_count,
-            tips_cache
+            trees: BTreeMap::new(),
+            cache
         }
     }
 
@@ -186,11 +156,6 @@ impl Snapshot {
         self.trees.insert(tree_name.as_ref().into(), None).is_some()
     }
 
-    // Transforms the snapshot into a BatchApply
-    pub fn finalize(self) -> BatchApply {
-        BatchApply { trees: self.trees }
-    }
-
     pub fn scan_prefix(&self, tree: &Tree, prefix: &[u8]) -> impl Iterator<Item = sled::Result<IVec>> {
         match self.trees.get(&tree.name()) {
             Some(Some(entries)) => {
@@ -264,14 +229,5 @@ impl Snapshot {
             },
             _ => Either::Right(tree.iter().keys())
         }
-    }
-}
-
-impl IntoIterator for BatchApply {
-    type Item = (IVec, Option<Batch>);
-    type IntoIter = IntoIter<IVec, Option<Batch>>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.trees.into_iter()
     }
 }

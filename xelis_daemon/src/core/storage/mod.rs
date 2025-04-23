@@ -1,5 +1,6 @@
 mod providers;
 mod sled;
+mod cache;
 
 pub use self::{
     sled::*,

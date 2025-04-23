@@ -38,9 +38,9 @@ impl SledStorage {
     // Update the blocks count and store it on disk
     fn store_blocks_count(&mut self, count: u64) -> Result<(), BlockchainError> {
         if let Some(snapshot) = self.snapshot.as_mut() {
-            snapshot.blocks_count = count;
+            snapshot.cache.blocks_count = count;
         } else {
-            self.blocks_count = count;
+            self.cache.blocks_count = count;
         }
         Self::insert_into_disk(self.snapshot.as_mut(), &self.extra, BLOCKS_COUNT, &count.to_be_bytes())?;
         Ok(())
@@ -57,9 +57,9 @@ impl BlockProvider for SledStorage {
     async fn count_blocks(&self) -> Result<u64, BlockchainError> {
         trace!("count blocks");
         let count = if let Some(snapshot) = &self.snapshot {
-            snapshot.blocks_count
+            snapshot.cache.blocks_count
         } else {
-            self.blocks_count
+            self.cache.blocks_count
         };
         Ok(count)
     }

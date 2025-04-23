@@ -18,7 +18,6 @@ use xelis_common::{
     transaction::Transaction
 };
 use std::{
-    collections::HashSet,
     hash::Hash as StdHash,
     num::NonZeroUsize,
     str::FromStr,
@@ -33,6 +32,7 @@ use log::{debug, trace, warn, info, error};
 pub use snapshot::Snapshot;
 
 use super::{
+    cache::StorageCache,
     providers::*,
     Storage,
     Tips
@@ -163,24 +163,9 @@ pub struct SledStorage {
     pub(super) cumulative_difficulty_cache: Option<Mutex<LruCache<Hash, CumulativeDifficulty>>>,
     // Assets cache
     pub(super) assets_cache: Option<Mutex<LruCache<Hash, TopoHeight>>>,
-    // Tips cache: current chain Tips
-    pub(super) tips_cache: Tips,
-    // Pruned topoheight cache
-    pub(super) pruned_topoheight: Option<TopoHeight>,
 
     // Cache for counters
-    // Count of assets
-    pub(super) assets_count: u64,
-    // Count of accounts
-    pub(super) accounts_count: u64,
-    // Count of transactions
-    pub(super) transactions_count: u64,
-    // Count of blocks
-    pub(super) blocks_count: u64,
-    // Count of blocks added in chain
-    pub(super) blocks_execution_count: u64,
-    // Count of contracts deployed
-    pub(super) contracts_count: u64,
+    pub(super) cache: StorageCache,
 
     // If we have a snapshot, we can use it to rollback
     pub(super) snapshot: Option<Snapshot>,
@@ -286,14 +271,7 @@ impl SledStorage {
             hash_at_topo_cache: init_cache!(cache_size),
             cumulative_difficulty_cache: init_cache!(cache_size),
             assets_cache: init_cache!(cache_size),
-            tips_cache: HashSet::new(),
-            pruned_topoheight: None,
-            assets_count: 0,
-            accounts_count: 0,
-            transactions_count: 0,
-            blocks_count: 0,
-            blocks_execution_count: 0,
-            contracts_count: 0,
+            cache: StorageCache::default(),
 
             snapshot: None,
         };
@@ -323,49 +301,49 @@ impl SledStorage {
         // Load tips from disk if available
         if let Ok(tips) = self.load_from_disk::<Tips>(&self.extra, TIPS, DiskContext::Tips) {
             debug!("Found tips: {}", tips.len());
-            self.tips_cache = tips;
+            self.cache.tips_cache = tips;
         }
 
         // Load the pruned topoheight from disk if available
         if let Ok(pruned_topoheight) = self.load_from_disk::<u64>(&self.extra, PRUNED_TOPOHEIGHT, DiskContext::PrunedTopoHeight) {
             debug!("Found pruned topoheight: {}", pruned_topoheight);
-            self.pruned_topoheight = Some(pruned_topoheight);
+            self.cache.pruned_topoheight = Some(pruned_topoheight);
         }
 
         // Load the assets count from disk if available
         if let Ok(assets_count) = self.load_from_disk::<u64>(&self.extra, ASSETS_COUNT, DiskContext::AssetsCount) {
             debug!("Found assets count: {}", assets_count);
-            self.assets_count = assets_count;
+            self.cache.assets_count = assets_count;
         }
 
         // Load the txs count from disk if available
         if let Ok(txs_count) = self.load_from_disk::<u64>(&self.extra, TXS_COUNT, DiskContext::TxsCount) {
             debug!("Found txs count: {}", txs_count);
-            self.transactions_count = txs_count;
+            self.cache.transactions_count = txs_count;
         }
 
         // Load the blocks count from disk if available
         if let Ok(blocks_count) = self.load_from_disk::<u64>(&self.extra, BLOCKS_COUNT, DiskContext::BlocksCount) {
             debug!("Found blocks count: {}", blocks_count);
-            self.blocks_count = blocks_count;
+            self.cache.blocks_count = blocks_count;
         }
 
         // Load the accounts count from disk if available
         if let Ok(accounts_count) = self.load_from_disk::<u64>(&self.extra, ACCOUNTS_COUNT, DiskContext::AccountsCount) {
             debug!("Found accounts count: {}", accounts_count);
-            self.accounts_count = accounts_count;
+            self.cache.accounts_count = accounts_count;
         }
 
         // Load the blocks execution count from disk if available
         if let Ok(blocks_execution_count) = self.load_from_disk::<u64>(&self.extra, BLOCKS_EXECUTION_ORDER_COUNT, DiskContext::BlocksExecutionOrderCount) {
             debug!("Found blocks execution count: {}", blocks_execution_count);
-            self.blocks_execution_count = blocks_execution_count;
+            self.cache.blocks_execution_count = blocks_execution_count;
         }
 
         // Load the contracts count from disk if available
         if let Ok(contracts_count) = self.load_from_disk::<u64>(&self.extra, CONTRACTS_COUNT, DiskContext::ContractsCount) {
             debug!("Found contracts count: {}", contracts_count);
-            self.contracts_count = contracts_count;
+            self.cache.contracts_count = contracts_count;
         }
     }
 
@@ -639,9 +617,9 @@ impl SledStorage {
     // Update the assets count and store it on disk
     pub(super) fn store_assets_count(&mut self, count: u64) -> Result<(), BlockchainError> {
         if let Some(snapshot) = self.snapshot.as_mut() {
-            snapshot.assets_count = count;
+            snapshot.cache.assets_count = count;
         } else {
-            self.assets_count = count;
+            self.cache.assets_count = count;
         }
 
         Self::insert_into_disk(self.snapshot.as_mut(), &self.extra, ASSETS_COUNT, &count.to_be_bytes())?;
@@ -812,7 +790,7 @@ impl Storage for SledStorage {
                 tips.insert(self.get_hash_at_topo_height(0).await?);
 
                 Self::remove_from_disk_without_reading(self.snapshot.as_mut(), &self.extra, PRUNED_TOPOHEIGHT)?;
-                self.pruned_topoheight = None;
+                self.cache.pruned_topoheight = None;
 
                 break 'main;
             }

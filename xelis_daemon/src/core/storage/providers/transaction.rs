@@ -38,9 +38,9 @@ impl SledStorage {
     // Update the txs count and store it on disk
     pub(super) fn store_transactions_count(&mut self, count: u64) -> Result<(), BlockchainError> {
         if let Some(snapshot) = self.snapshot.as_mut() {
-            snapshot.transactions_count = count;
+            snapshot.cache.transactions_count = count;
         } else {
-            self.transactions_count = count;
+            self.cache.transactions_count = count;
         }
         Self::insert_into_disk(self.snapshot.as_mut(), &self.extra, TXS_COUNT, &count.to_be_bytes())?;
         Ok(())
@@ -67,9 +67,9 @@ impl TransactionProvider for SledStorage {
     async fn count_transactions(&self) -> Result<u64, BlockchainError> {
         trace!("count transactions");
         let count = if let Some(snapshot) = self.snapshot.as_ref() {
-            snapshot.transactions_count
+            snapshot.cache.transactions_count
         } else {
-            self.transactions_count
+            self.cache.transactions_count
         };
         Ok(count)
     }

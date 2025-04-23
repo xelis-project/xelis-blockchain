@@ -55,9 +55,9 @@ impl SledStorage {
     // Update the accounts count and store it on disk
     pub fn store_accounts_count(&mut self, count: u64) -> Result<(), BlockchainError> {
         if let Some(snapshot) = self.snapshot.as_mut() {
-            snapshot.accounts_count = count;
+            snapshot.cache.accounts_count = count;
         } else {
-            self.accounts_count = count;
+            self.cache.accounts_count = count;
         }
         Self::insert_into_disk(self.snapshot.as_mut(), &self.extra, ACCOUNTS_COUNT, &count.to_be_bytes())?;
         Ok(())
@@ -79,9 +79,9 @@ impl NonceProvider for SledStorage {
     async fn count_accounts(&self) -> Result<u64, BlockchainError> {
         trace!("count accounts");
         let count = if let Some(snapshot) = self.snapshot.as_ref() {
-            snapshot.accounts_count
+            snapshot.cache.accounts_count
         } else {
-            self.accounts_count
+            self.cache.accounts_count
         };
         Ok(count)
     }

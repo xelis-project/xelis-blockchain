@@ -262,9 +262,9 @@ impl ContractProvider for SledStorage {
     async fn count_contracts(&self) -> Result<u64, BlockchainError> {
         trace!("Counting contracts");
         let count = if let Some(snapshot) = self.snapshot.as_ref() {
-            snapshot.contracts_count
+            snapshot.cache.contracts_count
         } else {
-            self.contracts_count
+            self.cache.contracts_count
         };
 
         Ok(count)
@@ -276,9 +276,9 @@ impl SledStorage {
     pub fn store_contracts_count(&mut self, count: u64) -> Result<(), BlockchainError> {
         trace!("Storing contracts count: {}", count);
         if let Some(snapshot) = self.snapshot.as_mut() {
-            snapshot.contracts_count = count;
+            snapshot.cache.contracts_count = count;
         } else {
-            self.contracts_count = count;
+            self.cache.contracts_count = count;
         }
         Self::insert_into_disk(self.snapshot.as_mut(), &self.extra, CONTRACTS_COUNT, &count.to_be_bytes())?;
         Ok(())

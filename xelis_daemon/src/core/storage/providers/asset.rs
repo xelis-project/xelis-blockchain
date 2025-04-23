@@ -217,9 +217,9 @@ impl AssetProvider for SledStorage {
         trace!("count assets");
 
         let count = if let Some(snapshot) = self.snapshot.as_ref() {
-            snapshot.assets_count
+            snapshot.cache.assets_count
         } else {
-            self.assets_count
+            self.cache.assets_count
         };
         Ok(count)
     }
