@@ -2536,8 +2536,7 @@ pub fn is_local_address(socket_addr: &SocketAddr) -> bool {
         }
         IpAddr::V6(ipv6) => {
             // Check if it's a local IPv6 address (e.g., ::1)
-            // https://github.com/rust-lang/rust/issues/27709
-            ipv6.is_loopback() // || ipv6.is_unique_local()
+            ipv6.is_loopback() || ipv6.is_unique_local() || ipv6.is_unicast_link_local()
         }
     }
 }
