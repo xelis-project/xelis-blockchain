@@ -115,7 +115,7 @@ impl AssetProvider for SledStorage {
                 let data = self.get_asset_at_topoheight(hash, topoheight).await?;
                 Ok((topoheight, data))
             },
-            None => Err(BlockchainError::AssetNotFound(hash.clone())).unwrap(),
+            None => Err(BlockchainError::AssetNotFound(hash.clone())),
         }
     }
 
