@@ -50,6 +50,10 @@ impl<T: Clone> Immutable<T> {
             }
         }
     }
+
+    pub fn to_owned(&self) -> T {
+        self.get_inner().clone()
+    }
 }
 
 impl<T: Clone> AsRef<T> for Immutable<T> {
