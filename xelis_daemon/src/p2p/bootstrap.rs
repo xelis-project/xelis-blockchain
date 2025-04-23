@@ -480,6 +480,7 @@ impl<S: Storage> P2pServer<S> {
                             Ok(())
                         }).await?;
 
+                    info!("Cleaning data");
                     let mut storage = self.blockchain.get_storage().write().await;
 
                     // Delete all old data
@@ -498,6 +499,8 @@ impl<S: Storage> P2pServer<S> {
                 }
             };
         }
+
+        info!("Reload caches from disk");
         self.blockchain.reload_from_disk().await?;
         info!("Fast sync done with {}, took {}", peer, humantime::format_duration(start.elapsed()));
 

@@ -127,7 +127,7 @@ impl AssetProvider for SledStorage {
     async fn get_asset_at_topoheight(&self, asset: &Hash, topoheight: TopoHeight) -> Result<VersionedAssetData, BlockchainError> {
         trace!("get asset registration topoheight {}", asset);
         let key = Self::get_asset_key(asset, topoheight);
-        self.load_from_disk(&self.versioned_assets, &key, DiskContext::Asset)
+        self.load_from_disk(&self.versioned_assets, &key, DiskContext::AssetAtTopoHeight(topoheight))
     }
 
     // we are forced to read from disk directly because cache may don't have all assets in memory
