@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use indexmap::IndexSet;
-use log::{trace, error};
+use log::{trace, debug, error};
 use xelis_common::{
     crypto::PublicKey,
     serializer::Serializer,
@@ -101,6 +101,7 @@ impl AccountProvider for SledStorage {
     async fn is_account_registered_for_topoheight(&self, key: &PublicKey, topoheight: TopoHeight) -> Result<bool, BlockchainError> {
         trace!("is account registered for topoheight: {} {}", key.as_address(self.network.is_mainnet()), topoheight);
         if !self.is_account_registered(key).await? {
+            debug!("account {} is not registered", key.as_address(self.network.is_mainnet()));
             return Ok(false);
         }
 

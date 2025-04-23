@@ -318,7 +318,7 @@ impl<S: Storage> P2pServer<S> {
                     {
                         let mut storage = self.blockchain.get_storage().write().await;
                         for (asset, data) in assets {
-                            debug!("Saving asset {} at topoheight {}", asset, stable_topoheight);
+                            info!("Saving asset {} at topoheight {}", asset, stable_topoheight);
                             storage.add_asset(&asset, stable_topoheight, VersionedAssetData::new(data, None)).await?;
                         }
                     }
