@@ -528,7 +528,7 @@ async fn submit_block<S: Storage>(context: &Context, body: Value) -> Result<Valu
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
 
     let block = blockchain.build_block_from_header(Immutable::Owned(header)).await?;
-    blockchain.add_new_block(block, true, true).await?;
+    blockchain.add_new_block(block, None, true, true).await?;
     Ok(json!(true))
 }
 
@@ -1673,9 +1673,11 @@ async fn get_p2p_block_propagation<S: Storage>(context: &Context, body: Value) -
 
     let mut peers = HashMap::new();
     let mut first_seen = None;
+    // TODO: Best would be "Equivalent" being implemented
+    let hash = Arc::new(params.hash.into_owned());
     for peer in p2p.get_peer_list().get_cloned_peers().await {
         let blocks_propagation = peer.get_blocks_propagation().lock().await;
-        if let Some((timed_direction, is_common)) = blocks_propagation.peek(&params.hash).copied() {
+        if let Some((timed_direction, is_common)) = blocks_propagation.peek(&hash).copied() {
             // We don't count common peers
             // Because we haven't really sent them it
             if !is_common {
@@ -1693,7 +1695,7 @@ async fn get_p2p_block_propagation<S: Storage>(context: &Context, body: Value) -
         }
     }
 
-    let processing_at = p2p.get_block_propagation_timestamp(&params.hash).await;
+    let processing_at = p2p.get_block_propagation_timestamp(&hash).await;
     Ok(json!(P2pBlockPropagationResult {
         peers,
         first_seen,

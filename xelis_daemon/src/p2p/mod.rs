@@ -138,9 +138,9 @@ pub struct P2pServer<S: Storage> {
     is_running: AtomicBool,
     // Synced cache to prevent concurrent tasks adding the block
     // Timestamp is None if block is not yet executed
-    blocks_propagation_queue: Mutex<LruCache<Hash, Option<TimestampMillis>>>,
+    blocks_propagation_queue: Mutex<LruCache<Arc<Hash>, Option<TimestampMillis>>>,
     // Sender for the blocks processing task to have an ordered queue
-    blocks_processor: Sender<(Arc<Peer>, BlockHeader, Hash)>,
+    blocks_processor: Sender<(Arc<Peer>, BlockHeader, Arc<Hash>)>,
     // Sender for the transactions propagated
     // Synced cache to prevent concurrent tasks adding the block
     txs_propagation_queue: Mutex<LruCache<Arc<Hash>, TimestampMillis>>,
@@ -390,7 +390,7 @@ impl<S: Storage> P2pServer<S> {
     async fn start(
         self: &Arc<Self>,
         receiver: Receiver<(SocketAddr, bool)>,
-        blocks_processor_receiver: Receiver<(Arc<Peer>, BlockHeader, Hash)>,
+        blocks_processor_receiver: Receiver<(Arc<Peer>, BlockHeader, Arc<Hash>)>,
         txs_processor_receiver: Receiver<(Arc<Peer>, Arc<Hash>)>,
         ping_receiver: Receiver<()>,
         event_receiver: Receiver<Arc<Peer>>,
@@ -1334,7 +1334,7 @@ impl<S: Storage> P2pServer<S> {
     }
 
     // Task for all blocks propagation
-    async fn blocks_processing_task(self: Arc<Self>, mut receiver: Receiver<(Arc<Peer>, BlockHeader, Hash)>) {
+    async fn blocks_processing_task(self: Arc<Self>, mut receiver: Receiver<(Arc<Peer>, BlockHeader, Arc<Hash>)>) {
         debug!("Starting blocks processing task");
         let mut server_exit = self.exit_sender.subscribe();
 
@@ -1411,7 +1411,7 @@ impl<S: Storage> P2pServer<S> {
                     // add immediately the block to chain as we are synced with
                     let block = Block::new(Immutable::Owned(header), txs);
                     debug!("Adding received block {} from {} to chain", block_hash, peer);
-                    if let Err(e) = self.blockchain.add_new_block(block, true, false).await {
+                    if let Err(e) = self.blockchain.add_new_block(block, Some(Immutable::Arc(block_hash)), true, false).await {
                         error!("Error while adding new block from {}: {}", peer, e);
                         peer.increment_fail_count();
                     }
@@ -1761,7 +1761,7 @@ impl<S: Storage> P2pServer<S> {
 
                 // check that the block height is valid
                 let header = header.into_owned();
-                let block_hash = header.hash();
+                let block_hash = Arc::new(header.hash());
 
                 trace!("Received block {}", block_hash);
 
@@ -1775,7 +1775,7 @@ impl<S: Storage> P2pServer<S> {
                     if let Some((origin, is_common)) = blocks_propagation.get_mut(&block_hash) {
                         if !origin.update(direction) && !*is_common {
                             warn!("{} send us a block ({}) already tracked by him ({:?} {})", peer, block_hash, origin, is_common);
-                            return Err(P2pError::AlreadyTrackedBlock(block_hash, *origin))
+                            return Err(P2pError::AlreadyTrackedBlock(block_hash.as_ref().clone(), *origin))
                         }
                     } else {
                         debug!("Saving {} in blocks propagation cache for {}", block_hash, peer);
@@ -2376,16 +2376,16 @@ impl<S: Storage> P2pServer<S> {
     }
 
     // broadcast block to all peers that can accept directly this new block
-    pub async fn broadcast_block(&self, block: &BlockHeader, cumulative_difficulty: CumulativeDifficulty, our_topoheight: u64, our_height: u64, pruned_topoheight: Option<u64>, hash: &Hash, lock: bool) {
+    pub async fn broadcast_block(&self, block: &BlockHeader, cumulative_difficulty: CumulativeDifficulty, our_topoheight: u64, our_height: u64, pruned_topoheight: Option<u64>, hash: Arc<Hash>, lock: bool) {
         debug!("Building the ping packet for broadcast block {}", hash);
         // we build the ping packet ourself this time (we have enough data for it)
         // because this function can be call from Blockchain, which would lead to a deadlock
-        let ping = Ping::new(Cow::Borrowed(hash), our_topoheight, our_height, pruned_topoheight, cumulative_difficulty, IndexSet::new());
-        self.broadcast_block_with_ping(block, ping, hash, lock, true).await;
+        let ping = Ping::new(Cow::Borrowed(&hash), our_topoheight, our_height, pruned_topoheight, cumulative_difficulty, IndexSet::new());
+        self.broadcast_block_with_ping(block, ping, &hash, lock, true).await;
     }
 
     // Broadcast a block with a pre-built ping packet
-    pub async fn broadcast_block_with_ping(&self, block: &BlockHeader, ping: Ping<'_>, hash: &Hash, lock: bool, send_ping: bool) {
+    pub async fn broadcast_block_with_ping(&self, block: &BlockHeader, ping: Ping<'_>, hash: &Arc<Hash>, lock: bool, send_ping: bool) {
         debug!("Broadcasting block {} at height {}", hash, block.get_height());
 
         // Build the block propagation packet
@@ -2464,6 +2464,7 @@ impl<S: Storage> P2pServer<S> {
                         }
                     } else if send_ping && peer_height >= block.get_height() {
                         // Peer is above us, send him a ping packet to inform him we got a block propagated
+                        debug!("send ping (block {}) for propagation to {}", hash, peer);
                         if let Err(e) = peer.send_bytes(packet_ping_bytes.clone()).await {
                             debug!("Error on sending ping to peer for notifying that we got the block {} to {}: {}", hash, peer, e);
                         } else {

@@ -102,7 +102,7 @@ impl Simulator {
 
             // Add all blocks to the chain
             for block in blocks {
-                match blockchain.add_new_block(block, false, false).await {
+                match blockchain.add_new_block(block, None, false, false).await {
                     Ok(_) => {},
                     Err(e) => {
                         error!("Error while adding block: {}", e);

@@ -559,7 +559,7 @@ impl<S: Storage> Blockchain<S> {
         storage.set_topo_height_for_block(&genesis_hash, 0).await?;
         storage.set_top_height(0)?;
 
-        self.add_new_block_for_storage(&mut *storage, genesis_block, false, false).await?;
+        self.add_new_block_for_storage(&mut *storage, genesis_block, None, false, false).await?;
 
         Ok(())
     }
@@ -1694,15 +1694,15 @@ impl<S: Storage> Blockchain<S> {
     }
 
     // Add a new block in chain
-    pub async fn add_new_block(&self, block: Block, broadcast: bool, mining: bool) -> Result<(), BlockchainError> {
+    pub async fn add_new_block(&self, block: Block, block_hash: Option<Immutable<Hash>>, broadcast: bool, mining: bool) -> Result<(), BlockchainError> {
         debug!("locking storage to add a new block in chain");
         let mut storage = self.storage.write().await;
         debug!("storage lock acquired for new block to add");
-        self.add_new_block_for_storage(&mut storage, block, broadcast, mining).await
+        self.add_new_block_for_storage(&mut storage, block, block_hash, broadcast, mining).await
     }
 
     // Add a new block in chain using the requested storage
-    pub async fn add_new_block_for_storage(&self, storage: &mut S, block: Block, broadcast: bool, mining: bool) -> Result<(), BlockchainError> {
+    pub async fn add_new_block_for_storage(&self, storage: &mut S, block: Block, block_hash: Option<Immutable<Hash>>, broadcast: bool, mining: bool) -> Result<(), BlockchainError> {
         let start = Instant::now();
 
         // Expected version for this block
@@ -1713,7 +1713,13 @@ impl<S: Storage> Blockchain<S> {
             return Err(BlockchainError::InvalidBlockVersion)
         }
 
-        let block_hash = block.hash();
+        // Either check or use the precomputed one
+        let block_hash = if let Some(hash) = block_hash {
+            hash
+        } else {
+            Immutable::Owned(block.hash())
+        };
+
         debug!("Add new block {}", block_hash);
         if storage.has_block_with_hash(&block_hash).await? {
             debug!("Block {} is already in chain!", block_hash);
@@ -1732,7 +1738,7 @@ impl<S: Storage> Blockchain<S> {
         // only 3 tips are allowed
         if tips_count > TIPS_LIMIT {
             debug!("Invalid tips count, got {} but maximum allowed is {}", tips_count, TIPS_LIMIT);
-            return Err(BlockchainError::InvalidTipsCount(block_hash, tips_count))
+            return Err(BlockchainError::InvalidTipsCount(block_hash.into_owned(), tips_count))
         }
 
         let mut current_height = self.get_height();
@@ -1748,7 +1754,7 @@ impl<S: Storage> Blockchain<S> {
 
         if tips_count == 0 && block.get_height() != 0 {
             debug!("Invalid tips count, got {} but current height is {} with block height {}", tips_count, current_height, block.get_height());
-            return Err(BlockchainError::InvalidTipsCount(block_hash, tips_count))
+            return Err(BlockchainError::InvalidTipsCount(block_hash.into_owned(), tips_count))
         }
 
         // block contains header and full TXs
@@ -1761,7 +1767,7 @@ impl<S: Storage> Blockchain<S> {
         for tip in block.get_tips() {
             if !storage.has_block_with_hash(tip).await? {
                 debug!("This block ({}) has a TIP ({}) which is not present in chain", block_hash, tip);
-                return Err(BlockchainError::InvalidTipsNotFound(block_hash, tip.clone()))
+                return Err(BlockchainError::InvalidTipsNotFound(block_hash.into_owned(), tip.clone()))
             }
         }
 
@@ -1812,7 +1818,7 @@ impl<S: Storage> Blockchain<S> {
                 if best_tip != hash {
                     if !self.validate_tips(storage, best_tip, hash).await? {
                         debug!("Tip {} is invalid, difficulty can't be less than 91% of {}", hash, best_tip);
-                        return Err(BlockchainError::InvalidTipsDifficulty(block_hash, hash.clone()))
+                        return Err(BlockchainError::InvalidTipsDifficulty(block_hash.into_owned(), hash.clone()))
                     }
                 }
             }
@@ -1887,7 +1893,7 @@ impl<S: Storage> Blockchain<S> {
                     // if the tx was executed below stable height, reject whole block!
                     if block_executor_height <= stable_height {
                         debug!("Block {} contains a dead tx {} from stable height {}", block_hash, tx_hash, stable_height);
-                        return Err(BlockchainError::DeadTxFromStableHeight(block_hash, tx_hash, stable_height, block_executor))
+                        return Err(BlockchainError::DeadTxFromStableHeight(block_hash.into_owned(), tx_hash, stable_height, block_executor))
                     }
                 }
 
@@ -1914,7 +1920,7 @@ impl<S: Storage> Blockchain<S> {
                         // reject the whole block
                         if txs.contains(&tx_hash) {
                             debug!("Malicious Block {} formed, contains a dead tx {}, is executed: {}", block_hash, tx_hash, is_executed);
-                            return Err(BlockchainError::DeadTxFromTips(block_hash, tx_hash))
+                            return Err(BlockchainError::DeadTxFromTips(block_hash.into_owned(), tx_hash))
                         } else if is_executed {
                             // otherwise, all looks good but because the TX was executed in another branch, we skip verification
                             // DAG will choose which branch will execute the TX
@@ -2016,9 +2022,11 @@ impl<S: Storage> Blockchain<S> {
 
         debug!("Saving block {} on disk", block_hash);
         // Add block to chain
-        storage.save_block(block.clone(), &txs, difficulty, p, block_hash.clone()).await?;
+        // TODO: best would be to not clone block hash
+        storage.save_block(block.clone(), &txs, difficulty, p, block_hash.to_owned()).await?;
         storage.add_block_execution_to_order(&block_hash).await?;
 
+        let block_hash = block_hash.to_arc();
         debug!("Block {} saved on disk, compute cumulative difficulty", block_hash);
 
         // Compute cumulative difficulty for block
@@ -2054,7 +2062,7 @@ impl<S: Storage> Blockchain<S> {
                         current_topoheight,
                         current_height.max(block.get_height()),
                         pruned_topoheight,
-                        &block_hash,
+                        block_hash,
                         mining
                     ).await;
                 });
@@ -2064,7 +2072,8 @@ impl<S: Storage> Blockchain<S> {
         }
 
         let mut tips = storage.get_tips().await?;
-        tips.insert(block_hash.clone());
+        // TODO: best would be to not clone
+        tips.insert(block_hash.as_ref().clone());
         for hash in block.get_tips() {
             tips.remove(hash);
         }
@@ -2098,7 +2107,7 @@ impl<S: Storage> Blockchain<S> {
         // order the DAG (up to TOP_HEIGHT - STABLE_LIMIT)
         let mut highest_topo = 0;
         // Tells if the new block added is ordered in DAG or not
-        let block_is_ordered = full_order.contains(&block_hash);
+        let block_is_ordered = full_order.contains(block_hash.as_ref());
         {
             let mut is_written = base_topo_height == 0;
             let mut skipped = 0;

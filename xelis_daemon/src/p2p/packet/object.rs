@@ -124,6 +124,8 @@ impl ObjectResponse<'_> {
         }
     }
 
+    // Be careful, this method ensure that the hash is the correct
+    // one for each object
     pub fn to_owned(self) -> OwnedObjectResponse {
         match self {
             Self::Block(block) => {

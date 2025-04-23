@@ -177,6 +177,8 @@ impl<S: Storage> P2pServer<S> {
     // Handle the blocks from chain validator by requesting missing TXs from each header
     // We don't request the full block itself as we already have the block header
     // This may be faster, but we would use slightly more bandwidth
+    // NOTE: ChainValidator must check the block hash and not trust it
+    // as we are giving it the chain directly to prevent a re-compute
     async fn handle_blocks_from_chain_validator(&self, peer: &Arc<Peer>, chain_validator: ChainValidator<'_, S>) -> Result<(), BlockchainError> {
         // now retrieve all txs from all blocks header and add block in chain
         for (hash, header) in chain_validator.get_blocks() {
@@ -206,7 +208,8 @@ impl<S: Storage> P2pServer<S> {
                 let transactions = futures.try_collect().await?;
                 // Assemble back the block and add it to the chain
                 let block = Block::new(Immutable::Arc(header), transactions);
-                self.blockchain.add_new_block(block, false, false).await?; // don't broadcast block because it's syncing
+                // don't broadcast block because it's syncing
+                self.blockchain.add_new_block(block, Some(Immutable::Owned(hash)), false, false).await?;
             } else {
                 // We need to re execute it to make sure it's in DAG
                 let mut storage = self.blockchain.get_storage().write().await;
@@ -220,7 +223,7 @@ impl<S: Storage> P2pServer<S> {
                             }
 
                             warn!("Block {} is already in chain but not in DAG, re-executing it", hash);
-                            self.blockchain.add_new_block_for_storage(&mut storage, block, false, false).await?;
+                            self.blockchain.add_new_block_for_storage(&mut storage, block, Some(Immutable::Owned(hash)), false, false).await?;
                         },
                         Err(e) => {
                             // This shouldn't happen, but in case
@@ -466,7 +469,8 @@ impl<S: Storage> P2pServer<S> {
                                     .context("Error while receiving response for block while syncing")?;
     
                                 match response {
-                                    OwnedObjectResponse::Block(block, _) => Ok(Some(block)),
+                                    // OwnedObjectResponse is built by computing the block hash, so we can trust it
+                                    OwnedObjectResponse::Block(block, hash) => Ok(Some((block, hash))),
                                     _ => Err(P2pError::ExpectedBlock(response))
                                 }
                             } else {
@@ -482,7 +486,7 @@ impl<S: Storage> P2pServer<S> {
                                                 storage.store_tips(&tips)?;
                                             }
 
-                                            Some(block)
+                                            Some((block, hash))
                                         },
                                         Err(e) => {
                                             // This shouldn't happen, but in case
@@ -494,7 +498,7 @@ impl<S: Storage> P2pServer<S> {
                                     trace!("Block {} is already in DAG, skipping it", hash);
                                     None
                                 };
-                                debug!("storage write lock released for block {} deletion: {}", hash, block.is_some());
+                                debug!("storage write lock released for block deletion: {}", block.is_some());
     
                                 Ok(block)
                             }
@@ -524,10 +528,10 @@ impl<S: Storage> P2pServer<S> {
                             };
 
                             match res {
-                                Ok(Some(block)) => {
+                                Ok(Some((block, hash))) => {
                                     blocks_processed += 1;
                                     total_requested += 1;
-                                    if let Err(e) = self.blockchain.add_new_block(block, false, false).await {
+                                    if let Err(e) = self.blockchain.add_new_block(block, Some(Immutable::Owned(hash)), false, false).await {
                                         // We need to drop the future before in case we have any future holding a mutex guard
                                         drop(futures);
 
@@ -557,7 +561,8 @@ impl<S: Storage> P2pServer<S> {
                         let response = peer.request_blocking_object(ObjectRequest::Block(hash)).await?;
                         if let OwnedObjectResponse::Block(block, hash) = response {
                             trace!("Received block {} at height {} from {}", hash, block.get_height(), peer);
-                            self.blockchain.add_new_block(block, false, false).await?;
+                            // Trust the block hash as we computed it for the owned object response
+                            self.blockchain.add_new_block(block, Some(Immutable::Owned(hash)), false, false).await?;
                         } else {
                             error!("{} sent us an invalid block response", peer);
                             return Err(P2pError::ExpectedBlock(response).into())
@@ -592,7 +597,8 @@ impl<S: Storage> P2pServer<S> {
                         };
 
                         warn!("Block {} is already in chain but not in DAG, re-executing it", hash);
-                        self.blockchain.add_new_block(block, false, false).await?;
+                        // We trust block hash because that block was already stored with such hash
+                        self.blockchain.add_new_block(block, Some(Immutable::Owned(hash)), false, false).await?;
                     }
                 }
             }
