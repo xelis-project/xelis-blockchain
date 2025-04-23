@@ -180,6 +180,8 @@ pub struct Blockchain<S: Storage> {
     // in differents groups and will verify them in parallel
     // If set to one, it will use the main thread directly
     txs_verification_threads_count: usize,
+    // Force the DB to be flushed after each block added
+    force_db_flush: bool,
 }
 
 impl<S: Storage> Blockchain<S> {
@@ -253,7 +255,8 @@ impl<S: Storage> Blockchain<S> {
             auto_prune_keep_n_blocks: config.auto_prune_keep_n_blocks,
             skip_block_template_txs_verification: config.skip_block_template_txs_verification,
             checkpoints: config.checkpoints.into_iter().collect(),
-            txs_verification_threads_count: config.txs_verification_threads_count
+            txs_verification_threads_count: config.txs_verification_threads_count,
+            force_db_flush: config.force_db_flush
         };
 
         // include genesis block
@@ -2608,6 +2611,11 @@ impl<S: Storage> Blockchain<S> {
                     }
                 }
             }
+        }
+
+        // Flush to the disk
+        if self.force_db_flush {
+            storage.flush().await?;
         }
 
         info!("Processed block {} at height {} in {}ms with {} txs (DAG: {})", block_hash, block.get_height(), start.elapsed().as_millis(), block.get_txs_count(), block_is_ordered);

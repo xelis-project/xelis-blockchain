@@ -949,4 +949,11 @@ impl Storage for SledStorage {
 
         Ok(count)
     }
+
+    async fn flush(&mut self) -> Result<(), BlockchainError> {
+        trace!("flush sled");
+        let n = self.db.flush_async().await?;
+        debug!("Flushed {} bytes", n);
+        Ok(())
+    }
 }

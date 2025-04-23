@@ -74,4 +74,7 @@ pub trait Storage:
 
     // Get the number of blocks orphaned in the DB
     async fn count_orphaned_blocks(&self) -> Result<u64, BlockchainError>;
+
+    // Flush the inner DB after a block being written
+    async fn flush(&mut self) -> Result<(), BlockchainError>;
 }

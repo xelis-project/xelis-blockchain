@@ -335,7 +335,13 @@ pub struct Config {
     /// such as difficulty for tips, stable height, etc.
     #[clap(long)]
     #[serde(default)]
-    pub recovery_mode: bool
+    pub recovery_mode: bool,
+    /// Force DB flush after each block being added in chain.
+    /// Flush after each block added ensure no corruption occurs in case
+    /// the daemon is killed.
+    #[clap(long)]
+    #[serde(default)]
+    pub force_db_flush: bool
 }
 
 mod humantime_serde {
