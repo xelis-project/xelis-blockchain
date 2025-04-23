@@ -6,7 +6,8 @@ use indexmap::IndexSet;
 use itertools::Either;
 use crate::{
     config::PRUNE_SAFETY_LIMIT,
-    core::error::{BlockchainError, DiskContext}
+    core::error::{BlockchainError, DiskContext},
+    init_cache
 };
 use xelis_common::{
     block::{TopoHeight, Block, BlockHeader},
@@ -19,7 +20,6 @@ use xelis_common::{
 };
 use std::{
     hash::Hash as StdHash,
-    num::NonZeroUsize,
     str::FromStr,
     sync::Arc
 };
@@ -169,16 +169,6 @@ pub struct SledStorage {
 
     // If we have a snapshot, we can use it to rollback
     pub(super) snapshot: Option<Snapshot>,
-}
-
-macro_rules! init_cache {
-    ($cache_size: expr) => {{
-        if let Some(size) = &$cache_size {
-            Some(Mutex::new(LruCache::new(NonZeroUsize::new(*size).unwrap())))
-        } else {
-            None
-        }
-    }};
 }
 
 #[derive(Clone, Copy, clap::ValueEnum, Serialize, Deserialize)]
