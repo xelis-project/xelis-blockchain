@@ -1056,7 +1056,8 @@ impl<S: Storage> P2pServer<S> {
                 let our_topoheight = self.blockchain.get_topo_height();
                 self.peer_list.get_peers().read().await.values().find(|p| {
                     let peer_topoheight = p.get_topoheight();
-                    peer_topoheight > our_topoheight && peer_topoheight - our_topoheight > PRUNE_SAFETY_LIMIT
+                    // Only try a fast sync if a peer is higher enough
+                    peer_topoheight > our_topoheight && peer_topoheight - our_topoheight > CHAIN_SYNC_RESPONSE_MAX_BLOCKS as _
                 }).is_some()
             } else {
                 false

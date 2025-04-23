@@ -37,6 +37,8 @@ use super::{
 
 #[derive(Error, Debug)]
 pub enum P2pError {
+    #[error("Invalid block metadata")]
+    InvalidBlockMetadata,
     #[error("Invalid temporary ban time, it must be greater than 0")]
     InvalidTempBanTime,
     #[error("Invalid fail count, it must be greater than 0")]

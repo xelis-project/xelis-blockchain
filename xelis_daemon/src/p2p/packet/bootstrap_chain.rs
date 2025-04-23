@@ -56,6 +56,8 @@ pub struct BlockMetadata {
     pub cumulative_difficulty: CumulativeDifficulty,
     // Difficulty P variable
     pub p: VarUint,
+    // All transactions marked as executed in this block
+    pub executed_transactions: IndexSet<Hash>
 }
 
 impl StdHash for BlockMetadata {
@@ -82,6 +84,18 @@ impl Serializer for BlockMetadata {
         let cumulative_difficulty = CumulativeDifficulty::read(reader)?;
         let p = VarUint::read(reader)?;
 
+        // We don't write it through IndexSet impl directly
+        // as we must support any u16 len same as a BlockHeader
+        // TODO best would be a const type providing a configurable MAX_ITEMS
+
+        let len = reader.read_u16()?;
+        let mut executed_transactions = IndexSet::new();
+        for _ in 0..len {
+            if !executed_transactions.insert(Hash::read(reader)?) {
+                return Err(ReaderError::InvalidValue)
+            }
+        }
+
         Ok(Self {
             hash,
             supply,
@@ -89,7 +103,8 @@ impl Serializer for BlockMetadata {
             reward,
             difficulty,
             cumulative_difficulty,
-            p
+            p,
+            executed_transactions
         })
     }
 
@@ -101,6 +116,7 @@ impl Serializer for BlockMetadata {
         self.difficulty.write(writer);
         self.cumulative_difficulty.write(writer);
         self.p.write(writer);
+        self.executed_transactions.write(writer);
     }
 
     fn size(&self) -> usize {
@@ -111,6 +127,7 @@ impl Serializer for BlockMetadata {
         + self.difficulty.size()
         + self.cumulative_difficulty.size()
         + self.p.size()
+        + self.executed_transactions.size()
     }
 }
 

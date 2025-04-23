@@ -228,7 +228,18 @@ impl<S: Storage> P2pServer<S> {
                         let cumulative_difficulty = storage.get_cumulative_difficulty_for_block_hash(&hash).await?;
                         let p = storage.get_estimated_covariance_for_block_hash(&hash).await?;
 
-                        Ok::<_, BlockchainError>(BlockMetadata { hash, supply, burned_supply, reward, difficulty, cumulative_difficulty, p })
+                        // Also track all executions
+                        let mut executed_transactions = IndexSet::new();
+                        {
+                            let header = storage.get_block_header_by_hash(&hash).await?;
+                            for tx_hash in header.get_txs_hashes() {
+                                if storage.is_tx_executed_in_block(tx_hash, &hash)? {
+                                    executed_transactions.insert(tx_hash.clone());
+                                }
+                            }
+                        }
+
+                        Ok::<_, BlockchainError>(BlockMetadata { hash, supply, burned_supply, reward, difficulty, cumulative_difficulty, p, executed_transactions })
                     })
                     .buffered(self.stream_concurrency)
                     .try_collect()
@@ -420,7 +431,7 @@ impl<S: Storage> P2pServer<S> {
                 },
                 StepResponse::BlocksMetadata(blocks) => {
                     // Last N blocks + stable block
-                    if blocks.len() != PRUNE_SAFETY_LIMIT as usize + 1{
+                    if blocks.len() != PRUNE_SAFETY_LIMIT as usize + 1 {
                         error!("Received {} blocks metadata while expecting {}", blocks.len(), PRUNE_SAFETY_LIMIT + 1);
                         return Err(P2pError::InvalidPacket.into())
                     }
@@ -473,7 +484,16 @@ impl<S: Storage> P2pServer<S> {
                             storage.set_topo_height_for_block(&hash, topoheight).await?;
     
                             storage.set_cumulative_difficulty_for_block_hash(&hash, metadata.cumulative_difficulty).await?;
-    
+
+                            // Mark needed TXs as executed
+                            for tx in metadata.executed_transactions {
+                                if !header.get_txs_hashes().contains(&tx) || storage.is_tx_executed_in_a_block(&tx)? {
+                                    return Err(P2pError::InvalidBlockMetadata.into())
+                                }
+
+                                storage.set_tx_executed_in_block(&tx, &hash)?;
+                            }
+
                             // save the block with its transactions, difficulty
                             storage.save_block(Arc::new(header), &txs, metadata.difficulty, metadata.p, hash).await?;
 
@@ -484,12 +504,18 @@ impl<S: Storage> P2pServer<S> {
                     let mut storage = self.blockchain.get_storage().write().await;
 
                     // Delete all old data
+                    // This also delete the DAG order, so we must delete below our metadata injection from above
                     storage.delete_versioned_data_below_topoheight(lowest_topoheight, true).await?;
 
                     storage.set_pruned_topoheight(lowest_topoheight).await?;
                     storage.set_top_topoheight(top_topoheight)?;
                     storage.set_top_height(top_height)?;
-                    storage.store_tips(&HashSet::from([top_block_hash.take().ok_or(BlockchainError::Unknown)?]))?;
+                    storage.store_tips(
+                        &HashSet::from([
+                            top_block_hash.take()
+                                .ok_or(BlockchainError::Unknown)?
+                        ])
+                    )?;
 
                     None
                 },
