@@ -610,6 +610,13 @@ impl<S: Storage> P2pServer<S> {
                 0
             };
             info!("we've synced {} on {} blocks and {} top blocks in {}s ({} bps) from {}", total_requested, blocks_len, top_len, elapsed, bps, peer);
+
+            // If we have synced a block and it was less than the max size
+            // It may means we are up to date
+            // Notify all peers about our new state
+            if total_requested > 0 && blocks_len < requested_max_size {
+                self.ping_peers().await;   
+            }
         }
 
         let peer_topoheight = peer.get_topoheight();
