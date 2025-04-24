@@ -443,22 +443,12 @@ impl SledStorage {
         Ok(len)
     }
 
-    // Drop a tree from the DB
-    // pub(super) fn drop_tree<V: AsRef<[u8]>>(snapshot: Option<&mut Snapshot>, db: &sled::Db, tree_name: V) -> Result<bool, BlockchainError> {
-    //     let v = if let Some(snapshot) = snapshot {
-    //         snapshot.drop_tree(tree_name)
-    //     } else {
-    //         db.drop_tree(tree_name)?
-    //     };
-
-    //     Ok(v)
-    // }
-
     // Load from disk and cache the value
     // Or load it from cache if available
     // Note that the Snapshot has no cache and is priority over the cache
     // This mean, cache is never used if a snapshot is available
     pub(super) async fn get_cacheable_arc_data<K: Eq + StdHash + Serializer + Clone, V: Serializer>(&self, tree: &Tree, cache: &Option<Mutex<LruCache<K, Arc<V>>>>, key: &K, context: DiskContext) -> Result<Arc<V>, BlockchainError> {
+        trace!("get cacheable arc data {:?}", context);
         let key_bytes = key.to_bytes();
         let value = if let Some(cache) = cache.as_ref()
             .filter(|_| self.snapshot.as_ref()
@@ -466,12 +456,17 @@ impl SledStorage {
                 .unwrap_or(true)
             )
         {
+            trace!("load arc from cache");
             let mut cache = cache.lock().await;
             if let Some(value) = cache.get(key) {
+                trace!("found key in cache, cloning Arc");
                 return Ok(Arc::clone(&value));
             }
 
+            trace!("no arc found in cache, loading from disk");
             let value = Arc::new(self.load_from_disk(tree, &key_bytes, context)?);
+
+            trace!("inserting arced data into the cache");
             cache.put(key.clone(), Arc::clone(&value));
             value
         } else {
@@ -482,6 +477,7 @@ impl SledStorage {
     }
 
     pub(super) async fn get_optional_cacheable_data<K: Eq + StdHash + Serializer + Clone, V: Serializer + Clone>(&self, tree: &Tree, cache: &Option<Mutex<LruCache<K, V>>>, key: &K) -> Result<Option<V>, BlockchainError> {
+        trace!("get optional cacheable data");
         let key_bytes = key.to_bytes();
         let value = if let Some(cache) = cache.as_ref()
             .filter(|_| self.snapshot.as_ref()
@@ -489,12 +485,17 @@ impl SledStorage {
                 .unwrap_or(true)
             )
         {
+            trace!("load optional from cache");
             let mut cache = cache.lock().await;
             if let Some(value) = cache.get(key).cloned() {
+                trace!("data is present in cache");
                 return Ok(Some(value));
             }
 
+            trace!("not found in cache, load optional from disk");
             let value: Option<V> = self.load_optional_from_disk(tree, &key_bytes)?;
+
+            trace!("load optional from disk is present: {}", value.is_some());
             if let Some(value) = value.as_ref() {
                 cache.put(key.clone(), value.clone());
             }
@@ -510,6 +511,7 @@ impl SledStorage {
     // Load a value from the DB and cache it
     // This data is not cached behind an Arc, but is cloned at each access
     pub(super) async fn get_cacheable_data<K: Eq + StdHash + Serializer + Clone, V: Serializer + Clone>(&self, tree: &Tree, cache: &Option<Mutex<LruCache<K, V>>>, key: &K, context: DiskContext) -> Result<V, BlockchainError> {
+        trace!("get cacheable data {:?}", context);
         let key_bytes = key.to_bytes();
         let value = if let Some(cache) = cache.as_ref()
             .filter(|_| self.snapshot.as_ref()
@@ -520,10 +522,14 @@ impl SledStorage {
             trace!("load from cache");
             let mut cache = cache.lock().await;
             if let Some(value) = cache.get(key) {
+                trace!("key found in cache");
                 return Ok(value.clone());
             }
 
+            trace!("not found in cache, loading from disk");
             let value: V = self.load_from_disk(tree, &key_bytes, context)?;
+
+            trace!("inserting disk value into cache");
             cache.put(key.clone(), value.clone());
             value
         } else {
@@ -534,14 +540,15 @@ impl SledStorage {
     }
 
     pub(super) async fn delete_cacheable_data<K: Eq + StdHash + Serializer + Clone, V: Serializer>(snapshot: Option<&mut Snapshot>, tree: &Tree, cache: Option<&mut Mutex<LruCache<K, V>>>, key: &K) -> Result<V, BlockchainError> {
+        trace!("delete cacheable data");
         let value = match Self::remove_from_disk::<V>(snapshot, tree, &key.to_bytes())? {
             Some(data) => data,
             None => return Err(BlockchainError::NotFoundOnDisk(DiskContext::DeleteData))
         };
 
         if let Some(cache) = cache {
-            if let Some(value) = cache.get_mut().pop(key) {
-                return Ok(value);
+            if cache.get_mut().pop(key).is_some() {
+                trace!("data has been deleted from cache");
             }
         }
 
@@ -550,14 +557,15 @@ impl SledStorage {
 
     // Delete a cacheable data from disk and cache behind a Arc
     pub(super) async fn delete_arc_cacheable_data<K: Eq + StdHash + Serializer + Clone, V: Serializer>(snapshot: Option<&mut Snapshot>, tree: &Tree, cache: Option<&mut Mutex<LruCache<K, Arc<V>>>>, key: &K) -> Result<Arc<V>, BlockchainError> {
+        trace!("delete arc cacheable data");
         let value = match Self::remove_from_disk::<V>(snapshot, tree, &key.to_bytes())? {
             Some(data) => data,
             None => return Err(BlockchainError::NotFoundOnDisk(DiskContext::DeleteData))
         };
 
         if let Some(cache) = cache {
-            if let Some(value) = cache.get_mut().pop(key) {
-                return Ok(value);
+            if cache.get_mut().pop(key).is_some() {
+                trace!("data has been deleted from arc cache");
             }
         }
 
@@ -566,9 +574,12 @@ impl SledStorage {
 
     // Check if our DB contains a data in cache or on disk
     pub(super) async fn contains_data_cached<K: Eq + StdHash + Serializer + Clone, V>(&self, tree: &Tree, cache: &Option<Mutex<LruCache<K, V>>>, key: &K) -> Result<bool, BlockchainError> {
+        trace!("contains data cached");
+
         let key_bytes = key.to_bytes();
         if let Some(snapshot) = self.snapshot.as_ref() {
             if let Some(v) = snapshot.contains_key_with_value(tree, &key_bytes) {
+                trace!("snapshot contains requested data");
                 return Ok(v);
             }
         }
@@ -576,6 +587,7 @@ impl SledStorage {
         if let Some(cache) = cache {
             let cache = cache.lock().await;
             if cache.contains(key) {
+                trace!("cache contains requested data");
                 return Ok(true);
             }
         }
@@ -585,9 +597,11 @@ impl SledStorage {
 
     // Check if our DB contains a data on disk
     pub(super) fn contains_data<K: Serializer>(&self, tree: &Tree, key: &K) -> Result<bool, BlockchainError> {
+        trace!("contains data");
         let key_bytes = key.to_bytes();
         if let Some(snapshot) = self.snapshot.as_ref() {
             if let Some(v) = snapshot.contains_key_with_value(tree, &key_bytes) {
+                trace!("snapshot contains data");
                 return Ok(v);
             }
         }
@@ -597,6 +611,7 @@ impl SledStorage {
 
     // Update the assets count and store it on disk
     pub(super) fn store_assets_count(&mut self, count: u64) -> Result<(), BlockchainError> {
+        trace!("store assets count {}", count);
         if let Some(snapshot) = self.snapshot.as_mut() {
             snapshot.cache.assets_count = count;
         } else {
