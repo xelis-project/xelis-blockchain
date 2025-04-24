@@ -402,8 +402,8 @@ impl<S: Storage> GetWorkServer<S> {
 impl<S: Storage> WebSocketHandler for GetWorkServer<S> {
     // For retro-compatibility with older miner versions,
     // we don't send any ping
-    fn send_ping_interval(&self) -> Option<Duration> {
-        None
+    async fn check_heartbeat(&self, _: &WebSocketSessionShared<Self>) -> bool {
+        false
     }
 
     async fn on_connection(&self, session: &WebSocketSessionShared<Self>) -> Result<Option<actix_web::HttpResponse>, anyhow::Error> {
