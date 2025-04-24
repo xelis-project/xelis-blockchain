@@ -3,12 +3,12 @@ use serde::{Serialize, Deserialize};
 
 #[derive(Clone, Serialize, Deserialize, Debug, Eq, Hash, PartialEq)]
 #[serde(untagged)]
-pub enum Immutable<T: Clone> {
+pub enum Immutable<T> {
     Owned(T),
     Arc(Arc<T>)
 }
 
-impl<T: Clone> Immutable<T> {
+impl<T> Immutable<T> {
     pub fn get_inner(&self) -> &T {
         match &self {
             Immutable::Owned(v) => v,
@@ -22,7 +22,9 @@ impl<T: Clone> Immutable<T> {
             Immutable::Arc(v) => v
         }
     }
+}
 
+impl<T: Clone> Immutable<T> {
     pub fn into_arc(&mut self) -> Arc<T> {
         match self {
             Immutable::Owned(v) => {
@@ -56,25 +58,25 @@ impl<T: Clone> Immutable<T> {
     }
 }
 
-impl<T: Clone> AsRef<T> for Immutable<T> {
+impl<T> AsRef<T> for Immutable<T> {
     fn as_ref(&self) -> &T {
         self.get_inner()
     }
 }
 
-impl<T: Clone> From<T> for Immutable<T> {
+impl<T> From<T> for Immutable<T> {
     fn from(v: T) -> Self {
         Immutable::Owned(v)
     }
 }
 
-impl<T: Clone> From<Arc<T>> for Immutable<T> {
+impl<T> From<Arc<T>> for Immutable<T> {
     fn from(v: Arc<T>) -> Self {
         Immutable::Arc(v)
     }
 }
 
-impl<T: Clone> Deref for Immutable<T> {
+impl<T> Deref for Immutable<T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
@@ -82,7 +84,7 @@ impl<T: Clone> Deref for Immutable<T> {
     }
 }
 
-impl<T: fmt::Display + Clone> Display for Immutable<T> {
+impl<T: fmt::Display> Display for Immutable<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Immutable::Owned(v) => write!(f, "{}", v),

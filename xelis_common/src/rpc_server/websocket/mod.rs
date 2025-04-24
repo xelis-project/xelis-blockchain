@@ -25,9 +25,10 @@ use actix_ws::{
 use async_trait::async_trait;
 use futures_util::StreamExt;
 use log::{debug, error, trace};
+use serde::Serialize;
+use serde_json::json;
 use crate::{
-    config::MAX_BLOCK_SIZE,
-    tokio::{
+    config::MAX_BLOCK_SIZE, immutable::Immutable, tokio::{
         select,
         sync::{
             mpsc::{
@@ -98,6 +99,11 @@ where
             .map_err(|e| WebSocketError::ChannelClosed(e.to_string()))?;
 
         Ok(())
+    }
+
+    // Send a json value
+    pub async fn send_json<S: Serialize>(self: &Arc<Self>, value: S) -> Result<(), WebSocketError> {
+        self.send_text(json!(value).to_string()).await
     }
 
     // Send a ping message to the session
@@ -197,18 +203,18 @@ pub trait WebSocketHandler: Sized + Sync + Send {
     }
 }
 
-pub struct WebSocketServer<H: WebSocketHandler + 'static> {
+pub struct WebSocketServer<H: WebSocketHandler + 'static + Send + Sync> {
     sessions: RwLock<HashSet<WebSocketSessionShared<H>>>,
     id_counter: AtomicU64,
-    handler: H
+    handler: Immutable<H>
 }
 
-impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static {
-    pub fn new(handler: H) -> WebSocketServerShared<H> {
+impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static + Send + Sync {
+    pub fn new(handler: impl Into<Immutable<H>>) -> WebSocketServerShared<H> {
         Arc::new(Self {
             sessions: RwLock::new(HashSet::new()),
             id_counter: AtomicU64::new(0),
-            handler
+            handler: handler.into()
         })
     }
 
@@ -240,7 +246,7 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static {
 
     // Returns the RPC handler used for this server
     pub fn get_handler(&self) -> &H {
-        &self.handler
+        self.handler.as_ref()
     }
 
     // Returns all sessions managed by this server
