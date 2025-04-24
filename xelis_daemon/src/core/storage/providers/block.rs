@@ -138,7 +138,7 @@ impl BlockProvider for SledStorage {
 
         self.remove_block_hash_at_height(&hash, header.get_height()).await?;
 
-        let mut transactions = Vec::new();
+        let mut transactions = Vec::with_capacity(header.get_txs_count());
         for tx in header.get_transactions() {
             let transaction = self.get_transaction(&tx).await?;
             transactions.push(Immutable::Arc(transaction));
