@@ -279,9 +279,9 @@ impl Prompt {
                 }
                 _ = interval.tick() => {
                     {
-                        // verify that we don't have any reader
+                        // verify that interactive is enabled and we don't have any reader
                         // as they may have changed the prompt
-                        if self.state.get_prompt_sender().lock()?.is_some() {
+                        if !self.state.is_interactive() || self.state.get_prompt_sender().lock()?.is_some() {
                             continue;
                         }
                     }
