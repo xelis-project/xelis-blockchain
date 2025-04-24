@@ -28,6 +28,7 @@ Common:
 - WIP private deposits for Smart Contracts
 
 Daemon:
+- Rework the websocket server base for GetWork Server
 - Optimize fast sync
 - Optimize reorganization of blocks
 - Optimize data deletion at exact topoheight
