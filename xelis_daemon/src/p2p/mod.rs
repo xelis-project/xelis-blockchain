@@ -907,11 +907,13 @@ impl<S: Storage> P2pServer<S> {
             storage.get_cumulative_difficulty_for_block_hash(&hash).await?
         };
 
-        trace!("peer list locked for select random best peer");
+        debug!("cloning peer list for select random best peer");
 
         // search for peers which are greater than us
         // and that are pruned but before our height so we can sync correctly
         let available_peers = self.peer_list.get_cloned_peers().await;
+        debug!("{} peers available for selection", available_peers.len());
+
         let mut peers = stream::iter(available_peers)
             .map(|p| async move {
                 // Avoid selecting peers that have a weaker cumulative difficulty than us
@@ -975,7 +977,7 @@ impl<S: Storage> P2pServer<S> {
         }
 
         let count = peers.len();
-        trace!("peers available for random selection: {}", count);
+        debug!("filtered peers available for random selection: {}", count);
         if count == 0 {
             return Ok(None)
         }
