@@ -76,6 +76,6 @@ impl TransactionProvider for SledStorage {
 
     async fn delete_transaction(&mut self, hash: &Hash) -> Result<Arc<Transaction>, BlockchainError> {
         Self::delete_cacheable_data::<Hash, HashSet<Hash>>(self.snapshot.as_mut(), &self.tx_blocks, None, hash).await?;
-        Self::delete_arc_cacheable_data(self.snapshot.as_mut(), &self.transactions, self.transactions_cache.as_mut(), hash).await
+        Self::delete_arc_cacheable_data(self.snapshot.as_mut(), &self.transactions, self.cache.transactions_cache.as_mut(), hash).await
     }
 }

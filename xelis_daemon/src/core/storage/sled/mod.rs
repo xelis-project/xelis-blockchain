@@ -6,8 +6,7 @@ use indexmap::IndexSet;
 use itertools::Either;
 use crate::{
     config::PRUNE_SAFETY_LIMIT,
-    core::error::{BlockchainError, DiskContext},
-    init_cache
+    core::error::{BlockchainError, DiskContext}
 };
 use xelis_common::{
     block::{TopoHeight, Block, BlockHeader},
@@ -20,6 +19,7 @@ use xelis_common::{
 };
 use std::{
     hash::Hash as StdHash,
+    ops::{Deref, DerefMut},
     str::FromStr,
     sync::Arc
 };
@@ -148,23 +148,7 @@ pub struct SledStorage {
     // opened DB used for assets to create dynamic assets
     pub(super) db: sled::Db,
 
-    // all available caches
-    // Transaction cache
-    pub(super) transactions_cache: Option<Mutex<LruCache<Hash, Arc<Transaction>>>>,
-    // Block header cache
-    pub(super) blocks_cache: Option<Mutex<LruCache<Hash, Arc<BlockHeader>>>>,
-    // Blocks Tips cache
-    pub(super) past_blocks_cache: Option<Mutex<LruCache<Hash, Arc<IndexSet<Hash>>>>>,
-    // Topoheight by hash cache
-    pub(super) topo_by_hash_cache: Option<Mutex<LruCache<Hash, TopoHeight>>>,
-    // Hash by topoheight cache
-    pub(super) hash_at_topo_cache: Option<Mutex<LruCache<TopoHeight, Hash>>>,
-    // Cumulative difficulty cache
-    pub(super) cumulative_difficulty_cache: Option<Mutex<LruCache<Hash, CumulativeDifficulty>>>,
-    // Assets cache
-    pub(super) assets_cache: Option<Mutex<LruCache<Hash, TopoHeight>>>,
-
-    // Cache for counters
+    // Cache
     pub(super) cache: StorageCache,
 
     // If we have a snapshot, we can use it to rollback
@@ -202,6 +186,20 @@ impl Into<sled::Mode> for StorageMode {
             Self::HighThroughput => sled::Mode::HighThroughput,
             Self::LowSpace => sled::Mode::LowSpace
         }
+    }
+}
+
+impl Deref for SledStorage {
+    type Target = StorageCache;
+
+    fn deref(&self) -> &Self::Target {
+        &self.cache
+    }
+}
+
+impl DerefMut for SledStorage {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.cache
     }
 }
 
@@ -254,14 +252,7 @@ impl SledStorage {
             assets_supply: sled.open_tree("assets_supply")?,
             versioned_assets_supply: sled.open_tree("versioned_assets_supply")?,
             db: sled,
-            transactions_cache: init_cache!(cache_size),
-            blocks_cache: init_cache!(cache_size),
-            past_blocks_cache: init_cache!(cache_size),
-            topo_by_hash_cache: init_cache!(cache_size),
-            hash_at_topo_cache: init_cache!(cache_size),
-            cumulative_difficulty_cache: init_cache!(cache_size),
-            assets_cache: init_cache!(cache_size),
-            cache: StorageCache::default(),
+            cache: StorageCache::new(cache_size),
 
             snapshot: None,
         };
@@ -624,17 +615,17 @@ impl Storage for SledStorage {
         trace!("Delete block at topoheight {topoheight}");
 
         // delete topoheight<->hash pointers
-        let hash = Self::delete_cacheable_data(self.snapshot.as_mut(), &self.hash_at_topo, self.hash_at_topo_cache.as_mut(), &topoheight).await?;
+        let hash = Self::delete_cacheable_data(self.snapshot.as_mut(), &self.hash_at_topo, self.cache.hash_at_topo_cache.as_mut(), &topoheight).await?;
 
         trace!("Deleting block execution order");
         Self::remove_from_disk_without_reading(self.snapshot.as_mut(), &self.blocks_execution_order, hash.as_bytes())?;
 
         trace!("Hash is {hash} at topo {topoheight}");
 
-        Self::delete_cacheable_data::<Hash, u64>(self.snapshot.as_mut(), &self.topo_by_hash, self.topo_by_hash_cache.as_mut(), &hash).await?;
+        Self::delete_cacheable_data::<Hash, u64>(self.snapshot.as_mut(), &self.topo_by_hash, self.cache.topo_by_hash_cache.as_mut(), &hash).await?;
 
         trace!("deleting block header {}", hash);
-        let block = Self::delete_arc_cacheable_data(self.snapshot.as_mut(), &self.blocks, self.blocks_cache.as_mut(), &hash).await?;
+        let block = Self::delete_arc_cacheable_data(self.snapshot.as_mut(), &self.blocks, self.cache.blocks_cache.as_mut(), &hash).await?;
         trace!("block header deleted successfully");
 
         trace!("Deleting supply");
@@ -653,7 +644,7 @@ impl Storage for SledStorage {
         let _: Difficulty = Self::delete_cacheable_data(self.snapshot.as_mut(), &self.difficulty, None, &hash).await?;
 
         trace!("Deleting cumulative difficulty");
-        let cumulative_difficulty: CumulativeDifficulty = Self::delete_cacheable_data(self.snapshot.as_mut(), &self.cumulative_difficulty, self.cumulative_difficulty_cache.as_mut(), &hash).await?;
+        let cumulative_difficulty: CumulativeDifficulty = Self::delete_cacheable_data(self.snapshot.as_mut(), &self.cumulative_difficulty, self.cache.cumulative_difficulty_cache.as_mut(), &hash).await?;
         trace!("Cumulative difficulty deleted: {}", cumulative_difficulty);
 
         let mut txs = Vec::new();
@@ -679,7 +670,7 @@ impl Storage for SledStorage {
             // which allow multiple time the same txs in differents blocks
             if should_delete && self.contains_data_cached(&self.transactions, &self.transactions_cache, tx_hash).await? {
                 trace!("Deleting TX {} in block {}", tx_hash, hash);
-                let tx: Arc<Transaction> = Self::delete_arc_cacheable_data(self.snapshot.as_mut(), &self.transactions, self.transactions_cache.as_mut(), tx_hash).await?;
+                let tx: Arc<Transaction> = Self::delete_arc_cacheable_data(self.snapshot.as_mut(), &self.transactions, self.cache.transactions_cache.as_mut(), tx_hash).await?;
                 txs.push((tx_hash.clone(), tx));
             }
         }

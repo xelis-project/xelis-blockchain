@@ -1,6 +1,14 @@
-use std::ops::{Deref, DerefMut};
+use std::{ops::{Deref, DerefMut}, sync::Arc};
 
-use xelis_common::block::TopoHeight;
+use indexmap::IndexSet;
+use lru::LruCache;
+use tokio::sync::Mutex;
+use xelis_common::{
+    block::{BlockHeader, TopoHeight},
+    crypto::Hash,
+    difficulty::CumulativeDifficulty,
+    transaction::Transaction
+};
 
 use super::Tips;
 
@@ -35,10 +43,55 @@ pub struct CounterCache {
     pub pruned_topoheight: Option<TopoHeight>,
 }
 
-#[derive(Debug, Default, Clone)]
+// Storage cache contains all our needed caches
+// During a clone, only the counters are cloned
+#[derive(Debug, Default)]
 pub struct StorageCache {
-    counter: CounterCache,
+    pub counter: CounterCache,
 
+    // all available caches
+    // Transaction cache
+    pub transactions_cache: Option<Mutex<LruCache<Hash, Arc<Transaction>>>>,
+    // Block header cache
+    pub blocks_cache: Option<Mutex<LruCache<Hash, Arc<BlockHeader>>>>,
+    // Blocks Tips cache
+    pub past_blocks_cache: Option<Mutex<LruCache<Hash, Arc<IndexSet<Hash>>>>>,
+    // Topoheight by hash cache
+    pub topo_by_hash_cache: Option<Mutex<LruCache<Hash, TopoHeight>>>,
+    // Hash by topoheight cache
+    pub hash_at_topo_cache: Option<Mutex<LruCache<TopoHeight, Hash>>>,
+    // Cumulative difficulty cache
+    pub cumulative_difficulty_cache: Option<Mutex<LruCache<Hash, CumulativeDifficulty>>>,
+    // Assets cache
+    pub assets_cache: Option<Mutex<LruCache<Hash, TopoHeight>>>,
+
+    // At which size all caches were initialized
+    pub cache_size: Option<usize>,
+}
+
+impl StorageCache {
+    pub fn new(cache_size: Option<usize>) -> Self {
+        Self {
+            counter: CounterCache::default(),
+            transactions_cache: init_cache!(cache_size),
+            blocks_cache: init_cache!(cache_size),
+            past_blocks_cache: init_cache!(cache_size),
+            topo_by_hash_cache: init_cache!(cache_size),
+            hash_at_topo_cache: init_cache!(cache_size),
+            cumulative_difficulty_cache: init_cache!(cache_size),
+            assets_cache: init_cache!(cache_size),
+            cache_size
+        }
+    }
+}
+
+impl Clone for StorageCache {
+    fn clone(&self) -> Self {
+        Self {
+            counter: self.counter.clone(),
+            ..Default::default()
+        }
+    }
 }
 
 impl Deref for StorageCache {
