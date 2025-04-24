@@ -82,6 +82,7 @@ use xelis_common::{
 };
 use clap::Parser;
 use log::{
+    trace,
     debug,
     info,
     warn,
@@ -556,8 +557,11 @@ async fn handle_websocket_message(message: Result<Message, TungsteniteError>, jo
             warn!("Daemon has closed the WebSocket connection with us: {}", reason);
             return Ok(true);
         },
-        _ => {
-            warn!("Unexpected message from WebSocket");
+        Message::Ping(_) => {
+            trace!("received ping");
+        },
+        msg => {
+            warn!("Unexpected message from WebSocket: {:?}", msg);
             return Ok(true);
         }
     };
