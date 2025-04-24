@@ -182,8 +182,8 @@ where
 pub trait WebSocketHandler: Sized + Sync + Send {
     // called when a new Session is added in websocket server
     // if an error is returned, maintaining the session is aborted
-    async fn on_connection(&self, _: &WebSocketSessionShared<Self>) -> Result<(), anyhow::Error> {
-        Ok(())
+    async fn on_connection(&self, _: &WebSocketSessionShared<Self>) -> Result<Option<actix_web::HttpResponse>, anyhow::Error> {
+        Ok(None)
     }
 
     // called when a new message is received
@@ -251,18 +251,30 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static {
     // Handle a new WebSocket connection request, register it and start handling it
     pub async fn handle_connection(self: &Arc<Self>, request: ActixHttpRequest, body: Payload) -> Result<HttpResponse, actix_web::Error> {
         debug!("Handling new WebSocket connection");
+
         let (response, session, stream) = actix_ws::handle(&request, body)?;
         let id = self.next_id();
-        debug!("Created new WebSocketSession with id {}", id);
-
+        let request = HttpRequest::from(request);
         let (tx, rx) = unbounded_channel();
         let session = Arc::new(WebSocketSession {
             id,
-            request: request.into(),
+            request,
             server: Arc::clone(&self),
             inner: Mutex::new(Some(session)),
             channel: tx
         });
+
+        debug!("Created new WebSocketSession with id {}", id);
+
+        // call on_connection
+        match self.handler.on_connection(&session).await {
+            Ok(Some(response)) => return Ok(response),
+            Ok(None) => (),
+            Err(e) => {
+                debug!("Error while calling on_connection: {}", e);
+                return Ok(HttpResponse::InternalServerError().body(e.to_string()));
+            }
+        };
 
         {
             debug!("Inserting session #{} into sessions", id);
@@ -317,13 +329,6 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static {
     // This will send a ping every 5 seconds and close the connection if no pong is received within 30 seconds
     // It will also translate all messages to the handler
     async fn handle_ws_internal(self: Arc<Self>, session: WebSocketSessionShared<H>, mut stream: AggregatedMessageStream, mut rx: UnboundedReceiver<InnerMessage>) {
-        // call on_connection
-        if let Err(e) = self.handler.on_connection(&session).await {
-            debug!("Error while calling on_connection: {}", e);
-            self.delete_session(&session, Some(CloseReason::from(CloseCode::Error))).await;
-            return;
-        }
-
         let mut interval = actix_rt::time::interval(KEEP_ALIVE_INTERVAL);
         let mut last_pong_received = Instant::now();
         let reason = loop {
