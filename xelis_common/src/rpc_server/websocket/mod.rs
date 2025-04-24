@@ -23,6 +23,7 @@ use actix_ws::{
     Session
 };
 use async_trait::async_trait;
+use futures::future::pending;
 use futures_util::StreamExt;
 use log::{debug, error, trace};
 use serde::Serialize;
@@ -186,6 +187,10 @@ where
 
 #[async_trait]
 pub trait WebSocketHandler: Sized + Sync + Send {
+    fn send_ping_interval(&self) -> Option<Duration> {
+        Some(KEEP_ALIVE_INTERVAL)
+    }
+
     // called when a new Session is added in websocket server
     // if an error is returned, maintaining the session is aborted
     async fn on_connection(&self, _: &WebSocketSessionShared<Self>) -> Result<Option<actix_web::HttpResponse>, anyhow::Error> {
@@ -335,12 +340,16 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static + Send + Sync {
     // This will send a ping every 5 seconds and close the connection if no pong is received within 30 seconds
     // It will also translate all messages to the handler
     async fn handle_ws_internal(self: Arc<Self>, session: WebSocketSessionShared<H>, mut stream: AggregatedMessageStream, mut rx: UnboundedReceiver<InnerMessage>) {
-        let mut interval = actix_rt::time::interval(KEEP_ALIVE_INTERVAL);
+        let mut interval = self.get_handler().send_ping_interval().map(actix_rt::time::interval);
         let mut last_pong_received = Instant::now();
         let reason = loop {
             select! {
                 // heartbeat
-                _ = interval.tick() => {
+                _ = async { match &mut interval {
+                    Some(interval) => Some(interval.tick().await),
+                    // never resolve
+                    None => pending().await
+                } } => {
                     trace!("Sending ping to session #{}", session.id);
                     if last_pong_received.elapsed() > KEEP_ALIVE_TIME_OUT {
                         debug!("session #{} didn't respond in time from our ping", session.id);
