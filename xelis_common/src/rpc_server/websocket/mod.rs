@@ -23,7 +23,6 @@ use actix_ws::{
     Session
 };
 use async_trait::async_trait;
-use futures::future::pending;
 use futures_util::StreamExt;
 use log::{debug, error, trace};
 use serde::Serialize;
@@ -187,8 +186,10 @@ where
 
 #[async_trait]
 pub trait WebSocketHandler: Sized + Sync + Send {
-    fn send_ping_interval(&self) -> Option<Duration> {
-        Some(KEEP_ALIVE_INTERVAL)
+    // should we check the heartbeat of session
+    // by sending ping / pong messages
+    async fn check_heartbeat(&self, _: &WebSocketSessionShared<Self>) -> bool {
+        true
     }
 
     // called when a new Session is added in websocket server
@@ -242,8 +243,15 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static + Send + Sync {
             sessions.drain().collect::<Vec<_>>()
         };
 
+        debug!("Clear {} connections", sessions.len());
         for session in sessions {
-            session.close(None).await?;
+            if let Err(e) = session.close_internal(None).await {
+                debug!("Error while closing internal session: {}", e);
+            }
+
+            if let Err(e) = self.get_handler().on_close(&session).await {
+                debug!("Error while closing session: {}", e);
+            }
         }
 
         Ok(())
@@ -340,30 +348,29 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static + Send + Sync {
     // This will send a ping every 5 seconds and close the connection if no pong is received within 30 seconds
     // It will also translate all messages to the handler
     async fn handle_ws_internal(self: Arc<Self>, session: WebSocketSessionShared<H>, mut stream: AggregatedMessageStream, mut rx: UnboundedReceiver<InnerMessage>) {
-        let mut interval = self.get_handler().send_ping_interval().map(actix_rt::time::interval);
+        let mut interval = actix_rt::time::interval(KEEP_ALIVE_INTERVAL);
         let mut last_pong_received = Instant::now();
         let reason = loop {
             select! {
                 // heartbeat
-                _ = async { match &mut interval {
-                    Some(interval) => Some(interval.tick().await),
-                    // never resolve
-                    None => pending().await
-                } } => {
+                _ = interval.tick() => {
                     trace!("Sending ping to session #{}", session.id);
-                    if last_pong_received.elapsed() > KEEP_ALIVE_TIME_OUT {
-                        debug!("session #{} didn't respond in time from our ping", session.id);
-                        break None;
-                    }
 
                     if session.is_closed().await {
                         debug!("Session is closed, stopping heartbeat");
                         break None;
                     }
 
-                    if let Err(e) = session.ping().await {
-                        debug!("Error while sending ping to session #{}: {}", session.id, e);
-                        break None;
+                    if self.get_handler().check_heartbeat(&session).await {
+                        if last_pong_received.elapsed() > KEEP_ALIVE_TIME_OUT {
+                            debug!("session #{} didn't respond in time from our ping", session.id);
+                            break None;
+                        }
+
+                        if let Err(e) = session.ping().await {
+                            debug!("Error while sending ping to session #{}: {}", session.id, e);
+                            break None;
+                        }
                     }
                 },
                 Some(msg) = rx.recv() => {
@@ -418,6 +425,7 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static + Send + Sync {
                             }
                         },
                         AggregatedMessage::Pong(data) => {
+                            trace!("received pong!");
                             if !data.is_empty() {
                                 debug!("Data in pong message is not empty for session #{}", session.id);
                                 break None;
