@@ -7,11 +7,7 @@ use config::{DEV_PUBLIC_KEY, STABLE_LIMIT};
 use human_bytes::human_bytes;
 use humantime::{format_duration, Duration as HumanDuration};
 use log::{debug, error, info, trace, warn};
-use p2p::P2pServer;
-use rpc::{
-    getwork_server::SharedGetWorkServer,
-    rpc::get_block_response_for_hash
-};
+use rpc::rpc::get_block_response_for_hash;
 use serde::{Deserialize, Serialize};
 use xelis_common::{
     async_handler,
@@ -332,16 +328,8 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
     command_manager.add_command(Command::new("broadcast_txs", "Broadcast all TXs in mempool if not done", CommandHandler::Async(async_handler!(broadcast_txs::<S>))))?;
 
     // Don't keep the lock for ever
-    let (p2p, getwork) = {
-        let p2p: Option<Arc<P2pServer<S>>> = match blockchain.get_p2p().read().await.as_ref() {
-            Some(p2p) => Some(p2p.clone()),
-            None => None
-        };
-        let getwork: Option<SharedGetWorkServer<S>> = match blockchain.get_rpc().read().await.as_ref() {
-            Some(rpc) => rpc.getwork_server().clone(),
-            None => None
-        };
-        (p2p, getwork)
+    let p2p = {
+        blockchain.get_p2p().read().await.as_ref().cloned()
     };
 
     let rpc = {
@@ -371,9 +359,11 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
         };
 
         trace!("Retrieving miners count");
-        let miners = match &getwork {
-            Some(getwork) => getwork.count_miners().await,
-            None => 0
+        let miners = {
+            match blockchain.get_rpc().read().await.as_ref().map(|v| v.getwork_server()) {
+                Some(Some(getwork)) => getwork.get_handler().count_miners().await,
+                _ => 0
+            }
         };
 
         trace!("Retrieving mempool size");
@@ -787,7 +777,7 @@ async fn list_miners<S: Storage>(manager: &CommandManager, mut arguments: Argume
     match blockchain.get_rpc().read().await.as_ref() {
         Some(rpc) => match rpc.getwork_server() {
             Some(getwork) => {
-                let miners = getwork.get_miners().lock().await;
+                let miners = getwork.get_handler().get_miners().lock().await;
                 if miners.is_empty() {
                     manager.message("No miners connected");
                     return Ok(());

@@ -1,14 +1,11 @@
 pub mod rpc;
-pub mod getwork_server;
+pub mod getwork;
 
-use crate::{
-    core::{
-        blockchain::Blockchain,
-        config::RPCConfig,
-        error::BlockchainError,
-        storage::Storage
-    },
-    rpc::getwork_server::GetWorkServer,
+use crate::core::{
+    blockchain::Blockchain,
+    config::RPCConfig,
+    error::BlockchainError,
+    storage::Storage
 };
 use actix_web::{
     get,
@@ -19,20 +16,17 @@ use actix_web::{
     HttpRequest,
     web::{
         self,
-        Path,
         Data,
         Payload
     },
     dev::ServerHandle,
     error::Error
 };
-use actix_web_actors::ws::WsResponseBuilder;
 use serde_json::{Value, json};
 use tokio::sync::Mutex;
 use xelis_common::{
     api::daemon::NotifyEvent,
     config,
-    crypto::Address,
     rpc_server::{
         json_rpc,
         websocket,
@@ -53,23 +47,18 @@ use std::{
     sync::Arc,
 };
 use log::{
-    trace,
-    debug,
     info,
     warn,
     error,
 };
-use self::getwork_server::{
-    GetWorkWebSocketHandler,
-    SharedGetWorkServer
-};
+use getwork::GetWorkServer;
 
 pub type SharedDaemonRpcServer<S> = Arc<DaemonRpcServer<S>>;
 
 pub struct DaemonRpcServer<S: Storage> {
     handle: Mutex<Option<ServerHandle>>,
     websocket: WebSocketServerShared<EventWebSocketHandler<Arc<Blockchain<S>>, NotifyEvent>>,
-    getwork: Option<SharedGetWorkServer<S>>
+    getwork: Option<WebSocketServerShared<GetWorkServer<S>>>
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -89,13 +78,13 @@ impl<S: Storage> DaemonRpcServer<S> {
         blockchain: Arc<Blockchain<S>>,
         config: RPCConfig
     ) -> Result<SharedDaemonRpcServer<S>, BlockchainError> {
-        let getwork: Option<SharedGetWorkServer<S>> = if !config.getwork.disable_getwork_server {
+        let getwork = if !config.getwork.disable_getwork_server {
             info!("Creating GetWork server...");
-            Some(GetWorkServer::new(
+            Some(WebSocketServer::new(GetWorkServer::new(
                 blockchain.clone(),
                 config.getwork.getwork_rate_limit_ms,
                 config.getwork.getwork_notify_job_concurrency
-            ))
+            )))
         } else {
             None
         };
@@ -171,7 +160,7 @@ impl<S: Storage> DaemonRpcServer<S> {
         }
     }
 
-    pub fn getwork_server(&self) -> &Option<SharedGetWorkServer<S>> {
+    pub fn getwork_server(&self) -> &Option<WebSocketServerShared<GetWorkServer<S>>> {
         &self.getwork
     }
 }
@@ -194,36 +183,9 @@ async fn index() -> impl Responder {
     HttpResponse::Ok().body(format!("Hello, world!\nRunning on: {}", config::VERSION))
 }
 
-async fn getwork_endpoint<S: Storage>(server: Data<DaemonRpcServer<S>>, request: HttpRequest, stream: Payload, path: Path<(String, String)>) -> Result<HttpResponse, Error> {
+async fn getwork_endpoint<S: Storage>(server: Data<DaemonRpcServer<S>>, request: HttpRequest, stream: Payload) -> Result<HttpResponse, Error> {
     match &server.getwork {
-        Some(getwork) => {
-            let (addr, worker) = path.into_inner();
-            if worker.len() > 32 {
-                return Ok(HttpResponse::BadRequest().body("Worker name must be less or equal to 32 chars"))
-            }
-
-            let address: Address = match Address::from_string(&addr) {
-                Ok(address) => address,
-                Err(e) => {
-                    debug!("Invalid miner address for getwork server: {}", e);
-                    return Ok(HttpResponse::BadRequest().body("Invalid miner address for getwork server"))
-                }
-            };
-            if !address.is_normal() {
-                return Ok(HttpResponse::BadRequest().body("Address should be in normal format"))
-            }
-
-            let network = server.get_rpc_handler().get_data().get_network();
-            if address.is_mainnet() != network.is_mainnet() {
-                return Ok(HttpResponse::BadRequest().body(format!("Address is not in same network state, should be in {} mode", network.to_string().to_lowercase())))
-            }
-
-            let key = address.to_public_key();
-            let (addr, response) = WsResponseBuilder::new(GetWorkWebSocketHandler::new(getwork.clone()), &request, stream).start_with_addr()?;
-            trace!("New miner connected to GetWork WebSocket: {:?}", addr);
-            getwork.add_miner(addr, key, worker).await;
-            Ok(response)
-        },
+        Some(getwork) => getwork.handle_connection(request, stream).await,
         None => Ok(HttpResponse::NotFound().reason("GetWork server is not enabled").finish()) // getwork server is not started
     }
 }

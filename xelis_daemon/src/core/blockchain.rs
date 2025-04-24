@@ -1437,7 +1437,7 @@ impl<S: Storage> Blockchain<S> {
                 if let Some(getwork) = rpc.getwork_server() {
                     let getwork = getwork.clone();
                     spawn_task("tx-notify-new-job", async move {
-                        if let Err(e) = getwork.notify_new_job_rate_limited().await {
+                        if let Err(e) = getwork.get_handler().notify_new_job_rate_limited().await {
                             debug!("Error while notifying miners for new tx: {}", e);
                         }
                     });
@@ -2644,7 +2644,7 @@ impl<S: Storage> Blockchain<S> {
                 if let Some(getwork) = rpc.getwork_server() {
                     let getwork = getwork.clone();
                     spawn_task("notify-new-job", async move {
-                        if let Err(e) = getwork.notify_new_job().await {
+                        if let Err(e) = getwork.get_handler().notify_new_job().await {
                             debug!("Error while notifying new job to miners: {}", e);
                         }
                     });
