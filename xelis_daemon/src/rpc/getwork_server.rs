@@ -104,7 +104,7 @@ pub struct Miner {
     // worker name
     name: String,
     // blocks accepted by us since he is connected
-    blocks_accepted: IndexSet<Hash>,
+    blocks_accepted: IndexSet<Arc<Hash>>,
     // blocks rejected since he is connected
     blocks_rejected: usize,
     // timestamp of the last invalid block received
@@ -377,7 +377,7 @@ impl<S: Storage> GetWorkServer<S> {
     // we retrieve the block header saved in cache using the mining job "header_work_hash"
     // its used to check that the job come from our server
     // when it's found, we merge the miner job inside the block header
-    async fn accept_miner_job(&self, job: MinerWork<'_>) -> Result<(Response, Hash), InternalRpcError> {
+    async fn accept_miner_job(&self, job: MinerWork<'_>) -> Result<(Response, Arc<Hash>), InternalRpcError> {
         trace!("accept miner job");
         if job.get_miner().is_none() {
             return Err(InternalRpcError::InvalidJSONRequest);
@@ -397,9 +397,11 @@ impl<S: Storage> GetWorkServer<S> {
             };
         }
 
-        let block = self.blockchain.build_block_from_header(Immutable::Owned(miner_header)).await.context("Error while building block from header")?;
-        let block_hash = block.hash();
-        Ok(match self.blockchain.add_new_block(block, None, true, true).await {
+        let block = self.blockchain.build_block_from_header(Immutable::Owned(miner_header)).await
+            .context("Error while building block from header")?;
+        let block_hash = Arc::new(block.hash());
+
+        Ok(match self.blockchain.add_new_block(block, Some(Immutable::Arc(block_hash.clone())), true, true).await {
             Ok(_) => (Response::BlockAccepted, block_hash),
             Err(e) => {
                 debug!("Error while accepting miner block: {}", e);
