@@ -894,17 +894,21 @@ impl<S: Storage> P2pServer<S> {
     // he have the blocks we need
     async fn select_random_best_peer(&self, fast_sync: bool, previous_peer: Option<(u64, bool, bool)>) -> Result<Option<Arc<Peer>>, BlockchainError> {
         trace!("select random best peer");
-        
-        let our_height = self.blockchain.get_height();
-        let our_topoheight = self.blockchain.get_topo_height();
 
         // Search our cumulative difficulty
-        let our_cumulative_difficulty = {
+        let (our_height, our_topoheight, our_cumulative_difficulty) = {
             debug!("locking storage to search our cumulative difficulty");
             let storage = self.blockchain.get_storage().read().await;
+
+            // We read those after having the storage locked to prevent issue
+            let our_height = self.blockchain.get_height();
+            let our_topoheight = self.blockchain.get_topo_height();
+
             debug!("storage locked for cumulative difficulty");
             let hash = storage.get_hash_at_topo_height(our_topoheight).await?;
-            storage.get_cumulative_difficulty_for_block_hash(&hash).await?
+            let our_cumulative_difficulty = storage.get_cumulative_difficulty_for_block_hash(&hash).await?;
+
+            (our_height, our_topoheight, our_cumulative_difficulty)
         };
 
         debug!("cloning peer list for select random best peer");
