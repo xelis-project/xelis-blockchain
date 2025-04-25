@@ -312,6 +312,7 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
     command_manager.add_command(Command::with_required_arguments("temp_ban_address", "Temporarily ban an address in ip:port format", vec![Arg::new("address", ArgType::String), Arg::new("duration", ArgType::String)], CommandHandler::Async(async_handler!(temp_ban_address::<S>))))?;
     command_manager.add_command(Command::new("clear_caches", "Clear storage caches", CommandHandler::Async(async_handler!(clear_caches::<S>))))?;
     command_manager.add_command(Command::new("clear_rpc_connections", "Clear all WS connections from RPC", CommandHandler::Async(async_handler!(clear_rpc_connections::<S>))))?;
+    command_manager.add_command(Command::new("clear_getwork_connections", "Clear all WS connections from GetWork", CommandHandler::Async(async_handler!(clear_miners_connections::<S>))))?;
     command_manager.add_command(Command::new("clear_p2p_connections", "Clear all P2P connections", CommandHandler::Async(async_handler!(clear_p2p_connections::<S>))))?;
     command_manager.add_command(Command::new("clear_p2p_peerlist", "Clear P2P peerlist", CommandHandler::Async(async_handler!(clear_p2p_peerlist::<S>))))?;
     command_manager.add_command(Command::with_optional_arguments("difficulty_dataset", "Create a dataset for difficulty from chain", vec![Arg::new("output", ArgType::String)], CommandHandler::Async(async_handler!(difficulty_dataset::<S>))))?;
@@ -1184,6 +1185,26 @@ async fn clear_rpc_connections<S: Storage>(manager: &CommandManager, _: Argument
         },
         None => {
             manager.error("RPC is not enabled");
+        }
+    };
+
+    Ok(())
+}
+
+async fn clear_miners_connections<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
+    let context = manager.get_context().lock()?;
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    match blockchain.get_rpc().read().await.as_ref().and_then(|rpc| rpc.getwork_server().as_ref()) {
+        Some(getwork) => match getwork.clear_connections().await {
+            Ok(_) => {
+                manager.message("All GetWork connections cleared");
+            },
+            Err(e) => {
+                manager.error(format!("Error while clearing GetWork connections: {}", e));
+            }
+        },
+        None => {
+            manager.error("GetWork is not enabled");
         }
     };
 
