@@ -14,7 +14,13 @@ use xelis_common::{
     block::Block
 };
 use crate::config::BLOCK_TIME_MILLIS;
-use super::{blockchain::Blockchain, storage::Storage};
+use super::{
+    blockchain::{
+        Blockchain,
+        BroadcastOption
+    },
+    storage::Storage
+};
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum Simulator {
@@ -102,7 +108,7 @@ impl Simulator {
 
             // Add all blocks to the chain
             for block in blocks {
-                match blockchain.add_new_block(block, None, false, false).await {
+                match blockchain.add_new_block(block, None, BroadcastOption::None, false).await {
                     Ok(_) => {},
                     Err(e) => {
                         error!("Error while adding block: {}", e);

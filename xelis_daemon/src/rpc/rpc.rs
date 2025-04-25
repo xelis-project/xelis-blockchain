@@ -9,7 +9,8 @@ use crate::{
         blockchain::{
             get_block_dev_fee,
             get_block_reward,
-            Blockchain
+            Blockchain,
+            BroadcastOption
         },
         hard_fork::get_pow_algorithm_for_version,
         error::BlockchainError,
@@ -528,7 +529,7 @@ async fn submit_block<S: Storage>(context: &Context, body: Value) -> Result<Valu
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
 
     let block = blockchain.build_block_from_header(Immutable::Owned(header)).await?;
-    blockchain.add_new_block(block, None, true, true).await?;
+    blockchain.add_new_block(block, None, BroadcastOption::All, true).await?;
     Ok(json!(true))
 }
 

@@ -16,6 +16,7 @@ use xelis_common::{
 use crate::{
     config::{CHAIN_SYNC_TOP_BLOCKS, STABLE_LIMIT},
     core::{
+        blockchain::BroadcastOption,
         error::BlockchainError,
         hard_fork,
         storage::Storage
@@ -209,7 +210,7 @@ impl<S: Storage> P2pServer<S> {
                 // Assemble back the block and add it to the chain
                 let block = Block::new(Immutable::Arc(header), transactions);
                 // don't broadcast block because it's syncing
-                self.blockchain.add_new_block(block, Some(Immutable::Owned(hash)), false, false).await?;
+                self.blockchain.add_new_block(block, Some(Immutable::Owned(hash)), BroadcastOption::Miners, false).await?;
             } else {
                 // We need to re execute it to make sure it's in DAG
                 let mut storage = self.blockchain.get_storage().write().await;
@@ -223,7 +224,7 @@ impl<S: Storage> P2pServer<S> {
                             }
 
                             warn!("Block {} is already in chain but not in DAG, re-executing it", hash);
-                            self.blockchain.add_new_block_for_storage(&mut storage, block, Some(Immutable::Owned(hash)), false, false).await?;
+                            self.blockchain.add_new_block_for_storage(&mut storage, block, Some(Immutable::Owned(hash)), BroadcastOption::Miners, false).await?;
                         },
                         Err(e) => {
                             // This shouldn't happen, but in case
@@ -531,7 +532,7 @@ impl<S: Storage> P2pServer<S> {
                                 Ok(Some((block, hash))) => {
                                     blocks_processed += 1;
                                     total_requested += 1;
-                                    if let Err(e) = self.blockchain.add_new_block(block, Some(Immutable::Owned(hash)), false, false).await {
+                                    if let Err(e) = self.blockchain.add_new_block(block, Some(Immutable::Owned(hash)), BroadcastOption::Miners, false).await {
                                         // We need to drop the future before in case we have any future holding a mutex guard
                                         drop(futures);
 
@@ -562,7 +563,7 @@ impl<S: Storage> P2pServer<S> {
                         if let OwnedObjectResponse::Block(block, hash) = response {
                             trace!("Received block {} at height {} from {}", hash, block.get_height(), peer);
                             // Trust the block hash as we computed it for the owned object response
-                            self.blockchain.add_new_block(block, Some(Immutable::Owned(hash)), false, false).await?;
+                            self.blockchain.add_new_block(block, Some(Immutable::Owned(hash)), BroadcastOption::Miners, false).await?;
                         } else {
                             error!("{} sent us an invalid block response", peer);
                             return Err(P2pError::ExpectedBlock(response).into())
@@ -598,7 +599,7 @@ impl<S: Storage> P2pServer<S> {
 
                         warn!("Block {} is already in chain but not in DAG, re-executing it", hash);
                         // We trust block hash because that block was already stored with such hash
-                        self.blockchain.add_new_block(block, Some(Immutable::Owned(hash)), false, false).await?;
+                        self.blockchain.add_new_block(block, Some(Immutable::Owned(hash)), BroadcastOption::Miners, false).await?;
                     }
                 }
             }

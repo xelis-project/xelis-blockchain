@@ -129,6 +129,26 @@ use super::storage::{
     PrunedTopoheightProvider,
 };
 
+#[derive(Debug, Clone, Copy)]
+pub enum BroadcastOption {
+    // P2P + Miners
+    All,
+    // GetWork
+    Miners,
+    // None of them
+    None,
+}
+
+impl BroadcastOption {
+    pub fn miners(&self) -> bool {
+        !matches!(self, Self::None)
+    }
+
+    pub fn p2p(&self) -> bool {
+        matches!(self, Self::All)
+    }
+}
+
 pub struct Blockchain<S: Storage> {
     // current block height
     height: AtomicU64,
@@ -559,7 +579,7 @@ impl<S: Storage> Blockchain<S> {
         storage.set_topo_height_for_block(&genesis_hash, 0).await?;
         storage.set_top_height(0)?;
 
-        self.add_new_block_for_storage(&mut *storage, genesis_block, None, false, false).await?;
+        self.add_new_block_for_storage(&mut *storage, genesis_block, None, BroadcastOption::Miners, false).await?;
 
         Ok(())
     }
@@ -1694,7 +1714,7 @@ impl<S: Storage> Blockchain<S> {
     }
 
     // Add a new block in chain
-    pub async fn add_new_block(&self, block: Block, block_hash: Option<Immutable<Hash>>, broadcast: bool, mining: bool) -> Result<(), BlockchainError> {
+    pub async fn add_new_block(&self, block: Block, block_hash: Option<Immutable<Hash>>, broadcast: BroadcastOption, mining: bool) -> Result<(), BlockchainError> {
         debug!("locking storage to add a new block in chain");
         let mut storage = self.storage.write().await;
         debug!("storage lock acquired for new block to add");
@@ -1702,7 +1722,7 @@ impl<S: Storage> Blockchain<S> {
     }
 
     // Add a new block in chain using the requested storage
-    pub async fn add_new_block_for_storage(&self, storage: &mut S, block: Block, block_hash: Option<Immutable<Hash>>, broadcast: bool, mining: bool) -> Result<(), BlockchainError> {
+    pub async fn add_new_block_for_storage(&self, storage: &mut S, block: Block, block_hash: Option<Immutable<Hash>>, broadcast: BroadcastOption, mining: bool) -> Result<(), BlockchainError> {
         let start = Instant::now();
 
         // Expected version for this block
@@ -2047,7 +2067,7 @@ impl<S: Storage> Blockchain<S> {
         };
 
         // Broadcast to p2p nodes the block asap as its valid
-        if broadcast {
+        if broadcast.p2p() {
             debug!("Broadcasting block");
             if let Some(p2p) = self.p2p.read().await.as_ref() {
                 trace!("P2p locked, broadcasting in new task");
@@ -2629,7 +2649,7 @@ impl<S: Storage> Blockchain<S> {
 
         info!("Processed block {} at height {} in {}ms with {} txs (DAG: {})", block_hash, block.get_height(), start.elapsed().as_millis(), block.get_txs_count(), block_is_ordered);
 
-        if let Some(p2p) = self.p2p.read().await.as_ref().filter(|_| broadcast) {
+        if let Some(p2p) = self.p2p.read().await.as_ref().filter(|_| broadcast.p2p()) {
             trace!("P2p locked, ping peers");
             let p2p = p2p.clone();
             spawn_task("notify-ping-peers", async move {
@@ -2640,7 +2660,7 @@ impl<S: Storage> Blockchain<S> {
         // broadcast to websocket new block
         if let Some(rpc) = rpc_server.as_ref() {
             // if we have a getwork server, and that its not from syncing, notify miners
-            if broadcast {
+            if broadcast.miners() {
                 if let Some(getwork) = rpc.getwork_server() {
                     let getwork = getwork.clone();
                     spawn_task("notify-new-job", async move {

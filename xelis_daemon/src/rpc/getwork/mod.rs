@@ -46,7 +46,7 @@ use xelis_common::{
 };
 use crate::{
     config::{DEV_PUBLIC_KEY, STABLE_LIMIT},
-    core::{blockchain::Blockchain,
+    core::{blockchain::{Blockchain, BroadcastOption},
         hard_fork::get_pow_algorithm_for_version,
         storage::Storage
     }
@@ -343,7 +343,7 @@ impl<S: Storage> GetWorkServer<S> {
             .context("Error while building block from header")?;
         let block_hash = Arc::new(block.hash());
 
-        Ok(match self.blockchain.add_new_block(block, Some(Immutable::Arc(block_hash.clone())), true, true).await {
+        Ok(match self.blockchain.add_new_block(block, Some(Immutable::Arc(block_hash.clone())), BroadcastOption::All, true).await {
             Ok(_) => BlockResult::Accepted(block_hash),
             Err(e) => {
                 debug!("Error while accepting miner block: {}", e);

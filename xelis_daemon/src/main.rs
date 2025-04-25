@@ -47,30 +47,27 @@ use xelis_common::{
         format_difficulty
     }
 };
-use crate::{
-    core::{
-        config::Config as InnerConfig,
-        blockchain::{
-            Blockchain,
-            get_block_reward
-        },
-        storage::{
-            Storage,
-            SledStorage
-        }
-    },
-    config::{
-        BLOCK_TIME_MILLIS,
-        MILLIS_PER_SECOND
-    }
+use crate::config::{
+    BLOCK_TIME_MILLIS,
+    MILLIS_PER_SECOND
 };
 use core::{
+    config::Config as InnerConfig,
+    blockchain::{
+        Blockchain,
+        BroadcastOption,
+        get_block_reward
+    },
+    storage::{
+        Storage,
+        SledStorage,
+        StorageMode,
+    },
     blockdag,
     hard_fork::{
         get_pow_algorithm_for_version,
         get_version_at_height
     },
-    storage::StorageMode
 };
 use std::{
     fs::File,
@@ -1401,7 +1398,7 @@ async fn mine_block<S: Storage>(manager: &CommandManager, mut arguments: Argumen
         manager.message(format!("Block mined: {}", block_hash));
 
         let mut storage = blockchain.get_storage().write().await;
-        blockchain.add_new_block_for_storage(&mut *storage, block, Some(Immutable::Owned(block_hash)), true, true).await
+        blockchain.add_new_block_for_storage(&mut *storage, block, Some(Immutable::Owned(block_hash)), BroadcastOption::All, true).await
             .context("Error while adding block to chain")?;
     }
     Ok(())

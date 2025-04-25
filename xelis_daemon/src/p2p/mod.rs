@@ -49,7 +49,7 @@ use xelis_common::{
 use crate::{
     config::*,
     core::{
-        blockchain::Blockchain,
+        blockchain::{Blockchain, BroadcastOption},
         error::BlockchainError,
         hard_fork,
         storage::Storage
@@ -1418,7 +1418,7 @@ impl<S: Storage> P2pServer<S> {
                     // add immediately the block to chain as we are synced with
                     let block = Block::new(Immutable::Owned(header), txs);
                     debug!("Adding received block {} from {} to chain", block_hash, peer);
-                    if let Err(e) = self.blockchain.add_new_block(block, Some(Immutable::Arc(block_hash)), true, false).await {
+                    if let Err(e) = self.blockchain.add_new_block(block, Some(Immutable::Arc(block_hash)), BroadcastOption::All, false).await {
                         error!("Error while adding new block from {}: {}", peer, e);
                         peer.increment_fail_count();
                     }
