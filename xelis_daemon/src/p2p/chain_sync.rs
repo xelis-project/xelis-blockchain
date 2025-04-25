@@ -615,7 +615,7 @@ impl<S: Storage> P2pServer<S> {
             // It may means we are up to date
             // Notify all peers about our new state
             if total_requested > 0 && blocks_len < requested_max_size {
-                self.ping_peers().await;   
+                self.ping_peers().await;
             }
         }
 

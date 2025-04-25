@@ -168,13 +168,13 @@ impl<S: Storage> GetWorkServer<S> {
             let mut hash = self.last_header_hash.lock().await;
             let mut mining_jobs = self.mining_jobs.lock().await;
             let (version, job, height, difficulty);
+
             // if we have a job in cache, and we are rate limited, we can send it
             // otherwise, we generate a new job
             if let Some(hash) = hash.as_ref().filter(|_| self.is_rate_limited()) {
-                let (header, diff) = mining_jobs.peek(hash).ok_or_else(|| {
-                    error!("No mining job found! How is it possible ?");
-                    InternalRpcError::InternalError("No mining job found")
-                })?;
+                let (header, diff) = mining_jobs.peek(hash)
+                    .ok_or(InternalRpcError::InternalError("No mining job found"))?;
+
                 job = MinerWork::new(header.get_work_hash(), get_current_time_in_millis());
                 height = header.get_height();
                 version = header.get_version();
