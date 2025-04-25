@@ -1,5 +1,6 @@
 mod snapshot;
 mod migrations;
+mod providers;
 
 use async_trait::async_trait;
 use indexmap::IndexSet;

@@ -23,6 +23,7 @@ chacha20poly1305 = "0.10.1"
 x25519-dalek = { version = "2.0.1", features = ["serde", "zeroize", "static_secrets"] }
 xelis-environment = { git = "https://github.com/xelis-project/xelis-vm", branch = "dev" }
 xelis-vm = { git = "https://github.com/xelis-project/xelis-vm", branch = "dev" }
+rocksdb = "0.23.0"
 
 # Common dependencies
 tokio = { version = "1", features = ["rt-multi-thread", "io-util", "io-std", "time", "macros", "sync", "net"] }
@@ -39,3 +40,4 @@ semver = "1.0.23"
 futures = "0.3.31"
 itertools = "0.14.0"
 async-scoped = { version = "0.9.0", features = ["use-tokio"] }
+strum = { version = "0.27.1", features = ["derive"] }

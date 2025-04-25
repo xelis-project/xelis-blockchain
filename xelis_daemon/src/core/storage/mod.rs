@@ -1,10 +1,12 @@
 mod providers;
 mod sled;
+mod rocksdb;
 mod cache;
 
 pub use self::{
     sled::*,
-    providers::*
+    providers::*,
+    rocksdb::*
 };
 
 use std::{collections::HashSet, sync::Arc};
