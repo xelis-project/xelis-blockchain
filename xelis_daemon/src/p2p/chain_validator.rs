@@ -175,6 +175,7 @@ impl<'a, S: Storage> ChainValidator<'a, S> {
         let (_, cumulative_difficulty) = self.blockchain.find_tip_work_score(
             &provider,
             &hash,
+            header.get_tips().iter(),
             Some(difficulty.clone()),
             &base,
             base_height

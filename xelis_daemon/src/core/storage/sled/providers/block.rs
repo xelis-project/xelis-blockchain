@@ -4,7 +4,7 @@ use log::{debug, trace};
 use xelis_common::{
     block::{Block, BlockHeader},
     crypto::Hash,
-    difficulty::Difficulty,
+    difficulty::{CumulativeDifficulty, Difficulty},
     immutable::Immutable,
     serializer::Serializer,
     transaction::Transaction,
@@ -57,7 +57,7 @@ impl BlockProvider for SledStorage {
         self.contains_data_cached(&self.blocks, &self.blocks_cache, hash).await
     }
 
-    async fn save_block(&mut self, block: Arc<BlockHeader>, txs: &Vec<Immutable<Transaction>>, difficulty: Difficulty, p: VarUint, hash: Hash) -> Result<(), BlockchainError> {
+    async fn save_block(&mut self, block: Arc<BlockHeader>, txs: &Vec<Immutable<Transaction>>, difficulty: Difficulty, cumulative_difficulty: CumulativeDifficulty, p: VarUint, hash: Immutable<Hash>) -> Result<(), BlockchainError> {
         debug!("Storing new {} with hash: {}, difficulty: {}, snapshot mode: {}", block, hash, difficulty, self.snapshot.is_some());
 
         // Store transactions
@@ -84,13 +84,18 @@ impl BlockProvider for SledStorage {
         // Store difficulty
         Self::insert_into_disk(self.snapshot.as_mut(), &self.difficulty, hash.as_bytes(), difficulty.to_bytes())?;
 
+        // Store cumulative difficulty
+        Self::insert_into_disk(self.snapshot.as_mut(), &self.cumulative_difficulty, hash.as_bytes(), cumulative_difficulty.to_bytes())?;
+
         // Store P
         Self::insert_into_disk(self.snapshot.as_mut(), &self.difficulty_covariance, hash.as_bytes(), p.to_bytes())?;
 
-        self.add_block_hash_at_height(hash.clone(), block.get_height()).await?;
+        // TODO: no clone
+        self.add_block_hash_at_height(hash.to_owned(), block.get_height()).await?;
 
         if let Some(cache) = self.blocks_cache.as_mut() {
-            cache.get_mut().put(hash, block);
+            // TODO: no clone
+            cache.get_mut().put(hash.into_owned(), block);
         }
 
         Ok(())

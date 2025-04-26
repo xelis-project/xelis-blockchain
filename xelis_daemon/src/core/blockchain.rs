@@ -1139,6 +1139,7 @@ impl<S: Storage> Blockchain<S> {
         &self,
         provider: &P,
         block_hash: &Hash,
+        block_tips: impl Iterator<Item = &Hash>,
         block_difficulty: Option<Difficulty>,
         base_block: &Hash,
         base_block_height: u64
@@ -1146,6 +1147,7 @@ impl<S: Storage> Blockchain<S> {
     where
         P: DifficultyProvider + DagOrderProvider
     {
+        trace!("find tip work score for {} at base {}", block_hash, base_block);
         let mut cache = self.tip_work_score_cache.lock().await;
         if let Some(value) = cache.get(&(block_hash.clone(), base_block.clone(), base_block_height)) {
             trace!("Found tip work score in cache: set [{}], height: {}", value.0.iter().map(|h| h.to_string()).collect::<Vec<String>>().join(", "), value.1);
@@ -1161,9 +1163,8 @@ impl<S: Storage> Blockchain<S> {
 
         map.insert(block_hash.clone(), block_difficulty);
 
-        let tips = provider.get_past_blocks_for_block_hash(block_hash).await?;
         let base_topoheight = provider.get_topo_height_for_hash(base_block).await?;
-        for hash in tips.iter() {
+        for hash in block_tips {
             if !map.contains_key(hash) {
                 let is_ordered = provider.is_block_topological_ordered(hash).await;
                 if !is_ordered || (is_ordered && provider.get_topo_height_for_hash(hash).await? >= base_topoheight) {
@@ -1198,7 +1199,8 @@ impl<S: Storage> Blockchain<S> {
 
         let mut scores = Vec::with_capacity(tips.len());
         for hash in tips {
-            let (_, cumulative_difficulty) = self.find_tip_work_score(provider, hash, None, base, base_height).await?;
+            let block_tips = provider.get_past_blocks_for_block_hash(hash).await?;
+            let (_, cumulative_difficulty) = self.find_tip_work_score(provider, hash, block_tips.iter(), None, base, base_height).await?;
             scores.push((hash, cumulative_difficulty));
         }
 
@@ -2057,10 +2059,11 @@ impl<S: Storage> Blockchain<S> {
         } else {
             debug!("Computing cumulative difficulty for block {}", block_hash);
             let (base, base_height) = self.find_common_base(storage, block.get_tips()).await?;
-            debug!("Common base found: {}, height: {}", base, base_height);
+            debug!("Common base found: {}, height: {}, calculating cumulative difficulty", base, base_height);
             self.find_tip_work_score(
                 storage,
                 &block_hash,
+                block.get_tips().iter(),
                 Some(difficulty),
                 &base,
                 base_height
