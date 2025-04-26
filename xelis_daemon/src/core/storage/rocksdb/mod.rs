@@ -6,7 +6,7 @@ use anyhow::Context;
 use log::trace;
 use rocksdb::{ColumnFamilyDescriptor, DBWithThreadMode, IteratorMode, MultiThreaded, Options, SliceTransform};
 use strum::IntoEnumIterator;
-use xelis_common::serializer::Serializer;
+use xelis_common::{network::Network, serializer::Serializer};
 use crate::core::error::{BlockchainError, DiskContext};
 
 pub use column::*;
@@ -21,10 +21,11 @@ macro_rules! cf_handle {
 
 pub struct RocksStorage {
     db: DBWithThreadMode<MultiThreaded>,
+    network: Network,
 }
 
 impl RocksStorage {
-    pub fn new() -> Self {
+    pub fn new(network: Network) -> Self {
         let cfs = Column::iter()
             .map(|column| {
                 let name = column.to_string();
@@ -45,7 +46,8 @@ impl RocksStorage {
             .expect("Failed to open RocksDB");
 
         Self {
-            db
+            db,
+            network
         }
     }
 
@@ -53,11 +55,29 @@ impl RocksStorage {
         trace!("load cache from disk");
     }
 
+    pub(super) fn insert_into_disk<K: Serializer, V: Serializer>(&self, column: Column, key: &K, value: &V) -> Result<(), BlockchainError> {
+        let cf = cf_handle!(self, column);
+
+        self.db.put_cf(&cf, key.to_bytes(), value.to_bytes())
+            .with_context(|| format!("Error while inserting into disk column {:?}", column))?;
+
+        Ok(())
+    }
+
+    pub fn contains_data<K: Serializer>(&self, column: Column, key: &K) -> Result<bool, BlockchainError> {
+        let cf = cf_handle!(self, column);
+
+        let value = self.db.get_pinned_cf(&cf, key.to_bytes())
+            .with_context(|| format!("Error while checking if key exists in column {:?}", column))?;
+
+        Ok(value.is_some())
+    }
+
     pub fn load_optional_from_disk<T: Serializer>(&self, column: Column, key: &[u8]) -> Result<Option<T>, BlockchainError> {
         trace!("load optional from disk internal");
 
         let cf = cf_handle!(self, column);
-        match self.db.get_cf(&cf, key)
+        match self.db.get_pinned_cf(&cf, key)
             .with_context(|| format!("Internal error while reading Column {:?}", column))? {
             Some(bytes) => Ok(Some(T::from_bytes(&bytes)?)),
             None => Ok(None)

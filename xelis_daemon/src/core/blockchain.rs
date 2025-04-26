@@ -1135,19 +1135,34 @@ impl<S: Storage> Blockchain<S> {
     }
 
     // find the sum of work done
-    pub async fn find_tip_work_score<P>(&self, provider: &P, hash: &Hash, base: &Hash, base_height: u64) -> Result<(HashSet<Hash>, CumulativeDifficulty), BlockchainError>
+    pub async fn find_tip_work_score<P>(
+        &self,
+        provider: &P,
+        block_hash: &Hash,
+        block_difficulty: Option<Difficulty>,
+        base_block: &Hash,
+        base_block_height: u64
+    ) -> Result<(HashSet<Hash>, CumulativeDifficulty), BlockchainError>
     where
         P: DifficultyProvider + DagOrderProvider
     {
         let mut cache = self.tip_work_score_cache.lock().await;
-        if let Some(value) = cache.get(&(hash.clone(), base.clone(), base_height)) {
+        if let Some(value) = cache.get(&(block_hash.clone(), base_block.clone(), base_block_height)) {
             trace!("Found tip work score in cache: set [{}], height: {}", value.0.iter().map(|h| h.to_string()).collect::<Vec<String>>().join(", "), value.1);
             return Ok(value.clone())
         }
 
-        let tips = provider.get_past_blocks_for_block_hash(hash).await?;
         let mut map: HashMap<Hash, CumulativeDifficulty> = HashMap::new();
-        let base_topoheight = provider.get_topo_height_for_hash(base).await?;
+        let block_difficulty = if let Some(diff) = block_difficulty {
+            diff
+        } else {
+            provider.get_difficulty_for_block_hash(&block_hash).await?
+        };
+
+        map.insert(block_hash.clone(), block_difficulty);
+
+        let tips = provider.get_past_blocks_for_block_hash(block_hash).await?;
+        let base_topoheight = provider.get_topo_height_for_hash(base_block).await?;
         for hash in tips.iter() {
             if !map.contains_key(hash) {
                 let is_ordered = provider.is_block_topological_ordered(hash).await;
@@ -1157,10 +1172,9 @@ impl<S: Storage> Blockchain<S> {
             }
         }
 
-        if base != hash {
-            map.insert(base.clone(), provider.get_cumulative_difficulty_for_block_hash(base).await?);
+        if base_block != block_hash {
+            map.insert(base_block.clone(), provider.get_cumulative_difficulty_for_block_hash(base_block).await?);
         }
-        map.insert(hash.clone(), provider.get_difficulty_for_block_hash(hash).await?.into());
 
         let mut set = HashSet::with_capacity(map.len());
         let mut score = CumulativeDifficulty::zero();
@@ -1170,7 +1184,7 @@ impl<S: Storage> Blockchain<S> {
         }
 
         // save this result in cache
-        cache.put((hash.clone(), base.clone(), base_height), (set.clone(), score));
+        cache.put((block_hash.clone(), base_block.clone(), base_block_height), (set.clone(), score));
 
         Ok((set, score))
     }
@@ -1184,7 +1198,7 @@ impl<S: Storage> Blockchain<S> {
 
         let mut scores = Vec::with_capacity(tips.len());
         for hash in tips {
-            let (_, cumulative_difficulty) = self.find_tip_work_score(provider, hash, base, base_height).await?;
+            let (_, cumulative_difficulty) = self.find_tip_work_score(provider, hash, None, base, base_height).await?;
             scores.push((hash, cumulative_difficulty));
         }
 
@@ -1734,7 +1748,7 @@ impl<S: Storage> Blockchain<S> {
         }
 
         // Either check or use the precomputed one
-        let block_hash = if let Some(hash) = block_hash {
+        let mut block_hash = if let Some(hash) = block_hash {
             hash
         } else {
             Immutable::Owned(block.hash())
@@ -2036,35 +2050,27 @@ impl<S: Storage> Blockchain<S> {
             }
         }
 
-        // Save transactions & block
-        let (block, txs) = block.split();
-        let block = block.to_arc();
-
-        debug!("Saving block {} on disk", block_hash);
-        // Add block to chain
-        // TODO: best would be to not clone block hash
-        storage.save_block(block.clone(), &txs, difficulty, p, block_hash.to_owned()).await?;
-        storage.add_block_execution_to_order(&block_hash).await?;
-
-        let block_hash = block_hash.to_arc();
-        debug!("Block {} saved on disk, compute cumulative difficulty", block_hash);
-
         // Compute cumulative difficulty for block
         // We retrieve it to pass it as a param below for p2p broadcast
-        let cumulative_difficulty = {
-            let cumulative_difficulty: CumulativeDifficulty = if tips_count == 0 {
-                GENESIS_BLOCK_DIFFICULTY.into()
-            } else {
-                debug!("Computing cumulative difficulty for block {}", block_hash);
-                let (base, base_height) = self.find_common_base(storage, block.get_tips()).await?;
-                debug!("Common base found: {}, height: {}", base, base_height);
-                let (_, cumulative_difficulty) = self.find_tip_work_score(storage, &block_hash, &base, base_height).await?;
-                cumulative_difficulty
-            };
-            storage.set_cumulative_difficulty_for_block_hash(&block_hash, cumulative_difficulty).await?;
-            debug!("Cumulative difficulty for block {}: {}", block_hash, cumulative_difficulty);
-            cumulative_difficulty
+        let cumulative_difficulty: CumulativeDifficulty = if tips_count == 0 {
+            GENESIS_BLOCK_DIFFICULTY.into()
+        } else {
+            debug!("Computing cumulative difficulty for block {}", block_hash);
+            let (base, base_height) = self.find_common_base(storage, block.get_tips()).await?;
+            debug!("Common base found: {}, height: {}", base, base_height);
+            self.find_tip_work_score(
+                storage,
+                &block_hash,
+                Some(difficulty),
+                &base,
+                base_height
+            ).await?.1
         };
+        debug!("Cumulative difficulty for block {}: {}", block_hash, cumulative_difficulty);
+
+        let (block, txs) = block.split();
+        let block = block.to_arc();
+        let block_hash = block_hash.into_arc();
 
         // Broadcast to p2p nodes the block asap as its valid
         if broadcast.p2p() {
@@ -2090,6 +2096,13 @@ impl<S: Storage> Blockchain<S> {
         } else {
             debug!("Not broadcasting block {} because broadcast is disabled", block_hash);
         }
+
+        // Save transactions & block
+        debug!("Saving block {} on disk", block_hash);
+        storage.save_block(block.clone(), &txs, difficulty, cumulative_difficulty, p, Immutable::Arc(block_hash.clone())).await?;
+        storage.add_block_execution_to_order(&block_hash).await?;
+
+        debug!("Block {} saved on disk", block_hash);
 
         let mut tips = storage.get_tips().await?;
         // TODO: best would be to not clone

@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use xelis_common::{
     block::{Block, BlockHeader},
     crypto::Hash,
-    difficulty::Difficulty,
+    difficulty::{CumulativeDifficulty, Difficulty},
     immutable::Immutable,
     transaction::Transaction,
     varuint::VarUint
@@ -26,7 +26,9 @@ pub trait BlockProvider: TransactionProvider + DifficultyProvider + BlocksAtHeig
     async fn get_block_by_hash(&self, hash: &Hash) -> Result<Block, BlockchainError>;
 
     // Save a new block with its transactions and difficulty
-    async fn save_block(&mut self, block: Arc<BlockHeader>, txs: &Vec<Immutable<Transaction>>, difficulty: Difficulty, p: VarUint, hash: Hash) -> Result<(), BlockchainError>;
+    // Hash is Immutable to be stored efficiently in caches and sharing the same object
+    // with others caches (like P2p or GetWork)
+    async fn save_block(&mut self, block: Arc<BlockHeader>, txs: &Vec<Immutable<Transaction>>, difficulty: Difficulty, cumulative_difficulty: CumulativeDifficulty, p: VarUint, hash: Immutable<Hash>) -> Result<(), BlockchainError>;
 
     // Delete a block using its hash
     async fn delete_block_with_hash(&mut self, hash: &Hash) -> Result<Block, BlockchainError>;

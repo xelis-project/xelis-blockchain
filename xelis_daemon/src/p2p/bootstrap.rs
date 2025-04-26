@@ -483,8 +483,6 @@ impl<S: Storage> P2pServer<S> {
                             storage.set_burned_supply_at_topo_height(topoheight, metadata.burned_supply)?;
                             storage.set_block_reward_at_topo_height(topoheight, metadata.reward)?;
                             storage.set_topo_height_for_block(&hash, topoheight).await?;
-    
-                            storage.set_cumulative_difficulty_for_block_hash(&hash, metadata.cumulative_difficulty).await?;
 
                             // Mark needed TXs as executed
                             for tx in metadata.executed_transactions {
@@ -496,7 +494,7 @@ impl<S: Storage> P2pServer<S> {
                             }
 
                             // save the block with its transactions, difficulty
-                            storage.save_block(Arc::new(header), &txs, metadata.difficulty, metadata.p, hash).await?;
+                            storage.save_block(Arc::new(header), &txs, metadata.difficulty, metadata.cumulative_difficulty, metadata.p, Immutable::Owned(hash)).await?;
 
                             Ok(())
                         }).await?;

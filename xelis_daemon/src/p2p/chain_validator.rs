@@ -33,7 +33,7 @@ use log::{debug, trace};
 struct BlockData {
     header: Arc<BlockHeader>,
     difficulty: Difficulty,
-    cumulative_difficulty: Option<CumulativeDifficulty>,
+    cumulative_difficulty: CumulativeDifficulty,
     p: VarUint
 }
 
@@ -92,7 +92,7 @@ impl<'a, S: Storage> ChainValidator<'a, S> {
     // It is the cumulative difficulty of the last block added
     pub fn get_chain_cumulative_difficulty(&self) -> Option<&CumulativeDifficulty> {
         let (_, data) = self.blocks.last()?;
-        data.cumulative_difficulty.as_ref()
+        Some(&data.cumulative_difficulty)
     }
 
     // validate the basic chain structure
@@ -171,22 +171,27 @@ impl<'a, S: Storage> ChainValidator<'a, S> {
 
         trace!("Common base: {} at height {} and hash {}", base, base_height, hash);
 
+        // Find the cumulative difficulty for this block
+        let (_, cumulative_difficulty) = self.blockchain.find_tip_work_score(
+            &provider,
+            &hash,
+            Some(difficulty.clone()),
+            &base,
+            base_height
+        ).await?;
+
         // Store the block in both maps
         // One is for blocks at height and the other is for the block data
-        self.blocks_at_height.entry(header.get_height()).or_insert_with(IndexSet::new).insert(hash.clone());
-        self.blocks.insert(hash.clone(), BlockData { header: Arc::new(header), difficulty, cumulative_difficulty: None, p });
+        self.blocks_at_height.entry(header.get_height())
+            .or_insert_with(IndexSet::new)
+            .insert(hash.clone());
 
-        // Re create the provider for the cumulative difficulty below
-        let provider = ChainValidatorProvider {
-            parent: &self,
-            storage: &storage,
-        };
-
-        // Find the cumulative difficulty for this block
-        let (_, cumulative_difficulty) = self.blockchain.find_tip_work_score(&provider, &hash, &base, base_height).await?;
-
-        let entry = self.blocks.get_mut(&hash).ok_or_else(|| BlockchainError::Unknown)?;
-        entry.cumulative_difficulty = Some(cumulative_difficulty);
+        self.blocks.insert(hash.clone(), BlockData {
+            header: Arc::new(header),
+            difficulty,
+            cumulative_difficulty,
+            p
+        });
 
         Ok(())
     }
@@ -232,9 +237,7 @@ impl<S: Storage> DifficultyProvider for ChainValidatorProvider<'_, S> {
     async fn get_cumulative_difficulty_for_block_hash(&self, hash: &Hash) -> Result<CumulativeDifficulty, BlockchainError> {
         trace!("get cumulative difficulty for block hash {}", hash);
         if let Some(data) = self.parent.blocks.get(hash) {
-            if let Some(cumulative_difficulty) = data.cumulative_difficulty {
-                return Ok(cumulative_difficulty)
-            }
+            return Ok(data.cumulative_difficulty)
         }
 
         trace!("fallback on storage for get_cumulative_difficulty_for_block_hash");
@@ -269,14 +272,6 @@ impl<S: Storage> DifficultyProvider for ChainValidatorProvider<'_, S> {
 
         trace!("fallback on storage for get_estimated_covariance_for_block_hash");
         self.storage.get_estimated_covariance_for_block_hash(hash).await
-    }
-
-    async fn set_estimated_covariance_for_block_hash(&mut self, _: &Hash, _: VarUint) -> Result<(), BlockchainError> {
-        Err(BlockchainError::UnsupportedOperation)
-    }
-
-    async fn set_cumulative_difficulty_for_block_hash(&mut self, _: &Hash, _: CumulativeDifficulty) -> Result<(), BlockchainError> {
-        Err(BlockchainError::UnsupportedOperation)
     }
 }
 

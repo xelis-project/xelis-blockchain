@@ -37,10 +37,4 @@ pub trait DifficultyProvider {
 
     // Retrieve the estimated covariance (P) for a block hash
     async fn get_estimated_covariance_for_block_hash(&self, hash: &Hash) -> Result<VarUint, BlockchainError>;
-
-    // Set the estimated covariance (P) for a block hash
-    async fn set_estimated_covariance_for_block_hash(&mut self, hash: &Hash, p: VarUint) -> Result<(), BlockchainError>;
-
-    // Set the cumulative difficulty for a block hash
-    async fn set_cumulative_difficulty_for_block_hash(&mut self, hash: &Hash, cumulative_difficulty: CumulativeDifficulty) -> Result<(), BlockchainError>;
 }

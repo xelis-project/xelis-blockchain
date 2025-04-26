@@ -10,7 +10,6 @@ use xelis_common::{
         Difficulty
     },
     immutable::Immutable,
-    serializer::Serializer,
     time::TimestampMillis,
     varuint::VarUint
 };
@@ -69,20 +68,8 @@ impl DifficultyProvider for SledStorage {
         self.get_cacheable_arc_data(&self.blocks, &self.blocks_cache, hash, DiskContext::GetBlockHeaderByHash).await
     }
 
-    async fn set_cumulative_difficulty_for_block_hash(&mut self, hash: &Hash, cumulative_difficulty: CumulativeDifficulty) -> Result<(), BlockchainError> {
-        trace!("set cumulative difficulty for hash {}", hash);
-        Self::insert_into_disk(self.snapshot.as_mut(), &self.cumulative_difficulty, hash.as_bytes(), cumulative_difficulty.to_bytes())?;
-        Ok(())
-    }
-
     async fn get_estimated_covariance_for_block_hash(&self, hash: &Hash) -> Result<VarUint, BlockchainError> {
         trace!("get p for hash {}", hash);
         self.load_from_disk(&self.difficulty_covariance, hash.as_bytes(), DiskContext::EstimatedCovarianceForBlockHash)
-    }
-
-    async fn set_estimated_covariance_for_block_hash(&mut self, hash: &Hash, p: VarUint) -> Result<(), BlockchainError> {
-        trace!("set p for hash {}", hash);
-        Self::insert_into_disk(self.snapshot.as_mut(), &self.difficulty_covariance, hash.as_bytes(), p.to_bytes())?;
-        Ok(())
     }
 }
