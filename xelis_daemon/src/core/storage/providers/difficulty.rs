@@ -84,7 +84,6 @@ impl DifficultyProvider for SledStorage {
             }
     
             let block = self.get_block_header_by_hash(hash).await?;
-        
             let tips = Arc::new(block.get_tips().clone());
             cache.put(hash.clone(), tips.clone());
             Immutable::Arc(tips)

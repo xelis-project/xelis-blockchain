@@ -167,6 +167,8 @@ pub const PEER_MAX_PACKET_SIZE: u32 = MAX_BLOCK_SIZE as u32 + 16;
 // Peer TX cache size
 // This is how many elements are stored in the LRU cache at maximum
 pub const PEER_TX_CACHE_SIZE: usize = 10240;
+// How many peers propagated are stored per peer in the LRU cache at maximum
+pub const PEER_PEERS_CACHE_SIZE: usize = 1024;
 // Peer Block cache size
 pub const PEER_BLOCK_CACHE_SIZE: usize = 1024;
 // Peer packet channel size
@@ -274,15 +276,15 @@ pub fn get_hex_genesis_block(network: &Network) -> Option<&str> {
 
 lazy_static! {
     // Developer public key is lazily converted from address to support any network
-    pub static ref DEV_PUBLIC_KEY: PublicKey = Address::from_string(&DEV_ADDRESS.to_owned()).unwrap().to_public_key();
+    pub static ref DEV_PUBLIC_KEY: PublicKey = Address::from_string(&DEV_ADDRESS).unwrap().to_public_key();
 }
 
 // Genesis block hash based on network selected
-pub fn get_genesis_block_hash(network: &Network) -> &'static Hash {
+pub fn get_genesis_block_hash(network: &Network) -> Option<&'static Hash> {
     match network {
-        Network::Mainnet => &MAINNET_GENESIS_BLOCK_HASH,
-        Network::Testnet => &TESTNET_GENESIS_BLOCK_HASH,
-        Network::Dev => panic!("Dev network has no fix genesis block hash"),
+        Network::Mainnet => Some(&MAINNET_GENESIS_BLOCK_HASH),
+        Network::Testnet => Some(&TESTNET_GENESIS_BLOCK_HASH),
+        Network::Dev => None
     }
 }
 

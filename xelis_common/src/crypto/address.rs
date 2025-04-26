@@ -153,7 +153,7 @@ impl Address {
     }
 
     // Parse an address from a string (human readable format)
-    pub fn from_string(address: &String) -> Result<Self, Error> {
+    pub fn from_string(address: &str) -> Result<Self, Error> {
         let (hrp, decoded) = decode(address)?;
         // check that hrp is valid one
         if hrp != PREFIX_ADDRESS && hrp != TESTNET_PREFIX_ADDRESS {

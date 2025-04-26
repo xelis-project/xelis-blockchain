@@ -536,6 +536,6 @@ impl Connection {
 
 impl Display for Connection {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::result::Result<(), Error> {
-        write!(f, "Connection[state: {:?}, peer: {}, read: {}, sent: {}, key rotation (in/out): ({}/{}), connected since: {}, closed: {}]", self.state, self.get_address(), human_bytes(self.bytes_in() as f64), human_bytes(self.bytes_out() as f64), self.key_rotation_in(), self.key_rotation_out(), self.get_human_uptime(), self.is_closed())
+        write!(f, "Connection[state: {:?}, addr: {}, read: {}, sent: {}, key rotation (in/out): ({}/{}), connected since: {}, closed: {}]", self.state, self.get_address(), human_bytes(self.bytes_in() as f64), human_bytes(self.bytes_out() as f64), self.key_rotation_in(), self.key_rotation_out(), self.get_human_uptime(), self.is_closed())
     }
 }

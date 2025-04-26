@@ -7,7 +7,6 @@ use std::borrow::Cow;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use bulletproofs::RangeProof;
-use xelis_vm::Module;
 use crate::{
     account::Nonce,
     crypto::{
@@ -24,6 +23,7 @@ use crate::{
         multisig::MultiSig,
         BurnPayload,
         InvokeContractPayload,
+        DeployContractPayload,
         MultiSigPayload,
         Reference,
         SourceCommitment,
@@ -86,7 +86,7 @@ pub enum RPCTransactionType<'a> {
     Burn(Cow<'a, BurnPayload>),
     MultiSig(Cow<'a, MultiSigPayload>),
     InvokeContract(Cow<'a, InvokeContractPayload>),
-    DeployContract(Cow<'a, Module>)
+    DeployContract(Cow<'a, DeployContractPayload>)
 }
 
 impl<'a> RPCTransactionType<'a> {
@@ -110,7 +110,7 @@ impl<'a> RPCTransactionType<'a> {
             TransactionType::Burn(burn) => Self::Burn(Cow::Borrowed(burn)),
             TransactionType::MultiSig(payload) => Self::MultiSig(Cow::Borrowed(payload)),
             TransactionType::InvokeContract(payload) => Self::InvokeContract(Cow::Borrowed(payload)),
-            TransactionType::DeployContract(module) => Self::DeployContract(Cow::Borrowed(module))
+            TransactionType::DeployContract(payload) => Self::DeployContract(Cow::Borrowed(payload))
         }
     }
 }
@@ -124,7 +124,7 @@ impl From<RPCTransactionType<'_>> for TransactionType {
             RPCTransactionType::Burn(burn) => TransactionType::Burn(burn.into_owned()),
             RPCTransactionType::MultiSig(payload) => TransactionType::MultiSig(payload.into_owned()),
             RPCTransactionType::InvokeContract(payload) => TransactionType::InvokeContract(payload.into_owned()),
-            RPCTransactionType::DeployContract(module) => TransactionType::DeployContract(module.into_owned())
+            RPCTransactionType::DeployContract(payload) => TransactionType::DeployContract(payload.into_owned())
         }
     }
 }
@@ -228,20 +228,42 @@ pub enum RPCContractOutput<'a> {
         asset: Cow<'a, Hash>,
         destination: Cow<'a, Address>
     },
+    Mint {
+        asset: Cow<'a, Hash>,
+        amount: u64
+    },
+    Burn {
+        asset: Cow<'a, Hash>,
+        amount: u64
+    },
+    NewAsset {
+        asset: Cow<'a, Hash>
+    },
     ExitCode(Option<u64>),
     RefundDeposits
 }
 
 impl<'a> RPCContractOutput<'a> {
-    pub fn from_output(output: ContractOutput, mainnet: bool) -> Self {
+    pub fn from_output(output: &'a ContractOutput, mainnet: bool) -> Self {
         match output {
-            ContractOutput::RefundGas { amount } => RPCContractOutput::RefundGas { amount },
+            ContractOutput::RefundGas { amount } => RPCContractOutput::RefundGas { amount: *amount },
             ContractOutput::Transfer { amount, asset, destination } => RPCContractOutput::Transfer {
-                amount,
-                asset: Cow::Owned(asset),
-                destination: Cow::Owned(destination.to_address(mainnet))
+                amount: *amount,
+                asset: Cow::Borrowed(asset),
+                destination: Cow::Owned(destination.as_address(mainnet))
             },
-            ContractOutput::ExitCode(code) => RPCContractOutput::ExitCode(code),
+            ContractOutput::Mint { asset, amount } => RPCContractOutput::Mint {
+                asset: Cow::Borrowed(asset),
+                amount: *amount
+            },
+            ContractOutput::Burn { asset, amount } => RPCContractOutput::Burn {
+                asset: Cow::Borrowed(asset),
+                amount: *amount
+            },
+            ContractOutput::NewAsset { asset } => RPCContractOutput::NewAsset {
+                asset: Cow::Borrowed(asset)
+            },
+            ContractOutput::ExitCode(code) => RPCContractOutput::ExitCode(code.clone()),
             ContractOutput::RefundDeposits => RPCContractOutput::RefundDeposits,
         }
     }
@@ -255,6 +277,17 @@ impl<'a> From<RPCContractOutput<'a>> for ContractOutput {
                 amount,
                 asset: asset.into_owned(),
                 destination: destination.into_owned().to_public_key()
+            },
+            RPCContractOutput::Mint { asset, amount } => ContractOutput::Mint {
+                asset: asset.into_owned(),
+                amount
+            },
+            RPCContractOutput::Burn { asset, amount } => ContractOutput::Burn {
+                asset: asset.into_owned(),
+                amount
+            },
+            RPCContractOutput::NewAsset { asset } => ContractOutput::NewAsset {
+                asset: asset.into_owned()
             },
             RPCContractOutput::ExitCode(code) => ContractOutput::ExitCode(code),
             RPCContractOutput::RefundDeposits => ContractOutput::RefundDeposits,

@@ -2,8 +2,9 @@ mod backend;
 mod types;
 
 use std::{
+    cmp::Ordering,
     collections::{HashMap, HashSet, VecDeque},
-    num::NonZeroUsize
+    num::NonZeroUsize,
 };
 use indexmap::IndexMap;
 use lru::LruCache;
@@ -47,7 +48,7 @@ use crate::{
     },
     error::WalletError
 };
-use log::{trace, debug, error};
+use log::{debug, error, trace, warn};
 
 use backend::{Db, Tree};
 
@@ -89,6 +90,10 @@ pub struct EncryptedStorage {
     cipher: Cipher,
     // All transactions where this wallet is part of
     transactions: Tree,
+    // All transactions hashes ordered by topoheight
+    // Key is only a counter incremented by one for each new transaction
+    // Value is the tx hash
+    transactions_indexes: Tree,
     // balances for each asset
     balances: Tree,
     // extra data (network, topoheight, etc)
@@ -117,7 +122,9 @@ pub struct EncryptedStorage {
     // use a stable balance or not
     last_coinbase_reward_topoheight: Option<u64>,
     // Transaction version to use
-    tx_version: TxVersion
+    tx_version: TxVersion,
+    // Multisig state
+    multisig_state: Option<MultiSig>
 }
 
 impl EncryptedStorage {
@@ -125,6 +132,7 @@ impl EncryptedStorage {
         let cipher = Cipher::new(key, Some(salt))?;
         let mut storage = Self {
             transactions: inner.db.open_tree(&cipher.hash_key("transactions"))?,
+            transactions_indexes: inner.db.open_tree(&cipher.hash_key("transactions_indexes"))?,
             balances: inner.db.open_tree(&cipher.hash_key("balances"))?,
             extra: inner.db.open_tree(&cipher.hash_key("extra"))?,
             assets: inner.db.open_tree(&cipher.hash_key("assets"))?,
@@ -137,7 +145,8 @@ impl EncryptedStorage {
             assets_cache: Mutex::new(LruCache::new(NonZeroUsize::new(DEFAULT_CACHE_SIZE).unwrap())),
             synced_topoheight: None,
             last_coinbase_reward_topoheight: None,
-            tx_version: TxVersion::V0
+            tx_version: TxVersion::V0,
+            multisig_state: None
         };
 
         if storage.has_network()? {
@@ -157,6 +166,11 @@ impl EncryptedStorage {
         // Load one-time the transaction version
         if storage.contains_data(&storage.extra, TX_VERSION)? {
             storage.tx_version = storage.load_from_disk(&storage.extra, TX_VERSION)?;
+        }
+
+        // Load one-time the multisig state
+        if storage.contains_data(&storage.extra, MULTISIG)? {
+            storage.multisig_state = Some(storage.load_from_disk(&storage.extra, MULTISIG)?);
         }
 
         Ok(storage)
@@ -204,6 +218,20 @@ impl EncryptedStorage {
             .context(format!("Error while loading data with hashed key {} from disk", String::from_utf8_lossy(key)))
     }
 
+    // Load from disk with key passed
+    fn load_from_disk_with_key<V: Serializer>(&self, tree: &Tree, key: &[u8]) -> Result<V> {
+        trace!("load from disk with key");
+        self.internal_load(tree, key)?
+            .context(format!("Error while loading data with key {} from disk", String::from_utf8_lossy(key)))
+    }
+
+    // Parse encrypted data
+    fn parse_encrypted_data<V: Serializer>(&self, data: &[u8]) -> Result<V> {
+        trace!("parse encrypted data");
+        let decrypted = self.cipher.decrypt_value(data)?;
+        Ok(V::from_bytes(&decrypted)?)
+    }
+
     // Because we can't predict the nonce used for encryption, we make it determistic
     fn create_encrypted_key(&self, key: &[u8]) -> Result<Vec<u8>> {
         trace!("create encrypted key");
@@ -231,16 +259,19 @@ impl EncryptedStorage {
     fn save_to_disk_with_encrypted_key(&self, tree: &Tree, key: &[u8], value: &[u8]) -> Result<()> {
         trace!("save to disk with encrypted key");
         let encrypted_key = self.create_encrypted_key(key)?;
-        let encrypted_value = self.cipher.encrypt_value(value)?;
-        tree.insert(encrypted_key, encrypted_value)?;
-        Ok(())
+        self.save_to_disk_with_key(tree, &encrypted_key, value)
     }
 
     // hash key, encrypt data and then save to disk 
     fn save_to_disk(&self, tree: &Tree, key: &[u8], value: &[u8]) -> Result<()> {
         trace!("save to disk");
         let hashed_key = self.cipher.hash_key(key);
-        tree.insert(hashed_key, self.cipher.encrypt_value(value)?)?;
+        self.save_to_disk_with_key(tree, &hashed_key, value)
+    }
+
+    fn save_to_disk_with_key(&self, tree: &Tree, key: &[u8], value: &[u8]) -> Result<()> {
+        trace!("save to disk with key");
+        tree.insert(key, self.cipher.encrypt_value(value)?)?;
         Ok(())
     }
 
@@ -249,6 +280,13 @@ impl EncryptedStorage {
         trace!("delete from disk");
         let hashed_key = self.cipher.hash_key(key);
         tree.remove(hashed_key)?;
+        Ok(())
+    }
+
+    // delete from disk using a the raw key
+    fn delete_from_disk_with_key(&self, tree: &Tree, key: &[u8]) -> Result<()> {
+        trace!("delete from disk with key");
+        tree.remove(key)?;
         Ok(())
     }
 
@@ -322,11 +360,18 @@ impl EncryptedStorage {
 
     // Search all entries with requested query_key/query_value
     // It has to go through the whole tree elements, decrypt each key/value and verify them against the query filter set
-    pub fn query_db(&self, tree: impl Into<String>, query_key: Option<Query>, query_value: Option<Query>, return_on_first: bool) -> Result<QueryResult> {
+    pub fn query_db(
+        &self,
+        tree: impl Into<String>,
+        query_key: Option<Query>,
+        query_value: Option<Query>,
+        limit: Option<usize>,
+        skip: Option<usize>
+    ) -> Result<QueryResult> {
         trace!("query db");
         let tree = self.get_custom_tree(tree)?;
         let mut entries: IndexMap<DataValue, DataElement> = IndexMap::new();
-        for res in tree.iter() {
+        for res in tree.iter().skip(skip.unwrap_or(0)) {
             let (k, v) = res?;
             let mut key = None;
             let mut value = None;
@@ -364,7 +409,9 @@ impl EncryptedStorage {
             };
 
             entries.insert(key, value);
-            if return_on_first {
+
+            if limit.is_some_and(|max| entries.len() >= max) {
+                trace!("max entries reached");
                 break;
             }
         }
@@ -376,11 +423,17 @@ impl EncryptedStorage {
     }
 
     // Get all keys from the custom
-    pub fn get_custom_tree_keys(&self, tree: &String, query: &Option<Query>) -> Result<Vec<DataValue>> {
+    pub fn get_custom_tree_keys(
+        &self,
+        tree: &str,
+        query: &Option<Query>,
+        limit: Option<usize>,
+        skip: Option<usize>
+    ) -> Result<Vec<DataValue>> {
         trace!("get custom tree keys");
         let tree = self.get_custom_tree(tree)?;
         let mut keys = Vec::new();
-        for e in tree.iter() {
+        for e in tree.iter().skip(skip.unwrap_or(0)) {
             let (key, _) = e?;
             let decrypted = self.cipher.decrypt_value(&key)?;
             let k = DataValue::from_bytes(&decrypted)?;
@@ -390,6 +443,11 @@ impl EncryptedStorage {
                 }
             }
             keys.push(k);
+
+            if limit.is_some_and(|max| keys.len() >= max) {
+                trace!("custom tree keys entries limit reached");
+                break;
+            }
         }
 
         Ok(keys)
@@ -397,7 +455,7 @@ impl EncryptedStorage {
 
     // Count entries from a tree
     // A query is possible to filter on keys
-    pub fn count_custom_tree_entries(&self, tree: &String, query_key: &Option<Query>, query_value: &Option<Query>) -> Result<usize> {
+    pub fn count_custom_tree_entries(&self, tree: &str, query_key: &Option<Query>, query_value: &Option<Query>) -> Result<usize> {
         trace!("count custom tree entries");
         let tree = self.get_custom_tree(tree)?;
         let count = if query_key.is_some() || query_value.is_some() {
@@ -436,6 +494,8 @@ impl EncryptedStorage {
     pub async fn set_multisig_state(&mut self, state: MultiSig) -> Result<()> {
         trace!("set multisig state");
         self.save_to_disk(&self.extra, MULTISIG, &state.to_bytes())?;
+        self.multisig_state = Some(state);
+
         Ok(())
     }
 
@@ -443,24 +503,20 @@ impl EncryptedStorage {
     pub async fn delete_multisig_state(&mut self) -> Result<()> {
         trace!("delete multisig state");
         self.delete_from_disk(&self.extra, MULTISIG)?;
+        self.multisig_state = None;
         Ok(())
     }
 
     // Get the multisig state
-    pub async fn get_multisig_state(&self) -> Result<Option<MultiSig>> {
+    pub async fn get_multisig_state(&self) -> Result<Option<&MultiSig>> {
         trace!("get multisig state");
-        if !self.contains_data(&self.extra, MULTISIG)? {
-            return Ok(None);
-        }
-
-        let state: MultiSig = self.load_from_disk(&self.extra, MULTISIG)?;
-        Ok(Some(state))
+        Ok(self.multisig_state.as_ref())
     }
 
     // Check if the wallet has a multisig state
-    pub async fn has_multi_sig_state(&self) -> Result<bool> {
+    pub async fn has_multisig_state(&self) -> Result<bool> {
         trace!("has multisig state");
-        self.contains_data(&self.extra, MULTISIG)
+        Ok(self.multisig_state.is_some())
     }
 
     // Set the TX Version
@@ -508,14 +564,14 @@ impl EncryptedStorage {
     }
 
     // Retrieve all assets with their data
-    pub async fn get_assets_with_data(&self) -> Result<Vec<(Hash, AssetData)>> {
+    pub async fn get_assets_with_data(&self) -> Result<IndexMap<Hash, AssetData>> {
         trace!("get assets with decimals");
         let mut cache = self.assets_cache.lock().await;
         if cache.len() == self.assets.len() {
             return Ok(cache.iter().map(|(k, v)| (k.clone(), v.clone())).collect());
         }
 
-        let mut assets = Vec::new();
+        let mut assets = IndexMap::new();
         for res in self.assets.iter() {
             let (key, value) = res?;
             let asset = Hash::from_bytes(&self.cipher.decrypt_value(&key)?)?;
@@ -532,7 +588,7 @@ impl EncryptedStorage {
                 data
             };
 
-            assets.push((asset, data));
+            assets.insert(asset, data);
         }
 
         Ok(assets)
@@ -577,6 +633,34 @@ impl EncryptedStorage {
         cache.put(asset.clone(), data.clone());
 
         Ok(data)
+    }
+
+    // Search an asset by name
+    pub async fn get_asset_by_name(&self, name: &str) -> Result<Option<Hash>> {
+        trace!("get asset by name");
+        let cache = self.assets_cache.lock().await;
+        let mut res = None;
+        for (asset, data) in cache.iter() {
+            if data.get_name() == name {
+                res = Some(asset.clone());
+                break;
+            }
+        }
+
+        if res.is_none() {
+            // Check in the DB
+            for el in self.assets.iter() {
+                let (key, value) = el?;
+                let data: AssetData = self.parse_encrypted_data(&value)?;
+                if data.get_name() == name {
+                    let asset: Hash = self.parse_encrypted_data(&key)?;
+                    res = Some(asset);
+                    break;
+                }
+            }
+        }
+
+        Ok(res)
     }
 
     // Set the asset name
@@ -752,42 +836,52 @@ impl EncryptedStorage {
     // read whole disk and returns all transactions
     pub fn get_transactions(&self) -> Result<Vec<TransactionEntry>> {
         trace!("get transactions");
-        self.get_filtered_transactions(None, None, None, None, true, true, true, true, None)
+        self.get_filtered_transactions(None, None, None, None, true, true, true, true, None, None, None)
     }
 
     // Find the last outgoing transaction created
     pub fn get_last_outgoing_transaction(&self) -> Result<Option<TransactionEntry>> {
         trace!("get last transaction created");
         let mut last_tx: Option<TransactionEntry> = None;
-        for res in self.transactions.iter().values() {
-            let value = res?;
-            let entry = TransactionEntry::from_bytes(&self.cipher.decrypt_value(&value)?)?;
-            if !entry.is_outgoing() {
-                continue;
-            }
 
-            if let Some(last) = last_tx.as_ref() {
-                if entry.get_topoheight() > last.get_topoheight() {
-                    last_tx = Some(entry);
-                }
-            } else {
+        for el in self.transactions_indexes.iter().values().rev() {
+            let tx_hash = el?;
+            let entry: TransactionEntry = self.load_from_disk_with_key(&self.transactions, &tx_hash)?;
+            if entry.is_outgoing() {
                 last_tx = Some(entry);
+                break;
             }
         }
 
         Ok(last_tx)
     }
 
+    // Count the number of transactions stored
+    // TODO: replace it by a cached value
+    pub fn get_transactions_count(&self) -> Result<usize> {
+        trace!("get transactions count");
+        Ok(self.transactions.len())
+    }
+
     // delete all transactions above the specified topoheight
     // This will go through each transaction, deserialize it, check topoheight, and delete it if required
     pub fn delete_transactions_above_topoheight(&mut self, topoheight: u64) -> Result<()> {
         trace!("delete transactions above topoheight {}", topoheight);
-        for el in self.transactions.iter().values() {
-            let value = el?;
-            let entry = TransactionEntry::from_bytes(&self.cipher.decrypt_value(&value)?)?;
-            if entry.get_topoheight() > topoheight {
-                self.delete_transaction(entry.get_hash())?;
-            }
+
+        // We search lowest id for topo + 1 to make sure we delete all transactions above the requested topoheight
+        let min = self.search_transaction_id_for_topoheight(topoheight + 1, None, None)?;
+        let iterator = match min {
+            Some(min) => self.transactions_indexes.range(min.to_be_bytes()..),
+            None => self.transactions_indexes.iter()
+        };
+
+        for el in iterator {
+            // tx hash is the value in its hashed form
+            let (id, tx_hash) = el?;
+
+            // Topoheight is passed, we can delete the transaction
+            self.delete_from_disk_with_key(&self.transactions, &tx_hash)?;
+            self.delete_from_disk_with_key(&self.transactions_indexes, &id)?;
         }
 
         Ok(())
@@ -796,51 +890,134 @@ impl EncryptedStorage {
     // delete all transactions at or above the specified topoheight
     pub fn delete_transactions_at_or_above_topoheight(&mut self, topoheight: u64) -> Result<()> {
         trace!("delete transactions at or above topoheight {}", topoheight);
-        for el in self.transactions.iter().values() {
-            let value = el?;
-            let entry = TransactionEntry::from_bytes(&self.cipher.decrypt_value(&value)?)?;
-            if entry.get_topoheight() >= topoheight {
-                self.delete_transaction(entry.get_hash())?;
-            }
+
+        let min = self.search_transaction_id_for_topoheight(topoheight, None, None)?;
+        let iterator = match min {
+            Some(min) => self.transactions_indexes.range(min.to_be_bytes()..),
+            None => self.transactions_indexes.iter()
+        };
+
+        for el in iterator.rev() {
+            let (id, tx_hash) = el?;
+            self.delete_from_disk_with_key(&self.transactions, &tx_hash)?;
+            self.delete_from_disk_with_key(&self.transactions_indexes, &id)?;
         }
 
         Ok(())
     }
 
-    // delete all transactions at the specified topoheight
-    // This will go through each transaction, deserialize it, check topoheight, and delete it if required
-    // Maybe we can optimize it by keeping a lookuptable of topoheight -> txs ?
-    pub fn delete_transactions_at_topoheight(&mut self, topoheight: u64) -> Result<()> {
-        trace!("delete transactions at topoheight {}", topoheight);
-        for el in self.transactions.iter().values() {
-            let value = el?;
-            let entry = TransactionEntry::from_bytes(&self.cipher.decrypt_value(&value)?)?;
-            if entry.get_topoheight() == topoheight {
-                self.delete_transaction(entry.get_hash())?;
+    // Search the lowest transaction id for the requested topoheight
+    // We do a bisect search to find the first transaction with the requested topoheight
+    fn search_transaction_id_for_topoheight(&self, topoheight: u64, left: Option<u64>, right: Option<u64>) -> Result<Option<u64>> {
+        debug!("search transaction id for topoheight {}", topoheight);
+
+        let mut right = match right {
+            Some(right) => right,
+            None => {
+                if let Some(right) = self.get_last_transaction_id()? {
+                    right
+                } else {
+                    debug!("no transaction index found");
+                    return Ok(None);
+                }
+            }
+        };
+        let mut left = left.unwrap_or(0);
+        let mut result = None;
+
+        while left < right {
+            let mid = left + (right - left) / 2;
+            let Some(tx_hash) = self.transactions_indexes.get(&mid.to_be_bytes())? else {
+                debug!("no transaction index found for {}", mid);
+                return Ok(None);
+            };
+
+            let entry: TransactionEntry = self.load_from_disk_with_key(&self.transactions, &tx_hash)?;
+            let ord = entry.get_topoheight().cmp(&topoheight);
+            match ord {
+                Ordering::Equal => {
+                    // We found a match, but we keep searching left to find the smallest ID
+                    result = Some(mid);
+                    right = mid;
+                },
+                Ordering::Less => {
+                    left = mid + 1;
+                },
+                Ordering::Greater => {
+                    right = mid;
+                }
             }
         }
 
-        Ok(())
+        Ok(result)
     }
 
     // Filter when the data is deserialized to not load all transactions in memory
-    pub fn get_filtered_transactions(&self, address: Option<&PublicKey>, asset: Option<&Hash>, min_topoheight: Option<u64>, max_topoheight: Option<u64>, accept_incoming: bool, accept_outgoing: bool, accept_coinbase: bool, accept_burn: bool, query: Option<&Query>) -> Result<Vec<TransactionEntry>> {
+    pub fn get_filtered_transactions(
+        &self,
+        address: Option<&PublicKey>,
+        asset: Option<&Hash>,
+        min_topoheight: Option<u64>,
+        max_topoheight: Option<u64>,
+        accept_incoming: bool,
+        accept_outgoing: bool,
+        accept_coinbase: bool,
+        accept_burn: bool,
+        query: Option<&Query>,
+        limit: Option<usize>,
+        skip: Option<usize>
+    ) -> Result<Vec<TransactionEntry>> {
         trace!("get filtered transactions");
-        let mut transactions = Vec::new();
-        for el in self.transactions.iter().values() {
-            let value = el?;
-            let mut entry = TransactionEntry::from_bytes(&self.cipher.decrypt_value(&value)?)?;
-            if let Some(topoheight) = min_topoheight {
-                if entry.get_topoheight() < topoheight {
-                    continue;
-                }
-            }
 
-            if let Some(topoheight) = max_topoheight {
-                if entry.get_topoheight() > topoheight {
-                    continue;
+        // Search the correct range
+        let iterator = match (min_topoheight, max_topoheight) {
+            (Some(min), Some(max)) => {
+                let min = self.search_transaction_id_for_topoheight(min, None, None)
+                    .context("Error while searching min id")?;
+                // + 1 so we find the lowest id of the next topoheight to be inclusive on the range
+                let max = self.search_transaction_id_for_topoheight(max + 1, min, None)
+                    .context("Error while searching max id")?;
+
+                if let Some(min) = min {
+                    if let Some(max) = max {
+                        self.transactions_indexes.range(min.to_be_bytes()..max.to_be_bytes())
+                    } else {
+                        self.transactions_indexes.range(min.to_be_bytes()..)
+                    }
+                } else {
+                    if let Some(max) = max {
+                        self.transactions_indexes.range(..max.to_be_bytes())
+                    } else {
+                        self.transactions_indexes.iter()
+                    }
                 }
-            }
+            },
+            (Some(min), None) => {
+                let min = self.search_transaction_id_for_topoheight(min, None, None)
+                    .context("Error while searching min id only")?;
+                if let Some(min) = min {
+                    self.transactions_indexes.range(min.to_be_bytes()..)
+                } else {
+                    self.transactions_indexes.iter()
+                }
+            },
+            (None, Some(max)) => {
+                let max = self.search_transaction_id_for_topoheight(max + 1, None, None)
+                    .context("Error while searching max id only")?;
+                if let Some(max) = max {
+                    self.transactions_indexes.range(..max.to_be_bytes())
+                } else {
+                    self.transactions_indexes.iter()
+                }
+            },
+            (None, None) => self.transactions_indexes.iter()
+        };
+
+        let mut transactions = Vec::new();
+        for el in iterator.values().rev().skip(skip.unwrap_or(0)) {
+            let tx_key = el?;
+            let mut entry: TransactionEntry = self.load_from_disk_with_key(&self.transactions, &tx_key)?;
+            trace!("entry: {}", entry.get_hash());
 
             let mut transfers: Option<Vec<Transfer>> = None;
             match entry.get_mut_entry() {
@@ -848,6 +1025,7 @@ impl EncryptedStorage {
                 EntryData::Burn { asset: burn_asset, .. } if accept_burn => {
                     if let Some(asset) = asset {
                         if *asset != *burn_asset {
+                            trace!("entry burn asset {} != requested asset {}", burn_asset, asset);
                             continue;
                         }
                     }
@@ -856,6 +1034,7 @@ impl EncryptedStorage {
                     // Filter by address
                     if let Some(filter_key) = address {
                         if *from != *filter_key {
+                            trace!("entry from != requested address");
                             continue;
                         }
                     }
@@ -866,7 +1045,6 @@ impl EncryptedStorage {
                     }
 
                     transfers = Some(t.iter_mut().map(|t| Transfer::In(t)).collect());
-
                 },
                 EntryData::Outgoing { transfers: t, .. } if accept_outgoing => {
                     // Filter by address
@@ -907,14 +1085,15 @@ impl EncryptedStorage {
             if let Some(query) = query {
                 if let Some(transfers) = transfers.as_mut() {
                     transfers.retain(|transfer| {
-                        if let Some(element) = transfer.get_extra_data() {
-                            query.verify_element(element.data())
+                        if let Some(element) = transfer.get_extra_data().as_ref().and_then(|v| v.data()) {
+                            query.verify_element(element)
                         } else {
                             false
                         }
                     });
                 } else {
                     // Coinbase, burn, etc will be discarded always with such filter
+                    trace!("entry has no extra data, discarding");
                     continue;
                 }
             }
@@ -930,7 +1109,14 @@ impl EncryptedStorage {
                     transactions.push(entry);
                 },
                 // All the left is discarded
-                _ => {}
+                e => {
+                    trace!("entry has no transfers, discarding {:?}", e);
+                }
+            }
+
+            if limit.is_some_and(|max| transactions.len() >= max) {
+                trace!("max entries reached");
+                break;
             }
         }
 
@@ -948,6 +1134,8 @@ impl EncryptedStorage {
     pub fn delete_transactions(&mut self) -> Result<()> {
         trace!("delete transactions");
         self.transactions.clear()?;
+        self.transactions_indexes.clear()?;
+
         Ok(())
     }
 
@@ -957,6 +1145,14 @@ impl EncryptedStorage {
         self.balances.clear()?;
         self.delete_unconfirmed_balances().await;
         self.balances_cache.lock().await.clear();
+        Ok(())
+    }
+
+    // Delete the nonce used to create new transactions
+    // This will reset the nonce to 0
+    pub async fn delete_nonce(&mut self) -> Result<()> {
+        trace!("delete nonce");
+        self.delete_from_disk(&self.extra, NONCE_KEY)?;
         Ok(())
     }
 
@@ -981,6 +1177,22 @@ impl EncryptedStorage {
         Ok(())
     }
 
+    // Get the last transaction id
+    pub fn get_last_transaction_id(&self) -> Result<Option<u64>> {
+        trace!("get last transaction id");
+        let last = self.transactions_indexes.last()?;
+        Ok(last.map(|(id, _)| u64::from_bytes(&id)).transpose()?)
+    }
+
+    // fetch the next transaction counter id to attribute to a new TX
+    fn get_next_transaction_id(&mut self) -> Result<u64> {
+        trace!("get next transaction counter id");
+        let id = self.get_last_transaction_id()?
+            .map(|id| id + 1)
+            .unwrap_or(0);
+        Ok(id)
+    }
+
     // Save the transaction with its TX hash as key
     // We hash the hash of the TX to use it as a key to not let anyone being able to see txs saved on disk
     // with no access to the decrypted master key
@@ -992,7 +1204,50 @@ impl EncryptedStorage {
             self.tx_cache = None;
         }
 
-        self.save_to_disk(&self.transactions, hash.as_bytes(), &transaction.to_bytes())
+        let id = self.get_next_transaction_id()?;
+        let key = self.cipher.hash_key(hash.as_bytes());
+        // We write in plaintext the id and the hashed key
+        // Attacker may be able to see the ordering of the TXs but not the real TXs.
+        self.transactions_indexes.insert(&id.to_be_bytes(), &key)?;
+        self.save_to_disk_with_key(&self.transactions, &key, &transaction.to_bytes())
+    }
+
+    // Reorg all the TXs written after a certain ID
+    // To reorg them, we only need to reverse the order written
+    pub fn reverse_transactions_indexes(&mut self, id: Option<u64>) -> Result<()> {
+        trace!("reverse transactions indexes after {:?}", id);
+        let Some(end_id) = self.get_last_transaction_id()? else {
+            debug!("no transactions indexes to reverse");
+            return Ok(());
+        };
+
+        // Start from the first ID to reverse
+        let mut low_id = id.map(|v| v + 1)
+            .unwrap_or(0);
+        // End at the last ID
+        let mut high_id = end_id;
+
+        while low_id < high_id {
+            // Load TX hashes for swapping
+            let Some(low_tx_hash) = self.transactions_indexes.get(&low_id.to_be_bytes())? else {
+                warn!("No transaction index found for low {}", low_id);
+                return Ok(());
+            };
+            let Some(high_tx_hash) = self.transactions_indexes.get(&high_id.to_be_bytes())? else {
+                warn!("No transaction index found for high {}", high_id);
+                return Ok(()); 
+            };
+
+            // Swap the transaction indexes on disk
+            self.transactions_indexes.insert(low_id.to_be_bytes(), high_tx_hash)?;
+            self.transactions_indexes.insert(high_id.to_be_bytes(), low_tx_hash)?;
+
+            // Move pointers inward
+            low_id += 1;
+            high_id -= 1;
+        }
+
+        Ok(())
     }
 
     // Check if the transaction is stored in wallet
@@ -1010,9 +1265,12 @@ impl EncryptedStorage {
 
     // Get the unconfirmed nonce to use to build ordered TXs
     // It will fallback to the real nonce if not set
-    pub fn get_unconfirmed_nonce(&self) -> u64 {
+    pub fn get_unconfirmed_nonce(&self) -> Result<u64> {
         trace!("get unconfirmed nonce");
-        self.tx_cache.as_ref().map(|c| c.nonce).unwrap_or_else(|| self.get_nonce().unwrap_or(0))
+        match self.tx_cache.as_ref().map(|c| c.nonce) {
+            Some(nonce) => Ok(nonce),
+            None => self.get_nonce()
+        }
     }
 
     // Set the TX cache to use it has reference for next txs

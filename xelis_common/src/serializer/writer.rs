@@ -46,8 +46,9 @@ impl<'a> Writer<'a> {
 
     // max 255 bytes
     pub fn write_string(&mut self, value: &str) {
-        self.bytes.push(value.len() as u8);
-        self.bytes.extend(value.as_bytes());
+        let bytes = value.as_bytes();
+        self.bytes.push(bytes.len() as u8);
+        self.bytes.extend(bytes.iter().take(u8::MAX as usize));
     }
 
     pub fn write_optional_string(&mut self, opt: &Option<String>) {

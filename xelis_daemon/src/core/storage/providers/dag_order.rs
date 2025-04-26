@@ -16,6 +16,7 @@ pub trait DagOrderProvider {
     async fn set_topo_height_for_block(&mut self, hash: &Hash, topoheight: TopoHeight) -> Result<(), BlockchainError>;
     async fn is_block_topological_ordered(&self, hash: &Hash) -> bool;
     async fn get_hash_at_topo_height(&self, topoheight: TopoHeight) -> Result<Hash, BlockchainError>;
+    async fn has_hash_at_topoheight(&self, topoheight: TopoHeight) -> Result<bool, BlockchainError>;
 }
 
 #[async_trait]
@@ -66,18 +67,11 @@ impl DagOrderProvider for SledStorage {
 
     async fn get_hash_at_topo_height(&self, topoheight: TopoHeight) -> Result<Hash, BlockchainError> {
         trace!("get hash at topoheight: {}", topoheight);
-        let hash = if let Some(cache) = &self.hash_at_topo_cache {
-            let mut hash_at_topo = cache.lock().await;
-            if let Some(value) = hash_at_topo.get(&topoheight) {
-                return Ok(value.clone())
-            }
-            let hash: Hash = self.load_from_disk(&self.hash_at_topo, &topoheight.to_be_bytes(), DiskContext::GetBlockHashAtTopoHeight(topoheight))?;
-            hash_at_topo.put(topoheight, hash.clone());
-            hash
-        } else {
-            self.load_from_disk(&self.hash_at_topo, &topoheight.to_be_bytes(), DiskContext::GetBlockHashAtTopoHeight(topoheight))?
-        };
+        self.get_cacheable_data(&self.hash_at_topo, &self.hash_at_topo_cache, &topoheight, DiskContext::GetBlockHashAtTopoHeight(topoheight)).await
+    }
 
-        Ok(hash)
+    async fn has_hash_at_topoheight(&self, topoheight: TopoHeight) -> Result<bool, BlockchainError> {
+        trace!("has hash at topoheight {}", topoheight);
+        self.contains_data_cached(&self.hash_at_topo, &self.hash_at_topo_cache, &topoheight).await
     }
 }

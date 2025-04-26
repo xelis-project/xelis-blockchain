@@ -32,8 +32,7 @@ pub trait BlockExecutionOrderProvider {
 #[async_trait]
 impl BlockExecutionOrderProvider for SledStorage {
     async fn get_blocks_execution_order(&self, skip: usize, count: usize) -> Result<IndexSet<Hash>, BlockchainError> {
-        let order = self.blocks_execution_order.iter()
-            .keys()
+        let order = Self::iter_keys(self.snapshot.as_ref(), &self.blocks_execution_order)
             .skip(skip)
             .take(count)
             .map(|x| Ok(Hash::from_bytes(&x?)?))
@@ -54,12 +53,12 @@ impl BlockExecutionOrderProvider for SledStorage {
 
     async fn add_block_execution_to_order(&mut self, hash: &Hash) -> Result<(), BlockchainError> {
         let position = if let Some(snapshot) = self.snapshot.as_mut() {
-            let pos = snapshot.blocks_execution_count;
-            snapshot.blocks_execution_count += 1;
+            let pos = snapshot.cache.blocks_execution_count;
+            snapshot.cache.blocks_execution_count += 1;
             pos
         } else {
-            let pos = self.blocks_execution_count;
-            self.blocks_execution_count += 1;
+            let pos = self.cache.blocks_execution_count;
+            self.cache.blocks_execution_count += 1;
             pos
         };
 
@@ -71,9 +70,9 @@ impl BlockExecutionOrderProvider for SledStorage {
 
     async fn get_blocks_execution_count(&self) -> u64 {
         if let Some(snapshot) = self.snapshot.as_ref() {
-            snapshot.blocks_execution_count
+            snapshot.cache.blocks_execution_count
         } else {
-            self.blocks_execution_count
+            self.cache.blocks_execution_count
         }
     }
 

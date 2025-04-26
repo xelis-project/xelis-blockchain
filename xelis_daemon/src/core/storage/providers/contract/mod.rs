@@ -2,6 +2,7 @@ mod data;
 mod output;
 mod provider;
 mod balance;
+mod supply;
 
 use std::borrow::Cow;
 
@@ -23,6 +24,7 @@ use log::trace;
 pub use data::*;
 pub use output::*;
 pub use balance::*;
+pub use supply::*;
 
 // A versioned contract is a contract that can be updated or deleted
 pub type VersionedContract<'a> = Versioned<Option<Cow<'a, Module>>>;
@@ -64,7 +66,14 @@ pub trait ContractProvider {
     async fn has_contract_pointer(&self, hash: &Hash) -> Result<bool, BlockchainError>;
 
     // Check if a contract exists at a given topoheight
+    // If the version is None, it returns None
+    async fn has_contract_module_at_topoheight(&self, hash: &Hash, topoheight: TopoHeight) -> Result<bool, BlockchainError>;
+
+    // Check if a contract version exists at a given topoheight
     async fn has_contract_at_exact_topoheight(&self, hash: &Hash, topoheight: TopoHeight) -> Result<bool, BlockchainError>;
+
+    // Check if a contract version exists at a maximum given topoheight
+    async fn has_contract_at_maximum_topoheight(&self, hash: &Hash, topoheight: TopoHeight) -> Result<bool, BlockchainError>;
 
     // Count the number of contracts
     async fn count_contracts(&self) -> Result<u64, BlockchainError>;
@@ -113,7 +122,12 @@ impl ContractProvider for SledStorage {
             return Ok(None)
         }
 
-        let topo = self.get_last_topoheight_for_contract(hash).await?;
+        let topo = if self.has_contract_at_exact_topoheight(hash, maximum_topoheight).await? {
+            maximum_topoheight
+        } else {
+            self.get_last_topoheight_for_contract(hash).await?
+        };
+
         let mut previous_topo = Some(topo);
         while let Some(topoheight) = previous_topo {
             if topoheight <= maximum_topoheight {
@@ -132,6 +146,33 @@ impl ContractProvider for SledStorage {
         Ok(None)
     }
 
+    async fn has_contract_at_maximum_topoheight(&self, hash: &Hash, maximum_topoheight: TopoHeight) -> Result<bool, BlockchainError> {
+        trace!("has contract {} at maximum topoheight {}", hash, maximum_topoheight);
+        if !self.has_contract_pointer(hash).await? {
+            trace!("Contract {} does not exist", hash);
+            return Ok(false)
+        }
+
+        if self.has_contract_at_exact_topoheight(hash, maximum_topoheight).await? {
+            return Ok(true)
+        }
+
+        let mut previous_topo = Some(self.get_last_topoheight_for_contract(hash).await?);
+        while let Some(topoheight) = previous_topo {
+            if topoheight <= maximum_topoheight {
+                return Ok(true)
+            }
+
+            previous_topo = self.load_from_disk(
+                &self.versioned_contracts,
+                &self.get_versioned_contract_key(hash, topoheight),
+                DiskContext::ContractTopoHeight
+            )?;
+        }
+
+        Ok(false)
+    }
+
     async fn get_contracts(&self, maximum: usize, skip: usize, minimum_topoheight: TopoHeight, maximum_topoheight: TopoHeight) -> Result<IndexSet<Hash>, BlockchainError> {
         trace!("Getting contracts, maximum: {}, skip: {}, minimum_topoheight: {}, maximum_topoheight: {}", maximum, skip, minimum_topoheight, maximum_topoheight);
         let mut contracts = IndexSet::new();
@@ -140,7 +181,7 @@ impl ContractProvider for SledStorage {
         // Unlike the keys, we don't prefix them with a topoheight at which they got registered
         // Because we allow contracts code to be updated, we need to get the latest version of the contract
         // We can't do a fast path with the skip checking, we need to process them all
-        for el in self.contracts.iter() {
+        for el in Self::iter(self.snapshot.as_ref(), &self.contracts) {
             let (key, value) = el?;
             let topoheight = TopoHeight::from_bytes(&value)?;
             let hash = Hash::from_bytes(&key)?;
@@ -203,21 +244,27 @@ impl ContractProvider for SledStorage {
     async fn has_contract(&self, hash: &Hash) -> Result<bool, BlockchainError> {
         trace!("Checking if contract {} exists", hash);
         let topoheight = self.get_last_topoheight_for_contract(hash).await?;
-        self.has_contract_at_exact_topoheight(hash, topoheight).await
+        self.has_contract_module_at_topoheight(hash, topoheight).await
+    }
+
+    async fn has_contract_module_at_topoheight(&self, hash: &Hash, topoheight: TopoHeight) -> Result<bool, BlockchainError> {
+        trace!("Checking if contract module {} exists at topoheight {}", hash, topoheight);
+        let contract = self.get_contract_at_topoheight_for(hash, topoheight).await?;
+        Ok(contract.get().is_some())
     }
 
     async fn has_contract_at_exact_topoheight(&self, hash: &Hash, topoheight: TopoHeight) -> Result<bool, BlockchainError> {
-        trace!("Checking if contract {} exists at topoheight {}", hash, topoheight);
-        let contract = self.get_contract_at_topoheight_for(hash, topoheight).await?;
-        Ok(contract.get().is_some())
+        trace!("Checking if contract {} exists at exact topoheight {}", hash, topoheight);
+        let key = self.get_versioned_contract_key(hash, topoheight);
+        self.contains_data(&self.versioned_contracts, &key)
     }
 
     async fn count_contracts(&self) -> Result<u64, BlockchainError> {
         trace!("Counting contracts");
         let count = if let Some(snapshot) = self.snapshot.as_ref() {
-            snapshot.contracts_count
+            snapshot.cache.contracts_count
         } else {
-            self.contracts_count
+            self.cache.contracts_count
         };
 
         Ok(count)
@@ -229,9 +276,9 @@ impl SledStorage {
     pub fn store_contracts_count(&mut self, count: u64) -> Result<(), BlockchainError> {
         trace!("Storing contracts count: {}", count);
         if let Some(snapshot) = self.snapshot.as_mut() {
-            snapshot.contracts_count = count;
+            snapshot.cache.contracts_count = count;
         } else {
-            self.contracts_count = count;
+            self.cache.contracts_count = count;
         }
         Self::insert_into_disk(self.snapshot.as_mut(), &self.extra, CONTRACTS_COUNT, &count.to_be_bytes())?;
         Ok(())

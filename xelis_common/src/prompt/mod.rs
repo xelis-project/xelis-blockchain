@@ -1,12 +1,16 @@
 pub mod command;
 pub mod argument;
 
+mod error;
+mod option;
+mod state;
+
 use crate::{
     tokio::{
+        spawn_task,
         sync::{
             mpsc::{
                 self,
-                UnboundedSender,
                 UnboundedReceiver,
                 Sender,
                 Receiver
@@ -17,40 +21,37 @@ use crate::{
         time::{interval, timeout}
     },
     crypto::Hash,
-    serializer::{Serializer, ReaderError},
+    serializer::Serializer,
 };
 use std::{
-    collections::VecDeque,
     fmt::{self, Display, Formatter},
-    fs::create_dir_all,
+    fs::{self, create_dir_all},
     future::Future,
-    io::{stdout, Error as IOError, Write},
+    io::{self, Write},
     path::Path,
     pin::Pin,
     str::FromStr,
     sync::{
-        atomic::{AtomicBool, AtomicU16, AtomicUsize, Ordering},
+        atomic::Ordering,
         Arc,
         Mutex,
-        PoisonError
     },
-    task::{Context, Poll},
     time::Duration
 };
-use crossterm::{
-    event::{self, Event, KeyCode, KeyModifiers, KeyEventKind},
-    terminal as crossterminal,
-};
+use crossterm::terminal;
+use tokio::task::JoinHandle;
 use self::command::{CommandError, CommandManager};
 use anyhow::Error;
 use fern::colors::ColoredLevelConfig;
-use regex::Regex;
-use log::{info, error, Level, debug, LevelFilter, warn};
-use thiserror::Error;
+use log::{debug, error, info, trace, warn, Level, LevelFilter};
 use serde::{Serialize, Deserialize};
+use state::State;
+use option::OptionReader;
 
 // Re-export fern and colors
 pub use fern::colors::Color;
+pub use error::PromptError;
+
 
 // used for launch param
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -134,341 +135,6 @@ impl FromStr for LogLevel {
     }
 }
 
-#[derive(Error, Debug)]
-pub enum PromptError {
-    #[error("Logs path is not a folder, it must ends with /")]
-    LogsPathNotFolder,
-    #[error("Canceled read input")]
-    Canceled,
-    #[error("End of stream")]
-    EndOfStream,
-    #[error(transparent)]
-    FernError(#[from] fern::InitError),
-    #[error(transparent)]
-    IOError(#[from] IOError),
-    #[error("Poison Error: {}", _0)]
-    PoisonError(String),
-    #[error("Prompt is already running")]
-    AlreadyRunning,
-    #[error("Prompt is not running")]
-    NotRunning,
-    #[error("No command manager found")]
-    NoCommandManager,
-    #[error("Error while parsing: {}", _0)]
-    ParseInputError(String),
-    #[error(transparent)]
-    ReaderError(#[from] ReaderError),
-    #[error(transparent)]
-    CommandError(#[from] CommandError),
-    #[error(transparent)]
-    Any(#[from] Error)
-}
-
-impl<T> From<PoisonError<T>> for PromptError {
-    fn from(err: PoisonError<T>) -> Self {
-        Self::PoisonError(format!("{}", err))
-    }
-}
-
-impl From<PromptError> for CommandError {
-    fn from(err: PromptError) -> Self {
-        Self::Any(err.into())
-    }
-}
-
-// State used to be shared between stdin thread and Prompt instance
-struct State {
-    prompt: Mutex<Option<String>>,
-    exit_channel: Mutex<Option<oneshot::Sender<()>>>,
-    width: AtomicU16,
-    previous_prompt_line: AtomicUsize,
-    user_input: Mutex<String>,
-    mask_input: AtomicBool,
-    prompt_sender: Mutex<Option<oneshot::Sender<String>>>,
-    has_exited: AtomicBool,
-    ascii_escape_regex: Regex,
-    interactive: bool
-}
-
-impl State {
-    fn new(allow_interactive: bool) -> Self {
-        // enable the raw mode for terminal
-        // so we can read each event/action
-        let interactive = if allow_interactive { !crossterminal::enable_raw_mode().is_err() } else { false };
-
-        Self {
-            prompt: Mutex::new(None),
-            exit_channel: Mutex::new(None),
-            width: AtomicU16::new(crossterminal::size().unwrap_or((80, 0)).0),
-            previous_prompt_line: AtomicUsize::new(0),
-            user_input: Mutex::new(String::new()),
-            mask_input: AtomicBool::new(false),
-            prompt_sender: Mutex::new(None),
-            has_exited: AtomicBool::new(false),
-            ascii_escape_regex: Regex::new("\x1B\\[[0-9;]*[A-Za-z]").unwrap(),
-            interactive
-        }
-    }
-
-    fn set_exit_channel(&self, sender: oneshot::Sender<()>) -> Result<(), PromptError> {
-        let mut exit = self.exit_channel.lock()?;
-        if exit.is_some() {
-            return Err(PromptError::AlreadyRunning)
-        }
-        *exit = Some(sender);
-        Ok(())
-    }
-
-    pub fn stop(&self) -> Result<(), PromptError> {
-        let mut exit = self.exit_channel.lock()?;
-        let sender = exit.take().ok_or(PromptError::NotRunning)?;
-
-        if sender.send(()).is_err() {
-            error!("Error while sending exit signal");
-        }
-
-        Ok(())
-    }
-
-    pub fn is_interactive(&self) -> bool {
-        self.interactive
-    }
-
-    fn ioloop(self: &Arc<Self>, sender: UnboundedSender<String>) -> Result<(), PromptError> {
-        debug!("ioloop started");
-
-        // all the history of commands
-        let mut history: VecDeque<String> = VecDeque::new();
-        // current index in history in case we use arrows to move in history
-        let mut history_index = 0;
-        let mut is_in_history = false;
-        loop {
-            if !is_in_history {
-                history_index = 0;
-            }
-
-            match event::read() {
-                Ok(event) => {
-                    match event {
-                        Event::Resize(width, _) => {
-                            self.width.store(width, Ordering::SeqCst);
-                            self.show()?;
-                        }
-                        Event::Paste(s) => {
-                            is_in_history = false;
-                            let mut buffer = self.user_input.lock()?;
-                            buffer.push_str(&s);
-                        }
-                        Event::Key(key) => {
-                            // Windows bug - https://github.com/crossterm-rs/crossterm/issues/772
-                            if key.kind != KeyEventKind::Press {
-                                continue;
-                            }
-
-                            match key.code {
-                                KeyCode::Up => {
-                                    let mut buffer = self.user_input.lock()?;
-                                    if buffer.is_empty() {
-                                        is_in_history = true;
-                                    }
-
-                                    if is_in_history {
-                                        if history_index < history.len() {
-                                            buffer.clear();
-                                            buffer.push_str(&history[history_index]);
-                                            self.show_input(&buffer)?;
-                                            if history_index + 1 < history.len() {
-                                                history_index += 1;
-                                            }
-                                        }
-                                    }
-                                },
-                                KeyCode::Down => {
-                                    if is_in_history {
-                                        let mut buffer = self.user_input.lock()?;
-                                        buffer.clear();
-                                        if history_index > 0 {
-                                            history_index -= 1;
-                                            if history_index < history.len() {
-                                                buffer.push_str(&history[history_index]);
-                                            }
-                                        } else {
-                                            is_in_history = false;
-                                        }
-                                        self.show_input(&buffer)?;
-                                    }
-                                },
-                                KeyCode::Char(c) => {
-                                    is_in_history = false;
-                                    // handle CTRL+C
-                                    if key.modifiers == KeyModifiers::CONTROL && c == 'c' {
-                                        break;
-                                    }
-
-                                    let mut buffer = self.user_input.lock()?;
-                                    buffer.push(c);
-                                    self.show_input(&buffer)?;
-                                },
-                                KeyCode::Backspace => {
-                                    is_in_history = false;
-                                    let mut buffer = self.user_input.lock()?;
-                                    buffer.pop();
-
-                                    self.show_input(&buffer)?;
-                                },
-                                KeyCode::Enter => {
-                                    is_in_history = false;
-                                    let mut buffer = self.user_input.lock()?;
-
-                                    // clone the buffer to send it to the command handler
-                                    let cloned_buffer = buffer.clone();
-                                    buffer.clear();
-                                    self.show_input(&buffer)?;
-
-                                    // Save in history & Send the message
-                                    let mut prompt_sender = self.prompt_sender.lock()?;
-                                    if let Some(sender) = prompt_sender.take() {
-                                        if let Err(e) = sender.send(cloned_buffer) {
-                                            error!("Error while sending input to reader: {}", e);
-                                            break;
-                                        }
-                                    } else {
-                                        if !cloned_buffer.is_empty() {
-                                            history.push_front(cloned_buffer.clone());
-                                            if let Err(e) = sender.send(cloned_buffer) {
-                                                error!("Error while sending input to command handler: {}", e);
-                                                break;
-                                            }
-                                        }
-                                    }
-                                },
-                                _ => {}
-                            }
-                        }
-                        _ => {}
-                    }
-                },
-                Err(e) => {
-                    error!("Error while reading input: {}", e);
-                    break;
-                }
-            };
-        }
-
-        if !self.has_exited.swap(true, Ordering::SeqCst) {
-            if self.is_interactive() {
-                if let Err(e) = crossterminal::disable_raw_mode() {
-                    error!("Error while disabling raw mode: {}", e);
-                }
-            }
-        }
-
-        info!("ioloop thread is now stopped");
-
-        // Send an empty message to the reader to unblock it
-        let mut sender = self.prompt_sender.lock()?;
-        if let Some(sender) = sender.take() {
-            if let Err(e) = sender.send(String::new()) {
-                error!("Error while sending input to reader: {}", e);
-            }
-        }
-
-        self.stop()
-    }
-
-    fn should_mask_input(&self) -> bool {
-        self.mask_input.load(Ordering::SeqCst)
-    }
-
-    fn count_lines(&self, value: &String) -> usize {
-        let width = self.width.load(Ordering::SeqCst);
-
-        let mut lines = 0;
-        let mut current_line_width = 0;
-        let input = self.ascii_escape_regex.replace_all(value, "");
-
-        for c in input.chars() {
-            if c == '\n' || current_line_width >= width {
-                lines += 1;
-                current_line_width = 0;
-            } else {
-                current_line_width += 1;
-            }
-        }
-
-        if current_line_width > 0 {
-            lines += 1;
-        }
-
-        lines
-    }
-
-    fn show_with_prompt_and_input(&self, prompt: &String, input: &String) -> Result<(), PromptError> {
-        // if not interactive, we don't need to show anything
-        if !self.is_interactive() {
-            return Ok(())
-        }
-
-        let current_count = self.count_lines(&format!("\r{}{}", prompt, input));
-        let previous_count = self.previous_prompt_line.swap(current_count, Ordering::SeqCst);
-
-        // > 1 because prompt line is already counted below
-        if previous_count > 1 {
-            print!("\x1B[{}A\x1B[J", previous_count - 1);
-        }
-
-        if self.should_mask_input() {
-            print!("\r\x1B[2K{}{}", prompt, "*".repeat(input.len()));
-        } else {
-            print!("\r\x1B[2K{}{}", prompt, input);
-        }
-
-        stdout().flush()?;
-        Ok(())
-    }
-
-    fn show_input(&self, input: &String) -> Result<(), PromptError> {
-        let default_value = String::with_capacity(0);
-        let lock = self.prompt.lock()?;
-        let prompt = lock.as_ref().unwrap_or(&default_value);
-        self.show_with_prompt_and_input(prompt, input)
-    }
-
-    fn show(&self) -> Result<(), PromptError> {
-        let input = self.user_input.lock()?;
-        self.show_input(&input)
-    }
-}
-
-struct OptionReader {
-    reader: Option<UnboundedReceiver<String>>
-}
-
-impl OptionReader {
-    fn new(reader: Option<UnboundedReceiver<String>>) -> Self {
-        Self {
-            reader
-        }
-    }
-}
-
-impl Future for OptionReader {
-    type Output = Option<String>;
-
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        match self.reader.as_mut() {
-            Some(reader) => {
-                match Pin::new(reader).poll_recv(cx) {
-                    Poll::Ready(Some(value)) => Poll::Ready(Some(value)),
-                    Poll::Ready(None) => Poll::Ready(None),
-                    Poll::Pending => Poll::Pending
-                }
-            },
-            None => Poll::Ready(None)
-        }
-    }
-}
-
 pub struct Prompt {
     state: Arc<State>,
     input_receiver: Mutex<Option<UnboundedReceiver<String>>>,
@@ -476,7 +142,9 @@ pub struct Prompt {
     read_input_sender: Sender<()>,
     read_input_receiver: AsyncMutex<Receiver<()>>,
     // Should we set colors or not
-    disable_colors: bool
+    disable_colors: bool,
+    // Handle to compress the log file
+    compression_handle: Option<JoinHandle<()>>
 }
 
 pub type ShareablePrompt = Arc<Prompt>;
@@ -492,23 +160,39 @@ impl Prompt {
         disable_file_logging: bool,
         disable_file_log_date_based: bool,
         disable_colors: bool,
+        enable_auto_compress_logs: bool,
         interactive: bool,
         module_logs: Vec<ModuleConfig>,
         file_level: LogLevel,
     ) -> Result<ShareablePrompt, PromptError> {
-        if !dir_path.ends_with("/") {
+        if !(dir_path.ends_with("/") || dir_path.ends_with("\\")) {
             return Err(PromptError::LogsPathNotFolder);
         }
 
         let (read_input_sender, read_input_receiver) = mpsc::channel(1);
-        let prompt = Self {
+        let mut prompt = Self {
             state: Arc::new(State::new(interactive)),
             input_receiver: Mutex::new(None),
             read_input_receiver: AsyncMutex::new(read_input_receiver),
             read_input_sender,
-            disable_colors
+            disable_colors,
+            compression_handle: None
         };
-        prompt.setup_logger(level, dir_path, filename_log, disable_file_logging, disable_file_log_date_based, module_logs, file_level)?;
+
+        if enable_auto_compress_logs && disable_file_log_date_based {
+            return Err(PromptError::AutoCompressParam)
+        }
+
+        prompt.setup_logger(
+            level,
+            dir_path,
+            filename_log,
+            disable_file_logging,
+            disable_file_log_date_based,
+            enable_auto_compress_logs,
+            module_logs,
+            file_level
+        )?;
 
         // Logs all the panics into the log file
         log_panics::init();
@@ -516,7 +200,10 @@ impl Prompt {
         #[cfg(feature = "tracing")]
         {
             info!("Tracing enabled");
-            console_subscriber::init();
+            console_subscriber::Builder::default()
+                .event_buffer_capacity(console_subscriber::ConsoleLayer::DEFAULT_EVENT_BUFFER_CAPACITY * 2000)
+                .client_buffer_capacity(console_subscriber::ConsoleLayer::DEFAULT_CLIENT_BUFFER_CAPACITY * 2000)
+                .init();
         }
 
         if prompt.state.is_interactive() {
@@ -592,9 +279,9 @@ impl Prompt {
                 }
                 _ = interval.tick() => {
                     {
-                        // verify that we don't have any reader
+                        // verify that interactive is enabled and we don't have any reader
                         // as they may have changed the prompt
-                        if self.state.prompt_sender.lock()?.is_some() {
+                        if !self.state.is_interactive() || self.state.get_prompt_sender().lock()?.is_some() {
                             continue;
                         }
                     }
@@ -611,12 +298,16 @@ impl Prompt {
             }
         }
 
-        if !self.state.has_exited.swap(true, Ordering::SeqCst) {
+        if !self.state.exit().swap(true, Ordering::SeqCst) {
             if self.state.is_interactive() {
-                if let Err(e) = crossterminal::disable_raw_mode() {
+                if let Err(e) = terminal::disable_raw_mode() {
                     error!("Error while disabling raw mode: {}", e);
                 }
             }
+        }
+
+        if let Some(handle) = self.compression_handle.as_ref() {
+            handle.abort();
         }
 
         Ok(())
@@ -629,7 +320,7 @@ impl Prompt {
     }
 
     pub fn update_prompt(&self, msg: String) -> Result<(), PromptError> {
-        let mut prompt = self.state.prompt.lock()?;
+        let mut prompt = self.state.get_prompt().lock()?;
         let old = prompt.replace(msg);
         if *prompt != old {
             drop(prompt);
@@ -640,7 +331,7 @@ impl Prompt {
 
     fn set_prompt(&self, prompt: Option<String>) -> Result<(), PromptError> {
         {
-            let mut lock = self.state.prompt.lock()?;
+            let mut lock = self.state.get_prompt().lock()?;
             *lock = prompt;
         }
         self.state.show()?;
@@ -650,7 +341,7 @@ impl Prompt {
 
     // get the current prompt displayed
     pub fn get_prompt(&self) -> Result<Option<String>, PromptError> {
-        let prompt = self.state.prompt.lock()?;
+        let prompt = self.state.get_prompt().lock()?;
         Ok(prompt.clone())
     }
 
@@ -667,14 +358,14 @@ impl Prompt {
             if valid_values.contains(&input.as_str()) {
                 return Ok(input);
             }
-            let escaped_colors = self.state.ascii_escape_regex.replace_all(&original_prompt, "");
+            let escaped_colors = self.state.get_ascii_escape_regex().replace_all(&original_prompt, "");
             prompt = self.colorize_string(Color::Red, &escaped_colors.into_owned());
         }
     }
 
     pub async fn ask_confirmation(&self) -> Result<bool, PromptError> {
         let res = self.read_valid_str_value(
-            self.colorize_str(Color::Green, "Confirm ? (Y/N): "),
+            self.colorize_string(Color::Green, "Confirm ? (Y/N): "),
             vec!["y", "n"]
         ).await?;
         Ok(res == "y")
@@ -704,13 +395,13 @@ impl Prompt {
         let mut canceler = self.read_input_receiver.lock().await;
 
         // Verify that during the time it hasn't exited
-        if self.state.has_exited.load(Ordering::SeqCst) {
+        if self.state.exit().load(Ordering::SeqCst) {
             return Err(PromptError::NotRunning)
         }
 
         // register our reader
         let receiver = {
-            let mut prompt_sender = self.state.prompt_sender.lock()?;
+            let mut prompt_sender = self.state.get_prompt_sender().lock()?;
             let (sender, receiver) = oneshot::channel();
             *prompt_sender = Some(sender);
             receiver
@@ -719,7 +410,7 @@ impl Prompt {
         // keep in memory the previous prompt
         let old_prompt = self.get_prompt()?;
         let old_user_input = {
-            let mut user_input = self.state.user_input.lock()?;
+            let mut user_input = self.state.get_user_input().lock()?;
             let cloned = user_input.clone();
             user_input.clear();
             cloned
@@ -734,7 +425,7 @@ impl Prompt {
         let input = {
             let input = tokio::select! {
                 Some(()) = canceler.recv() => {
-                    self.state.prompt_sender.lock()?.take();
+                    self.state.get_prompt_sender().lock()?.take();
                     Err(PromptError::Canceled)
                 },
                 res = receiver => res.map_err(|_| PromptError::EndOfStream)
@@ -748,7 +439,7 @@ impl Prompt {
 
         // set the old user input
         {
-            let mut user_input = self.state.user_input.lock()?;
+            let mut user_input = self.state.get_user_input().lock()?;
             *user_input = old_user_input;
         }
         self.set_prompt(old_prompt)?;
@@ -764,17 +455,18 @@ impl Prompt {
 
     // set the value to replace user input by * chars or not
     pub fn set_mask_input(&self, value: bool) {
-        self.state.mask_input.store(value, Ordering::SeqCst);
+        self.state.get_mask_input().store(value, Ordering::SeqCst);
     }
 
     // configure fern and print prompt message after each new output
     fn setup_logger(
-        &self,
+        &mut self,
         level: LogLevel,
         dir_path: &str,
         filename_log: &str,
         disable_file_logging: bool,
         disable_file_log_date_based: bool,
+        enable_auto_compress_logs: bool,
         module_logs: Vec<ModuleConfig>,
         file_level: LogLevel
     ) -> Result<(), fern::InitError> {
@@ -853,11 +545,24 @@ impl Prompt {
 
             // Don't rotate the log file based on date ourself if its disabled
             if !disable_file_log_date_based {
-                file_log = file_log.chain(fern::DateBased::new(logs_path, format!("%Y-%m-%d.{filename_log}")));
+                let suffix = format!("%Y-%m-%d.{filename_log}");
+                file_log = file_log.chain(fern::DateBased::new(logs_path, suffix.clone()));
+
+                // Start a thread to compress the log file
+                if enable_auto_compress_logs {
+                    let dir_path = dir_path.to_string();
+                    let handle = spawn_task("loop-compress-log", async move {
+                        if let Err(e) = Self::loop_compress_log_file(dir_path, suffix).await {
+                            error!("Error while compressing log file: {}", e);
+                        }
+                    });
+    
+                    self.compression_handle = Some(handle);
+                }
             } else {
                 file_log = file_log.chain(fern::log_file(format!("{}/{}", dir_path, filename_log))?)
             }
-            
+
             base = base.chain(file_log);
         }
 
@@ -867,12 +572,16 @@ impl Prompt {
             .level_for("actix_server", log::LevelFilter::Warn)
             .level_for("actix_web", log::LevelFilter::Off)
             .level_for("actix_http", log::LevelFilter::Off)
-            .level_for("tracing", log::LevelFilter::Off)
-            .level_for("runtime", log::LevelFilter::Off)
-            .level_for("tokio", log::LevelFilter::Off)
             .level_for("mio", log::LevelFilter::Warn)
             .level_for("tokio_tungstenite", log::LevelFilter::Warn)
             .level_for("tungstenite", log::LevelFilter::Warn);
+
+        #[cfg(not(feature = "tracing"))]
+        {
+            base = base.level_for("tracing", log::LevelFilter::Warn)
+                .level_for("runtime", log::LevelFilter::Warn)
+                .level_for("tokio", log::LevelFilter::Warn);
+        }
 
         for m in module_logs {
             base = base.level_for(m.module, m.level.into());
@@ -883,19 +592,65 @@ impl Prompt {
         Ok(())
     }
 
-    // colorize a string with a specific color
-    // if colors are disabled, the message is returned as is
-    pub fn colorize_string(&self, color: Color, message: &String) -> String {
-        if self.disable_colors {
-            return message.to_string();
-        }
+    // Compress the log file
+    // Once compressed, the original log file is deleted
+    fn zip_log_file(log_file_path: &str, zip_file_path: &str) -> io::Result<()> {
+        let file = fs::File::create(zip_file_path)?;
+        let mut zip = zip::ZipWriter::new(file);
+    
+        let log_file_data = fs::read(log_file_path)?;
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Zstd)
+            .large_file(true);
 
-        format!("\x1B[{}m{}\x1B[0m", color.to_fg_str(), message)
+        zip.start_file(log_file_path, options)?;
+        zip.write_all(&log_file_data)?;
+        zip.finish()?;
+    
+        // Delete the original log file
+        fs::remove_file(log_file_path)?;
+
+        Ok(())
+    }
+
+    // Compress the log file every day
+    // The log file is compressed with the date of the previous day
+    async fn loop_compress_log_file(dir_path: String, suffix: String) -> Result<(), anyhow::Error> {
+        let mut current = chrono::Local::now()
+            .date_naive();
+
+        loop {
+            let now = chrono::Local::now()
+                .date_naive();
+            trace!("Checking if we need to compress log file, current: {}, now: {}", current, now);
+
+            // We need to check that current != now
+            // because we don't want to compress the current file
+            if current.succ_opt() == Some(now) {
+                let filename = current.format(suffix.as_str());
+                info!("Compressing log file for {}", filename);
+                let path = format!("{}/{}", dir_path, filename);
+                if Path::new(&path).exists() {
+                    let zip_path = format!("{}.zip", path);
+                    if let Err(e) = Self::zip_log_file(&path, &zip_path) {
+                        error!("Error while compressing log file: {}", e);
+                    }
+                } else {
+                    info!("No log file to compress for {}", filename);
+                }
+
+                current = now;
+            } else {
+                debug!("No need to compress log file for {}", current);
+            }
+
+            tokio::time::sleep(Duration::from_secs(60)).await;
+        }
     }
 
     // colorize a string with a specific color
-    // No color is set if colors are disabled
-    pub fn colorize_str(&self, color: Color, message: &str) -> String {
+    // if colors are disabled, the message is returned as is
+    pub fn colorize_string(&self, color: Color, message: &str) -> String {
         if self.disable_colors {
             return message.to_string();
         }
@@ -907,8 +662,8 @@ impl Prompt {
 impl Drop for Prompt {
     fn drop(&mut self) {
         if self.state.is_interactive() {
-            if let Ok(true) = crossterminal::is_raw_mode_enabled() {
-                if let Err(e) = crossterminal::disable_raw_mode() {
+            if let Ok(true) = terminal::is_raw_mode_enabled() {
+                if let Err(e) = terminal::disable_raw_mode() {
                     error!("Error while forcing to disable raw mode: {}", e);
                 }
             } 

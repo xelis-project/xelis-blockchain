@@ -25,9 +25,10 @@ use actix_ws::{
 use async_trait::async_trait;
 use futures_util::StreamExt;
 use log::{debug, error, trace};
+use serde::Serialize;
+use serde_json::json;
 use crate::{
-    config::MAX_BLOCK_SIZE,
-    tokio::{
+    config::MAX_BLOCK_SIZE, immutable::Immutable, tokio::{
         select,
         sync::{
             mpsc::{
@@ -98,6 +99,11 @@ where
             .map_err(|e| WebSocketError::ChannelClosed(e.to_string()))?;
 
         Ok(())
+    }
+
+    // Send a json value
+    pub async fn send_json<S: Serialize>(self: &Arc<Self>, value: S) -> Result<(), WebSocketError> {
+        self.send_text(json!(value).to_string()).await
     }
 
     // Send a ping message to the session
@@ -180,10 +186,16 @@ where
 
 #[async_trait]
 pub trait WebSocketHandler: Sized + Sync + Send {
+    // should we check the heartbeat of session
+    // by sending ping / pong messages
+    async fn check_heartbeat(&self, _: &WebSocketSessionShared<Self>) -> bool {
+        true
+    }
+
     // called when a new Session is added in websocket server
     // if an error is returned, maintaining the session is aborted
-    async fn on_connection(&self, _: &WebSocketSessionShared<Self>) -> Result<(), anyhow::Error> {
-        Ok(())
+    async fn on_connection(&self, _: &WebSocketSessionShared<Self>) -> Result<Option<actix_web::HttpResponse>, anyhow::Error> {
+        Ok(None)
     }
 
     // called when a new message is received
@@ -197,18 +209,18 @@ pub trait WebSocketHandler: Sized + Sync + Send {
     }
 }
 
-pub struct WebSocketServer<H: WebSocketHandler + 'static> {
+pub struct WebSocketServer<H: WebSocketHandler + 'static + Send + Sync> {
     sessions: RwLock<HashSet<WebSocketSessionShared<H>>>,
     id_counter: AtomicU64,
-    handler: H
+    handler: Immutable<H>
 }
 
-impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static {
-    pub fn new(handler: H) -> WebSocketServerShared<H> {
+impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static + Send + Sync {
+    pub fn new(handler: impl Into<Immutable<H>>) -> WebSocketServerShared<H> {
         Arc::new(Self {
             sessions: RwLock::new(HashSet::new()),
             id_counter: AtomicU64::new(0),
-            handler
+            handler: handler.into()
         })
     }
 
@@ -231,8 +243,15 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static {
             sessions.drain().collect::<Vec<_>>()
         };
 
+        debug!("Clear {} connections", sessions.len());
         for session in sessions {
-            session.close(None).await?;
+            if let Err(e) = session.close_internal(None).await {
+                debug!("Error while closing internal session: {}", e);
+            }
+
+            if let Err(e) = self.get_handler().on_close(&session).await {
+                debug!("Error while closing session: {}", e);
+            }
         }
 
         Ok(())
@@ -240,7 +259,7 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static {
 
     // Returns the RPC handler used for this server
     pub fn get_handler(&self) -> &H {
-        &self.handler
+        self.handler.as_ref()
     }
 
     // Returns all sessions managed by this server
@@ -251,18 +270,30 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static {
     // Handle a new WebSocket connection request, register it and start handling it
     pub async fn handle_connection(self: &Arc<Self>, request: ActixHttpRequest, body: Payload) -> Result<HttpResponse, actix_web::Error> {
         debug!("Handling new WebSocket connection");
+
         let (response, session, stream) = actix_ws::handle(&request, body)?;
         let id = self.next_id();
-        debug!("Created new WebSocketSession with id {}", id);
-
+        let request = HttpRequest::from(request);
         let (tx, rx) = unbounded_channel();
         let session = Arc::new(WebSocketSession {
             id,
-            request: request.into(),
+            request,
             server: Arc::clone(&self),
             inner: Mutex::new(Some(session)),
             channel: tx
         });
+
+        debug!("Created new WebSocketSession with id {}", id);
+
+        // call on_connection
+        match self.handler.on_connection(&session).await {
+            Ok(Some(response)) => return Ok(response),
+            Ok(None) => (),
+            Err(e) => {
+                debug!("Error while calling on_connection: {}", e);
+                return Ok(HttpResponse::InternalServerError().body(e.to_string()));
+            }
+        };
 
         {
             debug!("Inserting session #{} into sessions", id);
@@ -271,7 +302,15 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static {
             debug!("Session #{} has been inserted into sessions: {}", id, res);
         }
 
-        actix_rt::spawn(Arc::clone(self).handle_ws_internal(session, stream.max_frame_size(MAX_BLOCK_SIZE).aggregate_continuations(), rx));
+        actix_rt::spawn(
+            Arc::clone(self)
+                .handle_ws_internal(
+                    session,
+                    stream.max_frame_size(MAX_BLOCK_SIZE)
+                        .aggregate_continuations(),
+                    rx
+                )
+        );
         Ok(response)
     }
 
@@ -309,13 +348,6 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static {
     // This will send a ping every 5 seconds and close the connection if no pong is received within 30 seconds
     // It will also translate all messages to the handler
     async fn handle_ws_internal(self: Arc<Self>, session: WebSocketSessionShared<H>, mut stream: AggregatedMessageStream, mut rx: UnboundedReceiver<InnerMessage>) {
-        // call on_connection
-        if let Err(e) = self.handler.on_connection(&session).await {
-            debug!("Error while calling on_connection: {}", e);
-            self.delete_session(&session, Some(CloseReason::from(CloseCode::Error))).await;
-            return;
-        }
-
         let mut interval = actix_rt::time::interval(KEEP_ALIVE_INTERVAL);
         let mut last_pong_received = Instant::now();
         let reason = loop {
@@ -323,19 +355,22 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static {
                 // heartbeat
                 _ = interval.tick() => {
                     trace!("Sending ping to session #{}", session.id);
-                    if last_pong_received.elapsed() > KEEP_ALIVE_TIME_OUT {
-                        debug!("session #{} didn't respond in time from our ping", session.id);
-                        break None;
-                    }
 
                     if session.is_closed().await {
                         debug!("Session is closed, stopping heartbeat");
                         break None;
                     }
 
-                    if let Err(e) = session.ping().await {
-                        debug!("Error while sending ping to session #{}: {}", session.id, e);
-                        break None;
+                    if self.get_handler().check_heartbeat(&session).await {
+                        if last_pong_received.elapsed() > KEEP_ALIVE_TIME_OUT {
+                            debug!("session #{} didn't respond in time from our ping", session.id);
+                            break None;
+                        }
+
+                        if let Err(e) = session.ping().await {
+                            debug!("Error while sending ping to session #{}: {}", session.id, e);
+                            break None;
+                        }
                     }
                 },
                 Some(msg) = rx.recv() => {
@@ -390,6 +425,7 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static {
                             }
                         },
                         AggregatedMessage::Pong(data) => {
+                            trace!("received pong!");
                             if !data.is_empty() {
                                 debug!("Data in pong message is not empty for session #{}", session.id);
                                 break None;

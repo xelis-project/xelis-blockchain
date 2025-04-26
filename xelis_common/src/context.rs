@@ -1,9 +1,13 @@
-use std::{hash::{Hasher, BuildHasherDefault}, any::{TypeId, Any}, collections::HashMap};
+use std::{
+    any::{Any, TypeId},
+    collections::HashMap,
+    hash::{BuildHasher, BuildHasherDefault, Hasher}
+};
 
 use anyhow::{Result, Context as AnyContext};
 
 // A hasher for `TypeId`s that takes advantage of its known characteristics.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone, Copy)]
 pub struct NoOpHasher(u64);
 
 impl Hasher for NoOpHasher {
@@ -17,6 +21,17 @@ impl Hasher for NoOpHasher {
 
     fn finish(&self) -> u64 {
         self.0
+    }
+}
+
+#[derive(Clone, Default)]
+pub struct NoOpBuildHasher;
+
+impl BuildHasher for NoOpBuildHasher {
+    type Hasher = NoOpHasher;
+
+    fn build_hasher(&self) -> Self::Hasher {
+        NoOpHasher::default()
     }
 }
 

@@ -82,6 +82,12 @@ impl DaemonAPI {
         self.client.on_connection().await
     }
 
+    // On reconnect event
+    pub async fn on_reconnect(&self) -> broadcast::Receiver<()> {
+        trace!("on_reconnect");
+        self.client.on_reconnect().await
+    }
+
     // On connection lost
     pub async fn on_connection_lost(&self) -> broadcast::Receiver<()> {
         trace!("on_connection_lost");
@@ -129,6 +135,12 @@ impl DaemonAPI {
         Ok(receiver)
     }
 
+    pub async fn on_contract_transfer_event(&self, address: Address) -> Result<EventReceiver<ContractTransferEvent>> {
+        trace!("on_contract_transfer_event");
+        let receiver = self.client.subscribe_event(NotifyEvent::ContractTransfer { address }, self.capacity).await?;
+        Ok(receiver)
+    }
+
     pub async fn get_version(&self) -> Result<String> {
         trace!("get_version");
         let version = self.client.call("get_version").await?;
@@ -155,10 +167,12 @@ impl DaemonAPI {
         Ok(assets)
     }
 
-    pub async fn get_account_assets(&self, address: &Address) -> Result<HashSet<Hash>> {
+    pub async fn get_account_assets(&self, address: &Address, maximum: Option<usize>, skip: Option<usize>) -> Result<HashSet<Hash>> {
         trace!("get_account_assets");
         let assets = self.client.call_with("get_account_assets", &GetAccountAssetsParams {
-            address: Cow::Borrowed(address)
+            address: Cow::Borrowed(address),
+            maximum,
+            skip
         }).await?;
         Ok(assets)
     }

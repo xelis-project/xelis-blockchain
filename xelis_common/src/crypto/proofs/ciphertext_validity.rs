@@ -63,7 +63,6 @@ impl CiphertextValidityProof {
         let Y_0 = PC_GENS.commit(y_x, y_r).compress();
         let Y_1 = (&y_r * P_dest).compress();
 
-
         let Y_2 = source_pubkey.map(|P_source| (&y_r * P_source.as_point()).compress());
 
         transcript.append_point(b"Y_0", &Y_0);

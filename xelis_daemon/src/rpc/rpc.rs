@@ -9,7 +9,8 @@ use crate::{
         blockchain::{
             get_block_dev_fee,
             get_block_reward,
-            Blockchain
+            Blockchain,
+            BroadcastOption
         },
         hard_fork::get_pow_algorithm_for_version,
         error::BlockchainError,
@@ -64,7 +65,7 @@ use xelis_common::{
 use anyhow::Context as AnyContext;
 use human_bytes::human_bytes;
 use serde_json::{json, Value};
-use std::{sync::Arc, borrow::Cow};
+use std::{borrow::Cow, collections::HashMap, sync::Arc};
 use log::{info, debug, trace};
 
 // Get the block type using the block hash and the blockchain current state
@@ -276,7 +277,7 @@ pub async fn get_peer_entry(peer: &Peer) -> PeerEntry {
         topoheight: peer.get_topoheight(),
         height: peer.get_height(),
         last_ping: peer.get_last_ping(),
-        peers: Cow::Owned(peers),
+        peers: Cow::Owned(peers.into_iter().collect()),
         pruned_topoheight: peer.get_pruned_topoheight(),
         cumulative_difficulty: Cow::Owned(cumulative_difficulty),
         connected_on: peer.get_connection().connected_on(),
@@ -369,6 +370,9 @@ pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>
     handler.register_method("get_contract_data_at_topoheight", async_handler!(get_contract_data_at_topoheight::<S>));
     handler.register_method("get_contract_balance", async_handler!(get_contract_balance::<S>));
     handler.register_method("get_contract_balance_at_topoheight", async_handler!(get_contract_balance_at_topoheight::<S>));
+
+    // P2p
+    handler.register_method("get_p2p_block_propagation", async_handler!(get_p2p_block_propagation::<S>));
 
     if allow_mining_methods {
         handler.register_method("get_block_template", async_handler!(get_block_template::<S>));
@@ -525,7 +529,7 @@ async fn submit_block<S: Storage>(context: &Context, body: Value) -> Result<Valu
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
 
     let block = blockchain.build_block_from_header(Immutable::Owned(header)).await?;
-    blockchain.add_new_block(block, true, true).await?;
+    blockchain.add_new_block(block, None, BroadcastOption::All, true).await?;
     Ok(json!(true))
 }
 
@@ -710,14 +714,11 @@ async fn get_asset<S: Storage>(context: &Context, body: Value) -> Result<Value, 
     let params: GetAssetParams = parse_params(body)?;
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let storage = blockchain.get_storage().read().await;
-    let (topoheight, data) = storage.get_asset(&params.asset).await.context("Asset was not found")?;
+    let (topoheight, inner) = storage.get_asset(&params.asset).await.context("Asset was not found")?;
     Ok(json!(RPCAssetData {
         asset: Cow::Borrowed(&params.asset),
         topoheight,
-        contract: None,
-        decimals: data.get_decimals(),
-        max_supply: data.get_max_supply(),
-        name: Cow::Borrowed(data.get_name())
+        inner: inner.take()
     }))
 }
 
@@ -742,19 +743,15 @@ async fn get_assets<S: Storage>(context: &Context, body: Value) -> Result<Value,
         .context("Error while retrieving registered assets")?;
 
     let mut response = Vec::with_capacity(assets.len());
-    for (asset, (topoheight, data)) in assets.iter() {
+    for (asset, (topoheight, inner)) in assets {
         response.push(RPCAssetData {
-            asset: Cow::Borrowed(asset),
-            topoheight: *topoheight,
-            // TODO
-            contract: None,
-            decimals: data.get_decimals(),
-            max_supply: data.get_max_supply(),
-            name: Cow::Borrowed(data.get_name())
+            asset: Cow::Owned(asset),
+            topoheight,
+            inner
         });
     }
 
-    Ok(json!(assets))
+    Ok(json!(response))
 }
 
 async fn count_assets<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
@@ -1282,9 +1279,23 @@ async fn get_account_assets<S: Storage>(context: &Context, body: Value) -> Resul
         return Err(InternalRpcError::InvalidParamsAny(BlockchainError::InvalidNetwork.into()))
     }
 
+    let maximum = if let Some(maximum) = params.maximum {
+        if maximum > MAX_ACCOUNTS {
+            return Err(InternalRpcError::InvalidJSONRequest).context(format!("Maximum accounts requested cannot be greater than {}", MAX_ACCOUNTS))?
+        }
+        maximum
+    } else {
+        MAX_ACCOUNTS
+    };
+    let skip = params.skip.unwrap_or(0);
+
     let key = params.address.get_public_key();
     let storage = blockchain.get_storage().read().await;
-    let assets = storage.get_assets_for(key).await.context("Error while retrieving assets for account")?;
+    let assets: Vec<_> = storage.get_assets_for(key).await
+        .skip(skip)
+        .take(maximum)
+        .collect::<Result<_, BlockchainError>>()
+        .context("Error while retrieving assets for account")?;
     Ok(json!(assets))
 }
 
@@ -1342,7 +1353,7 @@ async fn is_account_registered<S: Storage>(context: &Context, body: Value) -> Re
     let storage = blockchain.get_storage().read().await;
     let key = params.address.get_public_key();
     let registered = if params.in_stable_height {
-        storage.is_account_registered_at_topoheight(key, blockchain.get_stable_topoheight()).await
+        storage.is_account_registered_for_topoheight(key, blockchain.get_stable_topoheight()).await
             .context("Error while checking if account is registered in stable height")?
     } else {
         storage.is_account_registered(key).await
@@ -1460,7 +1471,6 @@ async fn extract_key_from_address<S: Storage>(context: &Context, body: Value) ->
         Ok(json!(ExtractKeyFromAddressResult::Bytes(params.address.get_public_key().to_bytes())))
     }
 }
-
 
 // Split an integrated address into its address and data
 async fn split_address<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
@@ -1581,13 +1591,15 @@ async fn get_contract_outputs<S: Storage>(context: &Context, body: Value) -> Res
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let is_mainnet = blockchain.get_network().is_mainnet();
     let storage = blockchain.get_storage().read().await;
-    let outputs = storage.get_contract_outputs_for_tx(&params.transaction).await
-        .context("Error while retrieving contract outputs")?
-        .into_iter()
-        .map(|output| RPCContractOutput::from_output(output, is_mainnet))
+    let outputs =  storage.get_contract_outputs_for_tx(&params.transaction).await
+        .context("Error while retrieving contract outputs")?;
+
+    let rpc_outputs = outputs
+        .iter()
+        .map(|output| RPCContractOutput::from_output(&output, is_mainnet))
         .collect::<Vec<_>>();
 
-    Ok(json!(outputs))
+    Ok(json!(rpc_outputs))
 }
 
 async fn get_contract_module<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
@@ -1651,4 +1663,43 @@ async fn get_contract_balance_at_topoheight<S: Storage>(context: &Context, body:
         .context("Error while retrieving contract balance")?;
 
     Ok(json!(version))
+}
+
+async fn get_p2p_block_propagation<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
+    let params: GetP2pBlockPropagation = parse_params(body)?;
+
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    let p2p = { blockchain.get_p2p().read().await.clone() }
+        .ok_or(InternalRpcError::InvalidParamsAny(ApiError::NoP2p.into()))?;
+
+    let mut peers = HashMap::new();
+    let mut first_seen = None;
+    // TODO: Best would be "Equivalent" being implemented
+    let hash = Arc::new(params.hash.into_owned());
+    for peer in p2p.get_peer_list().get_cloned_peers().await {
+        let blocks_propagation = peer.get_blocks_propagation().lock().await;
+        if let Some((timed_direction, is_common)) = blocks_propagation.peek(&hash).copied() {
+            // We don't count common peers
+            // Because we haven't really sent them it
+            if !is_common {
+                peers.insert(peer.get_id(), timed_direction);
+
+                match timed_direction {
+                    TimedDirection::In { received_at } | TimedDirection::Both { received_at, .. } => {
+                        if first_seen.map(|v| v > received_at).unwrap_or(true) {
+                            first_seen = Some(received_at);
+                        }
+                    },
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    let processing_at = p2p.get_block_propagation_timestamp(&hash).await;
+    Ok(json!(P2pBlockPropagationResult {
+        peers,
+        first_seen,
+        processing_at
+    }))
 }

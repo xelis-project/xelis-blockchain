@@ -178,7 +178,6 @@ impl Display for CiphertextCache {
     }
 }
 
-
 impl PartialEq for CiphertextCache {
     fn eq(&self, other: &Self) -> bool {
         let a = self.compress();

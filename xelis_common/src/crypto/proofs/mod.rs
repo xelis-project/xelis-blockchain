@@ -21,6 +21,7 @@ pub use commitment_eq::CommitmentEqProof;
 pub use ciphertext_validity::CiphertextValidityProof;
 pub use balance::BalanceProof;
 pub use ownership::OwnershipProof;
+pub use range_proof::RangeProof;
 
 // We are using 64 bits for the bulletproofs
 pub const BULLET_PROOF_SIZE: usize = 64;
@@ -40,8 +41,11 @@ pub struct MultiscalarMulVerificationError;
 pub enum ProofGenerationError {
     #[error(transparent)]
     Decompression(#[from] DecompressionError),
-    #[error("not enough funds in the account")]
-    InsufficientFunds,
+    #[error("not enough funds in the account, required: {required}, available: {available}")]
+    InsufficientFunds {
+        required: u64,
+        available: u64,
+    },
     #[error("range proof generation failed: {0}")]
     RangeProof(#[from] bulletproofs::ProofError),
     #[error("invalid format")]

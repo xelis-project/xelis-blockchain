@@ -23,9 +23,9 @@ pub struct Block {
 }
 
 impl Block {
-    pub fn new(block: Immutable<BlockHeader>, transactions: Vec<Immutable<Transaction>>) -> Self {
+    pub fn new(header: Immutable<BlockHeader>, transactions: Vec<Immutable<Transaction>>) -> Self {
         Block {
-            header: block,
+            header,
             transactions
         }
     }

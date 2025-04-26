@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use log::{trace, error};
+use log::trace;
 use xelis_common::{
     account::VersionedNonce,
     block::TopoHeight,
@@ -11,10 +11,10 @@ use crate::core::{
     storage::{sled::ACCOUNTS_COUNT, SledStorage},
 };
 
-use super::{AssetProvider, BalanceProvider, NetworkProvider};
+use super::NetworkProvider;
 
 #[async_trait]
-pub trait NonceProvider: BalanceProvider {
+pub trait NonceProvider {
     // Check if the account has a nonce
     async fn has_nonce(&self, key: &PublicKey) -> Result<bool, BlockchainError>;
 
@@ -36,10 +36,6 @@ pub trait NonceProvider: BalanceProvider {
     // Get the nonce under or equal topoheight requested for an account
     async fn get_nonce_at_maximum_topoheight(&self, key: &PublicKey, topoheight: TopoHeight) -> Result<Option<(TopoHeight, VersionedNonce)>, BlockchainError>;
 
-    // Check if the account has a nonce updated in the range given
-    // It will also check balances if no nonce found
-    async fn has_key_updated_in_range(&self, key: &PublicKey, minimum_topoheight: TopoHeight, maximum_topoheight: TopoHeight) -> Result<bool, BlockchainError>;
-
     // Set the last topoheight that the account has a nonce changed
     async fn set_last_topoheight_for_nonce(&mut self, key: &PublicKey, topoheight: TopoHeight) -> Result<(), BlockchainError>;
 
@@ -59,9 +55,9 @@ impl SledStorage {
     // Update the accounts count and store it on disk
     pub fn store_accounts_count(&mut self, count: u64) -> Result<(), BlockchainError> {
         if let Some(snapshot) = self.snapshot.as_mut() {
-            snapshot.accounts_count = count;
+            snapshot.cache.accounts_count = count;
         } else {
-            self.accounts_count = count;
+            self.cache.accounts_count = count;
         }
         Self::insert_into_disk(self.snapshot.as_mut(), &self.extra, ACCOUNTS_COUNT, &count.to_be_bytes())?;
         Ok(())
@@ -83,9 +79,9 @@ impl NonceProvider for SledStorage {
     async fn count_accounts(&self) -> Result<u64, BlockchainError> {
         trace!("count accounts");
         let count = if let Some(snapshot) = self.snapshot.as_ref() {
-            snapshot.accounts_count
+            snapshot.cache.accounts_count
         } else {
-            self.accounts_count
+            self.cache.accounts_count
         };
         Ok(count)
     }
@@ -137,7 +133,7 @@ impl NonceProvider for SledStorage {
         trace!("get nonce at topoheight {} for {}", topoheight, key.as_address(self.is_mainnet()));
 
         let key = self.get_versioned_nonce_key(key, topoheight);
-        self.load_from_disk(&self.versioned_nonces, &key, DiskContext::NonceAtTopoHeight)
+        self.load_from_disk(&self.versioned_nonces, &key, DiskContext::NonceAtTopoHeight(topoheight))
     }
 
     // topoheight is inclusive bounds
@@ -148,110 +144,27 @@ impl NonceProvider for SledStorage {
             return Ok(None)
         }
 
-        let (topo, mut version) = self.get_last_nonce(key).await?;
-        trace!("Last version of nonce for {} is at topoheight {}", key.as_address(self.is_mainnet()), topo);
-        // if it's the latest and its under the maximum topoheight
-        if topo <= topoheight {
-            trace!("Last version nonce (valid) found at {} (maximum topoheight = {})", topo, topoheight);
-            return Ok(Some((topo, version)))
-        }
+        // Fast path check
+        let topo = if self.has_nonce_at_exact_topoheight(key, topoheight).await? {
+            topoheight
+        } else {
+            self.get_last_topoheight_for_nonce(key).await?
+        };
 
         // otherwise, we have to go through the whole chain
-        while let Some(previous) = version.get_previous_topoheight() {
-            let previous_version = self.get_nonce_at_exact_topoheight(key, previous).await?;
+        let mut topo = Some(topo);
+        while let Some(previous) = topo {
             trace!("previous nonce version is at {}", previous);
             if previous <= topoheight {
                 trace!("Highest version nonce found at {} (maximum topoheight = {})", previous, topoheight);
-                return Ok(Some((previous, previous_version)))
+                let version = self.get_nonce_at_exact_topoheight(key, previous).await?;
+                return Ok(Some((previous, version)))
             }
 
-            if let Some(value) = previous_version.get_previous_topoheight() {
-                if value > previous {
-                    error!("FATAL ERROR: Previous topoheight ({}) should not be higher than current version ({})!", value, previous);
-                    return Err(BlockchainError::Unknown)
-                }
-            }
-            version = previous_version;
+            topo = self.load_from_disk(&self.versioned_nonces, &Self::get_versioned_key(key.as_bytes(), previous), DiskContext::LastNonce)?;
         }
 
         Ok(None)
-    }
-
-    async fn has_key_updated_in_range(&self, key: &PublicKey, minimum_topoheight: TopoHeight, maximum_topoheight: TopoHeight) -> Result<bool, BlockchainError> {
-        trace!("has key {} updated in range min topoheight {} and max topoheight {}", key.as_address(self.is_mainnet()), minimum_topoheight, maximum_topoheight);
-        // check first that this address has nonce, if no returns None
-        if !self.has_nonce(key).await? {
-            return Ok(false)
-        }
-
-        // fast path check the latest nonce
-        let (topo, mut version) = self.get_last_nonce(key).await?;
-        trace!("Last version of nonce for {} is at topoheight {}", key.as_address(self.is_mainnet()), topo);
-
-        // if it's the latest and its under the maximum topoheight and above minimum topoheight
-        if topo >= minimum_topoheight && topo <= maximum_topoheight {
-            trace!("Last version nonce (valid) found at {} (maximum topoheight = {})", topo, maximum_topoheight);
-            return Ok(true)
-        }
-
-        // otherwise, we have to go through the whole chain
-        while let Some(previous) = version.get_previous_topoheight() {
-            // we are under the minimum topoheight, we can stop
-            if previous < minimum_topoheight {
-                break;
-            }
-
-            let previous_version = self.get_nonce_at_exact_topoheight(key, previous).await?;
-            trace!("previous nonce version is at {}", previous);
-            if previous <= maximum_topoheight {
-                trace!("Highest version nonce found at {} (maximum topoheight = {})", previous, maximum_topoheight);
-                return Ok(true)
-            }
-
-            // security in case of DB corruption
-            if let Some(value) = previous_version.get_previous_topoheight() {
-                if value > previous {
-                    error!("FATAL ERROR: Previous topoheight ({}) should not be higher than current version ({})!", value, previous);
-                    return Err(BlockchainError::Unknown)
-                }
-            }
-            version = previous_version;
-        }
-
-        // if we are here, we didn't find any nonce in the range
-        // it start to be more and more heavy...
-        // lets check on balances now...
-
-        // check that we have a VersionedBalance between range given
-        for asset in self.get_assets_for(key).await? {
-            let (topo, mut version) = self.get_last_balance(key, &asset).await?;
-            if topo >= minimum_topoheight && topo <= maximum_topoheight {
-                return Ok(true)
-            }
-
-            while let Some(previous) = version.get_previous_topoheight() {
-                // we are under the minimum topoheight, we can stop
-                if previous < minimum_topoheight {
-                    break;
-                }
-
-                let previous_version = self.get_balance_at_exact_topoheight(key, &asset, previous).await?;
-                if previous <= maximum_topoheight {
-                    return Ok(true)
-                }
-
-                // security in case of DB corruption
-                if let Some(value) = previous_version.get_previous_topoheight() {
-                    if value > previous {
-                        error!("FATAL ERROR: Previous topoheight for balance ({}) should not be higher than current version of balance ({})!", value, previous);
-                        return Err(BlockchainError::Unknown)
-                    }
-                }
-                version = previous_version;
-            }
-        }
-
-        Ok(false)
     }
 
     async fn set_nonce_at_topoheight(&mut self, key: &PublicKey, topoheight: TopoHeight, version: &VersionedNonce) -> Result<(), BlockchainError> {

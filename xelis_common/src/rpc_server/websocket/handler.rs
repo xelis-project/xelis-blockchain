@@ -1,6 +1,7 @@
 use std::{collections::{HashMap, HashSet}, hash::Hash, borrow::Cow};
 use actix_web::web::Bytes;
 use async_trait::async_trait;
+use futures::{stream, StreamExt};
 use log::{trace, debug};
 use serde_json::{Value, json};
 use serde::{de::DeserializeOwned, Serialize};
@@ -21,8 +22,13 @@ use super::{WebSocketSessionShared, WebSocketHandler};
 
 // generic websocket handler supporting event subscriptions 
 pub struct EventWebSocketHandler<T: Sync + Send + Clone + 'static, E: Serialize + DeserializeOwned + Sync + Send + Eq + Hash + Clone + 'static> {
+    // a map of sessions to events
     events: RwLock<HashMap<WebSocketSessionShared<Self>, HashMap<E, Option<Id>>>>,
-    handler: RPCHandler<T>
+    // the RPC handler containing the methods to call
+    // when a message is received
+    handler: RPCHandler<T>,
+    // the number of concurrent notifications to send
+    notify_concurrency: usize,
 }
 
 impl<T, E> EventWebSocketHandler<T, E>
@@ -30,13 +36,17 @@ where
     T: Sync + Send + Clone + 'static,
     E: Serialize + DeserializeOwned + Sync + Send + Eq + Hash + Clone + 'static
 {
-    pub fn new(handler: RPCHandler<T>) -> Self {
+    // Creates a new event websocket handler
+    // with the given RPC handler and notify concurrency
+    pub fn new(handler: RPCHandler<T>, notify_concurrency: usize) -> Self {
         Self {
             events: RwLock::new(HashMap::new()),
-            handler
+            handler,
+            notify_concurrency
         }
     }
 
+    // Get all the tracked events across all sessions
     pub async fn get_tracked_events(&self) -> HashSet<E> {
         trace!("getting tracked events");
         let sessions = self.events.read().await;
@@ -44,6 +54,7 @@ where
         HashSet::from_iter(sessions.values().map(|e| e.keys().cloned()).flatten())
     }
 
+    // Check if an event is tracked by any session
     pub async fn is_event_tracked(&self, event: &E) -> bool {
         trace!("checking if event is tracked");
         let sessions = self.events.read().await;
@@ -54,6 +65,9 @@ where
             .is_some()
     }
 
+    // Notify all sessions subscribed to the given event
+    // This will send the event concurrently to all sessions
+    // based on the provided configuration
     pub async fn notify(&self, event: &E, value: Value) {
         let value = json!(EventResult { event: Cow::Borrowed(event), value });
         debug!("notifying event");
@@ -63,20 +77,27 @@ where
             events.clone()
         };
 
-        for (session, subscriptions) in sessions.iter() {
-            if let Some(id) = subscriptions.get(event) {
-                let response = json!(RpcResponse::new(Cow::Borrowed(&id), Cow::Borrowed(&value)));
-                trace!("sending event to #{}", session.id);
-                if let Err(e) = session.send_text(response.to_string()).await {
-                    debug!("Error occured while notifying a new event: {}", e);
-                };
-                trace!("event sent to #{}", session.id);
-            }
-        }
+        stream::iter(sessions.iter())
+            .for_each_concurrent(self.notify_concurrency, |(session, subscriptions)| {
+                let data = subscriptions.get(event)
+                    .map(|id| json!(RpcResponse::new(Cow::Borrowed(&id), Cow::Borrowed(&value))));
+
+                async move {
+                    if let Some(data) = data {
+                        trace!("sending event to #{}", session.id);
+                        if let Err(e) = session.send_text(data.to_string()).await {
+                            debug!("Error occured while notifying a new event: {}", e);
+                        };
+                        trace!("event sent to #{}", session.id);
+                    }
+                }
+            }).await;
 
         debug!("end event propagation");
     }
 
+    // Subscribe a session to an event
+    // If the session is already subscribed to the event, return an error
     async fn subscribe_session_to_event(&self, session: &WebSocketSessionShared<Self>, event: E, id: Option<Id>) -> Result<(), RpcResponseError> {
         trace!("subscribing session to event");
         let mut sessions = self.events.write().await;
@@ -90,6 +111,8 @@ where
         Ok(())
     }
 
+    // Unsubscribe a session from an event
+    // If the session is not subscribed to the event, return an error
     async fn unsubscribe_session_from_event(&self, session: &WebSocketSessionShared<Self>, event: E, id: Option<Id>) -> Result<(), RpcResponseError> {
         trace!("unsubscribing session from event");
         let mut sessions = self.events.write().await;
@@ -104,12 +127,18 @@ where
         Ok(())
     }
 
+    // Parse the event from the request
     fn parse_event(&self, request: &mut RpcRequest) -> Result<E, RpcResponseError> {
-        let value = request.params.take().ok_or_else(|| RpcResponseError::new(request.id.clone(), InternalRpcError::ExpectedParams))?;
-        let params: SubscribeParams<E> = serde_json::from_value(value).map_err(|e| RpcResponseError::new(request.id.clone(), InternalRpcError::InvalidJSONParams(e)))?;
+        let value = request.params.take()
+            .ok_or_else(|| RpcResponseError::new(request.id.clone(), InternalRpcError::ExpectedParams))?;
+        let params: SubscribeParams<E> = serde_json::from_value(value)
+            .map_err(|e| RpcResponseError::new(request.id.clone(), InternalRpcError::InvalidJSONParams(e)))?;
+
         Ok(params.notify.into_owned())
     }
 
+    // Execute the method from the request
+    // If the method is "subscribe" or "unsubscribe", subscribe or unsubscribe the session to/from the event
     async fn execute_method_internal(&self, context: &Context, value: Value) -> Result<Option<Value>, RpcResponseError> {
         let mut request = self.handler.parse_request(value)?;
         let method = request.method.clone();
@@ -128,6 +157,7 @@ where
         }
     }
 
+    // Handle the message received on the websocket
     async fn on_message_internal<'a>(&'a self, session: &'a WebSocketSessionShared<Self>, message: Bytes) -> Result<Value, RpcResponseError> {
         let request: Value = serde_json::from_slice(&message)
             .map_err(|_| RpcResponseError::new(None, InternalRpcError::ParseBodyError))?;
@@ -177,7 +207,7 @@ where
     }
 
     async fn on_message(&self, session: &WebSocketSessionShared<Self>, message: Bytes) -> Result<(), anyhow::Error> {
-        debug!("new message received on websocket");
+        trace!("new message received on websocket");
         let response: Value = match self.on_message_internal(session, message).await {
             Ok(result) => result,
             Err(e) => e.to_json(),

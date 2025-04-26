@@ -38,12 +38,30 @@ pub fn from_xelis(value: impl Into<String>) -> Option<u64> {
 // Convert a coin amount from string to a u64 based on the provided decimals
 pub fn from_coin(value: impl Into<String>, coin_decimals: u8) -> Option<u64> {
     let value = value.into();
-    let mut split = value.trim().split('.');
-    let value: u64 = split.next()?.parse::<u64>().ok()?;
-    let right_part = split.next().unwrap_or("0");
-    let decimals: String = right_part.chars().chain(std::iter::repeat('0')).take(coin_decimals as usize).collect();
-    let decimals_value = decimals.parse::<u64>().ok()?;
-    Some(value * 10u64.pow(coin_decimals as u32) + decimals_value)
+    let mut split = value.trim()
+        .split('.');
+    let value: u64 = split.next()?
+        .parse::<u64>()
+        .ok()?;
+
+    if coin_decimals > 0 {
+        let right_part = split.next()
+            .unwrap_or("0");
+        let decimals: String = right_part.chars()
+            .chain(std::iter::repeat('0'))
+            .take(coin_decimals as usize)
+            .collect();
+        let decimals_value = decimals.parse::<u64>()
+            .ok()?;
+        Some(value * 10u64.pow(coin_decimals as u32) + decimals_value)
+    } else {
+        // If we have an asset decimals set at 0, we can't have an amount with decimals
+        if split.next().is_some() {
+            return None
+        }
+
+        Some(value)
+    }
 }
 
 // return the fee for a transaction based on its size in bytes
@@ -134,6 +152,35 @@ pub fn sanitize_daemon_address(target: &str) -> String {
 mod tests {
     use super::*;
     use crate::config::COIN_VALUE;
+
+    #[test]
+    fn test_format_coin() {
+        assert_eq!(
+            from_coin("10", 8),
+            Some(10 * COIN_VALUE)
+        );
+        assert_eq!(
+            from_coin("1", 8),
+            Some(COIN_VALUE)
+        );
+        assert_eq!(
+            from_coin("0.1", 8),
+            Some(COIN_VALUE / 10)
+        );
+        assert_eq!(
+            from_coin("0.01", 8),
+            Some(COIN_VALUE / 100)
+        );
+
+        assert_eq!(
+            from_coin("0.1", 1),
+            Some(1)
+        );
+        assert_eq!(
+            from_coin("1", 0),
+            Some(1)
+        );
+    }
 
     #[test]
     fn test_xelis_format() {

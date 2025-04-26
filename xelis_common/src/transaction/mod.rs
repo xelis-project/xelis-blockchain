@@ -1,13 +1,8 @@
 use serde::{Deserialize, Serialize};
-use xelis_vm::Module;
 use crate::{
     account::Nonce,
     crypto::{
-        elgamal::{
-            CompressedCommitment,
-            CompressedPublicKey
-        },
-        proofs::CommitmentEqProof,
+        elgamal::CompressedPublicKey,
         Hash,
         Hashable,
         Signature,
@@ -22,14 +17,16 @@ pub mod builder;
 pub mod verify;
 pub mod extra_data;
 pub mod multisig;
-mod payload;
 
+mod payload;
+mod source_commitment;
 mod reference;
 mod version;
 
 pub use payload::*;
 pub use reference::Reference;
 pub use version::TxVersion;
+pub use source_commitment::SourceCommitment;
 
 #[cfg(test)]
 mod tests;
@@ -48,47 +45,11 @@ pub const MAX_MULTISIG_PARTICIPANTS: usize = 255;
 /// Simple enum to determine which DecryptHandle to use to craft a Ciphertext
 /// This allows us to store one time the commitment and only a decrypt handle for each.
 /// The DecryptHandle is used to decrypt the ciphertext and is selected based on the role in the transaction.
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug)]
 #[serde(rename_all = "snake_case")]
 pub enum Role {
     Sender,
     Receiver,
-}
-
-// SourceCommitment is a structure that holds the commitment and the equality proof
-// of the commitment to the asset
-// In a transaction, every spendings are summed up in a single commitment per asset
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct SourceCommitment {
-    commitment: CompressedCommitment,
-    proof: CommitmentEqProof,
-    asset: Hash,
-}
-
-impl SourceCommitment {
-    /// Create a new SourceCommitment
-    pub fn new(commitment: CompressedCommitment, proof: CommitmentEqProof, asset: Hash) -> Self {
-        SourceCommitment {
-            commitment,
-            proof,
-            asset
-        }
-    }
-
-    // Get the commitment
-    pub fn get_commitment(&self) -> &CompressedCommitment {
-        &self.commitment
-    }
-
-    // Get the equality proof
-    pub fn get_proof(&self) -> &CommitmentEqProof {
-        &self.proof
-    }
-
-    // Get the asset hash
-    pub fn get_asset(&self) -> &Hash {
-        &self.asset
-    }
 }
 
 // this enum represent all types of transaction available on XELIS Network
@@ -99,7 +60,7 @@ pub enum TransactionType {
     Burn(BurnPayload),
     MultiSig(MultiSigPayload),
     InvokeContract(InvokeContractPayload),
-    DeployContract(Module),
+    DeployContract(DeployContractPayload),
 }
 
 // Transaction to be sent over the network
@@ -190,7 +151,7 @@ impl Transaction {
 
     // Get the used assets
     pub fn get_assets(&self) -> impl Iterator<Item = &Hash> {
-        self.source_commitments.iter().map(|c| &c.asset)
+        self.source_commitments.iter().map(SourceCommitment::get_asset)
     }
 
     // Get the range proof
@@ -229,33 +190,20 @@ impl Transaction {
         }
     }
 
+    // Get the total outputs count per TX
+    // default is 1
+    // Transfers / Deposits are their own len
+    pub fn get_outputs_count(&self) -> usize {
+        match &self.data {
+            TransactionType::Transfers(transfers) => transfers.len(),
+            TransactionType::InvokeContract(payload) => payload.deposits.len().max(1),
+            _ => 1
+        }
+    }
+
     // Consume the transaction by returning the source public key and the transaction type
     pub fn consume(self) -> (CompressedPublicKey, TransactionType) {
         (self.source, self.data)
-    }
-}
-
-impl Serializer for SourceCommitment {
-    fn write(&self, writer: &mut Writer) {
-        self.commitment.write(writer);
-        self.proof.write(writer);
-        self.asset.write(writer);
-    }
-
-    fn read(reader: &mut Reader) -> Result<SourceCommitment, ReaderError> {
-        let commitment = CompressedCommitment::read(reader)?;
-        let proof = CommitmentEqProof::read(reader)?;
-        let asset = Hash::read(reader)?;
-
-        Ok(SourceCommitment {
-            commitment,
-            proof,
-            asset
-        })
-    }
-
-    fn size(&self) -> usize {
-        self.commitment.size() + self.proof.size() + self.asset.size()
     }
 }
 
@@ -308,18 +256,9 @@ impl Serializer for TransactionType {
                 }
                 TransactionType::Transfers(txs)
             },
-            2 => {
-                let payload = MultiSigPayload::read(reader)?;
-                TransactionType::MultiSig(payload)
-            },
-            3 => {
-                let payload = InvokeContractPayload::read(reader)?;
-                TransactionType::InvokeContract(payload)
-            },
-            4 => {
-                let module = Module::read(reader)?;
-                TransactionType::DeployContract(module)
-            },
+            2 => TransactionType::MultiSig(MultiSigPayload::read(reader)?),
+            3 => TransactionType::InvokeContract(InvokeContractPayload::read(reader)?),
+            4 => TransactionType::DeployContract(DeployContractPayload::read(reader)?),
             _ => {
                 return Err(ReaderError::InvalidValue)
             }

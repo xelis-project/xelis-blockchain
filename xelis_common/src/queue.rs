@@ -1,4 +1,4 @@
-use std::{hash::Hash, collections::{VecDeque, HashSet}, fmt::Debug, sync::Arc};
+use std::{collections::{HashMap, VecDeque}, fmt::Debug, hash::Hash, mem, sync::Arc};
 
 // A queue that allows for O(1) lookup of elements
 // The queue is backed by a VecDeque and a HashSet
@@ -6,36 +6,39 @@ use std::{hash::Hash, collections::{VecDeque, HashSet}, fmt::Debug, sync::Arc};
 // The VecDeque is used to keep track of the order of the elements
 // This can be shared between threads
 pub struct Queue<K: Hash + Eq + Debug, V> {
-    keys: HashSet<Arc<K>>,
-    order: VecDeque<(Arc<K>, V)>
+    keys: HashMap<Arc<K>, V>,
+    order: VecDeque<Arc<K>>
 }
 
 impl<K: Hash + Eq + Debug, V> Queue<K, V> {
     pub fn new() -> Self {
         Self {
-            keys: HashSet::new(),
+            keys: HashMap::new(),
             order: VecDeque::new()
         }
+    }
+
+    fn push_internal(&mut self, key: K, value: V) {
+        let key = Arc::new(key);
+        self.keys.insert(key.clone(), value);
+        self.order.push_back(key);
     }
 
     // Pushes a new element to the back of the queue
     // Returns true if the element was added, false if it already exists
     pub fn push(&mut self, key: K, value: V) -> bool {
-        if self.keys.contains(&key) {
+        if self.keys.contains_key(&key) {
             return false;
         }
 
-        let key = Arc::new(key);
-        self.keys.insert(key.clone());
-        self.order.push_back((key, value));
-
+        self.push_internal(key, value);
         true
     }
 
     // Removes and returns the first element
     pub fn pop(&mut self) -> Option<(K, V)> {
-        let (key, value) = self.order.pop_front()?;
-        self.keys.remove(&key);
+        let key = self.order.pop_front()?;
+        let value = self.keys.remove(&key)?;
 
         let key = Arc::try_unwrap(key).expect("Failed to unwrap Arc");
         Some((key, value))
@@ -43,46 +46,61 @@ impl<K: Hash + Eq + Debug, V> Queue<K, V> {
 
     // Returns true if key is presents in the queue
     pub fn has(&self, key: &K) -> bool {
-        self.keys.contains(key)
+        self.keys.contains_key(key)
+    }
+
+    fn remove_order_internal(&mut self, key: &K) -> Option<Arc<K>> {
+        let index = self.order.iter().position(|k| *k.as_ref() == *key)?;
+        self.order.remove(index)
     }
 
     // Removes and returns the element for the given key
-    pub fn remove(&mut self, key: &K) -> Option<(K, V)> {
-        let index = self.order.iter().position(|(k, _)| *k.as_ref() == *key)?;
-        let (key, value) = self.order.remove(index)?;
-        self.keys.remove(&key);
+    pub fn remove_entry(&mut self, key: &K) -> Option<(K, V)> {
+        let value = self.keys.remove(key)?;
+        let key = self.remove_order_internal(key)?;
 
         let key = Arc::try_unwrap(key).expect("Failed to unwrap Arc");
         Some((key, value))
     }
 
+    // Removes and returns the element for the given key
+    pub fn remove(&mut self, key: &K) -> Option<V> {
+        let value = self.keys.remove(key)?;
+        self.remove_order_internal(key)?;
+
+        Some(value)
+    }
+
     // Gets a reference to the element with the given key
     pub fn get(&self, key: &K) -> Option<&V> {
-        self.keys.get(key).and_then(|key| {
-            self.order.iter().find(|(k, _)| Arc::ptr_eq(k, key)).map(|(_, v)| v)
-        })
+        self.keys.get(key)
     }
 
     // Gets a mutable reference to the element with the given key
     pub fn get_mut(&mut self, key: &K) -> Option<&mut V> {
-        self.keys.get(key).and_then(|key| {
-            self.order.iter_mut().find(|(k, _)| Arc::ptr_eq(k, key)).map(|(_, v)| v)
-        })
+        self.keys.get_mut(key)
     }
 
     // Returns a reference to the element at the given index
-    pub fn get_index(&self, index: usize) -> Option<&(Arc<K>, V)> {
-        self.order.get(index)
+    pub fn get_index(&self, index: usize) -> Option<&K> {
+        self.order.get(index).map(|k| &**k)
     }
 
-    // Returns a reference to the first element
-    pub fn peek(&self) -> Option<&(Arc<K>, V)> {
+    // Returns a reference to the first value element
+    pub fn peek(&self) -> Option<&V> {
         self.order.front()
+            .and_then(|k| self.keys.get(k))
     }
 
-    // Returns a mutable reference to the first element
-    pub fn peek_mut(&mut self) -> Option<&mut (Arc<K>, V)> {
-        self.order.front_mut()
+    // Returns a mutable reference to the first value element
+    pub fn peek_mut(&mut self) -> Option<&mut V> {
+        self.order.front()
+            .and_then(|k| self.keys.get_mut(k))
+    }
+
+    // Returns a reference to the first key element
+    pub fn peek_key(&self) -> Option<&K> {
+        self.order.front().map(|k| &**k)
     }
 
     // Returns current size of the queue
@@ -101,41 +119,31 @@ impl<K: Hash + Eq + Debug, V> Queue<K, V> {
         self.order.clear();
     }
 
-    // Returns an iterator over the elements in the queue
-    pub fn iter(&self) -> impl Iterator<Item = &(Arc<K>, V)> {
-        self.order.iter()
-    }
-
-    // Returns an iterator over the elements in the queue
-    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut (Arc<K>, V)> {
-        self.order.iter_mut()
-    }
-
     // Returns an iterator over the keys in the queue
-    pub fn keys(&self) -> impl Iterator<Item = &Arc<K>> {
-        self.keys.iter()
+    // Keys are ordered based on the insertion order
+    pub fn keys(&self) -> impl Iterator<Item = &K> {
+        self.order.iter().map(|k| &**k)
     }
 
     // Returns an iterator over the values in the queue
     pub fn values(&self) -> impl Iterator<Item = &V> {
-        self.order.iter().map(|(_, v)| v)
-    }
-
-    // Returns an iterator over the values in the queue
-    pub fn values_mut(&mut self) -> impl Iterator<Item = &mut V> {
-        self.order.iter_mut().map(|(_, v)| v)
+        self.keys.values()
     }
 
     // Delete from queue and returns deleted elements
-    pub fn extract_if<'a, F: 'a + FnMut((&Arc<K>, &V)) -> bool>(&'a mut self, mut f: F) -> impl Iterator<Item = (Arc<K>, V)> + 'a {
-        let mut tmp = VecDeque::with_capacity(self.order.capacity());
-        std::mem::swap(&mut self.order, &mut tmp);
+    pub fn extract_if<'a, F: 'a + FnMut(&K, &V) -> bool>(&'a mut self, mut f: F) -> impl Iterator<Item = (K, V)> + 'a {
+        let mut tmp = HashMap::with_capacity(self.keys.len());
+        mem::swap(&mut self.keys, &mut tmp);
+
         tmp.into_iter().filter_map(move |(k, v)| {
-            if f((&k, &v)) {
-                self.keys.remove(&k);
-                Some((k, v))
+            if f(&k, &v) {
+                self.remove_order_internal(&k)?;
+
+                let key = Arc::try_unwrap(k)
+                    .expect("Failed to unwrap Arc");
+                Some((key, v))
             } else {
-                self.order.push_back((k, v));
+                self.keys.insert(k, v);
                 None
             }
         })

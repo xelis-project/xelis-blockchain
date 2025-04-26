@@ -134,9 +134,8 @@ pub struct UnsignedTransactionResponse {
     // Unsigned TX hash for signing for multisig signers
     pub hash: Hash,
     // Multisig threshold, zero if not active
-    pub threshold: u8,
+    pub threshold: Option<u8>,
     // Unsigned transaction in hex format
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub tx_as_hex: Option<String>
 }
 
@@ -164,14 +163,17 @@ pub struct ListTransactionsParams {
     #[serde(default = "default_true_value")]
     pub accept_burn: bool,
     // Filter by extra data
-    pub query: Option<Query>
+    pub query: Option<Query>,
+    // Limit the number of entries returned
+    pub limit: Option<usize>,
+    // Skip the first N entries
+    pub skip: Option<usize>,
 }
 
 #[derive(Serialize, Deserialize)]
 pub struct TransactionResponse<'a> {
     #[serde(flatten)]
     pub inner: DataHash<'a, Transaction>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub tx_as_hex: Option<String>
 }
 
@@ -239,7 +241,9 @@ pub struct HasKeyParams {
 #[derive(Serialize, Deserialize)]
 pub struct GetMatchingKeysParams {
     pub tree: String,
-    pub query: Option<Query>
+    pub query: Option<Query>,
+    pub limit: Option<usize>,
+    pub skip: Option<usize>
 }
 
 #[derive(Serialize, Deserialize)]
@@ -263,12 +267,17 @@ pub struct DeleteParams {
 }
 
 #[derive(Serialize, Deserialize)]
+pub struct DeleteTreeEntriesParams {
+    pub tree: String
+}
+
+#[derive(Serialize, Deserialize)]
 pub struct QueryDBParams {
     pub tree: String,
     pub key: Option<Query>,
     pub value: Option<Query>,
-    #[serde(default = "default_false_value")]
-    pub return_on_first: bool
+    pub limit: Option<usize>,
+    pub skip: Option<usize>
 }
 
 #[derive(Serialize, Deserialize)]
@@ -379,6 +388,8 @@ pub enum EntryType {
         chunk_id: u16,
         // Fee paid
         fee: u64,
+        // Max gas allowed
+        max_gas: u64,
         // Nonce used
         nonce: u64
     },

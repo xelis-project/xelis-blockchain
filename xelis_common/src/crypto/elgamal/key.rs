@@ -5,6 +5,7 @@ use curve25519_dalek::{
 };
 use rand::rngs::OsRng;
 use serde::{Deserialize, Deserializer, Serialize};
+use sha3::Sha3_512;
 use zeroize::Zeroize;
 use crate::{
     api::DataElement,
@@ -12,7 +13,8 @@ use crate::{
     crypto::{
         proofs::PC_GENS,
         Address,
-        AddressType
+        AddressType,
+        Hash
     },
     serializer::{
         Reader,
@@ -29,7 +31,7 @@ use super::{
     Signature
 };
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct PublicKey(RistrettoPoint);
 
 #[derive(Clone, Zeroize)]
@@ -45,6 +47,12 @@ impl PublicKey {
     // Create a public key from a point
     pub fn from_point(p: RistrettoPoint) -> Self {
         Self(p)
+    }
+
+    // Create a public key from a 32 byte hash
+    // The hash will be hashed again to output a 64 byte hash
+    pub fn from_hash(hash: &Hash) -> Self {
+        Self(RistrettoPoint::hash_from_bytes::<Sha3_512>(hash.as_bytes()))
     }
 
     // Create a new public key from a private key
@@ -123,7 +131,20 @@ impl PrivateKey {
 
     // Decode a point to a u64 with precomputed tables
     pub fn decode_point(&self, precomputed_tables: &ECDLPTablesFileView, point: RistrettoPoint) -> Option<u64> {
-        ecdlp::decode(precomputed_tables, point, ECDLPArguments::new_with_range(0, MAXIMUM_SUPPLY as i64))
+        self.decode_point_within_range(precomputed_tables, point, 0, MAXIMUM_SUPPLY as _)
+    }
+
+    // Decode a point to a u64 with precomputed tables within the requested range
+    pub fn decode_point_within_range(
+        &self,
+        precomputed_tables: &ECDLPTablesFileView,
+        point: RistrettoPoint,
+        range_min: i64,
+        range_max: i64
+    ) -> Option<u64> {
+        let args = ECDLPArguments::new_with_range(range_min, range_max);
+
+        ecdlp::decode(precomputed_tables, point, args)
             .map(|x| x as u64)
     }
 

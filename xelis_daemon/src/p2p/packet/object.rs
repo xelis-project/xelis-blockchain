@@ -78,7 +78,7 @@ impl Display for ObjectRequest {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum OwnedObjectResponse {
     Block(Block, Hash),
     BlockHeader(BlockHeader, Hash),
@@ -124,6 +124,8 @@ impl ObjectResponse<'_> {
         }
     }
 
+    // Be careful, this method ensure that the hash is the correct
+    // one for each object
     pub fn to_owned(self) -> OwnedObjectResponse {
         match self {
             Self::Block(block) => {
@@ -184,6 +186,17 @@ impl<'a> Serializer for ObjectResponse<'a> {
             Self::BlockHeader(header) => header.size(),
             Self::Transaction(transaction) => transaction.size(),
             Self::NotFound(obj) => obj.size()
+        }
+    }
+}
+
+impl Display for OwnedObjectResponse {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Block(block, hash) => write!(f, "OwnedObjectResponse({}, {})", block, hash),
+            Self::BlockHeader(block, hash) => write!(f, "OwnedObjectResponse({}, {})", block, hash),
+            Self::Transaction(_, hash) => write!(f, "OwnedObjectResponse(Transaction({}))", hash),
+            Self::NotFound(request) => write!(f, "OwnedObjectResponse(NotFound({}))", request),
         }
     }
 }

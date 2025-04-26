@@ -322,7 +322,7 @@ impl Serializer for String {
 
     fn size(&self) -> usize {
         // 1 for str len as byte + str len
-        1 + self.len()
+        1 + self.as_bytes().len().min(u8::MAX as usize)
     }
 }
 

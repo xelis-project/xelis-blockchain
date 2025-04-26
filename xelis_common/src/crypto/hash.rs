@@ -72,13 +72,13 @@ pub fn pow_hash(work: &[u8], algorithm: Algorithm) -> Result<Hash, XelisHashErro
             let slice = input.as_mut_slice()?;
             slice[..work.len()].copy_from_slice(work);
         
-            v1::xelis_hash(slice, &mut scratchpad).map(|bytes| Hash::new(bytes))
+            v1::xelis_hash(slice, &mut scratchpad)
         },
         Algorithm::V2 => {
             let mut scratchpad = v2::ScratchPad::default();
-            v2::xelis_hash(work, &mut scratchpad).map(|bytes| Hash::new(bytes))
+            v2::xelis_hash(work, &mut scratchpad)
         },
-    }
+    }.map(Hash::new)
 }
 
 impl Serializer for Hash {

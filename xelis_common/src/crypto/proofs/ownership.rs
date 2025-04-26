@@ -1,3 +1,4 @@
+use bulletproofs::RangeProof;
 use curve25519_dalek::Scalar;
 use merlin::Transcript;
 use crate::{
@@ -23,7 +24,10 @@ use super::{
     BatchCollector,
     CommitmentEqProof,
     ProofGenerationError,
-    ProofVerificationError
+    ProofVerificationError,
+    BP_GENS,
+    PC_GENS,
+    BULLET_PROOF_SIZE
 };
 
 /// Prove that the prover owns a certain amount (N > 0) of a given asset.
@@ -34,6 +38,8 @@ pub struct OwnershipProof {
     commitment: CompressedCommitment,
     /// The commitment proof.
     commitment_eq_proof: CommitmentEqProof,
+    /// The range proof to prove that commitment is >= 0
+    range_proof: RangeProof,
 }
 
 impl OwnershipProof {
@@ -42,8 +48,8 @@ impl OwnershipProof {
     const OPENING: PedersenOpening = PedersenOpening::from_scalar(Scalar::ONE);
 
     /// Create a new ownership proof.
-    pub fn from(amount: u64, commitment: CompressedCommitment, commitment_eq_proof: CommitmentEqProof) -> Self {
-        Self { amount, commitment, commitment_eq_proof }
+    pub fn from(amount: u64, commitment: CompressedCommitment, commitment_eq_proof: CommitmentEqProof, range_proof: RangeProof) -> Self {
+        Self { amount, commitment, commitment_eq_proof, range_proof }
     }
 
     /// Create a new ownership proof with default transcript
@@ -59,8 +65,11 @@ impl OwnershipProof {
         }
 
         let left = balance.checked_sub(amount)
-            .ok_or(ProofGenerationError::InsufficientFunds)?;
-        
+            .ok_or(ProofGenerationError::InsufficientFunds {
+                required: amount,
+                available: balance
+            })?;
+
         // We don't want to reveal the whole balance, so we create a new Commitment with a random opening.
         let opening = PedersenOpening::generate_new();
         let left_commitment = PedersenCommitment::new_with_opening(left, &opening)
@@ -75,10 +84,14 @@ impl OwnershipProof {
         let ct = keypair.get_public_key().encrypt_with_opening(amount, &Self::OPENING);
         let ct_left = ciphertext - ct;
 
-        // Generate the proof that the final balance is 0 after applying the commitment.
+        // Generate the proof that the final balance is ? minus N after applying the commitment.
         let commitment_eq_proof = CommitmentEqProof::new(keypair, &ct_left, &opening, left, transcript);
 
-        Ok(Self::from(amount, left_commitment, commitment_eq_proof))
+        // Create a range proof to prove that whats left is >= 0
+        let (range_proof, range_commitment) = RangeProof::prove_single(&BP_GENS, &PC_GENS, transcript, left, &opening.as_scalar(), BULLET_PROOF_SIZE)?;
+        assert_eq!(&range_commitment, left_commitment.as_point());
+
+        Ok(Self::from(amount, left_commitment, commitment_eq_proof, range_proof))
     }
 
     /// Verify the ownership proof.
@@ -101,6 +114,8 @@ impl OwnershipProof {
 
         self.commitment_eq_proof.pre_verify(public_key, &balance_left, &commitment, transcript, batch_collector)?;
 
+        self.range_proof.verify_single(&BP_GENS, &PC_GENS, transcript, &(commitment.as_point().clone(), self.commitment.as_point().clone()), BULLET_PROOF_SIZE)?;
+
         Ok(())
     }
 
@@ -118,20 +133,23 @@ impl Serializer for OwnershipProof {
         self.amount.write(writer);
         self.commitment.write(writer);
         self.commitment_eq_proof.write(writer);
+        self.range_proof.write(writer);
     }
 
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
         let amount = u64::read(reader)?;
         let commitment = CompressedCommitment::read(reader)?;
         let commitment_eq_proof = CommitmentEqProof::read(reader)?;
+        let range_proof = RangeProof::read(reader)?;
 
-        Ok(Self::from(amount, commitment, commitment_eq_proof))
+        Ok(Self::from(amount, commitment, commitment_eq_proof, range_proof))
     }
 
     fn size(&self) -> usize {
         self.amount.size()
             + self.commitment.size()
             + self.commitment_eq_proof.size()
+            + self.range_proof.size()
     }
 }
 
@@ -180,5 +198,78 @@ mod tests {
 
         // Create proof
         assert!(OwnershipProof::new(&keypair, balance, amount, ct).is_err());
+    }
+
+    #[test]
+    fn test_inflated_balance_ownership_proof() {
+        let keypair = KeyPair::new();
+        // Generate the balance
+        let balance = 100u64;
+        let amount = 10u64;
+        let ct = keypair.get_public_key().encrypt(balance);
+
+        // Create proof
+        let mut proof = OwnershipProof::new(&keypair, balance, amount, ct.clone()).unwrap();
+        let inflate = 100;
+
+        proof.amount += inflate;
+        let mut decompressed = proof.commitment.decompress().unwrap();
+        decompressed -= Scalar::from((-(inflate as i64)) as u64);
+
+        proof.commitment = decompressed.compress();
+
+        assert!(proof.verify(keypair.get_public_key(), ct).is_err());
+    }
+
+    #[test]
+    fn test_fake_commitment_ownership_proof() {
+        let keypair = KeyPair::new();
+        // Generate the balance
+        let balance = 10u64;
+
+        // How much we want to prove as ownership
+        let amount = 10u64;
+        // By how much we want to inflate it
+        let inflate = 10u64;
+
+        // Current balance on chain
+        let balance_ct = keypair.get_public_key().encrypt(balance);
+
+        let left = balance.checked_sub(amount).unwrap();
+
+        let mut transcript = Transcript::new(b"ownership_proof");
+        // We don't want to reveal the whole balance, so we create a new Commitment with a random opening.
+        let opening = PedersenOpening::generate_new();
+        let mut left_commitment = PedersenCommitment::new_with_opening(left, &opening);
+        left_commitment -= Scalar::from(inflate);
+
+        let left_commitment = left_commitment.compress();
+
+        transcript.ownership_proof_domain_separator();
+        transcript.append_u64(b"amount", amount + inflate);
+        transcript.append_commitment(b"commitment", &left_commitment);
+        transcript.append_ciphertext(b"source_ct", &balance_ct.compress());
+
+        // Compute the balance left
+        let ct = keypair.get_public_key().encrypt_with_opening(amount + inflate, &OwnershipProof::OPENING);
+        let ct_left = balance_ct.clone() - ct;
+
+        // expected left balance + the inflated amount
+        let left_scalar = Scalar::from(left) - Scalar::from(inflate);
+
+        let commitment_eq_proof = CommitmentEqProof::new_with_scalar(&keypair, &ct_left, &opening, left_scalar, &mut transcript);
+
+        // Range proof prevent such exploit by making sure our balance left commitment is >= 0
+        let (range_proof, _) = RangeProof::prove_single(&BP_GENS, &PC_GENS, &mut transcript, left, &opening.as_scalar(), BULLET_PROOF_SIZE).unwrap();
+
+        // Create proof
+        let proof = OwnershipProof {
+            commitment: left_commitment,
+            amount: amount + inflate,
+            commitment_eq_proof,
+            range_proof
+        };
+
+        assert!(proof.verify(keypair.get_public_key(), balance_ct).is_err());
     }
 }

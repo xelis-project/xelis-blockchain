@@ -1,11 +1,19 @@
-use std::borrow::Cow;
+use std::{borrow::Cow, collections::HashMap};
 
 use async_trait::async_trait;
+use indexmap::IndexMap;
 use xelis_vm::{Environment, Module};
 use crate::{
     account::Nonce,
     block::{Block, BlockVersion},
-    contract::{ChainState, ContractCache, ContractOutput, ContractProvider},
+    contract::{
+        AssetChanges,
+        ChainState,
+        ContractCache,
+        ContractEventTracker,
+        ContractOutput,
+        ContractProvider
+    },
     crypto::{
         elgamal::{
             Ciphertext,
@@ -14,7 +22,7 @@ use crate::{
         Hash
     },
     transaction::{
-        InvokeContractPayload,
+        ContractDeposit,
         MultiSigPayload,
         Reference,
         Transaction
@@ -101,10 +109,11 @@ pub trait BlockchainVerificationState<'a, E> {
 
     /// Load in the cache the contract module
     /// This is called before `get_contract_module_with_environment`
+    /// Returns true if the module is available
     async fn load_contract_module(
         &mut self,
         hash: &'a Hash
-    ) -> Result<(), E>;
+    ) -> Result<bool, E>;
 
     /// Get the contract module with the environment
     /// This is used to verify that all parameters are correct
@@ -148,16 +157,29 @@ pub trait BlockchainApplyState<'a, P: ContractProvider, E>: BlockchainVerificati
     ) -> Result<(), E>;
 
     /// Get the contract environment
+    /// Implementation should take care of deposits by applying them
+    /// to the chain state
     async fn get_contract_environment_for<'b>(
         &'b mut self,
-        payload: &'b InvokeContractPayload,
+        contract: &'b Hash,
+        deposits: &'b IndexMap<Hash, ContractDeposit>,
         tx_hash: &'b Hash
     ) -> Result<(ContractEnvironment<'b, P>, ChainState<'b>), E>;
 
     /// Merge the contract cache with the stored one
-    async fn merge_contract_cache(
+    async fn merge_contract_changes(
         &mut self,
         hash: &'a Hash,
-        cache: ContractCache
+        cache: ContractCache,
+        tracker: ContractEventTracker,
+        assets: HashMap<Hash, Option<AssetChanges>>
+    ) -> Result<(), E>;
+
+    /// Remove the contract module
+    /// This will mark the contract
+    /// as a None version
+    async fn remove_contract_module(
+        &mut self,
+        hash: &'a Hash
     ) -> Result<(), E>;
 }

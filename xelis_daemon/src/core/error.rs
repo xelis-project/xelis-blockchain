@@ -28,8 +28,8 @@ pub enum DiskContext {
     DataLen,
     #[error("multisig")]
     Multisig,
-    #[error("get multisig at topoheight")]
-    MultisigAtTopoHeight,
+    #[error("get multisig at topoheight {0}")]
+    MultisigAtTopoHeight(TopoHeight),
     #[error("get top block")]
     GetTopBlock,
     #[error("get top metadata")]
@@ -44,20 +44,22 @@ pub enum DiskContext {
     AccountRegistrationTopoHeight,
     #[error("get asset")]
     Asset,
+    #[error("get asset at topoheight {0}")]
+    AssetAtTopoHeight(TopoHeight),
     #[error("get last balance")]
     LastBalance,
-    #[error("get balance at topoheight")]
-    BalanceAtTopoHeight,
+    #[error("get balance at topoheight {0}")]
+    BalanceAtTopoHeight(TopoHeight),
     #[error("get last topoheight for balance")]
     LastTopoHeightForBalance,
-    #[error("get block reward at topoheight")]
-    BlockRewardAtTopoHeight,
-    #[error("get supply at topoheight")]
-    SupplyAtTopoHeight,
-    #[error("get burned supply at topoheight")]
-    BurnedSupplyAtTopoHeight,
-    #[error("get blocks at height")]
-    BlocksAtHeight,
+    #[error("get block reward at topoheight {0}")]
+    BlockRewardAtTopoHeight(TopoHeight),
+    #[error("get supply at topoheight {0}")]
+    SupplyAtTopoHeight(TopoHeight),
+    #[error("get burned supply at topoheight {0}")]
+    BurnedSupplyAtTopoHeight(TopoHeight),
+    #[error("get blocks at height {0}")]
+    BlocksAtHeight(u64),
     #[error("get block executor for tx")]
     BlockExecutorForTx,
     #[error("get blocks for tx")]
@@ -70,14 +72,14 @@ pub enum DiskContext {
     GetBlockHeaderByHash,
     #[error("get estimated covariance for block hash")]
     EstimatedCovarianceForBlockHash,
-    #[error("get balances merkle hash at topoheight")]
-    BalancesMerkleHashAtTopoHeight,
+    #[error("get balances merkle hash at topoheight {0}")]
+    BalancesMerkleHashAtTopoHeight(TopoHeight),
     #[error("get last topoheight for nonce")]
     LastTopoheightForNonce,
     #[error("get last nonce")]
     LastNonce,
-    #[error("get nonce at topoheight")]
-    NonceAtTopoHeight,
+    #[error("get nonce at topoheight {0}")]
+    NonceAtTopoHeight(TopoHeight),
     // Extra
     #[error("get network")]
     Network,
@@ -110,25 +112,47 @@ pub enum DiskContext {
     SearchBlockPositionInOrder,
     #[error("get contract topoheight")]
     ContractTopoHeight,
-    #[error("get contract at topoheight")]
-    ContractAtTopoHeight,
+    #[error("get contract at topoheight {0}")]
+    ContractAtTopoHeight(TopoHeight),
     #[error("contracts count")]
     ContractsCount,
     #[error("get contract data topoheight")]
     ContractDataTopoHeight,
-    #[error("get contract data at topoheight")]
-    ContractDataAtTopoHeight,
+    #[error("get contract data at topoheight {0}")]
+    ContractDataAtTopoHeight(TopoHeight),
     #[error("get contract data")]
     ContractData,
-    #[error("get contract output")]
-    ContractOutput,
+    #[error("get contract outputs")]
+    ContractOutputs,
     #[error("get contract balance")]
     ContractBalance,
+    #[error("get asset supply")]
+    AssetSupply,
+    #[error("get asset supply at topoheight {0}")]
+    AssetSupplyAtTopoHeight(TopoHeight),
+    #[error("get asset supply topoheight")]
+    AssetSupplyTopoHeight,
+
+    // Variants used by versioned data deletions
+    #[error("versioned contract")]
+    VersionedContract,
+    #[error("versioned contract data")]
+    VersionedContractData,
+    #[error("versioned nonce")]
+    VersionedNonce,
+    #[error("versioned multisig")]
+    VersionedMultisig,
+    #[error("versioned balance")]
+    VersionedBalance,
 }
 
 #[repr(usize)]
 #[derive(Error, Debug)]
 pub enum BlockchainError {
+    #[error("Invalid configuration provided")]
+    InvalidConfig,
+    #[error("Invalid data on disk: corrupted")]
+    CorruptedData,
     #[error("No contract balance found")]
     NoContractBalance,
     #[error("Contract already exists")]
@@ -187,40 +211,20 @@ pub enum BlockchainError {
     TxEmpty(Hash),
     #[error("Transaction has an invalid reference: block hash not found")]
     InvalidReferenceHash,
-    #[error("Transaction has an invalid reference: topoheight is too high")]
-    InvalidReferenceTopoheight,
+    #[error("Transaction has an invalid reference: topoheight {0} is higher than our topoheight {1}")]
+    InvalidReferenceTopoheight(u64, u64),
+    #[error("No previous balance found")]
+    NoPreviousBalanceFound,
     #[error("Transaction has an invalid reference: no balance version found in stable chain")]
     NoStableReferenceFound,
-    #[error("Tx {} has too many output", _0)]
-    TooManyOutputInTx(Hash),
     #[error("Tx {} is already in block", _0)]
     TxAlreadyInBlock(Hash),
-    #[error("Duplicate registration tx for address '{}' found in same block", _0)]
-    DuplicateRegistration(Address), // address
     #[error("Invalid Tx fee, expected at least {}, got {}", format_xelis(*_0), format_xelis(*_1))]
     InvalidTxFee(u64, u64),
     #[error("Fees are lower for this TX than the overrided TX, expected at least {}, got {}", format_xelis(*_0), format_xelis(*_1))]
     FeesToLowToOverride(u64, u64),
     #[error("No account found for {}", _0)]
     AccountNotFound(Address),
-    #[error("Address {} is not registered", _0)]
-    AddressNotRegistered(Address),
-    #[error("Address {} is already registered", _0)]
-    AddressAlreadyRegistered(Address),
-    #[error("Address {} should have {} for {} but have {}", _0, _2, _1, _3)]
-    NotEnoughFunds(Address, Hash, u64, u64), // address, asset, balance, expected
-    #[error("Coinbase Tx not allowed: {}", _0)]
-    CoinbaseTxNotAllowed(Hash),
-    #[error("Invalid block reward, expected {}, got {}", _0, _1)]
-    InvalidBlockReward(u64, u64),
-    #[error("Invalid fee reward for this block, expected {}, got {}", _0, _1)]
-    InvalidFeeReward(u64, u64),
-    #[error("Invalid circulating supply, expected {}, got {} coins generated!", _0, _1)]
-    InvalidCirculatingSupply(u64, u64),
-    #[error("Invalid tx registration PoW: {}", _0)]
-    InvalidTxRegistrationPoW(Hash),
-    #[error("Invalid tx registration, tx has a signature: {}", _0)]
-    InvalidTxRegistrationSignature(Hash),
     #[error("Invalid transaction nonce: {}, account nonce is: {}", _0, _1)]
     InvalidTransactionNonce(Nonce, Nonce),
     #[error("Invalid transaction, sender trying to send coins to himself: {}", _0)]
@@ -257,10 +261,6 @@ pub enum BlockchainError {
     IsSyncing,
     #[error("Invalid transaction signature")]
     InvalidTransactionSignature,
-    #[error("Found a signature on the transaction, but its not required")]
-    UnexpectedTransactionSignature,
-    #[error("Invalid miner transaction in the block, only coinbase tx is allowed")]
-    InvalidMinerTx,
     #[error("Genesis block is not mined by dev address!")]
     GenesisBlockMiner,
     #[error("Invalid genesis block")]
@@ -281,8 +281,6 @@ pub enum BlockchainError {
     UnsupportedOperation,
     #[error("Data not found on disk: {}", _0)]
     NotFoundOnDisk(DiskContext),
-    #[error("Invalid paramater: max chain response size isn't in range")]
-    ConfigMaxChainResponseSize,
     #[error("Invalid config sync mode")]
     ConfigSyncMode,
     #[error("Expected at least one tips")]
@@ -319,16 +317,12 @@ pub enum BlockchainError {
     NoBalanceChanges(Address, TopoHeight, Hash),
     #[error("No nonce found on disk for {}", _0)]
     NoNonce(Address),
-    #[error("No nonce changes for {} at specific topoheight", _0)]
-    NoNonceChanges(Address),
     #[error("Overflow detected")]
     Overflow,
     #[error("Error, block {} include a dead tx {} from stable height {} executed in block {}", _0, _1, _2, _3)]
     DeadTxFromStableHeight(Hash, Hash, u64, Hash),
     #[error("Error, block {} include a dead tx from tips {}", _0, _1)]
     DeadTxFromTips(Hash, Hash),
-    #[error("A non-zero value is required for burn")]
-    NoValueForBurn,
     #[error("TX {} is already in blockchain", _0)]
     TxAlreadyInBlockchain(Hash),
     #[error("Cannot prune, not enough blocks")]  
@@ -373,10 +367,14 @@ pub enum BlockchainError {
     InvalidTransactionFormat,
     #[error("Invalid invoke contract")]
     InvalidInvokeContract,
+    #[error("Deposit not found")]
+    DepositNotFound,
     #[error("MultiSig not found")]
     MultiSigNotFound,
     #[error("Error in module: {}", _0)]
-    ModuleError(String)
+    ModuleError(String),
+    #[error("Invalid transaction in block while verifying in multi-thread mode")]
+    InvalidTransactionMultiThread,
 }
 
 impl BlockchainError {
@@ -419,6 +417,8 @@ impl From<VerificationError<BlockchainError>> for BlockchainError {
             VerificationError::AnyError(e) => BlockchainError::Any(e),
             VerificationError::GasOverflow => BlockchainError::Overflow,
             VerificationError::InvalidInvokeContract => BlockchainError::InvalidInvokeContract,
+            VerificationError::DepositNotFound => BlockchainError::DepositNotFound,
+            e => BlockchainError::Any(e.into())
         }
     }
 }

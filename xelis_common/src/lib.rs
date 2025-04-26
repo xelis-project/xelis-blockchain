@@ -18,7 +18,6 @@ pub mod varuint;
 pub mod time;
 pub mod versioned_type;
 
-#[cfg(feature = "tokio")]
 pub mod tokio;
 
 #[cfg(feature = "json_rpc")]

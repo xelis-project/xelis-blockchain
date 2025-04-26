@@ -2,6 +2,7 @@ use crate::{
     core::error::BlockchainError,
     config::{CHAIN_SYNC_RESPONSE_MAX_BLOCKS, CHAIN_SYNC_RESPONSE_MIN_BLOCKS}
 };
+use anyhow::Error;
 use tokio::{
     sync::{
         AcquireError,
@@ -11,7 +12,7 @@ use tokio::{
     time::error::Elapsed
 };
 use xelis_common::{
-    api::daemon::Direction,
+    api::daemon::{TimedDirection, Direction},
     crypto::Hash,
     serializer::ReaderError,
 };
@@ -30,12 +31,18 @@ use super::{
     encryption::EncryptionError,
     packet::{
         bootstrap_chain::StepKind,
-        object::ObjectRequest,
+        object::{ObjectRequest, OwnedObjectResponse},
     }
 };
 
 #[derive(Error, Debug)]
 pub enum P2pError {
+    #[error("Invalid block metadata")]
+    InvalidBlockMetadata,
+    #[error("Invalid temporary ban time, it must be greater than 0")]
+    InvalidTempBanTime,
+    #[error("Invalid fail count, it must be greater than 0")]
+    InvalidFailCount,
     #[error("Invalid Diffie-Hellman key")]
     InvalidDHKey,
     #[error("Invalid local port, it must be greater than 0")]
@@ -71,7 +78,7 @@ pub enum P2pError {
     #[error("Invalid merkle hash")]
     InvalidMerkleHash,
     #[error("Duplicated peer {} received from {} received in ping packet (direction = {:?})", _0, _1, _2)]
-    DuplicatedPeer(SocketAddr, SocketAddr, Direction),
+    DuplicatedPeer(SocketAddr, SocketAddr, TimedDirection),
     #[error("Pruned topoheight {} is greater than topoheight {} in ping packet", _0, _1)]
     InvalidPrunedTopoHeight(u64, u64),
     #[error("Pruned topoheight {} is less than old pruned topoheight {} in ping packet", _0, _1)]
@@ -89,9 +96,9 @@ pub enum P2pError {
     #[error("Block {} at height {} propagated is under our stable height", _0, _1)]
     BlockPropagatedUnderStableHeight(Hash, u64),
     #[error("Block {} propagated is already tracked with direction {:?}", _0, _1)]
-    AlreadyTrackedBlock(Hash, Direction),
-    #[error("Transaction {} propagated is already tracked", _0)]
-    AlreadyTrackedTx(Hash),
+    AlreadyTrackedBlock(Hash, TimedDirection),
+    #[error("Transaction {} propagated is already tracked with {:?}", _0, _1)]
+    AlreadyTrackedTx(Hash, Direction),
     #[error("Malformed chain request, received {} blocks id", _0)]
     MalformedChainRequest(usize),
     #[error("Received a unrequested chain response")]
@@ -151,7 +158,7 @@ pub enum P2pError {
     #[error("Object not requested {}", _0)]
     ObjectNotRequested(ObjectRequest),
     #[error("Object requested {} is not present any more in queue", _0)]
-    ObjectHashNotPresentInQueue(Hash),
+    ObjectNotPresentInQueue(Hash),
     #[error("Object requested {} already requested", _0)]
     ObjectAlreadyRequested(ObjectRequest),
     #[error("Invalid object response for request, received hash: {}", _0)]
@@ -164,10 +171,10 @@ pub enum P2pError {
     BoostSyncModeBlockerError,
     #[error("Boost sync mode failed: {}", _0)]
     BoostSyncModeFailed(Box<P2pError>),
-    #[error("Expected a block type")]
-    ExpectedBlock,
-    #[error("Expected a transaction type")]
-    ExpectedTransaction,
+    #[error("Expected a block type got {0}")]
+    ExpectedBlock(OwnedObjectResponse),
+    #[error("Expected a transaction type got {0}")]
+    ExpectedTransaction(OwnedObjectResponse),
     #[error("Peer sent us a peerlist faster than protocol rules, expected to wait {} seconds more", _0)]
     PeerInvalidPeerListCountdown(u64),
     #[error("Peer sent us a ping packet faster than protocol rules")]
@@ -184,6 +191,8 @@ pub enum P2pError {
     SemaphoreAcquireError(#[from] AcquireError),
     #[error(transparent)]
     EncryptionError(#[from] EncryptionError),
+    #[error(transparent)]
+    Any(#[from] Error)
 }
 
 impl From<BlockchainError> for P2pError {

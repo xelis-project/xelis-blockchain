@@ -1,9 +1,10 @@
 use async_trait::async_trait;
-use log::trace;
+use log::{debug, trace};
 use crate::core::{
     error::BlockchainError,
-    storage::{SledStorage, Snapshot, Storage}
+    storage::{SledStorage, Snapshot, CacheProvider}
 };
+
 #[async_trait]
 pub trait CommitPointProvider {
     // Start a commit point
@@ -23,25 +24,20 @@ impl CommitPointProvider for SledStorage {
             return Err(BlockchainError::CommitPointAlreadyStarted);
         }
 
-        let snapshot = Snapshot::new(self.assets_count, self.accounts_count, self.transactions_count, self.blocks_count, self.blocks_execution_count, self.contracts_count);
+        let snapshot = Snapshot::new(self.cache.clone());
         self.snapshot = Some(snapshot);
         Ok(())
     }
 
     async fn end_commit_point(&mut self, apply: bool) -> Result<(), BlockchainError> {
         trace!("end commit point");
-
-        let snapshot = self.snapshot.take().ok_or(BlockchainError::CommitPointNotStarted)?;
+        let snapshot = self.snapshot.take()
+            .ok_or(BlockchainError::CommitPointNotStarted)?;
 
         if apply {
-            self.assets_count = snapshot.assets_count;
-            self.accounts_count = snapshot.accounts_count;
-            self.transactions_count = snapshot.transactions_count;
-            self.blocks_count = snapshot.blocks_count;
-            self.blocks_execution_count = snapshot.blocks_execution_count;
-            self.contracts_count = snapshot.contracts_count;
+            self.cache = snapshot.cache;
 
-            for (tree, batch) in snapshot.finalize().into_iter() {
+            for (tree, batch) in snapshot.trees {
                 trace!("Applying batch to tree {:?}", tree);
                 match batch {
                     Some(batch) => {
@@ -59,7 +55,8 @@ impl CommitPointProvider for SledStorage {
                     }
                 };
             }
-    
+        } else {
+            debug!("Clearing caches due to invalidation of the commit point");
             self.clear_caches().await?;
         }
 

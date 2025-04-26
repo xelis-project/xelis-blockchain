@@ -8,7 +8,7 @@ use std::{
 };
 use indexmap::IndexMap;
 use thiserror::Error;
-use anyhow::Error;
+use anyhow::{Context, Error};
 use log::{debug, error, info, trace, warn};
 use xelis_common::{
     account::CiphertextCache,
@@ -21,7 +21,6 @@ use xelis_common::{
         wallet::BalanceChanged,
         RPCTransactionType
     },
-    asset::AssetData,
     config::XELIS_ASSET,
     crypto::{
         elgamal::Ciphertext,
@@ -35,7 +34,12 @@ use xelis_common::{
         task::{JoinError, JoinHandle},
         time::sleep
     },
-    transaction::{ContractDeposit, MultiSigPayload, Role},
+    transaction::{
+        extra_data::{PlaintextExtraData, PlaintextFlag},
+        ContractDeposit,
+        MultiSigPayload,
+        Role
+    },
     utils::sanitize_daemon_address
 };
 use crate::{
@@ -294,7 +298,7 @@ impl NetworkHandler {
 
                     // Used to check only once if we have processed this TX already
                     let mut checked = false;
-                    for transfer in txs {
+                    for (i, transfer) in txs.into_iter().enumerate() {
                         let destination = transfer.destination.to_public_key();
                         if is_owner || destination == *address.get_public_key() {
                             // Check only once if we have processed this TX already
@@ -333,16 +337,28 @@ impl NetworkHandler {
                             };
 
                             let extra_data = if let Some(cipher) = transfer.extra_data.into_owned() {
-                                self.wallet.decrypt_extra_data(cipher, role).ok()
+                                match self.wallet.decrypt_extra_data(cipher,  Some(&handle), role) {
+                                    Ok(e) => Some(e),
+                                    Err(e) => {
+                                        warn!("Error while decrypting extra data of TX {}: {}", tx.hash, e);
+                                        Some(PlaintextExtraData::new(None, None, PlaintextFlag::Failed))
+                                    }
+                                }
                             } else {
                                 None
                             };
 
-                            debug!("Decrypting amount from TX {}", tx.hash);
-                            let ciphertext = Ciphertext::new(commitment, handle);
-                            let amount = Arc::clone(&self.wallet).decrypt_ciphertext(ciphertext).await?;
-
                             let asset = transfer.asset.into_owned();
+                            debug!("Decrypting amount from TX {} of asset {}", tx.hash, asset);
+                            let ciphertext = Ciphertext::new(commitment, handle);
+                            let amount = match self.wallet.decrypt_ciphertext_of_asset(&ciphertext, &asset).await? {
+                                Some(v) => v,
+                                None => {
+                                    warn!("Couldn't decrypt the ciphertext of transfer #{} for asset {} in TX {}. Skipping it", i, asset, tx.hash);
+                                    continue;
+                                }
+                            };
+
                             assets_changed.insert(asset.clone());
 
                             if is_owner {
@@ -392,15 +408,23 @@ impl NetworkHandler {
                                 ContractDeposit::Public(amount) => {
                                     deposits.insert(asset, amount);
                                 },
-                                // ContractDeposit::Private(ct) => {
-                                //     let ct = ct.decompress()?;
-                                //     let amount = self.wallet.decrypt_ciphertext(ct).await?;
-                                //     deposits.insert(asset, amount);
-                                // }
+                                ContractDeposit::Private { commitment, sender_handle, ..} => {
+                                    let commitment = commitment.decompress()?;
+                                    let handle = sender_handle.decompress()?;
+                                    let ciphertext = Ciphertext::new(commitment, handle);
+                                    let amount = match self.wallet.decrypt_ciphertext_of_asset(&ciphertext, &asset).await? {
+                                        Some(v) => v,
+                                        None => {
+                                            warn!("Couldn't decrypt deposit ciphertext for asset {}. Skipping it", asset);
+                                            continue;
+                                        }
+                                    };
+                                    deposits.insert(asset, amount);
+                                }
                             }
                         }
 
-                        Some(EntryData::InvokeContract { contract: payload.contract, deposits, chunk_id: payload.chunk_id, fee: tx.fee, nonce: tx.nonce })
+                        Some(EntryData::InvokeContract { contract: payload.contract, deposits, chunk_id: payload.chunk_id, fee: tx.fee, max_gas: payload.max_gas, nonce: tx.nonce })
                     } else {
                         None
                     }
@@ -530,6 +554,14 @@ impl NetworkHandler {
         // Determine if its the highest version of balance or not
         // This is used to save the latest balance
         let mut highest_version = true;
+
+        // Retrieve the last transaction ID
+        // We will need it to re-org all the TXs we have stored
+        let last_tx_id = {
+            let storage = self.wallet.get_storage().read().await;
+            storage.get_last_transaction_id()?
+        };
+
         loop {
             let (mut balance, _, _, previous_topoheight) = version.consume();
             // add this topoheight in cache to not re-process it (blocks are independant of asset to have faster sync)
@@ -567,7 +599,11 @@ impl NetworkHandler {
                         } else {
                             trace!("Decrypting balance for asset {}", asset);
                             let ciphertext = balance.decompressed()?;
-                            Arc::clone(&self.wallet).decrypt_ciphertext(ciphertext.clone()).await?
+                            let max_supply = storage.get_asset(asset).await?
+                                .get_max_supply();
+
+                            self.wallet.decrypt_ciphertext_with(&ciphertext, max_supply).await?
+                                .context(format!("Couldn't decrypt the ciphertext for {} at topoheight {}", asset, topoheight))?
                         };
                         
                         debug!("Storing balance from topoheight {} for asset {} ({}) {}", topoheight, asset, balance, plaintext_balance);
@@ -601,6 +637,10 @@ impl NetworkHandler {
             // Only first iteration is the highest one
             highest_version = false;
         }
+
+        // Re-org all the TXs we have stored
+        let mut storage = self.wallet.get_storage().write().await;
+        storage.reverse_transactions_indexes(last_tx_id)?;
 
         Ok(())
     }
@@ -734,14 +774,11 @@ impl NetworkHandler {
 
     // Sync the latest version of our balances and nonces and determine if we should parse all blocks
     // If assets are provided, we'll only sync these assets
-    // TODO: this may bug with Smart Contract integration as we could receive a new asset and not detect it
     // If nonce is not provided, we will fetch it from the daemon
+    // TODO: we should prevent to sync EVERY assets we receive, only sync the one accepted by the wallet
     async fn sync_head_state(&self, address: &Address, assets: Option<HashSet<Hash>>, nonce: Option<u64>, sync_nonce: bool) -> Result<bool, Error> {
         trace!("syncing head state");
-        let new_nonce = if nonce.is_some() {
-            debug!("nonce provided, using it");
-            nonce
-        } else if sync_nonce {
+        let new_nonce = if sync_nonce {
             debug!("no nonce provided, fetching it from daemon");
             match self.api.get_nonce(&address).await.map(|v| v.version) {
                 Ok(v) => Some(v.get_nonce()),
@@ -753,6 +790,8 @@ impl NetworkHandler {
                             warn!("We have balances but we couldn't fetch the nonce, deleting all balances");
                             storage.delete_balances().await?;
                             storage.delete_assets().await?;
+                            storage.delete_multisig_state().await?;
+                            storage.delete_nonce().await?;
                         }
                     }
                     // Account is not registered, we can return safely here
@@ -760,7 +799,7 @@ impl NetworkHandler {
                 }
             }
         } else {
-            None
+            nonce
         };
 
         // Check if we have a multisig account
@@ -786,7 +825,7 @@ impl NetworkHandler {
             }
         } else {
             let mut storage = self.wallet.get_storage().write().await;
-            if storage.has_multi_sig_state().await? {
+            if storage.has_multisig_state().await? {
                 info!("No multisig account detected, deleting multisig state");
                 storage.delete_multisig_state().await?;
             }
@@ -796,7 +835,8 @@ impl NetworkHandler {
             assets
         } else {
             trace!("no assets provided, fetching all assets");
-            self.api.get_account_assets(address).await?
+            // TODO: Fetch all available assets
+            self.api.get_account_assets(address, None, None).await?
         };
 
         trace!("assets: {}", assets.len());
@@ -815,8 +855,7 @@ impl NetworkHandler {
                 // Add the asset to the storage
                 {
                     let mut storage = self.wallet.get_storage().write().await;
-                    let data = AssetData::new(data.decimals, data.name.as_ref().to_owned(), data.max_supply);
-                    storage.add_asset(&asset, data).await?;
+                    storage.add_asset(&asset, data.inner.clone()).await?;
                 }
 
                 // New asset added to the wallet, inform listeners
@@ -834,7 +873,7 @@ impl NetworkHandler {
         {
             if let Some(new_nonce) = new_nonce {
                 let mut storage = self.wallet.get_storage().write().await;
-                if storage.get_nonce().map(|n| n != new_nonce).unwrap_or(true) {
+                if storage.get_nonce()? != new_nonce {
                     // Store the new nonce
                     debug!("Storing new nonce {}", new_nonce);
                     storage.set_nonce(new_nonce)?;
@@ -843,7 +882,7 @@ impl NetworkHandler {
             }
 
             for (asset, (mut ciphertext, topoheight)) in balances {
-                let (must_update, balance_cache) = {
+                let (must_update, balance_cache, max_supply) = {
                     let storage = self.wallet.get_storage().read().await;
                     let must_update = match storage.get_balance_for(&asset).await {
                         Ok(mut previous) => previous.ciphertext.compressed() != ciphertext.compressed(),
@@ -858,7 +897,10 @@ impl NetworkHandler {
                         None
                     };
 
-                    (must_update, balance_cache)
+                    let max_supply = storage.get_asset(asset).await?
+                        .get_max_supply();
+
+                    (must_update, balance_cache, max_supply)
                 };
 
                 if must_update {
@@ -867,7 +909,14 @@ impl NetworkHandler {
                         cache
                     } else {
                         trace!("Decrypting balance for asset {}", asset);
-                        Arc::clone(&self.wallet).decrypt_ciphertext(ciphertext.decompressed()?.clone()).await?
+                        let decompressed = ciphertext.decompressed()?;
+                        match self.wallet.decrypt_ciphertext_with(decompressed, max_supply).await? {
+                            Some(v) => v,
+                            None => {
+                                warn!("Couldn't decrypt ciphertext for asset {}, skipping it", asset);
+                                continue;
+                            }
+                        }
                     };
 
                     // Inform the change of the balance
@@ -988,6 +1037,9 @@ impl NetworkHandler {
         // This is rare event but may happen if someone try to do something shady
         let mut on_transaction_orphaned = self.api.on_transaction_orphaned_event().await?;
 
+        // Track also the contract transfers to our address
+        let mut on_contract_transfer = self.api.on_contract_transfer_event(address.clone()).await?;
+
         // Network events to detect if we are online or offline
         let mut on_connection = self.api.on_connection().await;
         let mut on_connection_lost = self.api.on_connection_lost().await;
@@ -1047,6 +1099,27 @@ impl NetworkHandler {
                         storage.clear_tx_cache();
                     }
                 },
+                res = on_contract_transfer.next() => {
+                    let event = res?;
+                    debug!("on contract transfer event asset {} at topo {} {}", event.asset, event.topoheight, event.block_hash);
+
+                    let contains_asset = {
+                        let storage = self.wallet.get_storage().read().await;
+                        storage.contains_asset(&event.asset).await?
+                    };
+
+                    let sync_new_blocks = self.sync_head_state(&address, Some(HashSet::from_iter([event.asset.into_owned()])), None, false).await?;
+                    debug!("sync new blocks: {}, contains asset: {}", sync_new_blocks, contains_asset);
+                    // If we already contains the asset we can sync new blocks in case we missed any
+                    // If we didn't loaded it before, we have no reason to go through chain
+                    // because it would have been detected earlier
+                    if contains_asset && sync_new_blocks {
+                        self.sync_new_blocks(&address, event.topoheight, false).await?;
+                    }
+
+                    // let mut storage = self.wallet.get_storage().write().await;
+                    // TODO: we need to store this output as a transaction so it appears in history
+                },
                 // Detect network events
                 res = on_connection.recv() => {
                     trace!("on_connection");
@@ -1071,7 +1144,7 @@ impl NetworkHandler {
             let storage = self.wallet.get_storage().read().await;
             storage.get_assets().await?
         };
-        
+
         debug!("Scanning history for each asset");
         // cache for all topoheight we already processed
         // this will prevent us to request more than one time the same topoheight

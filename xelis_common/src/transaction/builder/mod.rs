@@ -6,21 +6,22 @@ mod fee;
 mod unsigned;
 mod payload;
 
-use indexmap::{IndexMap, IndexSet};
 pub use state::AccountState;
 pub use fee::{FeeHelper, FeeBuilder};
 pub use unsigned::UnsignedTransaction;
 
+use indexmap::{IndexMap, IndexSet};
+use merlin::Transcript;
 use bulletproofs::RangeProof;
 use curve25519_dalek::Scalar;
 use serde::{Deserialize, Serialize};
 use xelis_vm::Module;
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     iter,
 };
 use crate::{
-    config::{BURN_PER_CONTRACT, XELIS_ASSET},
+    config::{BURN_PER_CONTRACT, MAX_GAS_USAGE_PER_TX, XELIS_ASSET},
     crypto::{
         elgamal::{
             Ciphertext,
@@ -51,10 +52,16 @@ use crate::{
 };
 use thiserror::Error;
 use super::{
-    extra_data::{ExtraData, PlaintextData},
+    extra_data::{
+        ExtraData,
+        ExtraDataType,
+        PlaintextData,
+        UnknownExtraDataFormat
+    },
     BurnPayload,
-    CompressedConstant,
     ContractDeposit,
+    DeployContractPayload,
+    InvokeConstructorPayload,
     InvokeContractPayload,
     MultiSigPayload,
     Role,
@@ -65,8 +72,8 @@ use super::{
     TxVersion,
     EXTRA_DATA_LIMIT_SIZE,
     EXTRA_DATA_LIMIT_SUM_SIZE,
-    MAX_TRANSFER_COUNT,
-    MAX_MULTISIG_PARTICIPANTS
+    MAX_MULTISIG_PARTICIPANTS,
+    MAX_TRANSFER_COUNT
 };
 
 pub use payload::*;
@@ -75,6 +82,10 @@ pub use payload::*;
 pub enum GenerationError<T> {
     #[error("Error in the state: {0}")]
     State(T),
+    #[error("Invalid constructor invoke on deploy")]
+    InvalidConstructorInvoke,
+    #[error("No contract key provided for private deposits")]
+    MissingContractKey,
     #[error("Empty transfers")]
     EmptyTransfers,
     #[error("Max transfer count reached")]
@@ -99,8 +110,12 @@ pub enum GenerationError<T> {
     MultiSigSelfParticipant,
     #[error("Burn amount is zero")]
     BurnZero,
+    #[error("Deposit amount is zero")]
+    DepositZero,
     #[error("Invalid module hexadecimal")]
     InvalidModule,
+    #[error("Configured max gas is above the network limit")]
+    MaxGasReached,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -111,14 +126,14 @@ pub enum TransactionTypeBuilder {
     Burn(BurnPayload),
     MultiSig(MultiSigBuilder),
     InvokeContract(InvokeContractBuilder),
-    DeployContract(String),
+    DeployContract(DeployContractBuilder),
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct TransactionBuilder {
     version: TxVersion,
     source: CompressedPublicKey,
-    required_thresholds: u8,
+    required_thresholds: Option<u8>,
     data: TransactionTypeBuilder,
     fee_builder: FeeBuilder
 }
@@ -134,6 +149,26 @@ struct TransferWithCommitment {
 }
 
 impl TransferWithCommitment {
+    fn get_ciphertext(&self, role: Role) -> Ciphertext {
+        let handle = match role {
+            Role::Receiver => self.receiver_handle.clone(),
+            Role::Sender => self.sender_handle.clone(),
+        };
+
+        Ciphertext::new(self.commitment.clone(), handle)
+    }
+}
+
+// Internal struct for build
+struct DepositWithCommitment {
+    amount: u64,
+    commitment: PedersenCommitment,
+    sender_handle: DecryptHandle,
+    receiver_handle: DecryptHandle,
+    amount_opening: PedersenOpening,
+}
+
+impl DepositWithCommitment {
     fn get_ciphertext(&self, role: Role) -> Ciphertext {
         let handle = match role {
             Role::Receiver => self.receiver_handle.clone(),
@@ -188,7 +223,7 @@ impl TransactionTypeBuilder {
 }
 
 impl TransactionBuilder {
-    pub fn new(version: TxVersion, source: CompressedPublicKey, required_thresholds: u8, data: TransactionTypeBuilder, fee_builder: FeeBuilder) -> Self {
+    pub fn new(version: TxVersion, source: CompressedPublicKey, required_thresholds: Option<u8>, data: TransactionTypeBuilder, fee_builder: FeeBuilder) -> Self {
         Self {
             version,
             source,
@@ -228,12 +263,12 @@ impl TransactionBuilder {
             size += 1;
         }
 
-        if self.required_thresholds != 0 {
+        if let Some(threshold) = self.required_thresholds {
             // 1 for Multisig participants count byte
-            size += 1 + (self.required_thresholds as usize * (SIGNATURE_SIZE + 1))
+            size += 1 + (threshold as usize * (SIGNATURE_SIZE + 1))
         }
 
-        let mut transfers_count = 0;
+        let mut commitments_count = 0;
         match &self.data {
             TransactionTypeBuilder::Transfers(transfers) => {
                 // Transfers count byte
@@ -258,10 +293,14 @@ impl TransactionBuilder {
                         // 2 represents u16 length of UnknownExtraDataFormat
                         // We have both length has we move one in the other
                         // This mean new ExtraData version has 2 + 2 + 32 (sender) + 32 (receiver) bytes of overhead.
-                        size += ExtraData::estimate_size(extra_data);
+                        if self.version >= TxVersion::V2 {
+                            size += ExtraDataType::estimate_size(extra_data, transfer.encrypt_extra_data);
+                        } else {
+                            size += ExtraData::estimate_size(extra_data);
+                        }
                     }
                 }
-                transfers_count = transfers.len()
+                commitments_count = transfers.len();
             }
             TransactionTypeBuilder::Burn(payload) => {
                 // Payload size
@@ -272,34 +311,34 @@ impl TransactionBuilder {
                 size += payload.threshold.size() + 1 + (payload.participants.len() * RISTRETTO_COMPRESSED_SIZE);
             },
             TransactionTypeBuilder::InvokeContract(payload) => {
-                let mut payload_size = payload.contract.size()
+                let payload_size = payload.contract.size()
                 + payload.max_gas.size()
                 + payload.chunk_id.size()
                 + 1 // byte for params len
                 // 4 is for the compressed constant len
-                + payload.parameters.iter().map(|param| 4 + param.size()).sum::<usize>()
-                + 1; // byte for deposits len
-
-                for (asset, deposit) in &payload.deposits {
-                    // 1 is for the deposit variant
-                    payload_size += asset.size() + 1;
-                    if deposit.private {
-                        payload_size += RISTRETTO_COMPRESSED_SIZE;
-                    } else {
-                        payload_size += deposit.amount.size();
-                    }
-                }
+                + payload.parameters.iter().map(|param| 4 + param.size()).sum::<usize>();
 
                 size += payload_size;
+
+                let (commitments, deposits_size) = self.estimate_deposits_size(&payload.deposits);
+                commitments_count += commitments;
+                size += deposits_size;
             },
-            TransactionTypeBuilder::DeployContract(module) => {
-                // Module size
-                size += module.size() / 2;
+            TransactionTypeBuilder::DeployContract(payload) => {
+                // Module is in hex format, so we need to divide by 2 for its bytes size
+                // + 1 for the invoke option
+                size += payload.module.len() / 2 + 1;
+                if let Some(invoke) = payload.invoke.as_ref() {
+                    let (commitments, deposits_size) = self.estimate_deposits_size(&invoke.deposits);
+
+                    commitments_count += commitments;
+                    size += deposits_size + invoke.max_gas.size();
+                }
             }
         };
 
         // Range Proof
-        let lg_n = (BULLET_PROOF_SIZE * (transfers_count + assets_used)).next_power_of_two().trailing_zeros() as usize;
+        let lg_n = (BULLET_PROOF_SIZE * (commitments_count + assets_used)).next_power_of_two().trailing_zeros() as usize;
         // Fixed size of the range proof
         size += RISTRETTO_COMPRESSED_SIZE * 4 + SCALAR_SIZE * 3
         // u16 bytes length
@@ -313,10 +352,36 @@ impl TransactionBuilder {
         size
     }
 
+    fn estimate_deposits_size(&self, deposits: &IndexMap<Hash, ContractDepositBuilder>) -> (usize, usize) {
+        let mut commitments_count = 0;
+        // Init to 1 for the deposits len
+        let mut size = 1;
+        for (asset, deposit) in deposits {
+            // 1 is for the deposit variant
+            size += asset.size() + 1;
+            if deposit.private {
+                // Commitment, sender handle, receiver handle
+                size += RISTRETTO_COMPRESSED_SIZE * 3;
+                // Ct validity proof
+                size += RISTRETTO_COMPRESSED_SIZE * 3 + SCALAR_SIZE * 2;
+
+                // Increment the commitments count
+                // Each deposit is a commitment
+                commitments_count += 1;
+            } else {
+                size += deposit.amount.size();
+            }
+        }
+
+        (commitments_count, size)
+    }
+
     // Estimate the fees for this TX
     pub fn estimate_fees<B: FeeHelper>(&self, state: &mut B) -> Result<u64, GenerationError<B::Error>> {
         let calculated_fee = match self.fee_builder {
-            FeeBuilder::Multiplier(multiplier) => {
+            // If the value is set, use it
+            FeeBuilder::Value(value) => value,
+            _ => {
                 // Compute the size and transfers count
                 let size = self.estimate_size();
                 let (transfers, new_addresses) = if let TransactionTypeBuilder::Transfers(transfers) = &self.data {
@@ -332,18 +397,27 @@ impl TransactionBuilder {
                     (0, 0)
                 };
 
-                let expected_fee = calculate_tx_fee(size, transfers, new_addresses, self.required_thresholds as usize);
-                (expected_fee as f64 * multiplier) as u64
+                let expected_fee = calculate_tx_fee(size, transfers, new_addresses, self.required_thresholds.unwrap_or(0) as usize);
+                match self.fee_builder {
+                    FeeBuilder::Multiplier(multiplier) => (expected_fee as f64 * multiplier) as u64,
+                    FeeBuilder::Boost(boost) => expected_fee + boost,
+                    _ => expected_fee,
+                }
             },
-            // If the value is set, use it
-            FeeBuilder::Value(value) => value
         };
 
         Ok(calculated_fee)
     }
 
     // Compute the new source ciphertext
-    fn get_new_source_ct(&self, mut ct: Ciphertext, fee: u64, asset: &Hash, transfers: &[TransferWithCommitment]) -> Ciphertext {
+    fn get_new_source_ct(
+        &self,
+        mut ct: Ciphertext,
+        fee: u64,
+        asset: &Hash,
+        transfers: &[TransferWithCommitment],
+        deposits: &HashMap<Hash, DepositWithCommitment>,
+    ) -> Ciphertext {
         if asset == &XELIS_ASSET {
             // Fees are applied to the native blockchain asset only.
             ct -= Scalar::from(fee);
@@ -362,7 +436,43 @@ impl TransactionBuilder {
                     ct -= Scalar::from(payload.amount)
                 }
             },
-            _ => {}
+            TransactionTypeBuilder::MultiSig(_) => {},
+            TransactionTypeBuilder::InvokeContract(payload) => {
+                if let Some(deposit) = payload.deposits.get(asset) {
+                    if deposit.private {
+                        if let Some(deposit) = deposits.get(asset) {
+                            ct -= deposit.get_ciphertext(Role::Sender);
+                        }
+                    } else {
+                        ct -= Scalar::from(deposit.amount);
+                    }
+                }
+
+                if *asset == XELIS_ASSET {
+                    ct -= Scalar::from(payload.max_gas);
+                }
+            },
+            TransactionTypeBuilder::DeployContract(payload) => {
+                if let Some(invoke) = payload.invoke.as_ref() {
+                    if let Some(deposit) = invoke.deposits.get(asset) {
+                        if deposit.private {
+                            if let Some(deposit) = deposits.get(asset) {
+                                ct -= deposit.get_ciphertext(Role::Sender);
+                            }
+                        } else {
+                            ct -= Scalar::from(deposit.amount);
+                        }
+                    }
+
+                    if *asset == XELIS_ASSET {
+                        ct -= Scalar::from(invoke.max_gas);
+                    }
+                }
+
+                if *asset == XELIS_ASSET {
+                    ct -= Scalar::from(BURN_PER_CONTRACT);
+                }
+            }
         }
 
         ct
@@ -400,14 +510,116 @@ impl TransactionBuilder {
                     cost += payload.max_gas;
                 }
             },
-            TransactionTypeBuilder::DeployContract(_) => {
+            TransactionTypeBuilder::DeployContract(payload) => {
                 if *asset == XELIS_ASSET {
                     cost += BURN_PER_CONTRACT;
+                }
+
+                if let Some(invoke) = payload.invoke.as_ref() {
+                    if let Some(deposit) = invoke.deposits.get(asset) {
+                        cost += deposit.amount;
+                    }
+
+                    if *asset == XELIS_ASSET {
+                        cost += invoke.max_gas;
+                    }
                 }
             }
         }
 
         cost
+    }
+
+    // Build the deposits commitments for the contract
+    fn build_deposits_commitments<E>(
+        deposits: &IndexMap<Hash, ContractDepositBuilder>,
+        public_key: &PublicKey,
+        contract_key: &Option<PublicKey>,
+    ) -> Result<HashMap<Hash, DepositWithCommitment>, GenerationError<E>> {
+        let mut deposits_commitments = HashMap::new();
+        for (asset, deposit) in deposits.iter() {
+            if deposit.private {
+                let amount_opening = PedersenOpening::generate_new();
+                let commitment = PedersenCommitment::new_with_opening(deposit.amount, &amount_opening);
+                let sender_handle = public_key.decrypt_handle(&amount_opening);
+                let receiver_handle = contract_key
+                    .as_ref()
+                    .ok_or(GenerationError::MissingContractKey)?
+                    .decrypt_handle(&amount_opening);
+
+                deposits_commitments.insert(asset.clone(), DepositWithCommitment {
+                    amount: deposit.amount,
+                    commitment,
+                    sender_handle,
+                    receiver_handle,
+                    amount_opening,
+                });
+                todo!("support private deposits")
+            } else {
+                if deposit.amount == 0 {
+                    return Err(GenerationError::DepositZero);
+                }
+            }
+        }
+
+        Ok(deposits_commitments)
+    }
+
+    // Finalize the deposits commitments
+    // Public & private variants are built here
+    fn finalize_deposits_commitments(
+        transcript: &mut Transcript,
+        range_proof_values: &mut Vec<u64>,
+        range_proof_openings: &mut Vec<Scalar>,
+        payload_deposits: &mut IndexMap<Hash, ContractDepositBuilder>,
+        deposits_commitments: HashMap<Hash, DepositWithCommitment>,
+        source_keypair: &KeyPair,
+        contract_key: &Option<PublicKey>,
+    ) -> IndexMap<Hash, ContractDeposit> {
+        range_proof_openings.reserve(deposits_commitments.len());
+        range_proof_values.reserve(deposits_commitments.len());
+
+        // Build the private deposits
+        let mut deposits = deposits_commitments
+            .into_iter()
+            .map(|(asset, deposit)| {
+                let commitment = deposit.commitment.compress();
+                let sender_handle = deposit.sender_handle.compress();
+                let receiver_handle = deposit.receiver_handle.compress();
+
+                transcript.deposit_proof_domain_separator();
+                transcript.append_hash(b"deposit_asset", &asset);
+                transcript.append_commitment(b"deposit_commitment", &commitment);
+                transcript.append_handle(b"deposit_sender_handle", &sender_handle);
+                transcript.append_handle(b"deposit_receiver_handle", &receiver_handle);
+
+                let ct_validity_proof = CiphertextValidityProof::new(
+                    contract_key.as_ref().expect("Contract key is required"),
+                    Some(source_keypair.get_public_key()),
+                    deposit.amount,
+                    &deposit.amount_opening,
+                    transcript,
+                );
+
+                range_proof_values.push(deposit.amount);
+                range_proof_openings.push(deposit.amount_opening.as_scalar());
+
+                (
+                    asset,
+                    ContractDeposit::Private { commitment, sender_handle, receiver_handle, ct_validity_proof }
+                )
+            }).collect::<IndexMap<_, _>>();
+
+            // Now build the public ones
+            for (asset, deposit) in payload_deposits.drain(..).filter(|(_, deposit)| !deposit.private) {
+                transcript.deposit_proof_domain_separator();
+                transcript.append_hash(b"deposit_asset", &asset);
+                transcript.append_u64(b"deposit_plain", deposit.amount);
+
+                deposits.insert(asset, ContractDeposit::Public(deposit.amount));
+            }
+
+            deposits
     }
 
     pub fn build<B: AccountState>(
@@ -434,82 +646,106 @@ impl TransactionBuilder {
         // 0.a Create the commitments
 
         // Data is mutable only to extract extra data
-        let transfers = if let TransactionTypeBuilder::Transfers(transfers) = &mut self.data {
-            if transfers.len() == 0 {
-                return Err(GenerationError::EmptyTransfers);
-            }
-
-            if transfers.len() > MAX_TRANSFER_COUNT {
-                return Err(GenerationError::MaxTransferCountReached);
-            }
-
-            let pk = source_keypair.get_public_key().compress();
-            let mut extra_data_size = 0;
-            for transfer in transfers.iter_mut() {
-                if *transfer.destination.get_public_key() == pk {
-                    return Err(GenerationError::SenderIsReceiver);
+        let mut transfers_commitments = Vec::new();
+        let mut deposits_commitments = HashMap::new();
+        match &mut self.data {
+            TransactionTypeBuilder::Transfers(transfers) => {
+                if transfers.len() == 0 {
+                    return Err(GenerationError::EmptyTransfers);
                 }
 
-                if state.is_mainnet() != transfer.destination.is_mainnet() {
-                    return Err(GenerationError::InvalidNetwork);
+                if transfers.len() > MAX_TRANSFER_COUNT {
+                    return Err(GenerationError::MaxTransferCountReached);
                 }
-
-                // Either extra data provided or an integrated address, not both
-                if transfer.extra_data.is_some() && !transfer.destination.is_normal() {
-                    return Err(GenerationError::ExtraDataAndIntegratedAddress);
-                }
-
-                // Set the integrated data as extra data
-                if let Some(extra_data) = transfer.destination.extract_data_only() {
-                    transfer.extra_data = Some(extra_data);
-                }
-
-                if let Some(extra_data) = &transfer.extra_data {
-                    let size = extra_data.size();
-                    if size > EXTRA_DATA_LIMIT_SIZE {
-                        return Err(GenerationError::ExtraDataTooLarge);
+    
+                let mut extra_data_size = 0;
+                for transfer in transfers.iter_mut() {
+                    if *transfer.destination.get_public_key() == self.source {
+                        return Err(GenerationError::SenderIsReceiver);
                     }
-                    extra_data_size += size;
+    
+                    if state.is_mainnet() != transfer.destination.is_mainnet() {
+                        return Err(GenerationError::InvalidNetwork);
+                    }
+    
+                    // Either extra data provided or an integrated address, not both
+                    if transfer.extra_data.is_some() && !transfer.destination.is_normal() {
+                        return Err(GenerationError::ExtraDataAndIntegratedAddress);
+                    }
+    
+                    // Set the integrated data as extra data
+                    if let Some(extra_data) = transfer.destination.extract_data_only() {
+                        transfer.extra_data = Some(extra_data);
+                    }
+    
+                    if let Some(extra_data) = &transfer.extra_data {
+                        let size = extra_data.size();
+                        if size > EXTRA_DATA_LIMIT_SIZE {
+                            return Err(GenerationError::ExtraDataTooLarge);
+                        }
+                        extra_data_size += size;
+                    }
                 }
-            }
-
-            if extra_data_size > EXTRA_DATA_LIMIT_SUM_SIZE {
-                return Err(GenerationError::ExtraDataTooLarge);
-            }
-
-            transfers
-                .iter()
-                .map(|transfer| {
-                    let destination = transfer
-                        .destination
-                        .get_public_key()
-                        .decompress()
-                        .map_err(|err| GenerationError::Proof(err.into()))?;
-
-                    let amount_opening = PedersenOpening::generate_new();
-                    let commitment =
-                        PedersenCommitment::new_with_opening(transfer.amount, &amount_opening);
-                    let sender_handle =
-                        source_keypair.get_public_key().decrypt_handle(&amount_opening);
-                    let receiver_handle = destination.decrypt_handle(&amount_opening);
-
-                    Ok(TransferWithCommitment {
-                        inner: transfer.clone(),
-                        commitment,
-                        sender_handle,
-                        receiver_handle,
-                        destination,
-                        amount_opening,
+    
+                if extra_data_size > EXTRA_DATA_LIMIT_SUM_SIZE {
+                    return Err(GenerationError::ExtraDataTooLarge);
+                }
+    
+                transfers_commitments = transfers
+                    .iter()
+                    .map(|transfer| {
+                        let destination = transfer
+                            .destination
+                            .get_public_key()
+                            .decompress()
+                            .map_err(|err| GenerationError::Proof(err.into()))?;
+    
+                        let amount_opening = PedersenOpening::generate_new();
+                        let commitment =
+                            PedersenCommitment::new_with_opening(transfer.amount, &amount_opening);
+                        let sender_handle =
+                            source_keypair.get_public_key().decrypt_handle(&amount_opening);
+                        let receiver_handle = destination.decrypt_handle(&amount_opening);
+    
+                        Ok(TransferWithCommitment {
+                            inner: transfer.clone(),
+                            commitment,
+                            sender_handle,
+                            receiver_handle,
+                            destination,
+                            amount_opening,
+                        })
                     })
-                })
-                .collect::<Result<Vec<_>, GenerationError<B::Error>>>()?
-        } else {
-            vec![]
+                    .collect::<Result<Vec<_>, GenerationError<B::Error>>>()?;
+            },
+            TransactionTypeBuilder::InvokeContract(payload) => {
+                if payload.max_gas > MAX_GAS_USAGE_PER_TX {
+                    return Err(GenerationError::MaxGasReached.into())
+                }
+
+                deposits_commitments = Self::build_deposits_commitments::<B::Error>(
+                    &payload.deposits,
+                    source_keypair.get_public_key(),
+                    &None
+                )?;
+            },
+            TransactionTypeBuilder::DeployContract(payload) => {
+                if let Some(invoke) = payload.invoke.as_ref() {
+                    if invoke.max_gas > MAX_GAS_USAGE_PER_TX {
+                        return Err(GenerationError::MaxGasReached.into())
+                    }
+
+                    deposits_commitments = Self::build_deposits_commitments::<B::Error>(
+                        &invoke.deposits,
+                        source_keypair.get_public_key(),
+                        &None
+                    )?;
+                }
+            },
+            _ => {}
         };
 
         let reference = state.get_reference();
-        let mut transcript = Transaction::prepare_transcript(self.version, &self.source, fee, nonce);
-
         let used_assets = self.data.used_assets();
 
         let mut range_proof_openings: Vec<_> =
@@ -521,15 +757,23 @@ impl TransactionBuilder {
             .iter()
             .map(|asset| {
                 let cost = self.get_transaction_cost(fee, &asset);
-                let source_new_balance = state
-                    .get_account_balance(asset)
-                    .map_err(GenerationError::State)?
+                let current_balance = state
+                .get_account_balance(asset)
+                .map_err(GenerationError::State)?;
+
+                let source_new_balance = current_balance
                     .checked_sub(cost)
-                    .ok_or(ProofGenerationError::InsufficientFunds)?;
+                    .ok_or(ProofGenerationError::InsufficientFunds {
+                        required: cost,
+                        available: current_balance,
+                    })?;
 
                 Ok(source_new_balance)
             })
             .collect::<Result<Vec<_>, GenerationError<B::Error>>>()?;
+
+        // Prepare the transcript used for proofs
+        let mut transcript = Transaction::prepare_transcript(self.version, &self.source, fee, nonce);
 
         let source_commitments = used_assets
             .into_iter()
@@ -551,7 +795,7 @@ impl TransactionBuilder {
                     .compress();
 
                 let new_source_ciphertext =
-                    self.get_new_source_ct(source_current_ciphertext, fee, &asset, &transfers);
+                    self.get_new_source_ct(source_current_ciphertext, fee, &asset, &transfers_commitments, &deposits_commitments);
 
                 // 1. Make the CommitmentEqProof
 
@@ -576,84 +820,123 @@ impl TransactionBuilder {
                     .update_account_balance(&asset, source_new_balance, new_source_ciphertext)
                     .map_err(GenerationError::State)?;
 
-                Ok(SourceCommitment {
-                    asset: asset.clone(),
-                    commitment,
-                    proof,
-                })
+                Ok(SourceCommitment::new(commitment, proof, asset.clone()))
             })
             .collect::<Result<Vec<_>, GenerationError<B::Error>>>()?;
 
-        let transfers = if let TransactionTypeBuilder::Transfers(_) = &mut self.data {
-            range_proof_values.reserve(transfers.len());
-            range_proof_openings.reserve(transfers.len());
+        let mut transfers = Vec::new();
+        let mut deposits = IndexMap::new();
+        match &mut self.data {
+            TransactionTypeBuilder::Transfers(_) => {
+                range_proof_values.reserve(transfers_commitments.len());
+                range_proof_openings.reserve(transfers_commitments.len());
 
-            let mut total_cipher_size = 0;
-            let transfers = transfers
-                .into_iter()
-                .map(|transfer| {
-                    let commitment = transfer.commitment.compress();
-                    let sender_handle = transfer.sender_handle.compress();
-                    let receiver_handle = transfer.receiver_handle.compress();
+                let mut total_cipher_size = 0;
+                transfers = transfers_commitments
+                    .into_iter()
+                    .map(|transfer| {
+                        let commitment = transfer.commitment.compress();
+                        let sender_handle = transfer.sender_handle.compress();
+                        let receiver_handle = transfer.receiver_handle.compress();
+    
+                        transcript.transfer_proof_domain_separator();
+                        transcript.append_public_key(b"dest_pubkey", transfer.inner.destination.get_public_key());
+                        transcript.append_commitment(b"amount_commitment", &commitment);
+                        transcript.append_handle(b"amount_sender_handle", &sender_handle);
+                        transcript.append_handle(b"amount_receiver_handle", &receiver_handle);
+    
+                        let source_pubkey = if self.version >= TxVersion::V1 {
+                            Some(source_keypair.get_public_key())
+                        } else {
+                            None
+                        };
+    
+                        let ct_validity_proof = CiphertextValidityProof::new(
+                            &transfer.destination,
+                            source_pubkey,
+                            transfer.inner.amount,
+                            &transfer.amount_opening,
+                            &mut transcript,
+                        );
+    
+                        range_proof_values.push(transfer.inner.amount);
+                        range_proof_openings.push(transfer.amount_opening.as_scalar());
+    
+                        // Encrypt the extra data if it exists
+                        let extra_data = if let Some(extra_data) = transfer.inner.extra_data {
+                            let bytes = extra_data.to_bytes();
 
-                    transcript.transfer_proof_domain_separator();
-                    transcript.append_public_key(b"dest_pubkey", transfer.inner.destination.get_public_key());
-                    transcript.append_commitment(b"amount_commitment", &commitment);
-                    transcript.append_handle(b"amount_sender_handle", &sender_handle);
-                    transcript.append_handle(b"amount_receiver_handle", &receiver_handle);
+                            let cipher: UnknownExtraDataFormat = if self.version >= TxVersion::V2 {
+                                if transfer.inner.encrypt_extra_data {
+                                    ExtraDataType::Private(ExtraData::new(
+                                        PlaintextData(bytes),
+                                        source_keypair.get_public_key(),
+                                        &transfer.destination)
+                                    )
+                                } else {
+                                    ExtraDataType::Public(PlaintextData(bytes))
+                                }.into()
+                            } else {
+                                ExtraData::new(
+                                    PlaintextData(bytes),
+                                    source_keypair.get_public_key(),
+                                    &transfer.destination
+                                ).into()
+                            };
 
-                    let source_pubkey = if self.version >= TxVersion::V1 {
-                        Some(source_keypair.get_public_key())
-                    } else {
-                        None
-                    };
-
-                    let ct_validity_proof = CiphertextValidityProof::new(
-                        &transfer.destination,
-                        source_pubkey,
-                        transfer.inner.amount,
-                        &transfer.amount_opening,
+                            let cipher_size = cipher.size();
+                            if cipher_size > EXTRA_DATA_LIMIT_SIZE {
+                                return Err(GenerationError::EncryptedExtraDataTooLarge(cipher_size, EXTRA_DATA_LIMIT_SIZE));
+                            }
+    
+                            total_cipher_size += cipher_size;
+    
+                            Some(cipher)
+                        } else {
+                            None
+                        };
+    
+                        Ok(TransferPayload::new(
+                            transfer.inner.asset,
+                            transfer.inner.destination.to_public_key(),
+                            extra_data,
+                            commitment,
+                            sender_handle,
+                            receiver_handle,
+                            ct_validity_proof,
+                        ))
+                    })
+                    .collect::<Result<Vec<_>, GenerationError<B::Error>>>()?;
+    
+                if total_cipher_size > EXTRA_DATA_LIMIT_SUM_SIZE {
+                    return Err(GenerationError::EncryptedExtraDataTooLarge(total_cipher_size, EXTRA_DATA_LIMIT_SUM_SIZE));
+                }
+            },
+            TransactionTypeBuilder::InvokeContract(payload) => {
+                deposits = Self::finalize_deposits_commitments(
+                    &mut transcript,
+                    &mut range_proof_values,
+                    &mut range_proof_openings,
+                    &mut payload.deposits,
+                    deposits_commitments,
+                    source_keypair,
+                    &None
+                );
+            },
+            TransactionTypeBuilder::DeployContract(payload) => {
+                if let Some(invoke) = payload.invoke.as_mut() {
+                    deposits = Self::finalize_deposits_commitments(
                         &mut transcript,
+                        &mut range_proof_values,
+                        &mut range_proof_openings,
+                        &mut invoke.deposits,
+                        deposits_commitments,
+                        source_keypair,
+                        &None
                     );
-
-                    range_proof_values.push(transfer.inner.amount);
-                    range_proof_openings.push(transfer.amount_opening.as_scalar());
-
-                    // Encrypt the extra data if it exists
-                    let extra_data = if let Some(extra_data) = transfer.inner.extra_data {
-                        let bytes = extra_data.to_bytes();
-                        let cipher = ExtraData::new(PlaintextData(bytes), source_keypair.get_public_key(), &transfer.destination);
-                        let cipher_size = cipher.size();
-                        if cipher_size > EXTRA_DATA_LIMIT_SIZE {
-                            return Err(GenerationError::EncryptedExtraDataTooLarge(cipher_size, EXTRA_DATA_LIMIT_SIZE));
-                        }
-
-                        total_cipher_size += cipher_size;
-
-                        Some(cipher.into())
-                    } else {
-                        None
-                    };
-
-                    Ok(TransferPayload::new(
-                        transfer.inner.asset,
-                        transfer.inner.destination.to_public_key(),
-                        extra_data,
-                        commitment,
-                        sender_handle,
-                        receiver_handle,
-                        ct_validity_proof,
-                    ))
-                })
-                .collect::<Result<Vec<_>, GenerationError<B::Error>>>()?;
-
-            if total_cipher_size > EXTRA_DATA_LIMIT_SUM_SIZE {
-                return Err(GenerationError::EncryptedExtraDataTooLarge(total_cipher_size, EXTRA_DATA_LIMIT_SUM_SIZE));
+                }
             }
-
-            transfers
-        } else {
-            vec![]
+            _ => {}
         };
 
         let n_commitments = range_proof_values.len();
@@ -704,8 +987,7 @@ impl TransactionBuilder {
                 }
 
                 // You can't contains yourself in the participants
-                let pk = source_keypair.get_public_key().compress();
-                if keys.contains(&pk) {
+                if keys.contains(&self.source) {
                     return Err(GenerationError::MultiSigSelfParticipant);
                 }
 
@@ -717,38 +999,42 @@ impl TransactionBuilder {
             TransactionTypeBuilder::InvokeContract(payload) => {
                 transcript.invoke_contract_proof_domain_separator();
                 transcript.append_hash(b"contract_hash", &payload.contract);
-                let mut deposits = IndexMap::new();
-                for (asset, deposit) in payload.deposits {
-                    transcript.append_hash(b"deposit_asset", &asset);
-                    if deposit.private {
-                        // TODO: handle private deposits
-                        todo!("Private deposits");
-                    } else {
-                        transcript.append_u64(b"deposit_plain", deposit.amount);
-                        deposits.insert(asset, ContractDeposit::Public(deposit.amount));
-                    }
-                }
+                transcript.append_u64(b"max_gas", payload.max_gas);
 
-                let mut parameters = Vec::with_capacity(payload.parameters.len());
-                for param in payload.parameters {
-                    let compressed = CompressedConstant::new(&param);
-                    transcript.append_message(b"contract_param", compressed.as_bytes());
-
-                    parameters.push(compressed);
+                for param in payload.parameters.iter() {
+                    transcript.append_message(b"contract_param", &param.to_bytes());
                 }
 
                 TransactionType::InvokeContract(InvokeContractPayload {
                     contract: payload.contract,
                     max_gas: payload.max_gas,
                     chunk_id: payload.chunk_id,
-                    parameters,
+                    parameters: payload.parameters,
                     deposits,
                 })
             },
-            TransactionTypeBuilder::DeployContract(module) => {
+            TransactionTypeBuilder::DeployContract(payload) => {
                 transcript.deploy_contract_proof_domain_separator();
-                let module = Module::from_hex(&module).map_err(|_| GenerationError::InvalidModule)?;
-                TransactionType::DeployContract(module)
+
+                let module = Module::from_hex(&payload.module)
+                    .map_err(|_| GenerationError::InvalidModule)?;
+
+                if payload.invoke.is_none() != module.get_chunk_id_of_hook(0).is_none() {
+                    return Err(GenerationError::InvalidConstructorInvoke);
+                }
+
+                TransactionType::DeployContract(DeployContractPayload {
+                    module,
+                    invoke: payload.invoke.map(|invoke| {
+                        transcript.invoke_constructor_proof_domain_separator();
+                        transcript.append_u64(b"max_gas", invoke.max_gas);
+
+                        InvokeConstructorPayload {
+                            max_gas: invoke.max_gas,
+                            deposits
+                        }
+                    }),
+                })
             }
         };
 

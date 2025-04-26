@@ -18,12 +18,12 @@ use std::{
     net::{IpAddr, SocketAddr},
     time::Duration
 };
+use futures::{stream, StreamExt};
 use humantime::format_duration;
 use serde::{Serialize, Deserialize};
 use tokio::sync::{mpsc::Sender, RwLock};
 use x25519_dalek::PublicKey;
 use xelis_common::{
-    api::daemon::Direction,
     block::TopoHeight,
     serializer::{Reader, ReaderError, Serializer, Writer},
     time::{get_current_time_in_seconds, TimestampSeconds}
@@ -46,7 +46,10 @@ pub struct PeerList {
     peer_disconnect_channel: Option<Sender<Arc<Peer>>>,
     // We only keep one "peer" per address in case the peer changes multiple
     // times its local port
-    cache: DiskCache
+    cache: DiskCache,
+    // Same as P2P Server
+    // How many concurrent tasks at same time 
+    stream_concurrency: usize
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Eq, Debug)]
@@ -77,12 +80,13 @@ pub struct PeerListEntry {
 }
 
 impl PeerList {
-    pub fn new(capacity: usize, filename: String, peer_disconnect_channel: Option<Sender<Arc<Peer>>>) -> Result<SharedPeerList, P2pError> {
+    pub fn new(capacity: usize, stream_concurrency: usize, filename: String, peer_disconnect_channel: Option<Sender<Arc<Peer>>>) -> Result<SharedPeerList, P2pError> {
         Ok(Arc::new(
             Self {
                 peers: RwLock::new(HashMap::with_capacity(capacity)),
                 peer_disconnect_channel,
-                cache: DiskCache::new(filename)?
+                cache: DiskCache::new(filename)?,
+                stream_concurrency,
             }
         ))
     }
@@ -94,6 +98,11 @@ impl PeerList {
         Ok(())
     }
 
+    // Check if the peerlist is empty
+    pub async fn is_empty(&self) -> bool {
+        self.peers.read().await.is_empty()
+    }
+
     // Get the cache
     pub fn get_cache(&self) -> &DiskCache {
         &self.cache
@@ -102,39 +111,46 @@ impl PeerList {
     // Remove a peer from the list
     // We will notify all peers that have this peer in common
     pub async fn remove_peer(&self, peer_id: u64, notify: bool) -> Result<(), P2pError> {
+        trace!("removing peer {}, notify = {}", peer_id, notify);
+
         let (peer, peers) = {
             let mut peers = self.peers.write().await;
             let peer = peers.remove(&peer_id).ok_or(P2pError::PeerNotFoundById(peer_id))?;
             let peers = peers.values().cloned().collect::<Vec<Arc<Peer>>>();
             (peer, peers)
         };
+
+        trace!("Signaling exit of {}", peer);
+        let res = peer.signal_exit().await;
  
         // If peer allows us to share it, we have to notify all peers that have this peer in common
         if notify && peer.sharable() {
             // now remove this peer from all peers that tracked it
             let addr = peer.get_outgoing_address();
             let packet = Bytes::from(Packet::PeerDisconnected(PacketPeerDisconnected::new(*addr)).to_bytes());
-            for peer in peers {
-                trace!("Locking shared peers for {}", peer.get_connection().get_address());
-                let mut shared_peers = peer.get_peers().lock().await;
-                trace!("locked shared peers for {}", peer.get_connection().get_address());
+            stream::iter(peers.iter())
+                .for_each_concurrent(self.stream_concurrency, |peer| {
+                    // move the reference only
+                    let packet = &packet;
+                    async move {
+                        trace!("Locking shared peers for {}", peer.get_connection().get_address());
+                        let mut shared_peers = peer.get_peers().lock().await;
+                        trace!("locked shared peers for {}", peer.get_connection().get_address());
 
-                // check if it was a common peer (we sent it and we received it)
-                // Because its a common peer, we can expect that he will send us the same packet
-                if let Some(direction) = shared_peers.get(addr) {
-                    // If its a outgoing direction, send a packet to notify that the peer disconnected
-                    if *direction != Direction::In {
-                        trace!("Sending PeerDisconnected packet to peer {} for {}", peer.get_outgoing_address(), addr);
-                        // we send the packet to notify the peer that we don't have it in common anymore
-                        if let Err(e) = peer.send_bytes(packet.clone()).await {
-                            error!("Error while trying to send PeerDisconnected packet to peer {}: {}", peer.get_connection().get_address(), e);
+                        // check if it was a common peer (we sent it and we received it)
+                        // Because its a common peer, we can expect that he will send us the same packet
+                        if let Some(direction) = shared_peers.pop(addr) {
+                            // If its a outgoing direction, send a packet to notify that the peer disconnected
+                            if !direction.is_in() {
+                                debug!("Sending PeerDisconnected packet to peer {} for {}", peer.get_outgoing_address(), addr);
+                                // we send the packet to notify the peer that we don't have it in common anymore
+                                if let Err(e) = peer.send_bytes(packet.clone()).await {
+                                    error!("Error while trying to send PeerDisconnected packet to peer {}: {}", peer.get_connection().get_address(), e);
+                                }
+                            }
                         }
-    
-                        // Maybe he only disconnected from us, delete it to stay synced
-                        shared_peers.remove(addr);
                     }
-                }
-            }
+                }).await;
         }
 
         info!("Peer disconnected: {}", peer);
@@ -149,7 +165,7 @@ impl PeerList {
             }
         }
 
-        Ok(())
+        res
     }
 
     // Add a new peer to the list
@@ -240,17 +256,19 @@ impl PeerList {
         };
 
         info!("Closing {} peers", peers.len());
-        for (_, peer) in peers {
-            debug!("Closing {}", peer);
+        stream::iter(peers)
+            .for_each_concurrent(self.stream_concurrency, |(_, peer)| async move {
+                debug!("Closing {}", peer);
 
-            if let Err(e) = peer.signal_exit().await {
-                error!("Error while trying to signal exit to {}: {}", peer, e);
-            }
-
-            if let Err(e) = self.update_peer(&peer).await {
-                error!("Error while updating peer {}: {}", peer, e);
-            }
-        }
+                if let Err(e) = peer.signal_exit().await {
+                    error!("Error while trying to signal exit to {}: {}", peer, e);
+                }
+    
+                if let Err(e) = self.update_peer(&peer).await {
+                    error!("Error while updating peer {}: {}", peer, e);
+                }
+            })
+            .await;
 
         if let Err(e) = self.cache.flush().await {
             error!("Error while flushing cache to disk: {}", e);
@@ -375,6 +393,7 @@ impl PeerList {
             } else {
                 entry.set_state(PeerListEntryState::Graylist);
             }
+            self.cache.set_peerlist_entry(ip, entry)?;
         }
 
         Ok(())
@@ -422,13 +441,25 @@ impl PeerList {
     }
 
     // temp ban a peer address for a duration in seconds
-    pub async fn temp_ban_address(&self, ip: &IpAddr, seconds: u64) -> Result<(), P2pError> {
+    pub async fn temp_ban_address(&self, ip: &IpAddr, seconds: u64, close_peer: bool) -> Result<(), P2pError> {
+        trace!("temp banning {} for {} seconds", ip, seconds);
         if self.cache.has_peerlist_entry(ip)? {
             let mut entry = self.cache.get_peerlist_entry(ip)?;
             entry.set_temp_ban_until(Some(get_current_time_in_seconds() + seconds));
             self.cache.set_peerlist_entry(ip, entry)?;
         } else {
             self.cache.set_peerlist_entry(ip, PeerListEntry::new(None, PeerListEntryState::Graylist))?;
+        }
+
+        if close_peer {
+            trace!("Closing peer if present in peerlist");
+            let peers = self.peers.read().await;
+            for peer in peers.values() {
+                if peer.get_connection().get_address().ip() == *ip {
+                    debug!("Kicking {} due to temp ban", peer);
+                    peer.signal_exit().await?;
+                }
+            }
         }
 
         Ok(())
@@ -458,7 +489,7 @@ impl PeerList {
 
             // If the peer is blacklisted or temp banned, skip it
             if *entry.get_state() == PeerListEntryState::Blacklist || entry.get_temp_ban_until().map(|temp_ban_until| temp_ban_until > current_time).unwrap_or(false) {
-                debug!("Skipping {} because it's blacklisted or temp banned ({})", ip, format_duration(Duration::from_secs(entry.get_temp_ban_until().unwrap_or(0))));
+                debug!("Skipping {} because it's blacklisted or temp banned ({})", ip, format_duration(Duration::from_secs(entry.get_temp_ban_until().map(|v| v - current_time).unwrap_or(0))));
                 continue;
             }
 

@@ -1,21 +1,22 @@
 use crate::{
     config::{
-        PEER_FAIL_TIME_RESET, PEER_BLOCK_CACHE_SIZE, PEER_TX_CACHE_SIZE,
-        PEER_TEMP_BAN_TIME, PEER_TIMEOUT_BOOTSTRAP_STEP,
+        PEER_FAIL_TIME_RESET, PEER_BLOCK_CACHE_SIZE,
+        PEER_TX_CACHE_SIZE, PEER_TIMEOUT_BOOTSTRAP_STEP,
         PEER_TIMEOUT_REQUEST_OBJECT, CHAIN_SYNC_TIMEOUT_SECS,
-        PEER_PACKET_CHANNEL_SIZE
+        PEER_PACKET_CHANNEL_SIZE, PEER_PEERS_CACHE_SIZE
     },
     p2p::packet::PacketWrapper
 };
+use anyhow::Context;
 use xelis_common::{
-    api::daemon::Direction,
+    api::daemon::{Direction, TimedDirection},
     block::TopoHeight,
     crypto::Hash,
     difficulty::CumulativeDifficulty,
     serializer::Serializer,
     time::{
-        TimestampSeconds,
-        get_current_time_in_seconds
+        get_current_time_in_seconds,
+        TimestampSeconds
     }
 };
 use super::{
@@ -42,16 +43,19 @@ use super::{
 use std::{
     num::NonZeroUsize,
     borrow::Cow,
-    collections::{HashMap, HashSet},
+    collections::{HashMap, VecDeque},
     fmt::{Display, Error, Formatter},
     hash::{Hash as StdHash, Hasher},
     net::{IpAddr, SocketAddr},
-    sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering},
+    sync::{
+        atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering},
+        Arc
+    },
     time::Duration
 };
 use tokio::{
     select,
-    sync::{broadcast, mpsc, oneshot::Sender, Mutex},
+    sync::{broadcast, mpsc, oneshot, Mutex},
     time::timeout,
 };
 use lru::LruCache;
@@ -66,7 +70,7 @@ use log::{
 
 // A RequestedObjects is a map of all objects requested from a peer
 // This is done to be awaitable with a timeout
-pub type RequestedObjects = HashMap<ObjectRequest, Sender<OwnedObjectResponse>>;
+pub type RequestedObjects = HashMap<ObjectRequest, broadcast::Sender<OwnedObjectResponse>>;
 
 pub type Tx = mpsc::Sender<Bytes>;
 pub type Rx = mpsc::Receiver<Bytes>;
@@ -118,7 +122,7 @@ pub struct Peer {
     // map of requested objects from this peer
     objects_requested: Mutex<RequestedObjects>,
     // all peers sent/received
-    peers: Mutex<HashMap<SocketAddr, Direction>>,
+    peers: Mutex<LruCache<SocketAddr, TimedDirection>>,
     // last time we received a peerlist from this peer
     last_peer_list: AtomicU64,
     // last time we got a ping packet from this peer
@@ -128,9 +132,9 @@ pub struct Peer {
     // cumulative difficulty of peer chain
     cumulative_difficulty: Mutex<CumulativeDifficulty>,
     // All transactions propagated from/to this peer
-    txs_cache: Mutex<LruCache<Hash, Direction>>,
+    txs_cache: Mutex<LruCache<Arc<Hash>, (Direction, bool)>>,
     // last blocks propagated to/from this peer
-    blocks_propagation: Mutex<LruCache<Hash, Direction>>,
+    blocks_propagation: Mutex<LruCache<Arc<Hash>, (TimedDirection, bool)>>,
     // last time we got an inventory packet from this peer
     last_inventory: AtomicU64,
     // if we requested this peer to send us an inventory notification
@@ -141,9 +145,12 @@ pub struct Peer {
     // cannot be set to false if its already to true (protocol rules)
     is_pruned: AtomicBool,
     // used for await on bootstrap chain packets
-    bootstrap_chain: Mutex<Option<Sender<StepResponse>>>,
+    // Because we are in a TCP stream, we know that all our
+    // requests will be answered in the order we sent them
+    // So we can use a queue to store the senders and pop them
+    bootstrap_chain: Mutex<VecDeque<oneshot::Sender<StepResponse>>>,
     // used to wait on chain response when syncing chain
-    sync_chain: Mutex<Option<Sender<ChainResponse>>>,
+    sync_chain: Mutex<Option<oneshot::Sender<ChainResponse>>>,
     // IP address with local port
     outgoing_address: SocketAddr,
     // Determine if this peer allows to be shared to others and/or through API
@@ -158,14 +165,9 @@ pub struct Peer {
 }
 
 impl Peer {
-    pub fn new(connection: Connection, id: u64, node_tag: Option<String>, local_port: u16, version: String, top_hash: Hash, topoheight: TopoHeight, height: u64, pruned_topoheight: Option<TopoHeight>, priority: bool, cumulative_difficulty: CumulativeDifficulty, peer_list: SharedPeerList, peers_received: HashSet<SocketAddr>, sharable: bool) -> (Self, Rx) {
+    pub fn new(connection: Connection, id: u64, node_tag: Option<String>, local_port: u16, version: String, top_hash: Hash, topoheight: TopoHeight, height: u64, pruned_topoheight: Option<TopoHeight>, priority: bool, cumulative_difficulty: CumulativeDifficulty, peer_list: SharedPeerList, sharable: bool) -> (Self, Rx) {
         let mut outgoing_address = *connection.get_address();
         outgoing_address.set_port(local_port);
-
-        let mut peers = HashMap::new();
-        for peer in peers_received {
-            peers.insert(peer, Direction::In);
-        }
 
         let (exit_channel, _) = broadcast::channel(1);
         let (tx, rx) = mpsc::channel(PEER_PACKET_CHANNEL_SIZE);
@@ -185,7 +187,7 @@ impl Peer {
             last_chain_sync: AtomicU64::new(0),
             peer_list,
             objects_requested: Mutex::new(HashMap::new()),
-            peers: Mutex::new(peers),
+            peers: Mutex::new(LruCache::new(NonZeroUsize::new(PEER_PEERS_CACHE_SIZE).unwrap())),
             last_peer_list: AtomicU64::new(0),
             last_ping: AtomicU64::new(0),
             last_ping_sent: AtomicU64::new(0),
@@ -196,7 +198,7 @@ impl Peer {
             requested_inventory: AtomicBool::new(false),
             pruned_topoheight: AtomicU64::new(pruned_topoheight.unwrap_or(0)),
             is_pruned: AtomicBool::new(pruned_topoheight.is_some()),
-            bootstrap_chain: Mutex::new(None),
+            bootstrap_chain: Mutex::new(VecDeque::new()),
             sync_chain: Mutex::new(None),
             outgoing_address,
             sharable,
@@ -218,12 +220,12 @@ impl Peer {
     }
 
     // Get all transactions propagated from/to this peer
-    pub fn get_txs_cache(&self) -> &Mutex<LruCache<Hash, Direction>> {
+    pub fn get_txs_cache(&self) -> &Mutex<LruCache<Arc<Hash>, (Direction, bool)>> {
         &self.txs_cache
     }
 
     // Get all blocks propagated from/to this peer
-    pub fn get_blocks_propagation(&self) -> &Mutex<LruCache<Hash, Direction>> {
+    pub fn get_blocks_propagation(&self) -> &Mutex<LruCache<Arc<Hash>, (TimedDirection, bool)>> {
         &self.blocks_propagation
     }
 
@@ -254,33 +256,33 @@ impl Peer {
 
     // Get the topoheight of the peer
     pub fn get_topoheight(&self) -> TopoHeight {
-        self.topoheight.load(Ordering::Acquire)
+        self.topoheight.load(Ordering::SeqCst)
     }
 
     // Set the topoheight of the peer
     pub fn set_topoheight(&self, topoheight: TopoHeight) {
-        self.topoheight.store(topoheight, Ordering::Release);
+        self.topoheight.store(topoheight, Ordering::SeqCst);
     }
 
     // Get the height of the peer
     pub fn get_height(&self) -> u64 {
-        self.height.load(Ordering::Acquire)
+        self.height.load(Ordering::SeqCst)
     }
 
     // Set the height of the peer
     pub fn set_height(&self, height: u64) {
-        self.height.store(height, Ordering::Release);
+        self.height.store(height, Ordering::SeqCst);
     }
 
     // Is the peer running a pruned chain
     pub fn is_pruned(&self) -> bool {
-        self.is_pruned.load(Ordering::Acquire)
+        self.is_pruned.load(Ordering::SeqCst)
     }
 
     // Get the pruned topoheight
     pub fn get_pruned_topoheight(&self) -> Option<TopoHeight> {
         if self.is_pruned() {
-            Some(self.pruned_topoheight.load(Ordering::Acquire))
+            Some(self.pruned_topoheight.load(Ordering::SeqCst))
         } else {
             None
         }
@@ -289,10 +291,10 @@ impl Peer {
     // Update the pruned topoheight state
     pub fn set_pruned_topoheight(&self, pruned_topoheight: Option<TopoHeight>) {
         if let Some(pruned_topoheight) = pruned_topoheight {
-            self.is_pruned.store(true, Ordering::Release);
-            self.pruned_topoheight.store(pruned_topoheight, Ordering::Release);
+            self.is_pruned.store(true, Ordering::SeqCst);
+            self.pruned_topoheight.store(pruned_topoheight, Ordering::SeqCst);
         } else {
-            self.is_pruned.store(false, Ordering::Release);
+            self.is_pruned.store(false, Ordering::SeqCst);
         }
     }
 
@@ -335,17 +337,17 @@ impl Peer {
 
     // Get the last time we got a fail from the peer
     pub fn get_last_fail_count(&self) -> u64 {
-        self.last_fail_count.load(Ordering::Acquire)
+        self.last_fail_count.load(Ordering::SeqCst)
     }
 
     // Set the last fail count of the peer
     pub fn set_last_fail_count(&self, value: u64) {
-        self.last_fail_count.store(value, Ordering::Release);
+        self.last_fail_count.store(value, Ordering::SeqCst);
     }
 
     // Get the fail count of the peer
     pub fn get_fail_count(&self) -> u8 {
-        self.fail_count.load(Ordering::Acquire)
+        self.fail_count.load(Ordering::SeqCst)
     }
 
     // Update the fail count of the peer
@@ -361,7 +363,7 @@ impl Peer {
         let reset = last_fail + PEER_FAIL_TIME_RESET < current_time;
         if reset {
             // reset counter
-            self.fail_count.store(to_store, Ordering::Release);
+            self.fail_count.store(to_store, Ordering::SeqCst);
         }
         reset
     }
@@ -374,7 +376,7 @@ impl Peer {
         // if its long time we didn't get a fail, reset the fail count to 1 (because of current fail)
         // otherwise, add 1
         if !self.update_fail_count(current_time, 1) {
-            self.fail_count.fetch_add(1, Ordering::Release);
+            self.fail_count.fetch_add(1, Ordering::SeqCst);
         }
         self.set_last_fail_count(current_time);
     }
@@ -382,12 +384,12 @@ impl Peer {
     // Get the last time we got a chain sync request
     // This is used to prevent spamming the chain sync packet
     pub fn get_last_chain_sync(&self) -> TimestampSeconds {
-        self.last_chain_sync.load(Ordering::Acquire)
+        self.last_chain_sync.load(Ordering::SeqCst)
     }
 
     // Store the last time we got a chain sync request
     pub fn set_last_chain_sync(&self, time: TimestampSeconds) {
-        self.last_chain_sync.store(time, Ordering::Release);
+        self.last_chain_sync.store(time, Ordering::SeqCst);
     }
 
     // Get all objects requested from this peer
@@ -402,7 +404,7 @@ impl Peer {
     }
 
     // Remove a requested object from the requested list
-    pub async fn remove_object_request(&self, request: ObjectRequest) -> Result<Sender<OwnedObjectResponse>, P2pError> {
+    pub async fn remove_object_request(&self, request: ObjectRequest) -> Result<broadcast::Sender<OwnedObjectResponse>, P2pError> {
         let mut objects = self.objects_requested.lock().await;
         objects.remove(&request).ok_or(P2pError::ObjectNotFound(request))
     }
@@ -410,26 +412,29 @@ impl Peer {
     // Request a object from this peer and wait on it until we receive it or until timeout 
     pub async fn request_blocking_object(&self, request: ObjectRequest) -> Result<OwnedObjectResponse, P2pError> {
         trace!("Requesting {} from {}", request, self);
-        let receiver = {
+        let mut receiver = {
             let mut objects = self.objects_requested.lock().await;
-            if objects.contains_key(&request) {
-                return Err(P2pError::ObjectAlreadyRequested(request));
+            if let Some(sender) = objects.get(&request) {
+                debug!("{} was already sent to {}, subscribing to the same channel", request, self);
+                sender.subscribe()
+            } else {
+                self.send_packet(Packet::ObjectRequest(Cow::Borrowed(&request))).await?;
+                let (sender, receiver) = broadcast::channel(1);
+                objects.insert(request.clone(), sender); // clone is necessary in case timeout has occured
+                receiver
             }
-            self.send_packet(Packet::ObjectRequest(Cow::Borrowed(&request))).await?;
-            let (sender, receiver) = tokio::sync::oneshot::channel();
-            objects.insert(request.clone(), sender); // clone is necessary in case timeout has occured
-            receiver
         };
 
         let mut exit_channel = self.get_exit_receiver();
         let object = select! {
             _ = exit_channel.recv() => return Err(P2pError::Disconnected),
-            res = timeout(Duration::from_millis(PEER_TIMEOUT_REQUEST_OBJECT), receiver) => match res {
-                Ok(res) => res?,
+            res = timeout(Duration::from_millis(PEER_TIMEOUT_REQUEST_OBJECT), receiver.recv()) => match res {
+                Ok(res) => res.context("Error on blocking object response")?,
                 Err(e) => {
-                    trace!("Requested data has timed out");
+                    warn!("Requested data {} has timed out", request);
                     let mut objects = self.objects_requested.lock().await;
-                    objects.remove(&request); // remove it from request list
+                    // remove it from request list
+                    objects.remove(&request);
                     return Err(P2pError::AsyncTimeOut(e));
                 }
             }
@@ -455,12 +460,13 @@ impl Peer {
         let step_kind = step.kind();
         let (sender, receiver) = tokio::sync::oneshot::channel();
         {
-            let mut sender_lock = self.bootstrap_chain.lock().await;
-            *sender_lock = Some(sender);
-        }
+            let mut senders = self.bootstrap_chain.lock().await;
 
-        // send the packet
-        self.send_packet(Packet::BootstrapChainRequest(BootstrapChainRequest::new(step))).await?;
+            // send the packet while holding the lock so we ensure the correct order
+            self.send_packet(Packet::BootstrapChainRequest(BootstrapChainRequest::new(step))).await?;
+
+            senders.push_back(sender);
+        }
 
         let mut exit_channel = self.get_exit_receiver();
         let response = select! {
@@ -468,6 +474,12 @@ impl Peer {
             res = timeout(Duration::from_millis(PEER_TIMEOUT_BOOTSTRAP_STEP), receiver) => match res {
                 Ok(res) => res?,
                 Err(e) => {
+                    // Clear the bootstrap chain channel to preserve the order
+                    {
+                        let mut senders = self.bootstrap_chain.lock().await;
+                        senders.pop_front();
+                    }
+
                     debug!("Requested bootstrap chain step {:?} has timed out", step_kind);
                     return Err(P2pError::AsyncTimeOut(e));
                 }
@@ -502,7 +514,9 @@ impl Peer {
             res = timeout(Duration::from_secs(CHAIN_SYNC_TIMEOUT_SECS), receiver) => match res {
                 Ok(res) => res?,
                 Err(e) => {
-                    debug!("Requested sync chain has timed out");
+                    // Clear the sync chain channel
+                    let contains = self.sync_chain.lock().await.take().is_some();
+                    debug!("Requested sync chain has timed out, contains: {}", contains);
                     return Err(P2pError::AsyncTimeOut(e));
                 }
             }
@@ -513,70 +527,70 @@ impl Peer {
 
     // Get the bootstrap chain channel
     // Like the sync chain channel, but for bootstrap (fast sync) syncing
-    pub fn get_bootstrap_chain_channel(&self) -> &Mutex<Option<Sender<StepResponse>>> {
+    pub fn get_bootstrap_chain_channel(&self) -> &Mutex<VecDeque<oneshot::Sender<StepResponse>>> {
         &self.bootstrap_chain
     }
 
     // Get the sync chain channel
     // This is used for chain sync requests to be fully awaited
-    pub fn get_sync_chain_channel(&self) -> &Mutex<Option<Sender<ChainResponse>>> {
+    pub fn get_sync_chain_channel(&self) -> &Mutex<Option<oneshot::Sender<ChainResponse>>> {
         &self.sync_chain
     }
 
     // Get all shared peers between this peer and us
-    pub fn get_peers(&self) -> &Mutex<HashMap<SocketAddr, Direction>> {
+    pub fn get_peers(&self) -> &Mutex<LruCache<SocketAddr, TimedDirection>> {
         &self.peers
     }
 
     // Get the last time we got a peer list
     pub fn get_last_peer_list(&self) -> TimestampSeconds {
-        self.last_peer_list.load(Ordering::Acquire)
+        self.last_peer_list.load(Ordering::SeqCst)
     }
 
     // Track the last time we got a peer list
     // This is used to prevent spamming the peer list
     pub fn set_last_peer_list(&self, value: TimestampSeconds) {
-        self.last_peer_list.store(value, Ordering::Release)
+        self.last_peer_list.store(value, Ordering::SeqCst)
     }
 
     // Get the last time we got a ping packet from this peer
     pub fn get_last_ping(&self) -> TimestampSeconds {
-        self.last_ping.load(Ordering::Acquire)
+        self.last_ping.load(Ordering::SeqCst)
     }
 
     // Track the last time we got a ping packet from this peer
     pub fn set_last_ping(&self, value: TimestampSeconds) {
-        self.last_ping.store(value, Ordering::Release)
+        self.last_ping.store(value, Ordering::SeqCst)
     }
 
     // Get the last time we sent a ping packet to this peer
     pub fn get_last_ping_sent(&self) -> TimestampSeconds {
-        self.last_ping_sent.load(Ordering::Acquire)
+        self.last_ping_sent.load(Ordering::SeqCst)
     }
 
     // Track the last time we sent a ping packet to this peer
     pub fn set_last_ping_sent(&self, value: TimestampSeconds) {
-        self.last_ping.store(value, Ordering::Release)
+        self.last_ping.store(value, Ordering::SeqCst)
     }
 
     // Get the last time a inventory has been requested
     pub fn get_last_inventory(&self) -> TimestampSeconds {
-        self.last_inventory.load(Ordering::Acquire)
+        self.last_inventory.load(Ordering::SeqCst)
     }
 
     // Set the last inventory time
     pub fn set_last_inventory(&self, value: TimestampSeconds) {
-        self.last_inventory.store(value, Ordering::Release)
+        self.last_inventory.store(value, Ordering::SeqCst)
     }
 
     // Get the requested inventory flag
     pub fn has_requested_inventory(&self) -> bool {
-        self.requested_inventory.load(Ordering::Acquire)
+        self.requested_inventory.load(Ordering::SeqCst)
     }
 
     // Set the requested inventory flag
     pub fn set_requested_inventory(&self, value: bool) {
-        self.requested_inventory.store(value, Ordering::Release)
+        self.requested_inventory.store(value, Ordering::SeqCst)
     }
 
     // Get the outgoing address of the peer
@@ -586,21 +600,15 @@ impl Peer {
     }
 
     // Close the peer connection and remove it from the peer list
-    pub async fn close_and_temp_ban(&self) -> Result<(), P2pError> {
-        trace!("Tempban {}", self);
-        let res = self.exit_channel.send(()).map_err(|e| P2pError::SendError(e.to_string()));
-
-        {
-            trace!("Locked peer list for temp ban {}", self);
-            if !self.is_priority() {
-                self.peer_list.temp_ban_address(&self.get_connection().get_address().ip(), PEER_TEMP_BAN_TIME).await?;
-            } else {
-                debug!("{} is a priority peer, closing only", self);
-            }
-    
-            self.peer_list.remove_peer(self.get_id(), true).await?;
+    pub async fn close_and_temp_ban(&self, seconds: u64) -> Result<(), P2pError> {
+        trace!("temp ban {}", self);
+        if !self.is_priority() {
+            self.peer_list.temp_ban_address(&self.get_connection().get_address().ip(), seconds, false).await?;
+        } else {
+            debug!("{} is a priority peer, closing only", self);
         }
-        res?;
+
+        self.peer_list.remove_peer(self.get_id(), true).await?;
         
         Ok(())
     }
@@ -616,19 +624,22 @@ impl Peer {
 
     // Close the peer connection and remove it from the peer list
     pub async fn close(&self) -> Result<(), P2pError> {
-        trace!("Closing connection internal with {}", self);
-        let res = self.get_connection().close().await;
-
         trace!("Deleting peer {} from peerlist", self);
-        self.peer_list.remove_peer(self.get_id(), true).await?;
+        let res = self.peer_list.remove_peer(self.get_id(), true).await;
 
-        res?;
-        Ok(())
+        trace!("Closing connection internal with {}", self);
+        self.get_connection()
+            .close()
+            .await
+            .context("Error while closing internal connection")?;
+
+        res
     }
 
     // Send a packet to the peer
     // This will transform the packet into bytes and send it to the peer
     pub async fn send_packet(&self, packet: Packet<'_>) -> Result<(), P2pError> {
+        trace!("Sending {:?}", packet);
         self.send_bytes(Bytes::from(packet.to_bytes())).await
     }
 
@@ -661,7 +672,7 @@ impl Display for Peer {
         // update fail counter to have up-to-date data to display
         self.update_fail_count_default();
         let peers = if let Ok(peers) = self.get_peers().try_lock() {
-            if log_enabled!(Level::Debug) {
+            if log_enabled!(Level::Trace) {
                 format!("{:?}", peers)
             } else {
                 format!("{}", peers.len())

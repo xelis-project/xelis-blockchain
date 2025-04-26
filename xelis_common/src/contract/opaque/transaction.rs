@@ -1,78 +1,84 @@
-use std::{any::TypeId, fmt};
+use anyhow::Context as AnyhowContext;
+use std::sync::Arc;
+use xelis_vm::{
+    traits::{JSONHelper, Serializable},
+    Context,
+    FnInstance,
+    FnParams,
+    FnReturnType,
+    OpaqueWrapper,
+    Primitive
+};
+use crate::{
+    contract::ChainState,
+    crypto::Hash,
+    transaction::Transaction
+};
 
-use anyhow::{bail, Context as AnyhowContext};
-use xelis_vm::{traits::{JSONHelper, Serializable}, Context, FnInstance, FnParams, FnReturnType, Opaque, OpaqueWrapper, Value};
-use crate::{contract::ChainState, transaction::Transaction};
+#[derive(Clone, Debug)]
+pub struct OpaqueTransaction {
+    pub hash: Hash,
+    pub inner: Arc<Transaction>
+}
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct OpaqueTransaction;
-
-impl JSONHelper for OpaqueTransaction {
-    fn get_type_name(&self) -> &'static str {
-        "Transaction"
-    }
-
-    fn serialize_json(&self) -> Result<serde_json::Value, anyhow::Error> {
-        bail!("Transaction is not serializable")
-    }
-
-    fn is_json_supported(&self) -> bool {
-        false
+impl PartialEq for OpaqueTransaction {
+    fn eq(&self, other: &Self) -> bool {
+        self.hash.eq(&other.hash)
     }
 }
 
-impl Serializable for OpaqueTransaction {
-    fn is_serializable(&self) -> bool {
-        false
+impl Eq for OpaqueTransaction {}
+
+impl std::hash::Hash for OpaqueTransaction {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.hash.hash(state);
     }
 }
 
-impl Opaque for OpaqueTransaction {
-    fn get_type(&self) -> TypeId {
-        TypeId::of::<OpaqueTransaction>()
-    }
+impl JSONHelper for OpaqueTransaction {}
 
-    fn clone_box(&self) -> Box<dyn Opaque> {
-        Box::new(self.clone())
-    }
+impl Serializable for OpaqueTransaction {}
 
-    fn display(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Transaction")
-    }
+pub fn transaction(_: FnInstance, _: FnParams, context: &mut Context) -> FnReturnType {
+    let tx: &Transaction = context.get()
+        .context("current transaction not found")?;
+    let state: &ChainState = context.get()
+        .context("chain state not found")?;
+
+    Ok(Some(Primitive::Opaque(OpaqueWrapper::new(OpaqueTransaction {
+        // TODO: maybe instead of cloning it, we can do a inner enum
+        // and if its Inner::Current we retrieve it from context for each function
+        inner: Arc::new(tx.clone()),
+        hash: state.tx_hash.clone()
+    })).into()))
 }
 
-pub fn transaction(_: FnInstance, _: FnParams, _: &mut Context) -> FnReturnType {
-    Ok(Some(Value::Opaque(OpaqueWrapper::new(OpaqueTransaction)).into()))
+pub fn transaction_nonce(zelf: FnInstance, _: FnParams, _: &mut Context) -> FnReturnType {
+    let tx: &OpaqueTransaction = zelf?.as_opaque_type()?;
+    Ok(Some(Primitive::U64(tx.inner.get_nonce()).into()))
 }
 
-pub fn transaction_nonce(zelf: FnInstance, _: FnParams, context: &mut Context) -> FnReturnType {
-    let _: &OpaqueTransaction = zelf?.as_opaque_type()?;
-    let tx: &Transaction = context.get().context("current transaction not found not found")?;
-
-    Ok(Some(Value::U64(tx.get_nonce()).into()))
-}
-
-pub fn transaction_hash(zelf: FnInstance, _: FnParams, context: &mut Context) -> FnReturnType {
-    let _: &OpaqueTransaction = zelf?.as_opaque_type()?;
-    let state: &ChainState = context.get().context("chain state not found")?;
-
-    Ok(Some(Value::Opaque(OpaqueWrapper::new(state.tx_hash.clone())).into()))
+pub fn transaction_hash(zelf: FnInstance, _: FnParams, _: &mut Context) -> FnReturnType {
+    let tx: &OpaqueTransaction = zelf?.as_opaque_type()?;
+    Ok(Some(Primitive::Opaque(OpaqueWrapper::new(tx.hash.clone())).into()))
 }
 
 pub fn transaction_source(zelf: FnInstance, _: FnParams, context: &mut Context) -> FnReturnType {
-    let _: &OpaqueTransaction = zelf?.as_opaque_type()?;
-    let tx: &Transaction = context.get().context("current transaction not found not found")?;
+    let tx: &OpaqueTransaction = zelf?.as_opaque_type()?;
     let state: &ChainState = context.get().context("chain state not found")?;
 
-    let address = tx.get_source()
+    let address = tx.inner.get_source()
         .as_address(state.mainnet);
 
-    Ok(Some(Value::Opaque(OpaqueWrapper::new(address)).into()))
+    Ok(Some(Primitive::Opaque(OpaqueWrapper::new(address)).into()))
 }
 
-pub fn transaction_fee(zelf: FnInstance, _: FnParams, context: &mut Context) -> FnReturnType {
-    let _: &OpaqueTransaction = zelf?.as_opaque_type()?;
-    let tx: &Transaction = context.get().context("current transaction not found not found")?;
+pub fn transaction_fee(zelf: FnInstance, _: FnParams, _: &mut Context) -> FnReturnType {
+    let tx: &OpaqueTransaction = zelf?.as_opaque_type()?;
+    Ok(Some(Primitive::U64(tx.inner.get_fee()).into()))
+}
 
-    Ok(Some(Value::U64(tx.get_fee()).into()))
+pub fn transaction_signature(zelf: FnInstance, _: FnParams, _: &mut Context) -> FnReturnType {
+    let tx: &OpaqueTransaction = zelf?.as_opaque_type()?;
+    Ok(Some(Primitive::Opaque(OpaqueWrapper::new(tx.inner.get_signature().clone())).into()))
 }

@@ -20,7 +20,7 @@ use xelis_common::{
     },
     serializer::Serializer,
     transaction::{
-        builder::TransactionBuilder,
+        builder::{FeeBuilder, TransactionBuilder},
         extra_data::ExtraData,
         multisig::{MultiSig, SignatureId}
     },
@@ -52,6 +52,7 @@ pub fn register_methods(handler: &mut RPCHandler<Arc<Wallet>>) {
     handler.register_method("get_assets", async_handler!(get_assets));
     handler.register_method("get_asset", async_handler!(get_asset));
     handler.register_method("get_transaction", async_handler!(get_transaction));
+    handler.register_method("dump_transaction", async_handler!(dump_transaction));
     handler.register_method("build_transaction", async_handler!(build_transaction));
     handler.register_method("build_transaction_offline", async_handler!(build_transaction_offline));
     handler.register_method("build_unsigned_transaction", async_handler!(build_unsigned_transaction));
@@ -198,7 +199,7 @@ async fn decrypt_extra_data(context: &Context, body: Value) -> Result<Value, Int
     let params: DecryptExtraDataParams = parse_params(body)?;
 
     let wallet: &Arc<Wallet> = context.get()?;
-    let data = wallet.decrypt_extra_data(params.extra_data.into_owned(), params.role)
+    let data = wallet.decrypt_extra_data(params.extra_data.into_owned(), None, params.role)
         .context("Error while decrypting extra data")?;
 
     Ok(json!(data))
@@ -209,7 +210,7 @@ async fn decrypt_ciphertext(context: &Context, body: Value) -> Result<Value, Int
 
     let wallet: &Arc<Wallet> = context.get()?;
     let decompressed = params.ciphertext.decompress().context("Error while decompressing ciphertext")?;
-    let amount = wallet.decrypt_ciphertext(decompressed).await
+    let amount = wallet.decrypt_ciphertext_with(&decompressed, None).await
         .context("Error while decrypting ciphertext")?;
 
     Ok(json!(amount))
@@ -304,6 +305,17 @@ async fn get_transaction(context: &Context, body: Value) -> Result<Value, Intern
     Ok(json!(transaction.serializable(wallet.get_network().is_mainnet())))
 }
 
+// Dump the TX in hex format
+async fn dump_transaction(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
+    let params: GetTransactionParams = parse_params(body)?;
+
+    let wallet: &Arc<Wallet> = context.get()?;
+    let storage = wallet.get_storage().read().await;
+    let transaction = storage.get_transaction(&params.hash)?;
+
+    Ok(json!(transaction.to_hex()))
+}
+
 // Build a transaction and broadcast it if requested
 async fn build_transaction(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: BuildTransactionParams = parse_params(body)?;
@@ -336,9 +348,9 @@ async fn build_transaction(context: &Context, body: Value) -> Result<Value, Inte
     let mut state = wallet.create_transaction_state_with_storage(&storage, &params.tx_type, &fee, params.nonce).await?;
 
     let tx = if params.signers.is_empty() {
-        wallet.create_transaction_with(&mut state, version, params.tx_type, fee)?
+        wallet.create_transaction_with(&mut state, None, version, params.tx_type, fee)?
     } else {
-        let builder = TransactionBuilder::new(version, wallet.get_public_key().clone(), params.signers.len() as u8, params.tx_type, fee);
+        let builder = TransactionBuilder::new(version, wallet.get_public_key().clone(), Some(params.signers.len() as u8), params.tx_type, fee);
         let mut unsigned = builder.build_unsigned(&mut state, wallet.get_keypair())
             .context("Error while building unsigned transaction")?;
 
@@ -390,8 +402,10 @@ async fn build_transaction_offline(context: &Context, body: Value) -> Result<Val
     let mut state = TransactionBuilderState::new(wallet.get_network().is_mainnet(), params.reference, params.nonce);
 
     for (hash, mut ciphertext) in params.balances {
-        let compressed = ciphertext.decompressed().context(format!("Error decompressing ciphertext {}", hash))?;
-        let amount = wallet.decrypt_ciphertext(compressed.clone()).await?;
+        let compressed = ciphertext.decompressed()
+            .context(format!("Error decompressing ciphertext {}", hash))?;
+        let amount = wallet.decrypt_ciphertext_with(compressed, None).await?
+            .context(format!("Couldn't decrypt ciphertext for asset {}", hash))?;
 
         state.add_balance(hash, Balance {
             amount,
@@ -411,9 +425,9 @@ async fn build_transaction_offline(context: &Context, body: Value) -> Result<Val
     };
 
     let tx = if params.signers.is_empty() {
-        wallet.create_transaction_with(&mut state, version, params.tx_type, params.fee)?
+        wallet.create_transaction_with(&mut state, None, version, params.tx_type, params.fee)?
     } else {
-        let builder = TransactionBuilder::new(version, wallet.get_public_key().clone(), params.signers.len() as u8, params.tx_type, params.fee);
+        let builder = TransactionBuilder::new(version, wallet.get_public_key().clone(), Some(params.signers.len() as u8), params.tx_type, params.fee);
         let mut unsigned = builder.build_unsigned(&mut state, wallet.get_keypair())
             .context("Error while building unsigned transaction")?;
 
@@ -451,13 +465,10 @@ async fn build_unsigned_transaction(context: &Context, body: Value) -> Result<Va
     let mut storage = wallet.get_storage().write().await;
     let fee = params.fee.unwrap_or_default();
     let mut state = wallet.create_transaction_state_with_storage(&storage, &params.tx_type, &fee, params.nonce).await?;
-    let version = storage.get_tx_version().await?;
 
-    let threshold = if let Some(state) = storage.get_multisig_state().await? {
-        state.payload.threshold
-    } else {
-        0
-    };
+    let version = storage.get_tx_version().await?;
+    let threshold = storage.get_multisig_state().await?
+        .map(|state| state.payload.threshold);
 
     // Generate the TX
     let builder = TransactionBuilder::new(version, wallet.get_public_key().clone(), threshold, params.tx_type, fee);
@@ -566,7 +577,7 @@ async fn clear_tx_cache(context: &Context, body: Value) -> Result<Value, Interna
 async fn estimate_fees(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: EstimateFeesParams = parse_params(body)?;
     let wallet: &Arc<Wallet> = context.get()?;
-    let fees = wallet.estimate_fees(params.tx_type).await?;
+    let fees = wallet.estimate_fees(params.tx_type, FeeBuilder::default()).await?;
 
     Ok(json!(fees))
 }
@@ -585,7 +596,19 @@ async fn list_transactions(context: &Context, body: Value) -> Result<Value, Inte
     let opt_key = params.address.map(|addr| addr.to_public_key());
     
     let mainnet = wallet.get_network().is_mainnet();
-    let txs = storage.get_filtered_transactions(opt_key.as_ref(), params.asset.as_ref(), params.min_topoheight, params.max_topoheight, params.accept_incoming, params.accept_outgoing, params.accept_coinbase, params.accept_burn, params.query.as_ref())?
+    let txs = storage.get_filtered_transactions(
+        opt_key.as_ref(),
+        params.asset.as_ref(),
+        params.min_topoheight,
+        params.max_topoheight,
+        params.accept_incoming,
+        params.accept_outgoing,
+        params.accept_coinbase,
+        params.accept_burn,
+        params.query.as_ref(),
+        params.limit,
+        params.skip,
+    )?
         .into_iter()
         .map(|tx| tx.serializable(mainnet))
         .collect::<Vec<_>>();
@@ -671,7 +694,7 @@ async fn get_matching_keys(context: &Context, body: Value) -> Result<Value, Inte
     let wallet: &Arc<Wallet> = context.get()?;
     let tree = get_tree_name(&context, params.tree).await?;
     let storage = wallet.get_storage().read().await;
-    let keys = storage.get_custom_tree_keys(&tree, &params.query)?;
+    let keys = storage.get_custom_tree_keys(&tree, &params.query, params.limit, params.skip)?;
 
     Ok(json!(keys))
 }
@@ -721,7 +744,7 @@ async fn delete(context: &Context, body: Value) -> Result<Value, InternalRpcErro
 
 // Delete all entries in the requested tree
 async fn delete_tree_entries(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    let params: DeleteParams = parse_params(body)?;
+    let params: DeleteTreeEntriesParams = parse_params(body)?;
     let wallet: &Arc<Wallet> = context.get()?;
     let tree = get_tree_name(&context, params.tree).await?;
     let mut storage = wallet.get_storage().write().await;
@@ -751,6 +774,6 @@ async fn query_db(context: &Context, body: Value) -> Result<Value, InternalRpcEr
     let wallet: &Arc<Wallet> = context.get()?;
     let tree = get_tree_name(&context, params.tree).await?;
     let storage = wallet.get_storage().read().await;
-    let result = storage.query_db(&tree, params.key, params.value, params.return_on_first)?;
+    let result = storage.query_db(&tree, params.key, params.value, params.limit, params.skip)?;
     Ok(json!(result))
 }

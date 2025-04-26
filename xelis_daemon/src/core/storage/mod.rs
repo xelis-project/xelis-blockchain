@@ -1,5 +1,6 @@
 mod providers;
 mod sled;
+mod cache;
 
 pub use self::{
     sled::*,
@@ -30,10 +31,9 @@ pub trait Storage:
     + NonceProvider + AccountProvider + ClientProtocolProvider + BlockDagProvider
     + MerkleHashProvider + NetworkProvider + MultiSigProvider + TipsProvider
     + CommitPointProvider + ContractProvider + ContractDataProvider + ContractOutputsProvider
-    + ContractInfoProvider + ContractBalanceProvider + VersionedProvider + Sync + Send + 'static {
-    // Clear caches if exists
-    async fn clear_caches(&mut self) -> Result<(), BlockchainError>;
-
+    + ContractInfoProvider + ContractBalanceProvider + VersionedProvider + SupplyProvider
+    + CacheProvider
+    + Sync + Send + 'static {
     // delete block at topoheight, and all pointers (hash_at_topo, topo_by_hash, reward, supply, diff, cumulative diff...)
     async fn delete_block_at_topoheight(&mut self, topoheight: TopoHeight) -> Result<(Hash, Arc<BlockHeader>, Vec<(Hash, Arc<Transaction>)>), BlockchainError>;
 
@@ -72,4 +72,10 @@ pub trait Storage:
 
     // Estimate the size of the DB in bytes
     async fn estimate_size(&self) -> Result<u64, BlockchainError>;
+
+    // Get the number of blocks orphaned in the DB
+    async fn count_orphaned_blocks(&self) -> Result<u64, BlockchainError>;
+
+    // Flush the inner DB after a block being written
+    async fn flush(&mut self) -> Result<(), BlockchainError>;
 }

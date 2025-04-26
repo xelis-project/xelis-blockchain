@@ -1,16 +1,17 @@
-use std::collections::{hash_map::{Entry, IntoIter}, HashMap};
+use std::collections::{btree_map::{Entry, IntoIter}, BTreeMap};
+use itertools::{Either, Itertools};
 use sled::{IVec, Tree};
 use xelis_common::serializer::Serializer;
 
-use crate::core::error::BlockchainError;
+use crate::core::{error::BlockchainError, storage::cache::StorageCache};
 
 pub struct Batch {
-    writes: HashMap<IVec, Option<IVec>>,
+    writes: BTreeMap<IVec, Option<IVec>>,
 }
 
 impl Default for Batch {
     fn default() -> Self {
-        Self { writes: HashMap::new() }
+        Self { writes: BTreeMap::new() }
     }
 }
 
@@ -52,51 +53,25 @@ impl IntoIterator for Batch {
 // We track all the changes made to the DB since the snapshot was created
 // So we can apply them to the DB or rollback them
 pub struct Snapshot {
-    trees: HashMap<IVec, Option<Batch>>,
-    pub(crate) assets_count: u64,
-    // Count of accounts
-    pub(crate) accounts_count: u64,
-    // Count of transactions
-    pub(crate) transactions_count: u64,
-    // Count of blocks
-    pub(crate) blocks_count: u64,
-    // Count of blocks added in chain
-    pub(crate) blocks_execution_count: u64,
-    // Count of contracts
-    pub(crate) contracts_count: u64,
-}
-
-// This is the final struct to get rid of the borrowed Storage
-// to be able to borrow it again mutably and apply changes
-pub struct BatchApply {
-    trees: HashMap<IVec, Option<Batch>>
+    pub trees: BTreeMap<IVec, Option<Batch>>,
+    pub cache: StorageCache
 }
 
 impl Default for Snapshot {
     fn default() -> Self {
         Self {
-            trees: HashMap::new(),
-            assets_count: 0,
-            accounts_count: 0,
-            transactions_count: 0,
-            blocks_count: 0,
-            blocks_execution_count: 0,
-            contracts_count: 0,
+            trees: BTreeMap::new(),
+            cache: StorageCache::default()
         }
     }
 }
 
 impl Snapshot {
     // Create a new snapshot with current counts
-    pub fn new(assets_count: u64, accounts_count: u64, transactions_count: u64, blocks_count: u64, blocks_execution_count: u64, contracts_count: u64) -> Self {
+    pub fn new(cache: StorageCache) -> Self {
         Self {
-            trees: HashMap::new(),
-            assets_count,
-            accounts_count,
-            transactions_count,
-            blocks_count,
-            blocks_execution_count,
-            contracts_count
+            trees: BTreeMap::new(),
+            cache
         }
     }
 
@@ -111,14 +86,16 @@ impl Snapshot {
 
     // Contains a key in the snapshot with a value
     // If its deleted, it should return false
-    // If its empty, return None
+    // If its not touched, return None
     pub fn contains_key_with_value(&self, tree: &Tree, key: &[u8]) -> Option<bool> {
         self.trees.get(&tree.name())
             .and_then(|batch| {
                 batch.as_ref()
-                    .and_then(|batch| batch.writes.get(key))
+                    .and_then(|batch|
+                        batch.writes.get(key)
+                            .map(|v| v.is_some())
+                    )
             })
-            .map(|value| value.is_some())
     }
 
     // Read from our snapshot
@@ -179,17 +156,78 @@ impl Snapshot {
         self.trees.insert(tree_name.as_ref().into(), None).is_some()
     }
 
-    // Transforms the snapshot into a BatchApply
-    pub fn finalize(self) -> BatchApply {
-        BatchApply { trees: self.trees }
+    pub fn scan_prefix(&self, tree: &Tree, prefix: &[u8]) -> impl Iterator<Item = sled::Result<IVec>> {
+        match self.trees.get(&tree.name()) {
+            Some(Some(entries)) => {
+                let original =  tree.scan_prefix(prefix)
+                    .keys()
+                    .filter_map_ok(|v| {
+                        if !entries.writes.contains_key(&v) {
+                            Some(v)
+                        } else {
+                            None
+                        }
+                    });
+
+                let changes = entries.writes.iter()
+                    .filter(|(k, v)| v.is_some() && k.starts_with(prefix))
+                    .map(|(k, _)| Ok(k.clone()))
+                    .chain(original)
+                    .collect::<Vec<_>>()
+                    .into_iter();
+
+                Either::Left(changes)
+            },
+            _ => Either::Right(tree.scan_prefix(prefix).keys())
+        }
     }
-}
 
-impl IntoIterator for BatchApply {
-    type Item = (IVec, Option<Batch>);
-    type IntoIter = IntoIter<IVec, Option<Batch>>;
+    pub fn iter(&self, tree: &Tree) -> impl Iterator<Item = sled::Result<(IVec, IVec)>> {
+        match self.trees.get(&tree.name()) {
+            Some(Some(entries)) => {
+                let original = tree.iter()
+                    .filter_map_ok(|(k, v)| {
+                        if !entries.writes.contains_key(&k) {
+                            Some((k, v))
+                        } else {
+                            None
+                        }
+                    });
 
-    fn into_iter(self) -> Self::IntoIter {
-        self.trees.into_iter()
+                let changes = entries.writes.iter()
+                    .filter_map(|(k, v)| v.clone().map(|v| Ok((k.clone(), v))))
+                    .chain(original)
+                    .collect::<Vec<_>>()
+                    .into_iter();
+
+                Either::Left(changes)
+            },
+            _ => Either::Right(tree.iter())
+        }
+    }
+
+    pub fn iter_keys(&self, tree: &Tree) -> impl Iterator<Item = sled::Result<IVec>> {
+        match self.trees.get(&tree.name()) {
+            Some(Some(entries)) => {
+                let original = tree.iter()
+                    .keys()
+                    .filter_map_ok(|k| {
+                        if !entries.writes.contains_key(&k) {
+                            Some(k)
+                        } else {
+                            None
+                        }
+                    });
+
+                let changes = entries.writes.iter()
+                    .filter_map(|(k, v)| v.as_ref().map(|_| Ok(k.clone())))
+                    .chain(original)
+                    .collect::<Vec<_>>()
+                    .into_iter();
+
+                Either::Left(changes)
+            },
+            _ => Either::Right(tree.iter().keys())
+        }
     }
 }

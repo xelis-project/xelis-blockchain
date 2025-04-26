@@ -73,7 +73,7 @@ where
         Ok(request)
     }
 
-    pub fn has_method(&self, method_name: &String) -> bool {
+    pub fn has_method(&self, method_name: &str) -> bool {
         self.methods.contains_key(method_name)
     }
 

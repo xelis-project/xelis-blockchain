@@ -7,20 +7,13 @@ use xelis_common::{api::wallet::NotifyEvent, rpc_server::WebSocketServerHandler}
 
 pub use self::{
     rpc_server::{WalletRpcServer, WalletRpcServerShared, AuthConfig},
-    xswd::{
-        XSWD,
-        AppStateShared,
-        PermissionResult,
-        PermissionRequest,
-        XSWDPermissionHandler,
-        XSWDNodeMethodHandler
-    },
+    xswd::*,
     rpc::register_methods as register_rpc_methods
 };
 
 pub enum APIServer<W>
 where
-    W: Clone + Send + Sync + XSWDPermissionHandler + XSWDNodeMethodHandler + 'static
+    W: Clone + Send + Sync + XSWDHandler + 'static
 {
     RPCServer(WalletRpcServerShared<W>),
     XSWD(XSWD<W>)
@@ -28,7 +21,7 @@ where
 
 impl<W> APIServer<W>
 where
-    W: Clone + Send + Sync + XSWDPermissionHandler + XSWDNodeMethodHandler + 'static
+    W: Clone + Send + Sync + XSWDHandler + 'static
 {
     pub async fn notify_event<V: Serialize>(&self, event: &NotifyEvent, value: &V) {
         let json = serde_json::to_value(value).unwrap();

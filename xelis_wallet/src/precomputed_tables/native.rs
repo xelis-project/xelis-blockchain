@@ -22,8 +22,8 @@ pub async fn has_precomputed_tables(path: Option<&str>, l1: usize) -> Result<boo
 // This must be call only one time, and can be cloned to be shared through differents wallets
 pub async fn read_or_generate_precomputed_tables<P: ecdlp::ProgressTableGenerationReportFunction>(path: Option<&str>, l1: usize, progress_report: P, store_on_disk: bool) -> Result<PrecomputedTablesShared> {
     if let Some(p) = &path {
-        if !p.ends_with('/') {
-            bail!("Path must end with /");
+        if !(p.ends_with('/') || p.ends_with('\\')) {
+            bail!("Path for precomputed tables must ends with / or \\");
         }
 
         let path = Path::new(&p);

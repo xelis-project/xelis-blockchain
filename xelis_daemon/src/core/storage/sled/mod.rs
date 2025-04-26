@@ -1,25 +1,25 @@
 mod snapshot;
+mod migrations;
 
-use anyhow::Context;
 use async_trait::async_trait;
 use indexmap::IndexSet;
+use itertools::Either;
 use crate::{
     config::PRUNE_SAFETY_LIMIT,
     core::error::{BlockchainError, DiskContext}
 };
 use xelis_common::{
     block::{TopoHeight, Block, BlockHeader},
-    crypto::{Hash, PublicKey},
+    crypto::Hash,
     difficulty::{CumulativeDifficulty, Difficulty},
     immutable::Immutable,
     network::Network,
-    serializer::{Reader, Serializer},
+    serializer::Serializer,
     transaction::Transaction
 };
 use std::{
-    collections::HashSet,
     hash::Hash as StdHash,
-    num::NonZeroUsize,
+    ops::{Deref, DerefMut},
     str::FromStr,
     sync::Arc
 };
@@ -27,11 +27,12 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 use lru::LruCache;
 use sled::{IVec, Tree};
-use log::{debug, trace, warn, info};
+use log::{debug, trace, warn, info, error};
 
 pub use snapshot::Snapshot;
 
 use super::{
+    cache::StorageCache,
     providers::*,
     Storage,
     Tips
@@ -50,6 +51,7 @@ pub(super) const ASSETS_COUNT: &[u8; 4] = b"CAST";
 pub(super) const BLOCKS_COUNT: &[u8; 4] = b"CBLK";
 pub(super) const BLOCKS_EXECUTION_ORDER_COUNT: &[u8; 4] = b"EBLK";
 pub(super) const CONTRACTS_COUNT: &[u8; 4] = b"CCON";
+pub(super) const DB_VERSION: &[u8; 4] = b"VRSN";
 
 pub struct SledStorage {
     // Network used by the storage
@@ -80,13 +82,22 @@ pub struct SledStorage {
     pub(super) assets: Tree,
     // Key is prefixed by the topoheight for easier deletion
     // Value is the asset data
-    pub(super) assets_prefixed: Tree,
+    pub(super) versioned_assets: Tree,
     // account nonces to prevent TX replay attack
     pub(super) nonces: Tree,
     // block reward for each block topoheight
     pub(super) rewards: Tree,
     // supply for each block topoheight
+    // This is only used by XELIS due to the minting at EVERY block
+    // topoheight->supply
     pub(super) supply: Tree,
+    // Supply tracked for each asset
+    // This tree store the latest topoheight pointer
+    // asset->topoheight
+    pub(super) assets_supply: Tree,
+    // Versioned assets supply
+    // Key is topoheight+asset->Versioned supply
+    pub(super) versioned_assets_supply: Tree,
     // burned supply for each block topoheight
     pub(super) burned_supply: Tree,
     // difficulty for each block hash
@@ -137,56 +148,15 @@ pub struct SledStorage {
     // opened DB used for assets to create dynamic assets
     pub(super) db: sled::Db,
 
-    // all available caches
-    // Transaction cache
-    pub(super) transactions_cache: Option<Mutex<LruCache<Hash, Arc<Transaction>>>>,
-    // Block header cache
-    pub(super) blocks_cache: Option<Mutex<LruCache<Hash, Arc<BlockHeader>>>>,
-    // Blocks Tips cache
-    pub(super) past_blocks_cache: Option<Mutex<LruCache<Hash, Arc<IndexSet<Hash>>>>>,
-    // Topoheight by hash cache
-    pub(super) topo_by_hash_cache: Option<Mutex<LruCache<Hash, TopoHeight>>>,
-    // Hash by topoheight cache
-    pub(super) hash_at_topo_cache: Option<Mutex<LruCache<TopoHeight, Hash>>>,
-    // Cumulative difficulty cache
-    pub(super) cumulative_difficulty_cache: Option<Mutex<LruCache<Hash, CumulativeDifficulty>>>,
-    // Assets cache
-    pub(super) assets_cache: Option<Mutex<LruCache<Hash, ()>>>,
-    // Tips cache: current chain Tips
-    pub(super) tips_cache: Tips,
-    // Pruned topoheight cache
-    pub(super) pruned_topoheight: Option<TopoHeight>,
-
-    // Cache for counters
-    // Count of assets
-    pub(super) assets_count: u64,
-    // Count of accounts
-    pub(super) accounts_count: u64,
-    // Count of transactions
-    pub(super) transactions_count: u64,
-    // Count of blocks
-    pub(super) blocks_count: u64,
-    // Count of blocks added in chain
-    pub(super) blocks_execution_count: u64,
-    // Count of contracts deployed
-    pub(super) contracts_count: u64,
+    // Cache
+    pub(super) cache: StorageCache,
 
     // If we have a snapshot, we can use it to rollback
     pub(super) snapshot: Option<Snapshot>,
 }
 
-macro_rules! init_cache {
-    ($cache_size: expr) => {{
-        if let Some(size) = &$cache_size {
-            Some(Mutex::new(LruCache::new(NonZeroUsize::new(*size).unwrap())))
-        } else {
-            None
-        }
-    }};
-}
-
 #[derive(Clone, Copy, clap::ValueEnum, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "snake_case")]
 pub enum StorageMode {
     HighThroughput,
     LowSpace
@@ -219,16 +189,27 @@ impl Into<sled::Mode> for StorageMode {
     }
 }
 
-// Default cache size
-const DEFAULT_DB_CACHE_CAPACITY: u64 = 16 * 1024 * 1024; // 16 MB
+impl Deref for SledStorage {
+    type Target = StorageCache;
+
+    fn deref(&self) -> &Self::Target {
+        &self.cache
+    }
+}
+
+impl DerefMut for SledStorage {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.cache
+    }
+}
 
 impl SledStorage {
-    pub fn new(dir_path: String, cache_size: Option<usize>, network: Network, internal_cache_size: Option<u64>, mode: StorageMode) -> Result<Self, BlockchainError> {
+    pub fn new(dir_path: String, cache_size: Option<usize>, network: Network, internal_cache_size: u64, mode: StorageMode) -> Result<Self, BlockchainError> {
         let path = format!("{}{}", dir_path, network.to_string().to_lowercase());
         let config = sled::Config::new()
             .temporary(false)
             .path(path)
-            .cache_capacity(internal_cache_size.unwrap_or(DEFAULT_DB_CACHE_CAPACITY))
+            .cache_capacity(internal_cache_size)
             .mode(mode.into());
 
         let sled = config.open()?;
@@ -246,7 +227,7 @@ impl SledStorage {
             cumulative_difficulty: sled.open_tree("cumulative_difficulty")?,
             difficulty_covariance: sled.open_tree("difficulty_covariance")?,
             assets: sled.open_tree("assets")?,
-            assets_prefixed: sled.open_tree("assets_prefixed")?,
+            versioned_assets: sled.open_tree("versioned_assets")?,
             nonces: sled.open_tree("nonces")?,
             rewards: sled.open_tree("rewards")?,
             supply: sled.open_tree("supply")?,
@@ -268,22 +249,10 @@ impl SledStorage {
             contracts_balances: sled.open_tree("contracts_balances")?,
             versioned_contracts_balances: sled.open_tree("versioned_contracts_balances")?,
             contracts_outputs: sled.open_tree("contracts_outputs")?,
+            assets_supply: sled.open_tree("assets_supply")?,
+            versioned_assets_supply: sled.open_tree("versioned_assets_supply")?,
             db: sled,
-            transactions_cache: init_cache!(cache_size),
-            blocks_cache: init_cache!(cache_size),
-            past_blocks_cache: init_cache!(cache_size),
-            topo_by_hash_cache: init_cache!(cache_size),
-            hash_at_topo_cache: init_cache!(cache_size),
-            cumulative_difficulty_cache: init_cache!(cache_size),
-            assets_cache: init_cache!(cache_size),
-            tips_cache: HashSet::new(),
-            pruned_topoheight: None,
-            assets_count: 0,
-            accounts_count: 0,
-            transactions_count: 0,
-            blocks_count: 0,
-            blocks_execution_count: 0,
-            contracts_count: 0,
+            cache: StorageCache::new(cache_size),
 
             snapshot: None,
         };
@@ -299,58 +268,63 @@ impl SledStorage {
             storage.set_network(&network)?;
         }
 
-        storage.load_cache();
+        if let Err(e) = storage.handle_migrations() {
+            error!("Error while migrating database: {}", e);
+        }
+
+        storage.load_cache_from_disk();
 
         Ok(storage)
     }
 
-    fn load_cache(&mut self) {
+    // Load all the needed cache and counters in memory from disk 
+    pub fn load_cache_from_disk(&mut self) {
         // Load tips from disk if available
         if let Ok(tips) = self.load_from_disk::<Tips>(&self.extra, TIPS, DiskContext::Tips) {
             debug!("Found tips: {}", tips.len());
-            self.tips_cache = tips;
+            self.cache.tips_cache = tips;
         }
 
         // Load the pruned topoheight from disk if available
         if let Ok(pruned_topoheight) = self.load_from_disk::<u64>(&self.extra, PRUNED_TOPOHEIGHT, DiskContext::PrunedTopoHeight) {
             debug!("Found pruned topoheight: {}", pruned_topoheight);
-            self.pruned_topoheight = Some(pruned_topoheight);
+            self.cache.pruned_topoheight = Some(pruned_topoheight);
         }
 
         // Load the assets count from disk if available
         if let Ok(assets_count) = self.load_from_disk::<u64>(&self.extra, ASSETS_COUNT, DiskContext::AssetsCount) {
             debug!("Found assets count: {}", assets_count);
-            self.assets_count = assets_count;
+            self.cache.assets_count = assets_count;
         }
 
         // Load the txs count from disk if available
         if let Ok(txs_count) = self.load_from_disk::<u64>(&self.extra, TXS_COUNT, DiskContext::TxsCount) {
             debug!("Found txs count: {}", txs_count);
-            self.transactions_count = txs_count;
+            self.cache.transactions_count = txs_count;
         }
 
         // Load the blocks count from disk if available
         if let Ok(blocks_count) = self.load_from_disk::<u64>(&self.extra, BLOCKS_COUNT, DiskContext::BlocksCount) {
             debug!("Found blocks count: {}", blocks_count);
-            self.blocks_count = blocks_count;
+            self.cache.blocks_count = blocks_count;
         }
 
         // Load the accounts count from disk if available
         if let Ok(accounts_count) = self.load_from_disk::<u64>(&self.extra, ACCOUNTS_COUNT, DiskContext::AccountsCount) {
             debug!("Found accounts count: {}", accounts_count);
-            self.accounts_count = accounts_count;
+            self.cache.accounts_count = accounts_count;
         }
 
         // Load the blocks execution count from disk if available
         if let Ok(blocks_execution_count) = self.load_from_disk::<u64>(&self.extra, BLOCKS_EXECUTION_ORDER_COUNT, DiskContext::BlocksExecutionOrderCount) {
             debug!("Found blocks execution count: {}", blocks_execution_count);
-            self.blocks_execution_count = blocks_execution_count;
+            self.cache.blocks_execution_count = blocks_execution_count;
         }
 
         // Load the contracts count from disk if available
         if let Ok(contracts_count) = self.load_from_disk::<u64>(&self.extra, CONTRACTS_COUNT, DiskContext::ContractsCount) {
             debug!("Found contracts count: {}", contracts_count);
-            self.contracts_count = contracts_count;
+            self.cache.contracts_count = contracts_count;
         }
     }
 
@@ -389,43 +363,56 @@ impl SledStorage {
             .ok_or(BlockchainError::NotFoundOnDisk(context))
     }
 
-    // Delete a key from the DB
-    pub(super) fn remove_from_disk<T: Serializer>(snapshot: Option<&mut Snapshot>, tree: &Tree, key: &[u8]) -> Result<Option<T>, BlockchainError> {
-        let data = if let Some(snapshot) = snapshot {
+    // Scan prefix
+    pub(super) fn scan_prefix(snapshot: Option<&Snapshot>, tree: &Tree, prefix: &[u8]) -> impl Iterator<Item = sled::Result<IVec>> {
+        match snapshot {
+            Some(snapshot) => Either::Left(snapshot.scan_prefix(tree, prefix)),
+            None => Either::Right(tree.scan_prefix(prefix).into_iter().keys())
+        }
+    }
+
+    // Iter over a tree entries
+    pub(super) fn iter(snapshot: Option<&Snapshot>, tree: &Tree) -> impl Iterator<Item = sled::Result<(IVec, IVec)>> {
+        match snapshot {
+            Some(snapshot) => Either::Left(snapshot.iter(tree)),
+            None => Either::Right(tree.iter())
+        }
+    }
+
+    // Iter over a tree keys
+    pub(super) fn iter_keys(snapshot: Option<&Snapshot>, tree: &Tree) -> impl Iterator<Item = sled::Result<IVec>> {
+        match snapshot {
+            Some(snapshot) => Either::Left(snapshot.iter_keys(tree)),
+            None => Either::Right(tree.iter().keys())
+        }
+    }
+
+    pub(super) fn remove_from_disk_internal(snapshot: Option<&mut Snapshot>, tree: &Tree, key: &[u8]) -> Result<Option<IVec>, BlockchainError> {
+        trace!("remove from disk internal");
+        if let Some(snapshot) = snapshot {
             let (value, load) = snapshot.remove(tree, key);
             if load {
-                tree.get(key)?
+                return Ok(tree.get(key)?);
             } else {
-                value
+                return Ok(value);
             }
-        } else {
-            tree.remove(key)?
-        };
-
-        match data {
-            Some(bytes) => {
-                let mut reader = Reader::new(&bytes);
-                let value = T::read(&mut reader)?;
-                Ok(Some(value))
-            },
-            None => Ok(None)
         }
+
+        Ok(tree.remove(key)?)
+    }
+
+    // Delete a key from the DB
+    pub(super) fn remove_from_disk<T: Serializer>(snapshot: Option<&mut Snapshot>, tree: &Tree, key: &[u8]) -> Result<Option<T>, BlockchainError> {
+        trace!("remove from disk");
+        let v = Self::remove_from_disk_internal(snapshot, tree, key)?;
+        Ok(v.map(|v| T::from_bytes(&v)).transpose()?)
     }
 
     // Delete a key from the DB without reading it
     pub(super) fn remove_from_disk_without_reading(snapshot: Option<&mut Snapshot>, tree: &Tree, key: &[u8]) -> Result<bool, BlockchainError> {
-        if let Some(snapshot) = snapshot {
-                let (v, load) = snapshot.remove(tree, key);
-                let res = if load {
-                    tree.contains_key(key)?
-                } else {
-                    v.is_some()
-                };
-                return Ok(res);
-        }
-
-        let v = tree.remove(key)?;
-        Ok(v.is_some())
+        trace!("remove from disk without reading");
+        Self::remove_from_disk_internal(snapshot, tree, key)
+            .map(|v| v.is_some())
     }
 
     // Insert a key into the DB
@@ -456,22 +443,12 @@ impl SledStorage {
         Ok(len)
     }
 
-    // Drop a tree from the DB
-    // pub(super) fn drop_tree<V: AsRef<[u8]>>(snapshot: Option<&mut Snapshot>, db: &sled::Db, tree_name: V) -> Result<bool, BlockchainError> {
-    //     let v = if let Some(snapshot) = snapshot {
-    //         snapshot.drop_tree(tree_name)
-    //     } else {
-    //         db.drop_tree(tree_name)?
-    //     };
-
-    //     Ok(v)
-    // }
-
     // Load from disk and cache the value
     // Or load it from cache if available
     // Note that the Snapshot has no cache and is priority over the cache
     // This mean, cache is never used if a snapshot is available
     pub(super) async fn get_cacheable_arc_data<K: Eq + StdHash + Serializer + Clone, V: Serializer>(&self, tree: &Tree, cache: &Option<Mutex<LruCache<K, Arc<V>>>>, key: &K, context: DiskContext) -> Result<Arc<V>, BlockchainError> {
+        trace!("get cacheable arc data {:?}", context);
         let key_bytes = key.to_bytes();
         let value = if let Some(cache) = cache.as_ref()
             .filter(|_| self.snapshot.as_ref()
@@ -479,12 +456,17 @@ impl SledStorage {
                 .unwrap_or(true)
             )
         {
+            trace!("load arc from cache");
             let mut cache = cache.lock().await;
             if let Some(value) = cache.get(key) {
+                trace!("found key in cache, cloning Arc");
                 return Ok(Arc::clone(&value));
             }
 
+            trace!("no arc found in cache, loading from disk");
             let value = Arc::new(self.load_from_disk(tree, &key_bytes, context)?);
+
+            trace!("inserting arced data into the cache");
             cache.put(key.clone(), Arc::clone(&value));
             value
         } else {
@@ -494,9 +476,42 @@ impl SledStorage {
         Ok(value)
     }
 
+    pub(super) async fn get_optional_cacheable_data<K: Eq + StdHash + Serializer + Clone, V: Serializer + Clone>(&self, tree: &Tree, cache: &Option<Mutex<LruCache<K, V>>>, key: &K) -> Result<Option<V>, BlockchainError> {
+        trace!("get optional cacheable data");
+        let key_bytes = key.to_bytes();
+        let value = if let Some(cache) = cache.as_ref()
+            .filter(|_| self.snapshot.as_ref()
+                .map(|s| !s.contains_key(tree, &key_bytes))
+                .unwrap_or(true)
+            )
+        {
+            trace!("load optional from cache");
+            let mut cache = cache.lock().await;
+            if let Some(value) = cache.get(key).cloned() {
+                trace!("data is present in cache");
+                return Ok(Some(value));
+            }
+
+            trace!("not found in cache, load optional from disk");
+            let value: Option<V> = self.load_optional_from_disk(tree, &key_bytes)?;
+
+            trace!("load optional from disk is present: {}", value.is_some());
+            if let Some(value) = value.as_ref() {
+                cache.put(key.clone(), value.clone());
+            }
+
+            value
+        } else {
+            self.load_optional_from_disk(tree, &key_bytes)?
+        };
+
+        Ok(value)
+    }
+
     // Load a value from the DB and cache it
     // This data is not cached behind an Arc, but is cloned at each access
     pub(super) async fn get_cacheable_data<K: Eq + StdHash + Serializer + Clone, V: Serializer + Clone>(&self, tree: &Tree, cache: &Option<Mutex<LruCache<K, V>>>, key: &K, context: DiskContext) -> Result<V, BlockchainError> {
+        trace!("get cacheable data {:?}", context);
         let key_bytes = key.to_bytes();
         let value = if let Some(cache) = cache.as_ref()
             .filter(|_| self.snapshot.as_ref()
@@ -507,10 +522,14 @@ impl SledStorage {
             trace!("load from cache");
             let mut cache = cache.lock().await;
             if let Some(value) = cache.get(key) {
+                trace!("key found in cache");
                 return Ok(value.clone());
             }
 
+            trace!("not found in cache, loading from disk");
             let value: V = self.load_from_disk(tree, &key_bytes, context)?;
+
+            trace!("inserting disk value into cache");
             cache.put(key.clone(), value.clone());
             value
         } else {
@@ -520,16 +539,16 @@ impl SledStorage {
         Ok(value)
     }
 
-    pub(super) async fn delete_cacheable_data<K: Eq + StdHash + Serializer + Clone, V: Serializer>(snapshot: Option<&mut Snapshot>, tree: &Tree, cache: &Option<Mutex<LruCache<K, V>>>, key: &K) -> Result<V, BlockchainError> {
+    pub(super) async fn delete_cacheable_data<K: Eq + StdHash + Serializer + Clone, V: Serializer>(snapshot: Option<&mut Snapshot>, tree: &Tree, cache: Option<&mut Mutex<LruCache<K, V>>>, key: &K) -> Result<V, BlockchainError> {
+        trace!("delete cacheable data");
         let value = match Self::remove_from_disk::<V>(snapshot, tree, &key.to_bytes())? {
             Some(data) => data,
             None => return Err(BlockchainError::NotFoundOnDisk(DiskContext::DeleteData))
         };
 
         if let Some(cache) = cache {
-            let mut cache = cache.lock().await;
-            if let Some(value) = cache.pop(key) {
-                return Ok(value);
+            if cache.get_mut().pop(key).is_some() {
+                trace!("data has been deleted from cache");
             }
         }
 
@@ -537,16 +556,16 @@ impl SledStorage {
     }
 
     // Delete a cacheable data from disk and cache behind a Arc
-    pub(super) async fn delete_arc_cacheable_data<K: Eq + StdHash + Serializer + Clone, V: Serializer>(snapshot: Option<&mut Snapshot>, tree: &Tree, cache: &Option<Mutex<LruCache<K, Arc<V>>>>, key: &K) -> Result<Arc<V>, BlockchainError> {
+    pub(super) async fn delete_arc_cacheable_data<K: Eq + StdHash + Serializer + Clone, V: Serializer>(snapshot: Option<&mut Snapshot>, tree: &Tree, cache: Option<&mut Mutex<LruCache<K, Arc<V>>>>, key: &K) -> Result<Arc<V>, BlockchainError> {
+        trace!("delete arc cacheable data");
         let value = match Self::remove_from_disk::<V>(snapshot, tree, &key.to_bytes())? {
             Some(data) => data,
             None => return Err(BlockchainError::NotFoundOnDisk(DiskContext::DeleteData))
         };
 
         if let Some(cache) = cache {
-            let mut cache = cache.lock().await;
-            if let Some(value) = cache.pop(key) {
-                return Ok(value);
+            if cache.get_mut().pop(key).is_some() {
+                trace!("data has been deleted from arc cache");
             }
         }
 
@@ -555,9 +574,12 @@ impl SledStorage {
 
     // Check if our DB contains a data in cache or on disk
     pub(super) async fn contains_data_cached<K: Eq + StdHash + Serializer + Clone, V>(&self, tree: &Tree, cache: &Option<Mutex<LruCache<K, V>>>, key: &K) -> Result<bool, BlockchainError> {
+        trace!("contains data cached");
+
         let key_bytes = key.to_bytes();
         if let Some(snapshot) = self.snapshot.as_ref() {
             if let Some(v) = snapshot.contains_key_with_value(tree, &key_bytes) {
+                trace!("snapshot contains requested data");
                 return Ok(v);
             }
         }
@@ -565,6 +587,7 @@ impl SledStorage {
         if let Some(cache) = cache {
             let cache = cache.lock().await;
             if cache.contains(key) {
+                trace!("cache contains requested data");
                 return Ok(true);
             }
         }
@@ -574,9 +597,11 @@ impl SledStorage {
 
     // Check if our DB contains a data on disk
     pub(super) fn contains_data<K: Serializer>(&self, tree: &Tree, key: &K) -> Result<bool, BlockchainError> {
+        trace!("contains data");
         let key_bytes = key.to_bytes();
         if let Some(snapshot) = self.snapshot.as_ref() {
             if let Some(v) = snapshot.contains_key_with_value(tree, &key_bytes) {
+                trace!("snapshot contains data");
                 return Ok(v);
             }
         }
@@ -586,10 +611,11 @@ impl SledStorage {
 
     // Update the assets count and store it on disk
     pub(super) fn store_assets_count(&mut self, count: u64) -> Result<(), BlockchainError> {
+        trace!("store assets count {}", count);
         if let Some(snapshot) = self.snapshot.as_mut() {
-            snapshot.assets_count = count;
+            snapshot.cache.assets_count = count;
         } else {
-            self.assets_count = count;
+            self.cache.assets_count = count;
         }
 
         Self::insert_into_disk(self.snapshot.as_mut(), &self.extra, ASSETS_COUNT, &count.to_be_bytes())?;
@@ -599,83 +625,41 @@ impl SledStorage {
 
 #[async_trait]
 impl Storage for SledStorage {
-    async fn clear_caches(&mut self) -> Result<(), BlockchainError> {
-        if let Some(cache) = self.transactions_cache.as_ref() {
-            let mut cache = cache.lock().await;
-            cache.clear();
-        }
-
-        if let Some(cache) = self.blocks_cache.as_ref() {
-            let mut cache = cache.lock().await;
-            cache.clear();
-        }
-
-        if let Some(cache) = self.past_blocks_cache.as_ref() {
-            let mut cache = cache.lock().await;
-            cache.clear();
-        }
-
-        if let Some(cache) = self.topo_by_hash_cache.as_ref() {
-            let mut cache = cache.lock().await;
-            cache.clear();
-        }
-
-        if let Some(cache) = self.hash_at_topo_cache.as_ref() {
-            let mut cache = cache.lock().await;
-            cache.clear();
-        }
-
-        if let Some(cache) = self.cumulative_difficulty_cache.as_ref() {
-            let mut cache = cache.lock().await;
-            cache.clear();
-        }
-
-        if let Some(cache) = self.assets_cache.as_ref() {
-            let mut cache = cache.lock().await;
-            cache.clear();
-        }
-
-        // also load the atomic counters from disk
-        self.load_cache();
-
-        Ok(())
-    }
-
     // Delete the whole block using its topoheight
     async fn delete_block_at_topoheight(&mut self, topoheight: u64) -> Result<(Hash, Arc<BlockHeader>, Vec<(Hash, Arc<Transaction>)>), BlockchainError> {
         trace!("Delete block at topoheight {topoheight}");
 
         // delete topoheight<->hash pointers
-        let hash = Self::delete_cacheable_data(self.snapshot.as_mut(), &self.hash_at_topo, &self.hash_at_topo_cache, &topoheight).await?;
+        let hash = Self::delete_cacheable_data(self.snapshot.as_mut(), &self.hash_at_topo, self.cache.hash_at_topo_cache.as_mut(), &topoheight).await?;
 
         trace!("Deleting block execution order");
         Self::remove_from_disk_without_reading(self.snapshot.as_mut(), &self.blocks_execution_order, hash.as_bytes())?;
 
         trace!("Hash is {hash} at topo {topoheight}");
 
-        Self::delete_cacheable_data::<Hash, u64>(self.snapshot.as_mut(), &self.topo_by_hash, &self.topo_by_hash_cache, &hash).await?;
+        Self::delete_cacheable_data::<Hash, u64>(self.snapshot.as_mut(), &self.topo_by_hash, self.cache.topo_by_hash_cache.as_mut(), &hash).await?;
 
         trace!("deleting block header {}", hash);
-        let block = Self::delete_arc_cacheable_data(self.snapshot.as_mut(), &self.blocks, &self.blocks_cache, &hash).await?;
+        let block = Self::delete_arc_cacheable_data(self.snapshot.as_mut(), &self.blocks, self.cache.blocks_cache.as_mut(), &hash).await?;
         trace!("block header deleted successfully");
 
         trace!("Deleting supply");
-        let supply: u64 = Self::delete_cacheable_data(self.snapshot.as_mut(), &self.supply, &None, &topoheight).await?;
+        let supply: u64 = Self::delete_cacheable_data(self.snapshot.as_mut(), &self.supply, None, &topoheight).await?;
         trace!("Supply was {}", supply);
 
         trace!("Deleting burned supply");
-        let burned_supply: u64 = Self::delete_cacheable_data(self.snapshot.as_mut(), &self.burned_supply, &None, &topoheight).await?;
+        let burned_supply: u64 = Self::delete_cacheable_data(self.snapshot.as_mut(), &self.burned_supply, None, &topoheight).await?;
         trace!("Burned supply was {}", burned_supply);
 
         trace!("Deleting rewards");
-        let reward: u64 = Self::delete_cacheable_data(self.snapshot.as_mut(), &self.rewards, &None, &topoheight).await?;
+        let reward: u64 = Self::delete_cacheable_data(self.snapshot.as_mut(), &self.rewards, None, &topoheight).await?;
         trace!("Reward for block {} was: {}", hash, reward);
 
         trace!("Deleting difficulty");
-        let _: Difficulty = Self::delete_cacheable_data(self.snapshot.as_mut(), &self.difficulty, &None, &hash).await?;
+        let _: Difficulty = Self::delete_cacheable_data(self.snapshot.as_mut(), &self.difficulty, None, &hash).await?;
 
         trace!("Deleting cumulative difficulty");
-        let cumulative_difficulty: CumulativeDifficulty = Self::delete_cacheable_data(self.snapshot.as_mut(), &self.cumulative_difficulty, &self.cumulative_difficulty_cache, &hash).await?;
+        let cumulative_difficulty: CumulativeDifficulty = Self::delete_cacheable_data(self.snapshot.as_mut(), &self.cumulative_difficulty, self.cache.cumulative_difficulty_cache.as_mut(), &hash).await?;
         trace!("Cumulative difficulty deleted: {}", cumulative_difficulty);
 
         let mut txs = Vec::new();
@@ -683,7 +667,7 @@ impl Storage for SledStorage {
             // Should we delete the tx too or only unlink it
             let mut should_delete = true;
             if self.has_tx_blocks(tx_hash)? {
-                let mut blocks: Tips = Self::delete_cacheable_data(self.snapshot.as_mut(), &self.tx_blocks, &None, tx_hash).await?;
+                let mut blocks: Tips = Self::delete_cacheable_data(self.snapshot.as_mut(), &self.tx_blocks, None, tx_hash).await?;
                 let blocks_len =  blocks.len();
                 blocks.remove(&hash);
                 should_delete = blocks.is_empty();
@@ -701,7 +685,7 @@ impl Storage for SledStorage {
             // which allow multiple time the same txs in differents blocks
             if should_delete && self.contains_data_cached(&self.transactions, &self.transactions_cache, tx_hash).await? {
                 trace!("Deleting TX {} in block {}", tx_hash, hash);
-                let tx: Arc<Transaction> = Self::delete_arc_cacheable_data(self.snapshot.as_mut(), &self.transactions, &self.transactions_cache, tx_hash).await?;
+                let tx: Arc<Transaction> = Self::delete_arc_cacheable_data(self.snapshot.as_mut(), &self.transactions, self.cache.transactions_cache.as_mut(), tx_hash).await?;
                 txs.push((tx_hash.clone(), tx));
             }
         }
@@ -712,15 +696,14 @@ impl Storage for SledStorage {
         }
 
         // Delete cache of past blocks
-        if let Some(cache) = &self.past_blocks_cache {
-            let mut cache = cache.lock().await;
-            cache.pop(&hash);
+        if let Some(cache) = self.past_blocks_cache.as_mut() {
+            cache.get_mut().pop(&hash);
         }
 
         Ok((hash, block, txs))
     }
 
-    async fn pop_blocks(&mut self, mut height: u64, mut topoheight: TopoHeight, count: u64, stable_topo_height: TopoHeight) -> Result<(u64, TopoHeight, Vec<(Hash, Arc<Transaction>)>), BlockchainError> {
+    async fn pop_blocks(&mut self, mut height: u64, mut topoheight: TopoHeight, count: u64, until_topo_height: TopoHeight) -> Result<(u64, TopoHeight, Vec<(Hash, Arc<Transaction>)>), BlockchainError> {
         trace!("pop blocks from height: {}, topoheight: {}, count: {}", height, topoheight, count);
         if topoheight < count as u64 { // also prevent removing genesis block
             return Err(BlockchainError::NotEnoughBlocks);
@@ -751,7 +734,7 @@ impl Storage for SledStorage {
 
         if pruned_topoheight != 0 {
             let safety_pruned_topoheight = pruned_topoheight + PRUNE_SAFETY_LIMIT;
-            if lowest_topo <= safety_pruned_topoheight && stable_topo_height != 0 {
+            if lowest_topo <= safety_pruned_topoheight && until_topo_height != 0 {
                 warn!("Pruned topoheight is {}, lowest topoheight is {}, rewind only until {}", pruned_topoheight, lowest_topo, safety_pruned_topoheight);
                 lowest_topo = safety_pruned_topoheight;
             }
@@ -773,14 +756,16 @@ impl Storage for SledStorage {
         let mut done = 0;
         'main: loop {
             // stop rewinding if its genesis block or if we reached the lowest topo
-            if topoheight <= lowest_topo || topoheight <= stable_topo_height || height == 0 { // prevent removing genesis block
-                trace!("Done: {done}, count: {count}, height: {height}, topoheight: {topoheight}, lowest topo: {lowest_topo}, stable topo: {stable_topo_height}");
+            if topoheight <= lowest_topo || topoheight <= until_topo_height || topoheight == 0 { // prevent removing genesis block
+                trace!("Done: {done}, count: {count}, height: {height}, topoheight: {topoheight}, lowest topo: {lowest_topo}, stable topo: {until_topo_height}");
                 break 'main;
             }
 
             // Delete the hash at topoheight
             let (hash, block, block_txs) = self.delete_block_at_topoheight(topoheight).await?;
-            trace!("Block {} at topoheight {} deleted", hash, topoheight);
+            self.delete_versioned_data_at_topoheight(topoheight).await?;
+
+            debug!("Block {} at topoheight {} deleted", hash, topoheight);
             txs.extend(block_txs);
 
             // generate new tips
@@ -801,7 +786,7 @@ impl Storage for SledStorage {
                 tips.insert(self.get_hash_at_topo_height(0).await?);
 
                 Self::remove_from_disk_without_reading(self.snapshot.as_mut(), &self.extra, PRUNED_TOPOHEIGHT)?;
-                self.pruned_topoheight = None;
+                self.cache.pruned_topoheight = None;
 
                 break 'main;
             }
@@ -814,118 +799,7 @@ impl Storage for SledStorage {
             done += 1;
         }
 
-        debug!("Blocks processed {}, new topoheight: {}, new height: {}, tips: {}", done, topoheight, height, tips.len());
-
-        trace!("Cleaning assets");
-
-        // All deleted assets
-        let mut deleted_assets = HashSet::new();
-
-        // clean all assets
-        for el in self.assets.iter() {
-            let (key, value) = el.context("error on asset iterator")?;
-            let registration_topoheight = TopoHeight::from_bytes(&value)?;
-            if registration_topoheight > topoheight {
-                let asset = Hash::from_bytes(&key)?;
-                trace!("Asset {} was registered at topoheight {}, deleting", asset, registration_topoheight);
-                // Delete it from registered assets
-                Self::remove_from_disk_without_reading(self.snapshot.as_mut(), &self.assets, &key)
-                    .context(format!("Error while deleting asset {asset} from registered assets"))?;
-
-                let key = Self::get_asset_key(&asset, registration_topoheight);
-                Self::remove_from_disk_without_reading(self.snapshot.as_mut(), &self.assets_prefixed, &key)
-                    .context(format!("Error while deleting asset {asset} from registered assets"))?;
-
-                self.store_assets_count(self.count_assets().await? - 1)?;
-
-                deleted_assets.insert(asset);
-            }
-        }
-
-        trace!("Cleaning nonces");
-        // now let's process nonces versions
-        // we set the new highest topoheight to the highest found under the new topoheight
-        for el in self.nonces.iter() {
-            let (key, value) = el?;
-            let topo_pointer = TopoHeight::from_bytes(&value)?;
-
-            if topo_pointer > topoheight {
-                let pkey = PublicKey::from_bytes(&key)?;
-                match self.get_nonce_at_maximum_topoheight(&pkey, topoheight).await? {
-                    Some((topo, _)) => {
-                        trace!("New highest version nonce for {} is at topoheight {}", pkey.as_address(self.is_mainnet()), topo);
-                        Self::insert_into_disk(self.snapshot.as_mut(), &self.nonces, &key, &topo.to_be_bytes())?;
-                    },
-                    None => {
-                        Self::remove_from_disk_without_reading(self.snapshot.as_mut(), &self.nonces, &key)?;
-                        self.store_accounts_count(self.count_accounts().await? - 1)?;
-                    }
-                }
-            }
-        }
-
-        trace!("Cleaning balances");
-        // do balances too
-        for el in self.balances.iter() {
-            let (key, value) = el?;
-            let asset = Hash::from_bytes(&key[32..64])?;
-            let mut delete = false;
-
-            // if the asset is not deleted, we can process it
-            if !deleted_assets.contains(&asset) {
-                let highest_topoheight = u64::from_bytes(&value)?;
-                // If the highest topoheight is above the new topoheight, we have to find the new highest version
-                if highest_topoheight > topoheight {
-                    // find the first version which is under topoheight
-                    let pkey = PublicKey::from_bytes(&key[0..32])?;
-                    trace!("Highest topoheight for balance {} is {}, above {}", pkey.as_address(self.is_mainnet()), highest_topoheight, topoheight);
-
-                    match self.get_balance_at_maximum_topoheight(&pkey, &asset, topoheight).await? {
-                        Some((topo, _)) => {
-                            // we find the new highest version which is under new topoheight
-                            trace!("New highest version balance for {} is at topoheight {}", pkey.as_address(self.is_mainnet()), topo);
-                            Self::insert_into_disk(self.snapshot.as_mut(), &self.balances, &key, &topo.to_be_bytes())?;
-                        },
-                        None => {
-                            delete = true;
-                        }
-                    }
-                }
-            } else {
-                delete = true;
-            }
-
-            if delete {
-                Self::remove_from_disk_without_reading(self.snapshot.as_mut(), &self.balances, &key)?;
-            }
-        }
-
-        // Clean the multisig
-        trace!("Cleaning multisig");
-        for el in self.multisig.iter() {
-            let (key, value) = el?;
-            let topo_pointer = TopoHeight::from_bytes(&value)?;
-
-            if topo_pointer > topoheight {
-                let pkey = PublicKey::from_bytes(&key)?;
-                match self.get_multisig_at_maximum_topoheight_for(&pkey, topoheight).await? {
-                    Some((topo, _)) => {
-                        trace!("New highest version multisig for {} is at topoheight {}", pkey.as_address(self.is_mainnet()), topo);
-                        Self::insert_into_disk(self.snapshot.as_mut(), &self.multisig, &key, &topo.to_be_bytes())?;
-                    },
-                    None => {
-                        Self::remove_from_disk_without_reading(self.snapshot.as_mut(), &self.multisig, &key)?;
-                    }
-                }
-            }
-        }
-
         warn!("Blocks rewinded: {}, new topoheight: {}, new height: {}", done, topoheight, height);
-
-        trace!("Cleaning versioned balances and nonces");
-
-        // now delete all versioned balances and nonces above the new topoheight
-        self.delete_versioned_data_above_topoheight(topoheight).await?;
 
         trace!("Cleaning caches");
         // Clear all caches to not have old data after rewind
@@ -940,6 +814,10 @@ impl Storage for SledStorage {
         // Reduce the count of blocks stored
         let count = self.count_blocks().await? - done;
         Self::insert_into_disk(self.snapshot.as_mut(), &self.extra, BLOCKS_COUNT, &count.to_be_bytes())?;
+
+        warn!("deleting versioned data above topoheight {}", topoheight);
+        // now delete all versioned balances and nonces above the new topoheight
+        // self.delete_versioned_data_above_topoheight(topoheight).await?;
 
         Ok((height, topoheight, txs))
     }
@@ -1006,7 +884,7 @@ impl Storage for SledStorage {
     async fn get_unexecuted_transactions(&self) -> Result<IndexSet<Hash>, BlockchainError> {
         trace!("get unexecuted transactions");
         let mut txs = IndexSet::new();
-        for el in self.transactions.iter().keys() {
+        for el in Self::iter_keys(self.snapshot.as_ref(), &self.transactions) {
             let key = el?;
             let tx_hash = Hash::from_bytes(&key)?;
             if !self.is_tx_executed_in_a_block(&tx_hash)? {
@@ -1024,12 +902,32 @@ impl Storage for SledStorage {
         for tree in self.db.tree_names() {
             let tree = self.db.open_tree(tree)?;
             debug!("Estimating size for tree {}", String::from_utf8_lossy(&tree.name()));
-            for el in tree.iter() {
+            for el in Self::iter(self.snapshot.as_ref(), &tree) {
                 let (key, value) = el?;
                 size += key.len() + value.len();
             }
         }
 
         Ok(size as u64)
+    }
+
+    async fn count_orphaned_blocks(&self) -> Result<u64, BlockchainError> {
+        trace!("Counting orphaned blocks");
+        let mut count = 0;
+        for el in Self::iter_keys(self.snapshot.as_ref(), &self.blocks) {
+            let hash = Hash::from_bytes(&el?)?;
+            if !self.is_block_topological_ordered(&hash).await {
+                count += 1;
+            }
+        }
+
+        Ok(count)
+    }
+
+    async fn flush(&mut self) -> Result<(), BlockchainError> {
+        trace!("flush sled");
+        let n = self.db.flush_async().await?;
+        debug!("Flushed {} bytes", n);
+        Ok(())
     }
 }

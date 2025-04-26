@@ -172,7 +172,7 @@ impl<'a, S: Storage> ChainState<'a, S> {
 
     // Create a sender echange
     async fn create_sender_echange(storage: &S, key: &'a PublicKey, asset: &'a Hash, current_topoheight: TopoHeight, reference: &Reference) -> Result<Echange, BlockchainError> {
-        let (use_output_balance, new_version, version) = super::search_versioned_balance_for_reference(storage, key, asset, current_topoheight, reference).await?;
+        let (use_output_balance, new_version, version) = super::search_versioned_balance_for_reference(storage, key, asset, current_topoheight, reference, true).await?;
         Ok(Echange::new(use_output_balance, new_version,  version))
     }
 
@@ -201,7 +201,7 @@ impl<'a, S: Storage> ChainState<'a, S> {
         match self.receiver_balances.entry(key.clone()).or_insert_with(HashMap::new).entry(asset.clone()) {
             Entry::Occupied(o) => Ok(o.into_mut().get_mut_balance().computable()?),
             Entry::Vacant(e) => {
-                let version = self.storage.get_new_versioned_balance(&key, &asset, self.topoheight).await?;
+                let (version, _) = self.storage.get_new_versioned_balance(&key, &asset, self.topoheight).await?;
                 Ok(e.insert(version).get_mut_balance().computable()?)
             }
         }
@@ -293,17 +293,18 @@ impl<'a, S: Storage> ChainState<'a, S> {
     }
 
     // Load a contract from the storage if its not already loaded
-    async fn load_versioned_contract(&mut self, hash: &'a Hash) -> Result<(), BlockchainError> {
+    async fn load_versioned_contract(&mut self, hash: &'a Hash) -> Result<bool, BlockchainError> {
         trace!("Loading contract {} at topoheight {}", hash, self.topoheight);
-        if !self.contracts.contains_key(hash) {
-            let contract = self.storage.get_contract_at_maximum_topoheight_for(hash, self.topoheight).await?
-                .map(|(topo, contract)| (VersionedState::FetchedAt(topo), contract.take()))
-                .unwrap_or((VersionedState::New, None));
+        match self.contracts.entry(hash) {
+            Entry::Occupied(o) => Ok(o.get().1.is_some()),
+            Entry::Vacant(e) => {
+                let contract = self.storage.get_contract_at_maximum_topoheight_for(hash, self.topoheight).await?
+                    .map(|(topo, contract)| (VersionedState::FetchedAt(topo), contract.take()))
+                    .unwrap_or((VersionedState::New, None));
 
-            self.contracts.insert(hash, contract);
+                Ok(e.insert(contract).1.is_some())
+            }
         }
-
-        Ok(())
     }
 
     // Get the contract module from our cache
@@ -439,7 +440,7 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for ChainS
     async fn load_contract_module(
         &mut self,
         hash: &'a Hash
-    ) -> Result<(), BlockchainError> {
+    ) -> Result<bool, BlockchainError> {
         self.load_versioned_contract(hash).await
     }
 

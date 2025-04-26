@@ -38,9 +38,9 @@ impl SledStorage {
     // Update the blocks count and store it on disk
     fn store_blocks_count(&mut self, count: u64) -> Result<(), BlockchainError> {
         if let Some(snapshot) = self.snapshot.as_mut() {
-            snapshot.blocks_count = count;
+            snapshot.cache.blocks_count = count;
         } else {
-            self.blocks_count = count;
+            self.cache.blocks_count = count;
         }
         Self::insert_into_disk(self.snapshot.as_mut(), &self.extra, BLOCKS_COUNT, &count.to_be_bytes())?;
         Ok(())
@@ -57,9 +57,9 @@ impl BlockProvider for SledStorage {
     async fn count_blocks(&self) -> Result<u64, BlockchainError> {
         trace!("count blocks");
         let count = if let Some(snapshot) = &self.snapshot {
-            snapshot.blocks_count
+            snapshot.cache.blocks_count
         } else {
-            self.blocks_count
+            self.cache.blocks_count
         };
         Ok(count)
     }
@@ -70,7 +70,7 @@ impl BlockProvider for SledStorage {
     }
 
     async fn save_block(&mut self, block: Arc<BlockHeader>, txs: &Vec<Immutable<Transaction>>, difficulty: Difficulty, p: VarUint, hash: Hash) -> Result<(), BlockchainError> {
-        debug!("Storing new {} with hash: {}, difficulty: {}", block, hash, difficulty);
+        debug!("Storing new {} with hash: {}, difficulty: {}, snapshot mode: {}", block, hash, difficulty, self.snapshot.is_some());
 
         // Store transactions
         let mut txs_count = 0;
@@ -101,9 +101,8 @@ impl BlockProvider for SledStorage {
 
         self.add_block_hash_at_height(hash.clone(), block.get_height()).await?;
 
-        if let Some(cache) = &self.blocks_cache {
-            let mut cache = cache.lock().await;
-            cache.put(hash, block);
+        if let Some(cache) = self.blocks_cache.as_mut() {
+            cache.get_mut().put(hash, block);
         }
 
         Ok(())
@@ -126,7 +125,7 @@ impl BlockProvider for SledStorage {
         debug!("Deleting block with hash: {}", hash);
 
         // Delete block header
-        let header = Self::delete_arc_cacheable_data(self.snapshot.as_mut(), &self.blocks, &self.blocks_cache, &hash).await?;
+        let header = Self::delete_arc_cacheable_data(self.snapshot.as_mut(), &self.blocks, self.cache.blocks_cache.as_mut(), &hash).await?;
 
         // Decrease blocks count
         self.store_blocks_count(self.count_blocks().await? - 1)?;
@@ -139,7 +138,7 @@ impl BlockProvider for SledStorage {
 
         self.remove_block_hash_at_height(&hash, header.get_height()).await?;
 
-        let mut transactions = Vec::new();
+        let mut transactions = Vec::with_capacity(header.get_txs_count());
         for tx in header.get_transactions() {
             let transaction = self.get_transaction(&tx).await?;
             transactions.push(Immutable::Arc(transaction));

@@ -63,17 +63,22 @@ impl<'a> TxSelector<'a> {
     // Create a TxSelector from a list of groups
     pub fn grouped<I>(groups: I) -> Self
     where
-        I: Iterator<Item = Vec<TxSelectorEntry<'a>>>
+        I: Iterator<Item = Vec<TxSelectorEntry<'a>>> + ExactSizeIterator
     {
-        let mut queue = BinaryHeap::new();
+        let mut queue = BinaryHeap::with_capacity(groups.len());
 
         // push every group to the queue
-        for group in groups {
-            queue.push(Transactions(VecDeque::from(group)));
-        }
+        queue.extend(groups.map(|v| Transactions(VecDeque::from(v))));
 
         Self {
             queue
+        }
+    }
+
+    // Create a TxSelector with a given capacity
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            queue: BinaryHeap::with_capacity(capacity)
         }
     }
 
@@ -108,6 +113,11 @@ impl<'a> TxSelector<'a> {
             v
         });
         Self::grouped(iter)
+    }
+
+    // Add a new group
+    pub fn push_group<V: Into<VecDeque<TxSelectorEntry<'a>>>>(&mut self, group: V) {
+        self.queue.push(Transactions(group.into()));
     }
 
     // Get the next transaction with the highest fee

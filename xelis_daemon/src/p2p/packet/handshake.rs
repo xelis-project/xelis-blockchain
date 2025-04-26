@@ -13,7 +13,6 @@ use crate::p2p::{
 };
 use std::{
     borrow::Cow,
-    collections::HashSet,
     fmt::{Display, Error, Formatter}
 };
 
@@ -86,8 +85,7 @@ impl<'a> Handshake<'a> {
 
     // Create a new peer using its connection and this handshake packet
     pub fn create_peer(self, connection: Connection, priority: bool, peer_list: SharedPeerList) -> (Peer, Rx) {
-        let peers = HashSet::new();
-        Peer::new(connection, self.get_peer_id(), self.node_tag.into_owned(), self.local_port, self.version.into_owned(), self.top_hash.into_owned(), self.topoheight, self.height, self.pruned_topoheight, priority, self.cumulative_difficulty.into_owned(), peer_list, peers, self.can_be_shared)
+        Peer::new(connection, self.get_peer_id(), self.node_tag.into_owned(), self.local_port, self.version.into_owned(), self.top_hash.into_owned(), self.topoheight, self.height, self.pruned_topoheight, priority, self.cumulative_difficulty.into_owned(), peer_list, self.can_be_shared)
     }
 
     pub fn get_local_port(&self) -> u16 {

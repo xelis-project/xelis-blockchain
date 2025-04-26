@@ -135,6 +135,12 @@ impl AddAssign<&Scalar> for Ciphertext {
     }
 }
 
+impl AddAssign<Scalar> for &mut Ciphertext {
+    fn add_assign(&mut self, rhs: Scalar) {
+        self.commitment += rhs;
+    }
+}
+
 // SUB TRAITS
 
 impl Sub<u64> for Ciphertext {
@@ -197,8 +203,8 @@ impl Mul<Scalar> for Ciphertext {
 
     fn mul(self, rhs: Scalar) -> Self {
         Self {
-            commitment: PedersenCommitment::from_point(self.commitment.as_point() * rhs),
-            handle: DecryptHandle::from_point(self.handle.as_point() * rhs),
+            commitment: PedersenCommitment::from_point(self.commitment.to_point() * rhs),
+            handle: DecryptHandle::from_point(self.handle.to_point() * rhs),
         }
     }
 }
@@ -208,8 +214,8 @@ impl Mul<&Scalar> for Ciphertext {
 
     fn mul(self, rhs: &Scalar) -> Self {
         Self {
-            commitment: PedersenCommitment::from_point(self.commitment.as_point() * rhs),
-            handle: DecryptHandle::from_point(self.handle.as_point() * rhs),
+            commitment: PedersenCommitment::from_point(self.commitment.to_point() * rhs),
+            handle: DecryptHandle::from_point(self.handle.to_point() * rhs),
         }
     }
 }
@@ -270,6 +276,13 @@ impl SubAssign<&Scalar> for Ciphertext {
     }
 }
 
+
+impl SubAssign<Scalar> for &mut Ciphertext {
+    fn sub_assign(&mut self, rhs: Scalar) {
+        self.commitment -= rhs;
+    }
+}
+
 impl Serialize for Ciphertext {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -309,6 +322,19 @@ mod tests {
     }
 
     #[test]
+    fn test_add_scalar() {
+        let keypair = KeyPair::new();
+
+        let ct1 = keypair.get_public_key().encrypt(5000u64);
+
+        let ct2 = ct1 + Scalar::from(1000u64);
+
+        let dec = keypair.decrypt_to_point(&ct2);
+
+        assert_eq!(dec, Scalar::from(6000u64) * PC_GENS.B);
+    }
+
+    #[test]
     fn test_sub() {
         let keypair = KeyPair::new();
 
@@ -318,6 +344,19 @@ mod tests {
         let ct3 = ct1 - ct2;
 
         let dec = keypair.decrypt_to_point(&ct3);
+
+        assert_eq!(dec, Scalar::from(4000u64) * PC_GENS.B);
+    }
+
+    #[test]
+    fn test_sub_scalar() {
+        let keypair = KeyPair::new();
+
+        let ct1 = keypair.get_public_key().encrypt(5000u64);
+
+        let ct2 = ct1 - Scalar::from(1000u64);
+
+        let dec = keypair.decrypt_to_point(&ct2);
 
         assert_eq!(dec, Scalar::from(4000u64) * PC_GENS.B);
     }
@@ -333,5 +372,28 @@ mod tests {
         let dec = keypair.decrypt_to_point(&ct2);
 
         assert_eq!(dec, Scalar::from(10000u64) * PC_GENS.B);
+    }
+
+    #[test]
+    fn test_div() {
+        let keypair = KeyPair::new();
+
+        let ct1 = keypair.get_public_key().encrypt(5000u64);
+        // NOTE: we don't impl the trait div because we must ensure scalar is NOT zero
+        let ct2 = ct1 * Scalar::from(2u64).invert();
+        let dec = keypair.decrypt_to_point(&ct2);
+
+        assert_eq!(dec, Scalar::from(2500u64) * PC_GENS.B);
+    }
+
+    #[test]
+    fn test_div_zero() {
+        let keypair = KeyPair::new();
+
+        let ct1 = keypair.get_public_key().encrypt(0u64);
+        let ct2 = ct1 * Scalar::from(10u64);
+        let dec = keypair.decrypt_to_point(&ct2);
+
+        assert_eq!(dec, Scalar::from(0u64) * PC_GENS.B);
     }
 }

@@ -1,3 +1,5 @@
+mod direction;
+
 use std::{
     borrow::Cow,
     collections::{HashSet, HashMap},
@@ -11,7 +13,7 @@ use serde::{
     Deserializer,
     de::Error
 };
-use xelis_vm::Constant;
+use xelis_vm::ValueCell;
 use crate::{
     account::{Nonce, CiphertextCache, VersionedBalance, VersionedNonce},
     block::{TopoHeight, Algorithm, BlockVersion, EXTRA_NONCE_SIZE},
@@ -22,6 +24,8 @@ use crate::{
     transaction::extra_data::{SharedKey, UnknownExtraDataFormat},
 };
 use super::{default_true_value, DataElement, RPCContractOutput, RPCTransaction};
+
+pub use direction::*;
 
 #[derive(Serialize, Deserialize, PartialEq, Eq)]
 pub enum BlockType {
@@ -72,7 +76,6 @@ pub struct RPCBlockResponse<'a> {
     pub extra_nonce: Cow<'a, [u8; EXTRA_NONCE_SIZE]>,
     pub miner: Cow<'a, Address>,
     pub txs_hashes: Cow<'a, IndexSet<Hash>>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
     #[serde(default)]
     pub transactions: Vec<RPCTransaction<'a>>,
 }
@@ -289,40 +292,6 @@ pub struct GetTransactionExecutorResult<'a> {
     pub block_hash: Cow<'a, Hash>
 }
 
-// Direction is used for cache to knows from which context it got added
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Direction {
-    // We don't update it because it's In, we won't send back
-    In,
-    // Out can be updated with In to be transformed to Both
-    // Because of desync, we may receive the object while sending it
-    Out,
-    // Cannot be updated
-    Both
-}
-
-impl Direction {
-    pub fn update(&mut self, direction: Direction) -> bool {
-        match self {
-            Self::Out => match direction {
-                Self::In => {
-                    *self = Self::Both;
-                    true
-                },
-                _ => false
-            },
-            Self::In => match direction {
-                Self::Out => {
-                    *self = Self::Both;
-                    true
-                },
-                _ => false
-            },
-            _ => false
-        }
-    }
-}
-
 #[derive(Serialize, Deserialize)]
 pub struct GetPeersResponse<'a> {
     // Peers that are connected and allows to be displayed
@@ -345,7 +314,7 @@ pub struct PeerEntry<'a> {
     pub height: u64,
     pub last_ping: TimestampSeconds,
     pub pruned_topoheight: Option<TopoHeight>,
-    pub peers: Cow<'a, HashMap<SocketAddr, Direction>>,
+    pub peers: Cow<'a, HashMap<SocketAddr, TimedDirection>>,
     pub cumulative_difficulty: Cow<'a, CumulativeDifficulty>,
     pub connected_on: TimestampSeconds,
     pub bytes_sent: usize,
@@ -389,7 +358,6 @@ pub struct TransactionResponse<'a> {
     // if it is in mempool
     pub in_mempool: bool,
     // if its a mempool tx, we add the timestamp when it was added
-    #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(default)]
     pub first_seen: Option<TimestampSeconds>,
     #[serde(flatten)]
@@ -447,7 +415,9 @@ pub struct AccountHistoryEntry {
 
 #[derive(Serialize, Deserialize)]
 pub struct GetAccountAssetsParams<'a> {
-    pub address: Cow<'a, Address>
+    pub address: Cow<'a, Address>,
+    pub skip: Option<usize>,
+    pub maximum: Option<usize>
 }
 
 #[derive(Serialize, Deserialize)]
@@ -660,13 +630,13 @@ pub struct GetContractModuleParams<'a> {
 #[derive(Serialize, Deserialize)]
 pub struct GetContractDataParams<'a> {
     pub contract: Cow<'a, Hash>,
-    pub key: Cow<'a, Constant>
+    pub key: Cow<'a, ValueCell>
 }
 
 #[derive(Serialize, Deserialize)]
 pub struct GetContractDataAtTopoHeightParams<'a> {
     pub contract: Cow<'a, Hash>,
-    pub key: Cow<'a, Constant>,
+    pub key: Cow<'a, ValueCell>,
     pub topoheight: TopoHeight
 }
 
@@ -688,6 +658,21 @@ pub struct RPCVersioned<T> {
     pub topoheight: TopoHeight,
     #[serde(flatten)]
     pub version: T
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct P2pBlockPropagationResult {
+    // peer id => entry
+    pub peers: HashMap<u64, TimedDirection>,
+    // When was the first time we saw this block
+    pub first_seen: Option<TimestampMillis>,
+    // At which time we started to process it
+    pub processing_at: Option<TimestampMillis>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct GetP2pBlockPropagation<'a> {
+    pub hash: Cow<'a, Hash>
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -722,10 +707,24 @@ pub enum NotifyEvent {
     InvokeContract {
         contract: Hash
     },
+    // When a contract has transfered any token
+    // to the receiver address
+    // It contains ContractTransferEvent struct as value
+    ContractTransfer {
+        address: Address
+    },
+    // When a contract fire an event
+    // It contains ContractEvent struct as value
+    ContractEvent {
+        // Contract hash to track
+        contract: Hash,
+        // ID of the event that is fired from the contract
+        id: u64
+    },
     // When a new contract has been deployed
     DeployContract,
     // When a new asset has been registered
-    // TODO: Smart Contracts
+    // It contains NewAssetEvent struct as value
     NewAsset,
     // When a new peer has connected to us
     // It contains PeerConnectedEvent struct as value
@@ -743,6 +742,8 @@ pub enum NotifyEvent {
     // and that he notified us
     // It contains PeerPeerDisconnectedEvent as value
     PeerPeerDisconnected,
+    // A new block template has been created
+    NewBlockTemplate,
 }
 
 // Value of NotifyEvent::NewBlock
@@ -792,6 +793,29 @@ pub struct TransactionExecutedEvent<'a> {
     pub block_hash: Cow<'a, Hash>,
     pub tx_hash: Cow<'a, Hash>,
     pub topoheight: TopoHeight,
+}
+
+// Value of NotifyEvent::NewAsset
+#[derive(Serialize, Deserialize)]
+pub struct NewAssetEvent<'a> {
+    pub asset: Cow<'a, Hash>,
+    pub block_hash: Cow<'a, Hash>,
+    pub topoheight: TopoHeight,
+}
+
+// Value of NotifyEvent::ContractTransfer
+#[derive(Serialize, Deserialize)]
+pub struct ContractTransferEvent<'a> {
+    pub asset: Cow<'a, Hash>,
+    pub amount: u64,
+    pub block_hash: Cow<'a, Hash>,
+    pub topoheight: TopoHeight,
+}
+
+// Value of NotifyEvent::ContractEvent
+#[derive(Serialize, Deserialize)]
+pub struct ContractEvent<'a> {
+    pub data: Cow<'a, ValueCell>
 }
 
 // Value of NotifyEvent::PeerConnected

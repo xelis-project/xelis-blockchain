@@ -82,6 +82,7 @@ use xelis_common::{
 };
 use clap::Parser;
 use log::{
+    trace,
     debug,
     info,
     warn,
@@ -134,6 +135,12 @@ pub struct LogConfig {
     #[clap(long)]
     #[serde(default)]
     disable_file_log_date_based: bool,
+    /// Enable the log file auto compression
+    /// If enabled, the log file will be compressed every day
+    /// This will only work if the log file is enabled
+    #[clap(long)]
+    #[serde(default)]
+    auto_compress_logs: bool,
     /// Disable the usage of colors in log
     #[clap(long)]
     #[serde(default)]
@@ -273,7 +280,18 @@ async fn main() -> Result<()> {
     }
 
     let log = config.log;
-    let prompt = Prompt::new(log.log_level, &log.logs_path, &log.filename_log, log.disable_file_logging, log.disable_file_log_date_based, log.disable_log_color, !log.disable_interactive_mode, log.logs_modules, log.file_log_level.unwrap_or(log.log_level))?;
+    let prompt = Prompt::new(
+        log.log_level,
+        &log.logs_path,
+        &log.filename_log,
+        log.disable_file_logging,
+        log.disable_file_log_date_based,
+        log.disable_log_color,
+        log.auto_compress_logs,
+        !log.disable_interactive_mode,
+        log.logs_modules,
+        log.file_log_level.unwrap_or(log.log_level)
+    )?;
 
     // Prevent the user to block the program by selecting text in CLI
     #[cfg(target_os = "windows")]
@@ -539,8 +557,11 @@ async fn handle_websocket_message(message: Result<Message, TungsteniteError>, jo
             warn!("Daemon has closed the WebSocket connection with us: {}", reason);
             return Ok(true);
         },
-        _ => {
-            warn!("Unexpected message from WebSocket");
+        Message::Ping(_) => {
+            trace!("received ping");
+        },
+        msg => {
+            warn!("Unexpected message from WebSocket: {:?}", msg);
             return Ok(true);
         }
     };
@@ -644,23 +665,23 @@ async fn run_prompt(prompt: ShareablePrompt) -> Result<()> {
     let closure = |_: &_, _: _| async {
         let topoheight_str = format!(
             "{}: {}",
-            prompt.colorize_str(Color::Yellow, "TopoHeight"),
+            prompt.colorize_string(Color::Yellow, "TopoHeight"),
             prompt.colorize_string(Color::Green, &format!("{}", CURRENT_TOPO_HEIGHT.load(Ordering::SeqCst))),
         );
         let blocks_found = format!(
             "{}: {}",
-            prompt.colorize_str(Color::Yellow, "Accepted"),
+            prompt.colorize_string(Color::Yellow, "Accepted"),
             prompt.colorize_string(Color::Green, &format!("{}", BLOCKS_FOUND.load(Ordering::SeqCst))),
         );
         let blocks_rejected = format!(
             "{}: {}",
-            prompt.colorize_str(Color::Yellow, "Rejected"),
+            prompt.colorize_string(Color::Yellow, "Rejected"),
             prompt.colorize_string(Color::Green, &format!("{}", BLOCKS_REJECTED.load(Ordering::SeqCst))),
         );
         let status = if WEBSOCKET_CONNECTED.load(Ordering::SeqCst) {
-            prompt.colorize_str(Color::Green, "Online")
+            prompt.colorize_string(Color::Green, "Online")
         } else {
-            prompt.colorize_str(Color::Red, "Offline")
+            prompt.colorize_string(Color::Red, "Offline")
         };
         let hashrate = {
             let mut last_time = HASHRATE_LAST_TIME.lock().await;
@@ -678,13 +699,13 @@ async fn run_prompt(prompt: ShareablePrompt) -> Result<()> {
         Ok(
             format!(
                 "{} | {} | {} | {} | {} | {} {} ",
-                prompt.colorize_str(Color::Blue, "XELIS Miner"),
+                prompt.colorize_string(Color::Blue, "XELIS Miner"),
                 topoheight_str,
                 blocks_found,
                 blocks_rejected,
                 hashrate,
                 status,
-                prompt.colorize_str(Color::BrightBlack, ">>")
+                prompt.colorize_string(Color::BrightBlack, ">>")
             )
         )
     };

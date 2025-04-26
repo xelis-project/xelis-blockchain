@@ -362,7 +362,7 @@ Current overhead per block:
 - Tree `difficulty` saving Difficulty value of a block (up to 33 bytes) using Hash (32 bytes) key.
 - Tree `cumulative_difficulty` saving the cumulative difficulty value (up to 33 bytes) of a topoheight (8 bytes).
 - Tree `rewards` saving block reward value (8 bytes) using topoheight (8 bytes) key.
-- Tree `supply` saving current circulating supply value (8 bytes) using topoheight (8 bytes) key.
+- Tree `supply` saving current emitted supply value (8 bytes) using topoheight (8 bytes) key.
 - Tree `versioned_balances` is updated at each block (for miner rewards), and also for each account that had interactions (transactions): 72 bytes for key and 16 bytes for value.
 - Tree `versioned_nonces` is updated for each account that send at least one TX per topoheight: 40 bytes for key and 16 bytes for value
 
@@ -507,7 +507,8 @@ XSWD also have the ability to sends JSON-RPC requests to the daemon directly.
 For this, set the prefix `node.` in front of daemon requests, it will not be requested to the user as it's public on-chain data.
 For wallets RPC methods, set the prefix `wallet.` which will requests/use the permission set by the user.
 
-DApp can also request to sign the `ApplicationData` to persist the configured permissions on its side and then provide it when user would reconnect later.
+You must provide the list of wallet RPC methods that your app would use during the whole connection lifetime.
+Any other RPC method will be **rejected** directly if not provided at the registration step.
 
 First JSON message from the dApp must be in following format to identify the application:
 ```json
@@ -516,13 +517,13 @@ First JSON message from the dApp must be in following format to identify the app
     "name": "XELIS Example",
     "description": "Description example of up to 255 characters",
     "url": "https://xelis.io",
-    "permissions": {}
+    "permissions": [
+        "get_balance",
+    ]
 }
 ```
 
-You can also add `signature` field and provide signed permissions if your dApp requested a signature from wallet in previous connection.
-
-If dApp is accepted by user through XSWD, you will receive the following response:
+If the connection is accepted by user through XSWD, you will receive the following response:
 ```json
 {
     "id": null,

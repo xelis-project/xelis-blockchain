@@ -1,4 +1,4 @@
-use bulletproofs::RangeProof;
+pub use bulletproofs::RangeProof;
 
 use crate::{
     crypto::elgamal::{

@@ -46,17 +46,17 @@ impl BlockDagProvider for SledStorage {
 
     fn get_block_reward_at_topo_height(&self, topoheight: TopoHeight) -> Result<u64, BlockchainError> {
         trace!("get block reward at topo height {}", topoheight);
-        Ok(self.load_from_disk(&self.rewards, &topoheight.to_be_bytes(), DiskContext::BlockRewardAtTopoHeight)?)
+        Ok(self.load_from_disk(&self.rewards, &topoheight.to_be_bytes(), DiskContext::BlockRewardAtTopoHeight(topoheight))?)
     }
 
     async fn get_supply_at_topo_height(&self, topoheight: TopoHeight) -> Result<u64, BlockchainError> {
         trace!("get supply at topo height {}", topoheight);
-        self.load_from_disk(&self.supply, &topoheight.to_be_bytes(), DiskContext::SupplyAtTopoHeight)
+        self.load_from_disk(&self.supply, &topoheight.to_be_bytes(), DiskContext::SupplyAtTopoHeight(topoheight))
     }
 
     async fn get_burned_supply_at_topo_height(&self, topoheight: TopoHeight) -> Result<u64, BlockchainError> {
         trace!("get burned supply at topo height {}", topoheight);
-        self.load_from_disk(&self.burned_supply, &topoheight.to_be_bytes(), DiskContext::BurnedSupplyAtTopoHeight)
+        self.load_from_disk(&self.burned_supply, &topoheight.to_be_bytes(), DiskContext::BurnedSupplyAtTopoHeight(topoheight))
     }
 
     fn set_block_reward_at_topo_height(&mut self, topoheight: TopoHeight, reward: u64) -> Result<(), BlockchainError> {
