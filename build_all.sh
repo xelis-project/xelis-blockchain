@@ -16,9 +16,17 @@ fi
 echo "Starting docker daemon"
 sudo systemctl start docker
 
+echo "Updating using rustup"
+rustup update stable
+
+echo "Only build in stable"
+rustup default stable
+
 # compile all binaries for all targets
 echo "Compiling binaries for all targets"
 for target in "${targets[@]}"; do
+    # support the target to build it
+    rustup target add $target
     cross build --target $target --profile release-with-lto
 done
 
