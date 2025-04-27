@@ -263,6 +263,7 @@ impl<S: Storage> P2pServer<S> {
         info!("Starting fast sync with {}", peer);
 
         let mut our_topoheight = self.blockchain.get_topo_height();
+        let is_fresh_sync = our_topoheight == 0;
 
         let mut stable_topoheight = 0;
         let mut step: Option<StepRequest> = {
@@ -500,12 +501,16 @@ impl<S: Storage> P2pServer<S> {
                             Ok(())
                         }).await?;
 
-                    info!("Cleaning data");
                     let mut storage = self.blockchain.get_storage().write().await;
 
-                    // Delete all old data
-                    // This also delete the DAG order, so we must delete below our metadata injection from above
-                    storage.delete_versioned_data_below_topoheight(lowest_topoheight, true).await?;
+                    if !is_fresh_sync {
+                        info!("Cleaning data");
+                        // Delete all old data
+                        // This also delete the DAG order, so we must delete below our metadata injection from above
+                        storage.delete_versioned_data_below_topoheight(lowest_topoheight, true).await?;
+                    } else {
+                        info!("No need to clean data, fresh sync detected");
+                    }
 
                     storage.set_pruned_topoheight(lowest_topoheight).await?;
                     storage.set_top_topoheight(top_topoheight)?;
