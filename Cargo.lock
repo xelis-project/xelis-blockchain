@@ -4290,6 +4290,7 @@ dependencies = [
  "chrono",
  "clap",
  "crc32fast",
+ "futures",
  "hex",
  "indexmap 2.9.0",
  "lazy_static",
