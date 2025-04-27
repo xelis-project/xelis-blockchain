@@ -1,17 +1,14 @@
 use std::{
-    collections::{
-        HashMap,
-        HashSet
-    },
-    sync::Arc,
+    collections::HashSet,
+    sync::{atomic::{AtomicBool, Ordering}, Arc},
     time::Duration
 };
+use futures::{stream, TryStreamExt};
 use indexmap::IndexMap;
 use thiserror::Error;
 use anyhow::{Context, Error};
 use log::{debug, error, info, trace, warn};
 use xelis_common::{
-    account::CiphertextCache,
     api::{
         daemon::{
             BlockResponse,
@@ -82,20 +79,22 @@ pub struct NetworkHandler {
     // api to communicate with daemon
     // It is behind a Arc to be shared across several wallets
     // in case someone make a custom service and don't want to create a new connection
-    api: Arc<DaemonAPI>
+    api: Arc<DaemonAPI>,
+    // Concurrency to use during syncing
+    concurrency: usize,
 }
 
 impl NetworkHandler {
     // Create a new network handler with a wallet and a daemon address
     // This will create itself a DaemonAPI and verify if connection is possible
-    pub async fn new<S: ToString>(wallet: Arc<Wallet>, daemon_address: S) -> Result<SharedNetworkHandler, Error> {
+    pub async fn new<S: ToString>(wallet: Arc<Wallet>, daemon_address: S, concurrency: usize) -> Result<SharedNetworkHandler, Error> {
         let s = daemon_address.to_string();
         let api = DaemonAPI::new(format!("{}/json_rpc", sanitize_daemon_address(s.as_str()))).await?;
-        Self::with_api(wallet, Arc::new(api)).await
+        Self::with_api(wallet, Arc::new(api), concurrency).await
     }
 
     // Create a new network handler with an already created daemon API
-    pub async fn with_api(wallet: Arc<Wallet>, api: Arc<DaemonAPI>) -> Result<SharedNetworkHandler, Error> {
+    pub async fn with_api(wallet: Arc<Wallet>, api: Arc<DaemonAPI>, concurrency: usize) -> Result<SharedNetworkHandler, Error> {
         // check that we can correctly get version from daemon
         let version = api.get_version().await?;
         debug!("Connected to daemon running version {}", version);
@@ -103,7 +102,8 @@ impl NetworkHandler {
         Ok(Arc::new(Self {
             task: Mutex::new(None),
             wallet,
-            api
+            api,
+            concurrency
         }))
     }
 
@@ -841,47 +841,34 @@ impl NetworkHandler {
 
         trace!("assets: {}", assets.len());
 
-        let mut balances: HashMap<&Hash, (CiphertextCache, u64)> = HashMap::new();
-        // Store newly detected assets
-        // Get the final balance of each asset
-        for asset in &assets {
-            trace!("asset: {}", asset);
-            // check if we have this asset locally
-            if !{
-                let storage = self.wallet.get_storage().read().await;
-                storage.contains_asset(&asset).await?
-            } {
-                let data = self.api.get_asset(&asset).await?;
-                // Add the asset to the storage
-                {
-                    let mut storage = self.wallet.get_storage().write().await;
-                    storage.add_asset(&asset, data.inner.clone()).await?;
+        let atomic_sync_blocks = AtomicBool::new(false);
+        // Reference are Copy & Send due to scoped stream
+        let sync_blocks = &atomic_sync_blocks;
+        stream::iter(assets.into_iter().map(Ok::<_, Error>))
+            .try_for_each_concurrent(self.concurrency, |asset| async move {
+                trace!("asset: {}", asset);
+                // check if we have this asset locally
+                if !{
+                    let storage = self.wallet.get_storage().read().await;
+                    storage.contains_asset(&asset).await?
+                } {
+                    let data = self.api.get_asset(&asset).await?;
+                    // Add the asset to the storage
+                    {
+                        let mut storage = self.wallet.get_storage().write().await;
+                        storage.add_asset(&asset, data.inner.clone()).await?;
+                    }
+
+                    // New asset added to the wallet, inform listeners
+                    self.wallet.propagate_event(Event::NewAsset(data)).await;
                 }
 
-                // New asset added to the wallet, inform listeners
-                self.wallet.propagate_event(Event::NewAsset(data)).await;
-            }
+                // get the balance for this asset
+                let result = self.api.get_balance(&address, &asset).await?;
+                trace!("found balance at topoheight: {}", result.topoheight);
 
-            // get the balance for this asset
-            let result = self.api.get_balance(&address, &asset).await?;
-            trace!("found balance at topoheight: {}", result.topoheight);
-            balances.insert(asset, (result.version.take_balance(), result.topoheight));
-        }
-
-        let mut should_sync_blocks = false;
-        // Apply changes
-        {
-            if let Some(new_nonce) = new_nonce {
-                let mut storage = self.wallet.get_storage().write().await;
-                if storage.get_nonce()? != new_nonce {
-                    // Store the new nonce
-                    debug!("Storing new nonce {}", new_nonce);
-                    storage.set_nonce(new_nonce)?;
-                    should_sync_blocks = true;
-                }
-            }
-
-            for (asset, (mut ciphertext, topoheight)) in balances {
+                let mut ciphertext = result.version.take_balance();
+                let topoheight = result.topoheight;
                 let (must_update, balance_cache, max_supply) = {
                     let storage = self.wallet.get_storage().read().await;
                     let must_update = match storage.get_balance_for(&asset).await {
@@ -897,7 +884,7 @@ impl NetworkHandler {
                         None
                     };
 
-                    let max_supply = storage.get_asset(asset).await?
+                    let max_supply = storage.get_asset(&asset).await?
                         .get_max_supply();
 
                     (must_update, balance_cache, max_supply)
@@ -914,7 +901,7 @@ impl NetworkHandler {
                             Some(v) => v,
                             None => {
                                 warn!("Couldn't decrypt ciphertext for asset {}, skipping it", asset);
-                                continue;
+                                return Ok(());
                             }
                         }
                     };
@@ -928,12 +915,27 @@ impl NetworkHandler {
                     // Update the balance
                     let mut storage = self.wallet.get_storage().write().await;
                     debug!("Storing balance at topoheight {} for asset {} ({}) {}", topoheight, asset, value, ciphertext);
-                    storage.set_balance_for(asset, Balance::new(value, ciphertext)).await?;
+                    storage.set_balance_for(&asset, Balance::new(value, ciphertext)).await?;
 
                     // We should sync new blocks to get the TXs
-                    should_sync_blocks = true;
+                    sync_blocks.store(true, Ordering::SeqCst);
                 } else {
                     debug!("balance for asset {} is already up-to-date", asset);
+                }
+
+                Ok(())
+            }).await?;
+
+        let mut should_sync_blocks = atomic_sync_blocks.load(Ordering::SeqCst);
+        // Apply changes
+        {
+            if let Some(new_nonce) = new_nonce {
+                let mut storage = self.wallet.get_storage().write().await;
+                if storage.get_nonce()? != new_nonce {
+                    // Store the new nonce
+                    debug!("Storing new nonce {}", new_nonce);
+                    storage.set_nonce(new_nonce)?;
+                    should_sync_blocks = true;
                 }
             }
         }

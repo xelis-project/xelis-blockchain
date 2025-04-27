@@ -212,6 +212,8 @@ pub struct Wallet {
     history_scan: AtomicBool,
     // flag to prioritize the usage of stable balance version when its online
     force_stable_balance: AtomicBool,
+    // Concurrency to use across the wallet
+    concurrency: usize,
 }
 
 struct InnerAccount {
@@ -268,7 +270,8 @@ impl Wallet {
             event_broadcaster: Mutex::new(None),
             history_scan: AtomicBool::new(true),
             force_stable_balance: AtomicBool::new(false),
-            inner: InnerAccount::new(precomputed_tables, keypair)
+            inner: InnerAccount::new(precomputed_tables, keypair),
+            concurrency: 4,
         };
 
         Arc::new(zelf)
@@ -970,7 +973,7 @@ impl Wallet {
         }
 
         // create the network handler
-        let network_handler = NetworkHandler::new(Arc::clone(&self), daemon_address).await?;
+        let network_handler = NetworkHandler::new(Arc::clone(&self), daemon_address, self.concurrency).await?;
         // start the task
         network_handler.start(auto_reconnect).await?;
         *self.network_handler.lock().await = Some(network_handler);
@@ -988,7 +991,7 @@ impl Wallet {
         }
 
         // create the network handler
-        let network_handler = NetworkHandler::with_api(Arc::clone(&self), daemon_api).await?;
+        let network_handler = NetworkHandler::with_api(Arc::clone(&self), daemon_api, self.concurrency).await?;
         // start the task
         network_handler.start(auto_reconnect).await?;
         *self.network_handler.lock().await = Some(network_handler);
