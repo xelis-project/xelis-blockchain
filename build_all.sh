@@ -22,19 +22,19 @@ rustup update stable
 echo "Only build in stable"
 rustup default stable
 
-# compile all binaries for all targets
-echo "Compiling binaries for all targets"
-for target in "${targets[@]}"; do
-    # support the target to build it
-    rustup target add $target
-    cross build --target $target --profile release-with-lto
-done
-
 echo "Deleting build folder"
 rm -rf build
 
-echo "Creating archives for all targets"
+# compile all binaries for all targets
+echo "Compiling binaries for all targets"
 for target in "${targets[@]}"; do
+    echo "Clean build cache for " $target
+    cross clean
+
+    # support the target to build it
+    rustup target add $target
+    cross build --target $target --profile release-with-lto
+
     mkdir -p build/$target
     # copy generated binaries to build directory
     for binary in "${binaries[@]}"; do
@@ -49,7 +49,10 @@ for target in "${targets[@]}"; do
     for file in "${extra_files[@]}"; do
         cp $file build/$target/$file
     done
+done
 
+echo "Creating archives for all targets"
+for target in "${targets[@]}"; do
     # generate checksums
     echo "Generating checksums for $target"
     cd build/$target
