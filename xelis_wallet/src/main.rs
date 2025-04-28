@@ -215,6 +215,16 @@ pub struct LogConfig {
     logs_modules: Vec<ModuleConfig>,
 }
 
+fn detect_parallelism() -> usize {
+    match std::thread::available_parallelism() {
+        Ok(n) => {
+            let v = n.get();
+            v
+        },
+        Err(_) => 1
+    }
+}
+
 #[derive(Parser, Serialize, Deserialize)]
 #[clap(version = VERSION, about = "XELIS is an innovative cryptocurrency built from scratch with BlockDAG, Homomorphic Encryption, Zero-Knowledge Proofs, and Smart Contracts.")]
 #[command(styles = xelis_common::get_cli_styles())]
@@ -241,6 +251,16 @@ pub struct Config {
     /// Restore wallet using seed
     #[clap(long)]
     seed: Option<String>,
+    /// How many threads we want to use
+    /// during ciphertext decryption
+    #[clap(long, default_value_t = detect_parallelism())]
+    #[serde(default = "detect_parallelism")]
+    n_decryption_threads: usize,
+    /// Concurrency configuration for Network Handler
+    #[clap(long, default_value_t = detect_parallelism())]
+    #[serde(default = "detect_parallelism")]
+    network_concurrency: usize,
+    /// 
     /// Network selected for chain
     #[clap(long, value_enum, default_value_t = Network::Mainnet)]
     #[serde(default)]
@@ -363,10 +383,10 @@ async fn main() -> Result<()> {
         let p = Path::new(path);
         let wallet = if p.exists() && p.is_dir() && Path::new(&format!("{}/db", path)).exists() {
             info!("Opening wallet {}", path);
-            Wallet::open(path, &password, config.network, precomputed_tables)?
+            Wallet::open(path, &password, config.network, precomputed_tables, config.n_decryption_threads, config.network_concurrency)?
         } else {
             info!("Creating a new wallet at {}", path);
-            Wallet::create(path, &password, config.seed.as_deref().map(RecoverOption::Seed), config.network, precomputed_tables)?
+            Wallet::create(path, &password, config.seed.as_deref().map(RecoverOption::Seed), config.network, precomputed_tables, config.n_decryption_threads, config.network_concurrency)?
         };
 
         command_manager.register_default_commands()?;
@@ -817,7 +837,7 @@ async fn open_wallet(manager: &CommandManager, _: ArgumentManager) -> Result<(),
         let context = manager.get_context().lock()?;
         let network = context.get::<Network>()?;
         let precomputed_tables = precomputed_tables::read_or_generate_precomputed_tables(config.precomputed_tables.precomputed_tables_path.as_deref(), config.precomputed_tables.precomputed_tables_l1, LogProgressTableGenerationReportFunction, true).await?;
-        Wallet::open(&dir, &password, *network, precomputed_tables)?
+        Wallet::open(&dir, &password, *network, precomputed_tables, config.n_decryption_threads, config.network_concurrency)?
     };
 
     manager.message("Wallet sucessfully opened");
@@ -865,7 +885,7 @@ async fn create_wallet(manager: &CommandManager, _: ArgumentManager) -> Result<(
         let context = manager.get_context().lock()?;
         let network = context.get::<Network>()?;
         let precomputed_tables = precomputed_tables::read_or_generate_precomputed_tables(config.precomputed_tables.precomputed_tables_path.as_deref(), precomputed_tables::L1_FULL, LogProgressTableGenerationReportFunction, true).await?;
-        Wallet::create(&dir, &password, None, *network, precomputed_tables)?
+        Wallet::create(&dir, &password, None, *network, precomputed_tables, config.n_decryption_threads, config.network_concurrency)?
     };
  
     manager.message("Wallet sucessfully created");
@@ -947,7 +967,7 @@ async fn recover_wallet(manager: &CommandManager, _: ArgumentManager, seed: bool
         } else {
             RecoverOption::PrivateKey(&content)
         };
-        Wallet::create(&dir, &password, Some(recover), *network, precomputed_tables)?
+        Wallet::create(&dir, &password, Some(recover), *network, precomputed_tables, config.n_decryption_threads, config.network_concurrency)?
     };
 
     manager.message("Wallet sucessfully recovered");

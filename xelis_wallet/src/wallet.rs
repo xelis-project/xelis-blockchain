@@ -35,7 +35,8 @@ use xelis_common::{
         sync::{
             broadcast,
             Mutex,
-            RwLock
+            RwLock,
+            Semaphore
         }
     },
     transaction::{
@@ -224,10 +225,11 @@ struct Account {
     inner: Arc<InnerAccount>,
     // Compressed public key
     public_key: PublicKey,
+    semaphore: Semaphore,
 }
 
 impl Account {
-    fn new(precomputed_tables: PrecomputedTablesShared, keypair: KeyPair) -> Self {
+    fn new(precomputed_tables: PrecomputedTablesShared, keypair: KeyPair, n_threads: usize) -> Self {
         let inner = Arc::new(InnerAccount {
             keypair,
             precomputed_tables
@@ -236,11 +238,15 @@ impl Account {
         Self {
             public_key: inner.keypair.get_public_key().compress(),
             inner,
+            semaphore: Semaphore::new(n_threads)
         }
         
     }
 
     pub async fn decrypt_ciphertext(&self, ciphertext: Ciphertext, max_supply: u64) -> Result<Option<u64>, WalletError> {
+        let _permit = self.semaphore.acquire().await
+            .context("Error while acquiring semaphore for decryption")?;
+
         trace!("decrypt ciphertext with max supply {}", max_supply);
 
         let inner = Arc::clone(&self.inner);
@@ -268,7 +274,7 @@ pub fn hash_password(password: &str, salt: &[u8]) -> Result<[u8; PASSWORD_HASH_S
 
 impl Wallet {
     // Create a new wallet with the specificed storage, keypair and its network
-    fn new(storage: EncryptedStorage, keypair: KeyPair, network: Network, precomputed_tables: PrecomputedTablesShared) -> Arc<Self> {
+    fn new(storage: EncryptedStorage, keypair: KeyPair, network: Network, precomputed_tables: PrecomputedTablesShared, n_threads: usize, concurrency: usize) -> Arc<Self> {
         let zelf = Self {
             storage: RwLock::new(storage),
             #[cfg(feature = "network_handler")]
@@ -281,15 +287,15 @@ impl Wallet {
             event_broadcaster: Mutex::new(None),
             history_scan: AtomicBool::new(true),
             force_stable_balance: AtomicBool::new(false),
-            account: Account::new(precomputed_tables, keypair),
-            concurrency: 4,
+            account: Account::new(precomputed_tables, keypair, n_threads),
+            concurrency,
         };
 
         Arc::new(zelf)
     }
 
     // Create a new wallet on disk
-    pub fn create(name: &str, password: &str, seed: Option<RecoverOption>, network: Network, precomputed_tables: PrecomputedTablesShared) -> Result<Arc<Self>, Error> {
+    pub fn create(name: &str, password: &str, seed: Option<RecoverOption>, network: Network, precomputed_tables: PrecomputedTablesShared, n_threads: usize, concurrency: usize) -> Result<Arc<Self>, Error> {
         if name.is_empty() {
             return Err(WalletError::EmptyName.into())
         }
@@ -352,11 +358,11 @@ impl Wallet {
         // Flush the storage to be sure its written on disk
         storage.flush()?;
 
-        Ok(Self::new(storage, keypair, network, precomputed_tables))
+        Ok(Self::new(storage, keypair, network, precomputed_tables, n_threads, concurrency))
     }
 
     // Open an existing wallet on disk
-    pub fn open(name: &str, password: &str, network: Network, precomputed_tables: PrecomputedTablesShared) -> Result<Arc<Self>, Error> {
+    pub fn open(name: &str, password: &str, network: Network, precomputed_tables: PrecomputedTablesShared, n_threads: usize, concurrency: usize) -> Result<Arc<Self>, Error> {
         if name.is_empty() {
             return Err(WalletError::EmptyName.into())
         }
@@ -395,7 +401,7 @@ impl Wallet {
         let private_key =  storage.get_private_key()?;
         let keypair = KeyPair::from_private_key(private_key);
 
-        Ok(Self::new(storage, keypair, network, precomputed_tables))
+        Ok(Self::new(storage, keypair, network, precomputed_tables, n_threads, concurrency))
     }
 
     // Close the wallet
