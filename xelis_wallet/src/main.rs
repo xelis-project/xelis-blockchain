@@ -1415,7 +1415,7 @@ async fn history(manager: &CommandManager, mut arguments: ArgumentManager) -> Re
         Some((page - 1) * ELEMENTS_PER_PAGE)
     )?;
 
-    manager.message(format!("Transactions (total {}) page {}/{}:", transactions.len(), page, max_pages));
+    manager.message(format!("{} Transactions (total {}) page {}/{}:", transactions.len(), txs_len, page, max_pages));
     for tx in transactions {
         manager.message(format!("- {}", tx.summary(wallet.get_network().is_mainnet(), &*storage).await?));
     }
