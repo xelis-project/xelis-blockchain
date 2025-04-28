@@ -1,5 +1,6 @@
 use std::borrow::Cow;
 use anyhow::Error;
+use log::debug;
 
 use crate::{
     api::DataElement,
@@ -94,12 +95,14 @@ impl UnknownExtraDataFormat {
 
         // Try the v2 if we had an error
         if res.is_err() {
+            debug!("try decrypt v2");
             res = self.decrypt_v2(private_key, role);
         }
 
         // If we got an error during previous decoding
         // fallback on old version if the handle is provided
         if let Some(handle) = handle.filter(|_| res.is_err()) {
+            debug!("try decrypt v1");
             let data = self.decrypt_v1(private_key, handle)?;
             res = Ok(PlaintextExtraData::new(
                 None,

@@ -164,7 +164,7 @@ impl<T: Serializer + std::hash::Hash + Ord> Serializer for BTreeSet<T> {
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
         let count = reader.read_u16()?;
         if count > DEFAULT_MAX_ITEMS as u16 {
-            warn!("Received {} while maximum is set to {}", count, DEFAULT_MAX_ITEMS);
+            warn!("Received {} in BTreeSet while maximum is set to {}", count, DEFAULT_MAX_ITEMS);
             return Err(ReaderError::InvalidSize)
         }
 
@@ -199,7 +199,7 @@ impl<T: Serializer + std::hash::Hash + Eq> Serializer for IndexSet<T> {
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
         let count = reader.read_u16()?;
         if count > DEFAULT_MAX_ITEMS as u16 {
-            warn!("Received {} while maximum is set to {}", count, DEFAULT_MAX_ITEMS);
+            warn!("Received {} in IndexSet while maximum is set to {}", count, DEFAULT_MAX_ITEMS);
             return Err(ReaderError::InvalidSize)
         }
 
@@ -287,7 +287,7 @@ impl<T: Serializer> Serializer for Vec<T> {
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
         let count = reader.read_u16()?;
         if count > DEFAULT_MAX_ITEMS as u16 {
-            warn!("Received {} while maximum is set to {}", count, DEFAULT_MAX_ITEMS);
+            warn!("Received {} in Vec while maximum is set to {}", count, DEFAULT_MAX_ITEMS);
             return Err(ReaderError::InvalidSize)
         }
 
