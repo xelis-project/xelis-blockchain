@@ -58,7 +58,8 @@ use xelis_common::{
     utils::{
         format_coin,
         format_xelis,
-        from_coin
+        from_coin,
+        detect_available_parallelism
     }
 };
 use xelis_wallet::{
@@ -215,16 +216,6 @@ pub struct LogConfig {
     logs_modules: Vec<ModuleConfig>,
 }
 
-fn detect_parallelism() -> usize {
-    match std::thread::available_parallelism() {
-        Ok(n) => {
-            let v = n.get();
-            v
-        },
-        Err(_) => 1
-    }
-}
-
 #[derive(Parser, Serialize, Deserialize)]
 #[clap(version = VERSION, about = "XELIS is an innovative cryptocurrency built from scratch with BlockDAG, Homomorphic Encryption, Zero-Knowledge Proofs, and Smart Contracts.")]
 #[command(styles = xelis_common::get_cli_styles())]
@@ -253,12 +244,12 @@ pub struct Config {
     seed: Option<String>,
     /// How many threads we want to use
     /// during ciphertext decryption
-    #[clap(long, default_value_t = detect_parallelism())]
-    #[serde(default = "detect_parallelism")]
+    #[clap(long, default_value_t = detect_available_parallelism())]
+    #[serde(default = "detect_available_parallelism")]
     n_decryption_threads: usize,
     /// Concurrency configuration for Network Handler
-    #[clap(long, default_value_t = detect_parallelism())]
-    #[serde(default = "detect_parallelism")]
+    #[clap(long, default_value_t = detect_available_parallelism())]
+    #[serde(default = "detect_available_parallelism")]
     network_concurrency: usize,
     /// 
     /// Network selected for chain
