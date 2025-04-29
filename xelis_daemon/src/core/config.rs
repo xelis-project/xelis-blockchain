@@ -1,7 +1,10 @@
-use std::{thread, time::Duration};
+use std::time::Duration;
 use humantime::Duration as HumanDuration;
 use serde::{Deserialize, Serialize};
-use xelis_common::crypto::Hash;
+use xelis_common::{
+    crypto::Hash,
+    utils::detect_available_parallelism,
+};
 use crate::{
     config::{
         CHAIN_SYNC_DEFAULT_RESPONSE_BLOCKS,
@@ -56,16 +59,6 @@ fn default_p2p_fail_count_limit() -> u8 {
     PEER_FAIL_LIMIT
 }
 
-fn detect_parallelism() -> usize {
-    match thread::available_parallelism() {
-        Ok(n) => {
-            let v = n.get();
-            v
-        },
-        Err(_) => 1
-    }
-}
-
 #[derive(Debug, Clone, clap::Args, Serialize, Deserialize)]
 pub struct GetWorkConfig {
     /// Disable GetWork Server (WebSocket for miners).
@@ -85,10 +78,10 @@ pub struct GetWorkConfig {
     /// Notify concurrently to N miners at a time.
     /// Set to 0 means no limit and will process as one task per miner.
     /// Default is detected based on available parallelism.
-    #[clap(long, default_value_t = detect_parallelism())]
+    #[clap(long, default_value_t = detect_available_parallelism())]
     #[serde(
         rename = "notify_job_concurrency",
-        default = "detect_parallelism"
+        default = "detect_available_parallelism"
     )]
     pub getwork_notify_job_concurrency: usize,
 }
@@ -114,10 +107,10 @@ pub struct RPCConfig {
     pub rpc_bind_address: String,
     /// Number of workers to spawn for the HTTP server.
     /// If not provided, it will use the available paralellism.
-    #[clap(long, default_value_t = detect_parallelism())]
+    #[clap(long, default_value_t = detect_available_parallelism())]
     #[serde(
         rename = "threads",
-        default = "detect_parallelism"
+        default = "detect_available_parallelism"
     )]
     pub rpc_threads: usize,
     /// RPC Server notification events concurrency
@@ -125,10 +118,10 @@ pub struct RPCConfig {
     /// that will be used to notify the events to the clients.
     /// By default, it will use the available parallelism.
     /// If set to 0, it will be unlimited.
-    #[clap(long, default_value_t = detect_parallelism())]
+    #[clap(long, default_value_t = detect_available_parallelism())]
     #[serde(
         rename = "notify_events_concurrency",
-        default = "detect_parallelism"
+        default = "detect_available_parallelism"
     )]
     pub rpc_notify_events_concurrency: usize,
 }
@@ -247,10 +240,10 @@ pub struct P2pConfig {
     /// that will be used to process the streams.
     /// By default, it will use the available parallelism.
     /// If set to 0, it will be unlimited.
-    #[clap(long, default_value_t = detect_parallelism())]
+    #[clap(long, default_value_t = detect_available_parallelism())]
     #[serde(
         rename = "stream_concurrency",
-        default = "detect_parallelism"
+        default = "detect_available_parallelism"
     )]
     pub p2p_stream_concurrency: usize,
     /// P2P Time to set when banning a peer temporarily due to the fail count limit reached.
@@ -319,8 +312,8 @@ pub struct Config {
     /// Set the threads count to use during TXs verifications.
     /// By default, will detect the best value.
     /// If set to 1, it will use the main thread.
-    #[clap(long, default_value_t = detect_parallelism())]
-    #[serde(default = "detect_parallelism")]
+    #[clap(long, default_value_t = detect_available_parallelism())]
+    #[serde(default = "detect_available_parallelism")]
     pub txs_verification_threads_count: usize,
     /// Enable the DB integrity check that happen on chain initialization.
     /// This may take some times on huge DB as it's iterating through all versioned data
