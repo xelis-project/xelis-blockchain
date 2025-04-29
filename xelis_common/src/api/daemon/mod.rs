@@ -653,6 +653,14 @@ pub struct GetContractBalanceAtTopoHeightParams<'a> {
     pub topoheight: TopoHeight
 }
 
+
+#[derive(Serialize, Deserialize)]
+pub struct GetContractBalancesParams<'a> {
+    pub contract: Cow<'a, Hash>,
+    pub skip: Option<usize>,
+    pub maximum: Option<usize>
+}
+
 #[derive(Serialize, Deserialize)]
 pub struct RPCVersioned<T> {
     pub topoheight: TopoHeight,
