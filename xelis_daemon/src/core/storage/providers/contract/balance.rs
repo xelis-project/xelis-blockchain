@@ -21,7 +21,11 @@ pub trait ContractBalanceProvider {
     // Get the last topoheight that the contract has a balance
     async fn get_last_topoheight_for_contract_balance(&self, contract: &Hash, asset: &Hash) -> Result<Option<TopoHeight>, BlockchainError>;
 
+    // Get the latest topoheight & versioned data for a contract balance
     async fn get_last_contract_balance(&self, contract: &Hash, asset: &Hash) -> Result<(TopoHeight, VersionedContractBalance), BlockchainError>;
+
+    // Get all the contract balances assets
+    async fn get_contract_assets_for(&self, contract: &Hash) -> Result<impl Iterator<Item = Result<Hash, BlockchainError>>, BlockchainError>;
 
     // Set the last topoheight that the contract has a balance
     async fn set_last_topoheight_for_contract_balance(&mut self, contract: &Hash, asset: &Hash, topoheight: TopoHeight) -> Result<(), BlockchainError>;
@@ -76,6 +80,16 @@ impl ContractBalanceProvider for SledStorage {
 
         let key = Self::get_versioned_key(Self::get_contract_balance_key(contract, asset), topoheight);
         Ok((topoheight, self.load_from_disk(&self.versioned_contracts_balances, &key, DiskContext::ContractBalance)?))
+    }
+
+    async fn get_contract_assets_for(&self, contract: &Hash) -> Result<impl Iterator<Item = Result<Hash, BlockchainError>>, BlockchainError> {
+        Ok(Self::scan_prefix(self.snapshot.as_ref(), &self.contracts_balances, contract.as_bytes())
+            .map(|res| {
+                let bytes = res?;
+                let hash = Hash::from_bytes(&bytes[HASH_SIZE..])?;
+                Ok(hash)
+            })
+        )
     }
 
     async fn set_last_topoheight_for_contract_balance(&mut self, contract: &Hash, asset: &Hash, topoheight: TopoHeight) -> Result<(), BlockchainError> {

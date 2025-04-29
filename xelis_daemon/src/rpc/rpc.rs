@@ -370,6 +370,7 @@ pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>
     handler.register_method("get_contract_data_at_topoheight", async_handler!(get_contract_data_at_topoheight::<S>));
     handler.register_method("get_contract_balance", async_handler!(get_contract_balance::<S>));
     handler.register_method("get_contract_balance_at_topoheight", async_handler!(get_contract_balance_at_topoheight::<S>));
+    handler.register_method("get_contract_assets", async_handler!(get_contract_assets::<S>));
 
     // P2p
     handler.register_method("get_p2p_block_propagation", async_handler!(get_p2p_block_propagation::<S>));
@@ -1652,6 +1653,30 @@ async fn get_contract_balance<S: Storage>(context: &Context, body: Value) -> Res
         topoheight,
         version,
     }))
+}
+
+async fn get_contract_assets<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
+    let params: GetContractBalancesParams = parse_params(body)?;
+    let maximum = if let Some(maximum) = params.maximum {
+        if maximum > MAX_ASSETS {
+            return Err(InternalRpcError::InvalidJSONRequest).context(format!("Maximum assets requested cannot be greater than {}", MAX_ASSETS))?
+        }
+        maximum
+    } else {
+        MAX_ASSETS
+    };
+
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    let storage = blockchain.get_storage().read().await;
+
+    let iter = storage.get_contract_assets_for(&params.contract).await
+        .context("Error while retrieving contract balance")?;
+
+    let assets = iter.skip(params.skip.unwrap_or_default())
+        .take(maximum)
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(json!(assets))
 }
 
 async fn get_contract_balance_at_topoheight<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
