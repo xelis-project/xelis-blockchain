@@ -132,6 +132,7 @@ impl NetworkHandler {
                 let res =  zelf.start_syncing().await;
                 if let Err(e) = res.as_ref() {
                     error!("Error while syncing: {}", e);
+                    zelf.wallet.propagate_event(Event::SyncError { message: e.to_string() }).await;
                 }
 
                 // Notify that we are offline
@@ -1226,7 +1227,7 @@ impl NetworkHandler {
             // and each iteration below populare a BTreeMap topoheight / list of all scanned TXs
             // so we still hold the correct holder, but this is discouraged to support low devices
             for asset in assets {
-                info!("calling get balances and transactions {} for asset {}", current_topoheight, asset);
+                debug!("fetch history for asset {}", asset);
                 if let Err(e) = self.get_balance_and_transactions(topoheight_processed.clone(), address, &asset, current_topoheight, balances, &mut highest_nonce).await {
                     error!("Error while syncing balance for asset {}: {}", asset, e);
                 }

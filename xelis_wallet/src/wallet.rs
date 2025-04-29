@@ -167,7 +167,10 @@ pub enum Event {
     // Wallet is now in online mode
     Online,
     // Wallet is now in offline mode
-    Offline
+    Offline,
+    SyncError {
+        message: String
+    }
 }
 
 impl Event {
@@ -180,7 +183,8 @@ impl Event {
             Event::Rescan { .. } => NotifyEvent::Rescan,
             Event::HistorySynced { .. } => NotifyEvent::HistorySynced,
             Event::Online => NotifyEvent::Online,
-            Event::Offline => NotifyEvent::Offline
+            Event::Offline => NotifyEvent::Offline,
+            Event::SyncError { .. } => NotifyEvent::SyncError,
         }
     }
 
