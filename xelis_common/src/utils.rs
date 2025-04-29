@@ -1,4 +1,6 @@
 use std::net::SocketAddr;
+use log::warn;
+
 use crate::{
     config::{
         COIN_DECIMALS,
@@ -63,6 +65,19 @@ pub fn from_coin(value: impl Into<String>, coin_decimals: u8) -> Option<u64> {
         Some(value)
     }
 }
+
+// Detect the available parallelism
+// Default to 1 on error
+pub fn detect_available_parallelism() -> usize {
+    match std::thread::available_parallelism() {
+        Ok(n) => n.get(),
+        Err(e) => {
+            warn!("Error while detecting parallelism, default to 1: {}", e);
+            1
+        }
+    }
+}
+
 
 // return the fee for a transaction based on its size in bytes
 // the fee is calculated in atomic units for XEL
