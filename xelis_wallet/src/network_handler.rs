@@ -895,8 +895,19 @@ impl NetworkHandler {
             assets
         } else {
             trace!("no assets provided, fetching all assets");
-            // TODO: Fetch all available assets
-            self.api.get_account_assets(address, None, None).await?
+            let mut assets = HashSet::new();
+            let mut skip = 0;
+
+            loop {
+                let response = self.api.get_account_assets(address, None, Some(skip)).await?;
+                if response.is_empty() {
+                    break;
+                }
+                skip += response.len();
+                assets.extend(response);
+            }
+
+            assets
         };
 
         trace!("assets: {}", assets.len());
