@@ -1674,8 +1674,8 @@ async fn get_p2p_block_propagation<S: Storage>(context: &Context, body: Value) -
 
     let mut peers = HashMap::new();
     let mut first_seen = None;
-    // TODO: Best would be "Equivalent" being implemented
-    let hash = Arc::new(params.hash.into_owned());
+
+    let hash = params.hash.into_owned();
     for peer in p2p.get_peer_list().get_cloned_peers().await {
         let blocks_propagation = peer.get_blocks_propagation().lock().await;
         if let Some((timed_direction, is_common)) = blocks_propagation.peek(&hash).copied() {
