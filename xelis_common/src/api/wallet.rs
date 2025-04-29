@@ -321,6 +321,8 @@ pub enum NotifyEvent {
     Online,
     // Same here
     Offline,
+    // Error occuring while syncing
+    SyncError,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
