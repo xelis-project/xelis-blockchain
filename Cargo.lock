@@ -690,9 +690,9 @@ checksum = "7575182f7272186991736b70173b0ea045398f984bf5ebbb3804736ce1330c9d"
 
 [[package]]
 name = "bytemuck"
-version = "1.22.0"
+version = "1.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b6b1fc10dbac614ebc03540c9dbd60e83887fda27794998c6528f1782047d540"
+checksum = "9134a6ef01ce4b366b50689c94f82c14bc72bc5d0386829828a2e2752ef7958c"
 dependencies = [
  "bytemuck_derive",
 ]
@@ -778,9 +778,9 @@ dependencies = [
 
 [[package]]
 name = "chrono"
-version = "0.4.40"
+version = "0.4.41"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1a7964611d71df112cb1730f2ee67324fcf4d0fc6606acbbe9bfe06df124637c"
+checksum = "c469d952047f47f91b68d1cba3f10d63c11d73e4636f24f08daf0278abf01c4d"
 dependencies = [
  "android-tzdata",
  "iana-time-zone",
@@ -1136,7 +1136,7 @@ dependencies = [
 [[package]]
 name = "curve25519-dalek"
 version = "4.1.3"
-source = "git+https://github.com/xelis-project/curve25519-dalek?branch=master#cabd974406ee657b31067f54c3f789297a7d6648"
+source = "git+https://github.com/xelis-project/curve25519-dalek?branch=master#2a2badb9a7b57dacafed9e498092443d9be90592"
 dependencies = [
  "bytemuck",
  "cfg-if",
@@ -1166,7 +1166,7 @@ dependencies = [
 [[package]]
 name = "curve25519-dalek-derive"
 version = "0.1.1"
-source = "git+https://github.com/xelis-project/curve25519-dalek?branch=master#cabd974406ee657b31067f54c3f789297a7d6648"
+source = "git+https://github.com/xelis-project/curve25519-dalek?branch=master#2a2badb9a7b57dacafed9e498092443d9be90592"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3409,9 +3409,9 @@ checksum = "3da5db5a963e24bc68be8b17b6fa82814bb22ee8660f192bb182771d498f09a3"
 
 [[package]]
 name = "toml_edit"
-version = "0.22.25"
+version = "0.22.26"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "10558ed0bd2a1562e630926a2d1f0b98c827da99fabd3fe20920a59642504485"
+checksum = "310068873db2c5b3e7659d2cc35d21855dbafa50d1ce336397c666e3cb08137e"
 dependencies = [
  "indexmap 2.9.0",
  "toml_datetime",
@@ -4086,7 +4086,7 @@ dependencies = [
 [[package]]
 name = "xelis-ast"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#63abfbec7d99a04b18889a5eb7bd53de5e087195"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#6d1c56c84dec48d8df5d13025d654b89be306946"
 dependencies = [
  "indexmap 2.9.0",
  "xelis-types",
@@ -4095,7 +4095,7 @@ dependencies = [
 [[package]]
 name = "xelis-builder"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#63abfbec7d99a04b18889a5eb7bd53de5e087195"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#6d1c56c84dec48d8df5d13025d654b89be306946"
 dependencies = [
  "anyhow",
  "log",
@@ -4109,7 +4109,7 @@ dependencies = [
 [[package]]
 name = "xelis-bytecode"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#63abfbec7d99a04b18889a5eb7bd53de5e087195"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#6d1c56c84dec48d8df5d13025d654b89be306946"
 dependencies = [
  "indexmap 2.9.0",
  "serde",
@@ -4119,7 +4119,7 @@ dependencies = [
 [[package]]
 name = "xelis-environment"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#63abfbec7d99a04b18889a5eb7bd53de5e087195"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#6d1c56c84dec48d8df5d13025d654b89be306946"
 dependencies = [
  "anyhow",
  "better_any",
@@ -4145,7 +4145,7 @@ dependencies = [
 [[package]]
 name = "xelis-types"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#63abfbec7d99a04b18889a5eb7bd53de5e087195"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#6d1c56c84dec48d8df5d13025d654b89be306946"
 dependencies = [
  "anyhow",
  "indexmap 2.9.0",
@@ -4159,7 +4159,7 @@ dependencies = [
 [[package]]
 name = "xelis-vm"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#63abfbec7d99a04b18889a5eb7bd53de5e087195"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#6d1c56c84dec48d8df5d13025d654b89be306946"
 dependencies = [
  "indexmap 2.9.0",
  "log",
