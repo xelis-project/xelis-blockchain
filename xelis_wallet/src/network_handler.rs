@@ -568,7 +568,7 @@ impl NetworkHandler {
 
     // Scan the chain using a specific balance asset, this helps us to get a list of version to only requests blocks where changes happened
     // When the block is requested, we don't limit the syncing to asset in parameter
-    async fn get_balance_and_transactions(&self, topoheight_processed: Arc<Mutex<HashSet<u64>>>, address: &Address, asset: &Hash, min_topoheight: u64, balances: bool, highest_nonce: &Mutex<Option<u64>>) -> Result<(), Error> {
+    async fn get_balance_and_transactions(&self, topoheight_processed: Arc<Mutex<HashSet<u64>>>, address: &Address, asset: &Hash, min_topoheight: u64, balances: bool, highest_nonce: &mut Option<u64>) -> Result<(), Error> {
         // Retrieve the highest version
         let (topoheight, version) = self.api.get_balance(address, asset).await
             .map(|res| (res.topoheight, res.version))?;
@@ -584,13 +584,6 @@ impl NetworkHandler {
         // Determine if its the highest version of balance or not
         // This is used to save the latest balance
         let mut highest_version = true;
-
-        // Retrieve the last transaction ID
-        // We will need it to re-org all the TXs we have stored
-        let last_tx_id = {
-            let storage = self.wallet.get_storage().read().await;
-            storage.get_last_transaction_id()?
-        };
 
         // This channel is used to send all the blocks to the processing loop
         // No more than {concurrency} blocks and versions will be prefetch in advance
@@ -642,21 +635,20 @@ impl NetworkHandler {
                     let mut storage = self.wallet.get_storage().write().await;
 
                     {
-                        let mut lock = highest_nonce.lock().await;
                         // Set the highest nonce we know
-                        if lock.is_none() {
+                        if highest_nonce.is_none() {
                             // Get the highest nonce from storage
                             debug!("Highest nonce is not set, fetching it from storage");
-                            *lock = Some(storage.get_nonce()?);
+                            *highest_nonce = Some(storage.get_nonce()?);
                         }
     
                         // Store only the highest nonce
                         // Because if we are building queued transactions, it may break our queue
                         // Our we couldn't submit new txs before they get removed from mempool
-                        if let Some(nonce) = nonce.filter(|n| lock.as_ref().map(|h| *h < *n).unwrap_or(true)) {
+                        if let Some(nonce) = nonce.filter(|n| highest_nonce.as_ref().map(|h| *h < *n).unwrap_or(true)) {
                             debug!("Storing new highest nonce {}", nonce);
                             storage.set_nonce(nonce)?;
-                            *lock = Some(nonce);
+                            *highest_nonce = Some(nonce);
                         }
                     }
 
@@ -690,14 +682,6 @@ impl NetworkHandler {
 
             // Only first iteration is the highest one
             highest_version = false;
-        }
-
-        // Re-org all the TXs we have stored
-        {
-            debug!("reverse txs indexes");
-            let mut storage = self.wallet.get_storage().write().await;
-            storage.reverse_transactions_indexes(last_tx_id)?;
-            debug!("txs indexes reversed successfully");
         }
 
         handle.await??;
@@ -1221,21 +1205,40 @@ impl NetworkHandler {
         };
 
         debug!("Scanning history for each asset");
+
+        // Retrieve the last transaction ID
+        // We will need it to re-org all the TXs we have stored
+        let last_tx_id = {
+            let storage = self.wallet.get_storage().read().await;
+            storage.get_last_transaction_id()?
+        };
+
         // cache for all topoheight we already processed
         // this will prevent us to request more than one time the same topoheight
         let start = Instant::now();
         let topoheight_processed = Arc::new(Mutex::new(HashSet::new()));
-        let highest_nonce = Mutex::new(None);
+        let mut highest_nonce = None;
         {
-            let topoheight_processed = &topoheight_processed;
-            let highest_nonce= &highest_nonce;
-            stream::iter(assets)
-                .for_each_concurrent(self.concurrency, |asset| async move {
-                    debug!("calling get balances and transactions {}", current_topoheight);
-                    if let Err(e) = self.get_balance_and_transactions(topoheight_processed.clone(), &address, &asset, current_topoheight, balances, &highest_nonce).await {
-                        error!("Error while syncing balance for asset {}: {}", asset, e);
-                    }
-                }).await;
+            // No async stream to preserve the orders of ALL transactions
+            // If we still want to run them concurrently, what we could do is:
+            // - Either reorder all TXs at the reverse txs indexes below
+            // - Or memory intensive: each process block returns the list of TXs
+            // and each iteration below populare a BTreeMap topoheight / list of all scanned TXs
+            // so we still hold the correct holder, but this is discouraged to support low devices
+            for asset in assets {
+                info!("calling get balances and transactions {} for asset {}", current_topoheight, asset);
+                if let Err(e) = self.get_balance_and_transactions(topoheight_processed.clone(), address, &asset, current_topoheight, balances, &mut highest_nonce).await {
+                    error!("Error while syncing balance for asset {}: {}", asset, e);
+                }
+            }
+        }
+
+        // Re-org all the TXs we have stored
+        {
+            debug!("reverse txs indexes");
+            let mut storage = self.wallet.get_storage().write().await;
+            storage.reverse_transactions_indexes(last_tx_id)?;
+            debug!("txs indexes reversed successfully");
         }
 
         self.wallet.propagate_event(Event::HistorySynced { topoheight: current_topoheight }).await;
