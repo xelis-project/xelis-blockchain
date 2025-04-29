@@ -1071,8 +1071,10 @@ impl Wallet {
                 storage.delete_unconfirmed_balances().await;
                 storage.clear_tx_cache();
 
-                debug!("reconnect API");
-                network_handler.get_api().reconnect().await?;
+                if !network_handler.get_api().is_online() {
+                    debug!("reconnect API");
+                    network_handler.get_api().reconnect().await?;
+                }
 
                 if topoheight == 0 {
                     debug!("Deleting all transactions for full rescan");
