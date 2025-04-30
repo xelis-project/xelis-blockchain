@@ -455,6 +455,11 @@ impl Wallet {
         self.close_events_channel().await;
     }
 
+    // Retrieve the precomputed tables to either use it or update it
+    pub fn get_precomputed_tables(&self) -> &PrecomputedTablesShared {
+        &self.account.inner.precomputed_tables
+    }
+
     // Disable/enable the history scan
     // This is used by the network handler to avoid scanning history if requested
     pub fn set_history_scan(&self, value: bool) {
