@@ -711,11 +711,13 @@ impl EncryptedStorage {
     // otherwise, fall back on the confirmed balance
     pub async fn get_unconfirmed_balance_for(&self, asset: &Hash) -> Result<(Balance, bool)> {
         trace!("get unconfirmed balance for {}", asset);
-        let cache = self.unconfirmed_balances_cache.lock().await;
-        if let Some(balances) = cache.get(asset) {
-            // get the latest unconfirmed balance
-            if let Some(balance) = balances.back() {
-                return Ok((balance.clone(), true));
+        {
+            let cache = self.unconfirmed_balances_cache.lock().await;
+            if let Some(balances) = cache.get(asset) {
+                // get the latest unconfirmed balance
+                if let Some(balance) = balances.back() {
+                    return Ok((balance.clone(), true));
+                }
             }
         }
 
