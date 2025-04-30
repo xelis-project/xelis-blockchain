@@ -18,17 +18,20 @@ use xelis_common::{
         DataValue
     },
     asset::AssetData,
+    block::TopoHeight,
     config::XELIS_ASSET,
     crypto::{
         elgamal::CompressedCiphertext,
         Hash,
         PrivateKey,
-        PublicKey
+        PublicKey,
+        HASH_SIZE
     },
     network::Network,
     serializer::{
         Reader,
         Serializer,
+        Skip,
     },
     tokio::sync::Mutex,
     transaction::TxVersion
@@ -868,32 +871,15 @@ impl EncryptedStorage {
     // delete all transactions above the specified topoheight
     // This will go through each transaction, deserialize it, check topoheight, and delete it if required
     pub fn delete_transactions_above_topoheight(&mut self, topoheight: u64) -> Result<()> {
-        trace!("delete transactions above topoheight {}", topoheight);
-
-        // We search lowest id for topo + 1 to make sure we delete all transactions above the requested topoheight
-        let min = self.search_transaction_id_for_topoheight(topoheight + 1, None, None)?;
-        let iterator = match min {
-            Some(min) => self.transactions_indexes.range(min.to_be_bytes()..),
-            None => self.transactions_indexes.iter()
-        };
-
-        for el in iterator {
-            // tx hash is the value in its hashed form
-            let (id, tx_hash) = el?;
-
-            // Topoheight is passed, we can delete the transaction
-            self.delete_from_disk_with_key(&self.transactions, &tx_hash)?;
-            self.delete_from_disk_with_key(&self.transactions_indexes, &id)?;
-        }
-
-        Ok(())
+        warn!("delete transactions above topoheight {}", topoheight);
+        self.delete_transactions_at_or_above_topoheight(topoheight + 1)
     }
 
     // delete all transactions at or above the specified topoheight
     pub fn delete_transactions_at_or_above_topoheight(&mut self, topoheight: u64) -> Result<()> {
         trace!("delete transactions at or above topoheight {}", topoheight);
 
-        let min = self.search_transaction_id_for_topoheight(topoheight, None, None)?;
+        let min = self.search_transaction_id_for_topoheight(topoheight, None, None, true)?;
         let iterator = match min {
             Some(min) => self.transactions_indexes.range(min.to_be_bytes()..),
             None => self.transactions_indexes.iter()
@@ -908,53 +894,80 @@ impl EncryptedStorage {
         Ok(())
     }
 
-    // Search the lowest transaction id for the requested topoheight
-    // We do a bisect search to find the first transaction with the requested topoheight
-    fn search_transaction_id_for_topoheight(&self, topoheight: u64, left: Option<u64>, right: Option<u64>) -> Result<Option<u64>> {
-        debug!("search transaction id for topoheight {}", topoheight);
+    fn search_transaction_id_for_topoheight(
+        &self,
+        topoheight: u64,
+        left_id: Option<u64>,
+        right_id: Option<u64>,
+        nearest: bool,
+    ) -> Result<Option<u64>> {
+        debug!("search transaction id for topoheight {}, nearest = {}", topoheight, nearest);
 
-        let mut right = match right {
-            Some(right) => right,
-            None => {
-                if let Some(right) = self.get_last_transaction_id()? {
-                    right
-                } else {
+        let mut right = match right_id {
+            Some(r) => r,
+            None => match self.get_last_transaction_id()? {
+                Some(r) => r,
+                None => {
                     debug!("no transaction index found");
                     return Ok(None);
                 }
-            }
+            },
         };
-        let mut left = left.unwrap_or(0);
+
+        let mut left = left_id.unwrap_or(0);
         let mut result = None;
 
-        while left < right {
+        while left <= right {
             let mid = left + (right - left) / 2;
+
             let Some(tx_hash) = self.transactions_indexes.get(&mid.to_be_bytes())? else {
                 debug!("no transaction index found for {}", mid);
                 return Ok(None);
             };
 
-            let entry: TransactionEntry = self.load_from_disk_with_key(&self.transactions, &tx_hash)?;
-            let ord = entry.get_topoheight().cmp(&topoheight);
-            match ord {
+            let entry: Skip<HASH_SIZE, TopoHeight> = self.load_from_disk_with_key(&self.transactions, &tx_hash)?;
+            let mid_topo = entry.0;
+
+            match mid_topo.cmp(&topoheight) {
                 Ordering::Equal => {
-                    // We found a match, but we keep searching left to find the smallest ID
                     result = Some(mid);
-                    right = mid;
-                },
+                    if mid == 0 {
+                        break;
+                    }
+                    // keep looking to the left for the lowest
+                    right = mid - 1;
+                }
                 Ordering::Less => {
                     left = mid + 1;
-                },
+                }
                 Ordering::Greater => {
-                    right = mid;
+                    // potential "nearest higher" if exact not found
+                    result = result.or(Some(mid));
+                    if mid == 0 {
+                        break;
+                    }
+                    right = mid - 1;
                 }
             }
         }
 
+        // If we didn’t find an exact match but nearest is true, return nearest higher topoheight
+        if result.is_none() && nearest {
+            // left should points to the insertion point where its the first topoheight above requested
+            let tx_hash_opt = self.transactions_indexes.get(&left.to_be_bytes())?;
+            if let Some(tx_hash) = tx_hash_opt {
+                let entry: Skip<HASH_SIZE, TopoHeight> = self.load_from_disk_with_key(&self.transactions, &tx_hash)?;
+                if entry.0 > topoheight {
+                    return Ok(Some(left));
+                }
+            }
+        }
+    
         Ok(result)
     }
 
     // Filter when the data is deserialized to not load all transactions in memory
+    // Topoheight bounds are inclusive
     pub fn get_filtered_transactions(
         &self,
         address: Option<&PublicKey>,
@@ -974,10 +987,9 @@ impl EncryptedStorage {
         // Search the correct range
         let iterator = match (min_topoheight, max_topoheight) {
             (Some(min), Some(max)) => {
-                let min = self.search_transaction_id_for_topoheight(min, None, None)
+                let min = self.search_transaction_id_for_topoheight(min, None, None, true)
                     .context("Error while searching min id")?;
-                // + 1 so we find the lowest id of the next topoheight to be inclusive on the range
-                let max = self.search_transaction_id_for_topoheight(max + 1, min, None)
+                let max = self.search_transaction_id_for_topoheight(max + 1, min, None, true)
                     .context("Error while searching max id")?;
 
                 if let Some(min) = min {
@@ -995,7 +1007,7 @@ impl EncryptedStorage {
                 }
             },
             (Some(min), None) => {
-                let min = self.search_transaction_id_for_topoheight(min, None, None)
+                let min = self.search_transaction_id_for_topoheight(min, None, None, true)
                     .context("Error while searching min id only")?;
                 if let Some(min) = min {
                     self.transactions_indexes.range(min.to_be_bytes()..)
@@ -1004,7 +1016,7 @@ impl EncryptedStorage {
                 }
             },
             (None, Some(max)) => {
-                let max = self.search_transaction_id_for_topoheight(max + 1, None, None)
+                let max = self.search_transaction_id_for_topoheight(max + 1, None, None, true)
                     .context("Error while searching max id only")?;
                 if let Some(max) = max {
                     self.transactions_indexes.range(..max.to_be_bytes())
