@@ -1230,6 +1230,7 @@ impl NetworkHandler {
                 debug!("fetch history for asset {}", asset);
                 if let Err(e) = self.get_balance_and_transactions(topoheight_processed.clone(), address, &asset, current_topoheight, balances, &mut highest_nonce).await {
                     error!("Error while syncing balance for asset {}: {}", asset, e);
+                    self.wallet.propagate_event(Event::SyncError { message: e.to_string() }).await;
                 }
             }
         }

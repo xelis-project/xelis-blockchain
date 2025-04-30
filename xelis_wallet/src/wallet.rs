@@ -1079,14 +1079,6 @@ impl Wallet {
                     debug!("reconnect API");
                     network_handler.get_api().reconnect().await?;
                 }
-
-                if topoheight == 0 {
-                    debug!("Deleting all transactions for full rescan");
-                    storage.delete_transactions()?;
-                } else {
-                    debug!("Deleting transactions at or above {} for partial rescan", topoheight);
-                    storage.delete_transactions_at_or_above_topoheight(topoheight)?;
-                }
             }
             debug!("Starting again network handler");
             network_handler.start(auto_reconnect).await?;
