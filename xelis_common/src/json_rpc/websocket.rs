@@ -630,8 +630,8 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
         self.send_message_internal(Some(id), method, params).await?;
 
         let response = timeout(self.timeout_after, receiver).await
-            .map_err(|_| JsonRPCError::TimedOut(json!(params).to_string()))?
-            .map_err(|e| JsonRPCError::NoResponse(json!(params).to_string(), e.to_string()))?;
+            .map_err(|_| JsonRPCError::TimedOut(json!({ "method": method, "params": params }).to_string()))?
+            .map_err(|e| JsonRPCError::NoResponse(json!({ "method": method, "params": params }).to_string(), e.to_string()))?;
 
         if let Some(error) = response.error {
             return Err(JsonRPCError::ServerError {
