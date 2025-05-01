@@ -187,7 +187,6 @@ impl Event {
             Event::SyncError { .. } => NotifyEvent::SyncError,
         }
     }
-
 }
 
 pub struct Wallet {
@@ -244,7 +243,6 @@ impl Account {
             inner,
             semaphore: Semaphore::new(n_threads)
         }
-        
     }
 
     pub async fn decrypt_ciphertext(&self, ciphertext: Ciphertext, max_supply: u64) -> Result<Option<u64>, WalletError> {
@@ -264,7 +262,8 @@ impl Account {
                 .decode_point_within_range(&view, point, 0, max_supply as _);
 
             Ok::<_, WalletError>(result)
-        }).await.unwrap()?;
+        }).await
+        .context("Error while waiting on decrypt thread")??;
 
         Ok(res)
     }
