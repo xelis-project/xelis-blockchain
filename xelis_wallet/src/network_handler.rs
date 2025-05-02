@@ -941,8 +941,8 @@ impl NetworkHandler {
         } else {
             // Update all tracked assets
             let storage = self.wallet.get_storage().read().await;
-            storage.get_tracked_assets()?
-                .collect::<Result<HashSet<_>, _>>()?
+            let iter = storage.get_tracked_assets()?;
+            iter.collect::<Result<HashSet<_>, _>>()?
         };
 
         trace!("Tracked assets: {}", tracked_assets.len());

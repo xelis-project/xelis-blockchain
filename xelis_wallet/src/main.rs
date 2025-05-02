@@ -659,13 +659,13 @@ async fn setup_wallet_command_manager(wallet: Arc<Wallet>, command_manager: &Com
     command_manager.add_command(Command::with_optional_arguments(
         "track_asset",
         "Mark an asset hash as tracked",
-        vec![Arg::new("page", ArgType::Number)],
+        vec![Arg::new("asset", ArgType::Hash)],
         CommandHandler::Async(async_handler!(track_asset))
     ))?;
     command_manager.add_command(Command::with_optional_arguments(
         "untrack_asset",
         "Remove an asset hash from being tracked",
-        vec![Arg::new("page", ArgType::Number)],
+        vec![Arg::new("asset", ArgType::Hash)],
         CommandHandler::Async(async_handler!(untrack_asset))
     ))?;
 
@@ -1119,6 +1119,8 @@ async fn untrack_asset(manager: &CommandManager, mut args: ArgumentManager) -> R
     let mut storage = wallet.get_storage().write().await;
     if !storage.is_asset_tracked(&asset)? {
         manager.message("Asset ID is not marked as tracked!");
+    } else if asset == XELIS_ASSET {
+        manager.message("XELIS asset cannot be untracked");
     } else {
         storage.untrack_asset(&asset)?;
         manager.message("Asset ID is not tracked anymore");

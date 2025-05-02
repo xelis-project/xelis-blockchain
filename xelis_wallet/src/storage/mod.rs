@@ -517,10 +517,11 @@ impl EncryptedStorage {
     }
 
     // Get all tracked assets by the wallet
-    pub fn get_tracked_assets(&self) -> Result<impl Iterator<Item = Result<Hash>>> {
+    pub fn get_tracked_assets<'a>(&'a self) -> Result<impl Iterator<Item = Result<Hash>> + 'a> {
         Ok(self.tracked_assets.iter().keys().map(|res| {
             let bytes = res?;
-            Ok(Hash::from_bytes(&bytes)?)
+            let decrypted_bytes = self.cipher.decrypt_value(&bytes)?;
+            Ok(Hash::from_bytes(&decrypted_bytes)?)
         }))
     }
 
