@@ -313,9 +313,7 @@ mod tests {
 
         let ct1 = keypair.get_public_key().encrypt(5000u64);
         let ct2 = keypair.get_public_key().encrypt(1000u64);
-
         let ct3 = ct1 + ct2;
-
         let dec = keypair.decrypt_to_point(&ct3);
 
         assert_eq!(dec, Scalar::from(6000u64) * PC_GENS.B);
@@ -326,9 +324,7 @@ mod tests {
         let keypair = KeyPair::new();
 
         let ct1 = keypair.get_public_key().encrypt(5000u64);
-
         let ct2 = ct1 + Scalar::from(1000u64);
-
         let dec = keypair.decrypt_to_point(&ct2);
 
         assert_eq!(dec, Scalar::from(6000u64) * PC_GENS.B);
@@ -340,9 +336,7 @@ mod tests {
 
         let ct1 = keypair.get_public_key().encrypt(5000u64);
         let ct2 = keypair.get_public_key().encrypt(1000u64);
-
         let ct3 = ct1 - ct2;
-
         let dec = keypair.decrypt_to_point(&ct3);
 
         assert_eq!(dec, Scalar::from(4000u64) * PC_GENS.B);
@@ -353,9 +347,7 @@ mod tests {
         let keypair = KeyPair::new();
 
         let ct1 = keypair.get_public_key().encrypt(5000u64);
-
         let ct2 = ct1 - Scalar::from(1000u64);
-
         let dec = keypair.decrypt_to_point(&ct2);
 
         assert_eq!(dec, Scalar::from(4000u64) * PC_GENS.B);
@@ -366,12 +358,21 @@ mod tests {
         let keypair = KeyPair::new();
 
         let ct1 = keypair.get_public_key().encrypt(5000u64);
-
         let ct2 = ct1 * Scalar::from(2u64);
-
         let dec = keypair.decrypt_to_point(&ct2);
 
         assert_eq!(dec, Scalar::from(10000u64) * PC_GENS.B);
+    }
+
+    #[test]
+    fn test_mul_zero() {
+        let keypair = KeyPair::new();
+
+        let ct1 = keypair.get_public_key().encrypt(0u64);
+        let ct2 = ct1 * Scalar::from(10u64);
+        let dec = keypair.decrypt_to_point(&ct2);
+
+        assert_eq!(dec, Scalar::from(0u64) * PC_GENS.B);
     }
 
     #[test]
@@ -391,7 +392,7 @@ mod tests {
         let keypair = KeyPair::new();
 
         let ct1 = keypair.get_public_key().encrypt(0u64);
-        let ct2 = ct1 * Scalar::from(10u64);
+        let ct2 = ct1 * Scalar::from(10u64).invert();
         let dec = keypair.decrypt_to_point(&ct2);
 
         assert_eq!(dec, Scalar::from(0u64) * PC_GENS.B);
