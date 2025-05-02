@@ -101,8 +101,10 @@ pub struct EncryptedStorage {
     balances: Tree,
     // extra data (network, topoheight, etc)
     extra: Tree,
-    // all assets tracked by the wallet
+    // all assets discovered by the wallet
     assets: Tree,
+    // All assets marked as tracked by the asset
+    tracked_assets: Tree,
     // This tree is used to store all topoheight where a change in the wallet occured
     changes_topoheight: Tree,
     // The inner storage
@@ -139,6 +141,7 @@ impl EncryptedStorage {
             balances: inner.db.open_tree(&cipher.hash_key("balances"))?,
             extra: inner.db.open_tree(&cipher.hash_key("extra"))?,
             assets: inner.db.open_tree(&cipher.hash_key("assets"))?,
+            tracked_assets: inner.db.open_tree(&cipher.hash_key("tracked_assets"))?,
             changes_topoheight: inner.db.open_tree(&cipher.hash_key("changes_topoheight"))?,
             cipher,
             inner,
@@ -174,6 +177,11 @@ impl EncryptedStorage {
         // Load one-time the multisig state
         if storage.contains_data(&storage.extra, MULTISIG)? {
             storage.multisig_state = Some(storage.load_from_disk(&storage.extra, MULTISIG)?);
+        }
+
+        // Force tracking of native xelis asset
+        if !storage.is_asset_tracked(&XELIS_ASSET)? {
+            storage.track_asset(&XELIS_ASSET)?;
         }
 
         Ok(storage)
@@ -309,7 +317,7 @@ impl EncryptedStorage {
     }
 
     // Encrypt instead of hash the key to recover it later
-    fn contains_encrypted_data(&self, tree: &Tree, key: &[u8]) -> Result<bool> {
+    fn contains_with_encrypted_key(&self, tree: &Tree, key: &[u8]) -> Result<bool> {
         trace!("contains encrypted data");
         let encrypted_key = self.create_encrypted_key(key)?;
         Ok(tree.contains_key(encrypted_key)?)
@@ -358,7 +366,7 @@ impl EncryptedStorage {
     pub fn has_custom_data(&self, tree: impl Into<String>, key: &DataValue) -> Result<bool> {
         trace!("has custom data");
         let tree = self.get_custom_tree(tree)?;
-        self.contains_encrypted_data(&tree, &key.to_bytes())
+        self.contains_with_encrypted_key(&tree, &key.to_bytes())
     }
 
     // Search all entries with requested query_key/query_value
@@ -493,6 +501,29 @@ impl EncryptedStorage {
         Ok(count)
     }
 
+    // Check if the asset is tracked
+    pub fn is_asset_tracked(&self, hash: &Hash) -> Result<bool> {
+        self.contains_with_encrypted_key(&self.tracked_assets, hash.as_bytes())
+    }
+
+    // Mark the requested asset as tracked
+    pub fn track_asset(&mut self, hash: &Hash) -> Result<()> {
+        self.save_to_disk_with_encrypted_key(&self.tracked_assets, hash.as_bytes(), &[])
+    }
+
+    // Unmark the requested asset from being tracked
+    pub fn untrack_asset(&mut self, hash: &Hash) -> Result<()> {
+        self.delete_from_disk_with_encrypted_key(&self.tracked_assets, hash.as_bytes())
+    }
+
+    // Get all tracked assets by the wallet
+    pub fn get_tracked_assets(&self) -> Result<impl Iterator<Item = Result<Hash>>> {
+        Ok(self.tracked_assets.iter().keys().map(|res| {
+            let bytes = res?;
+            Ok(Hash::from_bytes(&bytes)?)
+        }))
+    }
+
     // Set a multisig state
     pub async fn set_multisig_state(&mut self, state: MultiSig) -> Result<()> {
         trace!("set multisig state");
@@ -607,7 +638,7 @@ impl EncryptedStorage {
             }
         }
 
-        self.contains_encrypted_data(&self.assets, asset.as_bytes())
+        self.contains_with_encrypted_key(&self.assets, asset.as_bytes())
     }
 
     // save asset with its corresponding decimals
@@ -1430,7 +1461,7 @@ impl EncryptedStorage {
     // Check if the topoheight is present in the changes tree
     pub fn has_topoheight_in_changes(&self, topoheight: u64) -> Result<bool> {
         trace!("has topoheight {} in changes", topoheight);
-        self.contains_encrypted_data(&self.changes_topoheight, &topoheight.to_be_bytes())
+        self.contains_with_encrypted_key(&self.changes_topoheight, &topoheight.to_be_bytes())
     }
 
     // Delete all changes above topoheight

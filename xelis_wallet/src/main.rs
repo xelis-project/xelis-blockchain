@@ -646,9 +646,27 @@ async fn setup_wallet_command_manager(wallet: Arc<Wallet>, command_manager: &Com
     ))?;
     command_manager.add_command(Command::with_optional_arguments(
         "list_assets",
-        "List all registered assets",
+        "List all detected assets",
         vec![Arg::new("page", ArgType::Number)],
         CommandHandler::Async(async_handler!(list_assets))
+    ))?;
+    command_manager.add_command(Command::with_optional_arguments(
+        "list_tracked_assets",
+        "List all assets marked as tracked",
+        vec![Arg::new("page", ArgType::Number)],
+        CommandHandler::Async(async_handler!(list_tracked_assets))
+    ))?;
+    command_manager.add_command(Command::with_optional_arguments(
+        "track_asset",
+        "Mark an asset hash as tracked",
+        vec![Arg::new("page", ArgType::Number)],
+        CommandHandler::Async(async_handler!(track_asset))
+    ))?;
+    command_manager.add_command(Command::with_optional_arguments(
+        "untrack_asset",
+        "Remove an asset hash from being tracked",
+        vec![Arg::new("page", ArgType::Number)],
+        CommandHandler::Async(async_handler!(untrack_asset))
     ))?;
 
     #[cfg(feature = "network_handler")]
@@ -1021,8 +1039,89 @@ async fn list_assets(manager: &CommandManager, mut args: ArgumentManager) -> Res
     }
 
     manager.message(format!("Assets (page {}/{}):", page, max_pages));
-    for (asset, data) in assets {
+    for (asset, data) in assets.into_iter().take(ELEMENTS_PER_PAGE) {
         manager.message(format!("{} ({} decimals): {}", asset, data.get_decimals(), data.get_name()));
+    }
+
+    Ok(())
+}
+
+async fn list_tracked_assets(manager: &CommandManager, mut args: ArgumentManager) -> Result<(), CommandError> {
+    let context = manager.get_context().lock()?;
+    let wallet: &Arc<Wallet> = context.get()?;
+
+    let page = if args.has_argument("page") {
+        args.get_value("page")?.to_number()? as usize
+    } else {
+        0
+    };
+
+    let storage = wallet.get_storage().read().await;
+    let assets = storage.get_tracked_assets()?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    if assets.is_empty() {
+        manager.message("No tracked assets found");
+        return Ok(())
+    }
+
+    let mut max_pages = assets.len() / ELEMENTS_PER_PAGE;
+    if assets.len() % ELEMENTS_PER_PAGE != 0 {
+        max_pages += 1;
+    }
+
+    if page > max_pages {
+        return Err(CommandError::InvalidArgument(format!("Page must be less than maximum pages ({})", max_pages - 1)));
+    }
+
+    manager.message(format!("Assets (page {}/{}):", page, max_pages));
+    for asset in assets.into_iter().take(ELEMENTS_PER_PAGE) {
+        let data = storage.get_asset(&asset).await?;
+        manager.message(format!("{} ({} decimals): {}", asset, data.get_decimals(), data.get_name()));
+    }
+
+    Ok(())
+}
+
+async fn track_asset(manager: &CommandManager, mut args: ArgumentManager) -> Result<(), CommandError> {
+    let context = manager.get_context().lock()?;
+    let wallet: &Arc<Wallet> = context.get()?;
+    let prompt = manager.get_prompt();
+
+    let asset = if args.has_argument("asset") {
+        args.get_value("asset")?.to_hash()?
+    } else {
+        prompt.read_hash(prompt.colorize_string(Color::BrightGreen, "Asset ID: ")).await?
+    };
+
+    let mut storage = wallet.get_storage().write().await;
+    if storage.is_asset_tracked(&asset)? {
+        manager.message("Asset ID is already tracked!");
+    } else {
+        storage.track_asset(&asset)?;
+        manager.message("Asset ID is now tracked");
+    }
+
+    Ok(())
+}
+
+async fn untrack_asset(manager: &CommandManager, mut args: ArgumentManager) -> Result<(), CommandError> {
+    let context = manager.get_context().lock()?;
+    let wallet: &Arc<Wallet> = context.get()?;
+    let prompt = manager.get_prompt();
+
+    let asset = if args.has_argument("asset") {
+        args.get_value("asset")?.to_hash()?
+    } else {
+        prompt.read_hash(prompt.colorize_string(Color::BrightGreen, "Asset ID: ")).await?
+    };
+
+    let mut storage = wallet.get_storage().write().await;
+    if !storage.is_asset_tracked(&asset)? {
+        manager.message("Asset ID is not marked as tracked!");
+    } else {
+        storage.untrack_asset(&asset)?;
+        manager.message("Asset ID is not tracked anymore");
     }
 
     Ok(())

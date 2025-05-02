@@ -1,4 +1,5 @@
 use std::{
+    borrow::Cow,
     collections::HashSet,
     sync::{atomic::{AtomicBool, Ordering}, Arc},
     time::{Duration, Instant}
@@ -876,8 +877,10 @@ impl NetworkHandler {
             }
         }
 
-        let assets = if let Some(assets) = assets.filter(|a| !a.is_empty()) {
-            assets
+        let detected_assets = if let Some(assets) = assets.as_ref().filter(|a| !a.is_empty()) {
+            let mut references = HashSet::new();
+            references.extend(assets.iter().map(Cow::Borrowed));
+            references
         } else {
             trace!("no assets provided, fetching all assets");
             let mut assets = HashSet::new();
@@ -889,18 +892,16 @@ impl NetworkHandler {
                     break;
                 }
                 skip += response.len();
-                assets.extend(response);
+                assets.extend(response.into_iter().map(Cow::Owned));
             }
 
             assets
         };
 
-        trace!("assets: {}", assets.len());
+        trace!("assets: {}", detected_assets.len());
 
-        let atomic_sync_blocks = AtomicBool::new(false);
-        // Reference are Copy & Send due to scoped stream
-        let sync_blocks = &atomic_sync_blocks;
-        stream::iter(assets.into_iter().map(Ok::<_, Error>))
+        // First lets add all these new assets to our DB
+        stream::iter(detected_assets.into_iter().map(Ok::<_, Error>))
             .try_for_each_concurrent(self.concurrency, |asset| async move {
                 trace!("asset: {}", asset);
                 // check if we have this asset locally
@@ -908,6 +909,7 @@ impl NetworkHandler {
                     let storage = self.wallet.get_storage().read().await;
                     storage.contains_asset(&asset).await?
                 } {
+                    debug!("Discovered a new asset {}", asset);
                     let data = self.api.get_asset(&asset).await?;
                     // Add the asset to the storage
                     {
@@ -915,10 +917,42 @@ impl NetworkHandler {
                         storage.add_asset(&asset, data.inner.clone()).await?;
                     }
 
-                    // New asset added to the wallet, inform listeners
+                    // New asset detected added to the wallet, inform listeners
                     self.wallet.propagate_event(Event::NewAsset(data)).await;
                 }
 
+                Ok(())
+            }).await?;
+
+        // Now, we only sync the balances of the tracked assets
+        let tracked_assets = if let Some(assets) = assets.filter(|a| !a.is_empty()) {
+            let mut tracked_assets = HashSet::new();
+            let storage = self.wallet.get_storage().read().await;
+
+            for asset in assets {
+                if storage.is_asset_tracked(&asset)? {
+                    tracked_assets.insert(asset);
+                } else {
+                    debug!("Asset {} was requested but its not tracked, skipping...", asset);
+                }
+            }
+
+            tracked_assets
+        } else {
+            // Update all tracked assets
+            let storage = self.wallet.get_storage().read().await;
+            storage.get_tracked_assets()?
+                .collect::<Result<HashSet<_>, _>>()?
+        };
+
+        trace!("Tracked assets: {}", tracked_assets.len());
+
+        let atomic_sync_blocks = AtomicBool::new(false);
+        // Reference are Copy & Send due to scoped stream
+        let sync_blocks = &atomic_sync_blocks;
+        stream::iter(tracked_assets.into_iter().map(Ok::<_, Error>))
+            .try_for_each_concurrent(self.concurrency, |asset| async move {
+                trace!("requesting latest balance for {}", asset);
                 // get the balance for this asset
                 let result = self.api.get_balance(&address, &asset).await?;
                 trace!("found balance at topoheight: {}", result.topoheight);
@@ -981,7 +1015,6 @@ impl NetworkHandler {
 
                 Ok(())
             }).await?;
-
         let mut should_sync_blocks = atomic_sync_blocks.load(Ordering::SeqCst);
         // Apply changes
         {
