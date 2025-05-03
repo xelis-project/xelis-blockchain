@@ -590,7 +590,7 @@ async fn setup_wallet_command_manager(wallet: Arc<Wallet>, command_manager: &Com
     ))?;
     command_manager.add_command(Command::with_optional_arguments(
         "balance",
-        "List all non-zero balances or show the selected one",
+        "Show the balance of requested asset; Asset must be tracked",
         vec![Arg::new("asset", ArgType::Hash)],
         CommandHandler::Async(async_handler!(balance))
     ))?;
