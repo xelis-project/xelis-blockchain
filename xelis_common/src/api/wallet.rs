@@ -171,6 +171,12 @@ pub struct ListTransactionsParams {
 }
 
 #[derive(Serialize, Deserialize)]
+pub struct GetAssetsParams {
+    pub skip: Option<usize>,
+    pub maximum: Option<usize>,
+}
+
+#[derive(Serialize, Deserialize)]
 pub struct TransactionResponse<'a> {
     #[serde(flatten)]
     pub inner: DataHash<'a, Transaction>,
