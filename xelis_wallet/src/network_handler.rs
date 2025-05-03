@@ -821,7 +821,6 @@ impl NetworkHandler {
     // Sync the latest version of our balances and nonces and determine if we should parse all blocks
     // If assets are provided, we'll only sync these assets
     // If nonce is not provided, we will fetch it from the daemon
-    // TODO: we should prevent to sync EVERY assets we receive, only sync the one accepted by the wallet
     async fn sync_head_state(&self, address: &Address, assets: Option<HashSet<Hash>>, nonce: Option<u64>, sync_nonce: bool) -> Result<bool, Error> {
         trace!("syncing head state");
         let new_nonce = if sync_nonce {
@@ -1155,7 +1154,6 @@ impl NetworkHandler {
                                     debug!("Deleting all transactions due to reorg until 0");
                                     storage.delete_transactions()?;
                                 } else {
-                                    // TODO we should make a faster way to delete all TXs above this topoheight
                                     // Otherwise in future with millions of TXs, this may take few seconds.
                                     debug!("Deleting transactions above {} due to DAG reorg", topoheight);
                                     storage.delete_transactions_at_or_above_topoheight(topoheight)?;
