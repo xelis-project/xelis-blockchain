@@ -251,13 +251,22 @@ async fn has_balance(context: &Context, body: Value) -> Result<Value, InternalRp
 
 // Retrieve all tracked assets by wallet
 async fn get_tracked_assets(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    if body != Value::Null {
-        return Err(InternalRpcError::UnexpectedParams)
-    }
-
+    let params: GetAssetsParams = parse_params(body)?;
     let wallet: &Arc<Wallet> = context.get()?;
+    let maximum = if let Some(max) = params.maximum {
+        if max > MAX_ASSETS {
+            return Err(InternalRpcError::InvalidParams("Maximum is bigger than limit"))
+        }
+        max
+    } else {
+        MAX_ASSETS
+    };
+
     let storage = wallet.get_storage().read().await;
-    let tracked_assets = storage.get_assets().await?;
+    let tracked_assets = storage.get_tracked_assets()?
+        .skip(params.skip.unwrap_or(0))
+        .take(maximum)
+        .collect::<Result<Vec<_>, _>>()?;
 
     Ok(json!(tracked_assets))
 }
@@ -277,12 +286,21 @@ const MAX_ASSETS: usize = 100;
 // Retrieve all the assets that the wallet is aware of
 async fn get_assets(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: GetAssetsParams = parse_params(body)?;
-
     let wallet: &Arc<Wallet> = context.get()?;
+
+    let maximum = if let Some(max) = params.maximum {
+        if max > MAX_ASSETS {
+            return Err(InternalRpcError::InvalidParams("Maximum is bigger than limit"))
+        }
+        max
+    } else {
+        MAX_ASSETS
+    };
+
     let storage = wallet.get_storage().read().await;
     let assets = storage.get_assets_with_data().await?
         .skip(params.skip.unwrap_or(0))
-        .take(params.maximum.unwrap_or(MAX_ASSETS))
+        .take(maximum)
         .collect::<Result<Vec<_>, _>>()?;
 
     Ok(json!(assets))

@@ -1233,18 +1233,14 @@ impl NetworkHandler {
     // If balances is set to false, only the history will be updated
     // and not the nonce or balances
     async fn sync_new_blocks(&self, address: &Address, current_topoheight: u64, balances: bool) -> Result<(), Error> {
-        let assets = {
-            let storage = self.wallet.get_storage().read().await;
-            storage.get_assets().await?
-        };
-
         debug!("Scanning history for each asset");
-
         // Retrieve the last transaction ID
         // We will need it to re-org all the TXs we have stored
-        let last_tx_id = {
+        let (assets, last_tx_id) = {
             let storage = self.wallet.get_storage().read().await;
-            storage.get_last_transaction_id()?
+            let assets = storage.get_assets().await?;
+            let last_tx_id = storage.get_last_transaction_id()?;
+            (assets, last_tx_id)
         };
 
         // cache for all topoheight we already processed
