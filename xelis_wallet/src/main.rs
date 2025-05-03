@@ -1022,15 +1022,15 @@ async fn list_assets(manager: &CommandManager, mut args: ArgumentManager) -> Res
     };
 
     let storage = wallet.get_storage().read().await;
-    let assets = storage.get_assets_with_data().await?;
+    let count = storage.get_assets_count()?;
 
-    if assets.is_empty() {
+    if count == 0 {
         manager.message("No assets found");
         return Ok(())
     }
 
-    let mut max_pages = assets.len() / ELEMENTS_PER_PAGE;
-    if assets.len() % ELEMENTS_PER_PAGE != 0 {
+    let mut max_pages = count / ELEMENTS_PER_PAGE;
+    if count % ELEMENTS_PER_PAGE != 0 {
         max_pages += 1;
     }
 
@@ -1039,7 +1039,8 @@ async fn list_assets(manager: &CommandManager, mut args: ArgumentManager) -> Res
     }
 
     manager.message(format!("Assets (page {}/{}):", page, max_pages));
-    for (asset, data) in assets.into_iter().take(ELEMENTS_PER_PAGE) {
+    for res in storage.get_assets_with_data().await?.skip(page * ELEMENTS_PER_PAGE).take(ELEMENTS_PER_PAGE) {
+        let (asset, data) = res?;
         manager.message(format!("{} ({} decimals): {}", asset, data.get_decimals(), data.get_name()));
     }
 
@@ -1057,16 +1058,15 @@ async fn list_tracked_assets(manager: &CommandManager, mut args: ArgumentManager
     };
 
     let storage = wallet.get_storage().read().await;
-    let assets = storage.get_tracked_assets()?
-        .collect::<Result<Vec<_>, _>>()?;
 
-    if assets.is_empty() {
+    let count = storage.get_tracked_assets_count()?;
+    if count == 0 {
         manager.message("No tracked assets found");
         return Ok(())
     }
 
-    let mut max_pages = assets.len() / ELEMENTS_PER_PAGE;
-    if assets.len() % ELEMENTS_PER_PAGE != 0 {
+    let mut max_pages = count / ELEMENTS_PER_PAGE;
+    if count % ELEMENTS_PER_PAGE != 0 {
         max_pages += 1;
     }
 
@@ -1075,7 +1075,8 @@ async fn list_tracked_assets(manager: &CommandManager, mut args: ArgumentManager
     }
 
     manager.message(format!("Assets (page {}/{}):", page, max_pages));
-    for asset in assets.into_iter().take(ELEMENTS_PER_PAGE) {
+    for res in storage.get_tracked_assets()?.skip(page * ELEMENTS_PER_PAGE).take(ELEMENTS_PER_PAGE) {
+        let asset = res?;
         let data = storage.get_asset(&asset).await?;
         manager.message(format!("{} ({} decimals): {}", asset, data.get_decimals(), data.get_name()));
     }
@@ -1454,30 +1455,18 @@ async fn display_address(manager: &CommandManager, _: ArgumentManager) -> Result
 // Show current balance for specified asset or list all non-zero balances
 async fn balance(manager: &CommandManager, mut arguments: ArgumentManager) -> Result<(), CommandError> {
     let context = manager.get_context().lock()?;
+    let prompt = manager.get_prompt();
     let wallet: &Arc<Wallet> = context.get()?;
     let storage = wallet.get_storage().read().await;
 
-    if arguments.has_argument("asset") {
-        let asset = arguments.get_value("asset")?.to_hash()?;
-        let balance = storage.get_plaintext_balance_for(&asset).await?;
-        let data = storage.get_asset(&asset).await?;
-        manager.message(format!("Balance for asset {} ({}): {}", data.get_name(), asset, format_coin(balance, data.get_decimals())));
+    let asset = if arguments.has_argument("asset") {
+        arguments.get_value("asset")?.to_hash()?
     } else {
-        let assets = storage.get_assets_with_data().await?;
-        if assets.is_empty() {
-            manager.message("No assets found");
-            return Ok(())
-        }
-
-        for (asset, data) in assets {
-            let balance = storage.get_plaintext_balance_for(&asset).await
-                .context(format!("Error while retrieving balance for asset {asset}"))?;
-            if balance > 0 {
-                manager.message(format!("Balance for asset {} ({}): {}", data.get_name(), asset, format_coin(balance, data.get_decimals())));
-            }
-        }
-    }
-
+        prompt.read_hash("Asset ID: ").await?
+    };
+    let balance = storage.get_plaintext_balance_for(&asset).await?;
+    let data = storage.get_asset(&asset).await?;
+    manager.message(format!("Balance for asset {} ({}): {}", data.get_name(), asset, format_coin(balance, data.get_decimals())));
     Ok(())
 }
 

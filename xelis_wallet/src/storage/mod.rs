@@ -525,6 +525,10 @@ impl EncryptedStorage {
         }))
     }
 
+    pub fn get_tracked_assets_count(&self) -> Result<usize> {
+        Ok(self.tracked_assets.len())
+    }
+
     // Set a multisig state
     pub async fn set_multisig_state(&mut self, state: MultiSig) -> Result<()> {
         trace!("set multisig state");
@@ -598,35 +602,25 @@ impl EncryptedStorage {
         Ok(assets)
     }
 
-    // Retrieve all assets with their data
-    pub async fn get_assets_with_data(&self) -> Result<IndexMap<Hash, AssetData>> {
-        trace!("get assets with decimals");
-        let mut cache = self.assets_cache.lock().await;
-        if cache.len() == self.assets.len() {
-            return Ok(cache.iter().map(|(k, v)| (k.clone(), v.clone())).collect());
-        }
+    pub fn get_assets_count(&self) -> Result<usize> {
+        Ok(self.assets.len())
+    }
 
-        let mut assets = IndexMap::new();
-        for res in self.assets.iter() {
-            let (key, value) = res?;
-            let asset = Hash::from_bytes(&self.cipher.decrypt_value(&key)?)?;
-            let data = if let Some(asset) = cache.get(&asset) {
-                asset.clone()
-            } else {
+    // Retrieve all assets with their data
+    pub async fn get_assets_with_data<'a>(&'a self) -> Result<impl Iterator<Item = Result<(Hash, AssetData)>> + 'a> {
+        trace!("get assets with decimals");
+
+        Ok(self.assets.iter()
+            .map(|res| {
+                let (key, value) = res?;
+                let asset = Hash::from_bytes(&self.cipher.decrypt_value(&key)?)?;
                 let raw_value = &self.cipher.decrypt_value(&value)?;
                 let mut reader = Reader::new(raw_value);
                 let data = AssetData::read(&mut reader)?;
-                if cache.cap().get() != cache.len() {
-                    cache.put(asset.clone(), data.clone());
-                }
 
-                data
-            };
-
-            assets.insert(asset, data);
-        }
-
-        Ok(assets)
+                Ok((asset, data))
+            })
+        )
     }
 
     // Check if the asset is already registered

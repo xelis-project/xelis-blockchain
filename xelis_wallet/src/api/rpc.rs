@@ -272,15 +272,19 @@ async fn get_asset_precision(context: &Context, body: Value) -> Result<Value, In
     Ok(json!(data.get_decimals()))
 }
 
-// Retrieve all assets tracked by the wallet
+const MAX_ASSETS: usize = 100;
+
+// Retrieve all the assets that the wallet is aware of
 async fn get_assets(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    if body != Value::Null {
-        return Err(InternalRpcError::UnexpectedParams)
-    }
+    let params: GetAssetsParams = parse_params(body)?;
 
     let wallet: &Arc<Wallet> = context.get()?;
     let storage = wallet.get_storage().read().await;
-    let assets = storage.get_assets_with_data().await?;
+    let assets = storage.get_assets_with_data().await?
+        .skip(params.skip.unwrap_or(0))
+        .take(params.maximum.unwrap_or(MAX_ASSETS))
+        .collect::<Result<Vec<_>, _>>()?;
+
     Ok(json!(assets))
 }
 
