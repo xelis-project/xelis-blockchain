@@ -827,6 +827,10 @@ impl Wallet {
                 continue;
             }
 
+            if !storage.is_asset_tracked(asset)? {
+                return Err(WalletError::AssetNotTracked(asset.clone()))
+            }
+
             if !storage.has_balance_for(&asset).await? {
                 return Err(WalletError::BalanceNotFound(asset.clone()));
             }

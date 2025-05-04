@@ -15,6 +15,8 @@ use anyhow::Error;
 #[repr(usize)]
 #[derive(Error, Debug)]
 pub enum WalletError {
+    #[error("Asset {0} is not tracked by wallet")]
+    AssetNotTracked(Hash),
     #[error("Invalid datetime")]
     InvalidDatetime,
     #[error("Invalid builder state, tx hash not built")]
