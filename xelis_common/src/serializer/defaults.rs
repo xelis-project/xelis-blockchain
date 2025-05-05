@@ -585,3 +585,17 @@ impl<T: Serializer> Serializer for Arc<T> {
         self.as_ref().size()
     }
 }
+
+impl<'a> Serializer for &'a [u8] {
+    fn write(&self, writer: &mut Writer) {
+        writer.write_bytes(self);
+    }
+
+    fn read(_: &mut Reader) -> Result<Self, ReaderError> {
+        Err(ReaderError::ErrorTryInto)
+    }
+
+    fn size(&self) -> usize {
+        self.len()
+    }
+}
