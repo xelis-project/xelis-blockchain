@@ -7,5 +7,5 @@ pub trait TipsProvider {
     async fn get_tips(&self) -> Result<Tips, BlockchainError>;
 
     // Store chain tips
-    fn store_tips(&mut self, tips: &Tips) -> Result<(), BlockchainError>;
+    async fn store_tips(&mut self, tips: &Tips) -> Result<(), BlockchainError>;
 }

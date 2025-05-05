@@ -1389,7 +1389,7 @@ impl<S: Storage> P2pServer<S> {
                     for (tx, tx_hash) in transactions.into_iter().zip(header.get_txs_hashes()) {
                         match tx {
                             Some(tx) => {
-                                txs.push(Immutable::Arc(tx));
+                                txs.push(tx);
                             },
                             None => {
                                 if let Some(response) = futures.next().await {

@@ -56,6 +56,7 @@ impl RocksStorage {
     }
 
     pub(super) fn insert_into_disk<K: Serializer, V: Serializer>(&self, column: Column, key: &K, value: &V) -> Result<(), BlockchainError> {
+        trace!("insert into disk {:?}", column);
         let cf = cf_handle!(self, column);
 
         self.db.put_cf(&cf, key.to_bytes(), value.to_bytes())
@@ -64,38 +65,66 @@ impl RocksStorage {
         Ok(())
     }
 
-    pub fn contains_data<K: Serializer>(&self, column: Column, key: &K) -> Result<bool, BlockchainError> {
-        let cf = cf_handle!(self, column);
+    pub(super) fn remove_from_disk<K: Serializer>(&self, column: Column, key: &K) -> Result<(), BlockchainError> {
+        trace!("remove from disk {:?}", column);
 
+        let cf = cf_handle!(self, column);
+        self.db.delete_cf(&cf, key.to_bytes())
+            .with_context(|| format!("Error while removing from disk column {:?}", column))?;
+
+        Ok(())
+    }
+
+    pub fn contains_data<K: Serializer>(&self, column: Column, key: &K) -> Result<bool, BlockchainError> {
+        trace!("contains data {:?}", column);
+
+        let cf = cf_handle!(self, column);
         let value = self.db.get_pinned_cf(&cf, key.to_bytes())
             .with_context(|| format!("Error while checking if key exists in column {:?}", column))?;
 
         Ok(value.is_some())
     }
 
-    pub fn load_optional_from_disk<T: Serializer>(&self, column: Column, key: &[u8]) -> Result<Option<T>, BlockchainError> {
-        trace!("load optional from disk internal");
+    pub fn load_optional_from_disk<K: AsRef<[u8]>, V: Serializer>(&self, column: Column, key: &K) -> Result<Option<V>, BlockchainError> {
+        trace!("load optional {:?} from disk internal", column);
 
         let cf = cf_handle!(self, column);
-        match self.db.get_pinned_cf(&cf, key)
-            .with_context(|| format!("Internal error while reading Column {:?}", column))? {
-            Some(bytes) => Ok(Some(T::from_bytes(&bytes)?)),
+        match self.db.get_pinned_cf(&cf, key.as_ref())
+            .with_context(|| format!("Internal error while reading column {:?}", column))? {
+            Some(bytes) => Ok(Some(V::from_bytes(&bytes)?)),
             None => Ok(None)
         }
     }
 
-    pub fn load_from_disk<T: Serializer>(&self, column: Column, key: &[u8], context: DiskContext) -> Result<T, BlockchainError> {
+    pub fn load_from_disk<K: AsRef<[u8]>, V: Serializer>(&self, column: Column, key: &K) -> Result<V, BlockchainError> {
         trace!("load from disk internal");
-        self.load_optional_from_disk(column, key)?
-            .ok_or(BlockchainError::NotFoundOnDisk(context))
+
+        let data = self.load_optional_from_disk(column, key)?
+            .with_context(|| format!("Error while loading from {:?} with key {:?}", column, key.as_ref()))?;
+
+        Ok(data)
+    }
+
+    pub fn get_size_from_disk<K: AsRef<[u8]>>(&self, column: Column, key: &K) -> Result<usize, BlockchainError> {
+        trace!("load from disk internal");
+
+
+        let cf = cf_handle!(self, column);
+        match self.db.get_pinned_cf(&cf, key.as_ref())
+            .with_context(|| format!("Internal error while reading {:?}", column))? {
+            Some(bytes) => Ok(bytes.len()),
+            None => Err(BlockchainError::NotFoundOnDisk(DiskContext::DataLen))
+        }
     }
 
     pub fn scan_prefix<'a, K: Serializer, V: Serializer>(&'a self, column: Column, prefix: &'a [u8]) -> Result<impl Iterator<Item = Result<(K, V), BlockchainError>> + 'a, BlockchainError> {
+        trace!("scan prefix {:?}", column);
+
         let cf = cf_handle!(self, column);
         let iterator = self.db.prefix_iterator_cf(&cf, prefix);
 
-        Ok(iterator.map(|res| {
-            let (key, value) = res.context("Internal read error in scan prefix")?;
+        Ok(iterator.map(move |res| {
+            let (key, value) = res.with_context(|| format!("Internal read error in scan prefix for {:?}", column))?;
             let key = K::from_bytes(&key)?;
             let value = V::from_bytes(&value)?;
 

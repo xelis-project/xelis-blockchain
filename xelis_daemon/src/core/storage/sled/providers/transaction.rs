@@ -1,9 +1,10 @@
-use std::{collections::HashSet, sync::Arc};
+use std::collections::HashSet;
 use async_trait::async_trait;
 use log::trace;
 use xelis_common::{
-    transaction::Transaction,
     crypto::Hash,
+    immutable::Immutable,
+    transaction::Transaction
 };
 use crate::core::{
     error::{
@@ -32,7 +33,7 @@ impl SledStorage {
 
 #[async_trait]
 impl TransactionProvider for SledStorage {
-    async fn get_transaction(&self, hash: &Hash) -> Result<Arc<Transaction>, BlockchainError> {
+    async fn get_transaction(&self, hash: &Hash) -> Result<Immutable<Transaction>, BlockchainError> {
         trace!("get transaction for hash {}", hash);
         self.get_cacheable_arc_data(&self.transactions, &self.transactions_cache, hash, DiskContext::GetTransaction).await
     }
@@ -57,7 +58,7 @@ impl TransactionProvider for SledStorage {
         Ok(count)
     }
 
-    async fn delete_transaction(&mut self, hash: &Hash) -> Result<Arc<Transaction>, BlockchainError> {
+    async fn delete_transaction(&mut self, hash: &Hash) -> Result<Immutable<Transaction>, BlockchainError> {
         Self::delete_cacheable_data::<Hash, HashSet<Hash>>(self.snapshot.as_mut(), &self.tx_blocks, None, hash).await?;
         Self::delete_arc_cacheable_data(self.snapshot.as_mut(), &self.transactions, self.cache.transactions_cache.as_mut(), hash).await
     }

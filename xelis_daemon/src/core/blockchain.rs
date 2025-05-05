@@ -1529,7 +1529,7 @@ impl<S: Storage> Blockchain<S> {
     }
 
     // retrieve the TX based on its hash by searching in mempool then on disk
-    pub async fn get_tx(&self, hash: &Hash) -> Result<Arc<Transaction>, BlockchainError> {
+    pub async fn get_tx(&self, hash: &Hash) -> Result<Immutable<Transaction>, BlockchainError> {
         trace!("get tx {} from blockchain", hash);
         // check in mempool first
         // if its present, returns it
@@ -1538,7 +1538,7 @@ impl<S: Storage> Blockchain<S> {
             let mempool = self.mempool.read().await;
             trace!("Mempool locked for get tx {}", hash);
             if let Ok(tx) = mempool.get_tx(hash) {
-                return Ok(tx)
+                return Ok(Immutable::Arc(tx))
             } 
         }
 
@@ -1718,12 +1718,12 @@ impl<S: Storage> Blockchain<S> {
             trace!("Searching TX {} for building block", hash);
             // at this point, we don't want to lose/remove any tx, we clone it only
             let tx = if mempool.contains_tx(hash) {
-                mempool.get_tx(hash)?
+                Immutable::Arc(mempool.get_tx(hash)?)
             } else {
                 storage.get_transaction(hash).await?
             };
 
-            transactions.push(Immutable::Arc(tx));
+            transactions.push(tx);
         }
         let block = Block::new(header, transactions);
         Ok(block)
@@ -1750,7 +1750,7 @@ impl<S: Storage> Blockchain<S> {
         }
 
         // Either check or use the precomputed one
-        let mut block_hash = if let Some(hash) = block_hash {
+        let block_hash = if let Some(hash) = block_hash {
             hash
         } else {
             Immutable::Owned(block.hash())
@@ -2073,7 +2073,7 @@ impl<S: Storage> Blockchain<S> {
 
         let (block, txs) = block.split();
         let block = block.to_arc();
-        let block_hash = block_hash.into_arc();
+        let block_hash = block_hash.to_arc();
 
         // Broadcast to p2p nodes the block asap as its valid
         if broadcast.p2p() {
@@ -2541,7 +2541,7 @@ impl<S: Storage> Blockchain<S> {
         }
 
         // Store the new tips available
-        storage.store_tips(&tips)?;
+        storage.store_tips(&tips).await?;
 
         if current_height == 0 || block.get_height() > current_height {
             debug!("storing new top height {}", block.get_height());
@@ -2633,7 +2633,7 @@ impl<S: Storage> Blockchain<S> {
             // But to prevent loading the TX from storage and to fire wrong event
             if !storage.is_tx_executed_in_a_block(&tx_hash)? {
                 let tx = match storage.get_transaction(&tx_hash).await {
-                    Ok(tx) => tx,
+                    Ok(tx) => tx.to_arc(),
                     Err(e) => {
                         warn!("Error while loading orphaned tx: {}", e);
                         continue;
@@ -2856,14 +2856,14 @@ impl<S: Storage> Blockchain<S> {
     }
 
     // Rewind the chain by removing N blocks from the top
-    pub async fn rewind_chain(&self, count: u64, until_stable_height: bool) -> Result<(TopoHeight, Vec<(Hash, Arc<Transaction>)>), BlockchainError> {
+    pub async fn rewind_chain(&self, count: u64, until_stable_height: bool) -> Result<(TopoHeight, Vec<(Hash, Immutable<Transaction>)>), BlockchainError> {
         trace!("rewind chain of {} blocks (stable height: {})", count, until_stable_height);
         let mut storage = self.storage.write().await;
         self.rewind_chain_for_storage(&mut storage, count, until_stable_height).await
     }
 
     // Rewind the chain by removing N blocks from the top
-    pub async fn rewind_chain_for_storage(&self, storage: &mut S, count: u64, stop_at_stable_height: bool) -> Result<(TopoHeight, Vec<(Hash, Arc<Transaction>)>), BlockchainError> {
+    pub async fn rewind_chain_for_storage(&self, storage: &mut S, count: u64, stop_at_stable_height: bool) -> Result<(TopoHeight, Vec<(Hash, Immutable<Transaction>)>), BlockchainError> {
         trace!("rewind chain with count = {}", count);
         let current_height = self.get_height();
         let current_topoheight = self.get_topo_height();
@@ -2890,7 +2890,11 @@ impl<S: Storage> Blockchain<S> {
         // Clean mempool from old txs if the DAG has been updated
         {
             let mut mempool = self.mempool.write().await;
-            txs.extend(mempool.drain());
+            txs.extend(
+                mempool.drain()
+                    .into_iter()
+                    .map(|(hash, tx)| (hash, Immutable::Arc(tx)))
+                );
         }
 
         // Try to add all txs back to mempool if possible
@@ -2898,9 +2902,9 @@ impl<S: Storage> Blockchain<S> {
         // We try to add back all txs already in mempool just in case
         let mut orphaned_txs = Vec::new();
         {
-            for (hash, tx) in txs {
+            for (hash, mut tx) in txs {
                 debug!("Trying to add TX {} to mempool again", hash);
-                if let Err(e) = self.add_tx_to_mempool_with_storage_and_hash(storage, tx.clone(), Immutable::Owned(hash.clone()), false).await {
+                if let Err(e) = self.add_tx_to_mempool_with_storage_and_hash(storage, tx.make_arc(), Immutable::Owned(hash.clone()), false).await {
                     debug!("TX {} rewinded is not compatible anymore: {}", hash, e);
                     orphaned_txs.push((hash, tx));
                 }

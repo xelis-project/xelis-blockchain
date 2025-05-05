@@ -255,10 +255,10 @@ impl<S: Storage> DifficultyProvider for ChainValidatorProvider<'_, S> {
         self.storage.get_past_blocks_for_block_hash(hash).await
     }
 
-    async fn get_block_header_by_hash(&self, hash: &Hash) -> Result<Arc<BlockHeader>, BlockchainError> {
+    async fn get_block_header_by_hash(&self, hash: &Hash) -> Result<Immutable<BlockHeader>, BlockchainError> {
         trace!("get block header by hash {}", hash);
         if let Some(data) = self.parent.blocks.get(hash) {
-            return Ok(data.header.clone())
+            return Ok(Immutable::Arc(data.header.clone()))
         }
 
         trace!("fallback on storage for get_block_header_by_hash");

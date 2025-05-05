@@ -63,7 +63,7 @@ impl DifficultyProvider for SledStorage {
         Ok(tips)
     }
 
-    async fn get_block_header_by_hash(&self, hash: &Hash) -> Result<Arc<BlockHeader>, BlockchainError> {
+    async fn get_block_header_by_hash(&self, hash: &Hash) -> Result<Immutable<BlockHeader>, BlockchainError> {
         trace!("get block by hash: {}", hash);
         self.get_cacheable_arc_data(&self.blocks, &self.blocks_cache, hash, DiskContext::GetBlockHeaderByHash).await
     }

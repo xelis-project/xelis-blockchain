@@ -460,7 +460,7 @@ impl<S: Storage> P2pServer<S> {
                             for tx_hash in header.get_txs_hashes() {
                                 trace!("Retrieving TX {} for block {}", tx_hash, hash);
                                 let tx = if self.blockchain.has_tx(tx_hash).await? {
-                                    Immutable::Arc(self.blockchain.get_tx(tx_hash).await?)
+                                    self.blockchain.get_tx(tx_hash).await?
                                 } else {
                                     let OwnedObjectResponse::Transaction(tx, _) = peer.request_blocking_object(ObjectRequest::Transaction(tx_hash.clone())).await? else {
                                         error!("Received an invalid requested object while fetching block transaction {}", tx_hash);
@@ -518,7 +518,7 @@ impl<S: Storage> P2pServer<S> {
                             top_block_hash.take()
                                 .ok_or(BlockchainError::Unknown)?
                         ])
-                    )?;
+                    ).await?;
 
                     None
                 },

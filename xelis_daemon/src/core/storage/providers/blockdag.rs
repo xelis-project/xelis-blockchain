@@ -1,9 +1,8 @@
-use std::sync::Arc;
-
 use async_trait::async_trait;
 use xelis_common::{
-    block::{TopoHeight, BlockHeader},
-    crypto::Hash
+    block::{BlockHeader, TopoHeight},
+    crypto::Hash,
+    immutable::Immutable
 };
 use crate::core::error::BlockchainError;
 use super::{BlockProvider, DagOrderProvider};
@@ -11,7 +10,7 @@ use super::{BlockProvider, DagOrderProvider};
 #[async_trait]
 pub trait BlockDagProvider: DagOrderProvider + BlockProvider {
     // Get a block header & hash from its topoheight
-    async fn get_block_header_at_topoheight(&self, topoheight: TopoHeight) -> Result<(Hash, Arc<BlockHeader>), BlockchainError>;
+    async fn get_block_header_at_topoheight(&self, topoheight: TopoHeight) -> Result<(Hash, Immutable<BlockHeader>), BlockchainError>;
 
     // Get the block reward from using topoheight
     fn get_block_reward_at_topo_height(&self, topoheight: TopoHeight) -> Result<u64, BlockchainError>;

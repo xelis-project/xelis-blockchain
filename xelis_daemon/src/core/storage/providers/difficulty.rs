@@ -1,4 +1,3 @@
-use std::sync::Arc;
 use async_trait::async_trait;
 use indexmap::IndexSet;
 use xelis_common::{
@@ -33,7 +32,7 @@ pub trait DifficultyProvider {
     async fn get_past_blocks_for_block_hash(&self, hash: &Hash) -> Result<Immutable<IndexSet<Hash>>, BlockchainError>;
 
     // Get a block header using its hash
-    async fn get_block_header_by_hash(&self, hash: &Hash) -> Result<Arc<BlockHeader>, BlockchainError>;
+    async fn get_block_header_by_hash(&self, hash: &Hash) -> Result<Immutable<BlockHeader>, BlockchainError>;
 
     // Retrieve the estimated covariance (P) for a block hash
     async fn get_estimated_covariance_for_block_hash(&self, hash: &Hash) -> Result<VarUint, BlockchainError>;

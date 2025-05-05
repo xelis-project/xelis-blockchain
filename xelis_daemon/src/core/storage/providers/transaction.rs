@@ -1,15 +1,13 @@
-use std::sync::Arc;
 use async_trait::async_trait;
 use xelis_common::{
-    transaction::Transaction,
-    crypto::Hash,
+    crypto::Hash, immutable::Immutable, transaction::Transaction
 };
 use crate::core::error::BlockchainError;
 
 #[async_trait]
 pub trait TransactionProvider {
     // Get the transaction using its hash
-    async fn get_transaction(&self, hash: &Hash) -> Result<Arc<Transaction>, BlockchainError>;
+    async fn get_transaction(&self, hash: &Hash) -> Result<Immutable<Transaction>, BlockchainError>;
 
     // Get the transaction size using its hash
     async fn get_transaction_size(&self, hash: &Hash) -> Result<usize, BlockchainError>;
@@ -21,5 +19,5 @@ pub trait TransactionProvider {
     async fn has_transaction(&self, hash: &Hash) -> Result<bool, BlockchainError>;
 
     // Delete a transaction from the storage using its hash
-    async fn delete_transaction(&mut self, hash: &Hash) -> Result<Arc<Transaction>, BlockchainError>;
+    async fn delete_transaction(&mut self, hash: &Hash) -> Result<Immutable<Transaction>, BlockchainError>;
 }

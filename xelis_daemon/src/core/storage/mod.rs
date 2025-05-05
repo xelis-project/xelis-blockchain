@@ -9,7 +9,7 @@ pub use self::{
     rocksdb::*
 };
 
-use std::{collections::HashSet, sync::Arc};
+use std::collections::HashSet;
 use async_trait::async_trait;
 use indexmap::IndexSet;
 use xelis_common::{
@@ -17,10 +17,10 @@ use xelis_common::{
         Block,
         BlockHeader,
         TopoHeight,
-    },
-    contract::ContractProvider as ContractInfoProvider,
+    }, contract::ContractProvider as ContractInfoProvider,
     crypto::Hash,
-    transaction::Transaction,
+    immutable::Immutable,
+    transaction::Transaction
 };
 use crate::core::error::BlockchainError;
 
@@ -37,10 +37,10 @@ pub trait Storage:
     + CacheProvider
     + Sync + Send + 'static {
     // delete block at topoheight, and all pointers (hash_at_topo, topo_by_hash, reward, supply, diff, cumulative diff...)
-    async fn delete_block_at_topoheight(&mut self, topoheight: TopoHeight) -> Result<(Hash, Arc<BlockHeader>, Vec<(Hash, Arc<Transaction>)>), BlockchainError>;
+    async fn delete_block_at_topoheight(&mut self, topoheight: TopoHeight) -> Result<(Hash, Immutable<BlockHeader>, Vec<(Hash, Immutable<Transaction>)>), BlockchainError>;
 
     // Count is the number of blocks (topoheight) to rewind
-    async fn pop_blocks(&mut self, mut height: u64, mut topoheight: TopoHeight, count: u64, stable_height: u64) -> Result<(u64, TopoHeight, Vec<(Hash, Arc<Transaction>)>), BlockchainError>;
+    async fn pop_blocks(&mut self, mut height: u64, mut topoheight: TopoHeight, count: u64, stable_height: u64) -> Result<(u64, TopoHeight, Vec<(Hash, Immutable<Transaction>)>), BlockchainError>;
 
     // Get the top block hash of the chain
     async fn get_top_block_hash(&self) -> Result<Hash, BlockchainError>;
@@ -49,7 +49,7 @@ pub trait Storage:
     async fn get_top_block(&self) -> Result<Block, BlockchainError>;
 
     // Get the top block header of the chain, based on top block hash
-    async fn get_top_block_header(&self) -> Result<(Arc<BlockHeader>, Hash), BlockchainError>;
+    async fn get_top_block_header(&self) -> Result<(Immutable<BlockHeader>, Hash), BlockchainError>;
 
     // Get the top topoheight of the chain
     fn get_top_topoheight(&self) -> Result<u64, BlockchainError>;

@@ -1,10 +1,9 @@
-use std::sync::Arc;
-
 use async_trait::async_trait;
 use log::trace;
 use xelis_common::{
-    block::{TopoHeight, BlockHeader},
-    crypto::Hash
+    block::{BlockHeader, TopoHeight},
+    crypto::Hash,
+    immutable::Immutable
 };
 
 use crate::core::{
@@ -19,7 +18,7 @@ use crate::core::{
 
 #[async_trait]
 impl BlockDagProvider for SledStorage {
-    async fn get_block_header_at_topoheight(&self, topoheight: TopoHeight) -> Result<(Hash, Arc<BlockHeader>), BlockchainError> {
+    async fn get_block_header_at_topoheight(&self, topoheight: TopoHeight) -> Result<(Hash, Immutable<BlockHeader>), BlockchainError> {
         trace!("get block at topoheight: {}", topoheight);
         let hash = self.get_hash_at_topo_height(topoheight).await?;
         let block = self.get_block_header_by_hash(&hash).await?;

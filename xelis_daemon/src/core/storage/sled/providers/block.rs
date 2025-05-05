@@ -103,14 +103,14 @@ impl BlockProvider for SledStorage {
 
     async fn get_block_by_hash(&self, hash: &Hash) -> Result<Block, BlockchainError> {
         trace!("get block by hash {}", hash);
-        let block = self.get_block_header_by_hash(hash).await?;
+        let header = self.get_block_header_by_hash(hash).await?;
         let mut transactions = Vec::new();
-        for tx in block.get_transactions() {
+        for tx in header.get_transactions() {
             let transaction = self.get_transaction(tx).await?;
-            transactions.push(Immutable::Arc(transaction));
+            transactions.push(transaction);
         }
 
-        let block = Block::new(Immutable::Arc(block), transactions);
+        let block = Block::new(header, transactions);
         Ok(block)
     }
 
@@ -134,10 +134,10 @@ impl BlockProvider for SledStorage {
         let mut transactions = Vec::with_capacity(header.get_txs_count());
         for tx in header.get_transactions() {
             let transaction = self.get_transaction(&tx).await?;
-            transactions.push(Immutable::Arc(transaction));
+            transactions.push(transaction);
         }
 
-        let block = Block::new(Immutable::Arc(header), transactions);
+        let block = Block::new(header, transactions);
 
         Ok(block)
     }
