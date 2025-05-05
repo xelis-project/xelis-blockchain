@@ -389,6 +389,12 @@ impl InnerTree {
         entries.len()
     }
 
+    /// Returns the last entry (key/value) (by order) from this tree.
+    pub fn last(&self) -> Result<Option<(IVec, IVec)>> {
+        let entries = self.entries.lock().expect("Poisoned");
+        Ok(entries.last_key_value().map(|(k, v)| (k.clone(), v.clone())))
+    }
+
     /// Clears the `Tree`, removing all values.
     pub fn clear(&self) -> Result<()> {
         let mut entries = self.entries.lock().map_err(|_| DbError::Poisoned)?;
@@ -654,5 +660,15 @@ mod tests {
         let mut range = tree.range(10u64.to_be_bytes()..=10u64.to_be_bytes()).keys();
         assert_eq!(range.next().unwrap().unwrap(), IVec::from(&10u64.to_be_bytes()));
         assert!(range.next().is_none());
+    }
+
+    #[test]
+    fn test_db_last() {
+        let db = open("test").unwrap();
+        let tree = db.open_tree("test").unwrap();
+        assert!(tree.last().unwrap().is_none());
+
+        tree.insert(50u64.to_be_bytes(), "c").unwrap();
+        assert_eq!(tree.last().unwrap().unwrap(), (IVec::from(&50u64.to_be_bytes()), IVec::from("c".as_bytes())));
     }
 }
