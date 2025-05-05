@@ -10,3 +10,4 @@ mod cache;
 mod blockdag;
 mod blocks_at_height;
 mod block;
+mod commit_point;

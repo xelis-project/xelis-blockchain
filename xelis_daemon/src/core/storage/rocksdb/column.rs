@@ -5,7 +5,7 @@ const PREFIX_TOPOHEIGHT_LEN: usize = 8;
 const PREFIX_ACCOUNT_LEN: usize = RISTRETTO_COMPRESSED_SIZE;
 const PREFIX_ASSET_LEN: usize = HASH_SIZE;
 
-#[derive(Debug, Clone, Copy, EnumIter, Display)]
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Eq, Ord, Hash, EnumIter, Display)]
 #[strum(serialize_all = "snake_case")]
 pub enum Column {
     // All transactions stored

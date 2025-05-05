@@ -1,6 +1,7 @@
 mod column;
 mod types;
 mod providers;
+mod snapshot;
 
 use anyhow::Context;
 use log::trace;
@@ -12,6 +13,8 @@ use crate::core::error::{BlockchainError, DiskContext};
 pub use column::*;
 pub use types::*;
 
+pub use snapshot::RocksSnapshot;
+
 macro_rules! cf_handle {
     ($self: expr, $column: expr) => {
         $self.db.cf_handle(&$column.to_string())
@@ -22,6 +25,7 @@ macro_rules! cf_handle {
 pub struct RocksStorage {
     db: DBWithThreadMode<MultiThreaded>,
     network: Network,
+    pub(super) snapshot: Option<RocksSnapshot> 
 }
 
 impl RocksStorage {
@@ -47,7 +51,8 @@ impl RocksStorage {
 
         Self {
             db,
-            network
+            network,
+            snapshot: None
         }
     }
 
@@ -55,22 +60,32 @@ impl RocksStorage {
         trace!("load cache from disk");
     }
 
-    pub(super) fn insert_into_disk<K: Serializer, V: Serializer>(&self, column: Column, key: &K, value: &V) -> Result<(), BlockchainError> {
+    pub(super) fn insert_into_disk<K: Serializer, V: Serializer>(&mut self, column: Column, key: &K, value: &V) -> Result<(), BlockchainError> {
         trace!("insert into disk {:?}", column);
-        let cf = cf_handle!(self, column);
 
-        self.db.put_cf(&cf, key.to_bytes(), value.to_bytes())
-            .with_context(|| format!("Error while inserting into disk column {:?}", column))?;
+        match self.snapshot.as_mut() {
+            Some(snapshot) => snapshot.put(column, key.to_bytes(), value.to_bytes()),
+            None => {
+                let cf = cf_handle!(self, column);
+                self.db.put_cf(&cf, key.to_bytes(), value.to_bytes())
+                    .with_context(|| format!("Error while inserting into disk column {:?}", column))?
+            }
+        };
 
         Ok(())
     }
 
-    pub(super) fn remove_from_disk<K: Serializer>(&self, column: Column, key: &K) -> Result<(), BlockchainError> {
+    pub(super) fn remove_from_disk<K: Serializer>(&mut self, column: Column, key: &K) -> Result<(), BlockchainError> {
         trace!("remove from disk {:?}", column);
 
-        let cf = cf_handle!(self, column);
-        self.db.delete_cf(&cf, key.to_bytes())
-            .with_context(|| format!("Error while removing from disk column {:?}", column))?;
+        match self.snapshot.as_mut() {
+            Some(snapshot) => snapshot.delete(column, key.to_bytes()),
+            None => {
+                let cf = cf_handle!(self, column);
+                self.db.delete_cf(&cf, key.to_bytes())
+                    .with_context(|| format!("Error while removing from disk column {:?}", column))?;
+            }
+        };
 
         Ok(())
     }
@@ -78,8 +93,15 @@ impl RocksStorage {
     pub fn contains_data<K: Serializer>(&self, column: Column, key: &K) -> Result<bool, BlockchainError> {
         trace!("contains data {:?}", column);
 
+        let key_bytes = key.to_bytes();
+        if let Some(snapshot) = self.snapshot.as_ref() {
+            if let Some(v) = snapshot.contains(column, &key_bytes) {
+                return Ok(v)
+            }
+        }
+
         let cf = cf_handle!(self, column);
-        let value = self.db.get_pinned_cf(&cf, key.to_bytes())
+        let value = self.db.get_pinned_cf(&cf, key_bytes)
             .with_context(|| format!("Error while checking if key exists in column {:?}", column))?;
 
         Ok(value.is_some())
