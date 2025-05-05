@@ -47,7 +47,7 @@ impl DifficultyProvider for RocksStorage {
     // Get past blocks (block tips) for a specific block hash
     async fn get_past_blocks_for_block_hash(&self, hash: &Hash) -> Result<Immutable<IndexSet<Hash>>, BlockchainError> {
         let header = self.get_block_header_by_hash(hash).await?;
-        Ok(Immutable::Owned(header.get_tips().clone()))
+        Ok(header.get_immutable_tips().clone())
     }
 
     // Get a block header using its hash

@@ -1,4 +1,3 @@
-use std::sync::Arc;
 use async_trait::async_trait;
 use indexmap::IndexSet;
 use log::trace;
@@ -45,22 +44,8 @@ impl DifficultyProvider for SledStorage {
 
     async fn get_past_blocks_for_block_hash(&self, hash: &Hash) -> Result<Immutable<IndexSet<Hash>>, BlockchainError> {
         trace!("get past blocks of {}", hash);
-        let tips = if let Some(cache) = &self.past_blocks_cache {
-            let mut cache = cache.lock().await;
-            if let Some(tips) = cache.get(hash) {
-                return Ok(Immutable::Arc(tips.clone()))
-            }
-    
-            let block = self.get_block_header_by_hash(hash).await?;
-            let tips = Arc::new(block.get_tips().clone());
-            cache.put(hash.clone(), tips.clone());
-            Immutable::Arc(tips)
-        } else {
-            let block = self.get_block_header_by_hash(hash).await?;
-            Immutable::Owned(block.get_tips().clone())
-        };
-
-        Ok(tips)
+        let block = self.get_block_header_by_hash(hash).await?;
+        Ok(block.get_immutable_tips().clone())
     }
 
     async fn get_block_header_by_hash(&self, hash: &Hash) -> Result<Immutable<BlockHeader>, BlockchainError> {

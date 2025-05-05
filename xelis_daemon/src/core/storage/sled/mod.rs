@@ -674,11 +674,6 @@ impl Storage for SledStorage {
             self.remove_block_hash_at_height(&hash, block.get_height()).await?;
         }
 
-        // Delete cache of past blocks
-        if let Some(cache) = self.past_blocks_cache.as_mut() {
-            cache.get_mut().pop(&hash);
-        }
-
         Ok((hash, block, txs))
     }
 
@@ -751,7 +746,7 @@ impl Storage for SledStorage {
             trace!("Removing {} from {} tips", hash, tips.len());
             tips.remove(&hash);
  
-            for hash in block.get_tips() {
+            for hash in block.get_tips().iter() {
                 trace!("Adding {} to {} tips", hash, tips.len());
                 tips.insert(hash.clone());
             }
@@ -837,7 +832,7 @@ impl Storage for SledStorage {
     async fn get_top_block(&self) -> Result<Block, BlockchainError> {
         trace!("get top block");
         let (header, _) = self.get_top_block_header().await?;
-        let mut transactions = Vec::new();
+        let mut transactions = Vec::with_capacity(header.get_txs_count());
         for tx in header.get_transactions() {
             let transaction = self.get_transaction(tx).await?;
             transactions.push(transaction);
