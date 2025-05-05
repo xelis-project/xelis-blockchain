@@ -103,7 +103,7 @@ impl Deref for Block {
 impl Display for Block {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
         let mut tips = Vec::with_capacity(self.tips.len());
-        for hash in &self.tips {
+        for hash in self.tips.iter() {
             tips.push(format!("{}", hash));
         }
         write!(f, "Block[height: {}, tips: [{}], timestamp: {}, nonce: {}, extra_nonce: {}, txs: {}]", self.height, tips.join(", "), self.timestamp, self.nonce, hex::encode(self.extra_nonce), self.txs_hashes.len())
