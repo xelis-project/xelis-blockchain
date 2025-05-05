@@ -1675,18 +1675,18 @@ impl<S: Storage> P2pServer<S> {
         trace!("locked peer_list, locking peers received (common peers)");
         let peer_peers = {
             let lock = peer.get_peers().lock().await;
-            lock.clone()
+            lock.iter()
+                .map(|(addr, _)| addr.clone())
+                .collect::<Vec<_>>()
         };
         trace!("locked peers received (common peers)");
 
         let peer_id = peer.get_id();
+        let peer_list = &self.peer_list;
         stream::iter(peer_peers)
-            .filter_map(move |(addr, _)| {
-                let peer_list = Arc::clone(&self.peer_list);
-                async move {
-                    peer_list.get_peer_by_addr(&addr).await
-                        .filter(|peer| peer.get_id() != peer_id)
-                }
+            .filter_map(move |addr| async move {
+                peer_list.get_peer_by_addr(&addr).await
+                    .filter(|peer| peer.get_id() != peer_id)
             })
     }
 
@@ -2414,80 +2414,78 @@ impl<S: Storage> P2pServer<S> {
         }
 
         trace!("start broadcasting block {} to all peers", hash);
+        // Move the reference only which is copy
+        let packet_block_bytes = &packet_block_bytes;
+        let packet_ping_bytes = &packet_ping_bytes;
+
         // Prepare all the futures to execute them in parallel
         stream::iter(self.peer_list.get_cloned_peers().await)
-            .for_each_concurrent(self.stream_concurrency, |peer| {
-                // We can't move them, but we can copy them as Bytes is cheap
-                let packet_block_bytes = &packet_block_bytes;
-                let packet_ping_bytes = &packet_ping_bytes;
+            .for_each_concurrent(self.stream_concurrency, |peer| async move {
+                // if the peer can directly accept this new block, send it
+                let peer_height = peer.get_height();
 
-                async move {
-                    // if the peer can directly accept this new block, send it
-                    let peer_height = peer.get_height();
-
-                    // if the peer is not too far from us, send the block
-                    // check that peer height is greater or equal to block height but still under or equal to STABLE_LIMIT
-                    // or, check that peer height as difference of maximum 1 block
-                    // (block height is always + 1 above the highest tip height, so we can just check that peer height is not above block height + 1, it's enough in 90% of time)
-                    // chain can accept old blocks (up to STABLE_LIMIT) but new blocks only N+1
-                    if (peer_height >= block.get_height() && peer_height - block.get_height() <= STABLE_LIMIT) || (peer_height <= block.get_height() && block.get_height() - peer_height <= 1) {
-                        // Don't lock the blocks propagation while sending the packet
-                        let send_block = {
-                            trace!("locking blocks propagation for peer {}", peer);
-                            let mut blocks_propagation = peer.get_blocks_propagation().lock().await;
-                            trace!("end locking blocks propagation for peer {}", peer);
-                            let send = !blocks_propagation.contains(hash);
-                            // check that this block was never shared with this peer
-                            if send {
-                                // we broadcasted to him, add it to the cache
-                                // he should not send it back to us if it's a block found by us
-                                // Because only us is aware of this block
-                                let direction = if lock {
-                                    TimedDirection::Both {
-                                        sent_at: get_current_time_in_millis(),
-                                        // Never received, but locked
-                                        received_at: 0
-                                    }
-                                } else {
-                                    TimedDirection::Out {
-                                        sent_at: get_current_time_in_millis()
-                                    }
-                                };
-                                blocks_propagation.put(hash.clone(), (direction, false));
-                            }
-
-                            send
-                        };
-
-                        if send_block {
-                            debug!("Broadcast {} to {}", hash, peer);
-                            if let Err(e) = peer.send_bytes(packet_block_bytes.clone()).await {
-                                debug!("Error on broadcast block {} to {}: {}", hash, peer, e);
-                            }
-                            trace!("{} has been broadcasted to {}", hash, peer);
-                        } else if send_ping {
-                            debug!("{} contains {}, don't broadcast block to him", peer, hash);
-                            // But we can notify him with a ping packet that we got the block
-                            if let Err(e) = peer.send_bytes(packet_ping_bytes.clone()).await {
-                                debug!("Error on sending ping for notifying that we accepted the block {} to {}: {}", hash, peer, e);
+                // if the peer is not too far from us, send the block
+                // check that peer height is greater or equal to block height but still under or equal to STABLE_LIMIT
+                // or, check that peer height as difference of maximum 1 block
+                // (block height is always + 1 above the highest tip height, so we can just check that peer height is not above block height + 1, it's enough in 90% of time)
+                // chain can accept old blocks (up to STABLE_LIMIT) but new blocks only N+1
+                if (peer_height >= block.get_height() && peer_height - block.get_height() <= STABLE_LIMIT) || (peer_height <= block.get_height() && block.get_height() - peer_height <= 1) {
+                    // Don't lock the blocks propagation while sending the packet
+                    let send_block = {
+                        trace!("locking blocks propagation for peer {}", peer);
+                        let mut blocks_propagation = peer.get_blocks_propagation().lock().await;
+                        trace!("end locking blocks propagation for peer {}", peer);
+                        let send = !blocks_propagation.contains(hash);
+                        // check that this block was never shared with this peer
+                        if send {
+                            // we broadcasted to him, add it to the cache
+                            // he should not send it back to us if it's a block found by us
+                            // Because only us is aware of this block
+                            let direction = if lock {
+                                TimedDirection::Both {
+                                    sent_at: get_current_time_in_millis(),
+                                    // Never received, but locked
+                                    received_at: 0
+                                }
                             } else {
-                                trace!("{} has been notified that we have the block {}", peer, hash);
-                                peer.set_last_ping_sent(get_current_time_in_seconds());
-                            }
+                                TimedDirection::Out {
+                                    sent_at: get_current_time_in_millis()
+                                }
+                            };
+                            blocks_propagation.put(hash.clone(), (direction, false));
                         }
-                    } else if send_ping && peer_height >= block.get_height() {
-                        // Peer is above us, send him a ping packet to inform him we got a block propagated
-                        debug!("send ping (block {}) for propagation to {}", hash, peer);
+
+                        send
+                    };
+
+                    if send_block {
+                        debug!("Broadcast {} to {}", hash, peer);
+                        if let Err(e) = peer.send_bytes(packet_block_bytes.clone()).await {
+                            debug!("Error on broadcast block {} to {}: {}", hash, peer, e);
+                        }
+                        trace!("{} has been broadcasted to {}", hash, peer);
+                    } else if send_ping {
+                        debug!("{} contains {}, don't broadcast block to him", peer, hash);
+                        // But we can notify him with a ping packet that we got the block
                         if let Err(e) = peer.send_bytes(packet_ping_bytes.clone()).await {
-                            debug!("Error on sending ping to peer for notifying that we got the block {} to {}: {}", hash, peer, e);
+                            debug!("Error on sending ping for notifying that we accepted the block {} to {}: {}", hash, peer, e);
                         } else {
-                            trace!("{} has been notified that we received the block {}", peer, hash);
+                            trace!("{} has been notified that we have the block {}", peer, hash);
                             peer.set_last_ping_sent(get_current_time_in_seconds());
                         }
-                    } else {
-                        // Peer is too far, don't send the block and neither the ping packet
-                        debug!("Cannot broadcast {} at height {} to {}, too far", hash, block.get_height(), peer);
                     }
+                } else if send_ping && peer_height >= block.get_height() {
+                    // Peer is above us, send him a ping packet to inform him we got a block propagated
+                    debug!("send ping (block {}) for propagation to {}", hash, peer);
+                    if let Err(e) = peer.send_bytes(packet_ping_bytes.clone()).await {
+                        debug!("Error on sending ping to peer for notifying that we got the block {} to {}: {}", hash, peer, e);
+                    } else {
+                        trace!("{} has been notified that we received the block {}", peer, hash);
+                        peer.set_last_ping_sent(get_current_time_in_seconds());
+                    }
+                } else {
+                    // Peer is too far, don't send the block and neither the ping packet
+                    debug!("Cannot broadcast {} at height {} to {}, too far", hash, block.get_height(), peer);
                 }
         }).await;
 
