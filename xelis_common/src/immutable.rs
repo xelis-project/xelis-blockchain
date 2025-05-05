@@ -6,6 +6,8 @@ use std::{
 };
 use serde::{Serialize, Deserialize};
 
+use crate::serializer::*;
+
 #[derive(Clone, Serialize, Deserialize, Debug, Eq, Hash, PartialEq)]
 #[serde(untagged)]
 pub enum Immutable<T> {
@@ -102,5 +104,19 @@ impl<T: fmt::Display> Display for Immutable<T> {
             Immutable::Owned(v) => write!(f, "{}", v),
             Immutable::Arc(v) => write!(f, "{}", v)
         }
+    }
+}
+
+impl<T: Serializer> Serializer for Immutable<T> {
+    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
+        Ok(Immutable::Owned(T::read(reader)?))
+    }
+
+    fn write(&self, writer: &mut Writer) {
+        self.as_ref().write(writer);
+    }
+
+    fn size(&self) -> usize {
+        self.as_ref().size()
     }
 }
