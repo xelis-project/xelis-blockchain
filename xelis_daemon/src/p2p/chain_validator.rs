@@ -350,12 +350,12 @@ impl<S: Storage> BlocksAtHeightProvider for ChainValidatorProvider<'_, S> {
     }
 
     // This is used to store the blocks hashes at a specific height
-    async fn set_blocks_at_height(&mut self, _: IndexSet<Hash>, _: u64) -> Result<(), BlockchainError> {
+    async fn set_blocks_at_height(&mut self, _: &IndexSet<Hash>, _: u64) -> Result<(), BlockchainError> {
         Err(BlockchainError::UnsupportedOperation)
     }
 
     // Append a block hash at a specific height
-    async fn add_block_hash_at_height(&mut self, _: Hash, _: u64) -> Result<(), BlockchainError> {
+    async fn add_block_hash_at_height(&mut self, _: &Hash, _: u64) -> Result<(), BlockchainError> {
         Err(BlockchainError::UnsupportedOperation)
     }
 

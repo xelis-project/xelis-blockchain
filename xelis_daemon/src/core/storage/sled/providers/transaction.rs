@@ -4,6 +4,7 @@ use log::trace;
 use xelis_common::{
     crypto::Hash,
     immutable::Immutable,
+    serializer::Serializer,
     transaction::Transaction
 };
 use crate::core::{
@@ -46,6 +47,14 @@ impl TransactionProvider for SledStorage {
     async fn has_transaction(&self, hash: &Hash) -> Result<bool, BlockchainError> {
         trace!("has transaction {}", hash);
         self.contains_data_cached(&self.transactions, &self.transactions_cache, hash).await
+    }
+
+    // Store a new transaction
+    async fn add_transaction(&mut self, hash: &Hash, transaction: &Transaction) -> Result<(), BlockchainError> {
+        trace!("add transaction {}", hash);
+        Self::insert_into_disk(self.snapshot.as_mut(), &self.transactions, hash, transaction.to_bytes())?;
+
+        Ok(())
     }
 
     async fn count_transactions(&self) -> Result<u64, BlockchainError> {

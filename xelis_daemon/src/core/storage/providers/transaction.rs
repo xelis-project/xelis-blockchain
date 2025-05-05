@@ -18,6 +18,9 @@ pub trait TransactionProvider {
     // Check if the transaction exists
     async fn has_transaction(&self, hash: &Hash) -> Result<bool, BlockchainError>;
 
+    // Store a new transaction
+    async fn add_transaction(&mut self, hash: &Hash, transaction: &Transaction) -> Result<(), BlockchainError>;
+
     // Delete a transaction from the storage using its hash
     async fn delete_transaction(&mut self, hash: &Hash) -> Result<Immutable<Transaction>, BlockchainError>;
 }

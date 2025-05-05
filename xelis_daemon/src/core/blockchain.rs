@@ -2231,7 +2231,7 @@ impl<S: Storage> Blockchain<S> {
                 trace!("Ordering block {} at topoheight {}", hash, highest_topo);
 
                 storage.set_topo_height_for_block(&hash, highest_topo).await?;
-                let past_supply = if highest_topo == 0 {
+                let past_emitted_supply = if highest_topo == 0 {
                     0
                 } else {
                     storage.get_supply_at_topo_height(highest_topo - 1).await?
@@ -2265,16 +2265,11 @@ impl<S: Storage> Blockchain<S> {
                     },
                 };
 
-                let mut block_reward = self.internal_get_block_reward(past_supply, is_side_block, *side_blocks_count).await?;
+                let mut block_reward = self.internal_get_block_reward(past_emitted_supply, is_side_block, *side_blocks_count).await?;
                 trace!("set block {} reward to {} at {} (height {}, side block: {}, {} {}%)", hash, block_reward, highest_topo, height, is_side_block, side_blocks_count, side_block_reward_percentage(*side_blocks_count));
                 if is_side_block {
                     *side_blocks_count += 1;
                 }
-
-                storage.set_block_reward_at_topo_height(highest_topo, block_reward)?;
-                let supply = past_supply + block_reward;
-                trace!("set block supply to {} at {}", supply, highest_topo);
-                storage.set_supply_at_topo_height(highest_topo, supply)?;
 
                 // All fees from the transactions executed in this block
                 let mut total_fees = 0;
@@ -2465,7 +2460,11 @@ impl<S: Storage> Blockchain<S> {
                 }
 
                 // apply changes from Chain State
+                let burned_supply = chain_state.get_burned_supply();
                 chain_state.apply_changes().await?;
+
+                let emitted_supply = past_emitted_supply + block_reward;
+                storage.set_topoheight_metadata(highest_topo, block_reward, emitted_supply, burned_supply)?;
 
                 if should_track_events.contains(&NotifyEvent::BlockOrdered) {
                     let value = json!(BlockOrderedEvent {

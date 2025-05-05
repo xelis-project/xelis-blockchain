@@ -384,6 +384,11 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
         self.contract_manager.outputs.get(tx_hash)
     }
 
+    // Get the total amount of burned coins
+    pub fn get_burned_supply(&self) -> u64 {
+        self.burned_supply
+    }
+
     async fn remove_contract_module_internal(
         &mut self,
         hash: &'a Hash
@@ -583,9 +588,6 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
                 self.inner.storage.set_account_registration_topoheight(&account, self.inner.topoheight).await?;
             }
         }
-
-        trace!("Saving burned supply {} at topoheight {}", self.burned_supply, self.inner.topoheight);
-        self.inner.storage.set_burned_supply_at_topo_height(self.inner.topoheight, self.burned_supply)?;
 
         Ok(())
     }

@@ -33,6 +33,11 @@ impl TransactionProvider for RocksStorage {
         self.contains_data(Column::Transactions, hash)
     }
 
+    // Check if the transaction exists
+    async fn add_transaction(&mut self, hash: &Hash, transaction: &Transaction) -> Result<(), BlockchainError> {
+        self.insert_into_disk(Column::Transactions, hash, transaction)
+    }
+
     // Delete a transaction from the storage using its hash
     async fn delete_transaction(&mut self, hash: &Hash) -> Result<Immutable<Transaction>, BlockchainError> {
         let transaction = self.get_transaction(hash).await?;

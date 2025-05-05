@@ -64,8 +64,7 @@ impl BlockProvider for SledStorage {
         let mut txs_count = 0;
         for (hash, tx) in block.get_transactions().iter().zip(txs) { // first save all txs, then save block
             if !self.has_transaction(hash).await? {
-                Self::insert_into_disk(self.snapshot.as_mut(), &self.transactions, hash, tx.to_bytes())?;
-
+                self.add_transaction(hash, &tx).await?;
                 txs_count += 1;
             }
         }
@@ -90,8 +89,7 @@ impl BlockProvider for SledStorage {
         // Store P
         Self::insert_into_disk(self.snapshot.as_mut(), &self.difficulty_covariance, hash.as_bytes(), p.to_bytes())?;
 
-        // TODO: no clone
-        self.add_block_hash_at_height(hash.to_owned(), block.get_height()).await?;
+        self.add_block_hash_at_height(&hash, block.get_height()).await?;
 
         if let Some(cache) = self.blocks_cache.as_mut() {
             // TODO: no clone

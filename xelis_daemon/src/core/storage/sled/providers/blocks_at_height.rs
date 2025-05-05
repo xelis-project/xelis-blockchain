@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use async_trait::async_trait;
 use indexmap::IndexSet;
 use log::trace;
@@ -20,16 +22,16 @@ impl BlocksAtHeightProvider for SledStorage {
     async fn get_blocks_at_height(&self, height: u64) -> Result<IndexSet<Hash>, BlockchainError> {
         trace!("get blocks at height {}", height);
         let hashes: OrderedHashes = self.load_from_disk(&self.blocks_at_height, &height.to_be_bytes(), DiskContext::BlocksAtHeight(height))?;
-        Ok(hashes.0)
+        Ok(hashes.0.into_owned())
     }
 
-    async fn set_blocks_at_height(&mut self, tips: IndexSet<Hash>, height: u64) -> Result<(), BlockchainError> {
+    async fn set_blocks_at_height(&mut self, tips: &IndexSet<Hash>, height: u64) -> Result<(), BlockchainError> {
         trace!("set {} blocks at height {}", tips.len(), height);
-        Self::insert_into_disk(self.snapshot.as_mut(), &self.blocks_at_height, &height.to_be_bytes(), OrderedHashes(tips).to_bytes())?;
+        Self::insert_into_disk(self.snapshot.as_mut(), &self.blocks_at_height, &height.to_be_bytes(), OrderedHashes(Cow::Borrowed(tips)).to_bytes())?;
         Ok(())
     }
 
-    async fn add_block_hash_at_height(&mut self, hash: Hash, height: u64) -> Result<(), BlockchainError> {
+    async fn add_block_hash_at_height(&mut self, hash: &Hash, height: u64) -> Result<(), BlockchainError> {
         trace!("add block {} at height {}", hash, height);
         let mut tips = if self.has_blocks_at_height(height).await? {
             let hashes = self.get_blocks_at_height(height).await?;
@@ -40,8 +42,8 @@ impl BlocksAtHeightProvider for SledStorage {
             IndexSet::new()
         };
 
-        tips.insert(hash);
-        self.set_blocks_at_height(tips, height).await
+        tips.insert(hash.clone());
+        self.set_blocks_at_height(&tips, height).await
     }
 
     async fn remove_block_hash_at_height(&mut self, hash: &Hash, height: u64) -> Result<(), BlockchainError> {
@@ -53,7 +55,7 @@ impl BlocksAtHeightProvider for SledStorage {
         if tips.is_empty() {
             Self::remove_from_disk_without_reading(self.snapshot.as_mut(), &self.blocks_at_height, &height.to_be_bytes())?;
         } else {
-            self.set_blocks_at_height(tips, height).await?;
+            self.set_blocks_at_height(&tips, height).await?;
         }
 
         Ok(())

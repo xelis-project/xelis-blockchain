@@ -475,13 +475,17 @@ impl<S: Storage> P2pServer<S> {
                             // link its TX to the block
                             let mut storage = self.blockchain.get_storage().write().await;
                             for tx_hash in header.get_txs_hashes() {
-                                storage.add_block_for_tx(tx_hash, &hash)?;
+                                storage.add_block_linked_to_tx_if_not_present(tx_hash, &hash)?;
                             }
     
                             // save metadata of this block
-                            storage.set_supply_at_topo_height(topoheight, metadata.supply)?;
-                            storage.set_burned_supply_at_topo_height(topoheight, metadata.burned_supply)?;
-                            storage.set_block_reward_at_topo_height(topoheight, metadata.reward)?;
+                            storage.set_topoheight_metadata(
+                                topoheight,
+                                metadata.reward,
+                                metadata.supply,
+                                metadata.burned_supply
+                            )?;
+
                             storage.set_topo_height_for_block(&hash, topoheight).await?;
 
                             // Mark needed TXs as executed

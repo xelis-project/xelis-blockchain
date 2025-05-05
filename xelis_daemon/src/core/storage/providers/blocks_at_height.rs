@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use async_trait::async_trait;
 use indexmap::IndexSet;
 use log::error;
@@ -9,7 +10,7 @@ use crate::core::error::BlockchainError;
 
 // This struct is used to store the blocks hashes at a specific height
 // We use an IndexSet to store the hashes and maintains the order we processed them
-pub struct OrderedHashes(pub IndexSet<Hash>);
+pub struct OrderedHashes<'a>(pub Cow<'a, IndexSet<Hash>>);
 
 #[async_trait]
 pub trait BlocksAtHeightProvider {
@@ -20,18 +21,18 @@ pub trait BlocksAtHeightProvider {
     async fn get_blocks_at_height(&self, height: u64) -> Result<IndexSet<Hash>, BlockchainError>;
 
     // This is used to store the blocks hashes at a specific height
-    async fn set_blocks_at_height(&mut self, tips: IndexSet<Hash>, height: u64) -> Result<(), BlockchainError>;
+    async fn set_blocks_at_height(&mut self, tips: &IndexSet<Hash>, height: u64) -> Result<(), BlockchainError>;
 
     // Append a block hash at a specific height
-    async fn add_block_hash_at_height(&mut self, hash: Hash, height: u64) -> Result<(), BlockchainError>;
+    async fn add_block_hash_at_height(&mut self, hash: &Hash, height: u64) -> Result<(), BlockchainError>;
 
     // Remove a block hash at a specific height
     async fn remove_block_hash_at_height(&mut self, hash: &Hash, height: u64) -> Result<(), BlockchainError>;
 }
 
-impl Serializer for OrderedHashes {
+impl Serializer for OrderedHashes<'_> {
     fn write(&self, writer: &mut Writer) {
-        for hash in &self.0 {
+        for hash in self.0.iter() {
             hash.write(writer);
         }
     }
@@ -54,6 +55,6 @@ impl Serializer for OrderedHashes {
             return Err(ReaderError::InvalidSize) 
         }
 
-        Ok(OrderedHashes(hashes))
+        Ok(OrderedHashes(Cow::Owned(hashes)))
     }
 }

@@ -21,12 +21,6 @@ pub trait BlockDagProvider: DagOrderProvider + BlockProvider {
     // Get the burned supply from topoheight
     async fn get_burned_supply_at_topo_height(&self, topoheight: TopoHeight) -> Result<u64, BlockchainError>;
 
-    // Set the block reward for topoheight
-    fn set_block_reward_at_topo_height(&mut self, topoheight: TopoHeight, reward: u64) -> Result<(), BlockchainError>;
-
-    // Set the supply at topoheight
-    fn set_supply_at_topo_height(&mut self, topoheight: TopoHeight, supply: u64) -> Result<(), BlockchainError>;
-
-    // Set the burned supply at topoheight
-    fn set_burned_supply_at_topo_height(&mut self, topoheight: TopoHeight, burned_supply: u64) -> Result<(), BlockchainError>;
+    // Set the metadata for topoheight
+    fn set_topoheight_metadata(&mut self, topoheight: TopoHeight, block_reward: u64, supply: u64, burned_supply: u64) -> Result<(), BlockchainError>;
 }

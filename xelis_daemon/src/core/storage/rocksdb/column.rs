@@ -28,12 +28,8 @@ pub enum Column {
     BlockDifficulty,
     // Misc data with no specific rules
     Common,
-    // Block reward at topoheight
-    Rewards,
-    // XELIS Emitted Supply at topoheight
-    Supply,
-    // XELIS Burned Supply at topoheight
-    VersionedBurnedSupply,
+    // Topoheight Metadata
+    TopoHeightMetadata,
 
     // Each asset hash registered
     Assets,
@@ -80,7 +76,6 @@ impl Column {
             | VersionedNonces
             | VersionedBalances
             | VersionedMultisig
-            | VersionedBurnedSupply
             | VersionedAssetsSupply
             | VersionedContracts
             | VersionedContractsBalances => Some(PREFIX_TOPOHEIGHT_LEN),

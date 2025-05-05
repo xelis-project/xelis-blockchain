@@ -79,22 +79,6 @@ impl ClientProtocolProvider for SledStorage {
         self.load_from_disk(&self.tx_blocks, hash.as_bytes(), DiskContext::TxBlocks)
     }
 
-    fn add_block_for_tx(&mut self, tx: &Hash, block: &Hash) -> Result<(), BlockchainError> {
-        trace!("add block {} for tx {}", block, tx);
-        let mut blocks = if self.has_tx_blocks(tx)? {
-            self.get_blocks_for_tx(tx)?
-        } else {
-            Tips::new()
-        };
-
-        if !blocks.contains(&block) {
-            blocks.insert(block.clone());
-            self.set_blocks_for_tx(tx, &blocks)?;
-        }
-
-        Ok(())
-    }
-
     fn set_blocks_for_tx(&mut self, tx: &Hash, blocks: &Tips) -> Result<(), BlockchainError> {
         trace!("set blocks ({}) for tx {} ", blocks.len(), tx);
         Self::insert_into_disk(self.snapshot.as_mut(), &self.tx_blocks, tx.as_bytes(), blocks.to_bytes())?;

@@ -36,7 +36,4 @@ pub trait ClientProtocolProvider {
 
     // Set all blocks in which the transaction is included
     fn set_blocks_for_tx(&mut self, tx: &Hash, blocks: &Tips) -> Result<(), BlockchainError>;
-
-    // Add a block in which the transaction is included
-    fn add_block_for_tx(&mut self, tx: &Hash, block: &Hash) -> Result<(), BlockchainError>;
 }
