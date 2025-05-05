@@ -18,7 +18,7 @@ use crate::core::{
     error::{BlockchainError, DiskContext},
     storage::{
         SledStorage,
-        Snapshot,
+        SledSnapshot,
         VersionedProvider
     }
 };
@@ -27,7 +27,7 @@ impl VersionedProvider for SledStorage {}
 
 impl SledStorage {
     fn delete_versioned_tree_at_topoheight(
-        snapshot: &mut Option<Snapshot>,
+        snapshot: &mut Option<SledSnapshot>,
         tree_pointer: &Tree,
         tree_versioned: &Tree,
         topoheight: u64,
@@ -59,7 +59,7 @@ impl SledStorage {
     }
 
     fn delete_versioned_tree_above_topoheight(
-        snapshot: &mut Option<Snapshot>,
+        snapshot: &mut Option<SledSnapshot>,
         tree_pointer: &Tree,
         tree_versioned: &Tree,
         topoheight: u64,
@@ -110,7 +110,7 @@ impl SledStorage {
     }
 
     fn delete_versioned_tree_below_topoheight(
-        snapshot: &mut Option<Snapshot>,
+        snapshot: &mut Option<SledSnapshot>,
         tree_pointer: &Tree,
         tree_versioned: &Tree,
         topoheight: u64,

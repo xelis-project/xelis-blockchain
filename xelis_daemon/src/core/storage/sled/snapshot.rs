@@ -52,12 +52,12 @@ impl IntoIterator for Batch {
 // Create a snapshot of the current state of the DB
 // We track all the changes made to the DB since the snapshot was created
 // So we can apply them to the DB or rollback them
-pub struct Snapshot {
+pub struct SledSnapshot {
     pub trees: BTreeMap<IVec, Option<Batch>>,
     pub cache: StorageCache
 }
 
-impl Default for Snapshot {
+impl Default for SledSnapshot {
     fn default() -> Self {
         Self {
             trees: BTreeMap::new(),
@@ -66,7 +66,7 @@ impl Default for Snapshot {
     }
 }
 
-impl Snapshot {
+impl SledSnapshot {
     // Create a new snapshot with current counts
     pub fn new(cache: StorageCache) -> Self {
         Self {
