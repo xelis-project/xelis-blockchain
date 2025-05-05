@@ -10,7 +10,7 @@ use xelis_common::serializer::{
 use std::{
     borrow::Borrow,
     collections::{BTreeMap, HashMap},
-    ops::Deref,
+    ops::{Bound, Deref, RangeBounds},
     sync::{Arc, Mutex}
 };
 
@@ -402,7 +402,42 @@ impl InnerTree {
         Iter {
             tree: self.clone(),
             index: 0,
-            index_back: 0
+            index_back: 0,
+            range: (Bound::Unbounded, Bound::Unbounded)
+        }
+    }
+
+    /// Create an iterator over a range in this tree.
+    pub fn range<K, R>(self: &Tree, range: R) -> Iter
+    where
+        K: AsRef<[u8]>,
+        R: RangeBounds<K>,
+    {
+        let lo = match range.start_bound() {
+            Bound::Included(start) => {
+                Bound::Included(IVec::from(start.as_ref()))
+            }
+            Bound::Excluded(start) => {
+                Bound::Excluded(IVec::from(start.as_ref()))
+            }
+            Bound::Unbounded => Bound::Included(IVec::from(&[])),
+        };
+
+        let hi = match range.end_bound() {
+            Bound::Included(end) => {
+                Bound::Included(IVec::from(end.as_ref()))
+            }
+            Bound::Excluded(end) => {
+                Bound::Excluded(IVec::from(end.as_ref()))
+            }
+            Bound::Unbounded => Bound::Unbounded,
+        };
+
+        Iter {
+            tree: self.clone(),
+            index: 0,
+            index_back: 0,
+            range: (lo, hi)
         }
     }
 
@@ -443,7 +478,8 @@ impl InnerTree {
 pub struct Iter {
     tree: Tree,
     index: usize,
-    index_back: usize
+    index_back: usize,
+    range: (Bound<IVec>, Bound<IVec>)
 }
 
 impl Iter {
@@ -474,8 +510,7 @@ impl Iterator for Iter {
         if self.index >= entries.len() - self.index_back {
             return None
         }
-
-        let (k, v) = entries.iter().nth(self.index)?;
+        let (k, v) = entries.range(self.range.clone()).nth(self.index)?;
         self.index += 1;
 
         Some(Ok((k.clone(), v.clone())))
@@ -494,7 +529,7 @@ impl DoubleEndedIterator for Iter {
             return None
         }
 
-        let (k, v) = entries.iter().rev().nth(self.index_back)?;
+        let (k, v) = entries.range(self.range.clone()).rev().nth(self.index_back)?;
         self.index_back += 1;
 
         Some(Ok((k.clone(), v.clone())))
@@ -600,5 +635,24 @@ mod tests {
         assert!(iter.next_back().is_none());
         assert!(iter.next().is_none());
 
+    }
+
+    #[test]
+    fn test_db_range() {
+        let db = open("test").unwrap();
+        let tree = db.open_tree("test").unwrap();
+        tree.insert(50u64.to_be_bytes(), "c").unwrap();
+        tree.insert(10u64.to_be_bytes(), "a").unwrap();
+        tree.insert(25u64.to_be_bytes(), "b").unwrap();
+
+        let mut range = tree.range(0u64.to_be_bytes()..).keys();
+        assert_eq!(range.next().unwrap().unwrap(), IVec::from(&10u64.to_be_bytes()));
+        assert_eq!(range.next().unwrap().unwrap(), IVec::from(&25u64.to_be_bytes()));
+        assert_eq!(range.next().unwrap().unwrap(), IVec::from(&50u64.to_be_bytes()));
+        assert!(range.next().is_none());
+
+        let mut range = tree.range(10u64.to_be_bytes()..=10u64.to_be_bytes()).keys();
+        assert_eq!(range.next().unwrap().unwrap(), IVec::from(&10u64.to_be_bytes()));
+        assert!(range.next().is_none());
     }
 }
