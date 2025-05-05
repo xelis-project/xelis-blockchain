@@ -84,7 +84,7 @@ pub (super) async fn search_versioned_balance_for_reference<S: DagOrderProvider 
     // Retrieve the block topoheight based on reference hash
     let pruned_topoheight = storage.get_pruned_topoheight().await?;
 
-    let reference_block_topo = if storage.is_block_topological_ordered(&reference.hash).await {
+    let reference_block_topo = if storage.is_block_topological_ordered(&reference.hash).await? {
         let topo = storage.get_topo_height_for_hash(&reference.hash).await?;
         if topo == reference.topoheight {
             topo

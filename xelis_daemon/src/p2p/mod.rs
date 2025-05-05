@@ -2229,7 +2229,7 @@ impl<S: Storage> P2pServer<S> {
                 let (hash, topoheight) = block_id.consume();
                 debug!("Block {} is common, expected topoheight: {}", hash, topoheight);
                 // check that the block is ordered like us
-                if storage.is_block_topological_ordered(&hash).await && storage.get_topo_height_for_hash(&hash).await? == topoheight { // common point
+                if storage.is_block_topological_ordered(&hash).await? && storage.get_topo_height_for_hash(&hash).await? == topoheight { // common point
                     debug!("common point found at block {} with same topoheight at {}", hash, topoheight);
                     return Ok(Some(CommonPoint::new(hash, topoheight)))
                 }

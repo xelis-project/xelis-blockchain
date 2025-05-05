@@ -70,7 +70,7 @@ use log::{info, debug, trace};
 
 // Get the block type using the block hash and the blockchain current state
 pub async fn get_block_type_for_block<S: Storage, P: DifficultyProvider + DagOrderProvider + BlocksAtHeightProvider + PrunedTopoheightProvider>(blockchain: &Blockchain<S>, provider: &P, hash: &Hash) -> Result<BlockType, InternalRpcError> {
-    Ok(if blockchain.is_block_orphaned_for_storage(provider, hash).await {
+    Ok(if blockchain.is_block_orphaned_for_storage(provider, hash).await? {
         BlockType::Orphaned
     } else if blockchain.is_sync_block(provider, hash).await.context("Error while checking if block is sync")? {
         BlockType::Sync
@@ -89,7 +89,7 @@ where
     + PrunedTopoheightProvider
     + BlockDagProvider
 {
-    let (topoheight, supply, reward) = if provider.is_block_topological_ordered(hash).await {
+    let (topoheight, supply, reward) = if provider.is_block_topological_ordered(hash).await? {
         let topoheight = provider.get_topo_height_for_hash(&hash).await.context("Error while retrieving topo height")?;
         (
             Some(topoheight),

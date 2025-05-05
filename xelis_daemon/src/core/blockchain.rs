@@ -780,7 +780,7 @@ impl<S: Storage> Blockchain<S> {
         }
 
         // block must be ordered and in stable height
-        if block_height + STABLE_LIMIT > height || !provider.is_block_topological_ordered(hash).await {
+        if block_height + STABLE_LIMIT > height || !provider.is_block_topological_ordered(hash).await? {
             trace!("Block {} at height {} is not a sync block, it is not in stable height", hash, block_height);
             return Ok(false)
         }
@@ -804,7 +804,7 @@ impl<S: Storage> Blockchain<S> {
 
         // if block is not alone at its height and they are ordered (not orphaned), it can't be a sync block
         for hash_at_height in tips_at_height {
-            if *hash != hash_at_height && provider.is_block_topological_ordered(&hash_at_height).await {
+            if *hash != hash_at_height && provider.is_block_topological_ordered(&hash_at_height).await? {
                 trace!("Block {} at height {} is not a sync block, it has more than 1 block at its height", hash, block_height);
                 return Ok(false)
             }
@@ -829,7 +829,7 @@ impl<S: Storage> Blockchain<S> {
         for pre_hash in pre_blocks {
             // We compare only against block ordered otherwise we can have desync between node which could lead to fork
             // This is rare event but can happen
-            if provider.is_block_topological_ordered(&pre_hash).await {
+            if provider.is_block_topological_ordered(&pre_hash).await? {
                 let cumulative_difficulty = provider.get_cumulative_difficulty_for_block_hash(&pre_hash).await?;
                 if cumulative_difficulty >= sync_block_cumulative_difficulty {
                     warn!("Block {} at height {} is not a sync block, it has lower cumulative difficulty than block {} at height {}", hash, block_height, pre_hash, i);
@@ -860,7 +860,7 @@ impl<S: Storage> Blockchain<S> {
         'main: while let Some(current_hash) = stack.pop_back() {
             trace!("Finding tip base for {} at height {}", current_hash, height);
             processed.insert(current_hash.clone());
-            if pruned_topoheight > 0 && provider.is_block_topological_ordered(&current_hash).await {
+            if pruned_topoheight > 0 && provider.is_block_topological_ordered(&current_hash).await? {
                 let topoheight = provider.get_topo_height_for_hash(&current_hash).await?;
                 // Node is pruned, we only prune chain to stable height / sync block so we can return the hash
                 if topoheight <= pruned_topoheight {
@@ -888,7 +888,7 @@ impl<S: Storage> Blockchain<S> {
             }
 
             for tip_hash in tips.iter() {
-                if pruned_topoheight > 0 && provider.is_block_topological_ordered(&tip_hash).await {
+                if pruned_topoheight > 0 && provider.is_block_topological_ordered(&tip_hash).await? {
                     let topoheight = provider.get_topo_height_for_hash(&tip_hash).await?;
                     // Node is pruned, we only prune chain to stable height / sync block so we can return the hash
                     if topoheight <= pruned_topoheight {
@@ -1058,7 +1058,7 @@ impl<S: Storage> Blockchain<S> {
 
             let tips = provider.get_past_blocks_for_block_hash(&current_hash).await?;
             for tip_hash in tips.iter() {
-                if provider.is_block_topological_ordered(tip_hash).await {
+                if provider.is_block_topological_ordered(tip_hash).await? {
                     let height = provider.get_height_for_block_hash(tip_hash).await?;
                     if lowest_height > height {
                         lowest_height = height;
@@ -1081,7 +1081,7 @@ impl<S: Storage> Blockchain<S> {
     where
         P: DifficultyProvider + DagOrderProvider
     {
-        if provider.is_block_topological_ordered(hash).await {
+        if provider.is_block_topological_ordered(hash).await? {
             let height = provider.get_height_for_block_hash(hash).await?;
             debug!("calculate_distance: Block {} is at height {}", hash, height);
             return Ok(height)
@@ -1119,7 +1119,7 @@ impl<S: Storage> Blockchain<S> {
 
             for tip_hash in tips.iter() {
                 if !map.contains_key(tip_hash) {
-                    let is_ordered = provider.is_block_topological_ordered(tip_hash).await;
+                    let is_ordered = provider.is_block_topological_ordered(tip_hash).await?;
                     if !is_ordered || (is_ordered && provider.get_topo_height_for_hash(tip_hash).await? >= base_topoheight) {
                         stack.push_back(tip_hash.clone());
                     }
@@ -1166,7 +1166,7 @@ impl<S: Storage> Blockchain<S> {
         let base_topoheight = provider.get_topo_height_for_hash(base_block).await?;
         for hash in block_tips {
             if !map.contains_key(hash) {
-                let is_ordered = provider.is_block_topological_ordered(hash).await;
+                let is_ordered = provider.is_block_topological_ordered(hash).await?;
                 if !is_ordered || (is_ordered && provider.get_topo_height_for_hash(hash).await? >= base_topoheight) {
                     self.find_tip_work_score_internal(provider, &mut map, hash, base_topoheight).await?;
                 }
@@ -1262,7 +1262,7 @@ impl<S: Storage> Blockchain<S> {
             // Calculate the score for each tips above the base topoheight
             let mut scores = Vec::new();
             for tip_hash in block_tips.iter() {
-                let is_ordered = provider.is_block_topological_ordered(tip_hash).await;
+                let is_ordered = provider.is_block_topological_ordered(tip_hash).await?;
                 if !is_ordered || (is_ordered && provider.get_topo_height_for_hash(tip_hash).await? >= base_topo_height) {
                     let diff = provider.get_cumulative_difficulty_for_block_hash(tip_hash).await?;
                     scores.push((tip_hash.clone(), diff));
@@ -2157,7 +2157,7 @@ impl<S: Storage> Blockchain<S> {
                     if !is_written {
                         if let Some(order) = full_order.first() {
                             // Verify that the block is still at the same topoheight
-                            if storage.is_block_topological_ordered(order).await && *order == hash_at_topo {
+                            if storage.is_block_topological_ordered(order).await? && *order == hash_at_topo {
                                 trace!("Hash {} at topo {} stay the same, skipping cleaning", hash_at_topo, topoheight);
                                 // remove the hash from the order because we don't need to recompute it
                                 full_order.shift_remove_index(0);
@@ -2222,7 +2222,7 @@ impl<S: Storage> Blockchain<S> {
 
                 // if block is not re-ordered and it's not genesis block
                 // because we don't need to recompute everything as it's still good in chain
-                if !is_written && tips_count != 0 && storage.is_block_topological_ordered(&hash).await && storage.get_topo_height_for_hash(&hash).await? == highest_topo {
+                if !is_written && tips_count != 0 && storage.is_block_topological_ordered(&hash).await? && storage.get_topo_height_for_hash(&hash).await? == highest_topo {
                     trace!("Block ordered {} stay at topoheight {}. Skipping...", hash, highest_topo);
                     continue;
                 }
@@ -2798,9 +2798,9 @@ impl<S: Storage> Blockchain<S> {
     }
 
     // if a block is not ordered, it's an orphaned block and its transactions are not honoured
-    pub async fn is_block_orphaned_for_storage<P: DagOrderProvider>(&self, provider: &P, hash: &Hash) -> bool {
+    pub async fn is_block_orphaned_for_storage<P: DagOrderProvider>(&self, provider: &P, hash: &Hash) -> Result<bool, BlockchainError> {
         trace!("is block {} orphaned", hash);
-        !provider.is_block_topological_ordered(hash).await
+        Ok(!provider.is_block_topological_ordered(hash).await?)
     }
 
     pub async fn is_side_block<P: DifficultyProvider + DagOrderProvider>(&self, provider: &P, hash: &Hash) -> Result<bool, BlockchainError> {
@@ -2813,7 +2813,7 @@ impl<S: Storage> Blockchain<S> {
         P: DifficultyProvider + DagOrderProvider
     {
         trace!("is block {} a side block", hash);
-        if !provider.is_block_topological_ordered(hash).await {
+        if !provider.is_block_topological_ordered(hash).await? {
             return Ok(false)
         }
 
@@ -2848,7 +2848,7 @@ impl<S: Storage> Blockchain<S> {
         P: DagOrderProvider
     {
         trace!("has block {} stable order at topoheight {}", hash, topoheight);
-        if provider.is_block_topological_ordered(hash).await {
+        if provider.is_block_topological_ordered(hash).await? {
             let block_topo_height = provider.get_topo_height_for_hash(hash).await?;
             return Ok(block_topo_height + STABLE_LIMIT <= topoheight)
         }
@@ -2875,7 +2875,7 @@ impl<S: Storage> Blockchain<S> {
         };
 
         for hash in self.checkpoints.iter() {
-            if storage.is_block_topological_ordered(hash).await {
+            if storage.is_block_topological_ordered(hash).await? {
                 let topo = storage.get_topo_height_for_hash(hash).await?;
                 if until_topo_height <= topo {
                     info!("Configured checkpoint {} is at topoheight {}. Prevent to rewind below", hash, topo);

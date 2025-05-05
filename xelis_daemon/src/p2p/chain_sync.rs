@@ -214,7 +214,7 @@ impl<S: Storage> P2pServer<S> {
             } else {
                 // We need to re execute it to make sure it's in DAG
                 let mut storage = self.blockchain.get_storage().write().await;
-                if !storage.is_block_topological_ordered(&hash).await {
+                if !storage.is_block_topological_ordered(&hash).await? {
                     match storage.delete_block_with_hash(&hash).await {
                         Ok(block) => {
                             let mut tips = storage.get_tips().await?;
@@ -478,7 +478,7 @@ impl<S: Storage> P2pServer<S> {
                                 debug!("Block {} is already in chain, verify if its in DAG", hash);
                                 let mut storage = self.blockchain.get_storage().write().await;
                                 debug!("storage write lock acquired for potential block {} deletion", hash);
-                                let block = if !storage.is_block_topological_ordered(&hash).await {
+                                let block = if !storage.is_block_topological_ordered(&hash).await? {
                                     match storage.delete_block_with_hash(&hash).await {
                                         Ok(block) => {
                                             let mut tips = storage.get_tips().await?;
@@ -574,7 +574,7 @@ impl<S: Storage> P2pServer<S> {
 
                         let block = {
                             let mut storage = self.blockchain.get_storage().write().await;
-                            if !storage.is_block_topological_ordered(&hash).await {
+                            if !storage.is_block_topological_ordered(&hash).await? {
                                 match storage.delete_block_with_hash(&hash).await {
                                     Ok(block) => {
                                         let mut tips = storage.get_tips().await?;

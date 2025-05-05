@@ -746,7 +746,7 @@ impl Storage for SledStorage {
 
         // Delete all orphaned blocks tips
         for tip in tips.clone() {
-            if !self.is_block_topological_ordered(&tip).await {
+            if !self.is_block_topological_ordered(&tip).await? {
                 debug!("Tip {} is not ordered, removing", tip);
                 tips.remove(&tip);
             }
@@ -917,7 +917,7 @@ impl Storage for SledStorage {
         let mut count = 0;
         for el in Self::iter_keys(self.snapshot.as_ref(), &self.blocks) {
             let hash = Hash::from_bytes(&el?)?;
-            if !self.is_block_topological_ordered(&hash).await {
+            if !self.is_block_topological_ordered(&hash).await? {
                 count += 1;
             }
         }

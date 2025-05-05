@@ -293,10 +293,10 @@ impl<S: Storage> DagOrderProvider for ChainValidatorProvider<'_, S> {
         Err(BlockchainError::UnsupportedOperation)
     }
 
-    async fn is_block_topological_ordered(&self, hash: &Hash) -> bool {
+    async fn is_block_topological_ordered(&self, hash: &Hash) -> Result<bool, BlockchainError> {
         trace!("is block topological ordered {}", hash);
         if self.parent.blocks.contains_key(hash) {
-            return true
+            return Ok(true)
         }
 
         trace!("fallback on storage for is_block_topological_ordered");

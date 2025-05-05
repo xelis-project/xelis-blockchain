@@ -30,13 +30,13 @@ impl DagOrderProvider for SledStorage {
         Ok(())
     }
 
-    async fn is_block_topological_ordered(&self, hash: &Hash) -> bool {
+    async fn is_block_topological_ordered(&self, hash: &Hash) -> Result<bool, BlockchainError> {
         trace!("is block topological ordered: {}", hash);
         let topoheight = match self.get_topo_height_for_hash(&hash).await {
             Ok(topoheight) => topoheight,
             Err(e) => {
                 trace!("Error while checking if block {} is ordered: {}", hash, e);
-                return false
+                return Ok(false)
             }
         };
 
@@ -44,10 +44,10 @@ impl DagOrderProvider for SledStorage {
             Ok(hash_at_topo) => hash_at_topo,
             Err(e) => {
                 trace!("Error while checking if a block hash is ordered at topo {}: {}", topoheight, e);
-                return false
+                return Ok(false)
             }
         };
-        hash_at_topo == *hash
+        Ok(hash_at_topo == *hash)
     }
 
     async fn get_topo_height_for_hash(&self, hash: &Hash) -> Result<TopoHeight, BlockchainError> {
