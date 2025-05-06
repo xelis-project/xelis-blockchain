@@ -18,7 +18,7 @@ pub use snapshot::Snapshot;
 
 macro_rules! cf_handle {
     ($self: expr, $column: expr) => {
-        $self.db.cf_handle(&$column.to_string())
+        $self.db.cf_handle($column.as_ref())
             .with_context(|| format!("Column {:?} not found", $column))?
     };
 }
