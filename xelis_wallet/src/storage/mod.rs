@@ -888,10 +888,14 @@ impl EncryptedStorage {
     }
 
     // Count the number of transactions stored
-    // TODO: replace it by a cached value
     pub fn get_transactions_count(&self) -> Result<usize> {
         trace!("get transactions count");
-        Ok(self.transactions.len())
+        let id = self.get_last_transaction_id()?
+            // Increment by one due to 0
+            .map(|v| v + 1)
+            .unwrap_or(0);
+
+        Ok(id as usize)
     }
 
     // delete all transactions above the specified topoheight
