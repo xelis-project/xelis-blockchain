@@ -2265,7 +2265,7 @@ impl<S: Storage> Blockchain<S> {
                     },
                 };
 
-                let mut block_reward = self.internal_get_block_reward(past_emitted_supply, is_side_block, *side_blocks_count).await?;
+                let block_reward = self.internal_get_block_reward(past_emitted_supply, is_side_block, *side_blocks_count).await?;
                 trace!("set block {} reward to {} at {} (height {}, side block: {}, {} {}%)", hash, block_reward, highest_topo, height, is_side_block, side_blocks_count, side_block_reward_percentage(*side_blocks_count));
                 if is_side_block {
                     *side_blocks_count += 1;
@@ -2383,16 +2383,17 @@ impl<S: Storage> Blockchain<S> {
                 let dev_fee_percentage = get_block_dev_fee(block.get_height());
                 // Dev fee are only applied on block reward
                 // Transaction fees are not affected by dev fee
+                let mut miner_reward = block_reward;
                 if dev_fee_percentage != 0 {
                     let dev_fee_part = block_reward * dev_fee_percentage / 100;
                     chain_state.reward_miner(&DEV_PUBLIC_KEY, dev_fee_part).await?;
-                    block_reward -= dev_fee_part;    
+                    miner_reward -= dev_fee_part;    
                 }
 
                 // reward the miner
                 // Miner gets the block reward + total fees + gas fee
                 let gas_fee = chain_state.get_gas_fee();
-                chain_state.reward_miner(block.get_miner(), block_reward + total_fees + gas_fee).await?;
+                chain_state.reward_miner(block.get_miner(), miner_reward + total_fees + gas_fee).await?;
 
                 // Fire all the contract events
                 {
