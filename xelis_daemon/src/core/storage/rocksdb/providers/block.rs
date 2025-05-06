@@ -8,7 +8,19 @@ use xelis_common::{
     transaction::Transaction,
     varuint::VarUint
 };
-use crate::core::{error::BlockchainError, storage::{BlockDifficulty, BlockProvider, Column, DifficultyProvider, RocksStorage, TransactionProvider}};
+use crate::core::{
+    error::BlockchainError,
+    storage::{
+        rocksdb::{
+            BlockDifficulty,
+            Column,
+        },
+        BlockProvider,
+        DifficultyProvider,
+        RocksStorage,
+        TransactionProvider
+    }
+};
 
 #[async_trait]
 impl BlockProvider for RocksStorage {

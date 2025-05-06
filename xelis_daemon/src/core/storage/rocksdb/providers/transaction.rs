@@ -6,7 +6,11 @@ use xelis_common::{
 };
 use crate::core::{
     error::BlockchainError,
-    storage::{Column, RocksStorage, TransactionProvider}
+    storage::{
+        rocksdb::Column,
+        RocksStorage,
+        TransactionProvider
+    }
 };
 
 #[async_trait]

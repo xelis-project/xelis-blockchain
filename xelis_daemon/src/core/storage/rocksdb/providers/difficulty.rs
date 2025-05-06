@@ -11,8 +11,10 @@ use xelis_common::{
 use crate::core::{
     error::BlockchainError,
     storage::{
-        BlockDifficulty,
-        Column,
+        rocksdb::{
+            BlockDifficulty,
+            Column,
+        },
         DifficultyProvider,
         RocksStorage
     }

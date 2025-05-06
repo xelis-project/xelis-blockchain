@@ -3,7 +3,14 @@ use std::borrow::Cow;
 use async_trait::async_trait;
 use indexmap::IndexSet;
 use xelis_common::crypto::Hash;
-use crate::core::{error::BlockchainError, storage::{BlocksAtHeightProvider, Column, RocksStorage}};
+use crate::core::{
+    error::BlockchainError,
+    storage::{
+        rocksdb::Column,
+        BlocksAtHeightProvider,
+        RocksStorage
+    }
+};
 
 #[async_trait]
 impl BlocksAtHeightProvider for RocksStorage {

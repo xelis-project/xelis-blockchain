@@ -1,6 +1,14 @@
 use async_trait::async_trait;
 use xelis_common::block::TopoHeight;
-use crate::core::{error::BlockchainError, storage::{Column, PrunedTopoheightProvider, RocksStorage, PRUNED_TOPOHEIGHT}};
+use crate::core::{
+    error::BlockchainError,
+    storage::{
+        rocksdb::Column,
+        sled::PRUNED_TOPOHEIGHT,
+        PrunedTopoheightProvider,
+        RocksStorage,
+    }
+};
 
 // This trait is used for pruning
 #[async_trait]

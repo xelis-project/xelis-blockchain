@@ -62,11 +62,11 @@ impl Default for Batch {
     }
 }
 
-pub struct RocksSnapshot {
+pub struct Snapshot {
     pub columns: BTreeMap<Column, Batch>,
 }
 
-impl RocksSnapshot {
+impl Snapshot {
     pub fn new() -> Self {
         Self {
             columns: BTreeMap::new(),

@@ -30,7 +30,7 @@ use lru::LruCache;
 use sled::{IVec, Tree};
 use log::{debug, trace, warn, info, error};
 
-pub use snapshot::SledSnapshot;
+pub use snapshot::Snapshot;
 
 use super::{
     cache::StorageCache,
@@ -153,7 +153,7 @@ pub struct SledStorage {
     pub(super) cache: StorageCache,
 
     // If we have a snapshot, we can use it to rollback
-    pub(super) snapshot: Option<SledSnapshot>,
+    pub(super) snapshot: Option<Snapshot>,
 }
 
 #[derive(Clone, Copy, clap::ValueEnum, Serialize, Deserialize)]
@@ -329,7 +329,7 @@ impl SledStorage {
         }
     }
 
-    pub fn load_optional_from_disk_internal<T: Serializer>(snapshot: Option<&SledSnapshot>, tree: &Tree, key: &[u8]) -> Result<Option<T>, BlockchainError> {
+    pub fn load_optional_from_disk_internal<T: Serializer>(snapshot: Option<&Snapshot>, tree: &Tree, key: &[u8]) -> Result<Option<T>, BlockchainError> {
         trace!("load optional from disk internal");
         if let Some(snapshot) = snapshot {
             trace!("load from snapshot");
@@ -345,7 +345,7 @@ impl SledStorage {
         }
     }
 
-    pub fn load_from_disk_internal<T: Serializer>(snapshot: Option<&SledSnapshot>, tree: &Tree, key: &[u8], context: DiskContext) -> Result<T, BlockchainError> {
+    pub fn load_from_disk_internal<T: Serializer>(snapshot: Option<&Snapshot>, tree: &Tree, key: &[u8], context: DiskContext) -> Result<T, BlockchainError> {
         trace!("load from disk internal");
         Self::load_optional_from_disk_internal(snapshot, tree, key)?
             .ok_or(BlockchainError::NotFoundOnDisk(context))
@@ -365,7 +365,7 @@ impl SledStorage {
     }
 
     // Scan prefix
-    pub(super) fn scan_prefix(snapshot: Option<&SledSnapshot>, tree: &Tree, prefix: &[u8]) -> impl Iterator<Item = sled::Result<IVec>> {
+    pub(super) fn scan_prefix(snapshot: Option<&Snapshot>, tree: &Tree, prefix: &[u8]) -> impl Iterator<Item = sled::Result<IVec>> {
         match snapshot {
             Some(snapshot) => Either::Left(snapshot.scan_prefix(tree, prefix)),
             None => Either::Right(tree.scan_prefix(prefix).into_iter().keys())
@@ -373,7 +373,7 @@ impl SledStorage {
     }
 
     // Iter over a tree entries
-    pub(super) fn iter(snapshot: Option<&SledSnapshot>, tree: &Tree) -> impl Iterator<Item = sled::Result<(IVec, IVec)>> {
+    pub(super) fn iter(snapshot: Option<&Snapshot>, tree: &Tree) -> impl Iterator<Item = sled::Result<(IVec, IVec)>> {
         match snapshot {
             Some(snapshot) => Either::Left(snapshot.iter(tree)),
             None => Either::Right(tree.iter())
@@ -381,14 +381,14 @@ impl SledStorage {
     }
 
     // Iter over a tree keys
-    pub(super) fn iter_keys(snapshot: Option<&SledSnapshot>, tree: &Tree) -> impl Iterator<Item = sled::Result<IVec>> {
+    pub(super) fn iter_keys(snapshot: Option<&Snapshot>, tree: &Tree) -> impl Iterator<Item = sled::Result<IVec>> {
         match snapshot {
             Some(snapshot) => Either::Left(snapshot.iter_keys(tree)),
             None => Either::Right(tree.iter().keys())
         }
     }
 
-    pub(super) fn remove_from_disk_internal(snapshot: Option<&mut SledSnapshot>, tree: &Tree, key: &[u8]) -> Result<Option<IVec>, BlockchainError> {
+    pub(super) fn remove_from_disk_internal(snapshot: Option<&mut Snapshot>, tree: &Tree, key: &[u8]) -> Result<Option<IVec>, BlockchainError> {
         trace!("remove from disk internal");
         if let Some(snapshot) = snapshot {
             let (value, load) = snapshot.remove(tree, key);
@@ -403,21 +403,21 @@ impl SledStorage {
     }
 
     // Delete a key from the DB
-    pub(super) fn remove_from_disk<T: Serializer>(snapshot: Option<&mut SledSnapshot>, tree: &Tree, key: &[u8]) -> Result<Option<T>, BlockchainError> {
+    pub(super) fn remove_from_disk<T: Serializer>(snapshot: Option<&mut Snapshot>, tree: &Tree, key: &[u8]) -> Result<Option<T>, BlockchainError> {
         trace!("remove from disk");
         let v = Self::remove_from_disk_internal(snapshot, tree, key)?;
         Ok(v.map(|v| T::from_bytes(&v)).transpose()?)
     }
 
     // Delete a key from the DB without reading it
-    pub(super) fn remove_from_disk_without_reading(snapshot: Option<&mut SledSnapshot>, tree: &Tree, key: &[u8]) -> Result<bool, BlockchainError> {
+    pub(super) fn remove_from_disk_without_reading(snapshot: Option<&mut Snapshot>, tree: &Tree, key: &[u8]) -> Result<bool, BlockchainError> {
         trace!("remove from disk without reading");
         Self::remove_from_disk_internal(snapshot, tree, key)
             .map(|v| v.is_some())
     }
 
     // Insert a key into the DB
-    pub(super) fn insert_into_disk<K: AsRef<[u8]>, V: Into<IVec>>(snapshot: Option<&mut SledSnapshot>, tree: &Tree, key: K, value: V) -> Result<Option<IVec>, BlockchainError> {
+    pub(super) fn insert_into_disk<K: AsRef<[u8]>, V: Into<IVec>>(snapshot: Option<&mut Snapshot>, tree: &Tree, key: K, value: V) -> Result<Option<IVec>, BlockchainError> {
         let previous = if let Some(snapshot) = snapshot {
             let r = key.as_ref();
             snapshot.insert(tree, r, value)
@@ -517,7 +517,7 @@ impl SledStorage {
             .ok_or_else(|| BlockchainError::NotFoundOnDisk(DiskContext::LoadData))
     }
 
-    pub(super) async fn delete_cacheable_data<K: Eq + StdHash + Serializer + Clone, V: Serializer>(snapshot: Option<&mut SledSnapshot>, tree: &Tree, cache: Option<&mut Mutex<LruCache<K, V>>>, key: &K) -> Result<V, BlockchainError> {
+    pub(super) async fn delete_cacheable_data<K: Eq + StdHash + Serializer + Clone, V: Serializer>(snapshot: Option<&mut Snapshot>, tree: &Tree, cache: Option<&mut Mutex<LruCache<K, V>>>, key: &K) -> Result<V, BlockchainError> {
         trace!("delete cacheable data");
         let value = Self::remove_from_disk_internal(snapshot, tree, &key.to_bytes())?
             .ok_or(BlockchainError::NotFoundOnDisk(DiskContext::DeleteData))?;
@@ -534,7 +534,7 @@ impl SledStorage {
     }
 
     // Delete a cacheable data from disk and cache behind a Arc
-    pub(super) async fn delete_arc_cacheable_data<K: Eq + StdHash + Serializer + Clone, V: Serializer>(snapshot: Option<&mut SledSnapshot>, tree: &Tree, cache: Option<&mut Mutex<LruCache<K, Arc<V>>>>, key: &K) -> Result<Immutable<V>, BlockchainError> {
+    pub(super) async fn delete_arc_cacheable_data<K: Eq + StdHash + Serializer + Clone, V: Serializer>(snapshot: Option<&mut Snapshot>, tree: &Tree, cache: Option<&mut Mutex<LruCache<K, Arc<V>>>>, key: &K) -> Result<Immutable<V>, BlockchainError> {
         trace!("delete arc cacheable data");
         let value = match Self::remove_from_disk::<V>(snapshot, tree, &key.to_bytes())? {
             Some(data) => data,

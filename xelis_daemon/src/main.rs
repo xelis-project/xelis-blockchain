@@ -61,7 +61,7 @@ use core::{
     storage::{
         Storage,
         SledStorage,
-        StorageMode,
+        sled::StorageMode,
     },
     blockdag,
     hard_fork::{

@@ -2,7 +2,12 @@ use async_trait::async_trait;
 use log::{debug, trace};
 use crate::core::{
     error::BlockchainError,
-    storage::{rocksdb::RocksSnapshot, CacheProvider, CommitPointProvider, RocksStorage}
+    storage::{
+        rocksdb::Snapshot,
+        CacheProvider,
+        CommitPointProvider,
+        RocksStorage
+    }
 };
 
 #[async_trait]
@@ -13,7 +18,7 @@ impl CommitPointProvider for RocksStorage {
             return Err(BlockchainError::CommitPointAlreadyStarted);
         }
 
-        self.snapshot = Some(RocksSnapshot::new());
+        self.snapshot = Some(Snapshot::new());
         Ok(())
     }
 

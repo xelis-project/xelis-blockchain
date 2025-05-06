@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use log::{debug, trace};
 use crate::core::{
     error::BlockchainError,
-    storage::{CacheProvider, CommitPointProvider, SledStorage, SledSnapshot}
+    storage::{CacheProvider, CommitPointProvider, SledStorage, sled::Snapshot}
 };
 
 #[async_trait]
@@ -14,7 +14,7 @@ impl CommitPointProvider for SledStorage {
             return Err(BlockchainError::CommitPointAlreadyStarted);
         }
 
-        let snapshot = SledSnapshot::new(self.cache.clone());
+        let snapshot = Snapshot::new(self.cache.clone());
         self.snapshot = Some(snapshot);
         Ok(())
     }

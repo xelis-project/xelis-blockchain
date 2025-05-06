@@ -1,12 +1,13 @@
 mod providers;
-mod sled;
-mod rocksdb;
 mod cache;
 
+pub mod sled;
+pub mod rocksdb;
+
 pub use self::{
-    sled::*,
     providers::*,
-    rocksdb::*
+    sled::SledStorage,
+    rocksdb::RocksStorage,
 };
 
 use std::collections::HashSet;

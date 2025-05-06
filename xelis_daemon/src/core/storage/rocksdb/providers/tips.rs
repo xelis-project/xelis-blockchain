@@ -1,6 +1,15 @@
 use async_trait::async_trait;
 
-use crate::core::{error::BlockchainError, storage::{Column, RocksStorage, Tips, TipsProvider, TIPS}};
+use crate::core::{
+    error::BlockchainError,
+    storage::{
+        rocksdb::Column,
+        sled::TIPS,
+        Tips,
+        RocksStorage,
+        TipsProvider,
+    }
+};
 
 #[async_trait]
 impl TipsProvider for RocksStorage {

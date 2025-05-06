@@ -14,7 +14,7 @@ use crate::core::error::{BlockchainError, DiskContext};
 pub use column::*;
 pub use types::*;
 
-pub use snapshot::RocksSnapshot;
+pub use snapshot::Snapshot;
 
 macro_rules! cf_handle {
     ($self: expr, $column: expr) => {
@@ -26,7 +26,7 @@ macro_rules! cf_handle {
 pub struct RocksStorage {
     db: DBWithThreadMode<MultiThreaded>,
     network: Network,
-    pub(super) snapshot: Option<RocksSnapshot> 
+    pub(super) snapshot: Option<Snapshot> 
 }
 
 impl RocksStorage {

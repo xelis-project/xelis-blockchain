@@ -3,7 +3,11 @@ use xelis_common::{block::TopoHeight, crypto::Hash};
 
 use crate::core::{
     error::BlockchainError,
-    storage::{Column, DagOrderProvider, RocksStorage}
+    storage::{
+        rocksdb::Column,
+        DagOrderProvider,
+        RocksStorage
+    }
 };
 
 #[async_trait]

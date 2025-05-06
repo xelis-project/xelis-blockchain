@@ -1,7 +1,15 @@
 use async_trait::async_trait;
 use indexmap::IndexSet;
 use xelis_common::crypto::Hash;
-use crate::core::{error::BlockchainError, storage::{BlockExecutionOrderProvider, Column, RocksStorage, BLOCKS_EXECUTION_ORDER_COUNT}};
+use crate::core::{
+    error::BlockchainError,
+    storage::{
+        BlockExecutionOrderProvider,
+        RocksStorage,
+        rocksdb::Column,
+        sled::BLOCKS_EXECUTION_ORDER_COUNT,
+    }
+};
 
 // This provider tracks the order in which blocks are added in the chain.
 // This is independant of the DAG order and is used for debug purposes.

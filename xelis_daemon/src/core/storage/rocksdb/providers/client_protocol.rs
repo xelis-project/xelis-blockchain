@@ -4,7 +4,12 @@ use async_trait::async_trait;
 use xelis_common::crypto::Hash;
 use crate::core::{
     error::BlockchainError,
-    storage::{ClientProtocolProvider, Column, RocksStorage, Tips}
+    storage::{
+        rocksdb::Column,
+        ClientProtocolProvider,
+        RocksStorage,
+        Tips
+    }
 };
 
 #[async_trait]

@@ -7,12 +7,14 @@ use xelis_common::{
 use crate::core::{
     error::BlockchainError,
     storage::{
+        rocksdb::{
+            Column,
+            TopoHeightMetadata
+        },
         BlockDagProvider,
-        Column,
         DagOrderProvider,
         DifficultyProvider,
         RocksStorage,
-        TopoHeightMetadata
     }
 };
 

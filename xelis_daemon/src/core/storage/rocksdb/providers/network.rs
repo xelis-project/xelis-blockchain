@@ -2,7 +2,11 @@ use xelis_common::network::Network;
 use log::trace;
 use crate::core::{
     error::BlockchainError,
-    storage::{Column, NetworkProvider, RocksStorage}
+    storage::{
+        rocksdb::Column,
+        NetworkProvider,
+        RocksStorage
+    }
 };
 
 impl NetworkProvider for RocksStorage {

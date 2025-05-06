@@ -17,7 +17,7 @@ use crate::core::{
         ContractProvider,
         SledStorage,
         VersionedContract,
-        CONTRACTS_COUNT
+        sled::CONTRACTS_COUNT
     }
 };
 use log::trace;
