@@ -646,9 +646,9 @@ impl Wallet {
     }
 
     // Decrypt the extra data from a transfer
-    pub fn decrypt_extra_data(&self, cipher: UnknownExtraDataFormat, handle: Option<&DecryptHandle>, role: Role) -> Result<PlaintextExtraData, WalletError> {
+    pub fn decrypt_extra_data(&self, cipher: UnknownExtraDataFormat, handle: Option<&DecryptHandle>, role: Role, version: TxVersion) -> Result<PlaintextExtraData, WalletError> {
         trace!("decrypt extra data");
-        let res = cipher.decrypt(self.account.inner.keypair.get_private_key(), handle, role)?;
+        let res = cipher.decrypt(self.account.inner.keypair.get_private_key(), handle, role, version)?;
         Ok(res)
     }
 
