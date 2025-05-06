@@ -1745,6 +1745,7 @@ impl<S: Storage> P2pServer<S> {
                     }).await;
 
                 // Check that the tx is not in mempool or on disk already
+                debug!("checking if TX {} is already in chain", hash);
                 if self.blockchain.has_tx(&hash).await? {
                    debug!("TX {} propagated is already in chain", hash);
                    return Ok(())
@@ -1752,6 +1753,7 @@ impl<S: Storage> P2pServer<S> {
 
                 // Check that we are not already waiting on it
                 {
+                    debug!("Adding TX {} to propagation queue", hash);
                     let mut txs_propagation_queue = self.txs_propagation_queue.lock().await;
                     if txs_propagation_queue.contains(&hash) {
                         debug!("TX {} propagated is already in processing from another peer", hash);
