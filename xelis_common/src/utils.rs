@@ -228,6 +228,9 @@ mod tests {
     fn test_high_difficulty() {
         let value: Difficulty = 1150_000_000u64.into();
         assert_eq!(format_difficulty(value), "1.15G");
+
+        let max: Difficulty = u64::MAX.into();
+        assert_eq!(format_difficulty(max), "18.44E");
     }
 
     #[test]
