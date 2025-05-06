@@ -4487,6 +4487,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sled",
+ "strum",
  "thiserror 1.0.69",
  "wasm-bindgen-futures",
  "web-sys",
