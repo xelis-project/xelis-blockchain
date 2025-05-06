@@ -1292,7 +1292,7 @@ async fn get_account_assets<S: Storage>(context: &Context, body: Value) -> Resul
 
     let key = params.address.get_public_key();
     let storage = blockchain.get_storage().read().await;
-    let assets: Vec<_> = storage.get_assets_for(key).await
+    let assets: Vec<_> = storage.get_assets_for(key).await?
         .skip(skip)
         .take(maximum)
         .collect::<Result<_, BlockchainError>>()

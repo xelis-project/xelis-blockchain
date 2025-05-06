@@ -83,13 +83,13 @@ impl AssetProvider for SledStorage {
     }
 
     // we are forced to read from disk directly because cache may don't have all assets in memory
-    async fn get_assets(&self) -> impl Iterator<Item = Result<Hash, BlockchainError>> {
+    async fn get_assets(&self) -> Result<impl Iterator<Item = Result<Hash, BlockchainError>>, BlockchainError> {
         trace!("get assets");
 
-        Self::iter_keys(self.snapshot.as_ref(), &self.assets).map(|res| {
+        Ok(Self::iter_keys(self.snapshot.as_ref(), &self.assets).map(|res| {
             let key = res?;
             Ok(Hash::from_bytes(&key)?)
-        })
+        }))
     }
 
     async fn get_partial_assets_with_topoheight(&self, maximum: usize, skip: usize, minimum_topoheight: TopoHeight, maximum_topoheight: TopoHeight) -> Result<IndexMap<Hash, (TopoHeight, AssetData)>, BlockchainError> {
@@ -155,13 +155,13 @@ impl AssetProvider for SledStorage {
     }
 
     // Returns all assets that the key has
-    async fn get_assets_for(&self, key: &PublicKey) -> impl Iterator<Item = Result<Hash, BlockchainError>> {
-        Self::scan_prefix(self.snapshot.as_ref(), &self.balances, key.as_bytes()).map(|res| {
+    async fn get_assets_for(&self, key: &PublicKey) -> Result<impl Iterator<Item = Result<Hash, BlockchainError>>, BlockchainError> {
+        Ok(Self::scan_prefix(self.snapshot.as_ref(), &self.balances, key.as_bytes()).map(|res| {
             let key = res?;
             // Keys are stored like this: [public key (32 bytes)][asset hash (32 bytes)]
             // See Self::get_balance_key_for
             Ok(Hash::from_bytes(&key[RISTRETTO_COMPRESSED_SIZE..])?)
-        })
+        }))
     }
 
     // count assets in storage

@@ -32,7 +32,7 @@ pub trait AssetProvider {
     async fn get_asset(&self, hash: &Hash) -> Result<(TopoHeight, VersionedAssetData), BlockchainError>;
 
     // Get all available assets
-    async fn get_assets(&self) -> impl Iterator<Item = Result<Hash, BlockchainError>>;
+    async fn get_assets(&self) -> Result<impl Iterator<Item = Result<Hash, BlockchainError>>, BlockchainError>;
 
     // Get a partial list of assets supporting pagination and filtering by topoheight
     // TODO: replace with impl Iterator<Item = Result<Hash, BlockchainError>> when async trait methods are stable
@@ -46,7 +46,7 @@ pub trait AssetProvider {
     async fn get_chunked_assets(&self, maximum: usize, skip: usize) -> Result<IndexSet<Hash>, BlockchainError>;
 
     // Get all assets for a specific key
-    async fn get_assets_for(&self, key: &PublicKey) -> impl Iterator<Item = Result<Hash, BlockchainError>>;
+    async fn get_assets_for(&self, key: &PublicKey) -> Result<impl Iterator<Item = Result<Hash, BlockchainError>>, BlockchainError>;
 
     // Count the number of assets stored
     async fn count_assets(&self) -> Result<u64, BlockchainError>;

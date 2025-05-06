@@ -182,7 +182,7 @@ impl AccountProvider for SledStorage {
         // lets check on balances now...
 
         // check that we have a VersionedBalance between range given
-        for res in self.get_assets_for(key).await {
+        for res in self.get_assets_for(key).await? {
             let asset = res?;
             let (topo, mut version) = self.get_last_balance(key, &asset).await?;
             if topo >= minimum_topoheight && topo <= maximum_topoheight {
