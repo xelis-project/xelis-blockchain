@@ -181,7 +181,10 @@ impl<S: Storage> GetWorkServer<S> {
                 difficulty = *diff;
             } else {
                 // generate a mining job
+                debug!("locking storage for mining job generation");
                 let storage = self.blockchain.get_storage().read().await;
+                debug!("storage read acquired for mining job generation");
+
                 let header = self.blockchain.get_block_template_for_storage(&storage, DEV_PUBLIC_KEY.clone()).await
                     .context("Error while retrieving block template")?;
                 (difficulty, _) = self.blockchain.get_difficulty_at_tips(&*storage, header.get_tips().iter()).await
@@ -245,7 +248,10 @@ impl<S: Storage> GetWorkServer<S> {
         self.is_job_dirty.store(false, Ordering::SeqCst);
         debug!("Notify all miners for a new job");
         let (header, difficulty) = {
+            debug!("locking storage for new job");
             let storage = self.blockchain.get_storage().read().await;
+            debug!("storage read acquired for new job");
+
             let header = self.blockchain.get_block_template_for_storage(&storage, DEV_PUBLIC_KEY.clone()).await
                 .context("Error while retrieving block template when notifying new job")?;
             let (difficulty, _) = self.blockchain.get_difficulty_at_tips(&*storage, header.get_tips().iter()).await

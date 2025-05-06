@@ -676,8 +676,9 @@ impl<S: Storage> P2pServer<S> {
         let genesis_hash = match get_genesis_block_hash(self.blockchain.get_network()) {
             Some(hash) => Cow::Borrowed(hash),
             None => {
-                trace!("no hardcoded genesis block hash found, using the one from the storage");
+                debug!("no hardcoded genesis block hash found, using the one from the storage");
                 let storage = self.blockchain.get_storage().read().await;
+                debug!("storage read acquired for genesis block hash");
                 let hash = storage.get_hash_at_topo_height(0).await?;
                 Cow::Owned(hash)
             }
@@ -1816,7 +1817,9 @@ impl<S: Storage> P2pServer<S> {
 
                 // check that we don't have this block in our chain
                 {
+                    debug!("locking storage for block propagation {}", block_hash);
                     let storage = self.blockchain.get_storage().read().await;
+                    debug!("storage read acquired for block propagation");
                     if storage.has_block_with_hash(&block_hash).await? {
                         debug!("{}: {} with hash {} is already in our chain. Skipping", peer, header, block_hash);
                         return Ok(())
@@ -1961,6 +1964,7 @@ impl<S: Storage> P2pServer<S> {
                         debug!("{} asked full block {}", peer, hash);
                         let block = {
                             let storage = self.blockchain.get_storage().read().await;
+                            debug!("storage read acquired for full block request");
                             storage.get_block_by_hash(hash).await
                         };
 
@@ -1979,6 +1983,7 @@ impl<S: Storage> P2pServer<S> {
                         debug!("{} asked block header {}", peer, hash);
                         let block = {
                             let storage = self.blockchain.get_storage().read().await;
+                            debug!("storage read acquired for block header request");
                             storage.get_block_header_by_hash(hash).await
                         };
 

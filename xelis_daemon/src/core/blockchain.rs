@@ -487,8 +487,9 @@ impl<S: Storage> Blockchain<S> {
     // Reload the storage and update all cache values
     // Clear the mempool also in case of not being up-to-date
     pub async fn reload_from_disk(&self) -> Result<(), BlockchainError> {
-        trace!("Reloading chain from disk");
+        debug!("Reloading chain from disk");
         let mut storage = self.storage.write().await;
+        debug!("storage lock acquired for reload from disk");
         self.reload_from_disk_with_storage(&mut *storage).await
     }
 
@@ -616,8 +617,9 @@ impl<S: Storage> Blockchain<S> {
     // Prune the chain until topoheight
     // This will delete all blocks / versioned balances / txs until topoheight in param
     pub async fn prune_until_topoheight(&self, topoheight: TopoHeight) -> Result<TopoHeight, BlockchainError> {
-        trace!("prune until topoheight {}", topoheight);
+        debug!("prune until topoheight {}", topoheight);
         let mut storage = self.storage.write().await;
+        debug!("storage write acquired for pruning");
         self.prune_until_topoheight_for_storage(topoheight, &mut *storage).await
     }
 
@@ -720,15 +722,17 @@ impl<S: Storage> Blockchain<S> {
 
     // Get the current emitted supply of XELIS at current topoheight
     pub async fn get_supply(&self) -> Result<u64, BlockchainError> {
-        trace!("get supply");
+        debug!("get supply");
         let storage = self.storage.read().await;
+        debug!("storage read acquired for get supply");
         storage.get_supply_at_topo_height(self.get_topo_height()).await
     }
 
     // Get the current burned supply of XELIS at current topoheight
     pub async fn get_burned_supply(&self) -> Result<u64, BlockchainError> {
-        trace!("get burned supply");
+        debug!("get burned supply");
         let storage = self.storage.read().await;
+        debug!("storage read acquired for get burned supply");
         storage.get_burned_supply_at_topo_height(self.get_topo_height()).await
     }
 
@@ -740,8 +744,10 @@ impl<S: Storage> Blockchain<S> {
 
     // Get the current top block hash in chain
     pub async fn get_top_block_hash(&self) -> Result<Hash, BlockchainError> {
-        trace!("get top block hash");
+        debug!("get top block hash");
         let storage = self.storage.read().await;
+        debug!("storage read acquired for get top block hash");
+
         self.get_top_block_hash_for_storage(&storage).await
     }
 
@@ -754,8 +760,9 @@ impl<S: Storage> Blockchain<S> {
 
     // Verify if we have the current block in storage by locking it ourself
     pub async fn has_block(&self, hash: &Hash) -> Result<bool, BlockchainError> {
-        trace!("has block {} in chain", hash);
+        debug!("has block {} in chain", hash);
         let storage = self.storage.read().await;
+        debug!("storage read acquired for has block {}", hash);
         storage.has_block_with_hash(hash).await
     }
 
@@ -1405,8 +1412,9 @@ impl<S: Storage> Blockchain<S> {
 
     // Add a tx to the mempool with the given hash, it is not computed and the TX is transformed into an Arc
     pub async fn add_tx_to_mempool_with_hash(&self, tx: Transaction, hash: Immutable<Hash>, broadcast: bool) -> Result<(), BlockchainError> {
-        trace!("add tx to mempool with hash");
+        debug!("add tx to mempool with hash {}", hash);
         let storage = self.storage.read().await;
+        debug!("storage read acquired to add tx to mempool with hash");
         self.add_tx_to_mempool_with_storage_and_hash(&storage, Arc::new(tx), hash, broadcast).await
     }
 
@@ -1505,8 +1513,9 @@ impl<S: Storage> Blockchain<S> {
 
     // Get a block template for the new block work (mining)
     pub async fn get_block_template(&self, address: PublicKey) -> Result<BlockHeader, BlockchainError> {
-        trace!("get block template");
+        debug!("get block template");
         let storage = self.storage.read().await;
+        debug!("storage read acquired for get block template");
         self.get_block_template_for_storage(&storage, address).await
     }
 
@@ -1523,8 +1532,9 @@ impl<S: Storage> Blockchain<S> {
         }
 
         // check in storage now
-        trace!("has tx {} storage", hash);
+        debug!("has tx {} storage", hash);
         let storage = self.storage.read().await;
+        debug!("storage read acquired for has tx");
         storage.has_transaction(hash).await
     }
 
@@ -1711,9 +1721,13 @@ impl<S: Storage> Blockchain<S> {
     pub async fn build_block_from_header(&self, header: Immutable<BlockHeader>) -> Result<Block, BlockchainError> {
         trace!("Searching TXs for block at height {}", header.get_height());
         let mut transactions: Vec<Immutable<Transaction>> = Vec::with_capacity(header.get_txs_count());
+
+        debug!("locking storage for build block from header");
         let storage = self.storage.read().await;
+        debug!("storage read acquired for build block from header");
         let mempool = self.mempool.read().await;
-        trace!("Mempool lock acquired for building block from header");
+        debug!("Mempool lock acquired for building block from header");
+
         for hash in header.get_txs_hashes() {
             trace!("Searching TX {} for building block", hash);
             // at this point, we don't want to lose/remove any tx, we clone it only
@@ -2857,7 +2871,7 @@ impl<S: Storage> Blockchain<S> {
 
     // Rewind the chain by removing N blocks from the top
     pub async fn rewind_chain(&self, count: u64, until_stable_height: bool) -> Result<(TopoHeight, Vec<(Hash, Immutable<Transaction>)>), BlockchainError> {
-        trace!("rewind chain of {} blocks (stable height: {})", count, until_stable_height);
+        debug!("rewind chain of {} blocks (stable height: {})", count, until_stable_height);
         let mut storage = self.storage.write().await;
         self.rewind_chain_for_storage(&mut storage, count, until_stable_height).await
     }

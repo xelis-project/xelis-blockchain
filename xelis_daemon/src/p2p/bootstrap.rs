@@ -41,7 +41,7 @@ use crate::{
 use super::{packet::bootstrap_chain::{StepRequest, StepResponse, MAX_ITEMS_PER_PAGE}, peer::Peer, P2pServer};
 
 impl<S: Storage> P2pServer<S> {
-// Handle a bootstrap chain request
+    // Handle a bootstrap chain request
     // We have differents steps available for a bootstrap sync
     // We verify that they are send in good order
     pub(super) async fn handle_bootstrap_chain_request(self: &Arc<Self>, peer: &Arc<Peer>, request: StepRequest<'_>) -> Result<(), BlockchainError> {
