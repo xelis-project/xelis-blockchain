@@ -45,20 +45,38 @@ impl AssetProvider for RocksStorage {
     // Get the asset data from its hash and topoheight at which it got registered
     async fn get_asset_at_topoheight(&self, hash: &Hash, topoheight: TopoHeight) -> Result<VersionedAssetData, BlockchainError> {
         let asset = self.get_asset_type(hash)?;
-        let key = Self::create_asset_versioned_key(topoheight, asset.id);
-
-        self.load_from_disk(Column::VersionedAssets, &key)
+        self.get_asset_at_topoheight_internal(asset.id, topoheight)
     }
 
     // Check that the asset has been registered <= maximum topoheight  
-    async fn is_asset_registered_at_maximum_topoheight(&self, hash: &Hash, topoheight: TopoHeight) -> Result<bool, BlockchainError> {
-        todo!()
+    async fn is_asset_registered_at_maximum_topoheight(&self, hash: &Hash, maximum_topoheight: TopoHeight) -> Result<bool, BlockchainError> {
+        let topoheight = self.get_asset_topoheight(hash).await?;
+        match topoheight {
+            Some(topo) if topo <= maximum_topoheight => Ok(true),
+            _ => Ok(false)
+        }
     }
 
     // Get asset data for topoheight
     // This check that asset topoheight is <= requested topoheight
     async fn get_asset_at_maximum_topoheight(&self, hash: &Hash, topoheight: TopoHeight) -> Result<Option<(TopoHeight, VersionedAssetData)>, BlockchainError> {
-        todo!()
+        let Some(metadata) = self.get_optional_asset_type(hash)? else {
+            return Ok(None)
+        };
+
+
+        let mut topo = metadata.data_pointer;
+        while let Some(previous) = topo {
+            if previous <= topoheight {
+                let data = self.get_asset_at_topoheight_internal(metadata.id, previous)?;
+                return Ok(Some((previous, data)))
+            }
+
+            let key = Self::create_asset_versioned_key(topoheight, metadata.id);
+            topo = self.load_from_disk(Column::VersionedAssets, &key)?;
+        }
+
+        Ok(None)
     }
 
     // Get the asset data from its hash and topoheight at which it got registered
@@ -67,8 +85,7 @@ impl AssetProvider for RocksStorage {
         let topoheight = asset.data_pointer
             .ok_or_else(|| BlockchainError::AssetNotFound(hash.clone()))?;
 
-        let key = Self::create_asset_versioned_key(topoheight, asset.id);
-        let data = self.load_from_disk(Column::VersionedAssets, &key)?;
+        let data = self.get_asset_at_topoheight_internal(asset.id, topoheight)?;
 
         Ok((topoheight, data))
     }
@@ -143,6 +160,11 @@ impl RocksStorage {
         self.insert_into_disk(Column::Common, &ASSETS_ID, &(id + 1))?;
 
         Ok(id)
+    }
+
+    fn get_asset_at_topoheight_internal(&self, id: AssetId, topoheight: TopoHeight) -> Result<VersionedAssetData, BlockchainError> {
+        let key = Self::create_asset_versioned_key(topoheight, id);
+        self.load_from_disk(Column::VersionedAssets, &key)
     }
 
     fn get_optional_asset_type(&self, hash: &Hash) -> Result<Option<Asset>, BlockchainError> {

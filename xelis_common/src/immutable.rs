@@ -1,6 +1,5 @@
 use std::{
     fmt::{self, Display},
-    mem::MaybeUninit,
     ops::Deref,
     sync::Arc
 };
@@ -35,15 +34,9 @@ impl<T: Clone> Immutable<T> {
     pub fn make_arc(&mut self) -> Arc<T> {
         match self {
             Immutable::Owned(v) => {
-                // SAFETY: dummy value is dropped right after
-                let dummy = unsafe {
-                    MaybeUninit::uninit().assume_init()
-                };
-
-                let v = std::mem::replace(v, dummy);
-                let arc = Arc::new(v);
+                // Replace self with Immutable::Arc
+                let arc = Arc::new(v.clone());
                 *self = Immutable::Arc(arc.clone());
-
                 arc
             },
             Immutable::Arc(v) => v.clone()
