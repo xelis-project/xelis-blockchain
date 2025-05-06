@@ -1804,8 +1804,22 @@ No parameters
                 "last_ping": 1711664680,
                 "local_port": 2125,
                 "peers": {
-                    "255.255.255.255:2125": "In",
-                    "74.208.251.149:2125": "Both"
+                    "255.255.255.255:2125": {
+                        "out": {
+                            "sent_at": 1746147705443
+                        }
+                    },
+                    "74.208.251.149:2125": {
+                        "both": {
+                            "received_at": 1745996467029,
+                            "sent_at": 1745953407894
+                        }
+                    },
+                    "74.208.251.149:2126": {
+                        "in": {
+                            "received_at": 1745996467029
+                        }
+                    }
                 },
                 "pruned_topoheight": null,
                 "tag": null,
@@ -1821,10 +1835,7 @@ No parameters
                 "id": 2448648666414530279,
                 "last_ping": 1711664682,
                 "local_port": 2125,
-                "peers": {
-                    "127.0.0.1:2125": "In",
-                    "127.0.0.1:2126": "Both"
-                },
+                "peers": {},
                 "pruned_topoheight": null,
                 "tag": null,
                 "top_block_hash": "0000000007eeed3fecdaedff82ad867a224826230c12465cf39186471e2e360e",
