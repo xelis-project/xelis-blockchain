@@ -1,5 +1,10 @@
 use std::collections::{btree_map::{Entry, IntoIter}, BTreeMap};
+use anyhow::Context;
 use bytes::Bytes;
+use itertools::{Itertools, Either};
+use xelis_common::serializer::Serializer;
+
+use crate::core::error::BlockchainError;
 
 use super::Column;
 
@@ -82,5 +87,100 @@ impl RocksSnapshot {
     pub fn contains<K: AsRef<[u8]>>(&self, column: Column, key: K) -> Option<bool> {
         let batch = self.columns.get(&column)?;
         batch.contains(key)
+    }
+
+    // Lazy iterator over a prefix
+    pub fn scan_prefix<'a, K: Serializer + 'a, V: Serializer + 'a>(&'a self, column: Column, prefix: &'a [u8], iterator: impl Iterator<Item = Result<(Box<[u8]>, Box<[u8]>), rocksdb::Error>> + 'a) -> impl Iterator<Item = Result<(K, V), BlockchainError>> + 'a {
+        match self.columns.get(&column) {
+            Some(tree) => {
+                Either::Left(iterator.filter_map_ok(|(k, v)| {
+                        if tree.writes.contains_key(&*k) {
+                            Some((k, v))
+                        } else {
+                            None
+                        }
+                    })
+                    .map(|k| {
+                        let (key, value) = k.context("Internal error in snapshot scan_prefix")?;
+                        let k = K::from_bytes(&key)?;
+                        let v = V::from_bytes(&value)?;
+
+                        Ok((k, v))
+                    })
+                    .chain(
+                        tree.writes.iter()
+                            .filter_map(|(k, v)| {
+                                if k.starts_with(prefix) {
+                                    v.as_ref().map(|v| (k, v))
+                                } else {
+                                    None
+                                }
+                            })
+                            .map(|(k, v)| {
+                                let key = K::from_bytes(&k)?;
+                                let value = V::from_bytes(&v)?;
+                                Ok((key, value))
+                            })
+                    ))
+            },
+            None => Either::Right(std::iter::empty())
+        }
+    }
+
+    // Lazy iterator 
+    pub fn iter<'a, K: Serializer + 'a, V: Serializer + 'a>(&'a self, column: Column, iterator: impl Iterator<Item = Result<(Box<[u8]>, Box<[u8]>), rocksdb::Error>> + 'a) -> impl Iterator<Item = Result<(K, V), BlockchainError>> + 'a {
+        match self.columns.get(&column) {
+            Some(tree) => {
+                Either::Left(iterator.filter_map_ok(|(k, v)| {
+                        if tree.writes.contains_key(&*k) {
+                            Some((k, v))
+                        } else {
+                            None
+                        }
+                    })
+                    .map(|k| {
+                        let (key, value) = k.context("Internal error in snapshot iter")?;
+                        let k = K::from_bytes(&key)?;
+                        let v = V::from_bytes(&value)?;
+
+                        Ok((k, v))
+                    })
+                    .chain(
+                        tree.writes.iter()
+                            .filter_map(|(k, v)| v.as_ref().map(|v| (k, v)))
+                            .map(|(k, v)| {
+                                let key = K::from_bytes(&k)?;
+                                let value = V::from_bytes(&v)?;
+                                Ok((key, value))
+                            })
+                    ))
+            },
+            None => Either::Right(std::iter::empty())
+        }
+    }
+
+    // Lazy iterator over keys only
+    pub fn iter_keys<'a, K: Serializer + 'a>(&'a self, column: Column, iterator: impl Iterator<Item = Result<(Box<[u8]>, Box<[u8]>), rocksdb::Error>> + 'a) -> impl Iterator<Item = Result<K, BlockchainError>> + 'a {
+        match self.columns.get(&column) {
+            Some(tree) => {
+                Either::Left(iterator.filter_map_ok(|(k, _)| {
+                        if tree.writes.contains_key(&*k) {
+                            Some(k)
+                        } else {
+                            None
+                        }
+                    })
+                    .map(|k| {
+                        let key = k.context("Internal error in snapshot iter_keys")?;
+                        Ok(K::from_bytes(&key)?)
+                    })
+                    .chain(
+                        tree.writes.iter()
+                            .filter_map(|(k, v)| v.as_ref().map(|_| k))
+                            .map(|k| Ok(K::from_bytes(&k)?))
+                    ))
+            },
+            None => Either::Right(std::iter::empty())
+        }
     }
 }

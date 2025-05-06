@@ -4,6 +4,7 @@ mod providers;
 mod snapshot;
 
 use anyhow::Context;
+use itertools::Either;
 use log::trace;
 use rocksdb::{ColumnFamilyDescriptor, DBWithThreadMode, IteratorMode, MultiThreaded, Options, SliceTransform};
 use strum::IntoEnumIterator;
@@ -139,43 +140,62 @@ impl RocksStorage {
         }
     }
 
-    pub fn scan_prefix<'a, K: Serializer, V: Serializer>(&'a self, column: Column, prefix: &'a [u8]) -> Result<impl Iterator<Item = Result<(K, V), BlockchainError>> + 'a, BlockchainError> {
+    pub fn scan_prefix<'a, K: Serializer + 'a, V: Serializer + 'a>(&'a self, column: Column, prefix: &'a [u8]) -> Result<impl Iterator<Item = Result<(K, V), BlockchainError>> + 'a, BlockchainError> {
         trace!("scan prefix {:?}", column);
 
         let cf = cf_handle!(self, column);
         let iterator = self.db.prefix_iterator_cf(&cf, prefix);
 
-        Ok(iterator.map(move |res| {
-            let (key, value) = res.with_context(|| format!("Internal read error in scan prefix for {:?}", column))?;
-            let key = K::from_bytes(&key)?;
-            let value = V::from_bytes(&value)?;
-
-            Ok((key, value))
-        }))
+        match self.snapshot.as_ref() {
+            Some(snapshot) => Ok(Either::Left(snapshot.scan_prefix(column, prefix, iterator))),
+            None => {
+                Ok(Either::Right(iterator.map(|res| {
+                    let (key, value) = res.context("Internal read error in iter")?;
+                    let key = K::from_bytes(&key)?;
+                    let value = V::from_bytes(&value)?;
+        
+                    Ok((key, value))
+                })))
+            } 
+        }
     }
 
-    pub fn iter<'a, K: Serializer, V: Serializer>(&'a self, column: Column) -> Result<impl Iterator<Item = Result<(K, V), BlockchainError>> + 'a, BlockchainError> {
+    pub fn iter<'a, K: Serializer + 'a, V: Serializer + 'a>(&'a self, column: Column) -> Result<impl Iterator<Item = Result<(K, V), BlockchainError>> + 'a, BlockchainError> {
+        trace!("iter {:?}", column);
+
         let cf = cf_handle!(self, column);
         let iterator = self.db.iterator_cf(&cf, IteratorMode::Start);
 
-        Ok(iterator.map(|res| {
-            let (key, value) = res.context("Internal read error in scan prefix")?;
-            let key = K::from_bytes(&key)?;
-            let value = V::from_bytes(&value)?;
-
-            Ok((key, value))
-        }))
+        match self.snapshot.as_ref() {
+            Some(snapshot) => Ok(Either::Left(snapshot.iter(column, iterator))),
+            None => {
+                Ok(Either::Right(iterator.map(|res| {
+                    let (key, value) = res.context("Internal read error in iter")?;
+                    let key = K::from_bytes(&key)?;
+                    let value = V::from_bytes(&value)?;
+        
+                    Ok((key, value))
+                })))
+            } 
+        }
     }
 
-    pub fn iter_keys<'a, K: Serializer>(&'a self, column: Column) -> Result<impl Iterator<Item = Result<K, BlockchainError>> + 'a, BlockchainError> {
+    pub fn iter_keys<'a, K: Serializer + 'a>(&'a self, column: Column) -> Result<impl Iterator<Item = Result<K, BlockchainError>> + 'a, BlockchainError> {
+        trace!("iter keys {:?}", column);
+
         let cf = cf_handle!(self, column);
         let iterator = self.db.iterator_cf(&cf, IteratorMode::Start);
 
-        Ok(iterator.map(|res| {
-            let (key, _) = res.context("Internal read error in scan prefix")?;
-            let key = K::from_bytes(&key)?;
-
-            Ok(key)
-        }))
+        match self.snapshot.as_ref() {
+            Some(snapshot) => Ok(Either::Left(snapshot.iter_keys(column, iterator))),
+            None => {
+                Ok(Either::Right(iterator.map(|res| {
+                    let (key, _) = res.context("Internal read error in iter_keys")?;
+                    let key = K::from_bytes(&key)?;
+        
+                    Ok(key)
+                })))
+            } 
+        }
     }
 }
