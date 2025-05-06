@@ -21,6 +21,7 @@ actix = { version = "0.13.0", optional = true }
 actix-web = { version = "4", optional = true }
 hex = "0.4.3"
 bytemuck = "1.15.0"
+strum = { version = "0.27.1", features = ["derive"] }
 
 # common dependencies
 lru = "0.12.3"
