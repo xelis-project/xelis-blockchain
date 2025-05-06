@@ -172,19 +172,19 @@ fn test_encrypt_decrypt_two_parties() {
     let cipher = transfer.get_extra_data().clone().unwrap();
     // Verify the extra data from alice (sender)
     {
-        let decrypted = cipher.decrypt(&alice.keypair.get_private_key(), None, Role::Sender).unwrap();
+        let decrypted = cipher.decrypt(&alice.keypair.get_private_key(), None, Role::Sender, TxVersion::V1).unwrap();
         assert_eq!(decrypted.data(), Some(&payload));
     }
 
     // Verify the extra data from bob (receiver)
     {
-        let decrypted = cipher.decrypt(&bob.keypair.get_private_key(), None, Role::Receiver).unwrap();
+        let decrypted = cipher.decrypt(&bob.keypair.get_private_key(), None, Role::Receiver, TxVersion::V1).unwrap();
         assert_eq!(decrypted.data(), Some(&payload));
     }
 
     // Verify the extra data from alice (sender) with the wrong key
     {
-        let decrypted = cipher.decrypt(&bob.keypair.get_private_key(), None, Role::Sender);
+        let decrypted = cipher.decrypt(&bob.keypair.get_private_key(), None, Role::Sender, TxVersion::V1);
         assert!(decrypted.is_err());
     }
 }
