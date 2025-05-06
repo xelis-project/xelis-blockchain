@@ -1,5 +1,4 @@
 use async_trait::async_trait;
-use indexmap::{IndexMap, IndexSet};
 use xelis_common::{
     asset::{AssetData, VersionedAssetData},
     block::TopoHeight,
@@ -32,18 +31,10 @@ pub trait AssetProvider {
     async fn get_asset(&self, hash: &Hash) -> Result<(TopoHeight, VersionedAssetData), BlockchainError>;
 
     // Get all available assets
-    async fn get_assets(&self) -> Result<impl Iterator<Item = Result<Hash, BlockchainError>>, BlockchainError>;
+    async fn get_assets<'a>(&'a self) -> Result<impl Iterator<Item = Result<Hash, BlockchainError>> + 'a, BlockchainError>;
 
-    // Get a partial list of assets supporting pagination and filtering by topoheight
-    // TODO: replace with impl Iterator<Item = Result<Hash, BlockchainError>> when async trait methods are stable
-    async fn get_partial_assets_with_topoheight(&self, maximum: usize, skip: usize, minimum_topoheight: TopoHeight, maximum_topoheight: TopoHeight) -> Result<IndexMap<Hash, (TopoHeight, AssetData)>, BlockchainError>;
-
-    // Get a partial list of assets supporting pagination and filtering by topoheight
-    async fn get_partial_assets(&self, maximum: usize, skip: usize, minimum_topoheight: TopoHeight, maximum_topoheight: TopoHeight) -> Result<IndexMap<Hash, AssetData>, BlockchainError>;
-
-    // Get chunked assets
-    // This is useful to not retrieve all assets at once
-    async fn get_chunked_assets(&self, maximum: usize, skip: usize) -> Result<IndexSet<Hash>, BlockchainError>;
+    // Get all available assets with their Asset Data in specified range
+    async fn get_assets_with_data_in_range<'a>(&'a self, minimum_topoheight: Option<u64>, maximum_topoheight: Option<u64>) -> Result<impl Iterator<Item = Result<(Hash, TopoHeight, AssetData), BlockchainError>> + 'a, BlockchainError>;
 
     // Get all assets for a specific key
     async fn get_assets_for(&self, key: &PublicKey) -> Result<impl Iterator<Item = Result<Hash, BlockchainError>>, BlockchainError>;

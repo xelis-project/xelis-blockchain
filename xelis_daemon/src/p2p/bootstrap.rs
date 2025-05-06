@@ -1,7 +1,7 @@
 use std::{borrow::Cow, collections::HashSet, sync::Arc, time::Instant};
 
 use futures::{stream, StreamExt, TryStreamExt};
-use indexmap::IndexSet;
+use indexmap::{IndexMap, IndexSet};
 use log::{debug, error, info, trace, warn};
 use xelis_common::{
     account::{VersionedBalance, VersionedNonce},
@@ -82,7 +82,15 @@ impl<S: Storage> P2pServer<S> {
                 }
 
                 let page = page.unwrap_or(0);
-                let assets = storage.get_partial_assets(MAX_ITEMS_PER_PAGE, page as usize * MAX_ITEMS_PER_PAGE, min, max).await?;
+                let assets = storage.get_assets_with_data_in_range(Some(min), Some(max)).await?
+                    .skip(page as usize * MAX_ITEMS_PER_PAGE)
+                    .take(MAX_ITEMS_PER_PAGE)
+                    .map(|res| match res {
+                        Ok((hash, _, data)) => Ok((hash, data)),
+                        Err(e) => Err(e)
+                    })
+                    .collect::<Result<IndexMap<_, _>, _>>()?;
+
                 let page = if assets.len() == MAX_ITEMS_PER_PAGE {
                     Some(page + 1)
                 } else {
@@ -693,7 +701,11 @@ impl<S: Storage> P2pServer<S> {
             // Retrieve chunked assets
             let assets = {
                 let storage = self.blockchain.get_storage().read().await;
-                let assets = storage.get_chunked_assets(MAX_ITEMS_PER_PAGE, page * MAX_ITEMS_PER_PAGE).await?;
+                let assets = storage.get_assets().await?
+                    .skip(page * MAX_ITEMS_PER_PAGE)
+                    .take(MAX_ITEMS_PER_PAGE)
+                    .collect::<Result<IndexSet<_>, _>>()?;
+
                 if assets.is_empty() {
                     break;
                 }

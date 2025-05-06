@@ -59,7 +59,8 @@ impl BlockExecutionOrderProvider for RocksStorage {
 
 impl RocksStorage {
     fn get_next_block_position(&mut self) -> Result<u64, BlockchainError> {
-        let position = self.load_from_disk(Column::Common, BLOCKS_EXECUTION_ORDER_COUNT)?;
+        let position = self.load_optional_from_disk(Column::Common, BLOCKS_EXECUTION_ORDER_COUNT)?
+            .unwrap_or(0);
         self.insert_into_disk(Column::Common, BLOCKS_EXECUTION_ORDER_COUNT, &(position + 1))?;
         Ok(position)
     }

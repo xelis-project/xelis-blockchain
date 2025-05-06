@@ -1,5 +1,4 @@
 use async_trait::async_trait;
-use indexmap::{IndexMap, IndexSet};
 use log::trace;
 use xelis_common::{
     asset::{AssetData, VersionedAssetData},
@@ -83,7 +82,7 @@ impl AssetProvider for SledStorage {
     }
 
     // we are forced to read from disk directly because cache may don't have all assets in memory
-    async fn get_assets(&self) -> Result<impl Iterator<Item = Result<Hash, BlockchainError>>, BlockchainError> {
+    async fn get_assets<'a>(&'a self) -> Result<impl Iterator<Item = Result<Hash, BlockchainError>> + 'a, BlockchainError> {
         trace!("get assets");
 
         Ok(Self::iter_keys(self.snapshot.as_ref(), &self.assets).map(|res| {
@@ -92,66 +91,24 @@ impl AssetProvider for SledStorage {
         }))
     }
 
-    async fn get_partial_assets_with_topoheight(&self, maximum: usize, skip: usize, minimum_topoheight: TopoHeight, maximum_topoheight: TopoHeight) -> Result<IndexMap<Hash, (TopoHeight, AssetData)>, BlockchainError> {
-        trace!("get partial assets with topoheight with maximum {} and skip {}", maximum, skip);
-        let mut assets = IndexMap::new();
-        let mut skip_count = 0;
-        for el in Self::iter(self.snapshot.as_ref(), &self.assets) {
-            let (key, value) = el?;
-            let topo = u64::from_bytes(&value)?;
-            // check that we have a registered asset before the maximum topoheight
-            if topo >= minimum_topoheight && topo <= maximum_topoheight {
-                if skip_count < skip {
-                    skip_count += 1;
-                } else {
-                    let asset = Hash::from_bytes(&key)?;
-
-                    let data = self.get_asset_at_topoheight(&asset, topo).await?;
-                    assets.insert(asset, (topo, data.take()));
-
-                    if assets.len() == maximum {
-                        break;
-                    }
+    async fn get_assets_with_data_in_range<'a>(&'a self, minimum_topoheight: Option<u64>, maximum_topoheight: Option<u64>) -> Result<impl Iterator<Item = Result<(Hash, TopoHeight, AssetData), BlockchainError>> + 'a, BlockchainError> {
+        Ok(Self::iter(self.snapshot.as_ref(), &self.assets)
+            .map(move |res| {
+                let (key, value) = res?;
+                let topoheight = TopoHeight::from_bytes(&value)?;
+                if minimum_topoheight.is_some_and(|v| topoheight < v) || maximum_topoheight.is_some_and(|v| topoheight > v) {
+                    return Ok(None)
                 }
-            }
-        }
-        Ok(assets)
-    }
 
-    async fn get_partial_assets(&self, maximum: usize, skip: usize, minimum_topoheight: TopoHeight, maximum_topoheight: TopoHeight) -> Result<IndexMap<Hash, AssetData>, BlockchainError> {
-        trace!("get partial assets with maximum {} and skip {}", maximum, skip);
-        let mut assets = IndexMap::new();
-        let mut skip_count = 0;
-        for el in Self::iter(self.snapshot.as_ref(), &self.assets) {
-            let (key, value) = el?;
-            let topo = u64::from_bytes(&value)?;
-            // check that we have a registered asset before the maximum topoheight
-            if topo >= minimum_topoheight && topo <= maximum_topoheight {
-                if skip_count < skip {
-                    skip_count += 1;
-                } else {
-                    let asset = Hash::from_bytes(&key)?;
+                let asset = Hash::from_bytes(&key)?;
 
-                    let data = self.get_asset_at_topoheight(&asset, topo).await?;
-                    assets.insert(asset, data.take());
+                let key = Self::get_asset_key(&asset, topoheight);
+                let data = self.load_from_disk(&self.versioned_assets, &key, DiskContext::AssetAtTopoHeight(topoheight))?;
 
-                    if assets.len() == maximum {
-                        break;
-                    }
-                }
-            }
-        }
-        Ok(assets)
-    }
-
-    async fn get_chunked_assets(&self, maximum: usize, skip: usize) -> Result<IndexSet<Hash>, BlockchainError> {
-        let mut assets = IndexSet::with_capacity(maximum);
-        for el in Self::iter_keys(self.snapshot.as_ref(), &self.assets).skip(skip).take(maximum) {
-            let key = el?;
-            let asset = Hash::from_bytes(&key)?;
-            assets.insert(asset);
-        }
-        Ok(assets)
+                Ok(Some((asset, topoheight, data)))
+            })
+            .filter_map(Result::transpose)
+        )
     }
 
     // Returns all assets that the key has
