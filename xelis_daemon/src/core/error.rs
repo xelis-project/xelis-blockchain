@@ -1,5 +1,6 @@
 use crate::p2p::error::P2pError;
 use std::sync::PoisonError;
+use strum::{EnumDiscriminants, IntoDiscriminant};
 use thiserror::Error;
 use xelis_common::{
     crypto::{
@@ -146,8 +147,7 @@ pub enum DiskContext {
     VersionedBalance,
 }
 
-#[repr(usize)]
-#[derive(Error, Debug)]
+#[derive(Error, Debug, EnumDiscriminants)]
 pub enum BlockchainError {
     #[error("Invalid configuration provided")]
     InvalidConfig,
@@ -378,14 +378,14 @@ pub enum BlockchainError {
 }
 
 impl BlockchainError {
-    pub unsafe fn id(&self) -> usize {
-        *(self as *const Self as *const _)
+    pub fn id(&self) -> usize {
+        self.discriminant() as usize
     }
 }
 
 impl From<BlockchainError> for InternalRpcError {
     fn from(value: BlockchainError) -> Self {
-        let id = unsafe { value.id() } as i16;
+        let id = value.id() as i16;
         InternalRpcError::CustomAny(200 + id, value.into())
     }
 }
