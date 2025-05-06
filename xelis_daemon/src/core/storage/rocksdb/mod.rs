@@ -166,4 +166,16 @@ impl RocksStorage {
             Ok((key, value))
         }))
     }
+
+    pub fn iter_keys<'a, K: Serializer>(&'a self, column: Column) -> Result<impl Iterator<Item = Result<K, BlockchainError>> + 'a, BlockchainError> {
+        let cf = cf_handle!(self, column);
+        let iterator = self.db.iterator_cf(&cf, IteratorMode::Start);
+
+        Ok(iterator.map(|res| {
+            let (key, _) = res.context("Internal read error in scan prefix")?;
+            let key = K::from_bytes(&key)?;
+
+            Ok(key)
+        }))
+    }
 }

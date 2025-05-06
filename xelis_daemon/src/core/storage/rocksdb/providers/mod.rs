@@ -11,3 +11,4 @@ mod blockdag;
 mod blocks_at_height;
 mod block;
 mod commit_point;
+mod block_execution_order;
