@@ -445,6 +445,11 @@ impl<S: Storage> P2pServer<S> {
                 }
             }
         } else {
+            enum ResponseHelper {
+                Requested(Block, Hash),
+                NotRequested(Hash)
+            }
+
             // no rewind are needed, process normally
             // it will first add blocks to sync, and then all alt-tips blocks if any (top blocks)
             let mut total_requested = 0;
@@ -471,37 +476,12 @@ impl<S: Storage> P2pServer<S> {
     
                                 match response {
                                     // OwnedObjectResponse is built by computing the block hash, so we can trust it
-                                    OwnedObjectResponse::Block(block, hash) => Ok(Some((block, hash))),
+                                    OwnedObjectResponse::Block(block, hash) => Ok(ResponseHelper::Requested(block, hash)),
                                     _ => Err(P2pError::ExpectedBlock(response))
                                 }
                             } else {
                                 debug!("Block {} is already in chain, verify if its in DAG", hash);
-                                let mut storage = self.blockchain.get_storage().write().await;
-                                debug!("storage write lock acquired for potential block {} deletion", hash);
-                                let block = if !storage.is_block_topological_ordered(&hash).await? {
-                                    match storage.delete_block_with_hash(&hash).await {
-                                        Ok(block) => {
-                                            let mut tips = storage.get_tips().await?;
-                                            if tips.remove(&hash) {
-                                                debug!("Block {} was a tip, removing it from tips", hash);
-                                                storage.store_tips(&tips).await?;
-                                            }
-
-                                            Some((block, hash))
-                                        },
-                                        Err(e) => {
-                                            // This shouldn't happen, but in case
-                                            error!("Error while deleting block {} from storage to re-execute it for chain sync: {}", hash, e);
-                                            None
-                                        }
-                                    }
-                                } else {
-                                    trace!("Block {} is already in DAG, skipping it", hash);
-                                    None
-                                };
-                                debug!("storage write lock released for block deletion: {}", block.is_some());
-    
-                                Ok(block)
+                                Ok(ResponseHelper::NotRequested(hash))
                             }
                         };
     
@@ -529,18 +509,50 @@ impl<S: Storage> P2pServer<S> {
                             };
 
                             match res {
-                                Ok(Some((block, hash))) => {
-                                    blocks_processed += 1;
-                                    total_requested += 1;
-                                    if let Err(e) = self.blockchain.add_new_block(block, Some(Immutable::Owned(hash)), BroadcastOption::Miners, false).await {
-                                        // We need to drop the future before in case we have any future holding a mutex guard
-                                        drop(futures);
+                                Ok(response) => match response {
+                                    ResponseHelper::Requested(block, hash) => {
+                                        blocks_processed += 1;
+                                        total_requested += 1;
+                                        if let Err(e) = self.blockchain.add_new_block(block, Some(Immutable::Owned(hash)), BroadcastOption::Miners, false).await {
+                                            // We need to drop the future before in case we have any future holding a mutex guard
+                                            drop(futures);
 
-                                        self.object_tracker.mark_group_as_fail(group_id).await;
-                                        return Err(e)
+                                            self.object_tracker.mark_group_as_fail(group_id).await;
+                                            return Err(e)
+                                        }
+                                    },
+                                    ResponseHelper::NotRequested(hash) => {
+                                        let is_ordered = {
+                                            debug!("locking storage for block ordering check");
+                                            let storage = self.blockchain.get_storage().read().await;
+                                            debug!("storage read acquired for block ordering check");
+                                            storage.is_block_topological_ordered(&hash).await?
+                                        };
+
+                                        // Block is not ordered, we may have an issue, we should
+                                        // force its re execution, for that we delete it from our storage
+                                        if !is_ordered {
+                                            warn!("Forcing block {} re-execution", hash);
+                                            let mut storage = self.blockchain.get_storage().write().await;
+                                            debug!("storage write acquired for block forced re-execution");
+
+                                            let block = storage.delete_block_with_hash(&hash).await?;
+                                            let mut tips = storage.get_tips().await?;
+                                            if tips.remove(&hash) {
+                                                debug!("Block {} was a tip, removing it from tips", hash);
+                                                storage.store_tips(&tips).await?;
+                                            }
+
+                                            // Replicate same behavior as above branch
+                                            if let Err(e) = self.blockchain.add_new_block_for_storage(&mut storage, block, Some(Immutable::Owned(hash)), BroadcastOption::Miners, false).await {
+                                                drop(futures);
+
+                                                self.object_tracker.mark_group_as_fail(group_id).await;
+                                                return Err(e)
+                                            }                                            
+                                        }
                                     }
                                 },
-                                Ok(None) => {},
                                 Err(e) => {
                                     debug!("Unregistering group id {} due to error {}", group_id, e);
                                     // Same as above
