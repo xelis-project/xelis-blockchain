@@ -892,7 +892,7 @@ impl EncryptedStorage {
             let decrypted = self.cipher.decrypt_value(&value)?;
             let entry_hash = Hash::from_bytes(&decrypted)?;
             if entry_hash == *hash {
-                debug!("Entry key is {}", Hash::from_bytes(&key)?);
+                debug!("Entry key is {}, expected is {}", Hash::from_bytes(&key)?, Hash::from_bytes(&self.cipher.hash_key(hash))?);
                 let entry = TransactionEntry::from_bytes(&value)?;
                 return Ok(Some(entry))
             }
