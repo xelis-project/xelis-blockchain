@@ -762,6 +762,9 @@ impl Storage for SledStorage {
                 Self::remove_from_disk_without_reading(self.snapshot.as_mut(), &self.extra, PRUNED_TOPOHEIGHT)?;
                 self.cache.pruned_topoheight = None;
 
+                // Clear out ALL data
+                self.delete_versioned_data_above_topoheight(0).await?;
+
                 break 'main;
             }
 
