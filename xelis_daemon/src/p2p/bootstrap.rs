@@ -377,7 +377,8 @@ impl<S: Storage> P2pServer<S> {
                                 keys
                             };
 
-                            self.update_bootstrap_keys(peer, &keys, our_topoheight, stable_topoheight).await?;
+                            // We're not updating the registration, so the DB order is expected to stay the same!
+                            self.update_bootstrap_keys(peer, &keys, our_topoheight, stable_topoheight, false).await?;
                             if keys.len() < MAX_ITEMS_PER_PAGE {
                                 break;
                             }
@@ -394,7 +395,7 @@ impl<S: Storage> P2pServer<S> {
                 // fetch all new accounts
                 StepResponse::Keys(keys, next_page) => {
                     debug!("Requesting nonces for keys");
-                    self.update_bootstrap_keys(peer, &keys, our_topoheight, stable_topoheight).await?;
+                    self.update_bootstrap_keys(peer, &keys, our_topoheight, stable_topoheight, true).await?;
 
                     if next_page.is_some() {
                         Some(StepRequest::Keys(our_topoheight, stable_topoheight, next_page))
@@ -553,7 +554,7 @@ impl<S: Storage> P2pServer<S> {
     }
 
     // Handle the key nonces
-    async fn handle_nonces(&self, peer: &Arc<Peer>, keys: &IndexSet<PublicKey>, our_topoheight: u64, stable_topoheight: u64) -> Result<(), P2pError> {
+    async fn handle_nonces(&self, peer: &Arc<Peer>, keys: &IndexSet<PublicKey>, our_topoheight: u64, stable_topoheight: u64, update_registration: bool) -> Result<(), P2pError> {
         let StepResponse::Nonces(nonces) = peer.request_boostrap_chain(StepRequest::Nonces(our_topoheight, stable_topoheight, Cow::Borrowed(&keys))).await? else {
             // shouldn't happen
             error!("Received an invalid StepResponse (how ?) while fetching nonces");
@@ -575,7 +576,9 @@ impl<S: Storage> P2pServer<S> {
                 State::Some(nonce) => {
                     trace!("Saving nonce for {}", key.as_address(self.blockchain.get_network().is_mainnet()));
                     storage.set_last_nonce_to(key, stable_topoheight, &VersionedNonce::new(nonce, None)).await?;
-                    storage.set_account_registration_topoheight(key, stable_topoheight).await?;
+                    if update_registration {
+                        storage.set_account_registration_topoheight(key, stable_topoheight).await?;
+                    }
                 },
             };
         }
@@ -691,13 +694,13 @@ impl<S: Storage> P2pServer<S> {
 
     // Update all keys using bootstrap request
     // This will fetch the nonce and associated balance for each asset
-    async fn update_bootstrap_keys(&self, peer: &Arc<Peer>, keys: &IndexSet<PublicKey>, our_topoheight: u64, stable_topoheight: u64) -> Result<(), P2pError> {
+    async fn update_bootstrap_keys(&self, peer: &Arc<Peer>, keys: &IndexSet<PublicKey>, our_topoheight: u64, stable_topoheight: u64, update_registration: bool) -> Result<(), P2pError> {
         if keys.is_empty() {
             warn!("No keys to update");
             return Ok(())
         }
 
-        self.handle_nonces(peer, keys, our_topoheight, stable_topoheight).await?;
+        self.handle_nonces(peer, keys, our_topoheight, stable_topoheight, update_registration).await?;
         self.handle_multisigs(peer, keys, our_topoheight, stable_topoheight).await?;
 
         let mut page = 0;

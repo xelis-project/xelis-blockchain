@@ -102,12 +102,15 @@ impl AccountProvider for SledStorage {
             Self::iter_keys(self.snapshot.as_ref(), &self.registrations_prefixed)
                 .map(move |el| {
                     let key = el?;
-                    let topo = TopoHeight::from_bytes(&key[0..8])?;
-        
-                    // Skip if not in range
-                    if minimum_topoheight.is_some_and(|v| topo < v) || maximum_topoheight.is_some_and(|v| topo > v) {
-                        trace!("skipping {} {:?} {:?}", topo, minimum_topoheight, maximum_topoheight);
-                        return Ok(None);
+
+                    if minimum_topoheight.is_some() || maximum_topoheight.is_some() {
+                        let topo = TopoHeight::from_bytes(&key[0..8])?;
+
+                        // Skip if not in range
+                        if minimum_topoheight.is_some_and(|v| topo < v) || maximum_topoheight.is_some_and(|v| topo > v) {
+                            trace!("skipping {} at {}: {:?} {:?}", PublicKey::from_bytes(&key[8..40])?.as_address(self.is_mainnet()), topo, minimum_topoheight, maximum_topoheight);
+                            return Ok(None);
+                        }
                     }
 
                     let key = PublicKey::from_bytes(&key[8..40])?;
