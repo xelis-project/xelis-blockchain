@@ -314,7 +314,8 @@ impl<S: Storage> P2pServer<S> {
                         if *common_point.get_hash() != top_block_hash {
                             let pruned_topoheight = storage.get_pruned_topoheight().await?.unwrap_or(0);
                             
-                            warn!("Common point is {} while our top block hash is {} !", common_point.get_hash(), top_block_hash);
+                            let top_topoheight = storage.get_topo_height_for_hash(&top_block_hash).await?;
+                            warn!("Common point is {} while our top block hash is {} at {} !", common_point.get_hash(), top_block_hash, top_topoheight);
                             // Count how much blocks we need to pop
                             let pop_count = if pruned_topoheight >= common_point.get_topoheight() {
                                 our_topoheight - pruned_topoheight
@@ -358,9 +359,8 @@ impl<S: Storage> P2pServer<S> {
                             info!("Requesting local keys #{} until our topoheight {}", i, our_topoheight);
                             let keys = {
                                 let storage = self.blockchain.get_storage().read().await;
-                                // We search until our highest topoheight instead of the stable topoheight because:
-                                // If these keys are not existant, `handle_nonces` will simply delete them
-                                let keys: IndexSet<PublicKey> = storage.get_registered_keys(None, Some(our_topoheight)).await?
+                                // We search with no bounds, if they don't exists anymore they will either get deleted or updated
+                                let keys: IndexSet<PublicKey> = storage.get_registered_keys(None, None).await?
                                     .skip(skip)
                                     .take(MAX_ITEMS_PER_PAGE)
                                     .collect::<Result<_, _>>()?;

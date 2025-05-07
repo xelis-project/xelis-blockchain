@@ -106,6 +106,7 @@ impl AccountProvider for SledStorage {
         
                     // Skip if not in range
                     if minimum_topoheight.is_some_and(|v| topo < v) || maximum_topoheight.is_some_and(|v| topo > v) {
+                        trace!("skipping {} {:?} {:?}", topo, minimum_topoheight, maximum_topoheight);
                         return Ok(None);
                     }
 
