@@ -864,6 +864,43 @@ impl EncryptedStorage {
         self.load_from_disk(&self.transactions, hash.as_bytes())
     }
 
+    // Find the transaction index by its hash
+    pub fn get_transaction_id(&self, hash: &Hash) -> Result<Option<u64>> {
+        trace!("get transaction id of {}", hash);
+
+        let hashed_key = self.cipher.hash_key(hash.as_bytes());
+        // TODO: optimize
+        for el in self.transactions_indexes.iter() {
+            let (key, value) = el?;
+
+            if &value == &hashed_key {
+                return Ok(Some(u64::from_bytes(&key)?))
+            }
+        }
+
+        Ok(None)
+    }
+
+
+    // Raw search of the transaction by its hash
+    pub fn search_transaction(&self, hash: &Hash) -> Result<Option<TransactionEntry>> {
+        trace!("get transaction id of {}", hash);
+
+        for el in self.transactions.iter() {
+            let (key, value) = el?;
+
+            let decrypted = self.cipher.decrypt_value(&value)?;
+            let entry_hash = Hash::from_bytes(&decrypted)?;
+            if entry_hash == *hash {
+                debug!("Entry key is {}", Hash::from_bytes(&key)?);
+                let entry = TransactionEntry::from_bytes(&value)?;
+                return Ok(Some(entry))
+            }
+        }
+
+        Ok(None)
+    }
+
     // read whole disk and returns all transactions
     pub fn get_transactions(&self) -> Result<Vec<TransactionEntry>> {
         trace!("get transactions");

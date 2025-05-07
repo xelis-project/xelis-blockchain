@@ -503,11 +503,13 @@ impl NetworkHandler {
                         }
                     }
 
+                    debug!("storing new entry {} from block {}", entry.get_hash(), block_hash);
                     {
                         let mut storage = self.wallet.get_storage().write().await;
                         storage.save_transaction(entry.get_hash(), &entry)?;
                         // Store the changes for history
                         if !changes_stored {
+                            debug!("mark topoheight {} as changed", topoheight);
                             storage.add_topoheight_to_changes(topoheight, &block_hash)?;
                             changes_stored = true;
                         }

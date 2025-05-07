@@ -52,6 +52,7 @@ pub fn register_methods(handler: &mut RPCHandler<Arc<Wallet>>) {
     handler.register_method("get_assets", async_handler!(get_assets));
     handler.register_method("get_asset", async_handler!(get_asset));
     handler.register_method("get_transaction", async_handler!(get_transaction));
+    handler.register_method("search_transaction", async_handler!(search_transaction));
     handler.register_method("dump_transaction", async_handler!(dump_transaction));
     handler.register_method("build_transaction", async_handler!(build_transaction));
     handler.register_method("build_transaction_offline", async_handler!(build_transaction_offline));
@@ -327,9 +328,42 @@ async fn get_transaction(context: &Context, body: Value) -> Result<Value, Intern
 
     let wallet: &Arc<Wallet> = context.get()?;
     let storage = wallet.get_storage().read().await;
+    if !storage.has_transaction(&params.hash)? {
+        return Err(InternalRpcError::CustomStr(404, "Transaction is not found in wallet"))
+    }
+
     let transaction = storage.get_transaction(&params.hash)?;
 
     Ok(json!(transaction.serializable(wallet.get_network().is_mainnet())))
+}
+
+
+// Debug rpc method to perform a search across all entries for a transaction from the wallet storage using its hash
+async fn search_transaction(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
+    let params: SearchTransactionParams = parse_params(body)?;
+
+    let wallet: &Arc<Wallet> = context.get()?;
+    let storage = wallet.get_storage().read().await;
+
+    let index = storage.get_transaction_id(&params.hash)?;
+    if storage.has_transaction(&params.hash)? {
+        let transaction = storage.get_transaction(&params.hash)?;
+
+        return Ok(json!(SearchTransactionResult {
+            transaction: Some(transaction.serializable(wallet.get_network().is_mainnet())),
+            index,
+            is_raw_search: false
+        }))
+    }
+
+    let transaction = storage.search_transaction(&params.hash)?
+        .map(|transaction| transaction.serializable(wallet.get_network().is_mainnet()));
+
+    Ok(json!(SearchTransactionResult {
+        transaction,
+        index,
+        is_raw_search: true
+    }))
 }
 
 // Dump the TX in hex format
