@@ -385,6 +385,8 @@ impl<S: Storage> P2pServer<S> {
                             i += 1;
                         }
 
+                        info!("Updated {} local keys in {} steps", skip, i);
+
                         // Go to next step
                         Some(StepRequest::Keys(our_topoheight, stable_topoheight, None))
                     }
