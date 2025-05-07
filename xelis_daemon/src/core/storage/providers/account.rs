@@ -1,5 +1,4 @@
 use async_trait::async_trait;
-use indexmap::IndexSet;
 use xelis_common::{
     crypto::PublicKey,
     block::TopoHeight,
@@ -31,7 +30,7 @@ pub trait AccountProvider: NonceProvider + BalanceProvider + NetworkProvider + A
 
     // Get registered accounts supporting pagination and filtering by topoheight
     // Returned keys must have a nonce or a balance updated in the range given
-    async fn get_registered_keys(&self, maximum: usize, skip: usize, minimum_topoheight: TopoHeight, maximum_topoheight: TopoHeight) -> Result<(IndexSet<PublicKey>, usize), BlockchainError>;
+    async fn get_registered_keys<'a>(&'a self, minimum_topoheight: Option<TopoHeight>, maximum_topoheight: Option<TopoHeight>) -> Result<impl Iterator<Item = Result<PublicKey, BlockchainError>> + 'a, BlockchainError>;
 
     // Check if the account has a nonce updated in the range given
     // It will also check balances if no nonce found

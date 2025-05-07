@@ -1345,10 +1345,11 @@ async fn get_accounts<S: Storage>(context: &Context, body: Value) -> Result<Valu
 
     let storage = blockchain.get_storage().read().await;
     let mainnet = storage.is_mainnet();
-    let accounts = storage.get_registered_keys(maximum, skip, minimum_topoheight, maximum_topoheight).await
-        .context("Error while retrieving accounts")?
-        .0
-        .into_iter().map(|key| key.to_address(mainnet)).collect::<Vec<_>>();
+    let accounts = storage.get_registered_keys(Some(minimum_topoheight), Some(maximum_topoheight)).await?
+        .skip(skip)
+        .take(maximum)
+        .map(|key| key.map(|key| key.to_address(mainnet)))
+        .collect::<Result<Vec<_>, BlockchainError>>()?;
 
     Ok(json!(accounts))
 }

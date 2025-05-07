@@ -1,5 +1,4 @@
 use async_trait::async_trait;
-use indexmap::IndexSet;
 use log::{trace, debug, error};
 use xelis_common::{
     crypto::PublicKey,
@@ -96,44 +95,25 @@ impl AccountProvider for SledStorage {
     }
 
     // Get all keys that got registered in the range given
-    async fn get_registered_keys(&self, maximum: usize, skip: usize, minimum_topoheight: TopoHeight, maximum_topoheight: TopoHeight) -> Result<(IndexSet<PublicKey>, usize), BlockchainError> {
-        trace!("get partial keys, maximum: {}, skip: {}, minimum_topoheight: {}, maximum_topoheight: {}", maximum, skip, minimum_topoheight, maximum_topoheight);
+    async fn get_registered_keys<'a>(&'a self, minimum_topoheight: Option<TopoHeight>, maximum_topoheight: Option<TopoHeight>) -> Result<impl Iterator<Item = Result<PublicKey, BlockchainError>> + 'a, BlockchainError> {
+        trace!("get partial keys  minimum_topoheight: {:?}, maximum_topoheight: {:?}", minimum_topoheight, maximum_topoheight);
 
-        let mut keys: IndexSet<PublicKey> = IndexSet::new();
-        let mut skip_count = 0;
-        // At which index the previous key was set
-        // so we skip until it
-        let mut local_index = 0;
-        let mut current_topo = 0;
-        for el in Self::iter_keys(self.snapshot.as_ref(), &self.registrations_prefixed) {
-            let key = el?;
-            let topo = TopoHeight::from_bytes(&key[0..8])?;
+        Ok(
+            Self::iter_keys(self.snapshot.as_ref(), &self.registrations_prefixed)
+                .map(move |el| {
+                    let key = el?;
+                    let topo = TopoHeight::from_bytes(&key[0..8])?;
+        
+                    // Skip if not in range
+                    if minimum_topoheight.is_some_and(|v| topo < v) || maximum_topoheight.is_some_and(|v| topo > v) {
+                        return Ok(None);
+                    }
 
-            // Skip if not in range
-            if topo < minimum_topoheight || topo > maximum_topoheight {
-                continue;
-            }
-
-            if topo != current_topo {
-                current_topo = topo;
-                local_index = 0;
-            }
-
-            local_index += 1;
-
-            // Skip if asked
-            if skip_count < skip {
-                skip_count += 1;
-                continue;
-            }
-
-            keys.insert(PublicKey::from_bytes(&key[8..40])?);
-            if keys.len() >= maximum {
-                break;
-            }
-        }
-
-        Ok((keys, local_index))
+                    let key = PublicKey::from_bytes(&key[8..40])?;
+                    Ok(Some(key))
+                })
+                .filter_map(Result::transpose)
+        )
     }
 
     async fn has_key_updated_in_range(&self, key: &PublicKey, minimum_topoheight: TopoHeight, maximum_topoheight: TopoHeight) -> Result<bool, BlockchainError> {

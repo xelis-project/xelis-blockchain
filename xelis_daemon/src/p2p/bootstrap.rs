@@ -167,7 +167,11 @@ impl<S: Storage> P2pServer<S> {
                 }
 
                 let page = page.unwrap_or(0);
-                let (keys, _) = storage.get_registered_keys(MAX_ITEMS_PER_PAGE, page as usize * MAX_ITEMS_PER_PAGE, min, max).await?;
+                let keys: IndexSet<PublicKey> = storage.get_registered_keys(Some(min), Some(max)).await?
+                    .skip(page as usize * MAX_ITEMS_PER_PAGE)
+                    .take(MAX_ITEMS_PER_PAGE)
+                    .collect::<Result<_, _>>()?;
+
                 let page = if keys.len() == MAX_ITEMS_PER_PAGE {
                     Some(page + 1)
                 } else {
@@ -347,15 +351,19 @@ impl<S: Storage> P2pServer<S> {
                         Some(StepRequest::Assets(our_topoheight, stable_topoheight, next_page))
                     } else {
                         // We must handle all stored keys before extending our ledger
-                        let mut minimum_topoheight = 0;
                         let mut i = 0;
                         let mut skip = 0;
                         loop {
                             // We request our current keys so we don't miss them
-                            info!("Requesting local keys #{} at min topo {} and max topo {}", i, minimum_topoheight, our_topoheight);
+                            info!("Requesting local keys #{} until our topoheight {}", i, our_topoheight);
                             let keys = {
                                 let storage = self.blockchain.get_storage().read().await;
-                                let (keys, s) = storage.get_registered_keys(MAX_ITEMS_PER_PAGE, skip, minimum_topoheight, our_topoheight).await?;
+                                // We search until our highest topoheight instead of the stable topoheight because:
+                                // If these keys are not existant, `handle_nonces` will simply delete them
+                                let keys: IndexSet<PublicKey> = storage.get_registered_keys(None, Some(our_topoheight)).await?
+                                    .skip(skip)
+                                    .take(MAX_ITEMS_PER_PAGE)
+                                    .collect::<Result<_, _>>()?;
 
                                 // Because the keys are sorted by topoheight, we can get the minimum topoheight
                                 // of the last key to avoid fetching the same keys again
@@ -364,13 +372,7 @@ impl<S: Storage> P2pServer<S> {
                                 // This solution may also duplicate some keys
                                 // We could do it in one request and store in memory all keys,
                                 // but think about future and dozen of millions of accounts, in memory :)
-                                if let Some(key) = keys.last() {
-                                    debug!("Last key is {}", key.as_address(self.blockchain.get_network().is_mainnet()));
-                                    minimum_topoheight = storage.get_account_registration_topoheight(key).await?;
-                                    skip = s;
-                                } else {
-                                    break;
-                                }
+                                skip += keys.len();
 
                                 keys
                             };
