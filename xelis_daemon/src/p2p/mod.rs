@@ -1735,7 +1735,7 @@ impl<S: Storage> P2pServer<S> {
                     .for_each_concurrent(self.stream_concurrency, |common_peer| {
                         let hash = &hash;
                         async move {
-                            debug!("{} is a common peer with {}, adding TX {} to its cache", common_peer, peer, hash);
+                            trace!("{} is a common peer with {}, adding TX {} to its cache", common_peer, peer, hash);
                             let mut txs_cache = common_peer.get_txs_cache().lock().await;
                             if !txs_cache.contains(hash) {
                                 debug!("Adding TX {} to common peer {} cache", hash, common_peer);
