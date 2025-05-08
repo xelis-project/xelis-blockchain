@@ -9,6 +9,9 @@ use super::{AssetProvider, BalanceProvider, NetworkProvider, NonceProvider};
 
 #[async_trait]
 pub trait AccountProvider: NonceProvider + BalanceProvider + NetworkProvider + AssetProvider {
+    // Get the number of accounts with nonces available on chain
+    async fn count_accounts(&self) -> Result<u64, BlockchainError>;
+
     // first time we saw this account on chain
     async fn get_account_registration_topoheight(&self, key: &PublicKey) -> Result<TopoHeight, BlockchainError>;
 
@@ -16,7 +19,7 @@ pub trait AccountProvider: NonceProvider + BalanceProvider + NetworkProvider + A
     async fn set_account_registration_topoheight(&mut self, key: &PublicKey, topoheight: TopoHeight) -> Result<(), BlockchainError>;
 
     // delete the registration of an account
-    async fn delete_account_registration(&mut self, key: &PublicKey) -> Result<(), BlockchainError>;
+    async fn delete_account_for(&mut self, key: &PublicKey) -> Result<(), BlockchainError>;
 
     // Check if account is registered
     async fn is_account_registered(&self, key: &PublicKey) -> Result<bool, BlockchainError>;
@@ -24,9 +27,6 @@ pub trait AccountProvider: NonceProvider + BalanceProvider + NetworkProvider + A
     // Check if account is registered at topoheight
     // This will check that the registration topoheight is less or equal to the given topoheight
     async fn is_account_registered_for_topoheight(&self, key: &PublicKey, topoheight: TopoHeight) -> Result<bool, BlockchainError>;
-
-    // Delete all registrations at a certain topoheight
-    async fn delete_registrations_at_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError>;
 
     // Get registered accounts supporting pagination and filtering by topoheight
     // Returned keys must have a nonce or a balance updated in the range given

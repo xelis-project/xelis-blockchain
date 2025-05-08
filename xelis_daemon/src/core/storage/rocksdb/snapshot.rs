@@ -90,7 +90,7 @@ impl Snapshot {
     }
 
     // Lazy iterator over a prefix
-    pub fn scan_prefix<'a, K: Serializer + 'a, V: Serializer + 'a>(&'a self, column: Column, prefix: &'a [u8], iterator: impl Iterator<Item = Result<(Box<[u8]>, Box<[u8]>), rocksdb::Error>> + 'a) -> impl Iterator<Item = Result<(K, V), BlockchainError>> + 'a {
+    pub fn iter_prefix<'a, K: Serializer + 'a, V: Serializer + 'a, P: AsRef<[u8]> + 'a>(&'a self, column: Column, prefix: P, iterator: impl Iterator<Item = Result<(Box<[u8]>, Box<[u8]>), rocksdb::Error>> + 'a) -> impl Iterator<Item = Result<(K, V), BlockchainError>> + 'a {
         match self.columns.get(&column) {
             Some(tree) => {
                 Either::Left(iterator.filter_map_ok(|(k, v)| {
@@ -101,7 +101,7 @@ impl Snapshot {
                         }
                     })
                     .map(|k| {
-                        let (key, value) = k.context("Internal error in snapshot scan_prefix")?;
+                        let (key, value) = k.context("Internal error in snapshot iter_prefix")?;
                         let k = K::from_bytes(&key)?;
                         let v = V::from_bytes(&value)?;
 
@@ -109,8 +109,8 @@ impl Snapshot {
                     })
                     .chain(
                         tree.writes.iter()
-                            .filter_map(|(k, v)| {
-                                if k.starts_with(prefix) {
+                            .filter_map(move |(k, v)| {
+                                if k.starts_with(prefix.as_ref()) {
                                     v.as_ref().map(|v| (k, v))
                                 } else {
                                     None
@@ -120,6 +120,42 @@ impl Snapshot {
                                 let key = K::from_bytes(&k)?;
                                 let value = V::from_bytes(&v)?;
                                 Ok((key, value))
+                            })
+                    ))
+            },
+            None => Either::Right(std::iter::empty())
+        }
+    }
+
+    // Lazy iterator for keys only over a prefix
+    pub fn iter_keys_prefix<'a, K: Serializer + 'a, P: AsRef<[u8]> + 'a>(&'a self, column: Column, prefix: P, iterator: impl Iterator<Item = Result<(Box<[u8]>, Box<[u8]>), rocksdb::Error>> + 'a) -> impl Iterator<Item = Result<K, BlockchainError>> + 'a {
+        match self.columns.get(&column) {
+            Some(tree) => {
+                Either::Left(iterator.filter_map_ok(|(k, v)| {
+                        if tree.writes.contains_key(&*k) {
+                            Some((k, v))
+                        } else {
+                            None
+                        }
+                    })
+                    .map(|k| {
+                        let (key, _) = k.context("Internal error in snapshot iter_keys_prefix")?;
+                        let k = K::from_bytes(&key)?;
+
+                        Ok(k)
+                    })
+                    .chain(
+                        tree.writes.iter()
+                            .filter_map(move |(k, v)| {
+                                if k.starts_with(prefix.as_ref()) {
+                                    v.as_ref().map(|_| k)
+                                } else {
+                                    None
+                                }
+                            })
+                            .map(|k| {
+                                let key = K::from_bytes(&k)?;
+                                Ok(key)
                             })
                     ))
             },

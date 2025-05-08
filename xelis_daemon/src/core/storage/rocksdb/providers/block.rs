@@ -59,14 +59,14 @@ impl BlockProvider for RocksStorage {
             self.add_transaction(hash, &transaction).await?;
         }
 
-        self.insert_into_disk(Column::Blocks, &hash, &block)?;
+        self.insert_into_disk(Column::Blocks, hash.as_bytes(), &block)?;
 
         let block_difficulty = BlockDifficulty {
             covariance,
             difficulty,
             cumulative_difficulty
         };
-        self.insert_into_disk(Column::BlockDifficulty, &hash, &block_difficulty)?;
+        self.insert_into_disk(Column::BlockDifficulty, hash.as_bytes(), &block_difficulty)?;
 
         Ok(())
     }

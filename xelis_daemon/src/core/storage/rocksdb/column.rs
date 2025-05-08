@@ -46,9 +46,9 @@ pub enum Column {
     VersionedNonces,
 
     // Account balances pointer
-    // {account_id}{asset}
+    // {account_id}{asset_id} => topoheight
     Balances,
-    // {topoheight}{account_id}{asset}
+    // {topoheight}{account_id}{asset_id} => versioned
     VersionedBalances,
 
     // {contract}

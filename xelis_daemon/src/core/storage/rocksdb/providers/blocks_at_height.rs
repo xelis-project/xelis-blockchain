@@ -26,7 +26,7 @@ impl BlocksAtHeightProvider for RocksStorage {
 
     // This is used to store the blocks hashes at a specific height
     async fn set_blocks_at_height(&mut self, tips: &IndexSet<Hash>, height: u64) -> Result<(), BlockchainError> {
-        self.insert_into_disk(Column::BlocksAtHeight, &height, tips)
+        self.insert_into_disk(Column::BlocksAtHeight, height.to_be_bytes(), tips)
     }
 
     // Append a block hash at a specific height

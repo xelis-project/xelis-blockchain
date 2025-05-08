@@ -375,6 +375,8 @@ pub enum BlockchainError {
     ModuleError(String),
     #[error("Invalid transaction in block while verifying in multi-thread mode")]
     InvalidTransactionMultiThread,
+    #[error("Unknown account")]
+    UnknownAccount,
 }
 
 impl BlockchainError {

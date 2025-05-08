@@ -11,9 +11,6 @@ pub trait NonceProvider {
     // Check if the account has a nonce
     async fn has_nonce(&self, key: &PublicKey) -> Result<bool, BlockchainError>;
 
-    // Get the number of accounts with nonces available on chain
-    async fn count_accounts(&self) -> Result<u64, BlockchainError>;
-
     // Check if the account has a nonce at a specific topoheight
     async fn has_nonce_at_exact_topoheight(&self, key: &PublicKey, topoheight: TopoHeight) -> Result<bool, BlockchainError>;
 
@@ -29,17 +26,7 @@ pub trait NonceProvider {
     // Get the nonce under or equal topoheight requested for an account
     async fn get_nonce_at_maximum_topoheight(&self, key: &PublicKey, topoheight: TopoHeight) -> Result<Option<(TopoHeight, VersionedNonce)>, BlockchainError>;
 
-    // Set the last topoheight that the account has a nonce changed
-    async fn set_last_topoheight_for_nonce(&mut self, key: &PublicKey, topoheight: TopoHeight) -> Result<(), BlockchainError>;
-
-    // Delete the last topoheight that the account has a nonce
-    // This is only removing the pointer, not the version itself
-    async fn delete_last_topoheight_for_nonce(&mut self, key: &PublicKey) -> Result<(), BlockchainError>;
-
     // set the new nonce at exact topoheight for account
     // This will do like `set_nonce_at_topoheight` but will also update the pointer
     async fn set_last_nonce_to(&mut self, key: &PublicKey, topoheight: TopoHeight, nonce: &VersionedNonce) -> Result<(), BlockchainError>;
-
-    // set a new nonce at specific topoheight for account
-    async fn set_nonce_at_topoheight(&mut self, key: &PublicKey, topoheight: TopoHeight, version: &VersionedNonce) -> Result<(), BlockchainError>;
 }

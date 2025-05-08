@@ -18,7 +18,7 @@ impl DagOrderProvider for RocksStorage {
 
     async fn set_topo_height_for_block(&mut self, hash: &Hash, topoheight: TopoHeight) -> Result<(), BlockchainError> {
         self.insert_into_disk(Column::TopoByHash, hash, &topoheight)?;
-        self.insert_into_disk(Column::HashAtTopo, &topoheight, hash)
+        self.insert_into_disk(Column::HashAtTopo, topoheight.to_be_bytes(), hash)
     }
 
     async fn is_block_topological_ordered(&self, hash: &Hash) -> Result<bool, BlockchainError> {

@@ -569,9 +569,8 @@ impl<S: Storage> P2pServer<S> {
                     trace!("No nonce change for {}", key.as_address(self.blockchain.get_network().is_mainnet()));
                 },
                 State::Deleted | State::None => {
-                    trace!("Deleting nonce for {}", key.as_address(self.blockchain.get_network().is_mainnet()));
-                    storage.delete_last_topoheight_for_nonce(key).await?;
-                    storage.delete_account_registration(key).await?;
+                    trace!("Deleting account of {}", key.as_address(self.blockchain.get_network().is_mainnet()));
+                    storage.delete_account_for(key).await?;
                 },
                 State::Some(nonce) => {
                     trace!("Saving nonce for {}", key.as_address(self.blockchain.get_network().is_mainnet()));

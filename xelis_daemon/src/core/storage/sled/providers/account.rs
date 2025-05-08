@@ -30,6 +30,16 @@ fn prefixed_db_key_no_u64(topoheight: &[u8], key: &PublicKey) -> [u8; 40] {
 
 #[async_trait]
 impl AccountProvider for SledStorage {
+    async fn count_accounts(&self) -> Result<u64, BlockchainError> {
+        trace!("count accounts");
+        let count = if let Some(snapshot) = self.snapshot.as_ref() {
+            snapshot.cache.accounts_count
+        } else {
+            self.cache.accounts_count
+        };
+        Ok(count)
+    }
+
     async fn get_account_registration_topoheight(&self, key: &PublicKey) -> Result<TopoHeight, BlockchainError> {
         trace!("get account registration topoheight: {}", key.as_address(self.network.is_mainnet()));
         self.load_from_disk(&self.registrations, key.as_bytes(), DiskContext::AccountRegistrationTopoHeight)
@@ -46,7 +56,7 @@ impl AccountProvider for SledStorage {
         Ok(())
     }
 
-    async fn delete_account_registration(&mut self, key: &PublicKey) -> Result<(), BlockchainError> {
+    async fn delete_account_for(&mut self, key: &PublicKey) -> Result<(), BlockchainError> {
         trace!("delete account registration topoheight: {}", key.as_address(self.network.is_mainnet()));
 
         let value = self.load_optional_from_disk::<TopoHeight>(&self.registrations, key.as_bytes())?;
@@ -79,19 +89,6 @@ impl AccountProvider for SledStorage {
 
         let registration_topoheight = self.get_account_registration_topoheight(key).await?;
         Ok(registration_topoheight <= topoheight)
-    }
-
-    async fn delete_registrations_at_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError> {
-        trace!("delete registrations at topoheight: {}", topoheight);
-        for el in Self::scan_prefix(self.snapshot.as_ref(), &self.registrations_prefixed, &topoheight.to_bytes()) {
-            let k = el?;
-            Self::remove_from_disk_without_reading(self.snapshot.as_mut(), &self.registrations_prefixed, &k)?;
-
-            let key = &k[8..40];
-            Self::remove_from_disk_without_reading(self.snapshot.as_mut(), &self.registrations, key)?;
-        }
-
-        Ok(())
     }
 
     // Get all keys that got registered in the range given

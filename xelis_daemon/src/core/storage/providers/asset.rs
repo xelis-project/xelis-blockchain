@@ -37,7 +37,7 @@ pub trait AssetProvider {
     async fn get_assets_with_data_in_range<'a>(&'a self, minimum_topoheight: Option<u64>, maximum_topoheight: Option<u64>) -> Result<impl Iterator<Item = Result<(Hash, TopoHeight, AssetData), BlockchainError>> + 'a, BlockchainError>;
 
     // Get all assets for a specific key
-    async fn get_assets_for(&self, key: &PublicKey) -> Result<impl Iterator<Item = Result<Hash, BlockchainError>>, BlockchainError>;
+    async fn get_assets_for<'a>(&'a self, key: &'a PublicKey) -> Result<impl Iterator<Item = Result<Hash, BlockchainError>> + 'a, BlockchainError>;
 
     // Count the number of assets stored
     async fn count_assets(&self) -> Result<u64, BlockchainError>;

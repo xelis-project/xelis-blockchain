@@ -120,9 +120,9 @@ impl AssetProvider for RocksStorage {
     }
 
     // Get all assets for a specific key
-    async fn get_assets_for(&self, key: &PublicKey) -> Result<impl Iterator<Item = Result<Hash, BlockchainError>>, BlockchainError> {
-        // TODO: find account id, and read balances
-        Ok(std::iter::empty())
+    async fn get_assets_for<'a>(&'a self, key: &'a PublicKey) -> Result<impl Iterator<Item = Result<Hash, BlockchainError>> + 'a, BlockchainError> {
+        let account_id = self.get_account_id(key)?;
+        self.iter_keys_prefix(Column::Balances, account_id.to_be_bytes())
     }
 
     // Count the number of assets stored
@@ -172,6 +172,10 @@ impl RocksStorage {
     }
 
     fn get_asset_type(&self, hash: &Hash) -> Result<Asset, BlockchainError> {
+        self.load_from_disk(Column::Assets, hash)
+    }
+
+    pub(super) fn get_asset_id(&self, hash: &Hash) -> Result<AssetId, BlockchainError> {
         self.load_from_disk(Column::Assets, hash)
     }
 

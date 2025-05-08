@@ -50,9 +50,6 @@ pub trait BalanceProvider: AssetProvider + NetworkProvider + NonceProvider {
     // Get the last balance of the account, this is based on the last topoheight (pointer) available
     async fn get_last_balance(&self, key: &PublicKey, asset: &Hash) -> Result<(TopoHeight, VersionedBalance), BlockchainError>;
 
-    // Get the asset versioned balances for multiple keys
-    async fn get_versioned_balances<'a, I: Iterator<Item = &'a PublicKey> + Send>(&self, asset: &Hash, keys: I, maximum_topoheight: TopoHeight) -> Result<Vec<Option<VersionedBalance>>, BlockchainError>;
-
     // Set the last topoheight for this asset and key to the requested topoheight
     fn set_last_topoheight_for_balance(&mut self, key: &PublicKey, asset: &Hash, topoheight: TopoHeight) -> Result<(), BlockchainError>;
 
@@ -62,13 +59,6 @@ pub trait BalanceProvider: AssetProvider + NetworkProvider + NonceProvider {
 
     // Set the balance at specific topoheight for asset and key
     async fn set_balance_at_topoheight(&mut self, asset: &Hash, topoheight: TopoHeight, key: &PublicKey, balance: &VersionedBalance) -> Result<(), BlockchainError>;
-
-    // Delete the balance at specific topoheight for asset and key
-    async fn delete_balance_at_topoheight(&mut self, key: &PublicKey, asset: &Hash, topoheight: TopoHeight) -> Result<VersionedBalance, BlockchainError>;
-
-    // Delete the last topoheight for asset and key
-    // This will only remove the pointer, not the version itself
-    fn delete_last_topoheight_for_balance(&mut self, key: &PublicKey, asset: &Hash) -> Result<(), BlockchainError>;
 
     // Get the account summary for a key and asset on the specified topoheight range
     // If None is returned, that means there was no changes that occured in the specified topoheight range

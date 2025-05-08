@@ -61,14 +61,14 @@ impl RocksStorage {
         trace!("load cache from disk");
     }
 
-    pub(super) fn insert_into_disk<K: Serializer, V: Serializer>(&mut self, column: Column, key: &K, value: &V) -> Result<(), BlockchainError> {
+    pub(super) fn insert_into_disk<K: AsRef<[u8]>, V: Serializer>(&mut self, column: Column, key: K, value: &V) -> Result<(), BlockchainError> {
         trace!("insert into disk {:?}", column);
 
         match self.snapshot.as_mut() {
-            Some(snapshot) => snapshot.put(column, key.to_bytes(), value.to_bytes()),
+            Some(snapshot) => snapshot.put(column, key.as_ref().to_vec(), value.to_bytes()),
             None => {
                 let cf = cf_handle!(self, column);
-                self.db.put_cf(&cf, key.to_bytes(), value.to_bytes())
+                self.db.put_cf(&cf, key.as_ref(), value.to_bytes())
                     .with_context(|| format!("Error while inserting into disk column {:?}", column))?
             }
         };
@@ -108,7 +108,7 @@ impl RocksStorage {
         Ok(value.is_some())
     }
 
-    pub fn load_optional_from_disk<K: AsRef<[u8]>, V: Serializer>(&self, column: Column, key: &K) -> Result<Option<V>, BlockchainError> {
+    pub fn load_optional_from_disk<K: AsRef<[u8]> + ?Sized, V: Serializer>(&self, column: Column, key: &K) -> Result<Option<V>, BlockchainError> {
         trace!("load optional {:?} from disk internal", column);
 
         let cf = cf_handle!(self, column);
@@ -119,7 +119,7 @@ impl RocksStorage {
         }
     }
 
-    pub fn load_from_disk<K: AsRef<[u8]>, V: Serializer>(&self, column: Column, key: &K) -> Result<V, BlockchainError> {
+    pub fn load_from_disk<K: AsRef<[u8]> + ?Sized, V: Serializer>(&self, column: Column, key: &K) -> Result<V, BlockchainError> {
         trace!("load from disk internal");
 
         let data = self.load_optional_from_disk(column, key)?
@@ -131,7 +131,6 @@ impl RocksStorage {
     pub fn get_size_from_disk<K: AsRef<[u8]>>(&self, column: Column, key: &K) -> Result<usize, BlockchainError> {
         trace!("load from disk internal");
 
-
         let cf = cf_handle!(self, column);
         match self.db.get_pinned_cf(&cf, key.as_ref())
             .with_context(|| format!("Internal error while reading {:?}", column))? {
@@ -140,14 +139,14 @@ impl RocksStorage {
         }
     }
 
-    pub fn scan_prefix<'a, K: Serializer + 'a, V: Serializer + 'a>(&'a self, column: Column, prefix: &'a [u8]) -> Result<impl Iterator<Item = Result<(K, V), BlockchainError>> + 'a, BlockchainError> {
-        trace!("scan prefix {:?}", column);
+    pub fn iter_prefix<'a, K: Serializer + 'a, V: Serializer + 'a, P: AsRef<[u8]> + Copy + 'a>(&'a self, column: Column, prefix: P) -> Result<impl Iterator<Item = Result<(K, V), BlockchainError>> + 'a, BlockchainError> {
+        trace!("iter prefix {:?}", column);
 
         let cf = cf_handle!(self, column);
         let iterator = self.db.prefix_iterator_cf(&cf, prefix);
 
         match self.snapshot.as_ref() {
-            Some(snapshot) => Ok(Either::Left(snapshot.scan_prefix(column, prefix, iterator))),
+            Some(snapshot) => Ok(Either::Left(snapshot.iter_prefix(column, prefix, iterator))),
             None => {
                 Ok(Either::Right(iterator.map(|res| {
                     let (key, value) = res.context("Internal read error in iter")?;
@@ -155,6 +154,24 @@ impl RocksStorage {
                     let value = V::from_bytes(&value)?;
         
                     Ok((key, value))
+                })))
+            } 
+        }
+    }
+
+    pub fn iter_keys_prefix<'a, K: Serializer + 'a, P: AsRef<[u8]> + Copy + 'a>(&'a self, column: Column, prefix: P) -> Result<impl Iterator<Item = Result<K, BlockchainError>> + 'a, BlockchainError> {
+        trace!("iter keys prefix {:?}", column);
+
+        let cf = cf_handle!(self, column);
+        let iterator = self.db.prefix_iterator_cf(&cf, prefix);
+
+        match self.snapshot.as_ref() {
+            Some(snapshot) => Ok(Either::Left(snapshot.iter_keys_prefix(column, prefix, iterator))),
+            None => {
+                Ok(Either::Right(iterator.map(|res| {
+                    let (key, _) = res.context("Internal read error in iter")?;
+                    let key = K::from_bytes(&key)?;
+                    Ok(key)
                 })))
             } 
         }
