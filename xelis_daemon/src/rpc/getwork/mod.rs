@@ -70,12 +70,15 @@ pub enum BlockResult {
 pub type SharedGetWorkServer<S> = Arc<GetWorkServer<S>>;
 
 pub struct GetWorkServer<S: Storage> {
+    // Contains all miners connected to the getwork server
+    // The key is the session, and the value is the representation of a miner statistics
     miners: Mutex<HashMap<WebSocketSessionShared<Self>, Miner>>,
     blockchain: Arc<Blockchain<S>>,
     // all potential jobs sent to miners
     // we can keep them in cache up to STABLE_LIMIT blocks
     // so even a late miner have a chance to not be orphaned and be included in chain
     mining_jobs: Mutex<LruCache<Hash, (BlockHeader, Difficulty)>>,
+    // last header hash used for job
     last_header_hash: Mutex<Option<Hash>>,
     // used only when a new TX is received in mempool
     last_notify: AtomicU64,
