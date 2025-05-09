@@ -72,6 +72,7 @@ impl Snapshot {
             columns: BTreeMap::new(),
         }
     }
+
     pub fn delete<K: Into<Bytes>>(&mut self, column: Column, key: K) {
         self.columns.entry(column)
             .or_insert_with(Batch::default)

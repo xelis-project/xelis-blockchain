@@ -16,7 +16,6 @@ mod network;
 mod multisig;
 mod commit_point;
 mod tips_provider;
-mod db;
 mod contract;
 mod versioned;
 mod cache;
