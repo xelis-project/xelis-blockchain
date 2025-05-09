@@ -70,6 +70,14 @@ impl TimedDirection {
         matches!(self, Self::Out { .. })
     }
 
+    pub fn contains_out(&self) -> bool {
+        matches!(self, Self::Out { .. } | Self::Both { .. })
+    }
+
+    pub fn contains_in(&self) -> bool {
+        matches!(self, Self::In { .. } | Self::Both { .. })
+    }
+
     pub fn update(&mut self, direction: TimedDirection) -> bool {
         match *self {
             Self::Out { sent_at } => match direction {
