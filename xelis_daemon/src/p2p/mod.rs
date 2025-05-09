@@ -191,6 +191,9 @@ pub struct P2pServer<S: Storage> {
     fail_count_limit: u8,
     // Sender used to notify the ping loop
     notify_ping_loop: Sender<()>,
+    // This is used to reexecute blocks on chain sync
+    // in case the block detected is marked as orphaned
+    reexecute_blocks_on_sync: bool,
 }
 
 impl<S: Storage> P2pServer<S> {
@@ -214,6 +217,7 @@ impl<S: Storage> P2pServer<S> {
         stream_concurrency: usize,
         temp_ban_time: u64,
         fail_count_limit: u8,
+        reexecute_blocks_on_sync: bool,
     ) -> Result<Arc<Self>, P2pError> {
         if tag.as_ref().is_some_and(|tag| tag.len() == 0 || tag.len() > 16) {
             return Err(P2pError::InvalidTag);
@@ -291,6 +295,7 @@ impl<S: Storage> P2pServer<S> {
             temp_ban_time,
             fail_count_limit,
             notify_ping_loop: ping_sender,
+            reexecute_blocks_on_sync,
         };
 
         let arc = Arc::new(server);

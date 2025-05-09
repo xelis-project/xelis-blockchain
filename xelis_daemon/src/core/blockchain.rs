@@ -358,7 +358,8 @@ impl<S: Storage> Blockchain<S> {
                 config.p2p_on_dh_key_change,
                 config.p2p_stream_concurrency,
                 config.p2p_temp_ban_duration.as_secs(),
-                config.p2p_fail_count_limit
+                config.p2p_fail_count_limit,
+                config.reexecute_blocks_on_sync,
             ) {
                 Ok(p2p) => {
                     // connect to priority nodes
