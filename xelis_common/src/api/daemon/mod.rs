@@ -270,7 +270,9 @@ pub struct GetInfoResult {
     // software version on which the daemon is running
     pub version: String,
     // Network state (mainnet, testnet, devnet)
-    pub network: Network
+    pub network: Network,
+    // Current block version enabled
+    pub block_version: BlockVersion,
 }
 
 #[derive(Serialize, Deserialize)]
