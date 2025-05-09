@@ -180,7 +180,26 @@ impl<S: Storage> P2pServer<S> {
                 StepResponse::Keys(keys, page)
             },
             StepRequest::MultiSigs(min, max, keys) => {
-                let multisigs = storage.get_updated_multisigs(&keys, min, max).await?;
+                let multisigs = stream::iter(keys.iter())
+                    .map(|key| async {
+                        Ok::<_, BlockchainError>(if let Some((topoheight, version)) = storage.get_multisig_at_maximum_topoheight_for(key, max).await? {
+                            if topoheight >= min {
+                                match version.take() {
+                                    Some(multisig) => State::Some(multisig.into_owned()),
+                                    None => State::Deleted,
+                                }
+                            } else {
+                                State::Clean
+                            }
+                        } else {
+                            State::None
+                        })
+                    })
+                    .buffered(self.stream_concurrency)
+                    .boxed()
+                    .try_collect::<Vec<_>>()
+                    .await?;
+
                 StepResponse::MultiSigs(multisigs)
             },
             StepRequest::Contracts(min, max, page) => {

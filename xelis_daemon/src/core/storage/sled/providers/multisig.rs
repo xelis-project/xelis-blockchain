@@ -1,11 +1,8 @@
 use async_trait::async_trait;
-use indexmap::IndexSet;
 use xelis_common::{
     block::TopoHeight,
     crypto::PublicKey,
-    serializer::Serializer,
-    transaction::MultiSigPayload,
-    versioned_type::State
+    serializer::Serializer
 };
 use crate::core::{
     error::{BlockchainError, DiskContext},
@@ -23,13 +20,6 @@ impl MultiSigProvider for SledStorage {
     async fn get_multisig_at_topoheight_for<'a>(&'a self, account: &PublicKey, topoheight: TopoHeight) -> Result<VersionedMultiSig<'a>, BlockchainError> {
         trace!("get multisig at topoheight {}", topoheight);
         self.load_from_disk(&self.versioned_multisigs, &self.get_versioned_multisig_key(account, topoheight), DiskContext::Multisig )
-    }
-
-    async fn set_multisig_at_topoheight_for<'a>(&mut self, account: &PublicKey, topoheight: TopoHeight, multisig: VersionedMultiSig<'a>) -> Result<(), BlockchainError> {
-        trace!("set multisig at topoheight {}", topoheight);
-        let key: [u8; 40] = self.get_versioned_multisig_key(account, topoheight);
-        Self::insert_into_disk(self.snapshot.as_mut(), &self.versioned_multisigs, &key, multisig.to_bytes())?;
-        Ok(())
     }
 
     async fn delete_last_topoheight_for_multisig(&mut self, account: &PublicKey) -> Result<(), BlockchainError> {
@@ -58,29 +48,6 @@ impl MultiSigProvider for SledStorage {
         Ok(None)
     }
 
-    async fn get_updated_multisigs(&self, keys: &IndexSet<PublicKey>, minimum_topoheight: TopoHeight, maximum_topoheight: TopoHeight) -> Result<Vec<State<MultiSigPayload>>, BlockchainError> {
-        trace!("get updated multisigs");
-        let mut multisigs = Vec::with_capacity(keys.len());
-        for key in keys {
-            // We need to search the multisig state that match min and max topoheight
-            if let Some((topoheight, version)) = self.get_multisig_at_maximum_topoheight_for(key, maximum_topoheight).await? {
-                if topoheight >= minimum_topoheight {
-                    let state = match version.take() {
-                        Some(multisig) => State::Some(multisig.into_owned()),
-                        None => State::Deleted,
-                    };
-                    multisigs.push(state);
-                } else {
-                    multisigs.push(State::Clean);
-                }
-            } else {
-                multisigs.push(State::None);
-            }
-        }
-
-        Ok(multisigs)
-    }
-
     async fn has_multisig(&self, account: &PublicKey) -> Result<bool, BlockchainError> {
         trace!("has multisig");
         let Some(topoheight) = self.get_last_topoheight_for_multisig(account).await? else {
@@ -91,26 +58,17 @@ impl MultiSigProvider for SledStorage {
         Ok(version.get().is_some())
     }
 
-    async fn has_multisig_at_topoheight(&self, account: &PublicKey, topoheight: TopoHeight) -> Result<bool, BlockchainError> {
-        trace!("has multisig at topoheight {}", topoheight);
-        let version = self.get_multisig_at_topoheight_for(account, topoheight).await?;
-        Ok(version.get().is_some())
-    }
-
     async fn has_multisig_at_exact_topoheight(&self, account: &PublicKey, topoheight: TopoHeight) -> Result<bool, BlockchainError> {
         trace!("has multisig at exact topoheight {}", topoheight);
         self.contains_data(&self.versioned_multisigs, &self.get_versioned_multisig_key(account, topoheight))
     }
 
-    async fn set_last_topoheight_for_multisig<'a>(&mut self, account: &PublicKey, topoheight: TopoHeight) -> Result<(), BlockchainError> {
-        Self::insert_into_disk(self.snapshot.as_mut(), &self.multisig, account.as_bytes(), &topoheight.to_be_bytes())?;
-        Ok(())
-    }
-
     async fn set_last_multisig_to<'a>(&mut self, account: &PublicKey, topoheight: TopoHeight, multisig: VersionedMultiSig<'a>) -> Result<(), BlockchainError> {
         trace!("set last multisig to topoheight {}", topoheight);
-        self.set_multisig_at_topoheight_for(account, topoheight, multisig).await?;
-        self.set_last_topoheight_for_multisig(account, topoheight).await?;
+        let key: [u8; 40] = self.get_versioned_multisig_key(account, topoheight);
+        Self::insert_into_disk(self.snapshot.as_mut(), &self.versioned_multisigs, &key, multisig.to_bytes())?;
+        Self::insert_into_disk(self.snapshot.as_mut(), &self.multisig, account.as_bytes(), &topoheight.to_be_bytes())?;
+
         Ok(())
     }
 }

@@ -1588,7 +1588,7 @@ async fn has_multisig_at_topoheight<S: Storage>(context: &Context, body: Value) 
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let storage = blockchain.get_storage().read().await;
 
-    let multisig = storage.has_multisig_at_topoheight(&params.address.get_public_key(), params.topoheight).await
+    let multisig = storage.has_multisig_at_exact_topoheight(&params.address.get_public_key(), params.topoheight).await
         .context("Error while checking if account has multisig at topoheight")?;
 
     Ok(json!(multisig))
