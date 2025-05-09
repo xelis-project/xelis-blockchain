@@ -1724,7 +1724,9 @@ async fn get_p2p_block_propagation<S: Storage>(context: &Context, body: Value) -
             // We don't count common peers
             // Because we haven't really sent them it
             if !is_common {
-                peers.insert(peer.get_id(), timed_direction);
+                if (timed_direction.contains_out() && params.outgoing) || (timed_direction.contains_in() && params.incoming) {
+                    peers.insert(peer.get_id(), timed_direction);
+                }
 
                 match timed_direction {
                     TimedDirection::In { received_at } | TimedDirection::Both { received_at, .. } => {
