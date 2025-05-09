@@ -751,6 +751,11 @@ async fn setup_wallet_command_manager(wallet: Arc<Wallet>, command_manager: &Com
         "Set the transaction version",
         CommandHandler::Async(async_handler!(set_tx_version))
     ))?;
+    command_manager.add_command(Command::new(
+        "status",
+        "See the status of the wallet",
+        CommandHandler::Async(async_handler!(status))
+    ))?;
 
     let mut context = command_manager.get_context().lock()?;
     context.store(wallet);
@@ -1684,6 +1689,65 @@ async fn set_tx_version(manager: &CommandManager, _: ArgumentManager) -> Result<
     storage.set_tx_version(tx_version).await?;
 
     manager.message(format!("New transaction version is: {}", value));
+    Ok(())
+}
+
+async fn status(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
+    let context = manager.get_context().lock()?;
+    let wallet: &Arc<Wallet> = context.get()?;
+
+    if let Some(network_handler) = wallet.get_network_handler().lock().await.as_ref() {
+        let api = network_handler.get_api();
+        let is_online = api.get_client().is_online();
+        manager.message(format!("Network handler is online: {}", is_online));
+        manager.message(format!("Connected to: {}", api.get_client().get_target()));
+
+        if is_online {
+            let info = api.get_info().await
+                .context("Error while getting network info")?;
+
+            manager.message("--- Daemon status ---");
+            manager.message(format!("Height: {}", info.height));
+            manager.message(format!("Topoheight: {}", info.topoheight));
+            manager.message(format!("Stable height: {}", info.stableheight));
+            manager.message(format!("Pruned topoheight: {:?}", info.pruned_topoheight));
+            manager.message(format!("Top block hash: {}", info.top_block_hash));
+            manager.message(format!("Network: {}", info.network));
+            manager.message(format!("Emitted supply: {}", format_xelis(info.emitted_supply)));
+            manager.message(format!("Burned supply: {}", format_xelis(info.burned_supply)));
+            manager.message(format!("Circulating supply: {}", format_xelis(info.circulating_supply)));
+            manager.message("---------------------");
+        }
+    }
+
+    let storage = wallet.get_storage().read().await;
+    let multisig = storage.get_multisig_state().await?;
+    if let Some(multisig) = multisig {
+        manager.message("--- Multisig: ---");
+        manager.message(format!("Threshold: {}", multisig.payload.threshold));
+        manager.message(format!("Participants ({}): {}", multisig.payload.participants.len(),
+            multisig.payload.participants.iter()
+                .map(|p| p.as_address(wallet.get_network().is_mainnet()).to_string())
+                .collect::<Vec<_>>().join(", ")
+            ));
+        manager.message("---------------");
+    } else {
+        manager.message("No multisig state");
+    }
+
+    let tx_version = storage.get_tx_version().await?;
+    manager.message(format!("Transaction version: {}", tx_version));
+    let nonce = storage.get_nonce()?;
+    let unconfirmed_nonce = storage.get_unconfirmed_nonce()?;
+    manager.message(format!("Nonce: {}", nonce));
+    if nonce != unconfirmed_nonce {
+        manager.message(format!("Unconfirmed nonce: {}", unconfirmed_nonce));
+    }
+    let network = wallet.get_network();
+    manager.message(format!("Synced topoheight: {}", storage.get_synced_topoheight()?));
+    manager.message(format!("Network: {}", network));
+    manager.message(format!("Wallet address: {}", wallet.get_address()));
+
     Ok(())
 }
 
