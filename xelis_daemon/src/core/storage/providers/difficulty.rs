@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use indexmap::IndexSet;
 use xelis_common::{
-    block::BlockHeader,
+    block::{BlockHeader, BlockVersion},
     crypto::Hash,
     difficulty::{
         CumulativeDifficulty,
@@ -18,6 +18,9 @@ use crate::core::error::BlockchainError;
 pub trait DifficultyProvider {
     // Get the block height using its hash
     async fn get_height_for_block_hash(&self, hash: &Hash) -> Result<u64, BlockchainError>;
+
+    // Get the block version using its hash
+    async fn get_version_for_block_hash(&self, hash: &Hash) -> Result<BlockVersion, BlockchainError>;
 
     // Get the timestamp from the block using its hash
     async fn get_timestamp_for_block_hash(&self, hash: &Hash) -> Result<TimestampMillis, BlockchainError>;

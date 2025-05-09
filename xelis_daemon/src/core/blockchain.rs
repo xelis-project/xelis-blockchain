@@ -72,7 +72,7 @@ use xelis_vm::Environment;
 use crate::{
     config::{
         get_genesis_block_hash, get_hex_genesis_block,
-        BLOCK_TIME_MILLIS, DEV_FEES, DEV_PUBLIC_KEY, EMISSION_SPEED_FACTOR, GENESIS_BLOCK_DIFFICULTY,
+        DEV_FEES, DEV_PUBLIC_KEY, EMISSION_SPEED_FACTOR, GENESIS_BLOCK_DIFFICULTY,
         MILLIS_PER_SECOND, SIDE_BLOCK_REWARD_MAX_BLOCKS, PRUNE_SAFETY_LIMIT,
         SIDE_BLOCK_REWARD_PERCENT, SIDE_BLOCK_REWARD_MIN_PERCENT, STABLE_LIMIT, TIMESTAMP_IN_FUTURE_LIMIT,
     },
@@ -2288,7 +2288,7 @@ impl<S: Storage> Blockchain<S> {
                     },
                 };
 
-                let block_reward = self.internal_get_block_reward(past_emitted_supply, is_side_block, *side_blocks_count).await?;
+                let block_reward = self.internal_get_block_reward(past_emitted_supply, is_side_block, *side_blocks_count, block.get_version()).await?;
                 trace!("set block {} reward to {} at {} (height {}, side block: {}, {} {}%)", hash, block_reward, highest_topo, height, is_side_block, side_blocks_count, side_block_reward_percentage(*side_blocks_count));
                 if is_side_block {
                     *side_blocks_count += 1;
@@ -2741,17 +2741,17 @@ impl<S: Storage> Blockchain<S> {
 
     // Get block reward based on the type of the block
     // Block shouldn't be orphaned
-    pub async fn internal_get_block_reward(&self, past_supply: u64, is_side_block: bool, side_blocks_count: u64) -> Result<u64, BlockchainError> {
+    pub async fn internal_get_block_reward(&self, past_supply: u64, is_side_block: bool, side_blocks_count: u64, version: BlockVersion) -> Result<u64, BlockchainError> {
         trace!("internal get block reward");
-        let block_reward = if is_side_block {
-            let reward = get_block_reward(past_supply);
+        let block_time_target = get_block_time_target_for_version(version);
+        let mut block_reward = get_block_reward(past_supply, block_time_target);
+        if is_side_block {
             let side_block_percent = side_block_reward_percentage(side_blocks_count);
             trace!("side block reward: {}%", side_block_percent);
 
-            reward * side_block_percent / 100
-        } else {
-            get_block_reward(past_supply)
-        };
+            block_reward = block_reward * side_block_percent / 100;
+        }
+
         Ok(block_reward)
     }
 
@@ -2771,7 +2771,9 @@ impl<S: Storage> Blockchain<S> {
             }
         }
 
-        self.internal_get_block_reward(past_supply, is_side_block, side_blocks_count).await
+        let version = provider.get_version_for_block_hash(hash).await?;
+
+        self.internal_get_block_reward(past_supply, is_side_block, side_blocks_count, version).await
     }
 
     // retrieve all txs hashes until height or until genesis block
@@ -3006,7 +3008,8 @@ impl<S: Storage> Blockchain<S> {
         let mut count = if topoheight > 50 {
             50
         } else if topoheight <= 1 {
-            return Ok(BLOCK_TIME_MILLIS);
+            let version = get_version_at_height(self.get_network(), self.get_height());
+            return Ok(get_block_time_target_for_version(version));
         } else {
             topoheight - 1
         };
@@ -3064,7 +3067,7 @@ pub fn side_block_reward_percentage(side_blocks: u64) -> u64 {
 }
 
 // Calculate the block reward based on the emitted supply
-pub fn get_block_reward(supply: u64) -> u64 {
+pub fn get_block_reward(supply: u64, block_time_target: u64) -> u64 {
     // Prevent any overflow
     if supply >= MAXIMUM_SUPPLY {
         // Max supply reached, do we want to generate small fixed amount of coins? 
@@ -3072,7 +3075,7 @@ pub fn get_block_reward(supply: u64) -> u64 {
     }
 
     let base_reward = (MAXIMUM_SUPPLY - supply) >> EMISSION_SPEED_FACTOR;
-    base_reward * BLOCK_TIME_MILLIS / MILLIS_PER_SECOND / 180
+    base_reward * block_time_target / MILLIS_PER_SECOND / 180
 }
 
 // Returns the fee percentage for a block at a given height

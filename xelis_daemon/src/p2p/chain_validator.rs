@@ -2,7 +2,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use indexmap::{IndexMap, IndexSet};
 use xelis_common::{
-    block::{TopoHeight, BlockHeader},
+    block::{BlockHeader, BlockVersion, TopoHeight},
     config::TIPS_LIMIT,
     crypto::Hash,
     difficulty::{
@@ -213,6 +213,17 @@ impl<S: Storage> DifficultyProvider for ChainValidatorProvider<'_, S> {
 
         trace!("fallback on storage for get_height_for_block_hash");
         self.storage.get_height_for_block_hash(hash).await
+    }
+
+    // Get the block version using its hash
+    async fn get_version_for_block_hash(&self, hash: &Hash) -> Result<BlockVersion, BlockchainError> {
+        trace!("get version for block hash {}", hash);
+        if let Some(data) = self.parent.blocks.get(hash) {
+            return Ok(data.header.get_version())
+        }
+
+        trace!("fallback on storage for get_version_for_block_hash");
+        self.storage.get_version_for_block_hash(hash).await
     }
 
     async fn get_timestamp_for_block_hash(&self, hash: &Hash) -> Result<TimestampMillis, BlockchainError> {

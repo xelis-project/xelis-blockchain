@@ -27,9 +27,6 @@ pub const DEFAULT_CACHE_SIZE: usize = 1024;
 // Block rules
 // Millis per second, it is used to prevent having random 1000 values anywhere
 pub const MILLIS_PER_SECOND: u64 = 1000;
-// Block Time in milliseconds
-// 15s block time
-pub const BLOCK_TIME_MILLIS: u64 = 15 * MILLIS_PER_SECOND;
 
 // Constants for hashrate
 // Used for difficulty calculation

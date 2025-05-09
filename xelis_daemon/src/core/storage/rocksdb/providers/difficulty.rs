@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use indexmap::IndexSet;
 use log::trace;
 use xelis_common::{
-    block::BlockHeader,
+    block::{BlockHeader, BlockVersion},
     crypto::Hash,
     difficulty::{CumulativeDifficulty, Difficulty},
     immutable::Immutable,
@@ -28,6 +28,13 @@ impl DifficultyProvider for RocksStorage {
         trace!("get height for block hash {}", hash);
         let header = self.get_block_header_by_hash(hash).await?;
         Ok(header.get_height())
+    }
+
+    // Get the block version using its hash
+    async fn get_version_for_block_hash(&self, hash: &Hash) -> Result<BlockVersion, BlockchainError> {
+        trace!("get version for block hash {}", hash);
+        let block = self.get_block_header_by_hash(hash).await?;
+        Ok(block.get_version())
     }
 
     // Get the timestamp from the block using its hash

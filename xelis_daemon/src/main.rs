@@ -17,7 +17,6 @@ use xelis_common::{
         Address,
         Hashable
     },
-    difficulty::Difficulty,
     immutable::Immutable,
     network::Network,
     prompt::{
@@ -50,27 +49,25 @@ use xelis_common::{
         format_xelis
     }
 };
-use crate::config::{
-    BLOCK_TIME_MILLIS,
-    MILLIS_PER_SECOND
-};
+use crate::config::MILLIS_PER_SECOND;
 use core::{
-    config::Config as InnerConfig,
     blockchain::{
+        get_block_reward,
         Blockchain,
-        BroadcastOption,
-        get_block_reward
-    },
-    storage::{
-        Storage,
-        SledStorage,
-        sled::StorageMode,
+        BroadcastOption
     },
     blockdag,
+    config::Config as InnerConfig,
     hard_fork::{
+        get_block_time_target_for_version,
         get_pow_algorithm_for_version,
         get_version_at_height
     },
+    storage::{
+        sled::StorageMode,
+        SledStorage,
+        Storage
+    }
 };
 use std::{
     fs::File,
@@ -198,8 +195,6 @@ pub struct CliConfig {
     #[serde(default)]
     generate_config_template: bool
 }
-
-const BLOCK_TIME: Difficulty = Difficulty::from_u64(BLOCK_TIME_MILLIS / MILLIS_PER_SECOND);
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -384,7 +379,9 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
         };
 
         trace!("Retrieving network hashrate");
-        let network_hashrate: f64 = (blockchain.get_difficulty().await / BLOCK_TIME).into();
+        let version = get_version_at_height(blockchain.get_network(), blockchain.get_height());
+        let block_time_target = get_block_time_target_for_version(version);
+        let network_hashrate: f64 = (blockchain.get_difficulty().await / (block_time_target / MILLIS_PER_SECOND)).into();
 
         trace!("Building prompt message");
         Ok( 
@@ -1154,20 +1151,21 @@ async fn status<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Res
     let contracts = storage.count_contracts().await.context("Error while counting contracts")?;
     let pruned_topoheight = storage.get_pruned_topoheight().await.context("Error while retrieving pruned topoheight")?;
     let version = get_version_at_height(blockchain.get_network(), height);
+    let block_time_target = get_block_time_target_for_version(version);
 
     manager.message(format!("Height: {}", height));
     manager.message(format!("Stable Height: {}", stableheight));
     manager.message(format!("Stable Topo Height: {}", stable_topoheight));
     manager.message(format!("Topo Height: {}", topoheight));
     manager.message(format!("Difficulty: {}", format_difficulty(difficulty)));
-    manager.message(format!("Network Hashrate: {}", format_hashrate((difficulty / BLOCK_TIME).into())));
+    manager.message(format!("Network Hashrate: {}", format_hashrate((difficulty / (block_time_target / MILLIS_PER_SECOND)).into())));
     manager.message(format!("Top block hash: {}", top_block_hash));
     manager.message(format!("Average Block Time: {:.2}s", avg_block_time as f64 / MILLIS_PER_SECOND as f64));
-    manager.message(format!("Target Block Time: {:.2}s", BLOCK_TIME_MILLIS as f64 / MILLIS_PER_SECOND as f64));
+    manager.message(format!("Target Block Time: {:.2}s", block_time_target as f64 / MILLIS_PER_SECOND as f64));
     manager.message(format!("Emitted Supply: {} XELIS", format_xelis(emitted_supply)));
     manager.message(format!("Burned Supply: {} XELIS", format_xelis(burned_supply)));
     manager.message(format!("Circulating Supply: {} XELIS", format_xelis(emitted_supply - burned_supply)));
-    manager.message(format!("Current Block Reward: {} XELIS", format_xelis(get_block_reward(emitted_supply))));
+    manager.message(format!("Current Block Reward: {} XELIS", format_xelis(get_block_reward(emitted_supply, block_time_target))));
     manager.message(format!("Accounts/Transactions/Blocks/Assets/Contracts: {}/{}/{}/{}/{}", accounts_count, transactions_count, blocks_count, assets, contracts));
     manager.message(format!("Block Version: {}", version));
     manager.message(format!("POW Algorithm: {}", get_pow_algorithm_for_version(version)));

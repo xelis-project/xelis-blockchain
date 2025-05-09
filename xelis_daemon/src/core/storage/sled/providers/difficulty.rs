@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use indexmap::IndexSet;
 use log::trace;
 use xelis_common::{
-    block::BlockHeader,
+    block::{BlockHeader, BlockVersion},
     crypto::Hash,
     difficulty::{
         CumulativeDifficulty,
@@ -24,6 +24,12 @@ impl DifficultyProvider for SledStorage {
         trace!("get height for block hash {}", hash);
         let block = self.get_block_header_by_hash(hash).await?;
         Ok(block.get_height())
+    }
+
+    async fn get_version_for_block_hash(&self, hash: &Hash) -> Result<BlockVersion, BlockchainError> {
+        trace!("get version for block hash {}", hash);
+        let block = self.get_block_header_by_hash(hash).await?;
+        Ok(block.get_version())
     }
 
     async fn get_timestamp_for_block_hash(&self, hash: &Hash) -> Result<TimestampMillis, BlockchainError> {

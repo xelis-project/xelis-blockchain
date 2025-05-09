@@ -2,7 +2,8 @@ use crate::{
     config::{
         get_hard_forks as get_configured_hard_forks,
         DEV_FEES,
-        DEV_PUBLIC_KEY
+        DEV_PUBLIC_KEY,
+        MILLIS_PER_SECOND
     },
     core::{
         blockchain::{
@@ -21,7 +22,6 @@ use crate::{
         storage::*,
     },
     p2p::peer::Peer,
-    BLOCK_TIME
 };
 use super::{InternalRpcError, ApiError};
 use xelis_common::{
@@ -620,13 +620,15 @@ async fn get_info<S: Storage>(context: &Context, body: Value) -> Result<Value, I
         (top_block_hash, emitted_supply, burned_supply, pruned_topoheight, average_block_time)
     };
     let difficulty = blockchain.get_difficulty().await;
-    let block_reward = get_block_reward(emitted_supply);
-    let (dev_reward, miner_reward) = get_block_rewards(height, block_reward);
+
     let mempool_size = blockchain.get_mempool_size().await;
     let version = VERSION.into();
     let network = *blockchain.get_network();
     let block_version = get_version_at_height(&network, height);
     let block_time_target = get_block_time_target_for_version(block_version);
+
+    let block_reward = get_block_reward(emitted_supply, block_time_target);
+    let (dev_reward, miner_reward) = get_block_rewards(height, block_reward);
 
     Ok(json!(GetInfoResult {
         height,
@@ -1445,7 +1447,10 @@ async fn get_difficulty<S: Storage>(context: &Context, body: Value) -> Result<Va
 
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let difficulty = blockchain.get_difficulty().await;
-    let hashrate = difficulty / BLOCK_TIME;
+    let version = get_version_at_height(blockchain.get_network(), blockchain.get_height());
+    let block_time_target = get_block_time_target_for_version(version);
+
+    let hashrate = difficulty / (block_time_target / MILLIS_PER_SECOND);
     let hashrate_formatted = format_hashrate(hashrate.into());
     Ok(json!(GetDifficultyResult {
         hashrate,
