@@ -36,7 +36,7 @@ pub fn get_version_at_height(network: &Network, height: u64) -> BlockVersion {
 }
 
 // This function returns the PoW algorithm at a given version
-pub fn get_pow_algorithm_for_version(version: BlockVersion) -> Algorithm {
+pub const fn get_pow_algorithm_for_version(version: BlockVersion) -> Algorithm {
     match version {
         BlockVersion::V0 => Algorithm::V1,
         _ => Algorithm::V2
@@ -85,7 +85,7 @@ pub fn is_version_enabled_at_height(network: &Network, height: u64, version: Blo
 
 // This function checks if a transaction version is allowed in a block version
 #[inline(always)]
-pub fn is_tx_version_allowed_in_block_version(tx_version: TxVersion, block_version: BlockVersion) -> bool {
+pub const fn is_tx_version_allowed_in_block_version(tx_version: TxVersion, block_version: BlockVersion) -> bool {
     block_version.is_tx_version_allowed(tx_version)
 }
 

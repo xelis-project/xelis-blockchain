@@ -12,7 +12,7 @@ use crate::{
             Blockchain,
             BroadcastOption
         },
-        hard_fork::get_pow_algorithm_for_version,
+        hard_fork::{get_pow_algorithm_for_version, get_version_at_height},
         error::BlockchainError,
         mempool::Mempool,
         storage::*,
@@ -623,6 +623,7 @@ async fn get_info<S: Storage>(context: &Context, body: Value) -> Result<Value, I
     let mempool_size = blockchain.get_mempool_size().await;
     let version = VERSION.into();
     let network = *blockchain.get_network();
+    let block_version = get_version_at_height(&network, height);
 
     Ok(json!(GetInfoResult {
         height,
@@ -642,7 +643,8 @@ async fn get_info<S: Storage>(context: &Context, body: Value) -> Result<Value, I
         miner_reward,
         mempool_size,
         version,
-        network
+        network,
+        block_version,
     }))
 }
 
