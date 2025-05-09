@@ -578,11 +578,17 @@ async fn list_unexecuted_transactions<S: Storage>(manager: &CommandManager, _: A
     let context = manager.get_context().lock()?;
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let storage = blockchain.get_storage().read().await;
-    let unexecuted = storage.get_unexecuted_transactions().await.context("Error while retrieving unexecuted transactions")?;
-    manager.message(format!("Unexecuted transactions ({}):", unexecuted.len()));
-    for tx in unexecuted {
+    let unexecuted = storage.get_unexecuted_transactions().await
+        .context("Error while retrieving unexecuted transactions")?;
+
+    let mut count = 0;
+    for res in unexecuted {
+        count += 1;
+        let tx = res.context("Error on unexecuted tx hash")?;
         manager.message(format!("- {}", tx));
     }
+    manager.message(format!("{} TXs were not executed by the DAG", count));
+
     Ok(())
 }
 

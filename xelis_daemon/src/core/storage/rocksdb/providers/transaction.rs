@@ -9,6 +9,7 @@ use crate::core::{
     error::BlockchainError,
     storage::{
         rocksdb::Column,
+        ClientProtocolProvider,
         RocksStorage,
         TransactionProvider
     }
@@ -34,6 +35,25 @@ impl TransactionProvider for RocksStorage {
         trace!("count transactions");
         // TODO: to implement with cache
         Ok(0)
+    }
+
+    // Get all the unexecuted transactions
+    // Those were not executed by the DAG
+    async fn get_unexecuted_transactions<'a>(&'a self) -> Result<impl Iterator<Item = Result<Hash, BlockchainError>> + 'a, BlockchainError> {
+        trace!("get unexecuted transactions");
+        let iter = self.iter_keys(Column::Transactions)?;
+        Ok(
+            iter.map(|res| {
+                let hash = res?;
+
+                if self.is_tx_executed_in_a_block(&hash)? {
+                    return Ok(None);
+                }
+
+                Ok(Some(hash))
+            })
+            .filter_map(Result::transpose)
+        )
     }
 
     // Check if the transaction exists

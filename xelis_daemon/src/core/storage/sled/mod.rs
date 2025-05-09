@@ -3,7 +3,6 @@ mod migrations;
 mod providers;
 
 use async_trait::async_trait;
-use indexmap::IndexSet;
 use itertools::Either;
 use crate::{
     config::PRUNE_SAFETY_LIMIT,
@@ -856,20 +855,6 @@ impl Storage for SledStorage {
         self.db.flush_async().await?;
         info!("Sled database flushed");
         Ok(())
-    }
-
-    async fn get_unexecuted_transactions(&self) -> Result<IndexSet<Hash>, BlockchainError> {
-        trace!("get unexecuted transactions");
-        let mut txs = IndexSet::new();
-        for el in Self::iter_keys(self.snapshot.as_ref(), &self.transactions) {
-            let key = el?;
-            let tx_hash = Hash::from_bytes(&key)?;
-            if !self.is_tx_executed_in_a_block(&tx_hash)? {
-                txs.insert(tx_hash);
-            }
-        }
-
-        Ok(txs)
     }
 
     async fn estimate_size(&self) -> Result<u64, BlockchainError> {

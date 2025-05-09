@@ -15,6 +15,9 @@ pub trait TransactionProvider {
     // Count the number of transactions stored
     async fn count_transactions(&self) -> Result<u64, BlockchainError>;
 
+    // Get all the unexecuted transactions
+    async fn get_unexecuted_transactions<'a>(&'a self) -> Result<impl Iterator<Item = Result<Hash, BlockchainError>> + 'a, BlockchainError>;
+
     // Check if the transaction exists
     async fn has_transaction(&self, hash: &Hash) -> Result<bool, BlockchainError>;
 

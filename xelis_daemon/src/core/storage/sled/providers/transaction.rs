@@ -14,6 +14,7 @@ use crate::core::{
     },
     storage::{
         sled::TXS_COUNT,
+        ClientProtocolProvider,
         SledStorage,
         TransactionProvider
     }
@@ -65,6 +66,22 @@ impl TransactionProvider for SledStorage {
             self.cache.transactions_count
         };
         Ok(count)
+    }
+
+    async fn get_unexecuted_transactions<'a>(&'a self) -> Result<impl Iterator<Item = Result<Hash, BlockchainError>> + 'a, BlockchainError> {
+        trace!("get unexecuted transactions");
+        Ok(Self::iter_keys(self.snapshot.as_ref(), &self.transactions)
+            .map(|res| {
+                let key = res?;
+                let tx_hash = Hash::from_bytes(&key)?;
+                if !self.is_tx_executed_in_a_block(&tx_hash)? {
+                    return Ok(None);
+                }
+
+                Ok(Some(tx_hash))
+            })
+            .filter_map(Result::transpose)
+        )
     }
 
     async fn delete_transaction(&mut self, hash: &Hash) -> Result<Immutable<Transaction>, BlockchainError> {
