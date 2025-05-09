@@ -1,5 +1,4 @@
 use async_trait::async_trait;
-use indexmap::IndexSet;
 use log::trace;
 use xelis_common::crypto::Hash;
 use crate::core::{
@@ -17,12 +16,9 @@ use crate::core::{
 #[async_trait]
 impl BlockExecutionOrderProvider for RocksStorage {
     // Get the blocks execution order
-    async fn get_blocks_execution_order(&self, skip: usize, count: usize) -> Result<IndexSet<Hash>, BlockchainError> {
+    async fn get_blocks_execution_order<'a>(&'a self) -> Result<impl Iterator<Item = Result<Hash, BlockchainError>> + 'a, BlockchainError> {
         trace!("get blocks execution order");
-        self.iter_keys(Column::BlocksExecutionOrder)?
-            .skip(skip)
-            .take(count)
-            .collect::<Result<IndexSet<_>, _>>()
+        self.iter_keys(Column::BlocksExecutionOrder)
     }
 
     // Get the position of a block in the execution order

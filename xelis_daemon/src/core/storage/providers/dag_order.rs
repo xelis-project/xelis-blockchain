@@ -23,4 +23,7 @@ pub trait DagOrderProvider {
 
     // Is topoheight available
     async fn has_hash_at_topoheight(&self, topoheight: TopoHeight) -> Result<bool, BlockchainError>;
+
+    // Fetch all the blocks orphaned in the DB
+    async fn get_orphaned_blocks<'a>(&'a self) -> Result<impl Iterator<Item = Result<Hash, BlockchainError>> + 'a, BlockchainError>;
 }

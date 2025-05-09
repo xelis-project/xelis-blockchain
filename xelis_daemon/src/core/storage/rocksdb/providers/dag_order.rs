@@ -45,4 +45,23 @@ impl DagOrderProvider for RocksStorage {
         trace!("has hash at topo height {}", topoheight);
         self.contains_data(Column::HashAtTopo, &topoheight.to_be_bytes())
     }
+
+
+    // Fetch all the blocks orphaned in the DB
+    async fn get_orphaned_blocks<'a>(&'a self) -> Result<impl Iterator<Item = Result<Hash, BlockchainError>> + 'a, BlockchainError> {
+        trace!("get orphaned blocks");
+
+        let iter = self.iter_keys(Column::Blocks)?;
+        Ok(
+            iter.map(|key| {
+                let hash = key?;
+                if self.contains_data(Column::TopoByHash, &hash)? {
+                    return Ok(None)
+                }
+
+                Ok(Some(hash))
+            })
+            .filter_map(Result::transpose)
+        )
+    }
 }

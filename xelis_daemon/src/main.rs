@@ -320,7 +320,7 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
     command_manager.add_command(Command::new("swap_blocks_executions_positions", "Swap the position of two blocks executions", CommandHandler::Async(async_handler!(swap_blocks_executions_positions::<S>))))?;
     command_manager.add_command(Command::new("print_balance", "Print the encrypted balance at a specific topoheight", CommandHandler::Async(async_handler!(print_balance::<S>))))?;
     command_manager.add_command(Command::new("estimate_db_size", "Estimate the database total size", CommandHandler::Async(async_handler!(estimate_db_size::<S>))))?;
-    command_manager.add_command(Command::new("count_orphaned_blocks", "Count how many orphaned blocks we currently hold", CommandHandler::Async(async_handler!(count_orphaned_blocks::<S>))))?;
+    command_manager.add_command(Command::new("list_orphaned_blocks", "List all orphaned blocks we currently hold", CommandHandler::Async(async_handler!(list_orphaned_blocks::<S>))))?;
     command_manager.add_command(Command::new("show_json_config", "Show the current config in JSON", CommandHandler::Async(async_handler!(show_json_config::<S>))))?;
     command_manager.add_command(Command::with_optional_arguments("export_json_config", "Export the current config in JSON", vec![Arg::new("filename", ArgType::String)], CommandHandler::Async(async_handler!(export_json_config::<S>))))?;
     command_manager.add_command(Command::new("broadcast_txs", "Broadcast all TXs in mempool if not done", CommandHandler::Async(async_handler!(broadcast_txs::<S>))))?;
@@ -644,11 +644,20 @@ async fn estimate_db_size<S: Storage>(manager: &CommandManager, _: ArgumentManag
     Ok(())
 }
 
-async fn count_orphaned_blocks<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
+async fn list_orphaned_blocks<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
     let context = manager.get_context().lock()?;
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let storage = blockchain.get_storage().read().await;
-    let count = storage.count_orphaned_blocks().await.context("Error while counting orphaned blocks")?;
+    let orphaned_blocks = storage.get_orphaned_blocks().await
+        .context("Error while counting orphaned blocks")?;
+
+    let mut count = 0;
+    for block in orphaned_blocks {
+        count += 1;
+        let block = block.context("Error on orphaned block hash")?;
+        manager.message(format!("- {}", block));
+    }
+
     manager.message(format!("Orphaned blocks: {}", count));
 
     Ok(())

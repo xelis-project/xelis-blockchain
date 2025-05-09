@@ -873,19 +873,6 @@ impl Storage for SledStorage {
         Ok(size as u64)
     }
 
-    async fn count_orphaned_blocks(&self) -> Result<u64, BlockchainError> {
-        trace!("Counting orphaned blocks");
-        let mut count = 0;
-        for el in Self::iter_keys(self.snapshot.as_ref(), &self.blocks) {
-            let hash = Hash::from_bytes(&el?)?;
-            if !self.is_block_topological_ordered(&hash).await? {
-                count += 1;
-            }
-        }
-
-        Ok(count)
-    }
-
     async fn flush(&mut self) -> Result<(), BlockchainError> {
         trace!("flush sled");
         let n = self.db.flush_async().await?;

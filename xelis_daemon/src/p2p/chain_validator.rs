@@ -324,6 +324,12 @@ impl<S: Storage> DagOrderProvider for ChainValidatorProvider<'_, S> {
         trace!("fallback on storage for has_hash_at_topoheight");
         self.storage.has_hash_at_topoheight(topoheight).await
     }
+
+    async fn get_orphaned_blocks<'a>(&'a self) -> Result<impl Iterator<Item = Result<Hash, BlockchainError>> + 'a, BlockchainError> {
+        trace!("get orphaned blocks");
+        let iter = self.storage.get_orphaned_blocks().await?;
+        Ok(iter)
+    }
 }
 
 #[async_trait]

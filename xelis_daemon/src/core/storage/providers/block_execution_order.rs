@@ -1,5 +1,4 @@
 use async_trait::async_trait;
-use indexmap::IndexSet;
 use xelis_common::crypto::Hash;
 use crate::core::error::BlockchainError;
 
@@ -8,7 +7,7 @@ use crate::core::error::BlockchainError;
 #[async_trait]
 pub trait BlockExecutionOrderProvider {
     // Get the blocks execution order
-    async fn get_blocks_execution_order(&self, skip: usize, count: usize) -> Result<IndexSet<Hash>, BlockchainError>;
+    async fn get_blocks_execution_order<'a>(&'a self) -> Result<impl Iterator<Item = Result<Hash, BlockchainError>> + 'a, BlockchainError>;
 
     // Get the position of a block in the execution order
     async fn get_block_position_in_order(&self, hash: &Hash) -> Result<u64, BlockchainError>;

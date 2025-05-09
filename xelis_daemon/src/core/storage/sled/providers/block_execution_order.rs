@@ -1,5 +1,4 @@
 use async_trait::async_trait;
-use indexmap::IndexSet;
 use xelis_common::{crypto::Hash, serializer::Serializer};
 use crate::core::{
     error::{BlockchainError, DiskContext},
@@ -8,12 +7,9 @@ use crate::core::{
 
 #[async_trait]
 impl BlockExecutionOrderProvider for SledStorage {
-    async fn get_blocks_execution_order(&self, skip: usize, count: usize) -> Result<IndexSet<Hash>, BlockchainError> {
+    async fn get_blocks_execution_order<'a>(&'a self) -> Result<impl Iterator<Item = Result<Hash, BlockchainError>> + 'a, BlockchainError> {
         let order = Self::iter_keys(self.snapshot.as_ref(), &self.blocks_execution_order)
-            .skip(skip)
-            .take(count)
-            .map(|x| Ok(Hash::from_bytes(&x?)?))
-            .collect::<Result<_, BlockchainError>>()?;
+            .map(|x| Ok(Hash::from_bytes(&x?)?));
 
         Ok(order)
     }
