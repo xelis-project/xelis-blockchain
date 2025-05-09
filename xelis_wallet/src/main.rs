@@ -86,7 +86,11 @@ use {
     },
     xelis_common::{
         rpc_server::RpcRequest,
-        prompt::ShareablePrompt,
+        prompt::{
+            ShareablePrompt,
+            DEFAULT_LOGS_DATETIME_FORMAT,
+            default_logs_datetime_format,
+        },
         tokio::{
             spawn_task,
             sync::mpsc::UnboundedReceiver
@@ -214,6 +218,14 @@ pub struct LogConfig {
     #[clap(long)]
     #[serde(default)]
     logs_modules: Vec<ModuleConfig>,
+    /// Disable the ascii art at startup
+    #[clap(long)]
+    #[serde(default)]
+    disable_ascii_art: bool,
+    /// Change the datetime format used by the logger
+    #[clap(long, default_value = DEFAULT_LOGS_DATETIME_FORMAT)]
+    #[serde(default = "default_logs_datetime_format")]
+    datetime_format: String,
 }
 
 #[derive(Parser, Serialize, Deserialize)]
@@ -334,7 +346,9 @@ async fn main() -> Result<()> {
         log_config.auto_compress_logs,
         !log_config.disable_interactive_mode,
         log_config.logs_modules.clone(),
-        log_config.file_log_level.unwrap_or(log_config.log_level)
+        log_config.file_log_level.unwrap_or(log_config.log_level),
+        !log_config.disable_ascii_art,
+        log_config.datetime_format.clone(),
     )?;
 
     #[cfg(feature = "api_server")]
