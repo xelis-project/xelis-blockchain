@@ -1,10 +1,21 @@
 use log::trace;
 use xelis_common::{
+    block::BlockVersion,
     difficulty::Difficulty,
+    network::Network,
     time::TimestampMillis,
-    varuint::VarUint,
-    block::BlockVersion
+    varuint::VarUint
 };
+
+use crate::config::{
+    KILO_HASH,
+    MEGA_HASH,
+    GIGA_HASH,
+    DEFAULT_MINIMUM_HASHRATE,
+    MAINNET_MINIMUM_HASHRATE,
+    MILLIS_PER_SECOND
+};
+use super::hard_fork::get_block_time_target_for_version;
 
 mod v1;
 mod v2;
@@ -49,9 +60,10 @@ fn kalman_filter(z: VarUint, x_est_prev: VarUint, p_prev: VarUint, shift: u64, l
 pub fn calculate_difficulty(parent_timestamp: TimestampMillis, timestamp: TimestampMillis, previous_difficulty: Difficulty, p: VarUint, minimum_difficulty: Difficulty, version: BlockVersion) -> (Difficulty, VarUint) {
     let solve_time = (timestamp - parent_timestamp).max(1);
 
+    let block_time_target = get_block_time_target_for_version(version);
     match version {
-        BlockVersion::V0 => v1::calculate_difficulty(solve_time, previous_difficulty, p, minimum_difficulty),
-        _ => v2::calculate_difficulty(solve_time, previous_difficulty, p, minimum_difficulty),
+        BlockVersion::V0 => v1::calculate_difficulty(solve_time, previous_difficulty, p, minimum_difficulty, block_time_target),
+        _ => v2::calculate_difficulty(solve_time, previous_difficulty, p, minimum_difficulty, block_time_target),
     }
 }
 
@@ -61,5 +73,70 @@ pub fn get_covariance_p(version: BlockVersion) -> VarUint {
     match version {
         BlockVersion::V0 => v1::P,
         _ => v2::P
+    }
+}
+
+// Get the difficulty based on the hashrate and block time target
+// NOTE: The caller must ensure that the block time provided is in milliseconds
+pub const fn get_difficulty_with_target(hashrate: u64, block_time_target: u64) -> Difficulty {
+    Difficulty::from_u64(hashrate * block_time_target / MILLIS_PER_SECOND)
+}
+
+// Get minimum difficulty based on the network
+// Mainnet has a minimum difficulty to prevent spamming the network
+// Testnet has a lower difficulty to allow faster block generation
+pub const fn get_minimum_difficulty(network: &Network, version: BlockVersion) -> Difficulty {
+    let hashrate = match network {
+        Network::Mainnet => MAINNET_MINIMUM_HASHRATE,
+        _ => DEFAULT_MINIMUM_HASHRATE,
+    };
+
+    let block_time_target = get_block_time_target_for_version(version);
+    get_difficulty_with_target(hashrate, block_time_target)
+}
+
+// Get minimum difficulty at hard fork
+pub const fn get_difficulty_at_hard_fork(network: &Network, version: BlockVersion) -> Difficulty {
+    let hashrate = match network {
+        Network::Mainnet => match version {
+            BlockVersion::V0 | BlockVersion::V1 => 20 * KILO_HASH,
+            BlockVersion::V2 => 2 * MEGA_HASH,
+            BlockVersion::V3 => 1 * GIGA_HASH,
+        },
+        _ => DEFAULT_MINIMUM_HASHRATE,
+    };
+
+    let block_time_target = get_block_time_target_for_version(version);
+    get_difficulty_with_target(hashrate, block_time_target)
+}
+
+#[cfg(test)]
+mod tests {
+    use xelis_common::utils::format_hashrate;
+
+    use crate::config::HASH;
+
+    use super::*;
+
+    #[test]
+    fn test_difficulty_at_hard_fork() {
+        // 20 KH/s per second
+        assert_eq!(get_difficulty_at_hard_fork(&Network::Mainnet, BlockVersion::V0), Difficulty::from_u64(15 * 20 * KILO_HASH));
+        // 20 KH/s * 100 000 = 2 MH/s
+        assert_eq!(get_difficulty_at_hard_fork(&Network::Mainnet, BlockVersion::V2), Difficulty::from_u64(15 * 2 * MEGA_HASH));
+
+        // 2 KH/s per second for whole testnet
+        for version in [BlockVersion::V0, BlockVersion::V1, BlockVersion::V2] {
+            assert_eq!(get_difficulty_at_hard_fork(&Network::Testnet, version), Difficulty::from_u64(15 * 2 * KILO_HASH));
+        }
+        assert_eq!(get_difficulty_at_hard_fork(&Network::Testnet, BlockVersion::V3), Difficulty::from_u64(5 * 2 * KILO_HASH));
+    }
+
+    #[test]
+    fn test_const_hashrate_format() {
+        assert_eq!(format_hashrate(HASH as f64), "1.00 H/s");
+        assert_eq!(format_hashrate(KILO_HASH as f64), "1.00 KH/s");
+        assert_eq!(format_hashrate(MEGA_HASH as f64), "1.00 MH/s");
+        assert_eq!(format_hashrate(GIGA_HASH as f64), "1.00 GH/s");
     }
 }

@@ -8,7 +8,7 @@ use xelis_common::{
     varuint::VarUint
 };
 use crate::{
-    config::{BLOCK_TIME_MILLIS, MILLIS_PER_SECOND},
+    config::MILLIS_PER_SECOND,
     core::difficulty::kalman_filter
 };
 
@@ -24,13 +24,13 @@ pub const P: VarUint = LEFT_SHIFT;
 
 // Calculate the required difficulty for the next block based on the solve time of the previous block
 // We are using a Kalman filter to estimate the hashrate and adjust the difficulty
-pub fn calculate_difficulty(solve_time: TimestampMillis, previous_difficulty: Difficulty, p: VarUint, minimum_difficulty: Difficulty) -> (Difficulty, VarUint) {
+pub fn calculate_difficulty(solve_time: TimestampMillis, previous_difficulty: Difficulty, p: VarUint, minimum_difficulty: Difficulty, block_time_target: TimestampMillis) -> (Difficulty, VarUint) {
     let z = previous_difficulty * MILLIS_PER_SECOND / solve_time;
     trace!("Calculating difficulty v2, solve time: {}, previous_difficulty: {}, z: {}, p: {}", format_duration(Duration::from_millis(solve_time)), format_difficulty(previous_difficulty), z, p);
-    let (x_est_new, p_new) = kalman_filter(z, previous_difficulty * MILLIS_PER_SECOND / BLOCK_TIME_MILLIS, p, SHIFT, LEFT_SHIFT, PROCESS_NOISE_COVAR);
+    let (x_est_new, p_new) = kalman_filter(z, previous_difficulty * MILLIS_PER_SECOND / block_time_target, p, SHIFT, LEFT_SHIFT, PROCESS_NOISE_COVAR);
     trace!("x_est_new: {}, p_new: {}", x_est_new, p_new);
 
-    let difficulty = x_est_new * BLOCK_TIME_MILLIS / MILLIS_PER_SECOND;
+    let difficulty = x_est_new * block_time_target / MILLIS_PER_SECOND;
     if difficulty < minimum_difficulty {
         return (minimum_difficulty, P);
     }
@@ -40,17 +40,18 @@ pub fn calculate_difficulty(solve_time: TimestampMillis, previous_difficulty: Di
 
 #[cfg(test)]
 mod tests {
-    use crate::config::MAINNET_MINIMUM_DIFFICULTY;
     use super::*;
 
     #[test]
     fn test_kalman_filter_v2() {
-        let z = MAINNET_MINIMUM_DIFFICULTY / VarUint::from_u64(1000);
+        const DEFAULT_DIFFICULTY: Difficulty = Difficulty::from_u64(20 * 15 * 1000);
+
+        let z = DEFAULT_DIFFICULTY / VarUint::from_u64(1000);
         let (x_est_new, p_new) = kalman_filter(z, VarUint::one(), P, SHIFT, LEFT_SHIFT, PROCESS_NOISE_COVAR);
         assert_eq!(x_est_new, VarUint::one());
         assert_eq!(p_new, VarUint::from_u64(1067732));
 
-        let (x_est_new, p_new) = kalman_filter(MAINNET_MINIMUM_DIFFICULTY / VarUint::from_u64(2000), x_est_new, p_new, SHIFT, LEFT_SHIFT, PROCESS_NOISE_COVAR);
+        let (x_est_new, p_new) = kalman_filter(DEFAULT_DIFFICULTY / VarUint::from_u64(2000), x_est_new, p_new, SHIFT, LEFT_SHIFT, PROCESS_NOISE_COVAR);
         assert_eq!(x_est_new, VarUint::one());
         assert_eq!(p_new, VarUint::from_u64(1084948));
     }

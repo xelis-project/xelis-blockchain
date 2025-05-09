@@ -1,7 +1,6 @@
 use crate::{
     config::{
         get_hard_forks as get_configured_hard_forks,
-        BLOCK_TIME_MILLIS,
         DEV_FEES,
         DEV_PUBLIC_KEY
     },
@@ -12,8 +11,12 @@ use crate::{
             Blockchain,
             BroadcastOption
         },
-        hard_fork::{get_pow_algorithm_for_version, get_version_at_height},
         error::BlockchainError,
+        hard_fork::{
+            get_block_time_target_for_version,
+            get_pow_algorithm_for_version,
+            get_version_at_height
+        },
         mempool::Mempool,
         storage::*,
     },
@@ -617,13 +620,13 @@ async fn get_info<S: Storage>(context: &Context, body: Value) -> Result<Value, I
         (top_block_hash, emitted_supply, burned_supply, pruned_topoheight, average_block_time)
     };
     let difficulty = blockchain.get_difficulty().await;
-    let block_time_target = BLOCK_TIME_MILLIS;
     let block_reward = get_block_reward(emitted_supply);
     let (dev_reward, miner_reward) = get_block_rewards(height, block_reward);
     let mempool_size = blockchain.get_mempool_size().await;
     let version = VERSION.into();
     let network = *blockchain.get_network();
     let block_version = get_version_at_height(&network, height);
+    let block_time_target = get_block_time_target_for_version(block_version);
 
     Ok(json!(GetInfoResult {
         height,

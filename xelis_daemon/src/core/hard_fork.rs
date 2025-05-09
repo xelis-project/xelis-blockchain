@@ -5,7 +5,7 @@ use xelis_common::{
     network::Network,
     transaction::TxVersion
 };
-use crate::config::get_hard_forks;
+use crate::config::{get_hard_forks, MILLIS_PER_SECOND};
 
 // Get the hard fork at a given height
 pub fn get_hard_fork_at_height(network: &Network, height: u64) -> Option<&HardFork> {
@@ -40,6 +40,19 @@ pub const fn get_pow_algorithm_for_version(version: BlockVersion) -> Algorithm {
     match version {
         BlockVersion::V0 => Algorithm::V1,
         _ => Algorithm::V2
+    }
+}
+
+// This function returns the block time target for a given version
+// V0, V1 and V2 have a target of 15 seconds
+// V3 has a target of 5 seconds
+// V3 is used for testing purposes
+pub const fn get_block_time_target_for_version(version: BlockVersion) -> u64 {
+    match version {
+        BlockVersion::V0
+        | BlockVersion::V1
+        | BlockVersion::V2 => 15 * MILLIS_PER_SECOND,
+        BlockVersion::V3 => 5 * MILLIS_PER_SECOND,
     }
 }
 
@@ -212,5 +225,13 @@ mod tests {
         assert!(is_version_enabled_at_height(&Network::Testnet, 10, BlockVersion::V0));
         assert!(is_version_enabled_at_height(&Network::Testnet, 10, BlockVersion::V1));
         assert!(is_version_enabled_at_height(&Network::Testnet, 10, BlockVersion::V2));
+    }
+
+    #[test]
+    fn test_get_block_time_target_for_version() {
+        assert_eq!(get_block_time_target_for_version(BlockVersion::V0), 15 * MILLIS_PER_SECOND);
+        assert_eq!(get_block_time_target_for_version(BlockVersion::V1), 15 * MILLIS_PER_SECOND);
+        assert_eq!(get_block_time_target_for_version(BlockVersion::V2), 15 * MILLIS_PER_SECOND);
+        assert_eq!(get_block_time_target_for_version(BlockVersion::V3), 5 * MILLIS_PER_SECOND);
     }
 }
