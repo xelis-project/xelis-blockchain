@@ -377,7 +377,7 @@ async fn main() -> Result<()> {
             Wallet::open(path, &password, config.network, precomputed_tables, config.n_decryption_threads, config.network_concurrency)?
         } else {
             info!("Creating a new wallet at {}", path);
-            Wallet::create(path, &password, config.seed.as_deref().map(RecoverOption::Seed), config.network, precomputed_tables, config.n_decryption_threads, config.network_concurrency)?
+            Wallet::create(path, &password, config.seed.as_deref().map(RecoverOption::Seed), config.network, precomputed_tables, config.n_decryption_threads, config.network_concurrency).await?
         };
 
         command_manager.register_default_commands()?;
@@ -899,7 +899,7 @@ async fn create_wallet(manager: &CommandManager, _: ArgumentManager) -> Result<(
         let context = manager.get_context().lock()?;
         let network = context.get::<Network>()?;
         let precomputed_tables = precomputed_tables::read_or_generate_precomputed_tables(config.precomputed_tables.precomputed_tables_path.as_deref(), precomputed_tables::L1_FULL, LogProgressTableGenerationReportFunction, true).await?;
-        Wallet::create(&dir, &password, None, *network, precomputed_tables, config.n_decryption_threads, config.network_concurrency)?
+        Wallet::create(&dir, &password, None, *network, precomputed_tables, config.n_decryption_threads, config.network_concurrency).await?
     };
  
     manager.message("Wallet sucessfully created");
@@ -981,7 +981,7 @@ async fn recover_wallet(manager: &CommandManager, _: ArgumentManager, seed: bool
         } else {
             RecoverOption::PrivateKey(&content)
         };
-        Wallet::create(&dir, &password, Some(recover), *network, precomputed_tables, config.n_decryption_threads, config.network_concurrency)?
+        Wallet::create(&dir, &password, Some(recover), *network, precomputed_tables, config.n_decryption_threads, config.network_concurrency).await?
     };
 
     manager.message("Wallet sucessfully recovered");

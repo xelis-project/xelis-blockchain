@@ -188,9 +188,9 @@ impl EncryptedStorage {
     }
 
     // Flush on disk to make sure it is saved
-    pub fn flush(&mut self) -> Result<()> {
+    pub async fn flush(&mut self) -> Result<()> {
         trace!("Flushing storage");
-        self.inner.db.flush()?;
+        self.inner.db.flush_async().await?;
         Ok(())
     }
 

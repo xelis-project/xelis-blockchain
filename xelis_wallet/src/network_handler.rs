@@ -1102,6 +1102,13 @@ impl NetworkHandler {
             self.sync_new_blocks(address, wallet_topoheight, true).await?;
         }
 
+        {
+            debug!("Flushing storage");
+            let mut storage = self.wallet.get_storage().write().await;
+            storage.flush().await?;
+            debug!("Flushed storage");
+        }
+
         // Propagate the event
         self.wallet.propagate_event(Event::NewTopoHeight { topoheight: daemon_topoheight }).await;
         debug!("Synced to topoheight {}", daemon_topoheight);
