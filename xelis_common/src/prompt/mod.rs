@@ -1,5 +1,6 @@
 pub mod command;
 pub mod argument;
+pub mod art;
 
 mod error;
 mod option;
@@ -51,7 +52,6 @@ use option::OptionReader;
 // Re-export fern and colors
 pub use fern::colors::Color;
 pub use error::PromptError;
-
 
 // used for launch param
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -219,6 +219,8 @@ impl Prompt {
             let mut lock = prompt.input_receiver.lock()?;
             *lock = Some(input_receiver);
         }
+
+        info!("{}", art::LOGO_ASCII);
 
         Ok(Arc::new(prompt))
     }
@@ -488,6 +490,7 @@ impl Prompt {
                 if record.level() != Level::Error && record.level() != Level::Debug {
                     target_with_pad = " ".to_owned() + &target_with_pad;
                 }
+
                 let res = if disable_colors {
                     out.finish(format_args!(
                         "\x1b[2K{}{} {}{} > {}",
@@ -498,15 +501,22 @@ impl Prompt {
                         message
                     ))
                 } else {
-                    out.finish(format_args!(
-                        "\x1b[2K{}\x1B[90m{} {}\x1B[0m \x1B[{}m{}\x1B[0m \x1B[90m>\x1B[0m {}",
-                        if interactive { "\r" } else { "" },
-                        chrono::Local::now().format("[%Y-%m-%d] (%H:%M:%S%.3f)"),
-                        colors.color(record.level()),
-                        Color::BrightBlue.to_fg_str(),
-                        target_with_pad,
-                        message
-                    ))
+                    let messages = message.to_string()
+                        .lines()
+                        .map(|line| {
+                            format!(
+                                "\x1b[2K{}\x1B[90m{} {}\x1B[0m \x1B[{}m{}\x1B[0m \x1B[90m>\x1B[0m {}",
+                                if interactive { "\r" } else { "" },
+                                chrono::Local::now().format("[%Y-%m-%d] (%H:%M:%S%.3f)"),
+                                colors.color(record.level()),
+                                Color::BrightBlue.to_fg_str(),
+                                target_with_pad,
+                                line
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    out.finish(format_args!("{}", messages))
                 };
 
                 if interactive {
