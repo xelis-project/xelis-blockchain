@@ -131,7 +131,7 @@ impl<S: Storage> P2pServer<S> {
                     return Err(P2pError::InvalidRequestedTopoheight.into())
                 }
 
-                let (balances, next_max) = storage.get_spendable_balances_for(&key, &asset, min, max).await?;
+                let (balances, next_max) = storage.get_spendable_balances_for(&key, &asset, min, max, MAX_ITEMS_PER_PAGE).await?;
                 StepResponse::SpendableBalances(balances, next_max)
             },
             StepRequest::Nonces(min, max, keys) => {

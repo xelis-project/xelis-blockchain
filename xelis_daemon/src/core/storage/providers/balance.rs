@@ -65,7 +65,7 @@ pub trait BalanceProvider: AssetProvider + NetworkProvider + NonceProvider {
     async fn get_account_summary_for(&self, key: &PublicKey, asset: &Hash, min_topoheight: TopoHeight, max_topoheight: TopoHeight) -> Result<Option<AccountSummary>, BlockchainError>;
 
     // Get the spendable balances for a key and asset on the specified topoheight (exclusive) range
-    // Maximum 1024 entries per Vec<Balance>, Option<TopoHeight> is Some if we have others previous versions available and Vec is full.
-    // It will stop at the first output balance found without including it
-    async fn get_spendable_balances_for(&self, key: &PublicKey, asset: &Hash, min_topoheight: TopoHeight, max_topoheight: TopoHeight) -> Result<(Vec<Balance>, Option<TopoHeight>), BlockchainError>;
+    // It will stop at the first output balance found as we can't spend any balance below it
+    // NOTE: We could return an iterator directly, but we need to return the next topoheight if needed
+    async fn get_spendable_balances_for(&self, key: &PublicKey, asset: &Hash, min_topoheight: TopoHeight, max_topoheight: TopoHeight, maximum: usize) -> Result<(Vec<Balance>, Option<TopoHeight>), BlockchainError>;
 }

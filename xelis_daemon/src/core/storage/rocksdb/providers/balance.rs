@@ -231,8 +231,31 @@ impl BalanceProvider for RocksStorage {
     // Get the spendable balances for a key and asset on the specified topoheight (exclusive) range
     // Maximum 1024 entries per Vec<Balance>, Option<TopoHeight> is Some if we have others previous versions available and Vec is full.
     // It will stop at the first output balance found without including it
-    async fn get_spendable_balances_for(&self, key: &PublicKey, asset: &Hash, min_topoheight: TopoHeight, max_topoheight: TopoHeight) -> Result<(Vec<Balance>, Option<TopoHeight>), BlockchainError> {
-        todo!()
+    async fn get_spendable_balances_for(&self, key: &PublicKey, asset: &Hash, min_topoheight: TopoHeight, max_topoheight: TopoHeight, maximum: usize) -> Result<(Vec<Balance>, Option<TopoHeight>), BlockchainError> {
+        let account_id = self.get_account_id(key)?;
+        let asset_id = self.get_asset_id(asset)?;
+
+        let mut balances = Vec::new();
+        let mut next_topo = Some(max_topoheight);
+
+        // NOTE: the take is important here as we return it below
+        while let Some(topo) = next_topo.take().filter(|&t| t >= min_topoheight && balances.len() < maximum) {
+            let versioned_key = Self::get_versioned_account_balance_key(account_id, asset_id, topo);
+            let version = self.load_from_disk::<_, VersionedBalance>(Column::VersionedBalances, &versioned_key)?;
+            let has_output = version.contains_output();
+            let previous_topoheight = version.get_previous_topoheight();
+
+            balances.push(version.as_balance(topo));
+
+            // We have an output in it, we can return the account
+            if has_output {
+                break;
+            }
+
+            next_topo = previous_topoheight;
+        }
+
+        Ok((balances, next_topo))
     }
 }
 

@@ -12,7 +12,7 @@ use xelis_common::{
         Hash,
         PublicKey
     },
-    serializer::{Serializer, DEFAULT_MAX_ITEMS}
+    serializer::Serializer
 };
 use crate::core::{
     error::{BlockchainError, DiskContext},
@@ -289,13 +289,13 @@ impl BalanceProvider for SledStorage {
         Ok(None)
     }
 
-    async fn get_spendable_balances_for(&self, key: &PublicKey, asset: &Hash, min_topoheight: TopoHeight, max_topoheight: TopoHeight) -> Result<(Vec<Balance>, Option<TopoHeight>), BlockchainError> {
+    async fn get_spendable_balances_for(&self, key: &PublicKey, asset: &Hash, min_topoheight: TopoHeight, max_topoheight: TopoHeight, maximum: usize) -> Result<(Vec<Balance>, Option<TopoHeight>), BlockchainError> {
         trace!("get spendable balances for {} at maximum topoheight {}", key.as_address(self.is_mainnet()), max_topoheight);
 
         let mut balances = Vec::new();
 
         let mut fetch_topoheight = Some(max_topoheight);
-        while let Some(topo) = fetch_topoheight.take().filter(|&t| t >= min_topoheight && balances.len() < DEFAULT_MAX_ITEMS) {
+        while let Some(topo) = fetch_topoheight.take().filter(|&t| t >= min_topoheight && balances.len() < maximum) {
             let version = self.get_balance_at_exact_topoheight(key, asset, topo).await?;
             let has_output = version.contains_output();
             let previous_topoheight = version.get_previous_topoheight();
