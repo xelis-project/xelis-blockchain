@@ -69,7 +69,9 @@ use xelis_common::{
         LogLevel,
         ModuleConfig,
         Prompt,
-        ShareablePrompt
+        ShareablePrompt,
+        DEFAULT_LOGS_DATETIME_FORMAT,
+        default_logs_datetime_format
     },
     serializer::Serializer,
     time::get_current_time_in_millis,
@@ -169,6 +171,14 @@ pub struct LogConfig {
     #[clap(long)]
     #[serde(default)]
     logs_modules: Vec<ModuleConfig>,
+    /// Disable the ascii art at startup
+    #[clap(long)]
+    #[serde(default)]
+    disable_ascii_art: bool,
+    /// Change the datetime format used by the logger
+    #[clap(long, default_value = DEFAULT_LOGS_DATETIME_FORMAT)]
+    #[serde(default = "default_logs_datetime_format")]
+    datetime_format: String, 
 }
 
 #[derive(Parser, Serialize, Deserialize)]
@@ -290,7 +300,9 @@ async fn main() -> Result<()> {
         log.auto_compress_logs,
         !log.disable_interactive_mode,
         log.logs_modules,
-        log.file_log_level.unwrap_or(log.log_level)
+        log.file_log_level.unwrap_or(log.log_level),
+        !log.disable_ascii_art,
+        log.datetime_format.clone(),
     )?;
 
     // Prevent the user to block the program by selecting text in CLI
