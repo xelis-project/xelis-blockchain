@@ -669,9 +669,7 @@ async fn show_json_config<S: Storage>(manager: &CommandManager, _: ArgumentManag
     let json = serde_json::to_string_pretty(config)
         .context("Error while serializing config")?;
 
-    for line in json.lines() {
-        manager.message(line);
-    }
+    manager.message(json);
 
     Ok(())
 }
@@ -1011,9 +1009,7 @@ async fn print_block<S: Storage>(manager: &CommandManager, mut arguments: Argume
     let response = get_block_response_for_hash(blockchain, &storage, &hash, false).await.context("Error while building block response")?;
     let json = serde_json::to_string_pretty(&response).context("Error while serializing")?;
 
-    for line in json.lines() {
-        manager.message(line);
-    }
+    manager.message(json);
 
     Ok(())
 }
@@ -1050,9 +1046,7 @@ async fn top_block<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> 
     let response = get_block_response_for_hash(blockchain, &storage, &hash, false).await.context("Error while building block response")?;
     let json = serde_json::to_string_pretty(&response).context("Error while serializing")?;
 
-    for line in json.lines() {
-        manager.message(line);
-    }
+    manager.message(json);
 
     Ok(())
 }
