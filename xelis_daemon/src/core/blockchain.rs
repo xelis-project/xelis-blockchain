@@ -245,8 +245,8 @@ impl<S: Storage> Blockchain<S> {
         let on_disk = storage.has_blocks().await?;
         let (height, topoheight) = if on_disk {
             info!("Reading last metadata available...");
-            let height = storage.get_top_height()?;
-            let topoheight = storage.get_top_topoheight()?;
+            let height = storage.get_top_height().await?;
+            let topoheight = storage.get_top_topoheight().await?;
 
             (height, topoheight)
         } else { (0, 0) };
@@ -494,8 +494,8 @@ impl<S: Storage> Blockchain<S> {
     }
 
     pub async fn reload_from_disk_with_storage(&self, storage: &mut S) -> Result<(), BlockchainError> {
-        let topoheight = storage.get_top_topoheight()?;
-        let height = storage.get_top_height()?;
+        let topoheight = storage.get_top_topoheight().await?;
+        let height = storage.get_top_height().await?;
         self.topoheight.store(topoheight, Ordering::SeqCst);
         self.height.store(height, Ordering::SeqCst);
 
@@ -578,7 +578,7 @@ impl<S: Storage> Blockchain<S> {
 
         // hardcode genesis block topoheight
         storage.set_topo_height_for_block(&genesis_hash, 0).await?;
-        storage.set_top_height(0)?;
+        storage.set_top_height(0).await?;
 
         self.add_new_block_for_storage(&mut *storage, genesis_block, None, BroadcastOption::Miners, false).await?;
 
@@ -2523,7 +2523,7 @@ impl<S: Storage> Blockchain<S> {
         let extended = highest_topo > current_topoheight;
         if current_height == 0 || extended {
             debug!("Blockchain height extended, current topoheight is now {} (previous was {})", highest_topo, current_topoheight);
-            storage.set_top_topoheight(highest_topo)?;
+            storage.set_top_topoheight(highest_topo).await?;
             self.topoheight.store(highest_topo, Ordering::Release);
             current_topoheight = highest_topo;
         }
@@ -2559,7 +2559,7 @@ impl<S: Storage> Blockchain<S> {
 
         if current_height == 0 || block.get_height() > current_height {
             debug!("storing new top height {}", block.get_height());
-            storage.set_top_height(block.get_height())?;
+            storage.set_top_height(block.get_height()).await?;
             self.height.store(block.get_height(), Ordering::Release);
             current_height = block.get_height();
         }

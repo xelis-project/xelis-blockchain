@@ -19,6 +19,7 @@ mod tips;
 mod contract;
 mod versioned;
 mod cache;
+mod state;
 
 pub use asset::*;
 pub use blocks_at_height::*;
@@ -41,3 +42,4 @@ pub use tips::*;
 pub use contract::*;
 pub use versioned::*;
 pub use cache::*;
+pub use state::*;

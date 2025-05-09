@@ -528,8 +528,8 @@ impl<S: Storage> P2pServer<S> {
                     }
 
                     storage.set_pruned_topoheight(lowest_topoheight).await?;
-                    storage.set_top_topoheight(top_topoheight)?;
-                    storage.set_top_height(top_height)?;
+                    storage.set_top_topoheight(top_topoheight).await?;
+                    storage.set_top_height(top_height).await?;
                     storage.store_tips(
                         &HashSet::from([
                             top_block_hash.take()
