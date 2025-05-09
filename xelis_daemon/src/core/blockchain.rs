@@ -242,7 +242,7 @@ impl<S: Storage> Blockchain<S> {
             }
         }
 
-        let on_disk = storage.has_blocks().await;
+        let on_disk = storage.has_blocks().await?;
         let (height, topoheight) = if on_disk {
             info!("Reading last metadata available...");
             let height = storage.get_top_height()?;
@@ -2203,7 +2203,7 @@ impl<S: Storage> Blockchain<S> {
                     for tx_hash in block.get_txs_hashes() {
                         if storage.is_tx_executed_in_block(tx_hash, &hash_at_topo)? {
                             debug!("Removing execution of {}", tx_hash);
-                            storage.remove_tx_executed(tx_hash)?;
+                            storage.unmark_tx_from_executed(tx_hash)?;
                             storage.delete_contract_outputs_for_tx(tx_hash).await?;
 
                             if is_orphaned {
@@ -2335,7 +2335,7 @@ impl<S: Storage> Blockchain<S> {
                         chain_state.as_mut().update_account_nonce(tx.get_source(), next_nonce).await?;
 
                         // mark tx as executed
-                        chain_state.get_mut_storage().set_tx_executed_in_block(tx_hash, &hash)?;
+                        chain_state.get_mut_storage().mark_tx_as_executed_in_block(tx_hash, &hash)?;
 
                         // Delete the transaction from  the list if it was marked as orphaned
                         if orphaned_transactions.shift_remove(tx_hash) {

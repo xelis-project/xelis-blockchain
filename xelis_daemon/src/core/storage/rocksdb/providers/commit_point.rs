@@ -13,7 +13,7 @@ use crate::core::{
 #[async_trait]
 impl CommitPointProvider for RocksStorage {
     async fn start_commit_point(&mut self) -> Result<(), BlockchainError> {
-        trace!("Starting commit point");
+        trace!("starting commit point");
         if self.snapshot.is_some() {
             return Err(BlockchainError::CommitPointAlreadyStarted);
         }
@@ -28,6 +28,7 @@ impl CommitPointProvider for RocksStorage {
             .ok_or(BlockchainError::CommitPointNotStarted)?;
 
         if apply {
+            trace!("applying commit point");
             for (column, batch) in snapshot.columns {
                 for (key, value) in batch {
                     if let Some(value) = value {

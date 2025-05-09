@@ -14,7 +14,7 @@ use super::{BlocksAtHeightProvider, DifficultyProvider, TransactionProvider};
 #[async_trait]
 pub trait BlockProvider: TransactionProvider + DifficultyProvider + BlocksAtHeightProvider {
     // Check if the storage has blocks
-    async fn has_blocks(&self) -> bool;
+    async fn has_blocks(&self) -> Result<bool, BlockchainError>;
 
     // Count the number of blocks stored
     async fn count_blocks(&self) -> Result<u64, BlockchainError>;

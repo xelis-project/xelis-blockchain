@@ -507,7 +507,7 @@ impl<S: Storage> P2pServer<S> {
                                     return Err(P2pError::InvalidBlockMetadata.into())
                                 }
 
-                                storage.set_tx_executed_in_block(&tx, &hash)?;
+                                storage.mark_tx_as_executed_in_block(&tx, &hash)?;
                             }
 
                             // save the block with its transactions, difficulty

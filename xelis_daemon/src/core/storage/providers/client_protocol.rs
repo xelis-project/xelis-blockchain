@@ -29,10 +29,10 @@ pub trait ClientProtocolProvider {
     fn get_blocks_for_tx(&self, hash: &Hash) -> Result<Tips, BlockchainError>;
 
     // Set the block hash that executed the transaction
-    fn set_tx_executed_in_block(&mut self, tx: &Hash, block: &Hash) -> Result<(), BlockchainError>;
+    fn mark_tx_as_executed_in_block(&mut self, tx: &Hash, block: &Hash) -> Result<(), BlockchainError>;
 
     // Unmark the transaction as executed
-    fn remove_tx_executed(&mut self, tx: &Hash) -> Result<(), BlockchainError>;
+    fn unmark_tx_from_executed(&mut self, tx: &Hash) -> Result<(), BlockchainError>;
 
     // Set all blocks in which the transaction is included
     fn set_blocks_for_tx(&mut self, tx: &Hash, blocks: &Tips) -> Result<(), BlockchainError>;

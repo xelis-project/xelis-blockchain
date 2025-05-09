@@ -37,9 +37,9 @@ impl SledStorage {
 
 #[async_trait]
 impl BlockProvider for SledStorage {
-    async fn has_blocks(&self) -> bool {
+    async fn has_blocks(&self) -> Result<bool, BlockchainError> {
         trace!("has blocks");
-        !self.blocks.is_empty()
+        Ok(!self.blocks.is_empty())
     }
 
     async fn count_blocks(&self) -> Result<u64, BlockchainError> {

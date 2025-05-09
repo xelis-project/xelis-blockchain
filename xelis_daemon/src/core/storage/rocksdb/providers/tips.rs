@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use log::trace;
 
 use crate::core::{
     error::BlockchainError,
@@ -15,11 +16,13 @@ use crate::core::{
 impl TipsProvider for RocksStorage {
     // Get current chain tips
     async fn get_tips(&self) -> Result<Tips, BlockchainError> {
+        trace!("get tips");
         self.load_from_disk(Column::Common, TIPS)
     }
 
     // Store chain tips
     async fn store_tips(&mut self, tips: &Tips) -> Result<(), BlockchainError> {
+        trace!("store tips");
         self.insert_into_disk(Column::Common, TIPS, tips)
     }
 }

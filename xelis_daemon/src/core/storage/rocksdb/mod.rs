@@ -108,6 +108,18 @@ impl RocksStorage {
         Ok(value.is_some())
     }
 
+    // NOTE: If its used over a snapshot, we can't ensure that its fully empty
+    // Because we would have to iterate over all the keys in the column
+    // and check that they are all marked as deleted in snapshot
+    pub fn is_empty(&self, column: Column) -> Result<bool, BlockchainError> {
+        trace!("is empty {:?}", column);
+
+        let cf = cf_handle!(self, column);
+        let mut iterator = self.db.iterator_cf(&cf, IteratorMode::Start);
+
+        Ok(iterator.next().is_none())
+    }
+
     pub fn load_optional_from_disk<K: AsRef<[u8]> + ?Sized, V: Serializer>(&self, column: Column, key: &K) -> Result<Option<V>, BlockchainError> {
         trace!("load optional {:?} from disk internal", column);
 

@@ -656,7 +656,7 @@ impl Storage for SledStorage {
 
             if self.is_tx_executed_in_a_block(tx_hash)? {
                 trace!("Tx {} was executed, deleting", tx_hash);
-                self.remove_tx_executed(&tx_hash)?;
+                self.unmark_tx_from_executed(&tx_hash)?;
                 self.delete_contract_outputs_for_tx(&tx_hash).await?;
             }
 

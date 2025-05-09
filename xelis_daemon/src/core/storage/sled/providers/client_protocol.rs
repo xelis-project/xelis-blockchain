@@ -22,13 +22,13 @@ impl ClientProtocolProvider for SledStorage {
         self.load_from_disk(&self.txs_executed, tx.as_bytes(), DiskContext::BlockExecutorForTx)
     }
 
-    fn set_tx_executed_in_block(&mut self, tx: &Hash, block: &Hash) -> Result<(), BlockchainError> {
+    fn mark_tx_as_executed_in_block(&mut self, tx: &Hash, block: &Hash) -> Result<(), BlockchainError> {
         trace!("set tx {} executed in block {}", tx, block);
         Self::insert_into_disk(self.snapshot.as_mut(), &self.txs_executed, tx.as_bytes(), block.as_bytes())?;
         Ok(())
     }
 
-    fn remove_tx_executed(&mut self, tx: &Hash) -> Result<(), BlockchainError> {
+    fn unmark_tx_from_executed(&mut self, tx: &Hash) -> Result<(), BlockchainError> {
         trace!("remove tx {} executed", tx);
         Self::remove_from_disk_without_reading(self.snapshot.as_mut(), &self.txs_executed, tx.as_bytes())?;
 
