@@ -9,7 +9,12 @@ use xelis_common::{
 use crate::core::{
     error::{BlockchainError, DiskContext},
     storage::{
-        sled::{TOP_HEIGHT, TOP_TOPO_HEIGHT}, DagOrderProvider, DifficultyProvider, SledStorage, StateProvider, TransactionProvider
+        sled::{TOP_HEIGHT, TOP_TOPO_HEIGHT},
+        DagOrderProvider,
+        DifficultyProvider,
+        SledStorage,
+        StateProvider,
+        TransactionProvider
     }
 };
 
