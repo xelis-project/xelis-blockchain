@@ -360,6 +360,7 @@ impl<S: Storage> Blockchain<S> {
                 config.p2p_temp_ban_duration.as_secs(),
                 config.p2p_fail_count_limit,
                 config.reexecute_blocks_on_sync,
+                config.p2p_block_propagation_log_level.into(),
             ) {
                 Ok(p2p) => {
                     // connect to priority nodes

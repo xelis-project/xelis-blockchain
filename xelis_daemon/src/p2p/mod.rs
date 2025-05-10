@@ -97,7 +97,7 @@ use tokio::{
     task::JoinHandle,
     time::{interval, sleep, timeout}
 };
-use log::{info, warn, error, debug, trace};
+use log::{debug, error, info, log, trace, warn};
 use std::{
     borrow::Cow,
     io,
@@ -194,6 +194,8 @@ pub struct P2pServer<S: Storage> {
     // This is used to reexecute blocks on chain sync
     // in case the block detected is marked as orphaned
     reexecute_blocks_on_sync: bool,
+    // Log level for block propagation
+    block_propagation_log_level: log::Level,
 }
 
 impl<S: Storage> P2pServer<S> {
@@ -218,6 +220,7 @@ impl<S: Storage> P2pServer<S> {
         temp_ban_time: u64,
         fail_count_limit: u8,
         reexecute_blocks_on_sync: bool,
+        block_propagation_log_level: log::Level,
     ) -> Result<Arc<Self>, P2pError> {
         if tag.as_ref().is_some_and(|tag| tag.len() == 0 || tag.len() > 16) {
             return Err(P2pError::InvalidTag);
@@ -296,6 +299,7 @@ impl<S: Storage> P2pServer<S> {
             fail_count_limit,
             notify_ping_loop: ping_sender,
             reexecute_blocks_on_sync,
+            block_propagation_log_level
         };
 
         let arc = Arc::new(server);
@@ -2438,7 +2442,7 @@ impl<S: Storage> P2pServer<S> {
 
                 // if the peer is not too far from us, send the block
                 // check that peer height is greater or equal to block height but still under or equal to STABLE_LIMIT
-                // or, check that peer height as difference of maximum 1 block
+                // or, check that peer height has a difference of maximum 1 block
                 // (block height is always + 1 above the highest tip height, so we can just check that peer height is not above block height + 1, it's enough in 90% of time)
                 // chain can accept old blocks (up to STABLE_LIMIT) but new blocks only N+1
                 if (peer_height >= block.get_height() && peer_height - block.get_height() <= STABLE_LIMIT) || (peer_height <= block.get_height() && block.get_height() - peer_height <= 1) {
@@ -2471,13 +2475,13 @@ impl<S: Storage> P2pServer<S> {
                     };
 
                     if send_block {
-                        debug!("Broadcast {} to {}", hash, peer);
+                        log!(self.block_propagation_log_level, "Broadcast {} to {}", hash, peer);
                         if let Err(e) = peer.send_bytes(packet_block_bytes.clone()).await {
                             debug!("Error on broadcast block {} to {}: {}", hash, peer, e);
                         }
                         trace!("{} has been broadcasted to {}", hash, peer);
                     } else if send_ping {
-                        debug!("{} contains {}, don't broadcast block to him", peer, hash);
+                        log!(self.block_propagation_log_level, "{} contains {}, don't broadcast block to him", peer, hash);
                         // But we can notify him with a ping packet that we got the block
                         if let Err(e) = peer.send_bytes(packet_ping_bytes.clone()).await {
                             debug!("Error on sending ping for notifying that we accepted the block {} to {}: {}", hash, peer, e);
@@ -2488,7 +2492,7 @@ impl<S: Storage> P2pServer<S> {
                     }
                 } else if send_ping && peer_height >= block.get_height() {
                     // Peer is above us, send him a ping packet to inform him we got a block propagated
-                    debug!("send ping (block {}) for propagation to {}", hash, peer);
+                    log!(self.block_propagation_log_level, "send ping (block {}) for propagation to {}", hash, peer);
                     if let Err(e) = peer.send_bytes(packet_ping_bytes.clone()).await {
                         debug!("Error on sending ping to peer for notifying that we got the block {} to {}: {}", hash, peer, e);
                     } else {
@@ -2497,7 +2501,7 @@ impl<S: Storage> P2pServer<S> {
                     }
                 } else {
                     // Peer is too far, don't send the block and neither the ping packet
-                    debug!("Cannot broadcast {} at height {} to {}, too far", hash, block.get_height(), peer);
+                    log::log!(self.block_propagation_log_level, "Cannot broadcast {} at height {} to {}, too far", hash, block.get_height(), peer);
                 }
         }).await;
 

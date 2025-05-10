@@ -2,8 +2,7 @@ use std::time::Duration;
 use humantime::Duration as HumanDuration;
 use serde::{Deserialize, Serialize};
 use xelis_common::{
-    crypto::Hash,
-    utils::detect_available_parallelism,
+    crypto::Hash, prompt::LogLevel, utils::detect_available_parallelism
 };
 use crate::{
     config::{
@@ -57,6 +56,10 @@ fn default_p2p_temp_ban_duration() -> HumanDuration {
 
 fn default_p2p_fail_count_limit() -> u8 {
     PEER_FAIL_LIMIT
+}
+
+fn debug_log_level() -> LogLevel {
+    LogLevel::Debug
 }
 
 #[derive(Debug, Clone, clap::Args, Serialize, Deserialize)]
@@ -273,6 +276,15 @@ pub struct P2pConfig {
     #[clap(long)]
     #[serde(default)]
     pub reexecute_blocks_on_sync: bool,
+    /// P2P log level for the block propagation
+    /// This is used to configure the log level used during the block propagation to peers.
+    /// By default, it will be set to "debug".
+    #[clap(long, value_enum, default_value_t = LogLevel::Debug)]
+    #[serde(
+        rename = "block_propagation_log_level",
+        default = "debug_log_level"
+    )]
+    pub p2p_block_propagation_log_level: LogLevel,
 }
 
 #[derive(Debug, Clone, clap::Args, Serialize, Deserialize)]
