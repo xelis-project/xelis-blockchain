@@ -258,9 +258,10 @@ pub struct GetInfoResult {
     pub maximum_supply: u64,
     // Current difficulty at tips
     pub difficulty: Difficulty,
-    // Expected block time
+    // Expected block time in milliseconds
     pub block_time_target: u64,
     // Average block time of last 50 blocks
+    // in milliseconds
     pub average_block_time: u64,
     pub block_reward: u64,
     pub dev_reward: u64,
