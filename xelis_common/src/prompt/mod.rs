@@ -111,6 +111,19 @@ impl From<LogLevel> for LevelFilter {
     }
 }
 
+impl From<LogLevel> for Level {
+    fn from(value: LogLevel) -> Self {
+        match value {
+            LogLevel::Off => Self::Trace,
+            LogLevel::Error => Self::Error,
+            LogLevel::Warn => Self::Warn,
+            LogLevel::Info => Self::Info,
+            LogLevel::Debug => Self::Debug,
+            LogLevel::Trace => Self::Trace
+        }
+    }
+}
+
 impl Display for LogLevel {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         let str = match &self {
