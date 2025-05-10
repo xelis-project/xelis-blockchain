@@ -7,7 +7,11 @@ use xelis_common::{
 use crate::core::{
     error::BlockchainError,
     storage::{
-        rocksdb::{AccountId, Column}, MultiSigProvider, NetworkProvider, RocksStorage, VersionedMultiSig
+        rocksdb::{AccountId, Column},
+        MultiSigProvider,
+        NetworkProvider,
+        RocksStorage,
+        VersionedMultiSig
     }
 };
 
