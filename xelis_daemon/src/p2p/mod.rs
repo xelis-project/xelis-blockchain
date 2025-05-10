@@ -18,7 +18,8 @@ pub use encryption::EncryptionKey;
 use futures::{
     stream::{self, FuturesOrdered},
     Stream,
-    StreamExt
+    StreamExt,
+    TryStreamExt
 };
 use indexmap::IndexSet;
 use lru::LruCache;
@@ -1374,48 +1375,41 @@ impl<S: Storage> P2pServer<S> {
                         break 'main;
                     };
 
-                    let mut transactions = Vec::with_capacity(header.get_txs_count());
                     let mut futures = FuturesOrdered::new();
                     for hash in header.get_txs_hashes() {
-                        if let Ok(tx) = self.blockchain.get_tx(hash).await {
-                            transactions.push(Some(tx));
-                        } else {
-                            // request it from peer
-                            let hash = hash.clone();
-                            let fut = async {
+                        let future = async {
+                            if let Ok(tx) = self.blockchain.get_tx(hash).await {
+                                Ok(tx)
+                            } else {
+                                let hash = hash.clone();
+                                info!("Cache missed for TX {} in block propagation {}, will request it from peer", hash, block_hash);
+
+                                // request it from peer
                                 let mut listener = self.object_tracker.request_object_from_peer_with_or_get_notified(Arc::clone(&peer), ObjectRequest::Transaction(hash), None).await?;
-                                let response = listener.recv().await.context("Error while reading transaction for block")?;
+                                let response = listener.recv().await
+                                    .context("Error while reading transaction for block")?;
+
                                 match response {
-                                    OwnedObjectResponse::Transaction(tx, _) => Ok(tx),
+                                    OwnedObjectResponse::Transaction(tx, _) => Ok(Immutable::Owned(tx)),
                                     _ => Err(P2pError::ExpectedTransaction(response))
                                 }
-                            };
-                            futures.push_back(fut);
-                            transactions.push(None);
-                        }
+                            }
+                        };
+                        futures.push_back(future);
                     }
 
-                    let mut txs = Vec::with_capacity(header.get_txs_count());
-                    for (tx, tx_hash) in transactions.into_iter().zip(header.get_txs_hashes()) {
-                        match tx {
-                            Some(tx) => {
-                                txs.push(tx);
-                            },
-                            None => {
-                                if let Some(response) = futures.next().await {
-                                    match response {
-                                        Ok(tx) => {
-                                            txs.push(Immutable::Owned(tx));
-                                        },
-                                        Err(e) => {
-                                            error!("Error on block tx {}: {}", tx_hash, e);
-                                            continue 'main;
-                                        }
-                                    };
-                                }
-                            }
+                    // Now collect all the futures
+                    let txs = match futures.try_collect::<Vec<_>>().await {
+                        Ok(txs) => {
+                            debug!("All transactions for block {} received", block_hash);
+                            txs
+                        },
+                        Err(e) => {
+                            error!("Error while processing transactions for block {}: {}", block_hash, e);
+                            peer.increment_fail_count();
+                            continue;
                         }
-                    }
+                    };
 
                     // Mark the timestamp of when its being added
                     {
