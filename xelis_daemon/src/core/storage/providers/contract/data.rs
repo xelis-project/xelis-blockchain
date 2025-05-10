@@ -14,7 +14,7 @@ pub type VersionedContractData = Versioned<Option<ValueCell>>;
 #[async_trait]
 pub trait ContractDataProvider {
     // Set a contract data
-    async fn set_last_contract_data_to<'a>(&mut self, contract: &Hash, key: &ValueCell, topoheight: TopoHeight, contract: VersionedContractData) -> Result<(), BlockchainError>;
+    async fn set_last_contract_data_to<'a>(&mut self, contract: &Hash, key: &ValueCell, topoheight: TopoHeight, version: VersionedContractData) -> Result<(), BlockchainError>;
 
     // Set the last topoheight for a given contract data
     async fn set_last_topoheight_for_contract_data(&mut self, contract: &Hash, key: &ValueCell, topoheight: TopoHeight) -> Result<(), BlockchainError>;
