@@ -153,52 +153,22 @@ impl RocksStorage {
         }
     }
 
-    pub fn iter_prefix_internal<'a, K: Serializer + 'a, V: Serializer + 'a, P: AsRef<[u8]> + Copy + 'a>(db: &'a InnerDB, snapshot: Option<&'a Snapshot>, column: Column, prefix: P) -> Result<impl Iterator<Item = Result<(K, V), BlockchainError>> + 'a, BlockchainError> {
-        trace!("iter prefix {:?}", column);
-
-        let cf = cf_handle!(db, column);
-        let iterator = db.prefix_iterator_cf(&cf, prefix);
-
-        match snapshot {
-            Some(snapshot) => Ok(Either::Left(snapshot.iter_prefix(column, prefix, iterator))),
-            None => {
-                Ok(Either::Right(iterator.map(|res| {
-                    let (key, value) = res.context("Internal read error in iter")?;
-                    let key = K::from_bytes(&key)?;
-                    let value = V::from_bytes(&value)?;
-        
-                    Ok((key, value))
-                })))
-            } 
-        }
-    }
-
-    pub fn iter_keys_prefix_internal<'a, K: Serializer + 'a, P: AsRef<[u8]> + Copy + 'a>(db: &'a InnerDB, snapshot: Option<&'a Snapshot>, column: Column, prefix: P) -> Result<impl Iterator<Item = Result<K, BlockchainError>> + 'a, BlockchainError> {
-        trace!("iter keys prefix {:?}", column);
-
-        let cf = cf_handle!(db, column);
-        let iterator = db.prefix_iterator_cf(&cf, prefix);
-
-        match snapshot {
-            Some(snapshot) => Ok(Either::Left(snapshot.iter_keys_prefix(column, prefix, iterator))),
-            None => {
-                Ok(Either::Right(iterator.map(|res| {
-                    let (key, _) = res.context("Internal read error in iter")?;
-                    let key = K::from_bytes(&key)?;
-                    Ok(key)
-                })))
-            } 
-        }
-    }
-
-    pub fn iter_internal<'a, K: Serializer + 'a, V: Serializer + 'a>(db: &'a InnerDB, snapshot: Option<&'a Snapshot>, column: Column) -> Result<impl Iterator<Item = Result<(K, V), BlockchainError>> + 'a, BlockchainError> {
+    pub fn iter_internal<'a, K, V, P>(db: &'a InnerDB, snapshot: Option<&'a Snapshot>, prefix: Option<P>, column: Column) -> Result<impl Iterator<Item = Result<(K, V), BlockchainError>> + 'a, BlockchainError>
+    where
+        K: Serializer + 'a,
+        V: Serializer + 'a,
+        P: AsRef<[u8]> + Copy + 'a,
+    {
         trace!("iter {:?}", column);
 
         let cf = cf_handle!(db, column);
-        let iterator = db.iterator_cf(&cf, IteratorMode::Start);
+        let iterator = match prefix {
+            Some(prefix) => db.prefix_iterator_cf(&cf, prefix),
+            None => db.iterator_cf(&cf, IteratorMode::Start)
+        };
 
         match snapshot {
-            Some(snapshot) => Ok(Either::Left(snapshot.iter(column, iterator))),
+            Some(snapshot) => Ok(Either::Left(snapshot.iter(column, prefix, iterator))),
             None => {
                 Ok(Either::Right(iterator.map(|res| {
                     let (key, value) = res.context("Internal read error in iter")?;
@@ -211,14 +181,21 @@ impl RocksStorage {
         }
     }
 
-    pub fn iter_keys_internal<'a, K: Serializer + 'a>(db: &'a InnerDB, snapshot: Option<&'a Snapshot>, column: Column) -> Result<impl Iterator<Item = Result<K, BlockchainError>> + 'a, BlockchainError> {
+    pub fn iter_keys_internal<'a, K, P>(db: &'a InnerDB, snapshot: Option<&'a Snapshot>, prefix: Option<P>, column: Column) -> Result<impl Iterator<Item = Result<K, BlockchainError>> + 'a, BlockchainError>
+    where
+        K: Serializer + 'a,
+        P: AsRef<[u8]> + Copy + 'a,
+    {
         trace!("iter keys {:?}", column);
 
         let cf = cf_handle!(db, column);
-        let iterator = db.iterator_cf(&cf, IteratorMode::Start);
+        let iterator = match prefix {
+            Some(prefix) => db.prefix_iterator_cf(&cf, prefix),
+            None => db.iterator_cf(&cf, IteratorMode::Start)
+        };
 
         match snapshot {
-            Some(snapshot) => Ok(Either::Left(snapshot.iter_keys(column, iterator))),
+            Some(snapshot) => Ok(Either::Left(snapshot.iter_keys(column, prefix, iterator))),
             None => {
                 Ok(Either::Right(iterator.map(|res| {
                     let (key, _) = res.context("Internal read error in iter_keys")?;
@@ -231,22 +208,38 @@ impl RocksStorage {
     }
 
     #[inline(always)]
-    pub fn iter<'a, K: Serializer + 'a, V: Serializer + 'a>(&'a self, column: Column) -> Result<impl Iterator<Item = Result<(K, V), BlockchainError>> + 'a, BlockchainError> {
-        Self::iter_internal(&self.db, self.snapshot.as_ref(), column)
+    pub fn iter<'a, K, V>(&'a self, column: Column) -> Result<impl Iterator<Item = Result<(K, V), BlockchainError>> + 'a, BlockchainError>
+    where
+        K: Serializer + 'a,
+        V: Serializer + 'a,
+    {
+        Self::iter_internal(&self.db, self.snapshot.as_ref(), None::<&[u8]>, column)
     }
 
     #[inline(always)]
-    pub fn iter_keys<'a, K: Serializer + 'a>(&'a self, column: Column) -> Result<impl Iterator<Item = Result<K, BlockchainError>> + 'a, BlockchainError> {
-        Self::iter_keys_internal(&self.db, self.snapshot.as_ref(), column)
+    pub fn iter_keys<'a, K>(&'a self, column: Column) -> Result<impl Iterator<Item = Result<K, BlockchainError>> + 'a, BlockchainError>
+    where
+        K: Serializer + 'a,
+    {
+        Self::iter_keys_internal(&self.db, self.snapshot.as_ref(), None::<&[u8]>, column)
     }
 
     #[inline(always)]
-    pub fn iter_keys_prefix<'a, K: Serializer + 'a, P: AsRef<[u8]> + Copy + 'a>(&'a self, column: Column, prefix: P) -> Result<impl Iterator<Item = Result<K, BlockchainError>> + 'a, BlockchainError> {
-        Self::iter_keys_prefix_internal(&self.db, self.snapshot.as_ref(), column, prefix)
+    pub fn iter_keys_prefix<'a, K, P>(&'a self, column: Column, prefix: P) -> Result<impl Iterator<Item = Result<K, BlockchainError>> + 'a, BlockchainError>
+    where
+        K: Serializer + 'a,
+        P: AsRef<[u8]> + Copy + 'a,
+    {
+        Self::iter_keys_internal(&self.db, self.snapshot.as_ref(), Some(prefix), column)
     }
 
     #[inline(always)]
-    pub fn iter_prefix<'a, K: Serializer + 'a, V: Serializer + 'a, P: AsRef<[u8]> + Copy + 'a>(&'a self, column: Column, prefix: P) -> Result<impl Iterator<Item = Result<(K, V), BlockchainError>> + 'a, BlockchainError> {
-        Self::iter_prefix_internal(&self.db, self.snapshot.as_ref(), column, prefix)
+    pub fn iter_prefix<'a, K, V, P>(&'a self, column: Column, prefix: P) -> Result<impl Iterator<Item = Result<(K, V), BlockchainError>> + 'a, BlockchainError>
+    where
+        K: Serializer + 'a,
+        V: Serializer + 'a,
+        P: AsRef<[u8]> + Copy + 'a,
+    {
+        Self::iter_internal(&self.db, self.snapshot.as_ref(), Some(prefix), column)
     }
 }

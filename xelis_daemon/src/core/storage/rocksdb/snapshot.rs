@@ -90,134 +90,113 @@ impl Snapshot {
         batch.contains(key)
     }
 
-    // Lazy iterator over a prefix
-    pub fn iter_prefix<'a, K: Serializer + 'a, V: Serializer + 'a, P: AsRef<[u8]> + 'a>(&'a self, column: Column, prefix: P, iterator: impl Iterator<Item = Result<(Box<[u8]>, Box<[u8]>), rocksdb::Error>> + 'a) -> impl Iterator<Item = Result<(K, V), BlockchainError>> + 'a {
+    // Lazy interator over keys and values
+    // Both are parsed from bytes
+    // It will fallback on the disk iterator
+    // if the key is not present in the batch
+    pub fn iter<'a, K, V, P>(
+        &'a self,
+        column: Column,
+        prefix: Option<P>,
+        iterator: impl Iterator<Item = Result<(Box<[u8]>, Box<[u8]>), rocksdb::Error>> + 'a,
+    ) -> impl Iterator<Item = Result<(K, V), BlockchainError>> + 'a
+    where
+        K: Serializer + 'a,
+        V: Serializer + 'a,
+        P: AsRef<[u8]> + 'a,
+    {
         match self.columns.get(&column) {
             Some(tree) => {
-                Either::Left(iterator.filter_map_ok(|(k, v)| {
+                let disk_iter = iterator
+                    .filter_map_ok(|(k, v)| {
                         if tree.writes.contains_key(&*k) {
                             Some((k, v))
                         } else {
                             None
                         }
                     })
-                    .map(|k| {
-                        let (key, value) = k.context("Internal error in snapshot iter_prefix")?;
-                        let k = K::from_bytes(&key)?;
-                        let v = V::from_bytes(&value)?;
+                    .map(|res| {
+                        let (key, value) = res.context("Internal error in snapshot iterator")?;
+                        Ok((K::from_bytes(&key)?, V::from_bytes(&value)?))
+                    });
 
-                        Ok((k, v))
-                    })
-                    .chain(
-                        tree.writes.iter()
-                            .filter_map(move |(k, v)| {
-                                if k.starts_with(prefix.as_ref()) {
-                                    v.as_ref().map(|v| (k, v))
-                                } else {
-                                    None
-                                }
-                            })
-                            .map(|(k, v)| {
-                                let key = K::from_bytes(&k)?;
-                                let value = V::from_bytes(&v)?;
-                                Ok((key, value))
-                            })
-                    ))
-            },
-            None => Either::Right(std::iter::empty())
+                let mem_iter = tree.writes.iter().map(move |(k, v)| {
+                    if let Some(val) = v {
+                        if prefix.as_ref().map_or(true, |p| k.starts_with(p.as_ref())) {
+                            Ok(Some((
+                                K::from_bytes(k)?,
+                                V::from_bytes(val)?,
+                            )))
+                        } else {
+                            Ok(None)
+                        }
+                    } else {
+                        Ok(None)
+                    }
+                }).filter_map(Result::transpose);
+
+                Either::Left(disk_iter.chain(mem_iter))
+            }
+            None => {
+                let disk_iter = iterator
+                    .map(|res| {
+                        let (key, value) = res.context("Internal error in snapshot iterator")?;
+                        Ok((K::from_bytes(&key)?, V::from_bytes(&value)?))
+                    });
+
+                Either::Right(disk_iter)
+            }
         }
     }
 
-    // Lazy iterator for keys only over a prefix
-    pub fn iter_keys_prefix<'a, K: Serializer + 'a, P: AsRef<[u8]> + 'a>(&'a self, column: Column, prefix: P, iterator: impl Iterator<Item = Result<(Box<[u8]>, Box<[u8]>), rocksdb::Error>> + 'a) -> impl Iterator<Item = Result<K, BlockchainError>> + 'a {
+    // Similar to `iter` but only for keys
+    pub fn iter_keys<'a, K, P>(
+        &'a self,
+        column: Column,
+        prefix: Option<P>,
+        iterator: impl Iterator<Item = Result<(Box<[u8]>, Box<[u8]>), rocksdb::Error>> + 'a,
+    ) -> impl Iterator<Item = Result<K, BlockchainError>> + 'a
+    where
+        K: Serializer + 'a,
+        P: AsRef<[u8]> + 'a,
+    {
         match self.columns.get(&column) {
             Some(tree) => {
-                Either::Left(iterator.filter_map_ok(|(k, v)| {
-                        if tree.writes.contains_key(&*k) {
-                            Some((k, v))
+                let disk_iter = iterator
+                    .map(|res| {
+                        let (key, _) = res.context("Internal error in snapshot iterator")?;
+
+                        // Snapshot doesn't contains the key,
+                        // We can use the one from disk
+                        if !tree.writes.contains_key(&*key) {
+                            Ok(Some(K::from_bytes(&key)?))
                         } else {
-                            None
+                            Ok(None)
                         }
-                    })
-                    .map(|k| {
-                        let (key, _) = k.context("Internal error in snapshot iter_keys_prefix")?;
-                        let k = K::from_bytes(&key)?;
+                    }).filter_map(Result::transpose);
 
-                        Ok(k)
-                    })
-                    .chain(
-                        tree.writes.iter()
-                            .filter_map(move |(k, v)| {
-                                if k.starts_with(prefix.as_ref()) {
-                                    v.as_ref().map(|_| k)
-                                } else {
-                                    None
-                                }
-                            })
-                            .map(|k| {
-                                let key = K::from_bytes(&k)?;
-                                Ok(key)
-                            })
-                    ))
-            },
-            None => Either::Right(std::iter::empty())
-        }
-    }
-
-    // Lazy iterator 
-    pub fn iter<'a, K: Serializer + 'a, V: Serializer + 'a>(&'a self, column: Column, iterator: impl Iterator<Item = Result<(Box<[u8]>, Box<[u8]>), rocksdb::Error>> + 'a) -> impl Iterator<Item = Result<(K, V), BlockchainError>> + 'a {
-        match self.columns.get(&column) {
-            Some(tree) => {
-                Either::Left(iterator.filter_map_ok(|(k, v)| {
-                        if tree.writes.contains_key(&*k) {
-                            Some((k, v))
-                        } else {
-                            None
+                let mem_iter = tree.writes.iter()
+                    .map(move |(k, v)| {
+                        if v.is_some() {
+                            if prefix.as_ref().map_or(true, |p| k.starts_with(p.as_ref())) {
+                                return Ok(Some(K::from_bytes(k)?))
+                            }
                         }
-                    })
-                    .map(|k| {
-                        let (key, value) = k.context("Internal error in snapshot iter")?;
-                        let k = K::from_bytes(&key)?;
-                        let v = V::from_bytes(&value)?;
 
-                        Ok((k, v))
-                    })
-                    .chain(
-                        tree.writes.iter()
-                            .filter_map(|(k, v)| v.as_ref().map(|v| (k, v)))
-                            .map(|(k, v)| {
-                                let key = K::from_bytes(&k)?;
-                                let value = V::from_bytes(&v)?;
-                                Ok((key, value))
-                            })
-                    ))
-            },
-            None => Either::Right(std::iter::empty())
-        }
-    }
+                        Ok(None)
+                    }).filter_map(Result::transpose);
 
-    // Lazy iterator over keys only
-    pub fn iter_keys<'a, K: Serializer + 'a>(&'a self, column: Column, iterator: impl Iterator<Item = Result<(Box<[u8]>, Box<[u8]>), rocksdb::Error>> + 'a) -> impl Iterator<Item = Result<K, BlockchainError>> + 'a {
-        match self.columns.get(&column) {
-            Some(tree) => {
-                Either::Left(iterator.filter_map_ok(|(k, _)| {
-                        if tree.writes.contains_key(&*k) {
-                            Some(k)
-                        } else {
-                            None
-                        }
-                    })
-                    .map(|k| {
-                        let key = k.context("Internal error in snapshot iter_keys")?;
+                Either::Left(disk_iter.chain(mem_iter))
+            }
+            None => {
+                let disk_iter = iterator
+                    .map(|res| {
+                        let (key, _) = res.context("Internal error in snapshot iterator")?;
                         Ok(K::from_bytes(&key)?)
-                    })
-                    .chain(
-                        tree.writes.iter()
-                            .filter_map(|(k, v)| v.as_ref().map(|_| k))
-                            .map(|k| Ok(K::from_bytes(&k)?))
-                    ))
-            },
-            None => Either::Right(std::iter::empty())
+                    });
+
+                Either::Right(disk_iter)
+            }
         }
     }
 }
