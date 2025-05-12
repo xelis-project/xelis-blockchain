@@ -18,3 +18,5 @@ mod balance;
 mod nonce;
 mod state;
 mod multisig;
+mod contract;
+mod versioned;
