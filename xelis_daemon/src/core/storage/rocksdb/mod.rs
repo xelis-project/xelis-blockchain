@@ -4,17 +4,35 @@ mod providers;
 mod snapshot;
 
 use anyhow::Context;
+use async_trait::async_trait;
 use itertools::Either;
 use log::trace;
-use rocksdb::{ColumnFamilyDescriptor, DBWithThreadMode, IteratorMode, MultiThreaded, Options, SliceTransform};
+use rocksdb::{
+    ColumnFamilyDescriptor,
+    DBWithThreadMode,
+    IteratorMode,
+    MultiThreaded,
+    Options,
+    SliceTransform,
+    WaitForCompactOptions
+};
 use strum::IntoEnumIterator;
-use xelis_common::{network::Network, serializer::Serializer};
+use xelis_common::{
+    block::{BlockHeader, TopoHeight},
+    crypto::Hash,
+    immutable::Immutable,
+    network::Network,
+    serializer::Serializer,
+    transaction::Transaction
+};
 use crate::core::error::{BlockchainError, DiskContext};
 
 pub use column::*;
 pub use types::*;
 
 pub use snapshot::Snapshot;
+
+use super::Storage;
 
 macro_rules! cf_handle {
     ($db: expr, $column: expr) => {
@@ -32,7 +50,7 @@ pub struct RocksStorage {
 }
 
 impl RocksStorage {
-    pub fn new(network: Network) -> Self {
+    pub fn new(dir: &str, network: Network) -> Self {
         let cfs = Column::iter()
             .map(|column| {
                 let name = column.to_string();
@@ -49,7 +67,7 @@ impl RocksStorage {
         opts.create_if_missing(true);
         opts.create_missing_column_families(true);
 
-        let db  = DBWithThreadMode::<MultiThreaded>::open_cf_descriptors(&opts, "/rocksdb", cfs)
+        let db  = DBWithThreadMode::<MultiThreaded>::open_cf_descriptors(&opts, format!("{}{}", dir, network.to_string().to_lowercase()), cfs)
             .expect("Failed to open RocksDB");
 
         Self {
@@ -71,10 +89,10 @@ impl RocksStorage {
         Self::remove_from_disk_internal(&self.db, self.snapshot.as_mut(), column, key)
     }
 
-    pub fn contains_data<K: Serializer>(&self, column: Column, key: &K) -> Result<bool, BlockchainError> {
+    pub fn contains_data<K: AsRef<[u8]>>(&self, column: Column, key: &K) -> Result<bool, BlockchainError> {
         trace!("contains data {:?}", column);
 
-        let key_bytes = key.to_bytes();
+        let key_bytes = key.as_ref();
         if let Some(snapshot) = self.snapshot.as_ref() {
             if let Some(v) = snapshot.contains(column, &key_bytes) {
                 return Ok(v)
@@ -96,7 +114,6 @@ impl RocksStorage {
 
         let cf = cf_handle!(self.db, column);
         let mut iterator = self.db.iterator_cf(&cf, IteratorMode::Start);
-
         Ok(iterator.next().is_none())
     }
 
@@ -112,16 +129,14 @@ impl RocksStorage {
     }
 
     pub fn load_from_disk<K: AsRef<[u8]> + ?Sized, V: Serializer>(&self, column: Column, key: &K) -> Result<V, BlockchainError> {
-        trace!("load from disk internal");
+        trace!("load from disk internal {:?}", column);
 
-        let data = self.load_optional_from_disk(column, key)?
-            .with_context(|| format!("Error while loading from {:?} with key {:?}", column, key.as_ref()))?;
-
-        Ok(data)
+        self.load_optional_from_disk(column, key)?
+            .ok_or(BlockchainError::NotFoundOnDisk(DiskContext::LoadData))
     }
 
     pub fn get_size_from_disk<K: AsRef<[u8]>>(&self, column: Column, key: &K) -> Result<usize, BlockchainError> {
-        trace!("load from disk internal");
+        trace!("load from disk internal {:?}", column);
 
         if let Some(v) = self.snapshot.as_ref().and_then(|s| s.get_size(column, key.as_ref())) {
             match v {
@@ -304,5 +319,44 @@ impl RocksStorage {
         P: AsRef<[u8]> + Copy + 'a,
     {
         Self::iter_internal(&self.db, self.snapshot.as_ref(), Some(prefix), column)
+    }
+}
+
+#[async_trait]
+impl Storage for RocksStorage {
+    // delete block at topoheight, and all pointers (hash_at_topo, topo_by_hash, reward, supply, diff, cumulative diff...)
+    async fn delete_block_at_topoheight(&mut self, topoheight: TopoHeight) -> Result<(Hash, Immutable<BlockHeader>, Vec<(Hash, Immutable<Transaction>)>), BlockchainError> {
+        Ok(todo!())
+    }
+
+    // Count is the number of blocks (topoheight) to rewind
+    async fn pop_blocks(&mut self, mut height: u64, mut topoheight: TopoHeight, count: u64, stable_height: u64) -> Result<(u64, TopoHeight, Vec<(Hash, Immutable<Transaction>)>), BlockchainError> {
+        todo!()
+    }
+
+    // Get the size of the chain on disk in bytes
+    async fn get_size_on_disk(&self) -> Result<u64, BlockchainError> {
+        Ok(0)
+    }
+
+    // Estimate the size of the DB in bytes
+    async fn estimate_size(&self) -> Result<u64, BlockchainError> {
+        Ok(0)
+    }
+
+    // Stop the storage and wait for it to finish
+    async fn stop(&mut self) -> Result<(), BlockchainError> {
+        let options = WaitForCompactOptions::default();
+        self.db.wait_for_compact(&options)
+            .context("Error while waiting on compact")?;
+        Ok(())
+    }
+
+    // Flush the inner DB after a block being written
+    async fn flush(&mut self) -> Result<(), BlockchainError> {
+        self.db.flush()
+            .context("Error on flush")?;
+
+        Ok(())
     }
 }

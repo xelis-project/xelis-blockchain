@@ -60,6 +60,7 @@ impl BalanceProvider for RocksStorage {
     async fn get_balance_at_maximum_topoheight(&self, key: &PublicKey, asset: &Hash, maximum_topoheight: TopoHeight) -> Result<Option<(TopoHeight, VersionedBalance)>, BlockchainError> {
         trace!("get balance at maximum topoheight {} for {} {}", maximum_topoheight, key.as_address(self.is_mainnet()), asset);
         let Some(account_id) = self.get_optional_account_id(key)? else {
+            trace!("no account found for {}", key.as_address(self.is_mainnet()));
             return Ok(None);
         };
         let asset_id = self.get_asset_id(asset)?;
@@ -67,8 +68,10 @@ impl BalanceProvider for RocksStorage {
         let versioned_key = Self::get_versioned_account_balance_key(account_id, asset_id, maximum_topoheight);
         // Check if we have a balance at exact topoheight
         let mut topo = if self.contains_data(Column::VersionedBalances, &versioned_key)? {
+            trace!("using topoheight {}", maximum_topoheight);
             Some(maximum_topoheight)
         } else  {
+            trace!("load latest version available");
             // skip the topoheight from the key, load the last topoheight
             self.load_optional_from_disk(Column::Balances, &versioned_key[8..24])?
         };
@@ -77,7 +80,7 @@ impl BalanceProvider for RocksStorage {
         while let Some(topoheight) = topo {
             let versioned_key = Self::get_versioned_account_balance_key(account_id, asset_id, topoheight);            
             if topoheight <= maximum_topoheight {
-                trace!("balance of {} asset {} is updated at {}", key.as_address(self.is_mainnet()), asset_id, topoheight);
+                trace!("versioned balance of {} asset {} found at {}", key.as_address(self.is_mainnet()), asset_id, topoheight);
                 let version = self.load_from_disk(Column::VersionedBalances, &versioned_key)?;
                 return Ok(Some((topoheight, version)));
             }
@@ -115,7 +118,10 @@ impl BalanceProvider for RocksStorage {
                 Ok((version, false))
             },
             // if its the first balance, then we return a zero balance
-            None => Ok((VersionedBalance::zero(), true))
+            None => {
+                trace!("no balance found, new version for {}", key.as_address(self.is_mainnet()));
+                Ok((VersionedBalance::zero(), true))
+            }
         }
     }
 
@@ -139,7 +145,7 @@ impl BalanceProvider for RocksStorage {
         } else {
             trace!("balance not found at topoheight {}, loading last topoheight", maximum_topoheight);
             // skip the topoheight from the key, load the last topoheight
-            self.load_from_disk(Column::Balances, &versioned_key[0..16])?
+            self.load_from_disk(Column::Balances, &versioned_key[8..])?
         };
 
         let mut topo = Some(start_topo);

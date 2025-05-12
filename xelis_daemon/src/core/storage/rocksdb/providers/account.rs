@@ -157,7 +157,7 @@ impl RocksStorage {
             .unwrap_or(0);
 
         trace!("next account id is {}", id);
-        self.insert_into_disk(Column::Account, b"next_account_id", &(id + 1))?;
+        self.insert_into_disk(Column::Common, b"next_account_id", &(id + 1))?;
 
         Ok(id)
     }
@@ -187,10 +187,15 @@ impl RocksStorage {
         self.load_optional_from_disk(Column::Account, key.as_bytes())
     }
 
+    pub(super) fn get_account_key_from_id(&self, id: AccountId) -> Result<PublicKey, BlockchainError> {
+        trace!("get account key from id {}", id);
+        self.load_from_disk(Column::AccountById, &id.to_be_bytes())
+    }
+
     pub(super) fn get_account_from_id(&self, id: AccountId) -> Result<Account, BlockchainError> {
         trace!("get account from id {}", id);
 
-        let key = self.load_from_disk(Column::AccountById, &id.to_be_bytes())?;
+        let key = self.get_account_key_from_id(id)?;
         self.get_account_type(&key)
     }
 

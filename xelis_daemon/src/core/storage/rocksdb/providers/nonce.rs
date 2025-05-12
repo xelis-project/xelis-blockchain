@@ -66,13 +66,16 @@ impl NonceProvider for RocksStorage {
         // Check if the account has a nonce at the requested topoheight
         // otherwise, we will use the pointer to the last topoheight
         let Some(nonce_topoheight) = account.nonce_pointer else {
+            trace!("no nonce pointer found for account");
             return Ok(None);
         };
 
         let mut next_topo = if nonce_topoheight > maximum_topoheight
             && self.contains_data(Column::VersionedNonces, &Self::get_versioned_account_key(account.id, maximum_topoheight))? {
+            trace!("using maximum topoheight as start topo");
             Some(maximum_topoheight)
         } else {
+            trace!("using nonce pointer {:?} as start topo", account.nonce_pointer);
             account.nonce_pointer
         };
 
@@ -95,7 +98,7 @@ impl NonceProvider for RocksStorage {
     // set the new nonce at exact topoheight for account
     // This will do like `set_nonce_at_topoheight` but will also update the pointer
     async fn set_last_nonce_to(&mut self, key: &PublicKey, topoheight: TopoHeight, nonce: &VersionedNonce) -> Result<(), BlockchainError> {
-        trace!("set last nonce to for account {}", key.as_address(self.is_mainnet()));
+        trace!("set last nonce to {} for account {} at topoheight {}", nonce.get_nonce(), key.as_address(self.is_mainnet()), topoheight);
         let mut account = self.get_or_create_account_type(key)?;
         account.nonce_pointer = Some(topoheight);
 
