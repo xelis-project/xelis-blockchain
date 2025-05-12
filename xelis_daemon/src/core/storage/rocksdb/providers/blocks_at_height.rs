@@ -18,7 +18,7 @@ impl BlocksAtHeightProvider for RocksStorage {
     // Check if there are blocks at a specific height
     async fn has_blocks_at_height(&self, height: u64) -> Result<bool, BlockchainError> {
         trace!("has blocks at height {}", height);
-        self.contains_data(Column::BlocksAtHeight, &height)
+        self.contains_data(Column::BlocksAtHeight, &height.to_be_bytes())
     }
 
     // Retrieve the blocks hashes at a specific height

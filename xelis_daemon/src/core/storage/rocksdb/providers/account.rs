@@ -176,10 +176,22 @@ impl RocksStorage {
     }
 
     pub(super) fn get_account_id(&self, key: &PublicKey) -> Result<u64, BlockchainError> {
-        trace!("get account id {}", key.as_address(self.is_mainnet()));
+        self.get_optional_account_id(key)?
+            .ok_or_else(|| BlockchainError::AccountNotFound(key.as_address(self.is_mainnet())))
+    }
+
+    pub(super) fn get_optional_account_id(&self, key: &PublicKey) -> Result<Option<u64>, BlockchainError> {
+        trace!("get optional account id {}", key.as_address(self.is_mainnet()));
         // This will read just the id
         // TODO: cache
-        self.load_from_disk(Column::Account, key.as_bytes())
+        self.load_optional_from_disk(Column::Account, key.as_bytes())
+    }
+
+    pub(super) fn get_account_from_id(&self, id: AccountId) -> Result<Account, BlockchainError> {
+        trace!("get account from id {}", id);
+
+        let key = self.load_from_disk(Column::AccountById, &id.to_be_bytes())?;
+        self.get_account_type(&key)
     }
 
     pub(super) fn get_account_type(&self, key: &PublicKey) -> Result<Account, BlockchainError> {

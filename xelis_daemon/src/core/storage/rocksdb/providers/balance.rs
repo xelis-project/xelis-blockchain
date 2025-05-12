@@ -59,18 +59,20 @@ impl BalanceProvider for RocksStorage {
     // Get the balance under or equal topoheight requested for asset and key
     async fn get_balance_at_maximum_topoheight(&self, key: &PublicKey, asset: &Hash, maximum_topoheight: TopoHeight) -> Result<Option<(TopoHeight, VersionedBalance)>, BlockchainError> {
         trace!("get balance at maximum topoheight {} for {} {}", maximum_topoheight, key.as_address(self.is_mainnet()), asset);
-        let account_id = self.get_account_id(key)?;
+        let Some(account_id) = self.get_optional_account_id(key)? else {
+            return Ok(None);
+        };
         let asset_id = self.get_asset_id(asset)?;
 
         let versioned_key = Self::get_versioned_account_balance_key(account_id, asset_id, maximum_topoheight);
-        let start_topo = if self.contains_data(Column::VersionedBalances, &versioned_key)? {
-            maximum_topoheight
-        } else {
+        // Check if we have a balance at exact topoheight
+        let mut topo = if self.contains_data(Column::VersionedBalances, &versioned_key)? {
+            Some(maximum_topoheight)
+        } else  {
             // skip the topoheight from the key, load the last topoheight
-            self.load_from_disk(Column::Balances, &versioned_key[0..16])?
+            self.load_optional_from_disk(Column::Balances, &versioned_key[8..24])?
         };
 
-        let mut topo = Some(start_topo);
         // Iterate over our linked list of versions
         while let Some(topoheight) = topo {
             let versioned_key = Self::get_versioned_account_balance_key(account_id, asset_id, topoheight);            
