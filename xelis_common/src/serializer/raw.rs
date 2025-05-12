@@ -33,6 +33,12 @@ impl Deref for RawBytes {
     }
 }
 
+impl AsRef<[u8]> for RawBytes {
+    fn as_ref(&self) -> &[u8] {
+        &self.0
+    }
+}
+
 impl DerefMut for RawBytes {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
