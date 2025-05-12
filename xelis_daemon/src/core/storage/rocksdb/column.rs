@@ -32,7 +32,11 @@ pub enum Column {
     TopoHeightMetadata,
 
     // Each asset hash registered
+    // {asset_hash} => {asset}
     Assets,
+    // {asset_id} => {asset_hash}
+    AssetById,
+    // {topoheight}{asset_hash} => {asset}
     VersionedAssets,
 
     // {account_key} => {Account}

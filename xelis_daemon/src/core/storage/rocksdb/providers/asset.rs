@@ -155,11 +155,15 @@ impl AssetProvider for RocksStorage {
             asset
         } else {
             let id = self.get_next_asset_id()?;
-            Asset {
+            let asset = Asset {
                 id,
                 data_pointer: Some(topoheight),
                 supply_pointer: None
-            }
+            };
+
+            self.insert_into_disk(Column::AssetById, &id.to_be_bytes(), hash)?;
+
+            asset
         };
 
         self.insert_into_disk(Column::Assets, hash, &asset)?;
@@ -192,7 +196,7 @@ impl RocksStorage {
         self.load_optional_from_disk(Column::Assets, hash)
     }
 
-    fn get_asset_type(&self, hash: &Hash) -> Result<Asset, BlockchainError> {
+    pub(super) fn get_asset_type(&self, hash: &Hash) -> Result<Asset, BlockchainError> {
         trace!("get asset type {}", hash);
         self.load_from_disk(Column::Assets, hash)
     }
@@ -200,6 +204,11 @@ impl RocksStorage {
     pub(super) fn get_asset_id(&self, hash: &Hash) -> Result<AssetId, BlockchainError> {
         trace!("get asset id {}", hash);
         self.load_from_disk(Column::Assets, hash)
+    }
+
+    pub(super) fn get_asset_hash_from_id(&self, id: AssetId) -> Result<Hash, BlockchainError> {
+        trace!("get asset hash from id id {}", id);
+        self.load_from_disk(Column::AssetById, &id.to_be_bytes())
     }
 
     fn create_asset_versioned_key(topoheight: TopoHeight, id: AssetId) -> [u8; 16] {

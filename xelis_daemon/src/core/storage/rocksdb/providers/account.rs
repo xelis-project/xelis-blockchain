@@ -209,6 +209,7 @@ impl RocksStorage {
         self.load_optional_from_disk(Column::Account, key.as_bytes())
     }
 
+    // TODO: prevent double write on creation
     pub(super) fn get_or_create_account_type(&mut self, key: &PublicKey) -> Result<Account, BlockchainError> {
         trace!("get or create account {}", key.as_address(self.is_mainnet()));
         match self.get_optional_account_type(key)? {
