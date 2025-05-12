@@ -65,6 +65,7 @@ use core::{
     },
     storage::{
         sled::StorageMode,
+        RocksStorage,
         SledStorage,
         Storage
     }
@@ -193,7 +194,12 @@ pub struct CliConfig {
     #[clap(long)]
     #[serde(skip)]
     #[serde(default)]
-    generate_config_template: bool
+    generate_config_template: bool,
+    /// Use RocksDB as DB Engine.
+    #[clap(long)]
+    #[serde(skip)]
+    #[serde(default)]
+    use_unstable_rocksdb: bool,
 }
 
 #[tokio::main]
@@ -265,18 +271,26 @@ async fn main() -> Result<()> {
     info!("XELIS Blockchain running version: {}", VERSION);
     info!("----------------------------------------------");
 
-    let storage = {
-        let use_cache = if blockchain_config.cache_size > 0 {
-            Some(blockchain_config.cache_size)
-        } else {
-            None
-        };
-
-        let dir_path = blockchain_config.dir_path.clone().unwrap_or_default();
-        SledStorage::new(dir_path, use_cache, config.network, config.internal_cache_size, config.internal_db_mode)?
+    let use_cache = if blockchain_config.cache_size > 0 {
+        Some(blockchain_config.cache_size)
+    } else {
+        None
     };
 
-    let blockchain = Blockchain::new(blockchain_config.clone(), config.network, storage).await?;
+    let dir_path = blockchain_config.dir_path.as_deref()
+        .unwrap_or_default();
+
+    if config.use_unstable_rocksdb {
+        let storage = RocksStorage::new(&dir_path, config.network);
+        start_chain(prompt, storage, config).await
+    } else {
+        let storage = SledStorage::new(dir_path.to_owned(), use_cache, config.network, config.internal_cache_size, config.internal_db_mode)?;
+        start_chain(prompt, storage, config).await
+    }
+}
+
+async fn start_chain<S: Storage>(prompt: ShareablePrompt, storage: S, config: CliConfig) -> Result<()> {
+    let blockchain = Blockchain::new(config.core.clone(), config.network, storage).await?;
     if let Err(e) = run_prompt(prompt, blockchain.clone(), config).await {
         error!("Error while running prompt: {}", e);
     }
