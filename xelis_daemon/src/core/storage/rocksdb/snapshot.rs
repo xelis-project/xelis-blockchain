@@ -1,7 +1,7 @@
 use std::collections::{btree_map::{Entry, IntoIter}, BTreeMap};
 use anyhow::Context;
 use bytes::Bytes;
-use itertools::{Itertools, Either};
+use itertools::Either;
 use xelis_common::serializer::Serializer;
 
 use crate::core::error::BlockchainError;
@@ -33,7 +33,10 @@ impl Batch {
                 let value = entry.get_mut().take();
                 (value, false)
             },
-            Entry::Vacant(_) => (None, true),
+            Entry::Vacant(v) => {
+                v.insert(None);
+                (None, true)
+            },
         }
     }
 
@@ -85,6 +88,18 @@ impl Snapshot {
             .insert(key, value);
     }
 
+    pub fn get<'a, K: AsRef<[u8]>>(&'a self, column: Column, key: K) -> Option<Option<&'a Bytes>> {
+        let batch = self.columns.get(&column)?;
+        batch.writes.get(key.as_ref())
+            .map(|v| v.as_ref())
+    }
+
+    pub fn get_size<'a, K: AsRef<[u8]>>(&'a self, column: Column, key: K) -> Option<Option<usize>> {
+        let batch = self.columns.get(&column)?;
+        batch.writes.get(key.as_ref())
+            .map(|v| v.as_ref().map(|v| v.len()))
+    }
+
     pub fn contains<K: AsRef<[u8]>>(&self, column: Column, key: K) -> Option<bool> {
         let batch = self.columns.get(&column)?;
         batch.contains(key)
@@ -94,7 +109,9 @@ impl Snapshot {
     // Both are parsed from bytes
     // It will fallback on the disk iterator
     // if the key is not present in the batch
-    pub fn iter<'a, K, V, P>(
+    // Note that this iterator is lazy and is
+    // not allocating or copying any data from it!
+    pub fn lazy_iter<'a, K, V, P>(
         &'a self,
         column: Column,
         prefix: Option<P>,
@@ -108,32 +125,36 @@ impl Snapshot {
         match self.columns.get(&column) {
             Some(tree) => {
                 let disk_iter = iterator
-                    .filter_map_ok(|(k, v)| {
-                        if tree.writes.contains_key(&*k) {
-                            Some((k, v))
-                        } else {
-                            None
-                        }
-                    })
                     .map(|res| {
                         let (key, value) = res.context("Internal error in snapshot iterator")?;
-                        Ok((K::from_bytes(&key)?, V::from_bytes(&value)?))
-                    });
 
-                let mem_iter = tree.writes.iter().map(move |(k, v)| {
-                    if let Some(val) = v {
-                        if prefix.as_ref().map_or(true, |p| k.starts_with(p.as_ref())) {
-                            Ok(Some((
-                                K::from_bytes(k)?,
-                                V::from_bytes(val)?,
-                            )))
+                        // Snapshot doesn't contains the key,
+                        // We can use the one from disk
+                        if !tree.writes.contains_key(&*key) {
+                            let k = K::from_bytes(&key)?;
+                            let v = V::from_bytes(&value)?;
+ 
+                            Ok(Some((k, v)))
                         } else {
                             Ok(None)
                         }
-                    } else {
-                        Ok(None)
-                    }
-                }).filter_map(Result::transpose);
+                    }).filter_map(Result::transpose);
+
+                let mem_iter = tree.writes.iter()
+                    .map(move |(k, v)| {
+                        if let Some(val) = v {
+                            if prefix.as_ref().map_or(true, |p| k.starts_with(p.as_ref())) {
+                                Ok(Some((
+                                    K::from_bytes(k)?,
+                                    V::from_bytes(val)?,
+                                )))
+                            } else {
+                                Ok(None)
+                            }
+                        } else {
+                            Ok(None)
+                        }
+                    }).filter_map(Result::transpose);
 
                 Either::Left(disk_iter.chain(mem_iter))
             }
@@ -150,7 +171,9 @@ impl Snapshot {
     }
 
     // Similar to `iter` but only for keys
-    pub fn iter_keys<'a, K, P>(
+    // Note that this iterator is lazy and is
+    // not allocating or copying any data from it!
+    pub fn lazy_iter_keys<'a, K, P>(
         &'a self,
         column: Column,
         prefix: Option<P>,
@@ -193,6 +216,77 @@ impl Snapshot {
                     .map(|res| {
                         let (key, _) = res.context("Internal error in snapshot iterator")?;
                         Ok(K::from_bytes(&key)?)
+                    });
+
+                Either::Right(disk_iter)
+            }
+        }
+    }
+
+    // Iterator over keys and values
+    // Both are parsed from bytes
+    // It will fallback on the disk iterator
+    // if the key is not present in the batch
+    // NOTE: this iterator will copy and allocate
+    // the data from the iterators to prevent borrowing
+    // current snapshot.
+    pub fn iter<'a, K, V, P>(
+        &self,
+        column: Column,
+        prefix: Option<P>,
+        iterator: impl Iterator<Item = Result<(Box<[u8]>, Box<[u8]>), rocksdb::Error>> + 'a,
+    ) -> impl Iterator<Item = Result<(K, V), BlockchainError>> + 'a
+    where
+        K: Serializer + 'a,
+        V: Serializer + 'a,
+        P: AsRef<[u8]> + 'a,
+    {
+        match self.columns.get(&column) {
+            Some(tree) => {
+                let disk_iter = iterator
+                    .map(|res| {
+                        let (key, value) = res.context("Internal error in snapshot iterator")?;
+
+                        // Snapshot doesn't contains the key,
+                        // We can use the one from disk
+                        if !tree.writes.contains_key(&*key) {
+                            let k = K::from_bytes(&key)?;
+                            let v = V::from_bytes(&value)?;
+
+                            Ok(Some((k, v)))
+                        } else {
+                            Ok(None)
+                        }
+                    }).filter_map(Result::transpose);
+
+                let mem_iter = tree.writes.iter()
+                    .map(move |(k, v)| {
+                        if let Some(val) = v {
+                            if prefix.as_ref().map_or(true, |p| k.starts_with(p.as_ref())) {
+                                Ok(Some((
+                                    K::from_bytes(k)?,
+                                    V::from_bytes(val)?,
+                                )))
+                            } else {
+                                Ok(None)
+                            }
+                        } else {
+                            Ok(None)
+                        }
+                    }).filter_map(Result::transpose);
+
+                let entries = mem_iter
+                    .chain(disk_iter)
+                    .collect::<Vec<_>>()
+                    .into_iter();
+
+                Either::Left(entries)
+            }
+            None => {
+                let disk_iter = iterator
+                    .map(|res| {
+                        let (key, value) = res.context("Internal error in snapshot iterator")?;
+                        Ok((K::from_bytes(&key)?, V::from_bytes(&value)?))
                     });
 
                 Either::Right(disk_iter)

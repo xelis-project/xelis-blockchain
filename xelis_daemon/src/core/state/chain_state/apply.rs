@@ -572,11 +572,6 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
         // Apply all balances changes at topoheight
         // We injected the sender balances in the receiver balances previously
         for (account, balances) in self.inner.receiver_balances {
-            for (asset, version) in balances {
-                trace!("Saving versioned balance {} for {} at topoheight {}", version, account.as_address(self.inner.storage.is_mainnet()), self.inner.topoheight);
-                self.inner.storage.set_last_balance_to(&account, &asset, self.inner.topoheight, &version).await?;
-            }
-
             // If the account has no nonce set, set it to 0
             if !self.inner.accounts.contains_key(account.as_ref()) && !self.inner.storage.has_nonce(&account).await? {
                 debug!("{} has now a balance but without any nonce registered, set default (0) nonce", account.as_address(self.inner.storage.is_mainnet()));
@@ -586,6 +581,11 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
             // Mark it as registered at this topoheight
             if !self.inner.storage.is_account_registered_for_topoheight(&account, self.inner.topoheight).await? {
                 self.inner.storage.set_account_registration_topoheight(&account, self.inner.topoheight).await?;
+            }
+
+            for (asset, version) in balances {
+                trace!("Saving versioned balance {} for {} at topoheight {}", version, account.as_address(self.inner.storage.is_mainnet()), self.inner.topoheight);
+                self.inner.storage.set_last_balance_to(&account, &asset, self.inner.topoheight, &version).await?;
             }
         }
 

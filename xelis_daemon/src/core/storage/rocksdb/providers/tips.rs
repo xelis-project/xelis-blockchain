@@ -17,7 +17,8 @@ impl TipsProvider for RocksStorage {
     // Get current chain tips
     async fn get_tips(&self) -> Result<Tips, BlockchainError> {
         trace!("get tips");
-        self.load_from_disk(Column::Common, TIPS)
+        self.load_optional_from_disk(Column::Common, TIPS)
+            .map(|v| v.unwrap_or_default())
     }
 
     // Store chain tips

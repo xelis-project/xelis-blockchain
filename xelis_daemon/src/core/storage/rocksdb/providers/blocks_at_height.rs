@@ -41,7 +41,7 @@ impl BlocksAtHeightProvider for RocksStorage {
 
         if blocks.insert(Cow::Borrowed(hash)) {
             trace!("inserted block hash at height {}", height);
-            self.insert_into_disk(Column::BlocksAtHeight, hash, &blocks)?;
+            self.insert_into_disk(Column::BlocksAtHeight, height.to_be_bytes(), &blocks)?;
         }
 
         Ok(())

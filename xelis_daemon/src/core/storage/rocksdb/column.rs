@@ -37,6 +37,9 @@ pub enum Column {
 
     // {account_key} => {Account}
     Account,
+    // {topoheight}{account_key} => {}
+    // This column is used as a reverse index
+    PrefixedRegistrations,
     // {account_id} => {account_key}
     AccountById,
 

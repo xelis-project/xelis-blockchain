@@ -17,6 +17,7 @@ use crate::core::{
             Column,
         },
         BlockProvider,
+        BlocksAtHeightProvider,
         DifficultyProvider,
         RocksStorage,
         TransactionProvider
@@ -29,7 +30,7 @@ impl BlockProvider for RocksStorage {
     async fn has_blocks(&self) -> Result<bool, BlockchainError> {
         trace!("has blocks");
         // TODO: cache
-        self.is_empty(Column::Blocks)
+        self.is_empty(Column::Blocks).map(|v| !v)
     }
 
     // Count the number of blocks stored
@@ -75,6 +76,8 @@ impl BlockProvider for RocksStorage {
             cumulative_difficulty
         };
         self.insert_into_disk(Column::BlockDifficulty, hash.as_bytes(), &block_difficulty)?;
+
+        self.add_block_hash_at_height(&hash, block.get_height()).await?;
 
         Ok(())
     }
