@@ -41,9 +41,12 @@ pub enum Column {
 
     // {account_key} => {Account}
     Account,
+    // Column used as a "versioned" as its 
+    // prefixed with a topoheight to have
+    // easier search per topoheight
     // {topoheight}{account_key} => {}
-    // This column is used as a reverse index
     PrefixedRegistrations,
+    // This column is used as a reverse index
     // {account_id} => {account_key}
     AccountById,
 
@@ -85,7 +88,8 @@ impl Column {
             | VersionedMultisig
             | VersionedAssetsSupply
             | VersionedContracts
-            | VersionedContractsBalances => Some(PREFIX_TOPOHEIGHT_LEN),
+            | VersionedContractsBalances
+            | PrefixedRegistrations => Some(PREFIX_TOPOHEIGHT_LEN),
 
             ContractsBalances => Some(PREFIX_ASSET_LEN),
             Balances => Some(PREFIX_ACCOUNT_LEN),

@@ -491,7 +491,7 @@ mod tests {
     use tempdir::TempDir;
 
     #[test]
-    fn test_prefix_iteration_behavior() {
+    fn test_rocks_db_iterator_behavior() {
         // Create a temporary RocksDB instance
         let tmp_dir = TempDir::new("rocksdb-iterator").unwrap();
    
@@ -539,7 +539,7 @@ mod tests {
             assert_eq!(results[1].1, b"value2");
         }
 
-        // Second test: iterator on range
+        // Second test: reverse iterator on range
         {
             let prefix = 2u64.to_be_bytes();
             let iter = db.iterator(IteratorMode::From(&prefix, Direction::Reverse));
