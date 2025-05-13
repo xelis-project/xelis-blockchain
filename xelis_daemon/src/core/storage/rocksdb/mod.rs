@@ -137,7 +137,7 @@ impl RocksStorage {
         Self::insert_into_disk_internal(&self.db, self.snapshot.as_mut(), column, key, value)
     }
 
-    pub(super) fn remove_from_disk<K: Serializer>(&mut self, column: Column, key: &K) -> Result<(), BlockchainError> {
+    pub(super) fn remove_from_disk<K: AsRef<[u8]>>(&mut self, column: Column, key: K) -> Result<(), BlockchainError> {
         Self::remove_from_disk_internal(&self.db, self.snapshot.as_mut(), column, key)
     }
 
@@ -240,14 +240,15 @@ impl RocksStorage {
         Ok(())
     }
 
-    pub(super) fn remove_from_disk_internal<K: Serializer>(db: &InnerDB, snapshot: Option<&mut Snapshot>, column: Column, key: &K) -> Result<(), BlockchainError> {
+    pub(super) fn remove_from_disk_internal<K: AsRef<[u8]>>(db: &InnerDB, snapshot: Option<&mut Snapshot>, column: Column, key: K) -> Result<(), BlockchainError> {
         trace!("remove from disk {:?}", column);
 
+        let bytes = key.as_ref();
         match snapshot {
-            Some(snapshot) => snapshot.delete(column, key.to_bytes()),
+            Some(snapshot) => snapshot.delete(column, bytes.to_vec()),
             None => {
                 let cf = cf_handle!(db, column);
-                db.delete_cf(&cf, key.to_bytes())
+                db.delete_cf(&cf, bytes)
                     .with_context(|| format!("Error while removing from disk column {:?}", column))?;
             }
         };

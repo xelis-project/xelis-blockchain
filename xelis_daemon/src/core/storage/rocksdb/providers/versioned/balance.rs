@@ -11,7 +11,7 @@ use crate::core::{
     storage::{
         rocksdb::{
             Column,
-            IteratorMode,
+            IteratorMode
         },
         RocksStorage,
         VersionedBalanceProvider
@@ -50,7 +50,34 @@ impl VersionedBalanceProvider for RocksStorage {
 
     // delete versioned balances above topoheight
     async fn delete_versioned_balances_above_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError> {
-        todo!()
+        let start = (topoheight + 1).to_be_bytes();
+        for res in Self::iter_owned_internal::<RawBytes, Option<TopoHeight>>(&self.db, self.snapshot.as_ref(), IteratorMode::From(&start, Direction::Forward), Column::VersionedBalances)? {
+            let (key, prev_topo) = res?;
+            // Delete the version we've read
+            Self::remove_from_disk_internal(&self.db, self.snapshot.as_mut(), Column::VersionedBalances, &key)?;
+
+            let balance_pointer = self.load_optional_from_disk(Column::Balances, &key[8..])?;
+            // This algorithm should be finding the latest valid data pointer
+            // while limiting updates, it will write the highest
+            // data pointer if any, or set to None
+
+            // Case 1: data pointer is above topoheight => we update it
+            // Case 2: data pointer is None => we update it
+            if balance_pointer.is_none_or(|v| v > topoheight) {
+                // Case 1: prev topo is below or equal to requested topoheight => update it
+                // Case 2: prev topo is None but pointer is Some => we update it
+                let filtered = prev_topo.filter(|v| *v <= topoheight);
+                if filtered != balance_pointer {
+                    if let Some(pointer) = filtered {
+                        Self::insert_into_disk_internal(&self.db, self.snapshot.as_mut(), Column::Balances, &key[8..], &pointer.to_be_bytes())?;
+                    } else {
+                        Self::remove_from_disk_internal(&self.db, self.snapshot.as_mut(), Column::Balances, &key[8..])?;
+                    }
+                }
+            }
+        }
+
+        Ok(())
     }
 
     // delete versioned balances below topoheight
