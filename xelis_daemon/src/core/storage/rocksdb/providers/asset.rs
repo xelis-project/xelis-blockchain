@@ -213,7 +213,7 @@ impl RocksStorage {
         self.load_from_disk(Column::AssetById, &id.to_be_bytes())
     }
 
-    fn create_asset_versioned_key(topoheight: TopoHeight, id: AssetId) -> [u8; 16] {
+    pub(super) fn create_asset_versioned_key(topoheight: TopoHeight, id: AssetId) -> [u8; 16] {
         let mut buffer = [0u8; 16];
 
         buffer[0..8].copy_from_slice(&topoheight.to_be_bytes());

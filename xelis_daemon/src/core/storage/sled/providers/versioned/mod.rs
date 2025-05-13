@@ -141,7 +141,7 @@ impl SledStorage {
                             patched = true;
                             let mut data: Versioned<NoTransform> = Self::load_from_disk_internal(snapshot.as_ref(), tree_versioned, &key, context)?;
                             data.set_previous_topoheight(None);
-                            tree_versioned.insert(key, data.to_bytes())?;
+                            Self::insert_into_disk(snapshot.as_mut(), tree_versioned, key, data.to_bytes())?;
                         }
                     }
                 }
