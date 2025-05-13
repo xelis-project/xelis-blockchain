@@ -31,7 +31,10 @@ use xelis_common::{
     transaction::Transaction,
     utils::detect_available_parallelism
 };
-use crate::core::error::{BlockchainError, DiskContext};
+use crate::core::{
+    error::{BlockchainError, DiskContext},
+    storage::{BlocksAtHeightProvider, ClientProtocolProvider, ContractOutputsProvider, Tips}
+};
 
 pub use column::*;
 pub use types::*;
@@ -344,14 +347,75 @@ impl RocksStorage {
 
 #[async_trait]
 impl Storage for RocksStorage {
-    // delete block at topoheight, and all pointers (hash_at_topo, topo_by_hash, reward, supply, diff, cumulative diff...)
+    // delete block at topoheight, and all its data related
     async fn delete_block_at_topoheight(&mut self, topoheight: TopoHeight) -> Result<(Hash, Immutable<BlockHeader>, Vec<(Hash, Immutable<Transaction>)>), BlockchainError> {
-        Ok(todo!())
-    }
+        trace!("Delete block at topoheight {topoheight}");
 
-    // Count is the number of blocks (topoheight) to rewind
-    async fn pop_blocks(&mut self, mut height: u64, mut topoheight: TopoHeight, count: u64, stable_height: u64) -> Result<(u64, TopoHeight, Vec<(Hash, Immutable<Transaction>)>), BlockchainError> {
-        todo!()
+        // delete topoheight<->hash pointers
+        let hash: Hash = self.load_from_disk(Column::HashAtTopo, &topoheight.to_be_bytes())?;
+        self.remove_from_disk(Column::HashAtTopo, &topoheight.to_be_bytes())?;
+
+        trace!("deleting block execution order");
+        self.remove_from_disk(Column::BlocksExecutionOrder, hash.as_bytes())?;
+
+        trace!("hash is {hash} at topo {topoheight}");
+        self.remove_from_disk(Column::TopoByHash, &hash)?;
+
+        trace!("deleting block header {}", hash);
+        let block: Immutable<BlockHeader> = self.load_from_disk(Column::Blocks, &hash)?;
+        self.remove_from_disk(Column::Blocks, &hash)?;
+        trace!("block header deleted successfully");
+
+        trace!("deleting topoheight metadata");
+        self.remove_from_disk(Column::TopoHeightMetadata, &topoheight.to_be_bytes())?;
+        trace!("topoheight metadata deleted");
+
+        trace!("deleting block difficulty");
+        self.remove_from_disk(Column::BlockDifficulty, &hash)?;
+        trace!("block deleted");
+
+        let mut txs = Vec::with_capacity(block.get_txs_count());
+        for tx_hash in block.get_transactions() {
+            // Should we delete the tx too or only unlink it
+            let mut should_delete = true;
+            if self.has_tx_blocks(tx_hash)? {
+                let mut blocks: Tips = self.load_from_disk(Column::TransactionInBlocks, tx_hash)?;
+                self.remove_from_disk(Column::TransactionInBlocks, tx_hash)?;
+
+                let blocks_len =  blocks.len();
+                blocks.remove(&hash);
+                should_delete = blocks.is_empty();
+
+                if !should_delete {
+                    self.set_blocks_for_tx(tx_hash, &blocks)?;
+                }
+
+                trace!("Tx was included in {} blocks, now: {}", blocks_len, blocks.len());
+            }
+
+            if self.is_tx_executed_in_block(tx_hash, &hash)? {
+                trace!("Tx {} was executed in block {}, deleting", topoheight, tx_hash);
+                self.unmark_tx_from_executed(&tx_hash)?;
+                self.delete_contract_outputs_for_tx(&tx_hash).await?;
+            }
+
+            // We have to check first as we may have already deleted it because of client protocol
+            // which allow multiple time the same txs in differents blocks
+            if should_delete && self.contains_data(Column::TransactionsExecuted, tx_hash)? {
+                trace!("Deleting TX {} in block {}", tx_hash, hash);
+                let tx: Immutable<Transaction> = self.load_from_disk(Column::Transactions, tx_hash)?;
+                self.remove_from_disk(Column::Transactions, tx_hash)?;
+
+                txs.push((tx_hash.clone(), tx));
+            }
+        }
+
+        // remove the block hash from the set, and delete the set if empty
+        if self.has_blocks_at_height(block.get_height()).await? {
+            self.remove_block_hash_at_height(&hash, block.get_height()).await?;
+        }
+
+        Ok((hash, block, txs))
     }
 
     // Get the size of the chain on disk in bytes

@@ -653,15 +653,14 @@ impl Storage for SledStorage {
                 trace!("Tx was included in {}, blocks left: {}", blocks_len, blocks.into_iter().map(|b| b.to_string()).collect::<Vec<String>>().join(", "));
             }
 
-            if self.is_tx_executed_in_a_block(tx_hash)? {
+            if self.is_tx_executed_in_block(tx_hash, &hash)? {
                 trace!("Tx {} was executed, deleting", tx_hash);
                 self.unmark_tx_from_executed(&tx_hash)?;
                 self.delete_contract_outputs_for_tx(&tx_hash).await?;
             }
 
-            // We have to check first as we may have already deleted it because of client protocol
-            // which allow multiple time the same txs in differents blocks
-            if should_delete && self.contains_data_cached(&self.transactions, &self.transactions_cache, tx_hash).await? {
+            // Because the TX is not linked to any other block, we can safely delete that block
+            if should_delete {
                 trace!("Deleting TX {} in block {}", tx_hash, hash);
                 let tx: Immutable<Transaction> = Self::delete_arc_cacheable_data(self.snapshot.as_mut(), &self.transactions, self.cache.transactions_cache.as_mut(), tx_hash).await?;
                 txs.push((tx_hash.clone(), tx));
