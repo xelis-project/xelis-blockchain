@@ -513,12 +513,10 @@ mod tests {
         db.put(make_key(0, b"zero"), b"value0").unwrap();
         db.put(make_key(1, b"aaaa"), b"value1").unwrap();
         db.put(make_key(2, b"bbbb"), b"value2").unwrap();
-    
-        // Create an iterator starting from 1u64.to_be_bytes()
-        let prefix = 1u64.to_be_bytes();
 
         // First test: iterator on range
         {
+            let prefix = 1u64.to_be_bytes();
             let iter = db.iterator(IteratorMode::From(&prefix, Direction::Forward));
         
             // Collect matching keys for inspection
@@ -541,9 +539,35 @@ mod tests {
             assert_eq!(results[1].1, b"value2");
         }
 
-        // Second test: iterator on prefix only
+        // Second test: iterator on range
+        {
+            let prefix = 2u64.to_be_bytes();
+            let iter = db.iterator(IteratorMode::From(&prefix, Direction::Reverse));
+
+            // Collect matching keys for inspection
+            let results: Vec<(Vec<u8>, Vec<u8>)> = iter.filter_map_ok(|(k, v)|Some((k.to_vec(), v.to_vec())))
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap();
+
+            // Extract prefixes for checking
+            let prefixes: Vec<u64> = results.iter()
+                .map(|(k, _)| {
+                    let mut buf = [0u8; 8];
+                    buf.copy_from_slice(&k[..8]);
+                    u64::from_be_bytes(buf)
+                })
+                .collect();
+        
+            // We expect keys with prefix 0 only as its below
+            assert_eq!(prefixes, vec![1, 0]);
+            assert_eq!(results[0].1, b"value1");
+            assert_eq!(results[1].1, b"value0");
+        }
+
+        // Third test: iterator on prefix only
         // First test: iterator on range
         {
+            let prefix = 1u64.to_be_bytes();
             let iter = db.prefix_iterator(prefix);
         
             // Collect matching keys for inspection
