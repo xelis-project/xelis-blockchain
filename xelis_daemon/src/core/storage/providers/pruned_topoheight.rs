@@ -9,5 +9,5 @@ pub trait PrunedTopoheightProvider {
     async fn get_pruned_topoheight(&self) -> Result<Option<TopoHeight>, BlockchainError>;
 
     // set the pruned topoheight on disk
-    async fn set_pruned_topoheight(&mut self, pruned_topoheight: TopoHeight) -> Result<(), BlockchainError>;
+    async fn set_pruned_topoheight(&mut self, pruned_topoheight: Option<TopoHeight>) -> Result<(), BlockchainError>;
 }

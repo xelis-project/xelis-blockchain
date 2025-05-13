@@ -546,7 +546,7 @@ impl<S: Storage> P2pServer<S> {
                         info!("No need to clean data, fresh sync detected");
                     }
 
-                    storage.set_pruned_topoheight(lowest_topoheight).await?;
+                    storage.set_pruned_topoheight(Some(lowest_topoheight)).await?;
                     storage.set_top_topoheight(top_topoheight).await?;
                     storage.set_top_height(top_height).await?;
                     storage.store_tips(

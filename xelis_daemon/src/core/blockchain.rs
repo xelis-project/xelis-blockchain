@@ -667,7 +667,7 @@ impl<S: Storage> Blockchain<S> {
             debug!("Pruned versioned data until topoheight {} in {}ms", located_sync_topoheight, start.elapsed().as_millis());
 
             // Update the pruned topoheight
-            storage.set_pruned_topoheight(located_sync_topoheight).await?;
+            storage.set_pruned_topoheight(Some(located_sync_topoheight)).await?;
             Ok(located_sync_topoheight)
         } else {
             debug!("located_sync_topoheight <= topoheight, no pruning needed");

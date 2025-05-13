@@ -389,7 +389,7 @@ impl<S: Storage> PrunedTopoheightProvider for ChainValidatorProvider<'_, S> {
         self.storage.get_pruned_topoheight().await
     }
 
-    async fn set_pruned_topoheight(&mut self, _: TopoHeight) -> Result<(), BlockchainError> {
+    async fn set_pruned_topoheight(&mut self, _: Option<TopoHeight>) -> Result<(), BlockchainError> {
         Err(BlockchainError::UnsupportedOperation)
     }
 }
