@@ -20,7 +20,7 @@ impl AccountProvider for RocksStorage {
     // Get the number of accounts with nonces available on chain
     async fn count_accounts(&self) -> Result<u64, BlockchainError> {
         trace!("count accounts");
-        todo!()
+        self.get_last_account_id()
     }
 
     // first time we saw this account on chain
@@ -151,13 +151,19 @@ impl AccountProvider for RocksStorage {
 }
 
 impl RocksStorage {
+    const NEXT_ACCOUNT_ID: &[u8] = b"NAID";
+
+    fn get_last_account_id(&self) -> Result<AccountId, BlockchainError> {
+        trace!("get current account id");
+        self.load_optional_from_disk::<_, AccountId>(Column::Common, Self::NEXT_ACCOUNT_ID)
+            .map(|v| v.unwrap_or(0))
+    }
+
     fn get_next_account_id(&mut self) -> Result<u64, BlockchainError> {
         trace!("get next account id");
-        let id = self.load_optional_from_disk(Column::Common, b"next_account_id")?
-            .unwrap_or(0);
-
+        let id = self.get_last_account_id()?;
         trace!("next account id is {}", id);
-        self.insert_into_disk(Column::Common, b"next_account_id", &(id + 1))?;
+        self.insert_into_disk(Column::Common, Self::NEXT_ACCOUNT_ID, &(id + 1))?;
 
         Ok(id)
     }
@@ -190,13 +196,6 @@ impl RocksStorage {
     pub(super) fn get_account_key_from_id(&self, id: AccountId) -> Result<PublicKey, BlockchainError> {
         trace!("get account key from id {}", id);
         self.load_from_disk(Column::AccountById, &id.to_be_bytes())
-    }
-
-    pub(super) fn get_account_from_id(&self, id: AccountId) -> Result<Account, BlockchainError> {
-        trace!("get account from id {}", id);
-
-        let key = self.get_account_key_from_id(id)?;
-        self.get_account_type(&key)
     }
 
     pub(super) fn get_account_type(&self, key: &PublicKey) -> Result<Account, BlockchainError> {

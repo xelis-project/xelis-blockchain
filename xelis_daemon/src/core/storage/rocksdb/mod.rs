@@ -3,13 +3,17 @@ mod types;
 mod providers;
 mod snapshot;
 
+use std::sync::Arc;
+
 use anyhow::Context;
 use async_trait::async_trait;
 use itertools::Either;
 use log::{debug, trace};
 use rocksdb::{
     ColumnFamilyDescriptor,
+    DBCompactionStyle,
     DBWithThreadMode,
+    Env,
     IteratorMode,
     MultiThreaded,
     Options,
@@ -22,8 +26,10 @@ use xelis_common::{
     crypto::Hash,
     immutable::Immutable,
     network::Network,
-    serializer::Serializer,
-    transaction::Transaction
+    serializer::{Count, Serializer},
+    tokio,
+    transaction::Transaction,
+    utils::detect_available_parallelism
 };
 use crate::core::error::{BlockchainError, DiskContext};
 
@@ -44,7 +50,7 @@ macro_rules! cf_handle {
 type InnerDB = DBWithThreadMode<MultiThreaded>;
 
 pub struct RocksStorage {
-    db: InnerDB,
+    db: Arc<InnerDB>,
     network: Network,
     snapshot: Option<Snapshot> 
 }
@@ -66,12 +72,26 @@ impl RocksStorage {
         let mut opts = Options::default();
         opts.create_if_missing(true);
         opts.create_missing_column_families(true);
+        opts.set_compaction_style(DBCompactionStyle::Universal);
+
+        // TODO: expose these config
+        let cores = detect_available_parallelism();
+        opts.increase_parallelism(cores as _);
+        opts.set_max_background_jobs(cores as _);
+        opts.set_max_subcompactions(cores as _);
+
+        opts.set_max_open_files(1024);
+        opts.set_keep_log_file_num(4);
+
+        let mut env = Env::new().expect("Creating new env");
+        env.set_low_priority_background_threads(cores  as _);
+        opts.set_env(&env);
 
         let db  = DBWithThreadMode::<MultiThreaded>::open_cf_descriptors(&opts, format!("{}{}", dir, network.to_string().to_lowercase()), cfs)
             .expect("Failed to open RocksDB");
 
         Self {
-            db,
+            db: Arc::new(db),
             network,
             snapshot: None
         }
@@ -209,7 +229,7 @@ impl RocksStorage {
         V: Serializer + 'a,
         P: AsRef<[u8]> + Copy + 'a,
     {
-        trace!("iter {:?}", column);
+        trace!("iter owned {:?}", column);
 
         let cf = cf_handle!(db, column);
         let iterator = match prefix {
@@ -336,12 +356,33 @@ impl Storage for RocksStorage {
 
     // Get the size of the chain on disk in bytes
     async fn get_size_on_disk(&self) -> Result<u64, BlockchainError> {
-        Ok(0)
+        let db = Arc::clone(&self.db);
+        tokio::task::spawn_blocking(move || {
+            let mut size = 0;
+            for column in Column::iter() {
+                let cf = cf_handle!(db, column);
+                let metadata = db.get_column_family_metadata_cf(&cf);
+                size += metadata.size;
+            }
+
+            Ok::<_, BlockchainError>(size)
+        }).await.context("Getting size on disk")?
     }
 
     // Estimate the size of the DB in bytes
     async fn estimate_size(&self) -> Result<u64, BlockchainError> {
-        Ok(0)
+        let db = Arc::clone(&self.db);
+        tokio::task::spawn_blocking(move || {
+            let mut size = 0;
+            for column in Column::iter() {
+                for res in Self::iter_internal::<Count, Count, &[u8]>(&db, None, None, column)? {
+                    let (key, value) = res?;
+                    size += (key.0 + value.0) as u64;
+                }
+            }
+
+            Ok::<_, BlockchainError>(size)
+        }).await.context("Estimating size")?
     }
 
     // Stop the storage and wait for it to finish
@@ -353,21 +394,27 @@ impl Storage for RocksStorage {
     async fn flush(&mut self) -> Result<(), BlockchainError> {
         trace!("flush DB");
 
-        for column in Column::iter() {
-            debug!("compacting column {:?}", column);
-            let cf = cf_handle!(self.db, column);
-            self.db.compact_range_cf::<&[u8], &[u8]>(&cf, None, None);
-        }
+        let db = Arc::clone(&self.db);
+        // To prevent starving the current async worker,
+        // We execute the following on a blocking thread
+        // and simply await its result 
+        tokio::task::spawn_blocking(move || {
+            for column in Column::iter() {
+                debug!("compacting column {:?}", column);
+                let cf = cf_handle!(db, column);
+                db.compact_range_cf::<&[u8], &[u8]>(&cf, None, None);
+            }
+    
+            debug!("wait for compact");
+            let options = WaitForCompactOptions::default();
+            db.wait_for_compact(&options)
+                .context("Error while waiting on compact")?;
+    
+            debug!("flushing DB");
+            db.flush()
+                .context("Error while flushing DB")?;
 
-        debug!("wait for compact");
-        let options = WaitForCompactOptions::default();
-        self.db.wait_for_compact(&options)
-            .context("Error while waiting on compact")?;
-
-        debug!("flushing DB");
-        self.db.flush()
-            .context("Error while flushing DB")?;
-
-        Ok(())
+            Ok::<_, BlockchainError>(())
+        }).await.context("Flushing DB")?
     }
 }
