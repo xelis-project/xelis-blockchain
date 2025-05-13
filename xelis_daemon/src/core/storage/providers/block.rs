@@ -19,6 +19,9 @@ pub trait BlockProvider: TransactionProvider + DifficultyProvider + BlocksAtHeig
     // Count the number of blocks stored
     async fn count_blocks(&self) -> Result<u64, BlockchainError>;
 
+    // Decrease the count of blocks that is currently stored
+    async fn decrease_blocks_count(&mut self, amount: u64) -> Result<(), BlockchainError>;
+
     // Check if the block exists using its hash
     async fn has_block_with_hash(&self, hash: &Hash) -> Result<bool, BlockchainError>;
 

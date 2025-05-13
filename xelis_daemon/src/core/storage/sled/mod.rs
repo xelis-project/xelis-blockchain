@@ -4,12 +4,9 @@ mod providers;
 
 use async_trait::async_trait;
 use itertools::Either;
-use crate::{
-    config::PRUNE_SAFETY_LIMIT,
-    core::error::{BlockchainError, DiskContext}
-};
+use crate::core::error::{BlockchainError, DiskContext};
 use xelis_common::{
-    block::{TopoHeight, BlockHeader},
+    block::BlockHeader,
     crypto::Hash,
     difficulty::{CumulativeDifficulty, Difficulty},
     immutable::Immutable,
@@ -27,7 +24,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 use lru::LruCache;
 use sled::{IVec, Tree};
-use log::{debug, trace, warn, info, error};
+use log::{debug, trace, info, error};
 
 pub use snapshot::Snapshot;
 
@@ -673,128 +670,6 @@ impl Storage for SledStorage {
         }
 
         Ok((hash, block, txs))
-    }
-
-    async fn pop_blocks(&mut self, mut height: u64, mut topoheight: TopoHeight, count: u64, until_topo_height: TopoHeight) -> Result<(u64, TopoHeight, Vec<(Hash, Immutable<Transaction>)>), BlockchainError> {
-        trace!("pop blocks from height: {}, topoheight: {}, count: {}", height, topoheight, count);
-        if topoheight < count as u64 { // also prevent removing genesis block
-            return Err(BlockchainError::NotEnoughBlocks);
-        }
-
-        // search the lowest topo height available based on count + 1
-        // (last lowest topo height accepted)
-        let mut lowest_topo = topoheight - count;
-        trace!("Lowest topoheight for rewind: {}", lowest_topo);
-
-        let pruned_topoheight = self.get_pruned_topoheight().await?.unwrap_or(0);
-
-        // we must check that we are stopping a sync block
-        // easy way for this: check the block at topo is currently alone at height
-        while lowest_topo > pruned_topoheight {
-            let hash = self.get_hash_at_topo_height(lowest_topo).await?;
-            let block_height = self.get_height_for_block_hash(&hash).await?;
-            let blocks_at_height = self.get_blocks_at_height(block_height).await?;
-            info!("blocks at height: {}", blocks_at_height.len());
-            if blocks_at_height.len() == 1 {
-                info!("Sync block found at topoheight {}", lowest_topo);
-                break;
-            } else {
-                warn!("No sync block found at topoheight {} we must go lower if possible", lowest_topo);
-                lowest_topo -= 1;
-            }
-        }
-
-        if pruned_topoheight != 0 {
-            let safety_pruned_topoheight = pruned_topoheight + PRUNE_SAFETY_LIMIT;
-            if lowest_topo <= safety_pruned_topoheight && until_topo_height != 0 {
-                warn!("Pruned topoheight is {}, lowest topoheight is {}, rewind only until {}", pruned_topoheight, lowest_topo, safety_pruned_topoheight);
-                lowest_topo = safety_pruned_topoheight;
-            }
-        }
-
-        // new TIPS for chain
-        let mut tips = self.get_tips().await?;
-
-        // Delete all orphaned blocks tips
-        for tip in tips.clone() {
-            if !self.is_block_topological_ordered(&tip).await? {
-                debug!("Tip {} is not ordered, removing", tip);
-                tips.remove(&tip);
-            }
-        }
-
-        // all txs to be rewinded
-        let mut txs = Vec::new();
-        let mut done = 0;
-        'main: loop {
-            // stop rewinding if its genesis block or if we reached the lowest topo
-            if topoheight <= lowest_topo || topoheight <= until_topo_height || topoheight == 0 { // prevent removing genesis block
-                trace!("Done: {done}, count: {count}, height: {height}, topoheight: {topoheight}, lowest topo: {lowest_topo}, stable topo: {until_topo_height}");
-                break 'main;
-            }
-
-            // Delete the hash at topoheight
-            let (hash, block, block_txs) = self.delete_block_at_topoheight(topoheight).await?;
-            self.delete_versioned_data_at_topoheight(topoheight).await?;
-
-            debug!("Block {} at topoheight {} deleted", hash, topoheight);
-            txs.extend(block_txs);
-
-            // generate new tips
-            trace!("Removing {} from {} tips", hash, tips.len());
-            tips.remove(&hash);
- 
-            for hash in block.get_tips().iter() {
-                trace!("Adding {} to {} tips", hash, tips.len());
-                tips.insert(hash.clone());
-            }
-
-            if topoheight <= pruned_topoheight {
-                warn!("Pruned topoheight is reached, this is not healthy, starting from 0");
-                topoheight = 0;
-                height = 0;
-
-                tips.clear();
-                tips.insert(self.get_hash_at_topo_height(0).await?);
-
-                Self::remove_from_disk_without_reading(self.snapshot.as_mut(), &self.extra, PRUNED_TOPOHEIGHT)?;
-                self.cache.pruned_topoheight = None;
-
-                // Clear out ALL data
-                self.delete_versioned_data_above_topoheight(0).await?;
-
-                break 'main;
-            }
-
-            topoheight -= 1;
-            // height of old block become new height
-            if block.get_height() < height {
-                height = block.get_height();
-            }
-            done += 1;
-        }
-
-        warn!("Blocks rewinded: {}, new topoheight: {}, new height: {}", done, topoheight, height);
-
-        trace!("Cleaning caches");
-        // Clear all caches to not have old data after rewind
-        self.clear_caches().await?;
-
-        trace!("Storing new pointers");
-        // store the new tips and topo topoheight
-        self.store_tips(&tips).await?;
-        self.set_top_topoheight(topoheight).await?;
-        self.set_top_height(height).await?;
-
-        // Reduce the count of blocks stored
-        let count = self.count_blocks().await? - done;
-        Self::insert_into_disk(self.snapshot.as_mut(), &self.extra, BLOCKS_COUNT, &count.to_be_bytes())?;
-
-        warn!("deleting versioned data above topoheight {}", topoheight);
-        // now delete all versioned balances and nonces above the new topoheight
-        // self.delete_versioned_data_above_topoheight(topoheight).await?;
-
-        Ok((height, topoheight, txs))
     }
 
     // Returns the current size on disk in bytes

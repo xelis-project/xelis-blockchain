@@ -40,6 +40,10 @@ impl BlockProvider for RocksStorage {
         Ok(0)
     }
 
+    async fn decrease_blocks_count(&mut self, _: u64) -> Result<(), BlockchainError> {
+        Ok(())
+    }
+
     // Check if the block exists using its hash
     async fn has_block_with_hash(&self, hash: &Hash) -> Result<bool, BlockchainError> {
         trace!("has block with hash");

@@ -52,6 +52,17 @@ impl BlockProvider for SledStorage {
         Ok(count)
     }
 
+    async fn decrease_blocks_count(&mut self, amount: u64) -> Result<(), BlockchainError> {
+        trace!("count blocks");
+        if let Some(snapshot) = self.snapshot.as_mut() {
+            snapshot.cache.blocks_count -= amount;
+        } else {
+            self.cache.blocks_count -= amount;
+        }
+
+        Ok(())
+    }
+
     async fn has_block_with_hash(&self, hash: &Hash) -> Result<bool, BlockchainError> {
         trace!("has block {}", hash);
         self.contains_data_cached(&self.blocks, &self.blocks_cache, hash).await
