@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use log::trace;
+use rocksdb::Direction;
 use xelis_common::{
     asset::{AssetData, VersionedAssetData},
     block::TopoHeight,
@@ -10,7 +11,8 @@ use crate::core::{error::BlockchainError,
         rocksdb::{
             Asset,
             AssetId,
-            Column
+            Column,
+            IteratorMode,
         },
         AssetProvider,
         NetworkProvider,
@@ -104,13 +106,13 @@ impl AssetProvider for RocksStorage {
     // Get all available assets
     async fn get_assets<'a>(&'a self) -> Result<impl Iterator<Item = Result<Hash, BlockchainError>> + 'a, BlockchainError> {
         trace!("get assets");
-        self.iter_keys(Column::Assets)
+        self.iter_keys(Column::Assets, IteratorMode::Start)
     }
 
     // Get all available assets with their Asset Data in specified range
     async fn get_assets_with_data_in_range<'a>(&'a self, minimum_topoheight: Option<u64>, maximum_topoheight: Option<u64>) -> Result<impl Iterator<Item = Result<(Hash, TopoHeight, AssetData), BlockchainError>> + 'a, BlockchainError> {
         trace!("get assets with data in range minimum_topoheight: {:?}, maximum_topoheight: {:?}", minimum_topoheight, maximum_topoheight);
-        Ok(self.iter::<Hash, Asset>(Column::Assets)?
+        Ok(self.iter::<Hash, Asset>(Column::Assets, IteratorMode::Start)?
             .map(move |res| {
                 let (asset, metadata) = res?;
 
@@ -136,7 +138,7 @@ impl AssetProvider for RocksStorage {
     async fn get_assets_for<'a>(&'a self, key: &'a PublicKey) -> Result<impl Iterator<Item = Result<Hash, BlockchainError>> + 'a, BlockchainError> {
         trace!("get assets for {}", key.as_address(self.is_mainnet()));
         let account_id = self.get_account_id(key)?;
-        self.iter_keys_prefix(Column::Balances, account_id.to_be_bytes())
+        self.iter_keys(Column::Balances, IteratorMode::WithPrefix(&account_id.to_be_bytes(), Direction::Forward))
     }
 
     // Count the number of assets stored

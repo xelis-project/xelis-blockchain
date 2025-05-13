@@ -1,11 +1,10 @@
 use async_trait::async_trait;
 use log::trace;
 use xelis_common::{block::TopoHeight, crypto::Hash};
-
 use crate::core::{
     error::BlockchainError,
     storage::{
-        rocksdb::Column,
+        rocksdb::{Column, IteratorMode},
         DagOrderProvider,
         RocksStorage
     }
@@ -51,7 +50,7 @@ impl DagOrderProvider for RocksStorage {
     async fn get_orphaned_blocks<'a>(&'a self) -> Result<impl Iterator<Item = Result<Hash, BlockchainError>> + 'a, BlockchainError> {
         trace!("get orphaned blocks");
 
-        let iter = self.iter_keys(Column::Blocks)?;
+        let iter = self.iter_keys(Column::Blocks, IteratorMode::Start)?;
         Ok(
             iter.map(|key| {
                 let hash = key?;

@@ -1,9 +1,14 @@
 use async_trait::async_trait;
+use rocksdb::Direction;
 use xelis_common::{block::TopoHeight, serializer::{Serializer, RawBytes}};
 use crate::core::{
     error::BlockchainError,
     storage::{
-        rocksdb::{AssetId, Column},
+        rocksdb::{
+            AssetId,
+            Column,
+            IteratorMode,
+        },
         RocksStorage,
         VersionedAssetProvider
     }
@@ -13,7 +18,8 @@ use crate::core::{
 impl VersionedAssetProvider for RocksStorage {
     // delete versioned assets at topoheight
     async fn delete_versioned_assets_at_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError> {
-        for res in Self::iter_owned_internal::<RawBytes, Option<TopoHeight>, _>(&self.db, self.snapshot.as_ref(), Some(topoheight.to_be_bytes()), Column::VersionedAssets)? {
+        let prefix = topoheight.to_be_bytes();
+        for res in Self::iter_owned_internal::<RawBytes, Option<TopoHeight>>(&self.db, self.snapshot.as_ref(), IteratorMode::WithPrefix(&prefix, Direction::Forward), Column::VersionedAssets)? {
             let (key, prev_topo) = res?;
 
             Self::remove_from_disk_internal(&self.db, self.snapshot.as_mut(), Column::VersionedAssets, &key)?;

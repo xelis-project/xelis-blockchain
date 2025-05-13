@@ -43,9 +43,9 @@ pub trait VersionedProvider:
         self.delete_versioned_nonces_at_topoheight(topoheight).await?;
         self.delete_versioned_multisigs_at_topoheight(topoheight).await?;
         self.delete_versioned_registrations_at_topoheight(topoheight).await?;
-        self.delete_versioned_contracts_at_topoheight(topoheight).await?;
-        self.delete_versioned_contract_data_at_topoheight(topoheight).await?;
-        self.delete_versioned_assets_supply_at_topoheight(topoheight).await?;
+        // self.delete_versioned_contracts_at_topoheight(topoheight).await?;
+        // self.delete_versioned_contract_data_at_topoheight(topoheight).await?;
+        // self.delete_versioned_assets_supply_at_topoheight(topoheight).await?;
 
         // Special case: because we inject it directly into the chain at startup
         if topoheight > 0 {

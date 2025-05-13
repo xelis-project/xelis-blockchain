@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use log::trace;
+use rocksdb::Direction;
 use xelis_common::{
     block::TopoHeight,
     crypto::PublicKey,
@@ -8,7 +9,13 @@ use xelis_common::{
 use crate::core::{
     error::BlockchainError,
     storage::{
-        rocksdb::{Account, AccountId, AssetId, Column},
+        rocksdb::{
+            Account,
+            AccountId,
+            AssetId,
+            Column,
+            IteratorMode,
+        },
         AccountProvider,
         NetworkProvider,
         RocksStorage
@@ -73,7 +80,7 @@ impl AccountProvider for RocksStorage {
     async fn get_registered_keys<'a>(&'a self, minimum_topoheight: Option<TopoHeight>, maximum_topoheight: Option<TopoHeight>) -> Result<impl Iterator<Item = Result<PublicKey, BlockchainError>> + 'a, BlockchainError> {
         trace!("get registered keys with topoheight range {:?} - {:?}", minimum_topoheight, maximum_topoheight);
         // We actually only read the registered_at field
-        Ok(self.iter::<PublicKey, Skip<8, Option<u64>>>(Column::Account)?
+        Ok(self.iter::<PublicKey, Skip<8, Option<u64>>>(Column::Account, IteratorMode::Start)?
             .map(move |res| {
                 let (key, value) = res?;
                 let Some(registered_at) = value.0 else {
@@ -125,7 +132,8 @@ impl AccountProvider for RocksStorage {
 
         // for the key, we only read the asset id, we skip the 8 bytes representing the account ID
         // as we already know it as we iter prefix on it
-        for res in self.iter_prefix::<Skip<8, AssetId>, TopoHeight, _>(Column::Balances, account.id.to_be_bytes())? {
+        let prefix = account.id.to_be_bytes();
+        for res in self.iter::<Skip<8, AssetId>, TopoHeight>(Column::Balances, IteratorMode::WithPrefix(&prefix, Direction::Forward))? {
             let (k, topo) = res?;
 
             let asset_id = k.0;

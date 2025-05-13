@@ -8,7 +8,7 @@ use xelis_common::{
 use crate::core::{
     error::BlockchainError,
     storage::{
-        rocksdb::Column,
+        rocksdb::{Column, IteratorMode},
         ClientProtocolProvider,
         RocksStorage,
         TransactionProvider
@@ -41,7 +41,7 @@ impl TransactionProvider for RocksStorage {
     // Those were not executed by the DAG
     async fn get_unexecuted_transactions<'a>(&'a self) -> Result<impl Iterator<Item = Result<Hash, BlockchainError>> + 'a, BlockchainError> {
         trace!("get unexecuted transactions");
-        let iter = self.iter_keys(Column::Transactions)?;
+        let iter = self.iter_keys(Column::Transactions, IteratorMode::Start)?;
         Ok(
             iter.map(|res| {
                 let hash = res?;

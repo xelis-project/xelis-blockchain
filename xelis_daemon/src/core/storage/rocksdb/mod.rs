@@ -13,10 +13,12 @@ use rocksdb::{
     ColumnFamilyDescriptor,
     DBCompactionStyle,
     DBWithThreadMode,
+    Direction,
     Env,
-    IteratorMode,
+    IteratorMode as InternalIteratorMode,
     MultiThreaded,
     Options,
+    ReadOptions,
     SliceTransform,
     WaitForCompactOptions
 };
@@ -51,6 +53,33 @@ macro_rules! cf_handle {
 }
 
 type InnerDB = DBWithThreadMode<MultiThreaded>;
+
+#[derive(Copy, Clone)]
+pub enum IteratorMode<'a> {
+    Start,
+    End,
+    // Allow for range start operations
+    From(&'a [u8], Direction),
+    // Strict prefix to all keys
+    WithPrefix(&'a [u8], Direction),
+}
+
+impl<'a> IteratorMode<'a> {
+    pub fn convert(self) -> (InternalIteratorMode<'a>, ReadOptions) {
+        let mut opts = ReadOptions::default();
+        let mode = match self {
+            Self::Start => InternalIteratorMode::Start,
+            Self::End => InternalIteratorMode::End,
+            Self::From(prefix, direction) => InternalIteratorMode::From(prefix, direction),
+            Self::WithPrefix(prefix, direction) => {
+                opts.set_prefix_same_as_start(true);
+                InternalIteratorMode::From(prefix, direction)
+            }
+        };
+
+        (mode, opts)
+    }
+}
 
 pub struct RocksStorage {
     db: Arc<InnerDB>,
@@ -136,7 +165,7 @@ impl RocksStorage {
         trace!("is empty {:?}", column);
 
         let cf = cf_handle!(self.db, column);
-        let mut iterator = self.db.iterator_cf(&cf, IteratorMode::Start);
+        let mut iterator = self.db.iterator_cf(&cf, InternalIteratorMode::Start);
         Ok(iterator.next().is_none())
     }
 
@@ -226,22 +255,19 @@ impl RocksStorage {
         Ok(())
     }
 
-    pub fn iter_owned_internal<'a, K, V, P>(db: &'a InnerDB, snapshot: Option<&Snapshot>, prefix: Option<P>, column: Column) -> Result<impl Iterator<Item = Result<(K, V), BlockchainError>> + 'a, BlockchainError>
+    pub fn iter_owned_internal<'a, K, V>(db: &'a InnerDB, snapshot: Option<&Snapshot>, mode: IteratorMode, column: Column) -> Result<impl Iterator<Item = Result<(K, V), BlockchainError>> + 'a, BlockchainError>
     where
         K: Serializer + 'a,
         V: Serializer + 'a,
-        P: AsRef<[u8]> + Copy + 'a,
     {
         trace!("iter owned {:?}", column);
 
         let cf = cf_handle!(db, column);
-        let iterator = match prefix {
-            Some(prefix) => db.prefix_iterator_cf(&cf, prefix),
-            None => db.iterator_cf(&cf, IteratorMode::Start)
-        };
+        let (m, opts) = mode.convert();
+        let iterator = db.iterator_cf_opt(&cf, opts, m);
 
         match snapshot {
-            Some(snapshot) => Ok(Either::Left(snapshot.iter(column, prefix, iterator))),
+            Some(snapshot) => Ok(Either::Left(snapshot.iter_owned(column, mode, iterator))),
             None => {
                 Ok(Either::Right(iterator.map(|res| {
                     let (key, value) = res.context("Internal read error in iter")?;
@@ -254,22 +280,19 @@ impl RocksStorage {
         }
     }
 
-    pub fn iter_internal<'a, K, V, P>(db: &'a InnerDB, snapshot: Option<&'a Snapshot>, prefix: Option<P>, column: Column) -> Result<impl Iterator<Item = Result<(K, V), BlockchainError>> + 'a, BlockchainError>
+    pub fn iter_internal<'a, K, V>(db: &'a InnerDB, snapshot: Option<&'a Snapshot>, mode: IteratorMode, column: Column) -> Result<impl Iterator<Item = Result<(K, V), BlockchainError>> + 'a, BlockchainError>
     where
         K: Serializer + 'a,
         V: Serializer + 'a,
-        P: AsRef<[u8]> + Copy + 'a,
     {
         trace!("iter {:?}", column);
 
         let cf = cf_handle!(db, column);
-        let iterator = match prefix {
-            Some(prefix) => db.prefix_iterator_cf(&cf, prefix),
-            None => db.iterator_cf(&cf, IteratorMode::Start)
-        };
+        let (m, opts) = mode.convert();
+        let iterator = db.iterator_cf_opt(&cf, opts, m);
 
         match snapshot {
-            Some(snapshot) => Ok(Either::Left(snapshot.lazy_iter(column, prefix, iterator))),
+            Some(snapshot) => Ok(Either::Left(snapshot.lazy_iter(column, mode, iterator))),
             None => {
                 Ok(Either::Right(iterator.map(|res| {
                     let (key, value) = res.context("Internal read error in iter")?;
@@ -282,21 +305,18 @@ impl RocksStorage {
         }
     }
 
-    pub fn iter_keys_internal<'a, K, P>(db: &'a InnerDB, snapshot: Option<&'a Snapshot>, prefix: Option<P>, column: Column) -> Result<impl Iterator<Item = Result<K, BlockchainError>> + 'a, BlockchainError>
+    pub fn iter_keys_internal<'a, K>(db: &'a InnerDB, snapshot: Option<&'a Snapshot>, mode: IteratorMode, column: Column) -> Result<impl Iterator<Item = Result<K, BlockchainError>> + 'a, BlockchainError>
     where
         K: Serializer + 'a,
-        P: AsRef<[u8]> + Copy + 'a,
     {
         trace!("iter keys {:?}", column);
 
         let cf = cf_handle!(db, column);
-        let iterator = match prefix {
-            Some(prefix) => db.prefix_iterator_cf(&cf, prefix),
-            None => db.iterator_cf(&cf, IteratorMode::Start)
-        };
+        let (m, opts) = mode.convert();
+        let iterator = db.iterator_cf_opt(&cf, opts, m);
 
         match snapshot {
-            Some(snapshot) => Ok(Either::Left(snapshot.lazy_iter_keys(column, prefix, iterator))),
+            Some(snapshot) => Ok(Either::Left(snapshot.lazy_iter_keys(column, mode, iterator))),
             None => {
                 Ok(Either::Right(iterator.map(|res| {
                     let (key, _) = res.context("Internal read error in iter_keys")?;
@@ -309,39 +329,20 @@ impl RocksStorage {
     }
 
     #[inline(always)]
-    pub fn iter<'a, K, V>(&'a self, column: Column) -> Result<impl Iterator<Item = Result<(K, V), BlockchainError>> + 'a, BlockchainError>
+    pub fn iter<'a, K, V>(&'a self, column: Column, mode: IteratorMode) -> Result<impl Iterator<Item = Result<(K, V), BlockchainError>> + 'a, BlockchainError>
     where
         K: Serializer + 'a,
         V: Serializer + 'a,
     {
-        Self::iter_internal(&self.db, self.snapshot.as_ref(), None::<&[u8]>, column)
+        Self::iter_internal(&self.db, self.snapshot.as_ref(), mode, column)
     }
 
     #[inline(always)]
-    pub fn iter_keys<'a, K>(&'a self, column: Column) -> Result<impl Iterator<Item = Result<K, BlockchainError>> + 'a, BlockchainError>
+    pub fn iter_keys<'a, K>(&'a self, column: Column, mode: IteratorMode) -> Result<impl Iterator<Item = Result<K, BlockchainError>> + 'a, BlockchainError>
     where
         K: Serializer + 'a,
     {
-        Self::iter_keys_internal(&self.db, self.snapshot.as_ref(), None::<&[u8]>, column)
-    }
-
-    #[inline(always)]
-    pub fn iter_keys_prefix<'a, K, P>(&'a self, column: Column, prefix: P) -> Result<impl Iterator<Item = Result<K, BlockchainError>> + 'a, BlockchainError>
-    where
-        K: Serializer + 'a,
-        P: AsRef<[u8]> + Copy + 'a,
-    {
-        Self::iter_keys_internal(&self.db, self.snapshot.as_ref(), Some(prefix), column)
-    }
-
-    #[inline(always)]
-    pub fn iter_prefix<'a, K, V, P>(&'a self, column: Column, prefix: P) -> Result<impl Iterator<Item = Result<(K, V), BlockchainError>> + 'a, BlockchainError>
-    where
-        K: Serializer + 'a,
-        V: Serializer + 'a,
-        P: AsRef<[u8]> + Copy + 'a,
-    {
-        Self::iter_internal(&self.db, self.snapshot.as_ref(), Some(prefix), column)
+        Self::iter_keys_internal(&self.db, self.snapshot.as_ref(), mode, column)
     }
 }
 
@@ -439,7 +440,7 @@ impl Storage for RocksStorage {
         tokio::task::spawn_blocking(move || {
             let mut size = 0;
             for column in Column::iter() {
-                for res in Self::iter_internal::<Count, Count, &[u8]>(&db, None, None, column)? {
+                for res in Self::iter_internal::<Count, Count>(&db, None, IteratorMode::Start, column)? {
                     let (key, value) = res?;
                     size += (key.0 + value.0) as u64;
                 }
@@ -480,5 +481,88 @@ impl Storage for RocksStorage {
 
             Ok::<_, BlockchainError>(())
         }).await.context("Flushing DB")?
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use itertools::Itertools;
+    use rocksdb::{Direction, IteratorMode, Options, SliceTransform, DB};
+    use tempdir::TempDir;
+
+    #[test]
+    fn test_prefix_iteration_behavior() {
+        // Create a temporary RocksDB instance
+        let tmp_dir = TempDir::new("rocksdb-iterator").unwrap();
+   
+        let mut opts = Options::default();
+        opts.create_if_missing(true);
+        opts.create_missing_column_families(true);
+        opts.set_prefix_extractor(SliceTransform::create_fixed_prefix(8));
+
+        let db = DB::open(&opts, tmp_dir.path()).unwrap();
+    
+        // Helper to encode a u64 prefix + suffix
+        fn make_key(prefix: u64, suffix: &[u8]) -> Vec<u8> {
+            let mut key = prefix.to_be_bytes().to_vec();
+            key.extend_from_slice(suffix);
+            key
+        }
+    
+        // Insert three test entries
+        db.put(make_key(0, b"zero"), b"value0").unwrap();
+        db.put(make_key(1, b"aaaa"), b"value1").unwrap();
+        db.put(make_key(2, b"bbbb"), b"value2").unwrap();
+    
+        // Create an iterator starting from 1u64.to_be_bytes()
+        let prefix = 1u64.to_be_bytes();
+
+        // First test: iterator on range
+        {
+            let iter = db.iterator(IteratorMode::From(&prefix, Direction::Forward));
+        
+            // Collect matching keys for inspection
+            let results: Vec<(Vec<u8>, Vec<u8>)> = iter.filter_map_ok(|(k, v)|Some((k.to_vec(), v.to_vec())))
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap();
+        
+            // Extract prefixes for checking
+            let prefixes: Vec<u64> = results.iter()
+                .map(|(k, _)| {
+                    let mut buf = [0u8; 8];
+                    buf.copy_from_slice(&k[..8]);
+                    u64::from_be_bytes(buf)
+                })
+                .collect();
+        
+            // We expect keys with prefix 1 and 2
+            assert_eq!(prefixes, vec![1, 2]);
+            assert_eq!(results[0].1, b"value1");
+            assert_eq!(results[1].1, b"value2");
+        }
+
+        // Second test: iterator on prefix only
+        // First test: iterator on range
+        {
+            let iter = db.prefix_iterator(prefix);
+        
+            // Collect matching keys for inspection
+            let results: Vec<(Vec<u8>, Vec<u8>)> = iter.filter_map_ok(|(k, v)|Some((k.to_vec(), v.to_vec())))
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap();
+        
+            // Extract prefixes for checking
+            let prefixes: Vec<u64> = results.iter()
+                .map(|(k, _)| {
+                    let mut buf = [0u8; 8];
+                    buf.copy_from_slice(&k[..8]);
+                    u64::from_be_bytes(buf)
+                })
+                .collect();
+        
+            // We expect keys with prefix 1 only
+            assert_eq!(prefixes, vec![1]);
+            assert_eq!(results[0].1, b"value1");
+        }
     }
 }

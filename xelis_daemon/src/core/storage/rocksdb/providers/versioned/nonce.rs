@@ -1,10 +1,15 @@
 use async_trait::async_trait;
 use log::trace;
+use rocksdb::Direction;
 use xelis_common::{block::TopoHeight, serializer::{RawBytes, Serializer}};
 use crate::core::{
     error::BlockchainError,
     storage::{
-        rocksdb::{AccountId, Column},
+        rocksdb::{
+            AccountId,
+            Column,
+            IteratorMode,
+        },
         NetworkProvider,
         RocksStorage,
         VersionedNonceProvider
@@ -16,7 +21,8 @@ impl VersionedNonceProvider for RocksStorage {
     // delete versioned nonces at topoheight
     async fn delete_versioned_nonces_at_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError> {
         trace!("delete versioned nonces at {}", topoheight);
-        for res in Self::iter_owned_internal::<RawBytes, Option<TopoHeight>, _>(&self.db, self.snapshot.as_ref(), Some(topoheight.to_be_bytes()), Column::VersionedNonces)? {
+        let prefix = topoheight.to_be_bytes();
+        for res in Self::iter_owned_internal::<RawBytes, Option<TopoHeight>>(&self.db, self.snapshot.as_ref(), IteratorMode::WithPrefix(&prefix, Direction::Forward), Column::VersionedNonces)? {
             let (key, prev_topo) = res?;
 
             Self::remove_from_disk_internal(&self.db, self.snapshot.as_mut(), Column::VersionedNonces, &key)?;

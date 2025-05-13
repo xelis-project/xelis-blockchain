@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use log::trace;
+use rocksdb::Direction;
 use xelis_common::{
     block::TopoHeight,
     crypto::PublicKey,
@@ -8,7 +9,10 @@ use xelis_common::{
 use crate::core::{
     error::BlockchainError,
     storage::{
-        rocksdb::Column,
+        rocksdb::{
+            Column,
+            IteratorMode,
+        },
         RocksStorage,
         VersionedBalanceProvider
     }
@@ -19,7 +23,8 @@ impl VersionedBalanceProvider for RocksStorage {
     // delete versioned balances at topoheight
     async fn delete_versioned_balances_at_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError> {
         trace!("delete versioned balances at {}", topoheight);
-        for res in Self::iter_owned_internal::<RawBytes, Option<TopoHeight>, _>(&self.db, self.snapshot.as_ref(), Some(topoheight.to_be_bytes()), Column::VersionedBalances)? {
+        let prefix = topoheight.to_be_bytes();
+        for res in Self::iter_owned_internal::<RawBytes, Option<TopoHeight>>(&self.db, self.snapshot.as_ref(), IteratorMode::WithPrefix(&prefix, Direction::Forward), Column::VersionedBalances)? {
             let (key, prev_topo) = res?;
             let k: PublicKey = self.load_from_disk(Column::AccountById, &key[8..16])?;
             trace!("delete versioned balance for {}", k.as_address(true));

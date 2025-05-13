@@ -2,11 +2,12 @@ use std::collections::{btree_map::{Entry, IntoIter}, BTreeMap};
 use anyhow::Context;
 use bytes::Bytes;
 use itertools::Either;
+use rocksdb::Direction;
 use xelis_common::serializer::Serializer;
 
 use crate::core::error::BlockchainError;
 
-use super::Column;
+use super::{Column, IteratorMode};
 
 pub struct Batch {
     writes: BTreeMap<Bytes, Option<Bytes>>,
@@ -111,16 +112,15 @@ impl Snapshot {
     // if the key is not present in the batch
     // Note that this iterator is lazy and is
     // not allocating or copying any data from it!
-    pub fn lazy_iter<'a, K, V, P>(
+    pub fn lazy_iter<'a, K, V>(
         &'a self,
         column: Column,
-        prefix: Option<P>,
+        mode: IteratorMode,
         iterator: impl Iterator<Item = Result<(Box<[u8]>, Box<[u8]>), rocksdb::Error>> + 'a,
     ) -> impl Iterator<Item = Result<(K, V), BlockchainError>> + 'a
     where
         K: Serializer + 'a,
         V: Serializer + 'a,
-        P: AsRef<[u8]> + 'a,
     {
         match self.columns.get(&column) {
             Some(tree) => {
@@ -131,33 +131,48 @@ impl Snapshot {
                         // Snapshot doesn't contains the key,
                         // We can use the one from disk
                         if !tree.writes.contains_key(&*key) {
-                            let k = K::from_bytes(&key)?;
-                            let v = V::from_bytes(&value)?;
- 
-                            Ok(Some((k, v)))
+                            Ok(Some((K::from_bytes(&key)?, V::from_bytes(&value)?)))
                         } else {
                             Ok(None)
                         }
                     }).filter_map(Result::transpose);
 
-                let mem_iter = tree.writes.iter()
-                    .map(move |(k, v)| {
-                        if let Some(val) = v {
-                            if prefix.as_ref().map_or(true, |p| k.starts_with(p.as_ref())) {
-                                Ok(Some((
-                                    K::from_bytes(k)?,
-                                    V::from_bytes(val)?,
-                                )))
-                            } else {
-                                Ok(None)
+                let mem_iter = match mode {
+                    IteratorMode::Start => Either::Left(Either::Left(tree.writes.iter().filter_map(|(k, v)| v.as_ref().map(|v| (k, v))))),
+                    IteratorMode::End => Either::Left(Either::Right(tree.writes.iter().rev().filter_map(|(k, v)| v.as_ref().map(|v| (k, v))))),
+                    IteratorMode::WithPrefix(prefix, direction) => {
+                        let iter = match direction {
+                            Direction::Forward => Either::Left(tree.writes.iter()),
+                            Direction::Reverse => Either::Right(tree.writes.iter().rev())
+                        };
+
+                        let cloned = prefix.to_vec();
+                        Either::Right(Either::Left(iter.filter_map(move |(k, v)| {
+                            if let Some(v) = v {
+                                if k.starts_with(&cloned) {
+                                    return Some((k, v))
+                                }
                             }
-                        } else {
-                            Ok(None)
-                        }
-                    }).filter_map(Result::transpose);
+
+                            None
+                        })))
+                    },
+                    IteratorMode::From(start, direction) => {
+                        let start = Bytes::from(start.to_vec());
+                        let iter = match direction {
+                            Direction::Forward => Either::Left(tree.writes.range(start..)),
+                            Direction::Reverse => Either::Right(tree.writes.range(start..).rev())
+                        };
+
+                        Either::Right(Either::Right(iter.filter_map(|(k, v)| v.as_ref().map(|v| (k, v)))))
+                    }
+                };
+
+                let mem_iter = mem_iter.into_iter()
+                    .map(|(k, v)| Ok((K::from_bytes(k)?, V::from_bytes(v)?)));
 
                 Either::Left(disk_iter.chain(mem_iter))
-            }
+            },
             None => {
                 let disk_iter = iterator
                     .map(|res| {
@@ -173,54 +188,17 @@ impl Snapshot {
     // Similar to `iter` but only for keys
     // Note that this iterator is lazy and is
     // not allocating or copying any data from it!
-    pub fn lazy_iter_keys<'a, K, P>(
+    pub fn lazy_iter_keys<'a, K>(
         &'a self,
         column: Column,
-        prefix: Option<P>,
+        mode: IteratorMode,
         iterator: impl Iterator<Item = Result<(Box<[u8]>, Box<[u8]>), rocksdb::Error>> + 'a,
     ) -> impl Iterator<Item = Result<K, BlockchainError>> + 'a
     where
-        K: Serializer + 'a,
-        P: AsRef<[u8]> + 'a,
+        K: Serializer + 'a
     {
-        match self.columns.get(&column) {
-            Some(tree) => {
-                let disk_iter = iterator
-                    .map(|res| {
-                        let (key, _) = res.context("Internal error in snapshot iterator")?;
-
-                        // Snapshot doesn't contains the key,
-                        // We can use the one from disk
-                        if !tree.writes.contains_key(&*key) {
-                            Ok(Some(K::from_bytes(&key)?))
-                        } else {
-                            Ok(None)
-                        }
-                    }).filter_map(Result::transpose);
-
-                let mem_iter = tree.writes.iter()
-                    .map(move |(k, v)| {
-                        if v.is_some() {
-                            if prefix.as_ref().map_or(true, |p| k.starts_with(p.as_ref())) {
-                                return Ok(Some(K::from_bytes(k)?))
-                            }
-                        }
-
-                        Ok(None)
-                    }).filter_map(Result::transpose);
-
-                Either::Left(disk_iter.chain(mem_iter))
-            }
-            None => {
-                let disk_iter = iterator
-                    .map(|res| {
-                        let (key, _) = res.context("Internal error in snapshot iterator")?;
-                        Ok(K::from_bytes(&key)?)
-                    });
-
-                Either::Right(disk_iter)
-            }
-        }
+        self.lazy_iter::<K, ()>(column, mode, iterator)
+            .map(|res| res.map(|(k, _)| k))
     }
 
     // Iterator over keys and values
@@ -230,16 +208,15 @@ impl Snapshot {
     // NOTE: this iterator will copy and allocate
     // the data from the iterators to prevent borrowing
     // current snapshot.
-    pub fn iter<'a, K, V, P>(
+    pub fn iter_owned<'a, K, V>(
         &self,
         column: Column,
-        prefix: Option<P>,
+        mode: IteratorMode,
         iterator: impl Iterator<Item = Result<(Box<[u8]>, Box<[u8]>), rocksdb::Error>> + 'a,
     ) -> impl Iterator<Item = Result<(K, V), BlockchainError>> + 'a
     where
         K: Serializer + 'a,
         V: Serializer + 'a,
-        P: AsRef<[u8]> + 'a,
     {
         match self.columns.get(&column) {
             Some(tree) => {
@@ -250,38 +227,48 @@ impl Snapshot {
                         // Snapshot doesn't contains the key,
                         // We can use the one from disk
                         if !tree.writes.contains_key(&*key) {
-                            let k = K::from_bytes(&key)?;
-                            let v = V::from_bytes(&value)?;
-
-                            Ok(Some((k, v)))
+                            Ok(Some((K::from_bytes(&key)?, V::from_bytes(&value)?)))
                         } else {
                             Ok(None)
                         }
                     }).filter_map(Result::transpose);
 
-                let mem_iter = tree.writes.iter()
-                    .map(move |(k, v)| {
-                        if let Some(val) = v {
-                            if prefix.as_ref().map_or(true, |p| k.starts_with(p.as_ref())) {
-                                Ok(Some((
-                                    K::from_bytes(k)?,
-                                    V::from_bytes(val)?,
-                                )))
-                            } else {
-                                Ok(None)
+                let mem_iter = match mode {
+                    IteratorMode::Start => Either::Left(Either::Left(tree.writes.iter().filter_map(|(k, v)| v.as_ref().map(|v| (k, v))))),
+                    IteratorMode::End => Either::Left(Either::Right(tree.writes.iter().rev().filter_map(|(k, v)| v.as_ref().map(|v| (k, v))))),
+                    IteratorMode::WithPrefix(prefix, direction) => {
+                        let iter = match direction {
+                            Direction::Forward => Either::Left(tree.writes.iter()),
+                            Direction::Reverse => Either::Right(tree.writes.iter().rev())
+                        };
+
+                        let cloned = prefix.to_vec();
+                        Either::Right(Either::Left(iter.filter_map(move |(k, v)| {
+                            if let Some(v) = v {
+                                if k.starts_with(&cloned) {
+                                    return Some((k, v))
+                                }
                             }
-                        } else {
-                            Ok(None)
-                        }
-                    }).filter_map(Result::transpose);
 
-                let entries = mem_iter
-                    .chain(disk_iter)
-                    .collect::<Vec<_>>()
-                    .into_iter();
+                            None
+                        })))
+                    },
+                    IteratorMode::From(start, direction) => {
+                        let start = Bytes::from(start.to_vec());
+                        let iter = match direction {
+                            Direction::Forward => Either::Left(tree.writes.range(start..)),
+                            Direction::Reverse => Either::Right(tree.writes.range(start..).rev())
+                        };
 
-                Either::Left(entries)
-            }
+                        Either::Right(Either::Right(iter.filter_map(|(k, v)| v.as_ref().map(|v| (k, v)))))
+                    }
+                };
+
+                let mem_iter = mem_iter.into_iter()
+                    .map(|(k, v)| Ok((K::from_bytes(k)?, V::from_bytes(v)?)));
+
+                Either::Left(disk_iter.chain(mem_iter).collect::<Vec<_>>().into_iter())
+            },
             None => {
                 let disk_iter = iterator
                     .map(|res| {

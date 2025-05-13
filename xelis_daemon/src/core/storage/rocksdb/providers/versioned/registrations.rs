@@ -1,15 +1,25 @@
 use async_trait::async_trait;
+use rocksdb::Direction;
 use xelis_common::{block::TopoHeight, serializer::{Serializer, RawBytes}};
 use crate::core::{
     error::BlockchainError,
-    storage::{rocksdb::{AccountId, Column}, RocksStorage, VersionedRegistrationsProvider}
+    storage::{
+        rocksdb::{
+            AccountId,
+            Column,
+            IteratorMode
+        },
+        RocksStorage,
+        VersionedRegistrationsProvider
+    }
 };
 
 #[async_trait]
 impl VersionedRegistrationsProvider for RocksStorage {
     // delete versioned registrations at topoheight
     async fn delete_versioned_registrations_at_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError> {
-        for res in Self::iter_owned_internal::<RawBytes, (), _>(&self.db, self.snapshot.as_ref(), Some(topoheight.to_be_bytes()), Column::PrefixedRegistrations)? {
+        let prefix = topoheight.to_be_bytes();
+        for res in Self::iter_owned_internal::<RawBytes, ()>(&self.db, self.snapshot.as_ref(), IteratorMode::WithPrefix(&prefix, Direction::Forward), Column::PrefixedRegistrations)? {
             let (key, _) = res?;
 
             Self::remove_from_disk_internal(&self.db, self.snapshot.as_mut(), Column::PrefixedRegistrations, &key)?;
@@ -30,6 +40,11 @@ impl VersionedRegistrationsProvider for RocksStorage {
 
     // delete versioned registrations above topoheight
     async fn delete_versioned_registrations_above_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError> {
-        todo!()
+        let prefix = topoheight.to_be_bytes();
+        for res in Self::iter_owned_internal::<RawBytes, ()>(&self.db, self.snapshot.as_ref(), IteratorMode::From(&prefix, Direction::Forward), Column::PrefixedRegistrations)? {
+
+        }
+
+        Ok(())
     }
 }

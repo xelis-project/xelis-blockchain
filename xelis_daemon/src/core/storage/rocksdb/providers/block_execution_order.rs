@@ -6,7 +6,7 @@ use crate::core::{
     storage::{
         BlockExecutionOrderProvider,
         RocksStorage,
-        rocksdb::Column,
+        rocksdb::{Column, IteratorMode},
         sled::BLOCKS_EXECUTION_ORDER_COUNT,
     }
 };
@@ -18,7 +18,7 @@ impl BlockExecutionOrderProvider for RocksStorage {
     // Get the blocks execution order
     async fn get_blocks_execution_order<'a>(&'a self) -> Result<impl Iterator<Item = Result<Hash, BlockchainError>> + 'a, BlockchainError> {
         trace!("get blocks execution order");
-        self.iter_keys(Column::BlocksExecutionOrder)
+        self.iter_keys(Column::BlocksExecutionOrder, IteratorMode::Start)
     }
 
     // Get the position of a block in the execution order

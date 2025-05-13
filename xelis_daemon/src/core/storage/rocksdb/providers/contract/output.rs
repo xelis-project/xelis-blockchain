@@ -12,7 +12,7 @@ use crate::core::{
 impl ContractOutputsProvider for RocksStorage {
     // Verify if the contract outputs for a transaction exist
     async fn has_contract_outputs_for_tx(&self, tx_hash: &Hash) -> Result<bool, BlockchainError> {
-        todo!()
+        Ok(false)
     }
 
     // Get the contract outputs for a transaction
@@ -27,6 +27,6 @@ impl ContractOutputsProvider for RocksStorage {
 
     // Delete the contract outputs for a transaction
     async fn delete_contract_outputs_for_tx(&mut self, tx_hash: &Hash) -> Result<(), BlockchainError> {
-        todo!()
+        Ok(())
     }
 }
