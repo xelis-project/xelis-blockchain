@@ -6,7 +6,7 @@ mod snapshot;
 use anyhow::Context;
 use async_trait::async_trait;
 use itertools::Either;
-use log::trace;
+use log::{debug, trace};
 use rocksdb::{
     ColumnFamilyDescriptor,
     DBWithThreadMode,
@@ -346,16 +346,27 @@ impl Storage for RocksStorage {
 
     // Stop the storage and wait for it to finish
     async fn stop(&mut self) -> Result<(), BlockchainError> {
-        let options = WaitForCompactOptions::default();
-        self.db.wait_for_compact(&options)
-            .context("Error while waiting on compact")?;
-        Ok(())
+        self.flush().await
     }
 
     // Flush the inner DB after a block being written
     async fn flush(&mut self) -> Result<(), BlockchainError> {
+        trace!("flush DB");
+
+        for column in Column::iter() {
+            debug!("compacting column {:?}", column);
+            let cf = cf_handle!(self.db, column);
+            self.db.compact_range_cf::<&[u8], &[u8]>(&cf, None, None);
+        }
+
+        debug!("wait for compact");
+        let options = WaitForCompactOptions::default();
+        self.db.wait_for_compact(&options)
+            .context("Error while waiting on compact")?;
+
+        debug!("flushing DB");
         self.db.flush()
-            .context("Error on flush")?;
+            .context("Error while flushing DB")?;
 
         Ok(())
     }
