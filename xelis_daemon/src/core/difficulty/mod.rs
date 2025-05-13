@@ -9,7 +9,6 @@ use xelis_common::{
 
 use crate::config::{
     KILO_HASH,
-    MEGA_HASH,
     GIGA_HASH,
     DEFAULT_MINIMUM_HASHRATE,
     MAINNET_MINIMUM_HASHRATE,
@@ -96,40 +95,38 @@ pub const fn get_minimum_difficulty(network: &Network, version: BlockVersion) ->
 }
 
 // Get minimum difficulty at hard fork
-pub const fn get_difficulty_at_hard_fork(network: &Network, version: BlockVersion) -> Difficulty {
+pub const fn get_difficulty_at_hard_fork(network: &Network, version: BlockVersion) -> Option<Difficulty> {
     let hashrate = match network {
         Network::Mainnet => match version {
             BlockVersion::V0 | BlockVersion::V1 => 20 * KILO_HASH,
-            BlockVersion::V2 => 2 * MEGA_HASH,
-            BlockVersion::V3 => 1 * GIGA_HASH,
+            BlockVersion::V2 => 2 * GIGA_HASH,
+            BlockVersion::V3 => return None,
         },
-        _ => DEFAULT_MINIMUM_HASHRATE,
+        _ => return None,
     };
 
     let block_time_target = get_block_time_target_for_version(version);
-    get_difficulty_with_target(hashrate, block_time_target)
+    Some(get_difficulty_with_target(hashrate, block_time_target))
 }
 
 #[cfg(test)]
 mod tests {
     use xelis_common::utils::format_hashrate;
-
-    use crate::config::HASH;
+    use crate::config::{HASH, MEGA_HASH};
 
     use super::*;
 
     #[test]
     fn test_difficulty_at_hard_fork() {
-        // 20 KH/s per second
-        assert_eq!(get_difficulty_at_hard_fork(&Network::Mainnet, BlockVersion::V0), Difficulty::from_u64(15 * 20 * KILO_HASH));
-        // 20 KH/s * 100 000 = 2 MH/s
-        assert_eq!(get_difficulty_at_hard_fork(&Network::Mainnet, BlockVersion::V2), Difficulty::from_u64(15 * 2 * MEGA_HASH));
+        // 20 KH/s
+        assert_eq!(get_difficulty_at_hard_fork(&Network::Mainnet, BlockVersion::V0).unwrap(), Difficulty::from_u64(15 * 20 * KILO_HASH));
+        // 2 GH/s
+        assert_eq!(get_difficulty_at_hard_fork(&Network::Mainnet, BlockVersion::V2).unwrap(), Difficulty::from_u64(15 * 2 * GIGA_HASH));
 
         // 2 KH/s per second for whole testnet
-        for version in [BlockVersion::V0, BlockVersion::V1, BlockVersion::V2] {
-            assert_eq!(get_difficulty_at_hard_fork(&Network::Testnet, version), Difficulty::from_u64(15 * 2 * KILO_HASH));
+        for version in [BlockVersion::V0, BlockVersion::V1, BlockVersion::V2, BlockVersion::V3] {
+            assert!(get_difficulty_at_hard_fork(&Network::Testnet, version).is_none());
         }
-        assert_eq!(get_difficulty_at_hard_fork(&Network::Testnet, BlockVersion::V3), Difficulty::from_u64(5 * 2 * KILO_HASH));
     }
 
     #[test]

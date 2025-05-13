@@ -1333,7 +1333,9 @@ impl<S: Storage> Blockchain<S> {
 
         // Simulator is enabled, don't calculate difficulty
         if height <= 1 || self.is_simulator_enabled() || has_hard_fork {
-            return Ok((difficulty::get_difficulty_at_hard_fork(self.get_network(), version), difficulty::get_covariance_p(version)))
+            if let Some(difficulty) = difficulty::get_difficulty_at_hard_fork(self.get_network(), version) {
+                return Ok((difficulty, difficulty::get_covariance_p(version)))
+            }
         }
 
         // Search the highest difficulty available
