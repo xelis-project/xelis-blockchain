@@ -97,7 +97,7 @@ impl VersionedAssetProvider for RocksStorage {
                     // If we are already below the threshold, we can directly erase without patching
                     let mut patched = topo < topoheight;
                     while let Some(prev_topo) = prev_version {
-                        let key = Self::create_asset_versioned_key(asset.id, prev_topo);
+                        let key = Self::get_asset_versioned_key(asset.id, prev_topo);
     
                         // Delete this version from DB if its below the threshold
                         prev_version = self.load_from_disk(Column::VersionedAssets, &key)?;

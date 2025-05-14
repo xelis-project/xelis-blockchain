@@ -26,13 +26,9 @@ use log::trace;
 impl ContractProvider for SledStorage {
     async fn set_last_contract_to<'a>(&mut self, hash: &Hash, topoheight: TopoHeight, contract: VersionedContract<'a>) -> Result<(), BlockchainError> {
         trace!("Setting contract {} at topoheight {}", hash, topoheight);
-        self.set_contract_at_topoheight(hash, topoheight, contract).await?;
-        self.set_last_topoheight_for_contract(hash, topoheight).await?;
-        Ok(())
-    }
+        let key = self.get_versioned_contract_key(hash, topoheight);
+        Self::insert_into_disk(self.snapshot.as_mut(), &self.versioned_contracts, &key, contract.to_bytes())?;
 
-    async fn set_last_topoheight_for_contract(&mut self, hash: &Hash, topoheight: TopoHeight) -> Result<(), BlockchainError> {
-        trace!("Setting last topoheight for contract {} to {}", hash, topoheight);
         let prev = Self::insert_into_disk(self.snapshot.as_mut(), &self.contracts, hash.as_bytes(), &topoheight.to_be_bytes())?;
         if prev.is_none() {
             self.store_contracts_count(self.count_contracts().await? + 1)?;
@@ -161,13 +157,6 @@ impl ContractProvider for SledStorage {
         }
 
         Ok(contracts)
-    }
-
-    async fn set_contract_at_topoheight<'a>(&mut self, hash: &Hash, topoheight: TopoHeight, contract: VersionedContract<'a>) -> Result<(), BlockchainError> {
-        trace!("Setting contract {} at topoheight {}", hash, topoheight);
-        let key = self.get_versioned_contract_key(hash, topoheight);
-        Self::insert_into_disk(self.snapshot.as_mut(), &self.versioned_contracts, &key, contract.to_bytes())?;
-        Ok(())
     }
 
     async fn delete_last_topoheight_for_contract(&mut self, hash: &Hash) -> Result<(), BlockchainError> {

@@ -28,9 +28,6 @@ pub trait ContractProvider {
     // Deploy a contract
     async fn set_last_contract_to<'a>(&mut self, hash: &Hash, topoheight: TopoHeight, contract: VersionedContract<'a>) -> Result<(), BlockchainError>;
 
-    // Set the last topoheight for a given contract
-    async fn set_last_topoheight_for_contract(&mut self, hash: &Hash, topoheight: TopoHeight) -> Result<(), BlockchainError>;
-
     // Retrieve the last topoheight for a given contract
     async fn get_last_topoheight_for_contract(&self, hash: &Hash) -> Result<TopoHeight, BlockchainError>;
 
@@ -45,9 +42,6 @@ pub trait ContractProvider {
 
     // Retrieve the size of a contract at a given topoheight without loading the contract
     async fn get_contract_size_at_topoheight(&self, hash: &Hash, topoheight: TopoHeight) -> Result<usize, BlockchainError>;
-
-    // Store a contract at a given topoheight
-    async fn set_contract_at_topoheight<'a>(&mut self, hash: &Hash, topoheight: TopoHeight, contract: VersionedContract<'a>) -> Result<(), BlockchainError>;
 
     // Delete the last topoheight for a given contract
     async fn delete_last_topoheight_for_contract(&mut self, hash: &Hash) -> Result<(), BlockchainError>;

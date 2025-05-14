@@ -16,21 +16,9 @@ pub trait SupplyProvider {
     // Verify if we have a versioned data at exact topoheight
     async fn has_asset_supply_at_exact_topoheight(&self, asset: &Hash, topoheight: TopoHeight) -> Result<bool, BlockchainError>;
 
-    // Get the latest supply topoheight for asset
-    async fn get_last_topoheight_for_asset_supply(&self, asset: &Hash) -> Result<TopoHeight, BlockchainError>;
-
-    // Get a versioned supply at a specific topoheight
-    async fn get_asset_supply_at_topoheight(&self, asset: &Hash, topoheight: TopoHeight) -> Result<VersionedSupply, BlockchainError>;
-
     // Get the supply at the maximum topoheight
     async fn get_asset_supply_at_maximum_topoheight(&self, asset: &Hash, topoheight: TopoHeight) -> Result<Option<(TopoHeight, VersionedSupply)>, BlockchainError>;
 
     // Set the latest supply pointer for this asset and store the versioned data
     async fn set_last_supply_for_asset(&mut self, asset: &Hash, topoheight: TopoHeight, supply: &VersionedSupply) -> Result<(), BlockchainError>;
-
-    // Set the topoheight as last pointer for the asset supply
-    async fn set_last_topoheight_for_asset_supply(&mut self, asset: &Hash, topoheight: TopoHeight) -> Result<(), BlockchainError>;
-
-    // Store the versioned supply to a specific topoheight
-    async fn set_asset_supply_at_topoheight(&mut self, asset: &Hash, topoheight: TopoHeight, supply: &VersionedSupply) -> Result<(), BlockchainError>;
 }

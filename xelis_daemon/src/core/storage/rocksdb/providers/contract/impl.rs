@@ -4,17 +4,20 @@ use xelis_common::{
     block::TopoHeight,
     crypto::Hash
 };
-use crate::core::{error::BlockchainError, storage::{ContractProvider, RocksStorage, VersionedContract}};
+use crate::core::{
+    error::BlockchainError,
+    storage::{
+        rocksdb::{Column, ContractId},
+        ContractProvider,
+        RocksStorage,
+        VersionedContract
+    }
+};
 
 #[async_trait]
 impl ContractProvider for RocksStorage {
     // Deploy a contract
     async fn set_last_contract_to<'a>(&mut self, hash: &Hash, topoheight: TopoHeight, contract: VersionedContract<'a>) -> Result<(), BlockchainError> {
-        todo!()
-    }
-
-    // Set the last topoheight for a given contract
-    async fn set_last_topoheight_for_contract(&mut self, hash: &Hash, topoheight: TopoHeight) -> Result<(), BlockchainError> {
         todo!()
     }
 
@@ -40,11 +43,6 @@ impl ContractProvider for RocksStorage {
 
     // Retrieve the size of a contract at a given topoheight without loading the contract
     async fn get_contract_size_at_topoheight(&self, hash: &Hash, topoheight: TopoHeight) -> Result<usize, BlockchainError> {
-        todo!()
-    }
-
-    // Store a contract at a given topoheight
-    async fn set_contract_at_topoheight<'a>(&mut self, hash: &Hash, topoheight: TopoHeight, contract: VersionedContract<'a>) -> Result<(), BlockchainError> {
         todo!()
     }
 
@@ -83,5 +81,15 @@ impl ContractProvider for RocksStorage {
     // Count the number of contracts
     async fn count_contracts(&self) -> Result<u64, BlockchainError> {
         todo!()
+    }
+}
+
+impl RocksStorage {
+    pub(super) fn get_contract_id(&self, contract: &Hash) -> Result<ContractId, BlockchainError> {
+        self.load_from_disk(Column::Contracts, contract)
+    }
+
+    pub(super) fn get_contract_from_id(&self, contract: ContractId) -> Result<Hash, BlockchainError> {
+        self.load_from_disk(Column::ContractById, &contract.to_be_bytes())
     }
 }

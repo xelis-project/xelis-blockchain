@@ -566,7 +566,7 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
 
         // Apply all the contract outputs
         for (key, outputs) in self.contract_manager.outputs {
-            self.inner.storage.set_contract_outputs_for_tx(&key, outputs).await?;
+            self.inner.storage.set_contract_outputs_for_tx(&key, &outputs).await?;
         }
 
         // Apply all balances changes at topoheight

@@ -35,7 +35,7 @@ impl AssetProvider for RocksStorage {
     async fn has_asset_at_exact_topoheight(&self, hash: &Hash, topoheight: TopoHeight) -> Result<bool, BlockchainError> {
         trace!("has asset {} at topoheight {}", hash, topoheight);
         let asset = self.get_asset_type(hash)?;
-        let key = Self::create_asset_versioned_key(topoheight, asset.id);
+        let key = Self::get_asset_versioned_key(topoheight, asset.id);
 
         self.contains_data(Column::VersionedAssets, &key)
     }
@@ -85,7 +85,7 @@ impl AssetProvider for RocksStorage {
                 return Ok(Some((previous, data)))
             }
 
-            let key = Self::create_asset_versioned_key(topoheight, metadata.id);
+            let key = Self::get_asset_versioned_key(topoheight, metadata.id);
             topo = self.load_from_disk(Column::VersionedAssets, &key)?;
         }
 
@@ -125,7 +125,7 @@ impl AssetProvider for RocksStorage {
                     return Ok(None)
                 }
 
-                let key = Self::create_asset_versioned_key(topoheight, metadata.id);
+                let key = Self::get_asset_versioned_key(topoheight, metadata.id);
                 match self.load_optional_from_disk::<_, VersionedAssetData>(Column::VersionedAssets, &key)? {
                     Some(data) => Ok(Some((asset, topoheight, data.take()))),
                     None => Ok(None)
@@ -175,7 +175,7 @@ impl AssetProvider for RocksStorage {
 
         self.insert_into_disk(Column::Assets, hash, &asset)?;
 
-        let key = Self::create_asset_versioned_key(topoheight, asset.id);
+        let key = Self::get_asset_versioned_key(topoheight, asset.id);
         self.insert_into_disk(Column::VersionedAssets, &key, &data)
     }
 }
@@ -194,7 +194,7 @@ impl RocksStorage {
 
     fn get_asset_at_topoheight_internal(&self, id: AssetId, topoheight: TopoHeight) -> Result<VersionedAssetData, BlockchainError> {
         trace!("get asset at topoheight internal {} {}", id, topoheight);
-        let key = Self::create_asset_versioned_key(topoheight, id);
+        let key = Self::get_asset_versioned_key(topoheight, id);
         self.load_from_disk(Column::VersionedAssets, &key)
     }
 
@@ -218,7 +218,7 @@ impl RocksStorage {
         self.load_from_disk(Column::AssetById, &id.to_be_bytes())
     }
 
-    pub(super) fn create_asset_versioned_key(topoheight: TopoHeight, id: AssetId) -> [u8; 16] {
+    pub(super) fn get_asset_versioned_key(topoheight: TopoHeight, id: AssetId) -> [u8; 16] {
         let mut buffer = [0u8; 16];
 
         buffer[0..8].copy_from_slice(&topoheight.to_be_bytes());

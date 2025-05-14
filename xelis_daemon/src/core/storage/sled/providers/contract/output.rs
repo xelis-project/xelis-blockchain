@@ -19,7 +19,7 @@ impl ContractOutputsProvider for SledStorage {
         self.load_from_disk(&self.contracts_outputs, tx_hash.as_bytes(), DiskContext::ContractOutputs)
     }
 
-    async fn set_contract_outputs_for_tx(&mut self, tx_hash: &Hash, contract_output: Vec<ContractOutput>) -> Result<(), BlockchainError> {
+    async fn set_contract_outputs_for_tx(&mut self, tx_hash: &Hash, contract_output: &Vec<ContractOutput>) -> Result<(), BlockchainError> {
         Self::insert_into_disk(self.snapshot.as_mut(), &self.contracts_outputs, tx_hash.as_bytes(), contract_output.to_bytes())?;
         Ok(())
     }

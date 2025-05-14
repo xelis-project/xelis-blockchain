@@ -71,16 +71,12 @@ impl ContractBalanceProvider for SledStorage {
         Ok((topoheight, self.load_from_disk(&self.versioned_contracts_balances, &key, DiskContext::ContractBalance)?))
     }
 
-    async fn set_last_topoheight_for_contract_balance(&mut self, contract: &Hash, asset: &Hash, topoheight: TopoHeight) -> Result<(), BlockchainError> {
-        Self::insert_into_disk(self.snapshot.as_mut(), &self.contracts_balances, &Self::get_contract_balance_key(contract, asset), &topoheight.to_be_bytes())?;
-        Ok(())
-    }
-
     async fn set_last_contract_balance_to(&mut self, contract: &Hash, asset: &Hash, topoheight: TopoHeight, balance: VersionedContractBalance) -> Result<(), BlockchainError> {
         let key = Self::get_versioned_key(Self::get_contract_balance_key(contract, asset), topoheight);
         Self::insert_into_disk(self.snapshot.as_mut(), &self.versioned_contracts_balances, &key, balance.to_bytes())?;
+        Self::insert_into_disk(self.snapshot.as_mut(), &self.contracts_balances, &Self::get_contract_balance_key(contract, asset), &topoheight.to_be_bytes())?;
 
-        self.set_last_topoheight_for_contract_balance(contract, asset, topoheight).await
+        Ok(())
     }
 }
 
