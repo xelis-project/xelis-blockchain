@@ -533,7 +533,7 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
             for (key, (state, value)) in cache.storage {
                 if state.should_be_stored() {
                     trace!("Saving contract data {} key {} at topoheight {}", contract, key, self.inner.topoheight);
-                    self.inner.storage.set_last_contract_data_to(&contract, &key, self.inner.topoheight, VersionedContractData::new(value, state.get_topoheight())).await?;
+                    self.inner.storage.set_last_contract_data_to(&contract, &key, self.inner.topoheight, &VersionedContractData::new(value, state.get_topoheight())).await?;
                 }
             }
 
@@ -560,7 +560,7 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
         for (hash, (state, module)) in self.inner.contracts {
             if state.should_be_stored() {
                 trace!("Saving contract {} at topoheight {}", hash, self.inner.topoheight);
-                self.inner.storage.set_last_contract_to(&hash, self.inner.topoheight, VersionedContract::new(module, state.get_topoheight())).await?;
+                self.inner.storage.set_last_contract_to(&hash, self.inner.topoheight, &VersionedContract::new(module, state.get_topoheight())).await?;
             }
         }
 

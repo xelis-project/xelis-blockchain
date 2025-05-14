@@ -209,7 +209,11 @@ impl<S: Storage> P2pServer<S> {
                 }
 
                 let page = page.unwrap_or(0);
-                let contracts = storage.get_contracts(MAX_ITEMS_PER_PAGE, page as usize * MAX_ITEMS_PER_PAGE, min, max).await?;
+                let contracts = storage.get_contracts(min, max).await?
+                    .skip(page as usize * MAX_ITEMS_PER_PAGE)
+                    .take(MAX_ITEMS_PER_PAGE)
+                    .collect::<Result<IndexSet<Hash>, _>>()?;
+
                 let page = if contracts.len() == MAX_ITEMS_PER_PAGE {
                     Some(page + 1)
                 } else {
@@ -448,7 +452,7 @@ impl<S: Storage> P2pServer<S> {
                                     debug!("Saving contract metadata for {}", contract);
                                     let module = &metadata.module;
                                     let versioned = VersionedContract::new(Some(Cow::Borrowed(module)), None);
-                                    storage.set_last_contract_to(&contract, stable_topoheight, versioned).await?;
+                                    storage.set_last_contract_to(&contract, stable_topoheight, &versioned).await?;
                                 },
                             };
 

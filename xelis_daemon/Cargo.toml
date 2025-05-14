@@ -24,6 +24,7 @@ xelis-environment = { git = "https://github.com/xelis-project/xelis-vm", branch 
 xelis-vm = { git = "https://github.com/xelis-project/xelis-vm", branch = "dev" }
 rocksdb = "0.23.0"
 strum = { version = "0.27.1", features = ["derive"] }
+xxhash-rust = { version = "0.8.15", features = ["xxh3"] }
 
 # Common dependencies
 tokio = { version = "1", features = ["rt-multi-thread", "io-util", "io-std", "time", "macros", "sync", "net"] }

@@ -81,8 +81,12 @@ pub enum Column {
     // {contract_id} => {contract_hash}
     ContractById,
 
-    // {topoheight}{contract} => {version}
+    // {topoheight}{contract_id} => {version}
     VersionedContracts,
+    // {topoheight}{contract_id}{data_key} => {version}
+    VersionedContractsData,
+    // {contract_id}{data_key} => {topoheight}
+    ContractsData,
 
     // {contract}{asset} => {topoheight}
     ContractsBalances,
@@ -105,6 +109,7 @@ impl Column {
             | VersionedAssetsSupply
             | VersionedContracts
             | VersionedContractsBalances
+            | VersionedContractsData
             | PrefixedRegistrations => Some(PREFIX_TOPOHEIGHT_LEN),
 
             ContractsBalances => Some(PREFIX_ASSET_LEN),

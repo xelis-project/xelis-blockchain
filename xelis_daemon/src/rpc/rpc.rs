@@ -1624,7 +1624,9 @@ async fn get_contract_module<S: Storage>(context: &Context, body: Value) -> Resu
     let params: GetContractModuleParams = parse_params(body)?;
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let storage = blockchain.get_storage().read().await;
-    let topoheight = storage.get_last_topoheight_for_contract(&params.contract).await?;
+    let Some(topoheight) = storage.get_last_topoheight_for_contract(&params.contract).await? else {
+        return Err(InternalRpcError::InvalidParams("no contract module available"));
+    };
     let module = storage.get_contract_at_topoheight_for(&params.contract, topoheight).await
         .context("Error while retrieving contract module")?;
 
@@ -1636,10 +1638,10 @@ async fn get_contract_data<S: Storage>(context: &Context, body: Value) -> Result
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let storage = blockchain.get_storage().read().await;
 
-    let topoheight = storage.get_last_topoheight_for_contract_data(&params.contract, &params.key).await
-        .context("Error while retrieving last topoheight for contract data")?;
+    let topoheight = storage.get_last_topoheight_for_contract_data(&params.contract, &params.key).await?
+        .context("No data found with requested key")?;
 
-    let version = storage.get_contract_data_at_topoheight_for(&params.contract, &params.key, topoheight).await?;
+    let version = storage.get_contract_data_at_exact_topoheight_for(&params.contract, &params.key, topoheight).await?;
 
     Ok(json!(RPCVersioned {
         topoheight,
@@ -1653,7 +1655,7 @@ async fn get_contract_data_at_topoheight<S: Storage>(context: &Context, body: Va
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let storage = blockchain.get_storage().read().await;
 
-    let version = storage.get_contract_data_at_topoheight_for(&params.contract, &params.key, params.topoheight).await?;
+    let version = storage.get_contract_data_at_exact_topoheight_for(&params.contract, &params.key, params.topoheight).await?;
 
     Ok(json!(version))
 }
