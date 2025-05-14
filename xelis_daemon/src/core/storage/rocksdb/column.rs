@@ -61,8 +61,11 @@ pub enum Column {
     // {topoheight}{account_id}{asset_id} => versioned
     VersionedBalances,
 
-    // {contract}
+    // {contract_hash} => {contract}
     Contracts,
+    // {contract_id} => {contract_hash}
+    ContractById,
+
     // {topoheight}{contract}
     VersionedContracts,
 

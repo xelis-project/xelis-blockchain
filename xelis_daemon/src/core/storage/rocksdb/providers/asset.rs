@@ -5,6 +5,7 @@ use xelis_common::{
     asset::{AssetData, VersionedAssetData},
     block::TopoHeight,
     crypto::{Hash, PublicKey},
+    serializer::Skip,
 };
 use crate::core::{error::BlockchainError,
     storage::{
@@ -138,7 +139,11 @@ impl AssetProvider for RocksStorage {
     async fn get_assets_for<'a>(&'a self, key: &'a PublicKey) -> Result<impl Iterator<Item = Result<Hash, BlockchainError>> + 'a, BlockchainError> {
         trace!("get assets for {}", key.as_address(self.is_mainnet()));
         let account_id = self.get_account_id(key)?;
-        self.iter_keys(Column::Balances, IteratorMode::WithPrefix(&account_id.to_be_bytes(), Direction::Forward))
+        self.iter_keys::<Skip<8, AssetId>>(Column::Balances, IteratorMode::WithPrefix(&account_id.to_be_bytes(), Direction::Forward))
+            .map(|iter| iter.map(|res| {
+                let k = res?;
+                self.get_asset_hash_from_id(k.0)
+            }))
     }
 
     // Count the number of assets stored

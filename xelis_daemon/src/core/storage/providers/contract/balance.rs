@@ -29,7 +29,7 @@ pub trait ContractBalanceProvider {
     async fn get_last_contract_balance(&self, contract: &Hash, asset: &Hash) -> Result<(TopoHeight, VersionedContractBalance), BlockchainError>;
 
     // Get all the contract balances assets
-    async fn get_contract_assets_for(&self, contract: &Hash) -> Result<impl Iterator<Item = Result<Hash, BlockchainError>>, BlockchainError>;
+    async fn get_contract_assets_for<'a>(&'a self, contract: &'a Hash) -> Result<impl Iterator<Item = Result<Hash, BlockchainError>> + 'a, BlockchainError>;
 
     // Set the last topoheight that the contract has a balance
     async fn set_last_topoheight_for_contract_balance(&mut self, contract: &Hash, asset: &Hash, topoheight: TopoHeight) -> Result<(), BlockchainError>;
