@@ -70,7 +70,6 @@ impl RocksStorage {
         Ok(())
     }
 
-
     pub fn delete_versioned_below_topoheight(&mut self, column_pointer: Column, column_versioned: Column, topoheight: TopoHeight, keep_last: bool) -> Result<(), BlockchainError> {
         let start = topoheight.to_be_bytes();
         if keep_last {
@@ -94,15 +93,13 @@ impl RocksStorage {
                     prev_version = self.load_from_disk(column_versioned, &versioned_key)?;
                     if patched {
                         Self::remove_from_disk_internal(&self.db, self.snapshot.as_mut(), column_versioned, &versioned_key)?;
-                    } else {
-                        if prev_version.is_some_and(|v| v < topoheight) {
-                            trace!("Patching versioned data at topoheight {}", topoheight);
-                            patched = true;
-                            let mut data: Versioned<RawBytes> = self.load_from_disk(column_versioned, &versioned_key)?;
-                            data.set_previous_topoheight(None);
+                    } else if prev_version.is_some_and(|v| v < topoheight) {
+                        trace!("Patching versioned data at topoheight {}", topoheight);
+                        patched = true;
+                        let mut data: Versioned<RawBytes> = self.load_from_disk(column_versioned, &versioned_key)?;
+                        data.set_previous_topoheight(None);
 
-                            Self::insert_into_disk_internal(&self.db, self.snapshot.as_mut(), column_versioned, &versioned_key, &data)?;
-                        }
+                        Self::insert_into_disk_internal(&self.db, self.snapshot.as_mut(), column_versioned, &versioned_key, &data)?;
                     }
                 }
             }
