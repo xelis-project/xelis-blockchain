@@ -4,7 +4,7 @@ use log::trace;
 use xelis_common::{
     block::TopoHeight,
     serializer::{RawBytes, Serializer},
-    versioned_type::Versioned
+    versioned_type::Versioned,
 };
 use crate::core::{
     error::BlockchainError,
@@ -24,25 +24,22 @@ use crate::core::{
 impl VersionedAssetProvider for RocksStorage {
     // delete versioned assets at topoheight
     async fn delete_versioned_assets_at_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError> {
+        trace!("delete versioned assets at topoheight {}", topoheight);
         let prefix = topoheight.to_be_bytes();
         for res in Self::iter_owned_internal::<RawBytes, Option<TopoHeight>>(&self.db, self.snapshot.as_ref(), IteratorMode::WithPrefix(&prefix, Direction::Forward), Column::VersionedAssets)? {
-            let (key, prev_topo) = res?;
+            let (versioned_key, prev_topo) = res?;
 
-            Self::remove_from_disk_internal(&self.db, self.snapshot.as_mut(), Column::VersionedAssets, &key)?;
+            Self::remove_from_disk_internal(&self.db, self.snapshot.as_mut(), Column::VersionedAssets, &versioned_key)?;
 
-            let key_without_prefix = &key[8..];
+            let key_without_prefix = &versioned_key[8..];
+            
             let asset_id = AssetId::from_bytes(&key_without_prefix[0..8])?;
             let asset_hash = self.get_asset_hash_from_id(asset_id)?;
             let mut asset = self.get_asset_type(&asset_hash)?;
 
-            if let Some(pointer) = Self::load_optional_from_disk_internal::<_, TopoHeight>(&self.db, self.snapshot.as_ref(), Column::Assets, key_without_prefix)? {
-                if pointer >= topoheight {
-                    if let Some(prev_topo) = prev_topo {
-                        asset.data_pointer = Some(prev_topo);
-                    } else {
-                        asset.data_pointer = None;                        
-                    }
-
+            if asset.data_pointer.is_none_or(|pointer| pointer >= topoheight) {
+                if asset.data_pointer != prev_topo {
+                    asset.data_pointer = prev_topo;
                     Self::insert_into_disk_internal(&self.db, self.snapshot.as_mut(), Column::Assets, &asset_hash, &asset)?;
                 }
             }
@@ -53,6 +50,7 @@ impl VersionedAssetProvider for RocksStorage {
 
     // delete versioned assets above topoheight
     async fn delete_versioned_assets_above_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError> {
+        trace!("delete versioned assets above topoheight {}", topoheight);
         let start = (topoheight + 1).to_be_bytes();
         for res in Self::iter_owned_internal::<RawBytes, Option<TopoHeight>>(&self.db, self.snapshot.as_ref(), IteratorMode::From(&start, Direction::Forward), Column::VersionedAssets)? {
             let (key, prev_topo) = res?;
@@ -85,6 +83,7 @@ impl VersionedAssetProvider for RocksStorage {
 
     // delete versioned assets below topoheight
     async fn delete_versioned_assets_below_topoheight(&mut self, topoheight: TopoHeight, keep_last: bool) -> Result<(), BlockchainError> {
+        trace!("delete versioned assets below topoheight {}", topoheight);
         let start = topoheight.to_be_bytes();
         if keep_last {
             for res in Self::iter_owned_internal::<(), Asset>(&self.db, self.snapshot.as_ref(), IteratorMode::Start, Column::Assets)? {

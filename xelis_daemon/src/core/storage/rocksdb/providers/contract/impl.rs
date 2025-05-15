@@ -184,7 +184,7 @@ impl RocksStorage {
         self.load_from_disk(Column::Contracts, contract)
     }
 
-    pub(super) fn get_contract_type(&self, contract: &Hash) -> Result<Contract, BlockchainError> {
+    pub fn get_contract_type(&self, contract: &Hash) -> Result<Contract, BlockchainError> {
         self.load_from_disk(Column::Contracts, contract)
     }
 
@@ -204,11 +204,11 @@ impl RocksStorage {
         }
     }
 
-    pub(super) fn get_contract_from_id(&self, contract: ContractId) -> Result<Hash, BlockchainError> {
+    pub fn get_contract_from_id(&self, contract: ContractId) -> Result<Hash, BlockchainError> {
         self.load_from_disk(Column::ContractById, &contract.to_be_bytes())
     }
 
-    pub(super) fn get_versioned_contract_key(contract: ContractId, topoheight: TopoHeight) -> [u8; 16] {
+    pub fn get_versioned_contract_key(contract: ContractId, topoheight: TopoHeight) -> [u8; 16] {
         let mut buf = [0u8; 16];
         buf[0..8].copy_from_slice(&topoheight.to_be_bytes());
         buf[8..16].copy_from_slice(&contract.to_be_bytes());
