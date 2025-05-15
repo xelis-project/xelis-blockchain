@@ -1,9 +1,9 @@
 use async_trait::async_trait;
 use xelis_common::block::TopoHeight;
-use crate::core::{error::BlockchainError, storage::{RocksStorage, VersionedSupplyProvider}};
+use crate::core::{error::BlockchainError, storage::{RocksStorage, VersionedAssetsSupplyProvider}};
 
 #[async_trait]
-impl VersionedSupplyProvider for RocksStorage {
+impl VersionedAssetsSupplyProvider for RocksStorage {
     async fn delete_versioned_assets_supply_at_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError> {
         Ok(())
     }

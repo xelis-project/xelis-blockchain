@@ -103,7 +103,7 @@ impl ContractBalanceProvider for RocksStorage {
 }
 
 impl RocksStorage {
-    pub(super) fn get_contract_balance_key(contract: ContractId, asset: AssetId) -> [u8; 16] {
+    pub fn get_contract_balance_key(contract: ContractId, asset: AssetId) -> [u8; 16] {
         let mut buf = [0u8; 16];
         buf[0..8].copy_from_slice(&contract.to_be_bytes());
         buf[8..16].copy_from_slice(&asset.to_be_bytes());
@@ -111,7 +111,7 @@ impl RocksStorage {
         buf
     }
 
-    pub(super) fn get_versioned_contract_balance_key(contract: ContractId, asset: AssetId, topoheight: TopoHeight) -> [u8; 24] {
+    pub fn get_versioned_contract_balance_key(contract: ContractId, asset: AssetId, topoheight: TopoHeight) -> [u8; 24] {
         let mut buf = [0u8; 24];
         buf[0..8].copy_from_slice(&topoheight.to_be_bytes());
         buf[8..16].copy_from_slice(&contract.to_be_bytes());

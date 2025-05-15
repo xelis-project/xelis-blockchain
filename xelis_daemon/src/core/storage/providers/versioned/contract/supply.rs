@@ -3,7 +3,7 @@ use xelis_common::block::TopoHeight;
 use crate::core::error::BlockchainError;
 
 #[async_trait]
-pub trait VersionedSupplyProvider {
+pub trait VersionedAssetsSupplyProvider {
     async fn delete_versioned_assets_supply_at_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError>;
 
     async fn delete_versioned_assets_supply_above_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError>;

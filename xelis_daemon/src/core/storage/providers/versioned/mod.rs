@@ -32,7 +32,7 @@ pub trait VersionedProvider:
     + VersionedContractDataProvider
     + VersionedContractBalanceProvider
     + VersionedAssetProvider
-    + VersionedSupplyProvider
+    + VersionedAssetsSupplyProvider
     + VersionedCacheProvider
     + VersionedDagOrderProvider {
 
@@ -43,9 +43,9 @@ pub trait VersionedProvider:
         self.delete_versioned_nonces_at_topoheight(topoheight).await?;
         self.delete_versioned_multisigs_at_topoheight(topoheight).await?;
         self.delete_versioned_registrations_at_topoheight(topoheight).await?;
-        // self.delete_versioned_contracts_at_topoheight(topoheight).await?;
-        // self.delete_versioned_contract_data_at_topoheight(topoheight).await?;
-        // self.delete_versioned_assets_supply_at_topoheight(topoheight).await?;
+        self.delete_versioned_contracts_at_topoheight(topoheight).await?;
+        self.delete_versioned_contract_data_at_topoheight(topoheight).await?;
+        self.delete_versioned_assets_supply_at_topoheight(topoheight).await?;
 
         // Special case: because we inject it directly into the chain at startup
         if topoheight > 0 {
@@ -63,8 +63,11 @@ pub trait VersionedProvider:
         self.delete_versioned_balances_below_topoheight(topoheight, keep_last).await?;
         self.delete_versioned_nonces_below_topoheight(topoheight, keep_last).await?;
         self.delete_versioned_multisigs_below_topoheight(topoheight, keep_last).await?;
+
         self.delete_versioned_contracts_below_topoheight(topoheight, keep_last).await?;
         self.delete_versioned_contract_data_below_topoheight(topoheight, keep_last).await?;
+        self.delete_versioned_contract_balances_below_topoheight(topoheight, keep_last).await?;
+
         self.delete_versioned_assets_supply_below_topoheight(topoheight, keep_last).await?;
         self.delete_versioned_assets_below_topoheight(topoheight, keep_last).await?;
 
@@ -78,8 +81,11 @@ pub trait VersionedProvider:
         self.delete_versioned_nonces_above_topoheight(topoheight).await?;
         self.delete_versioned_multisigs_above_topoheight(topoheight).await?;
         self.delete_versioned_registrations_above_topoheight(topoheight).await?;
+
         self.delete_versioned_contracts_above_topoheight(topoheight).await?;
         self.delete_versioned_contract_data_above_topoheight(topoheight).await?;
+        self.delete_versioned_contract_balances_above_topoheight(topoheight).await?;
+
         self.delete_versioned_assets_supply_above_topoheight(topoheight).await?;
         self.delete_versioned_assets_above_topoheight(topoheight).await?;
 

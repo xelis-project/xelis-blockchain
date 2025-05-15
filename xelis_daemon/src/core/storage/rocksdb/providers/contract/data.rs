@@ -107,7 +107,7 @@ impl RocksStorage {
         buf
     }
 
-    pub(super) fn get_versioned_contract_data_key(contract: ContractId, key: &ValueCell, topoheight: TopoHeight) -> [u8; 24] {
+    pub fn get_versioned_contract_data_key(contract: ContractId, key: &ValueCell, topoheight: TopoHeight) -> [u8; 24] {
         let mut buf = [0u8; 24];
         buf[0..8].copy_from_slice(&topoheight.to_be_bytes());
         buf[8..16].copy_from_slice(&contract.to_be_bytes());
