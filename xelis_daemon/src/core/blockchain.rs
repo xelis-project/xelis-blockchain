@@ -192,6 +192,8 @@ pub struct Blockchain<S: Storage> {
     full_order_cache: Mutex<LruCache<(Hash, Hash, u64), IndexSet<Hash>>>,
     // auto prune mode if enabled, will delete all blocks every N and keep only N top blocks (topoheight based)
     auto_prune_keep_n_blocks: Option<u64>,
+    // Flush storage manually to the disk every N blocks (topoheight based)
+    flush_db_every_n_blocks: Option<u64>,
     // Blocks hashes checkpoints
     // No rewind can be done below these blocks
     checkpoints: HashSet<Hash>,
@@ -200,8 +202,6 @@ pub struct Blockchain<S: Storage> {
     // in differents groups and will verify them in parallel
     // If set to one, it will use the main thread directly
     txs_verification_threads_count: usize,
-    // Force the DB to be flushed after each block added
-    force_db_flush: bool,
 }
 
 impl<S: Storage> Blockchain<S> {
@@ -276,7 +276,7 @@ impl<S: Storage> Blockchain<S> {
             skip_block_template_txs_verification: config.skip_block_template_txs_verification,
             checkpoints: config.checkpoints.into_iter().collect(),
             txs_verification_threads_count: config.txs_verification_threads_count,
-            force_db_flush: config.force_db_flush
+            flush_db_every_n_blocks: config.flush_db_every_n_blocks,
         };
 
         // include genesis block
@@ -2685,7 +2685,7 @@ impl<S: Storage> Blockchain<S> {
         }
 
         // Flush to the disk
-        if self.force_db_flush {
+        if self.flush_db_every_n_blocks.is_some_and(|n| current_topoheight % n == 0) {
             storage.flush().await?;
         }
 

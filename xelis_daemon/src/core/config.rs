@@ -349,12 +349,11 @@ pub struct Config {
     #[clap(long)]
     #[serde(default)]
     pub recovery_mode: bool,
-    /// Force DB flush after each block being added in chain.
-    /// Flush after each block added ensure no corruption occurs in case
-    /// the daemon is killed.
+    /// Flush the storage onto the disk every N blocks (topoheight based).
+    /// In case of RocksDB, this will also compact the changes. 
     #[clap(long)]
     #[serde(default)]
-    pub force_db_flush: bool
+    pub flush_db_every_n_blocks: Option<u64>
 }
 
 mod humantime_serde {
