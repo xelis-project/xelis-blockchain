@@ -196,10 +196,11 @@ pub struct CliConfig {
     #[serde(default)]
     generate_config_template: bool,
     /// Use RocksDB as DB Engine.
+    /// By default will use `sled` for retro-compatibility.
     #[clap(long)]
     #[serde(skip)]
     #[serde(default)]
-    use_unstable_rocksdb: bool,
+    use_rocksdb_backend: bool,
 }
 
 #[tokio::main]
@@ -280,7 +281,7 @@ async fn main() -> Result<()> {
     let dir_path = blockchain_config.dir_path.as_deref()
         .unwrap_or_default();
 
-    if config.use_unstable_rocksdb {
+    if config.use_rocksdb_backend {
         let storage = RocksStorage::new(&dir_path, config.network);
         start_chain(prompt, storage, config).await
     } else {
