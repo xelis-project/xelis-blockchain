@@ -88,7 +88,6 @@ use {
         rpc_server::RpcRequest,
         prompt::{
             ShareablePrompt,
-            DEFAULT_LOGS_DATETIME_FORMAT,
             default_logs_datetime_format,
         },
         tokio::{
@@ -168,7 +167,7 @@ pub struct PrecomputedTablesConfig {
 #[derive(Debug, clap::Args, Serialize, Deserialize)]
 pub struct LogConfig {
     /// Set log level
-    #[clap(long, value_enum, default_value_t = LogLevel::Info)]
+    #[clap(long, value_enum, default_value_t)]
     #[serde(default)]
     log_level: LogLevel,
     /// Set file log level
@@ -204,14 +203,14 @@ pub struct LogConfig {
     /// By default filename is xelis-wallet.log.
     /// File will be stored in logs directory, this is only the filename, not the full path.
     /// Log file is rotated every day and has the format YYYY-MM-DD.xelis-wallet.log.
-    #[clap(long, default_value_t = String::from("xelis-wallet.log"))]
+    #[clap(long, default_value_t = default_logs_path())]
     #[serde(default = "default_log_filename")]
     filename_log: String,
     /// Logs directory
     /// 
     /// By default it will be logs/ of the current directory.
     /// It must end with a / to be a valid folder.
-    #[clap(long, default_value_t = String::from("logs/"))]
+    #[clap(long, default_value_t = default_logs_path())]
     #[serde(default = "default_logs_path")]
     logs_path: String,
     /// Module configuration for logs
@@ -223,7 +222,7 @@ pub struct LogConfig {
     #[serde(default)]
     disable_ascii_art: bool,
     /// Change the datetime format used by the logger
-    #[clap(long, default_value = DEFAULT_LOGS_DATETIME_FORMAT)]
+    #[clap(long, default_value_t = default_logs_datetime_format())]
     #[serde(default = "default_logs_datetime_format")]
     datetime_format: String,
 }
