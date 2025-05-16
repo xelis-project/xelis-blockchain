@@ -12,6 +12,7 @@ use log::{debug, trace};
 use rocksdb::{
     ColumnFamilyDescriptor,
     DBCompactionStyle,
+    DBCompressionType,
     DBWithThreadMode,
     Direction,
     Env,
@@ -22,6 +23,7 @@ use rocksdb::{
     SliceTransform,
     WaitForCompactOptions
 };
+use serde::{Deserialize, Serialize};
 use strum::IntoEnumIterator;
 use xelis_common::{
     block::{BlockHeader, TopoHeight},
@@ -53,6 +55,38 @@ macro_rules! cf_handle {
 }
 
 type InnerDB = DBWithThreadMode<MultiThreaded>;
+
+#[derive(Debug, Copy, Clone, clap::ValueEnum, Serialize, Deserialize)]
+#[clap(rename_all = "snake_case")]
+pub enum CompressionMode {
+    None,
+    Snappy,
+    Zlib,
+    Bz2,
+    Lz4,
+    Lz4hc,
+    Zstd,
+}
+
+impl Default for CompressionMode {
+    fn default() -> Self {
+        Self::Snappy
+    }
+}
+
+impl CompressionMode {
+    pub fn convert(self) -> DBCompressionType {
+        match self {
+            Self::None => DBCompressionType::None,
+            Self::Snappy => DBCompressionType::Snappy,
+            Self::Zlib => DBCompressionType::Zlib,
+            Self::Bz2 => DBCompressionType::Bz2,
+            Self::Lz4 => DBCompressionType::Lz4,
+            Self::Lz4hc => DBCompressionType::Lz4hc,
+            Self::Zstd => DBCompressionType::Zstd,
+        }
+    }
+}
 
 #[derive(Copy, Clone)]
 pub enum IteratorMode<'a> {
@@ -116,6 +150,7 @@ impl RocksStorage {
         let mut env = Env::new().expect("Creating new env");
         env.set_low_priority_background_threads(config.low_priority_background_threads as _);
         opts.set_env(&env);
+        opts.set_compression_type(config.compression_mode.convert());
 
         let db  = DBWithThreadMode::<MultiThreaded>::open_cf_descriptors(&opts, format!("{}{}", dir, network.to_string().to_lowercase()), cfs)
             .expect("Failed to open RocksDB");

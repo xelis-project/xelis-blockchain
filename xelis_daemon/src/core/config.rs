@@ -21,7 +21,7 @@ use crate::{
     p2p::diffie_hellman::{KeyVerificationAction, WrappedSecret}
 };
 
-use super::simulator::Simulator;
+use super::{simulator::Simulator, storage::rocksdb::CompressionMode};
 
 // Functions helpers for serde default values
 fn default_p2p_bind_address() -> String {
@@ -330,6 +330,10 @@ pub struct RocksDBConfig {
     #[clap(name = "rocksdb-keep-max-log-files", long, default_value_t = default_keep_max_log_files())]
     #[serde(default = "default_keep_max_log_files")]
     pub keep_max_log_files: usize,
+    /// Compression mode to use for RocksDB.
+    #[clap(name = "rocksdb-compression-mode", value_enum, long, default_value_t)]
+    #[serde(default)]
+    pub compression_mode: CompressionMode,
 }
 
 #[derive(Debug, Clone, clap::Args, Serialize, Deserialize)]
