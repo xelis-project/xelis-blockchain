@@ -1321,6 +1321,8 @@ impl<S: Storage> Blockchain<S> {
         I: IntoIterator<Item = &'a Hash> + ExactSizeIterator + Clone,
         I::IntoIter: ExactSizeIterator
     {
+        trace!("get difficulty at tips");
+
         // Get the height at the tips
         let height = blockdag::calculate_height_at_tips(provider, tips.clone().into_iter()).await?;
 
@@ -1328,12 +1330,19 @@ impl<S: Storage> Blockchain<S> {
         let (has_hard_fork, version) = has_hard_fork_at_height(self.get_network(), height);
 
         if tips.len() == 0 { // Genesis difficulty
+            trace!("genesis difficulty");
             return Ok((GENESIS_BLOCK_DIFFICULTY, difficulty::get_covariance_p(version)))
         }
 
-        // Simulator is enabled, don't calculate difficulty
-        if height <= 1 || self.is_simulator_enabled() || has_hard_fork {
+        // if simulator is enabled or we are too low in height, don't calculate difficulty
+        if height <= 1 || self.is_simulator_enabled() {
+            let difficulty = difficulty::get_minimum_difficulty(self.get_network(), version);
+            return Ok((difficulty, difficulty::get_covariance_p(version)))
+        }
+
+        if has_hard_fork {
             if let Some(difficulty) = difficulty::get_difficulty_at_hard_fork(self.get_network(), version) {
+                trace!("difficulty for hard fork found");
                 return Ok((difficulty, difficulty::get_covariance_p(version)))
             }
         }
