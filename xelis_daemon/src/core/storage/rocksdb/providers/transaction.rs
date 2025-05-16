@@ -33,8 +33,8 @@ impl TransactionProvider for RocksStorage {
     // Count the number of transactions stored
     async fn count_transactions(&self) -> Result<u64, BlockchainError> {
         trace!("count transactions");
-        // TODO: to implement with cache
-        Ok(0)
+        self.count_entries(Column::Transactions)
+            .map(|v| v as _)
     }
 
     // Get all the unexecuted transactions

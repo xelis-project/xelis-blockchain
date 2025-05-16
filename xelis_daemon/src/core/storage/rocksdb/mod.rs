@@ -106,7 +106,6 @@ impl RocksStorage {
         opts.create_missing_column_families(true);
         opts.set_compaction_style(DBCompactionStyle::Universal);
 
-        // TODO: expose these config
         opts.increase_parallelism(config.parallelism as _);
         opts.set_max_background_jobs(config.max_background_jobs as _);
         opts.set_max_subcompactions(config.max_subcompaction_jobs as _);
@@ -157,15 +156,33 @@ impl RocksStorage {
         Ok(value.is_some())
     }
 
-    // NOTE: If its used over a snapshot, we can't ensure that its fully empty
-    // Because we would have to iterate over all the keys in the column
-    // and check that they are all marked as deleted in snapshot
+    // Check if its empty by checking the snapshot cache first, and then the raw DB
     pub fn is_empty(&self, column: Column) -> Result<bool, BlockchainError> {
         trace!("is empty {:?}", column);
 
         let cf = cf_handle!(self.db, column);
         let mut iterator = self.db.iterator_cf(&cf, InternalIteratorMode::Start);
+
+        if let Some(snapshot) = self.snapshot.as_ref() {
+            return Ok(snapshot.is_empty(column, iterator))
+        }
+
         Ok(iterator.next().is_none())
+    }
+
+
+    // Count how many entries we have stored in a column
+    pub fn count_entries(&self, column: Column) -> Result<usize, BlockchainError> {
+        trace!("count entries {:?}", column);
+
+        let cf = cf_handle!(self.db, column);
+        let iterator = self.db.iterator_cf(&cf, InternalIteratorMode::Start);
+
+        if let Some(snapshot) = self.snapshot.as_ref() {
+            return Ok(snapshot.count_entries(column, iterator))
+        }
+
+        Ok(iterator.count())
     }
 
     pub fn load_optional_from_disk<K: AsRef<[u8]> + ?Sized, V: Serializer>(&self, column: Column, key: &K) -> Result<Option<V>, BlockchainError> {

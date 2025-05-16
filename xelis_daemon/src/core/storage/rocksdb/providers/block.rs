@@ -29,15 +29,14 @@ impl BlockProvider for RocksStorage {
     // Check if the storage has blocks
     async fn has_blocks(&self) -> Result<bool, BlockchainError> {
         trace!("has blocks");
-        // TODO: cache
         self.is_empty(Column::Blocks).map(|v| !v)
     }
 
     // Count the number of blocks stored
     async fn count_blocks(&self) -> Result<u64, BlockchainError> {
         trace!("count blocks");
-        // TODO: cache
-        Ok(0)
+        self.count_entries(Column::Blocks)
+            .map(|v| v as _)
     }
 
     async fn decrease_blocks_count(&mut self, _: u64) -> Result<(), BlockchainError> {

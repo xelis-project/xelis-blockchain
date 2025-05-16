@@ -83,6 +83,58 @@ impl Snapshot {
             .remove(key);
     }
 
+    pub fn count_entries(&self, column: Column, iterator: impl Iterator<Item = Result<(Box<[u8]>, Box<[u8]>), rocksdb::Error>>) -> usize {
+        let changes = self.columns.get(&column);
+        iterator.map(|res| {
+            let (k, _) = res?;
+
+            let is_deleted = changes.map_or(false, |changes| changes.writes.get(k.as_ref())
+                .map_or(false, |v| v.is_none())
+            );
+
+            let v = if is_deleted {
+                None
+            } else {
+                Some(())
+            };
+
+            Ok::<_, rocksdb::Error>(v)
+        }).filter_map(Result::transpose)
+        .count()
+    }
+
+    pub fn is_empty(&self, column: Column, iterator: impl Iterator<Item = Result<(Box<[u8]>, Box<[u8]>), rocksdb::Error>>) -> bool {
+        let changes = self.columns.get(&column);
+
+        if let Some(batch) = changes.as_ref() {
+            let any = batch.writes.iter()
+                .find(|(_, v)| v.is_some());
+    
+            if any.is_some() {
+                return true
+            }
+        }
+
+        let next = iterator.map(|res| {
+            let (k, _) = res?;
+
+            let is_deleted = changes.map_or(false, |changes| changes.writes.get(k.as_ref())
+                .map_or(false, |v| v.is_none())
+            );
+
+            let v = if is_deleted {
+                None
+            } else {
+                Some(())
+            };
+
+            Ok::<_, rocksdb::Error>(v)
+        }).filter_map(Result::transpose)
+        .next();
+
+        next.is_none()
+    }
+
     pub fn put<K: Into<Bytes>, V: Into<Bytes>>(&mut self, column: Column, key: K, value: V) {
         self.columns.entry(column)
             .or_insert_with(Batch::default)
