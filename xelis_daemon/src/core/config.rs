@@ -23,7 +23,6 @@ use crate::{
 
 use super::simulator::Simulator;
 
-
 // Functions helpers for serde default values
 fn default_p2p_bind_address() -> String {
     DEFAULT_P2P_BIND_ADDRESS.to_owned()
@@ -65,29 +64,27 @@ const fn debug_log_level() -> LogLevel {
     LogLevel::Debug
 }
 
-
 const fn default_db_cache_size() -> u64 {
     64 * 1024 * 1024 // 64 MB
 }
 
-
 #[derive(Debug, Clone, clap::Args, Serialize, Deserialize)]
 pub struct GetWorkConfig {
     /// Disable GetWork Server (WebSocket for miners).
-    #[clap(long = "getwork-disable-server")]
+    #[clap(name = "getwork-disable-server", long)]
     #[serde(default)]
     pub disable: bool,
     /// Set the rate limit for GetWork server in milliseconds.
     /// In case of high transactions added in mempool, new jobs are rate limited.
     /// If is set to 0 (no limit), any new job will be sent to miners directly.
-    #[clap(long = "getwork-rate-limit-ms", default_value_t = default_getwork_rate_limit_ms())]
+    #[clap(name = "getwork-rate-limit-ms", long, default_value_t = default_getwork_rate_limit_ms())]
     #[serde(default = "default_getwork_rate_limit_ms")]
     pub rate_limit_ms: u64,
     /// Set the concurrency for GetWork server during a new job notification.
     /// Notify concurrently to N miners at a time.
     /// Set to 0 means no limit and will process as one task per miner.
     /// Default is detected based on available parallelism.
-    #[clap(long = "getwork-notify-job-concurrency", default_value_t = detect_available_parallelism())]
+    #[clap(name = "getwork-notify-job-concurrency", long, default_value_t = detect_available_parallelism())]
     #[serde(default = "detect_available_parallelism")]
     pub notify_job_concurrency: usize,
 }
@@ -101,16 +98,16 @@ pub struct RPCConfig {
     pub getwork: GetWorkConfig,
     /// Disable RPC Server
     /// This will also disable the GetWork Server as it is loaded on RPC server.
-    #[clap(long = "rpc-disable-server")]
+    #[clap(name = "rpc-disable-server", long)]
     #[serde(default)]
     pub disable: bool,
     /// RPC bind address to listen for HTTP requests
-    #[clap(long = "rpc-bind-address", default_value_t = default_rpc_bind_address())]
+    #[clap(name = "rpc-bind-address", long, default_value_t = default_rpc_bind_address())]
     #[serde(default = "default_rpc_bind_address")]
     pub bind_address: String,
     /// Number of workers to spawn for the HTTP server.
     /// If not provided, it will use the available paralellism.
-    #[clap(long = "rpc-threads", default_value_t = detect_available_parallelism())]
+    #[clap(name = "rpc-threads", long, default_value_t = detect_available_parallelism())]
     #[serde(default = "detect_available_parallelism")]
     pub threads: usize,
     /// RPC Server notification events concurrency
@@ -118,7 +115,7 @@ pub struct RPCConfig {
     /// that will be used to notify the events to the clients.
     /// By default, it will use the available parallelism.
     /// If set to 0, it will be unlimited.
-    #[clap(long = "rpc-notify-events-concurrency", default_value_t = detect_available_parallelism())]
+    #[clap(name = "rpc-notify-events-concurrency", long, default_value_t = detect_available_parallelism())]
     #[serde(default = "detect_available_parallelism")]
     pub notify_events_concurrency: usize,
 }
@@ -130,7 +127,7 @@ pub struct P2pConfig {
     #[clap(long)]
     pub tag: Option<String>,
     /// P2p bind address to listen for incoming connections
-    #[clap(long = "p2p-bind-address", default_value_t = default_p2p_bind_address())]
+    #[clap(name = "p2p-bind-address", long, default_value_t = default_p2p_bind_address())]
     #[serde(default = "default_p2p_bind_address")]
     pub bind_address: String,
     /// Number of maximums peers allowed
@@ -150,7 +147,7 @@ pub struct P2pConfig {
     /// Disable the P2P Server.
     /// No connections will be accepted.
     /// Node will not be able to communicate the network.
-    #[clap(long = "p2p-disable-server")]
+    #[clap(name = "p2p-disable-server", long)]
     #[serde(default)]
     pub disable: bool,
     /// Allow fast sync mode.
@@ -200,16 +197,16 @@ pub struct P2pConfig {
     /// Disable P2P outgoing connections from peers.
     /// 
     /// This is useful for seed nodes under heavy load or for nodes that don't want to connect to others.
-    #[clap(long = "p2p-disable-outgoing-connections")]
+    #[clap(name = "p2p-disable-outgoing-connections", long)]
     #[serde(default)]
     pub disable_outgoing_connections: bool,
     /// Limit of concurrent tasks accepting new incoming connections.
-    #[clap(long = "p2p-concurrency-task-count-limit", default_value_t = default_p2p_concurrency_task_count_limit())]
+    #[clap(name = "p2p-concurrency-task-count-limit", long, default_value_t = default_p2p_concurrency_task_count_limit())]
     #[serde(default = "default_p2p_concurrency_task_count_limit")]
     pub concurrency_task_count_limit: usize,
     /// Execute a specific action when the P2p Diffie-Hellman Key of a peer is different from our stored one.
     /// By default, it will ignore the key change and update it.
-    #[clap(long = "p2p-on-dh-key-change", value_enum, default_value_t = KeyVerificationAction::Ignore)]
+    #[clap(name = "p2p-on-dh-key-change", long, value_enum, default_value_t = KeyVerificationAction::Ignore)]
     #[serde(default)]
     pub on_dh_key_change: KeyVerificationAction,
     /// P2p DH private key to use.
@@ -220,20 +217,20 @@ pub struct P2pConfig {
     /// across several restarts.
     /// Note that reusing the same key may allow to track your node
     /// across your IP changes.
-    #[clap(long = "p2p-dh-private-key")]
+    #[clap(name = "p2p-dh-private-key", long)]
     pub dh_private_key: Option<WrappedSecret>,
     /// P2P Concurrency to use during streams.
     /// This is used to configure the number of concurrent tasks
     /// that will be used to process the streams.
     /// By default, it will use the available parallelism.
     /// If set to 0, it will be unlimited.
-    #[clap(long = "p2p-stream-concurrency", default_value_t = detect_available_parallelism())]
+    #[clap(name = "p2p-stream-concurrency", long, default_value_t = detect_available_parallelism())]
     #[serde(default = "detect_available_parallelism")]
     pub stream_concurrency: usize,
     /// P2P Time to set when banning a peer temporarily due to the fail count limit reached.
     /// This is used to configure the time to wait before unbanning the peer.
     /// By default, it will be set to 15 minutes.
-    #[clap(long = "p2p-temp-ban-duration", default_value_t = default_p2p_temp_ban_duration())]
+    #[clap(name = "p2p-temp-ban-duration", long, default_value_t = default_p2p_temp_ban_duration())]
     #[serde(
         with = "humantime_serde",
         default = "default_p2p_temp_ban_duration"
@@ -242,7 +239,7 @@ pub struct P2pConfig {
     /// P2P Fail count limit to ban a peer temporarily.
     /// This is used to configure the number of failed requests
     /// before banning the peer temporarily.
-    #[clap(long = "p2p-fail-count-limit", default_value_t = default_p2p_fail_count_limit())]
+    #[clap(name = "p2p-fail-count-limit", long, default_value_t = default_p2p_fail_count_limit())]
     #[serde(default = "default_p2p_fail_count_limit")]
     pub fail_count_limit: u8,
     /// Force the P2P to re-execute an orphaned block during chain sync.
@@ -250,21 +247,23 @@ pub struct P2pConfig {
     /// and re-add it to the chain.
     /// This may be useful in case of an issue while syncing
     /// NOTE: In versions 1.17 and below, this was the default behavior.
-    #[clap(long = "p2p-reexecute-blocks-on-sync")]
+    #[clap(name = "p2p-reexecute-blocks-on-sync", long)]
     #[serde(default)]
     pub reexecute_blocks_on_sync: bool,
     /// P2P log level for the block propagation
     /// This is used to configure the log level used during the block propagation to peers.
     /// By default, it will be set to "debug".
-    #[clap(long = "p2p-block-propagation-log-level", value_enum, default_value_t = LogLevel::Debug)]
+    #[clap(name = "p2p-block-propagation-log-level", long, value_enum, default_value_t = LogLevel::Debug)]
     #[serde(default = "debug_log_level")]
     pub block_propagation_log_level: LogLevel,
 }
 
 #[derive(Debug, Clone, Copy, clap::ValueEnum, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
 pub enum StorageBackend {
+    #[serde(rename = "sled")]
     Sled,
+    #[serde(rename = "rocksdb")]
+    #[clap(name = "rocksdb")]
     RocksDB
 }
 
@@ -277,15 +276,15 @@ impl Default for StorageBackend {
 #[derive(Debug, Clone, clap::Args, Serialize, Deserialize)]
 pub struct SledConfig {
     /// Set LRUCache size (0 = disabled).
-    #[clap(long = "sled-cache-size", default_value_t = default_cache_size())]
+    #[clap(name = "sled-cache-size", long, default_value_t = default_cache_size())]
     #[serde(default = "default_cache_size")]
     pub cache_size: usize,
     /// DB cache size in bytes
-    #[clap(long = "sled-internal-cache-size", default_value_t = default_db_cache_size())]
+    #[clap(name = "sled-internal-cache-size", long, default_value_t = default_db_cache_size())]
     #[serde(default = "default_db_cache_size")]
     pub internal_cache_size: u64,
     /// Internal DB mode to use
-    #[clap(long = "sled-internal-db-mode", value_enum, default_value_t = StorageMode::LowSpace)]
+    #[clap(name = "sled-internal-db-mode", long, value_enum, default_value_t = StorageMode::LowSpace)]
     #[serde(default)]
     pub internal_db_mode: StorageMode,
 }
