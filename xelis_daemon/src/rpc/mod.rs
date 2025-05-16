@@ -78,12 +78,12 @@ impl<S: Storage> DaemonRpcServer<S> {
         blockchain: Arc<Blockchain<S>>,
         config: RPCConfig
     ) -> Result<SharedDaemonRpcServer<S>, BlockchainError> {
-        let getwork = if !config.getwork.disable_getwork_server {
+        let getwork = if !config.getwork.disable {
             info!("Creating GetWork server...");
             Some(WebSocketServer::new(GetWorkServer::new(
                 blockchain.clone(),
-                config.getwork.getwork_rate_limit_ms,
-                config.getwork.getwork_notify_job_concurrency
+                config.getwork.rate_limit_ms,
+                config.getwork.notify_job_concurrency
             )))
         } else {
             None
@@ -91,10 +91,10 @@ impl<S: Storage> DaemonRpcServer<S> {
 
         // create the RPC Handler which will register and contains all available methods
         let mut rpc_handler = RPCHandler::new(blockchain);
-        rpc::register_methods(&mut rpc_handler, !config.getwork.disable_getwork_server);
+        rpc::register_methods(&mut rpc_handler, !config.getwork.disable);
 
         // create the default websocket server (support event & rpc methods)
-        let ws = WebSocketServer::new(EventWebSocketHandler::new(rpc_handler, config.rpc_notify_events_concurrency));
+        let ws = WebSocketServer::new(EventWebSocketHandler::new(rpc_handler, config.notify_events_concurrency));
 
         let server = Arc::new(Self {
             handle: Mutex::new(None),
@@ -115,9 +115,9 @@ impl<S: Storage> DaemonRpcServer<S> {
                     .service(index)
             })
             .disable_signals()
-            .bind(&config.rpc_bind_address)?;
+            .bind(&config.bind_address)?;
 
-            let http_server = builder.workers(config.rpc_threads).run();
+            let http_server = builder.workers(config.threads).run();
 
             { // save the server handle to be able to stop it later
                 let handle = http_server.handle();

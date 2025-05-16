@@ -37,7 +37,6 @@ use xelis_common::{
         Prompt,
         PromptError,
         ShareablePrompt,
-        DEFAULT_LOGS_DATETIME_FORMAT,
         default_logs_datetime_format
     },
     rpc_server::WebSocketServerHandler,
@@ -57,14 +56,13 @@ use core::{
         BroadcastOption
     },
     blockdag,
-    config::Config as InnerConfig,
+    config::{Config as InnerConfig, StorageBackend},
     hard_fork::{
         get_block_time_target_for_version,
         get_pow_algorithm_for_version,
         get_version_at_height
     },
     storage::{
-        sled::StorageMode,
         RocksStorage,
         SledStorage,
         Storage
@@ -91,13 +89,6 @@ fn default_filename_log() -> String {
 
 fn default_logs_path() -> String {
     "logs/".to_owned()
-}
-
-// Default cache size
-const DEFAULT_DB_CACHE_CAPACITY: u64 = 16 * 1024 * 1024; // 16 MB
-
-fn default_db_cache_size() -> u64 {
-    DEFAULT_DB_CACHE_CAPACITY
 }
 
 #[derive(Debug, Clone, Parser, Serialize, Deserialize)]
@@ -139,14 +130,14 @@ pub struct LogConfig {
     /// By default filename is xelis-daemon.log.
     /// File will be stored in logs directory, this is only the filename, not the full path.
     /// Log file is rotated every day and has the format YYYY-MM-DD.xelis-daemon.log.
-    #[clap(long, default_value_t = String::from("xelis-daemon.log"))]
+    #[clap(long, default_value_t = default_filename_log())]
     #[serde(default = "default_filename_log")]
     filename_log: String,
     /// Logs directory
     /// 
     /// By default it will be logs/ of the current directory.
     /// It must end with a / to be a valid folder.
-    #[clap(long, default_value_t = String::from("logs/"))]
+    #[clap(long, default_value_t = default_logs_path())]
     #[serde(default = "default_logs_path")]
     logs_path: String,
     /// Module configuration for logs
@@ -158,7 +149,7 @@ pub struct LogConfig {
     #[serde(default)]
     disable_ascii_art: bool,
     /// Change the datetime format used by the logger
-    #[clap(long, default_value = DEFAULT_LOGS_DATETIME_FORMAT)]
+    #[clap(long, default_value_t = default_logs_datetime_format())]
     #[serde(default = "default_logs_datetime_format")]
     datetime_format: String, 
 }
@@ -177,14 +168,6 @@ pub struct CliConfig {
     #[clap(long, value_enum, default_value_t = Network::Mainnet)]
     #[serde(default)]
     network: Network,
-    /// DB cache size in bytes
-    #[clap(long, default_value_t = DEFAULT_DB_CACHE_CAPACITY)]
-    #[serde(default = "default_db_cache_size")]
-    internal_cache_size: u64,
-    /// Internal DB mode to use
-    #[clap(long, value_enum, default_value_t = StorageMode::LowSpace)]
-    #[serde(default)]
-    internal_db_mode: StorageMode,
     /// JSON File to load the configuration from
     #[clap(long)]
     #[serde(skip)]
@@ -195,12 +178,6 @@ pub struct CliConfig {
     #[serde(skip)]
     #[serde(default)]
     generate_config_template: bool,
-    /// Use RocksDB as DB Engine.
-    /// By default will use `sled` for retro-compatibility.
-    #[clap(long)]
-    #[serde(skip)]
-    #[serde(default)]
-    use_rocksdb_backend: bool,
 }
 
 #[tokio::main]
@@ -226,6 +203,8 @@ async fn main() -> Result<()> {
             println!("Config file template generated at {}", path);
             return Ok(());
         }
+
+        println!("Using config from '{}', any launch option set will be discarded", path);
 
         let file = File::open(path)
             .context("Error while opening config file")?;
@@ -272,21 +251,24 @@ async fn main() -> Result<()> {
     info!("XELIS Blockchain running version: {}", VERSION);
     info!("----------------------------------------------");
 
-    let use_cache = if blockchain_config.cache_size > 0 {
-        Some(blockchain_config.cache_size)
-    } else {
-        None
-    };
-
     let dir_path = blockchain_config.dir_path.as_deref()
         .unwrap_or_default();
 
-    if config.use_rocksdb_backend {
-        let storage = RocksStorage::new(&dir_path, config.network);
-        start_chain(prompt, storage, config).await
-    } else {
-        let storage = SledStorage::new(dir_path.to_owned(), use_cache, config.network, config.internal_cache_size, config.internal_db_mode)?;
-        start_chain(prompt, storage, config).await
+    match blockchain_config.use_db_backend {
+        StorageBackend::Sled => {
+            let use_cache = if blockchain_config.sled.cache_size > 0 {
+                Some(blockchain_config.sled.cache_size)
+            } else {
+                None
+            };
+
+            let storage = SledStorage::new(dir_path.to_owned(), use_cache, config.network, blockchain_config.sled.internal_cache_size, blockchain_config.sled.internal_db_mode)?;
+            start_chain(prompt, storage, config).await
+        },
+        StorageBackend::RocksDB => {
+            let storage = RocksStorage::new(&dir_path, config.network);
+            start_chain(prompt, storage, config).await
+        }
     }
 }
 

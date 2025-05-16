@@ -236,7 +236,7 @@ impl<S: Storage> Blockchain<S> {
                 info!("Will use {} threads for TXs verification", config.txs_verification_threads_count);
             }
 
-            if config.rpc.rpc_threads == 0 {
+            if config.rpc.threads == 0 {
                 error!("RPC threads count must be above 0");
                 return Err(BlockchainError::InvalidConfig.into())
             }
@@ -308,7 +308,7 @@ impl<S: Storage> Blockchain<S> {
 
         let arc = Arc::new(blockchain);
         // create P2P Server
-        if !config.p2p.disable_p2p_server {
+        if !config.p2p.disable {
             let dir_path = config.dir_path;
             let config = config.p2p;
             info!("Starting P2p server...");
@@ -340,11 +340,11 @@ impl<S: Storage> Blockchain<S> {
             }
 
             match P2pServer::new(
-                config.p2p_concurrency_task_count_limit,
+                config.concurrency_task_count_limit,
                 dir_path,
                 config.tag,
                 config.max_peers,
-                config.p2p_bind_address,
+                config.bind_address,
                 Arc::clone(&arc),
                 exclusive_nodes.is_empty(),
                 exclusive_nodes,
@@ -353,14 +353,14 @@ impl<S: Storage> Blockchain<S> {
                 config.allow_priority_blocks,
                 config.max_chain_response_size,
                 !config.disable_ip_sharing,
-                config.disable_p2p_outgoing_connections,
-                config.p2p_dh_private_key.map(|v| v.into()),
-                config.p2p_on_dh_key_change,
-                config.p2p_stream_concurrency,
-                config.p2p_temp_ban_duration.as_secs(),
-                config.p2p_fail_count_limit,
+                config.disable_outgoing_connections,
+                config.dh_private_key.map(|v| v.into()),
+                config.on_dh_key_change,
+                config.stream_concurrency,
+                config.temp_ban_duration.as_secs(),
+                config.fail_count_limit,
                 config.reexecute_blocks_on_sync,
-                config.p2p_block_propagation_log_level.into(),
+                config.block_propagation_log_level.into(),
             ) {
                 Ok(p2p) => {
                     // connect to priority nodes
@@ -395,8 +395,8 @@ impl<S: Storage> Blockchain<S> {
         }
 
         // create RPC Server
-        if !config.rpc.disable_rpc_server {
-            info!("RPC Server will listen on: {}", config.rpc.rpc_bind_address);
+        if !config.rpc.disable {
+            info!("RPC Server will listen on: {}", config.rpc.bind_address);
             match DaemonRpcServer::new(
                 Arc::clone(&arc),
                 config.rpc

@@ -152,7 +152,7 @@ pub struct SledStorage {
     pub(super) snapshot: Option<Snapshot>,
 }
 
-#[derive(Clone, Copy, clap::ValueEnum, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, clap::ValueEnum, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum StorageMode {
     HighThroughput,
