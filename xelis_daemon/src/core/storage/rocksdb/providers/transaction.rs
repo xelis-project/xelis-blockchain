@@ -9,6 +9,7 @@ use crate::core::{
     error::BlockchainError,
     storage::{
         rocksdb::{Column, IteratorMode},
+        sled::TXS_COUNT,
         ClientProtocolProvider,
         RocksStorage,
         TransactionProvider
@@ -33,8 +34,8 @@ impl TransactionProvider for RocksStorage {
     // Count the number of transactions stored
     async fn count_transactions(&self) -> Result<u64, BlockchainError> {
         trace!("count transactions");
-        self.count_entries(Column::Transactions)
-            .map(|v| v as _)
+        self.load_optional_from_disk(Column::Common, TXS_COUNT)
+            .map(|v| v.unwrap_or(0))
     }
 
     // Get all the unexecuted transactions

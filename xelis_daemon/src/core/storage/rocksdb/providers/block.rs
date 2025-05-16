@@ -16,6 +16,7 @@ use crate::core::{
             BlockDifficulty,
             Column,
         },
+        sled::{BLOCKS_COUNT, TXS_COUNT},
         BlockProvider,
         BlocksAtHeightProvider,
         DifficultyProvider,
@@ -35,12 +36,14 @@ impl BlockProvider for RocksStorage {
     // Count the number of blocks stored
     async fn count_blocks(&self) -> Result<u64, BlockchainError> {
         trace!("count blocks");
-        self.count_entries(Column::Blocks)
-            .map(|v| v as _)
+        self.load_optional_from_disk(Column::Common, BLOCKS_COUNT)
+            .map(|v| v.unwrap_or(0))
     }
 
-    async fn decrease_blocks_count(&mut self, _: u64) -> Result<(), BlockchainError> {
-        Ok(())
+    async fn decrease_blocks_count(&mut self, minus: u64) -> Result<(), BlockchainError> {
+        trace!("decrease blocks count by {}", minus);
+        let count = self.count_blocks().await?;
+        self.insert_into_disk(Column::Common, BLOCKS_COUNT, &(count.saturating_sub(minus)))
     }
 
     // Check if the block exists using its hash
@@ -67,8 +70,13 @@ impl BlockProvider for RocksStorage {
     // with others caches (like P2p or GetWork)
     async fn save_block(&mut self, block: Arc<BlockHeader>, txs: &Vec<Immutable<Transaction>>, difficulty: Difficulty, cumulative_difficulty: CumulativeDifficulty, covariance: VarUint, hash: Immutable<Hash>) -> Result<(), BlockchainError> {
         trace!("save block");
+
+        let mut count_txs = 0;
         for (hash, transaction) in block.get_transactions().iter().zip(txs.iter()) {
-            self.add_transaction(hash, &transaction).await?;
+            if !self.has_transaction(hash).await? {
+                self.add_transaction(hash, &transaction).await?;
+                count_txs += 1;
+            }
         }
 
         self.insert_into_disk(Column::Blocks, hash.as_bytes(), &block)?;
@@ -82,7 +90,13 @@ impl BlockProvider for RocksStorage {
 
         self.add_block_hash_at_height(&hash, block.get_height()).await?;
 
-        Ok(())
+        if count_txs > 0 {
+            count_txs += self.count_transactions().await?;
+            self.insert_into_disk(Column::Common, TXS_COUNT, &count_txs)?;
+        }
+
+        let blocks_count = self.count_blocks().await?;
+        self.insert_into_disk(Column::Common, BLOCKS_COUNT, &(blocks_count + 1))
     }
 
     // Delete a block using its hash
