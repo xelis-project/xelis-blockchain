@@ -70,7 +70,6 @@ use xelis_common::{
         ModuleConfig,
         Prompt,
         ShareablePrompt,
-        DEFAULT_LOGS_DATETIME_FORMAT,
         default_logs_datetime_format
     },
     serializer::Serializer,
@@ -176,7 +175,7 @@ pub struct LogConfig {
     #[serde(default)]
     disable_ascii_art: bool,
     /// Change the datetime format used by the logger
-    #[clap(long, default_value = DEFAULT_LOGS_DATETIME_FORMAT)]
+    #[clap(long, default_value_t = default_logs_datetime_format())]
     #[serde(default = "default_logs_datetime_format")]
     datetime_format: String, 
 }
