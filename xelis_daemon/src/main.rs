@@ -266,7 +266,7 @@ async fn main() -> Result<()> {
             start_chain(prompt, storage, config).await
         },
         StorageBackend::RocksDB => {
-            let storage = RocksStorage::new(&dir_path, config.network);
+            let storage = RocksStorage::new(&dir_path, config.network, &blockchain_config.rocksdb);
             start_chain(prompt, storage, config).await
         }
     }

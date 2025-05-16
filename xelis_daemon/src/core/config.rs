@@ -68,6 +68,14 @@ const fn default_db_cache_size() -> u64 {
     64 * 1024 * 1024 // 64 MB
 }
 
+const fn default_max_open_files() -> i32 {
+    1024
+}
+
+const fn default_keep_max_log_files() -> usize {
+    4
+}
+
 #[derive(Debug, Clone, clap::Args, Serialize, Deserialize)]
 pub struct GetWorkConfig {
     /// Disable GetWork Server (WebSocket for miners).
@@ -290,6 +298,41 @@ pub struct SledConfig {
 }
 
 #[derive(Debug, Clone, clap::Args, Serialize, Deserialize)]
+pub struct RocksDBConfig {
+    /// How many background threads RocksDB should use for parallelism.
+    /// Default set to the available parallelism detected.
+    #[clap(name = "rocksdb-background-threads", long, default_value_t = detect_available_parallelism())]
+    #[serde(default = "detect_available_parallelism")]
+    pub parallelism: usize,
+    /// Sets maximum number of concurrent background jobs (compactions and flushes).
+    /// Default set to the available parallelism detected.
+    #[clap(name = "rocksdb-max-background-jobs", long, default_value_t = detect_available_parallelism())]
+    #[serde(default = "detect_available_parallelism")]
+    pub max_background_jobs: usize,
+    /// Sets maximum number of threads that will concurrently perform a compaction job by breaking it into multiple,
+    /// smaller ones that are run simultaneously.
+    /// Default set to the available parallelism detected.
+    #[clap(name = "rocksdb-max-subcompaction-jobs", long, default_value_t = detect_available_parallelism())]
+    #[serde(default = "detect_available_parallelism")]
+    pub max_subcompaction_jobs: usize,
+    /// Sets the size of the low priority thread pool that can be used to prevent compactions from stalling memtable flushes.
+    /// Default set to the available parallelism detected.
+    #[clap(name = "rocksdb-low-priority-background-threads", long, default_value_t = detect_available_parallelism())]
+    #[serde(default = "detect_available_parallelism")]
+    pub low_priority_background_threads: usize,
+    /// Sets the number of open files that can be used by the DB.
+    /// You may need to increase this if your database has a large working set.
+    /// Value -1 means files opened are always kept open.
+    #[clap(name = "rocksdb-max-open-files", long, default_value_t = default_max_open_files())]
+    #[serde(default = "default_max_open_files")]
+    pub max_open_files: i32,
+    /// Specify the maximal number of info log files to be kept.
+    #[clap(name = "rocksdb-keep-max-log-files", long, default_value_t = default_keep_max_log_files())]
+    #[serde(default = "default_keep_max_log_files")]
+    pub keep_max_log_files: usize,
+}
+
+#[derive(Debug, Clone, clap::Args, Serialize, Deserialize)]
 pub struct Config {
     /// RPC configuration
     #[clap(flatten)]
@@ -300,6 +343,9 @@ pub struct Config {
     /// Sled DB Backend if enabled
     #[clap(flatten)]
     pub sled: SledConfig,
+    /// RocksDB Backend if enabled
+    #[clap(flatten)]
+    pub rocksdb: RocksDBConfig,
     /// Set dir path for blockchain storage.
     /// This will be appended by the network name for the database directory.
     /// It must ends with a slash.

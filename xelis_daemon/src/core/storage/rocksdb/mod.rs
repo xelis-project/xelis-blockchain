@@ -31,9 +31,9 @@ use xelis_common::{
     serializer::{Count, Serializer},
     tokio,
     transaction::Transaction,
-    utils::detect_available_parallelism
 };
 use crate::core::{
+    config::RocksDBConfig,
     error::{BlockchainError, DiskContext},
     storage::{BlocksAtHeightProvider, ClientProtocolProvider, ContractOutputsProvider, Tips}
 };
@@ -88,7 +88,7 @@ pub struct RocksStorage {
 }
 
 impl RocksStorage {
-    pub fn new(dir: &str, network: Network) -> Self {
+    pub fn new(dir: &str, network: Network, config: &RocksDBConfig) -> Self {
         let cfs = Column::iter()
             .map(|column| {
                 let name = column.to_string();
@@ -107,16 +107,15 @@ impl RocksStorage {
         opts.set_compaction_style(DBCompactionStyle::Universal);
 
         // TODO: expose these config
-        let cores = detect_available_parallelism();
-        opts.increase_parallelism(cores as _);
-        opts.set_max_background_jobs(cores as _);
-        opts.set_max_subcompactions(cores as _);
+        opts.increase_parallelism(config.parallelism as _);
+        opts.set_max_background_jobs(config.max_background_jobs as _);
+        opts.set_max_subcompactions(config.max_subcompaction_jobs as _);
 
-        opts.set_max_open_files(1024);
-        opts.set_keep_log_file_num(4);
+        opts.set_max_open_files(config.max_open_files);
+        opts.set_keep_log_file_num(config.keep_max_log_files);
 
         let mut env = Env::new().expect("Creating new env");
-        env.set_low_priority_background_threads(cores  as _);
+        env.set_low_priority_background_threads(config.low_priority_background_threads as _);
         opts.set_env(&env);
 
         let db  = DBWithThreadMode::<MultiThreaded>::open_cf_descriptors(&opts, format!("{}{}", dir, network.to_string().to_lowercase()), cfs)
