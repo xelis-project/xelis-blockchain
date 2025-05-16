@@ -8,7 +8,7 @@ use std::sync::Arc;
 use anyhow::Context;
 use async_trait::async_trait;
 use itertools::Either;
-use log::{debug, trace};
+use log::{debug, info, trace};
 use rocksdb::{
     ColumnFamilyDescriptor,
     DBCompactionStyle,
@@ -517,17 +517,17 @@ impl Storage for RocksStorage {
         // and simply await its result 
         tokio::task::spawn_blocking(move || {
             for column in Column::iter() {
-                debug!("compacting column {:?}", column);
+                info!("compacting {:?}", column);
                 let cf = cf_handle!(db, column);
                 db.compact_range_cf::<&[u8], &[u8]>(&cf, None, None);
             }
-    
+
             debug!("wait for compact");
             let options = WaitForCompactOptions::default();
             db.wait_for_compact(&options)
                 .context("Error while waiting on compact")?;
-    
-            debug!("flushing DB");
+
+            info!("flushing DB");
             db.flush()
                 .context("Error while flushing DB")?;
 
