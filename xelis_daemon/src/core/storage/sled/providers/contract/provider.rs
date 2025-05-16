@@ -36,7 +36,7 @@ impl ContractStorage for SledStorage {
 
     fn has_data(&self, contract: &Hash, key: &ValueCell, topoheight: TopoHeight) -> Result<bool, anyhow::Error> {
         trace!("check if contract {} key {} data exists at topoheight {}", contract, key, topoheight);
-        let contains = try_block_on(self.has_contract_data_at_topoheight(contract, &key, topoheight))??;
+        let contains = try_block_on(self.has_contract_data_at_maximum_topoheight(contract, &key, topoheight))??;
         Ok(contains)
     }
 

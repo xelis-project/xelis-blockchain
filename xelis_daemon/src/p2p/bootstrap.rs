@@ -1,7 +1,7 @@
 use std::{borrow::Cow, collections::HashSet, sync::Arc, time::Instant};
 
 use futures::{stream, StreamExt, TryStreamExt};
-use indexmap::IndexSet;
+use indexmap::{IndexMap, IndexSet};
 use log::{debug, error, info, trace, warn};
 use xelis_common::{
     account::{VersionedBalance, VersionedNonce},
@@ -41,7 +41,7 @@ use crate::{
 use super::{packet::bootstrap_chain::{StepRequest, StepResponse, MAX_ITEMS_PER_PAGE}, peer::Peer, P2pServer};
 
 impl<S: Storage> P2pServer<S> {
-// Handle a bootstrap chain request
+    // Handle a bootstrap chain request
     // We have differents steps available for a bootstrap sync
     // We verify that they are send in good order
     pub(super) async fn handle_bootstrap_chain_request(self: &Arc<Self>, peer: &Arc<Peer>, request: StepRequest<'_>) -> Result<(), BlockchainError> {
@@ -82,7 +82,15 @@ impl<S: Storage> P2pServer<S> {
                 }
 
                 let page = page.unwrap_or(0);
-                let assets = storage.get_partial_assets(MAX_ITEMS_PER_PAGE, page as usize * MAX_ITEMS_PER_PAGE, min, max).await?;
+                let assets = storage.get_assets_with_data_in_range(Some(min), Some(max)).await?
+                    .skip(page as usize * MAX_ITEMS_PER_PAGE)
+                    .take(MAX_ITEMS_PER_PAGE)
+                    .map(|res| match res {
+                        Ok((hash, _, data)) => Ok((hash, data)),
+                        Err(e) => Err(e)
+                    })
+                    .collect::<Result<IndexMap<_, _>, _>>()?;
+
                 let page = if assets.len() == MAX_ITEMS_PER_PAGE {
                     Some(page + 1)
                 } else {
@@ -123,7 +131,7 @@ impl<S: Storage> P2pServer<S> {
                     return Err(P2pError::InvalidRequestedTopoheight.into())
                 }
 
-                let (balances, next_max) = storage.get_spendable_balances_for(&key, &asset, min, max).await?;
+                let (balances, next_max) = storage.get_spendable_balances_for(&key, &asset, min, max, MAX_ITEMS_PER_PAGE).await?;
                 StepResponse::SpendableBalances(balances, next_max)
             },
             StepRequest::Nonces(min, max, keys) => {
@@ -159,7 +167,11 @@ impl<S: Storage> P2pServer<S> {
                 }
 
                 let page = page.unwrap_or(0);
-                let (keys, _) = storage.get_registered_keys(MAX_ITEMS_PER_PAGE, page as usize * MAX_ITEMS_PER_PAGE, min, max).await?;
+                let keys: IndexSet<PublicKey> = storage.get_registered_keys(Some(min), Some(max)).await?
+                    .skip(page as usize * MAX_ITEMS_PER_PAGE)
+                    .take(MAX_ITEMS_PER_PAGE)
+                    .collect::<Result<_, _>>()?;
+
                 let page = if keys.len() == MAX_ITEMS_PER_PAGE {
                     Some(page + 1)
                 } else {
@@ -168,7 +180,26 @@ impl<S: Storage> P2pServer<S> {
                 StepResponse::Keys(keys, page)
             },
             StepRequest::MultiSigs(min, max, keys) => {
-                let multisigs = storage.get_updated_multisigs(&keys, min, max).await?;
+                let multisigs = stream::iter(keys.iter())
+                    .map(|key| async {
+                        Ok::<_, BlockchainError>(if let Some((topoheight, version)) = storage.get_multisig_at_maximum_topoheight_for(key, max).await? {
+                            if topoheight >= min {
+                                match version.take() {
+                                    Some(multisig) => State::Some(multisig.into_owned()),
+                                    None => State::Deleted,
+                                }
+                            } else {
+                                State::Clean
+                            }
+                        } else {
+                            State::None
+                        })
+                    })
+                    .buffered(self.stream_concurrency)
+                    .boxed()
+                    .try_collect::<Vec<_>>()
+                    .await?;
+
                 StepResponse::MultiSigs(multisigs)
             },
             StepRequest::Contracts(min, max, page) => {
@@ -178,7 +209,11 @@ impl<S: Storage> P2pServer<S> {
                 }
 
                 let page = page.unwrap_or(0);
-                let contracts = storage.get_contracts(MAX_ITEMS_PER_PAGE, page as usize * MAX_ITEMS_PER_PAGE, min, max).await?;
+                let contracts = storage.get_contracts(min, max).await?
+                    .skip(page as usize * MAX_ITEMS_PER_PAGE)
+                    .take(MAX_ITEMS_PER_PAGE)
+                    .collect::<Result<IndexSet<Hash>, _>>()?;
+
                 let page = if contracts.len() == MAX_ITEMS_PER_PAGE {
                     Some(page + 1)
                 } else {
@@ -302,7 +337,8 @@ impl<S: Storage> P2pServer<S> {
                         if *common_point.get_hash() != top_block_hash {
                             let pruned_topoheight = storage.get_pruned_topoheight().await?.unwrap_or(0);
                             
-                            warn!("Common point is {} while our top block hash is {} !", common_point.get_hash(), top_block_hash);
+                            let top_topoheight = storage.get_topo_height_for_hash(&top_block_hash).await?;
+                            warn!("Common point is {} while our top block hash is {} at {} !", common_point.get_hash(), top_block_hash, top_topoheight);
                             // Count how much blocks we need to pop
                             let pop_count = if pruned_topoheight >= common_point.get_topoheight() {
                                 our_topoheight - pruned_topoheight
@@ -339,15 +375,18 @@ impl<S: Storage> P2pServer<S> {
                         Some(StepRequest::Assets(our_topoheight, stable_topoheight, next_page))
                     } else {
                         // We must handle all stored keys before extending our ledger
-                        let mut minimum_topoheight = 0;
                         let mut i = 0;
                         let mut skip = 0;
                         loop {
                             // We request our current keys so we don't miss them
-                            info!("Requesting local keys #{} at min topo {} and max topo {}", i, minimum_topoheight, our_topoheight);
+                            info!("Requesting local keys #{} until our topoheight {}", i, our_topoheight);
                             let keys = {
                                 let storage = self.blockchain.get_storage().read().await;
-                                let (keys, s) = storage.get_registered_keys(MAX_ITEMS_PER_PAGE, skip, minimum_topoheight, our_topoheight).await?;
+                                // We search with no bounds, if they don't exists anymore they will either get deleted or updated
+                                let keys: IndexSet<PublicKey> = storage.get_registered_keys(None, None).await?
+                                    .skip(skip)
+                                    .take(MAX_ITEMS_PER_PAGE)
+                                    .collect::<Result<_, _>>()?;
 
                                 // Because the keys are sorted by topoheight, we can get the minimum topoheight
                                 // of the last key to avoid fetching the same keys again
@@ -356,24 +395,21 @@ impl<S: Storage> P2pServer<S> {
                                 // This solution may also duplicate some keys
                                 // We could do it in one request and store in memory all keys,
                                 // but think about future and dozen of millions of accounts, in memory :)
-                                if let Some(key) = keys.last() {
-                                    debug!("Last key is {}", key.as_address(self.blockchain.get_network().is_mainnet()));
-                                    minimum_topoheight = storage.get_account_registration_topoheight(key).await?;
-                                    skip = s;
-                                } else {
-                                    break;
-                                }
+                                skip += keys.len();
 
                                 keys
                             };
 
-                            self.update_bootstrap_keys(peer, &keys, our_topoheight, stable_topoheight).await?;
+                            // We're not updating the registration, so the DB order is expected to stay the same!
+                            self.update_bootstrap_keys(peer, &keys, our_topoheight, stable_topoheight, false).await?;
                             if keys.len() < MAX_ITEMS_PER_PAGE {
                                 break;
                             }
 
                             i += 1;
                         }
+
+                        info!("Updated {} local keys in {} steps", skip, i);
 
                         // Go to next step
                         Some(StepRequest::Keys(our_topoheight, stable_topoheight, None))
@@ -382,7 +418,7 @@ impl<S: Storage> P2pServer<S> {
                 // fetch all new accounts
                 StepResponse::Keys(keys, next_page) => {
                     debug!("Requesting nonces for keys");
-                    self.update_bootstrap_keys(peer, &keys, our_topoheight, stable_topoheight).await?;
+                    self.update_bootstrap_keys(peer, &keys, our_topoheight, stable_topoheight, true).await?;
 
                     if next_page.is_some() {
                         Some(StepRequest::Keys(our_topoheight, stable_topoheight, next_page))
@@ -416,7 +452,7 @@ impl<S: Storage> P2pServer<S> {
                                     debug!("Saving contract metadata for {}", contract);
                                     let module = &metadata.module;
                                     let versioned = VersionedContract::new(Some(Cow::Borrowed(module)), None);
-                                    storage.set_last_contract_to(&contract, stable_topoheight, versioned).await?;
+                                    storage.set_last_contract_to(&contract, stable_topoheight, &versioned).await?;
                                 },
                             };
 
@@ -460,7 +496,7 @@ impl<S: Storage> P2pServer<S> {
                             for tx_hash in header.get_txs_hashes() {
                                 trace!("Retrieving TX {} for block {}", tx_hash, hash);
                                 let tx = if self.blockchain.has_tx(tx_hash).await? {
-                                    Immutable::Arc(self.blockchain.get_tx(tx_hash).await?)
+                                    self.blockchain.get_tx(tx_hash).await?
                                 } else {
                                     let OwnedObjectResponse::Transaction(tx, _) = peer.request_blocking_object(ObjectRequest::Transaction(tx_hash.clone())).await? else {
                                         error!("Received an invalid requested object while fetching block transaction {}", tx_hash);
@@ -475,16 +511,18 @@ impl<S: Storage> P2pServer<S> {
                             // link its TX to the block
                             let mut storage = self.blockchain.get_storage().write().await;
                             for tx_hash in header.get_txs_hashes() {
-                                storage.add_block_for_tx(tx_hash, &hash)?;
+                                storage.add_block_linked_to_tx_if_not_present(tx_hash, &hash)?;
                             }
     
                             // save metadata of this block
-                            storage.set_supply_at_topo_height(topoheight, metadata.supply)?;
-                            storage.set_burned_supply_at_topo_height(topoheight, metadata.burned_supply)?;
-                            storage.set_block_reward_at_topo_height(topoheight, metadata.reward)?;
+                            storage.set_topoheight_metadata(
+                                topoheight,
+                                metadata.reward,
+                                metadata.supply,
+                                metadata.burned_supply
+                            )?;
+
                             storage.set_topo_height_for_block(&hash, topoheight).await?;
-    
-                            storage.set_cumulative_difficulty_for_block_hash(&hash, metadata.cumulative_difficulty).await?;
 
                             // Mark needed TXs as executed
                             for tx in metadata.executed_transactions {
@@ -492,11 +530,11 @@ impl<S: Storage> P2pServer<S> {
                                     return Err(P2pError::InvalidBlockMetadata.into())
                                 }
 
-                                storage.set_tx_executed_in_block(&tx, &hash)?;
+                                storage.mark_tx_as_executed_in_block(&tx, &hash)?;
                             }
 
                             // save the block with its transactions, difficulty
-                            storage.save_block(Arc::new(header), &txs, metadata.difficulty, metadata.p, hash).await?;
+                            storage.save_block(Arc::new(header), &txs, metadata.difficulty, metadata.cumulative_difficulty, metadata.p, Immutable::Owned(hash)).await?;
 
                             Ok(())
                         }).await?;
@@ -512,15 +550,15 @@ impl<S: Storage> P2pServer<S> {
                         info!("No need to clean data, fresh sync detected");
                     }
 
-                    storage.set_pruned_topoheight(lowest_topoheight).await?;
-                    storage.set_top_topoheight(top_topoheight)?;
-                    storage.set_top_height(top_height)?;
+                    storage.set_pruned_topoheight(Some(lowest_topoheight)).await?;
+                    storage.set_top_topoheight(top_topoheight).await?;
+                    storage.set_top_height(top_height).await?;
                     storage.store_tips(
                         &HashSet::from([
                             top_block_hash.take()
                                 .ok_or(BlockchainError::Unknown)?
                         ])
-                    )?;
+                    ).await?;
 
                     None
                 },
@@ -539,7 +577,7 @@ impl<S: Storage> P2pServer<S> {
     }
 
     // Handle the key nonces
-    async fn handle_nonces(&self, peer: &Arc<Peer>, keys: &IndexSet<PublicKey>, our_topoheight: u64, stable_topoheight: u64) -> Result<(), P2pError> {
+    async fn handle_nonces(&self, peer: &Arc<Peer>, keys: &IndexSet<PublicKey>, our_topoheight: u64, stable_topoheight: u64, update_registration: bool) -> Result<(), P2pError> {
         let StepResponse::Nonces(nonces) = peer.request_boostrap_chain(StepRequest::Nonces(our_topoheight, stable_topoheight, Cow::Borrowed(&keys))).await? else {
             // shouldn't happen
             error!("Received an invalid StepResponse (how ?) while fetching nonces");
@@ -554,14 +592,15 @@ impl<S: Storage> P2pServer<S> {
                     trace!("No nonce change for {}", key.as_address(self.blockchain.get_network().is_mainnet()));
                 },
                 State::Deleted | State::None => {
-                    trace!("Deleting nonce for {}", key.as_address(self.blockchain.get_network().is_mainnet()));
-                    storage.delete_last_topoheight_for_nonce(key).await?;
-                    storage.delete_account_registration(key).await?;
+                    trace!("Deleting account of {}", key.as_address(self.blockchain.get_network().is_mainnet()));
+                    storage.delete_account_for(key).await?;
                 },
                 State::Some(nonce) => {
                     trace!("Saving nonce for {}", key.as_address(self.blockchain.get_network().is_mainnet()));
                     storage.set_last_nonce_to(key, stable_topoheight, &VersionedNonce::new(nonce, None)).await?;
-                    storage.set_account_registration_topoheight(key, stable_topoheight).await?;
+                    if update_registration {
+                        storage.set_account_registration_topoheight(key, stable_topoheight).await?;
+                    }
                 },
             };
         }
@@ -677,13 +716,13 @@ impl<S: Storage> P2pServer<S> {
 
     // Update all keys using bootstrap request
     // This will fetch the nonce and associated balance for each asset
-    async fn update_bootstrap_keys(&self, peer: &Arc<Peer>, keys: &IndexSet<PublicKey>, our_topoheight: u64, stable_topoheight: u64) -> Result<(), P2pError> {
+    async fn update_bootstrap_keys(&self, peer: &Arc<Peer>, keys: &IndexSet<PublicKey>, our_topoheight: u64, stable_topoheight: u64, update_registration: bool) -> Result<(), P2pError> {
         if keys.is_empty() {
             warn!("No keys to update");
             return Ok(())
         }
 
-        self.handle_nonces(peer, keys, our_topoheight, stable_topoheight).await?;
+        self.handle_nonces(peer, keys, our_topoheight, stable_topoheight, update_registration).await?;
         self.handle_multisigs(peer, keys, our_topoheight, stable_topoheight).await?;
 
         let mut page = 0;
@@ -691,7 +730,11 @@ impl<S: Storage> P2pServer<S> {
             // Retrieve chunked assets
             let assets = {
                 let storage = self.blockchain.get_storage().read().await;
-                let assets = storage.get_chunked_assets(MAX_ITEMS_PER_PAGE, page * MAX_ITEMS_PER_PAGE).await?;
+                let assets = storage.get_assets().await?
+                    .skip(page * MAX_ITEMS_PER_PAGE)
+                    .take(MAX_ITEMS_PER_PAGE)
+                    .collect::<Result<IndexSet<_>, _>>()?;
+
                 if assets.is_empty() {
                     break;
                 }

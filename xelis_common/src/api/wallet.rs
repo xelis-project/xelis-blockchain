@@ -226,6 +226,18 @@ pub struct GetTransactionParams {
     pub hash: Hash
 }
 
+#[derive(Serialize, Deserialize)]
+pub struct SearchTransactionParams<'a> {
+    pub hash: Cow<'a, Hash>
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct SearchTransactionResult {
+    pub transaction: Option<TransactionEntry>,
+    pub index: Option<u64>,
+    pub is_raw_search: bool
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct BalanceChanged {
     pub asset: Hash,

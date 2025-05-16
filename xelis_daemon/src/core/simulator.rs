@@ -13,7 +13,6 @@ use xelis_common::{
     config::TIPS_LIMIT,
     block::Block
 };
-use crate::config::BLOCK_TIME_MILLIS;
 use super::{
     blockchain::{
         Blockchain,
@@ -81,7 +80,7 @@ impl Simulator {
     pub async fn start<S: Storage>(&self, blockchain: Arc<Blockchain<S>>) {
         let millis_interval = match self {
             Self::Stress => 300,
-            _ => BLOCK_TIME_MILLIS
+            _ => 5000
         };
 
         let mut interval = interval(Duration::from_millis(millis_interval));

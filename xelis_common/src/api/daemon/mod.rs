@@ -258,9 +258,10 @@ pub struct GetInfoResult {
     pub maximum_supply: u64,
     // Current difficulty at tips
     pub difficulty: Difficulty,
-    // Expected block time
+    // Expected block time in milliseconds
     pub block_time_target: u64,
     // Average block time of last 50 blocks
+    // in milliseconds
     pub average_block_time: u64,
     pub block_reward: u64,
     pub dev_reward: u64,
@@ -270,7 +271,9 @@ pub struct GetInfoResult {
     // software version on which the daemon is running
     pub version: String,
     // Network state (mainnet, testnet, devnet)
-    pub network: Network
+    pub network: Network,
+    // Current block version enabled
+    pub block_version: BlockVersion,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -680,7 +683,11 @@ pub struct P2pBlockPropagationResult {
 
 #[derive(Serialize, Deserialize)]
 pub struct GetP2pBlockPropagation<'a> {
-    pub hash: Cow<'a, Hash>
+    pub hash: Cow<'a, Hash>,
+    #[serde(default = "default_true_value")]
+    pub outgoing: bool,
+    #[serde(default = "default_true_value")]
+    pub incoming: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]

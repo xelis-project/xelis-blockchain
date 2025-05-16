@@ -35,7 +35,10 @@ impl Batch {
                 let value = entry.get_mut().take();
                 (value, false)
             },
-            Entry::Vacant(_) => (None, true),
+            Entry::Vacant(v) => {
+                v.insert(None);
+                (None, true)
+            },
         }
     }
 }

@@ -1,25 +1,13 @@
-use std::{collections::HashSet, sync::Arc};
 use async_trait::async_trait;
-use log::trace;
 use xelis_common::{
-    transaction::Transaction,
-    crypto::Hash,
+    crypto::Hash, immutable::Immutable, transaction::Transaction
 };
-use crate::core::{
-    error::{
-        BlockchainError,
-        DiskContext
-    },
-    storage::{
-        sled::TXS_COUNT,
-        SledStorage
-    }
-};
+use crate::core::error::BlockchainError;
 
 #[async_trait]
 pub trait TransactionProvider {
     // Get the transaction using its hash
-    async fn get_transaction(&self, hash: &Hash) -> Result<Arc<Transaction>, BlockchainError>;
+    async fn get_transaction(&self, hash: &Hash) -> Result<Immutable<Transaction>, BlockchainError>;
 
     // Get the transaction size using its hash
     async fn get_transaction_size(&self, hash: &Hash) -> Result<usize, BlockchainError>;
@@ -27,55 +15,15 @@ pub trait TransactionProvider {
     // Count the number of transactions stored
     async fn count_transactions(&self) -> Result<u64, BlockchainError>;
 
+    // Get all the unexecuted transactions
+    async fn get_unexecuted_transactions<'a>(&'a self) -> Result<impl Iterator<Item = Result<Hash, BlockchainError>> + 'a, BlockchainError>;
+
     // Check if the transaction exists
     async fn has_transaction(&self, hash: &Hash) -> Result<bool, BlockchainError>;
 
+    // Store a new transaction
+    async fn add_transaction(&mut self, hash: &Hash, transaction: &Transaction) -> Result<(), BlockchainError>;
+
     // Delete a transaction from the storage using its hash
-    async fn delete_transaction(&mut self, hash: &Hash) -> Result<Arc<Transaction>, BlockchainError>;
-}
-
-impl SledStorage {
-    // Update the txs count and store it on disk
-    pub(super) fn store_transactions_count(&mut self, count: u64) -> Result<(), BlockchainError> {
-        if let Some(snapshot) = self.snapshot.as_mut() {
-            snapshot.cache.transactions_count = count;
-        } else {
-            self.cache.transactions_count = count;
-        }
-        Self::insert_into_disk(self.snapshot.as_mut(), &self.extra, TXS_COUNT, &count.to_be_bytes())?;
-        Ok(())
-    }    
-}
-
-#[async_trait]
-impl TransactionProvider for SledStorage {
-    async fn get_transaction(&self, hash: &Hash) -> Result<Arc<Transaction>, BlockchainError> {
-        trace!("get transaction for hash {}", hash);
-        self.get_cacheable_arc_data(&self.transactions, &self.transactions_cache, hash, DiskContext::GetTransaction).await
-    }
-
-    async fn get_transaction_size(&self, hash: &Hash) -> Result<usize, BlockchainError> {
-        trace!("get transaction size for hash {}", hash);
-        self.get_size_from_disk(&self.transactions, hash.as_bytes())
-    }
-
-    async fn has_transaction(&self, hash: &Hash) -> Result<bool, BlockchainError> {
-        trace!("has transaction {}", hash);
-        self.contains_data_cached(&self.transactions, &self.transactions_cache, hash).await
-    }
-
-    async fn count_transactions(&self) -> Result<u64, BlockchainError> {
-        trace!("count transactions");
-        let count = if let Some(snapshot) = self.snapshot.as_ref() {
-            snapshot.cache.transactions_count
-        } else {
-            self.cache.transactions_count
-        };
-        Ok(count)
-    }
-
-    async fn delete_transaction(&mut self, hash: &Hash) -> Result<Arc<Transaction>, BlockchainError> {
-        Self::delete_cacheable_data::<Hash, HashSet<Hash>>(self.snapshot.as_mut(), &self.tx_blocks, None, hash).await?;
-        Self::delete_arc_cacheable_data(self.snapshot.as_mut(), &self.transactions, self.cache.transactions_cache.as_mut(), hash).await
-    }
+    async fn delete_transaction(&mut self, hash: &Hash) -> Result<Immutable<Transaction>, BlockchainError>;
 }

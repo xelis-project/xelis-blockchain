@@ -1,3 +1,4 @@
+use strum::{EnumDiscriminants, IntoDiscriminant};
 use thiserror::Error;
 use chacha20poly1305::Error as CryptoError;
 #[cfg(feature = "network_handler")]
@@ -12,8 +13,7 @@ use xelis_common::rpc_server::InternalRpcError;
 
 use anyhow::Error;
 
-#[repr(usize)]
-#[derive(Error, Debug)]
+#[derive(Error, Debug, EnumDiscriminants)]
 pub enum WalletError {
     #[error("Asset {0} is not tracked by wallet")]
     AssetNotTracked(Hash),
@@ -98,15 +98,15 @@ pub enum WalletError {
 
 impl WalletError {
     // Return the id for the variant
-    pub unsafe fn id(&self) -> usize {
-        *(self as *const Self as *const _)
+    pub  fn id(&self) -> usize {
+        self.discriminant() as usize
     }
 }
 
 #[cfg(feature = "api_server")]
 impl From<WalletError> for InternalRpcError {
     fn from(e: WalletError) -> Self {
-        let id = unsafe { e.id() };
+        let id = e.id();
         InternalRpcError::Custom(100 + id as i16, e.to_string())
     }
 }

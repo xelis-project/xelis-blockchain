@@ -1,6 +1,5 @@
 use std::{ops::{Deref, DerefMut}, sync::Arc};
 
-use indexmap::IndexSet;
 use lru::LruCache;
 use tokio::sync::Mutex;
 use xelis_common::{
@@ -54,8 +53,6 @@ pub struct StorageCache {
     pub transactions_cache: Option<Mutex<LruCache<Hash, Arc<Transaction>>>>,
     // Block header cache
     pub blocks_cache: Option<Mutex<LruCache<Hash, Arc<BlockHeader>>>>,
-    // Blocks Tips cache
-    pub past_blocks_cache: Option<Mutex<LruCache<Hash, Arc<IndexSet<Hash>>>>>,
     // Topoheight by hash cache
     pub topo_by_hash_cache: Option<Mutex<LruCache<Hash, TopoHeight>>>,
     // Hash by topoheight cache
@@ -75,7 +72,6 @@ impl StorageCache {
             counter: CounterCache::default(),
             transactions_cache: init_cache!(cache_size),
             blocks_cache: init_cache!(cache_size),
-            past_blocks_cache: init_cache!(cache_size),
             topo_by_hash_cache: init_cache!(cache_size),
             hash_at_topo_cache: init_cache!(cache_size),
             cumulative_difficulty_cache: init_cache!(cache_size),

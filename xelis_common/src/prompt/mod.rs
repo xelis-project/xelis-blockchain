@@ -1,5 +1,6 @@
 pub mod command;
 pub mod argument;
+pub mod art;
 
 mod error;
 mod option;
@@ -52,6 +53,11 @@ use option::OptionReader;
 pub use fern::colors::Color;
 pub use error::PromptError;
 
+pub const DEFAULT_LOGS_DATETIME_FORMAT: &str = "[%Y-%m-%d] (%H:%M:%S%.3f)";
+
+pub fn default_logs_datetime_format() -> String {
+    DEFAULT_LOGS_DATETIME_FORMAT.to_string()
+}
 
 // used for launch param
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -96,6 +102,19 @@ impl From<LogLevel> for LevelFilter {
     fn from(value: LogLevel) -> Self {
         match value {
             LogLevel::Off => Self::Off,
+            LogLevel::Error => Self::Error,
+            LogLevel::Warn => Self::Warn,
+            LogLevel::Info => Self::Info,
+            LogLevel::Debug => Self::Debug,
+            LogLevel::Trace => Self::Trace
+        }
+    }
+}
+
+impl From<LogLevel> for Level {
+    fn from(value: LogLevel) -> Self {
+        match value {
+            LogLevel::Off => Self::Trace,
             LogLevel::Error => Self::Error,
             LogLevel::Warn => Self::Warn,
             LogLevel::Info => Self::Info,
@@ -164,6 +183,8 @@ impl Prompt {
         interactive: bool,
         module_logs: Vec<ModuleConfig>,
         file_level: LogLevel,
+        show_ascii: bool,
+        logs_datetime_format: String,
     ) -> Result<ShareablePrompt, PromptError> {
         if !(dir_path.ends_with("/") || dir_path.ends_with("\\")) {
             return Err(PromptError::LogsPathNotFolder);
@@ -191,7 +212,8 @@ impl Prompt {
             disable_file_log_date_based,
             enable_auto_compress_logs,
             module_logs,
-            file_level
+            file_level,
+            logs_datetime_format,
         )?;
 
         // Logs all the panics into the log file
@@ -218,6 +240,10 @@ impl Prompt {
     
             let mut lock = prompt.input_receiver.lock()?;
             *lock = Some(input_receiver);
+        }
+
+        if show_ascii {
+            info!("{}", art::LOGO_ASCII);
         }
 
         Ok(Arc::new(prompt))
@@ -468,7 +494,8 @@ impl Prompt {
         disable_file_log_date_based: bool,
         enable_auto_compress_logs: bool,
         module_logs: Vec<ModuleConfig>,
-        file_level: LogLevel
+        file_level: LogLevel,
+        logs_datetime_format: String,
     ) -> Result<(), fern::InitError> {
         let colors = ColoredLevelConfig::new()
             .debug(Color::Green)
@@ -488,25 +515,33 @@ impl Prompt {
                 if record.level() != Level::Error && record.level() != Level::Debug {
                     target_with_pad = " ".to_owned() + &target_with_pad;
                 }
+
                 let res = if disable_colors {
                     out.finish(format_args!(
                         "\x1b[2K{}{} {}{} > {}",
                         if interactive { "\r" } else { "" },
-                        chrono::Local::now().format("[%Y-%m-%d] (%H:%M:%S%.3f)"),
+                        chrono::Local::now().format(&logs_datetime_format),
                         record.level(),
                         target_with_pad,
                         message
                     ))
                 } else {
-                    out.finish(format_args!(
-                        "\x1b[2K{}\x1B[90m{} {}\x1B[0m \x1B[{}m{}\x1B[0m \x1B[90m>\x1B[0m {}",
-                        if interactive { "\r" } else { "" },
-                        chrono::Local::now().format("[%Y-%m-%d] (%H:%M:%S%.3f)"),
-                        colors.color(record.level()),
-                        Color::BrightBlue.to_fg_str(),
-                        target_with_pad,
-                        message
-                    ))
+                    let messages = message.to_string()
+                        .lines()
+                        .map(|line| {
+                            format!(
+                                "\x1b[2K{}\x1B[90m{} {}\x1B[0m \x1B[{}m{}\x1B[0m \x1B[90m>\x1B[0m {}",
+                                if interactive { "\r" } else { "" },
+                                chrono::Local::now().format(&logs_datetime_format),
+                                colors.color(record.level()),
+                                Color::BrightBlue.to_fg_str(),
+                                target_with_pad,
+                                line
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    out.finish(format_args!("{}", messages))
                 };
 
                 if interactive {
@@ -532,15 +567,22 @@ impl Prompt {
             .format(move |out, message, record| {
                 let pad = " ".repeat((30i16 - record.target().len() as i16).max(0) as usize);
                 let level_pad = if record.level() == Level::Error || record.level() == Level::Debug { "" } else { " " };
-                out.finish(format_args!(
-                    "{} [{}{}] [{}]{} | {}",
-                    chrono::Local::now().format("[%Y-%m-%d] (%H:%M:%S%.3f)"),
-                    record.level(),
-                    level_pad,
-                    record.target(),
-                    pad,
-                    message
-                ))
+                let messages = message.to_string()
+                    .lines()
+                    .map(|line| {
+                        format!(
+                            "{} [{}{}] [{}]{} | {}",
+                            chrono::Local::now().format("[%Y-%m-%d] (%H:%M:%S%.3f)"),
+                            record.level(),
+                            level_pad,
+                            record.target(),
+                            pad,
+                            line
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                out.finish(format_args!("{}", messages))
             });
 
             // Don't rotate the log file based on date ourself if its disabled

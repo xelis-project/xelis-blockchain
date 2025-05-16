@@ -298,7 +298,7 @@ impl Wallet {
     }
 
     // Create a new wallet on disk
-    pub fn create(name: &str, password: &str, seed: Option<RecoverOption>, network: Network, precomputed_tables: PrecomputedTablesShared, n_threads: usize, concurrency: usize) -> Result<Arc<Self>, Error> {
+    pub async fn create<'a>(name: &'a str, password: &'a str, seed: Option<RecoverOption<'a>>, network: Network, precomputed_tables: PrecomputedTablesShared, n_threads: usize, concurrency: usize) -> Result<Arc<Self>, Error> {
         if name.is_empty() {
             return Err(WalletError::EmptyName.into())
         }
@@ -359,7 +359,7 @@ impl Wallet {
         storage.set_private_key(&keypair.get_private_key())?;
 
         // Flush the storage to be sure its written on disk
-        storage.flush()?;
+        storage.flush().await?;
 
         Ok(Self::new(storage, keypair, network, precomputed_tables, n_threads, concurrency))
     }
@@ -646,9 +646,9 @@ impl Wallet {
     }
 
     // Decrypt the extra data from a transfer
-    pub fn decrypt_extra_data(&self, cipher: UnknownExtraDataFormat, handle: Option<&DecryptHandle>, role: Role) -> Result<PlaintextExtraData, WalletError> {
+    pub fn decrypt_extra_data(&self, cipher: UnknownExtraDataFormat, handle: Option<&DecryptHandle>, role: Role, version: TxVersion) -> Result<PlaintextExtraData, WalletError> {
         trace!("decrypt extra data");
-        let res = cipher.decrypt(self.account.inner.keypair.get_private_key(), handle, role)?;
+        let res = cipher.decrypt(self.account.inner.keypair.get_private_key(), handle, role, version)?;
         Ok(res)
     }
 

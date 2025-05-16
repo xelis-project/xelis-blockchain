@@ -27,26 +27,39 @@ pub const DEFAULT_CACHE_SIZE: usize = 1024;
 // Block rules
 // Millis per second, it is used to prevent having random 1000 values anywhere
 pub const MILLIS_PER_SECOND: u64 = 1000;
-// Block Time in milliseconds
-pub const BLOCK_TIME_MILLIS: u64 = 15 * MILLIS_PER_SECOND; // 15s block time
-// Minimum difficulty (each difficulty point is in H/s)
-// Current: BLOCK TIME in millis * 20 = 20 KH/s minimum
+
+// Constants for hashrate
+// Used for difficulty calculation
+// and to be easier to read
+pub const HASH: u64 = 1;
+pub const KILO_HASH: u64 = HASH * 1000;
+pub const MEGA_HASH: u64 = KILO_HASH * 1000;
+pub const GIGA_HASH: u64 = MEGA_HASH * 1000;
+pub const TERA_HASH: u64 = GIGA_HASH * 1000;
+
+// Minimum difficulty is calculated the following (each difficulty point is in H/s)
+// BLOCK TIME in millis * N = minimum hashrate
 // This is to prevent spamming the network with low difficulty blocks
-// This is active only on mainnet mode
-pub const MAINNET_MINIMUM_DIFFICULTY: Difficulty = Difficulty::from_u64(BLOCK_TIME_MILLIS * 20);
-// Testnet & Devnet minimum difficulty
-pub const OTHER_MINIMUM_DIFFICULTY: Difficulty = Difficulty::from_u64(BLOCK_TIME_MILLIS * 2);
+// and is only active on mainnet
+// Currently set to 20 KH/s
+pub const MAINNET_MINIMUM_HASHRATE: u64 = 20 * KILO_HASH;
+// Testnet & Devnet minimum hashrate
+// Currently set to 2 KH/s
+pub const DEFAULT_MINIMUM_HASHRATE: u64 = 2 * KILO_HASH;
+
 // This is also used as testnet and devnet minimum difficulty
-pub const GENESIS_BLOCK_DIFFICULTY: Difficulty = Difficulty::from_u64(1);
+pub const GENESIS_BLOCK_DIFFICULTY: Difficulty = Difficulty::from_u64(1 * HASH);
+
 // 2 seconds maximum in future (prevent any attack on reducing difficulty but keep margin for unsynced devices)
-pub const TIMESTAMP_IN_FUTURE_LIMIT: TimestampSeconds = 2 * 1000;
+pub const TIMESTAMP_IN_FUTURE_LIMIT: TimestampSeconds = 2 * MILLIS_PER_SECOND;
 
 // keep at least last N blocks until top topoheight when pruning the chain
 // WARNING: This must be at least 50 blocks for difficulty adjustement
 pub const PRUNE_SAFETY_LIMIT: u64 = STABLE_LIMIT * 10;
 
 // BlockDAG rules
-pub const STABLE_LIMIT: u64 = 8; // in how many height we consider the block stable
+// in how many height we consider the block stable
+pub const STABLE_LIMIT: u64 = 8;
 
 // Emission rules
 // 15% (6 months), 10% (6 months), 5% per block going to dev address
@@ -276,7 +289,9 @@ pub fn get_hex_genesis_block(network: &Network) -> Option<&str> {
 
 lazy_static! {
     // Developer public key is lazily converted from address to support any network
-    pub static ref DEV_PUBLIC_KEY: PublicKey = Address::from_string(&DEV_ADDRESS).unwrap().to_public_key();
+    pub static ref DEV_PUBLIC_KEY: PublicKey = Address::from_string(&DEV_ADDRESS)
+        .expect("valid dev address")
+        .to_public_key();
 }
 
 // Genesis block hash based on network selected
@@ -294,27 +309,6 @@ pub const fn get_seed_nodes(network: &Network) -> &[&str] {
         Network::Mainnet => &MAINNET_SEED_NODES,
         Network::Testnet => &TESTNET_SEED_NODES,
         Network::Dev => &[],
-    }
-}
-
-// Get minimum difficulty based on the network
-// Mainnet has a minimum difficulty to prevent spamming the network
-// Testnet has a lower difficulty to allow faster block generation
-pub fn get_minimum_difficulty(network: &Network) -> Difficulty {
-    match network {
-        Network::Mainnet => MAINNET_MINIMUM_DIFFICULTY,
-        _ => OTHER_MINIMUM_DIFFICULTY,
-    }
-}
-
-pub fn get_difficulty_at_hard_fork(network: &Network, block_version: BlockVersion) -> Difficulty {
-    match network {
-        Network::Mainnet => match block_version {
-            BlockVersion::V0 | BlockVersion::V1 => MAINNET_MINIMUM_DIFFICULTY,
-            // 20 KH/s * 100 000 = 2 GH/s
-            _ => MAINNET_MINIMUM_DIFFICULTY * Difficulty::from_u64(100_000),
-        },
-        _ => OTHER_MINIMUM_DIFFICULTY,
     }
 }
 

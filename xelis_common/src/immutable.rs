@@ -1,5 +1,11 @@
-use std::{fmt::{self, Display}, ops::Deref, sync::Arc};
+use std::{
+    fmt::{self, Display},
+    ops::Deref,
+    sync::Arc
+};
 use serde::{Serialize, Deserialize};
+
+use crate::serializer::*;
 
 #[derive(Clone, Serialize, Deserialize, Debug, Eq, Hash, PartialEq)]
 #[serde(untagged)]
@@ -25,12 +31,13 @@ impl<T> Immutable<T> {
 }
 
 impl<T: Clone> Immutable<T> {
-    pub fn into_arc(&mut self) -> Arc<T> {
+    pub fn make_arc(&mut self) -> Arc<T> {
         match self {
             Immutable::Owned(v) => {
-                let arced = Arc::new(v.clone());
-                *self = Immutable::Arc(arced.clone());
-                arced
+                // Replace self with Immutable::Arc
+                let arc = Arc::new(v.clone());
+                *self = Immutable::Arc(arc.clone());
+                arc
             },
             Immutable::Arc(v) => v.clone()
         }
@@ -90,5 +97,19 @@ impl<T: fmt::Display> Display for Immutable<T> {
             Immutable::Owned(v) => write!(f, "{}", v),
             Immutable::Arc(v) => write!(f, "{}", v)
         }
+    }
+}
+
+impl<T: Serializer> Serializer for Immutable<T> {
+    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
+        Ok(Immutable::Owned(T::read(reader)?))
+    }
+
+    fn write(&self, writer: &mut Writer) {
+        self.as_ref().write(writer);
+    }
+
+    fn size(&self) -> usize {
+        self.as_ref().size()
     }
 }

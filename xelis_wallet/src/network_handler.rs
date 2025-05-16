@@ -342,7 +342,7 @@ impl NetworkHandler {
                                 };
     
                                 let extra_data = if let Some(cipher) = transfer.extra_data.into_owned() {
-                                    match self.wallet.decrypt_extra_data(cipher,  Some(&handle), role) {
+                                    match self.wallet.decrypt_extra_data(cipher,  Some(&handle), role, tx.version) {
                                         Ok(e) => Some(e),
                                         Err(e) => {
                                             warn!("Error while decrypting extra data of TX {}: {}", tx.hash, e);
@@ -503,11 +503,13 @@ impl NetworkHandler {
                         }
                     }
 
+                    debug!("storing new entry {} from block {}", entry.get_hash(), block_hash);
                     {
                         let mut storage = self.wallet.get_storage().write().await;
                         storage.save_transaction(entry.get_hash(), &entry)?;
                         // Store the changes for history
                         if !changes_stored {
+                            debug!("mark topoheight {} as changed", topoheight);
                             storage.add_topoheight_to_changes(topoheight, &block_hash)?;
                             changes_stored = true;
                         }
@@ -1098,6 +1100,13 @@ impl NetworkHandler {
         if sync_new_blocks && self.wallet.get_history_scan() {
             debug!("Syncing new blocks");
             self.sync_new_blocks(address, wallet_topoheight, true).await?;
+        }
+
+        {
+            debug!("Flushing storage");
+            let mut storage = self.wallet.get_storage().write().await;
+            storage.flush().await?;
+            debug!("Flushed storage");
         }
 
         // Propagate the event

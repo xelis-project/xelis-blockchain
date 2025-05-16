@@ -18,7 +18,8 @@ pub use encryption::EncryptionKey;
 use futures::{
     stream::{self, FuturesOrdered},
     Stream,
-    StreamExt
+    StreamExt,
+    TryStreamExt
 };
 use indexmap::IndexSet;
 use lru::LruCache;
@@ -97,7 +98,7 @@ use tokio::{
     task::JoinHandle,
     time::{interval, sleep, timeout}
 };
-use log::{info, warn, error, debug, trace};
+use log::{debug, error, info, log, trace, warn};
 use std::{
     borrow::Cow,
     io,
@@ -191,6 +192,11 @@ pub struct P2pServer<S: Storage> {
     fail_count_limit: u8,
     // Sender used to notify the ping loop
     notify_ping_loop: Sender<()>,
+    // This is used to reexecute blocks on chain sync
+    // in case the block detected is marked as orphaned
+    reexecute_blocks_on_sync: bool,
+    // Log level for block propagation
+    block_propagation_log_level: log::Level,
 }
 
 impl<S: Storage> P2pServer<S> {
@@ -214,6 +220,8 @@ impl<S: Storage> P2pServer<S> {
         stream_concurrency: usize,
         temp_ban_time: u64,
         fail_count_limit: u8,
+        reexecute_blocks_on_sync: bool,
+        block_propagation_log_level: log::Level,
     ) -> Result<Arc<Self>, P2pError> {
         if tag.as_ref().is_some_and(|tag| tag.len() == 0 || tag.len() > 16) {
             return Err(P2pError::InvalidTag);
@@ -271,9 +279,9 @@ impl<S: Storage> P2pServer<S> {
             connections_sender,
             object_tracker,
             is_running: AtomicBool::new(true),
-            blocks_propagation_queue: Mutex::new(LruCache::new(NonZeroUsize::new(STABLE_LIMIT as usize * TIPS_LIMIT).unwrap())),
+            blocks_propagation_queue: Mutex::new(LruCache::new(NonZeroUsize::new(STABLE_LIMIT as usize * TIPS_LIMIT).expect("non-zero blocks propagation queue"))),
             blocks_processor,
-            txs_propagation_queue: Mutex::new(LruCache::new(NonZeroUsize::new(TRANSACTIONS_CHANNEL_CAPACITY).unwrap())),
+            txs_propagation_queue: Mutex::new(LruCache::new(NonZeroUsize::new(TRANSACTIONS_CHANNEL_CAPACITY).expect("non-zero transactions propagation queue"))),
             txs_processor,
             allow_fast_sync_mode,
             allow_boost_sync_mode,
@@ -291,6 +299,8 @@ impl<S: Storage> P2pServer<S> {
             temp_ban_time,
             fail_count_limit,
             notify_ping_loop: ping_sender,
+            reexecute_blocks_on_sync,
+            block_propagation_log_level
         };
 
         let arc = Arc::new(server);
@@ -676,8 +686,9 @@ impl<S: Storage> P2pServer<S> {
         let genesis_hash = match get_genesis_block_hash(self.blockchain.get_network()) {
             Some(hash) => Cow::Borrowed(hash),
             None => {
-                trace!("no hardcoded genesis block hash found, using the one from the storage");
+                debug!("no hardcoded genesis block hash found, using the one from the storage");
                 let storage = self.blockchain.get_storage().read().await;
+                debug!("storage read acquired for genesis block hash");
                 let hash = storage.get_hash_at_topo_height(0).await?;
                 Cow::Owned(hash)
             }
@@ -1364,48 +1375,41 @@ impl<S: Storage> P2pServer<S> {
                         break 'main;
                     };
 
-                    let mut transactions = Vec::with_capacity(header.get_txs_count());
                     let mut futures = FuturesOrdered::new();
                     for hash in header.get_txs_hashes() {
-                        if let Ok(tx) = self.blockchain.get_tx(hash).await {
-                            transactions.push(Some(tx));
-                        } else {
-                            // request it from peer
-                            let hash = hash.clone();
-                            let fut = async {
+                        let future = async {
+                            if let Ok(tx) = self.blockchain.get_tx(hash).await {
+                                Ok(tx)
+                            } else {
+                                let hash = hash.clone();
+                                info!("Cache missed for TX {} in block propagation {}, will request it from peer", hash, block_hash);
+
+                                // request it from peer
                                 let mut listener = self.object_tracker.request_object_from_peer_with_or_get_notified(Arc::clone(&peer), ObjectRequest::Transaction(hash), None).await?;
-                                let response = listener.recv().await.context("Error while reading transaction for block")?;
+                                let response = listener.recv().await
+                                    .context("Error while reading transaction for block")?;
+
                                 match response {
-                                    OwnedObjectResponse::Transaction(tx, _) => Ok(tx),
+                                    OwnedObjectResponse::Transaction(tx, _) => Ok(Immutable::Owned(tx)),
                                     _ => Err(P2pError::ExpectedTransaction(response))
                                 }
-                            };
-                            futures.push_back(fut);
-                            transactions.push(None);
-                        }
+                            }
+                        };
+                        futures.push_back(future);
                     }
 
-                    let mut txs = Vec::with_capacity(header.get_txs_count());
-                    for (tx, tx_hash) in transactions.into_iter().zip(header.get_txs_hashes()) {
-                        match tx {
-                            Some(tx) => {
-                                txs.push(Immutable::Arc(tx));
-                            },
-                            None => {
-                                if let Some(response) = futures.next().await {
-                                    match response {
-                                        Ok(tx) => {
-                                            txs.push(Immutable::Owned(tx));
-                                        },
-                                        Err(e) => {
-                                            error!("Error on block tx {}: {}", tx_hash, e);
-                                            continue 'main;
-                                        }
-                                    };
-                                }
-                            }
+                    // Now collect all the futures
+                    let txs = match futures.try_collect::<Vec<_>>().await {
+                        Ok(txs) => {
+                            debug!("All transactions for block {} received", block_hash);
+                            txs
+                        },
+                        Err(e) => {
+                            error!("Error while processing transactions for block {}: {}", block_hash, e);
+                            peer.increment_fail_count();
+                            continue;
                         }
-                    }
+                    };
 
                     // Mark the timestamp of when its being added
                     {
@@ -1734,7 +1738,7 @@ impl<S: Storage> P2pServer<S> {
                     .for_each_concurrent(self.stream_concurrency, |common_peer| {
                         let hash = &hash;
                         async move {
-                            debug!("{} is a common peer with {}, adding TX {} to its cache", common_peer, peer, hash);
+                            trace!("{} is a common peer with {}, adding TX {} to its cache", common_peer, peer, hash);
                             let mut txs_cache = common_peer.get_txs_cache().lock().await;
                             if !txs_cache.contains(hash) {
                                 debug!("Adding TX {} to common peer {} cache", hash, common_peer);
@@ -1745,6 +1749,7 @@ impl<S: Storage> P2pServer<S> {
                     }).await;
 
                 // Check that the tx is not in mempool or on disk already
+                debug!("checking if TX {} is already in chain", hash);
                 if self.blockchain.has_tx(&hash).await? {
                    debug!("TX {} propagated is already in chain", hash);
                    return Ok(())
@@ -1752,6 +1757,7 @@ impl<S: Storage> P2pServer<S> {
 
                 // Check that we are not already waiting on it
                 {
+                    debug!("Adding TX {} to propagation queue", hash);
                     let mut txs_propagation_queue = self.txs_propagation_queue.lock().await;
                     if txs_propagation_queue.contains(&hash) {
                         debug!("TX {} propagated is already in processing from another peer", hash);
@@ -1814,7 +1820,9 @@ impl<S: Storage> P2pServer<S> {
 
                 // check that we don't have this block in our chain
                 {
+                    debug!("locking storage for block propagation {}", block_hash);
                     let storage = self.blockchain.get_storage().read().await;
+                    debug!("storage read acquired for block propagation");
                     if storage.has_block_with_hash(&block_hash).await? {
                         debug!("{}: {} with hash {} is already in our chain. Skipping", peer, header, block_hash);
                         return Ok(())
@@ -1959,6 +1967,7 @@ impl<S: Storage> P2pServer<S> {
                         debug!("{} asked full block {}", peer, hash);
                         let block = {
                             let storage = self.blockchain.get_storage().read().await;
+                            debug!("storage read acquired for full block request");
                             storage.get_block_by_hash(hash).await
                         };
 
@@ -1977,6 +1986,7 @@ impl<S: Storage> P2pServer<S> {
                         debug!("{} asked block header {}", peer, hash);
                         let block = {
                             let storage = self.blockchain.get_storage().read().await;
+                            debug!("storage read acquired for block header request");
                             storage.get_block_header_by_hash(hash).await
                         };
 
@@ -2229,7 +2239,7 @@ impl<S: Storage> P2pServer<S> {
                 let (hash, topoheight) = block_id.consume();
                 debug!("Block {} is common, expected topoheight: {}", hash, topoheight);
                 // check that the block is ordered like us
-                if storage.is_block_topological_ordered(&hash).await && storage.get_topo_height_for_hash(&hash).await? == topoheight { // common point
+                if storage.is_block_topological_ordered(&hash).await? && storage.get_topo_height_for_hash(&hash).await? == topoheight { // common point
                     debug!("common point found at block {} with same topoheight at {}", hash, topoheight);
                     return Ok(Some(CommonPoint::new(hash, topoheight)))
                 }
@@ -2426,7 +2436,7 @@ impl<S: Storage> P2pServer<S> {
 
                 // if the peer is not too far from us, send the block
                 // check that peer height is greater or equal to block height but still under or equal to STABLE_LIMIT
-                // or, check that peer height as difference of maximum 1 block
+                // or, check that peer height has a difference of maximum 1 block
                 // (block height is always + 1 above the highest tip height, so we can just check that peer height is not above block height + 1, it's enough in 90% of time)
                 // chain can accept old blocks (up to STABLE_LIMIT) but new blocks only N+1
                 if (peer_height >= block.get_height() && peer_height - block.get_height() <= STABLE_LIMIT) || (peer_height <= block.get_height() && block.get_height() - peer_height <= 1) {
@@ -2459,13 +2469,13 @@ impl<S: Storage> P2pServer<S> {
                     };
 
                     if send_block {
-                        debug!("Broadcast {} to {}", hash, peer);
+                        log!(self.block_propagation_log_level, "Broadcast {} to {}", hash, peer);
                         if let Err(e) = peer.send_bytes(packet_block_bytes.clone()).await {
                             debug!("Error on broadcast block {} to {}: {}", hash, peer, e);
                         }
                         trace!("{} has been broadcasted to {}", hash, peer);
                     } else if send_ping {
-                        debug!("{} contains {}, don't broadcast block to him", peer, hash);
+                        log!(self.block_propagation_log_level, "{} contains {}, don't broadcast block to him", peer, hash);
                         // But we can notify him with a ping packet that we got the block
                         if let Err(e) = peer.send_bytes(packet_ping_bytes.clone()).await {
                             debug!("Error on sending ping for notifying that we accepted the block {} to {}: {}", hash, peer, e);
@@ -2476,7 +2486,7 @@ impl<S: Storage> P2pServer<S> {
                     }
                 } else if send_ping && peer_height >= block.get_height() {
                     // Peer is above us, send him a ping packet to inform him we got a block propagated
-                    debug!("send ping (block {}) for propagation to {}", hash, peer);
+                    log!(self.block_propagation_log_level, "send ping (block {}) for propagation to {}", hash, peer);
                     if let Err(e) = peer.send_bytes(packet_ping_bytes.clone()).await {
                         debug!("Error on sending ping to peer for notifying that we got the block {} to {}: {}", hash, peer, e);
                     } else {
@@ -2485,7 +2495,7 @@ impl<S: Storage> P2pServer<S> {
                     }
                 } else {
                     // Peer is too far, don't send the block and neither the ping packet
-                    debug!("Cannot broadcast {} at height {} to {}, too far", hash, block.get_height(), peer);
+                    log::log!(self.block_propagation_log_level, "Cannot broadcast {} at height {} to {}, too far", hash, block.get_height(), peer);
                 }
         }).await;
 

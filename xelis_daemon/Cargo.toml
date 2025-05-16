@@ -14,7 +14,6 @@ actix = "0.13.0"
 actix-web = "4"
 sled = "0.34.7"
 lru = "0.12.3"
-async-recursion = "1"
 async-trait = "0.1.64"
 humantime = "2.1.0"
 human_bytes = "0.4.2"
@@ -23,6 +22,9 @@ chacha20poly1305 = "0.10.1"
 x25519-dalek = { version = "2.0.1", features = ["serde", "zeroize", "static_secrets"] }
 xelis-environment = { git = "https://github.com/xelis-project/xelis-vm", branch = "dev" }
 xelis-vm = { git = "https://github.com/xelis-project/xelis-vm", branch = "dev" }
+rocksdb = "0.23.0"
+strum = { version = "0.27.1", features = ["derive"] }
+xxhash-rust = { version = "0.8.15", features = ["xxh3"] }
 
 # Common dependencies
 tokio = { version = "1", features = ["rt-multi-thread", "io-util", "io-std", "time", "macros", "sync", "net"] }
@@ -39,3 +41,6 @@ semver = "1.0.23"
 futures = "0.3.31"
 itertools = "0.14.0"
 async-scoped = { version = "0.9.0", features = ["use-tokio"] }
+
+[dev-dependencies]
+tempdir = "*"

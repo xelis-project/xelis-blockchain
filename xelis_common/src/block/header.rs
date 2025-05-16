@@ -14,7 +14,8 @@ use crate::{
         HASH_SIZE
     },
     serializer::{Reader, ReaderError, Serializer, Writer},
-    time::TimestampMillis
+    time::TimestampMillis,
+    immutable::Immutable
 };
 use xelis_hash::Error as XelisHashError;
 use super::{Algorithm, MinerWork, EXTRA_NONCE_SIZE};
@@ -38,7 +39,7 @@ pub struct BlockHeader {
     // Version of the block
     pub version: BlockVersion,
     // All TIPS of the block (previous hashes of the block)
-    pub tips: IndexSet<Hash>,
+    pub tips: Immutable<IndexSet<Hash>>,
     // Timestamp in milliseconds
     pub timestamp: TimestampMillis,
     // Height of the block
@@ -59,12 +60,12 @@ pub struct BlockHeader {
 }
 
 impl BlockHeader {
-    pub fn new(version: BlockVersion, height: u64, timestamp: TimestampMillis, tips: IndexSet<Hash>, extra_nonce: [u8; EXTRA_NONCE_SIZE], miner: CompressedPublicKey, txs_hashes: IndexSet<Hash>) -> Self {
+    pub fn new(version: BlockVersion, height: u64, timestamp: TimestampMillis, tips: impl Into<Immutable<IndexSet<Hash>>>, extra_nonce: [u8; EXTRA_NONCE_SIZE], miner: CompressedPublicKey, txs_hashes: IndexSet<Hash>) -> Self {
         BlockHeader {
             version,
             height,
             timestamp,
-            tips,
+            tips: tips.into(),
             nonce: 0,
             extra_nonce,
             miner,
@@ -105,11 +106,16 @@ impl BlockHeader {
         &self.tips
     }
 
+
+    pub fn get_immutable_tips(&self) -> &Immutable<IndexSet<Hash>> {
+        &self.tips
+    }
+
     // Compute a hash covering all tips hashes
     pub fn get_tips_hash(&self) -> Hash {
         let mut bytes = Vec::with_capacity(self.tips.len() * HASH_SIZE);
 
-        for tx in &self.tips {
+        for tx in self.tips.iter() {
             bytes.extend(tx.as_bytes())
         }
 
@@ -203,7 +209,7 @@ impl Serializer for BlockHeader {
         writer.write_u64(&self.nonce); // 17 + 8 = 25
         writer.write_bytes(&self.extra_nonce); // 25 + 32 = 57
         writer.write_u8(self.tips.len() as u8); // 57 + 1 = 58
-        for tip in &self.tips {
+        for tip in self.tips.iter() {
             writer.write_hash(tip); // 32 per hash
         }
 
@@ -252,7 +258,7 @@ impl Serializer for BlockHeader {
                 extra_nonce,
                 height,
                 timestamp,
-                tips,
+                tips: Immutable::Owned(tips),
                 miner,
                 nonce,
                 txs_hashes
@@ -287,7 +293,7 @@ impl Hashable for BlockHeader {
 impl Display for BlockHeader {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
         let mut tips = Vec::with_capacity(self.tips.len());
-        for hash in &self.tips {
+        for hash in self.tips.iter() {
             tips.push(format!("{}", hash));
         }
         write!(f, "BlockHeader[height: {}, tips: [{}], timestamp: {}, nonce: {}, extra_nonce: {}, txs: {}]", self.height, tips.join(", "), self.timestamp, self.nonce, hex::encode(self.extra_nonce), self.txs_hashes.len())

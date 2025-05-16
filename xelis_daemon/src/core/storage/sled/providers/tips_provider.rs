@@ -3,17 +3,8 @@ use log::trace;
 use xelis_common::serializer::Serializer;
 use crate::core::{
     error::BlockchainError,
-    storage::{sled::TIPS, SledStorage, Tips}
+    storage::{sled::TIPS, SledStorage, Tips, TipsProvider}
 };
-
-#[async_trait]
-pub trait TipsProvider {
-    // Get current chain tips
-    async fn get_tips(&self) -> Result<Tips, BlockchainError>;
-
-    // Store chain tips
-    fn store_tips(&mut self, tips: &Tips) -> Result<(), BlockchainError>;
-}
 
 #[async_trait]
 impl TipsProvider for SledStorage {
@@ -26,7 +17,7 @@ impl TipsProvider for SledStorage {
         })
     }
 
-    fn store_tips(&mut self, tips: &Tips) -> Result<(), BlockchainError> {
+    async fn store_tips(&mut self, tips: &Tips) -> Result<(), BlockchainError> {
         trace!("Saving {} Tips", tips.len());
         Self::insert_into_disk(self.snapshot.as_mut(), &self.extra, TIPS, tips.to_bytes())?;
         if let Some(snapshot) = self.snapshot.as_mut() {

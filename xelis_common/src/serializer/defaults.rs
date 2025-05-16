@@ -1,11 +1,20 @@
 use crate::crypto::{Hash, HASH_SIZE};
 use super::{Serializer, Writer, Reader, ReaderError};
 use std::{
-    collections::{HashSet, BTreeSet, HashMap},
     borrow::Cow,
+    collections::{
+        BTreeSet,
+        HashMap,
+        HashSet
+    },
     hash::Hash as StdHash,
-    net::{SocketAddr, IpAddr, Ipv4Addr, Ipv6Addr
-    }
+    net::{
+        IpAddr,
+        Ipv4Addr,
+        Ipv6Addr,
+        SocketAddr
+    },
+    sync::Arc
 };
 use indexmap::{IndexMap, IndexSet};
 use log::{error, warn};
@@ -560,5 +569,33 @@ impl<T: Serializer> Serializer for Box<T> {
 
     fn size(&self) -> usize {
         self.as_ref().size()
+    }
+}
+
+impl<T: Serializer> Serializer for Arc<T> {
+    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
+        Ok(Arc::new(T::read(reader)?))
+    }
+
+    fn write(&self, writer: &mut Writer) {
+        self.as_ref().write(writer);
+    }
+
+    fn size(&self) -> usize {
+        self.as_ref().size()
+    }
+}
+
+impl<'a> Serializer for &'a [u8] {
+    fn write(&self, writer: &mut Writer) {
+        writer.write_bytes(self);
+    }
+
+    fn read(_: &mut Reader) -> Result<Self, ReaderError> {
+        Err(ReaderError::ErrorTryInto)
+    }
+
+    fn size(&self) -> usize {
+        self.len()
     }
 }

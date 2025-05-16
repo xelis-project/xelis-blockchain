@@ -188,9 +188,9 @@ impl EncryptedStorage {
     }
 
     // Flush on disk to make sure it is saved
-    pub fn flush(&mut self) -> Result<()> {
+    pub async fn flush(&mut self) -> Result<()> {
         trace!("Flushing storage");
-        self.inner.db.flush()?;
+        self.inner.db.flush_async().await?;
         Ok(())
     }
 
@@ -864,6 +864,43 @@ impl EncryptedStorage {
         self.load_from_disk(&self.transactions, hash.as_bytes())
     }
 
+    // Find the transaction index by its hash
+    pub fn get_transaction_id(&self, hash: &Hash) -> Result<Option<u64>> {
+        trace!("get transaction id of {}", hash);
+
+        let hashed_key = self.cipher.hash_key(hash.as_bytes());
+        // TODO: optimize
+        for el in self.transactions_indexes.iter() {
+            let (key, value) = el?;
+
+            if &value == &hashed_key {
+                return Ok(Some(u64::from_bytes(&key)?))
+            }
+        }
+
+        Ok(None)
+    }
+
+
+    // Raw search of the transaction by its hash
+    pub fn search_transaction(&self, hash: &Hash) -> Result<Option<TransactionEntry>> {
+        trace!("get transaction id of {}", hash);
+
+        for el in self.transactions.iter() {
+            let (key, value) = el?;
+
+            let decrypted = self.cipher.decrypt_value(&value)?;
+            let entry_hash = Hash::from_bytes(&decrypted)?;
+            if entry_hash == *hash {
+                debug!("Entry key is {}, expected is {}", Hash::from_bytes(&key)?, Hash::from_bytes(&self.cipher.hash_key(hash))?);
+                let entry = TransactionEntry::from_bytes(&value)?;
+                return Ok(Some(entry))
+            }
+        }
+
+        Ok(None)
+    }
+
     // read whole disk and returns all transactions
     pub fn get_transactions(&self) -> Result<Vec<TransactionEntry>> {
         trace!("get transactions");
@@ -888,10 +925,14 @@ impl EncryptedStorage {
     }
 
     // Count the number of transactions stored
-    // TODO: replace it by a cached value
     pub fn get_transactions_count(&self) -> Result<usize> {
         trace!("get transactions count");
-        Ok(self.transactions.len())
+        let id = self.get_last_transaction_id()?
+            // Increment by one due to 0
+            .map(|v| v + 1)
+            .unwrap_or(0);
+
+        Ok(id as usize)
     }
 
     // delete all transactions above the specified topoheight
