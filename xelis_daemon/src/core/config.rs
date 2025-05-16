@@ -21,7 +21,7 @@ use crate::{
     p2p::diffie_hellman::{KeyVerificationAction, WrappedSecret}
 };
 
-use super::{simulator::Simulator, storage::rocksdb::CompressionMode};
+use super::{simulator::Simulator, storage::rocksdb::{CacheMode, CompressionMode}};
 
 // Functions helpers for serde default values
 fn default_p2p_bind_address() -> String {
@@ -334,6 +334,23 @@ pub struct RocksDBConfig {
     #[clap(name = "rocksdb-compression-mode", value_enum, long, default_value_t)]
     #[serde(default)]
     pub compression_mode: CompressionMode,
+    /// RocksDB block based cache mode to use.
+    #[clap(name = "rocksdb-cache-mode", value_enum, long, default_value_t)]
+    #[serde(default)]
+    pub cache_mode: CacheMode,
+    /// Size in bytes for the RocksDB block based to cache use if mode is not None.
+    #[clap(name = "rocksdb-cache-size", long, default_value_t = default_db_cache_size())]
+    #[serde(default = "default_db_cache_size")]
+    pub cache_size: u64,
+    /// Write buffer to use for the amount of data to build up in memtables.
+    #[clap(name = "rocksdb-write-buffer-size", long, default_value_t = default_db_cache_size())]
+    #[serde(default = "default_db_cache_size")]
+    pub write_buffer_size: u64,
+    /// Enforces a limit for a single memtable using the above write buffer size.
+    /// Disabled by default, each column will have its own buffer.
+    #[clap(name = "rocksdb-write-buffer-shared", long)]
+    #[serde(default)]
+    pub write_buffer_shared: bool,
 }
 
 #[derive(Debug, Clone, clap::Args, Serialize, Deserialize)]

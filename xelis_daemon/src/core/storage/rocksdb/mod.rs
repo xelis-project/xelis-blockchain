@@ -10,6 +10,8 @@ use async_trait::async_trait;
 use itertools::Either;
 use log::{debug, info, trace};
 use rocksdb::{
+    BlockBasedOptions,
+    Cache,
     ColumnFamilyDescriptor,
     DBCompactionStyle,
     DBCompressionType,
@@ -58,6 +60,7 @@ type InnerDB = DBWithThreadMode<MultiThreaded>;
 
 #[derive(Debug, Copy, Clone, clap::ValueEnum, Serialize, Deserialize)]
 #[clap(rename_all = "snake_case")]
+#[serde(rename_all = "snake_case")]
 pub enum CompressionMode {
     None,
     Snappy,
@@ -66,6 +69,21 @@ pub enum CompressionMode {
     Lz4,
     Lz4hc,
     Zstd,
+}
+
+#[derive(Debug, Copy, Clone, clap::ValueEnum, Serialize, Deserialize)]
+#[clap(rename_all = "snake_case")]
+#[serde(rename_all = "snake_case")]
+pub enum CacheMode {
+    None,
+    Lru,
+    HyperClock
+}
+
+impl Default for CacheMode {
+    fn default() -> Self {
+        Self::Lru
+    }
 }
 
 impl Default for CompressionMode {
@@ -151,6 +169,28 @@ impl RocksStorage {
         env.set_low_priority_background_threads(config.low_priority_background_threads as _);
         opts.set_env(&env);
         opts.set_compression_type(config.compression_mode.convert());
+
+        let mut block_opts = BlockBasedOptions::default();
+        match config.cache_mode {
+            CacheMode::None => {
+                block_opts.disable_cache();
+            },
+            CacheMode::Lru => {
+                let cache = Cache::new_lru_cache(config.cache_size as _);
+                block_opts.set_block_cache(&cache);
+            },
+            CacheMode::HyperClock => {
+                let cache = Cache::new_lru_cache(config.cache_size as _);
+                block_opts.set_block_cache(&cache);
+            }
+        };
+
+        opts.set_block_based_table_factory(&block_opts);
+        if config.write_buffer_shared {
+            opts.set_db_write_buffer_size(config.write_buffer_size as _);
+        } else {
+            opts.set_write_buffer_size(config.write_buffer_size as _);
+        }
 
         let db  = DBWithThreadMode::<MultiThreaded>::open_cf_descriptors(&opts, format!("{}{}", dir, network.to_string().to_lowercase()), cfs)
             .expect("Failed to open RocksDB");
