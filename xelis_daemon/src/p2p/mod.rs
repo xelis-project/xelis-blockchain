@@ -1471,37 +1471,38 @@ impl<S: Storage> P2pServer<S> {
 
                     let future = async move {
                         debug!("Requesting from txs processing task tx {}", hash);
-                        // TODO
                         let (transaction, hash2) = match peer.request_blocking_object(ObjectRequest::Transaction(hash.as_ref().clone())).await {
                             Ok(OwnedObjectResponse::Transaction(tx, hash)) => (tx, hash),
                             Ok(response) => {
                                 warn!("Received invalid object type response from {}", peer);
                                 peer.increment_fail_count();
-                                return Err(P2pError::ExpectedTransaction(response))
+                                return Err((P2pError::ExpectedTransaction(response), peer))
                             },
                             Err(e) => {
                                 peer.increment_fail_count();
-                                return Err(e)
+                                return Err((e, peer))
                             }
                         };
 
                         debug_assert!(hash.as_ref() == &hash2, "Hash mismatch between request and response");
 
-                        Ok((transaction, hash))
+                        Ok((transaction, hash, peer))
                     };
 
                     futures.push_back(future);
                 },
                 Some(res) = futures.next() => {
                     match res {
-                        Ok((transaction, hash)) => {
+                        Ok((transaction, hash, peer)) => {
                             debug!("Adding TX to mempool from processing TX task: {}", hash);
                             if let Err(e) = self.blockchain.add_tx_to_mempool_with_hash(transaction, Immutable::Arc(hash.clone()), true).await {
-                                warn!("Couldn't add processed TX {}: {}", hash, e);
+                                warn!("Couldn't add processed TX {} from {}: {}", hash, peer, e);
+                                peer.increment_fail_count();
                             }
                         },
-                        Err(e) => {
-                            error!("Error while handling TX: {}", e);
+                        Err((e, peer)) => {
+                            error!("Error while handling TX from {}: {} ", peer, e);
+                            peer.increment_fail_count();
                         }
                     }
                 }
