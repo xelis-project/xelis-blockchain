@@ -171,6 +171,10 @@ pub type ShareablePrompt = Arc<Prompt>;
 type LocalBoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + 'a>>;
 type AsyncF<'a, T1, T2, R> = Box<dyn Fn(&'a T1, T2) -> LocalBoxFuture<'a, R> + 'a>;
 
+pub fn is_maybe_dir(path: &str) -> bool {
+    path.ends_with("/") || path.ends_with("\\")
+}
+
 impl Prompt {
     pub fn new(
         level: LogLevel,
@@ -186,7 +190,7 @@ impl Prompt {
         show_ascii: bool,
         logs_datetime_format: String,
     ) -> Result<ShareablePrompt, PromptError> {
-        if !(dir_path.ends_with("/") || dir_path.ends_with("\\")) {
+        if !is_maybe_dir(dir_path) {
             return Err(PromptError::LogsPathNotFolder);
         }
 
@@ -202,6 +206,10 @@ impl Prompt {
 
         if enable_auto_compress_logs && disable_file_log_date_based {
             return Err(PromptError::AutoCompressParam)
+        }
+
+        if is_maybe_dir(filename_log) {
+            return Err(PromptError::FileNotDir);
         }
 
         prompt.setup_logger(
