@@ -1814,6 +1814,11 @@ impl<S: Storage> P2pServer<S> {
                             warn!("{} send us a block ({}) already tracked by him ({:?} {})", peer, block_hash, origin, is_common);
                             return Err(P2pError::AlreadyTrackedBlock(block_hash.as_ref().clone(), *origin))
                         }
+
+                        if *is_common {
+                            debug!("{} was marked as common for block {}", peer, block_hash);
+                            *is_common = false;
+                        }
                     } else {
                         debug!("Saving {} in blocks propagation cache for {}", block_hash, peer);
                         blocks_propagation.put(block_hash.clone(),  (direction, false));

@@ -411,8 +411,7 @@ impl<S: Storage> P2pServer<S> {
                 {
                     info!("Ending commit point for chain validator");
                     let apply = res.as_ref()
-                        .map(|(_, v)| v.is_ok())
-                        .unwrap_or(false);
+                        .map_or(false, |(_, v)| v.is_ok());
 
                     let mut storage = self.blockchain.get_storage().write().await;
                     storage.end_commit_point(apply).await?;
