@@ -1478,18 +1478,26 @@ impl<S: Storage> P2pServer<S> {
 
                     debug!("Adding TX {} from {} to futures queue", hash, peer);
 
-                    let future = async move {
+                    let future = async {
                         debug!("Requesting from txs processing task tx {}", hash);
-                        let (transaction, hash2) = match peer.request_blocking_object(ObjectRequest::Transaction(hash.as_ref().clone())).await {
-                            Ok(OwnedObjectResponse::Transaction(tx, hash)) => (tx, hash),
-                            Ok(response) => {
-                                warn!("Received invalid object type response from {}", peer);
-                                peer.increment_fail_count();
+                        let mut listener = match self.object_tracker.request_object_from_peer_with_or_get_notified(
+                            Arc::clone(&peer),
+                            ObjectRequest::Transaction(hash.as_ref().clone()),
+                            None
+                        ).await {
+                            Ok(listener) => listener,
+                            Err(e) => return Err((e, peer))
+                        };
+
+                        let res = listener.recv().await
+                            .context("Error while listening TX")
+                            .map_err(|e| (e.into(), Arc::clone(&peer)))?;
+
+                        let (transaction, hash2) = match res {
+                            OwnedObjectResponse::Transaction(tx, hash) => (tx, hash),
+                            response => {
+                                debug!("Received invalid object type response from {}", peer);
                                 return Err((P2pError::ExpectedTransaction(response), peer))
-                            },
-                            Err(e) => {
-                                peer.increment_fail_count();
-                                return Err((e, peer))
                             }
                         };
 
