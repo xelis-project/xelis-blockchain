@@ -1046,12 +1046,12 @@ impl<S: Storage> Blockchain<S> {
 
     // Search the lowest height available from the tips of a block hash
     // We go through all tips and their tips until we have no unordered block left
-    async fn find_lowest_height_from_mainchain<P>(&self, provider: &P, hash: Hash) -> Result<u64, BlockchainError>
+    async fn find_lowest_height_from_mainchain<P>(&self, provider: &P, hash: Hash) -> Result<Option<u64>, BlockchainError>
     where
         P: DifficultyProvider + DagOrderProvider
     {
         // Lowest height found from mainchain
-        let mut lowest_height = u64::max_value();
+        let mut lowest_height = None;
         // Current stack of blocks to process
         let mut stack: VecDeque<Hash> = VecDeque::new();
         // Because several blocks can have the same tips,
@@ -1069,8 +1069,8 @@ impl<S: Storage> Blockchain<S> {
             for tip_hash in tips.iter() {
                 if provider.is_block_topological_ordered(tip_hash).await? {
                     let height = provider.get_height_for_block_hash(tip_hash).await?;
-                    if lowest_height > height {
-                        lowest_height = height;
+                    if lowest_height.is_none_or(|h| h > height) {
+                        lowest_height = Some(height);
                     }
                 } else {
                     stack.push_back(tip_hash.clone());
@@ -1086,30 +1086,41 @@ impl<S: Storage> Blockchain<S> {
     // This function is used to calculate the distance from mainchain
     // It will recursively search all tips and their height
     // If a tip is not ordered, we will search its tips until we find an ordered block
-    async fn calculate_distance_from_mainchain<P>(&self, provider: &P, hash: &Hash) -> Result<u64, BlockchainError>
+    async fn calculate_distance_from_mainchain<P>(&self, provider: &P, hash: &Hash) -> Result<Option<u64>, BlockchainError>
     where
         P: DifficultyProvider + DagOrderProvider
     {
         if provider.is_block_topological_ordered(hash).await? {
             let height = provider.get_height_for_block_hash(hash).await?;
             debug!("calculate_distance: Block {} is at height {}", hash, height);
-            return Ok(height)
+            return Ok(Some(height))
         }
         debug!("calculate_distance: Block {} is not ordered, calculate distance from mainchain", hash);
         let lowest_height = self.find_lowest_height_from_mainchain(provider, hash.clone()).await?;
 
-        debug!("calculate_distance: lowest height found is {}", lowest_height);
+        debug!("calculate_distance: lowest height found is {:?}", lowest_height);
         Ok(lowest_height)
     }
 
     // Verify if the block is not too far from mainchain
     // We calculate the distance from mainchain and compare it to the height
-    async fn verify_distance_from_mainchain<P>(&self, provider: &P, hash: &Hash, height: u64) -> Result<bool, BlockchainError>
+    async fn is_near_enough_from_main_chain<P>(&self, provider: &P, hash: &Hash, chain_height: u64) -> Result<bool, BlockchainError>
     where
         P: DifficultyProvider + DagOrderProvider
     {
-        let distance = self.calculate_distance_from_mainchain(provider, hash).await?;
-        Ok(!(distance <= height && height - distance >= STABLE_LIMIT))
+        let Some(lowest_ordered_height) = self.calculate_distance_from_mainchain(provider, hash).await? else {
+            return Ok(false);
+        };
+
+        debug!("distance for block {}: {} at chain height {}", hash, lowest_ordered_height, chain_height);
+
+        // If the lowest ordered height is below or equal to current chain height
+        // and that we have a difference bigger than our stable limit
+        if lowest_ordered_height <= chain_height && chain_height - lowest_ordered_height >= STABLE_LIMIT {
+            return Ok(false)
+        }
+
+        Ok(true)
     }
 
     // Find tip work score internal for a block hash
@@ -1610,7 +1621,7 @@ impl<S: Storage> Blockchain<S> {
                         continue;
                     }
 
-                    if !self.verify_distance_from_mainchain(storage, &hash, current_height).await? {
+                    if !self.is_near_enough_from_main_chain(storage, &hash, current_height).await? {
                         warn!("Tip {} is not selected for mining: too far from mainchain at height: {}", hash, current_height);
                         continue;
                     }
@@ -1628,7 +1639,7 @@ impl<S: Storage> Blockchain<S> {
         let mut sorted_tips = blockdag::sort_tips(storage, tips.into_iter()).await?;
         if sorted_tips.len() > TIPS_LIMIT {
             let dropped_tips = sorted_tips.drain(TIPS_LIMIT..); // keep only first 3 heavier tips
-            debug!("Dropping tips {} because they are not in the first 3 heavier tips", dropped_tips.map(|h| h.to_string()).collect::<Vec<String>>().join(", "));
+            warn!("Dropping tips {} because they are not in the first 3 heavier tips", dropped_tips.map(|h| h.to_string()).collect::<Vec<String>>().join(", "));
         }
 
         // find the newest timestamp
@@ -1875,8 +1886,8 @@ impl<S: Storage> Blockchain<S> {
             trace!("calculate distance from mainchain for tips: {}", hash);
 
             // We're processing the block tips, so we can't use the block height as it may not be in the chain yet
-            let height = block_height_by_tips.checked_sub(1).unwrap_or(0);
-            if !self.verify_distance_from_mainchain(storage, hash, height).await? {
+            let height = block_height_by_tips.saturating_sub(1);
+            if !self.is_near_enough_from_main_chain(storage, hash, height).await? {
                 error!("{} with hash {} have deviated too much (current height: {}, block height: {})", block, block_hash, current_height, block_height_by_tips);
                 return Err(BlockchainError::BlockDeviation)
             }
@@ -2516,7 +2527,7 @@ impl<S: Storage> Blockchain<S> {
         let best_height = storage.get_height_for_block_hash(best_tip).await?;
         let mut new_tips = Vec::new();
         for hash in tips {
-            if self.verify_distance_from_mainchain(storage, &hash, current_height).await? {
+            if self.is_near_enough_from_main_chain(storage, &hash, current_height).await? {
                 trace!("Adding {} as new tips", hash);
                 new_tips.push(hash);
             } else {
