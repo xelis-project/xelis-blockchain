@@ -45,7 +45,7 @@ Thank you to every people testing actively the code base, honest miners and ever
 
 ## How to build
 
-Building this project requires a working [Rust](https://rustup.rs) (stable) toolchain.
+Building this project requires a working [Rust](https://rustup.rs) (stable) toolchain and `clang` package installed (required by RocksDB if building `xelis_daemon`).
 
 It's expected to be cross-platform and guaranteed to work on Linux, Windows, MacOS platforms.
 
