@@ -2445,7 +2445,11 @@ impl<S: Storage> P2pServer<S> {
                         trace!("locking blocks propagation for peer {}", peer);
                         let mut blocks_propagation = peer.get_blocks_propagation().lock().await;
                         trace!("end locking blocks propagation for peer {}", peer);
-                        let send = !blocks_propagation.contains(hash);
+
+                        // If the peer is marked as common, lets send him anyway for better propagation
+                        let send = blocks_propagation.peek(hash)
+                            .map_or(true, |(_, is_common)| *is_common);
+
                         // check that this block was never shared with this peer
                         if send {
                             // we broadcasted to him, add it to the cache
@@ -2484,7 +2488,7 @@ impl<S: Storage> P2pServer<S> {
                             peer.set_last_ping_sent(get_current_time_in_seconds());
                         }
                     }
-                } else if send_ping && peer_height >= block.get_height() {
+                } else if send_ping && peer_height >= block.get_height().saturating_sub(STABLE_LIMIT) {
                     // Peer is above us, send him a ping packet to inform him we got a block propagated
                     log!(self.block_propagation_log_level, "send ping (block {}) for propagation to {}", hash, peer);
                     if let Err(e) = peer.send_bytes(packet_ping_bytes.clone()).await {
