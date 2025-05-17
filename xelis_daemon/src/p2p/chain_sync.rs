@@ -320,14 +320,17 @@ impl<S: Storage> P2pServer<S> {
         blocks.extend(top_blocks);
 
         if pop_count > 0 {
-            warn!("{} sent us a pop count request of {} with {} blocks", peer, pop_count, blocks_len);
+            warn!("{} sent us a pop count request of {} with {} blocks (common point: {} at {}, skip stable: {})", peer, pop_count, blocks_len, common_point.get_hash(), common_topoheight, skip_stable_height_check);
         }
 
         // if node asks us to pop blocks, check that the peer's height/topoheight is in advance on us
         let peer_topoheight = peer.get_topoheight();
+        let our_stable_topoheight = self.blockchain.get_stable_topoheight();
+
         if pop_count > 0
             && peer_topoheight > our_previous_topoheight
             && peer.get_height() >= our_previous_height
+            && (skip_stable_height_check || common_topoheight < our_stable_topoheight)
             // then, verify if it's a priority node, otherwise, check if we are connected to a priority node so only him can rewind us
             && (peer.is_priority() || !self.is_connected_to_a_synced_priority_node().await)
         {
