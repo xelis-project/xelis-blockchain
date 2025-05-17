@@ -203,7 +203,7 @@ pub struct LogConfig {
     /// By default filename is xelis-wallet.log.
     /// File will be stored in logs directory, this is only the filename, not the full path.
     /// Log file is rotated every day and has the format YYYY-MM-DD.xelis-wallet.log.
-    #[clap(long, default_value_t = default_logs_path())]
+    #[clap(long, default_value_t = default_log_filename())]
     #[serde(default = "default_log_filename")]
     filename_log: String,
     /// Logs directory
