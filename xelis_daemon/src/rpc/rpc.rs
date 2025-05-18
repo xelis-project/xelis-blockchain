@@ -649,7 +649,7 @@ async fn get_info<S: Storage>(context: &Context, body: Value) -> Result<Value, I
         mempool_size,
         version,
         network,
-        block_version,
+        block_version: Some(block_version),
     }))
 }
 
