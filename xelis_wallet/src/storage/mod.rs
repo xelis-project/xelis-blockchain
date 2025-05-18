@@ -639,9 +639,6 @@ impl EncryptedStorage {
     // save asset with its corresponding decimals
     pub async fn add_asset(&mut self, asset: &Hash, data: AssetData) -> Result<()> {
         trace!("add asset");
-        if self.contains_asset(asset).await? {
-            return Err(WalletError::AssetAlreadyRegistered.into());
-        }
 
         self.save_to_disk_with_encrypted_key(&self.assets, asset.as_bytes(), &data.to_bytes())?;
 
