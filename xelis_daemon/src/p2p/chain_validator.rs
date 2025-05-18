@@ -43,12 +43,12 @@ struct BlockData {
 // This is doing only minimal checks and valid chain order based on topoheight and difficulty
 pub struct ChainValidator<'a, S: Storage> {
     // store all blocks data in topological order
-    blocks: IndexMap<Arc<Hash>, BlockData>,
+    blocks: HashMap<Arc<Hash>, BlockData>,
     // store all blocks hashes at a specific height
     blocks_at_height: IndexMap<u64, IndexSet<Arc<Hash>>>,
     // Blockchain reference used to verify current chain state
     blockchain: &'a Blockchain<S>,
-    hash_at_topo: HashMap<TopoHeight, Arc<Hash>>
+    hash_at_topo: IndexMap<TopoHeight, Arc<Hash>>
 }
 
 // This struct is passed as the Provider param.
@@ -63,10 +63,10 @@ impl<'a, S: Storage> ChainValidator<'a, S> {
     // Starting topoheight must be 1 topoheight above the common point
     pub fn new(blockchain: &'a Blockchain<S>) -> Self {        
         Self {
-            blocks: IndexMap::new(),
+            blocks: HashMap::new(),
             blocks_at_height: IndexMap::new(),
             blockchain,
-            hash_at_topo: HashMap::new()
+            hash_at_topo: IndexMap::new()
         }
     }
 
@@ -90,14 +90,15 @@ impl<'a, S: Storage> ChainValidator<'a, S> {
     // Retrieve the cumulative difficulty of the chain validator
     // It is the cumulative difficulty of the last block added
     pub fn get_chain_cumulative_difficulty(&self) -> Option<&CumulativeDifficulty> {
-        let (_, data) = self.blocks.last()?;
-        Some(&data.cumulative_difficulty)
+        let (_, hash) = self.hash_at_topo.last()?;
+        self.blocks.get(hash)
+            .map(|data| &data.cumulative_difficulty)
     }
 
     // validate the basic chain structure
     // We expect that the block added is the next block ordered by topoheight
     pub async fn insert_block(&mut self, hash: Hash, header: BlockHeader, topoheight: TopoHeight) -> Result<(), BlockchainError> {
-        debug!("Inserting block {} into chain validator", hash);
+        debug!("Inserting block {} into chain validator with expected topoheight {}", hash, topoheight);
 
         if self.blocks.contains_key(&hash) {
             debug!("Block {} is already in validator chain!", hash);
@@ -198,9 +199,8 @@ impl<'a, S: Storage> ChainValidator<'a, S> {
         Ok(())
     }
 
-    // Retrieve all blocks from the chain validator
-    pub fn get_blocks(self) -> impl Iterator<Item = (Arc<Hash>, Arc<BlockHeader>)> {
-        self.blocks.into_iter().map(|(hash, data)| (hash, data.header))
+    pub fn get_block(&mut self, hash: &Hash) -> Option<Arc<BlockHeader>> {
+        self.blocks.remove(hash).map(|v| v.header)
     }
 }
 

@@ -179,42 +179,56 @@ impl<S: Storage> P2pServer<S> {
     // This may be faster, but we would use slightly more bandwidth
     // NOTE: ChainValidator must check the block hash and not trust it
     // as we are giving it the chain directly to prevent a re-compute
-    async fn handle_blocks_from_chain_validator(&self, peer: &Arc<Peer>, chain_validator: ChainValidator<'_, S>) -> Result<(), BlockchainError> {
+    async fn handle_blocks_from_chain_validator(&self, peer: &Arc<Peer>, mut chain_validator: ChainValidator<'_, S>, blocks: IndexSet<Hash>) -> Result<(), BlockchainError> {
         // now retrieve all txs from all blocks header and add block in chain
-        for (hash, header) in chain_validator.get_blocks() {
+        for hash in blocks {
             trace!("Processing block {} from chain validator", hash);
+            let header = chain_validator.get_block(&hash);
+
             // we don't already have this block, lets retrieve its txs and add in our chain
             if !self.blockchain.has_block(&hash).await? {
-                let mut futures = FuturesOrdered::new();
-                for tx_hash in header.get_txs_hashes() {
-                    let fut = async move {
-                        // check first on disk in case it was already fetch by a previous block
-                        // it can happens as TXs can be integrated in multiple blocks and executed only one time
-                        // check if we find it
-                        if let Ok(tx) = self.blockchain.get_tx(tx_hash).await {
-                            trace!("Found the transaction {} on disk", tx_hash);
-                            Ok(tx)
-                        } else {
-                            // otherwise, ask it from peer
-                            // But because we may have the same TX in several blocks, lets request it using object tracker
-                            let response = self.object_tracker.request_object_from_peer_with_or_get_notified(Arc::clone(&peer), ObjectRequest::Transaction(tx_hash.clone()), None).await?
-                                .recv().await
-                                .context("Error on listener for TX")?;
-
-                            match response {
-                                OwnedObjectResponse::Transaction(tx, _) => Ok(Immutable::Owned(tx)),
-                                _ => Err(P2pError::ExpectedTransaction(response))
-                            }
+                let block = match header {
+                    Some(header) => {
+                        let mut futures = FuturesOrdered::new();
+                        for tx_hash in header.get_txs_hashes() {
+                            let fut = async move {
+                                // check first on disk in case it was already fetch by a previous block
+                                // it can happens as TXs can be integrated in multiple blocks and executed only one time
+                                // check if we find it
+                                if let Ok(tx) = self.blockchain.get_tx(tx_hash).await {
+                                    trace!("Found the transaction {} on disk", tx_hash);
+                                    Ok(tx)
+                                } else {
+                                    // otherwise, ask it from peer
+                                    // But because we may have the same TX in several blocks, lets request it using object tracker
+                                    let response = self.object_tracker.request_object_from_peer_with_or_get_notified(Arc::clone(&peer), ObjectRequest::Transaction(tx_hash.clone()), None).await?
+                                        .recv().await
+                                        .context("Error on listener for TX")?;
+        
+                                    match response {
+                                        OwnedObjectResponse::Transaction(tx, _) => Ok(Immutable::Owned(tx)),
+                                        _ => Err(P2pError::ExpectedTransaction(response))
+                                    }
+                                }
+                            };
+                            futures.push_back(fut);
                         }
-                    };
-                    futures.push_back(fut);
-                }
+        
+                        let transactions = futures.try_collect().await?;
+                        // Assemble back the block and add it to the chain
+                        Block::new(Immutable::Arc(header), transactions)
+                    },
+                    None => {
+                        let response = peer.request_blocking_object(ObjectRequest::Block(hash.clone())).await?;
+                        match response {
+                            OwnedObjectResponse::Block(block, _) => block,
+                            response => return Err(P2pError::ExpectedBlock(response).into())
+                        }
+                    }
+                };
 
-                let transactions = futures.try_collect().await?;
-                // Assemble back the block and add it to the chain
-                let block = Block::new(Immutable::Arc(header), transactions);
                 // don't broadcast block because it's syncing
-                self.blockchain.add_new_block(block, Some(Immutable::Arc(hash)), BroadcastOption::Miners, false).await?;
+                self.blockchain.add_new_block(block, Some(Immutable::Owned(hash)), BroadcastOption::Miners, false).await?;
             } else if self.reexecute_blocks_on_sync {
                 // We need to re execute it to make sure it's in DAG
                 let mut storage = self.blockchain.get_storage().write().await;
@@ -228,7 +242,7 @@ impl<S: Storage> P2pServer<S> {
                             }
 
                             warn!("Block {} is already in chain but not in DAG, re-executing it", hash);
-                            self.blockchain.add_new_block_for_storage(&mut storage, block, Some(Immutable::Arc(hash)), BroadcastOption::Miners, false).await?;
+                            self.blockchain.add_new_block_for_storage(&mut storage, block, Some(Immutable::Owned(hash)), BroadcastOption::Miners, false).await?;
                         },
                         Err(e) => {
                             // This shouldn't happen, but in case
@@ -247,12 +261,12 @@ impl<S: Storage> P2pServer<S> {
 
     // Handle the chain validator by rewinding our current chain first
     // This should only be called with a commit point enabled
-    async fn handle_chain_validator_with_rewind(&self, peer: &Arc<Peer>, pop_count: u64, chain_validator: ChainValidator<'_, S>) -> Result<(Vec<(Hash, Immutable<Transaction>)>, Result<(), BlockchainError>), BlockchainError> {
+    async fn handle_chain_validator_with_rewind(&self, peer: &Arc<Peer>, pop_count: u64, chain_validator: ChainValidator<'_, S>, blocks: IndexSet<Hash>) -> Result<(Vec<(Hash, Immutable<Transaction>)>, Result<(), BlockchainError>), BlockchainError> {
         // peer chain looks correct, lets rewind our chain
         warn!("Rewinding chain because of {} (pop count: {})", peer, pop_count);
         let (topoheight, txs) = self.blockchain.rewind_chain(pop_count, false).await?;
         debug!("Rewinded chain until topoheight {}", topoheight);
-        let res = self.handle_blocks_from_chain_validator(peer, chain_validator).await;
+        let res = self.handle_blocks_from_chain_validator(peer, chain_validator, blocks).await;
 
         Ok((txs, res))
     }
@@ -356,7 +370,7 @@ impl<S: Storage> P2pServer<S> {
                 // Starting topoheight must be the next topoheight after common block
                 // Blocks in chain response must be ordered by topoheight otherwise it will give incorrect results 
                 let mut futures = FuturesOrdered::new();
-                for hash in blocks {
+                for hash in blocks.iter().cloned() {
                     trace!("Request block header for chain validator: {}", hash);
 
                     let fut = async {
@@ -413,7 +427,7 @@ impl<S: Storage> P2pServer<S> {
                     storage.start_commit_point().await?;
                     info!("Commit point started for chain validator");
                 }
-                let mut res = self.handle_chain_validator_with_rewind(peer, pop_count, chain_validator).await;
+                let mut res = self.handle_chain_validator_with_rewind(peer, pop_count, chain_validator, blocks).await;
                 {
                     info!("Ending commit point for chain validator");
                     let apply = res.as_ref()
