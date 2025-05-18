@@ -73,7 +73,8 @@ impl<'a, S: Storage> ChainValidator<'a, S> {
     // Check if the chain validator has a higher cumulative difficulty than our blockchain
     // This is used to determine if we should switch to the new chain by popping blocks or not
     pub async fn has_higher_cumulative_difficulty(&self) -> Result<bool, BlockchainError> {
-        let new_cumulative_difficulty = self.get_chain_cumulative_difficulty().ok_or(BlockchainError::NotEnoughBlocks)?;
+        let new_cumulative_difficulty = self.get_expected_chain_cumulative_difficulty()
+            .ok_or(BlockchainError::NotEnoughBlocks)?;
 
         // Retrieve the current cumulative difficulty
         let current_cumulative_difficulty = {
@@ -89,8 +90,11 @@ impl<'a, S: Storage> ChainValidator<'a, S> {
 
     // Retrieve the cumulative difficulty of the chain validator
     // It is the cumulative difficulty of the last block added
-    pub fn get_chain_cumulative_difficulty(&self) -> Option<&CumulativeDifficulty> {
+    pub fn get_expected_chain_cumulative_difficulty(&self) -> Option<&CumulativeDifficulty> {
+        debug!("retrieving expected chain cumulative difficulty");
         let (_, hash) = self.hash_at_topo.last()?;
+
+        debug!("looking for cumulative difficulty of {}", hash);
         self.blocks.get(hash)
             .map(|data| &data.cumulative_difficulty)
     }
@@ -200,7 +204,8 @@ impl<'a, S: Storage> ChainValidator<'a, S> {
     }
 
     pub fn get_block(&mut self, hash: &Hash) -> Option<Arc<BlockHeader>> {
-        self.blocks.remove(hash).map(|v| v.header)
+        debug!("retrieving block header for {}", hash);
+        self.blocks.get(hash).map(|v| v.header.clone())
     }
 }
 
