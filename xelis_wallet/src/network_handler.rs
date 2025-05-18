@@ -899,7 +899,7 @@ impl NetworkHandler {
 
             if assets.is_empty() {
                 let mut storage = self.wallet.get_storage().write().await;
-                if storage.has_any_balance().await? {
+                if storage.has_any_asset().await? {
                     warn!("No asset detected while syncing head state, deleting local assets");
                     storage.delete_assets().await?;
                     return Ok(false)

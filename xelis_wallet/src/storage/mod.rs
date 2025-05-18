@@ -803,6 +803,17 @@ impl EncryptedStorage {
         Ok(!self.balances.is_empty())
     }
 
+    // Determine if we have any asset stored
+    pub async fn has_any_asset(&self) -> Result<bool> {
+        trace!("has any asset");
+        let cache = self.assets_cache.lock().await;
+        if !cache.is_empty() {
+            return Ok(true);
+        }
+
+        Ok(!self.assets.is_empty())
+    }
+
     // Determine if we have a balance for this asset
     pub async fn has_balance_for(&self, asset: &Hash) -> Result<bool> {
         trace!("has balance for {}", asset);
