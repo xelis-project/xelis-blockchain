@@ -1147,6 +1147,7 @@ async fn status<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Res
     let assets = storage.count_assets().await.context("Error while counting assets")?;
     let contracts = storage.count_contracts().await.context("Error while counting contracts")?;
     let pruned_topoheight = storage.get_pruned_topoheight().await.context("Error while retrieving pruned topoheight")?;
+    let snapshot = storage.has_commit_point().await.context("Error while checking snapshot")?;
     let version = get_version_at_height(blockchain.get_network(), height);
     let block_time_target = get_block_time_target_for_version(version);
 
@@ -1166,6 +1167,7 @@ async fn status<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Res
     manager.message(format!("Accounts/Transactions/Blocks/Assets/Contracts: {}/{}/{}/{}/{}", accounts_count, transactions_count, blocks_count, assets, contracts));
     manager.message(format!("Block Version: {}", version));
     manager.message(format!("POW Algorithm: {}", get_pow_algorithm_for_version(version)));
+    manager.message(format!("Snapshot: {}", snapshot));
 
     manager.message(format!("Tips ({}):", tips.len()));
     for hash in tips {

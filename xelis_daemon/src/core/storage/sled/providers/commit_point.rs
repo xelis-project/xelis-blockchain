@@ -7,6 +7,10 @@ use crate::core::{
 
 #[async_trait]
 impl CommitPointProvider for SledStorage {
+    // Check if we have a commit point already set
+    async fn has_commit_point(&self) -> Result<bool, BlockchainError> {
+        Ok(self.snapshot.is_some())
+    }
 
     async fn start_commit_point(&mut self) -> Result<(), BlockchainError> {
         trace!("Starting commit point");
