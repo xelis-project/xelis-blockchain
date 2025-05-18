@@ -214,7 +214,7 @@ impl<S: Storage> P2pServer<S> {
                 // Assemble back the block and add it to the chain
                 let block = Block::new(Immutable::Arc(header), transactions);
                 // don't broadcast block because it's syncing
-                self.blockchain.add_new_block(block, Some(Immutable::Owned(hash)), BroadcastOption::Miners, false).await?;
+                self.blockchain.add_new_block(block, Some(Immutable::Arc(hash)), BroadcastOption::Miners, false).await?;
             } else if self.reexecute_blocks_on_sync {
                 // We need to re execute it to make sure it's in DAG
                 let mut storage = self.blockchain.get_storage().write().await;
@@ -228,7 +228,7 @@ impl<S: Storage> P2pServer<S> {
                             }
 
                             warn!("Block {} is already in chain but not in DAG, re-executing it", hash);
-                            self.blockchain.add_new_block_for_storage(&mut storage, block, Some(Immutable::Owned(hash)), BroadcastOption::Miners, false).await?;
+                            self.blockchain.add_new_block_for_storage(&mut storage, block, Some(Immutable::Arc(hash)), BroadcastOption::Miners, false).await?;
                         },
                         Err(e) => {
                             // This shouldn't happen, but in case
@@ -365,7 +365,7 @@ impl<S: Storage> P2pServer<S> {
                             trace!("We already have block {}, skipping", hash);
                             return Ok(None)
                         }
-    
+
                         let response = peer.request_blocking_object(ObjectRequest::BlockHeader(hash)).await?;
                         match response {
                             OwnedObjectResponse::BlockHeader(header, hash) => Ok(Some((header, hash))),
@@ -376,7 +376,8 @@ impl<S: Storage> P2pServer<S> {
                     futures.push_back(fut);
                 }
 
-                let mut chain_validator = ChainValidator::new(&self.blockchain, common_topoheight + 1);
+                let mut expected_topoheight = common_topoheight + 1;
+                let mut chain_validator = ChainValidator::new(&self.blockchain);
                 let mut exit_signal = self.exit_sender.subscribe();
                 'main: loop {
                     tokio::select! {
@@ -391,7 +392,8 @@ impl<S: Storage> P2pServer<S> {
                             };
 
                             if let Some((block, hash)) = res? {
-                                chain_validator.insert_block(hash, block).await?;
+                                chain_validator.insert_block(hash, block, expected_topoheight).await?;
+                                expected_topoheight += 1;
                             }
                         }
                     };
