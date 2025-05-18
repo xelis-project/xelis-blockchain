@@ -772,11 +772,13 @@ impl EncryptedStorage {
         if let Some(balances) = cache.get_mut(asset) {
             for balance in balances.iter_mut() {
                 if *balance.ciphertext.compressed() == *compressed_ct {
+                    trace!("found unconfirmed balance");
                     return Ok(Some(balance.amount));
                 }
             }
         }
 
+        trace!("no unconfirmed balance found");
         Ok(None)
     }
 

@@ -888,12 +888,22 @@ impl NetworkHandler {
             let mut skip = 0;
 
             loop {
+                debug!("requesting account assets, skip {}", skip);
                 let response = self.api.get_account_assets(address, None, Some(skip)).await?;
                 if response.is_empty() {
                     break;
                 }
                 skip += response.len();
                 assets.extend(response.into_iter().map(Cow::Owned));
+            }
+
+            if assets.is_empty() {
+                let mut storage = self.wallet.get_storage().write().await;
+                if storage.has_any_balance().await? {
+                    warn!("No asset detected while syncing head state, deleting local assets");
+                    storage.delete_assets().await?;
+                    return Ok(false)
+                }
             }
 
             assets
