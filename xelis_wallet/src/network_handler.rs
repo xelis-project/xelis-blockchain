@@ -879,6 +879,7 @@ impl NetworkHandler {
         }
 
         let detected_assets = if let Some(assets) = assets.as_ref().filter(|a| !a.is_empty()) {
+            trace!("got {} assets requested", assets.len());
             let mut references = HashSet::new();
             references.extend(assets.iter().map(Cow::Borrowed));
             references
@@ -905,6 +906,8 @@ impl NetworkHandler {
                     return Ok(false)
                 }
             }
+
+            trace!("found {} assets", assets.len());
 
             assets
         };
