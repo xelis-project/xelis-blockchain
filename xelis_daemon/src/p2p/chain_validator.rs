@@ -200,6 +200,8 @@ impl<'a, S: Storage> ChainValidator<'a, S> {
             p
         });
 
+        self.hash_at_topo.insert(topoheight, hash);
+
         Ok(())
     }
 
