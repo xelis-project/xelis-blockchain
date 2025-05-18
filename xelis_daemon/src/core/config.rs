@@ -255,9 +255,9 @@ pub struct P2pConfig {
     /// and re-add it to the chain.
     /// This may be useful in case of an issue while syncing
     /// NOTE: In versions 1.17 and below, this was the default behavior.
-    #[clap(name = "p2p-reexecute-blocks-on-sync", long)]
+    #[clap(name = "p2p-disable-reexecute-blocks-on-sync", long)]
     #[serde(default)]
-    pub reexecute_blocks_on_sync: bool,
+    pub disable_reexecute_blocks_on_sync: bool,
     /// P2P log level for the block propagation
     /// This is used to configure the log level used during the block propagation to peers.
     /// By default, it will be set to "debug".

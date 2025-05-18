@@ -359,7 +359,7 @@ impl<S: Storage> Blockchain<S> {
                 config.stream_concurrency,
                 config.temp_ban_duration.as_secs(),
                 config.fail_count_limit,
-                config.reexecute_blocks_on_sync,
+                config.disable_reexecute_blocks_on_sync,
                 config.block_propagation_log_level.into(),
             ) {
                 Ok(p2p) => {

@@ -194,7 +194,7 @@ pub struct P2pServer<S: Storage> {
     notify_ping_loop: Sender<()>,
     // This is used to reexecute blocks on chain sync
     // in case the block detected is marked as orphaned
-    reexecute_blocks_on_sync: bool,
+    disable_reexecute_blocks_on_sync: bool,
     // Log level for block propagation
     block_propagation_log_level: log::Level,
 }
@@ -220,7 +220,7 @@ impl<S: Storage> P2pServer<S> {
         stream_concurrency: usize,
         temp_ban_time: u64,
         fail_count_limit: u8,
-        reexecute_blocks_on_sync: bool,
+        disable_reexecute_blocks_on_sync: bool,
         block_propagation_log_level: log::Level,
     ) -> Result<Arc<Self>, P2pError> {
         if tag.as_ref().is_some_and(|tag| tag.len() == 0 || tag.len() > 16) {
@@ -299,7 +299,7 @@ impl<S: Storage> P2pServer<S> {
             temp_ban_time,
             fail_count_limit,
             notify_ping_loop: ping_sender,
-            reexecute_blocks_on_sync,
+            disable_reexecute_blocks_on_sync,
             block_propagation_log_level
         };
 

@@ -229,7 +229,7 @@ impl<S: Storage> P2pServer<S> {
 
                 // don't broadcast block because it's syncing
                 self.blockchain.add_new_block(block, Some(Immutable::Owned(hash)), BroadcastOption::Miners, false).await?;
-            } else if self.reexecute_blocks_on_sync {
+            } else if !self.disable_reexecute_blocks_on_sync {
                 // We need to re execute it to make sure it's in DAG
                 let mut storage = self.blockchain.get_storage().write().await;
                 if !storage.is_block_topological_ordered(&hash).await? {
@@ -544,7 +544,7 @@ impl<S: Storage> P2pServer<S> {
                                         }
                                     },
                                     ResponseHelper::NotRequested(hash) => {
-                                        if self.reexecute_blocks_on_sync {
+                                        if !self.disable_reexecute_blocks_on_sync {
                                             let is_ordered = {
                                                 debug!("locking storage for block ordering check");
                                                 let storage = self.blockchain.get_storage().read().await;
@@ -605,7 +605,7 @@ impl<S: Storage> P2pServer<S> {
                             return Err(P2pError::ExpectedBlock(response).into())
                         }
                         total_requested += 1;
-                    } else if self.reexecute_blocks_on_sync {
+                    } else if !self.disable_reexecute_blocks_on_sync {
                         trace!("Block {} is already in chain, verify if its in DAG", hash);
 
                         let block = {
