@@ -2462,6 +2462,7 @@ impl<S: Storage> P2pServer<S> {
                 // or, check that peer height has a difference of maximum 1 block
                 // (block height is always + 1 above the highest tip height, so we can just check that peer height is not above block height + 1, it's enough in 90% of time)
                 // chain can accept old blocks (up to STABLE_LIMIT) but new blocks only N+1
+                // Easier way: we could simply check that the block height is above peer stable height
                 if (peer_height >= block.get_height() && peer_height - block.get_height() <= STABLE_LIMIT) || (peer_height <= block.get_height() && block.get_height() - peer_height <= 1) {
                     // Don't lock the blocks propagation while sending the packet
                     let send_block = {

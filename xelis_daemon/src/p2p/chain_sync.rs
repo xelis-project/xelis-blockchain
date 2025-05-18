@@ -76,7 +76,6 @@ impl<S: Storage> P2pServer<S> {
         self.handle_chain_response(peer, response, requested_max_size, skip_stable_height_check).await
     }
 
-
     // search a common point between our blockchain and the peer's one
     // when the common point is found, start sending blocks from this point
     pub async fn handle_chain_request(self: &Arc<Self>, peer: &Arc<Peer>, blocks: IndexSet<BlockId>, accepted_response_size: usize) -> Result<(), BlockchainError> {
@@ -195,8 +194,13 @@ impl<S: Storage> P2pServer<S> {
                         if let Ok(tx) = self.blockchain.get_tx(tx_hash).await {
                             trace!("Found the transaction {} on disk", tx_hash);
                             Ok(tx)
-                        } else { // otherwise, ask it from peer
-                            let response = peer.request_blocking_object(ObjectRequest::Transaction(tx_hash.clone())).await?;
+                        } else {
+                            // otherwise, ask it from peer
+                            // But because we may have the same TX in several blocks, lets request it using object tracker
+                            let response = self.object_tracker.request_object_from_peer_with_or_get_notified(Arc::clone(&peer), ObjectRequest::Transaction(tx_hash.clone()), None).await?
+                                .recv().await
+                                .context("Error on listener for TX")?;
+
                             match response {
                                 OwnedObjectResponse::Transaction(tx, _) => Ok(Immutable::Owned(tx)),
                                 _ => Err(P2pError::ExpectedTransaction(response))
@@ -275,21 +279,21 @@ impl<S: Storage> P2pServer<S> {
         debug!("{} found a common point with block {} at topo {} for sync, received {} blocks", peer.get_outgoing_address(), common_point.get_hash(), common_topoheight, response_size);
         let pop_count = {
             let storage = self.blockchain.get_storage().read().await;
-            let topoheight = storage.get_topo_height_for_hash(common_point.get_hash()).await?;
-            if topoheight != common_topoheight {
-                error!("{} sent us a valid block hash, but at invalid topoheight (expected: {}, got: {})!", peer, topoheight, common_topoheight);
+            let expected_common_topoheight = storage.get_topo_height_for_hash(common_point.get_hash()).await?;
+            if expected_common_topoheight != common_topoheight {
+                error!("{} sent us a valid block hash, but at invalid topoheight (expected: {}, got: {})!", peer, expected_common_topoheight, common_topoheight);
                 return Err(P2pError::InvalidCommonPoint(common_topoheight).into())
             }
 
             let block_height = storage.get_height_for_block_hash(common_point.get_hash()).await?;
-            trace!("block height: {}, stable height: {}, topoheight: {}, hash: {}", block_height, self.blockchain.get_stable_height(), topoheight, common_point.get_hash());
+            trace!("block height: {}, stable height: {}, topoheight: {}, hash: {}", block_height, self.blockchain.get_stable_height(), expected_common_topoheight, common_point.get_hash());
             // We are under the stable height, rewind is necessary
             let mut count = if skip_stable_height_check || peer.is_priority() || lowest_height <= self.blockchain.get_stable_height() {
                 let our_topoheight = self.blockchain.get_topo_height();
-                if our_topoheight > topoheight {
-                    our_topoheight - topoheight
+                if our_topoheight > expected_common_topoheight {
+                    our_topoheight - expected_common_topoheight
                 } else {
-                    topoheight - our_topoheight
+                    expected_common_topoheight - our_topoheight
                 }
             } else {
                 0
