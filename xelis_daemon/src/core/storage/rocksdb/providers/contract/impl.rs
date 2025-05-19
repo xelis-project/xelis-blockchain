@@ -32,8 +32,8 @@ impl ContractProvider for RocksStorage {
     // Retrieve the last topoheight for a given contract
     async fn get_last_topoheight_for_contract(&self, hash: &Hash) -> Result<Option<TopoHeight>, BlockchainError> {
         trace!("get last topoheight for contract {}", hash);
-        self.get_contract_type(hash)
-            .map(|v| v.module_pointer)
+        self.get_optional_contract_type(hash)
+            .map(|res| res.and_then(|v| v.module_pointer))
     }
 
     // Retrieve a contract at a given topoheight
@@ -49,7 +49,10 @@ impl ContractProvider for RocksStorage {
     // Retrieve a contract at maximum topoheight
     async fn get_contract_at_maximum_topoheight_for<'a>(&self, hash: &Hash, maximum_topoheight: TopoHeight) -> Result<Option<(TopoHeight, VersionedContract<'a>)>, BlockchainError> {
         trace!("get contract at maximum topoheight {} for {}", maximum_topoheight, hash);
-        let contract = self.get_contract_type(hash)?;
+        let Some(contract) = self.get_optional_contract_type(hash)? else {
+            return Ok(None)
+        };
+
         let Some(pointer) = contract.module_pointer else {
             return Ok(None)
         };
@@ -109,7 +112,10 @@ impl ContractProvider for RocksStorage {
     // and that it has a Module
     async fn has_contract(&self, hash: &Hash) -> Result<bool, BlockchainError> {
         trace!("has contract {}", hash);
-        let contract = self.get_contract_type(hash)?;
+        let Some(contract) = self.get_optional_contract_type(hash)? else {
+            return Ok(false)
+        };
+
         let Some(pointer) = contract.module_pointer else {
             return Ok(false)
         };
@@ -123,8 +129,8 @@ impl ContractProvider for RocksStorage {
     // Check if we have the contract
     async fn has_contract_pointer(&self, hash: &Hash) -> Result<bool, BlockchainError> {
         trace!("has contract pointer {}", hash);
-        self.get_contract_type(hash)
-            .map(|v| v.module_pointer.is_some())
+        self.get_optional_contract_type(hash)
+            .map(|res| res.map_or(false, |v| v.module_pointer.is_some()))
     }
 
     // Check if a contract exists at a given topoheight
@@ -199,15 +205,20 @@ impl RocksStorage {
         self.load_from_disk(Column::Contracts, contract)
     }
 
-    pub fn get_contract_type(&self, contract: &Hash) -> Result<Contract, BlockchainError> {
-        trace!("get contract type {}", contract);
-        self.load_from_disk(Column::Contracts, contract)
+    pub fn get_optional_contract_type(&self, contract: &Hash) -> Result<Option<Contract>, BlockchainError> {
+        trace!("get optional contract type {}", contract);
+        self.load_optional_from_disk(Column::Contracts, contract)
     }
 
+    pub fn get_contract_type(&self, contract: &Hash) -> Result<Contract, BlockchainError> {
+        trace!("get contract type {}", contract);
+        self.get_optional_contract_type(contract)?
+            .ok_or_else(|| BlockchainError::ContractNotFound(contract.clone()))
+    }
 
-    pub(super) fn get_or_create_contract_type(&mut self, contract: &Hash) -> Result<Contract, BlockchainError> {
-        trace!("get or create contract type {}", contract);
-        match self.load_optional_from_disk::<_, Contract>(Column::Contracts, contract)? {
+    pub(super) fn get_or_create_contract_type(&mut self, hash: &Hash) -> Result<Contract, BlockchainError> {
+        trace!("get or create contract type {}", hash);
+        match self.load_optional_from_disk::<_, Contract>(Column::Contracts, hash)? {
             Some(contract) => Ok(contract),
             None => {
                 let id = self.get_next_contract_id()?;
@@ -215,6 +226,8 @@ impl RocksStorage {
                     id,
                     module_pointer: None
                 };
+
+                self.insert_into_disk(Column::ContractById, &id.to_be_bytes(), hash)?;
 
                 Ok(contract)
             }
