@@ -1,9 +1,7 @@
 use strum::{Display, EnumIter, AsRefStr};
-use xelis_common::crypto::HASH_SIZE;
 
 const PREFIX_TOPOHEIGHT_LEN: usize = 8;
-const PREFIX_ACCOUNT_LEN: usize = 8;
-const PREFIX_ASSET_LEN: usize = HASH_SIZE;
+const PREFIX_ID_LEN: usize = 8;
 
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Eq, Ord, Hash, EnumIter, Display, AsRefStr)]
 #[strum(serialize_all = "snake_case")]
@@ -112,8 +110,8 @@ impl Column {
             | VersionedContractsData
             | PrefixedRegistrations => Some(PREFIX_TOPOHEIGHT_LEN),
 
-            ContractsBalances => Some(PREFIX_ASSET_LEN),
-            Balances => Some(PREFIX_ACCOUNT_LEN),
+            ContractsBalances => Some(PREFIX_ID_LEN),
+            Balances => Some(PREFIX_ID_LEN),
 
             _ => None,
         }
