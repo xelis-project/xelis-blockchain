@@ -10,6 +10,7 @@ use crate::core::error::BlockchainError;
 
 // This struct is used to store the blocks hashes at a specific height
 // We use an IndexSet to store the hashes and maintains the order we processed them
+#[derive(Default)]
 pub struct OrderedHashes<'a>(pub Cow<'a, IndexSet<Hash>>);
 
 #[async_trait]
