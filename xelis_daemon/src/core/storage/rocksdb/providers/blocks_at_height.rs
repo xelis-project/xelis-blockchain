@@ -24,7 +24,8 @@ impl BlocksAtHeightProvider for RocksStorage {
     // Retrieve the blocks hashes at a specific height
     async fn get_blocks_at_height(&self, height: u64) -> Result<IndexSet<Hash>, BlockchainError> {
         trace!("get blocks at height {}", height);
-        self.load_from_disk(Column::BlocksAtHeight, &height.to_be_bytes())
+        self.load_optional_from_disk(Column::BlocksAtHeight, &height.to_be_bytes())
+            .map(|v| v.unwrap_or_default())
     }
 
     // This is used to store the blocks hashes at a specific height
