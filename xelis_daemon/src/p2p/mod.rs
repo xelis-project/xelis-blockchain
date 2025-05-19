@@ -1486,18 +1486,18 @@ impl<S: Storage> P2pServer<S> {
                             None
                         ).await {
                             Ok(listener) => listener,
-                            Err(e) => return Err((e, peer))
+                            Err(e) => return Err((e, hash, peer))
                         };
 
                         let res = listener.recv().await
-                            .context("Error while listening TX")
-                            .map_err(|e| (e.into(), Arc::clone(&peer)))?;
+                            .with_context(|| format!("Error while listening TX {}", hash))
+                            .map_err(|e| (e.into(), Arc::clone(&hash), Arc::clone(&peer)))?;
 
                         let (transaction, hash2) = match res {
                             OwnedObjectResponse::Transaction(tx, hash) => (tx, hash),
                             response => {
                                 debug!("Received invalid object type response from {}", peer);
-                                return Err((P2pError::ExpectedTransaction(response), peer))
+                                return Err((P2pError::ExpectedTransaction(response), hash, peer))
                             }
                         };
 
@@ -1517,8 +1517,8 @@ impl<S: Storage> P2pServer<S> {
                                 peer.increment_fail_count();
                             }
                         },
-                        Err((e, peer)) => {
-                            error!("Error while handling TX from {}: {} ", peer, e);
+                        Err((e, hash, peer)) => {
+                            error!("Error while handling TX {} from {}: {} ", hash, peer, e);
                             peer.increment_fail_count();
                         }
                     }
