@@ -3063,7 +3063,7 @@ pub async fn estimate_required_tx_fees<P: AccountProvider>(provider: &P, current
     if let TransactionType::Transfers(transfers) = tx.get_data() {
         output_count = transfers.len();
         for transfer in transfers {
-            if !provider.is_account_registered_for_topoheight(transfer.get_destination(), current_topoheight).await? {
+            if !processed_keys.contains(transfer.get_destination()) && !provider.is_account_registered_for_topoheight(transfer.get_destination(), current_topoheight).await? {
                 debug!("Account {} is not registered for topoheight {}", transfer.get_destination().as_address(provider.is_mainnet()), current_topoheight);
                 processed_keys.insert(transfer.get_destination());
             }
