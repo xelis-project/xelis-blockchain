@@ -2677,7 +2677,10 @@ impl<S: Storage> Blockchain<S> {
             let mut mempool = self.mempool.write().await;
             debug!("mempool write mode ok");
             let version = get_version_at_height(self.get_network(), current_height);
-            mempool.clean_up(&*storage, &self.environment, base_topo_height, highest_topo, version).await
+            let start = Instant::now();
+            let res = mempool.clean_up(&*storage, &self.environment, base_topo_height, highest_topo, version).await;
+            debug!("Took {:?} to clean mempool!", start.elapsed());
+            res
         } else {
             Vec::new()
         };
