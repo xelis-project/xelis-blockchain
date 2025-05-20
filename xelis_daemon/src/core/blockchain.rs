@@ -1601,22 +1601,30 @@ impl<S: Storage> Blockchain<S> {
     // retrieve the TX based on its hash by searching in mempool then on disk
     pub async fn get_tx(&self, hash: &Hash) -> Result<Immutable<Transaction>, BlockchainError> {
         trace!("get tx {} from blockchain", hash);
-        // check in mempool first
-        // if its present, returns it
-        {
-            trace!("Locking mempool for get tx {}", hash);
-            let mempool = self.mempool.read().await;
-            trace!("Mempool locked for get tx {}", hash);
-            if let Ok(tx) = mempool.get_tx(hash) {
-                return Ok(Immutable::Arc(tx))
-            } 
-        }
 
         // check in storage now
-        debug!("get tx {} lock", hash);
-        let storage = self.storage.read().await;
-        debug!("get tx {} lock acquired", hash);
-        storage.get_transaction(hash).await
+        {
+            debug!("get tx {} storage lock", hash);
+            let storage = self.storage.read().await;
+            debug!("get tx {} storage read acquired", hash);
+            if storage.has_transaction(&hash).await? {
+                debug!("tx {} in in storage", hash);
+                return storage.get_transaction(hash).await
+            }
+        }
+
+        // check in mempool first
+        // if its present, returns it
+        let res = {
+            debug!("Locking mempool for get tx {}", hash);
+            let mempool = self.mempool.read().await;
+            debug!("Mempool locked for get tx {}", hash);
+            mempool.get_tx(hash)
+        };
+
+        debug!("found {} in mempool: {}", hash, res.is_ok());
+
+        res.map(|v| Immutable::Arc(v))
     }
 
     pub async fn get_block_header_template(&self, address: PublicKey) -> Result<BlockHeader, BlockchainError> {
