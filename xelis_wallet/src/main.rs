@@ -895,11 +895,9 @@ async fn track_asset(manager: &CommandManager, mut args: ArgumentManager) -> Res
         prompt.read_hash(prompt.colorize_string(Color::BrightGreen, "Asset ID: ")).await?
     };
 
-    let mut storage = wallet.get_storage().write().await;
-    if storage.is_asset_tracked(&asset)? {
+    if wallet.track_asset(asset).await.context("Error while tracking asset")? {
         manager.message("Asset ID is already tracked!");
     } else {
-        storage.track_asset(&asset)?;
         manager.message("Asset ID is now tracked");
     }
 
@@ -917,13 +915,11 @@ async fn untrack_asset(manager: &CommandManager, mut args: ArgumentManager) -> R
         prompt.read_hash(prompt.colorize_string(Color::BrightGreen, "Asset ID: ")).await?
     };
 
-    let mut storage = wallet.get_storage().write().await;
-    if !storage.is_asset_tracked(&asset)? {
-        manager.message("Asset ID is not marked as tracked!");
-    } else if asset == XELIS_ASSET {
+    if asset == XELIS_ASSET {
         manager.message("XELIS asset cannot be untracked");
+    } else if wallet.untrack_asset(asset).await.context("Error while untracking asset")? {
+        manager.message("Asset ID is not marked as tracked!");
     } else {
-        storage.untrack_asset(&asset)?;
         manager.message("Asset ID is not tracked anymore");
     }
 

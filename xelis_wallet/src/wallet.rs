@@ -170,7 +170,13 @@ pub enum Event {
     Offline,
     SyncError {
         message: String
-    }
+    },
+    TrackAsset {
+        asset: Hash
+    },
+    UntrackAsset {
+        asset: Hash
+    },
 }
 
 impl Event {
@@ -185,6 +191,8 @@ impl Event {
             Event::Online => NotifyEvent::Online,
             Event::Offline => NotifyEvent::Offline,
             Event::SyncError { .. } => NotifyEvent::SyncError,
+            Event::TrackAsset { .. } => NotifyEvent::TrackAsset,
+            Event::UntrackAsset { .. } => NotifyEvent::UntrackAsset,
         }
     }
 }
@@ -503,6 +511,41 @@ impl Wallet {
                 }
             }
         }
+    }
+
+    // Mark an asset tracked by the wallet
+    pub async fn track_asset(&self, asset: Hash) -> Result<bool, WalletError> {
+        debug!("track asset {}", asset);
+        {
+            let mut storage = self.storage.write().await;
+            if storage.is_asset_tracked(&asset)? {
+                return Ok(false)
+            }
+
+            storage.track_asset(&asset)?;
+        }
+
+        self.propagate_event(Event::TrackAsset { asset }).await;
+
+        Ok(true)
+    }
+
+
+    // Mark an asset tracked by the wallet
+    pub async fn untrack_asset(&self, asset: Hash) -> Result<bool, WalletError> {
+        debug!("untrack asset {}", asset);
+        {
+            let mut storage = self.storage.write().await;
+            if !storage.is_asset_tracked(&asset)? {
+                return Ok(false)
+            }
+
+            storage.untrack_asset(&asset)?;
+        }
+
+        self.propagate_event(Event::UntrackAsset { asset }).await;
+
+        Ok(true)
     }
 
     // Subscribe to events
