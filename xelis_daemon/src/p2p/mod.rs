@@ -197,6 +197,8 @@ pub struct P2pServer<S: Storage> {
     disable_reexecute_blocks_on_sync: bool,
     // Log level for block propagation
     block_propagation_log_level: log::Level,
+    // Disable fetching transactions
+    disable_fetching_txs_propagated: bool,
 }
 
 impl<S: Storage> P2pServer<S> {
@@ -222,6 +224,7 @@ impl<S: Storage> P2pServer<S> {
         fail_count_limit: u8,
         disable_reexecute_blocks_on_sync: bool,
         block_propagation_log_level: log::Level,
+        disable_fetching_txs_propagated: bool,
     ) -> Result<Arc<Self>, P2pError> {
         if tag.as_ref().is_some_and(|tag| tag.len() == 0 || tag.len() > 16) {
             return Err(P2pError::InvalidTag);
@@ -300,7 +303,8 @@ impl<S: Storage> P2pServer<S> {
             fail_count_limit,
             notify_ping_loop: ping_sender,
             disable_reexecute_blocks_on_sync,
-            block_propagation_log_level
+            block_propagation_log_level,
+            disable_fetching_txs_propagated
         };
 
         let arc = Arc::new(server);
@@ -1749,6 +1753,11 @@ impl<S: Storage> P2pServer<S> {
 
                 // peer should not send us twice the same transaction
                 debug!("Received tx hash {} from {}", hash, peer.get_outgoing_address());
+                if self.disable_fetching_txs_propagated {
+                    debug!("skipping TX {} due to fetching disabled", hash);                    
+                    return Ok(())
+                }
+
                 {
                     let mut txs_cache = peer.get_txs_cache().lock().await;
 
