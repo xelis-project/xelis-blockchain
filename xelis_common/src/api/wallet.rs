@@ -341,6 +341,8 @@ pub enum NotifyEvent {
     Offline,
     // Error occuring while syncing
     SyncError,
+    TrackAsset,
+    UntrackAsset,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
