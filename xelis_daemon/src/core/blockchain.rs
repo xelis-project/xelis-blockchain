@@ -1569,20 +1569,33 @@ impl<S: Storage> Blockchain<S> {
     // check that the TX Hash is present in mempool or in chain disk
     pub async fn has_tx(&self, hash: &Hash) -> Result<bool, BlockchainError> {
         trace!("has tx {}", hash);
-        // check in mempool first
-        // if its present, returns it
+
+
+        // check in storage now
+        debug!("has tx {} in storage storage", hash);
         {
-            let mempool = self.mempool.read().await;
-            if mempool.contains_tx(hash) {
+            let storage = self.storage.read().await;
+            debug!("storage read acquired for has tx");
+            if storage.has_transaction(hash).await? {
+                debug!("TX {} found in storage", hash);
                 return Ok(true)
             }
         }
 
-        // check in storage now
-        debug!("has tx {} storage", hash);
-        let storage = self.storage.read().await;
-        debug!("storage read acquired for has tx");
-        storage.has_transaction(hash).await
+        // check in mempool first
+        // if its present, returns it
+        debug!("has tx {} in mempool", hash);
+        {
+            let mempool = self.mempool.read().await;
+            if mempool.contains_tx(hash) {
+                debug!("TX {} found in mempool", hash);
+                return Ok(true)
+            }
+        }
+
+        debug!("TX {} was not found in storage or mempool", hash);
+
+        Ok(false)
     }
 
     // retrieve the TX based on its hash by searching in mempool then on disk
