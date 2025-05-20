@@ -66,7 +66,7 @@ impl ContractDataProvider for SledStorage {
             }
 
             previous_topo = self.load_from_disk(
-                &self.versioned_contracts,
+                &self.versioned_contracts_data,
                 &self.get_versioned_contract_data_key(&contract, key, topoheight),
                 DiskContext::ContractDataTopoHeight
             )?;
