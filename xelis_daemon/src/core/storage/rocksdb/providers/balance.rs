@@ -2,7 +2,10 @@ use async_trait::async_trait;
 use log::trace;
 use xelis_common::{
     account::{
-        AccountSummary, Balance, BalanceType, VersionedBalance
+        AccountSummary,
+        Balance,
+        BalanceType,
+        VersionedBalance
     },
     block::TopoHeight,
     crypto::{
@@ -139,13 +142,16 @@ impl BalanceProvider for RocksStorage {
         let asset_id = self.get_asset_id(asset)?;
 
         let versioned_key = Self::get_versioned_account_balance_key(account_id, asset_id, maximum_topoheight);
-        let start_topo = if self.contains_data(Column::VersionedBalances, &versioned_key)? {
+        let Some(pointer) = self.load_optional_from_disk(Column::Balances, &versioned_key[8..])? else {
+            return Ok(None)
+        };
+
+        let start_topo = if pointer > maximum_topoheight && self.contains_data(Column::VersionedBalances, &versioned_key)? {
             trace!("balance found at topoheight {}, using it", maximum_topoheight);
             maximum_topoheight
         } else {
             trace!("balance not found at topoheight {}, loading last topoheight", maximum_topoheight);
-            // skip the topoheight from the key, load the last topoheight
-            self.load_from_disk(Column::Balances, &versioned_key[8..])?
+            pointer
         };
 
         let mut topo = Some(start_topo);

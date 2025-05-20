@@ -103,9 +103,12 @@ impl ContractProvider for RocksStorage {
     async fn delete_last_topoheight_for_contract(&mut self, hash: &Hash) -> Result<(), BlockchainError> {
         trace!("delete last topoheight for contract {}", hash);
         let mut contract = self.get_contract_type(hash)?;
-        contract.module_pointer = None;
-
-        self.insert_into_disk(Column::Contracts, hash, &contract)
+        if contract.module_pointer.is_some() {
+            contract.module_pointer = None;
+            self.insert_into_disk(Column::Contracts, hash, &contract)
+        } else {
+            Ok(())
+        }
     }
 
     // Check if a contract exists
