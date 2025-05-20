@@ -2578,7 +2578,7 @@ impl<S: Storage> Blockchain<S> {
         // If block is directly orphaned
         // Mark all TXs ourself as linked to it
         if !block_is_ordered {
-            trace!("Block {} is orphaned, marking all TXs as linked to it", block_hash);
+            debug!("Block {} is orphaned, marking all TXs as linked to it", block_hash);
             for tx_hash in block.get_txs_hashes() {
                 storage.add_block_linked_to_tx_if_not_present(&tx_hash, &block_hash)?;
             }
@@ -2601,6 +2601,7 @@ impl<S: Storage> Blockchain<S> {
             }
         }
 
+        debug!("Storing new tips in storage");
         // Store the new tips available
         storage.store_tips(&tips).await?;
 
@@ -2641,7 +2642,7 @@ impl<S: Storage> Blockchain<S> {
             self.stable_height.store(base_height, Ordering::SeqCst);
             self.stable_topoheight.store(base_topo_height, Ordering::SeqCst);
 
-            trace!("update difficulty in cache");
+            debug!("update difficulty in cache for new tips");
             let (difficulty, _) = self.get_difficulty_at_tips(storage, tips.iter()).await?;
             self.set_difficulty(difficulty).await;
         }
@@ -2721,6 +2722,7 @@ impl<S: Storage> Blockchain<S> {
 
         // Flush to the disk
         if self.flush_db_every_n_blocks.is_some_and(|n| current_topoheight % n == 0) {
+            debug!("force flushing storage");
             storage.flush().await?;
         }
 
