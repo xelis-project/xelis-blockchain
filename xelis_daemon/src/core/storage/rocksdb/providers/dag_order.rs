@@ -25,10 +25,11 @@ impl DagOrderProvider for RocksStorage {
 
     async fn is_block_topological_ordered(&self, hash: &Hash) -> Result<bool, BlockchainError> {
         trace!("is block topological ordered {}", hash);
-        let Ok(topo_by_hash) = self.get_topo_height_for_hash(hash).await else {
+        let Some(topo_by_hash) = self.load_optional_from_disk::<_, TopoHeight>(Column::TopoByHash, hash)? else {
             return Ok(false)
         };
-        let Ok(hash_at_topo) = self.get_hash_at_topo_height(topo_by_hash).await else {
+
+        let Some(hash_at_topo) = self.load_optional_from_disk::<_, Hash>(Column::HashAtTopo, &topo_by_hash.to_be_bytes())? else {
             return Ok(false)
         };
 

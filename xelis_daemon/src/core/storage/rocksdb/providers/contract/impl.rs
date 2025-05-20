@@ -26,7 +26,7 @@ impl ContractProvider for RocksStorage {
         let versioned_key = Self::get_versioned_contract_key(contract.id, topoheight);
 
         self.insert_into_disk(Column::VersionedContracts, versioned_key, version)?;
-        self.insert_into_disk(Column::Contracts, &versioned_key[8..], &contract)
+        self.insert_into_disk(Column::Contracts, hash, &contract)
     }
 
     // Retrieve the last topoheight for a given contract
@@ -203,9 +203,15 @@ impl RocksStorage {
         Ok(id)
     }
 
+    pub(super) fn get_optional_contract_id(&self, contract: &Hash) -> Result<Option<ContractId>, BlockchainError> {
+        trace!("get contract id");
+        self.load_optional_from_disk(Column::Contracts, contract)
+    }
+
     pub(super) fn get_contract_id(&self, contract: &Hash) -> Result<ContractId, BlockchainError> {
         trace!("get contract id");
-        self.load_from_disk(Column::Contracts, contract)
+        self.get_optional_contract_id(contract)?
+            .ok_or_else(|| BlockchainError::ContractNotFound(contract.clone()))
     }
 
     pub fn get_optional_contract_type(&self, contract: &Hash) -> Result<Option<Contract>, BlockchainError> {

@@ -14,7 +14,9 @@ impl SupplyProvider for RocksStorage {
     // Verify if we have a supply already set for this asset
     async fn has_supply_for_asset(&self, asset: &Hash) -> Result<bool, BlockchainError> {
         trace!("has supply for asset {}", asset);
-        let asset = self.get_asset_type(asset)?;
+        let Some(asset) = self.get_optional_asset_type(asset)? else {
+            return Ok(false)
+        };
         Ok(asset.supply_pointer.is_some())
     }
 
@@ -29,7 +31,9 @@ impl SupplyProvider for RocksStorage {
     // Get the supply at the maximum topoheight
     async fn get_asset_supply_at_maximum_topoheight(&self, asset: &Hash, maximum_topoheight: TopoHeight) -> Result<Option<(TopoHeight, VersionedSupply)>, BlockchainError> {
         trace!("get asset {} supply at maximum topoheight {}", asset, maximum_topoheight);
-        let asset = self.get_asset_type(asset)?;
+        let Some(asset) = self.get_optional_asset_type(asset)? else {
+            return Ok(None)
+        };
         let Some(pointer) = asset.supply_pointer else {
             return Ok(None)
         };

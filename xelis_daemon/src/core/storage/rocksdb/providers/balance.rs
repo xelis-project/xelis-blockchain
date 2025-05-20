@@ -143,6 +143,7 @@ impl BalanceProvider for RocksStorage {
 
         let versioned_key = Self::get_versioned_account_balance_key(account_id, asset_id, maximum_topoheight);
         let Some(pointer) = self.load_optional_from_disk(Column::Balances, &versioned_key[8..])? else {
+            trace!("no balance pointer found");
             return Ok(None)
         };
 
@@ -150,7 +151,7 @@ impl BalanceProvider for RocksStorage {
             trace!("balance found at topoheight {}, using it", maximum_topoheight);
             maximum_topoheight
         } else {
-            trace!("balance not found at topoheight {}, loading last topoheight", maximum_topoheight);
+            trace!("balance not found at topoheight {}, using topoheight pointer {}", maximum_topoheight, pointer);
             pointer
         };
 

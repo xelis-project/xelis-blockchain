@@ -198,7 +198,7 @@ impl RocksStorage {
         self.load_from_disk(Column::VersionedAssets, &key)
     }
 
-    fn get_optional_asset_type(&self, hash: &Hash) -> Result<Option<Asset>, BlockchainError> {
+    pub(super) fn get_optional_asset_type(&self, hash: &Hash) -> Result<Option<Asset>, BlockchainError> {
         trace!("get optional asset {}", hash);
         self.load_optional_from_disk(Column::Assets, hash)
     }
@@ -208,9 +208,15 @@ impl RocksStorage {
         self.load_from_disk(Column::Assets, hash)
     }
 
+    pub(super) fn get_optional_asset_id(&self, hash: &Hash) -> Result<Option<AssetId>, BlockchainError> {
+        trace!("get optional asset id {}", hash);
+        self.load_optional_from_disk(Column::Assets, hash)
+    }
+
     pub(super) fn get_asset_id(&self, hash: &Hash) -> Result<AssetId, BlockchainError> {
         trace!("get asset id {}", hash);
-        self.load_from_disk(Column::Assets, hash)
+        self.get_optional_asset_id(hash)?
+            .ok_or_else(|| BlockchainError::AssetNotFound(hash.clone()))
     }
 
     pub(super) fn get_asset_hash_from_id(&self, id: AssetId) -> Result<Hash, BlockchainError> {

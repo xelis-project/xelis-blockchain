@@ -527,6 +527,19 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
             }
         }
 
+        // Start by storing the contracts
+        debug!("Storing contracts");
+        for (hash, (state, module)) in self.inner.contracts.iter() {
+            if state.should_be_stored() {
+                trace!("Saving contract {} at topoheight {}", hash, self.inner.topoheight);
+                // Prevent cloning the value
+                let module = module.as_ref()
+                    .map(|v| Cow::Borrowed(v.as_ref()));
+                self.inner.storage.set_last_contract_to(&hash, self.inner.topoheight, &VersionedContract::new(module, state.get_topoheight())).await?;
+            }
+        }
+
+        debug!("Storing contract storage changes");
         // Apply all the contract storage changes
         for (contract, cache) in self.contract_manager.caches {
             // Apply all storage changes
@@ -547,6 +560,7 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
             }
         }
 
+        debug!("applying external transfers");
         // Apply all the transfers to the receiver accounts
         for (key, assets) in self.contract_manager.tracker.transfers {
             for (asset, amount) in assets {
@@ -556,15 +570,8 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
             }
         }
 
-        // Also store the contracts updated
-        for (hash, (state, module)) in self.inner.contracts {
-            if state.should_be_stored() {
-                trace!("Saving contract {} at topoheight {}", hash, self.inner.topoheight);
-                self.inner.storage.set_last_contract_to(&hash, self.inner.topoheight, &VersionedContract::new(module, state.get_topoheight())).await?;
-            }
-        }
-
         // Apply all the contract outputs
+        debug!("storing contract outputs");
         for (key, outputs) in self.contract_manager.outputs {
             self.inner.storage.set_contract_outputs_for_tx(&key, &outputs).await?;
         }
