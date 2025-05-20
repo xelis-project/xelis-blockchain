@@ -1,4 +1,9 @@
-use std::{borrow::Cow, collections::HashSet, sync::Arc};
+use std::{
+    borrow::Cow,
+    collections::HashSet,
+    sync::Arc,
+    time::Duration
+};
 
 use anyhow::Result;
 use serde::Serialize;
@@ -30,11 +35,16 @@ pub struct DaemonAPI {
 
 impl DaemonAPI {
     pub async fn new(daemon_address: String) -> Result<Self> {
-        Self::with_capacity(daemon_address, 64).await
+        Self::with(daemon_address, None, 64).await
     }
 
-    pub async fn with_capacity(daemon_address: String, capacity: usize) -> Result<Self> {
-        let client = WebSocketJsonRPCClientImpl::new(daemon_address).await?;
+    pub async fn with(daemon_address: String, timeout: Option<Duration>, capacity: usize) -> Result<Self> {
+        let client = if let Some(timeout) = timeout {
+            WebSocketJsonRPCClientImpl::with(daemon_address, timeout).await?
+        } else {
+            WebSocketJsonRPCClientImpl::new(daemon_address).await?
+        };
+
         Ok(Self {
             client,
             capacity
