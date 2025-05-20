@@ -1,4 +1,5 @@
 use std::{
+    collections::HashSet,
     io::Write,
     sync::{atomic::{AtomicBool, Ordering}, Arc}
 };
@@ -525,7 +526,15 @@ impl Wallet {
             storage.track_asset(&asset)?;
         }
 
-        self.propagate_event(Event::TrackAsset { asset }).await;
+        self.propagate_event(Event::TrackAsset { asset: asset.clone() }).await;
+
+        #[cfg(feature = "network_handler")]
+        {
+            if let Some(network_handler) = self.network_handler.lock().await.as_ref() {
+                debug!("Syncing head state for newly tracked asset {}", asset);
+                network_handler.sync_head_state(&self.get_address(), Some(HashSet::from_iter([asset])), None, false, false).await?;
+            }
+        }
 
         Ok(true)
     }

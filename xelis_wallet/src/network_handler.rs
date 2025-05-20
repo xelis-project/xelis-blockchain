@@ -823,7 +823,7 @@ impl NetworkHandler {
     // Sync the latest version of our balances and nonces and determine if we should parse all blocks
     // If assets are provided, we'll only sync these assets
     // If nonce is not provided, we will fetch it from the daemon
-    async fn sync_head_state(&self, address: &Address, assets: Option<HashSet<Hash>>, nonce: Option<u64>, sync_nonce: bool) -> Result<bool, Error> {
+    pub async fn sync_head_state(&self, address: &Address, assets: Option<HashSet<Hash>>, nonce: Option<u64>, sync_nonce: bool, sync_multisig: bool) -> Result<bool, Error> {
         trace!("syncing head state");
         let new_nonce = if sync_nonce {
             debug!("no nonce provided, fetching it from daemon");
@@ -850,31 +850,33 @@ impl NetworkHandler {
         };
 
         // Check if we have a multisig account
-        if self.api.has_multisig(address).await.unwrap_or(false) {
-            debug!("Multisig account detected");
-            let data = self.api.get_multisig(address).await?;
-            if let MultisigState::Active { participants, threshold } = data.state {
-                debug!("Active multisig account with participants [{}] and threshold {}", participants.iter().map(Address::to_string).collect::<Vec<_>>().join(", "), threshold);
-
-                let payload = MultiSigPayload {
-                    participants: participants.into_iter().map(|p| p.to_public_key()).collect(),
-                    threshold
-                };
-
-                let multisig = MultiSig {
-                    payload,
-                    topoheight: data.topoheight
-                };
-                let mut storage = self.wallet.get_storage().write().await;
-                storage.set_multisig_state(multisig).await?;
+        if sync_multisig {
+            if self.api.has_multisig(address).await.unwrap_or(false) {
+                debug!("Multisig account detected");
+                let data = self.api.get_multisig(address).await?;
+                if let MultisigState::Active { participants, threshold } = data.state {
+                    debug!("Active multisig account with participants [{}] and threshold {}", participants.iter().map(Address::to_string).collect::<Vec<_>>().join(", "), threshold);
+    
+                    let payload = MultiSigPayload {
+                        participants: participants.into_iter().map(|p| p.to_public_key()).collect(),
+                        threshold
+                    };
+    
+                    let multisig = MultiSig {
+                        payload,
+                        topoheight: data.topoheight
+                    };
+                    let mut storage = self.wallet.get_storage().write().await;
+                    storage.set_multisig_state(multisig).await?;
+                } else {
+                    warn!("Multisig account is not active while marked as, skipping it");
+                }
             } else {
-                warn!("Multisig account is not active while marked as, skipping it");
-            }
-        } else {
-            let mut storage = self.wallet.get_storage().write().await;
-            if storage.has_multisig_state().await? {
-                info!("No multisig account detected, deleting multisig state");
-                storage.delete_multisig_state().await?;
+                let mut storage = self.wallet.get_storage().write().await;
+                if storage.has_multisig_state().await? {
+                    info!("No multisig account detected, deleting multisig state");
+                    storage.delete_multisig_state().await?;
+                }
             }
         }
 
@@ -1078,7 +1080,7 @@ impl NetworkHandler {
                         }
                     }
                     // A change happened in this block, lets update balance and nonce
-                    sync_new_blocks |= self.sync_head_state(&address, Some(assets), nonce, false).await?;
+                    sync_new_blocks |= self.sync_head_state(&address, Some(assets), nonce, false, false).await?;
                 }
 
                 wallet_topoheight = topoheight;
@@ -1097,7 +1099,7 @@ impl NetworkHandler {
 
             trace!("sync head state");
             // Now sync head state, this will helps us to determinate if we should sync blocks or not
-            sync_new_blocks |= self.sync_head_state(&address, None, None, true).await?;
+            sync_new_blocks |= self.sync_head_state(&address, None, None, true, true).await?;
         }
 
         // Update the topoheight and block hash for wallet
@@ -1219,7 +1221,7 @@ impl NetworkHandler {
                         storage.contains_asset(&event.asset).await?
                     };
 
-                    let sync_new_blocks = self.sync_head_state(&address, Some(HashSet::from_iter([event.asset.into_owned()])), None, false).await?;
+                    let sync_new_blocks = self.sync_head_state(&address, Some(HashSet::from_iter([event.asset.into_owned()])), None, false, false).await?;
                     debug!("sync new blocks: {}, contains asset: {}", sync_new_blocks, contains_asset);
                     // If we already contains the asset we can sync new blocks in case we missed any
                     // If we didn't loaded it before, we have no reason to go through chain
