@@ -118,7 +118,12 @@ pub const DEFAULT_AUTO_RECONNECT: Duration = Duration::from_secs(5);
 impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static> WebSocketJsonRPCClientImpl<E> {
 
     // Create a new WebSocketJsonRPCClient with the target address
-    pub async fn new(mut target: String) -> Result<WebSocketJsonRPCClient<E>, JsonRPCError> {
+    pub async fn new(target: String) -> Result<WebSocketJsonRPCClient<E>, JsonRPCError> {
+        Self::with(target, Duration::from_secs(15)).await
+    }
+
+    // Create a new WebSocketJsonRPCClient with the target address and timeout
+    pub async fn with(mut target: String, timeout_after: Duration) -> Result<WebSocketJsonRPCClient<E>, JsonRPCError> {
         target = sanitize_daemon_address(target.as_str());
         let ws = connect(&target).await?;
 
@@ -136,7 +141,7 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
             online_channel: Mutex::new(None),
             reconnect_channel: Mutex::new(None),
             background_task: Mutex::new(None),
-            timeout_after: Duration::from_secs(5),
+            timeout_after,
         });
 
         // Start the background task
