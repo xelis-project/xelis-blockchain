@@ -4,15 +4,21 @@ use argon2::{Params, Argon2, Algorithm, Version};
 use lazy_static::lazy_static;
 use log::info;
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "cli")]
 use clap::Parser;
 use xelis_common::{
     config::VERSION,
     crypto::ecdlp,
     network::Network,
-    prompt::{default_logs_datetime_format, LogLevel, ModuleConfig},
     utils::detect_available_parallelism
 };
 
+#[cfg(feature = "cli")]
+use xelis_common::prompt::{
+    default_logs_datetime_format,
+    LogLevel,
+    ModuleConfig
+};
 use crate::precomputed_tables;
 
 pub const DIR_PATH: &str = "wallets/";
@@ -38,7 +44,7 @@ lazy_static! {
 // This struct is used to configure the RPC Server
 // In case we want to enable it instead of starting
 // the XSWD Server
-#[cfg(feature = "api_server")]
+#[cfg(all(feature = "api_server", feature = "cli"))]
 #[derive(Debug, clap::Args, Serialize, Deserialize)]
 pub struct RPCConfig {
     /// RPC Server bind address
@@ -72,6 +78,7 @@ fn default_logs_path() -> String {
     String::from("logs/")
 }
 
+#[cfg(feature = "cli")]
 #[derive(Debug, clap::Args, Serialize, Deserialize)]
 pub struct NetworkConfig {
     /// Daemon address to use
@@ -85,6 +92,7 @@ pub struct NetworkConfig {
     pub offline_mode: bool,
 }
 
+#[cfg(feature = "cli")]
 #[derive(Debug, clap::Args, Serialize, Deserialize)]
 pub struct PrecomputedTablesConfig {
     /// L1 size for precomputed tables
@@ -101,6 +109,7 @@ pub struct PrecomputedTablesConfig {
     pub precomputed_tables_path: Option<String>,
 }
 
+#[cfg(feature = "cli")]
 #[derive(Debug, clap::Args, Serialize, Deserialize)]
 pub struct LogConfig {
     /// Set log level
@@ -164,6 +173,7 @@ pub struct LogConfig {
     pub datetime_format: String,
 }
 
+#[cfg(feature = "cli")]
 #[derive(Parser, Serialize, Deserialize)]
 #[clap(version = VERSION, about = "XELIS is an innovative cryptocurrency built from scratch with BlockDAG, Homomorphic Encryption, Zero-Knowledge Proofs, and Smart Contracts.")]
 #[command(styles = xelis_common::get_cli_styles())]
