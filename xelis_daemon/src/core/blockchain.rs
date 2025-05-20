@@ -479,10 +479,22 @@ impl<S: Storage> Blockchain<S> {
     // Clear all caches
     pub async fn clear_caches(&self) {
         debug!("Clearing caches...");
-        self.tip_base_cache.lock().await.clear();
-        self.tip_work_score_cache.lock().await.clear();
-        self.common_base_cache.lock().await.clear();
-        self.full_order_cache.lock().await.clear();
+        {
+            debug!("locking tip base cache");
+            self.tip_base_cache.lock().await.clear();
+        }
+        {
+            debug!("locking tip work score cache");
+            self.tip_work_score_cache.lock().await.clear();
+        }
+        {
+            debug!("locking common base cache");
+            self.common_base_cache.lock().await.clear();
+        }
+        {
+            debug!("locking full order cache");
+            self.full_order_cache.lock().await.clear();
+        }
         debug!("Caches are now cleared!");
     }
 
@@ -515,10 +527,12 @@ impl<S: Storage> Blockchain<S> {
         self.set_difficulty(difficulty).await;
 
         // TXs in mempool may be outdated, clear them as they will be asked later again
-        debug!("locking mempool for cleaning");
-        let mut mempool = self.mempool.write().await;
-        debug!("Clearing mempool");
-        mempool.clear();
+        {
+            debug!("locking mempool for cleaning");
+            let mut mempool = self.mempool.write().await;
+            debug!("Clearing mempool");
+            mempool.clear();
+        }
 
         self.clear_caches().await;
 
