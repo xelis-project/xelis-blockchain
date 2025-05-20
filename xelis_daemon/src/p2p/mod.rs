@@ -1391,7 +1391,7 @@ impl<S: Storage> P2pServer<S> {
                                     let mut listener = self.object_tracker.request_object_from_peer_with_or_get_notified(Arc::clone(&peer), ObjectRequest::Transaction(hash), None).await?;
                                     let response = listener.recv().await
                                         .context("Error while reading transaction for block")?;
-    
+
                                     match response {
                                         OwnedObjectResponse::Transaction(tx, _) => Ok(Immutable::Owned(tx)),
                                         _ => Err(P2pError::ExpectedTransaction(response))
@@ -1512,9 +1512,22 @@ impl<S: Storage> P2pServer<S> {
                     match res {
                         Ok((transaction, hash, peer)) => {
                             debug!("Adding TX to mempool from processing TX task: {}", hash);
-                            if let Err(e) = self.blockchain.add_tx_to_mempool_with_hash(transaction, Immutable::Arc(hash.clone()), true).await {
-                                warn!("Couldn't add processed TX {} from {}: {}", hash, peer, e);
-                                peer.increment_fail_count();
+                            // Double check because we may had a race condition here when we're under heavy load
+                            let has_tx = match self.blockchain.has_tx(&hash).await {
+                                Ok(v) => v,
+                                Err(e) => {
+                                    error!("Error while checking if TX {} was already included, will default to false: {}", hash, e);
+                                    false
+                                }
+                            };
+
+                            if !has_tx {
+                                if let Err(e) = self.blockchain.add_tx_to_mempool_with_hash(transaction, Immutable::Arc(hash.clone()), true).await {
+                                    warn!("Couldn't add processed TX {} from {}: {}", hash, peer, e);
+                                    peer.increment_fail_count();
+                                }
+                            } else {
+                                debug!("Propagated Tx {} got front-runned, skipping it...", hash);
                             }
                         },
                         Err((e, hash, peer)) => {
