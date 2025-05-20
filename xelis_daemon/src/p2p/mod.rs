@@ -1385,7 +1385,7 @@ impl<S: Storage> P2pServer<S> {
                                     Ok(tx)
                                 } else {
                                     let hash = hash.clone();
-                                    info!("Cache missed for TX {} in block propagation {}, will request it from peer", hash, block_hash);
+                                    debug!("Cache missed for TX {} in block propagation {}, will request it from peer", hash, block_hash);
     
                                     // request it from peer
                                     let mut listener = self.object_tracker.request_object_from_peer_with_or_get_notified(Arc::clone(&peer), ObjectRequest::Transaction(hash), None).await?;
