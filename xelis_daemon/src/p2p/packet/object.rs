@@ -1,28 +1,31 @@
 use xelis_common::{
+    block::{
+        Block,
+        BlockHeader
+    },
     crypto::{
         Hash,
         Hashable,
         HASH_SIZE
     },
-    block::{
-        Block,
-        BlockHeader
-    },
-    transaction::Transaction,
+    immutable::Immutable,
     serializer::{
         Reader,
         ReaderError,
         Serializer,
         Writer
     },
+    transaction::Transaction
 };
 use std::{borrow::Cow, fmt::{Display, Formatter, self}};
 
+use crate::p2p::error::P2pError;
+
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub enum ObjectRequest {
-    Block(Hash),
-    BlockHeader(Hash),
-    Transaction(Hash)
+    Block(Immutable<Hash>),
+    BlockHeader(Immutable<Hash>),
+    Transaction(Immutable<Hash>)
 }
 
 impl ObjectRequest {
@@ -56,9 +59,9 @@ impl Serializer for ObjectRequest {
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
         let id = reader.read_u8()?;
         Ok(match id {
-            0 => ObjectRequest::Block(reader.read_hash()?),
-            1 => ObjectRequest::BlockHeader(reader.read_hash()?),
-            2 => ObjectRequest::Transaction(reader.read_hash()?),
+            0 => ObjectRequest::Block(Immutable::read(reader)?),
+            1 => ObjectRequest::BlockHeader(Immutable::read(reader)?),
+            2 => ObjectRequest::Transaction(Immutable::read(reader)?),
             _ => return Err(ReaderError::InvalidValue)
         })
     }
@@ -98,10 +101,31 @@ impl OwnedObjectResponse {
 
     pub fn get_request(&self) -> ObjectRequest {
         match &self {
-            Self::Block(_, hash) => ObjectRequest::Block(hash.clone()),
-            Self::BlockHeader(_, hash) => ObjectRequest::BlockHeader(hash.clone()),
-            Self::Transaction(_, hash) => ObjectRequest::Transaction(hash.clone()),
+            Self::Block(_, hash) => ObjectRequest::Block(Immutable::Owned(hash.clone())),
+            Self::BlockHeader(_, hash) => ObjectRequest::BlockHeader(Immutable::Owned(hash.clone())),
+            Self::Transaction(_, hash) => ObjectRequest::Transaction(Immutable::Owned(hash.clone())),
             Self::NotFound(request) => request.clone(),
+        }
+    }
+
+    pub fn into_transaction(self) -> Result<(Transaction, Hash), P2pError> {
+        match self {
+            Self::Transaction(tx, hash) => Ok((tx, hash)),
+            response => Err(P2pError::ExpectedTransaction(response)),
+        }
+    }
+
+    pub fn into_block_header(self) -> Result<(BlockHeader, Hash), P2pError> {
+        match self {
+            Self::BlockHeader(block, hash) => Ok((block, hash)),
+            response => Err(P2pError::ExpectedBlockHeader(response)),
+        }
+    }
+
+    pub fn into_block(self) -> Result<(Block, Hash), P2pError> {
+        match self {
+            Self::Block(block, hash) => Ok((block, hash)),
+            response => Err(P2pError::ExpectedBlock(response)),
         }
     }
 }
@@ -117,9 +141,9 @@ pub enum ObjectResponse<'a> {
 impl ObjectResponse<'_> {
     pub fn get_request(&self) -> Cow<'_, ObjectRequest> {
         match &self {
-            Self::Block(block) => Cow::Owned(ObjectRequest::Block(block.hash())),
-            Self::BlockHeader(header) => Cow::Owned(ObjectRequest::BlockHeader(header.hash())),
-            Self::Transaction(tx) => Cow::Owned(ObjectRequest::Transaction(tx.hash())),
+            Self::Block(block) => Cow::Owned(ObjectRequest::Block(Immutable::Owned(block.hash()))),
+            Self::BlockHeader(header) => Cow::Owned(ObjectRequest::BlockHeader(Immutable::Owned(header.hash()))),
+            Self::Transaction(tx) => Cow::Owned(ObjectRequest::Transaction(Immutable::Owned(tx.hash()))),
             Self::NotFound(request) => Cow::Borrowed(request)
         }
     }

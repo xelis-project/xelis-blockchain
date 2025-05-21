@@ -25,7 +25,7 @@ use crate::{
         error::P2pError,
         packet::{
             chain::ChainRequest,
-            object::{ObjectRequest, OwnedObjectResponse},
+            object::ObjectRequest,
             Packet,
             PacketWrapper
         }
@@ -182,6 +182,7 @@ impl<S: Storage> P2pServer<S> {
     async fn handle_blocks_from_chain_validator(&self, peer: &Arc<Peer>, mut chain_validator: ChainValidator<'_, S>, blocks: IndexSet<Hash>) -> Result<(), BlockchainError> {
         // now retrieve all txs from all blocks header and add block in chain
         for hash in blocks {
+            let hash = Immutable::Arc(Arc::new(hash));
             trace!("Processing block {} from chain validator", hash);
             let header = chain_validator.get_block(&hash);
 
@@ -201,14 +202,15 @@ impl<S: Storage> P2pServer<S> {
                                 } else {
                                     // otherwise, ask it from peer
                                     // But because we may have the same TX in several blocks, lets request it using object tracker
-                                    let response = self.object_tracker.request_object_from_peer_with_or_get_notified(Arc::clone(&peer), ObjectRequest::Transaction(tx_hash.clone()), None).await?
+                                    self.object_tracker.request_object_from_peer_with_or_get_notified(
+                                        Arc::clone(&peer),
+                                        ObjectRequest::Transaction(Immutable::Owned(tx_hash.clone())),
+                                        None
+                                    ).await?
                                         .recv().await
-                                        .context("Error on listener for TX")?;
-        
-                                    match response {
-                                        OwnedObjectResponse::Transaction(tx, _) => Ok(Immutable::Owned(tx)),
-                                        _ => Err(P2pError::ExpectedTransaction(response))
-                                    }
+                                        .context("Error on listener for TX")?
+                                        .into_transaction()
+                                        .map(|(tx, _)| Immutable::Owned(tx))
                                 }
                             };
                             futures.push_back(fut);
@@ -219,16 +221,14 @@ impl<S: Storage> P2pServer<S> {
                         Block::new(Immutable::Arc(header), transactions)
                     },
                     None => {
-                        let response = peer.request_blocking_object(ObjectRequest::Block(hash.clone())).await?;
-                        match response {
-                            OwnedObjectResponse::Block(block, _) => block,
-                            response => return Err(P2pError::ExpectedBlock(response).into())
-                        }
+                        peer.request_blocking_object(ObjectRequest::Block(hash.clone())).await?
+                            .into_block()?
+                            .0
                     }
                 };
 
                 // don't broadcast block because it's syncing
-                self.blockchain.add_new_block(block, Some(Immutable::Owned(hash)), BroadcastOption::Miners, false).await?;
+                self.blockchain.add_new_block(block, Some(hash), BroadcastOption::Miners, false).await?;
             } else if !self.disable_reexecute_blocks_on_sync {
                 // We need to re execute it to make sure it's in DAG
                 let mut storage = self.blockchain.get_storage().write().await;
@@ -242,7 +242,7 @@ impl<S: Storage> P2pServer<S> {
                             }
 
                             warn!("Block {} is already in chain but not in DAG, re-executing it", hash);
-                            self.blockchain.add_new_block_for_storage(&mut storage, block, Some(Immutable::Owned(hash)), BroadcastOption::Miners, false).await?;
+                            self.blockchain.add_new_block_for_storage(&mut storage, block, Some(hash), BroadcastOption::Miners, false).await?;
                         },
                         Err(e) => {
                             // This shouldn't happen, but in case
@@ -380,11 +380,9 @@ impl<S: Storage> P2pServer<S> {
                             return Ok(None)
                         }
 
-                        let response = peer.request_blocking_object(ObjectRequest::BlockHeader(hash)).await?;
-                        match response {
-                            OwnedObjectResponse::BlockHeader(header, hash) => Ok(Some((header, hash))),
-                            _ => Err(P2pError::ExpectedBlock(response))
-                        }
+                        peer.request_blocking_object(ObjectRequest::BlockHeader(Immutable::Owned(hash))).await?
+                            .into_block_header()
+                            .map(Some)
                     };
 
                     futures.push_back(fut);
@@ -491,16 +489,12 @@ impl<S: Storage> P2pServer<S> {
                         let fut = async move {
                             if !request_block {
                                 debug!("Requesting boost sync block {}", hash);
-                                let mut receiver = self.object_tracker.request_object_from_peer_with_or_get_notified(Arc::clone(peer), ObjectRequest::Block(hash.clone()), Some(group_id)).await?;
+                                let mut receiver = self.object_tracker.request_object_from_peer_with_or_get_notified(Arc::clone(peer), ObjectRequest::Block(Immutable::Owned(hash.clone())), Some(group_id)).await?;
                                 debug!("Waiting boost sync block response {}", hash);
-                                let response = receiver.recv().await
-                                    .context("Error while receiving response for block while syncing")?;
-    
-                                match response {
-                                    // OwnedObjectResponse is built by computing the block hash, so we can trust it
-                                    OwnedObjectResponse::Block(block, hash) => Ok(ResponseHelper::Requested(block, hash)),
-                                    _ => Err(P2pError::ExpectedBlock(response))
-                                }
+                                    receiver.recv().await
+                                    .context("Error while receiving response for block while syncing")?
+                                    .into_block()
+                                    .map(|(block, hash)| ResponseHelper::Requested(block, hash))
                             } else {
                                 debug!("Block {} is already in chain, verify if its in DAG", hash);
                                 Ok(ResponseHelper::NotRequested(hash))
@@ -595,15 +589,13 @@ impl<S: Storage> P2pServer<S> {
                     if !self.blockchain.has_block(&hash).await? {
                         trace!("Block {} is not found, asking it to {} (index = {})", hash, peer.get_outgoing_address(), total_requested);
                         // Otherwise, request them one by one and wait for the response
-                        let response = peer.request_blocking_object(ObjectRequest::Block(hash)).await?;
-                        if let OwnedObjectResponse::Block(block, hash) = response {
-                            trace!("Received block {} at height {} from {}", hash, block.get_height(), peer);
-                            // Trust the block hash as we computed it for the owned object response
-                            self.blockchain.add_new_block(block, Some(Immutable::Owned(hash)), BroadcastOption::Miners, false).await?;
-                        } else {
-                            error!("{} sent us an invalid block response", peer);
-                            return Err(P2pError::ExpectedBlock(response).into())
-                        }
+                        let (block, hash) = peer.request_blocking_object(ObjectRequest::Block(Immutable::Owned(hash))).await?
+                            .into_block()?;
+
+                        trace!("Received block {} at height {} from {}", hash, block.get_height(), peer);
+                        // Trust the block hash as we computed it for the owned object response
+                        self.blockchain.add_new_block(block, Some(Immutable::Owned(hash)), BroadcastOption::Miners, false).await?;
+
                         total_requested += 1;
                     } else if !self.disable_reexecute_blocks_on_sync {
                         trace!("Block {} is already in chain, verify if its in DAG", hash);

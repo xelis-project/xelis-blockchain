@@ -173,6 +173,8 @@ pub enum P2pError {
     BoostSyncModeFailed(Box<P2pError>),
     #[error("Expected a block type got {0}")]
     ExpectedBlock(OwnedObjectResponse),
+    #[error("Expected a block header type got {0}")]
+    ExpectedBlockHeader(OwnedObjectResponse),
     #[error("Expected a transaction type got {0}")]
     ExpectedTransaction(OwnedObjectResponse),
     #[error("Peer sent us a peerlist faster than protocol rules, expected to wait {} seconds more", _0)]

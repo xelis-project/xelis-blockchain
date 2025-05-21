@@ -167,6 +167,8 @@ pub const PEER_TEMP_BAN_TIME_ON_CONNECT: u64 = 60;
 pub const PEER_TEMP_BAN_TIME: u64 = 15 * 60;
 // millis until we timeout
 pub const PEER_TIMEOUT_REQUEST_OBJECT: u64 = 15_000;
+// How many objects requests can be concurrently requested?
+pub const PEER_OBJECTS_CONCURRENCY: usize = 16;
 // millis until we timeout during a bootstrap request
 pub const PEER_TIMEOUT_BOOTSTRAP_STEP: u64 = 60_000;
 // millis until we timeout during a handshake

@@ -29,10 +29,7 @@ use crate::{
                 BlockMetadata,
                 BootstrapChainResponse
             },
-            object::{
-                ObjectRequest,
-                OwnedObjectResponse
-            },
+            object::ObjectRequest,
             Packet
         }
     }
@@ -486,10 +483,8 @@ impl<S: Storage> P2pServer<S> {
                             }
 
                             debug!("Saving block metadata {}", metadata.hash);
-                            let OwnedObjectResponse::BlockHeader(header, hash) = peer.request_blocking_object(ObjectRequest::BlockHeader(metadata.hash)).await? else {
-                                error!("Received an invalid requested object while fetching blocks metadata");
-                                return Err(P2pError::InvalidPacket.into())
-                            };
+                            let (header, hash) = peer.request_blocking_object(ObjectRequest::BlockHeader(Immutable::Owned(metadata.hash))).await?
+                                .into_block_header()?;
 
                             let mut txs = Vec::with_capacity(header.get_txs_hashes().len());
                             debug!("Retrieving {} txs for block {}", header.get_txs_count(), hash);
@@ -498,12 +493,11 @@ impl<S: Storage> P2pServer<S> {
                                 let tx = if self.blockchain.has_tx(tx_hash).await? {
                                     self.blockchain.get_tx(tx_hash).await?
                                 } else {
-                                    let OwnedObjectResponse::Transaction(tx, _) = peer.request_blocking_object(ObjectRequest::Transaction(tx_hash.clone())).await? else {
-                                        error!("Received an invalid requested object while fetching block transaction {}", tx_hash);
-                                        return Err(P2pError::InvalidObjectResponseType.into())
-                                    };
+                                    let (tx, _) = peer.request_blocking_object(ObjectRequest::Transaction(Immutable::Owned(tx_hash.clone()))).await?
+                                        .into_transaction()?;
                                     Immutable::Owned(tx)
                                 };
+
                                 trace!("TX {} ok", tx_hash);
                                 txs.push(tx);
                             }

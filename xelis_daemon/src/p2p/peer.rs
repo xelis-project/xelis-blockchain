@@ -55,7 +55,7 @@ use std::{
 };
 use tokio::{
     select,
-    sync::{broadcast, mpsc, oneshot, Mutex},
+    sync::{broadcast, mpsc, oneshot, Mutex, Semaphore},
     time::timeout,
 };
 use lru::LruCache;
@@ -162,6 +162,9 @@ pub struct Peer {
     // Tracking dedicated tasks
     read_task: Mutex<TaskState>,
     write_task: Mutex<TaskState>,
+    // Semaphore to prevent requesting too many
+    // objects at once
+    objects_semaphore: Semaphore,
 }
 
 impl Peer {
@@ -206,6 +209,7 @@ impl Peer {
             tx,
             read_task: Mutex::new(TaskState::Inactive),
             write_task: Mutex::new(TaskState::Inactive),
+            objects_semaphore: Semaphore::new(64)
         }, rx)
     }
 
@@ -411,6 +415,7 @@ impl Peer {
 
     // Request a object from this peer and wait on it until we receive it or until timeout 
     pub async fn request_blocking_object(&self, request: ObjectRequest) -> Result<OwnedObjectResponse, P2pError> {
+        let _permit = self.objects_semaphore.acquire().await?;
         trace!("Requesting {} from {}", request, self);
         let mut receiver = {
             let mut objects = self.objects_requested.lock().await;
