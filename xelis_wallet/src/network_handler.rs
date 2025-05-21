@@ -46,6 +46,7 @@ use crate::{
     config::AUTO_RECONNECT_INTERVAL,
     daemon_api::DaemonAPI,
     entry::{
+        DeployInvoke,
         EntryData,
         TransactionEntry,
         TransferIn,
@@ -224,6 +225,7 @@ impl NetworkHandler {
         let mut assets_changed = HashSet::new();
         // Miner address to verify if we mined the block
         let miner = block.miner.into_owned().to_public_key();
+        let should_scan_history = self.wallet.get_history_scan();
 
         // Prevent storing changes multiple times
         let mut changes_stored = false;
@@ -232,35 +234,38 @@ impl NetworkHandler {
         if miner == *address.get_public_key() {
             debug!("Block {} at topoheight {} is mined by us", block_hash, topoheight);
             if let Some(reward) = block.miner_reward {
-                let coinbase = EntryData::Coinbase { reward };
-                let entry = TransactionEntry::new(block_hash.clone(), topoheight, block.timestamp, coinbase);
                 assets_changed.insert(XELIS_ASSET);
+                
+                if should_scan_history {
+                    let coinbase = EntryData::Coinbase { reward };
+                    let entry = TransactionEntry::new(block_hash.clone(), topoheight, block.timestamp, coinbase);
 
-                let broadcast = {
-                    let mut storage = self.wallet.get_storage().write().await;
-
-                    // Mark it as last coinbase reward topoheight
-                    // it is internally checked if its higher or not
-                    debug!("Storing last coinbase reward topoheight {}", topoheight);
-                    storage.set_last_coinbase_reward_topoheight(Some(topoheight))?;
-
-                    if storage.has_transaction(entry.get_hash())? {
-                        false
-                    } else {
-                        storage.save_transaction(entry.get_hash(), &entry)?;
+                    let broadcast = {
+                        let mut storage = self.wallet.get_storage().write().await;
     
-                        // Store the changes for history
-                        if !changes_stored {
-                            storage.add_topoheight_to_changes(topoheight, &block_hash)?;
-                            changes_stored = true;
+                        // Mark it as last coinbase reward topoheight
+                        // it is internally checked if its higher or not
+                        debug!("Storing last coinbase reward topoheight {}", topoheight);
+                        storage.set_last_coinbase_reward_topoheight(Some(topoheight))?;
+    
+                        if storage.has_transaction(entry.get_hash())? {
+                            false
+                        } else {
+                            storage.save_transaction(entry.get_hash(), &entry)?;
+        
+                            // Store the changes for history
+                            if !changes_stored {
+                                storage.add_topoheight_to_changes(topoheight, &block_hash)?;
+                                changes_stored = true;
+                            }
+                            true
                         }
-                        true
+                    };
+    
+                    // Propagate the event to the wallet
+                    if broadcast {
+                        self.wallet.propagate_event(Event::NewTransaction(entry.serializable(self.wallet.get_network().is_mainnet()))).await;
                     }
-                };
-
-                // Propagate the event to the wallet
-                if broadcast {
-                    self.wallet.propagate_event(Event::NewTransaction(entry.serializable(self.wallet.get_network().is_mainnet()))).await;
                 }
             } else {
                 warn!("No reward for block {} at topoheight {}", block_hash, topoheight);
@@ -286,12 +291,13 @@ impl NetworkHandler {
                     RPCTransactionType::Burn(payload) => {
                         let payload = payload.into_owned();
                         if is_owner {
-                            if self.has_tx_stored(&tx.hash).await? {
+                            assets_changed.insert(payload.asset.clone());
+
+                            if !should_scan_history || self.has_tx_stored(&tx.hash).await? {
                                 debug!("Transaction burn {} was already stored, skipping it", tx.hash);
                                 return Ok((None, assets_changed));
                             }
     
-                            assets_changed.insert(payload.asset.clone());
                             Some(EntryData::Burn { asset: payload.asset, amount: payload.amount, fee: tx.fee, nonce: tx.nonce })
                         } else {
                             None
@@ -306,6 +312,9 @@ impl NetworkHandler {
                         for (i, transfer) in txs.into_iter().enumerate() {
                             let destination = transfer.destination.to_public_key();
                             if is_owner || destination == *address.get_public_key() {
+                                let asset = transfer.asset.into_owned();
+                                assets_changed.insert(asset.clone());
+
                                 // Check only once if we have processed this TX already
                                 if !checked {
                                     // Check if we already stored this TX
@@ -314,6 +323,10 @@ impl NetworkHandler {
                                         return Ok((None, assets_changed));
                                     }
                                     checked = true;
+                                }
+
+                                if !should_scan_history {
+                                    continue;
                                 }
 
                                 // Get the right handle
@@ -353,7 +366,6 @@ impl NetworkHandler {
                                     None
                                 };
 
-                                let asset = transfer.asset.into_owned();
                                 debug!("Decrypting amount from TX {} of asset {}", tx.hash, asset);
                                 let ciphertext = Ciphertext::new(commitment, handle);
                                 let amount = match self.wallet.decrypt_ciphertext_of_asset(ciphertext, &asset).await? {
@@ -363,8 +375,6 @@ impl NetworkHandler {
                                         continue;
                                     }
                                 };
-
-                                assets_changed.insert(asset.clone());
     
                                 if is_owner {
                                     let transfer = TransferOut::new(destination, asset, amount, extra_data);
@@ -376,7 +386,7 @@ impl NetworkHandler {
                             }
                         }
     
-                        if is_owner { // check that we are owner of this TX
+                        if is_owner && !transfers_out.is_empty() { // check that we are owner of this TX
                             Some(EntryData::Outgoing { transfers: transfers_out, fee: tx.fee, nonce: tx.nonce })
                         } else if !transfers_in.is_empty() { // otherwise, check that we received one or few transfers from it
                             Some(EntryData::Incoming { from: tx.source.to_public_key(), transfers: transfers_in })
@@ -387,7 +397,7 @@ impl NetworkHandler {
                     RPCTransactionType::MultiSig(payload) => {
                         let payload = payload.into_owned();
                         if is_owner {
-                            if self.has_tx_stored(&tx.hash).await? {
+                            if !should_scan_history || self.has_tx_stored(&tx.hash).await? {
                                 debug!("Transaction multisig setup {} was already stored, skipping it", tx.hash);
                                 return Ok((None, assets_changed));
                             }
@@ -408,40 +418,86 @@ impl NetworkHandler {
                             let mut deposits = IndexMap::new();
                             for (asset, deposit) in payload.deposits {
                                 assets_changed.insert(asset.clone());
-    
-                                match deposit {
-                                    ContractDeposit::Public(amount) => {
-                                        deposits.insert(asset, amount);
-                                    },
-                                    ContractDeposit::Private { commitment, sender_handle, ..} => {
-                                        let commitment = commitment.decompress()?;
-                                        let handle = sender_handle.decompress()?;
-                                        let ciphertext = Ciphertext::new(commitment, handle);
-                                        let amount = match self.wallet.decrypt_ciphertext_of_asset(ciphertext, &asset).await? {
-                                            Some(v) => v,
-                                            None => {
-                                                warn!("Couldn't decrypt deposit ciphertext for asset {}. Skipping it", asset);
-                                                continue;
-                                            }
-                                        };
-                                        deposits.insert(asset, amount);
+
+                                if should_scan_history {
+                                    match deposit {
+                                        ContractDeposit::Public(amount) => {
+                                            deposits.insert(asset, amount);
+                                        },
+                                        ContractDeposit::Private { commitment, sender_handle, ..} => {
+                                            let commitment = commitment.decompress()?;
+                                            let handle = sender_handle.decompress()?;
+                                            let ciphertext = Ciphertext::new(commitment, handle);
+                                            let amount = match self.wallet.decrypt_ciphertext_of_asset(ciphertext, &asset).await? {
+                                                Some(v) => v,
+                                                None => {
+                                                    warn!("Couldn't decrypt deposit ciphertext for asset {}. Skipping it", asset);
+                                                    continue;
+                                                }
+                                            };
+                                            deposits.insert(asset, amount);
+                                        }
                                     }
                                 }
                             }
-    
-                            Some(EntryData::InvokeContract { contract: payload.contract, deposits, chunk_id: payload.chunk_id, fee: tx.fee, max_gas: payload.max_gas, nonce: tx.nonce })
+
+                            if should_scan_history {
+                                Some(EntryData::InvokeContract { contract: payload.contract, deposits, chunk_id: payload.chunk_id, fee: tx.fee, max_gas: payload.max_gas, nonce: tx.nonce })
+                            } else {
+                                None
+                            }
                         } else {
                             None
                         }
                     },
-                    RPCTransactionType::DeployContract(_) => {
+                    RPCTransactionType::DeployContract(payload) => {
                         if is_owner {
                             if self.has_tx_stored(&tx.hash).await? {
                                 debug!("Transaction deploy contract {} was already stored, skipping it", tx.hash);
                                 return Ok((None, assets_changed));
                             }
-    
-                            Some(EntryData::DeployContract { fee: tx.fee, nonce: tx.nonce })
+
+                            let payload = payload.into_owned();
+                            let invoke = if let Some(invoke) = payload.invoke {
+                                let mut deposits = IndexMap::new();
+                                for (asset, deposit) in invoke.deposits {
+                                    assets_changed.insert(asset.clone());
+
+                                    if should_scan_history {
+                                        match deposit {
+                                            ContractDeposit::Public(amount) => {
+                                                deposits.insert(asset, amount);
+                                            },
+                                            ContractDeposit::Private { commitment, sender_handle, ..} => {
+                                                let commitment = commitment.decompress()?;
+                                                let handle = sender_handle.decompress()?;
+                                                let ciphertext = Ciphertext::new(commitment, handle);
+                                                let amount = match self.wallet.decrypt_ciphertext_of_asset(ciphertext, &asset).await? {
+                                                    Some(v) => v,
+                                                    None => {
+                                                        warn!("Couldn't decrypt deposit ciphertext for asset {}. Skipping it", asset);
+                                                        continue;
+                                                    }
+                                                };
+                                                deposits.insert(asset, amount);
+                                            }
+                                        }
+                                    }
+                                }
+
+                                Some(DeployInvoke {
+                                    max_gas: invoke.max_gas,
+                                    deposits,
+                                })
+                            } else {
+                                None
+                            };
+
+                            if should_scan_history {
+                                Some(EntryData::DeployContract { fee: tx.fee, nonce: tx.nonce, invoke })
+                            } else {
+                                None
+                            }
                         } else {
                             None
                         }

@@ -1,11 +1,11 @@
 use indexmap::{IndexMap, IndexSet};
 use xelis_common::{
-    time::TimestampMillis,
     api::wallet::{
-        TransactionEntry as RPCTransactionEntry,
         EntryType as RPCEntryType,
+        TransactionEntry as RPCTransactionEntry,
         TransferIn as RPCTransferIn,
-        TransferOut as RPCTransferOut
+        TransferOut as RPCTransferOut,
+        DeployInvoke as RPCDeployInvoke,
     },
     config::XELIS_ASSET,
     crypto::{
@@ -18,6 +18,7 @@ use xelis_common::{
         Serializer,
         Writer
     },
+    time::TimestampMillis,
     transaction::extra_data::PlaintextExtraData,
     utils::{
         format_coin,
@@ -155,6 +156,45 @@ impl Serializer for TransferIn {
 }
 
 #[derive(Debug, Clone)]
+pub struct DeployInvoke {
+    // Additionnal fees to pay
+    // This is the maximum of gas that can be used by the contract
+    // If a contract uses more gas than this value, the transaction
+    // is still accepted by nodes but the contract execution is stopped
+    pub max_gas: u64,
+    // Assets deposited with this call
+    pub deposits: IndexMap<Hash, u64>,
+}
+
+impl Serializer for DeployInvoke {
+    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
+        let max_gas = reader.read_u64()?;
+        let deposits_size = reader.read_u8()? as usize;
+        let mut deposits = IndexMap::new();
+        for _ in 0..deposits_size {
+            let asset = reader.read_hash()?;
+            let amount = reader.read_u64()?;
+            deposits.insert(asset, amount);
+        }
+
+
+        Ok(Self {
+            max_gas,
+            deposits,
+        })
+    }
+
+    fn write(&self, writer: &mut Writer) {
+        self.max_gas.write(writer);
+        writer.write_u8(self.deposits.len() as _);
+        for (asset, amount) in self.deposits.iter() {
+            asset.write(writer);
+            amount.write(writer);
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub enum EntryData {
     // Coinbase is only XELIS_ASSET
     Coinbase {
@@ -209,7 +249,9 @@ pub enum EntryData {
         // Fee paid
         fee: u64,
         // Nonce used
-        nonce: u64
+        nonce: u64,
+        // Invoke if any
+        invoke: Option<DeployInvoke>
     }
 }
 
@@ -277,7 +319,8 @@ impl Serializer for EntryData {
             6 => {
                 let fee = reader.read_u64()?;
                 let nonce = reader.read_u64()?;
-                Self::DeployContract { fee, nonce }
+                let invoke = Option::read(reader)?;
+                Self::DeployContract { fee, nonce, invoke }
             }
             _ => return Err(ReaderError::InvalidValue)
         }) 
@@ -339,10 +382,11 @@ impl Serializer for EntryData {
                 writer.write_u64(max_gas);
                 writer.write_u64(nonce);
             },
-            Self::DeployContract { fee, nonce } => {
+            Self::DeployContract { fee, nonce, invoke } => {
                 writer.write_u8(6);
                 writer.write_u64(fee);
                 writer.write_u64(nonce);
+                invoke.write(writer);
             }
         }
     }
@@ -363,8 +407,8 @@ impl Serializer for EntryData {
             Self::InvokeContract { contract, deposits, chunk_id, fee, max_gas, nonce } => {
                 contract.size() + 2 + deposits.iter().map(|(a, b)| a.size() + b.size()).sum::<usize>() + chunk_id.size() + fee.size() + max_gas.size() + nonce.size()
             },
-            Self::DeployContract { fee, nonce } => {
-                fee.size() + nonce.size()
+            Self::DeployContract { fee, nonce, invoke } => {
+                fee.size() + nonce.size() + invoke.size()
             }
         }
     }
@@ -462,8 +506,12 @@ impl TransactionEntry {
                 EntryData::InvokeContract { contract, deposits, chunk_id, fee, max_gas, nonce } => {
                     RPCEntryType::InvokeContract { contract, deposits, chunk_id, fee, max_gas, nonce }
                 },
-                EntryData::DeployContract { fee, nonce } => {
-                    RPCEntryType::DeployContract { fee, nonce }
+                EntryData::DeployContract { fee, nonce, invoke } => {
+                    let invoke = invoke.map(|v| RPCDeployInvoke {
+                        max_gas: v.max_gas,
+                        deposits: v.deposits.clone()
+                    });
+                    RPCEntryType::DeployContract { fee, nonce, invoke }
                 }
             }
         }
@@ -517,8 +565,8 @@ impl TransactionEntry {
                 }
                 str
             },
-            EntryData::DeployContract { fee, nonce } => {
-                format!("Fee: {}, Nonce: {} Deploy contract", format_xelis(*fee), nonce)
+            EntryData::DeployContract { fee, nonce, invoke } => {
+                format!("Fee: {}, Nonce: {} Deploy contract (constructor called: {})", format_xelis(*fee), nonce, invoke.is_some())
             }
         };
 

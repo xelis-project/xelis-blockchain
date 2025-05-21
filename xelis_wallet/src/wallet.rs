@@ -1036,8 +1036,17 @@ impl Wallet {
 
                     writeln!(w, "{},{},{},{},{},{},{},{},{}", datetime_from_timestamp(tx.get_timestamp())?, tx.get_topoheight(), tx.get_hash(), "InvokeContract", contract, str_deposits.join("|"), chunk_id, format_xelis(*fee), nonce).context("Error while writing csv line")?;
                 },
-                EntryData::DeployContract { fee, nonce } => {
-                    writeln!(w, "{},{},{},{},-,-,-,{},{}", datetime_from_timestamp(tx.get_timestamp())?, tx.get_topoheight(), tx.get_hash(), "DeployContract", format_xelis(*fee), nonce).context("Error while writing csv line")?;
+                EntryData::DeployContract { fee, nonce, invoke } => {
+                    let mut str_deposits = Vec::new();
+                    if let Some(invoke) = invoke {
+                        str_deposits.push(format!("Gas:{}", format_xelis(invoke.max_gas)));
+                        for (asset, amount) in invoke.deposits.iter() {
+                            let data = storage.get_asset(&asset).await?;
+                            str_deposits.push(format!("{}:{}", data.get_name(), format_coin(*amount, data.get_decimals())));
+                        }
+                    }
+
+                    writeln!(w, "{},{},{},{},-,-,{},{},{}", datetime_from_timestamp(tx.get_timestamp())?, tx.get_topoheight(), tx.get_hash(), "DeployContract", str_deposits.join("|"), format_xelis(*fee), nonce).context("Error while writing csv line")?;
                 },
             }
         }
