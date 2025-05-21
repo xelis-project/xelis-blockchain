@@ -367,6 +367,17 @@ pub struct TransferIn {
     pub extra_data: Option<PlaintextExtraData>
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeployInvoke {
+    // Additionnal fees to pay
+    // This is the maximum of gas that can be used by the contract
+    // If a contract uses more gas than this value, the transaction
+    // is still accepted by nodes but the contract execution is stopped
+    pub max_gas: u64,
+    // Assets deposited with this call
+    pub deposits: IndexMap<Hash, u64>,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EntryType {
@@ -419,7 +430,9 @@ pub enum EntryType {
         // Fee paid
         fee: u64,
         // Nonce used
-        nonce: u64
+        nonce: u64,
+        // constructor invoke
+        invoke: Option<DeployInvoke>
     }
 }
 
