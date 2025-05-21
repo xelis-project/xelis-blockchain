@@ -80,6 +80,40 @@ pub struct RPCBlockResponse<'a> {
     pub transactions: Vec<RPCTransaction<'a>>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GetMempoolParams {
+    pub maximum: Option<usize>,
+    pub skip: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MempoolTransactionSummary<'a> {
+    // TX hash
+    pub hash: Cow<'a, Hash>,
+    // The current sender
+    pub source: Address,
+    // Fees expected to be paid
+    pub fee: u64,
+    // First time seen in the mempool
+    pub first_seen: TimestampSeconds,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct GetMempoolResult<'a> {
+    // The range of transactions requested
+    pub transactions: Vec<TransactionResponse<'a>>,
+    // How many TXs in total available in mempool
+    pub total: usize,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct GetMempoolSummaryResult<'a> {
+    // The range of transactions requested
+    pub transactions: Vec<MempoolTransactionSummary<'a>>,
+    // How many TXs in total available in mempool
+    pub total: usize,
+}
+
 pub type BlockResponse = RPCBlockResponse<'static>;
 
 #[derive(Serialize, Deserialize)]
