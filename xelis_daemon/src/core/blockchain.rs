@@ -18,9 +18,10 @@ use xelis_common::{
             NewAssetEvent,
             ContractTransferEvent,
             ContractEvent,
+            MempoolTransactionSummary,
         },
         RPCContractOutput,
-        RPCTransaction
+        RPCTransaction,
     },
     asset::{AssetData, VersionedAssetData},
     block::{
@@ -1535,13 +1536,12 @@ impl<S: Storage> Blockchain<S> {
                 }
 
                 if rpc.is_event_tracked(&NotifyEvent::TransactionAddedInMempool).await {
-                    let data = RPCTransaction::from_tx(&tx, &hash, storage.is_mainnet());
-                    let data: TransactionResponse<'_> = TransactionResponse {
-                        blocks: None,
-                        executed_in_block: None,
-                        in_mempool: true,
-                        first_seen: Some(get_current_time_in_seconds()),
-                        data,
+                    let data = MempoolTransactionSummary {
+                        size: tx_size,
+                        hash: Cow::Borrowed(&hash),
+                        fee: tx.get_fee(),
+                        source: tx.get_source().as_address(self.network.is_mainnet()),
+                        first_seen: get_current_time_in_seconds(),
                     };
                     let json = json!(data);
 
