@@ -76,7 +76,10 @@ pub struct RPCBlockResponse<'a> {
     pub extra_nonce: Cow<'a, [u8; EXTRA_NONCE_SIZE]>,
     pub miner: Cow<'a, Address>,
     pub txs_hashes: Cow<'a, IndexSet<Hash>>,
-    #[serde(default)]
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+    )]
     pub transactions: Vec<RPCTransaction<'a>>,
 }
 
