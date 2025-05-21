@@ -242,7 +242,7 @@ pub async fn get_block_response_for_hash<S: Storage>(blockchain: &Blockchain<S>,
 }
 
 // Transaction response based on data in chain/mempool and from parameters
-pub async fn get_transaction_response<S: Storage>(storage: &S, tx: &Transaction, hash: &Hash, in_mempool: bool, first_seen: Option<TimestampSeconds>) -> Result<Value, InternalRpcError> {
+pub async fn get_transaction_response<'a, S: Storage>(storage: &S, tx: &'a Transaction, hash: &'a Hash, in_mempool: bool, first_seen: Option<TimestampSeconds>) -> Result<TransactionResponse<'a>, InternalRpcError> {
     let blocks = if storage.has_tx_blocks(hash).context("Error while checking if tx in included in blocks")? {
         Some(storage.get_blocks_for_tx(hash).context("Error while retrieving in which blocks its included")?)
     } else {
@@ -251,16 +251,20 @@ pub async fn get_transaction_response<S: Storage>(storage: &S, tx: &Transaction,
 
     let data = RPCTransaction::from_tx(tx, hash, storage.is_mainnet());
     let executed_in_block = storage.get_block_executor_for_tx(hash).ok();
-    Ok(json!(TransactionResponse { blocks, executed_in_block, data, in_mempool, first_seen }))
+    Ok(TransactionResponse { blocks, executed_in_block, data, in_mempool, first_seen })
 }
 
 // first check on disk, then check in mempool
 pub async fn get_transaction_response_for_hash<S: Storage>(storage: &S, mempool: &Mempool, hash: &Hash) -> Result<Value, InternalRpcError> {
     match storage.get_transaction(hash).await {
-        Ok(tx) => get_transaction_response(storage, &tx, hash, false, None).await,
+        Ok(tx) => {
+            let tx = get_transaction_response(storage, &tx, hash, false, None).await?;
+            Ok(json!(tx))
+        }
         Err(_) => {
             let tx = mempool.get_sorted_tx(hash).context("Error while retrieving transaction from disk and mempool")?;
-            get_transaction_response(storage, &tx.get_tx(), hash, true, Some(tx.get_first_seen())).await
+            let tx = get_transaction_response(storage, &tx.get_tx(), hash, true, Some(tx.get_first_seen())).await?;
+            Ok(json!(tx))
         }
     }
 }
@@ -340,6 +344,7 @@ pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>
     handler.register_method("get_peers", async_handler!(get_peers::<S>));
 
     handler.register_method("get_mempool", async_handler!(get_mempool::<S>));
+    handler.register_method("get_mempool_summary", async_handler!(get_mempool_summary::<S>));
     handler.register_method("get_mempool_cache", async_handler!(get_mempool_cache::<S>));
     handler.register_method("get_estimated_fee_rates", async_handler!(get_estimated_fee_rates::<S>));
 
@@ -910,19 +915,64 @@ async fn get_peers<S: Storage>(context: &Context, body: Value) -> Result<Value, 
 }
 
 async fn get_mempool<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    if body != Value::Null {
-        return Err(InternalRpcError::UnexpectedParams)
-    }
+    let params: GetMempoolParams = parse_params(body)?;
+
+    let maximum = params.maximum.filter(|v| *v <= MAX_TXS)
+        .unwrap_or(MAX_TXS);
+    let skip = params.skip.unwrap_or(0);
+
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let storage = blockchain.get_storage().read().await;
     let mempool = blockchain.get_mempool().read().await;
-    let mut transactions: Vec<Value> = Vec::new();
-    for (hash, sorted_tx) in mempool.get_txs() {
-        transactions.push(get_transaction_response(&*storage, sorted_tx.get_tx(), hash, true, Some(sorted_tx.get_first_seen())).await?);
+    let mut transactions = Vec::with_capacity(maximum);
+
+    let txs = mempool.get_txs();
+    let total = txs.len();
+    for (hash, sorted_tx) in txs.iter().skip(skip).take(maximum) {
+        let tx = get_transaction_response(&*storage, sorted_tx.get_tx(), hash, true, Some(sorted_tx.get_first_seen())).await?;
+        transactions.push(tx);
     }
 
-    Ok(json!(transactions))
+    Ok(json!(GetMempoolResult {
+        transactions,
+        total
+    }))
 }
+
+pub const MAX_SUMMARY: usize = 1024;
+
+async fn get_mempool_summary<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
+    let params: GetMempoolParams = parse_params(body)?;
+
+    let maximum = params.maximum.filter(|v| *v <= MAX_SUMMARY)
+        .unwrap_or(MAX_SUMMARY);
+
+    let skip = params.skip.unwrap_or(0);
+
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    let mempool = blockchain.get_mempool().read().await;
+    let txs = mempool.get_txs();
+    let total = txs.len();
+    let mut transactions = Vec::with_capacity(maximum.max(total));
+
+    let mainnet = blockchain.get_network().is_mainnet();
+    for (hash, sorted_tx) in txs.iter().skip(skip).take(maximum) {
+        let tx = MempoolTransactionSummary {
+            hash: Cow::Borrowed(hash),
+            source: sorted_tx.get_tx().get_source().as_address(mainnet),
+            fee: sorted_tx.get_fee(),
+            first_seen: sorted_tx.get_first_seen()
+        };
+
+        transactions.push(tx);
+    }
+
+    Ok(json!(GetMempoolSummaryResult {
+        transactions,
+        total
+    }))
+}
+
 
 async fn get_estimated_fee_rates<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
     if body != Value::Null {
