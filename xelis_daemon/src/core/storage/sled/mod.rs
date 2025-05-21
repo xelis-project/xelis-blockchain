@@ -467,6 +467,7 @@ impl SledStorage {
             cache.put(key.clone(), Arc::clone(&value));
             Immutable::Arc(value)
         } else {
+            trace!("no cache or snapshot enabled, load from disk");
             Immutable::Owned(self.load_from_disk(tree, &key_bytes, context)?)
         };
 

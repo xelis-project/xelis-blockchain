@@ -1383,12 +1383,12 @@ impl<S: Storage> P2pServer<S> {
 
                     let future = async {
                         let mut txs_futures = FuturesOrdered::new();
-                        for hash in header.get_txs_hashes() {
+                        for hash in header.get_txs_hashes().iter().cloned() {
                             let future = async {
-                                if let Ok(tx) = self.blockchain.get_tx(hash).await {
+                                if let Ok(tx) = self.blockchain.get_tx(&hash).await {
+                                    debug!("tx {} found in chain", hash);
                                     Ok(tx)
                                 } else {
-                                    let hash = hash.clone();
                                     debug!("Cache missed for TX {} in block propagation {}, will request it from peer", hash, block_hash);
     
                                     // request it from peer

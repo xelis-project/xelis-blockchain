@@ -1608,7 +1608,7 @@ impl<S: Storage> Blockchain<S> {
             let storage = self.storage.read().await;
             debug!("get tx {} storage read acquired", hash);
             if storage.has_transaction(&hash).await? {
-                debug!("tx {} in in storage", hash);
+                debug!("tx {} is in storage", hash);
                 return storage.get_transaction(hash).await
             }
         }
