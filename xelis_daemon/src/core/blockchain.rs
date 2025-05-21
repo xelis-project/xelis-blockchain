@@ -2777,7 +2777,8 @@ impl<S: Storage> Blockchain<S> {
             // atm, we always notify websocket clients
             trace!("Notifying websocket clients");
             if should_track_events.contains(&NotifyEvent::NewBlock) {
-                match get_block_response(self, storage, &block_hash, &Block::new(Immutable::Arc(block), txs), block_size).await {
+                // We are not including the transactions in `NewBlock` event to prevent spamming
+                match get_block_response(self, storage, &block_hash, &Block::new(Immutable::Arc(block), Vec::new()), block_size).await {
                     Ok(response) => {
                         events.entry(NotifyEvent::NewBlock).or_insert_with(Vec::new).push(response);
                     },
