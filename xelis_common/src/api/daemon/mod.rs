@@ -96,6 +96,8 @@ pub struct MempoolTransactionSummary<'a> {
     pub fee: u64,
     // First time seen in the mempool
     pub first_seen: TimestampSeconds,
+    // Size of the TX
+    pub size: usize,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -835,7 +837,7 @@ pub struct StableTopoHeightChangedEvent {
 
 
 // Value of NotifyEvent::TransactionAddedInMempool
-pub type TransactionAddedInMempoolEvent = TransactionResponse<'static>;
+pub type TransactionAddedInMempoolEvent = MempoolTransactionSummary<'static>;
 // Value of NotifyEvent::TransactionOrphaned
 pub type TransactionOrphanedEvent = TransactionResponse<'static>;
 
