@@ -961,7 +961,8 @@ async fn get_mempool_summary<S: Storage>(context: &Context, body: Value) -> Resu
             hash: Cow::Borrowed(hash),
             source: sorted_tx.get_tx().get_source().as_address(mainnet),
             fee: sorted_tx.get_fee(),
-            first_seen: sorted_tx.get_first_seen()
+            first_seen: sorted_tx.get_first_seen(),
+            size: sorted_tx.get_size(),
         };
 
         transactions.push(tx);
