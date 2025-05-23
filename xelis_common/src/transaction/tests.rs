@@ -10,7 +10,7 @@ use crate::{
     config::{BURN_PER_CONTRACT, COIN_VALUE, XELIS_ASSET},
     crypto::{
         elgamal::{Ciphertext, PedersenOpening},
-        proofs::PC_GENS,
+        proofs::{PC_GENS, ProofVerificationError},
         Address,
         Hash,
         Hashable,
@@ -23,6 +23,7 @@ use crate::{
         MultiSigPayload,
         TransactionType,
         TxVersion,
+        verify::{ZKPCache, NoZKPCache, VerificationError},
         MAX_TRANSFER_COUNT
     }
 };
@@ -47,11 +48,13 @@ use super::{
     Transaction
 };
 
+#[derive(Debug, Clone)]
 struct AccountChainState {
     balances: HashMap<Hash, Ciphertext>,
     nonce: Nonce,
 }
 
+#[derive(Debug, Clone)]
 struct ChainState {
     accounts: HashMap<PublicKey, AccountChainState>,
     multisig: HashMap<PublicKey, MultiSigPayload>,
@@ -189,7 +192,6 @@ fn test_encrypt_decrypt_two_parties() {
     }
 }
 
-
 #[tokio::test]
 async fn test_tx_verify() {
     let mut alice = Account::new();
@@ -227,7 +229,7 @@ async fn test_tx_verify() {
     }
 
     let hash = tx.hash();
-    tx.verify(&hash, &mut state).await.unwrap();
+    tx.verify(&hash, &mut state, &NoZKPCache).await.unwrap();
 
     // Check Bob balance
     let balance = bob.keypair.decrypt_to_point(&state.accounts[&bob.keypair.get_public_key().compress()].balances[&XELIS_ASSET]);    
@@ -236,6 +238,71 @@ async fn test_tx_verify() {
     // Check Alice balance
     let balance = alice.keypair.decrypt_to_point(&state.accounts[&alice.keypair.get_public_key().compress()].balances[&XELIS_ASSET]);
     assert_eq!(balance, Scalar::from((100u64 * COIN_VALUE) - (50 + tx.fee)) * PC_GENS.B);
+}
+
+
+#[tokio::test]
+async fn test_tx_verify_with_zkp_cache() {
+    let mut alice = Account::new();
+    let mut bob = Account::new();
+
+    alice.set_balance(XELIS_ASSET, 100 * COIN_VALUE);
+    bob.set_balance(XELIS_ASSET, 0);
+
+    // Alice account is cloned to not be updated as it is used for verification and need current state
+    let tx = create_tx_for(alice.clone(), bob.address(), 50, None);
+
+    let mut state = ChainState::new();
+
+    // Create the chain state
+    {
+        let mut balances = HashMap::new();
+        for (asset, balance) in &alice.balances {
+            balances.insert(asset.clone(), balance.ciphertext.clone().take_ciphertext().unwrap());
+        }
+        state.accounts.insert(alice.keypair.get_public_key().compress(), AccountChainState {
+            balances,
+            nonce: alice.nonce,
+        });
+    }
+
+    {
+        let mut balances = HashMap::new();
+        for (asset, balance) in &bob.balances {
+            balances.insert(asset.clone(), balance.ciphertext.clone().take_ciphertext().unwrap());
+        }
+        state.accounts.insert(bob.keypair.get_public_key().compress(), AccountChainState {
+            balances,
+            nonce: alice.nonce,
+        });
+    }
+
+    let mut clean_state = state.clone();
+    let hash = tx.hash();
+    {
+        // Ensure the TX is valid first
+        assert!(tx.verify(&hash, &mut state, &NoZKPCache).await.is_ok());    
+    }
+
+    struct DummyCache;
+
+    #[async_trait]
+    impl<E> ZKPCache<E> for DummyCache {
+        async fn is_already_verified(&self, _: &Hash) -> Result<bool, E> {
+            Ok(true)
+        }
+    }
+
+    // Fix the nonce to pass the verification
+    state.accounts.get_mut(&alice.keypair.get_public_key().compress())
+        .unwrap()
+        .nonce = 0;
+
+    // Now, the chain state balances has changed, it should error even if the TX is in cache
+    assert!(matches!(tx.verify(&hash, &mut state, &DummyCache).await, Err(VerificationError::Proof(ProofVerificationError::GenericProof))));
+
+    // But should be fine for a clean state
+    assert!(tx.verify(&hash, &mut clean_state, &DummyCache).await.is_ok());
 }
 
 #[tokio::test]
@@ -281,7 +348,7 @@ async fn test_burn_tx_verify() {
     }
 
     let hash = tx.hash();
-    tx.verify(&hash, &mut state).await.unwrap();
+    tx.verify(&hash, &mut state, &NoZKPCache).await.unwrap();
 
     // Check Alice balance
     let balance = alice.keypair.decrypt_to_point(&state.accounts[&alice.keypair.get_public_key().compress()].balances[&XELIS_ASSET]);
@@ -343,7 +410,7 @@ async fn test_tx_invoke_contract() {
     }
 
     let hash = tx.hash();
-    tx.verify(&hash, &mut state).await.unwrap();
+    tx.verify(&hash, &mut state, &NoZKPCache).await.unwrap();
 
     // Check Alice balance
     let balance = alice.keypair.decrypt_to_point(&state.accounts[&alice.keypair.get_public_key().compress()].balances[&XELIS_ASSET]);
@@ -400,7 +467,7 @@ async fn test_tx_deploy_contract() {
     }
 
     let hash = tx.hash();
-    tx.verify(&hash, &mut state).await.unwrap();
+    tx.verify(&hash, &mut state, &NoZKPCache).await.unwrap();
 
     // Check Alice balance
     let balance = alice.keypair.decrypt_to_point(&state.accounts[&alice.keypair.get_public_key().compress()].balances[&XELIS_ASSET]);
@@ -476,7 +543,7 @@ async fn test_max_transfers() {
         });
     }
     let hash = tx.hash();
-    tx.verify(&hash, &mut state).await.unwrap();
+    tx.verify(&hash, &mut state, &NoZKPCache).await.unwrap();
 }
 
 #[tokio::test]
@@ -537,7 +604,7 @@ async fn test_multisig_setup() {
     }
 
     let hash = tx.hash();
-    tx.verify(&hash, &mut state).await.unwrap();
+    tx.verify(&hash, &mut state, &NoZKPCache).await.unwrap();
 
     assert!(state.multisig.contains_key(&alice.keypair.get_public_key().compress()));
 }
@@ -614,7 +681,7 @@ async fn test_multisig() {
     });
 
     let hash = tx.hash();
-    tx.verify(&hash, &mut state).await.unwrap();
+    tx.verify(&hash, &mut state, &NoZKPCache).await.unwrap();
 }
 
 #[async_trait]
