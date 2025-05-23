@@ -2581,6 +2581,11 @@ impl<S: Storage> P2pServer<S> {
     // Request the inventory of a peer
     // This will sends him a request packet so we get notified of all its TXs hashes in its mempool
     async fn request_inventory_of(&self, peer: &Arc<Peer>) -> Result<(), BlockchainError> {
+        if self.disable_fetching_txs_propagated {
+            debug!("skipping inventory request from {} due to fetching disabled", peer);                    
+            return Ok(())
+        }
+
         debug!("Requesting inventory of {}", peer);
         let packet = Cow::Owned(NotifyInventoryRequest::new(None));
         let ping = Cow::Owned(self.build_generic_ping_packet().await?);
