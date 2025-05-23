@@ -2173,6 +2173,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "linked-hash-map"
+version = "0.5.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0717cef1bc8b636c6e1c1bbdefc09e6322da8a9321966e8928ef80d20f7f770f"
+
+[[package]]
 name = "litemap"
 version = "0.7.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4477,6 +4483,7 @@ dependencies = [
  "indexmap 2.9.0",
  "itertools 0.14.0",
  "lazy_static",
+ "linked-hash-map",
  "log",
  "lru",
  "rand 0.8.5",
