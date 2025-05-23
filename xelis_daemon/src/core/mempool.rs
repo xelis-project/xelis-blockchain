@@ -1,7 +1,8 @@
 use super::{
     error::BlockchainError,
     state::MempoolState,
-    storage::Storage
+    storage::Storage,
+    TxCache
 };
 use std::{
     collections::HashMap,
@@ -12,10 +13,10 @@ use serde::{Serialize, Deserialize};
 use indexmap::IndexSet;
 use log::{debug, info, trace, warn};
 use xelis_common::{
-    config::{BYTES_PER_KB, FEE_PER_KB},
     account::Nonce,
     api::daemon::FeeRatesEstimated,
     block::{BlockVersion, TopoHeight},
+    config::{BYTES_PER_KB, FEE_PER_KB},
     crypto::{
         elgamal::Ciphertext,
         Hash,
@@ -23,7 +24,11 @@ use xelis_common::{
     },
     network::Network,
     time::{get_current_time_in_seconds, TimestampSeconds},
-    transaction::{Transaction, MultiSigPayload}
+    transaction::{
+        verify::NoZKPCache,
+        MultiSigPayload,
+        Transaction
+    }
 };
 use xelis_vm::Environment;
 
@@ -131,7 +136,7 @@ impl Mempool {
     // All checks are made in Blockchain before calling this function
     pub async fn add_tx<S: Storage>(&mut self, storage: &S, environment: &Environment, stable_topoheight: TopoHeight, topoheight: TopoHeight, hash: Arc<Hash>, tx: Arc<Transaction>, size: usize, block_version: BlockVersion) -> Result<(), BlockchainError> {
         let mut state = MempoolState::new(&self, storage, environment, stable_topoheight, topoheight, block_version, self.mainnet);
-        tx.verify(&hash, &mut state).await?;
+        tx.verify(&hash, &mut state, &NoZKPCache).await?;
 
         let (balances, multisig) = state.get_sender_cache(tx.get_source())
             .ok_or_else(|| BlockchainError::AccountNotFound(tx.get_source().as_address(self.mainnet)))?;
@@ -439,9 +444,10 @@ impl Mempool {
                             .map(|tx| (tx, hash))
                         );
 
+                    let tx_cache = TxCache::new(storage, &self);
                     if let Some((next_tx, tx_hash)) = first_tx {
                         let mut state = MempoolState::new(&self, storage, environment, stable_topoheight, topoheight, block_version, self.mainnet);
-                        if let Err(e) = Transaction::verify(next_tx.get_tx(), &tx_hash, &mut state).await {
+                        if let Err(e) = Transaction::verify(next_tx.get_tx(), &tx_hash, &mut state, &tx_cache).await {
                             warn!("Error while verifying TXs for source {}: {}", key.as_address(self.mainnet), e);
 
                             // We may have only one TX invalid, but because they are all linked to each others we delete the whole cache

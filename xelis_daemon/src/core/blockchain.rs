@@ -93,7 +93,8 @@ use crate::{
         storage::{DagOrderProvider, DifficultyProvider, Storage},
         tx_selector::{TxSelector, TxSelectorEntry},
         state::{ChainState, ApplicableChainState},
-        hard_fork::*
+        hard_fork::*,
+        TxCache,
     },
     p2p::P2pServer,
     rpc::{
@@ -1746,6 +1747,7 @@ impl<S: Storage> Blockchain<S> {
         let mut chain_state = ChainState::new(storage, &self.environment, stable_topoheight, topoheight, block.get_version());
 
         if !tx_selector.is_empty() {
+            let tx_cache = TxCache::new(storage, &mempool);
             let mut failed_sources = HashSet::new();
             // Search all txs that were processed in tips
             // This help us to determine if a TX was already included or not based on our DAG
@@ -1773,7 +1775,7 @@ impl<S: Storage> Blockchain<S> {
                         continue;
                     }
 
-                    if let Err(e) = tx.verify(&hash, &mut chain_state).await {
+                    if let Err(e) = tx.verify(&hash, &mut chain_state, &tx_cache).await {
                         warn!("TX {} ({}) is not valid for mining: {}", hash, source.as_address(self.network.is_mainnet()), e);
                         failed_sources.insert(source);
                         continue;
@@ -2066,6 +2068,13 @@ impl<S: Storage> Blockchain<S> {
 
             if !txs_batch.is_empty() {
                 debug!("proof verifications of {} TXs from {} sources with {} outputs in block {}", txs_batch.len(), txs_grouped.len(), total_outputs, block_hash);
+
+                debug!("locking mempool read mode for cache usage");
+                let mempool = self.mempool.read().await;
+                debug!("mempool locked for cache usage");
+
+                let tx_cache = TxCache::new(&*storage, &mempool);
+
                 // Track how much time it takes to verify them all
                 let start = Instant::now();
                 // If multi thread is enabled and we have more than one source
@@ -2092,6 +2101,7 @@ impl<S: Storage> Blockchain<S> {
                     let (sender, _) = broadcast::channel::<()>(1);
                     let (_, results) = async_scoped::TokioScope::scope_and_block(|scope| {
                         let storage = &*storage;
+                        let tx_cache = &tx_cache;
                         let stable_topoheight = self.get_stable_topoheight();
                         for (i, batch) in batches.into_iter().enumerate() {
                             let sender = &sender;
@@ -2100,7 +2110,7 @@ impl<S: Storage> Blockchain<S> {
                             scope.spawn(async move {
                                 let mut chain_state = ChainState::new(storage, &self.environment, stable_topoheight, current_topoheight, version);
                                 tokio::select! {
-                                    res = Transaction::verify_batch(batch.as_slice(), &mut chain_state) => {
+                                    res = Transaction::verify_batch(batch.as_slice(), &mut chain_state, tx_cache) => {
                                         if let Err(e) = &res {
                                             if sender.send(()).is_err() {
                                                 error!("Error while notifying others tasks about batch #{} failing with error: {}", i, e);
@@ -2122,7 +2132,7 @@ impl<S: Storage> Blockchain<S> {
                         match result {
                             Ok(Ok(())) => {},
                             Ok(Err(e)) => {
-                                error!("Error on batch #{}: {}", i, e);
+                                error!("Error on batch #{} in block {}: {}", i, e, block_hash);
                                 return Err(e.into());
                             },
                             Err(e) => {
@@ -2134,7 +2144,7 @@ impl<S: Storage> Blockchain<S> {
                 } else {
                     // Verify all valid transactions in one batch
                     let mut chain_state = ChainState::new(storage, &self.environment, self.get_stable_topoheight(), current_topoheight, version);
-                    Transaction::verify_batch(txs_batch.as_slice(), &mut chain_state).await?;
+                    Transaction::verify_batch(txs_batch.as_slice(), &mut chain_state, &tx_cache).await?;
                 }
                 debug!("Verified {} transactions in {}ms", txs_batch.len(), start.elapsed().as_millis());
             }
