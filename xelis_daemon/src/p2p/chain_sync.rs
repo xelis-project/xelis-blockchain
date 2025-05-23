@@ -431,7 +431,10 @@ impl<S: Storage> P2pServer<S> {
                     let apply = res.as_ref()
                         .map_or(false, |(_, v)| v.is_ok());
 
+                    debug!("locking storage write mode for commit point");
                     let mut storage = self.blockchain.get_storage().write().await;
+                    debug!("locked storage write mode for commit point");
+
                     storage.end_commit_point(apply).await?;
                     info!("Commit point ended for chain validator, apply: {}", apply);
 
@@ -446,7 +449,9 @@ impl<S: Storage> P2pServer<S> {
                             for (hash, tx) in txs.drain(..) {
                                 debug!("Trying to apply orphaned TX {}", hash);
                                 if !storage.has_transaction(&hash).await? && {
+                                    debug!("locking mempool read mode to check tx");
                                     let mempool = self.blockchain.get_mempool().read().await;
+                                    debug!("mempool locked read mode to check tx");
                                     !mempool.contains_tx(&hash)
                                 } {
                                     debug!("TX {} is not in chain, adding it to mempool", hash);

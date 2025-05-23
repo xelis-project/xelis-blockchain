@@ -71,7 +71,7 @@ use self::{
     packet::{
         chain::BlockId,
         handshake::Handshake,
-        object::{ObjectRequest, ObjectResponse, OwnedObjectResponse},
+        object::{ObjectRequest, ObjectResponse},
         ping::Ping,
         Packet,
         PacketWrapper
@@ -1398,13 +1398,10 @@ impl<S: Storage> P2pServer<S> {
                                         None
                                     ).await?;
 
-                                    let response = listener.recv().await
-                                        .context("Error while reading transaction for block")?;
-
-                                    match response {
-                                        OwnedObjectResponse::Transaction(tx, _) => Ok(Immutable::Owned(tx)),
-                                        _ => Err(P2pError::ExpectedTransaction(response))
-                                    }
+                                    listener.recv().await
+                                        .context("Error while reading transaction for block")?
+                                        .into_transaction()
+                                        .map(|(tx, _)| Immutable::Owned(tx))
                                 }
                             };
                             txs_futures.push_back(future);
@@ -1498,17 +1495,11 @@ impl<S: Storage> P2pServer<S> {
                             Err(e) => return Err((e, hash, peer))
                         };
 
-                        let res = listener.recv().await
+                        let (transaction, hash2) = listener.recv().await
                             .with_context(|| format!("Error while listening TX {}", hash))
-                            .map_err(|e| (e.into(), Arc::clone(&hash), Arc::clone(&peer)))?;
-
-                        let (transaction, hash2) = match res {
-                            OwnedObjectResponse::Transaction(tx, hash) => (tx, hash),
-                            response => {
-                                debug!("Received invalid object type response from {}", peer);
-                                return Err((P2pError::ExpectedTransaction(response), hash, peer))
-                            }
-                        };
+                            .map_err(|e| (e.into(), Arc::clone(&hash), Arc::clone(&peer)))?
+                            .into_transaction()
+                            .map_err(|e| (e, Arc::clone(&hash), Arc::clone(&peer)))?;
 
                         debug_assert!(hash.as_ref() == &hash2, "Hash mismatch between request and response");
 

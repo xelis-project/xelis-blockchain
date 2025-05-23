@@ -1469,21 +1469,24 @@ impl<S: Storage> Blockchain<S> {
     // Add a tx to the mempool with the given hash, it will verify the TX and check that it is not already in mempool or in blockchain
     // and its validity (nonce, balance, etc...)
     pub async fn add_tx_to_mempool_with_storage_and_hash(&self, storage: &S, tx: Arc<Transaction>, hash: Immutable<Hash>, broadcast: bool) -> Result<(), BlockchainError> {
+        debug!("add tx to mempool with storage and hash {} (broadcast = {})", hash, broadcast);
         let tx_size = tx.size();
         if tx_size > MAX_TRANSACTION_SIZE {
             return Err(BlockchainError::TxTooBig(tx_size, MAX_TRANSACTION_SIZE))
         }
 
+        // check that the TX is not already in blockchain
+        if storage.is_tx_executed_in_a_block(&hash)? {
+            return Err(BlockchainError::TxAlreadyInBlockchain(hash.into_owned()))
+        }
+
         let hash = {
+            debug!("locking mempool to add tx");
             let mut mempool = self.mempool.write().await;
+            debug!("mempool locked to add tx");
 
             if mempool.contains_tx(&hash) {
                 return Err(BlockchainError::TxAlreadyInMempool(hash.into_owned()))
-            }
-
-            // check that the TX is not already in blockchain
-            if storage.is_tx_executed_in_a_block(&hash)? {
-                return Err(BlockchainError::TxAlreadyInBlockchain(hash.into_owned()))
             }
 
             let stable_topoheight = self.get_stable_topoheight();
@@ -1514,6 +1517,7 @@ impl<S: Storage> Blockchain<S> {
         };
 
         if broadcast {
+            debug!("broadcast new tx {} added in mempool", hash);
             // P2p broadcast to others peers
             if let Some(p2p) = self.p2p.read().await.as_ref() {
                 let p2p = p2p.clone();
@@ -1572,10 +1576,10 @@ impl<S: Storage> Blockchain<S> {
 
 
         // check in storage now
-        debug!("has tx {} in storage storage", hash);
+        debug!("has tx {} in storage", hash);
         {
             let storage = self.storage.read().await;
-            debug!("storage read acquired for has tx");
+            debug!("storage read acquired for has tx {}", hash);
             if storage.has_transaction(hash).await? {
                 debug!("TX {} found in storage", hash);
                 return Ok(true)
@@ -1587,6 +1591,7 @@ impl<S: Storage> Blockchain<S> {
         debug!("has tx {} in mempool", hash);
         {
             let mempool = self.mempool.read().await;
+            debug!("mempool lock acquired for has tx {}", hash);
             if mempool.contains_tx(hash) {
                 debug!("TX {} found in mempool", hash);
                 return Ok(true)
@@ -2979,7 +2984,9 @@ impl<S: Storage> Blockchain<S> {
 
         // Clean mempool from old txs if the DAG has been updated
         {
+            debug!("lock mempool in write mode for cleaning old TXs");
             let mut mempool = self.mempool.write().await;
+            debug!("mempool lock acquired for cleaning old TXs");
             txs.extend(
                 mempool.drain()
                     .into_iter()
