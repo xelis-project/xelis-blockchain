@@ -62,6 +62,12 @@ impl<S: Storage> P2pServer<S> {
             PacketWrapper::new(Cow::Owned(request), Cow::Owned(ping))
         };
 
+        // Update last chain sync time
+        // This will be overwritten in case
+        // we got the chain response
+        // This prevent us from requesting too fast the chain from peer
+        *last_chain_sync = get_current_time_in_millis();
+
         let response = peer.request_sync_chain(packet).await?;
         debug!("Received a chain response of {} blocks", response.blocks_size());
 
@@ -641,7 +647,7 @@ impl<S: Storage> P2pServer<S> {
             let bps = if elapsed > 0 {
                 total_requested / elapsed
             } else {
-                0
+                total_requested
             };
             info!("we've synced {} on {} blocks and {} top blocks in {}s ({} bps) from {}", total_requested, blocks_len, top_len, elapsed, bps, peer);
 
