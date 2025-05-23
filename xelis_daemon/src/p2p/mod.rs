@@ -18,6 +18,7 @@ pub use encryption::EncryptionKey;
 use log::{debug, error, info, log, trace, warn};
 use std::{
     borrow::Cow,
+    collections::HashSet,
     io,
     net::{IpAddr, SocketAddr},
     num::NonZeroUsize,
@@ -43,6 +44,7 @@ use xelis_common::{
         net::{TcpListener, TcpStream},
         select,
         sync::{
+            Semaphore,
             broadcast,
             mpsc::{
                 self,
@@ -1457,8 +1459,11 @@ impl<S: Storage> P2pServer<S> {
     // Task for all transactions propagation
     async fn txs_processing_task(self: Arc<Self>, mut receiver: Receiver<(Arc<Peer>, Arc<Hash>)>) {
         debug!("Starting txs processing task");
+        let semaphore = Semaphore::new(PEER_OBJECTS_CONCURRENCY);
+
         let mut server_exit = self.exit_sender.subscribe();
         let mut futures = FuturesOrdered::new();
+        let mut pending_requests = HashSet::new();
 
         'main: loop {
             select! {
@@ -1469,7 +1474,7 @@ impl<S: Storage> P2pServer<S> {
                 }
                 Some((peer, hash)) = receiver.recv() => {
                     // We may have lagged by waiting on previous request, lets double check that its not in chain already
-                    let has_tx = match self.blockchain.has_tx(&hash).await {
+                    let has_tx = pending_requests.contains(&hash) || match self.blockchain.has_tx(&hash).await {
                         Ok(v) => v,
                         Err(e) => {
                             error!("Error while double checking if TX {} was already included: {}", hash, e);
@@ -1478,13 +1483,17 @@ impl<S: Storage> P2pServer<S> {
                     };
 
                     if has_tx {
-                        debug!("TX {} is already in chain, mostly due to lag on previous request, skipping it", hash);
+                        debug!("TX {} is already requested or in chain, mostly due to lag on previous request, skipping it", hash);
                         continue;
                     }
 
                     debug!("Adding TX {} from {} to futures queue", hash, peer);
+                    pending_requests.insert(hash.clone());
 
                     let future = async {
+                        let _permit = semaphore.acquire().await
+                            .map_err(|e| (e.into(), Arc::clone(&hash), Arc::clone(&peer)))?;
+
                         debug!("Requesting from txs processing task tx {}", hash);
                         let mut listener = match self.object_tracker.request_object_from_peer_with_or_get_notified(
                             Arc::clone(&peer),
@@ -1509,7 +1518,7 @@ impl<S: Storage> P2pServer<S> {
                     futures.push_back(future);
                 },
                 Some(res) = futures.next() => {
-                    match res {
+                    let tx_hash = match res {
                         Ok((transaction, hash, peer)) => {
                             debug!("Adding TX to mempool from processing TX task: {}", hash);
                             // Double check because we may had a race condition here when we're under heavy load
@@ -1529,12 +1538,18 @@ impl<S: Storage> P2pServer<S> {
                             } else {
                                 debug!("Propagated Tx {} got front-runned, skipping it...", hash);
                             }
+
+                            hash
                         },
                         Err((e, hash, peer)) => {
                             error!("Error while handling TX {} from {}: {} ", hash, peer, e);
                             peer.increment_fail_count();
+                            hash
                         }
-                    }
+                    };
+
+                    debug!("removing TX {} from pending requests", tx_hash);
+                    pending_requests.remove(&tx_hash);
                 }
             }
         }
