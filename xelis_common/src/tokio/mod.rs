@@ -1,6 +1,9 @@
 #[cfg(feature = "tokio")]
 mod thread_pool;
 
+#[cfg(feature = "tokio")]
+pub mod sync;
+
 use std::future::Future;
 use cfg_if::cfg_if;
 use log::trace;

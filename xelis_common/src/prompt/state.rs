@@ -1,13 +1,30 @@
 use std::{
-    collections::VecDeque, io::{stdout, Write}, sync::{
-        atomic::{AtomicBool, AtomicU16, AtomicUsize, Ordering}, Arc, Mutex
+    collections::VecDeque,
+    io::{stdout, Write},
+    sync::{
+        atomic::{
+            AtomicBool,
+            AtomicU16,
+            AtomicUsize,
+            Ordering
+        },
+        Arc,
+        Mutex
     }
 };
-
-use crossterm::{event::{self, Event, KeyCode, KeyEventKind, KeyModifiers}, terminal};
+use crossterm::{
+    event::{
+        self,
+        Event,
+        KeyCode,
+        KeyEventKind,
+        KeyModifiers
+    },
+    terminal
+};
 use regex::Regex;
-use tokio::sync::{mpsc::UnboundedSender, oneshot};
 use log::{debug, error, info};
+use crate::tokio::sync::{mpsc::UnboundedSender, oneshot};
 
 use super::PromptError;
 

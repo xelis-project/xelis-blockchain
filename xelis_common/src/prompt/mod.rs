@@ -9,6 +9,7 @@ mod state;
 use crate::{
     tokio::{
         spawn_task,
+        task::JoinHandle,
         sync::{
             mpsc::{
                 self,
@@ -40,7 +41,6 @@ use std::{
     time::Duration
 };
 use crossterm::terminal;
-use tokio::task::JoinHandle;
 use self::command::{CommandError, CommandManager};
 use anyhow::Error;
 use fern::colors::ColoredLevelConfig;
