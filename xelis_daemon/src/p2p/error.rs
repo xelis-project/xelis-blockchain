@@ -3,15 +3,15 @@ use crate::{
     config::{CHAIN_SYNC_RESPONSE_MAX_BLOCKS, CHAIN_SYNC_RESPONSE_MIN_BLOCKS}
 };
 use anyhow::Error;
-use tokio::{
-    sync::{
-        AcquireError,
-        mpsc::error::SendError as TSendError,
-        oneshot::error::RecvError,
-    },
-    time::error::Elapsed
-};
 use xelis_common::{
+    tokio::{
+        sync::{
+            AcquireError,
+            mpsc::error::SendError as TSendError,
+            oneshot::error::RecvError,
+        },
+        time::error::Elapsed
+    },
     api::daemon::{TimedDirection, Direction},
     crypto::Hash,
     serializer::ReaderError,

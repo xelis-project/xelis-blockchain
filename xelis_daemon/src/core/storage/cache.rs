@@ -1,8 +1,8 @@
 use std::{ops::{Deref, DerefMut}, sync::Arc};
 
 use lru::LruCache;
-use tokio::sync::Mutex;
 use xelis_common::{
+    tokio::sync::Mutex,
     block::{BlockHeader, TopoHeight},
     crypto::Hash,
     difficulty::CumulativeDifficulty,

@@ -4,8 +4,8 @@ use anyhow::Context;
 use futures::{stream::FuturesOrdered, StreamExt, TryStreamExt};
 use indexmap::IndexSet;
 use log::{debug, error, info, trace, warn};
-use tokio::time::interval;
 use xelis_common::{
+    tokio::time::interval,
     block::{Block, BlockVersion},
     crypto::Hash,
     immutable::Immutable,

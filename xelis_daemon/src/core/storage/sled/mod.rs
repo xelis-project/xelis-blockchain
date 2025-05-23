@@ -12,7 +12,8 @@ use xelis_common::{
     immutable::Immutable,
     network::Network,
     serializer::Serializer,
-    transaction::Transaction
+    transaction::Transaction,
+    tokio::sync::Mutex
 };
 use std::{
     hash::Hash as StdHash,
@@ -21,7 +22,6 @@ use std::{
     sync::Arc
 };
 use serde::{Deserialize, Serialize};
-use tokio::sync::Mutex;
 use lru::LruCache;
 use sled::{IVec, Tree};
 use log::{debug, trace, info, error};

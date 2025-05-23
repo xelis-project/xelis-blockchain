@@ -1,8 +1,10 @@
 use std::{sync::Arc, time::Instant};
 
-use tokio::sync::broadcast;
 use log::error;
-use xelis_common::crypto::Hash;
+use xelis_common::{
+    tokio::sync::broadcast,
+    crypto::Hash
+};
 use crate::p2p::{
     packet::object::{ObjectRequest, OwnedObjectResponse},
     peer::Peer

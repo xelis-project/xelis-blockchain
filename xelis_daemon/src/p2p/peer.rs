@@ -9,6 +9,11 @@ use crate::{
 };
 use anyhow::Context;
 use xelis_common::{
+    tokio::{
+        select,
+        sync::{broadcast, mpsc, oneshot, Mutex, Semaphore},
+        time::timeout,
+    },
     api::daemon::{Direction, TimedDirection},
     block::TopoHeight,
     crypto::Hash,
@@ -52,11 +57,6 @@ use std::{
         Arc
     },
     time::Duration
-};
-use tokio::{
-    select,
-    sync::{broadcast, mpsc, oneshot, Mutex, Semaphore},
-    time::timeout,
 };
 use lru::LruCache;
 use bytes::Bytes;

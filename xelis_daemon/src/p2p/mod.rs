@@ -15,6 +15,20 @@ mod chain_sync;
 use anyhow::Context;
 pub use encryption::EncryptionKey;
 
+use log::{debug, error, info, log, trace, warn};
+use std::{
+    borrow::Cow,
+    io,
+    net::{IpAddr, SocketAddr},
+    num::NonZeroUsize,
+    sync::{
+        atomic::{AtomicBool, AtomicU64, Ordering},
+        Arc
+    },
+    time::Duration
+};
+use bytes::Bytes;
+use rand::{seq::IteratorRandom, Rng};
 use futures::{
     stream::{self, FuturesOrdered},
     Stream,
@@ -24,6 +38,24 @@ use futures::{
 use indexmap::IndexSet;
 use lru::LruCache;
 use xelis_common::{
+    tokio::{
+        io::AsyncWriteExt,
+        net::{TcpListener, TcpStream},
+        select,
+        sync::{
+            broadcast,
+            mpsc::{
+                self,
+                channel,
+                Receiver,
+                Sender
+            },
+            oneshot,
+            Mutex
+        },
+        task::JoinHandle,
+        time::{interval, sleep, timeout}
+    },
     api::daemon::{
         Direction,
         NotifyEvent,
@@ -55,63 +87,31 @@ use crate::{
         hard_fork,
         storage::Storage
     },
-    p2p::packet::{
-        chain::CommonPoint,
-        inventory::{
-            NotifyInventoryRequest,
-            NotifyInventoryResponse,
-            NOTIFY_MAX_LEN
+    p2p::{
+        connection::{Connection, State},
+        error::P2pError,
+        packet::{
+            chain::BlockId,
+            handshake::Handshake,
+            object::{ObjectRequest, ObjectResponse},
+            ping::Ping,
+            Packet,
+            PacketWrapper
+        },
+        peer::{Peer, TaskState, Rx},
+        peer_list::{PeerList, SharedPeerList},
+        tracker::{ObjectTracker, SharedObjectTracker},
+        packet::{
+            chain::CommonPoint,
+            inventory::{
+                NotifyInventoryRequest,
+                NotifyInventoryResponse,
+                NOTIFY_MAX_LEN
+            }
         }
     },
     rpc::rpc::get_peer_entry
 };
-use self::{
-    connection::{Connection, State},
-    error::P2pError,
-    packet::{
-        chain::BlockId,
-        handshake::Handshake,
-        object::{ObjectRequest, ObjectResponse},
-        ping::Ping,
-        Packet,
-        PacketWrapper
-    },
-    peer::{Peer, TaskState, Rx},
-    peer_list::{PeerList, SharedPeerList},
-    tracker::{ObjectTracker, SharedObjectTracker}
-};
-use tokio::{
-    io::AsyncWriteExt,
-    net::{TcpListener, TcpStream},
-    select,
-    sync::{
-        broadcast,
-        mpsc::{
-            self,
-            channel,
-            Receiver,
-            Sender
-        },
-        oneshot,
-        Mutex
-    },
-    task::JoinHandle,
-    time::{interval, sleep, timeout}
-};
-use log::{debug, error, info, log, trace, warn};
-use std::{
-    borrow::Cow,
-    io,
-    net::{IpAddr, SocketAddr},
-    num::NonZeroUsize,
-    sync::{
-        atomic::{AtomicBool, AtomicU64, Ordering},
-        Arc
-    },
-    time::Duration
-};
-use bytes::Bytes;
-use rand::{seq::IteratorRandom, Rng};
 
 pub const TRANSACTIONS_CHANNEL_CAPACITY: usize = 128;
 

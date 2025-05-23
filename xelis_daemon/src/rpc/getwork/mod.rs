@@ -1,7 +1,10 @@
 mod miner;
 
 use std::{
-    borrow::Cow, collections::HashMap, num::NonZeroUsize, sync::{
+    borrow::Cow,
+    collections::HashMap,
+    num::NonZeroUsize,
+    sync::{
         atomic::{
             AtomicBool,
             AtomicU64, Ordering
@@ -18,8 +21,8 @@ use async_trait::async_trait;
 use log::{debug, error, trace, warn};
 use lru::LruCache;
 use serde::Serialize;
-use tokio::{sync::Mutex, time::sleep};
 use xelis_common::{
+    tokio::{sync::Mutex, time::sleep},
     api::daemon::{
         GetBlockTemplateResult,
         GetMinerWorkResult,

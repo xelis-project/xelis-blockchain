@@ -20,16 +20,16 @@ use std::{
 };
 use human_bytes::human_bytes;
 use humantime::format_duration;
-use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
-    net::{
-        tcp::{OwnedReadHalf, OwnedWriteHalf},
-        TcpStream
-    },
-    sync::Mutex,
-    time::timeout
-};
 use xelis_common::{
+    tokio::{
+        io::{AsyncReadExt, AsyncWriteExt},
+        net::{
+            tcp::{OwnedReadHalf, OwnedWriteHalf},
+            TcpStream
+        },
+        sync::Mutex,
+        time::timeout
+    },
     time::{TimestampSeconds, get_current_time_in_seconds},
     serializer::{Reader, Serializer},
 };

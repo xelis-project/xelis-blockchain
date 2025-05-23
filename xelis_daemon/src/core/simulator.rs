@@ -7,8 +7,8 @@ use std::{
 use serde::{Serialize, Deserialize};
 use log::{info, error};
 use rand::{rngs::OsRng, Rng};
-use tokio::time::interval;
 use xelis_common::{
+    tokio::time::interval,
     crypto::KeyPair,
     config::TIPS_LIMIT,
     block::Block

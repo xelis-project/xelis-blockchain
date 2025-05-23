@@ -21,9 +21,9 @@ use std::{
 use futures::{stream, StreamExt};
 use humantime::format_duration;
 use serde::{Serialize, Deserialize};
-use tokio::sync::{mpsc::Sender, RwLock};
 use x25519_dalek::PublicKey;
 use xelis_common::{
+    tokio::sync::{mpsc::Sender, RwLock},
     block::TopoHeight,
     serializer::{Reader, ReaderError, Serializer, Writer},
     time::{get_current_time_in_seconds, TimestampSeconds}

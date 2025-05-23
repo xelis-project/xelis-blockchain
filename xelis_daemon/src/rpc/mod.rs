@@ -23,8 +23,8 @@ use actix_web::{
     error::Error
 };
 use serde_json::{Value, json};
-use tokio::sync::Mutex;
 use xelis_common::{
+    tokio::sync::Mutex,
     api::daemon::NotifyEvent,
     config,
     rpc_server::{

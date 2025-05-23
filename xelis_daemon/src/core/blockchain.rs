@@ -65,7 +65,12 @@ use xelis_common::{
         TransactionType
     },
     utils::{calculate_tx_fee, format_xelis},
-    tokio::{spawn_task, is_multi_threads_supported},
+    tokio::{
+        spawn_task,
+        is_multi_threads_supported,
+        net::lookup_host,
+        sync::{broadcast, Mutex, RwLock}
+    },
     varuint::VarUint,
     contract::build_environment,
 };
@@ -115,10 +120,6 @@ use std::{
         Arc
     },
     time::Instant
-};
-use tokio::{
-    net::lookup_host,
-    sync::{broadcast, Mutex, RwLock}
 };
 use log::{info, error, debug, warn, trace};
 use rand::Rng;
