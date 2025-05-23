@@ -9,6 +9,7 @@ use std::{
     sync::Arc,
     mem,
 };
+use linked_hash_map::LinkedHashMap;
 use serde::{Serialize, Deserialize};
 use indexmap::IndexSet;
 use log::{debug, info, trace, warn};
@@ -69,7 +70,10 @@ pub struct Mempool {
     // Used for log purpose
     mainnet: bool,
     // store all txs waiting to be included in a block
-    txs: HashMap<Arc<Hash>, SortedTx>,
+    // LinkedHashMap is required to keep the correct insertion
+    // order to easily propagate TXs in p2p
+    // Older are first to be propagated, and follow nonce order
+    txs: LinkedHashMap<Arc<Hash>, SortedTx>,
     // store all sender's nonce for faster finding
     caches: HashMap<PublicKey, AccountCache>
 }
@@ -79,7 +83,7 @@ impl Mempool {
     pub fn new(network: Network) -> Self {
         Mempool {
             mainnet: network.is_mainnet(),
-            txs: HashMap::new(),
+            txs: LinkedHashMap::new(),
             caches: HashMap::new()
         }
     }
@@ -255,8 +259,8 @@ impl Mempool {
     // Get a sorted TX from its hash
     // This is useful to get its size along the TX and its first seen
     pub fn get_sorted_tx(&self, hash: &Hash) -> Result<&SortedTx, BlockchainError> {
-        let tx = self.txs.get(hash).ok_or_else(|| BlockchainError::TxNotFound(hash.clone()))?;
-        Ok(tx)
+        self.txs.get(hash)
+            .ok_or_else(|| BlockchainError::TxNotFound(hash.clone()))
     }
 
     // Get a TX (cloned) from mempool using its hash
@@ -275,7 +279,7 @@ impl Mempool {
     }
 
     // Get all txs in mempool
-    pub fn get_txs(&self) -> &HashMap<Arc<Hash>, SortedTx> {
+    pub fn get_txs(&self) -> &LinkedHashMap<Arc<Hash>, SortedTx> {
         &self.txs
     }
 

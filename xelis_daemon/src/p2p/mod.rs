@@ -2102,12 +2102,13 @@ impl<S: Storage> P2pServer<S> {
 
                 let packet = {
                     let mempool = self.blockchain.get_mempool().read().await;
-                    let nonces_cache = mempool.get_caches();
-                    let txs = nonces_cache.values()
-                        .flat_map(|v| v.get_txs())
-                        .skip(skip).take(NOTIFY_MAX_LEN)
+                    let txs = mempool.get_txs()
+                        .keys()
+                        .skip(skip)
+                        .take(NOTIFY_MAX_LEN)
                         .map(|tx| Cow::Borrowed(tx.as_ref()))
                         .collect::<IndexSet<_>>();
+
                     let mempool_size = mempool.size();
                     let next_page = {
                         if txs.len() == NOTIFY_MAX_LEN && mempool_size > skip && mempool_size - skip > NOTIFY_MAX_LEN {

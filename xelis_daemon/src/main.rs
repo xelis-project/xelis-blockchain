@@ -721,13 +721,11 @@ async fn broadcast_txs<S: Storage>(manager: &CommandManager, _: ArgumentManager)
     };
 
     let mempool = blockchain.get_mempool().read().await;
-    let txs = mempool.get_caches();
+    let txs = mempool.get_txs();
 
-    for (key, cache) in txs {
-        info!("Broadcasting TXs of {}", key.as_address(blockchain.get_network().is_mainnet()));
-        for hash in cache.get_txs() {
-            p2p.broadcast_tx_hash(hash.clone()).await;
-        }
+    for hash in txs.keys() {
+        info!("Broadcasting TX {}", hash);
+        p2p.broadcast_tx_hash(hash.clone()).await;
     }
 
     Ok(())
