@@ -205,6 +205,8 @@ pub struct Blockchain<S: Storage> {
     // in differents groups and will verify them in parallel
     // If set to one, it will use the main thread directly
     txs_verification_threads_count: usize,
+    // Disable the ZKP Cache
+    disable_zkp_cache: bool,
 }
 
 impl<S: Storage> Blockchain<S> {
@@ -262,7 +264,7 @@ impl<S: Storage> Blockchain<S> {
             topoheight: AtomicU64::new(topoheight),
             stable_height: AtomicU64::new(0),
             stable_topoheight: AtomicU64::new(0),
-            mempool: RwLock::new(Mempool::new(network)),
+            mempool: RwLock::new(Mempool::new(network, config.disable_zkp_cache)),
             storage: RwLock::new(storage),
             environment,
             p2p: RwLock::new(None),
@@ -280,6 +282,7 @@ impl<S: Storage> Blockchain<S> {
             checkpoints: config.checkpoints.into_iter().collect(),
             txs_verification_threads_count: config.txs_verification_threads_count,
             flush_db_every_n_blocks: config.flush_db_every_n_blocks,
+            disable_zkp_cache: config.disable_zkp_cache,
         };
 
         // include genesis block
@@ -1778,7 +1781,7 @@ impl<S: Storage> Blockchain<S> {
         let mut chain_state = ChainState::new(storage, &self.environment, stable_topoheight, topoheight, block.get_version());
 
         if !tx_selector.is_empty() {
-            let tx_cache = TxCache::new(storage, &mempool);
+            let tx_cache = TxCache::new(storage, &mempool, self.disable_zkp_cache);
             let mut failed_sources = HashSet::new();
             // Search all txs that were processed in tips
             // This help us to determine if a TX was already included or not based on our DAG
@@ -2104,7 +2107,7 @@ impl<S: Storage> Blockchain<S> {
                 let mempool = self.mempool.read().await;
                 debug!("mempool locked for cache usage");
 
-                let tx_cache = TxCache::new(&*storage, &mempool);
+                let tx_cache = TxCache::new(&*storage, &mempool, self.disable_zkp_cache);
 
                 // Track how much time it takes to verify them all
                 let start = Instant::now();

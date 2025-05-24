@@ -431,7 +431,11 @@ pub struct Config {
     /// and you may lose your data.
     #[clap(long, value_enum, default_value_t)]
     #[serde(default)]
-    pub use_db_backend: StorageBackend
+    pub use_db_backend: StorageBackend,
+    // Disable the TX Cache (ZKP Cache)
+    // ZKP Cache is enabled by default and
+    // prevent to re-verify the same ZK Proofs more than once.
+    pub disable_zkp_cache: bool
 }
 
 mod humantime_serde {

@@ -75,16 +75,18 @@ pub struct Mempool {
     // Older are first to be propagated, and follow nonce order
     txs: LinkedHashMap<Arc<Hash>, SortedTx>,
     // store all sender's nonce for faster finding
-    caches: HashMap<PublicKey, AccountCache>
+    caches: HashMap<PublicKey, AccountCache>,
+    disable_zkp_cache: bool,
 }
 
 impl Mempool {
     // Create a new empty mempool
-    pub fn new(network: Network) -> Self {
+    pub fn new(network: Network, disable_zkp_cache: bool) -> Self {
         Mempool {
             mainnet: network.is_mainnet(),
             txs: LinkedHashMap::new(),
-            caches: HashMap::new()
+            caches: HashMap::new(),
+            disable_zkp_cache,
         }
     }
 
@@ -448,7 +450,7 @@ impl Mempool {
                             .map(|tx| (tx, hash))
                         );
 
-                    let tx_cache = TxCache::new(storage, &self);
+                    let tx_cache = TxCache::new(storage, &self, self.disable_zkp_cache);
                     if let Some((next_tx, tx_hash)) = first_tx {
                         let mut state = MempoolState::new(&self, storage, environment, stable_topoheight, topoheight, block_version, self.mainnet);
                         if let Err(e) = Transaction::verify(next_tx.get_tx(), &tx_hash, &mut state, &tx_cache).await {
