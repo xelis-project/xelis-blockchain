@@ -1099,7 +1099,7 @@ async fn add_tx<S: Storage>(manager: &CommandManager, mut arguments: ArgumentMan
 
     let context = manager.get_context().lock()?;
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
-    blockchain.add_tx_to_mempool_with_hash(tx, Immutable::Owned(hash), broadcast).await.context("Error while adding TX to mempool")?;
+    blockchain.add_tx_to_mempool(tx, broadcast).await.context("Error while adding TX to mempool")?;
     manager.message("TX has been added to mempool");
     Ok(())
 }

@@ -2,6 +2,7 @@ use crate::p2p::error::P2pError;
 use std::sync::PoisonError;
 use strum::{EnumDiscriminants, IntoDiscriminant};
 use thiserror::Error;
+use tokio::sync::AcquireError;
 use xelis_common::{
     crypto::{
         bech32::Bech32Error,
@@ -377,6 +378,8 @@ pub enum BlockchainError {
     InvalidTransactionMultiThread,
     #[error("Unknown account")]
     UnknownAccount,
+    #[error(transparent)]
+    SemaphoreError(#[from] AcquireError),
 }
 
 impl BlockchainError {

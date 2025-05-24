@@ -1457,15 +1457,15 @@ impl<S: Storage> Blockchain<S> {
     // Add a tx to the mempool, its hash will be computed
     pub async fn add_tx_to_mempool(&self, tx: Transaction, broadcast: bool) -> Result<(), BlockchainError> {
         let hash = tx.hash();
-        self.add_tx_to_mempool_with_hash(tx, Immutable::Owned(hash), broadcast).await
+        self.add_tx_to_mempool_with_hash(Arc::new(tx), Immutable::Owned(hash), broadcast).await
     }
 
     // Add a tx to the mempool with the given hash, it is not computed and the TX is transformed into an Arc
-    pub async fn add_tx_to_mempool_with_hash(&self, tx: Transaction, hash: Immutable<Hash>, broadcast: bool) -> Result<(), BlockchainError> {
+    pub async fn add_tx_to_mempool_with_hash(&self, tx: Arc<Transaction>, hash: Immutable<Hash>, broadcast: bool) -> Result<(), BlockchainError> {
         debug!("add tx to mempool with hash {}", hash);
         let storage = self.storage.read().await;
         debug!("storage read acquired to add tx to mempool with hash");
-        self.add_tx_to_mempool_with_storage_and_hash(&storage, Arc::new(tx), hash, broadcast).await
+        self.add_tx_to_mempool_with_storage_and_hash(&storage, tx, hash, broadcast).await
     }
 
     // Add a tx to the mempool with the given hash, it will verify the TX and check that it is not already in mempool or in blockchain
@@ -1510,7 +1510,7 @@ impl<S: Storage> Blockchain<S> {
             }
 
             // Put the hash behind an Arc to share it cheaply
-            let hash = hash.to_arc();
+            let hash = hash.into_arc();
 
             let version = get_version_at_height(self.get_network(), self.get_height());
             mempool.add_tx(storage, &self.environment, stable_topoheight, current_topoheight, hash.clone(), tx.clone(), tx_size, version).await?;
@@ -1602,6 +1602,37 @@ impl<S: Storage> Blockchain<S> {
 
         debug!("TX {} was not found in storage or mempool", hash);
 
+        Ok(false)
+    }
+
+    // Check if the TX is either executed in chain or already present in mempool
+    pub async fn is_tx_included(&self, hash: &Hash) -> Result<bool, BlockchainError> {
+        trace!("is tx {} maybe compatible", hash);
+
+        // check in storage now
+        debug!("is tx {} already executed", hash);
+        {
+            let storage = self.storage.read().await;
+            debug!("storage read acquired for is tx {} compatible", hash);
+            if storage.is_tx_executed_in_a_block(hash)? {
+                debug!("TX {} found in storage", hash);
+                return Ok(true)
+            }
+        }
+
+        // check in mempool first
+        // if its present, returns it
+        debug!("is tx {} included in mempool", hash);
+        {
+            let mempool = self.mempool.read().await;
+            debug!("mempool lock acquired for is tx included {}", hash);
+            if mempool.contains_tx(hash) {
+                debug!("TX {} found in mempool", hash);
+                return Ok(true)
+            }
+        }
+
+        debug!("TX {} is not included anywhere", hash);
         Ok(false)
     }
 
@@ -2170,8 +2201,8 @@ impl<S: Storage> Blockchain<S> {
         debug!("Cumulative difficulty for block {}: {}", block_hash, cumulative_difficulty);
 
         let (block, txs) = block.split();
-        let block = block.to_arc();
-        let block_hash = block_hash.to_arc();
+        let block = block.into_arc();
+        let block_hash = block_hash.into_arc();
 
         // Broadcast to p2p nodes the block asap as its valid
         if broadcast.p2p() {
@@ -2735,7 +2766,7 @@ impl<S: Storage> Blockchain<S> {
             // But to prevent loading the TX from storage and to fire wrong event
             if !storage.is_tx_executed_in_a_block(&tx_hash)? {
                 let tx = match storage.get_transaction(&tx_hash).await {
-                    Ok(tx) => tx.to_arc(),
+                    Ok(tx) => tx.into_arc(),
                     Err(e) => {
                         warn!("Error while loading orphaned tx: {}", e);
                         continue;
