@@ -1,5 +1,8 @@
 use std::{
-    fmt::{self, Display}, hash::{Hash, Hasher}, ops::Deref, sync::Arc
+    fmt::{self, Display},
+    hash::{Hash, Hasher},
+    ops::Deref,
+    sync::Arc
 };
 use serde::{Serialize, Deserialize};
 
