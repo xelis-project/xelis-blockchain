@@ -1,6 +1,5 @@
 use std::{borrow::Cow, sync::Arc, time::{Duration, Instant}};
 
-use anyhow::Context;
 use futures::{stream::FuturesOrdered, StreamExt, TryStreamExt};
 use indexmap::IndexSet;
 use log::{debug, error, info, trace, warn};
@@ -208,13 +207,8 @@ impl<S: Storage> P2pServer<S> {
                                 } else {
                                     // otherwise, ask it from peer
                                     // But because we may have the same TX in several blocks, lets request it using object tracker
-                                    self.object_tracker.request_object_from_peer_with_or_get_notified(
-                                        Arc::clone(&peer),
-                                        ObjectRequest::Transaction(Immutable::Owned(tx_hash.clone())),
-                                        None
-                                    ).await?
-                                        .recv().await
-                                        .context("Error on listener for TX")?
+                                    peer.request_blocking_object(ObjectRequest::Transaction(Immutable::Owned(tx_hash.clone())))
+                                        .await?
                                         .into_transaction()
                                         .map(|(tx, _)| Immutable::Owned(tx))
                                 }
@@ -500,10 +494,8 @@ impl<S: Storage> P2pServer<S> {
                         let fut = async move {
                             if !request_block {
                                 debug!("Requesting boost sync block {}", hash);
-                                let mut receiver = self.object_tracker.request_object_from_peer_with_or_get_notified(Arc::clone(peer), ObjectRequest::Block(Immutable::Owned(hash.clone())), Some(group_id)).await?;
-                                debug!("Waiting boost sync block response {}", hash);
-                                    receiver.recv().await
-                                    .context("Error while receiving response for block while syncing")?
+                                peer.request_blocking_object(ObjectRequest::Block(Immutable::Owned(hash.clone())))
+                                    .await?
                                     .into_block()
                                     .map(|(block, hash)| ResponseHelper::Requested(block, hash))
                             } else {
