@@ -22,7 +22,7 @@ impl<T> Immutable<T> {
         }
     }
 
-    pub fn to_arc(self) -> Arc<T> {
+    pub fn into_arc(self) -> Arc<T> {
         match self {
             Immutable::Owned(v) => Arc::new(v),
             Immutable::Arc(v) => v

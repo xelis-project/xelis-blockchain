@@ -42,7 +42,7 @@ impl Block {
     }
 
     pub fn to_header(self) -> Arc<BlockHeader> {
-        self.header.to_arc()
+        self.header.into_arc()
     }
 
     pub fn get_header(&self) -> &BlockHeader {
