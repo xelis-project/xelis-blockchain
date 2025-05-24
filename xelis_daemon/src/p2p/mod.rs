@@ -2086,12 +2086,10 @@ impl<S: Storage> P2pServer<S> {
                 // check if we requested it from this peer directly
                 // or that we requested it through the object tracker
                 let request = response.get_request();
-                if peer.has_requested_object(&request).await {
-                    let sender = peer.remove_object_request(request).await?;
+                if let Some(sender) = peer.remove_object_request(&request).await {
                     // handle the response
-                    if sender.send(response).is_err() {
-                        error!("Error while sending object response to sender!");
-                    }
+                    sender.send(response)
+                        .context("Cannot notify listener")?;
                 } else if !self.object_tracker.handle_object_response(response).await? {
                     return Err(P2pError::ObjectNotRequested(request))
                 }

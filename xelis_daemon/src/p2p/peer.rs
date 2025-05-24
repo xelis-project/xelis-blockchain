@@ -408,9 +408,9 @@ impl Peer {
     }
 
     // Remove a requested object from the requested list
-    pub async fn remove_object_request(&self, request: ObjectRequest) -> Result<broadcast::Sender<OwnedObjectResponse>, P2pError> {
+    pub async fn remove_object_request(&self, request: &ObjectRequest) -> Option<broadcast::Sender<OwnedObjectResponse>> {
         let mut objects = self.objects_requested.lock().await;
-        objects.remove(&request).ok_or(P2pError::ObjectNotFound(request))
+        objects.remove(request)
     }
 
     // Request a object from this peer and wait on it until we receive it or until timeout 
