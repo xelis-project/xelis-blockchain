@@ -13,6 +13,7 @@ use tokio::{
     },
     time::timeout
 };
+use log::error;
 
 // Simple wrapper around RwLock
 // to panic on a failed lock and print all actual lock locations
@@ -35,7 +36,7 @@ impl<T: ?Sized> RwLock<T> {
         }
     }
 
-    fn show_locations(&self, location: &Location) -> ! {
+    fn show_locations(&self, location: &Location) {
         let mut msg = String::new();
         {
             let location = self.active_write_location.lock().expect("last write location");
@@ -53,25 +54,27 @@ impl<T: ?Sized> RwLock<T> {
             }
         }
 
-        panic!("lock at {} timed out: {}", location, msg)
+        error!("lock at {} timed out: {}", location, msg)
     }
 
     #[track_caller]
     pub fn read(&self) -> impl Future<Output = RwLockReadGuard<'_, T>> {
         let location = Location::caller();
         async {
-            match timeout(Duration::from_secs(10), self.inner.read()).await {
-                Ok(guard) => {
-                    let mut locations = self.active_read_locations.lock().expect("active read locations");
-                    locations.push(location);
-    
-                    RwLockReadGuard {
-                        inner: guard,
-                        locations: self.active_read_locations.clone(),
-                        location,
+            loop {
+                match timeout(Duration::from_secs(10), self.inner.read()).await {
+                    Ok(guard) => {
+                        let mut locations = self.active_read_locations.lock().expect("active read locations");
+                        locations.push(location);
+        
+                        return RwLockReadGuard {
+                            inner: guard,
+                            locations: self.active_read_locations.clone(),
+                            location,
+                        };
                     }
-                }
-                Err(_) => self.show_locations(location)
+                    Err(_) => self.show_locations(location)
+                };
             }
         }
     }
@@ -80,15 +83,17 @@ impl<T: ?Sized> RwLock<T> {
     pub fn write(&self) -> impl Future<Output = RwLockWriteGuard<'_, T>> {
         let location = Location::caller();
         async {
-            match timeout(Duration::from_secs(10), self.inner.write()).await {
-                Ok(guard) => {
-                    *self.active_write_location.lock().expect("last write location") = Some(location);
-                    RwLockWriteGuard {
-                        inner: guard,
-                        active_location: self.active_write_location.clone(),
+            loop {
+                match timeout(Duration::from_secs(10), self.inner.write()).await {
+                    Ok(guard) => {
+                        *self.active_write_location.lock().expect("last write location") = Some(location);
+                        return RwLockWriteGuard {
+                            inner: guard,
+                            active_location: self.active_write_location.clone(),
+                        };
                     }
-                }
-                Err(_) => self.show_locations(location)
+                    Err(_) => self.show_locations(location)
+                };
             }
         }
     }

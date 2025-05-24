@@ -9,6 +9,7 @@ use tokio::{
     sync::{Mutex as InnerMutex, MutexGuard},
     time::timeout
 };
+use log::error;
 
 pub struct Mutex<T: ?Sized> {
     last_location: StdMutex<Option<&'static Location<'static>>>,
@@ -31,22 +32,24 @@ impl<T: ?Sized> Mutex<T> {
     pub fn lock(&self) -> impl Future<Output = MutexGuard<'_, T>> {
         let location = Location::caller();
         async move {
-            match timeout(Duration::from_secs(10), self.inner.lock()).await {
-                Ok(guard) => {
-                    *self.last_location.lock().expect("last lock location") = Some(location);
-                    guard
-                }
-                Err(_) => {
-                    let last = self.last_location.lock().expect("last lock location");
-                    let mut msg = format!("Lock at {} failed.", location);
-                    match *last {
-                        Some(last) => {
-                            msg.push_str(&format!("\n- Last successful lock at: {}", last));
-                        }
-                        None => {}
+            loop {
+                match timeout(Duration::from_secs(10), self.inner.lock()).await {
+                    Ok(guard) => {
+                        *self.last_location.lock().expect("last lock location") = Some(location);
+                        return guard;
                     }
-                    panic!("{}", msg);
-                }
+                    Err(_) => {
+                        let last = self.last_location.lock().expect("last lock location");
+                        let mut msg = format!("Lock at {} failed.", location);
+                        match *last {
+                            Some(last) => {
+                                msg.push_str(&format!("\n- Last successful lock at: {}", last));
+                            }
+                            None => {}
+                        }
+                        error!("{}", msg);
+                    }
+                };
             }
         }
     }
