@@ -18,6 +18,7 @@ use log::error;
 // Simple wrapper around RwLock
 // to panic on a failed lock and print all actual lock locations
 pub struct RwLock<T: ?Sized> {
+    init_location: &'static Location<'static>,
     active_write_location: Arc<StdMutex<Option<&'static Location<'static>>>>,
     active_read_locations: Arc<StdMutex<Vec<&'static Location<'static>>>>,
     inner: InnerRwLock<T>
@@ -30,6 +31,7 @@ impl<T: ?Sized> RwLock<T> {
         T: Sized,
     {
         Self {
+            init_location: Location::caller(),
             active_write_location: Arc::new(StdMutex::new(None)),
             active_read_locations: Arc::new(StdMutex::new(Vec::new())),
             inner: InnerRwLock::new(value)
@@ -54,7 +56,7 @@ impl<T: ?Sized> RwLock<T> {
             }
         }
 
-        error!("lock at {} timed out: {}", location, msg)
+        error!("RwLock {} timed out at {}: {}", self.init_location, location, msg)
     }
 
     #[track_caller]

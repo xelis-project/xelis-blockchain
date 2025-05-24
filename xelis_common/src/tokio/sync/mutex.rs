@@ -12,6 +12,7 @@ use tokio::{
 use log::error;
 
 pub struct Mutex<T: ?Sized> {
+    init_location: &'static Location<'static>,
     last_location: StdMutex<Option<&'static Location<'static>>>,
     inner: InnerMutex<T>,
 }
@@ -23,6 +24,7 @@ impl<T: ?Sized> Mutex<T> {
         T: Sized,
     {
         Self {
+            init_location: Location::caller(),
             last_location: StdMutex::new(None),
             inner: InnerMutex::new(t)
         }
@@ -40,7 +42,7 @@ impl<T: ?Sized> Mutex<T> {
                     }
                     Err(_) => {
                         let last = self.last_location.lock().expect("last lock location");
-                        let mut msg = format!("Lock at {} failed.", location);
+                        let mut msg = format!("Mutex at {} failed locking at {}.", self.init_location, location);
                         match *last {
                             Some(last) => {
                                 msg.push_str(&format!("\n- Last successful lock at: {}", last));
