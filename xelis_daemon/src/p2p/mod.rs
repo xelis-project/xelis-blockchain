@@ -67,14 +67,7 @@ use xelis_common::{
         spawn_task,
         sync::{
             broadcast,
-            mpsc::{
-                self,
-                channel,
-                Receiver,
-                Sender,
-                UnboundedReceiver,
-                UnboundedSender,
-            },
+            mpsc,
             oneshot,
             Mutex,
             Semaphore
@@ -138,7 +131,7 @@ pub struct P2pServer<S: Storage> {
     // reference to the chain to add blocks/txs
     blockchain: Arc<Blockchain<S>>,
     // this sender allows to create a queue system in one task only
-    connections_sender: Sender<(SocketAddr, bool)>,
+    connections_sender: mpsc::Sender<(SocketAddr, bool)>,
     // used to requests objects to peers and avoid requesting the same object to multiple peers
     object_tracker: SharedObjectTracker,
     // used to check if the server is running or not in tasks
@@ -147,12 +140,12 @@ pub struct P2pServer<S: Storage> {
     // Timestamp is None if block is not yet executed
     blocks_propagation_queue: Mutex<LruCache<Arc<Hash>, Option<TimestampMillis>>>,
     // Sender for the blocks processing task to have an ordered queue
-    blocks_processor: UnboundedSender<(Arc<Peer>, BlockHeader, Arc<Hash>)>,
+    blocks_processor: mpsc::Sender<(Arc<Peer>, BlockHeader, Arc<Hash>)>,
     // Sender for the transactions propagated
     // Synced cache to prevent concurrent tasks adding the block
     txs_propagation_queue: Mutex<LruCache<Arc<Hash>, TimestampMillis>>,
     // Sender for the txs processing task to have an ordered queue
-    txs_processor: UnboundedSender<(Arc<Peer>, Arc<Hash>)>,
+    txs_processor: mpsc::Sender<(Arc<Peer>, Arc<Hash>)>,
     // allow fast syncing (only balances / assets / Smart Contracts changes)
     // without syncing the history
     allow_fast_sync_mode: bool,
@@ -197,7 +190,7 @@ pub struct P2pServer<S: Storage> {
     // Fail count threshold to ban a peer
     fail_count_limit: u8,
     // Sender used to notify the ping loop
-    notify_ping_loop: Sender<()>,
+    notify_ping_loop: mpsc::Sender<()>,
     // This is used to reexecute blocks on chain sync
     // in case the block detected is marked as orphaned
     disable_reexecute_blocks_on_sync: bool,
@@ -261,8 +254,8 @@ impl<S: Storage> P2pServer<S> {
 
         // create mspc channel for connections to peers
         let (connections_sender, connections_receiver) = mpsc::channel(max_peers);
-        let (blocks_processor, blocks_processor_receiver) = mpsc::unbounded_channel();
-        let (txs_processor, txs_processor_receiver) = mpsc::unbounded_channel();
+        let (blocks_processor, blocks_processor_receiver) = mpsc::channel(TIPS_LIMIT * STABLE_LIMIT as usize);
+        let (txs_processor, txs_processor_receiver) = mpsc::channel(TRANSACTIONS_CHANNEL_CAPACITY);
 
         // Channel used to broadcast the stop message
         let (exit_sender, exit_receiver) = broadcast::channel(1);
@@ -270,7 +263,7 @@ impl<S: Storage> P2pServer<S> {
 
         let (ping_sender, ping_receiver) = mpsc::channel(1);
 
-        let (sender, event_receiver) = channel::<Arc<Peer>>(max_peers); 
+        let (sender, event_receiver) = mpsc::channel::<Arc<Peer>>(max_peers); 
         let peer_list = PeerList::new(
             max_peers,
             stream_concurrency,
@@ -362,7 +355,7 @@ impl<S: Storage> P2pServer<S> {
     }
 
     // every 10 seconds, verify and connect if necessary to a random node
-    async fn maintains_connection_to_nodes(self: &Arc<Self>, nodes: IndexSet<SocketAddr>, sender: Sender<SocketAddr>) -> Result<(), P2pError> {
+    async fn maintains_connection_to_nodes(self: &Arc<Self>, nodes: IndexSet<SocketAddr>, sender: mpsc::Sender<SocketAddr>) -> Result<(), P2pError> {
         debug!("Starting maintains seed nodes task...");
         let mut interval = interval(Duration::from_secs(P2P_AUTO_CONNECT_PRIORITY_NODES_DELAY));
         let mut exit_receiver = self.exit_sender.subscribe();
@@ -409,11 +402,11 @@ impl<S: Storage> P2pServer<S> {
     // and wait on all new connections
     async fn start(
         self: &Arc<Self>,
-        receiver: Receiver<(SocketAddr, bool)>,
-        blocks_processor_receiver: UnboundedReceiver<(Arc<Peer>, BlockHeader, Arc<Hash>)>,
-        txs_processor_receiver: UnboundedReceiver<(Arc<Peer>, Arc<Hash>)>,
-        ping_receiver: Receiver<()>,
-        event_receiver: Receiver<Arc<Peer>>,
+        receiver: mpsc::Receiver<(SocketAddr, bool)>,
+        blocks_processor_receiver: mpsc::Receiver<(Arc<Peer>, BlockHeader, Arc<Hash>)>,
+        txs_processor_receiver: mpsc::Receiver<(Arc<Peer>, Arc<Hash>)>,
+        ping_receiver: mpsc::Receiver<()>,
+        event_receiver: mpsc::Receiver<Arc<Peer>>,
         use_peerlist: bool,
         concurrency: usize
     ) -> Result<(), P2pError> {
@@ -457,7 +450,7 @@ impl<S: Storage> P2pServer<S> {
             spawn_task("p2p-peerlist", Arc::clone(&self).peerlist_loop());
         }
 
-        let (tx, mut rx) = channel(1);
+        let (tx, mut rx) = mpsc::channel(1);
         spawn_task("p2p-outgoing-connections", Arc::clone(&self).handle_outgoing_connections(priority_connections, receiver, tx.clone()));
         spawn_task("p2p-incoming-connections", Arc::clone(&self).handle_incoming_connections(listener, tx, concurrency));
 
@@ -501,7 +494,7 @@ impl<S: Storage> P2pServer<S> {
         Ok(())
     }
 
-    async fn handle_outgoing_connections(self: Arc<Self>, mut priority_connections: Receiver<SocketAddr>, mut receiver: Receiver<(SocketAddr, bool)>, tx: Sender<(Peer, Rx)>) {
+    async fn handle_outgoing_connections(self: Arc<Self>, mut priority_connections: mpsc::Receiver<SocketAddr>, mut receiver: mpsc::Receiver<(SocketAddr, bool)>, tx: mpsc::Sender<(Peer, Rx)>) {
         // only allocate one time the buffer for this packet
         let mut handshake_buffer = [0; 512];
         let mut exit_receiver = self.exit_sender.subscribe();
@@ -601,7 +594,7 @@ impl<S: Storage> P2pServer<S> {
     // This task will handle an incoming connection request
     // It will verify if we can accept this connection
     // If we can, we will create a new peer and send it to the listener
-    async fn handle_incoming_connection(self: &Arc<Self>, res: io::Result<(TcpStream, SocketAddr)>, thread_pool: &ThreadPool, tx: &Sender<(Peer, Rx)>) -> Result<(), P2pError> {
+    async fn handle_incoming_connection(self: &Arc<Self>, res: io::Result<(TcpStream, SocketAddr)>, thread_pool: &ThreadPool, tx: &mpsc::Sender<(Peer, Rx)>) -> Result<(), P2pError> {
         let (mut stream, addr) = res?;
 
         // Verify if we can accept new connections
@@ -644,7 +637,7 @@ impl<S: Storage> P2pServer<S> {
     // This task will handle all incoming connections requests
     // Based on the concurrency set, it will create a thread pool to handle requests and wait when
     // a worker is free to accept a new connection
-    async fn handle_incoming_connections(self: Arc<Self>, listener: TcpListener, tx: Sender<(Peer, Rx)>, concurrency: usize) {
+    async fn handle_incoming_connections(self: Arc<Self>, listener: TcpListener, tx: mpsc::Sender<(Peer, Rx)>, concurrency: usize) {
         let mut thread_pool = ThreadPool::new(concurrency);
         let mut exit_receiver = self.exit_sender.subscribe();
         loop {
@@ -1151,7 +1144,7 @@ impl<S: Storage> P2pServer<S> {
     // if we have to send our peerlist to all peers, we calculate the ping for each peer
     // instead of being done in each write task of peer, we do it one time so we don't have
     // several lock on the chain and on peerlist
-    async fn ping_loop(self: Arc<Self>, mut ping_receiver: Receiver<()>) {
+    async fn ping_loop(self: Arc<Self>, mut ping_receiver: mpsc::Receiver<()>) {
         debug!("Starting ping loop...");
 
         let mut last_peerlist_update = get_current_time_in_seconds();
@@ -1336,7 +1329,7 @@ impl<S: Storage> P2pServer<S> {
 
     // This function is used to broadcast PeerDisconnected event to listeners
     // We use a channel to avoid having to pass the Blockchain<S> to the Peerlist & Peers
-    async fn event_loop(self: Arc<Self>, mut receiver: Receiver<Arc<Peer>>) {
+    async fn event_loop(self: Arc<Self>, mut receiver: mpsc::Receiver<Arc<Peer>>) {
         debug!("Starting event loop task...");
         let mut server_exit = self.exit_sender.subscribe();
 
@@ -1367,7 +1360,7 @@ impl<S: Storage> P2pServer<S> {
     }
 
     // Task for all blocks propagation
-    async fn blocks_processing_task(self: Arc<Self>, mut receiver: UnboundedReceiver<(Arc<Peer>, BlockHeader, Arc<Hash>)>) {
+    async fn blocks_processing_task(self: Arc<Self>, mut receiver: mpsc::Receiver<(Arc<Peer>, BlockHeader, Arc<Hash>)>) {
         debug!("Starting blocks processing task");
         let semaphore = Semaphore::new(PEER_OBJECTS_CONCURRENCY);
         let mut server_exit = self.exit_sender.subscribe();
@@ -1489,7 +1482,7 @@ impl<S: Storage> P2pServer<S> {
     }
 
     // Task for all transactions propagation
-    async fn txs_processing_task(self: Arc<Self>, mut receiver: UnboundedReceiver<(Arc<Peer>, Arc<Hash>)>) {
+    async fn txs_processing_task(self: Arc<Self>, mut receiver: mpsc::Receiver<(Arc<Peer>, Arc<Hash>)>) {
         debug!("Starting txs processing task");
         // Prevent requesting too many TXs at once
         let semaphore = Arc::new(Semaphore::new(PEER_OBJECTS_CONCURRENCY));
@@ -1834,7 +1827,7 @@ impl<S: Storage> P2pServer<S> {
                 let peer = Arc::clone(peer);
                 // This will block the task if the bounded channel is full
                 debug!("Pushing TX {} in txs processor channel", hash);
-                if let Err(e) = self.txs_processor.send((peer, hash.clone())) {
+                if let Err(e) = self.txs_processor.send((peer, hash.clone())).await {
                     error!("Error while sending block propagated to blocks processor task: {}", e);
                 }
                 debug!("TX {} has been pushed to txs processor", hash);
@@ -1944,7 +1937,7 @@ impl<S: Storage> P2pServer<S> {
                 let peer = Arc::clone(peer);
 
                 // This will block the task if the bounded channel is full
-                if let Err(e) = self.blocks_processor.send((peer, header, block_hash)) {
+                if let Err(e) = self.blocks_processor.send((peer, header, block_hash)).await {
                     error!("Error while sending block propagated to blocks processor task: {}", e);
                 }
             },
@@ -2163,7 +2156,7 @@ impl<S: Storage> P2pServer<S> {
                 for tx in txs.into_owned() {
                     let tx = Arc::new(tx.into_owned());
 
-                    if let Err(e) = self.txs_processor.send((Arc::clone(peer), tx)) {
+                    if let Err(e) = self.txs_processor.send((Arc::clone(peer), tx)).await {
                         error!("Error while sending to TXs processor task from inventory response of {}: {}", peer, e);
                         peer.increment_fail_count();
                         return Ok(())
