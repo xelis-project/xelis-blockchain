@@ -1452,7 +1452,7 @@ impl<S: Storage> P2pServer<S> {
                             }
                         },
                         Err(e) => {
-                            error!("Error on blocks processing task: {}", e);
+                            debug!("Error on blocks processing task: {}", e);
                         }
                     }
                 }
@@ -1510,13 +1510,18 @@ impl<S: Storage> P2pServer<S> {
 
                     let semaphore = Arc::clone(&semaphore);
                     let zelf = &self;
+                    let mut peer_exit = peer.get_exit_receiver();
+
                     let future = async move {
                         if peer.get_connection().is_closed() {
                             return (Ok(None), hash)
                         }
 
-                        let res = zelf.request_transaction(&semaphore, &peer, Arc::clone(&hash)).await;
-                        (res, hash)
+                        select! {
+                            biased;
+                            _ = peer_exit.recv() => (Ok(None), hash),
+                            res = zelf.request_transaction(&semaphore, &peer, Arc::clone(&hash)) => (res, hash)
+                        }
                     };
 
                     futures.push_back(future);
@@ -1545,7 +1550,7 @@ impl<S: Storage> P2pServer<S> {
                             }
                         },
                         Err(e) => {
-                            error!("Error in txs processing task: {} ", e);
+                            debug!("Error in txs processing task for TX {}: {} ", hash, e);
                         }
                     };
 
