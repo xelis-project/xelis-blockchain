@@ -1446,7 +1446,7 @@ impl<S: Storage> P2pServer<S> {
                                     }
                                 }
                             }
-        
+
                             debug!("Adding received block {} from {} to chain", block_hash, peer);
                             if let Err(e) = self.blockchain.add_new_block(block, Some(Immutable::Arc(block_hash)), BroadcastOption::All, false).await {
                                 error!("Error while adding new block from {}: {}", peer, e);
@@ -1472,14 +1472,16 @@ impl<S: Storage> P2pServer<S> {
     ) -> Result<Option<Arc<Transaction>>, BlockchainError> {
         let _permit = semaphore.acquire().await?;
 
+        debug!("Requesting TX {} from {}", hash, peer);
+
         // First, re-check that we don't already have it somewhere
         if self.blockchain.has_tx(&hash).await? {
-            debug!("TX {} was found in chain, retrieve it instead of requesting peer", hash);
+            debug!("TX {} was found in chain, retrieve it instead of requesting {}", hash, peer);
             let tx = self.blockchain.get_tx(&hash).await?;
             return Ok::<_, BlockchainError>(Some(tx.into_arc()))
         }
 
-        debug!("Requesting from txs processing task TX {}", hash);
+        debug!("Requesting TX object {}", hash);
         let (tx, _) = peer.request_blocking_object(ObjectRequest::Transaction(Immutable::Arc(hash.clone()))).await?
             .into_transaction()?;
 
@@ -1516,12 +1518,16 @@ impl<S: Storage> P2pServer<S> {
 
                     let future = async move {
                         if peer.get_connection().is_closed() {
+                            debug!("{} is closed, skipping TX {} request", peer, hash);
                             return (Ok(None), hash)
                         }
 
                         select! {
                             biased;
-                            _ = peer_exit.recv() => (Ok(None), hash),
+                            _ = peer_exit.recv() => {
+                                debug!("{} has disconnected, skipping TX {} request", peer, hash);
+                                (Ok(None), hash)
+                            },
                             res = zelf.request_transaction(&semaphore, &peer, Arc::clone(&hash)) => (res, hash)
                         }
                     };
@@ -1828,9 +1834,10 @@ impl<S: Storage> P2pServer<S> {
                 let peer = Arc::clone(peer);
                 // This will block the task if the bounded channel is full
                 debug!("Pushing TX {} in txs processor channel", hash);
-                if let Err(e) = self.txs_processor.send((peer, hash)) {
+                if let Err(e) = self.txs_processor.send((peer, hash.clone())) {
                     error!("Error while sending block propagated to blocks processor task: {}", e);
                 }
+                debug!("TX {} has been pushed to txs processor", hash);
             },
             Packet::BlockPropagation(packet_wrapper) => {
                 trace!("Received a block propagation packet from {}", peer);
