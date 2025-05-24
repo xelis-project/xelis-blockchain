@@ -109,8 +109,8 @@ use crate::{
 use std::{
     borrow::Cow,
     collections::{
-        HashMap,
         hash_map::Entry,
+        HashMap,
         HashSet,
         VecDeque
     },
@@ -120,7 +120,7 @@ use std::{
         atomic::{AtomicU64, Ordering},
         Arc
     },
-    time::Instant
+    time::{Duration, Instant}
 };
 use log::{info, error, debug, warn, trace};
 use rand::Rng;
@@ -2347,6 +2347,9 @@ impl<S: Storage> Blockchain<S> {
             let mut nonce_checker = NonceChecker::new();
             // Side blocks counter per height
             let mut side_blocks: HashMap<u64, u64> = HashMap::new();
+            let mut total_txs_executed = 0;
+            let mut total_txs_execution_time = 0;
+
             // time to order the DAG that is moving
             debug!("Ordering blocks based on generated DAG order ({} blocks)", full_order.len());
             for (i, hash) in full_order.into_iter().enumerate() {
@@ -2418,6 +2421,8 @@ impl<S: Storage> Blockchain<S> {
                     &block,
                 );
 
+                total_txs_executed += block.get_txs_count();
+
                 // compute rewards & execute txs
                 for (tx, tx_hash) in block.get_transactions().iter().zip(block.get_txs_hashes()) { // execute all txs
                     // Link the transaction hash to this block
@@ -2438,6 +2443,7 @@ impl<S: Storage> Blockchain<S> {
                             continue;
                         }
 
+                        let start = Instant::now();
                         // Execute the transaction by applying changes in storage
                         debug!("Executing tx {} in block {} with nonce {}", tx_hash, hash, tx.get_nonce());
                         if let Err(e) = tx.apply_with_partial_verify(tx_hash, &mut chain_state).await {
@@ -2446,6 +2452,7 @@ impl<S: Storage> Blockchain<S> {
                             orphaned_transactions.insert(tx_hash.clone());
                             continue;
                         }
+                        total_txs_execution_time += start.elapsed().as_micros();
 
                         // Calculate the new nonce
                         // This has to be done in case of side blocks where TX B would be before TX A
@@ -2608,6 +2615,8 @@ impl<S: Storage> Blockchain<S> {
                     events.entry(NotifyEvent::BlockOrdered).or_insert_with(Vec::new).push(value);
                 }
             }
+
+            debug!("Executed {} TXs in {:?}", total_txs_executed, Duration::from_micros(total_txs_execution_time as _))
         }
 
         let best_height = storage.get_height_for_block_hash(best_tip).await?;
