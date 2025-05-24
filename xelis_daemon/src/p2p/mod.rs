@@ -1365,6 +1365,7 @@ impl<S: Storage> P2pServer<S> {
     // Task for all blocks propagation
     async fn blocks_processing_task(self: Arc<Self>, mut receiver: Receiver<(Arc<Peer>, BlockHeader, Arc<Hash>)>) {
         debug!("Starting blocks processing task");
+        let semaphore = Semaphore::new(PEER_OBJECTS_CONCURRENCY);
         let mut server_exit = self.exit_sender.subscribe();
 
         // All pending blocks
@@ -1384,6 +1385,13 @@ impl<S: Storage> P2pServer<S> {
                     };
 
                     let future = async {
+                        let _permit = match semaphore.acquire().await {
+                            Ok(p) => p,
+                            Err(e) => {
+                                error!("FATAL! Error on semaphore in blocks processing task: {}", e);
+                                return None;
+                            }
+                        };
                         let mut txs_futures = FuturesOrdered::new();
                         for hash in header.get_txs_hashes().iter().cloned() {
                             let future = async {
@@ -2450,6 +2458,8 @@ impl<S: Storage> P2pServer<S> {
                             error!("Error while broadcasting tx hash {} to {}: {}", tx, peer, e);
                         }
                     }
+                } else {
+                    trace!("{} is too far for TX {} broadcast", peer, tx);
                 }
             }
         }).await;
