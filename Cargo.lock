@@ -4442,6 +4442,7 @@ dependencies = [
  "log",
  "log-panics",
  "merlin",
+ "pin-project-lite",
  "primitive-types",
  "rand 0.8.5",
  "regex",
