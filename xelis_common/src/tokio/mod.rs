@@ -1,4 +1,10 @@
 #[cfg(feature = "tokio")]
+mod scheduler;
+
+#[cfg(feature = "tokio")]
+pub use scheduler::Scheduler;
+
+#[cfg(feature = "tokio")]
 mod thread_pool;
 
 #[cfg(feature = "tokio")]
