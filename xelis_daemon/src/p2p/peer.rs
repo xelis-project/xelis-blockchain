@@ -415,8 +415,9 @@ impl Peer {
 
     // Request a object from this peer and wait on it until we receive it or until timeout 
     pub async fn request_blocking_object(&self, request: ObjectRequest) -> Result<OwnedObjectResponse, P2pError> {
+        trace!("waiting for permit {}", request);
         let _permit = self.objects_semaphore.acquire().await?;
-        trace!("Requesting {} from {}", request, self);
+        debug!("requesting {}", request);
         let mut receiver = {
             let mut objects = self.objects_requested.lock().await;
             if let Some(sender) = objects.get(&request) {
@@ -435,15 +436,16 @@ impl Peer {
             _ = exit_channel.recv() => return Err(P2pError::Disconnected),
             res = timeout(Duration::from_millis(PEER_TIMEOUT_REQUEST_OBJECT), receiver.recv()) => match res {
                 Ok(res) => res.context("Error on blocking object response")?,
-                Err(e) => {
+                Err(_) => {
                     warn!("Requested data {} has timed out", request);
                     let mut objects = self.objects_requested.lock().await;
                     // remove it from request list
                     objects.remove(&request);
-                    return Err(P2pError::AsyncTimeOut(e));
+                    return Err(P2pError::ObjectRequestTimedOut(request));
                 }
             }
         };
+        debug!("received response for request {}", request);
 
         // Verify that the object is the one we requested
         let object_hash = object.get_hash();

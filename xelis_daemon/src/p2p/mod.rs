@@ -31,7 +31,7 @@ use std::{
 use bytes::Bytes;
 use rand::{seq::IteratorRandom, Rng};
 use futures::{
-    stream::{self, FuturesOrdered},
+    stream::{self, FuturesOrdered, FuturesUnordered},
     Stream,
     StreamExt,
     TryStreamExt
@@ -74,7 +74,8 @@ use xelis_common::{
         },
         task::JoinHandle,
         time::{interval, sleep, timeout},
-        ThreadPool
+        ThreadPool,
+        Executor,
     },
     transaction::Transaction
 };
@@ -1608,42 +1609,47 @@ impl<S: Storage> P2pServer<S> {
     }
 
     // This function is a separated task with its own buffer (1kB) to read and handle every packets from the peer sequentially
-    async fn handle_connection_read_side(self: &Arc<Self>, peer: &Arc<Peer>, mut write_task: JoinHandle<()>) -> Result<(), P2pError> {
+    async fn handle_connection_read_side(self: &Arc<Self>, peer: &Arc<Peer>, write_task: JoinHandle<()>) -> Result<(), P2pError> {
         // allocate the unique buffer for this connection
-        let mut buf = [0u8; 1024];
         let mut server_exit = self.exit_sender.subscribe();
         let mut peer_exit = peer.get_exit_receiver();
-        loop {
-            select! {
-                biased;
-                _ = server_exit.recv() => {
-                    trace!("Exit message received for peer {}", peer);
-                    break;
-                },
-                _ = peer_exit.recv() => {
-                    debug!("Peer {} has exited, stopping...", peer);
-                    break;
-                },
-                _ = &mut write_task => {
-                    debug!("write task for {} has finished, stopping...", peer);
-                    break;
-                },
-                res = self.listen_connection(&mut buf, &peer) => {
-                    res?;
 
-                    // check that we don't have too many fails
-                    // otherwise disconnect peer
-                    // Priority nodes are not disconnected
-                    if peer.get_fail_count() >= self.fail_count_limit && !peer.is_priority() {
-                        warn!("High fail count detected for {}! Closing connection...", peer);
-                        if let Err(e) = peer.close_and_temp_ban(self.temp_ban_time).await {
-                            error!("Error while trying to close connection with {} due to high fail count: {}", peer, e);
-                        }
-                        break;
-                    }
-                }
+        // Read peer packets from a dedicated task
+        async fn read_peer_packet_task(peer: Arc<Peer>, sender: mpsc::Sender<Packet<'static>>) -> Result<(), P2pError> {
+            let mut buf = [0u8; 1024];
+            loop {
+                let packet = peer.get_connection()
+                    .read_packet(&mut buf, PEER_MAX_PACKET_SIZE).await?;
+                trace!("received a new packet #{} from {}", packet.get_id(), peer);
+
+                sender.send(packet).await
+                    .context("Error while sending raw packet")?;
             }
         }
+
+        let (sender, receiver) = mpsc::channel(8);
+        let read_packet = spawn_task("peer-read-packet", read_peer_packet_task(Arc::clone(peer), sender));
+
+        select! {
+            biased;
+            _ = server_exit.recv() => {
+                trace!("Exit message received for peer {}", peer);
+            },
+            _ = peer_exit.recv() => {
+                debug!("Peer {} has exited, stopping...", peer);
+            },
+            _ = write_task => {
+                debug!("write task for {} has finished, stopping...", peer);
+            },
+            res = read_packet => {
+                debug!("read packet task for {} has  finished", peer);
+                res.context("Error while joining read packet task")??;
+            },
+            res = self.listen_connection(&peer, receiver) => {
+                res?;
+            }
+        }
+
         Ok(())
     }
 
@@ -2091,7 +2097,7 @@ impl<S: Storage> P2pServer<S> {
                 if let Some(sender) = peer.remove_object_request(&request).await {
                     // handle the response
                     sender.send(response)
-                        .context("Cannot notify listener")?;
+                        .with_context(|| format!("Cannot notify listener for {}", request))?;
                 } else if !self.object_tracker.handle_object_response(response).await? {
                     return Err(P2pError::ObjectNotRequested(request))
                 }
@@ -2220,26 +2226,52 @@ impl<S: Storage> P2pServer<S> {
 
     // Listen to incoming packets from a connection
     // Packet is read from the same task always, while its handling is delegated to a unique task
-    async fn listen_connection(self: &Arc<Self>, buf: &mut [u8], peer: &Arc<Peer>) -> Result<(), P2pError> {
-        // Read & parse the packet
-        // 16 additional bytes are for AEAD
-        let packet = peer.get_connection().read_packet(buf, PEER_MAX_PACKET_SIZE).await?;
-        let packet_id = packet.get_id();
-        // Handle the packet
-        if let Err(e) = self.handle_incoming_packet(&peer, packet).await {
-            match e {
-                P2pError::Disconnected => {
-                    debug!("Peer {} has disconnected, stopping...", peer);
-                    return Err(e)
+    async fn listen_connection(self: &Arc<Self>, peer: &Arc<Peer>, mut receiver: mpsc::Receiver<Packet<'static>>) -> Result<(), P2pError> {
+        let mut unordered_packets = FuturesUnordered::new();
+        let mut executor = Executor::new();
+
+        loop {
+            select! {
+                biased;
+                Some(packet) = receiver.recv() => {
+                    let dependent = packet.is_order_dependent();
+                    let future = async {
+                        let packet_id = packet.get_id();
+                        trace!("handling received packet #{} from {}", packet_id, peer);
+                        if let Err(e) = self.handle_incoming_packet(&peer, packet).await {
+                            error!("Error while handing packet #{}: {}", packet_id, e);
+                            // check that we don't have too many fails
+                            // otherwise disconnect peer
+                            // Priority nodes are not disconnected
+                            if peer.get_fail_count() >= self.fail_count_limit && !peer.is_priority() {
+                                warn!("High fail count detected for {}! Closing connection...", peer);
+                                if let Err(e) = peer.close_and_temp_ban(self.temp_ban_time).await {
+                                    error!("Error while trying to close connection with {} due to high fail count: {}", peer, e);
+                                }
+
+                                return true
+                            }
+                        }
+
+                        false
+                    };
+
+                    if dependent {
+                        executor.push_back(future);
+                    } else {
+                        unordered_packets.push(future);
+                    }
                 },
-                P2pError::SendError(_) => {
-                    debug!("Error while sending packet to peer: {}", e);
-                    return Err(e)
+                Some(res) = unordered_packets.next() => {
+                    if res {
+                        break;
+                    }
                 },
-                e => {
-                    error!("Error occured while handling incoming packet #{} from {}: {}", packet_id, peer, e);
-                    peer.increment_fail_count();
-                }
+                Some(res) = executor.next() => {
+                    if res {
+                        break;
+                    }
+                },
             }
         }
 

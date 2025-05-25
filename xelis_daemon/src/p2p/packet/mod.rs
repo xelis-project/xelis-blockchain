@@ -121,6 +121,20 @@ impl Packet<'_> {
         }
     }
 
+    pub fn is_order_dependent(&self) -> bool {
+        match self {
+            Packet::ObjectRequest(_)
+            | Packet::ObjectResponse(_)
+            | Packet::ChainRequest(_) 
+            | Packet::ChainResponse(_)
+            | Packet::NotifyInventoryRequest(_)
+            | Packet::NotifyInventoryResponse(_)
+            | Packet::PeerDisconnected(_)
+            | Packet::Ping(_) => false,
+            _ => true,
+        }
+    }
+
     #[inline]
     fn write_packet<T: Serializer>(writer: &mut Writer, id: u8, packet: &T) {
         writer.write_u8(id);
