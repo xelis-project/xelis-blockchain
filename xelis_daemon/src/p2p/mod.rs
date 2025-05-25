@@ -2272,6 +2272,9 @@ impl<S: Storage> P2pServer<S> {
                         break;
                     }
                 },
+                else => {
+                    break;
+                }
             }
         }
 
