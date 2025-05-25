@@ -862,7 +862,7 @@ impl<S: Storage> Blockchain<S> {
             if provider.is_block_topological_ordered(&pre_hash).await? {
                 let cumulative_difficulty = provider.get_cumulative_difficulty_for_block_hash(&pre_hash).await?;
                 if cumulative_difficulty >= sync_block_cumulative_difficulty {
-                    warn!("Block {} at height {} is not a sync block, it has lower cumulative difficulty than block {} at height {}", hash, block_height, pre_hash, i);
+                    debug!("Block {} at height {} is not a sync block, it has lower cumulative difficulty than block {} at height {}", hash, block_height, pre_hash, i);
                     return Ok(false)
                 }
             }
