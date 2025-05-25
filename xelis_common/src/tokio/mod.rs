@@ -5,6 +5,12 @@ mod scheduler;
 pub use scheduler::Scheduler;
 
 #[cfg(feature = "tokio")]
+mod executor;
+
+#[cfg(feature = "tokio")]
+pub use executor::Executor;
+
+#[cfg(feature = "tokio")]
 mod thread_pool;
 
 #[cfg(feature = "tokio")]
