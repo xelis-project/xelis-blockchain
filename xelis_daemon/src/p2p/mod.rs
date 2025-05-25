@@ -2239,7 +2239,7 @@ impl<S: Storage> P2pServer<S> {
                         let packet_id = packet.get_id();
                         trace!("handling received packet #{} from {}", packet_id, peer);
                         if let Err(e) = self.handle_incoming_packet(&peer, packet).await {
-                            error!("Error while handing packet #{}: {}", packet_id, e);
+                            error!("Error while handling packet #{}: {}", packet_id, e);
                             // check that we don't have too many fails
                             // otherwise disconnect peer
                             // Priority nodes are not disconnected
