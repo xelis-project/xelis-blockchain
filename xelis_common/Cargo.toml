@@ -53,6 +53,7 @@ log-panics = { version = "2", features = ["with-backtrace"]}
 zip = { version = "2.2.2", features = ["zstd"], default-features = false, optional = true }
 futures = { version = "0.3.31", optional = true }
 cfg-if = "1.0.0"
+pin-project-lite = { version = "0.2.16", optional = true }
 
 [target.'cfg(windows)'.dependencies]
 win32console = "0.1.5"
@@ -71,7 +72,7 @@ tokio = { version = "1", features = ["full"] }
 criterion = "0.5.1"
 
 [features]
-tokio = ["dep:tokio", "dep:tokio_with_wasm", "dep:futures"]
+tokio = ["dep:tokio", "dep:tokio_with_wasm", "dep:futures", "dep:pin-project-lite"]
 json_rpc = ["tokio", "dep:reqwest", "dep:futures-util", "dep:tokio-tungstenite-wasm"]
 clap = ["dep:clap"]
 prompt = ["clap", "tokio", "dep:crossterm", "dep:chrono", "dep:zip"]
