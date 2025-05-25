@@ -435,6 +435,8 @@ pub struct Config {
     // Disable the TX Cache (ZKP Cache)
     // ZKP Cache is enabled by default and
     // prevent to re-verify the same ZK Proofs more than once.
+    #[clap(long)]
+    #[serde(default)]
     pub disable_zkp_cache: bool
 }
 
