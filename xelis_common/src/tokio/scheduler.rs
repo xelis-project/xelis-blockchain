@@ -13,14 +13,16 @@ pin_project! {
     pub struct Scheduler<F: Future> {
         states: VecDeque<State<F>>,
         next_yield: usize,
+        max: Option<usize>
     }
 }
 
 impl<F: Future> Scheduler<F> {
-    pub fn new() -> Self {
+    pub fn new(max: impl Into<Option<usize>>) -> Self {
         Self {
             states: VecDeque::new(),
             next_yield: 0,
+            max: max.into(),
         }
     }
 
@@ -33,6 +35,7 @@ impl<F: Future> Stream for Scheduler<F> {
     type Item = F::Output;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let max = self.max;
         let this = self.project();
         let len = this.states.len();
 
@@ -43,7 +46,7 @@ impl<F: Future> Stream for Scheduler<F> {
         let mut made_progress = false;
 
         // Poll all pending futures starting from next_yield
-        for state in this.states.iter_mut().skip(*this.next_yield) {
+        for state in this.states.iter_mut().skip(*this.next_yield).take(max.unwrap_or(len)) {
             if let State::Pending(fut) = state {
                 match fut.as_mut().poll(cx) {
                     Poll::Ready(output) => {
@@ -86,7 +89,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_scheduler() {
-        let mut scheduler = Scheduler::new();
+        let mut scheduler = Scheduler::new(1);
 
         async fn foo(duration: Duration, msg: &'static str) -> &'static str {
             sleep(duration).await;
