@@ -31,7 +31,7 @@ use std::{
 use bytes::Bytes;
 use rand::{seq::IteratorRandom, Rng};
 use futures::{
-    stream::{self, FuturesOrdered, FuturesUnordered},
+    stream::{self, FuturesOrdered},
     Stream,
     StreamExt,
     TryStreamExt
@@ -199,6 +199,9 @@ pub struct P2pServer<S: Storage> {
     block_propagation_log_level: log::Level,
     // Disable fetching transactions
     disable_fetching_txs_propagated: bool,
+    // Should we handle packets in task
+    // Each packet will be handled in a dedicated task
+    handle_peer_packets_in_dedicated_task: bool,
 }
 
 impl<S: Storage> P2pServer<S> {
@@ -225,6 +228,7 @@ impl<S: Storage> P2pServer<S> {
         disable_reexecute_blocks_on_sync: bool,
         block_propagation_log_level: log::Level,
         disable_fetching_txs_propagated: bool,
+        handle_peer_packets_in_dedicated_task: bool
     ) -> Result<Arc<Self>, P2pError> {
         if tag.as_ref().is_some_and(|tag| tag.len() == 0 || tag.len() > 16) {
             return Err(P2pError::InvalidTag);
@@ -304,7 +308,8 @@ impl<S: Storage> P2pServer<S> {
             notify_ping_loop: ping_sender,
             disable_reexecute_blocks_on_sync,
             block_propagation_log_level,
-            disable_fetching_txs_propagated
+            disable_fetching_txs_propagated,
+            handle_peer_packets_in_dedicated_task
         };
 
         let arc = Arc::new(server);
@@ -2227,7 +2232,6 @@ impl<S: Storage> P2pServer<S> {
     // Listen to incoming packets from a connection
     // Packet is read from the same task always, while its handling is delegated to a unique task
     async fn listen_connection(self: &Arc<Self>, peer: &Arc<Peer>, mut receiver: mpsc::Receiver<Packet<'static>>) -> Result<(), P2pError> {
-        let mut unordered_packets = FuturesUnordered::new();
         let mut executor = Executor::new();
 
         loop {
@@ -2235,17 +2239,19 @@ impl<S: Storage> P2pServer<S> {
                 biased;
                 Some(packet) = receiver.recv() => {
                     let dependent = packet.is_order_dependent();
-                    let future = async {
+                    let zelf = Arc::clone(self);
+                    let peer = Arc::clone(peer);
+                    let future = async move {
                         let packet_id = packet.get_id();
                         trace!("handling received packet #{} from {}", packet_id, peer);
-                        if let Err(e) = self.handle_incoming_packet(&peer, packet).await {
-                            error!("Error while handling packet #{}: {}", packet_id, e);
+                        if let Err(e) = zelf.handle_incoming_packet(&peer, packet).await {
+                            error!("Error while handling packet #{} from {}: {}", packet_id, peer, e);
                             // check that we don't have too many fails
                             // otherwise disconnect peer
                             // Priority nodes are not disconnected
-                            if peer.get_fail_count() >= self.fail_count_limit && !peer.is_priority() {
+                            if peer.get_fail_count() >= zelf.fail_count_limit && !peer.is_priority() {
                                 warn!("High fail count detected for {}! Closing connection...", peer);
-                                if let Err(e) = peer.close_and_temp_ban(self.temp_ban_time).await {
+                                if let Err(e) = peer.close_and_temp_ban(zelf.temp_ban_time).await {
                                     error!("Error while trying to close connection with {} due to high fail count: {}", peer, e);
                                 }
 
@@ -2256,16 +2262,20 @@ impl<S: Storage> P2pServer<S> {
                         false
                     };
 
-                    if dependent {
-                        executor.push_back(future);
+                    if !self.handle_peer_packets_in_dedicated_task {
+                        // If we don't handle packets in dedicated task, we can just run it directly
+                        // This is useful when we want to handle packets immediately
+                        if future.await {
+                            break;
+                        }
                     } else {
-                        unordered_packets.push(future);
+                        if dependent {
+                            executor.push_back(future);
+                        } else {
+                            tokio::spawn(future);
+                        }
                     }
-                },
-                Some(res) = unordered_packets.next() => {
-                    if res {
-                        break;
-                    }
+
                 },
                 Some(res) = executor.next() => {
                     if res {

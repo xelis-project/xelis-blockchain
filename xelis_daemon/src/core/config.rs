@@ -265,9 +265,12 @@ pub struct P2pConfig {
     #[serde(default = "debug_log_level")]
     pub block_propagation_log_level: LogLevel,
     /// Disable requesting P2P transactions propagated
-    #[clap(name = "disable-fetching-txs-propagated", long)]
+    #[clap(name = "p2p-disable-fetching-txs-propagated", long)]
     #[serde(default)]
     pub disable_fetching_txs_propagated: bool,
+    #[clap(name = "p2p-handle-peer-packets-in-dedicated-task", long)]
+    #[serde(default)]
+    pub handle_peer_packets_in_dedicated_task: bool,
 }
 
 #[derive(Debug, Clone, Copy, clap::ValueEnum, Serialize, Deserialize)]

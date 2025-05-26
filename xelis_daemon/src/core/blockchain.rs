@@ -368,6 +368,7 @@ impl<S: Storage> Blockchain<S> {
                 config.disable_reexecute_blocks_on_sync,
                 config.block_propagation_log_level.into(),
                 config.disable_fetching_txs_propagated,
+                config.handle_peer_packets_in_dedicated_task,
             ) {
                 Ok(p2p) => {
                     // connect to priority nodes
