@@ -2732,7 +2732,7 @@ impl<S: Storage> Blockchain<S> {
         let orphan_event_tracked = should_track_events.contains(&NotifyEvent::TransactionOrphaned);
 
         // Clean mempool from old txs if the DAG has been updated
-        let mempool_deleted_txs = if highest_topo >= current_topoheight {
+        let mempool_deleted_txs = {
             debug!("Locking mempool write mode");
             let mut mempool = self.mempool.write().await;
             debug!("mempool write mode ok");
@@ -2741,8 +2741,6 @@ impl<S: Storage> Blockchain<S> {
             let res = mempool.clean_up(&*storage, &self.environment, base_topo_height, highest_topo, version).await;
             debug!("Took {:?} to clean mempool!", start.elapsed());
             res
-        } else {
-            Vec::new()
         };
 
         if orphan_event_tracked {
