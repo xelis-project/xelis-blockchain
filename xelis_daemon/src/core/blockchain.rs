@@ -1,4 +1,5 @@
 use anyhow::Error;
+use futures::{stream, TryStreamExt};
 use indexmap::IndexSet;
 use lru::LruCache;
 use serde_json::{Value, json};
@@ -69,7 +70,7 @@ use xelis_common::{
         spawn_task,
         is_multi_threads_supported,
         net::lookup_host,
-        sync::{broadcast, Mutex, RwLock, Semaphore}
+        sync::{Mutex, RwLock, Semaphore}
     },
     varuint::VarUint,
     contract::build_environment,
@@ -2134,59 +2135,23 @@ impl<S: Storage> Blockchain<S> {
 
                     debug!("using multi-threading mode to verify the transactions in {} batches", batches_count);
                     let mut batches = vec![Vec::new(); batches_count];
-                    let mut queue: VecDeque<_> = txs_grouped.into_values().collect();
 
                     let mut i = 0;
                     // TODO: load balance more!
-                    while let Some(group) = queue.pop_front() {
+                    for group in txs_grouped.into_values() {
                         batches[i % batches_count].extend(group);
                         i += 1;
                     }
 
-                    // Channel to be notified of any batch failing
-                    let (sender, _) = broadcast::channel::<()>(1);
-                    let (_, results) = async_scoped::TokioScope::scope_and_block(|scope| {
-                        let storage = &*storage;
-                        let tx_cache = &tx_cache;
-                        let stable_topoheight = self.get_stable_topoheight();
-                        for (i, batch) in batches.into_iter().enumerate() {
-                            let sender = &sender;
-                            let mut receiver = sender.subscribe();
-
-                            scope.spawn(async move {
-                                let mut chain_state = ChainState::new(storage, &self.environment, stable_topoheight, current_topoheight, version);
-                                tokio::select! {
-                                    res = Transaction::verify_batch(batch.as_slice(), &mut chain_state, tx_cache) => {
-                                        if let Err(e) = &res {
-                                            if sender.send(()).is_err() {
-                                                error!("Error while notifying others tasks about batch #{} failing with error: {}", i, e);
-                                            }
-                                        }
-
-                                        res
-                                    },
-                                    _ = receiver.recv() => {
-                                        info!("Exiting batch task #{} due to exit signal received", i);
-                                        Ok(())
-                                    }
-                                }
-                            });
-                        }
-                    });
-
-                    for (i, result) in results.into_iter().enumerate() {
-                        match result {
-                            Ok(Ok(())) => {},
-                            Ok(Err(e)) => {
-                                error!("Error on batch #{} in block {}: {}", i, e, block_hash);
-                                return Err(e.into());
-                            },
-                            Err(e) => {
-                                error!("Error while joining batch task #{}: {} ", i, e);
-                                return Err(BlockchainError::InvalidTransactionMultiThread)
-                            }
-                        };
-                    }
+                    let stable_topoheight = self.get_stable_topoheight();
+                    let storage = &*storage;
+                    let environment = &self.environment;
+                    let cache = &tx_cache;
+                    stream::iter(batches.into_iter().map(Ok))
+                        .try_for_each_concurrent(self.txs_verification_threads_count, async |txs| {
+                            let mut chain_state = ChainState::new(storage, environment, stable_topoheight, current_topoheight, version);
+                            Transaction::verify_batch(&txs, &mut chain_state, cache).await
+                        }).await?;
                 } else {
                     // Verify all valid transactions in one batch
                     let mut chain_state = ChainState::new(&*storage, &self.environment, self.get_stable_topoheight(), current_topoheight, version);
