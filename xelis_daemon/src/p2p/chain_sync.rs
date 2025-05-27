@@ -229,30 +229,8 @@ impl<S: Storage> P2pServer<S> {
 
                 // don't broadcast block because it's syncing
                 self.blockchain.add_new_block(block, Some(hash), BroadcastOption::Miners, false).await?;
-            } else if !self.disable_reexecute_blocks_on_sync {
-                // We need to re execute it to make sure it's in DAG
-                let mut storage = self.blockchain.get_storage().write().await;
-                if !storage.is_block_topological_ordered(&hash).await? {
-                    match storage.delete_block_with_hash(&hash).await {
-                        Ok(block) => {
-                            let mut tips = storage.get_tips().await?;
-                            if tips.remove(&hash) {
-                                debug!("Block {} was a tip, removing it from tips", hash);
-                                storage.store_tips(&tips).await?;
-                            }
-
-                            warn!("Block {} is already in chain but not in DAG, re-executing it", hash);
-                            self.blockchain.add_new_block_for_storage(&mut storage, block, Some(hash), BroadcastOption::Miners, false).await?;
-                        },
-                        Err(e) => {
-                            // This shouldn't happen, but in case
-                            error!("Error while deleting block {} from storage to re-execute it for chain sync: {}", hash, e);
-                            continue;
-                        }
-                    }
-                } else {
-                    trace!("Block {} is already in DAG, skipping it", hash);
-                }
+            } else {
+                self.try_re_execution_block(hash).await?;
             }
         }
 
@@ -541,36 +519,11 @@ impl<S: Storage> P2pServer<S> {
                                         }
                                     },
                                     ResponseHelper::NotRequested(hash) => {
-                                        if !self.disable_reexecute_blocks_on_sync {
-                                            let is_ordered = {
-                                                debug!("locking storage for block ordering check");
-                                                let storage = self.blockchain.get_storage().read().await;
-                                                debug!("storage read acquired for block ordering check");
-                                                storage.is_block_topological_ordered(&hash).await?
-                                            };
-    
-                                            // Block is not ordered, we may have an issue, we should
-                                            // force its re execution, for that we delete it from our storage
-                                            if !is_ordered {
-                                                warn!("Forcing block {} re-execution", hash);
-                                                let mut storage = self.blockchain.get_storage().write().await;
-                                                debug!("storage write acquired for block forced re-execution");
-    
-                                                let block = storage.delete_block_with_hash(&hash).await?;
-                                                let mut tips = storage.get_tips().await?;
-                                                if tips.remove(&hash) {
-                                                    debug!("Block {} was a tip, removing it from tips", hash);
-                                                    storage.store_tips(&tips).await?;
-                                                }
-    
-                                                // Replicate same behavior as above branch
-                                                if let Err(e) = self.blockchain.add_new_block_for_storage(&mut storage, block, Some(Immutable::Owned(hash)), BroadcastOption::Miners, false).await {
-                                                    drop(futures);
-    
-                                                    self.object_tracker.mark_group_as_fail(group_id).await;
-                                                    return Err(e)
-                                                }                                            
-                                            }
+                                        if let Err(e) = self.try_re_execution_block(Immutable::Owned(hash)).await {
+                                            drop(futures);
+
+                                            self.object_tracker.mark_group_as_fail(group_id).await;
+                                            return Err(e)
                                         }
                                     }
                                 },
@@ -600,37 +553,8 @@ impl<S: Storage> P2pServer<S> {
                         self.blockchain.add_new_block(block, Some(Immutable::Owned(hash)), BroadcastOption::Miners, false).await?;
 
                         total_requested += 1;
-                    } else if !self.disable_reexecute_blocks_on_sync {
-                        trace!("Block {} is already in chain, verify if its in DAG", hash);
-
-                        let block = {
-                            let mut storage = self.blockchain.get_storage().write().await;
-                            if !storage.is_block_topological_ordered(&hash).await? {
-                                match storage.delete_block_with_hash(&hash).await {
-                                    Ok(block) => {
-                                        let mut tips = storage.get_tips().await?;
-                                        if tips.remove(&hash) {
-                                            debug!("Block {} was a tip, removing it from tips", hash);
-                                            storage.store_tips(&tips).await?;
-                                        }
-
-                                        block
-                                    },
-                                    Err(e) => {
-                                        // This shouldn't happen, but in case
-                                        error!("Error while deleting block {} from storage to re-execute it for chain sync: {}", hash, e);
-                                        continue;
-                                    }
-                                }
-                            } else {
-                                trace!("Block {} is already in DAG, skipping it", hash);
-                                continue;
-                            }
-                        };
-
-                        warn!("Block {} is already in chain but not in DAG, re-executing it", hash);
-                        // We trust block hash because that block was already stored with such hash
-                        self.blockchain.add_new_block(block, Some(Immutable::Owned(hash)), BroadcastOption::Miners, false).await?;
+                    } else {
+                        self.try_re_execution_block(Immutable::Owned(hash)).await?;
                     }
                 }
             }
@@ -665,5 +589,41 @@ impl<S: Storage> P2pServer<S> {
         }
 
         Ok(())
+    }
+
+    // Try to re-execute the block requested if its not included in DAG order (it has no topoheight assigned)
+    async fn try_re_execution_block(&self, hash: Immutable<Hash>) -> Result<(), BlockchainError> {
+        trace!("check re execution block {}", hash);
+        
+        if self.disable_reexecute_blocks_on_sync {
+            trace!("re execute blocks on sync is disabled");
+            return Ok(())
+        }
+
+        {
+            let storage = self.blockchain.get_storage().read().await;
+            if storage.is_block_topological_ordered(&hash).await? {
+                trace!("block {} is already ordered", hash);
+                return Ok(())
+            }
+        }
+
+        warn!("Forcing block {} re-execution", hash);
+        let block = {
+            let mut storage = self.blockchain.get_storage().write().await;
+            debug!("storage write acquired for block forced re-execution");
+    
+            let block = storage.delete_block_with_hash(&hash).await?;
+            let mut tips = storage.get_tips().await?;
+            if tips.remove(&hash) {
+                debug!("Block {} was a tip, removing it from tips", hash);
+                storage.store_tips(&tips).await?;
+            }
+
+            block
+        };
+
+        // Replicate same behavior as above branch
+        self.blockchain.add_new_block(block, Some(hash), BroadcastOption::Miners, false).await
     }
 }
