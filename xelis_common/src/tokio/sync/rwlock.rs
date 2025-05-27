@@ -162,25 +162,25 @@ impl<'a, T: ?Sized> DerefMut for RwLockWriteGuard<'a, T> {
     }
 }
 
-impl<T: ?Sized> AsRef<InnerRwLock<T>> for RwLock<T> {
-    fn as_ref(&self) -> &InnerRwLock<T> {
-        &self.inner
-    }
-}
+// impl<T: ?Sized> AsRef<InnerRwLock<T>> for RwLock<T> {
+//     fn as_ref(&self) -> &InnerRwLock<T> {
+//         &self.inner
+//     }
+// }
 
-impl<T: ?Sized> Deref for RwLock<T> {
-    type Target = InnerRwLock<T>;
+// impl<T: ?Sized> Deref for RwLock<T> {
+//     type Target = InnerRwLock<T>;
 
-    fn deref(&self) -> &Self::Target {
-        &self.inner
-    }
-}
+//     fn deref(&self) -> &Self::Target {
+//         &self.inner
+//     }
+// }
 
-impl<T: ?Sized> DerefMut for RwLock<T> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.inner
-    }
-}
+// impl<T: ?Sized> DerefMut for RwLock<T> {
+//     fn deref_mut(&mut self) -> &mut Self::Target {
+//         &mut self.inner
+//     }
+// }
 
 impl<T: ?Sized> std::fmt::Debug for RwLock<T>
 where
