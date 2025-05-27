@@ -9,7 +9,7 @@ use tokio::{
     sync::{Mutex as InnerMutex, MutexGuard},
     time::timeout
 };
-use log::error;
+use log::{debug, error};
 
 pub struct Mutex<T: ?Sized> {
     init_location: &'static Location<'static>,
@@ -33,6 +33,7 @@ impl<T: ?Sized> Mutex<T> {
     #[track_caller]
     pub fn lock(&self) -> impl Future<Output = MutexGuard<'_, T>> {
         let location = Location::caller();
+        debug!("Mutex at {} locking at {}", self.init_location, location);
         async move {
             loop {
                 match timeout(Duration::from_secs(10), self.inner.lock()).await {

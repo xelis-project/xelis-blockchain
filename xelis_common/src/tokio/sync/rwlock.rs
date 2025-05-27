@@ -13,7 +13,7 @@ use tokio::{
     },
     time::timeout
 };
-use log::error;
+use log::{debug, error};
 
 // Simple wrapper around RwLock
 // to panic on a failed lock and print all actual lock locations
@@ -62,6 +62,7 @@ impl<T: ?Sized> RwLock<T> {
     #[track_caller]
     pub fn read(&self) -> impl Future<Output = RwLockReadGuard<'_, T>> {
         let location = Location::caller();
+        debug!("RwLock {} trying to read at {}", self.init_location, location);
         async {
             loop {
                 match timeout(Duration::from_secs(10), self.inner.read()).await {
@@ -84,6 +85,7 @@ impl<T: ?Sized> RwLock<T> {
     #[track_caller]
     pub fn write(&self) -> impl Future<Output = RwLockWriteGuard<'_, T>> {
         let location = Location::caller();
+        debug!("RwLock {} trying to write at {}", self.init_location, location);
         async {
             loop {
                 match timeout(Duration::from_secs(10), self.inner.write()).await {
@@ -111,6 +113,7 @@ pub struct RwLockReadGuard<'a, T: ?Sized> {
 impl<'a, T: ?Sized> Drop for RwLockReadGuard<'a, T> {
     fn drop(&mut self) {
         // We don't use a HashSet in case of multi threading where we would lock at same location
+        debug!("Dropping RwLockReadGuard at {}", self.location);
         let mut locations = self.locations.lock().expect("locations");
         let index = locations.iter()
             .position(|v| *v == self.location)
@@ -136,10 +139,12 @@ pub struct RwLockWriteGuard<'a, T: ?Sized> {
 
 impl<'a, T: ?Sized> Drop for RwLockWriteGuard<'a, T> {
     fn drop(&mut self) {
-        self.active_location.lock()
-            .expect("locations")
+        let active_location = self.active_location.lock()
+            .expect("active write location")
             .take()
-            .expect("active write location");
+            .expect("active write location should be set");
+
+        debug!("Dropping RwLockWriteGuard at {}", active_location);
     }
 }
 
