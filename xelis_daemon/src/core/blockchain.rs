@@ -549,62 +549,67 @@ impl<S: Storage> Blockchain<S> {
 
     // function to include the genesis block and register the public dev key.
     async fn create_genesis_block(&self, genesis_hex: Option<&str>) -> Result<(), BlockchainError> {
-        let mut storage = self.storage.write().await;
-
-        // register XELIS asset
-        debug!("Registering XELIS asset: {} at topoheight 0", XELIS_ASSET);
-        let ticker = match self.network {
-            Network::Mainnet => "XEL".to_owned(),
-            _ => "XET".to_owned(),
-        };
-
-        storage.add_asset(
-            &XELIS_ASSET,
-            0,
-            VersionedAssetData::new(
-                AssetData::new(COIN_DECIMALS, "XELIS".to_owned(), ticker, Some(MAXIMUM_SUPPLY), None),
-                None
-            )
-        ).await?;
-
-        let (genesis_block, genesis_hash) = if let Some(genesis_block) = get_hex_genesis_block(&self.network) {
-            info!("De-serializing genesis block for network {}...", self.network);
-            let genesis = Block::from_hex(genesis_block)?;
-            let expected_hash = genesis.hash();
-            (genesis, expected_hash)
-        } else if let Some(hex) = genesis_hex {
-            info!("De-serializing genesis block hex from config...");
-            let genesis = Block::from_hex(hex)?;
-            let expected_hash = genesis.hash();
-
-            (genesis, expected_hash)
-        } else {
-            warn!("No genesis block found!");
-            info!("Generating a new genesis block...");
-            let header = BlockHeader::new(BlockVersion::V0, 0, get_current_time_in_millis(), IndexSet::new(), [0u8; EXTRA_NONCE_SIZE], DEV_PUBLIC_KEY.clone(), IndexSet::new());
-            let block = Block::new(Immutable::Owned(header), Vec::new());
-            let block_hash = block.hash();
-            info!("Genesis generated: {} with {:?} {}", block.to_hex(), block_hash, block_hash);
-            (block, block_hash)
-        };
-
-        if *genesis_block.get_miner() != *DEV_PUBLIC_KEY {
-            return Err(BlockchainError::GenesisBlockMiner)
-        }
-
-        if let Some(expected_hash) = get_genesis_block_hash(&self.network) {
-            if genesis_hash != *expected_hash {
-                error!("Genesis block hash is invalid! Expected: {}, got: {}", expected_hash, genesis_hash);
-                return Err(BlockchainError::InvalidGenesisHash)
+        debug!("create genesis block");
+        let genesis_block = {
+            let mut storage = self.storage.write().await;
+    
+            // register XELIS asset
+            debug!("Registering XELIS asset: {} at topoheight 0", XELIS_ASSET);
+            let ticker = match self.network {
+                Network::Mainnet => "XEL".to_owned(),
+                _ => "XET".to_owned(),
+            };
+    
+            storage.add_asset(
+                &XELIS_ASSET,
+                0,
+                VersionedAssetData::new(
+                    AssetData::new(COIN_DECIMALS, "XELIS".to_owned(), ticker, Some(MAXIMUM_SUPPLY), None),
+                    None
+                )
+            ).await?;
+    
+            let (genesis_block, genesis_hash) = if let Some(genesis_block) = get_hex_genesis_block(&self.network) {
+                info!("De-serializing genesis block for network {}...", self.network);
+                let genesis = Block::from_hex(genesis_block)?;
+                let expected_hash = genesis.hash();
+                (genesis, expected_hash)
+            } else if let Some(hex) = genesis_hex {
+                info!("De-serializing genesis block hex from config...");
+                let genesis = Block::from_hex(hex)?;
+                let expected_hash = genesis.hash();
+    
+                (genesis, expected_hash)
+            } else {
+                warn!("No genesis block found!");
+                info!("Generating a new genesis block...");
+                let header = BlockHeader::new(BlockVersion::V0, 0, get_current_time_in_millis(), IndexSet::new(), [0u8; EXTRA_NONCE_SIZE], DEV_PUBLIC_KEY.clone(), IndexSet::new());
+                let block = Block::new(Immutable::Owned(header), Vec::new());
+                let block_hash = block.hash();
+                info!("Genesis generated: {} with {:?} {}", block.to_hex(), block_hash, block_hash);
+                (block, block_hash)
+            };
+    
+            if *genesis_block.get_miner() != *DEV_PUBLIC_KEY {
+                return Err(BlockchainError::GenesisBlockMiner)
             }
-        }
-        debug!("Adding genesis block '{}' to chain", genesis_hash);
+    
+            if let Some(expected_hash) = get_genesis_block_hash(&self.network) {
+                if genesis_hash != *expected_hash {
+                    error!("Genesis block hash is invalid! Expected: {}, got: {}", expected_hash, genesis_hash);
+                    return Err(BlockchainError::InvalidGenesisHash)
+                }
+            }
+            debug!("Adding genesis block '{}' to chain", genesis_hash);
+    
+            // hardcode genesis block topoheight
+            storage.set_topo_height_for_block(&genesis_hash, 0).await?;
+            storage.set_top_height(0).await?;
 
-        // hardcode genesis block topoheight
-        storage.set_topo_height_for_block(&genesis_hash, 0).await?;
-        storage.set_top_height(0).await?;
+            genesis_block
+        };
 
-        self.add_new_block_for_storage(&mut *storage, genesis_block, None, BroadcastOption::Miners, false).await?;
+        self.add_new_block(genesis_block, None, BroadcastOption::Miners, false).await?;
 
         Ok(())
     }
