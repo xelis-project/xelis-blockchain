@@ -16,12 +16,12 @@ pub use tokio_with_wasm::sync::*;
 ))]
 pub use tokio::sync::*;
 
-#[cfg(feature = "deadlock-detection")]
+#[cfg(any(test, feature = "deadlock-detection"))]
 mod rwlock;
 #[cfg(feature = "deadlock-detection")]
 pub use rwlock::RwLock;
 
-#[cfg(feature = "deadlock-detection")]
+#[cfg(any(test, feature = "deadlock-detection"))]
 mod mutex;
 #[cfg(feature = "deadlock-detection")]
 pub use mutex::Mutex;

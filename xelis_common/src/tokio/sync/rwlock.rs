@@ -185,3 +185,40 @@ where
         self.inner.fmt(f)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_rwlock() {
+        let lock = RwLock::new(42);
+        {
+            let read_guard = lock.read().await;
+            {
+                let locations = lock.active_read_locations.lock().unwrap();
+                assert_eq!(locations.len(), 1);
+            }
+            assert_eq!(*read_guard, 42);
+        }
+
+        {
+            let locations = lock.active_read_locations.lock().unwrap();
+            assert!(locations.is_empty());
+        }
+
+        {
+            let mut write_guard = lock.write().await;
+            {
+                let location = lock.active_write_location.lock().unwrap();
+                assert!(location.is_some());
+            }
+
+            *write_guard += 1;
+        }
+        {
+            let read_guard = lock.read().await;
+            assert_eq!(*read_guard, 43);
+        }
+    }
+}
