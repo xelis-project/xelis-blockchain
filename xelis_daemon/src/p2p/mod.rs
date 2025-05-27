@@ -2015,9 +2015,7 @@ impl<S: Storage> P2pServer<S> {
                         return Err(P2pError::PeerInvalidPeerListCountdown(P2P_PING_PEER_LIST_DELAY - diff))
                     }
                     peer.set_last_peer_list(current_time);
-                }
 
-                {
                     let is_local_peer = is_local_address(peer.get_connection().get_address());
                     for addr in ping.get_peers() {
                         if (is_local_address(addr) && !is_local_peer) || !is_valid_address(addr) {
@@ -2568,6 +2566,11 @@ impl<S: Storage> P2pServer<S> {
 
                     if send_block {
                         log!(self.block_propagation_log_level, "Broadcast {} to {}", hash, peer);
+
+                        // We update the peer height to the block height
+                        // As we expect that the peer will accept this block
+                        peer.set_height(block.get_height().max(peer.get_height()));
+
                         if let Err(e) = peer.send_bytes(packet_block_bytes.clone()).await {
                             debug!("Error on broadcast block {} to {}: {}", hash, peer, e);
                         }
