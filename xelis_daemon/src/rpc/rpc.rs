@@ -896,14 +896,15 @@ async fn get_peers<S: Storage>(context: &Context, body: Value) -> Result<Value, 
     match p2p.as_ref() {
         Some(p2p) => {
             let peer_list = p2p.get_peer_list();
-            let mut peers = Vec::new();
             let peers_availables = peer_list.get_cloned_peers().await;
-            let total_peers = peers_availables.len();
-            let mut sharable_peers = 0;
+
+            let mut peers = Vec::new();
             for p in peers_availables.iter().filter(|p| p.sharable()) {
                 peers.push(get_peer_entry(p).await);
-                sharable_peers += 1;
             }
+
+            let total_peers = peers_availables.len();
+            let sharable_peers = peers.len();
             Ok(json!(GetPeersResponse {
                 peers,
                 total_peers,
