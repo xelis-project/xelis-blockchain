@@ -2,18 +2,22 @@ use std::{
     future::Future,
     ops::{Deref, DerefMut},
     panic::Location,
-    sync::Mutex as StdMutex,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Mutex as StdMutex
+    },
     time::Duration
 };
 use tokio::{
     sync::{Mutex as InnerMutex, MutexGuard},
     time::timeout
 };
-use log::{debug, error};
+use log::{debug, log, Level};
 
 pub struct Mutex<T: ?Sized> {
     init_location: &'static Location<'static>,
     last_location: StdMutex<Option<&'static Location<'static>>>,
+    show: AtomicBool,
     inner: InnerMutex<T>,
 }
 
@@ -26,6 +30,7 @@ impl<T: ?Sized> Mutex<T> {
         Self {
             init_location: Location::caller(),
             last_location: StdMutex::new(None),
+            show: AtomicBool::new(true),
             inner: InnerMutex::new(t)
         }
     }
@@ -42,6 +47,12 @@ impl<T: ?Sized> Mutex<T> {
                         return guard;
                     }
                     Err(_) => {
+                        let level = if self.show.swap(false, Ordering::SeqCst) {
+                            Level::Error
+                        } else {
+                            Level::Debug
+                        };
+
                         let last = self.last_location.lock().expect("last lock location");
                         let mut msg = format!("Mutex at {} failed locking at {}.", self.init_location, location);
                         match *last {
@@ -49,8 +60,9 @@ impl<T: ?Sized> Mutex<T> {
                                 msg.push_str(&format!("\n- Last successful lock at: {}", last));
                             }
                             None => {}
-                        }
-                        error!("{}", msg);
+                        };
+
+                        log!(level, "{}", msg);
                     }
                 };
             }
