@@ -203,14 +203,14 @@ impl<S: Storage> P2pServer<S> {
                                 // check if we find it
                                 if let Ok(tx) = self.blockchain.get_tx(tx_hash).await {
                                     trace!("Found the transaction {} on disk", tx_hash);
-                                    Ok(tx)
+                                    Ok(tx.into_arc())
                                 } else {
                                     // otherwise, ask it from peer
                                     // But because we may have the same TX in several blocks, lets request it using object tracker
                                     peer.request_blocking_object(ObjectRequest::Transaction(Immutable::Owned(tx_hash.clone())))
                                         .await?
                                         .into_transaction()
-                                        .map(|(tx, _)| Immutable::Owned(tx))
+                                        .map(|(tx, _)| Arc::new(tx))
                                 }
                             };
                             futures.push_back(fut);

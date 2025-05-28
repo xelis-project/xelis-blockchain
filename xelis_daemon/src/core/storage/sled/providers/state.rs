@@ -59,7 +59,7 @@ impl StateProvider for SledStorage {
         let mut transactions = Vec::with_capacity(header.get_txs_count());
         for tx in header.get_transactions() {
             let transaction = self.get_transaction(tx).await?;
-            transactions.push(transaction);
+            transactions.push(transaction.into_arc());
         }
 
         let block = Block::new(header, transactions);

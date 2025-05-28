@@ -1841,7 +1841,7 @@ impl<S: Storage> Blockchain<S> {
     // Build a block using the header and search for TXs in mempool and storage
     pub async fn build_block_from_header(&self, header: Immutable<BlockHeader>) -> Result<Block, BlockchainError> {
         trace!("Searching TXs for block at height {}", header.get_height());
-        let mut transactions: Vec<Immutable<Transaction>> = Vec::with_capacity(header.get_txs_count());
+        let mut transactions = Vec::with_capacity(header.get_txs_count());
 
         debug!("locking storage for build block from header");
         let storage = self.storage.read().await;
@@ -1853,9 +1853,10 @@ impl<S: Storage> Blockchain<S> {
             trace!("Searching TX {} for building block", hash);
             // at this point, we don't want to lose/remove any tx, we clone it only
             let tx = if mempool.contains_tx(hash) {
-                Immutable::Arc(mempool.get_tx(hash)?)
+                mempool.get_tx(hash)?
             } else {
                 storage.get_transaction(hash).await?
+                    .into_arc()
             };
 
             transactions.push(tx);
@@ -2036,13 +2037,14 @@ impl<S: Storage> Blockchain<S> {
             // Cache to retrieve only one time all TXs hashes until stable height
             let mut all_parents_txs: Option<HashSet<Hash>> = None;
 
-            // All transactions to be verified in one batch
-            let mut txs_batch = Vec::with_capacity(block.get_txs_count());
             // All transactions grouped per source key
-            // used for multi threading
+            // used for batch verifications
             let mut txs_grouped = HashMap::new();
             let mut total_outputs = 0;
+            let mut total_txs = 0;
+
             let is_v2_enabled = version >= BlockVersion::V2;
+
             for (tx, hash) in block.get_transactions().iter().zip(block.get_txs_hashes()) {
                 let tx_size = tx.size();
                 if tx_size > MAX_TRANSACTION_SIZE {
@@ -2107,14 +2109,16 @@ impl<S: Storage> Blockchain<S> {
                 }
 
                 total_outputs += tx.get_outputs_count();
-                txs_batch.push((tx, hash));
+                total_txs += 1;
+                // Transactions are behind a Arc because they are
+                // cloned for verify_batch which run a spawn_blocking thread
                 txs_grouped.entry(tx.get_source())
                     .or_insert_with(Vec::new)
-                    .push((tx, hash));
+                    .push((Arc::clone(tx), hash));
             }
 
-            if !txs_batch.is_empty() {
-                debug!("proof verifications of {} TXs from {} sources with {} outputs in block {}", txs_batch.len(), txs_grouped.len(), total_outputs, block_hash);
+            if !txs_grouped.is_empty() {
+                debug!("proof verifications of {} TXs from {} sources with {} outputs in block {}", total_txs, txs_grouped.len(), total_outputs, block_hash);
 
                 debug!("locking mempool read mode for cache usage");
                 let mempool = self.mempool.read().await;
@@ -2124,6 +2128,7 @@ impl<S: Storage> Blockchain<S> {
 
                 // Track how much time it takes to verify them all
                 let start = Instant::now();
+                let stable_topoheight = self.get_stable_topoheight();
                 // If multi thread is enabled and we have more than one source
                 // Otherwise its not worth-it to move it on another thread
                 if self.txs_verification_threads_count > 1 && txs_grouped.len() > 1 && is_multi_threads_supported() {
@@ -2143,21 +2148,26 @@ impl<S: Storage> Blockchain<S> {
                         i += 1;
                     }
 
-                    let stable_topoheight = self.get_stable_topoheight();
                     let storage = &*storage;
                     let environment = &self.environment;
                     let cache = &tx_cache;
+
+                    // We run the batches in concurrent tasks
+                    // But, because Transaction#verify_batch is actually spawning a blocking thread
+                    // it will be multi-threaded by N threads
                     stream::iter(batches.into_iter().map(Ok))
                         .try_for_each_concurrent(self.txs_verification_threads_count, async |txs| {
                             let mut chain_state = ChainState::new(storage, environment, stable_topoheight, current_topoheight, version);
-                            Transaction::verify_batch(&txs, &mut chain_state, cache).await
+                            Transaction::verify_batch(txs.iter(), &mut chain_state, cache).await
                         }).await?;
                 } else {
                     // Verify all valid transactions in one batch
-                    let mut chain_state = ChainState::new(&*storage, &self.environment, self.get_stable_topoheight(), current_topoheight, version);
-                    Transaction::verify_batch(txs_batch.as_slice(), &mut chain_state, &tx_cache).await?;
+                    let mut chain_state = ChainState::new(&*storage, &self.environment, stable_topoheight, current_topoheight, version);
+                    let iter = txs_grouped.values()
+                        .flatten();
+                    Transaction::verify_batch(iter, &mut chain_state, &tx_cache).await?;
                 }
-                debug!("Verified {} transactions in {}ms", txs_batch.len(), start.elapsed().as_millis());
+                debug!("Verified {} transactions in {}ms", total_txs, start.elapsed().as_millis());
             }
         }
 

@@ -1397,7 +1397,7 @@ impl<S: Storage> P2pServer<S> {
                             let future = async {
                                 if let Ok(tx) = self.blockchain.get_tx(&hash).await {
                                     debug!("tx {} found in chain", hash);
-                                    Ok(tx)
+                                    Ok(tx.into_arc())
                                 } else {
                                     debug!("Cache missed for TX {} in block propagation {}, will request it from peer", hash, block_hash);
 
@@ -1412,7 +1412,7 @@ impl<S: Storage> P2pServer<S> {
                                     listener.recv().await
                                         .context("Error while reading transaction for block")?
                                         .into_transaction()
-                                        .map(|(tx, _)| Immutable::Owned(tx))
+                                        .map(|(tx, _)| Arc::new(tx))
                                 }
                             };
                             txs_futures.push_back(future);

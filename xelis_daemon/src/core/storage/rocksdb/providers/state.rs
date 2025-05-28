@@ -11,11 +11,11 @@ use crate::core::{
     storage::{
         rocksdb::Column,
         sled::{TOP_HEIGHT, TOP_TOPO_HEIGHT},
+        BlockProvider,
         DagOrderProvider,
         DifficultyProvider,
         RocksStorage,
         StateProvider,
-        TransactionProvider
     }
 };
 
@@ -30,15 +30,8 @@ impl StateProvider for RocksStorage {
     // Get the top block of the chain, based on top block hash
     async fn get_top_block(&self) -> Result<Block, BlockchainError> {
         trace!("get top block");
-        let (header, _) = self.get_top_block_header().await?;
-        let mut transactions = Vec::with_capacity(header.get_txs_count());
-        for tx in header.get_transactions() {
-            let transaction = self.get_transaction(tx).await?;
-            transactions.push(transaction);
-        }
-
-        let block = Block::new(header, transactions);
-        Ok(block)
+        let hash = self.get_top_block_hash().await?;
+        self.get_block_by_hash(&hash).await
     }
 
     // Get the top block header of the chain, based on top block hash

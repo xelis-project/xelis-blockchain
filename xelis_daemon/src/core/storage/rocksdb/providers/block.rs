@@ -59,7 +59,7 @@ impl BlockProvider for RocksStorage {
         let mut transactions = Vec::with_capacity(header.get_txs_count());
         for hash in header.get_txs_hashes() {
             let transaction = self.get_transaction(hash).await?;
-            transactions.push(transaction);
+            transactions.push(transaction.into_arc());
         }
 
         Ok(Block::new(header, transactions))
@@ -68,7 +68,7 @@ impl BlockProvider for RocksStorage {
     // Save a new block with its transactions and difficulty
     // Hash is Immutable to be stored efficiently in caches and sharing the same object
     // with others caches (like P2p or GetWork)
-    async fn save_block(&mut self, block: Arc<BlockHeader>, txs: &Vec<Immutable<Transaction>>, difficulty: Difficulty, cumulative_difficulty: CumulativeDifficulty, covariance: VarUint, hash: Immutable<Hash>) -> Result<(), BlockchainError> {
+    async fn save_block(&mut self, block: Arc<BlockHeader>, txs: &[Arc<Transaction>], difficulty: Difficulty, cumulative_difficulty: CumulativeDifficulty, covariance: VarUint, hash: Immutable<Hash>) -> Result<(), BlockchainError> {
         trace!("save block");
 
         let mut count_txs = 0;
