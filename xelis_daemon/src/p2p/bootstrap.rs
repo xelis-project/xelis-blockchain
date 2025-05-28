@@ -492,10 +492,11 @@ impl<S: Storage> P2pServer<S> {
                                 trace!("Retrieving TX {} for block {}", tx_hash, hash);
                                 let tx = if self.blockchain.has_tx(tx_hash).await? {
                                     self.blockchain.get_tx(tx_hash).await?
+                                        .into_arc()
                                 } else {
                                     let (tx, _) = peer.request_blocking_object(ObjectRequest::Transaction(Immutable::Owned(tx_hash.clone()))).await?
                                         .into_transaction()?;
-                                    Immutable::Owned(tx)
+                                    Arc::new(tx)
                                 };
 
                                 trace!("TX {} ok", tx_hash);
