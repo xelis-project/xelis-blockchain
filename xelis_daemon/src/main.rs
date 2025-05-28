@@ -720,10 +720,17 @@ async fn broadcast_txs<S: Storage>(manager: &CommandManager, _: ArgumentManager)
         }
     };
 
-    let mempool = blockchain.get_mempool().read().await;
-    let txs = mempool.get_txs();
+    // Don't keep the mempool lock, otherwise we may get a deadlock
+    // due to the broadcast_tx_hash locking storage for ping.
+    let txs = {
+        let mempool = blockchain.get_mempool().read().await;
+        mempool.get_txs()
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>()
+    };
 
-    for hash in txs.keys() {
+    for hash in txs {
         info!("Broadcasting TX {}", hash);
         p2p.broadcast_tx_hash(hash.clone()).await;
     }
