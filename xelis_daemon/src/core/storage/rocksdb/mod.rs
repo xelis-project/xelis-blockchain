@@ -261,14 +261,7 @@ impl RocksStorage {
     }
 
     pub fn load_optional_from_disk<K: AsRef<[u8]> + ?Sized, V: Serializer>(&self, column: Column, key: &K) -> Result<Option<V>, BlockchainError> {
-        trace!("load optional {:?} from disk internal", column);
-
-        let cf = cf_handle!(self.db, column);
-        match self.db.get_pinned_cf(&cf, key.as_ref())
-            .with_context(|| format!("Internal error while reading column {:?}", column))? {
-            Some(bytes) => Ok(Some(V::from_bytes(&bytes)?)),
-            None => Ok(None)
-        }
+        Self::load_optional_from_disk_internal(&self.db, self.snapshot.as_ref(), column, key)
     }
 
     pub fn load_from_disk<K: AsRef<[u8]> + ?Sized, V: Serializer>(&self, column: Column, key: &K) -> Result<V, BlockchainError> {
