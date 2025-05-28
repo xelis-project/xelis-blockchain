@@ -3,7 +3,7 @@ use std::{
     ops::{Deref, DerefMut},
     panic::Location,
     sync::{Arc, Mutex as StdMutex},
-    time::Duration
+    time::{Duration, Instant}
 };
 use tokio::{
     sync::{
@@ -19,8 +19,8 @@ use log::{debug, error};
 // to panic on a failed lock and print all actual lock locations
 pub struct RwLock<T: ?Sized> {
     init_location: &'static Location<'static>,
-    active_write_location: Arc<StdMutex<Option<&'static Location<'static>>>>,
-    active_read_locations: Arc<StdMutex<Vec<&'static Location<'static>>>>,
+    active_write_location: Arc<StdMutex<Option<(&'static Location<'static>, Instant)>>>,
+    active_read_locations: Arc<StdMutex<Vec<(&'static Location<'static>, Instant)>>>,
     inner: InnerRwLock<T>
 }
 
@@ -38,12 +38,12 @@ impl<T: ?Sized> RwLock<T> {
         }
     }
 
-    fn show_locations(&self, location: &Location) {
+    fn show_locations(&self, location: &Location, write: bool) {
         let mut msg = String::new();
         {
             let location = self.active_write_location.lock().expect("last write location");
-            if let Some(location) = location.as_ref() {
-                msg.push_str(&format!("\n- write guard at: {}", location));
+            if let Some((location, start)) = location.as_ref() {
+                msg.push_str(&format!("\n- write guard at: {} since {:?}", location, start.elapsed()));
             } else {
                 msg.push_str("\n- no active write location");
             }
@@ -51,32 +51,36 @@ impl<T: ?Sized> RwLock<T> {
 
         {
             let locations = self.active_read_locations.lock().expect("last read locations");
-            for (i, location) in locations.iter().enumerate() {
-                msg.push_str(&format!("\n- read guard #{} at: {}", i, location));
+            for (i, (location, start)) in locations.iter().enumerate() {
+                msg.push_str(&format!("\n- read guard #{} at: {} since {:?}", i, location, start.elapsed()));
             }
         }
 
-        error!("RwLock {} timed out at {}: {}", self.init_location, location, msg)
+        error!("RwLock {} (write = {}) timed out at {}: {}", self.init_location, write, location, msg)
     }
 
     #[track_caller]
     pub fn read(&self) -> impl Future<Output = RwLockReadGuard<'_, T>> {
         let location = Location::caller();
         debug!("RwLock {} trying to read at {}", self.init_location, location);
-        async {
+        async move {
             loop {
                 match timeout(Duration::from_secs(10), self.inner.read()).await {
                     Ok(guard) => {
+                        debug!("RwLock {} read guard acquired at {}", self.init_location, location);
                         let mut locations = self.active_read_locations.lock().expect("active read locations");
-                        locations.push(location);
+                        let start = Instant::now();
+                        locations.push((location, start.clone()));
         
                         return RwLockReadGuard {
-                            inner: guard,
+                            init_location: self.init_location,
+                            inner: Some(guard),
                             locations: self.active_read_locations.clone(),
                             location,
+                            lifetime: start,
                         };
                     }
-                    Err(_) => self.show_locations(location)
+                    Err(_) => self.show_locations(location, false)
                 };
             }
         }
@@ -86,17 +90,19 @@ impl<T: ?Sized> RwLock<T> {
     pub fn write(&self) -> impl Future<Output = RwLockWriteGuard<'_, T>> {
         let location = Location::caller();
         debug!("RwLock {} trying to write at {}", self.init_location, location);
-        async {
+        async move {
             loop {
                 match timeout(Duration::from_secs(10), self.inner.write()).await {
                     Ok(guard) => {
-                        *self.active_write_location.lock().expect("last write location") = Some(location);
+                        debug!("RwLock {} write guard acquired at {}", self.init_location, location);
+                        *self.active_write_location.lock().expect("last write location") = Some((location, Instant::now()));
                         return RwLockWriteGuard {
-                            inner: guard,
+                            init_location: self.init_location,
+                            inner: Some(guard),
                             active_location: self.active_write_location.clone(),
                         };
                     }
-                    Err(_) => self.show_locations(location)
+                    Err(_) => self.show_locations(location, true)
                 };
             }
         }
@@ -105,18 +111,25 @@ impl<T: ?Sized> RwLock<T> {
 
 #[derive(Debug)]
 pub struct RwLockReadGuard<'a, T: ?Sized> {
-    inner: InnerRwLockReadGuard<'a, T>,
-    locations: Arc<StdMutex<Vec<&'static Location<'static>>>>,
+    init_location: &'static Location<'static>,
+    inner: Option<InnerRwLockReadGuard<'a, T>>,
+    locations: Arc<StdMutex<Vec<(&'static Location<'static>, Instant)>>>,
     location: &'static Location<'static>,
+    lifetime: Instant,
 }
 
 impl<'a, T: ?Sized> Drop for RwLockReadGuard<'a, T> {
     fn drop(&mut self) {
+        {
+            let guard = self.inner.take().expect("drop");
+            drop(guard);
+        }
+
         // We don't use a HashSet in case of multi threading where we would lock at same location
-        debug!("Dropping RwLockReadGuard at {}", self.location);
+        debug!("Dropping {} RwLockReadGuard at {} after {:?}", self.init_location, self.location, self.lifetime.elapsed());
         let mut locations = self.locations.lock().expect("locations");
         let index = locations.iter()
-            .position(|v| *v == self.location)
+            .position(|(v, _)| *v == self.location)
             .expect("location position");
 
         locations.remove(index);
@@ -127,24 +140,30 @@ impl<'a, T: ?Sized> Deref for RwLockReadGuard<'a, T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
-        &self.inner
+        &self.inner.as_ref().expect("not dropped")
     }
 }
 
 #[derive(Debug)]
 pub struct RwLockWriteGuard<'a, T: ?Sized> {
-    inner: InnerRwLockWriteGuard<'a, T>,
-    active_location: Arc<StdMutex<Option<&'static Location<'static>>>>,
+    init_location: &'static Location<'static>,
+    inner: Option<InnerRwLockWriteGuard<'a, T>>,
+    active_location: Arc<StdMutex<Option<(&'static Location<'static>, Instant)>>>,
 }
 
 impl<'a, T: ?Sized> Drop for RwLockWriteGuard<'a, T> {
     fn drop(&mut self) {
-        let active_location = self.active_location.lock()
+        {
+            let guard = self.inner.take().expect("drop");
+            drop(guard);
+        }
+
+        let (active_location, lifetime) = self.active_location.lock()
             .expect("active write location")
             .take()
             .expect("active write location should be set");
 
-        debug!("Dropping RwLockWriteGuard at {}", active_location);
+        debug!("Dropping {} RwLockWriteGuard at {} after {:?}", self.init_location, active_location, lifetime.elapsed());
     }
 }
 
@@ -152,13 +171,14 @@ impl<'a, T: ?Sized> Deref for RwLockWriteGuard<'a, T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
-        &self.inner
+        &self.inner.as_ref().expect("not dropped")
     }
 }
 
 impl<'a, T: ?Sized> DerefMut for RwLockWriteGuard<'a, T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.inner
+        self.inner.as_mut()
+            .expect("not dropped")
     }
 }
 
