@@ -59,6 +59,13 @@ struct ChainValidatorProvider<'a, S: Storage> {
     storage: &'a S,
 }
 
+impl<'a, S: Storage> ChainValidatorProvider<'a, S> {
+    // Check in chain validator or in storage if block exists
+    pub async fn has_block_with_hash(&self, hash: &Hash) -> Result<bool, BlockchainError> {
+        Ok(self.parent.blocks.contains_key(hash) || self.storage.has_block_with_hash(hash).await?)
+    }
+}
+
 impl<'a, S: Storage> ChainValidator<'a, S> {
     // Starting topoheight must be 1 topoheight above the common point
     pub fn new(blockchain: &'a Blockchain<S>) -> Self {        
@@ -149,7 +156,7 @@ impl<'a, S: Storage> ChainValidator<'a, S> {
         {
             for tip in tips {
                 trace!("Checking tip {} for block {}", tip, hash);
-                if !self.blocks.contains_key(tip) && !self.blockchain.has_block(tip).await? {
+                if !self.blocks.contains_key(tip) && !provider.has_block_with_hash(tip).await? {
                     debug!("Block {} contains tip {} which is not present in chain validator", hash, tip);
                     return Err(BlockchainError::InvalidTipsNotFound(hash, tip.clone()))
                 }

@@ -370,10 +370,7 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
         };
 
         trace!("Retrieving mempool size");
-        let mempool = {
-            let mempool = blockchain.get_mempool().read().await;
-            mempool.size()
-        };
+        let mempool = blockchain.get_mempool_size().await;
 
         trace!("Retrieving network hashrate");
         let version = get_version_at_height(blockchain.get_network(), blockchain.get_height());

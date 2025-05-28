@@ -759,16 +759,14 @@ async fn get_assets<S: Storage>(context: &Context, body: Value) -> Result<Value,
         .skip(skip)
         .take(maximum);
 
-    // TODO: build from iterator
-    let mut response = Vec::new();
-    for res in assets {
+    let response = assets.map(|res| {
         let (asset, topoheight, inner) = res?;
-        response.push(RPCAssetData {
+        Ok(RPCAssetData {
             asset: Cow::Owned(asset),
             topoheight,
             inner
-        });
-    }
+        })
+    }).collect::<Result<Vec<_>, BlockchainError>>()?;
 
     Ok(json!(response))
 }

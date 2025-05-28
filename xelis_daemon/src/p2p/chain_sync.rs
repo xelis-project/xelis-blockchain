@@ -409,16 +409,18 @@ impl<S: Storage> P2pServer<S> {
                     let apply = res.as_ref()
                         .map_or(false, |(_, v)| v.is_ok());
 
-                    debug!("locking storage write mode for commit point");
-                    let mut storage = self.blockchain.get_storage().write().await;
-                    debug!("locked storage write mode for commit point");
+                    {
+                        debug!("locking storage write mode for commit point");
+                        let mut storage = self.blockchain.get_storage().write().await;
+                        debug!("locked storage write mode for commit point");
 
-                    storage.end_commit_point(apply).await?;
-                    info!("Commit point ended for chain validator, apply: {}", apply);
+                        storage.end_commit_point(apply).await?;
+                        info!("Commit point ended for chain validator, apply: {}", apply);
+                    }
 
                     if !apply {
                         debug!("Reloading chain caches from disk due to invalidation of commit point");
-                        self.blockchain.reload_from_disk_with_storage(&mut *storage).await?;
+                        self.blockchain.reload_from_disk().await?;
 
                         // Try to apply any orphaned TX back to our chain
                         // We want to prevent any loss
@@ -426,14 +428,9 @@ impl<S: Storage> P2pServer<S> {
                             debug!("Applying back orphaned {} TXs", txs.len());
                             for (hash, tx) in txs.drain(..) {
                                 debug!("Trying to apply orphaned TX {}", hash);
-                                if !storage.has_transaction(&hash).await? && {
-                                    debug!("locking mempool read mode to check tx");
-                                    let mempool = self.blockchain.get_mempool().read().await;
-                                    debug!("mempool locked read mode to check tx");
-                                    !mempool.contains_tx(&hash)
-                                } {
+                                if !self.blockchain.is_tx_included(&hash).await? {
                                     debug!("TX {} is not in chain, adding it to mempool", hash);
-                                    if let Err(e) = self.blockchain.add_tx_to_mempool_with_storage_and_hash(&storage, tx.into_arc(), Immutable::Owned(hash), false).await {
+                                    if let Err(e) = self.blockchain.add_tx_to_mempool_with_hash(tx.into_arc(), Immutable::Owned(hash), false).await {
                                         debug!("Couldn't add back to mempool after commit point rollbacked: {}", e);
                                     }
                                 } else {
@@ -462,28 +459,22 @@ impl<S: Storage> P2pServer<S> {
                 let mut futures = FuturesOrdered::new();
                 let group_id = self.object_tracker.next_group_id();
 
-                {
-                    // Lock one time only
-                    let storage = self.blockchain.get_storage().read().await;
-                    for hash in blocks {
-                        debug!("processing block request {}", hash);
-                        let request_block = storage.has_block_with_hash(&hash).await?;
-                        debug!("request block: {}", hash);
-                        let fut = async move {
-                            if !request_block {
-                                debug!("Requesting boost sync block {}", hash);
-                                peer.request_blocking_object(ObjectRequest::Block(Immutable::Owned(hash.clone())))
-                                    .await?
-                                    .into_block()
-                                    .map(|(block, hash)| ResponseHelper::Requested(block, hash))
-                            } else {
-                                debug!("Block {} is already in chain, verify if its in DAG", hash);
-                                Ok(ResponseHelper::NotRequested(hash))
-                            }
-                        };
-    
-                        futures.push_back(fut);
-                    }
+                for hash in blocks {
+                    debug!("processing block request {}", hash);
+                    let fut = async {
+                        if !self.blockchain.has_block(&hash).await? {
+                            debug!("Requesting boost sync block {}", hash);
+                            peer.request_blocking_object(ObjectRequest::Block(Immutable::Owned(hash.clone())))
+                                .await?
+                                .into_block()
+                                .map(|(block, hash)| ResponseHelper::Requested(block, hash))
+                        } else {
+                            debug!("Block {} is already in chain, verify if its in DAG", hash);
+                            Ok(ResponseHelper::NotRequested(hash))
+                        }
+                    };
+
+                    futures.push_back(fut);
                 }
 
                 let mut exit_signal = self.exit_sender.subscribe();

@@ -2489,6 +2489,8 @@ impl<S: Storage> P2pServer<S> {
                 }
             }
         }).await;
+
+        debug!("broadcast tx {} done", tx);
     }
 
     // broadcast block to all peers that can accept directly this new block
