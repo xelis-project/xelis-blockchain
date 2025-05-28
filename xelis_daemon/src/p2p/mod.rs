@@ -995,9 +995,11 @@ impl<S: Storage> P2pServer<S> {
             .collect::<IndexSet<_>>()
             .await;
 
-        // Try to not reuse the same peer between each sync
+        // Try to not reuse the same peer between each sync if we had an error
         if let Some((previous_peer, priority, err)) = previous_peer {
-            if peers.len() > 1 || (err && !priority) {
+            // If we had an error with previous peer and it was not a priority node
+            // and that we have still another peer for syncing, remove previous peer
+            if peers.len() > 1 && (err && !priority) {
                 debug!("removing previous peer {} from random selection, err: {}, priority: {}", previous_peer, err, priority);
                 // We don't need to preserve the order
                 if let Some(position) = peers.iter().position(|p| p.get_id() == previous_peer) {
