@@ -19,25 +19,14 @@ use super::BlockHeader;
 pub struct Block {
     #[serde(flatten)]
     header: Immutable<BlockHeader>,
-    transactions: Vec<Immutable<Transaction>>
+    transactions: Vec<Arc<Transaction>>
 }
 
 impl Block {
-    pub fn new(header: Immutable<BlockHeader>, transactions: Vec<Immutable<Transaction>>) -> Self {
+    pub fn new(header: Immutable<BlockHeader>, transactions: Vec<Arc<Transaction>>) -> Self {
         Block {
             header,
             transactions
-        }
-    }
-
-    pub fn with(mut block: BlockHeader, transactions: Vec<Transaction>) -> Self {
-        transactions.iter().for_each(|tx| {
-            block.txs_hashes.insert(tx.hash());
-        });
-
-        Block {
-            header: Immutable::Owned(block),
-            transactions: transactions.into_iter().map(|tx| Immutable::Owned(tx)).collect()
         }
     }
 
@@ -53,11 +42,11 @@ impl Block {
         self.transactions.len()
     }
 
-    pub fn get_transactions(&self) -> &Vec<Immutable<Transaction>> {
+    pub fn get_transactions(&self) -> &Vec<Arc<Transaction>> {
         &self.transactions
     }
 
-    pub fn split(self) -> (Immutable<BlockHeader>, Vec<Immutable<Transaction>>) {
+    pub fn split(self) -> (Immutable<BlockHeader>, Vec<Arc<Transaction>>) {
         (self.header, self.transactions)
     }
 }
@@ -72,10 +61,10 @@ impl Serializer for Block {
 
     fn read(reader: &mut Reader) -> Result<Block, ReaderError> {
         let block = BlockHeader::read(reader)?;
-        let mut txs: Vec<Immutable<Transaction>> = Vec::new();
+        let mut txs = Vec::new();
         for _ in 0..block.get_txs_count() {
             let tx = Transaction::read(reader)?;
-            txs.push(Immutable::Owned(tx));     
+            txs.push(Arc::new(tx));     
         }
 
         Ok(Block::new(Immutable::Owned(block), txs))

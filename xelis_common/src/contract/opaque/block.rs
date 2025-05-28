@@ -84,7 +84,7 @@ pub fn block_transactions(_: FnInstance, _: FnParams, context: &mut Context) -> 
         .iter()
         .zip(block.get_transactions())
         .map(|(hash, tx)| Primitive::Opaque(OpaqueWrapper::new(OpaqueTransaction {
-            inner: tx.as_arc(),
+            inner: tx.clone(),
             hash: hash.clone()
         })).into())
         .collect();

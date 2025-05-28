@@ -6,9 +6,11 @@ mod zkp_cache;
 use std::{
     borrow::Cow,
     collections::HashMap,
-    iter
+    iter,
+    sync::Arc
 };
 
+use anyhow::Context;
 use bulletproofs::RangeProof;
 use curve25519_dalek::{
     ristretto::CompressedRistretto,
@@ -21,7 +23,7 @@ use log::{debug, trace};
 use merlin::Transcript;
 use xelis_vm::ModuleValidator;
 use crate::{
-    tokio::block_in_place_safe,
+    tokio::{block_in_place_safe, task::spawn_blocking},
     account::Nonce,
     config::{BURN_PER_CONTRACT, MAX_GAS_USAGE_PER_TX, XELIS_ASSET},
     contract::ContractProvider,
@@ -960,22 +962,20 @@ impl Transaction {
         Ok((transcript, final_commitments))
     }
 
-    pub async fn verify_batch<'a, T, H, E, B, C>(
-        txs: &'a [(T, H)],
+    pub async fn verify_batch<'a, H, E, B, C>(
+        txs: impl Iterator<Item = &'a (Arc<Transaction>, H)>,
         state: &mut B,
         cache: &C,
     ) -> Result<(), VerificationError<E>>
     where
-        T: AsRef<Transaction>,
-        H: AsRef<Hash>,
+        H: AsRef<Hash> + 'a,
         B: BlockchainVerificationState<'a, E>,
         C: ZKPCache<E>
     {
-        trace!("Verifying batch of {} transactions", txs.len());
+        trace!("Verifying batch of transactions");
         let mut sigma_batch_collector = BatchCollector::default();
-        let mut prepared = Vec::with_capacity(txs.len());
+        let mut prepared = Vec::new();
         for (tx, hash) in txs {
-            let tx = tx.as_ref();
             let hash = hash.as_ref();
 
             // In case the cache already know this TX
@@ -990,11 +990,13 @@ impl Transaction {
             } else {
                 let (transcript, commitments) = tx
                     .pre_verify(hash, state, &mut sigma_batch_collector).await?;
-                prepared.push((tx, hash, transcript, commitments));
+                prepared.push((tx.clone(), transcript, commitments));
             }
         }
 
-        block_in_place_safe(|| {
+        // Spawn a dedicated thread for the ZK Proofs verification
+        // this prevent us from blocking the current thread
+        spawn_blocking(move || {
             sigma_batch_collector
                 .verify()
                 .map_err(|_| ProofVerificationError::GenericProof)?;
@@ -1002,7 +1004,7 @@ impl Transaction {
             if !prepared.is_empty() {
                 RangeProof::verify_batch(
                     prepared.iter_mut()
-                        .map(|(tx, _, transcript, commitments)| {
+                        .map(|(tx, transcript, commitments)| {
                             tx.range_proof
                                 .verification_view(
                                     transcript,
@@ -1018,7 +1020,7 @@ impl Transaction {
                 debug!("no range proof to verify, skipping them");
                 Ok(())
             }
-        })?;
+        }).await.context("spawning blocking thread for ZK verification")??;
 
         Ok(())
     }
@@ -1046,6 +1048,8 @@ impl Transaction {
             Some(self.pre_verify(tx_hash, state, &mut sigma_batch_collector).await?)
         };
 
+        // Block in place instead of spawning a dedicated thread to reduce overhead
+        // verification is expected to be fast enough to not block anything
         block_in_place_safe(|| {
             trace!("Verifying sigma proofs");
             sigma_batch_collector
