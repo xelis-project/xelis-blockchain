@@ -2,7 +2,7 @@ use std::{
     future::Future,
     ops::{Deref, DerefMut},
     panic::Location,
-    sync::{Arc, Mutex as StdMutex},
+    sync::{atomic::{AtomicBool, Ordering}, Arc, Mutex as StdMutex},
     time::{Duration, Instant}
 };
 use tokio::{
@@ -13,7 +13,7 @@ use tokio::{
     },
     time::timeout
 };
-use log::{debug, error};
+use log::{debug, error, log, Level};
 
 // Simple wrapper around RwLock
 // to panic on a failed lock and print all actual lock locations
@@ -21,7 +21,8 @@ pub struct RwLock<T: ?Sized> {
     init_location: &'static Location<'static>,
     active_write_location: Arc<StdMutex<Option<(&'static Location<'static>, Instant)>>>,
     active_read_locations: Arc<StdMutex<Vec<(&'static Location<'static>, Instant)>>>,
-    inner: InnerRwLock<T>
+    show: AtomicBool,
+    inner: InnerRwLock<T>,
 }
 
 impl<T: ?Sized> RwLock<T> {
@@ -34,11 +35,16 @@ impl<T: ?Sized> RwLock<T> {
             init_location: Location::caller(),
             active_write_location: Arc::new(StdMutex::new(None)),
             active_read_locations: Arc::new(StdMutex::new(Vec::new())),
-            inner: InnerRwLock::new(value)
+            show: AtomicBool::new(true),
+            inner: InnerRwLock::new(value),
         }
     }
 
     fn show_locations(&self, location: &Location, write: bool) {
+        if !self.show.swap(false, Ordering::SeqCst) {
+            return
+        }
+
         let mut msg = String::new();
         {
             let location = self.active_write_location.lock().expect("last write location");
@@ -67,17 +73,21 @@ impl<T: ?Sized> RwLock<T> {
             loop {
                 match timeout(Duration::from_secs(10), self.inner.read()).await {
                     Ok(guard) => {
-                        debug!("RwLock {} read guard acquired at {}", self.init_location, location);
+                        let level = if !self.show.swap(true, Ordering::SeqCst) {
+                            Level::Warn
+                        } else {
+                            Level::Debug
+                        };
+                        log!(level, "RwLock {} read guard acquired at {}", self.init_location, location);
+
                         let mut locations = self.active_read_locations.lock().expect("active read locations");
-                        let start = Instant::now();
-                        locations.push((location, start.clone()));
+                        locations.push((location, Instant::now()));
         
                         return RwLockReadGuard {
                             init_location: self.init_location,
                             inner: Some(guard),
                             locations: self.active_read_locations.clone(),
                             location,
-                            lifetime: start,
                         };
                     }
                     Err(_) => self.show_locations(location, false)
@@ -94,7 +104,12 @@ impl<T: ?Sized> RwLock<T> {
             loop {
                 match timeout(Duration::from_secs(10), self.inner.write()).await {
                     Ok(guard) => {
-                        debug!("RwLock {} write guard acquired at {}", self.init_location, location);
+                        let level = if !self.show.swap(true, Ordering::SeqCst) {
+                            Level::Warn
+                        } else {
+                            Level::Debug
+                        };
+                        log!(level, "RwLock {} write guard acquired at {}", self.init_location, location);
                         *self.active_write_location.lock().expect("last write location") = Some((location, Instant::now()));
                         return RwLockWriteGuard {
                             init_location: self.init_location,
@@ -115,7 +130,6 @@ pub struct RwLockReadGuard<'a, T: ?Sized> {
     inner: Option<InnerRwLockReadGuard<'a, T>>,
     locations: Arc<StdMutex<Vec<(&'static Location<'static>, Instant)>>>,
     location: &'static Location<'static>,
-    lifetime: Instant,
 }
 
 impl<'a, T: ?Sized> Drop for RwLockReadGuard<'a, T> {
@@ -126,13 +140,15 @@ impl<'a, T: ?Sized> Drop for RwLockReadGuard<'a, T> {
         }
 
         // We don't use a HashSet in case of multi threading where we would lock at same location
-        debug!("Dropping {} RwLockReadGuard at {} after {:?}", self.init_location, self.location, self.lifetime.elapsed());
-        let mut locations = self.locations.lock().expect("locations");
+        let mut locations = self.locations.lock()
+            .expect("locations");
+
         let index = locations.iter()
             .position(|(v, _)| *v == self.location)
             .expect("location position");
-
-        locations.remove(index);
+    
+        let (_, lifetime) = locations.remove(index);
+        debug!("Dropping {} RwLockReadGuard at {} after {:?}", self.init_location, self.location, lifetime.elapsed());
     }
 }
 
