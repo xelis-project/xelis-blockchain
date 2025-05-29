@@ -369,8 +369,7 @@ impl<S: Storage> GetWorkServer<S> {
             };
         }
 
-        let block = self.blockchain.build_block_from_header(Immutable::Owned(miner_header)).await
-            .context("Error while building block from header")?;
+        let block = self.blockchain.build_block_from_header(Immutable::Owned(miner_header)).await?;
         let block_hash = Arc::new(block.hash());
 
         Ok(match self.blockchain.add_new_block(block, Some(Immutable::Arc(block_hash.clone())), BroadcastOption::All, true).await {
