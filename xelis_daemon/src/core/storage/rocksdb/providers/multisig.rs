@@ -101,13 +101,15 @@ impl MultiSigProvider for RocksStorage {
     }
 
     // Store the last multisig setup for a given account
-    async fn set_last_multisig_to<'a>(&mut self, account: &PublicKey, topoheight: TopoHeight, multisig: VersionedMultiSig<'a>) -> Result<(), BlockchainError> {
-        trace!("set last multisig to {} for {}", topoheight, account.as_address(self.is_mainnet()));
-        let account = self.get_account_type(account)?;
-        let key = Self::get_versioned_multisig_key(account.id, topoheight);
+    async fn set_last_multisig_to<'a>(&mut self, key: &PublicKey, topoheight: TopoHeight, multisig: VersionedMultiSig<'a>) -> Result<(), BlockchainError> {
+        trace!("set last multisig to {} for {}", topoheight, key.as_address(self.is_mainnet()));
+        let mut account = self.get_account_type(key)?;
+        account.multisig_pointer = Some(topoheight);
 
-        self.insert_into_disk(Column::VersionedMultisig, &key, &multisig)?;
-        self.insert_into_disk(Column::Account, key, &account)
+        let versioned_key = Self::get_versioned_multisig_key(account.id, topoheight);
+
+        self.insert_into_disk(Column::VersionedMultisig, &versioned_key, &multisig)?;
+        self.insert_into_disk(Column::Account, key.as_bytes(), &account)
     }
 }
 
