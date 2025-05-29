@@ -629,7 +629,7 @@ impl<S: Storage> P2pServer<S> {
     // This check in chain storage & in blocks propagation queue
     async fn should_request_block(&self, hash: &Hash) -> Result<bool, BlockchainError> {
         {
-            let lock = self.blocks_propagation_queue.lock().await;
+            let lock = self.blocks_propagation_queue.read().await;
             if lock.contains(hash) {
                 return Ok(false)
             }

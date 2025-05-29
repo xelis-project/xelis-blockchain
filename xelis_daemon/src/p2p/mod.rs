@@ -69,8 +69,8 @@ use xelis_common::{
             broadcast,
             mpsc,
             oneshot,
-            Mutex,
-            Semaphore
+            Semaphore,
+            RwLock,
         },
         task::JoinHandle,
         time::{interval, sleep, timeout},
@@ -139,12 +139,12 @@ pub struct P2pServer<S: Storage> {
     is_running: AtomicBool,
     // Synced cache to prevent concurrent tasks adding the block
     // Timestamp is None if block is not yet executed
-    blocks_propagation_queue: Mutex<LruCache<Arc<Hash>, Option<TimestampMillis>>>,
+    blocks_propagation_queue: RwLock<LruCache<Arc<Hash>, Option<TimestampMillis>>>,
     // Sender for the blocks processing task to have an ordered queue
     blocks_processor: mpsc::Sender<(Arc<Peer>, BlockHeader, Arc<Hash>)>,
     // Sender for the transactions propagated
     // Synced cache to prevent concurrent tasks adding the block
-    txs_propagation_queue: Mutex<LruCache<Arc<Hash>, TimestampMillis>>,
+    txs_propagation_queue: RwLock<LruCache<Arc<Hash>, TimestampMillis>>,
     // Sender for the txs processing task to have an ordered queue
     txs_processor: mpsc::Sender<(Arc<Peer>, Arc<Hash>)>,
     // allow fast syncing (only balances / assets / Smart Contracts changes)
@@ -286,9 +286,9 @@ impl<S: Storage> P2pServer<S> {
             connections_sender,
             object_tracker,
             is_running: AtomicBool::new(true),
-            blocks_propagation_queue: Mutex::new(LruCache::new(NonZeroUsize::new(STABLE_LIMIT as usize * TIPS_LIMIT).expect("non-zero blocks propagation queue"))),
+            blocks_propagation_queue: RwLock::new(LruCache::new(NonZeroUsize::new(STABLE_LIMIT as usize * TIPS_LIMIT).expect("non-zero blocks propagation queue"))),
             blocks_processor,
-            txs_propagation_queue: Mutex::new(LruCache::new(NonZeroUsize::new(TRANSACTIONS_CHANNEL_CAPACITY).expect("non-zero transactions propagation queue"))),
+            txs_propagation_queue: RwLock::new(LruCache::new(NonZeroUsize::new(TRANSACTIONS_CHANNEL_CAPACITY).expect("non-zero transactions propagation queue"))),
             txs_processor,
             allow_fast_sync_mode,
             allow_boost_sync_mode,
@@ -1419,7 +1419,7 @@ impl<S: Storage> P2pServer<S> {
                             };
                             txs_futures.push_back(future);
                         }
-    
+
                         // Now collect all the futures
                         let txs = txs_futures.try_collect::<Vec<_>>().await
                             .context("Error while collecting all TXs")?;
@@ -1438,7 +1438,7 @@ impl<S: Storage> P2pServer<S> {
                         Ok(Some((block, block_hash, peer))) => {
                             {
                                 debug!("Locking blocks propagation queue to mark the execution timestamp for {}", block_hash);
-                                let mut blocks_propagation_queue = self.blocks_propagation_queue.lock().await;
+                                let mut blocks_propagation_queue = self.blocks_propagation_queue.write().await;
                                 match blocks_propagation_queue.peek_mut(&block_hash) {
                                     Some(v) => {
                                         *v = Some(get_current_time_in_millis());
@@ -1829,12 +1829,17 @@ impl<S: Storage> P2pServer<S> {
 
                 // Check that we are not already waiting on it
                 {
-                    debug!("Adding TX {} to propagation queue", hash);
-                    let mut txs_propagation_queue = self.txs_propagation_queue.lock().await;
+                    debug!("checking TX {} in propagation queue", hash);
+                    let txs_propagation_queue = self.txs_propagation_queue.read().await;
                     if txs_propagation_queue.contains(&hash) {
                         debug!("TX {} propagated is already in processing from another peer", hash);
                         return Ok(())
                     }
+                }
+
+                {
+                    debug!("adding TX {} in propagation queue", hash);
+                    let mut txs_propagation_queue = self.txs_propagation_queue.write().await;
                     txs_propagation_queue.put(hash.clone(), get_current_time_in_millis());
                 }
 
@@ -1909,11 +1914,18 @@ impl<S: Storage> P2pServer<S> {
 
                 // Check that we are not already waiting on it
                 {
-                    let mut blocks_propagation_queue = self.blocks_propagation_queue.lock().await;
+                    debug!("checking block {} in propagation queue", block_hash);
+                    let blocks_propagation_queue = self.blocks_propagation_queue.read().await;
                     if blocks_propagation_queue.contains(&block_hash) {
                         debug!("Block {} propagated is already in processing from another peer", block_hash);
                         return Ok(())
                     }
+                }
+
+                // Add it in queue
+                {
+                    debug!("adding block {} in propagation queue", block_hash);
+                    let mut blocks_propagation_queue = self.blocks_propagation_queue.write().await;
                     blocks_propagation_queue.put(block_hash.clone(), None);
                 }
 
@@ -2422,7 +2434,7 @@ impl<S: Storage> P2pServer<S> {
 
     // Retrieve at which timestamp the block got finally started to be finally executed
     pub async fn get_block_propagation_timestamp(&self, hash: &Hash) -> Option<TimestampMillis> {
-        let blocks_propagation_queue = self.blocks_propagation_queue.lock().await;
+        let blocks_propagation_queue = self.blocks_propagation_queue.read().await;
         blocks_propagation_queue.peek(hash)
             .copied()
             .flatten()
@@ -2514,7 +2526,7 @@ impl<S: Storage> P2pServer<S> {
         // Lock the block from being handled again as we are broadcasting it
         if is_from_mining {
             debug!("Locking block propagation {}", hash);
-            let mut blocks_propagation_queue = self.blocks_propagation_queue.lock().await;
+            let mut blocks_propagation_queue = self.blocks_propagation_queue.write().await;
             blocks_propagation_queue.put(hash.clone(), Some(get_current_time_in_millis()));
         }
 
