@@ -2366,15 +2366,13 @@ impl<S: Storage> Blockchain<S> {
                 trace!("Ordering block {} at topoheight {}", hash, highest_topo);
 
                 storage.set_topo_height_for_block(&hash, highest_topo).await?;
-                let past_emitted_supply = if highest_topo == 0 {
-                    0
+                let (past_emitted_supply, past_burned_supply) = if highest_topo == 0 {
+                    (0, 0)
                 } else {
-                    storage.get_supply_at_topo_height(highest_topo - 1).await?
-                };
-                let past_burned_supply = if highest_topo == 0 {
-                    0
-                } else {
-                    storage.get_burned_supply_at_topo_height(highest_topo - 1).await?
+                    (
+                        storage.get_supply_at_topo_height(highest_topo - 1).await?,
+                        storage.get_burned_supply_at_topo_height(highest_topo - 1).await?
+                    )
                 };
 
                 // Block for this hash
