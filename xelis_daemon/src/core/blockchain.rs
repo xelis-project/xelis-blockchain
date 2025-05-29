@@ -1770,12 +1770,18 @@ impl<S: Storage> Blockchain<S> {
         let mut tx_selector = TxSelector::with_capacity(caches.len());
         for cache in caches.values() {
             let cache_txs = cache.get_txs();
-            let mut txs = Vec::with_capacity(cache_txs.len());
             // Map every tx hash to a TxSelectorEntry
-            for tx_hash in cache_txs.iter() {
-                let sorted_tx = mempool.get_sorted_tx(tx_hash)?;
-                txs.push(TxSelectorEntry { size: sorted_tx.get_size(), hash: tx_hash, tx: sorted_tx.get_tx() });
-            }
+            let txs = cache_txs.iter()
+                .map(|tx_hash| {
+                    let sorted_tx = mempool.get_sorted_tx(tx_hash)?;
+                    Ok(TxSelectorEntry {
+                        size: sorted_tx.get_size(),
+                        hash: tx_hash,
+                        tx: sorted_tx.get_tx()
+                    })
+                })
+                .collect::<Result<VecDeque<_>, BlockchainError>>()?;
+
             tx_selector.push_group(txs);
         }
 

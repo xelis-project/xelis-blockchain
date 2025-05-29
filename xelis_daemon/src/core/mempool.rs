@@ -26,7 +26,6 @@ use xelis_common::{
     network::Network,
     time::{get_current_time_in_seconds, TimestampSeconds},
     transaction::{
-        verify::NoZKPCache,
         MultiSigPayload,
         Transaction
     }
@@ -142,7 +141,8 @@ impl Mempool {
     // All checks are made in Blockchain before calling this function
     pub async fn add_tx<S: Storage>(&mut self, storage: &S, environment: &Environment, stable_topoheight: TopoHeight, topoheight: TopoHeight, hash: Arc<Hash>, tx: Arc<Transaction>, size: usize, block_version: BlockVersion) -> Result<(), BlockchainError> {
         let mut state = MempoolState::new(&self, storage, environment, stable_topoheight, topoheight, block_version, self.mainnet);
-        tx.verify(&hash, &mut state, &NoZKPCache).await?;
+        let tx_cache = TxCache::new(storage, self, self.disable_zkp_cache);
+        tx.verify(&hash, &mut state, &tx_cache).await?;
 
         let (balances, multisig) = state.get_sender_cache(tx.get_source())
             .ok_or_else(|| BlockchainError::AccountNotFound(tx.get_source().as_address(self.mainnet)))?;
