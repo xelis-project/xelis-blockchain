@@ -1048,7 +1048,7 @@ impl<S: Storage> P2pServer<S> {
 
     // Get the current syncing rate if its syncing
     pub fn get_syncing_rate_bps(&self) -> Option<u64> {
-        if self.is_syncing_chain() && self.allow_boost_sync() {
+        if self.is_syncing_chain() {
             Some(self.syncing_rate_bps.load(Ordering::SeqCst))
         } else {
             None

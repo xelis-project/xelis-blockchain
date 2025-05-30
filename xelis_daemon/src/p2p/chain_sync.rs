@@ -4,11 +4,11 @@ use futures::{stream::FuturesOrdered, StreamExt, TryStreamExt};
 use indexmap::IndexSet;
 use log::{debug, error, info, trace, warn};
 use xelis_common::{
-    tokio::time::interval,
     block::{Block, BlockVersion},
     crypto::Hash,
     immutable::Immutable,
     time::{get_current_time_in_millis, TimestampMillis},
+    tokio::{time::interval, Scheduler},
     transaction::Transaction
 };
 
@@ -454,107 +454,94 @@ impl<S: Storage> P2pServer<S> {
             // it will first add blocks to sync, and then all alt-tips blocks if any (top blocks)
             let mut total_requested = 0;
             let start = Instant::now();
-            if self.allow_boost_sync() {
+
+            let capacity = if self.allow_boost_sync() {
                 debug!("Requesting needed blocks in boost sync mode");
-                let mut futures = FuturesOrdered::new();
-                let group_id = self.object_tracker.next_group_id();
+                None
+            } else {
+                Some(1)
+            };
 
-                for hash in blocks {
-                    debug!("processing block request {}", hash);
-                    let fut = async {
-                        if !self.blockchain.has_block(&hash).await? {
-                            debug!("Requesting boost sync block {}", hash);
-                            peer.request_blocking_object(ObjectRequest::Block(Immutable::Owned(hash.clone())))
-                                .await?
-                                .into_block()
-                                .map(|(block, hash)| ResponseHelper::Requested(block, hash))
-                        } else {
-                            debug!("Block {} is already in chain or being processed, verify if its in DAG", hash);
-                            Ok(ResponseHelper::NotRequested(hash))
-                        }
-                    };
+            let mut futures = Scheduler::new(capacity);
+            let group_id = self.object_tracker.next_group_id();
 
-                    futures.push_back(fut);
-                }
+            for hash in blocks {
+                debug!("processing block request {}", hash);
+                let fut = async {
+                    if !self.blockchain.has_block(&hash).await? {
+                        debug!("Requesting boost sync block {}", hash);
+                        peer.request_blocking_object(ObjectRequest::Block(Immutable::Owned(hash.clone())))
+                            .await?
+                            .into_block()
+                            .map(|(block, hash)| ResponseHelper::Requested(block, hash))
+                    } else {
+                        debug!("Block {} is already in chain or being processed, verify if its in DAG", hash);
+                        Ok(ResponseHelper::NotRequested(hash))
+                    }
+                };
 
-                let mut exit_signal = self.exit_sender.subscribe();
-                let mut internal_bps = interval(Duration::from_secs(1));
-                let mut blocks_processed = 0;
-                'main: loop {
-                    tokio::select! {
-                        _ = exit_signal.recv() => {
-                            debug!("Stopping chain sync due to exit signal");
+                futures.push_back(fut);
+            }
+
+            let mut exit_signal = self.exit_sender.subscribe();
+            let mut internal_bps = interval(Duration::from_secs(1));
+            let mut blocks_processed = 0;
+            'main: loop {
+                tokio::select! {
+                    _ = exit_signal.recv() => {
+                        debug!("Stopping chain sync due to exit signal");
+                        break 'main;
+                    },
+                    _ = internal_bps.tick() => {
+                        self.set_chain_sync_rate_bps(blocks_processed);
+                        blocks_processed = 0;
+                    },
+                    next = futures.next() => {
+                        let Some(res) = next else {
+                            debug!("No more items in futures for chain sync");
                             break 'main;
-                        },
-                        _ = internal_bps.tick() => {
-                            self.set_chain_sync_rate_bps(blocks_processed);
-                            blocks_processed = 0;
-                        },
-                        next = futures.next() => {
-                            let Some(res) = next else {
-                                debug!("No more items in futures for chain sync");
-                                break 'main;
-                            };
+                        };
 
-                            match res {
-                                Ok(response) => match response {
-                                    ResponseHelper::Requested(block, hash) => {
-                                        blocks_processed += 1;
-                                        total_requested += 1;
-                                        // Lets ensure that the block is not already in chain
-                                        // This may happen if we try to chain sync with peer
-                                        // while we got the block through propagation
-                                        if !self.blockchain.has_block(&hash).await? {
-                                            if let Err(e) = self.blockchain.add_new_block(block, Some(Immutable::Owned(hash)), BroadcastOption::Miners, false).await {
-                                                // We need to drop the future before in case we have any future holding a mutex guard
-                                                drop(futures);
-    
-                                                self.object_tracker.mark_group_as_fail(group_id).await;
-                                                return Err(e)
-                                            }
-                                        } else {
-                                            debug!("Block {} is already in chain despite requesting it, skipping it..", hash);
-                                        }
-                                    },
-                                    ResponseHelper::NotRequested(hash) => {
-                                        if let Err(e) = self.try_re_execution_block(Immutable::Owned(hash)).await {
+                        match res {
+                            Ok(response) => match response {
+                                ResponseHelper::Requested(block, hash) => {
+                                    blocks_processed += 1;
+                                    total_requested += 1;
+                                    // Lets ensure that the block is not already in chain
+                                    // This may happen if we try to chain sync with peer
+                                    // while we got the block through propagation
+                                    if !self.blockchain.has_block(&hash).await? {
+                                        if let Err(e) = self.blockchain.add_new_block(block, Some(Immutable::Owned(hash)), BroadcastOption::Miners, false).await {
+                                            // We need to drop the future before in case we have any future holding a mutex guard
                                             drop(futures);
 
                                             self.object_tracker.mark_group_as_fail(group_id).await;
                                             return Err(e)
                                         }
+                                    } else {
+                                        debug!("Block {} is already in chain despite requesting it, skipping it..", hash);
                                     }
                                 },
-                                Err(e) => {
-                                    debug!("Unregistering group id {} due to error {}", group_id, e);
-                                    // Same as above
-                                    drop(futures);
+                                ResponseHelper::NotRequested(hash) => {
+                                    if let Err(e) = self.try_re_execution_block(Immutable::Owned(hash)).await {
+                                        drop(futures);
 
-                                    self.object_tracker.mark_group_as_fail(group_id).await;
-                                    return Err(e.into())
+                                        self.object_tracker.mark_group_as_fail(group_id).await;
+                                        return Err(e)
+                                    }
                                 }
-                            };
-                        }
-                    };
-                }
-            } else {
-                debug!("Requesting needed blocks in normal mode");
-                for hash in blocks {
-                    if !self.blockchain.has_block(&hash).await? {
-                        trace!("Block {} is not found, asking it to {} (index = {})", hash, peer.get_outgoing_address(), total_requested);
-                        // Otherwise, request them one by one and wait for the response
-                        let (block, hash) = peer.request_blocking_object(ObjectRequest::Block(Immutable::Owned(hash))).await?
-                            .into_block()?;
+                            },
+                            Err(e) => {
+                                debug!("Unregistering group id {} due to error {}", group_id, e);
+                                // Same as above
+                                drop(futures);
 
-                        trace!("Received block {} at height {} from {}", hash, block.get_height(), peer);
-                        // Trust the block hash as we computed it for the owned object response
-                        self.blockchain.add_new_block(block, Some(Immutable::Owned(hash)), BroadcastOption::Miners, false).await?;
-
-                        total_requested += 1;
-                    } else {
-                        self.try_re_execution_block(Immutable::Owned(hash)).await?;
+                                self.object_tracker.mark_group_as_fail(group_id).await;
+                                return Err(e.into())
+                            }
+                        };
                     }
-                }
+                };
             }
 
             let elapsed = start.elapsed().as_secs();
@@ -610,7 +597,7 @@ impl<S: Storage> P2pServer<S> {
         let block = {
             let mut storage = self.blockchain.get_storage().write().await;
             debug!("storage write acquired for block forced re-execution");
-    
+
             let block = storage.delete_block_with_hash(&hash).await?;
             let mut tips = storage.get_tips().await?;
             if tips.remove(&hash) {
