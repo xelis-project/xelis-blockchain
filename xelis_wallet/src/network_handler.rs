@@ -1,7 +1,7 @@
 use std::{
     borrow::Cow,
     collections::HashSet,
-    sync::{atomic::{AtomicBool, Ordering}, Arc},
+    sync::Arc,
     time::{Duration, Instant}
 };
 use futures::{stream, StreamExt, TryStreamExt};
@@ -1014,19 +1014,35 @@ impl NetworkHandler {
             // Update all tracked assets
             let storage = self.wallet.get_storage().read().await;
             let iter = storage.get_tracked_assets()?;
-            iter.collect::<Result<HashSet<_>, _>>()?
+            let mut tracked_assets = HashSet::new();
+
+            // Only track assets that are actually available
+            for res in iter {
+                let asset = res?;
+                if storage.has_asset(&asset).await? {
+                    tracked_assets.insert(asset);
+                } else {
+                    debug!("Tracked asset {} is not available", asset);
+                }
+            }
+
+            tracked_assets
         };
 
         trace!("Tracked assets: {}", tracked_assets.len());
 
-        let atomic_sync_blocks = AtomicBool::new(false);
-        // Reference are Copy & Send due to scoped stream
-        let sync_blocks = &atomic_sync_blocks;
-        stream::iter(tracked_assets.into_iter().map(Ok::<_, Error>))
-            .try_for_each_concurrent(self.concurrency, |asset| async move {
+        let mut should_sync_blocks = stream::iter(tracked_assets.into_iter())
+            .map(|asset| async move {
                 trace!("requesting latest balance for {}", asset);
                 // get the balance for this asset
-                let result = self.api.get_balance(&address, &asset).await?;
+                let result = match self.api.get_balance(&address, &asset).await {
+                    Ok(res) => res,
+                    Err(e) => {
+                        warn!("No balance found for tracked asset {}: {}", asset, e);
+                        self.wallet.propagate_event(Event::SyncError { message: format!("Error on asset {}: {}", asset, e) }).await;
+                        return Ok(false)
+                    }
+                };
                 trace!("found balance at topoheight: {}", result.topoheight);
 
                 let mut ciphertext = result.version.take_balance();
@@ -1063,7 +1079,7 @@ impl NetworkHandler {
                             Some(v) => v,
                             None => {
                                 warn!("Couldn't decrypt ciphertext for asset {}, skipping it", asset);
-                                return Ok(());
+                                return Ok::<_, Error>(false);
                             }
                         }
                     };
@@ -1079,15 +1095,17 @@ impl NetworkHandler {
                     debug!("Storing balance at topoheight {} for asset {} ({}) {}", topoheight, asset, value, ciphertext);
                     storage.set_balance_for(&asset, Balance::new(value, ciphertext)).await?;
 
-                    // We should sync new blocks to get the TXs
-                    sync_blocks.store(true, Ordering::SeqCst);
+                    Ok(true)
                 } else {
                     debug!("balance for asset {} is already up-to-date", asset);
+                    Ok(false)
                 }
-
-                Ok(())
+            })
+            .buffer_unordered(self.concurrency)
+            .try_fold(false, |acc, x| async move {
+                Ok(acc | x)
             }).await?;
-        let mut should_sync_blocks = atomic_sync_blocks.load(Ordering::SeqCst);
+
         // Apply changes
         {
             if let Some(new_nonce) = new_nonce {

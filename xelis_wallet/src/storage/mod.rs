@@ -656,7 +656,7 @@ impl EncryptedStorage {
 
     // Retrieve the stored decimals for this asset for better display
     pub async fn get_asset(&self, asset: &Hash) -> Result<AssetData> {
-        trace!("get asset");
+        trace!("get asset {}", asset);
         let mut cache = self.assets_cache.lock().await;
         if let Some(asset) = cache.get(asset) {
             return Ok(asset.clone());
@@ -666,6 +666,20 @@ impl EncryptedStorage {
         cache.put(asset.clone(), data.clone());
 
         Ok(data)
+    }
+
+
+    // Retrieve the stored decimals for this asset for better display
+    pub async fn has_asset(&self, asset: &Hash) -> Result<bool> {
+        trace!("has asset {}", asset);
+        {
+            let cache = self.assets_cache.lock().await;
+            if cache.contains(asset) {
+                return Ok(true);
+            }
+        }
+
+        self.contains_with_encrypted_key(&self.assets, asset.as_bytes())
     }
 
     // Retrieve the stored decimals for this asset for better display
