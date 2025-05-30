@@ -462,7 +462,7 @@ impl<S: Storage> P2pServer<S> {
                 for hash in blocks {
                     debug!("processing block request {}", hash);
                     let fut = async {
-                        if self.should_request_block(&hash).await? {
+                        if !self.blockchain.has_block(&hash).await? {
                             debug!("Requesting boost sync block {}", hash);
                             peer.request_blocking_object(ObjectRequest::Block(Immutable::Owned(hash.clone())))
                                 .await?
@@ -540,7 +540,7 @@ impl<S: Storage> P2pServer<S> {
             } else {
                 debug!("Requesting needed blocks in normal mode");
                 for hash in blocks {
-                    if self.should_request_block(&hash).await? {
+                    if !self.blockchain.has_block(&hash).await? {
                         trace!("Block {} is not found, asking it to {} (index = {})", hash, peer.get_outgoing_address(), total_requested);
                         // Otherwise, request them one by one and wait for the response
                         let (block, hash) = peer.request_blocking_object(ObjectRequest::Block(Immutable::Owned(hash))).await?
@@ -623,19 +623,5 @@ impl<S: Storage> P2pServer<S> {
 
         // Replicate same behavior as above branch
         self.blockchain.add_new_block(block, Some(hash), BroadcastOption::Miners, false).await
-    }
-
-    // Should we request the block for chain sync?
-    // This check in chain storage & in blocks propagation queue
-    async fn should_request_block(&self, hash: &Hash) -> Result<bool, BlockchainError> {
-        {
-            let lock = self.blocks_propagation_queue.read().await;
-            if lock.contains(hash) {
-                return Ok(false)
-            }
-        }
-
-        self.blockchain.has_block(hash).await
-            .map(|v| !v)
     }
 }
