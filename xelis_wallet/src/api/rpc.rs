@@ -268,6 +268,8 @@ async fn get_tracked_assets(context: &Context, body: Value) -> Result<Value, Int
         MAX_ASSETS
     };
 
+    // In case of a huge reorg, a tracked asset may be inexistant if the asset got removed temporarily
+    // This must be taken in count
     let storage = wallet.get_storage().read().await;
     let tracked_assets = storage.get_tracked_assets()?
         .skip(params.skip.unwrap_or(0))

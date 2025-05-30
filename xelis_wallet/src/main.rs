@@ -446,6 +446,12 @@ async fn setup_wallet_command_manager(wallet: Arc<Wallet>, command_manager: &Com
         CommandHandler::Async(async_handler!(list_assets))
     ))?;
     command_manager.add_command(Command::with_optional_arguments(
+        "list_balances",
+        "List all balances tracked",
+        vec![Arg::new("page", ArgType::Number)],
+        CommandHandler::Async(async_handler!(list_balances))
+    ))?;
+    command_manager.add_command(Command::with_optional_arguments(
         "list_tracked_assets",
         "List all assets marked as tracked",
         vec![Arg::new("page", ArgType::Number)],
@@ -847,6 +853,48 @@ async fn list_assets(manager: &CommandManager, mut args: ArgumentManager) -> Res
     Ok(())
 }
 
+async fn list_balances(manager: &CommandManager, mut args: ArgumentManager) -> Result<(), CommandError> {
+    let context = manager.get_context().lock()?;
+    let wallet: &Arc<Wallet> = context.get()?;
+
+    let page = if args.has_argument("page") {
+        args.get_value("page")?.to_number()? as usize
+    } else {
+        0
+    };
+
+    let storage = wallet.get_storage().read().await;
+    let count = storage.get_tracked_assets_count()?;
+
+    if count == 0 {
+        manager.message("No balances found");
+        return Ok(())
+    }
+
+    let mut max_pages = count / ELEMENTS_PER_PAGE;
+    if count % ELEMENTS_PER_PAGE != 0 {
+        max_pages += 1;
+    }
+
+    if page > max_pages {
+        return Err(CommandError::InvalidArgument(format!("Page must be less than maximum pages ({})", max_pages - 1)));
+    }
+
+    manager.message(format!("Balances (page {}/{}):", page, max_pages));
+    for res in storage.get_tracked_assets()?.skip(page * ELEMENTS_PER_PAGE).take(ELEMENTS_PER_PAGE) {
+        let asset = res?;
+        if let Some(data) = storage.get_optional_asset(&asset).await? {
+            let balance = storage.get_plaintext_balance_for(&asset).await?;
+            manager.message(format!("Balance for asset {} ({}): {}", data.get_name(), asset, format_coin(balance, data.get_decimals())));
+        } else {
+            manager.message(format!("No asset data for {}", asset));
+        }
+
+    }
+
+    Ok(())
+}
+
 async fn list_tracked_assets(manager: &CommandManager, mut args: ArgumentManager) -> Result<(), CommandError> {
     let context = manager.get_context().lock()?;
     let wallet: &Arc<Wallet> = context.get()?;
@@ -877,8 +925,11 @@ async fn list_tracked_assets(manager: &CommandManager, mut args: ArgumentManager
     manager.message(format!("Assets (page {}/{}):", page, max_pages));
     for res in storage.get_tracked_assets()?.skip(page * ELEMENTS_PER_PAGE).take(ELEMENTS_PER_PAGE) {
         let asset = res?;
-        let data = storage.get_asset(&asset).await?;
-        manager.message(format!("{} ({} decimals): {}", asset, data.get_decimals(), data.get_name()));
+        if let Some(data) = storage.get_optional_asset(&asset).await? {
+            manager.message(format!("{} ({} decimals): {}", asset, data.get_decimals(), data.get_name()));
+        } else {
+            manager.message(format!("No asset data for {}", asset));
+        }
     }
 
     Ok(())
@@ -1258,7 +1309,9 @@ async fn balance(manager: &CommandManager, mut arguments: ArgumentManager) -> Re
     let asset = if arguments.has_argument("asset") {
         arguments.get_value("asset")?.to_hash()?
     } else {
-        prompt.read_hash("Asset ID: ").await?
+        prompt.read_hash(
+            prompt.colorize_string(Color::Green, "Asset (default XELIS): ")
+        ).await.unwrap_or(XELIS_ASSET)
     };
     let balance = storage.get_plaintext_balance_for(&asset).await?;
     let data = storage.get_asset(&asset).await?;

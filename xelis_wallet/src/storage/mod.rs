@@ -260,9 +260,16 @@ impl EncryptedStorage {
     // load from disk using an encrypted key, decrypt the value and deserialize it
     fn load_from_disk_with_encrypted_key<V: Serializer>(&self, tree: &Tree, key: &[u8]) -> Result<V> {
         trace!("load from disk with encrypted key");
-        let encrypted_key = self.create_encrypted_key(key)?;
-        self.internal_load(tree, &encrypted_key)?
+        self.load_from_disk_optional_with_encrypted_key(tree, key)?
             .context(format!("Error while loading data with encrypted key {} from disk", String::from_utf8_lossy(key)))
+    }
+
+
+    // load from disk using an encrypted key, decrypt the value and deserialize it
+    fn load_from_disk_optional_with_encrypted_key<V: Serializer>(&self, tree: &Tree, key: &[u8]) -> Result<Option<V>> {
+        trace!("load from disk optional with encrypted key");
+        let encrypted_key = self.create_encrypted_key(key)?;
+        self.internal_load(tree, &encrypted_key)
     }
 
     // Encrypt key, encrypt data and then save to disk
@@ -657,6 +664,22 @@ impl EncryptedStorage {
 
         let data: AssetData = self.load_from_disk_with_encrypted_key(&self.assets, asset.as_bytes())?;
         cache.put(asset.clone(), data.clone());
+
+        Ok(data)
+    }
+
+    // Retrieve the stored decimals for this asset for better display
+    pub async fn get_optional_asset(&self, asset: &Hash) -> Result<Option<AssetData>> {
+        trace!("get asset");
+        let mut cache = self.assets_cache.lock().await;
+        if let Some(asset) = cache.get(asset) {
+            return Ok(Some(asset.clone()));
+        }
+
+        let data: Option<AssetData> = self.load_from_disk_optional_with_encrypted_key(&self.assets, asset.as_bytes())?;
+        if let Some(data) = data.as_ref() {
+            cache.put(asset.clone(), data.clone());
+        }
 
         Ok(data)
     }
