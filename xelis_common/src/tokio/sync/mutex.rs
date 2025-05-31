@@ -9,8 +9,9 @@ use std::{
     time::Duration
 };
 use tokio::{
+    pin,
     sync::{Mutex as InnerMutex, MutexGuard},
-    time::timeout
+    time::interval
 };
 use log::{debug, log, Level};
 
@@ -39,14 +40,15 @@ impl<T: ?Sized> Mutex<T> {
     pub fn lock(&self) -> impl Future<Output = MutexGuard<'_, T>> {
         let location = Location::caller();
         debug!("Mutex at {} locking at {}", self.init_location, location);
+
         async move {
+            let mut interval = interval(Duration::from_secs(10));
+            let future = self.inner.lock();
+            pin!(future);
+
             loop {
-                match timeout(Duration::from_secs(10), self.inner.lock()).await {
-                    Ok(guard) => {
-                        *self.last_location.lock().expect("last lock location") = Some(location);
-                        return guard;
-                    }
-                    Err(_) => {
+                tokio::select! {
+                    _ = interval.tick() => {
                         let level = if self.show.swap(false, Ordering::SeqCst) {
                             Level::Error
                         } else {
@@ -64,7 +66,12 @@ impl<T: ?Sized> Mutex<T> {
 
                         log!(level, "{}", msg);
                     }
-                };
+                    guard = &mut future => {
+                        debug!("Mutex {} write guard acquired at {}", self.init_location, location);
+                        *self.last_location.lock().expect("last lock location") = Some(location);
+                        return guard;
+                    }
+                }
             }
         }
     }
