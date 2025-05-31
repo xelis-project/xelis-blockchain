@@ -6,12 +6,13 @@ use std::{
     time::{Duration, Instant}
 };
 use tokio::{
+    pin,
     sync::{
         RwLock as InnerRwLock,
         RwLockReadGuard as InnerRwLockReadGuard,
         RwLockWriteGuard as InnerRwLockWriteGuard,
     },
-    time::timeout
+    time::interval
 };
 use log::{debug, error, log, Level};
 
@@ -69,20 +70,30 @@ impl<T: ?Sized> RwLock<T> {
     pub fn read(&self) -> impl Future<Output = RwLockReadGuard<'_, T>> {
         let location = Location::caller();
         debug!("RwLock {} trying to read at {}", self.init_location, location);
+
         async move {
+            let mut interval = interval(Duration::from_secs(10));
+            let future = self.inner.read();
+            pin!(future);
+
             loop {
-                match timeout(Duration::from_secs(10), self.inner.read()).await {
-                    Ok(guard) => {
+                tokio::select! {
+                    _ = interval.tick() => {
+                        if self.show.swap(false, Ordering::SeqCst) {
+                            self.show_locations(location, false);
+                        }
+                    }
+                    guard = &mut future => {
                         let level = if !self.show.swap(true, Ordering::SeqCst) {
                             Level::Warn
                         } else {
                             Level::Debug
                         };
                         log!(level, "RwLock {} read guard acquired at {}", self.init_location, location);
-
+    
                         let mut locations = self.active_read_locations.lock().expect("active read locations");
                         locations.push((location, Instant::now()));
-        
+    
                         return RwLockReadGuard {
                             init_location: self.init_location,
                             inner: Some(guard),
@@ -90,8 +101,7 @@ impl<T: ?Sized> RwLock<T> {
                             location,
                         };
                     }
-                    Err(_) => self.show_locations(location, false)
-                };
+                }
             }
         }
     }
@@ -100,10 +110,20 @@ impl<T: ?Sized> RwLock<T> {
     pub fn write(&self) -> impl Future<Output = RwLockWriteGuard<'_, T>> {
         let location = Location::caller();
         debug!("RwLock {} trying to write at {}", self.init_location, location);
+
         async move {
+            let mut interval = interval(Duration::from_secs(10));
+            let future = self.inner.write();
+            pin!(future);
+
             loop {
-                match timeout(Duration::from_secs(10), self.inner.write()).await {
-                    Ok(guard) => {
+                tokio::select! {
+                    _ = interval.tick() => {
+                        if self.show.swap(false, Ordering::SeqCst) {
+                            self.show_locations(location, true);
+                        }
+                    }
+                    guard = &mut future => {
                         let level = if !self.show.swap(true, Ordering::SeqCst) {
                             Level::Warn
                         } else {
@@ -117,8 +137,7 @@ impl<T: ?Sized> RwLock<T> {
                             active_location: self.active_write_location.clone(),
                         };
                     }
-                    Err(_) => self.show_locations(location, true)
-                };
+                }
             }
         }
     }
