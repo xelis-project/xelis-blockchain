@@ -2,7 +2,6 @@ use crate::p2p::error::P2pError;
 use std::sync::PoisonError;
 use strum::{EnumDiscriminants, IntoDiscriminant};
 use thiserror::Error;
-use tokio::sync::AcquireError;
 use xelis_common::{
     crypto::{
         bech32::Bech32Error,
@@ -12,6 +11,7 @@ use xelis_common::{
         Hash,
         XelisHashError
     },
+    tokio::sync::AcquireError,
     account::Nonce,
     block::TopoHeight,
     difficulty::DifficultyError,

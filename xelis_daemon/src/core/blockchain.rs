@@ -1590,6 +1590,18 @@ impl<S: Storage> Blockchain<S> {
     pub async fn has_tx(&self, hash: &Hash) -> Result<bool, BlockchainError> {
         trace!("has tx {}", hash);
 
+        // check in mempool first
+        // if its present, returns it
+        // Hopefully no deadlock appear here as we lock independently
+        debug!("has tx {} in mempool", hash);
+        {
+            let mempool = self.mempool.read().await;
+            debug!("mempool lock acquired for has tx {}", hash);
+            if mempool.contains_tx(hash) {
+                debug!("TX {} found in mempool", hash);
+                return Ok(true)
+            }
+        }
 
         // check in storage now
         debug!("has tx {} in storage", hash);
@@ -1598,18 +1610,6 @@ impl<S: Storage> Blockchain<S> {
             debug!("storage read acquired for has tx {}", hash);
             if storage.has_transaction(hash).await? {
                 debug!("TX {} found in storage", hash);
-                return Ok(true)
-            }
-        }
-
-        // check in mempool first
-        // if its present, returns it
-        debug!("has tx {} in mempool", hash);
-        {
-            let mempool = self.mempool.read().await;
-            debug!("mempool lock acquired for has tx {}", hash);
-            if mempool.contains_tx(hash) {
-                debug!("TX {} found in mempool", hash);
                 return Ok(true)
             }
         }
@@ -1623,17 +1623,6 @@ impl<S: Storage> Blockchain<S> {
     pub async fn is_tx_included(&self, hash: &Hash) -> Result<bool, BlockchainError> {
         trace!("is tx {} maybe compatible", hash);
 
-        // check in storage now
-        debug!("is tx {} already executed", hash);
-        {
-            let storage = self.storage.read().await;
-            debug!("storage read acquired for is tx {} compatible", hash);
-            if storage.is_tx_executed_in_a_block(hash)? {
-                debug!("TX {} found in storage", hash);
-                return Ok(true)
-            }
-        }
-
         // check in mempool first
         // if its present, returns it
         debug!("is tx {} included in mempool", hash);
@@ -1646,6 +1635,17 @@ impl<S: Storage> Blockchain<S> {
             }
         }
 
+        // check in storage now
+        debug!("is tx {} already executed", hash);
+        {
+            let storage = self.storage.read().await;
+            debug!("storage read acquired for is tx {} compatible", hash);
+            if storage.is_tx_executed_in_a_block(hash)? {
+                debug!("TX {} found in storage", hash);
+                return Ok(true)
+            }
+        }
+
         debug!("TX {} is not included anywhere", hash);
         Ok(false)
     }
@@ -1653,6 +1653,18 @@ impl<S: Storage> Blockchain<S> {
     // retrieve the TX based on its hash by searching in mempool then on disk
     pub async fn get_tx(&self, hash: &Hash) -> Result<Immutable<Transaction>, BlockchainError> {
         trace!("get tx {} from blockchain", hash);
+
+        // check in mempool first
+        // if its present, returns it
+        {
+            debug!("Locking mempool for get tx {}", hash);
+            let mempool = self.mempool.read().await;
+            debug!("Mempool locked for get tx {}", hash);
+            if let Ok(tx) =  mempool.get_tx(hash) {
+                debug!("found {} in mempool", hash);
+                return Ok(Immutable::Arc(tx))
+            }
+        }
 
         // check in storage now
         {
@@ -1665,18 +1677,7 @@ impl<S: Storage> Blockchain<S> {
             }
         }
 
-        // check in mempool first
-        // if its present, returns it
-        let res = {
-            debug!("Locking mempool for get tx {}", hash);
-            let mempool = self.mempool.read().await;
-            debug!("Mempool locked for get tx {}", hash);
-            mempool.get_tx(hash)
-        };
-
-        debug!("found {} in mempool: {}", hash, res.is_ok());
-
-        res.map(|v| Immutable::Arc(v))
+        Err(BlockchainError::TxNotFound(hash.clone()))
     }
 
     pub async fn get_block_header_template(&self, address: PublicKey) -> Result<BlockHeader, BlockchainError> {

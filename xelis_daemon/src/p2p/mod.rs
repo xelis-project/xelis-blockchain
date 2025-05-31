@@ -987,6 +987,7 @@ impl<S: Storage> P2pServer<S> {
                     debug!("{} is a candidate for chain sync, our topoheight: {}, our height: {}", p, our_topoheight, our_height);
                     Some(p)
                 } else {
+                    trace!("{} is not ahead of us, skipping it", p);
                     None
                 }
             })
