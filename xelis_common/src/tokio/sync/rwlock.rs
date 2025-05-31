@@ -124,7 +124,7 @@ impl<T: ?Sized> RwLock<T> {
                         }
                     }
                     guard = &mut future => {
-                        let level = if !self.show.swap(true, Ordering::SeqCst) {
+                        let level = if self.show.swap(true, Ordering::SeqCst) {
                             Level::Warn
                         } else {
                             Level::Debug
