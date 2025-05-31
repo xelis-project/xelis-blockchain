@@ -2,7 +2,7 @@ use std::{
     future::Future,
     ops::{Deref, DerefMut},
     panic::Location,
-    sync::{atomic::{AtomicBool, Ordering}, Arc, Mutex as StdMutex},
+    sync::{Arc, Mutex as StdMutex},
     time::{Duration, Instant}
 };
 use tokio::{
@@ -22,7 +22,6 @@ pub struct RwLock<T: ?Sized> {
     init_location: &'static Location<'static>,
     active_write_location: Arc<StdMutex<Option<(&'static Location<'static>, Instant)>>>,
     active_read_locations: Arc<StdMutex<Vec<(&'static Location<'static>, Instant)>>>,
-    show: AtomicBool,
     inner: InnerRwLock<T>,
 }
 
@@ -36,16 +35,11 @@ impl<T: ?Sized> RwLock<T> {
             init_location: Location::caller(),
             active_write_location: Arc::new(StdMutex::new(None)),
             active_read_locations: Arc::new(StdMutex::new(Vec::new())),
-            show: AtomicBool::new(true),
             inner: InnerRwLock::new(value),
         }
     }
 
     fn show_locations(&self, location: &Location, write: bool) {
-        if !self.show.swap(false, Ordering::SeqCst) {
-            return
-        }
-
         let mut msg = String::new();
         {
             let location = self.active_write_location.lock().expect("last write location");
@@ -76,15 +70,17 @@ impl<T: ?Sized> RwLock<T> {
             let future = self.inner.read();
             pin!(future);
 
+            let mut show = true;
             loop {
                 tokio::select! {
                     _ = interval.tick() => {
-                        if self.show.swap(false, Ordering::SeqCst) {
+                        if show {
                             self.show_locations(location, false);
+                            show = false;
                         }
                     }
                     guard = &mut future => {
-                        let level = if !self.show.swap(true, Ordering::SeqCst) {
+                        let level = if !show {
                             Level::Warn
                         } else {
                             Level::Debug
@@ -116,15 +112,18 @@ impl<T: ?Sized> RwLock<T> {
             let future = self.inner.write();
             pin!(future);
 
+            let mut show = true;
             loop {
                 tokio::select! {
                     _ = interval.tick() => {
-                        if self.show.swap(false, Ordering::SeqCst) {
+                        if !show {
                             self.show_locations(location, true);
+                            show = false;
                         }
                     }
                     guard = &mut future => {
-                        let level = if self.show.swap(true, Ordering::SeqCst) {
+                        // It was maybe deadlocked, show it in warn
+                        let level = if !show {
                             Level::Warn
                         } else {
                             Level::Debug
