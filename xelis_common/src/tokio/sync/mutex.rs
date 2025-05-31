@@ -38,6 +38,9 @@ impl<T: ?Sized> Mutex<T> {
 
         async move {
             let mut interval = interval(Duration::from_secs(10));
+            // First tick is instant
+            interval.tick().await;
+
             let future = self.inner.lock();
             pin!(future);
 

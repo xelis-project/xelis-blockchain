@@ -67,6 +67,9 @@ impl<T: ?Sized> RwLock<T> {
 
         async move {
             let mut interval = interval(Duration::from_secs(10));
+            // First tick is instant
+            interval.tick().await;
+
             let future = self.inner.read();
             pin!(future);
 
@@ -109,6 +112,9 @@ impl<T: ?Sized> RwLock<T> {
 
         async move {
             let mut interval = interval(Duration::from_secs(10));
+            // First tick is instant
+            interval.tick().await;
+
             let future = self.inner.write();
             pin!(future);
 
