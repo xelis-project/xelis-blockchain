@@ -2,10 +2,7 @@ use std::{
     future::Future,
     ops::{Deref, DerefMut},
     panic::Location,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Mutex as StdMutex
-    },
+    sync::Mutex as StdMutex,
     time::Duration
 };
 use tokio::{
@@ -13,12 +10,11 @@ use tokio::{
     sync::{Mutex as InnerMutex, MutexGuard},
     time::interval
 };
-use log::{debug, log, Level};
+use log::{debug, error, log, Level};
 
 pub struct Mutex<T: ?Sized> {
     init_location: &'static Location<'static>,
     last_location: StdMutex<Option<&'static Location<'static>>>,
-    show: AtomicBool,
     inner: InnerMutex<T>,
 }
 
@@ -31,7 +27,6 @@ impl<T: ?Sized> Mutex<T> {
         Self {
             init_location: Location::caller(),
             last_location: StdMutex::new(None),
-            show: AtomicBool::new(true),
             inner: InnerMutex::new(t)
         }
     }
@@ -46,28 +41,31 @@ impl<T: ?Sized> Mutex<T> {
             let future = self.inner.lock();
             pin!(future);
 
+            let mut show = true;
             loop {
                 tokio::select! {
                     _ = interval.tick() => {
-                        let level = if self.show.swap(false, Ordering::SeqCst) {
-                            Level::Error
+                        if show {
+                            show = false;
+                            let last = self.last_location.lock().expect("last lock location");
+                            let mut msg = format!("Mutex at {} failed locking at {}.", self.init_location, location);
+                            match *last {
+                                Some(last) => {
+                                    msg.push_str(&format!("\n- Last successful lock at: {}", last));
+                                }
+                                None => {}
+                            };
+ 
+                            error!("{}", msg);
+                        }
+                    }
+                    guard = &mut future => {
+                        let level = if !show {
+                            Level::Warn
                         } else {
                             Level::Debug
                         };
-
-                        let last = self.last_location.lock().expect("last lock location");
-                        let mut msg = format!("Mutex at {} failed locking at {}.", self.init_location, location);
-                        match *last {
-                            Some(last) => {
-                                msg.push_str(&format!("\n- Last successful lock at: {}", last));
-                            }
-                            None => {}
-                        };
-
-                        log!(level, "{}", msg);
-                    }
-                    guard = &mut future => {
-                        debug!("Mutex {} write guard acquired at {}", self.init_location, location);
+                        log!(level, "Mutex {} write guard acquired at {}", self.init_location, location);
                         *self.last_location.lock().expect("last lock location") = Some(location);
                         return guard;
                     }
