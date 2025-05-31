@@ -329,6 +329,7 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
     command_manager.add_command(Command::new("show_json_config", "Show the current config in JSON", CommandHandler::Async(async_handler!(show_json_config::<S>))))?;
     command_manager.add_command(Command::with_optional_arguments("export_json_config", "Export the current config in JSON", vec![Arg::new("filename", ArgType::String)], CommandHandler::Async(async_handler!(export_json_config::<S>))))?;
     command_manager.add_command(Command::new("broadcast_txs", "Broadcast all TXs in mempool if not done", CommandHandler::Async(async_handler!(broadcast_txs::<S>))))?;
+    command_manager.add_command(Command::new("snapshot_mode", "Force to be in snapshot mode (memory only)", CommandHandler::Async(async_handler!(snapshot_mode::<S>))))?;
 
     // Don't keep the lock for ever
     let p2p = {
@@ -1084,6 +1085,18 @@ async fn clear_mempool<S: Storage>(manager: &CommandManager, _: ArgumentManager)
     let mut mempool = blockchain.get_mempool().write().await;
     mempool.clear();
     info!("Mempool cleared");
+
+    Ok(())
+}
+
+async fn snapshot_mode<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
+    let context = manager.get_context().lock()?;
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    manager.message("Starting snapshot mode...");
+    let mut storage = blockchain.get_storage().write().await;
+    storage.start_commit_point().await
+        .context("Error on commit point")?;
+    manager.message("Snapshot mode enabled");
 
     Ok(())
 }
