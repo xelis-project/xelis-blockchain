@@ -1,4 +1,4 @@
-use std::{borrow::Cow, collections::HashMap};
+use std::{borrow::Cow, collections::HashMap, sync::Arc};
 use async_trait::async_trait;
 use curve25519_dalek::Scalar;
 use indexmap::IndexSet;
@@ -114,7 +114,7 @@ struct AccountStateImpl {
     nonce: Nonce,
 }
 
-fn create_tx_for(account: Account, destination: Address, amount: u64, extra_data: Option<DataElement>) -> Transaction {
+fn create_tx_for(account: Account, destination: Address, amount: u64, extra_data: Option<DataElement>) -> Arc<Transaction> {
     let mut state = AccountStateImpl {
         balances: account.balances,
         nonce: account.nonce,
@@ -139,7 +139,7 @@ fn create_tx_for(account: Account, destination: Address, amount: u64, extra_data
     assert!(estimated_size == tx.size(), "expected {} bytes got {} bytes", tx.size(), estimated_size);
     assert!(tx.to_bytes().len() == estimated_size);
 
-    tx
+    Arc::new(tx)
 }
 
 #[test]
@@ -330,7 +330,7 @@ async fn test_burn_tx_verify() {
         assert!(estimated_size == tx.size());
         assert!(tx.to_bytes().len() == estimated_size);
 
-        tx
+        Arc::new(tx)
     };
 
     let mut state = ChainState::new();
@@ -389,7 +389,7 @@ async fn test_tx_invoke_contract() {
         assert!(estimated_size == tx.size());
         assert!(tx.to_bytes().len() == estimated_size);
 
-        tx
+        Arc::new(tx)
     };
 
     let mut state = ChainState::new();
@@ -449,7 +449,7 @@ async fn test_tx_deploy_contract() {
         assert!(estimated_size == tx.size(), "expected {} bytes got {} bytes", tx.size(), estimated_size);
         assert!(tx.to_bytes().len() == estimated_size);
 
-        tx
+        Arc::new(tx)
     };
 
     let mut state = ChainState::new();
@@ -513,7 +513,7 @@ async fn test_max_transfers() {
         assert!(estimated_size == tx.size());
         assert!(tx.to_bytes().len() == estimated_size);
 
-        tx
+        Arc::new(tx)
     };
 
     // Create the chain state
@@ -575,7 +575,7 @@ async fn test_multisig_setup() {
         assert!(estimated_size == tx.size());
         assert!(tx.to_bytes().len() == estimated_size);
 
-        tx
+        Arc::new(tx)
     };
 
     let mut state = ChainState::new();
@@ -644,7 +644,7 @@ async fn test_multisig() {
         tx.sign_multisig(&charlie.keypair, 0);
         tx.sign_multisig(&dave.keypair, 1);
 
-        tx.finalize(&alice.keypair)
+        Arc::new(tx.finalize(&alice.keypair))
     };
 
     // Create the chain state

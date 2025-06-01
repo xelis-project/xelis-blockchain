@@ -23,7 +23,7 @@ use log::{debug, trace};
 use merlin::Transcript;
 use xelis_vm::ModuleValidator;
 use crate::{
-    tokio::{block_in_place_safe, task::spawn_blocking},
+    tokio::task::spawn_blocking,
     account::Nonce,
     config::{BURN_PER_CONTRACT, MAX_GAS_USAGE_PER_TX, XELIS_ASSET},
     contract::ContractProvider,
@@ -1027,7 +1027,7 @@ impl Transaction {
 
     /// Verify one transaction. Use `verify_batch` to verify a batch of transactions.
     pub async fn verify<'a, E, B, C>(
-        &'a self,
+        self: &'a Arc<Self>,
         tx_hash: &'a Hash,
         state: &mut B,
         cache: &C,
@@ -1045,21 +1045,22 @@ impl Transaction {
             None
         }
         else {
-            Some(self.pre_verify(tx_hash, state, &mut sigma_batch_collector).await?)
+            let res = self.pre_verify(tx_hash, state, &mut sigma_batch_collector).await?;
+            Some((res, Arc::clone(&self)))
         };
 
         // Block in place instead of spawning a dedicated thread to reduce overhead
         // verification is expected to be fast enough to not block anything
-        block_in_place_safe(|| {
+        spawn_blocking(move || {
             trace!("Verifying sigma proofs");
             sigma_batch_collector
-            .verify()
-            .map_err(|_| ProofVerificationError::GenericProof)?;
+                .verify()
+                .map_err(|_| ProofVerificationError::GenericProof)?;
 
-            if let Some((mut transcript, commitments)) = res {
+            if let Some(((mut transcript, commitments), tx)) = res {
                 trace!("Verifying range proof");
                 RangeProof::verify_multiple(
-                    &self.range_proof,
+                    &tx.range_proof,
                     &BP_GENS,
                     &PC_GENS,
                     &mut transcript,
@@ -1069,8 +1070,8 @@ impl Transaction {
             } else {
                 Ok(())
             }
-        })?;
-    
+        }).await.context("spawning blocking thread for ZK verification")??;
+ 
         Ok(())
     }
 
