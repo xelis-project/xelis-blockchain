@@ -76,6 +76,7 @@ use xelis_common::{
         time::{interval, sleep, timeout},
         ThreadPool,
         Executor,
+        Scheduler,
     },
     transaction::Transaction
 };
@@ -1469,12 +1470,9 @@ impl<S: Storage> P2pServer<S> {
 
     async fn request_transaction(
         &self,
-        semaphore: &Semaphore,
         peer: &Arc<Peer>,
         hash: Arc<Hash>,
     ) -> Result<Option<Arc<Transaction>>, BlockchainError> {
-        let _permit = semaphore.acquire().await?;
-
         debug!("Requesting TX {} from {}", hash, peer);
 
         // First, re-check that we don't already have it somewhere
@@ -1494,13 +1492,11 @@ impl<S: Storage> P2pServer<S> {
     // Task for all transactions propagation
     async fn txs_processing_task(self: Arc<Self>, mut receiver: mpsc::Receiver<(Arc<Peer>, Arc<Hash>)>) {
         debug!("Starting txs processing task");
-        // Prevent requesting too many TXs at once
-        let semaphore = Arc::new(Semaphore::new(PEER_OBJECTS_CONCURRENCY));
         // Keep a cache of all pending requests to prevent requesting them twice at once
         let mut pending_requests = HashSet::new();
 
         let mut server_exit = self.exit_sender.subscribe();
-        let mut futures = FuturesOrdered::new();
+        let mut futures = Scheduler::new(Some(PEER_OBJECTS_CONCURRENCY));
 
         'main: loop {
             select! {
@@ -1515,7 +1511,6 @@ impl<S: Storage> P2pServer<S> {
                         continue;
                     }
 
-                    let semaphore = Arc::clone(&semaphore);
                     let zelf = &self;
                     let mut peer_exit = peer.get_exit_receiver();
 
@@ -1531,7 +1526,7 @@ impl<S: Storage> P2pServer<S> {
                                 debug!("{} has disconnected, skipping TX {} request", peer, hash);
                                 (Ok(None), hash)
                             },
-                            res = zelf.request_transaction(&semaphore, &peer, Arc::clone(&hash)) => (res, hash)
+                            res = zelf.request_transaction(&peer, Arc::clone(&hash)) => (res, hash)
                         }
                     };
 

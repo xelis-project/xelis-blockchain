@@ -1511,9 +1511,10 @@ impl<S: Storage> Blockchain<S> {
             // if presents, it means we have at least one tx from this owner in mempool
             if let Some(cache) = mempool.get_cache_for(tx.get_source()) {
                 // we accept to delete a tx from mempool if the new one has a higher fee
-                if let Some(hash) = cache.has_tx_with_same_nonce(tx.get_nonce()) {
+                if let Some(hash2) = cache.has_tx_with_same_nonce(tx.get_nonce()) {
                     // A TX with the same nonce is already in mempool
-                    return Err(BlockchainError::TxNonceAlreadyUsed(tx.get_nonce(), hash.as_ref().clone()))
+                    debug!("TX {} nonce is already used by TX {}", hash, hash2);
+                    return Err(BlockchainError::TxNonceAlreadyUsed(tx.get_nonce(), hash2.as_ref().clone()))
                 }
 
                 // check that the nonce is in the range
@@ -1528,6 +1529,8 @@ impl<S: Storage> Blockchain<S> {
 
             let version = get_version_at_height(self.get_network(), self.get_height());
             mempool.add_tx(storage, &self.environment, stable_topoheight, current_topoheight, hash.clone(), tx.clone(), tx_size, version).await?;
+
+            debug!("TX {} has been added to the mempool", hash);
 
             hash
         };
