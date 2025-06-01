@@ -1823,7 +1823,7 @@ impl<S: Storage> P2pServer<S> {
 
                 // Check that the tx is not in mempool or on disk already
                 debug!("checking if TX {} is already in chain", hash);
-                if self.blockchain.has_tx(&hash).await? {
+                if self.blockchain.is_tx_included(&hash).await? {
                    debug!("TX {} propagated is already in chain", hash);
                    return Ok(())
                 }
@@ -2179,12 +2179,13 @@ impl<S: Storage> P2pServer<S> {
 
                 // Process the response
                 for tx in txs.into_owned() {
-                    let tx = Arc::new(tx.into_owned());
-
-                    if let Err(e) = self.txs_processor.send((Arc::clone(peer), tx)).await {
-                        error!("Error while sending to TXs processor task from inventory response of {}: {}", peer, e);
-                        peer.increment_fail_count();
-                        return Ok(())
+                    if !self.blockchain.is_tx_included(&tx).await? {
+                        let tx = Arc::new(tx.into_owned());
+                        if let Err(e) = self.txs_processor.send((Arc::clone(peer), tx)).await {
+                            error!("Error while sending to TXs processor task from inventory response of {}: {}", peer, e);
+                            peer.increment_fail_count();
+                            return Ok(())
+                        }
                     }
                 }
 
