@@ -2,7 +2,7 @@ use std::{
     future::Future,
     ops::{Deref, DerefMut},
     panic::Location,
-    sync::{Arc, Mutex as StdMutex},
+    sync::{atomic::{AtomicU64, Ordering}, Arc, Mutex as StdMutex},
     time::{Duration, Instant}
 };
 use tokio::{
@@ -22,6 +22,7 @@ pub struct RwLock<T: ?Sized> {
     init_location: &'static Location<'static>,
     active_write_location: Arc<StdMutex<Option<(&'static Location<'static>, Instant)>>>,
     active_read_locations: Arc<StdMutex<Vec<(&'static Location<'static>, Instant)>>>,
+    read_guards: Arc<AtomicU64>,
     inner: InnerRwLock<T>,
 }
 
@@ -35,6 +36,7 @@ impl<T: ?Sized> RwLock<T> {
             init_location: Location::caller(),
             active_write_location: Arc::new(StdMutex::new(None)),
             active_read_locations: Arc::new(StdMutex::new(Vec::new())),
+            read_guards: Arc::new(AtomicU64::new(0)),
             inner: InnerRwLock::new(value),
         }
     }
@@ -57,7 +59,8 @@ impl<T: ?Sized> RwLock<T> {
             }
         }
 
-        error!("RwLock {} (write = {}) timed out at {}: {}", self.init_location, write, location, msg)
+        let guards = self.read_guards.load(Ordering::SeqCst);
+        error!("RwLock {} (write = {}) (active guards = {}) timed out at {}: {}", self.init_location, write, guards, location, msg)
     }
 
     #[track_caller]
@@ -89,15 +92,18 @@ impl<T: ?Sized> RwLock<T> {
                             Level::Debug
                         };
                         log!(level, "RwLock {} read guard acquired at {}", self.init_location, location);
-    
+
                         let mut locations = self.active_read_locations.lock().expect("active read locations");
                         locations.push((location, Instant::now()));
-    
+
+                        self.read_guards.fetch_add(1, Ordering::SeqCst);
+
                         return RwLockReadGuard {
                             init_location: self.init_location,
                             inner: Some(guard),
                             locations: self.active_read_locations.clone(),
                             location,
+                            read_guards: self.read_guards.clone(),
                         };
                     }
                 }
@@ -154,6 +160,7 @@ pub struct RwLockReadGuard<'a, T: ?Sized> {
     inner: Option<InnerRwLockReadGuard<'a, T>>,
     locations: Arc<StdMutex<Vec<(&'static Location<'static>, Instant)>>>,
     location: &'static Location<'static>,
+    read_guards: Arc<AtomicU64>,
 }
 
 impl<'a, T: ?Sized> Drop for RwLockReadGuard<'a, T> {
@@ -172,7 +179,8 @@ impl<'a, T: ?Sized> Drop for RwLockReadGuard<'a, T> {
             .expect("location position");
     
         let (_, lifetime) = locations.remove(index);
-        debug!("Dropping {} RwLockReadGuard at {} after {:?}", self.init_location, self.location, lifetime.elapsed());
+        let guards = self.read_guards.fetch_sub(1, Ordering::SeqCst);
+        debug!("Dropping {} RwLockReadGuard at {} after {:?} (guards = {})", self.init_location, self.location, lifetime.elapsed(), guards);
     }
 }
 
