@@ -52,6 +52,8 @@ pub enum InternalRpcError {
     Custom(i16, String),
     #[error("{}", _1)]
     CustomStr(i16, &'static str),
+    #[error("batch limit exceeded")]
+    BatchLimitExceeded,
 }
 
 impl InternalRpcError {
@@ -59,22 +61,31 @@ impl InternalRpcError {
         match self {
             // JSON RPC errors
             Self::ParseBodyError => -32700,
-            Self::InvalidJSONRequest | Self::InvalidRequestStr(_) | InternalRpcError::InvalidVersion => -32600,
+            Self::InvalidJSONRequest
+            | Self::InvalidRequestStr(_)
+            | Self::InvalidVersion
+            | Self::BatchLimitExceeded => -32600,
             Self::MethodNotFound(_) => -32601,
-            Self::InvalidJSONParams(_) | Self::InvalidParams(_) |  Self::InvalidParamsAny(_) | InternalRpcError::UnexpectedParams | InternalRpcError::ExpectedParams => -32602,
+            Self::InvalidJSONParams(_)
+            | Self::InvalidParams(_)
+            | Self::InvalidParamsAny(_)
+            | Self::UnexpectedParams
+            | Self::ExpectedParams => -32602,
             // Internal errors
             Self::InternalError(_) => -32603,
             // 32000 to -32099	Server error (Reserved for implementation-defined server-errors)
             Self::DeserializerError(_) => -32000,
             Self::InvalidContext => -32001,
             Self::ClientNotFound => -32002,
-            InternalRpcError::SerializeResponse(_) => -32003,
-            InternalRpcError::AnyError(_) => -32004,
+            Self::SerializeResponse(_) => -32003,
+            Self::AnyError(_) => -32004,
             // Events invalid requests
             Self::EventNotSubscribed => -1,
             Self::EventAlreadySubscribed => -2,
             // Custom errors
-            Self::Custom(code, _) | Self::CustomStr(code, _) | Self::CustomAny(code, _) => *code,
+            Self::Custom(code, _)
+            | Self::CustomStr(code, _)
+            | Self::CustomAny(code, _) => *code,
         }
     }
 }

@@ -8,8 +8,11 @@ use log::{error, trace};
 
 pub type Handler = fn(&'_ Context, Value) -> Pin<Box<dyn Future<Output = Result<Value, InternalRpcError>> + Send + '_>>;
 
+pub const JSON_RPC_BATCH_LIMIT: usize = 20;
+
 pub struct RPCHandler<T: Send + Clone + 'static> {
-    methods: HashMap<String, Handler>, // all RPC methods registered
+    // all RPC methods registered
+    methods: HashMap<String, Handler>,
     data: T
 }
 
@@ -40,7 +43,11 @@ where
         match request {
             e @ Value::Object(_) => self.execute_method(&context, self.parse_request(e)?).await.map(|e| e.unwrap_or(Value::Null)),
             Value::Array(requests) => {
-                let mut responses = Vec::new();
+                if requests.len() > JSON_RPC_BATCH_LIMIT {
+                    return Err(RpcResponseError::new(None, InternalRpcError::BatchLimitExceeded))
+                }
+
+                let mut responses = Vec::with_capacity(requests.len());
                 for value in requests {
                     if value.is_object() {
                         let request = self.parse_request(value)?;
