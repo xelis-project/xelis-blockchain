@@ -31,6 +31,7 @@ use std::{
 use bytes::Bytes;
 use rand::{seq::IteratorRandom, Rng};
 use futures::{
+    future::OptionFuture,
     stream::{self, FuturesOrdered},
     Stream,
     StreamExt,
@@ -649,6 +650,7 @@ impl<S: Storage> P2pServer<S> {
         let mut exit_receiver = self.exit_sender.subscribe();
         loop {
             select! {
+                biased;
                 _ = exit_receiver.recv() => {
                     debug!("Received exit message, exiting incoming connections task");
                     break;
@@ -1346,6 +1348,7 @@ impl<S: Storage> P2pServer<S> {
 
         loop {
             select! {
+                biased;
                 _ = server_exit.recv() => {
                     debug!("Exit message received, stopping event loop task");
                     break;
@@ -1378,6 +1381,8 @@ impl<S: Storage> P2pServer<S> {
 
         // All pending blocks
         let mut futures = FuturesOrdered::new();
+        // Current block to process
+        let mut current = None;
 
         'main: loop {
             select! {
@@ -1433,29 +1438,35 @@ impl<S: Storage> P2pServer<S> {
 
                     futures.push_back(future);
                 },
-                Some(res) = futures.next() => {
+                Some(_) = OptionFuture::from(current.as_mut()) => {},
+                Some(res) = futures.next(), if current.is_none() => {
                     // Mark the timestamp of when its being added
                     match res {
                         Ok(None) => {},
                         Ok(Some((block, block_hash, peer))) => {
-                            {
-                                debug!("Locking blocks propagation queue to mark the execution timestamp for {}", block_hash);
-                                let mut blocks_propagation_queue = self.blocks_propagation_queue.write().await;
-                                match blocks_propagation_queue.peek_mut(&block_hash) {
-                                    Some(v) => {
-                                        *v = Some(get_current_time_in_millis());
-                                    },
-                                    None => {
-                                        warn!("Block propagation {} not found in queue, are we overloaded?", block_hash);
+                            let zelf = &self;
+                            let future = async move {
+                                {
+                                    debug!("Locking blocks propagation queue to mark the execution timestamp for {}", block_hash);
+                                    let mut blocks_propagation_queue = zelf.blocks_propagation_queue.write().await;
+                                    match blocks_propagation_queue.peek_mut(&block_hash) {
+                                        Some(v) => {
+                                            *v = Some(get_current_time_in_millis());
+                                        },
+                                        None => {
+                                            warn!("Block propagation {} not found in queue, are we overloaded?", block_hash);
+                                        }
                                     }
                                 }
-                            }
+    
+                                debug!("Adding received block {} from {} to chain", block_hash, peer);
+                                if let Err(e) = zelf.blockchain.add_new_block(block, Some(Immutable::Arc(block_hash)), BroadcastOption::All, false).await {
+                                    error!("Error while adding new block from {}: {}", peer, e);
+                                    peer.increment_fail_count();
+                                }
+                            };
 
-                            debug!("Adding received block {} from {} to chain", block_hash, peer);
-                            if let Err(e) = self.blockchain.add_new_block(block, Some(Immutable::Arc(block_hash)), BroadcastOption::All, false).await {
-                                error!("Error while adding new block from {}: {}", peer, e);
-                                peer.increment_fail_count();
-                            }
+                            current = Some(Box::pin(future));
                         },
                         Err(e) => {
                             debug!("Error on blocks processing task: {}", e);
@@ -1497,6 +1508,7 @@ impl<S: Storage> P2pServer<S> {
 
         let mut server_exit = self.exit_sender.subscribe();
         let mut futures = Scheduler::new(Some(PEER_OBJECTS_CONCURRENCY));
+        let mut current = None;
 
         'main: loop {
             select! {
@@ -1504,8 +1516,13 @@ impl<S: Storage> P2pServer<S> {
                 _ = server_exit.recv() => {
                     debug!("Exit message received, stopping txs processing task");
                     break 'main;
-                }
-                Some((peer, hash)) = receiver.recv() => {
+                },
+                Some(res) = OptionFuture::from(current.as_mut()) => {
+                    if let Err(e) = res {
+                        debug!("Error while processing TX: {}", e);
+                    }
+                },
+                Some((peer, hash)) = receiver.recv(), if current.is_none() => {
                     if !pending_requests.insert(hash.clone()) {
                         debug!("TX {} is already requested, skipping it", hash);
                         continue;
@@ -1532,36 +1549,33 @@ impl<S: Storage> P2pServer<S> {
 
                     futures.push_back(future);
                 },
-                Some((res, hash)) = futures.next() => {
+                Some((res, hash)) = futures.next(), if current.is_none() => {
+                    debug!("removing TX {} from pending requests", hash);
+                    pending_requests.remove(&hash);
+
                     match res {
                         Ok(None) => {},
                         Ok(Some(transaction)) => {
-                            debug!("Adding TX to mempool from processing TX task: {}", hash);
-                            // Double check because we may had a race condition here when we're under heavy load
-                            // This can happen if a block got prioritized with the TX inside
-                            let is_included = match self.blockchain.is_tx_included(&hash).await {
-                                Ok(v) => v,
-                                Err(e) => {
-                                    error!("Error while checking if TX {} was already included, will default to false: {}", hash, e);
-                                    false
+                            let zelf = &self;
+                            let future = async move {
+                                debug!("Adding TX to mempool from processing TX task: {}", hash);
+                                // Double check because we may had a race condition here when we're under heavy load
+                                // This can happen if a block got prioritized with the TX inside
+                                if !zelf.blockchain.is_tx_included(&hash).await? {
+                                    zelf.blockchain.add_tx_to_mempool_with_hash(transaction, Immutable::Arc(hash.clone()), true).await?;
+                                } else {
+                                    debug!("Propagated Tx {} got front-runned, skipping it...", hash);
                                 }
+
+                                Ok::<_, BlockchainError>(())
                             };
 
-                            if !is_included {
-                                if let Err(e) = self.blockchain.add_tx_to_mempool_with_hash(transaction, Immutable::Arc(hash.clone()), true).await {
-                                    warn!("Couldn't add requested TX {}: {}", hash, e);
-                                }
-                            } else {
-                                debug!("Propagated Tx {} got front-runned, skipping it...", hash);
-                            }
+                            current = Some(Box::pin(future));
                         },
                         Err(e) => {
                             debug!("Error in txs processing task for TX {}: {} ", hash, e);
                         }
                     };
-
-                    debug!("removing TX {} from pending requests", hash);
-                    pending_requests.remove(&hash);
                 }
             }
         }
