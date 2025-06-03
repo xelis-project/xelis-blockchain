@@ -1438,7 +1438,9 @@ impl<S: Storage> P2pServer<S> {
 
                     futures.push_back(future);
                 },
-                Some(_) = OptionFuture::from(current.as_mut()) => {},
+                Some(_) = OptionFuture::from(current.as_mut()) => {
+                    current = None;
+                },
                 Some(res) = futures.next(), if current.is_none() => {
                     // Mark the timestamp of when its being added
                     match res {
@@ -1521,6 +1523,7 @@ impl<S: Storage> P2pServer<S> {
                     if let Err(e) = res {
                         debug!("Error while processing TX: {}", e);
                     }
+                    current = None;
                 },
                 Some((peer, hash)) = receiver.recv(), if current.is_none() => {
                     if !pending_requests.insert(hash.clone()) {
