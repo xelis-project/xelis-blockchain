@@ -31,7 +31,6 @@ use std::{
 use bytes::Bytes;
 use rand::{seq::IteratorRandom, Rng};
 use futures::{
-    future::OptionFuture,
     stream::{self, FuturesOrdered},
     Stream,
     StreamExt,
@@ -1381,8 +1380,8 @@ impl<S: Storage> P2pServer<S> {
 
         // All pending blocks
         let mut futures = FuturesOrdered::new();
-        // Current block to process
-        let mut current = None;
+        // Sequential blocks executor
+        let mut blocks_executor = Executor::new();
 
         'main: loop {
             select! {
@@ -1438,10 +1437,8 @@ impl<S: Storage> P2pServer<S> {
 
                     futures.push_back(future);
                 },
-                Some(_) = OptionFuture::from(current.as_mut()) => {
-                    current = None;
-                },
-                Some(res) = futures.next(), if current.is_none() => {
+                Some(_) = blocks_executor.next() => {},
+                Some(res) = futures.next() => {
                     // Mark the timestamp of when its being added
                     match res {
                         Ok(None) => {},
@@ -1468,7 +1465,7 @@ impl<S: Storage> P2pServer<S> {
                                 }
                             };
 
-                            current = Some(Box::pin(future));
+                            blocks_executor.push_back(future);
                         },
                         Err(e) => {
                             debug!("Error on blocks processing task: {}", e);
@@ -1510,7 +1507,8 @@ impl<S: Storage> P2pServer<S> {
 
         let mut server_exit = self.exit_sender.subscribe();
         let mut futures = Scheduler::new(Some(PEER_OBJECTS_CONCURRENCY));
-        let mut current = None;
+        // Sequential executor for TXs
+        let mut txs_executor = Executor::new();
 
         'main: loop {
             select! {
@@ -1519,13 +1517,12 @@ impl<S: Storage> P2pServer<S> {
                     debug!("Exit message received, stopping txs processing task");
                     break 'main;
                 },
-                Some(res) = OptionFuture::from(current.as_mut()) => {
+                Some(res) = txs_executor.next() => {
                     if let Err(e) = res {
                         debug!("Error while processing TX: {}", e);
                     }
-                    current = None;
                 },
-                Some((peer, hash)) = receiver.recv(), if current.is_none() => {
+                Some((peer, hash)) = receiver.recv() => {
                     if !pending_requests.insert(hash.clone()) {
                         debug!("TX {} is already requested, skipping it", hash);
                         continue;
@@ -1552,7 +1549,7 @@ impl<S: Storage> P2pServer<S> {
 
                     futures.push_back(future);
                 },
-                Some((res, hash)) = futures.next(), if current.is_none() => {
+                Some((res, hash)) = futures.next() => {
                     debug!("removing TX {} from pending requests", hash);
                     pending_requests.remove(&hash);
 
@@ -1573,7 +1570,7 @@ impl<S: Storage> P2pServer<S> {
                                 Ok::<_, BlockchainError>(())
                             };
 
-                            current = Some(Box::pin(future));
+                            txs_executor.push_back(future);
                         },
                         Err(e) => {
                             debug!("Error in txs processing task for TX {}: {} ", hash, e);

@@ -4,7 +4,6 @@ use std::{
     time::{Duration, Instant}
 };
 use futures::{
-    future::OptionFuture,
     stream::FuturesOrdered,
     StreamExt,
     TryStreamExt
@@ -16,7 +15,7 @@ use xelis_common::{
     crypto::Hash,
     immutable::Immutable,
     time::{get_current_time_in_millis, TimestampMillis},
-    tokio::{time::interval, Scheduler, select},
+    tokio::{select, time::interval, Executor, Scheduler},
     transaction::Transaction
 };
 
@@ -497,8 +496,8 @@ impl<S: Storage> P2pServer<S> {
             let mut internal_bps = interval(Duration::from_secs(1));
             // All blocks processed during our syncing
             let mut blocks_processed = 0;
-            // Current block to process
-            let mut current = None;
+            // Blocks executor for sequential processing
+            let mut blocks_executor = Executor::new();
 
             'main: loop {
                 select! {
@@ -511,18 +510,17 @@ impl<S: Storage> P2pServer<S> {
                         self.set_chain_sync_rate_bps(blocks_processed);
                         blocks_processed = 0;
                     },
-                    Some(res) = OptionFuture::from(current.as_mut()) => {
+                    Some(res) = blocks_executor.next() => {
                         // If we actually requested the block
                         if res? {
                             total_requested += 1;
                         }
 
                         blocks_processed += 1;
-                        current = None;
                     },
                     // Even with the biased select & the option future being above
                     // we must ensure we don't miss a block
-                    next = futures.next(), if current.is_none() => {
+                    next = futures.next() => {
                         let Some(res) = next else {
                             debug!("No more items in futures for chain sync");
                             break 'main;
@@ -563,7 +561,7 @@ impl<S: Storage> P2pServer<S> {
                             }
                         };
 
-                        current = Some(Box::pin(future));
+                        blocks_executor.push_back(future);
                     }
                 };
             }
