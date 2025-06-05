@@ -203,12 +203,18 @@ impl<S: Storage> P2pServer<S> {
                 let block = match header {
                     Some(header) => {
                         let mut futures = FuturesOrdered::new();
+                        let mut txs_to_request = 0;
                         for tx_hash in header.get_txs_hashes() {
+                            let tx = self.blockchain.get_tx(tx_hash).await.ok();
+                            if tx.is_none() {
+                                txs_to_request += 1;
+                            }
+
                             let fut = async move {
                                 // check first on disk in case it was already fetch by a previous block
                                 // it can happens as TXs can be integrated in multiple blocks and executed only one time
                                 // check if we find it
-                                if let Ok(tx) = self.blockchain.get_tx(tx_hash).await {
+                                if let Some(tx) = tx {
                                     trace!("Found the transaction {} on disk", tx_hash);
                                     Ok(tx.into_arc())
                                 } else {
@@ -222,10 +228,18 @@ impl<S: Storage> P2pServer<S> {
                             };
                             futures.push_back(fut);
                         }
-        
-                        let transactions = futures.try_collect().await?;
-                        // Assemble back the block and add it to the chain
-                        Block::new(Immutable::Arc(header), transactions)
+
+                        // If we have more than one request, lets request big block (for one time big packet)
+                        if txs_to_request > 1 {
+                            debug!("requesting big block {} because we have more than one TX to request from peer", hash);
+                            peer.request_blocking_object(ObjectRequest::Block(hash.clone())).await?
+                                .into_block()?
+                                .0
+                        } else {
+                            let transactions = futures.try_collect().await?;
+                            // Assemble back the block and add it to the chain
+                            Block::new(Immutable::Arc(header), transactions)
+                        }
                     },
                     None => {
                         peer.request_blocking_object(ObjectRequest::Block(hash.clone())).await?
