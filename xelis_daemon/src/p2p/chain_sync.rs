@@ -263,8 +263,6 @@ impl<S: Storage> P2pServer<S> {
                         }
                     };
 
-                    // don't broadcast block because it's syncing
-                    // self.blockchain.add_new_block(block, Some(hash), BroadcastOption::Miners, false).await?;
                     Ok::<_, BlockchainError>(ResponseHelper::Requested(block, hash))
                 } else {
                     Ok(ResponseHelper::NotRequested(hash))
