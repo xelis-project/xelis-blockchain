@@ -45,6 +45,11 @@ use super::{
     P2pServer
 };
 
+enum ResponseHelper {
+    Requested(Block, Immutable<Hash>),
+    NotRequested(Immutable<Hash>)
+}
+
 impl<S: Storage> P2pServer<S> {
     // this function basically send all our blocks based on topological order (topoheight)
     // we send up to CHAIN_SYNC_REQUEST_MAX_BLOCKS blocks id (combinaison of block hash and topoheight)
@@ -193,65 +198,101 @@ impl<S: Storage> P2pServer<S> {
     // as we are giving it the chain directly to prevent a re-compute
     async fn handle_blocks_from_chain_validator(&self, peer: &Arc<Peer>, mut chain_validator: ChainValidator<'_, S>, blocks: IndexSet<Hash>) -> Result<(), BlockchainError> {
         // now retrieve all txs from all blocks header and add block in chain
+
+        let capacity = if self.allow_boost_sync() {
+            debug!("Requesting needed blocks in boost sync mode");
+            None
+        } else {
+            Some(1)
+        };
+
+        let mut scheduler = Scheduler::new(capacity);
         for hash in blocks {
             let hash = Immutable::Arc(Arc::new(hash));
             trace!("Processing block {} from chain validator", hash);
             let header = chain_validator.get_block(&hash);
 
-            // we don't already have this block, lets retrieve its txs and add in our chain
-            if !self.blockchain.has_block(&hash).await? {
-                let block = match header {
-                    Some(header) => {
-                        let mut futures = FuturesOrdered::new();
-                        let mut txs_to_request = 0;
-                        for tx_hash in header.get_txs_hashes() {
-                            let tx = self.blockchain.get_tx(tx_hash).await.ok();
-                            if tx.is_none() {
-                                txs_to_request += 1;
-                            }
-
-                            let fut = async move {
-                                // check first on disk in case it was already fetch by a previous block
-                                // it can happens as TXs can be integrated in multiple blocks and executed only one time
-                                // check if we find it
-                                if let Some(tx) = tx {
-                                    trace!("Found the transaction {} on disk", tx_hash);
-                                    Ok(tx.into_arc())
-                                } else {
-                                    // otherwise, ask it from peer
-                                    // But because we may have the same TX in several blocks, lets request it using object tracker
-                                    peer.request_blocking_object(ObjectRequest::Transaction(Immutable::Owned(tx_hash.clone())))
-                                        .await?
-                                        .into_transaction()
-                                        .map(|(tx, _)| Arc::new(tx))
+            let future = async move {
+                // we don't already have this block, lets retrieve its txs and add in our chain
+                if !self.blockchain.has_block(&hash).await? {
+                    let block = match header {
+                        Some(header) => {
+                            let mut futures = FuturesOrdered::new();
+                            let mut txs_to_request = 0;
+                            for tx_hash in header.get_txs_hashes() {
+                                let tx = self.blockchain.get_tx(tx_hash).await.ok();
+                                if tx.is_none() {
+                                    txs_to_request += 1;
                                 }
-                            };
-                            futures.push_back(fut);
-                        }
-
-                        // If we have more than one request, lets request big block (for one time big packet)
-                        if txs_to_request > 1 {
-                            debug!("requesting big block {} because we have more than one TX to request from peer", hash);
+    
+                                let fut = async move {
+                                    // check first on disk in case it was already fetch by a previous block
+                                    // it can happens as TXs can be integrated in multiple blocks and executed only one time
+                                    // check if we find it
+                                    if let Some(tx) = tx {
+                                        trace!("Found the transaction {} on disk", tx_hash);
+                                        Ok(tx.into_arc())
+                                    } else {
+                                        // otherwise, ask it from peer
+                                        // But because we may have the same TX in several blocks, lets request it using object tracker
+                                        peer.request_blocking_object(ObjectRequest::Transaction(Immutable::Owned(tx_hash.clone())))
+                                            .await?
+                                            .into_transaction()
+                                            .map(|(tx, _)| Arc::new(tx))
+                                    }
+                                };
+                                futures.push_back(fut);
+                            }
+    
+                            // If we have more than one request, lets request big block (for one time big packet)
+                            if txs_to_request > 1 {
+                                debug!("requesting big block {} because we have more than one TX to request from peer", hash);
+                                peer.request_blocking_object(ObjectRequest::Block(hash.clone())).await?
+                                    .into_block()?
+                                    .0
+                            } else {
+                                let transactions = futures.try_collect().await?;
+                                // Assemble back the block and add it to the chain
+                                Block::new(Immutable::Arc(header), transactions)
+                            }
+                        },
+                        None => {
                             peer.request_blocking_object(ObjectRequest::Block(hash.clone())).await?
                                 .into_block()?
                                 .0
-                        } else {
-                            let transactions = futures.try_collect().await?;
-                            // Assemble back the block and add it to the chain
-                            Block::new(Immutable::Arc(header), transactions)
                         }
-                    },
-                    None => {
-                        peer.request_blocking_object(ObjectRequest::Block(hash.clone())).await?
-                            .into_block()?
-                            .0
-                    }
-                };
+                    };
 
-                // don't broadcast block because it's syncing
-                self.blockchain.add_new_block(block, Some(hash), BroadcastOption::Miners, false).await?;
-            } else {
-                self.try_re_execution_block(hash).await?;
+                    // don't broadcast block because it's syncing
+                    // self.blockchain.add_new_block(block, Some(hash), BroadcastOption::Miners, false).await?;
+                    Ok::<_, BlockchainError>(ResponseHelper::Requested(block, hash))
+                } else {
+                    Ok(ResponseHelper::NotRequested(hash))
+                }
+            };
+
+            scheduler.push_back(future);
+        }
+
+        let mut blocks_executor = Executor::new();
+        loop {
+            select! {
+                biased;
+                Some(res) = blocks_executor.next() => {
+                    res?;
+                },
+                Some(res) = scheduler.next() => {
+                    let future = async move {
+                        match res? {
+                            ResponseHelper::Requested(block, hash) => self.blockchain.add_new_block(block, Some(hash), BroadcastOption::Miners, false).await,
+                            ResponseHelper::NotRequested(hash) => self.try_re_execution_block(hash).await,
+                        }
+                    };
+                    blocks_executor.push_back(future);
+                },
+                else => {
+                    break;
+                }
             }
         }
 
@@ -466,11 +507,6 @@ impl<S: Storage> P2pServer<S> {
                 }
             }
         } else {
-            enum ResponseHelper {
-                Requested(Block, Hash),
-                NotRequested(Hash)
-            }
-
             // no rewind are needed, process normally
             // it will first add blocks to sync, and then all alt-tips blocks if any (top blocks)
             let mut total_requested = 0;
@@ -489,12 +525,13 @@ impl<S: Storage> P2pServer<S> {
             for hash in blocks {
                 debug!("processing block request {}", hash);
                 let fut = async {
+                    let hash = Immutable::Arc(Arc::new(hash));
                     if !self.blockchain.has_block(&hash).await? {
                         debug!("Requesting boost sync block {}", hash);
-                        peer.request_blocking_object(ObjectRequest::Block(Immutable::Owned(hash.clone())))
+                        peer.request_blocking_object(ObjectRequest::Block(hash.clone()))
                             .await?
                             .into_block()
-                            .map(|(block, hash)| ResponseHelper::Requested(block, hash))
+                            .map(|(block, _)| ResponseHelper::Requested(block, hash))
                     } else {
                         debug!("Block {} is already in chain or being processed, verify if its in DAG", hash);
                         Ok(ResponseHelper::NotRequested(hash))
@@ -534,12 +571,7 @@ impl<S: Storage> P2pServer<S> {
                     },
                     // Even with the biased select & the option future being above
                     // we must ensure we don't miss a block
-                    next = futures.next() => {
-                        let Some(res) = next else {
-                            debug!("No more items in futures for chain sync");
-                            break 'main;
-                        };
-
+                    Some(res) = futures.next() => {
                         let future = async {
                             match res {
                                 Ok(response) => match response {
@@ -548,7 +580,7 @@ impl<S: Storage> P2pServer<S> {
                                         // This may happen if we try to chain sync with peer
                                         // while we got the block through propagation
                                         if !self.blockchain.has_block(&hash).await? {
-                                            if let Err(e) = self.blockchain.add_new_block(block, Some(Immutable::Owned(hash)), BroadcastOption::Miners, false).await {
+                                            if let Err(e) = self.blockchain.add_new_block(block, Some(hash), BroadcastOption::Miners, false).await {
                                                 self.object_tracker.mark_group_as_fail(group_id).await;
                                                 return Err(e)
                                             }
@@ -559,7 +591,7 @@ impl<S: Storage> P2pServer<S> {
                                         Ok(true)
                                     },
                                     ResponseHelper::NotRequested(hash) => {
-                                        if let Err(e) = self.try_re_execution_block(Immutable::Owned(hash)).await {
+                                        if let Err(e) = self.try_re_execution_block(hash).await {
                                             self.object_tracker.mark_group_as_fail(group_id).await;
                                             return Err(e)
                                         }
@@ -576,6 +608,9 @@ impl<S: Storage> P2pServer<S> {
                         };
 
                         blocks_executor.push_back(future);
+                    },
+                    else => {
+                        break 'main;
                     }
                 };
             }
