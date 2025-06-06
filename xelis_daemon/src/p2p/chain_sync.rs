@@ -611,6 +611,10 @@ impl<S: Storage> P2pServer<S> {
                         break 'main;
                     }
                 };
+
+                if blocks_executor.is_empty() && futures.is_empty() {
+                    break;
+                }
             }
 
             let elapsed = start.elapsed().as_secs();
