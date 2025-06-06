@@ -29,6 +29,14 @@ impl<F: Future> Scheduler<F> {
     pub fn push_back(&mut self, future: F) {
         self.states.push_back(State::Pending(Box::pin(future)));
     }
+
+    pub fn len(&self) -> usize {
+        self.states.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.states.is_empty()
+    }
 }
 
 impl<F: Future> Stream for Scheduler<F> {

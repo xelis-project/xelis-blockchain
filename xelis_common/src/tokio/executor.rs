@@ -19,6 +19,14 @@ impl<F: Future> Executor<F> {
     pub fn push_back(&mut self, future: F) {
         self.futures.push_back(Box::pin(future));
     }
+
+    pub fn len(&self) -> usize {
+        self.futures.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.futures.is_empty()
+    }
 }
 
 impl<F: Future> Stream for Executor<F> {
