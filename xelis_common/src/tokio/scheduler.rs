@@ -31,11 +31,11 @@ impl<F: Future> Scheduler<F> {
     }
 
     pub fn len(&self) -> usize {
-        self.states.len()
+        self.states.len() - self.next_yield
     }
 
     pub fn is_empty(&self) -> bool {
-        self.states.is_empty()
+        self.states.back().map_or(true, |v| matches!(v, State::Done))
     }
 }
 
