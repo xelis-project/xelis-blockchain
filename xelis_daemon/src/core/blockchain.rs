@@ -1808,6 +1808,36 @@ impl<S: Storage> Blockchain<S> {
             // This help us to determine if a TX was already included or not based on our DAG
             // Hopefully, this should never be triggered because the mempool is cleaned based on our state
             let processed_txs = self.get_all_txs_until_height(storage, stable_height, block.get_tips().iter().cloned(), false).await?;
+
+            // Grouped per source each TXs that were contained in blocks (orphaned) tips
+            let mut grouped_orphaned_txs = HashMap::new();
+            // Keep track of processed sources to avoid re-verifying them
+            let mut processed_sources = HashSet::new();
+
+            let is_v3_enabled = block.get_version() >= BlockVersion::V3;
+
+            // If we are not skipping block template TXs verification,
+            // we need to detect any orphaned TXs that were processed in the tips
+            // This is required in order to include the next TXs
+            // We will compute the exact expected balances/nonces after the orphaned TXs
+            if !self.skip_block_template_txs_verification && is_v3_enabled {
+                for hash in processed_txs.iter() {
+                    if storage.is_tx_executed_in_a_block(&hash)? {
+                        // If the TX is executed in a block, we can skip it
+                        debug!("Skipping TX {} because it is already executed in a block", hash);
+                        continue;
+                    }
+
+                    let tx = storage.get_transaction(&hash).await?
+                        .into_arc();
+
+                    let source = tx.get_source();
+                    grouped_orphaned_txs.entry(source.clone())
+                        .or_insert_with(Vec::new)
+                        .push((tx, hash));
+                }
+            }
+
             while let Some(TxSelectorEntry { size, hash, tx }) = tx_selector.next() {
                 if block_size + total_txs_size + size >= MAX_BLOCK_SIZE || block.txs_hashes.len() >= u16::MAX as usize {
                     debug!("Stopping to include new TXs in this block, final size: {}, count: {}", human_bytes::human_bytes((block_size + total_txs_size) as f64), block.txs_hashes.len());
@@ -1825,12 +1855,31 @@ impl<S: Storage> Blockchain<S> {
                     trace!("Checking TX {} with nonce {}, {}", hash, tx.get_nonce(), tx.get_source().as_address(self.network.is_mainnet()));
 
                     let source = tx.get_source();
-                    if failed_sources.contains(&source) {
+                    if failed_sources.contains(source) {
                         debug!("Skipping TX {} because its source has failed before", hash);
                         continue;
                     }
 
-                    if let Err(e) = tx.verify(&hash, &mut chain_state, &tx_cache).await {
+                    // Verify the TX against the chain state
+                    // if we have any orphaned TXs, verify them one time only
+                    if let Some(orphaned_txs) = grouped_orphaned_txs.get(&source).filter(|_| processed_sources.insert(source)) {
+                        if let Err(e) = Transaction::verify_batch(
+                            orphaned_txs.iter(),
+                            &mut chain_state,
+                            &tx_cache,
+                        ).await {
+                            warn!("Orphaned TXs for source {} are not valid anymore: {}", source.as_address(self.network.is_mainnet()), e);
+                            failed_sources.insert(source);
+                            continue;
+                        }
+                    }
+
+                    // Now verify the current TX
+                    if let Err(e) = tx.verify(
+                        &hash,
+                        &mut chain_state,
+                        &tx_cache,
+                    ).await {
                         warn!("TX {} ({}) is not valid for mining: {}", hash, source.as_address(self.network.is_mainnet()), e);
                         failed_sources.insert(source);
                         continue;
@@ -2458,8 +2507,12 @@ impl<S: Storage> Blockchain<S> {
 
                         // Calculate the new nonce
                         // This has to be done in case of side blocks where TX B would be before TX A
-                        let next_nonce = nonce_checker.get_new_nonce(tx.get_source(), self.network.is_mainnet())?;
-                        chain_state.as_mut().update_account_nonce(tx.get_source(), next_nonce).await?;
+                        let expected_next_nonce = nonce_checker.get_new_nonce(tx.get_source(), self.network.is_mainnet())?;
+                        let next_nonce = tx.get_nonce() + 1;
+                        if expected_next_nonce != next_nonce {
+                            warn!("TX {} has a nonce {}, but the next nonce is {}, forcing it...", tx_hash, next_nonce, expected_next_nonce);
+                            chain_state.as_mut().update_account_nonce(tx.get_source(), expected_next_nonce).await?;
+                        }
 
                         // mark tx as executed
                         chain_state.get_mut_storage().mark_tx_as_executed_in_block(tx_hash, &hash)?;

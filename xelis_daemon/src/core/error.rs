@@ -346,8 +346,8 @@ pub enum BlockchainError {
     DecompressionError(#[from] DecompressionError),
     #[error(transparent)]
     Any(#[from] anyhow::Error),
-    #[error("Invalid nonce: expected {}, got {}", _0, _1)]
-    InvalidNonce(Nonce, Nonce),
+    #[error("Invalid nonce for TX {}: expected {}, got {}", _0, _1, _2)]
+    InvalidNonce(Hash, Nonce, Nonce),
     #[error("Sender cannot be receiver")]
     SenderIsReceiver,
     #[error("Invalid transaction proof: {}", _0)]
@@ -404,7 +404,7 @@ impl<T> From<PoisonError<T>> for BlockchainError {
 impl From<VerificationError<BlockchainError>> for BlockchainError {
     fn from(value: VerificationError<BlockchainError>) -> Self {
         match value {
-            VerificationError::InvalidNonce(expected, got) => BlockchainError::InvalidNonce(expected, got),
+            VerificationError::InvalidNonce(tx, expected, got) => BlockchainError::InvalidNonce(tx, expected, got),
             VerificationError::SenderIsReceiver => BlockchainError::NoSenderOutput,
             VerificationError::InvalidSignature => BlockchainError::InvalidTransactionSignature,
             VerificationError::State(s) => s,
