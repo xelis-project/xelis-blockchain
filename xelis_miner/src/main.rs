@@ -477,12 +477,7 @@ async fn communication_task(daemon_address: String, job_sender: broadcast::Sende
             },
             Err(e) => {
                 if let TungsteniteError::Http(e) = e {
-                    let body: String = e.into_body()
-                        .map_or(
-                            "Unknown error".to_owned(),
-                            |v| String::from_utf8_lossy(&v).to_string()
-                        );
-                    error!("Error while connecting to {}, got an unexpected response: {}", daemon_address, body);
+                    error!("Error while connecting to {}, got an unexpected response: {}", daemon_address, e.status());
                 } else {
                     error!("Error while connecting to {}: {}", daemon_address, e);
                 }
