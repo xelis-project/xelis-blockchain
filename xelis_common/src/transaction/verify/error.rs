@@ -2,16 +2,19 @@ use anyhow::Error as AnyError;
 use thiserror::Error;
 
 use crate::{
-    crypto::proofs::ProofVerificationError,
-    account::Nonce
+    account::Nonce,
+    crypto::{
+        proofs::ProofVerificationError,    
+        Hash
+    }
 };
 
 #[derive(Error, Debug)]
 pub enum VerificationError<T> {
     #[error("State error: {0}")]
     State(T),
-    #[error("Invalid nonce, got {} expected {}", _0, _1)]
-    InvalidNonce(Nonce, Nonce),
+    #[error("Invalid TX {} nonce, got {} expected {}", _0, _1, _2)]
+    InvalidNonce(Hash, Nonce, Nonce),
     #[error("Sender is receiver")]
     SenderIsReceiver,
     #[error("Invalid signature")]

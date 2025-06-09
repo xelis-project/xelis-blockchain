@@ -401,6 +401,7 @@ impl Transaction {
 
     async fn verify_dynamic_parts<'a, E, B: BlockchainVerificationState<'a, E>>(
         &'a self,
+        tx_hash: &'a Hash,
         state: &mut B,
         sigma_batch_collector: &mut BatchCollector,
     ) -> Result<(), VerificationError<E>> {
@@ -416,7 +417,7 @@ impl Transaction {
             .map_err(VerificationError::State)?;
 
         if account_nonce != self.nonce {
-            return Err(VerificationError::InvalidNonce(account_nonce, self.nonce));
+            return Err(VerificationError::InvalidNonce(tx_hash.clone(), account_nonce, self.nonce));
         }
 
         // Nonce is valid, update it for next transactions if any
@@ -569,7 +570,7 @@ impl Transaction {
             .map_err(VerificationError::State)?;
 
         if account_nonce != self.nonce {
-            return Err(VerificationError::InvalidNonce(account_nonce, self.nonce));
+            return Err(VerificationError::InvalidNonce(tx_hash.clone(), account_nonce, self.nonce));
         }
 
         // Nonce is valid, update it for next transactions if any
@@ -986,7 +987,7 @@ impl Transaction {
                 .map_err(VerificationError::State)?;
             if dynamic_parts_only {
                 debug!("TX {} is known from ZKPCache, verifying dynamic parts only", hash);
-                tx.verify_dynamic_parts(state, &mut sigma_batch_collector).await?;
+                tx.verify_dynamic_parts(hash, state, &mut sigma_batch_collector).await?;
             } else {
                 let (transcript, commitments) = tx
                     .pre_verify(hash, state, &mut sigma_batch_collector).await?;
@@ -1041,7 +1042,7 @@ impl Transaction {
             .map_err(VerificationError::State)?;
         let res = if dynamic_parts_only {
             debug!("TX {} is known from ZKPCache, verifying dynamic parts only", tx_hash);
-            self.verify_dynamic_parts(state, &mut sigma_batch_collector).await?;
+            self.verify_dynamic_parts(tx_hash, state, &mut sigma_batch_collector).await?;
             None
         }
         else {
