@@ -3,7 +3,8 @@ use crate::{
         PEER_FAIL_TIME_RESET, PEER_BLOCK_CACHE_SIZE,
         PEER_TX_CACHE_SIZE, PEER_TIMEOUT_BOOTSTRAP_STEP,
         PEER_TIMEOUT_REQUEST_OBJECT, CHAIN_SYNC_TIMEOUT_SECS,
-        PEER_PACKET_CHANNEL_SIZE, PEER_PEERS_CACHE_SIZE
+        PEER_PACKET_CHANNEL_SIZE, PEER_PEERS_CACHE_SIZE,
+        PEER_OBJECTS_CONCURRENCY
     },
     p2p::packet::PacketWrapper
 };
@@ -209,7 +210,7 @@ impl Peer {
             tx,
             read_task: Mutex::new(TaskState::Inactive),
             write_task: Mutex::new(TaskState::Inactive),
-            objects_semaphore: Semaphore::new(64)
+            objects_semaphore: Semaphore::new(PEER_OBJECTS_CONCURRENCY)
         }, rx)
     }
 
