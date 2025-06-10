@@ -35,7 +35,15 @@ use crate::{
     }
 };
 
-use super::{packet::bootstrap_chain::{StepRequest, StepResponse, MAX_ITEMS_PER_PAGE}, peer::Peer, P2pServer};
+use super::{
+    packet::bootstrap_chain::{
+        StepRequest,
+        StepResponse,
+        MAX_ITEMS_PER_PAGE
+    },
+    peer::Peer,
+    P2pServer
+};
 
 impl<S: Storage> P2pServer<S> {
     // Handle a bootstrap chain request
@@ -111,13 +119,12 @@ impl<S: Storage> P2pServer<S> {
                 let key = &key;
 
                 // We fetch the account summary for each asset
-                // Order is not important, so we can parallelize it
                 let assets = stream::iter(assets)
                     .map(|asset| async move {
                         let summary = storage.get_account_summary_for(&key, &asset, min, max).await?;
                         Ok::<_, BlockchainError>((asset, summary))
                     })
-                    .buffer_unordered(self.stream_concurrency)
+                    .buffered(self.stream_concurrency)
                     .try_collect::<IndexMap<_, _>>()
                     .await?;
 
@@ -142,31 +149,46 @@ impl<S: Storage> P2pServer<S> {
                 let (balances, next_max) = storage.get_spendable_balances_for(&key, &asset, min, max, MAX_ITEMS_PER_PAGE).await?;
                 StepResponse::SpendableBalances(balances, next_max)
             },
-            StepRequest::Nonces(min, max, keys) => {
+            StepRequest::Accounts(min, max, keys) => {
                 if min > max {
-                    warn!("Invalid range for nonces");
+                    warn!("Invalid range for accounts");
                     return Err(P2pError::InvalidPacket.into())
                 }
 
                 // move references only
                 let storage = &storage;
 
-                let nonces: Vec<State<u64>> = stream::iter(keys.into_owned())
+                let states: Vec<(State<u64>, _)> = stream::iter(keys.into_owned())
                     .map(|key| async move {
-                        storage.get_nonce_at_maximum_topoheight(&key, max).await
-                            .map(|v| v.map(|(topo, v)| {
+                        let nonce = storage.get_nonce_at_maximum_topoheight(&key, max).await?
+                            .map_or(State::None, |(topo, v)| {
                                 if topo < min {
                                     State::Clean
                                 } else {
                                     State::Some(v.get_nonce())
                                 }
-                            }).unwrap_or(State::None))
+                            });
+
+                        let multisig = if let Some((topoheight, version)) = storage.get_multisig_at_maximum_topoheight_for(&key, max).await? {
+                            if topoheight >= min {
+                                match version.take() {
+                                    Some(multisig) => State::Some(multisig.into_owned()),
+                                    None => State::Deleted,
+                                }
+                            } else {
+                                State::Clean
+                            }
+                        } else {
+                            State::None
+                        };
+
+                        Ok::<_, BlockchainError>((nonce, multisig))
                     })
                     .buffered(self.stream_concurrency)
                     .try_collect()
                     .await?;
 
-                StepResponse::Nonces(nonces)
+                StepResponse::Accounts(states)
             },
             StepRequest::Keys(min, max, page) => {
                 if min > max {
@@ -186,29 +208,6 @@ impl<S: Storage> P2pServer<S> {
                     None
                 };
                 StepResponse::Keys(keys, page)
-            },
-            StepRequest::MultiSigs(min, max, keys) => {
-                let multisigs = stream::iter(keys.iter())
-                    .map(|key| async {
-                        Ok::<_, BlockchainError>(if let Some((topoheight, version)) = storage.get_multisig_at_maximum_topoheight_for(key, max).await? {
-                            if topoheight >= min {
-                                match version.take() {
-                                    Some(multisig) => State::Some(multisig.into_owned()),
-                                    None => State::Deleted,
-                                }
-                            } else {
-                                State::Clean
-                            }
-                        } else {
-                            State::None
-                        })
-                    })
-                    .buffered(self.stream_concurrency)
-                    .boxed()
-                    .try_collect::<Vec<_>>()
-                    .await?;
-
-                StepResponse::MultiSigs(multisigs)
             },
             StepRequest::Contracts(min, max, page) => {
                 if min > max {
@@ -582,10 +581,10 @@ impl<S: Storage> P2pServer<S> {
         Ok(())
     }
 
-    // Handle the key nonces
-    // This will save the nonces for each key
-    async fn handle_nonces(&self, peer: &Arc<Peer>, keys: &IndexSet<PublicKey>, our_topoheight: u64, stable_topoheight: u64, update_registration: bool) -> Result<(), P2pError> {
-        let StepResponse::Nonces(nonces) = peer.request_boostrap_chain(StepRequest::Nonces(our_topoheight, stable_topoheight, Cow::Borrowed(&keys))).await? else {
+    // Handle the accounts states
+    // This will save the nonces & multisig for each key
+    async fn handle_accounts(&self, peer: &Arc<Peer>, keys: &IndexSet<PublicKey>, our_topoheight: u64, stable_topoheight: u64, update_registration: bool) -> Result<(), P2pError> {
+        let StepResponse::Accounts(nonces) = peer.request_boostrap_chain(StepRequest::Accounts(our_topoheight, stable_topoheight, Cow::Borrowed(&keys))).await? else {
             // shouldn't happen
             error!("Received an invalid StepResponse (how ?) while fetching nonces");
             return Err(P2pError::InvalidPacket.into())
@@ -593,7 +592,7 @@ impl<S: Storage> P2pServer<S> {
 
         let mut storage = self.blockchain.get_storage().write().await;
         // save all nonces
-        for (key, nonce) in keys.iter().zip(nonces) {
+        for (key, (nonce, multisig)) in keys.iter().zip(nonces) {
             match nonce {
                 State::Clean => {
                     trace!("No nonce change for {}", key.as_address(self.blockchain.get_network().is_mainnet()));
@@ -610,25 +609,7 @@ impl<S: Storage> P2pServer<S> {
                     }
                 },
             };
-        }
 
-
-        Ok(())
-    }
-
-    // Handle the multisigs changes
-    // This will save the multisigs states for each key
-    async fn handle_multisigs(&self, peer: &Arc<Peer>, keys: &IndexSet<PublicKey>, our_topoheight: u64, stable_topoheight: u64) -> Result<(), P2pError> {
-        // Also request the multisigs states
-        let StepResponse::MultiSigs(multisigs) = peer.request_boostrap_chain(StepRequest::MultiSigs(our_topoheight, stable_topoheight, Cow::Borrowed(keys))).await? else {
-            // shouldn't happen
-            error!("Received an invalid StepResponse (how ?) while fetching multisigs");
-            return Err(P2pError::InvalidPacket.into())
-        };
-
-        let mut storage = self.blockchain.get_storage().write().await;
-        // save all multisigs
-        for (key, multisig) in keys.iter().zip(multisigs) {
             match multisig {
                 State::None | State::Clean => {
                     trace!("No multisig change for {}", key.as_address(self.blockchain.get_network().is_mainnet()));
@@ -670,7 +651,7 @@ impl<S: Storage> P2pServer<S> {
                 .try_for_each_concurrent(self.stream_concurrency, |(asset, summary)| async move {
                     // check that the account have balance for this asset
                     if let Some(account) = summary {
-                        info!("Fetching balance history for {}", key.as_address(blockchain.get_network().is_mainnet()));
+                        info!("Fetching balance {} history for {}", asset, key.as_address(blockchain.get_network().is_mainnet()));
 
                         // Each version are applied on iteration N+1 of the loop
                         // This is done to get the previous topoheight of the current version
@@ -743,10 +724,8 @@ impl<S: Storage> P2pServer<S> {
             return Ok(())
         }
 
-        self.handle_nonces(peer, keys, our_topoheight, stable_topoheight, update_registration).await?;
-        self.handle_multisigs(peer, keys, our_topoheight, stable_topoheight).await?;
+        self.handle_accounts(peer, keys, our_topoheight, stable_topoheight, update_registration).await?;
 
-        // Handle balances for each key
         stream::iter(keys.iter().map(Ok))
             .try_for_each_concurrent(self.stream_concurrency, |key| async move {
                 self.handle_balances(peer, key, our_topoheight, stable_topoheight).await
