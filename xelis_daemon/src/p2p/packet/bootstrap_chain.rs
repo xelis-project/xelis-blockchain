@@ -136,7 +136,7 @@ pub enum StepKind {
     ChainInfo,
     Assets,
     Keys,
-    Balances,
+    KeyBalances,
     Nonces,
     MultiSigs,
     Contracts,
@@ -148,8 +148,8 @@ impl StepKind {
         Some(match self {
             Self::ChainInfo => Self::Assets,
             Self::Assets => Self::Keys,
-            Self::Keys => Self::Balances,
-            Self::Balances => Self::Nonces,
+            Self::Keys => Self::KeyBalances,
+            Self::KeyBalances => Self::Nonces,
             Self::Nonces => Self::MultiSigs,
             Self::MultiSigs => Self::Contracts,
             Self::Contracts => Self::BlocksMetadata,
@@ -166,10 +166,10 @@ pub enum StepRequest<'a> {
     Assets(TopoHeight, TopoHeight, Option<u64>),
     // Min topoheight, Max topoheight, pagination
     Keys(TopoHeight, TopoHeight, Option<u64>),
-    // Request the account summary of a public key
+    // Request the assets for a public key
     // Can request up to 1024 keys per page
-    // Key, Asset, min topoheight, max topoheight
-    Balances(Cow<'a, IndexSet<PublicKey>>, Cow<'a, Hash>, TopoHeight, TopoHeight),
+    // Key, min topoheight, max topoheight, pagination
+    KeyBalances(Cow<'a, PublicKey>, TopoHeight, TopoHeight, Option<u64>),
     // Request the spendable balances of a public key
     // Can request up to 1024 keys per page
     // Key, Asset, min topoheight, max topoheight (exclusive range)
@@ -195,8 +195,8 @@ impl<'a> StepRequest<'a> {
             Self::ChainInfo(_) => StepKind::ChainInfo,
             Self::Assets(_, _, _) => StepKind::Assets,
             Self::Keys(_, _, _) => StepKind::Keys,
-            Self::Balances(_, _, _, _) => StepKind::Balances,
-            Self::SpendableBalances(_, _, _, _) => StepKind::Balances,
+            Self::KeyBalances(_, _, _, _) => StepKind::KeyBalances,
+            Self::SpendableBalances(_, _, _, _) => StepKind::KeyBalances,
             Self::Nonces(_, _, _) => StepKind::Nonces,
             Self::MultiSigs(_, _, _) => StepKind::MultiSigs,   
             Self::Contracts(_, _, _) => StepKind::Contracts,
@@ -209,7 +209,7 @@ impl<'a> StepRequest<'a> {
         Some(*match self {
             Self::Assets(_, topo, _) => topo,
             Self::Keys(_, topo, _) => topo,
-            Self::Balances(_, _, _, topo) => topo,
+            Self::KeyBalances(_, _, topo, _) => topo,
             Self::SpendableBalances(_, _, _, topo) => topo,
             Self::Nonces(_, topo, _) => topo,
             Self::MultiSigs(_, topo, _) => topo,
@@ -276,7 +276,6 @@ impl Serializer for StepRequest<'_> {
             },
             3 => {
                 let key = Cow::read(reader)?;
-                let asset = Cow::read(reader)?;
                 let min = reader.read_u64()?;
                 let max = reader.read_u64()?;
                 if min > max {
@@ -284,7 +283,14 @@ impl Serializer for StepRequest<'_> {
                     return Err(ReaderError::InvalidValue)
                 }
 
-                Self::Balances(key, asset, min, max)
+                let page = Option::read(reader)?;
+                if let Some(page_number) = &page {
+                    if *page_number == 0 {
+                        debug!("Invalid page number (0) in Step Request");
+                        return Err(ReaderError::InvalidValue)
+                    }
+                }
+                Self::KeyBalances(key, min, max, page)
             },
             4 => {
                 let key = Cow::read(reader)?;
@@ -297,7 +303,7 @@ impl Serializer for StepRequest<'_> {
                 }
 
                 Self::SpendableBalances(key, asset, min, max)
-            }
+            },
             5 => {
                 let min = reader.read_u64()?;
                 let max = reader.read_u64()?;
@@ -309,7 +315,7 @@ impl Serializer for StepRequest<'_> {
                 let max = reader.read_u64()?;
                 let keys = Cow::<'_, IndexSet<PublicKey>>::read(reader)?;
                 Self::MultiSigs(min, max, keys)
-            }
+            },
             7 => {
                 let min = reader.read_u64()?;
                 let max = reader.read_u64()?;
@@ -359,12 +365,12 @@ impl Serializer for StepRequest<'_> {
                 writer.write_u64(max);
                 page.write(writer);
             },
-            Self::Balances(keys, asset, min, max) => {
+            Self::KeyBalances(key, min, max, page) => {
                 writer.write_u8(3);
-                keys.write(writer);
-                asset.write(writer);
+                key.write(writer);
                 writer.write_u64(min);
                 writer.write_u64(max);
+                page.write(writer);
             },
             Self::SpendableBalances(key, asset, min, max) => {
                 writer.write_u8(4);
@@ -409,7 +415,7 @@ impl Serializer for StepRequest<'_> {
             Self::ChainInfo(blocks) => 1 + blocks.size(),
             Self::Assets(min, max, page) => min.size() + max.size() + page.size(),
             Self::Keys(min, max, page) => min.size() + max.size() + page.size(),
-            Self::Balances(keys, asset, min, max) => keys.size() + asset.size() + min.size() + max.size(),
+            Self::KeyBalances(key, min, max, page) => key.size() + min.size() + max.size() + page.size(),
             Self::SpendableBalances(key, asset, min, max) => key.size() + asset.size() + min.size() + max.size(),
             Self::Nonces(min, max, nonces) => min.size() + max.size() + nonces.size(),
             Self::MultiSigs(min, max, keys) => min.size() + max.size() + keys.size(),
@@ -430,8 +436,8 @@ pub enum StepResponse {
     Assets(IndexMap<Hash, AssetData>, Option<u64>),
     // Set of keys, pagination
     Keys(IndexSet<PublicKey>, Option<u64>),
-    // Account summary response
-    Balances(Vec<Option<AccountSummary>>),
+    // All assets for requested key, pagination
+    KeyBalances(IndexMap<Hash, Option<AccountSummary>>, Option<u64>),
     // This is for per key/account only
     // TopoHeight is for the next max exclusive topoheight (if none, no more data)
     SpendableBalances(Vec<Balance>, Option<TopoHeight>),
@@ -454,8 +460,8 @@ impl StepResponse {
             Self::ChainInfo(_, _, _, _) => StepKind::ChainInfo,
             Self::Assets(_, _) => StepKind::Assets,
             Self::Keys(_, _) => StepKind::Keys,
-            Self::Balances(_) => StepKind::Balances,
-            Self::SpendableBalances(_, _) => StepKind::Balances,
+            Self::KeyBalances(_, _) => StepKind::KeyBalances,
+            Self::SpendableBalances(_, _) => StepKind::KeyBalances,
             Self::Nonces(_) => StepKind::Nonces,
             Self::MultiSigs(_) => StepKind::MultiSigs,
             Self::Contracts(_, _) => StepKind::Contracts,
@@ -498,7 +504,17 @@ impl Serializer for StepResponse {
                 }
                 Self::Keys(keys, page)
             },
-            3 => Self::Balances(Vec::read(reader)?),
+            3 => {
+                let keys = IndexMap::read(reader)?;
+                let page = Option::read(reader)?;
+                if let Some(page_number) = &page {
+                    if *page_number == 0 {
+                        debug!("Invalid page number (0) in Step Response");
+                        return Err(ReaderError::InvalidValue)
+                    }
+                }
+                Self::KeyBalances(keys, page)
+            },
             4 => Self::SpendableBalances(Vec::read(reader)?, Option::read(reader)?),
             5 => Self::Nonces(Vec::read(reader)?),
             6 => Self::MultiSigs( Vec::read(reader)?),
@@ -545,9 +561,10 @@ impl Serializer for StepResponse {
                 keys.write(writer);
                 page.write(writer);
             },
-            Self::Balances(account) => {
+            Self::KeyBalances(keys, page) => {
                 writer.write_u8(3);
-                account.write(writer);
+                keys.write(writer);
+                page.write(writer);
             },
             Self::SpendableBalances(balances, page) => {
                 writer.write_u8(4);
@@ -583,7 +600,7 @@ impl Serializer for StepResponse {
             Self::ChainInfo(common_point, topoheight, stable_height, hash) => common_point.size() + topoheight.size() + stable_height.size() + hash.size(),
             Self::Assets(assets, page) => assets.size() + page.size(),
             Self::Keys(keys, page) => keys.size() + page.size(),
-            Self::Balances(account) => account.size(),
+            Self::KeyBalances(keys, page) => keys.size() + page.size(),
             Self::SpendableBalances(balances, page) => balances.size() + page.size(),
             Self::Nonces(nonces) => nonces.size(),
             Self::MultiSigs(multisigs) => multisigs.size(),

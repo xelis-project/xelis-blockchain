@@ -95,27 +95,38 @@ impl<S: Storage> P2pServer<S> {
                 };
                 StepResponse::Assets(assets, page)
             },
-            StepRequest::Balances(keys, asset, min, max) => {
+            StepRequest::KeyBalances(key, min, max, page) => {
                 if min > max {
-                    warn!("Invalid range for account balance");
+                    warn!("Invalid range for key assets");
                     return Err(P2pError::InvalidPacket.into())
                 }
 
-                // move references only
-                let asset = &asset;
-                let storage = &storage;
+                let page = page.unwrap_or(0);
+                let assets = storage.get_assets_for(&key).await?
+                    .skip(page as usize * MAX_ITEMS_PER_PAGE)
+                    .take(MAX_ITEMS_PER_PAGE)
+                    .collect::<Result<IndexSet<_>, _>>()?;
 
-                let balances: Vec<Option<_>> = stream::iter(keys.into_owned())
-                    .map(|key| async move {
-                            storage.get_account_summary_for(&key, asset, min, max).await
-                        }
-                    )
-                    .buffered(self.stream_concurrency)
-                    .try_collect()
+                let storage = &storage;
+                let key = &key;
+
+                // We fetch the account summary for each asset
+                // Order is not important, so we can parallelize it
+                let assets = stream::iter(assets)
+                    .map(|asset| async move {
+                        let summary = storage.get_account_summary_for(&key, &asset, min, max).await?;
+                        Ok::<_, BlockchainError>((asset, summary))
+                    })
+                    .buffer_unordered(self.stream_concurrency)
+                    .try_collect::<IndexMap<_, _>>()
                     .await?;
 
-                trace!("Sending {} balances to {}", balances.len(), peer);
-                StepResponse::Balances(balances)
+                let page = if assets.len() == MAX_ITEMS_PER_PAGE {
+                    Some(page + 1)
+                } else {
+                    None
+                };
+                StepResponse::KeyBalances(assets, page)
             },
             StepRequest::SpendableBalances(key, asset, min, max) => {
                 if min > max {
@@ -572,6 +583,7 @@ impl<S: Storage> P2pServer<S> {
     }
 
     // Handle the key nonces
+    // This will save the nonces for each key
     async fn handle_nonces(&self, peer: &Arc<Peer>, keys: &IndexSet<PublicKey>, our_topoheight: u64, stable_topoheight: u64, update_registration: bool) -> Result<(), P2pError> {
         let StepResponse::Nonces(nonces) = peer.request_boostrap_chain(StepRequest::Nonces(our_topoheight, stable_topoheight, Cow::Borrowed(&keys))).await? else {
             // shouldn't happen
@@ -604,6 +616,8 @@ impl<S: Storage> P2pServer<S> {
         Ok(())
     }
 
+    // Handle the multisigs changes
+    // This will save the multisigs states for each key
     async fn handle_multisigs(&self, peer: &Arc<Peer>, keys: &IndexSet<PublicKey>, our_topoheight: u64, stable_topoheight: u64) -> Result<(), P2pError> {
         // Also request the multisigs states
         let StepResponse::MultiSigs(multisigs) = peer.request_boostrap_chain(StepRequest::MultiSigs(our_topoheight, stable_topoheight, Cow::Borrowed(keys))).await? else {
@@ -635,76 +649,88 @@ impl<S: Storage> P2pServer<S> {
         Ok(())
     }
 
-    async fn handle_balances_for_asset(&self, peer: &Arc<Peer>, asset: &Hash, keys: &IndexSet<PublicKey>, our_topoheight: u64, stable_topoheight: u64) -> Result<(), P2pError> {
-        debug!("Requesting balances for asset {} at topo {}", asset, stable_topoheight);
-        let StepResponse::Balances(balances) = peer.request_boostrap_chain(StepRequest::Balances(Cow::Borrowed(&keys), Cow::Borrowed(asset), our_topoheight, stable_topoheight)).await? else {
-            // shouldn't happen
-            error!("Received an invalid StepResponse (how ?) while fetching balances");
-            return Err(P2pError::InvalidPacket.into())
-        };
+    // Handle the balances for each key
+    // This will request in chunks the account summary per asset
+    // Each asset will be handled in parallel
+    async fn handle_balances(&self, peer: &Arc<Peer>, key: &PublicKey, our_topoheight: u64, stable_topoheight: u64) -> Result<(), P2pError> {
+        debug!("Requesting balances assets for {} at topo {}", key.as_address(self.blockchain.get_network().is_mainnet()), stable_topoheight);
+        let mut page = None;
+        loop {
+            let StepResponse::KeyBalances(balances, next_page) = peer.request_boostrap_chain(StepRequest::KeyBalances(Cow::Borrowed(&key), our_topoheight, stable_topoheight, page)).await? else {
+                // shouldn't happen
+                error!("Received an invalid StepResponse (how ?) while fetching key balances");
+                return Err(P2pError::InvalidPacket.into())
+            };
 
-        // save all balances for this asset
-        let blockchain = &self.blockchain;
-        stream::iter(keys.iter().zip(balances).map(Ok))
-            .try_for_each_concurrent(self.stream_concurrency, |(key, balance)| async move {
-                // check that the account have balance for this asset
-                if let Some(account) = balance {
-                    info!("Fetching balance history for {}", key.as_address(blockchain.get_network().is_mainnet()));
+            page = next_page;
 
-                    // Each version are applied on iteration N+1 of the loop
-                    // This is done to get the previous topoheight of the current version
-                    let mut previous_version: Option<(u64, VersionedBalance)> = None;
-                    // Highest topoheight bound for balance history
-                    let mut max_topoheight = Some(account.stable_topoheight);
-                    // Lowest topoheight bound for balance histor
-                    let min_topo = account.output_topoheight.unwrap_or(0);
+            // Handle all assets for this key
+            let blockchain = &self.blockchain;
+            stream::iter(balances.into_iter().map(Ok))
+                .try_for_each_concurrent(self.stream_concurrency, |(asset, summary)| async move {
+                    // check that the account have balance for this asset
+                    if let Some(account) = summary {
+                        info!("Fetching balance history for {}", key.as_address(blockchain.get_network().is_mainnet()));
 
-                    let mut highest_topoheight = None;
-                    // Go through all balance history
-                    while let Some(max) = max_topoheight {
-                        debug!("Requesting spendable balances for asset {} at max topo {} for {}", asset, max, key.as_address(blockchain.get_network().is_mainnet()));
-                        let StepResponse::SpendableBalances(balances, max_next) = peer.request_boostrap_chain(StepRequest::SpendableBalances(Cow::Borrowed(&key), Cow::Borrowed(&asset), min_topo, max)).await? else {
-                            // shouldn't happen
-                            error!("Received an invalid StepResponse (how ?) while fetching balances");
-                            return Err(P2pError::InvalidPacket)
-                        };
+                        // Each version are applied on iteration N+1 of the loop
+                        // This is done to get the previous topoheight of the current version
+                        let mut previous_version: Option<(u64, VersionedBalance)> = None;
+                        // Highest topoheight bound for balance history
+                        let mut max_topoheight = Some(account.stable_topoheight);
+                        // Lowest topoheight bound for balance histor
+                        let min_topo = account.output_topoheight.unwrap_or(0);
 
-                        for balance in balances {
-                            let (topo, version) = balance.as_version();
-                            if highest_topoheight.is_none() {
-                                highest_topoheight = Some(topo);
+                        let mut highest_topoheight = None;
+                        // Go through all balance history
+                        while let Some(max) = max_topoheight {
+                            debug!("Requesting spendable balances for asset {} at max topo {} for {}", asset, max, key.as_address(blockchain.get_network().is_mainnet()));
+                            let StepResponse::SpendableBalances(balances, max_next) = peer.request_boostrap_chain(StepRequest::SpendableBalances(Cow::Borrowed(&key), Cow::Borrowed(&asset), min_topo, max)).await? else {
+                                // shouldn't happen
+                                error!("Received an invalid StepResponse (how ?) while fetching balances");
+                                return Err(P2pError::InvalidPacket)
+                            };
+
+                            for balance in balances {
+                                let (topo, version) = balance.as_version();
+                                if highest_topoheight.is_none() {
+                                    highest_topoheight = Some(topo);
+                                }
+    
+                                if let Some((prev_topo, mut prev)) = previous_version {
+                                    prev.set_previous_topoheight(Some(topo));
+    
+                                    let mut storage = blockchain.get_storage().write().await;
+                                    storage.set_balance_at_topoheight(&asset, prev_topo, &key, &prev).await?;
+                                }
+
+                                previous_version = Some((topo, version));
                             }
 
-                            if let Some((prev_topo, mut prev)) = previous_version {
-                                prev.set_previous_topoheight(Some(topo));
-
-                                let mut storage = blockchain.get_storage().write().await;
-                                storage.set_balance_at_topoheight(&asset, prev_topo, &key, &prev).await?;
-                            }
-
-                            previous_version = Some((topo, version));
+                            max_topoheight = max_next;
                         }
 
-                        max_topoheight = max_next;
+                        // Store the oldest balance version
+                        if let Some((topo, prev)) = previous_version {
+                            let mut storage = blockchain.get_storage().write().await;
+                            storage.set_balance_at_topoheight(&asset, topo, &key, &prev).await?;
+                        }
+
+                        // Store the highest topoheight as the last topoheight for this asset balance
+                        if let Some(highest_topoheight) = highest_topoheight {
+                            let mut storage = blockchain.get_storage().write().await;
+                            storage.set_last_topoheight_for_balance(&key, &asset, highest_topoheight)?;
+                        }
+                    } else {
+                        debug!("No balance for key {} at topoheight {}", key.as_address(blockchain.get_network().is_mainnet()), stable_topoheight);
                     }
 
-                    // Store the oldest balance version
-                    if let Some((topo, prev)) = previous_version {
-                        let mut storage = blockchain.get_storage().write().await;
-                        storage.set_balance_at_topoheight(&asset, topo, &key, &prev).await?;
-                    }
+                    Ok(())
+                }).await?;
 
-                    // Store the highest topoheight as the last topoheight for this asset balance
-                    if let Some(highest_topoheight) = highest_topoheight {
-                        let mut storage = blockchain.get_storage().write().await;
-                        storage.set_last_topoheight_for_balance(&key, &asset, highest_topoheight)?;
-                    }
-                } else {
-                    debug!("No balance for key {} at topoheight {}", key.as_address(blockchain.get_network().is_mainnet()), stable_topoheight);
-                }
-
-                Ok(())
-            }).await?;
+            if page.is_none() {
+                break;
+            }
+        }
 
         Ok(())
     }
@@ -720,28 +746,11 @@ impl<S: Storage> P2pServer<S> {
         self.handle_nonces(peer, keys, our_topoheight, stable_topoheight, update_registration).await?;
         self.handle_multisigs(peer, keys, our_topoheight, stable_topoheight).await?;
 
-        let mut page = 0;
-        loop {
-            // Retrieve chunked assets
-            let assets = {
-                let storage = self.blockchain.get_storage().read().await;
-                let assets = storage.get_assets().await?
-                    .skip(page * MAX_ITEMS_PER_PAGE)
-                    .take(MAX_ITEMS_PER_PAGE)
-                    .collect::<Result<IndexSet<_>, _>>()?;
-
-                if assets.is_empty() {
-                    break;
-                }
-                page += 1;
-                assets
-            };
-
-            // Request every asset balances
-            for asset in assets {
-                self.handle_balances_for_asset(peer, &asset, keys, our_topoheight, stable_topoheight).await?;
-            }
-        }
+        // Handle balances for each key
+        stream::iter(keys.iter().map(Ok))
+            .try_for_each_concurrent(self.stream_concurrency, |key| async move {
+                self.handle_balances(peer, key, our_topoheight, stable_topoheight).await
+            }).await?;
 
         Ok(())
     }
