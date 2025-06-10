@@ -23,7 +23,7 @@ use log::{debug, trace};
 use merlin::Transcript;
 use xelis_vm::ModuleValidator;
 use crate::{
-    tokio::task::spawn_blocking,
+    tokio::spawn_blocking_safe,
     account::Nonce,
     config::{BURN_PER_CONTRACT, MAX_GAS_USAGE_PER_TX, XELIS_ASSET},
     contract::ContractProvider,
@@ -997,7 +997,7 @@ impl Transaction {
 
         // Spawn a dedicated thread for the ZK Proofs verification
         // this prevent us from blocking the current thread
-        spawn_blocking(move || {
+        spawn_blocking_safe(move || {
             sigma_batch_collector
                 .verify()
                 .map_err(|_| ProofVerificationError::GenericProof)?;
@@ -1052,7 +1052,7 @@ impl Transaction {
 
         // Block in place instead of spawning a dedicated thread to reduce overhead
         // verification is expected to be fast enough to not block anything
-        spawn_blocking(move || {
+        spawn_blocking_safe(move || {
             trace!("Verifying sigma proofs");
             sigma_batch_collector
                 .verify()
