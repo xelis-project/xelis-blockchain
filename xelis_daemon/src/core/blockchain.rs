@@ -1845,7 +1845,7 @@ impl<S: Storage> Blockchain<S> {
                 }
 
                 // Check if the TX is already in the block
-                if processed_txs.contains(hash) {
+                if processed_txs.contains(hash.as_ref()) {
                     debug!("Skipping TX {} because it is already in the DAG branch", hash);
                     continue;
                 }
@@ -2093,16 +2093,57 @@ impl<S: Storage> Blockchain<S> {
             }
 
             trace!("verifying {} TXs in block {}", txs_len, block_hash);
-            // Cache to retrieve only one time all TXs hashes until stable height
-            let mut all_parents_txs: Option<HashSet<Hash>> = None;
+
+            // V2 helps us to determine if we should retrieve all TXs from parents
+            // that are not only executed, but also just in block tips to prevent re integration
+            // as we know that if current block would be accepted, its tips would be also executed in DAG
+            let is_v2_enabled = version >= BlockVersion::V2;
+            // V3 group transactions from orphaned blocks per source to re inject them for verification
+            // This is required in case of complex DAG reorgs where we have orphaned blocks with TXs referencing to
+            // each other
+            // Because these TXs were already verified, their cost should be amortized by the batching verification
+            let is_v3_enabled = version >= BlockVersion::V3;
 
             // All transactions grouped per source key
             // used for batch verifications
             let mut txs_grouped = HashMap::new();
+
+            // Cache to retrieve only one time all TXs hashes until stable height from our TIPS
+            // This include all TXs that were executed (or not if any TIP branch is orphaned)
+            let parents_txs = if !block.get_txs_hashes().is_empty() {
+                debug!("Loading all TXs until height {} for block {} (executed only: {})", stable_height, block_hash, !is_v2_enabled);
+                self.get_all_txs_until_height(
+                    &*storage,
+                    stable_height,
+                    block.get_tips().iter().cloned(),
+                    !is_v2_enabled
+                ).await?
+            } else {
+                IndexSet::new()
+            };
+
+            if is_v3_enabled {
+                // if V3 is enabled, we should also group the TXs by source
+                // to re inject them in case of orphaned blocks
+                debug!("Grouping all TXs from parents by source for block {}", block_hash);
+                for hash in parents_txs.iter() {
+                    if storage.is_tx_executed_in_a_block(hash)? {
+                        debug!("TX {} from parent is executed, skipping it", hash);
+                        continue;
+                    }
+
+                    let tx = storage.get_transaction(hash).await?
+                        .into_arc();
+
+                    let source = tx.get_source();
+                    txs_grouped.entry(Cow::Owned(source.clone()))
+                        .or_insert_with(Vec::new)
+                        .push((tx, hash));
+                }
+            }
+
             let mut total_outputs = 0;
             let mut total_txs = 0;
-
-            let is_v2_enabled = version >= BlockVersion::V2;
 
             for (tx, hash) in block.get_transactions().iter().zip(block.get_txs_hashes()) {
                 let tx_size = tx.size();
@@ -2135,35 +2176,19 @@ impl<S: Storage> Blockchain<S> {
                 // we should check that the TX is not in block tips
                 // For v2 and above, all TXs that are presents in block TIPs are rejected
                 if is_v2_enabled || (is_executed && !is_v2_enabled) {
-                    // now we should check that the TX was not executed in our TIP branch
-                    // because that mean the miner was aware of the TX execution and still include it
-                    if all_parents_txs.is_none() {
-                        debug!("Loading all TXs until height {} for block {} (executed only: {})", stable_height, block_hash, !is_v2_enabled);
-                        let txs = self.get_all_txs_until_height(
-                            &*storage,
-                            stable_height,
-                            block.get_tips().iter().cloned(),
-                            !is_v2_enabled
-                        ).await?;
-                        all_parents_txs = Some(txs);
-                    }
+                    // miner knows this tx was already executed because its present in block tips
+                    // reject the whole block
+                    if parents_txs.contains(&tx_hash) {
+                        debug!("Malicious Block {} formed, contains a dead tx {}, is executed: {}", block_hash, tx_hash, is_executed);
+                        return Err(BlockchainError::DeadTxFromTips(block_hash.into_owned(), tx_hash))
+                    } else if is_executed {
+                        // otherwise, all looks good but because the TX was executed in another branch, we skip verification
+                        // DAG will choose which branch will execute the TX
+                        debug!("TX {} was executed in another branch, skipping verification", tx_hash);
 
-                    // if its the case, we should reject the block
-                    if let Some(txs) = all_parents_txs.as_ref() {
-                        // miner knows this tx was already executed because its present in block tips
-                        // reject the whole block
-                        if txs.contains(&tx_hash) {
-                            debug!("Malicious Block {} formed, contains a dead tx {}, is executed: {}", block_hash, tx_hash, is_executed);
-                            return Err(BlockchainError::DeadTxFromTips(block_hash.into_owned(), tx_hash))
-                        } else if is_executed {
-                            // otherwise, all looks good but because the TX was executed in another branch, we skip verification
-                            // DAG will choose which branch will execute the TX
-                            debug!("TX {} was executed in another branch, skipping verification", tx_hash);
-    
-                            // because TX was already validated & executed and is not in block tips
-                            // we can safely skip the verification of this TX
-                            continue;
-                        }
+                        // because TX was already validated & executed and is not in block tips
+                        // we can safely skip the verification of this TX
+                        continue;
                     }
                 }
 
@@ -2171,7 +2196,7 @@ impl<S: Storage> Blockchain<S> {
                 total_txs += 1;
                 // Transactions are behind a Arc because they are
                 // cloned for verify_batch which run a spawn_blocking thread
-                txs_grouped.entry(tx.get_source())
+                txs_grouped.entry(Cow::Borrowed(tx.get_source()))
                     .or_insert_with(Vec::new)
                     .push((Arc::clone(tx), hash));
             }
@@ -2955,13 +2980,13 @@ impl<S: Storage> Blockchain<S> {
 
     // retrieve all txs hashes until height or until genesis block
     // for this we get all tips and recursively retrieve all txs from tips until we reach height
-    async fn get_all_txs_until_height<P>(&self, provider: &P, until_height: u64, tips: impl Iterator<Item = Hash>, executed_only: bool) -> Result<HashSet<Hash>, BlockchainError>
+    async fn get_all_txs_until_height<P>(&self, provider: &P, until_height: u64, tips: impl Iterator<Item = Hash>, executed_only: bool) -> Result<IndexSet<Hash>, BlockchainError>
     where
         P: DifficultyProvider + ClientProtocolProvider
     {
         trace!("get all txs until height {}", until_height);
         // All transactions hashes found under the stable height
-        let mut hashes = HashSet::new();
+        let mut hashes = IndexSet::new();
         // Current queue of blocks to process
         let mut queue = IndexSet::new();
         // All already processed blocks
