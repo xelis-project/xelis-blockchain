@@ -1,4 +1,9 @@
-use curve25519_dalek::{ristretto::CompressedRistretto, Scalar};
+use curve25519_dalek::{
+    ristretto::CompressedRistretto,
+    traits::{IsIdentity, VartimeMultiscalarMul},
+    RistrettoPoint,
+    Scalar
+};
 use merlin::Transcript;
 use rand::rngs::OsRng;
 use zeroize::Zeroize;
@@ -6,6 +11,7 @@ use zeroize::Zeroize;
 use crate::{
     crypto::{
         elgamal::{
+            DecompressionError,
             DecryptHandle,
             PedersenCommitment,
             PedersenOpening,
@@ -26,7 +32,9 @@ use crate::{
 use super::{
     BatchCollector,
     ProofVerificationError,
-    PC_GENS
+    PC_GENS,
+    G,
+    H,
 };
 
 /// Cipher text validity proof.
@@ -84,6 +92,9 @@ impl CiphertextValidityProof {
         Self { Y_0, Y_1, Y_2, z_r, z_x }
     }
 
+    /// Pre-verification of the ciphertext validity proof.
+    /// This function checks the validity of the proof without performing the full verification.
+    /// It collects the necessary data for batch verification.
     pub fn pre_verify(
         &self,
         commitment: &PedersenCommitment,
@@ -111,16 +122,16 @@ impl CiphertextValidityProof {
         let Y_0 = self
             .Y_0
             .decompress()
-            .ok_or(ProofVerificationError::CiphertextValidityProof)?;
+            .ok_or(DecompressionError)?;
         let Y_1 = self
             .Y_1
             .decompress()
-            .ok_or(ProofVerificationError::CiphertextValidityProof)?;
+            .ok_or(DecompressionError)?;
         let Y_2 = if let Some(Y_2) = self.Y_2.as_ref() {
             Some(
                 Y_2
                     .decompress()
-                    .ok_or(ProofVerificationError::CiphertextValidityProof)?,
+                    .ok_or(DecompressionError)?,
             )
         } else {
             None
@@ -179,6 +190,122 @@ impl CiphertextValidityProof {
         }
 
         Ok(())
+    }
+
+    /// Verify the ciphertext validity proof.
+    /// This function checks the validity of the proof against the provided commitment and public keys.
+    /// It directly verifys the proof without collecting data for batch verification.
+    pub fn verify(
+        &self,
+        commitment: &PedersenCommitment,
+        dest_pubkey: &PublicKey,
+        source_pubkey: &PublicKey,
+        dest_handle: &DecryptHandle,
+        source_handle: &DecryptHandle,
+        check_y_2: bool,
+        transcript: &mut Transcript,
+    ) -> Result<(), ProofVerificationError> {
+        transcript.ciphertext_validity_proof_domain_separator();
+
+        transcript.validate_and_append_point(b"Y_0", &self.Y_0)?;
+        transcript.validate_and_append_point(b"Y_1", &self.Y_1)?;
+
+        if let Some(Y_2) = self.Y_2.as_ref().filter(|_| check_y_2) {
+            transcript.validate_and_append_point(b"Y_2", Y_2)?;
+        }
+
+        let c = transcript.challenge_scalar(b"c");
+        let w = transcript.challenge_scalar(b"w");
+        let ww = &w * &w;
+
+        let w_negated = -&w;
+        let ww_negated = -&ww;
+
+        // check the required algebraic conditions
+        let Y_0 = self
+            .Y_0
+            .decompress()
+            .ok_or(DecompressionError)?;
+        let Y_1 = self
+            .Y_1
+            .decompress()
+            .ok_or(DecompressionError)?;
+        let Y_2 = if let Some(Y_2) = self.Y_2.as_ref() {
+            Some(
+                Y_2
+                    .decompress()
+                    .ok_or(DecompressionError)?,
+            )
+        } else {
+            None
+        };
+
+        if Y_2.is_some() != check_y_2 {
+            return Err(ProofVerificationError::CiphertextValidityProof);
+        }
+
+        let P_dest = dest_pubkey.as_point();
+        let P_source = source_pubkey.as_point();
+
+        let C = commitment.as_point();
+        let D_dest = dest_handle.as_point();
+        let D_source = source_handle.as_point();
+
+        let check = if let Some(Y_2) = Y_2 {
+            RistrettoPoint::vartime_multiscalar_mul(
+                vec![
+                    &self.z_r,           // z_r
+                    &self.z_x,           // z_x
+                    &(-&c),              // -c
+                    &-(&Scalar::ONE),    // -identity
+                    &(&w * &self.z_r),   // w * z_r
+                    &(&w_negated * &c),  // -w * c
+                    &w_negated,          // -w
+                    &(&ww * &self.z_r),  // ww * z_r
+                    &(&ww_negated * &c), // -ww * c
+                    &ww_negated,         // -ww
+                ],
+                vec![
+                    &(*H), // H
+                    &(*G), // G
+                    C,        // C
+                    &Y_0,     // Y_0
+                    P_dest,  // P_first
+                    D_dest,  // D_first
+                    &Y_1,     // Y_1
+                    P_source, // P_second
+                    D_source, // D_second
+                    &Y_2, // Y_2
+                ],
+            )
+        } else {
+            RistrettoPoint::vartime_multiscalar_mul(
+                vec![
+                    &self.z_r,           // z_r
+                    &self.z_x,           // z_x
+                    &(-&c),              // -c
+                    &-(&Scalar::ONE),    // -identity
+                    &(&w * &self.z_r),   // w * z_r
+                    &(&w_negated * &c),  // -w * c
+                    &w_negated,          // -w
+                ],
+                vec![
+                    &(*H), // H
+                    &(*G), // G
+                    C,        // C
+                    &Y_0,     // Y_0
+                    P_dest,  // P_first
+                    D_dest,  // D_first
+                    &Y_1,     // Y_1
+                ],
+            )
+        };
+
+        if check.is_identity() {
+            Ok(())
+        } else {
+            Err(ProofVerificationError::CiphertextValidityProof)
+        }
     }
 }
 

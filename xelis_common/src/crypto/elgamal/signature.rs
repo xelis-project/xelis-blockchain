@@ -2,7 +2,7 @@ use curve25519_dalek::{RistrettoPoint, Scalar};
 use serde::{de::Error, Serialize};
 use sha3::{Digest, Sha3_512};
 use crate::{
-    crypto::proofs::PC_GENS,
+    crypto::proofs::H,
     serializer::{
         Reader,
         ReaderError,
@@ -27,7 +27,7 @@ impl Signature {
 
     // Verify the signature using the Public Key and the hash of the message
     pub fn verify(&self, message: &[u8], key: &PublicKey) -> bool {
-        let r = PC_GENS.B_blinding * &self.s + key.as_point() * -self.e;
+        let r = (*H) * &self.s + key.as_point() * -self.e;
         let calculated = hash_and_point_to_scalar(&key.compress(), message, &r);
         self.e == calculated
     }

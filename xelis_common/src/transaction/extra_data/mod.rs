@@ -27,7 +27,7 @@ use crate::{
             PedersenOpening,
             PrivateKey,
         },
-        proofs::PC_GENS
+        proofs::H
     },
     serializer::{
         Reader,
@@ -76,7 +76,7 @@ pub struct PlaintextData(pub Vec<u8>);
 
 /// See [`derive_shared_key`].
 pub fn derive_shared_key_from_opening(opening: &PedersenOpening) -> SharedKey {
-    derive_shared_key(&(opening.as_scalar() * &PC_GENS.B_blinding).compress())
+    derive_shared_key(&(opening.as_scalar() * (*H)).compress())
 }
 
 /// See [`derive_shared_key`].

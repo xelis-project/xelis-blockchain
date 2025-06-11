@@ -10,7 +10,7 @@ use crate::{
     config::{BURN_PER_CONTRACT, COIN_VALUE, XELIS_ASSET},
     crypto::{
         elgamal::{Ciphertext, PedersenOpening},
-        proofs::{PC_GENS, ProofVerificationError},
+        proofs::{G, ProofVerificationError},
         Address,
         Hash,
         Hashable,
@@ -233,11 +233,11 @@ async fn test_tx_verify() {
 
     // Check Bob balance
     let balance = bob.keypair.decrypt_to_point(&state.accounts[&bob.keypair.get_public_key().compress()].balances[&XELIS_ASSET]);    
-    assert_eq!(balance, Scalar::from(50u64) * PC_GENS.B);
+    assert_eq!(balance, Scalar::from(50u64) * (*G));
 
     // Check Alice balance
     let balance = alice.keypair.decrypt_to_point(&state.accounts[&alice.keypair.get_public_key().compress()].balances[&XELIS_ASSET]);
-    assert_eq!(balance, Scalar::from((100u64 * COIN_VALUE) - (50 + tx.fee)) * PC_GENS.B);
+    assert_eq!(balance, Scalar::from((100u64 * COIN_VALUE) - (50 + tx.fee)) * (*G));
 }
 
 
@@ -352,7 +352,7 @@ async fn test_burn_tx_verify() {
 
     // Check Alice balance
     let balance = alice.keypair.decrypt_to_point(&state.accounts[&alice.keypair.get_public_key().compress()].balances[&XELIS_ASSET]);
-    assert_eq!(balance, Scalar::from((100u64 * COIN_VALUE) - (50 * COIN_VALUE + tx.fee)) * PC_GENS.B);
+    assert_eq!(balance, Scalar::from((100u64 * COIN_VALUE) - (50 * COIN_VALUE + tx.fee)) * (*G));
 }
 
 #[tokio::test]
@@ -417,7 +417,7 @@ async fn test_tx_invoke_contract() {
     // 50 coins deposit + tx fee + 1000 gas fee
     let total_spend = (50 * COIN_VALUE) + tx.fee + 1000;
 
-    assert_eq!(balance, Scalar::from((100 * COIN_VALUE) - total_spend) * PC_GENS.B);
+    assert_eq!(balance, Scalar::from((100 * COIN_VALUE) - total_spend) * (*G));
 }
 
 
@@ -474,7 +474,7 @@ async fn test_tx_deploy_contract() {
     // 1 XEL for contract deploy, tx fee
     let total_spend = BURN_PER_CONTRACT + tx.fee;
 
-    assert_eq!(balance, Scalar::from((100 * COIN_VALUE) - total_spend) * PC_GENS.B);
+    assert_eq!(balance, Scalar::from((100 * COIN_VALUE) - total_spend) * (*G));
 }
 
 #[tokio::test]
