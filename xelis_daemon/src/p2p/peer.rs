@@ -464,8 +464,12 @@ impl Peer {
 
     // Request a bootstrap chain from this peer and wait on it until we receive it or until timeout
     pub async fn request_boostrap_chain(&self, step: StepRequest<'_>) -> Result<StepResponse, P2pError> {
-        debug!("Requesting bootstrap chain step: {:?}", step.kind());
         let step_kind = step.kind();
+        debug!("waiting for permit for bootstrap chain step: {:?}", step_kind);
+
+        let _permit = self.objects_semaphore.acquire().await?;
+
+        debug!("Requesting bootstrap chain step: {:?}", step_kind);
         let (sender, receiver) = tokio::sync::oneshot::channel();
         {
             let mut senders = self.bootstrap_chain.lock().await;
