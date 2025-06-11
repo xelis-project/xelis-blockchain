@@ -38,7 +38,7 @@ use crate::config::CHAIN_SYNC_REQUEST_MAX_BLOCKS;
 // The protocol is based on
 // how many items we can answer per request
 
-pub const MAX_ITEMS_PER_PAGE: usize = 16384; // 16k items per page
+pub const MAX_ITEMS_PER_PAGE: usize = 1024; // 1k items per page
 
 #[derive(Debug)]
 pub struct BlockMetadata {
@@ -548,8 +548,36 @@ impl Serializer for StepResponse {
                 }
                 Self::KeyBalances(keys, page)
             },
-            4 => Self::SpendableBalances(Vec::read(reader)?, Option::read(reader)?),
-            5 => Self::Accounts(Vec::read(reader)?),
+            4 => {
+                let len = reader.read_u16()?;
+                if len > MAX_ITEMS_PER_PAGE as u16 {
+                    debug!("Invalid spendable balances response length: {}", len);
+                    return Err(ReaderError::InvalidValue)
+                }
+
+                let mut balances = Vec::with_capacity(len as usize);
+                for _ in 0..len {
+                    let balance = Balance::read(reader)?;
+                    balances.push(balance);
+                }
+
+                Self::SpendableBalances(balances, Option::read(reader)?)
+            },
+            5 => {
+                let len = reader.read_u16()?;
+                if len > MAX_ITEMS_PER_PAGE as u16 {
+                    debug!("Invalid accounts response length: {}", len);
+                    return Err(ReaderError::InvalidValue)
+                }
+                let mut accounts = Vec::with_capacity(len as usize);
+                for _ in 0..len {
+                    let nonce = State::<Nonce>::read(reader)?;
+                    let multisig = State::<MultiSigPayload>::read(reader)?;
+                    accounts.push((nonce, multisig));
+                }
+
+                Self::Accounts(accounts)
+            },
             6 => {
                 let len = reader.read_u16()?;
                 if len > MAX_ITEMS_PER_PAGE as u16 {
