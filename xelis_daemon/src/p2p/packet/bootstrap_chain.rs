@@ -38,7 +38,7 @@ use crate::config::CHAIN_SYNC_REQUEST_MAX_BLOCKS;
 // The protocol is based on
 // how many items we can answer per request
 
-pub const MAX_ITEMS_PER_PAGE: usize = 1024;
+pub const MAX_ITEMS_PER_PAGE: usize = 16384; // 16k items per page
 
 #[derive(Debug)]
 pub struct BlockMetadata {
@@ -302,8 +302,21 @@ impl Serializer for StepRequest<'_> {
             5 => {
                 let min = reader.read_u64()?;
                 let max = reader.read_u64()?;
-                let keys = Cow::read(reader)?;
-                Self::Accounts(min, max, keys)
+                let len = reader.read_u16()?;
+                if len > MAX_ITEMS_PER_PAGE as u16 {
+                    debug!("Invalid accounts request length: {}", len);
+                    return Err(ReaderError::InvalidValue)
+                }
+
+                let mut keys = IndexSet::with_capacity(len as usize);
+                for _ in 0..len {
+                    if !keys.insert(PublicKey::read(reader)?) {
+                        debug!("Duplicated public key for accounts request");
+                        return Err(ReaderError::InvalidValue)
+                    }
+                }
+
+                Self::Accounts(min, max, Cow::Owned(keys))
             },
             6 => {
                 let min = reader.read_u64()?;
@@ -368,11 +381,11 @@ impl Serializer for StepRequest<'_> {
                 writer.write_u64(min);
                 writer.write_u64(max);
             },
-            Self::Accounts(min, max, nonces) => {
+            Self::Accounts(min, max, keys) => {
                 writer.write_u8(5);
                 writer.write_u64(min);
                 writer.write_u64(max);
-                nonces.write(writer);
+                keys.write(writer);
             },
             Self::Contracts(min, max, pagination) => {
                 writer.write_u8(6);
@@ -462,7 +475,22 @@ impl Serializer for StepResponse {
                 Self::ChainInfo(common_point, topoheight, stable_height, hash)
             },
             1 => {
-                let assets = IndexMap::read(reader)?;
+                let len = reader.read_u16()?;
+                if len > MAX_ITEMS_PER_PAGE as u16 {
+                    debug!("Invalid assets response length: {}", len);
+                    return Err(ReaderError::InvalidValue)
+                }
+
+                let mut assets = IndexMap::with_capacity(len as usize);
+                for _ in 0..len {
+                    let key = Hash::read(reader)?;
+                    let value = AssetData::read(reader)?;
+                    if assets.insert(key, value).is_some() {
+                        debug!("Duplicated asset key in Step Response");
+                        return Err(ReaderError::InvalidValue)
+                    }
+                }
+
                 let page = Option::read(reader)?;
                 if let Some(page_number) = &page {
                     if *page_number == 0 {
@@ -473,7 +501,19 @@ impl Serializer for StepResponse {
                 Self::Assets(assets, page)
             },
             2 => {
-                let keys = IndexSet::read(reader)?;
+                let len = reader.read_u16()?;
+                if len > MAX_ITEMS_PER_PAGE as u16 {
+                    debug!("Invalid keys response length: {}", len);
+                    return Err(ReaderError::InvalidValue)
+                }
+                let mut keys = IndexSet::with_capacity(len as usize);
+                for _ in 0..len {
+                    if !keys.insert(PublicKey::read(reader)?) {
+                        debug!("Duplicated public key in Step Response");
+                        return Err(ReaderError::InvalidValue)
+                    }
+                }
+
                 let page = Option::read(reader)?;
                 if let Some(page_number) = &page {
                     if *page_number == 0 {
@@ -484,7 +524,21 @@ impl Serializer for StepResponse {
                 Self::Keys(keys, page)
             },
             3 => {
-                let keys = IndexMap::read(reader)?;
+                let len = reader.read_u16()?;
+                if len > MAX_ITEMS_PER_PAGE as u16 {
+                    debug!("Invalid key balances response length: {}", len);
+                    return Err(ReaderError::InvalidValue)
+                }
+                let mut keys = IndexMap::with_capacity(len as usize);
+                for _ in 0..len {
+                    let key = Hash::read(reader)?;
+                    let value = Option::read(reader)?;
+                    if keys.insert(key, value).is_some() {
+                        debug!("Duplicated key in Step Response");
+                        return Err(ReaderError::InvalidValue)
+                    }
+                }
+
                 let page = Option::read(reader)?;
                 if let Some(page_number) = &page {
                     if *page_number == 0 {
@@ -497,7 +551,20 @@ impl Serializer for StepResponse {
             4 => Self::SpendableBalances(Vec::read(reader)?, Option::read(reader)?),
             5 => Self::Accounts(Vec::read(reader)?),
             6 => {
-                let contracts = IndexSet::<Hash>::read(reader)?;
+                let len = reader.read_u16()?;
+                if len > MAX_ITEMS_PER_PAGE as u16 {
+                    debug!("Invalid contracts response length: {}", len);
+                    return Err(ReaderError::InvalidValue)
+                }
+
+                let mut contracts = IndexSet::with_capacity(len as usize);
+                for _ in 0..len {
+                    if !contracts.insert(Hash::read(reader)?) {
+                        debug!("Duplicated contract hash in Step Response");
+                        return Err(ReaderError::InvalidValue)
+                    }
+                }
+
                 let page = Option::read(reader)?;
                 if let Some(page_number) = &page {
                     if *page_number == 0 {
@@ -507,11 +574,24 @@ impl Serializer for StepResponse {
                 }
                 Self::Contracts(contracts, page)
             },
-            7 => {
-                Self::ContractMetadata(State::read(reader)?)
-            }
+            7 => Self::ContractMetadata(State::read(reader)?),
             8 => {
-                Self::BlocksMetadata(IndexSet::read(reader)?)
+                let len = reader.read_u16()?;
+                if len > CHAIN_SYNC_REQUEST_MAX_BLOCKS as u16 {
+                    debug!("Invalid blocks metadata response length: {}", len);
+                    return Err(ReaderError::InvalidValue)
+                }
+
+                let mut blocks = IndexSet::with_capacity(len as usize);
+                for _ in 0..len {
+                    let metadata = BlockMetadata::read(reader)?;
+                    if !blocks.insert(metadata) {
+                        debug!("Duplicated block metadata in Step Response");
+                        return Err(ReaderError::InvalidValue)
+                    }
+                }
+
+                Self::BlocksMetadata(blocks)
             },
             id => {
                 debug!("Received invalid value for StepResponse: {}", id);

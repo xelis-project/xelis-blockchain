@@ -651,7 +651,7 @@ impl<S: Storage> P2pServer<S> {
                 .try_for_each_concurrent(self.stream_concurrency, |(asset, summary)| async move {
                     // check that the account have balance for this asset
                     if let Some(account) = summary {
-                        info!("Fetching balance {} history for {}", asset, key.as_address(blockchain.get_network().is_mainnet()));
+                        debug!("Fetching balance {} history for {}", asset, key.as_address(blockchain.get_network().is_mainnet()));
 
                         // Each version are applied on iteration N+1 of the loop
                         // This is done to get the previous topoheight of the current version
@@ -709,6 +709,7 @@ impl<S: Storage> P2pServer<S> {
                 }).await?;
 
             if page.is_none() {
+                debug!("Finished fetching balances for key {}", key.as_address(self.blockchain.get_network().is_mainnet()));
                 break;
             }
         }
@@ -724,12 +725,18 @@ impl<S: Storage> P2pServer<S> {
             return Ok(())
         }
 
+        let mut start = Instant::now();
+        info!("Updating {} keys", keys.len());
         self.handle_accounts(peer, keys, our_topoheight, stable_topoheight, update_registration).await?;
+        info!("Updated {} keys in {}", keys.len(), humantime::format_duration(start.elapsed()));
+        start = Instant::now();
 
         stream::iter(keys.iter().map(Ok))
             .try_for_each_concurrent(self.stream_concurrency, |key| async move {
                 self.handle_balances(peer, key, our_topoheight, stable_topoheight).await
             }).await?;
+
+        info!("Updated {} balances in {}", keys.len(), humantime::format_duration(start.elapsed()));
 
         Ok(())
     }
