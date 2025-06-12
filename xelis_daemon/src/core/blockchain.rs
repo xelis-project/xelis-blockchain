@@ -218,7 +218,7 @@ impl<S: Storage> Blockchain<S> {
     pub async fn new(config: Config, network: Network, storage: S) -> Result<Arc<Self>, Error> {
         // Do some checks on config params
         {
-            if config.simulator.is_some() && network != Network::Dev {
+            if config.simulator.is_some() && network != Network::Devnet {
                 error!("Impossible to enable simulator mode except in dev network!");
                 return Err(BlockchainError::InvalidNetwork.into())
             }

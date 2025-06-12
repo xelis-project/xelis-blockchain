@@ -215,8 +215,8 @@ const HARD_FORKS: [HardFork; 3] = [
     }
 ];
 
-// Testnet / Devnet hard forks
-const TESTNET_HARD_FORKS: [HardFork; 4] = [
+// Testnet / Stagenet / Devnet hard forks
+const OTHERS_NETWORK_HARD_FORKS: [HardFork; 4] = [
     HardFork {
         height: 0,
         version: BlockVersion::V0,
@@ -283,8 +283,8 @@ const TESTNET_GENESIS_BLOCK_HASH: Hash = Hash::new([171, 50, 219, 186, 28, 164, 
 pub fn get_hex_genesis_block(network: &Network) -> Option<&str> {
     match network {
         Network::Mainnet => Some(MAINNET_GENESIS_BLOCK),
-        Network::Testnet => Some(TESTNET_GENESIS_BLOCK),
-        Network::Dev => None
+        Network::Testnet | Network::Stagenet => Some(TESTNET_GENESIS_BLOCK),
+        Network::Devnet => None
     }
 }
 
@@ -299,8 +299,8 @@ lazy_static! {
 pub fn get_genesis_block_hash(network: &Network) -> Option<&'static Hash> {
     match network {
         Network::Mainnet => Some(&MAINNET_GENESIS_BLOCK_HASH),
-        Network::Testnet => Some(&TESTNET_GENESIS_BLOCK_HASH),
-        Network::Dev => None
+        Network::Testnet | Network::Stagenet => Some(&TESTNET_GENESIS_BLOCK_HASH),
+        Network::Devnet => None
     }
 }
 
@@ -309,7 +309,8 @@ pub const fn get_seed_nodes(network: &Network) -> &[&str] {
     match network {
         Network::Mainnet => &MAINNET_SEED_NODES,
         Network::Testnet => &TESTNET_SEED_NODES,
-        Network::Dev => &[],
+        Network::Stagenet => &[],
+        Network::Devnet => &[],
     }
 }
 
@@ -317,7 +318,7 @@ pub const fn get_seed_nodes(network: &Network) -> &[&str] {
 pub const fn get_hard_forks(network: &Network) -> &[HardFork] {
     match network {
         Network::Mainnet => &HARD_FORKS,
-        _ => &TESTNET_HARD_FORKS,
+        _ => &OTHERS_NETWORK_HARD_FORKS,
     }
 }
 

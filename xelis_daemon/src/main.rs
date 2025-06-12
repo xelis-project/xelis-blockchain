@@ -227,8 +227,8 @@ async fn main() -> Result<()> {
         }
     }
 
-    if blockchain_config.simulator.is_some() && config.network != Network::Dev {
-        config.network = Network::Dev;
+    if blockchain_config.simulator.is_some() && config.network != Network::Devnet {
+        config.network = Network::Devnet;
         warn!("Switching automatically to network {} because of simulator enabled", config.network);
     }
 
