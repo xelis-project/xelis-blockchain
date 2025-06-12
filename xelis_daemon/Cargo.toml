@@ -26,6 +26,7 @@ rocksdb = "0.23.0"
 strum = { version = "0.27.1", features = ["derive"] }
 xxhash-rust = { version = "0.8.15", features = ["xxh3"] }
 metrics = "0.24.2"
+metrics-exporter-prometheus = "0.17.0"
 
 # Common dependencies
 tokio = { version = "1", features = ["rt-multi-thread", "io-util", "io-std", "time", "macros", "sync", "net"] }
