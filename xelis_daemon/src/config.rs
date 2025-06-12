@@ -10,7 +10,8 @@ use xelis_common::{
     },
     difficulty::Difficulty,
     network::Network,
-    time::TimestampSeconds
+    time::TimestampSeconds,
+    static_assert,
 };
 
 // In case of potential forks, have a unique network id to not connect to others compatible chains
@@ -138,8 +139,6 @@ pub const P2P_EXTEND_PEERLIST_DELAY: u64 = 60;
 // At least 5 minutes of countdown to retry to connect to the same peer
 // This will be multiplied by the number of fails
 pub const P2P_PEERLIST_RETRY_AFTER: u64 = 60 * 15;
-// Peer wait on error accept new p2p connections in seconds
-pub const P2P_PEER_WAIT_ON_ERROR: u64 = 15;
 // Delay in second to connect to priority nodes
 pub const P2P_AUTO_CONNECT_PRIORITY_NODES_DELAY: u64 = 5;
 // Default number of concurrent tasks for incoming p2p connections
@@ -321,3 +320,21 @@ pub const fn get_hard_forks(network: &Network) -> &[HardFork] {
         _ => &TESTNET_HARD_FORKS,
     }
 }
+
+// Static checks
+static_assert!(
+    CHAIN_SYNC_RESPONSE_MAX_BLOCKS >= CHAIN_SYNC_RESPONSE_MIN_BLOCKS,
+    "Chain sync response max blocks must be greater than or equal to min blocks"
+);
+static_assert!(
+    CHAIN_SYNC_DEFAULT_RESPONSE_BLOCKS >= CHAIN_SYNC_RESPONSE_MIN_BLOCKS,
+    "Chain sync default response blocks must be greater than or equal to min blocks"
+);
+static_assert!(
+    CHAIN_SYNC_DEFAULT_RESPONSE_BLOCKS <= CHAIN_SYNC_RESPONSE_MAX_BLOCKS,
+    "Chain sync default response blocks must be less than or equal to max blocks"
+);
+static_assert!(
+    CHAIN_SYNC_RESPONSE_MAX_BLOCKS <= u16::MAX as usize,
+    "Chain sync response max blocks must be less than or equal to u16::MAX"
+);

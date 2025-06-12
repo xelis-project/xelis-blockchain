@@ -359,8 +359,7 @@ impl Connection {
         }
         trace!("Size received: {}", size);
 
-        let bytes = self.read_all_bytes(&mut stream, buf, size).await?;
-        Ok(bytes)
+        self.read_all_bytes(&mut stream, buf, size).await
     }
 
     // Deserialize a packet from bytes and verify its integrity
@@ -371,6 +370,7 @@ impl Connection {
             debug!("read {:?} only {}/{} on bytes available from {}", packet, reader.total_read(), bytes.len(), self);
             return Err(P2pError::InvalidPacketNotFullRead)
         }
+
         Ok(packet)
     }
 
@@ -409,7 +409,8 @@ impl Connection {
     // This support fragmented packets and encryption
     async fn read_all_bytes(&self, stream: &mut OwnedReadHalf, buf: &mut [u8], mut left: u32) -> P2pResult<Vec<u8>> {
         let buf_size = buf.len() as u32;
-        let mut bytes = Vec::new();
+        // Allocate a vector to store the bytes read
+        let mut bytes = Vec::with_capacity(left as usize);
         while left > 0 {
             let max = if buf_size > left {
                 left as usize
