@@ -166,6 +166,10 @@ pub struct Peer {
     // Semaphore to prevent requesting too many
     // objects at once
     objects_semaphore: Semaphore,
+    // Should we broadcast transactions to this peer
+    // Due to needed order of TXs to be accepted
+    // We must wait that the peer received our inventory
+    should_propagate_txs: AtomicBool,
 }
 
 impl Peer {
@@ -210,8 +214,19 @@ impl Peer {
             tx,
             read_task: Mutex::new(TaskState::Inactive),
             write_task: Mutex::new(TaskState::Inactive),
-            objects_semaphore: Semaphore::new(PEER_OBJECTS_CONCURRENCY)
+            objects_semaphore: Semaphore::new(PEER_OBJECTS_CONCURRENCY),
+            should_propagate_txs: AtomicBool::new(false),
         }, rx)
+    }
+
+    // This is used to mark that peer is ready to get our propagated transactions
+    pub fn set_ready_to_propagate_txs(&self, value: bool) {
+        self.should_propagate_txs.store(value, Ordering::SeqCst);
+    }
+
+    // Is this peer ready to receive our propagated transactions
+    pub fn is_ready_for_txs_propagation(&self) -> bool {
+        self.should_propagate_txs.load(Ordering::SeqCst)
     }
 
     // Subscribe to the exit channel to be notified when peer disconnects

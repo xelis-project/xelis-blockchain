@@ -2137,10 +2137,11 @@ impl<S: Storage> P2pServer<S> {
 
                 let request = request.into_owned();
 
-                let page_id = request.page().unwrap_or(0);
+                let page = request.page();
+                let page_id = page.unwrap_or(0);
                 let skip = page_id as usize * NOTIFY_MAX_LEN;
 
-                let packet = {
+                let (is_last, packet) = {
                     let mempool = self.blockchain.get_mempool().read().await;
                     let txs = mempool.get_txs()
                         .keys()
@@ -2157,11 +2158,24 @@ impl<S: Storage> P2pServer<S> {
                             None
                         }
                     };
-                    Packet::NotifyInventoryResponse(NotifyInventoryResponse::new(next_page, Cow::Owned(txs))).to_bytes()
+
+                    let is_last = next_page.is_none();
+                    let packet = Packet::NotifyInventoryResponse(NotifyInventoryResponse::new(next_page, Cow::Owned(txs))).to_bytes();
+                    (is_last, packet)
                 };
 
                 trace!("Sending inventory response to {}", peer);
                 peer.send_bytes(Bytes::from(packet)).await?;
+
+                // Last inventory response has been sent
+                // Mark it as ready for propagation
+                if is_last {
+                    debug!("{} requested last inventory, marking it as ready for TXs propagation", peer);
+                    peer.set_ready_to_propagate_txs(true);
+                } else if peer.is_ready_for_txs_propagation() && page.is_none() {
+                    debug!("{} requested first page of inventory, unmarking it from being ready for TXs propagation", peer);
+                    peer.set_ready_to_propagate_txs(false);
+                }
             },
             Packet::NotifyInventoryResponse(inventory) => {
                 debug!("Received a notify inventory from {}: {} txs", peer, inventory.len());
@@ -2481,7 +2495,7 @@ impl<S: Storage> P2pServer<S> {
                 // check that the peer is not too far from us
                 // otherwise we may spam him for nothing
                 let peer_topoheight = peer.get_topoheight();
-                if (peer_topoheight >= current_topoheight && peer_topoheight - current_topoheight < STABLE_LIMIT) || (current_topoheight >= peer_topoheight && current_topoheight - peer_topoheight < STABLE_LIMIT) {
+                if peer.is_ready_for_txs_propagation() && ((peer_topoheight >= current_topoheight && peer_topoheight - current_topoheight < STABLE_LIMIT) || (current_topoheight >= peer_topoheight && current_topoheight - peer_topoheight < STABLE_LIMIT)) {
                     trace!("Peer {} is not too far from us, checking cache for tx hash {}", peer, tx);
 
                     // Do not keep the txs cache lock while sending the packet

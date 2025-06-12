@@ -128,7 +128,6 @@ impl Packet<'_> {
             | Packet::ChainRequest(_) 
             | Packet::ChainResponse(_)
             | Packet::NotifyInventoryRequest(_)
-            | Packet::NotifyInventoryResponse(_)
             | Packet::PeerDisconnected(_)
             | Packet::Ping(_) => false,
             _ => true,
