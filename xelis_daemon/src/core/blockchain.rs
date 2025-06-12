@@ -2,6 +2,7 @@ use anyhow::Error;
 use futures::{stream, TryStreamExt};
 use indexmap::IndexSet;
 use lru::LruCache;
+use metrics::{counter, histogram};
 use serde_json::{Value, json};
 use xelis_common::{
     api::{
@@ -550,6 +551,7 @@ impl<S: Storage> Blockchain<S> {
 
         self.clear_caches().await;
 
+        counter!("blockchain_reload_from_disk").increment(1);
         Ok(())
     }
 
@@ -701,6 +703,8 @@ impl<S: Storage> Blockchain<S> {
 
             // Update the pruned topoheight
             storage.set_pruned_topoheight(Some(located_sync_topoheight)).await?;
+
+            counter!("blockchain_prune_until_topoheight").increment(1);
             Ok(located_sync_topoheight)
         } else {
             debug!("located_sync_topoheight <= topoheight, no pruning needed");
@@ -1528,10 +1532,15 @@ impl<S: Storage> Blockchain<S> {
             // Put the hash behind an Arc to share it cheaply
             let hash = hash.into_arc();
 
+            let start = Instant::now();
             let version = get_version_at_height(self.get_network(), self.get_height());
             mempool.add_tx(storage, &self.environment, stable_topoheight, current_topoheight, hash.clone(), tx.clone(), tx_size, version).await?;
 
             debug!("TX {} has been added to the mempool", hash);
+
+            // Record the time taken to add the transaction to the mempool
+            histogram!("mempool_tx_added_ms").record(start.elapsed().as_millis() as f64);
+            counter!("txs_verified").increment(1u64);
 
             hash
         };
@@ -1694,6 +1703,8 @@ impl<S: Storage> Blockchain<S> {
     // Generate a block header template without transactions
     pub async fn get_block_header_template_for_storage(&self, storage: &S, address: PublicKey) -> Result<BlockHeader, BlockchainError> {
         trace!("get block header template");
+        let start = Instant::now();
+
         let extra_nonce: [u8; EXTRA_NONCE_SIZE] = rand::thread_rng().gen::<[u8; EXTRA_NONCE_SIZE]>(); // generate random bytes
         let tips_set = storage.get_tips().await?;
         let mut tips = Vec::with_capacity(tips_set.len());
@@ -1755,6 +1766,8 @@ impl<S: Storage> Blockchain<S> {
         let height = blockdag::calculate_height_at_tips(storage, sorted_tips.iter()).await?;
         let block = BlockHeader::new(get_version_at_height(self.get_network(), height), height, timestamp, sorted_tips, extra_nonce, address, IndexSet::new());
 
+        histogram!("block_header_template_ms").record(start.elapsed().as_millis() as f64);
+
         Ok(block)
     }
 
@@ -1767,6 +1780,8 @@ impl<S: Storage> Blockchain<S> {
         trace!("Locking mempool for building block template");
         let mempool = self.mempool.read().await;
         trace!("Mempool locked for building block template");
+
+        let start = Instant::now();
 
         // use the mempool cache to get all availables txs grouped by account
         let caches = mempool.get_caches();
@@ -1894,6 +1909,9 @@ impl<S: Storage> Blockchain<S> {
                 total_txs_size += size;
             }
         }
+
+        histogram!("block_header_template_txs_selection_ms").record(start.elapsed().as_millis() as f64);
+        counter!("block_template").increment(1);
 
         Ok(block)
     }
@@ -2252,7 +2270,12 @@ impl<S: Storage> Blockchain<S> {
                         .flatten();
                     Transaction::verify_batch(iter, &mut chain_state, &tx_cache).await?;
                 }
+
                 debug!("Verified {} transactions in {}ms", total_txs, start.elapsed().as_millis());
+
+                // Record metrics
+                counter!("txs_verified").increment(total_txs as u64);
+                histogram!("txs_verification_ms").record(start.elapsed().as_millis() as f64);
             }
         }
 
@@ -2309,6 +2332,9 @@ impl<S: Storage> Blockchain<S> {
         // Start by dropping the read guard
         // Because we will re-lock it in write mode
         drop(storage);
+
+        counter!("block_added").increment(1);
+
         let mut storage = self.storage.write().await;
 
         // Save transactions & block
@@ -2697,7 +2723,12 @@ impl<S: Storage> Blockchain<S> {
                 }
             }
 
-            debug!("Executed {} TXs in {:?}", total_txs_executed, Duration::from_micros(total_txs_execution_time as _))
+            let elapsed = Duration::from_micros(total_txs_execution_time as _);
+            debug!("Executed {} TXs in {:?}", total_txs_executed, elapsed);
+
+            // Record metrics
+            counter!("txs_executed").increment(total_txs_executed as u64);
+            histogram!("txs_execution_ms").record(elapsed.as_millis() as f64);
         }
 
         let best_height = storage.get_height_for_block_hash(best_tip).await?;
@@ -2820,6 +2851,7 @@ impl<S: Storage> Blockchain<S> {
             let start = Instant::now();
             let res = mempool.clean_up(&*storage, &self.environment, base_topo_height, highest_topo, version).await;
             debug!("Took {:?} to clean mempool!", start.elapsed());
+            histogram!("mempool_clean_up_ms").record(start.elapsed().as_millis() as f64);
             res
         };
 
@@ -2851,35 +2883,41 @@ impl<S: Storage> Blockchain<S> {
         }
 
         // Now we can try to add back all transactions
-        for tx_hash in orphaned_transactions {
-            debug!("Trying to add orphaned tx {} back in mempool", tx_hash);
-            // It is verified in add_tx_to_mempool function too
-            // But to prevent loading the TX from storage and to fire wrong event
-            if !storage.is_tx_executed_in_a_block(&tx_hash)? {
-                let tx = match storage.get_transaction(&tx_hash).await {
-                    Ok(tx) => tx.into_arc(),
-                    Err(e) => {
-                        warn!("Error while loading orphaned tx: {}", e);
-                        continue;
-                    }
-                };
+        {
+            counter!("orphaned_txs").increment(orphaned_transactions.len() as u64);
 
-                if let Err(e) = self.add_tx_to_mempool_with_storage_and_hash(&*storage, tx.clone(), Immutable::Owned(tx_hash.clone()), false).await {
-                    warn!("Error while adding back orphaned tx {}: {}", tx_hash, e);
-                    if !orphan_event_tracked {
-                        // We couldn't add it back to mempool, let's notify this event
-                        let data = RPCTransaction::from_tx(&tx, &tx_hash, storage.is_mainnet());
-                        let data = TransactionResponse {
-                            blocks: None,
-                            executed_in_block: None,
-                            in_mempool: false,
-                            first_seen: None,
-                            data,
-                        };
-                        events.entry(NotifyEvent::TransactionOrphaned).or_insert_with(Vec::new).push(json!(data));
+            let start = Instant::now();
+            for tx_hash in orphaned_transactions {
+                debug!("Trying to add orphaned tx {} back in mempool", tx_hash);
+                // It is verified in add_tx_to_mempool function too
+                // But to prevent loading the TX from storage and to fire wrong event
+                if !storage.is_tx_executed_in_a_block(&tx_hash)? {
+                    let tx = match storage.get_transaction(&tx_hash).await {
+                        Ok(tx) => tx.into_arc(),
+                        Err(e) => {
+                            warn!("Error while loading orphaned tx: {}", e);
+                            continue;
+                        }
+                    };
+    
+                    if let Err(e) = self.add_tx_to_mempool_with_storage_and_hash(&*storage, tx.clone(), Immutable::Owned(tx_hash.clone()), false).await {
+                        warn!("Error while adding back orphaned tx {}: {}", tx_hash, e);
+                        if !orphan_event_tracked {
+                            // We couldn't add it back to mempool, let's notify this event
+                            let data = RPCTransaction::from_tx(&tx, &tx_hash, storage.is_mainnet());
+                            let data = TransactionResponse {
+                                blocks: None,
+                                executed_in_block: None,
+                                in_mempool: false,
+                                first_seen: None,
+                                data,
+                            };
+                            events.entry(NotifyEvent::TransactionOrphaned).or_insert_with(Vec::new).push(json!(data));
+                        }
                     }
                 }
             }
+            histogram!("orphaned_txs_add_back_ms").record(start.elapsed().as_millis() as f64);
         }
 
         // Flush to the disk
@@ -3093,6 +3131,10 @@ impl<S: Storage> Blockchain<S> {
     // Rewind the chain by removing N blocks from the top
     pub async fn rewind_chain_for_storage(&self, storage: &mut S, count: u64, stop_at_stable_height: bool) -> Result<(TopoHeight, Vec<(Hash, Immutable<Transaction>)>), BlockchainError> {
         trace!("rewind chain with count = {}", count);
+
+        counter!("rewind_chain").increment(1);
+        histogram!("rewind_chain_count").record(count as f64);
+
         let current_height = self.get_height();
         let current_topoheight = self.get_topo_height();
         warn!("Rewind chain with count = {}, height = {}, topoheight = {}", count, current_height, current_topoheight);
@@ -3112,8 +3154,11 @@ impl<S: Storage> Blockchain<S> {
             }
         }
 
+        let start = Instant::now();
         let (new_height, new_topoheight, mut txs) = storage.pop_blocks(current_height, current_topoheight, count, until_topo_height).await?;
         debug!("New topoheight: {} (diff: {})", new_topoheight, current_topoheight - new_topoheight);
+
+        histogram!("rewind_chain_ms").record(start.elapsed().as_millis() as f64);
 
         // Clean mempool from old txs if the DAG has been updated
         {

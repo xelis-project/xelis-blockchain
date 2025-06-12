@@ -1,4 +1,8 @@
-use crate::config::{PEER_TIMEOUT_DISCONNECT, PEER_TIMEOUT_INIT_CONNECTION, PEER_SEND_BYTES_TIMEOUT};
+use crate::config::{
+    PEER_TIMEOUT_DISCONNECT,
+    PEER_TIMEOUT_INIT_CONNECTION,
+    PEER_SEND_BYTES_TIMEOUT
+};
 use super::{
     diffie_hellman,
     encryption::{Encryption, CipherSide},
@@ -20,6 +24,7 @@ use std::{
 };
 use human_bytes::human_bytes;
 use humantime::format_duration;
+use metrics::counter;
 use xelis_common::{
     tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
@@ -286,6 +291,7 @@ impl Connection {
     // Otherwise, we can't know how much bytes to read for each ciphertext/packet
     async fn send_packet_bytes_internal(&self, stream: &mut OwnedWriteHalf, packet: &[u8]) -> P2pResult<()> {
         let packet_len = packet.len() as u32;
+        counter!("p2p_bytes_out_total").increment(packet_len as u64);
         stream.write_all(&packet_len.to_be_bytes()).await?;
         stream.write_all(packet).await?;
 
@@ -421,6 +427,8 @@ impl Connection {
             left -= read as u32;
             bytes.extend(&buf[0..read]);
         }
+
+        counter!("p2p_bytes_in_total").increment(bytes.len() as u64);
 
         // If encryption is supported, use it
         if self.encryption.is_read_ready().await {

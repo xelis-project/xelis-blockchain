@@ -36,6 +36,10 @@ fn default_rpc_bind_address() -> String {
     DEFAULT_RPC_BIND_ADDRESS.to_owned()
 }
 
+fn default_prometheus_route() -> String {
+    "/metrics".to_owned()
+}
+
 const fn default_cache_size() -> usize {
     DEFAULT_CACHE_SIZE
 }
@@ -98,12 +102,29 @@ pub struct GetWorkConfig {
 }
 
 #[derive(Debug, Clone, clap::Args, Serialize, Deserialize)]
+pub struct PrometheusConfig {
+    /// Enable Prometheus metrics server
+    /// This only works if the RPC server is enabled.
+    #[clap(long = "prometheus-enable")]
+    #[serde(default)]
+    pub enable: bool,
+    /// Route for the Prometheus metrics export
+    #[clap(name = "prometheus-route", long, default_value_t = default_prometheus_route())]
+    #[serde(default = "default_prometheus_route")]
+    pub route: String,
+}
+
+#[derive(Debug, Clone, clap::Args, Serialize, Deserialize)]
 pub struct RPCConfig {
     /// GetWork configuration
     /// This is used to configure the GetWork server.
     /// Only available if the RPC is enabled
     #[clap(flatten)]
     pub getwork: GetWorkConfig,
+    /// Prometheus configuration
+    /// This is used to configure the Prometheus metrics server.
+    #[clap(flatten)]
+    pub prometheus: PrometheusConfig,
     /// Disable RPC Server
     /// This will also disable the GetWork Server as it is loaded on RPC server.
     #[clap(name = "rpc-disable-server", long)]
