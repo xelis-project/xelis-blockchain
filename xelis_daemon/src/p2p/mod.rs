@@ -1317,12 +1317,12 @@ impl<S: Storage> P2pServer<S> {
     async fn peerlist_loop(self: Arc<Self>) {
         debug!("Starting peerlist task...");
         loop {
-            sleep(Duration::from_secs(P2P_EXTEND_PEERLIST_DELAY)).await;
             if !self.is_running() {
                 debug!("Peerlist loop task is stopped!");
                 break;
             }
 
+            let mut should_wait = true;
             if self.accept_new_connections().await {
                 let peer = {
                     trace!("Locking peer list write mode (peerlist loop)");
@@ -1339,9 +1339,15 @@ impl<S: Storage> P2pServer<S> {
                 if let Some(addr) = peer {
                     debug!("Found peer {}", addr);
                     self.try_to_connect_to_peer(addr, false).await;
+                    should_wait = false;
                 } else {
-                    trace!("No peer found to connect to");
+                    debug!("No peer found to connect to");
                 }
+            }
+
+            if should_wait {
+                debug!("Not accepting new connections or no potential peer found, waiting delay before next check");
+                sleep(Duration::from_secs(P2P_EXTEND_PEERLIST_DELAY)).await;
             }
         }
     }

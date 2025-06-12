@@ -216,6 +216,7 @@ impl PeerList {
             let mut entry = PeerListEntry::new(Some(peer.get_local_port()), PeerListEntryState::Graylist);
             entry.set_first_seen(peer.get_connection().connected_on());
             entry.set_last_seen(get_current_time_in_seconds());
+            entry.set_last_connection_try(None);
 
             self.cache.set_peerlist_entry(&ip, entry)?;
         }
@@ -490,6 +491,7 @@ impl PeerList {
         let mut potential_gray_peer = None;
         for res in peerlist_entries {
             let (ip, mut entry) = res?;
+            trace!("Checking peer {}: {}", ip, entry);
 
             // If the peer is blacklisted or temp banned, skip it
             if *entry.get_state() == PeerListEntryState::Blacklist || entry.get_temp_ban_until().map(|temp_ban_until| temp_ban_until > current_time).unwrap_or(false) {
@@ -505,11 +507,13 @@ impl PeerList {
                         potential_gray_peer = Some((ip, addr));
                     } else if *entry.get_state() == PeerListEntryState::Whitelist {
                         debug!("Found peer to connect: {}, updating last connection try", addr);
-                        entry.set_last_connection_try(current_time);
+                        entry.set_last_connection_try(Some(current_time + P2P_PEERLIST_RETRY_AFTER));
                         self.cache.set_peerlist_entry(&ip, entry)?;
                         return Ok(Some(addr));
                     }
                 }
+            } else {
+                debug!("Skipping {} because it has no local port", ip);
             }
         }
 
@@ -518,7 +522,7 @@ impl PeerList {
             Some((ip, addr)) => {
                 debug!("Found gray peer to connect: {}, updating last connection try", addr);
                 let mut entry = self.cache.get_peerlist_entry(&ip)?;
-                entry.set_last_connection_try(current_time);
+                entry.set_last_connection_try(Some(current_time + P2P_PEERLIST_RETRY_AFTER));
                 self.cache.set_peerlist_entry(&ip, entry)?;
                 Some(addr)
             },
@@ -633,8 +637,8 @@ impl PeerListEntry {
         self.last_seen = Some(last_seen);
     }
 
-    fn set_last_connection_try(&mut self, last_connection_try: TimestampSeconds) {
-        self.last_connection_try = Some(last_connection_try);
+    fn set_last_connection_try(&mut self, last_connection_try: Option<TimestampSeconds>) {
+        self.last_connection_try = last_connection_try;
     }
 
     fn set_state(&mut self, state: PeerListEntryState) {
@@ -679,11 +683,19 @@ impl Display for PeerListEntry {
         let current_time = get_current_time_in_seconds();
         write!(
             f,
-            "PeerListEntry[state: {:?}, first seen: {}, last seen: {}, last try: {}]",
+            "PeerListEntry[state: {:?}, first seen: {}, last seen: {}, last try: {}, fail count: {}, ban: {}]",
             self.state,
             self.first_seen.map(|v| format!("{} ago", format_duration(Duration::from_secs(current_time - v)))).unwrap_or_else(|| "never".to_string()),
             self.last_seen.map(|v| format!("{} ago", format_duration(Duration::from_secs(current_time - v)))).unwrap_or_else(|| "never".to_string()),
-            self.last_connection_try.map(|v| format!("{} ago", format_duration(Duration::from_secs(current_time - v)))).unwrap_or_else(|| "never".to_string())
+            self.last_connection_try.map(|v| format!("{} ago", format_duration(Duration::from_secs(current_time - (v - P2P_PEERLIST_RETRY_AFTER))))).unwrap_or_else(|| "never".to_string()),
+            self.fail_count,
+            self.temp_ban_until.map_or("none".to_string(), |temp_ban_until| {
+                if temp_ban_until > current_time {
+                    format!("{} ago", format_duration(Duration::from_secs(temp_ban_until - current_time)))
+                } else {
+                    "not banned".to_string()
+                }
+            })
         )
     }
 }
