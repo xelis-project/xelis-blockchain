@@ -13,6 +13,22 @@ use crate::{
     varuint::VarUint
 };
 
+/// Static assert macro to check conditions at compile time
+/// Usage: `static_assert!(condition);` or `static_assert!(condition, "Error message");`
+#[macro_export]
+macro_rules! static_assert {
+    ($cond:expr $(,)?) => {
+        const _: () = {
+            assert!($cond);
+        };
+    };
+    ($cond:expr, $($arg:tt)+) => {
+        const _: () = {
+            assert!($cond, $($arg)+);
+        };
+    };
+}
+
 #[macro_export]
 macro_rules! async_handler {
     ($func: expr) => {
