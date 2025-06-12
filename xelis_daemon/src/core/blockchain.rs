@@ -2926,7 +2926,11 @@ impl<S: Storage> Blockchain<S> {
             storage.flush().await?;
         }
 
-        info!("Processed block {} at height {} in {}ms with {} txs (DAG: {})", block_hash, block.get_height(), start.elapsed().as_millis(), block.get_txs_count(), block_is_ordered);
+        let elapsed = start.elapsed().as_millis();
+        info!("Processed block {} at height {} in {}ms with {} txs (DAG: {})", block_hash, block.get_height(), elapsed, block.get_txs_count(), block_is_ordered);
+
+        // Record metrics
+        histogram!("block_processing_ms").record(elapsed as f64);
 
         if let Some(p2p) = self.p2p.read().await.as_ref().filter(|_| broadcast.p2p()) {
             trace!("P2p locked, ping peers");
