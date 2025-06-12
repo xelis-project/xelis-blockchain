@@ -5,22 +5,32 @@ use crate::serializer::{Serializer, Reader, ReaderError, Writer};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Network {
+    // Production network
+    // This is the main network where real transactions happen
     Mainnet,
+    // Test network
+    // This is a stable environment for testing purposes
     Testnet,
-    Dev
+    // Stage network
+    // This is a development network for testing (unstable) new features
+    Stagenet,
+    // Development network
+    // This is a local network for development purposes
+    Devnet
 }
 
 #[cfg(feature = "clap")]
 impl clap::ValueEnum for Network {
     fn value_variants<'a>() -> &'a [Self] {
-        &[Self::Mainnet, Self::Testnet, Self::Dev]
+        &[Self::Mainnet, Self::Testnet, Self::Devnet]
     }
 
     fn to_possible_value(&self) -> Option<clap::builder::PossibleValue> {
         match self {
             Self::Mainnet => Some(clap::builder::PossibleValue::new("mainnet").alias("Mainnet")),
             Self::Testnet => Some(clap::builder::PossibleValue::new("testnet").alias("Testnet")),
-            Self::Dev => Some(clap::builder::PossibleValue::new("dev").alias("Dev"))
+            Self::Stagenet => Some(clap::builder::PossibleValue::new("stagenet").alias("Stagenet")),
+            Self::Devnet => Some(clap::builder::PossibleValue::new("devnet").alias("Devnet"))
         }
     }
 
@@ -62,7 +72,8 @@ impl Display for Network {
         let str = match &self {
             Self::Mainnet => "Mainnet",
             Self::Testnet => "Testnet",
-            Self::Dev => "Dev"
+            Self::Stagenet => "Stagenet",
+            Self::Devnet => "Dev"
         };
         write!(f, "{}", str)
     }
@@ -75,7 +86,8 @@ impl FromStr for Network {
         Ok(match s.to_lowercase().as_str() {
             "mainnet" | "0" => Self::Mainnet,
             "testnet" | "1" => Self::Testnet,
-            "dev" | "2" => Self::Dev,
+            "stagenet" | "2" => Self::Stagenet,
+            "dev" | "3" => Self::Devnet,
             _ => return Err("Invalid network".into())
         })
     }
@@ -86,16 +98,18 @@ impl Serializer for Network {
         Ok(match reader.read_u8()? {
             0 => Self::Mainnet,
             1 => Self::Testnet,
-            2 => Self::Dev,
+            2 => Self::Stagenet,
+            3 => Self::Devnet,
             _ => return Err(ReaderError::InvalidValue)
         })
     }
 
     fn write(&self, writer: &mut Writer) {
         let id = match &self {
-          Self::Mainnet => 0,
-          Self::Testnet => 1,
-          Self::Dev => 2 
+            Self::Mainnet => 0,
+            Self::Testnet => 1,
+            Self::Stagenet => 2,
+            Self::Devnet => 3 
         };
         writer.write_u8(id);
     }
