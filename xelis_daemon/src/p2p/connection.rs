@@ -266,6 +266,7 @@ impl Connection {
 
         // Increment the key rotation counter
         self.rotate_key_out.fetch_add(1, Ordering::Relaxed);
+        counter!("p2p_rotate_key_total").increment(1);
 
         // Reset the counter
         self.bytes_encrypted.store(0, Ordering::Relaxed);

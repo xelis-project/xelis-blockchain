@@ -9,6 +9,7 @@ use crate::{
     p2p::packet::PacketWrapper
 };
 use anyhow::Context;
+use metrics::counter;
 use xelis_common::{
     tokio::{
         select,
@@ -434,6 +435,8 @@ impl Peer {
         trace!("waiting for permit {}", request);
         let _permit = self.objects_semaphore.acquire().await?;
         debug!("requesting {}", request);
+        counter!("p2p_objects_requests", "peer" => self.get_id().to_string()).increment(1u64);
+
         let mut receiver = {
             let mut objects = self.objects_requested.lock().await;
             if let Some(sender) = objects.get(&request) {
@@ -483,8 +486,9 @@ impl Peer {
         debug!("waiting for permit for bootstrap chain step: {:?}", step_kind);
 
         let _permit = self.objects_semaphore.acquire().await?;
-
         debug!("Requesting bootstrap chain step: {:?}", step_kind);
+        counter!("p2p_bootstrap_requests", "peer" => self.get_id().to_string()).increment(1u64);
+
         let (sender, receiver) = tokio::sync::oneshot::channel();
         {
             let mut senders = self.bootstrap_chain.lock().await;

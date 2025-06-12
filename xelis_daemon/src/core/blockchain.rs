@@ -2,7 +2,7 @@ use anyhow::Error;
 use futures::{stream, TryStreamExt};
 use indexmap::IndexSet;
 use lru::LruCache;
-use metrics::{counter, histogram};
+use metrics::{counter, gauge, histogram};
 use serde_json::{Value, json};
 use xelis_common::{
     api::{
@@ -2931,6 +2931,8 @@ impl<S: Storage> Blockchain<S> {
 
         // Record metrics
         histogram!("block_processing_ms").record(elapsed as f64);
+        gauge!("block_height").set(current_height as f64);
+        gauge!("block_topoheight").set(current_topoheight as f64);
 
         if let Some(p2p) = self.p2p.read().await.as_ref().filter(|_| broadcast.p2p()) {
             trace!("P2p locked, ping peers");

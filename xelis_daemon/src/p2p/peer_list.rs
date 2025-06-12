@@ -20,6 +20,7 @@ use std::{
 };
 use futures::{stream, StreamExt};
 use humantime::format_duration;
+use metrics::gauge;
 use serde::{Serialize, Deserialize};
 use x25519_dalek::PublicKey;
 use xelis_common::{
@@ -121,6 +122,8 @@ impl PeerList {
         };
 
         trace!("Signaling exit of {}", peer);
+        gauge!("p2p_peers_current").set(peers.len() as f64);
+
         let res = peer.signal_exit().await;
  
         // If peer allows us to share it, we have to notify all peers that have this peer in common
@@ -170,7 +173,7 @@ impl PeerList {
     // Add a new peer to the list
     // This will returns an error if peerlist is full
     pub async fn add_peer(&self, peer: &Arc<Peer>, max_peers: usize) -> Result<(), P2pError> {
-        {
+        let count = {
             let mut peers = self.peers.write().await;
             if peers.len() >= max_peers {
                 return Err(P2pError::PeerListFull);
@@ -181,8 +184,10 @@ impl PeerList {
             }
 
             peers.insert(peer.get_id(), Arc::clone(&peer));
-        }
+            peers.len()
+        };
         info!("New peer connected: {}", peer);
+        gauge!("p2p_peers_current").set(count as f64);
 
         self.update_peer(&peer).await?;
 
