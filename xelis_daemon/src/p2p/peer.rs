@@ -456,7 +456,7 @@ impl Peer {
             res = timeout(Duration::from_millis(PEER_TIMEOUT_REQUEST_OBJECT), receiver.recv()) => match res {
                 Ok(res) => res.context("Error on blocking object response")?,
                 Err(_) => {
-                    warn!("Requested data {} has timed out", request);
+                    warn!("Requested data {} from {} has timed out", request, self);
                     let mut objects = self.objects_requested.lock().await;
                     // remove it from request list
                     objects.remove(&request);
