@@ -12,7 +12,7 @@ use crate::{
     config::FEE_PER_BYTE_IN_CONTRACT_MEMORY,
     contract::{ChainState, ContractProvider},
 };
-use super::Serializer;
+use super::{Serializer, MAX_KEY_SIZE, MAX_VALUE_SIZE};
 
 // Shareable data across invoke call on the same Contract in the same Block
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -21,12 +21,6 @@ pub struct OpaqueMemoryStorage;
 impl Serializable for OpaqueMemoryStorage {}
 
 impl JSONHelper for OpaqueMemoryStorage {}
-
-// Maximum size of a value in the storage
-pub const MAX_VALUE_SIZE: usize = 4096;
-
-// Maximum size of a key in the storage
-pub const MAX_KEY_SIZE: usize = 256;
 
 pub fn memory_storage(_: FnInstance, _: FnParams, _: &mut Context) -> FnReturnType {
     Ok(Some(Primitive::Opaque(OpaqueWrapper::new(OpaqueMemoryStorage)).into()))

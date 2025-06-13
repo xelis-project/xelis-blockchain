@@ -1,4 +1,3 @@
-mod metadata;
 mod opaque;
 mod random;
 mod output;
@@ -13,7 +12,6 @@ use anyhow::Context as AnyhowContext;
 use better_any::Tid;
 use indexmap::IndexMap;
 use log::{debug, info};
-use opaque::*;
 use xelis_builder::EnvironmentBuilder;
 use xelis_vm::{
     Context,
@@ -44,13 +42,11 @@ use crate::{
     versioned_type::VersionedState
 };
 
-pub use metadata::ContractMetadata;
 pub use random::DeterministicRandom;
 pub use output::*;
 
-pub use opaque::ContractStorage;
+pub use opaque::*;
 pub use provider::*;
-pub use opaque::register_opaque_types;
 pub use cache::*;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
