@@ -14,6 +14,25 @@ crunchy = { git = "https://github.com/xelis-project/crunchy", branch = "master" 
 
 [workspace.dependencies]
 metrics = "0.24.2"
+anyhow = "1"
+thiserror = "1"
+log = "0.4"
+lru = "0.12.3"
+hex = "0.4.3"
+async-trait = "0.1.77"
+chrono = "0.4.38"
+chacha20poly1305 = "0.10.1"
+futures = "0.3.31"
+lazy_static = "1.4.0"
+rand = "0.8.5"
+serde_json = "1"
+tokio = "1"
+actix-web = "4"
+futures-util = "0.3.30"
+clap = { version = "4.5.2", features = ["derive"] }
+indexmap = { version = "2.7.0", features = ["serde"] }
+serde = { version = "1", features = ["derive", "rc"] }
+strum = { version = "0.27.1", features = ["derive"] }
 
 # cargo run --profile release-with-lto
 [profile.release-with-lto]

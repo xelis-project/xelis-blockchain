@@ -8,54 +8,56 @@ build = "build.rs"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-blake3 = "1.5.1"
-hex = "0.4.3"
-serde = { version = "1", features = ["derive", "rc"] }
-serde_json = "1"
-rand = "0.8.5"
-bulletproofs = { git = "https://github.com/xelis-project/bulletproofs", branch = "master", version = "5.0.2" }
-curve25519-dalek = { version = "4.1.1", features = ["digest", "group", "rand_core", "serde", "ecdlp"], git = "https://github.com/xelis-project/curve25519-dalek", branch = "master" }
-merlin = "3.0.0"
-zeroize = "1.7.0"
-lazy_static = "1.4.0"
-sha3 = "0.10.8"
-chacha20poly1305 = "0.10.1"
 xelis-hash = { git = "https://github.com/xelis-project/xelis-hash", branch = "master" }
 xelis-vm = { git = "https://github.com/xelis-project/xelis-vm", branch = "dev", features = ["logging"] }
 xelis-types = { git = "https://github.com/xelis-project/xelis-vm", branch = "dev" }
 xelis-builder = { git = "https://github.com/xelis-project/xelis-vm", branch = "dev" }
-thiserror = "1"
-anyhow = "1"
-log = "0.4"
+bulletproofs = { git = "https://github.com/xelis-project/bulletproofs", branch = "master", version = "5.0.2" }
+curve25519-dalek = { version = "4.1.1", features = ["digest", "group", "rand_core", "serde", "ecdlp"], git = "https://github.com/xelis-project/curve25519-dalek", branch = "master" }
+blake3 = "1.5.1"
+merlin = "3.0.0"
+zeroize = "1.7.0"
+sha3 = "0.10.8"
 fern = { version = "0.6", features = ["colored", "date-based"] }
-chrono = { version = "0.4.35", optional = true }
+
 reqwest = { version = "0.11.25", default-features = false, features = ["json"], optional = true }
-clap = { version = "4.5.2", features = ["derive"], optional = true }
 crossterm = { version = "0.27.0", optional = true }
-indexmap = { version = "2.7.0", features = ["serde"] }
 actix-rt = { version = "2.9.0", optional = true }
-actix-web = { version = "4", optional = true }
 actix-ws = { version = "0.3.0", optional = true }
-futures-util = { version = "0.3.30", optional = true }
-async-trait = "0.1.77"
+zip = { version = "4", features = ["zstd"], default-features = false, optional = true }
+pin-project-lite = { version = "0.2.16", optional = true }
+console-subscriber = { version = "0.2.0", optional = true }
+# WebSocket support
+tokio-tungstenite-wasm = { version = "0.3.1", features = ["rustls-tls-webpki-roots"], optional = true }
+
+lazy_static = { workspace = true }
+hex = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chacha20poly1305 = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+log = { workspace = true }
+rand = { workspace = true }
+chrono = { workspace = true, optional = true }
+clap = { workspace = true, optional = true }
+indexmap = { workspace = true }
+actix-web = { workspace = true, optional = true }
+futures-util = { workspace = true, optional = true }
+async-trait = { workspace = true }
+futures = { workspace = true, optional = true }
+metrics = { workspace = true, optional = true }
+
 # Query system
 regex = "1"
 # Query system
 serde_regex = "1.1.0"
 # Used for U256
 primitive-types = { version = "0.12.2", features = ["serde"] }
-console-subscriber = { version = "0.2.0", optional = true }
 chacha20 = "0.9.1"
-# WebSocket support
-tokio-tungstenite-wasm = { version = "0.3.1", features = ["rustls-tls-webpki-roots"], optional = true }
 better_any = "0.2.0"
 log-panics = { version = "2", features = ["with-backtrace"]}
-zip = { version = "2.2.2", features = ["zstd"], default-features = false, optional = true }
-futures = { version = "0.3.31", optional = true }
 cfg-if = "1.0.0"
-pin-project-lite = { version = "0.2.16", optional = true }
-
-metrics = { workspace = true, optional = true }
 
 [target.'cfg(windows)'.dependencies]
 win32console = "0.1.5"
@@ -67,10 +69,10 @@ tokio_with_wasm = { version = "0.7.2", features = ["macros", "sync", "time", "rt
 
 # dependencies for non-WASM
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-tokio = { version = "1", default-features = false, features = ["macros", "signal", "time", "sync", "rt"], optional = true }
+tokio = { workspace = true, features = ["macros", "signal", "time", "sync", "rt"], optional = true }
 
 [dev-dependencies]
-tokio = { version = "1", features = ["full"] }
+tokio = { workspace = true, features = ["full"] }
 criterion = "0.5.1"
 
 [features]
