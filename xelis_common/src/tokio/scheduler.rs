@@ -31,12 +31,22 @@ impl<F: Future> Scheduler<F> {
         self.states.push_back(State::Pending(Box::pin(future)));
     }
 
+    // Current len of futures available (pending & ready)
     pub fn len(&self) -> usize {
         self.states.len()
     }
 
+    // Do we have any future left
     pub fn is_empty(&self) -> bool {
         self.states.back().is_none()
+    }
+
+    // How many futures are ready to be polled
+    pub fn ready(&self) -> usize {
+        self.states.iter()
+            .take(self.max.unwrap_or(self.states.len()))
+            .filter(|v| matches!(v, State::Ready(_)))
+            .count()
     }
 }
 
