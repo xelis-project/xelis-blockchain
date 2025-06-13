@@ -2,7 +2,7 @@ use lazy_static::lazy_static;
 use xelis_common::{
     api::daemon::{DevFeeThreshold, HardFork},
     block::BlockVersion,
-    config::MAX_BLOCK_SIZE,
+    config::BYTES_PER_KB,
     crypto::{
         Address,
         Hash,
@@ -176,8 +176,8 @@ pub const PEER_TIMEOUT_INIT_CONNECTION: u64 = 5_000;
 pub const PEER_TIMEOUT_INIT_OUTGOING_CONNECTION: u64 = 30_000;
 // millis until we timeout during a handshake
 pub const PEER_TIMEOUT_DISCONNECT: u64 = 1_500;
-// 16 additional bytes are for AEAD from ChaCha20Poly1305
-pub const PEER_MAX_PACKET_SIZE: u32 = MAX_BLOCK_SIZE as u32 + 16;
+// Maximum packet size set to 5 MiB
+pub const PEER_MAX_PACKET_SIZE: u32 = 5 * (BYTES_PER_KB * BYTES_PER_KB) as u32;
 // Peer TX cache size
 // This is how many elements are stored in the LRU cache at maximum
 pub const PEER_TX_CACHE_SIZE: usize = 1024;

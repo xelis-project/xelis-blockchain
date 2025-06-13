@@ -1,5 +1,7 @@
 use async_trait::async_trait;
+use futures::{stream, Stream, StreamExt};
 use log::trace;
+use rocksdb::Direction;
 use xelis_vm::ValueCell;
 use xelis_common::{
     block::TopoHeight,
@@ -9,7 +11,7 @@ use xelis_common::{
 use crate::core::{
     error::BlockchainError,
     storage::{
-        rocksdb::{Column, ContractId},
+        rocksdb::{Column, ContractId, IteratorMode},
         ContractDataProvider,
         RocksStorage,
         VersionedContractData
@@ -24,6 +26,10 @@ impl ContractDataProvider for RocksStorage {
 
         let contract_id = self.get_contract_id(contract)?;
         let versioned_key = Self::get_versioned_contract_data_key(contract_id, key, topoheight);
+
+        // We know the generated id is 16..24, so retrieve it to store the real key
+        self.insert_into_disk(Column::ContractDataById, &versioned_key[16..24], key)?;
+
         self.insert_into_disk(Column::VersionedContractsData, &versioned_key, version)?;
         self.insert_into_disk(Column::ContractsData, &versioned_key[8..], &topoheight.to_be_bytes())
     }
@@ -109,6 +115,20 @@ impl ContractDataProvider for RocksStorage {
         let contract_id = self.get_contract_id(contract)?;
         let key = Self::get_versioned_contract_data_key(contract_id, key, topoheight);
         self.load_from_disk(Column::VersionedContractsData, &key)
+    }
+
+    async fn get_contract_data_entries_at_maximum_topoheight<'a>(&'a self, contract: &'a Hash, topoheight: TopoHeight) -> Result<impl Stream<Item = Result<(ValueCell, ValueCell), BlockchainError>> + Send + 'a, BlockchainError> {
+        let iterator = self.iter_keys::<u64>(Column::ContractsData, IteratorMode::WithPrefix(contract.as_bytes(), Direction::Forward))?;
+        Ok(stream::iter(iterator)
+            .map(move |res| async move {
+                let id = res?;
+                let key = self.load_from_disk(Column::ContractDataById, &id.to_be_bytes())?;
+                // TODO: Optimize by a raw call instead of recalculating an id we already know
+                let value = self.get_contract_data_at_maximum_topoheight_for(contract, &key, topoheight).await?;
+                Ok(value.and_then(|(_, v)| v.take().map(|v| (key, v))))
+            })
+            .filter_map(|res| async move { res.await.transpose() })
+        )
     }
 }
 

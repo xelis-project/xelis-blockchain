@@ -74,6 +74,7 @@ pub enum Column {
     // {topoheight}{account_id}{asset_id} => {version}
     VersionedBalances,
 
+    // Contains the contract module per hash
     // {contract_hash} => {contract}
     Contracts,
     // {contract_id} => {contract_hash}
@@ -83,8 +84,13 @@ pub enum Column {
     VersionedContracts,
     // {topoheight}{contract_id}{data_key} => {version}
     VersionedContractsData,
+    // Represent the link between a contract and a data
     // {contract_id}{data_key} => {topoheight}
     ContractsData,
+
+    // A contract data accessible by its ID
+    // {data_id} => {data}
+    ContractDataById,
 
     // {contract}{asset} => {topoheight}
     ContractsBalances,

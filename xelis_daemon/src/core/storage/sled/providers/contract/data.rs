@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use futures::{stream, Stream, StreamExt};
 use log::trace;
 use xelis_common::{
     block::TopoHeight,
@@ -84,6 +85,19 @@ impl ContractDataProvider for SledStorage {
     async fn has_contract_data_at_exact_topoheight(&self, contract: &Hash, key: &ValueCell, topoheight: TopoHeight) -> Result<bool, BlockchainError> {
         trace!("has contract data at exact topoheight {}", topoheight);
         self.contains_data(&self.versioned_contracts_data, &self.get_versioned_contract_data_key(contract, key, topoheight))
+    }
+
+    async fn get_contract_data_entries_at_maximum_topoheight<'a>(&'a self, contract: &'a Hash, topoheight: TopoHeight) -> Result<impl Stream<Item = Result<(ValueCell, ValueCell), BlockchainError>> + Send + 'a, BlockchainError> {
+        Ok(stream::iter(Self::scan_prefix(self.snapshot.as_ref(), &self.contracts_data, contract.as_bytes()))
+            .map(move |res| async move {
+                let key = res?;
+                let k = ValueCell::from_bytes(&key)?;
+                let value = self.get_contract_data_at_maximum_topoheight_for(contract, &k, topoheight).await?;
+
+                Ok(value.and_then(|(_, v)| v.take().map(|v| (k, v))))
+            })
+            .filter_map(|res| async move { res.await.transpose() })
+        )
     }
 }
 

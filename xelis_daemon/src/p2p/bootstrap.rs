@@ -3,9 +3,9 @@ use std::{borrow::Cow, collections::HashSet, sync::Arc, time::Instant};
 use futures::{stream, StreamExt, TryStreamExt};
 use indexmap::{IndexMap, IndexSet};
 use log::{debug, error, info, trace, warn};
+use tokio::try_join;
 use xelis_common::{
     account::{VersionedBalance, VersionedNonce},
-    contract::ContractMetadata,
     crypto::{Hash, PublicKey},
     immutable::Immutable,
     versioned_type::State,
@@ -19,6 +19,8 @@ use crate::{
         storage::{
             Storage,
             VersionedContract,
+            VersionedContractBalance,
+            VersionedContractData,
             VersionedMultiSig
         }
     },
@@ -228,7 +230,7 @@ impl<S: Storage> P2pServer<S> {
                 };
                 StepResponse::Contracts(contracts, page)
             },
-            StepRequest::ContractMetadata(min, max, contract) => {
+            StepRequest::ContractModule(min, max, contract) => {
                 if min > max {
                     warn!("Invalid range for contract metadata");
                     return Err(P2pError::InvalidPacket.into())
@@ -241,7 +243,7 @@ impl<S: Storage> P2pServer<S> {
                             State::Clean
                         } else {
                             match v.take() {
-                                Some(v) => State::Some(ContractMetadata { module: v.into_owned() }),
+                                Some(v) => State::Some(v.into_owned()),
                                 None => State::Deleted,
                             }
                         }
@@ -249,7 +251,57 @@ impl<S: Storage> P2pServer<S> {
                     None => State::None,
                 };
 
-                StepResponse::ContractMetadata(state)
+                StepResponse::ContractModule(state)
+            },
+            StepRequest::ContractBalances(contract, topoheight, page) => {
+                let page = page.unwrap_or(0);
+                let assets = storage.get_contract_assets_for(&contract).await?
+                    .skip(page as usize * MAX_ITEMS_PER_PAGE)
+                    .take(MAX_ITEMS_PER_PAGE)
+                    .collect::<Result<IndexSet<_>, _>>()?;
+
+                let len = assets.len();
+                let contract = &contract;
+                let storage = &storage;
+
+                let balances = stream::iter(assets)
+                    .map(|asset| async move {
+                        let balance = storage.get_contract_balance_at_maximum_topoheight(contract, &asset, topoheight).await?;
+                        Ok::<_, BlockchainError>(balance.map(|(_, v)| (asset, v.take())))
+                    })
+                    .buffered(self.stream_concurrency)
+                    .boxed()
+                    .filter_map(|res| async move { res.transpose() })
+                    .try_collect::<IndexMap<Hash, u64>>().await?;
+
+                let page = if len == MAX_ITEMS_PER_PAGE {
+                    Some(page + 1)
+                } else {
+                    None
+                };
+                StepResponse::ContractBalances(balances, page)
+            },
+            StepRequest::ContractStores(contract, topoheight, page) => {
+                let page_id = page.unwrap_or(0);
+                // Skip will skip only the N results
+                // So they are still computing! We must find a better way to scale better
+                // if we have millions of entries
+                // Example: a cursor?
+                // Also, what about the order being broken
+                // All DB preserve an order based on the key endian, not on insertion order
+                // Because our chain keeps growing what if a smart contract store a new key
+                // that is at the beginning and that we missed? We would break our order
+                // Fortunately, if this happen, we don't care about that missed key because we
+                // sync against a specific topoheight point, but it will slowdown the sync due to
+                // duplicated entries received as the order is being moved
+                let stream = storage.get_contract_data_entries_at_maximum_topoheight(&contract, topoheight).await?
+                    .skip(page_id as usize * MAX_ITEMS_PER_PAGE)
+                    .take(MAX_ITEMS_PER_PAGE);
+
+                let entries = stream.boxed()
+                    .try_collect().await?;
+
+                StepResponse::ContractStores(entries, page)
             },
             StepRequest::BlocksMetadata(topoheight) => {
                 // go from the lowest available point until the requested stable topoheight
@@ -436,35 +488,7 @@ impl<S: Storage> P2pServer<S> {
                 },
                 StepResponse::Contracts(contracts, page) => {
                     info!("Requesting contract metadata for {} contracts #{}", contracts.len(), page.unwrap_or(0));
-                    stream::iter(contracts.into_iter().map(Ok::<_, BlockchainError>))
-                        .try_for_each_concurrent(self.stream_concurrency, |contract| async move {
-                            debug!("Requesting contract metadata for {}", contract);
-                            let StepResponse::ContractMetadata(metadata) = peer.request_boostrap_chain(StepRequest::ContractMetadata(our_topoheight, stable_topoheight, Cow::Borrowed(&contract))).await? else {
-                                // shouldn't happen
-                                error!("Received an invalid StepResponse (how ?) while fetching contract metadata");
-                                return Err(P2pError::InvalidPacket.into())
-                            };
-
-                            let mut storage = self.blockchain.get_storage().write().await;
-                            match metadata {
-                                // It wasn't found on their side or was deleted
-                                State::None | State::Deleted => {
-                                    debug!("contract metadata for {}", contract);
-                                    storage.delete_last_topoheight_for_contract(&contract).await?;
-                                },
-                                State::Clean => {
-                                    debug!("contract {} didn't changed", contract);
-                                },
-                                State::Some(metadata) => {
-                                    debug!("Saving contract metadata for {}", contract);
-                                    let module = &metadata.module;
-                                    let versioned = VersionedContract::new(Some(Cow::Borrowed(module)), None);
-                                    storage.set_last_contract_to(&contract, stable_topoheight, &versioned).await?;
-                                },
-                            };
-
-                            Ok(())
-                        }).await?;
+                    self.update_bootstrap_contracts(peer, &contracts, our_topoheight, stable_topoheight).await?;
 
                     if page.is_some() {
                         Some(StepRequest::Contracts(our_topoheight, stable_topoheight, page))
@@ -737,6 +761,112 @@ impl<S: Storage> P2pServer<S> {
             }).await?;
 
         info!("Updated {} balances in {}", keys.len(), humantime::format_duration(start.elapsed()));
+
+        Ok(())
+    }
+
+    // Retrieve the latest contract module
+    async fn handle_contract_module(&self, peer: &Arc<Peer>, contract: &Hash, our_topoheight: u64, stable_topoheight: u64) -> Result<(), P2pError> {
+        debug!("Requesting contract metadata for {}", contract);
+        let StepResponse::ContractModule(metadata) = peer.request_boostrap_chain(StepRequest::ContractModule(our_topoheight, stable_topoheight, Cow::Borrowed(&contract))).await? else {
+            // shouldn't happen
+            error!("Received an invalid StepResponse (how ?) while fetching contract metadata");
+            return Err(P2pError::InvalidPacket.into())
+        };
+
+        let mut storage = self.blockchain.get_storage().write().await;
+        match metadata {
+            // It wasn't found on their side or was deleted
+            State::None => {
+                debug!("contract metadata for {}", contract);
+                storage.delete_last_topoheight_for_contract(&contract).await?;
+            },
+            State::Deleted => {
+                debug!("contract {} killed itself, mark it as a tombstone only", contract);
+                let versioned = VersionedContract::new(None, None);
+                storage.set_last_contract_to(&contract, stable_topoheight, &versioned).await?;
+            },
+            State::Clean => {
+                debug!("contract {} didn't changed", contract);
+            },
+            State::Some(module) => {
+                debug!("Saving contract metadata for {}", contract);
+                let versioned = VersionedContract::new(Some(Cow::Owned(module)), None);
+                storage.set_last_contract_to(&contract, stable_topoheight, &versioned).await?;
+            },
+        };
+
+        Ok(())
+    }
+
+    // Request every balances available for contract
+    async fn handle_contract_balances(&self, peer: &Arc<Peer>, contract: &Hash, stable_topoheight: u64) -> Result<(), P2pError> {
+        let mut next_page = None;
+        loop {
+            let StepResponse::ContractBalances(balances, page) = peer.request_boostrap_chain(StepRequest::ContractBalances(Cow::Borrowed(&contract), stable_topoheight, next_page)).await? else {
+                // shouldn't happen
+                error!("Received an invalid StepResponse (how ?) while fetching contract balances");
+                return Err(P2pError::InvalidPacket.into())
+            };
+
+            let mut storage = self.blockchain.get_storage().write().await;
+            for (asset, balance) in balances {
+                storage.set_last_contract_balance_to(contract, &asset, stable_topoheight, VersionedContractBalance::new(balance, None)).await?;
+            }
+
+            next_page = page;
+            if next_page.is_none() {
+                break;
+            }
+        }
+
+        Ok(())
+    }
+
+    // Request every entries available from the contract storage
+    async fn handle_contract_stores(&self, peer: &Arc<Peer>, contract: &Hash, stable_topoheight: u64) -> Result<(), P2pError> {
+        let mut next_page = None;
+        loop {
+            let StepResponse::ContractStores(entries, page) = peer.request_boostrap_chain(StepRequest::ContractStores(Cow::Borrowed(&contract), stable_topoheight, next_page)).await? else {
+                // shouldn't happen
+                error!("Received an invalid StepResponse (how ?) while fetching contract stores");
+                return Err(P2pError::InvalidPacket.into())
+            };
+
+            let mut storage = self.blockchain.get_storage().write().await;
+            for (key, value) in entries {
+                storage.set_last_contract_data_to(contract, &key, stable_topoheight, &VersionedContractData::new(Some(value), None)).await?;
+            }
+
+            next_page = page;
+            if next_page.is_none() {
+                break;
+            }
+        }
+
+        Ok(())
+    }
+
+    // Update all keys using bootstrap request
+    // This will fetch the nonce and associated balance for each asset
+    async fn update_bootstrap_contracts(&self, peer: &Arc<Peer>, contracts: &IndexSet<Hash>, our_topoheight: u64, stable_topoheight: u64) -> Result<(), P2pError> {
+        if contracts.is_empty() {
+            warn!("No contract to update");
+            return Ok(())
+        }
+
+        stream::iter(contracts.iter().map(Ok))
+            .try_for_each_concurrent(self.stream_concurrency, |contract| async move {
+                // Order is important because storing module generate an id for the contract
+                // which is used later for balances
+                self.handle_contract_module(peer, contract, our_topoheight, stable_topoheight).await?;
+
+                // But once the module is stored, we can support concurrency
+                try_join!(
+                    self.handle_contract_stores(peer, contract, stable_topoheight),
+                    self.handle_contract_balances(peer, contract, stable_topoheight)
+                ).map(|_| ())
+            }).await?;
 
         Ok(())
     }
