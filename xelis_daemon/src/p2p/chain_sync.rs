@@ -404,10 +404,17 @@ impl<S: Storage> P2pServer<S> {
                     return Err(P2pError::InvalidPopCount(pop_count, blocks_len as u64).into())
                 }
 
+                let capacity = if self.allow_boost_sync() {
+                    debug!("Requesting needed blocks in boost sync mode");
+                    None
+                } else {
+                    Some(1)
+                };
+
                 // request all blocks header and verify basic chain structure
                 // Starting topoheight must be the next topoheight after common block
                 // Blocks in chain response must be ordered by topoheight otherwise it will give incorrect results 
-                let mut futures = FuturesOrdered::new();
+                let mut futures = Scheduler::new(capacity);
                 for hash in blocks.iter().cloned() {
                     trace!("Request block header for chain validator: {}", hash);
 
