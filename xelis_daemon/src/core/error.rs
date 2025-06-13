@@ -254,8 +254,6 @@ pub enum BlockchainError {
     ErrorOnReader(#[from] ReaderError),
     #[error(transparent)]
     ErrorOnPrompt(#[from] PromptError),
-    #[error(transparent)]
-    ErrorOnSignature(#[from] ed25519_dalek::SignatureError),
     #[error("Poison Error: {}", _0)]
     PoisonError(String),
     #[error("Blockchain is syncing")]
