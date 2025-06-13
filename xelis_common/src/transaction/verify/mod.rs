@@ -1276,13 +1276,6 @@ impl Transaction {
             _ => {}
         }
 
-        let new_source_commitments_decompressed = self
-            .source_commitments
-            .iter()
-            .map(|commitment| commitment.get_commitment().decompress())
-            .collect::<Result<Vec<_>, DecompressionError>>()
-            .map_err(ProofVerificationError::from)?;
-
         let owner = self
             .source
             .decompress()
@@ -1293,13 +1286,15 @@ impl Transaction {
         trace!("verifying commitments eq proofs");
 
         // This contains sender balance updated, output ciphertext, asset commitment
-        let mut commitments_changes = Vec::new();
+        let mut commitments_changes = Vec::with_capacity(self.source_commitments.len());
 
-        for (commitment, new_source_commitment) in self
-            .source_commitments
-            .iter()
-            .zip(&new_source_commitments_decompressed)
+        for commitment in self.source_commitments.iter()
         {
+            // Decompress the commitment
+            let new_source_commitment = commitment.get_commitment()
+                .decompress()
+                .map_err(ProofVerificationError::from)?;
+
             // Ciphertext containing all the funds spent for this commitment
             let output = self.get_sender_output_ct(commitment.get_asset(), &transfers_decompressed, &deposits_decompressed)
                 .map_err(ProofVerificationError::from)?;
