@@ -23,8 +23,8 @@ impl VersionedDagOrderProvider for RocksStorage {
             let (topo, hash) = el?;
             if topo > topoheight {
                 debug!("found hash {} at topoheight {} while threshold topoheight is at {}", hash, topo, topoheight);
-                Self::remove_from_disk_internal(&self.db, self.snapshot.as_mut(), Column::HashAtTopo, &hash)?;
-                Self::remove_from_disk_internal(&self.db, self.snapshot.as_mut(), Column::TopoByHash, &topo.to_be_bytes())?;
+                Self::remove_from_disk_internal(&self.db, self.snapshot.as_mut(), Column::HashAtTopo, &topo.to_be_bytes())?;
+                Self::remove_from_disk_internal(&self.db, self.snapshot.as_mut(), Column::TopoByHash, &hash)?;
             }
         }
 
