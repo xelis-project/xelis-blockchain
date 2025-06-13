@@ -12,6 +12,9 @@ members = [
 [patch.crates-io]
 crunchy = { git = "https://github.com/xelis-project/crunchy", branch = "master" }
 
+[workspace.dependencies]
+metrics = "0.24.2"
+
 # cargo run --profile release-with-lto
 [profile.release-with-lto]
 inherits = "release"

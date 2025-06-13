@@ -4820,6 +4820,7 @@ dependencies = [
  "log",
  "log-panics",
  "merlin",
+ "metrics",
  "pin-project-lite",
  "primitive-types",
  "rand 0.8.5",
