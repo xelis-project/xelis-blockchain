@@ -1,7 +1,13 @@
-use std::{collections::HashMap, pin::Pin, future::Future};
+use std::{
+    collections::HashMap,
+    future::Future,
+    pin::Pin,
+    time::Instant
+};
 use serde::de::DeserializeOwned;
 use serde_json::{json, Map, Value};
 use crate::context::Context;
+use metrics::{counter, histogram};
 
 use super::{InternalRpcError, RpcResponseError, RpcRequest, JSON_RPC_VERSION};
 use log::{error, trace};
@@ -90,8 +96,16 @@ where
             None => return Err(RpcResponseError::new(request.id, InternalRpcError::MethodNotFound(request.method)))
         };
         trace!("executing '{}' RPC method", request.method);
+        counter!("rpc_calls", "method" => request.method.clone()).increment(1);
+
         let params = request.params.take().unwrap_or(Value::Null);
-        let result = handler(context, params).await.map_err(|err| RpcResponseError::new(request.id.clone(), err))?;
+
+        let start = Instant::now();
+        let result = handler(context, params).await
+            .map_err(|err| RpcResponseError::new(request.id.clone(), err))?;
+
+        histogram!("rpc_calls_ms", "method" => request.method).record(start.elapsed().as_millis() as f64);
+
         Ok(if request.id.is_some() {
             Some(json!({
                 "jsonrpc": JSON_RPC_VERSION,

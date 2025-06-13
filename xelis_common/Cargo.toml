@@ -55,6 +55,8 @@ futures = { version = "0.3.31", optional = true }
 cfg-if = "1.0.0"
 pin-project-lite = { version = "0.2.16", optional = true }
 
+metrics = { workspace = true, optional = true }
+
 [target.'cfg(windows)'.dependencies]
 win32console = "0.1.5"
 
@@ -76,7 +78,7 @@ tokio = ["dep:tokio", "dep:tokio_with_wasm", "dep:futures", "dep:pin-project-lit
 json_rpc = ["tokio", "dep:reqwest", "dep:futures-util", "dep:tokio-tungstenite-wasm"]
 clap = ["dep:clap"]
 prompt = ["clap", "tokio", "dep:crossterm", "dep:chrono", "dep:zip"]
-rpc_server = ["dep:actix-rt", "dep:actix-web", "dep:actix-ws", "dep:futures-util", "tokio", "dep:reqwest"]
+rpc_server = ["dep:actix-rt", "dep:actix-web", "dep:actix-ws", "dep:futures-util", "tokio", "dep:reqwest", "dep:metrics"]
 tracing = ["dep:console-subscriber", "tokio", "tokio/tracing"]
 tokio-multi-thread = ["tokio", "tokio/rt-multi-thread", "tokio_with_wasm/rt-multi-thread"]
 deadlock-detection = ["tokio"]
