@@ -39,6 +39,20 @@ fn bench_he_operations(c: &mut Criterion) {
         })
     });
 
+
+    group.bench_function("compress", |b| {
+        b.iter(|| {
+            let _ = black_box(ct1.compress());
+        })
+    });
+
+    let compressed = ct1.compress();
+    group.bench_function("decompress", |b| {
+        b.iter(|| {
+            let _ = black_box(compressed.decompress().unwrap());
+        })
+    });
+
     group.finish();
 }
 
