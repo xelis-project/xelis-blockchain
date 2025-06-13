@@ -1,18 +1,20 @@
-use std::{collections::VecDeque, future::Future, pin::Pin, task::{Context, Poll}};
-
+use std::{
+    collections::VecDeque,
+    future::Future,
+    pin::Pin,
+    task::{Context, Poll}
+};
 use futures::Stream;
 use pin_project_lite::pin_project;
 
 enum State<F: Future> {
     Pending(Pin<Box<F>>),
     Ready(F::Output),
-    Done
 }
 
 pin_project! {
     pub struct Scheduler<F: Future> {
         states: VecDeque<State<F>>,
-        next_yield: usize,
         max: Option<usize>
     }
 }
@@ -21,7 +23,6 @@ impl<F: Future> Scheduler<F> {
     pub fn new(max: impl Into<Option<usize>>) -> Self {
         Self {
             states: VecDeque::new(),
-            next_yield: 0,
             max: max.into(),
         }
     }
@@ -31,11 +32,11 @@ impl<F: Future> Scheduler<F> {
     }
 
     pub fn len(&self) -> usize {
-        self.states.len() - self.next_yield
+        self.states.len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.states.back().map_or(true, |v| matches!(v, State::Done))
+        self.states.back().is_none()
     }
 }
 
@@ -52,7 +53,7 @@ impl<F: Future> Stream for Scheduler<F> {
         }
 
         // Poll all pending futures starting from next_yield
-        for state in this.states.iter_mut().skip(*this.next_yield).take(max.unwrap_or(len)) {
+        for state in this.states.iter_mut().take(max.unwrap_or(len)) {
             if let State::Pending(fut) = state {
                 match fut.as_mut().poll(cx) {
                     Poll::Ready(output) => {
@@ -64,10 +65,9 @@ impl<F: Future> Stream for Scheduler<F> {
         }
 
         // Check if next_yield future is ready to yield
-        if let Some(state) = this.states.get_mut(*this.next_yield) {
+        if let Some(state) = this.states.front() {
             if matches!(state, State::Ready(_)) {
-                if let State::Ready(output) = std::mem::replace(state, State::Done) {
-                    *this.next_yield += 1;
+                if let Some(State::Ready(output)) = this.states.pop_front() {
                     return Poll::Ready(Some(output));
                 }
             }
