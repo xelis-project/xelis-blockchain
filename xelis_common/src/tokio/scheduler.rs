@@ -51,15 +51,12 @@ impl<F: Future> Stream for Scheduler<F> {
             return Poll::Ready(None);
         }
 
-        let mut made_progress = false;
-
         // Poll all pending futures starting from next_yield
         for state in this.states.iter_mut().skip(*this.next_yield).take(max.unwrap_or(len)) {
             if let State::Pending(fut) = state {
                 match fut.as_mut().poll(cx) {
                     Poll::Ready(output) => {
                         *state = State::Ready(output);
-                        made_progress = true;
                     }
                     Poll::Pending => {}
                 }
@@ -76,11 +73,6 @@ impl<F: Future> Stream for Scheduler<F> {
             }
         } else {
             return Poll::Ready(None);
-        }
-
-        // If progress was made, ask executor to poll again
-        if made_progress {
-            cx.waker().wake_by_ref();
         }
 
         Poll::Pending
