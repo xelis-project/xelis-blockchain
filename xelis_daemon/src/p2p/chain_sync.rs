@@ -622,6 +622,8 @@ impl<S: Storage> P2pServer<S> {
                 if blocks_executor.is_empty() && futures.is_empty() {
                     break;
                 }
+
+                debug!("chain sync futures ready: {}", futures.ready());
             }
 
             let elapsed = start.elapsed().as_secs();
