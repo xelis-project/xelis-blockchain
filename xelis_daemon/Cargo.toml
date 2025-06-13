@@ -25,7 +25,7 @@ xelis-vm = { git = "https://github.com/xelis-project/xelis-vm", branch = "dev" }
 rocksdb = "0.23.0"
 strum = { version = "0.27.1", features = ["derive"] }
 xxhash-rust = { version = "0.8.15", features = ["xxh3"] }
-metrics = "0.24.2"
+metrics = { workspace = true }
 metrics-exporter-prometheus = "0.17.0"
 
 # Common dependencies
