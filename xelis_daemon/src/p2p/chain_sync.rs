@@ -278,6 +278,9 @@ impl<S: Storage> P2pServer<S> {
                 biased;
                 Some(res) = blocks_executor.next() => {
                     res?;
+                    // Increase by one the limit again
+                    // allow to request one new block
+                    scheduler.increment_n();
                 },
                 Some(res) = scheduler.next() => {
                     let future = async move {
@@ -286,6 +289,12 @@ impl<S: Storage> P2pServer<S> {
                             ResponseHelper::NotRequested(hash) => self.try_re_execution_block(hash).await,
                         }
                     };
+
+                    // Decrease by one the limit
+                    // This create a backpressure to reduce
+                    // requesting too many blocks and keeping them
+                    // in memory
+                    scheduler.decrement_n();
                     blocks_executor.push_back(future);
                 },
                 else => {
@@ -572,6 +581,7 @@ impl<S: Storage> P2pServer<S> {
                             total_requested += 1;
                         }
 
+                        futures.increment_n();
                         blocks_processed += 1;
                     },
                     // Even with the biased select & the option future being above
@@ -612,8 +622,7 @@ impl<S: Storage> P2pServer<S> {
                             }
                         };
 
-                        // TODO: if we have ALL the blocks in memory
-                        // low end devices will run out of memory!!
+                        futures.decrement_n();
                         blocks_executor.push_back(future);
                     },
                     else => {
