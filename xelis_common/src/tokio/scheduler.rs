@@ -45,10 +45,7 @@ impl<F: Future> Scheduler<F> {
 
     // How many futures are ready to be polled
     pub fn ready(&self) -> usize {
-        self.states.iter()
-            .take(self.max.unwrap_or(self.states.len()))
-            .filter(|v| matches!(v, State::Ready(_)))
-            .count()
+        self.next_yield
     }
 }
 
