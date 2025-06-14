@@ -209,6 +209,7 @@ impl PeerList {
 
             entry.set_last_seen(get_current_time_in_seconds());
             entry.set_local_port(peer.get_local_port());
+            entry.set_last_connection_try(None);
 
             self.cache.set_peerlist_entry(&ip, entry)?;
         } else {
@@ -501,16 +502,27 @@ impl PeerList {
 
             if let Some(local_port) = entry.get_local_port() {
                 let addr = SocketAddr::new(ip, local_port);
-                if entry.get_last_connection_try().unwrap_or(0) + (entry.get_fail_count() as u64 * P2P_PEERLIST_RETRY_AFTER) <= current_time && Self::internal_get_peer_by_addr(&peers, &addr).is_none() {
+                // Check if we can connect to it:
+                // - we haven't connected to him recently
+                // - he is not tempbanned
+                let try_connect =  entry.get_last_connection_try()
+                    .unwrap_or(0) + (entry.get_fail_count().max(1) as u64 * P2P_PEERLIST_RETRY_AFTER) <= current_time;
+
+                // Verify that we are not already connected to it
+                let not_in_peerlist = Self::internal_get_peer_by_addr(&peers, &addr).is_none();
+
+                if try_connect && not_in_peerlist {
                     // Store it if we don't have any whitelisted peer to connect to
                     if potential_gray_peer.is_none() && *entry.get_state() == PeerListEntryState::Graylist {
                         potential_gray_peer = Some((ip, addr));
                     } else if *entry.get_state() == PeerListEntryState::Whitelist {
                         debug!("Found peer to connect: {}, updating last connection try", addr);
-                        entry.set_last_connection_try(Some(current_time + P2P_PEERLIST_RETRY_AFTER));
+                        entry.set_last_connection_try(Some(current_time));
                         self.cache.set_peerlist_entry(&ip, entry)?;
                         return Ok(Some(addr));
                     }
+                } else {
+                    debug!("{} can try to connect to {}: {}, not in peerlist: {}", entry, ip, try_connect, not_in_peerlist);
                 }
             } else {
                 debug!("Skipping {} because it has no local port", ip);
@@ -522,7 +534,7 @@ impl PeerList {
             Some((ip, addr)) => {
                 debug!("Found gray peer to connect: {}, updating last connection try", addr);
                 let mut entry = self.cache.get_peerlist_entry(&ip)?;
-                entry.set_last_connection_try(Some(current_time + P2P_PEERLIST_RETRY_AFTER));
+                entry.set_last_connection_try(Some(current_time));
                 self.cache.set_peerlist_entry(&ip, entry)?;
                 Some(addr)
             },
@@ -687,7 +699,7 @@ impl Display for PeerListEntry {
             self.state,
             self.first_seen.map(|v| format!("{} ago", format_duration(Duration::from_secs(current_time - v)))).unwrap_or_else(|| "never".to_string()),
             self.last_seen.map(|v| format!("{} ago", format_duration(Duration::from_secs(current_time - v)))).unwrap_or_else(|| "never".to_string()),
-            self.last_connection_try.map(|v| format!("{} ago", format_duration(Duration::from_secs(current_time - (v - P2P_PEERLIST_RETRY_AFTER))))).unwrap_or_else(|| "never".to_string()),
+            self.last_connection_try.map(|v| format!("{} ago", format_duration(Duration::from_secs(current_time - v)))).unwrap_or_else(|| "never".to_string()),
             self.fail_count,
             self.temp_ban_until.map_or("none".to_string(), |temp_ban_until| {
                 if temp_ban_until > current_time {
