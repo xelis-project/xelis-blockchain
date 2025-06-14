@@ -15,7 +15,8 @@ enum State<F: Future> {
 pin_project! {
     pub struct Scheduler<F: Future> {
         states: VecDeque<State<F>>,
-        max: Option<usize>
+        max: Option<usize>,
+        next_yield: usize,
     }
 }
 
@@ -24,6 +25,7 @@ impl<F: Future> Scheduler<F> {
         Self {
             states: VecDeque::new(),
             max: max.into(),
+            next_yield: 0,
         }
     }
 
@@ -63,13 +65,21 @@ impl<F: Future> Stream for Scheduler<F> {
         }
 
         // Poll all pending futures starting from next_yield
-        for state in this.states.iter_mut().take(max.unwrap_or(len)) {
+        // until the limit set
+        let mut first = true;
+        for state in this.states.iter_mut().take(max.unwrap_or(len)).skip(*this.next_yield) {
             if let State::Pending(fut) = state {
                 match fut.as_mut().poll(cx) {
                     Poll::Ready(output) => {
                         *state = State::Ready(output);
+                        if first {
+                            // next yield increase
+                            *this.next_yield += 1;
+                        }
                     }
-                    Poll::Pending => {}
+                    Poll::Pending => {
+                        first = false;
+                    }
                 }
             }
         }
@@ -78,6 +88,7 @@ impl<F: Future> Stream for Scheduler<F> {
         if let Some(state) = this.states.front() {
             if matches!(state, State::Ready(_)) {
                 if let Some(State::Ready(output)) = this.states.pop_front() {
+                    *this.next_yield -= 1;
                     return Poll::Ready(Some(output));
                 }
             }
