@@ -16,6 +16,10 @@ impl<F: Future> Executor<F> {
         }
     }
 
+    pub fn push_front(&mut self, future: F) {
+        self.futures.push_front(Box::pin(future));
+    }
+
     pub fn push_back(&mut self, future: F) {
         self.futures.push_back(Box::pin(future));
     }
