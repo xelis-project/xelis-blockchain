@@ -30,7 +30,7 @@ use xelis_common::{
 };
 use xelis_vm::{Module, ValueCell};
 use super::chain::{BlockId, CommonPoint};
-use crate::config::{CHAIN_SYNC_REQUEST_MAX_BLOCKS, PEER_MAX_PACKET_SIZE};
+use crate::config::{CHAIN_SYNC_REQUEST_MAX_BLOCKS, PEER_MAX_PACKET_SIZE, PRUNE_SAFETY_LIMIT};
 
 // this file implements the protocol for the fast sync (bootstrapped chain)
 // You will have to request through StepRequest::FetchAssets all the registered assets
@@ -709,7 +709,7 @@ impl Serializer for StepResponse {
             },
             10 => {
                 let len = reader.read_u16()?;
-                if len > CHAIN_SYNC_REQUEST_MAX_BLOCKS as u16 {
+                if len > PRUNE_SAFETY_LIMIT as u16 + 1 {
                     debug!("Invalid blocks metadata response length: {}", len);
                     return Err(ReaderError::InvalidValue)
                 }

@@ -410,7 +410,7 @@ impl<S: Storage> P2pServer<S> {
     // and wait on all new connections
     async fn start(
         self: &Arc<Self>,
-        receiver: mpsc::Receiver<(SocketAddr, bool)>,
+        connections_receiver: mpsc::Receiver<(SocketAddr, bool)>,
         blocks_processor_receiver: mpsc::Receiver<(Arc<Peer>, BlockHeader, Arc<Hash>)>,
         txs_processor_receiver: mpsc::Receiver<(Arc<Peer>, Arc<Hash>)>,
         ping_receiver: mpsc::Receiver<()>,
@@ -459,7 +459,7 @@ impl<S: Storage> P2pServer<S> {
         }
 
         let (tx, mut rx) = mpsc::channel(1);
-        spawn_task("p2p-outgoing-connections", Arc::clone(&self).handle_outgoing_connections(priority_connections, receiver, tx.clone()));
+        spawn_task("p2p-outgoing-connections", Arc::clone(&self).handle_outgoing_connections(priority_connections, connections_receiver, tx.clone()));
         spawn_task("p2p-incoming-connections", Arc::clone(&self).handle_incoming_connections(listener, tx, concurrency));
 
         let mut exit_receiver = self.exit_sender.subscribe();
