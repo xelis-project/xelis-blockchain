@@ -19,8 +19,7 @@ enum State<F: Future> {
 pin_project! {
     pub struct Scheduler<F: Future> {
         states: VecDeque<State<F>>,
-        n: Option<usize>,
-        next_yield: usize,
+        n: Option<usize>
     }
 }
 
@@ -29,7 +28,6 @@ impl<F: Future> Scheduler<F> {
         Self {
             states: VecDeque::new(),
             n: n.into(),
-            next_yield: 0,
         }
     }
 
@@ -53,11 +51,17 @@ impl<F: Future> Scheduler<F> {
 
     // How many futures are ready to be polled
     pub fn ready(&self) -> usize {
-        self.next_yield
+        self.states.iter()
+            .filter(|v| matches!(v, State::Ready(_)))
+            .count()
     }
 
     pub fn set_n(&mut self, n: impl Into<Option<usize>>) {
         self.n = n.into();
+    }
+
+    pub fn get_n(&self) -> Option<usize> {
+        self.n
     }
 
     // Do nothing if n was set to None
@@ -87,40 +91,40 @@ impl<F: Future> Stream for Scheduler<F> {
             return Poll::Ready(None);
         }
 
-        // Poll all pending futures starting from next_yield
-        // until the limit set
-        let mut first = true;
-        for state in this.states.iter_mut().take(n.unwrap_or(len)).skip(*this.next_yield) {
-            if let State::New(fut) = state {
-                // Mark it has polled
-                *state = State::Pending(fut.take().expect("new future available"));
-            }
+        // Poll all pending futures until the limit set
+        for state in this.states.iter_mut().take(n.unwrap_or(len)) {
+            match state {
+                State::New(fut) => {
+                    let mut fut = fut.take()
+                        .expect("new future available");
 
-            if let State::Pending(fut) = state {
-                match fut.as_mut().poll(cx) {
-                    Poll::Ready(output) => {
+                    // Try poll it, if its already ready, just mark it has such
+                    // otherwise, we mark it has pending
+                    if let Poll::Ready(output) = fut.as_mut().poll(cx) {
                         *state = State::Ready(output);
-                        if first {
-                            // next yield increase
-                            *this.next_yield += 1;
-                        }
+                    } else {
+                        // Mark it has polled
+                        *state = State::Pending(fut);
                     }
-                    Poll::Pending => {
-                        first = false;
+                },
+                State::Pending(fut) => {
+                    if let Poll::Ready(output) = fut.as_mut().poll(cx) {
+                        *state = State::Ready(output);
                     }
-                }
+                },
+                State::Ready(_) => {}
             }
         }
 
-        // Check if next_yield future is ready to yield
+        // Check if our next future is ready to yield
         if let Some(state) = this.states.front() {
             if matches!(state, State::Ready(_)) {
                 if let Some(State::Ready(output)) = this.states.pop_front() {
-                    *this.next_yield -= 1;
                     return Poll::Ready(Some(output));
                 }
             }
         } else {
+            // no more future available
             return Poll::Ready(None);
         }
 
