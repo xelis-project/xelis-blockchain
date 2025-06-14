@@ -20,7 +20,7 @@ use xelis_common::{
 };
 
 use crate::{
-    config::{CHAIN_SYNC_TOP_BLOCKS, STABLE_LIMIT},
+    config::{CHAIN_SYNC_TOP_BLOCKS, PEER_OBJECTS_CONCURRENCY, STABLE_LIMIT},
     core::{
         blockchain::BroadcastOption,
         error::BlockchainError,
@@ -201,7 +201,7 @@ impl<S: Storage> P2pServer<S> {
 
         let capacity = if self.allow_boost_sync() {
             debug!("Requesting needed blocks in boost sync mode");
-            None
+            Some(PEER_OBJECTS_CONCURRENCY)
         } else {
             Some(1)
         };
@@ -406,7 +406,7 @@ impl<S: Storage> P2pServer<S> {
 
                 let capacity = if self.allow_boost_sync() {
                     debug!("Requesting needed blocks in boost sync mode");
-                    None
+                    Some(PEER_OBJECTS_CONCURRENCY)
                 } else {
                     Some(1)
                 };
@@ -519,7 +519,7 @@ impl<S: Storage> P2pServer<S> {
 
             let capacity = if self.allow_boost_sync() {
                 debug!("Requesting needed blocks in boost sync mode");
-                None
+                Some(PEER_OBJECTS_CONCURRENCY)
             } else {
                 Some(1)
             };
@@ -612,6 +612,8 @@ impl<S: Storage> P2pServer<S> {
                             }
                         };
 
+                        // TODO: if we have ALL the blocks in memory
+                        // low end devices will run out of memory!!
                         blocks_executor.push_back(future);
                     },
                     else => {
@@ -622,8 +624,6 @@ impl<S: Storage> P2pServer<S> {
                 if blocks_executor.is_empty() && futures.is_empty() {
                     break;
                 }
-
-                debug!("chain sync futures ready: {}", futures.ready());
             }
 
             let elapsed = start.elapsed().as_secs();
