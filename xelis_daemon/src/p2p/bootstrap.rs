@@ -60,7 +60,9 @@ impl<S: Storage> P2pServer<S> {
         if let Some(topoheight) = request.get_requested_topoheight() {
             let our_topoheight = self.blockchain.get_topo_height();
             if
-                pruned_topoheight >= topoheight
+                // Special case, spendable balances needs to go below the pruned point because we store versions
+                // at precise topoheight.
+                (pruned_topoheight >= topoheight && !matches!(request, StepRequest::SpendableBalances(_, _, _, _)))
                 || topoheight > our_topoheight
             {
                 warn!("Invalid begin topoheight (received {}, our is {}, pruned: {}) received from {} on step {:?}", topoheight, our_topoheight, pruned_topoheight, peer, request_kind);
