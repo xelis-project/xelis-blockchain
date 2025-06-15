@@ -694,6 +694,7 @@ impl<S: Storage> P2pServer<S> {
                         let min_topo = account.output_topoheight.unwrap_or(0);
 
                         let mut highest_topoheight = None;
+                        let mut total_versions = 0;
                         // Go through all balance history
                         while let Some(max) = max_topoheight {
                             debug!("Requesting spendable balances for asset {} at max topo {} for {}", asset, max, key.as_address(blockchain.get_network().is_mainnet()));
@@ -702,6 +703,8 @@ impl<S: Storage> P2pServer<S> {
                                 error!("Received an invalid StepResponse (how ?) while fetching balances");
                                 return Err(P2pError::InvalidPacket)
                             };
+
+                            total_versions += balances.len();
 
                             for balance in balances {
                                 let (topo, version) = balance.as_version();
@@ -733,6 +736,8 @@ impl<S: Storage> P2pServer<S> {
                             let mut storage = blockchain.get_storage().write().await;
                             storage.set_last_topoheight_for_balance(&key, &asset, highest_topoheight)?;
                         }
+
+                        info!("Synced {} balance versions {} of {}", total_versions, asset, key.as_address(blockchain.get_network().is_mainnet()));
                     } else {
                         debug!("No balance for key {} at topoheight {}", key.as_address(blockchain.get_network().is_mainnet()), stable_topoheight);
                     }
