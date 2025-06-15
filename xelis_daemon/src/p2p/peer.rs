@@ -170,11 +170,26 @@ pub struct Peer {
     // Should we broadcast transactions to this peer
     // Due to needed order of TXs to be accepted
     // We must wait that the peer received our inventory
-    should_propagate_txs: AtomicBool,
+    propagate_txs: AtomicBool,
 }
 
 impl Peer {
-    pub fn new(connection: Connection, id: u64, node_tag: Option<String>, local_port: u16, version: String, top_hash: Hash, topoheight: TopoHeight, height: u64, pruned_topoheight: Option<TopoHeight>, priority: bool, cumulative_difficulty: CumulativeDifficulty, peer_list: SharedPeerList, sharable: bool) -> (Self, Rx) {
+    pub fn new(
+        connection: Connection,
+        id: u64,
+        node_tag: Option<String>,
+        local_port: u16,
+        version: String,
+        top_hash: Hash,
+        topoheight: TopoHeight,
+        height: u64,
+        pruned_topoheight: Option<TopoHeight>,
+        priority: bool,
+        cumulative_difficulty: CumulativeDifficulty,
+        peer_list: SharedPeerList,
+        sharable: bool,
+        propagate_txs: bool
+    ) -> (Self, Rx) {
         let mut outgoing_address = *connection.get_address();
         outgoing_address.set_port(local_port);
 
@@ -216,18 +231,18 @@ impl Peer {
             read_task: Mutex::new(TaskState::Inactive),
             write_task: Mutex::new(TaskState::Inactive),
             objects_semaphore: Semaphore::new(PEER_OBJECTS_CONCURRENCY),
-            should_propagate_txs: AtomicBool::new(false),
+            propagate_txs: AtomicBool::new(propagate_txs),
         }, rx)
     }
 
     // This is used to mark that peer is ready to get our propagated transactions
     pub fn set_ready_to_propagate_txs(&self, value: bool) {
-        self.should_propagate_txs.store(value, Ordering::SeqCst);
+        self.propagate_txs.store(value, Ordering::SeqCst);
     }
 
     // Is this peer ready to receive our propagated transactions
     pub fn is_ready_for_txs_propagation(&self) -> bool {
-        self.should_propagate_txs.load(Ordering::SeqCst)
+        self.propagate_txs.load(Ordering::SeqCst)
     }
 
     // Subscribe to the exit channel to be notified when peer disconnects

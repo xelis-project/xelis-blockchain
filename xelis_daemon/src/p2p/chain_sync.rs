@@ -660,10 +660,14 @@ impl<S: Storage> P2pServer<S> {
             && peer_topoheight - our_previous_topoheight > STABLE_LIMIT
         {
             let our_topoheight = self.blockchain.get_topo_height();
-            // verify that we synced it partially well
-            if peer_topoheight >= our_topoheight && peer_topoheight - our_topoheight < STABLE_LIMIT {
-                if let Err(e) = self.request_inventory_of(&peer).await {
-                    error!("Error while asking inventory to {}: {}", peer, e);
+
+            for peer in self.peer_list.get_cloned_peers().await {
+                let peer_topoheight = peer.get_topoheight();
+                // verify that we synced it partially well
+                if peer_topoheight >= our_topoheight && peer_topoheight - our_topoheight < STABLE_LIMIT {
+                    if let Err(e) = self.request_inventory_of(&peer).await {
+                        error!("Error while asking inventory to {}: {}", peer, e);
+                    }
                 }
             }
         }

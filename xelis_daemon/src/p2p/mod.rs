@@ -761,7 +761,15 @@ impl<S: Storage> P2pServer<S> {
             }
         };
 
-        let (peer, rx) = handshake.create_peer(connection, priority, self.peer_list.clone());
+        // If we have already some TXs in mempool,
+        // best is to not broadcast the following one to the peer
+        // Otherwise he may get them in incorrect order
+        let has_any_tx = {
+            let mempool = self.blockchain.get_mempool().read().await;
+            mempool.size() > 0
+        };
+
+        let (peer, rx) = handshake.create_peer(connection, priority, self.peer_list.clone(), !has_any_tx);
         Ok((peer, rx))
     }
 
@@ -2241,19 +2249,10 @@ impl<S: Storage> P2pServer<S> {
                     peer.set_requested_inventory(true);
                     peer.send_packet(Packet::NotifyInventoryRequest(PacketWrapper::new(packet, ping))).await?;
                 } else {
-                    // We expect that the rest of the network is synced between them
-                    // So if we have made a inventory response and this is the last page
-                    // We mark all others peers as ready for propagation
-                    debug!("Marking all our synced peers as ready for txs propagation");
-
-                    let our_height = self.blockchain.get_height();
-                    let peers = self.peer_list.get_peers().read().await;
-                    for peer in peers.values() {
-                        if peer.get_height() >= our_height && peer.get_height() - our_height < STABLE_LIMIT {
-                            info!("Marked {} as ready for txs propagation", peer);
-                            peer.set_ready_to_propagate_txs(true);
-                        }
-                    }
+                    // Last inventory response has been processed,
+                    // we can know send back any TX in case we have any
+                    debug!("Marked {} as ready for txs propagation", peer);
+                    peer.set_ready_to_propagate_txs(true);
                 }
             },
             Packet::BootstrapChainRequest(request) => {
