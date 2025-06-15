@@ -1361,7 +1361,7 @@ async fn difficulty_dataset<S: Storage>(manager: &CommandManager, mut arguments:
 
     manager.message(format!("Creating file {}...", output_path));
     let mut file = File::create(&output_path).context("Error while creating file")?;
-    file.write(b"topoheight,solve_time_ms,difficulty,hashrate\n")
+    file.write(b"topoheight,solve_time_ms,difficulty,hashrate,timestamp\n")
         .context("Error while writing header to file")?;
 
     let context = manager.get_context().lock()?;
@@ -1370,7 +1370,7 @@ async fn difficulty_dataset<S: Storage>(manager: &CommandManager, mut arguments:
     manager.message("Creating difficulty dataset...");
     for topoheight in 0..=blockchain.get_topo_height() {
         // Retrieve block hash and header
-        let (solve_time, difficulty, version) = {
+        let (solve_time, difficulty, version, timestamp) = {
             let storage = blockchain.get_storage().read().await;
             let (hash, header) = storage.get_block_header_at_topoheight(topoheight).await
                 .context("Error while retrieving hash at topo")?;
@@ -1390,14 +1390,14 @@ async fn difficulty_dataset<S: Storage>(manager: &CommandManager, mut arguments:
                 solve_time
             };
 
-            (solve_time, difficulty, header.get_version())
+            (solve_time, difficulty, header.get_version(), header.get_timestamp())
         };
 
         let block_time_target = get_block_time_target_for_version(version);
         let hashrate = format_hashrate((difficulty / (block_time_target / MILLIS_PER_SECOND)).into());
 
         // Write to file
-        file.write(format!("{},{},{},{}\n", topoheight, solve_time, difficulty, hashrate).as_bytes())
+        file.write(format!("{},{},{},{},{}\n", topoheight, solve_time, difficulty, hashrate, timestamp).as_bytes())
             .context("Error while writing to file")?;
     }
 
