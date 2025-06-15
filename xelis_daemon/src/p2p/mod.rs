@@ -2240,6 +2240,9 @@ impl<S: Storage> P2pServer<S> {
                     let ping = Cow::Owned(self.build_generic_ping_packet().await?);
                     peer.set_requested_inventory(true);
                     peer.send_packet(Packet::NotifyInventoryRequest(PacketWrapper::new(packet, ping))).await?;
+                } else if peer.is_out() {
+                    debug!("Marking {} as ready for txs propagation", peer);
+                    peer.set_ready_to_propagate_txs(true);
                 }
             },
             Packet::BootstrapChainRequest(request) => {

@@ -732,7 +732,7 @@ impl Display for Peer {
         let read_task = self.read_task.try_lock().map(|v| *v).unwrap_or(TaskState::Unknown);
         let write_task = self.write_task.try_lock().map(|v| *v).unwrap_or(TaskState::Unknown);
 
-        write!(f, "Peer[connection: {}, id: {}, topoheight: {}, top hash: {}, height: {}, pruned: {}, priority: {}, tag: {}, version: {}, fail count: {}, out: {}, peers: {}, tasks: {:?}/{:?}]",
+        write!(f, "Peer[connection: {}, id: {}, topoheight: {}, top hash: {}, height: {}, pruned: {}, priority: {}, tag: {}, version: {}, fail count: {}, out: {}, peers: {}, tasks: {:?}/{:?}, txs: {}]",
             self.get_connection(),
             self.get_id(),
             self.get_topoheight(),
@@ -746,7 +746,8 @@ impl Display for Peer {
             self.is_out(),
             peers,
             read_task,
-            write_task
+            write_task,
+            self.is_ready_for_txs_propagation()
         )
     }
 }
