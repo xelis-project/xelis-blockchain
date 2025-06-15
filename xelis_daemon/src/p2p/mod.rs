@@ -1754,9 +1754,9 @@ impl<S: Storage> P2pServer<S> {
         }
 
         // verify that we are synced with him to receive all TXs correctly
-        let our_topoheight = self.blockchain.get_topo_height();
-        let peer_topoheight = peer.get_topoheight();
-        if peer_topoheight == our_topoheight {
+        let our_height = self.blockchain.get_height();
+        let peer_height = peer.get_height();
+        if our_height == peer_height {
             if let Err(e) = self.request_inventory_of(&peer).await {
                 warn!("Error while requesting inventory of {}: {}", peer, e);
             }
@@ -2240,9 +2240,20 @@ impl<S: Storage> P2pServer<S> {
                     let ping = Cow::Owned(self.build_generic_ping_packet().await?);
                     peer.set_requested_inventory(true);
                     peer.send_packet(Packet::NotifyInventoryRequest(PacketWrapper::new(packet, ping))).await?;
-                } else if peer.is_out() {
-                    debug!("Marking {} as ready for txs propagation", peer);
-                    peer.set_ready_to_propagate_txs(true);
+                } else {
+                    // We expect that the rest of the network is synced between them
+                    // So if we have made a inventory response and this is the last page
+                    // We mark all others peers as ready for propagation
+                    debug!("Marking all our synced peers as ready for txs propagation");
+
+                    let our_height = self.blockchain.get_height();
+                    let peers = self.peer_list.get_peers().read().await;
+                    for peer in peers.values() {
+                        if peer.get_height() >= our_height && peer.get_height() - our_height < STABLE_LIMIT {
+                            info!("Marked {} as ready for txs propagation", peer);
+                            peer.set_ready_to_propagate_txs(true);
+                        }
+                    }
                 }
             },
             Packet::BootstrapChainRequest(request) => {

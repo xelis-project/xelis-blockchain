@@ -654,7 +654,11 @@ impl<S: Storage> P2pServer<S> {
         let peer_topoheight = peer.get_topoheight();
         // ask inventory of this peer if we sync from too far
         // if we are not further than one sync, request the inventory
-        if peer_topoheight > our_previous_topoheight && blocks_len < requested_max_size {
+        if
+            blocks_len < requested_max_size
+            && peer_topoheight > our_previous_topoheight
+            && peer_topoheight - our_previous_topoheight > STABLE_LIMIT
+        {
             let our_topoheight = self.blockchain.get_topo_height();
             // verify that we synced it partially well
             if peer_topoheight >= our_topoheight && peer_topoheight - our_topoheight < STABLE_LIMIT {
