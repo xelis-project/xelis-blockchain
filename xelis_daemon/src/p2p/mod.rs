@@ -70,7 +70,6 @@ use xelis_common::{
             broadcast,
             mpsc,
             oneshot,
-            Semaphore,
             RwLock,
         },
         task::JoinHandle,
@@ -1395,14 +1394,52 @@ impl<S: Storage> P2pServer<S> {
         debug!("Event loop task is stopped!");
     }
 
+    async fn request_block(&self, peer: &Arc<Peer>, block_hash: &Hash, header: BlockHeader) -> Result<Block, BlockchainError> {
+        // All futures containing the TXs requested
+        let mut txs_futures = FuturesOrdered::new();
+        for hash in header.get_txs_hashes().iter().cloned() {
+            let future = async {
+                if let Ok(tx) = self.blockchain.get_tx(&hash).await {
+                    debug!("tx {} found in chain", hash);
+                    Ok(tx.into_arc())
+                } else {
+                    debug!("Cache missed for TX {} in block propagation {}, will request it from peer", hash, block_hash);
+
+                    // request it from peer
+                    // TODO: rework object tracker
+                    let mut listener = self.object_tracker.request_object_from_peer_with_or_get_notified(
+                        Arc::clone(&peer),
+                        ObjectRequest::Transaction(Immutable::Owned(hash)),
+                        None
+                    ).await?;
+
+                    listener.recv().await
+                        .context("Error while reading transaction for block")?
+                        .into_transaction()
+                        .map(|(tx, _)| Arc::new(tx))
+                }
+            };
+            txs_futures.push_back(future);
+        }
+
+        // Now collect all the futures
+        let txs = txs_futures.try_collect::<Vec<_>>().await
+            .context("Error while collecting all TXs")?;
+
+        // build the final block with TXs
+        let block = Block::new(Immutable::Owned(header), txs);
+        Ok(block)
+    }
+
     // Task for all blocks propagation
     async fn blocks_processing_task(self: Arc<Self>, mut receiver: mpsc::Receiver<(Arc<Peer>, BlockHeader, Arc<Hash>)>) {
         debug!("Starting blocks processing task");
-        let semaphore = Semaphore::new(PEER_OBJECTS_CONCURRENCY);
         let mut server_exit = self.exit_sender.subscribe();
 
+        // All blocks being in the process
+        let mut pending_requests = HashSet::new();
         // All pending blocks
-        let mut futures = FuturesOrdered::new();
+        let mut scheduler = Scheduler::new(Some(PEER_OBJECTS_CONCURRENCY));
         // Sequential blocks executor
         let mut blocks_executor = Executor::new();
 
@@ -1419,55 +1456,30 @@ impl<S: Storage> P2pServer<S> {
                         break 'main;
                     };
 
+                    // prevent any duplicated block
+                    if !pending_requests.insert(block_hash.clone()) {
+                        debug!("Block {} is already being processed, skipping it", block_hash);
+                        continue;
+                    }
+
                     counter!("p2p_incoming_blocks_propagated_total").increment(1u64);
 
                     let future = async {
-                        let _permit = semaphore.acquire().await?;
+                       let res = self.request_block(&peer, &block_hash, header).await;
 
-                        // All futures containing the TXs requested
-                        let mut txs_futures = FuturesOrdered::new();
-                        for hash in header.get_txs_hashes().iter().cloned() {
-                            let future = async {
-                                if let Ok(tx) = self.blockchain.get_tx(&hash).await {
-                                    debug!("tx {} found in chain", hash);
-                                    Ok(tx.into_arc())
-                                } else {
-                                    debug!("Cache missed for TX {} in block propagation {}, will request it from peer", hash, block_hash);
-
-                                    // request it from peer
-                                    // TODO: rework object tracker
-                                    let mut listener = self.object_tracker.request_object_from_peer_with_or_get_notified(
-                                        Arc::clone(&peer),
-                                        ObjectRequest::Transaction(Immutable::Owned(hash)),
-                                        None
-                                    ).await?;
-
-                                    listener.recv().await
-                                        .context("Error while reading transaction for block")?
-                                        .into_transaction()
-                                        .map(|(tx, _)| Arc::new(tx))
-                                }
-                            };
-                            txs_futures.push_back(future);
-                        }
-
-                        // Now collect all the futures
-                        let txs = txs_futures.try_collect::<Vec<_>>().await
-                            .context("Error while collecting all TXs")?;
-
-                        // build the final block with TXs
-                        let block = Block::new(Immutable::Owned(header), txs);
-                        Ok::<_, BlockchainError>(Some((block, block_hash, peer)))
+                       (res, block_hash, peer)
                     };
 
-                    futures.push_back(future);
+                    scheduler.push_back(future);
                 },
-                Some(_) = blocks_executor.next() => {},
-                Some(res) = futures.next() => {
+                Some(block_hash) = blocks_executor.next() => {
+                    pending_requests.remove(&block_hash);
+                    scheduler.increment_n();
+                },
+                Some((res, block_hash, peer)) = scheduler.next() => {
                     // Mark the timestamp of when its being added
                     match res {
-                        Ok(None) => {},
-                        Ok(Some((block, block_hash, peer))) => {
+                        Ok(block) => {
                             let zelf = &self;
                             let future = async move {
                                 {
@@ -1485,15 +1497,19 @@ impl<S: Storage> P2pServer<S> {
     
                                 debug!("Adding received block {} from {} to chain", block_hash, peer);
                                 if let Err(e) = zelf.blockchain.add_new_block(block, Some(Immutable::Arc(block_hash.clone())), BroadcastOption::All, false).await {
-                                    error!("Error while adding new block {} from {}: {}", block_hash, peer, e);
+                                    warn!("Error while adding new block {} from {}: {}", block_hash, peer, e);
                                     peer.increment_fail_count();
                                 }
+
+                                block_hash
                             };
 
+                            scheduler.decrement_n();
                             blocks_executor.push_back(future);
                         },
                         Err(e) => {
-                            debug!("Error on blocks processing task: {}", e);
+                            pending_requests.remove(&block_hash);
+                            warn!("Error on blocks processing task: {}", e);
                         }
                     }
                 }
