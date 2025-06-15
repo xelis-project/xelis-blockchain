@@ -1126,6 +1126,7 @@ impl<S: Storage> P2pServer<S> {
                 // otherwise, fallback on the normal chain sync
                 let err = if fast_sync {
                     if let Err(e) = self.bootstrap_chain(&peer).await {
+                        peer.clear_bootstrap_requests().await;
                         warn!("Error occured while fast syncing with {}: {}", peer, e);
                         true
                     } else {
@@ -1134,6 +1135,7 @@ impl<S: Storage> P2pServer<S> {
                 } else {
                     let previous_err = previous_peer.map(|(_, _, err)| err).unwrap_or(false);
                     if let Err(e) = self.request_sync_chain_for(&peer, &mut last_chain_sync, previous_err).await {
+                        peer.clear_objects_requested().await;
                         warn!("Error occured on chain sync with {}: {}", peer, e);
                         true
                     } else {
@@ -1474,8 +1476,8 @@ impl<S: Storage> P2pServer<S> {
                                 }
     
                                 debug!("Adding received block {} from {} to chain", block_hash, peer);
-                                if let Err(e) = zelf.blockchain.add_new_block(block, Some(Immutable::Arc(block_hash)), BroadcastOption::All, false).await {
-                                    error!("Error while adding new block from {}: {}", peer, e);
+                                if let Err(e) = zelf.blockchain.add_new_block(block, Some(Immutable::Arc(block_hash.clone())), BroadcastOption::All, false).await {
+                                    error!("Error while adding new block {} from {}: {}", block_hash, peer, e);
                                     peer.increment_fail_count();
                                 }
                             };
@@ -2245,7 +2247,7 @@ impl<S: Storage> P2pServer<S> {
             },
             Packet::BootstrapChainResponse(response) => {
                 debug!("Received a bootstrap chain response ({:?}) from {}", response.kind(), peer);
-                if let Some(sender) = peer.get_bootstrap_chain_channel().lock().await.pop_front() {
+                if let Some(sender) = peer.get_next_bootstrap_request().await {
                     trace!("Sending bootstrap chain response ({:?})", response.kind());
                     let response = response.response();
                     if let Err(e) = sender.send(response) {

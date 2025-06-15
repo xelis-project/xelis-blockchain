@@ -50,7 +50,7 @@ use super::{
 use std::{
     num::NonZeroUsize,
     borrow::Cow,
-    collections::{HashMap, VecDeque},
+    collections::VecDeque,
     fmt::{Display, Error, Formatter},
     hash::{Hash as StdHash, Hasher},
     net::{IpAddr, SocketAddr},
@@ -72,7 +72,7 @@ use log::{
 
 // A RequestedObjects is a map of all objects requested from a peer
 // This is done to be awaitable with a timeout
-pub type RequestedObjects = HashMap<ObjectRequest, broadcast::Sender<OwnedObjectResponse>>;
+pub type RequestedObjects = LruCache<ObjectRequest, broadcast::Sender<OwnedObjectResponse>>;
 
 pub type Tx = mpsc::Sender<Bytes>;
 pub type Rx = mpsc::Receiver<Bytes>;
@@ -150,7 +150,7 @@ pub struct Peer {
     // Because we are in a TCP stream, we know that all our
     // requests will be answered in the order we sent them
     // So we can use a queue to store the senders and pop them
-    bootstrap_chain: Mutex<VecDeque<oneshot::Sender<StepResponse>>>,
+    bootstrap_requests: Mutex<VecDeque<oneshot::Sender<StepResponse>>>,
     // used to wait on chain response when syncing chain
     sync_chain: Mutex<Option<oneshot::Sender<ChainResponse>>>,
     // IP address with local port
@@ -195,7 +195,7 @@ impl Peer {
             fail_count: AtomicU8::new(0),
             last_chain_sync: AtomicU64::new(0),
             peer_list,
-            objects_requested: Mutex::new(HashMap::new()),
+            objects_requested: Mutex::new(LruCache::new(NonZeroUsize::new(PEER_OBJECTS_CONCURRENCY).expect("PEER_OBJECTS_CONCURRENCY must be non-zero"))),
             peers: Mutex::new(LruCache::new(NonZeroUsize::new(PEER_PEERS_CACHE_SIZE).expect("PEER_PEERS_CACHE_SIZE must be non-zero"))),
             last_peer_list: AtomicU64::new(0),
             last_ping: AtomicU64::new(0),
@@ -207,7 +207,7 @@ impl Peer {
             requested_inventory: AtomicBool::new(false),
             pruned_topoheight: AtomicU64::new(pruned_topoheight.unwrap_or(0)),
             is_pruned: AtomicBool::new(pruned_topoheight.is_some()),
-            bootstrap_chain: Mutex::new(VecDeque::new()),
+            bootstrap_requests: Mutex::new(VecDeque::new()),
             sync_chain: Mutex::new(None),
             outgoing_address,
             sharable,
@@ -414,20 +414,15 @@ impl Peer {
     }
 
     // Get all objects requested from this peer
-    pub fn get_objects_requested(&self) -> &Mutex<RequestedObjects> {
-        &self.objects_requested
-    }
-
-    // Verify if this peer requested the object
-    pub async fn has_requested_object(&self, request: &ObjectRequest) -> bool {
-        let objects = self.objects_requested.lock().await;
-        objects.contains_key(&request)
+    pub async fn clear_objects_requested(&self) {
+        let mut objects = self.objects_requested.lock().await;
+        objects.clear();
     }
 
     // Remove a requested object from the requested list
     pub async fn remove_object_request(&self, request: &ObjectRequest) -> Option<broadcast::Sender<OwnedObjectResponse>> {
         let mut objects = self.objects_requested.lock().await;
-        objects.remove(request)
+        objects.pop(request)
     }
 
     // Request a object from this peer and wait on it until we receive it or until timeout 
@@ -445,7 +440,10 @@ impl Peer {
             } else {
                 self.send_packet(Packet::ObjectRequest(Cow::Borrowed(&request))).await?;
                 let (sender, receiver) = broadcast::channel(1);
-                objects.insert(request.clone(), sender); // clone is necessary in case timeout has occured
+                // clone is necessary in case timeout has occured
+                if objects.put(request.clone(), sender).is_some() {
+                    warn!("{} was already pending for {}", request, self);
+                };
                 receiver
             }
         };
@@ -459,7 +457,7 @@ impl Peer {
                     warn!("Requested data {} from {} has timed out", request, self);
                     let mut objects = self.objects_requested.lock().await;
                     // remove it from request list
-                    objects.remove(&request);
+                    objects.pop(&request);
                     return Err(P2pError::ObjectRequestTimedOut(request));
                 }
             }
@@ -491,7 +489,7 @@ impl Peer {
 
         let (sender, receiver) = tokio::sync::oneshot::channel();
         {
-            let mut senders = self.bootstrap_chain.lock().await;
+            let mut senders = self.bootstrap_requests.lock().await;
 
             // send the packet while holding the lock so we ensure the correct order
             self.send_packet(Packet::BootstrapChainRequest(BootstrapChainRequest::new(step))).await?;
@@ -507,7 +505,7 @@ impl Peer {
                 Err(e) => {
                     // Clear the bootstrap chain channel to preserve the order
                     {
-                        let mut senders = self.bootstrap_chain.lock().await;
+                        let mut senders = self.bootstrap_requests.lock().await;
                         senders.pop_front();
                     }
 
@@ -558,8 +556,15 @@ impl Peer {
 
     // Get the bootstrap chain channel
     // Like the sync chain channel, but for bootstrap (fast sync) syncing
-    pub fn get_bootstrap_chain_channel(&self) -> &Mutex<VecDeque<oneshot::Sender<StepResponse>>> {
-        &self.bootstrap_chain
+    pub async fn get_next_bootstrap_request(&self) -> Option<oneshot::Sender<StepResponse>> {
+        let mut requests = self.bootstrap_requests.lock().await;
+        requests.pop_front()
+    }
+
+    // Clear all pending requests in case something went wrong
+    pub async fn clear_bootstrap_requests(&self) {
+        let mut requests = self.bootstrap_requests.lock().await;
+        requests.clear();
     }
 
     // Get the sync chain channel
