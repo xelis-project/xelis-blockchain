@@ -7,8 +7,9 @@ mod typed;
 use std::borrow::Cow;
 
 use chacha20poly1305::{
-    aead::{Aead, Payload},
-    AeadInPlace, ChaCha20Poly1305, KeyInit,
+    aead::{Aead, Payload, AeadInOut},
+    ChaCha20Poly1305,
+    KeyInit,
 };
 use chacha20::{
     cipher::{KeyIvInit, StreamCipher},
