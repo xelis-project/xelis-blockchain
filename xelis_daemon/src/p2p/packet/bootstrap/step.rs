@@ -1,7 +1,4 @@
-use std::{
-    borrow::Cow,
-    hash::{Hash as StdHash, Hasher}
-};
+use std::borrow::Cow;
 use indexmap::{IndexMap, IndexSet};
 use log::debug;
 use xelis_common::{
@@ -13,10 +10,6 @@ use xelis_common::{
         Hash,
         PublicKey
     },
-    difficulty::{
-        CumulativeDifficulty,
-        Difficulty
-    },
     serializer::{
         Reader,
         ReaderError,
@@ -25,12 +18,16 @@ use xelis_common::{
     },
     static_assert,
     transaction::MultiSigPayload,
-    varuint::VarUint,
     versioned_type::State
 };
 use xelis_vm::{Module, ValueCell};
-use super::chain::{BlockId, CommonPoint};
-use crate::config::{CHAIN_SYNC_REQUEST_MAX_BLOCKS, PEER_MAX_PACKET_SIZE, PRUNE_SAFETY_LIMIT};
+use crate::{
+    config::{CHAIN_SYNC_REQUEST_MAX_BLOCKS, PEER_MAX_PACKET_SIZE, PRUNE_SAFETY_LIMIT},
+    p2p::packet::{
+        bootstrap::BlockMetadata,
+        chain::{BlockId, CommonPoint}
+    }
+};
 
 // this file implements the protocol for the fast sync (bootstrapped chain)
 // You will have to request through StepRequest::FetchAssets all the registered assets
@@ -43,98 +40,10 @@ use crate::config::{CHAIN_SYNC_REQUEST_MAX_BLOCKS, PEER_MAX_PACKET_SIZE, PRUNE_S
 pub const MAX_ITEMS_PER_PAGE: usize = 1024; // 1k items per page
 
 // Contract Stores can be a big packet, we must ensure that we are below the max packet size
-static_assert!(MAX_ITEMS_PER_PAGE * (MAX_KEY_SIZE + MAX_VALUE_SIZE) + 32 <= PEER_MAX_PACKET_SIZE as usize);
-
-#[derive(Debug)]
-pub struct BlockMetadata {
-    // Hash of the block
-    pub hash: Hash,
-    // Emitted supply
-    pub supply: u64,
-    // Burned supply
-    pub burned_supply: u64,
-    // Miner reward
-    pub reward: u64,
-    // Difficulty of the block
-    pub difficulty: Difficulty,
-    // Cumulative difficulty of the chain
-    pub cumulative_difficulty: CumulativeDifficulty,
-    // Difficulty P variable
-    pub p: VarUint,
-    // All transactions marked as executed in this block
-    pub executed_transactions: IndexSet<Hash>
-}
-
-impl StdHash for BlockMetadata {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.hash.hash(state);
-    }
-}
-
-impl PartialEq for BlockMetadata {
-    fn eq(&self, other: &Self) -> bool {
-        self.hash == other.hash
-    }
-}
-
-impl Eq for BlockMetadata {}
-
-impl Serializer for BlockMetadata {
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let hash = reader.read_hash()?;
-        let supply = reader.read_u64()?;
-        let burned_supply = reader.read_u64()?;
-        let reward = reader.read_u64()?;
-        let difficulty = Difficulty::read(reader)?;
-        let cumulative_difficulty = CumulativeDifficulty::read(reader)?;
-        let p = VarUint::read(reader)?;
-
-        // We don't write it through IndexSet impl directly
-        // as we must support any u16 len same as a BlockHeader
-        // TODO best would be a const type providing a configurable MAX_ITEMS
-
-        let len = reader.read_u16()?;
-        let mut executed_transactions = IndexSet::new();
-        for _ in 0..len {
-            if !executed_transactions.insert(Hash::read(reader)?) {
-                return Err(ReaderError::InvalidValue)
-            }
-        }
-
-        Ok(Self {
-            hash,
-            supply,
-            burned_supply,
-            reward,
-            difficulty,
-            cumulative_difficulty,
-            p,
-            executed_transactions
-        })
-    }
-
-    fn write(&self, writer: &mut Writer) {
-        writer.write_hash(&self.hash);
-        writer.write_u64(&self.supply);
-        writer.write_u64(&self.burned_supply);
-        writer.write_u64(&self.reward);
-        self.difficulty.write(writer);
-        self.cumulative_difficulty.write(writer);
-        self.p.write(writer);
-        self.executed_transactions.write(writer);
-    }
-
-    fn size(&self) -> usize {
-        self.hash.size()
-        + self.supply.size()
-        + self.burned_supply.size()
-        + self.reward.size()
-        + self.difficulty.size()
-        + self.cumulative_difficulty.size()
-        + self.p.size()
-        + self.executed_transactions.size()
-    }
-}
+static_assert!(
+    MAX_ITEMS_PER_PAGE * (MAX_KEY_SIZE + MAX_VALUE_SIZE) + 32 <= PEER_MAX_PACKET_SIZE as usize,
+    "Contract Stores packet must be below max packet size"
+);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Ord, PartialOrd)]
 pub enum StepKind {
@@ -807,75 +716,5 @@ impl Serializer for StepResponse {
         };
         // 1 for the id
         size + 1
-    }
-}
-
-#[derive(Debug)]
-pub struct BootstrapChainRequest<'a> {
-    step: StepRequest<'a>
-}
-
-impl<'a> BootstrapChainRequest<'a> {
-    pub fn new(step: StepRequest<'a>) -> Self {
-        Self {
-            step
-        }
-    }
-
-    pub fn kind(&self) -> StepKind {
-        self.step.kind()
-    }
-
-    pub fn step(self) -> StepRequest<'a> {
-        self.step
-    }
-}
-
-impl Serializer for BootstrapChainRequest<'_> {
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        Ok(Self::new(StepRequest::read(reader)?))
-    }
-
-    fn write(&self, writer: &mut Writer) {
-        self.step.write(writer);
-    }
-
-    fn size(&self) -> usize {
-        self.step.size()
-    }
-}
-
-#[derive(Debug)]
-pub struct BootstrapChainResponse {
-    response: StepResponse
-}
-
-impl BootstrapChainResponse {
-    pub fn new(response: StepResponse) -> Self {
-        Self {
-            response
-        }
-    }
-
-    pub fn kind(&self) -> StepKind {
-        self.response.kind()
-    }
-
-    pub fn response(self) -> StepResponse {
-        self.response
-    }
-}
-
-impl Serializer for BootstrapChainResponse {
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        Ok(Self::new(StepResponse::read(reader)?))
-    }
-
-    fn write(&self, writer: &mut Writer) {
-        self.response.write(writer);
-    }
-
-    fn size(&self) -> usize {
-        self.response.size()
     }
 }

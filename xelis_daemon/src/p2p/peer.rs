@@ -28,7 +28,7 @@ use xelis_common::{
 };
 use super::{
     packet::{
-        bootstrap_chain::{
+        bootstrap::{
             StepRequest,
             BootstrapChainRequest,
             StepResponse

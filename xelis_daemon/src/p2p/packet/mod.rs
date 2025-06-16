@@ -3,10 +3,10 @@ pub mod chain;
 pub mod ping;
 pub mod object;
 pub mod inventory;
-pub mod bootstrap_chain;
+pub mod bootstrap;
 pub mod peer_disconnected;
 
-use self::bootstrap_chain::{BootstrapChainRequest, BootstrapChainResponse};
+use self::bootstrap::{BootstrapChainRequest, BootstrapChainResponse};
 use self::inventory::{NotifyInventoryResponse, NotifyInventoryRequest};
 use self::object::{ObjectRequest, ObjectResponse};
 use self::chain::{ChainRequest, ChainResponse};

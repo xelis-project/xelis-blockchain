@@ -1,7 +1,13 @@
-use crate::{
-    core::error::BlockchainError,
-    config::{CHAIN_SYNC_RESPONSE_MAX_BLOCKS, CHAIN_SYNC_RESPONSE_MIN_BLOCKS}
+use std::{
+    array::TryFromSliceError,
+    net::{AddrParseError, SocketAddr},
+    sync::{
+        mpsc::SendError,
+        PoisonError,
+    },
+    io::Error as IOError
 };
+use thiserror::Error;
 use anyhow::Error;
 use xelis_common::{
     tokio::{
@@ -16,21 +22,15 @@ use xelis_common::{
     crypto::Hash,
     serializer::ReaderError,
 };
-use std::{
-    array::TryFromSliceError,
-    net::{AddrParseError, SocketAddr},
-    sync::{
-        mpsc::SendError,
-        PoisonError,
-    },
-    io::Error as IOError
+use crate::{
+    core::error::BlockchainError,
+    config::{CHAIN_SYNC_RESPONSE_MAX_BLOCKS, CHAIN_SYNC_RESPONSE_MIN_BLOCKS}
 };
-use thiserror::Error;
 use super::{
     disk_cache::DiskError,
     encryption::EncryptionError,
     packet::{
-        bootstrap_chain::StepKind,
+        bootstrap::StepKind,
         object::{ObjectRequest, OwnedObjectResponse},
     }
 };

@@ -25,26 +25,21 @@ use crate::{
         }
     },
     p2p::{
+        P2pServer,
+        peer::Peer,
         error::P2pError,
         packet::{
-            bootstrap_chain::{
+            bootstrap::{
                 BlockMetadata,
-                BootstrapChainResponse
+                BootstrapChainResponse,
+                StepRequest,
+                StepResponse,
+                MAX_ITEMS_PER_PAGE
             },
             object::ObjectRequest,
             Packet
         }
     }
-};
-
-use super::{
-    packet::bootstrap_chain::{
-        StepRequest,
-        StepResponse,
-        MAX_ITEMS_PER_PAGE
-    },
-    peer::Peer,
-    P2pServer
 };
 
 impl<S: Storage> P2pServer<S> {
