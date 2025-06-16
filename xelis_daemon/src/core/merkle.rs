@@ -58,7 +58,7 @@ impl<'a> MerkleBuilder<'a> {
     // Build the merkle tree and return the root hash
     pub fn build(&mut self) -> Hash {
         while self.hashes.len() > 1 {
-            let mut new_hashes = Vec::new();
+            let mut new_hashes = Vec::with_capacity(self.hashes.len() / 2);
             for i in (0..self.hashes.len()).step_by(2) {
                 let left = &self.hashes[i];
                 let right = if i + 1 < self.hashes.len() {
@@ -66,7 +66,7 @@ impl<'a> MerkleBuilder<'a> {
                 } else {
                     self.hashes[i].as_ref()
                 };
-                let hash = hash(&[left.as_bytes().as_ref(), right.as_bytes().as_ref()].concat());
+                let hash = hash(&[*left.as_bytes(), *right.as_bytes()].concat());
                 new_hashes.push(Cow::Owned(hash));
             }
             self.hashes = new_hashes;
