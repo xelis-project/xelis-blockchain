@@ -369,7 +369,7 @@ impl Connection {
         }
         trace!("Size received: {}", size);
 
-        self.read_all_bytes(&mut stream, buf, size).await
+        self.read_all_bytes(&mut stream, buf, size as usize).await
     }
 
     // Deserialize a packet from bytes and verify its integrity
@@ -417,18 +417,18 @@ impl Connection {
 
     // Read all bytes until the the buffer is full with the requested size
     // This support fragmented packets and encryption
-    async fn read_all_bytes(&self, stream: &mut OwnedReadHalf, buf: &mut [u8], mut left: u32) -> P2pResult<Vec<u8>> {
-        let buf_size = buf.len() as u32;
+    async fn read_all_bytes(&self, stream: &mut OwnedReadHalf, buf: &mut [u8], mut left: usize) -> P2pResult<Vec<u8>> {
+        let buf_size = buf.len();
         // Allocate a vector to store the bytes read
-        let mut bytes = Vec::with_capacity(left as usize);
+        let mut bytes = Vec::with_capacity(left);
         while left > 0 {
             let max = if buf_size > left {
-                left as usize
+                left
             } else {
-                buf_size as usize
+                buf_size
             };
             let read = self.read_bytes_from_stream(stream, &mut buf[0..max]).await?;
-            left -= read as u32;
+            left -= read;
             bytes.extend(&buf[0..read]);
         }
 
@@ -436,11 +436,10 @@ impl Connection {
 
         // If encryption is supported, use it
         if self.encryption.is_read_ready().await {
-            let content = self.encryption.decrypt_packet(&bytes).await?;
-            Ok(content)
-        } else {
-            Ok(bytes)
+            self.encryption.decrypt_packet(&mut bytes).await?;
         }
+
+        Ok(bytes)
     }
 
     // this function will wait until something is sent to the socket if it's in blocking mode
