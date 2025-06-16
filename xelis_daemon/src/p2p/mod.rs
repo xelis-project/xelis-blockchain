@@ -29,7 +29,7 @@ use std::{
     },
     time::Duration
 };
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 use rand::{seq::IteratorRandom, Rng};
 use futures::{
     stream::{self, FuturesOrdered},
@@ -889,8 +889,8 @@ impl<S: Storage> P2pServer<S> {
     // Handsake is sent only once, when we connect to a new peer, and we get it back from connection to make it a peer
     async fn send_handshake(&self, connection: &Connection) -> Result<(), P2pError> {
         trace!("Sending handshake to {}", connection);
-        let handshake = self.build_handshake().await?;
-        connection.send_bytes(&handshake).await
+        let mut handshake = self.build_handshake().await?;
+        connection.send_bytes(&mut handshake).await
     }
 
     // build a ping packet with the current state of the blockchain
@@ -1663,7 +1663,8 @@ impl<S: Storage> P2pServer<S> {
                     // there is a overhead of 4 for each packet (packet size u32 4 bytes, packet id u8 is counted in the packet size)
                     trace!("Sending packet with real length: {}", bytes.len());
                     trace!("Packet id #{} : {:?}", bytes[0], bytes);
-                    peer.get_connection().send_bytes(&bytes).await?;
+                    let mut buffer = BytesMut::from(bytes);
+                    peer.get_connection().send_bytes(&mut buffer).await?;
                     trace!("data sucessfully sent!");
                 }
             }
