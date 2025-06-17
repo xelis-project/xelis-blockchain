@@ -103,6 +103,18 @@ pub struct MempoolTransactionSummary<'a> {
     pub size: usize,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TransactionSummary<'a> {
+    // TX hash
+    pub hash: Cow<'a, Hash>,
+    // The current sender
+    pub source: Address,
+    // Fees expected to be paid
+    pub fee: u64,
+    // Size of the TX
+    pub size: usize,
+}
+
 #[derive(Serialize, Deserialize)]
 pub struct GetMempoolResult<'a> {
     // The range of transactions requested
