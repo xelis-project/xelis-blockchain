@@ -338,6 +338,7 @@ pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>
     handler.register_method("get_transaction_executor", async_handler!(get_transaction_executor::<S>));
     handler.register_method("get_transaction", async_handler!(get_transaction::<S>));
     handler.register_method("get_transactions", async_handler!(get_transactions::<S>));
+    handler.register_method("get_transactions_summary", async_handler!(get_transactions_summary::<S>));
     handler.register_method("is_tx_executed_in_block", async_handler!(is_tx_executed_in_block::<S>));
 
     handler.register_method("p2p_status", async_handler!(p2p_status::<S>));
@@ -1118,6 +1119,37 @@ async fn get_transactions<S: Storage>(context: &Context, body: Value) -> Result<
                 debug!("Error while retrieving tx {} from storage: {}", hash, e);
                 None
             }
+        };
+        transactions.push(tx);
+    }
+
+    Ok(json!(transactions))
+}
+
+const MAX_TXS_SUMMARY: usize = 100;
+
+// get up to 100 transactions summary at once
+// if a tx hash is not present, we keep the order and put json "null" value
+async fn get_transactions_summary<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
+    let params: GetTransactionsParams = parse_params(body)?;
+
+    let hashes = params.tx_hashes;
+    if  hashes.len() > MAX_TXS_SUMMARY {
+        return Err(InternalRpcError::InvalidJSONRequest).context(format!("Too many requested txs: {}, maximum is {}", hashes.len(), MAX_TXS))?
+    }
+
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    let mut transactions = Vec::with_capacity(hashes.len());
+    for hash in hashes {
+        let tx = if let Some(tx)  = blockchain.get_tx(&hash).await.ok() {
+            Some(TransactionSummary {
+                hash: Cow::Owned(hash),
+                source: tx.get_source().as_address(blockchain.get_network().is_mainnet()),
+                fee: tx.get_fee(),
+                size: tx.size()
+            })
+        } else {
+            None
         };
         transactions.push(tx);
     }
