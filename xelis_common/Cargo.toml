@@ -58,13 +58,13 @@ chacha20 = "0.9.1"
 better_any = "0.2.0"
 log-panics = { version = "2", features = ["with-backtrace"]}
 cfg-if = "1.0.0"
+getrandom = { version = "0.3.3", features = ["wasm_js"] }
 
 [target.'cfg(windows)'.dependencies]
 win32console = "0.1.5"
 
 # Tokio dependency for WASM
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-getrandom = { version = "0.3.3", features = ["wasm_js"] }
 tokio_with_wasm = { version = "0.7.2", features = ["macros", "sync", "time", "rt"], optional = true }
 
 # dependencies for non-WASM
