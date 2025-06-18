@@ -63,7 +63,7 @@ pub fn block_tips(_: FnInstance, _: FnParams, context: &mut Context) -> FnReturn
         .map(|tip| Primitive::Opaque(OpaqueWrapper::new(tip.clone())).into())
         .collect();
 
-    Ok(Some(ValueCell::Array(tips)))
+    Ok(Some(ValueCell::Object(tips)))
 }
 
 pub fn block_transactions_hashes(_: FnInstance, _: FnParams, context: &mut Context) -> FnReturnType {
@@ -74,7 +74,7 @@ pub fn block_transactions_hashes(_: FnInstance, _: FnParams, context: &mut Conte
         .map(|hash| Primitive::Opaque(OpaqueWrapper::new(hash.clone())).into())
         .collect();
 
-    Ok(Some(ValueCell::Array(hashes)))
+    Ok(Some(ValueCell::Object(hashes)))
 }
 
 pub fn block_transactions(_: FnInstance, _: FnParams, context: &mut Context) -> FnReturnType {
@@ -89,7 +89,7 @@ pub fn block_transactions(_: FnInstance, _: FnParams, context: &mut Context) -> 
         })).into())
         .collect();
 
-    Ok(Some(ValueCell::Array(txs)))
+    Ok(Some(ValueCell::Object(txs)))
 }
 
 pub fn block_transactions_count(_: FnInstance, _: FnParams, context: &mut Context) -> FnReturnType {
@@ -109,5 +109,5 @@ pub fn block_extra_nonce(_: FnInstance, _: FnParams, context: &mut Context) -> F
         .map(|v| Primitive::U8(*v).into())
         .collect();
 
-    Ok(Some(ValueCell::Array(extra_nonce)))
+    Ok(Some(ValueCell::Object(extra_nonce)))
 }

@@ -1164,7 +1164,7 @@ fn get_account_balance_of<P: ContractProvider>(_: FnInstance, mut params: FnPara
         .into_opaque_type()?;
 
     let balance = provider.get_account_balance_for_asset(address.get_public_key(), &asset, state.topoheight)?
-        .map(|(topoheight, ciphertext)| ValueCell::Array(vec![
+        .map(|(topoheight, ciphertext)| ValueCell::Object(vec![
             Primitive::U64(topoheight).into(),
             Primitive::Opaque(ciphertext.into()).into()
         ]))
