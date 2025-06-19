@@ -169,6 +169,12 @@ pub struct ProxyConfig {
     /// Proxy protocol to use when connecting to a peer
     #[clap(name = "p2p-proxy", long)]
     pub kind: Option<ProxyKind>,
+    /// Proxy username for authentication
+    #[clap(name = "p2p-proxy-username", long)]
+    pub username: Option<String>,
+    /// Proxy password for authentication
+    #[clap(name = "p2p-proxy-password", long)]
+    pub password: Option<String>
 }
 
 #[derive(Debug, Clone, clap::Args, Serialize, Deserialize)]

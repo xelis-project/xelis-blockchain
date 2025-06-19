@@ -256,6 +256,11 @@ impl<S: Storage> Blockchain<S> {
                 error!("P2P Proxy must be specified with an address");
                 return Err(BlockchainError::InvalidConfig.into())
             }
+
+            if config.p2p.proxy.username.is_some() != config.p2p.proxy.password.is_some() {
+                error!("P2P Proxy auth username/password mismatch");
+                return Err(BlockchainError::InvalidConfig.into())
+            }
         }
 
         let on_disk = storage.has_blocks().await?;
@@ -357,8 +362,14 @@ impl<S: Storage> Blockchain<S> {
                 }
             }
 
+            let proxy_auth = if let (Some(username), Some(password)) = (config.proxy.username, config.proxy.password) {
+                Some((username, password))
+            } else {
+                None
+            };
+
             let proxy = if let (Some(proxy), Some(addr)) = (config.proxy.kind, &config.proxy.address) {
-                Some((proxy, addr.parse()?))
+                Some((proxy, addr.parse()?, proxy_auth))
             } else {
                 None
             };
