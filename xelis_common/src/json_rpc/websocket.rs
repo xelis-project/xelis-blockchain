@@ -462,7 +462,7 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
                 Some(msg) = receiver.recv() => {
                     match msg {
                         InternalMessage::Send(text) => {
-                            write.send(Message::Text(text)).await?;
+                            write.send(Message::Text(text.into())).await?;
                         },
                         InternalMessage::Close => {
                             debug!("Closing the connection");

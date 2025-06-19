@@ -51,8 +51,7 @@ impl VarUint {
 
 impl Serializer for VarUint {
     fn write(&self, writer: &mut Writer) {
-        let mut buffer = [0u8; 32];
-        self.0.to_big_endian(&mut buffer);
+        let buffer = self.0.to_big_endian();
         let mut len = buffer.len();
 
         // Search how much bytes we need to write

@@ -18,17 +18,17 @@ blake3 = "1.5.1"
 merlin = "3.0.0"
 zeroize = "1.7.0"
 sha3 = "0.10.8"
-fern = { version = "0.6", features = ["colored", "date-based"] }
+fern = { version = "0.7.1", features = ["colored", "date-based"] }
 
-reqwest = { version = "0.11.25", default-features = false, features = ["json"], optional = true }
-crossterm = { version = "0.27.0", optional = true }
+reqwest = { version = "0.11.27", default-features = false, features = ["json"], optional = true }
+crossterm = { version = "0.29.0", optional = true }
 actix-rt = { version = "2.9.0", optional = true }
 actix-ws = { version = "0.3.0", optional = true }
 zip = { version = "4", features = ["zstd"], default-features = false, optional = true }
 pin-project-lite = { version = "0.2.16", optional = true }
-console-subscriber = { version = "0.2.0", optional = true }
+console-subscriber = { version = "0.4.1", optional = true }
 # WebSocket support
-tokio-tungstenite-wasm = { version = "0.3.1", features = ["rustls-tls-webpki-roots"], optional = true }
+tokio-tungstenite-wasm = { version = "0.6.0", features = ["rustls-tls-webpki-roots"], optional = true }
 
 lazy_static = { workspace = true }
 hex = { workspace = true }
@@ -53,19 +53,22 @@ regex = "1"
 # Query system
 serde_regex = "1.1.0"
 # Used for U256
-primitive-types = { version = "0.12.2", features = ["serde"] }
+primitive-types = { version = "0.13.1", features = ["serde"] }
 chacha20 = "0.9.1"
 better_any = "0.2.0"
 log-panics = { version = "2", features = ["with-backtrace"]}
 cfg-if = "1.0.0"
-getrandom = { version = "0.3.3", features = ["wasm_js"] }
 
 [target.'cfg(windows)'.dependencies]
 win32console = "0.1.5"
 
 # Tokio dependency for WASM
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-tokio_with_wasm = { version = "0.7.2", features = ["macros", "sync", "time", "rt"], optional = true }
+# We need both crates version to support the WASM/JS
+# NOTE: You must set `RUSTFLAGS='--cfg getrandom_backend="wasm_js"'` when building
+getrandom_02 = { package = "getrandom", version = "0.2", features = ["js"] }
+getrandom_03 = { package = "getrandom", version = "0.3", features = ["wasm_js"] }
+tokio_with_wasm = { version = "0.8.6", features = ["macros", "sync", "time", "rt"], optional = true }
 
 # dependencies for non-WASM
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
@@ -73,7 +76,7 @@ tokio = { workspace = true, features = ["macros", "signal", "time", "sync", "rt"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["full"] }
-criterion = "0.5.1"
+criterion = "0.6.0"
 
 [features]
 tokio = ["dep:tokio", "dep:tokio_with_wasm", "dep:futures", "dep:pin-project-lite"]
