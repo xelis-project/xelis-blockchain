@@ -251,6 +251,11 @@ impl<S: Storage> Blockchain<S> {
                 error!("RPC threads count must be above 0");
                 return Err(BlockchainError::InvalidConfig.into())
             }
+
+            if config.p2p.proxy.kind.is_some() != config.p2p.proxy.address.is_some() {
+                error!("P2P Proxy must be specified with an address");
+                return Err(BlockchainError::InvalidConfig.into())
+            }
         }
 
         let on_disk = storage.has_blocks().await?;
@@ -352,6 +357,12 @@ impl<S: Storage> Blockchain<S> {
                 }
             }
 
+            let proxy = if let (Some(proxy), Some(addr)) = (config.proxy.kind, &config.proxy.address) {
+                Some((proxy, addr.parse()?))
+            } else {
+                None
+            };
+
             match P2pServer::new(
                 config.concurrency_task_count_limit,
                 dir_path,
@@ -376,6 +387,7 @@ impl<S: Storage> Blockchain<S> {
                 config.block_propagation_log_level.into(),
                 config.disable_fetching_txs_propagated,
                 config.handle_peer_packets_in_dedicated_task,
+                proxy,
             ) {
                 Ok(p2p) => {
                     // connect to priority nodes

@@ -149,8 +149,33 @@ pub struct RPCConfig {
     pub notify_events_concurrency: usize,
 }
 
+#[derive(Debug, Clone, Copy, clap::ValueEnum, Serialize, Deserialize, strum::Display)]
+#[serde(rename_all = "lowercase")]
+pub enum ProxyKind {
+    #[clap(name = "socks5")]
+    Socks5,
+    #[clap(name = "socks4")]
+    Socks4,
+}
+
+#[derive(Debug, Clone, clap::Args, Serialize, Deserialize)]
+pub struct ProxyConfig {
+    /// Configure a proxy address to be used
+    /// Make sure to set the `proxy` type along it
+    /// when connecting to a peer
+    #[clap(name = "p2p-proxy-address", long)]
+    #[serde(default)]
+    pub address: Option<String>,
+    /// Proxy protocol to use when connecting to a peer
+    #[clap(name = "p2p-proxy", long)]
+    pub kind: Option<ProxyKind>,
+}
+
 #[derive(Debug, Clone, clap::Args, Serialize, Deserialize)]
 pub struct P2pConfig {
+    /// Proxy configuration
+    #[clap(flatten)]
+    pub proxy: ProxyConfig,
     /// Optional node tag
     /// This is used to identify the node in the network.
     #[clap(long)]

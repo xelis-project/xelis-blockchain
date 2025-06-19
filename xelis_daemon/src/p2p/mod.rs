@@ -29,6 +29,7 @@ use std::{
     },
     time::Duration
 };
+use tokio_socks::tcp::{Socks4Stream, Socks5Stream};
 use bytes::{Bytes, BytesMut};
 use rand::{seq::IteratorRandom, Rng};
 use futures::{
@@ -86,7 +87,8 @@ use crate::{
         blockchain::{Blockchain, BroadcastOption},
         error::BlockchainError,
         hard_fork,
-        storage::Storage
+        storage::Storage,
+        config::ProxyKind,
     },
     p2p::{
         connection::{Connection, State},
@@ -203,6 +205,9 @@ pub struct P2pServer<S: Storage> {
     // Should we handle packets in task
     // Each packet will be handled in a dedicated task
     handle_peer_packets_in_dedicated_task: bool,
+    // Proxy address to use in case we try to connect
+    // to an outgoing peer
+    proxy: Option<(ProxyKind, SocketAddr)>,
 }
 
 impl<S: Storage> P2pServer<S> {
@@ -229,7 +234,8 @@ impl<S: Storage> P2pServer<S> {
         disable_reexecute_blocks_on_sync: bool,
         block_propagation_log_level: log::Level,
         disable_fetching_txs_propagated: bool,
-        handle_peer_packets_in_dedicated_task: bool
+        handle_peer_packets_in_dedicated_task: bool,
+        proxy: Option<(ProxyKind, SocketAddr)>,
     ) -> Result<Arc<Self>, P2pError> {
         if tag.as_ref().is_some_and(|tag| tag.len() == 0 || tag.len() > 16) {
             return Err(P2pError::InvalidTag);
@@ -256,7 +262,7 @@ impl<S: Storage> P2pServer<S> {
         // generate a random peer id for network
         let peer_id: u64 = rng.gen();
         // parse the bind address
-        let addr: SocketAddr = bind_address.parse()?;
+        let bind_address: SocketAddr = bind_address.parse()?;
 
         // create mspc channel for connections to peers
         let (connections_sender, connections_receiver) = mpsc::channel(max_peers);
@@ -281,7 +287,7 @@ impl<S: Storage> P2pServer<S> {
             peer_id,
             tag,
             max_peers,
-            bind_address: addr,
+            bind_address,
             peer_list,
             blockchain,
             connections_sender,
@@ -310,7 +316,8 @@ impl<S: Storage> P2pServer<S> {
             disable_reexecute_blocks_on_sync,
             block_propagation_log_level,
             disable_fetching_txs_propagated,
-            handle_peer_packets_in_dedicated_task
+            handle_peer_packets_in_dedicated_task,
+            proxy
         };
 
         let arc = Arc::new(server);
@@ -419,6 +426,9 @@ impl<S: Storage> P2pServer<S> {
     ) -> Result<(), P2pError> {
         let listener = TcpListener::bind(self.get_bind_address()).await?;
         info!("P2p Server will listen on: {}", self.get_bind_address());
+        if let Some((proxy, addr)) = self.proxy.as_ref() {
+            info!("Proxy to use: {} ({})", addr, proxy);
+        }
 
         let mut exclusive_nodes = self.exclusive_nodes.clone();
         if exclusive_nodes.is_empty() {
@@ -880,7 +890,20 @@ impl<S: Storage> P2pServer<S> {
             }
         }
 
-        let stream = timeout(Duration::from_millis(PEER_TIMEOUT_INIT_OUTGOING_CONNECTION), TcpStream::connect(&addr)).await??;
+        let duration = Duration::from_millis(PEER_TIMEOUT_INIT_OUTGOING_CONNECTION);
+        let stream = if let Some((kind, proxy)) = self.proxy.as_ref() {
+            match kind {
+                ProxyKind::Socks5 => timeout(duration, Socks5Stream::connect(proxy, &addr)).await?
+                    .context("Error while connecting through given SOCKS5 proxy")?
+                    .into_inner(),
+                ProxyKind::Socks4 => timeout(duration, Socks4Stream::connect(proxy, &addr)).await?
+                    .context("Error while connecting through given SOCKS4 proxy")?
+                    .into_inner(),
+            }
+        } else {
+            timeout(duration, TcpStream::connect(&addr)).await??
+        };
+
         let connection = Connection::new(stream, addr, true);
         Ok(connection)
     }
