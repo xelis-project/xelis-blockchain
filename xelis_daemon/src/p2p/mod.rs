@@ -167,9 +167,9 @@ pub struct P2pServer<S: Storage> {
     // Are we allowing others nodes to share us as a potential peer ?
     // Also if we allows to be listed in get_peers RPC API
     sharable: bool,
-    // Do we try to connect to others nodes
-    // If this is enabled, only way to have peers is to let them connect to us
-    outgoing_connections_disabled: AtomicBool,
+    // How many outgoing peers we want to have
+    // Set to 0 for none
+    max_outgoing_peers: usize,
     // Should we propagate the blocks from priority nodes
     // before checking them
     // This is useful for faster propagation through the network
@@ -225,7 +225,7 @@ impl<S: Storage> P2pServer<S> {
         allow_priority_blocks: bool,
         max_chain_response_size: usize,
         sharable: bool,
-        disable_outgoing_connections: bool,
+        max_outgoing_peers: usize,
         dh_keypair: Option<diffie_hellman::DHKeyPair>,
         dh_action: diffie_hellman::KeyVerificationAction,
         stream_concurrency: usize,
@@ -305,7 +305,7 @@ impl<S: Storage> P2pServer<S> {
             allow_priority_blocks,
             is_syncing: AtomicBool::new(false),
             syncing_rate_bps: AtomicU64::new(0),
-            outgoing_connections_disabled: AtomicBool::new(disable_outgoing_connections),
+            max_outgoing_peers,
             exit_sender,
             dh_keypair: dh_keypair.unwrap_or_else(diffie_hellman::DHKeyPair::new),
             dh_action,
@@ -358,14 +358,6 @@ impl<S: Storage> P2pServer<S> {
     // Verify if we are still running
     pub fn is_running(&self) -> bool {
         self.is_running.load(Ordering::SeqCst)
-    }
-
-    pub fn is_outgoing_connections_disabled(&self) -> bool {
-        self.outgoing_connections_disabled.load(Ordering::SeqCst)
-    }
-
-    pub fn set_disable_outgoing_connections(&self, disable: bool) {
-        self.outgoing_connections_disabled.store(disable, Ordering::SeqCst);
     }
 
     // every 10 seconds, verify and connect if necessary to a random node
@@ -511,6 +503,7 @@ impl<S: Storage> P2pServer<S> {
         Ok(())
     }
 
+    // Handle outgoing connections task create a sequential task of potential peers to connect to.
     async fn handle_outgoing_connections(self: Arc<Self>, mut priority_connections: mpsc::Receiver<SocketAddr>, mut receiver: mpsc::Receiver<(SocketAddr, bool)>, tx: mpsc::Sender<(Peer, Rx)>) {
         // only allocate one time the buffer for this packet
         let mut handshake_buffer = [0; 512];
@@ -546,12 +539,19 @@ impl<S: Storage> P2pServer<S> {
             trace!("Trying to connect to {}", addr);
             if !priority {
                 trace!("checking if connection can be accepted");
-                // check that this incoming peer isn't blacklisted
-                if !self.accept_new_connections().await {
-                    debug!("{} is not allowed, we don't accept any new connection", addr);
+
+                if self.peer_list.get_outgoing_peers_count() < self.max_outgoing_peers {
+                    debug!("cannot connect to {}, no more outgoing peers accepted", addr);
                     continue;
                 }
 
+                // check that this incoming peer isn't blacklisted
+                if !self.accept_new_connections().await {
+                    debug!("cannot connect to {}, we don't accept any new connection", addr);
+                    continue;
+                }
+
+                // check that the peer is in our banlist
                 match self.peer_list.is_allowed(&addr.ip()).await {
                     Ok(allowed) => {
                         if !allowed {

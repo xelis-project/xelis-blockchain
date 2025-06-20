@@ -7,16 +7,7 @@ use xelis_common::{
     utils::detect_available_parallelism
 };
 use crate::{
-    config::{
-        CHAIN_SYNC_DEFAULT_RESPONSE_BLOCKS,
-        DEFAULT_CACHE_SIZE,
-        DEFAULT_P2P_BIND_ADDRESS,
-        DEFAULT_RPC_BIND_ADDRESS,
-        P2P_DEFAULT_CONCURRENCY_TASK_COUNT_LIMIT,
-        P2P_DEFAULT_MAX_PEERS,
-        PEER_FAIL_LIMIT,
-        PEER_TEMP_BAN_TIME
-    },
+    config::*,
     core::storage::sled::StorageMode,
     p2p::diffie_hellman::{KeyVerificationAction, WrappedSecret}
 };
@@ -30,6 +21,10 @@ fn default_p2p_bind_address() -> String {
 
 const fn default_max_peers() -> usize {
     P2P_DEFAULT_MAX_PEERS
+}
+
+const fn default_max_outgoing_peers() -> usize {
+    P2P_DEFAULT_MAX_OUTGOING_PEERS
 }
 
 fn default_rpc_bind_address() -> String {
@@ -194,6 +189,12 @@ pub struct P2pConfig {
     #[clap(long, default_value_t = default_max_peers())]
     #[serde(default = "default_max_peers")]
     pub max_peers: usize,
+    /// Set a maximum of P2P outgoing peers.
+    /// 
+    /// This is useful to limit to how many nodes you want to connect to.
+    #[clap(name = "p2p-max-outgoing-peers", long, default_value_t = default_max_outgoing_peers())]
+    #[serde(default = "default_max_outgoing_peers")]
+    pub max_outgoing_peers: usize,
     /// Add a priority node to connect when P2p is started.
     /// A priority node is connected only one time.
     #[clap(long)]
@@ -254,12 +255,6 @@ pub struct P2pConfig {
     #[clap(long)]
     #[serde(default)]
     pub disable_ip_sharing: bool,
-    /// Disable P2P outgoing connections from peers.
-    /// 
-    /// This is useful for seed nodes under heavy load or for nodes that don't want to connect to others.
-    #[clap(name = "p2p-disable-outgoing-connections", long)]
-    #[serde(default)]
-    pub disable_outgoing_connections: bool,
     /// Limit of concurrent tasks accepting new incoming connections.
     #[clap(name = "p2p-concurrency-task-count-limit", long, default_value_t = default_p2p_concurrency_task_count_limit())]
     #[serde(default = "default_p2p_concurrency_task_count_limit")]

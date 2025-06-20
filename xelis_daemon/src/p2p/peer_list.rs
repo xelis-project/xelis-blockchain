@@ -13,10 +13,7 @@ use super::{
     peer::Peer
 };
 use std::{
-    collections::{HashMap, HashSet},
-    fmt::{self, Display, Formatter},
-    net::{IpAddr, SocketAddr},
-    time::Duration
+    collections::{HashMap, HashSet}, fmt::{self, Display, Formatter}, net::{IpAddr, SocketAddr}, sync::atomic::{AtomicUsize, Ordering}, time::Duration
 };
 use futures::{stream, StreamExt};
 use humantime::format_duration;
@@ -50,7 +47,9 @@ pub struct PeerList {
     cache: DiskCache,
     // Same as P2P Server
     // How many concurrent tasks at same time 
-    stream_concurrency: usize
+    stream_concurrency: usize,
+    // How many outgoing peers we currently have connected
+    outgoing_peers: AtomicUsize,
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Eq, Debug)]
@@ -88,6 +87,7 @@ impl PeerList {
                 peer_disconnect_channel,
                 cache: DiskCache::new(filename)?,
                 stream_concurrency,
+                outgoing_peers: AtomicUsize::new(0)
             }
         ))
     }
@@ -107,6 +107,18 @@ impl PeerList {
     // Get the cache
     pub fn get_cache(&self) -> &DiskCache {
         &self.cache
+    }
+
+    pub fn get_outgoing_peers_count(&self) -> usize {
+        self.outgoing_peers.load(Ordering::SeqCst)
+    }
+
+    fn decrement_outgoing_peers_count(&self) -> usize {
+        self.outgoing_peers.fetch_sub(1, Ordering::SeqCst)
+    }
+
+    fn increment_outgoing_peers_count(&self) -> usize {
+        self.outgoing_peers.fetch_add(1, Ordering::SeqCst)
     }
 
     // Remove a peer from the list
@@ -156,6 +168,9 @@ impl PeerList {
         }
 
         info!("Peer disconnected: {}", peer);
+        if peer.is_out() {
+            self.decrement_outgoing_peers_count();
+        }
 
         // Update the peerlist entry
         self.update_peer(&peer).await?;
@@ -188,6 +203,10 @@ impl PeerList {
         };
         info!("New peer connected: {}", peer);
         gauge!("p2p_peers_current").set(count as f64);
+
+        if peer.is_out() {
+            self.increment_outgoing_peers_count();
+        }
 
         self.update_peer(&peer).await?;
 

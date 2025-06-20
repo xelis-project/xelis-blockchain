@@ -319,7 +319,6 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
     command_manager.add_command(Command::new("clear_p2p_peerlist", "Clear P2P peerlist", CommandHandler::Async(async_handler!(clear_p2p_peerlist::<S>))))?;
     command_manager.add_command(Command::with_optional_arguments("difficulty_dataset", "Create a dataset for difficulty from chain", vec![Arg::new("output", ArgType::String)], CommandHandler::Async(async_handler!(difficulty_dataset::<S>))))?;
     command_manager.add_command(Command::with_optional_arguments("mine_block", "Mine a block on testnet", vec![Arg::new("count", ArgType::Number)], CommandHandler::Async(async_handler!(mine_block::<S>))))?;
-    command_manager.add_command(Command::new("p2p_outgoing_connections", "Accept/refuse to connect to outgoing nodes", CommandHandler::Async(async_handler!(p2p_outgoing_connections::<S>))))?;
     command_manager.add_command(Command::with_required_arguments("add_peer", "Connect to a new peer using ip:port format", vec![Arg::new("address", ArgType::String)], CommandHandler::Async(async_handler!(add_peer::<S>))))?;
     command_manager.add_command(Command::new("list_unexecuted_transactions", "List all unexecuted transactions", CommandHandler::Async(async_handler!(list_unexecuted_transactions::<S>))))?;
     command_manager.add_command(Command::new("swap_blocks_executions_positions", "Swap the position of two blocks executions", CommandHandler::Async(async_handler!(swap_blocks_executions_positions::<S>))))?;
@@ -1440,23 +1439,6 @@ async fn mine_block<S: Storage>(manager: &CommandManager, mut arguments: Argumen
         blockchain.add_new_block(block, Some(Immutable::Owned(block_hash)), BroadcastOption::All, true).await
             .context("Error while adding block to chain")?;
     }
-    Ok(())
-}
-
-async fn p2p_outgoing_connections<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
-    let context = manager.get_context().lock()?;
-    let blockchain: &Arc<Blockchain<S>> = context.get()?;
-    match blockchain.get_p2p().read().await.as_ref() {
-        Some(p2p) => {
-            let current = p2p.is_outgoing_connections_disabled();
-            p2p.set_disable_outgoing_connections(!current);
-            manager.message(format!("Outgoing connections are now {}", if current { "enabled" } else { "disabled" }));
-        },
-        None => {
-            manager.error("P2P is not enabled");
-        }
-    };
-
     Ok(())
 }
 

@@ -133,6 +133,8 @@ pub const P2P_PING_PEER_LIST_DELAY: u64 = 60 * 5;
 pub const P2P_PING_PEER_LIST_LIMIT: usize = 16;
 // default number of maximum peers
 pub const P2P_DEFAULT_MAX_PEERS: usize = 32;
+// default number of maximum outgoing peers
+pub const P2P_DEFAULT_MAX_OUTGOING_PEERS: usize = 8;
 // time in seconds between each time we try to connect to a new peer
 pub const P2P_EXTEND_PEERLIST_DELAY: u64 = 60;
 // time in seconds between each time we try to connect to a outgoing peer
