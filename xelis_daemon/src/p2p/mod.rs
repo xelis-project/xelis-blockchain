@@ -1,15 +1,11 @@
 pub mod connection;
-pub mod peer;
 pub mod error;
 pub mod packet;
 pub mod peer_list;
-pub mod chain_validator;
 pub mod diffie_hellman;
 
 mod tracker;
 mod encryption;
-mod disk_cache;
-mod bootstrap;
 mod chain_sync;
 
 use anyhow::Context;
@@ -94,23 +90,27 @@ use crate::{
         connection::{Connection, State},
         error::P2pError,
         packet::{
-            chain::BlockId,
-            handshake::Handshake,
-            object::{ObjectRequest, ObjectResponse},
-            ping::Ping,
+            BlockId,
+            Handshake,
+            ObjectRequest,
+            ObjectResponse,
+            Ping,
             Packet,
             PacketWrapper
         },
-        peer::{Peer, TaskState, Rx},
-        peer_list::{PeerList, SharedPeerList},
+        peer_list::{
+            PeerList,
+            SharedPeerList,
+            Peer,
+            TaskState,
+            Rx
+        },
         tracker::{ObjectTracker, SharedObjectTracker},
         packet::{
-            chain::CommonPoint,
-            inventory::{
-                NotifyInventoryRequest,
-                NotifyInventoryResponse,
-                NOTIFY_MAX_LEN
-            }
+            CommonPoint,
+            NotifyInventoryRequest,
+            NotifyInventoryResponse,
+            NOTIFY_MAX_LEN
         }
     },
     rpc::rpc::get_peer_entry
@@ -2120,7 +2120,7 @@ impl<S: Storage> P2pServer<S> {
                             return Err(P2pError::InvalidPeerlist)
                         }
 
-                        if !self.is_connected_to_addr(addr).await && !self.peer_list.has_peer_stored(&addr.ip()).await? {
+                        if !self.is_connected_to_addr(addr).await {
                             if !self.peer_list.store_peer_address(*addr).await? {
                                 debug!("{} already stored in peer list", addr);
                             }

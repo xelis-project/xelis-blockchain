@@ -26,18 +26,16 @@ use crate::{
     },
     p2p::{
         P2pServer,
-        peer::Peer,
+        Peer,
         error::P2pError,
         packet::{
-            bootstrap::{
-                BlockMetadata,
-                BootstrapChainResponse,
-                StepRequest,
-                StepResponse,
-                MAX_ITEMS_PER_PAGE
-            },
-            object::ObjectRequest,
-            Packet
+            BlockMetadata,
+            BootstrapChainResponse,
+            StepRequest,
+            StepResponse,
+            ObjectRequest,
+            Packet,
+            MAX_ITEMS_PER_PAGE,
         }
     }
 };
@@ -46,7 +44,7 @@ impl<S: Storage> P2pServer<S> {
     // Handle a bootstrap chain request
     // We have differents steps available for a bootstrap sync
     // We verify that they are send in good order
-    pub(super) async fn handle_bootstrap_chain_request(self: &Arc<Self>, peer: &Arc<Peer>, request: StepRequest<'_>) -> Result<(), BlockchainError> {
+    pub async fn handle_bootstrap_chain_request(self: &Arc<Self>, peer: &Arc<Peer>, request: StepRequest<'_>) -> Result<(), BlockchainError> {
         let request_kind = request.kind();
         debug!("Handle bootstrap chain request {:?} from {}", request_kind, peer);
 
@@ -349,7 +347,7 @@ impl<S: Storage> P2pServer<S> {
     // and for the last step, retrieve last STABLE TOPOHEIGHT - PRUNE_SAFETY_LIMIT blocks
     // reload blockchain cache from disk, and we're ready to sync the rest of the chain
     // NOTE: it could be even faster without retrieving each TXs, but we do it in case user don't enable pruning
-    pub(super) async fn bootstrap_chain(&self, peer: &Arc<Peer>) -> Result<(), BlockchainError> {
+    pub async fn bootstrap_chain(&self, peer: &Arc<Peer>) -> Result<(), BlockchainError> {
         let start = Instant::now();
         info!("Starting fast sync with {}", peer);
 

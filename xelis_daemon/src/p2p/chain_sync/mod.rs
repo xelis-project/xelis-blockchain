@@ -1,3 +1,6 @@
+mod bootstrap;
+mod chain_validator;
+
 use std::{
     borrow::Cow,
     sync::Arc,
@@ -30,8 +33,8 @@ use crate::{
     p2p::{
         error::P2pError,
         packet::{
-            chain::ChainRequest,
-            object::ObjectRequest,
+            ChainRequest,
+            ObjectRequest,
             Packet,
             PacketWrapper
         }
@@ -39,11 +42,12 @@ use crate::{
 };
 
 use super::{
-    chain_validator::ChainValidator,
-    packet::chain::{BlockId, ChainResponse},
-    peer::Peer,
+    packet::{BlockId, ChainResponse},
+    Peer,
     P2pServer
 };
+
+pub use chain_validator::*;
 
 enum ResponseHelper {
     Requested(Block, Immutable<Hash>),

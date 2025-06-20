@@ -5,7 +5,7 @@ use sled::{Config, Db, Mode, Tree};
 use xelis_common::serializer::{ReaderError, Serializer};
 use thiserror::Error;
 
-use super::peer_list::PeerListEntry;
+use super::PeerListEntry;
 
 #[derive(Debug, Error)]
 pub enum DiskError {

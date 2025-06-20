@@ -29,14 +29,12 @@ use xelis_common::{
 };
 use super::{
     packet::{
-        object::{
-            ObjectRequest,
-            OwnedObjectResponse
-        },
+        ObjectRequest,
+        OwnedObjectResponse,
         Packet
     },
     error::P2pError,
-    peer::Peer
+    peer_list::Peer
 };
 use crate::config::PEER_TIMEOUT_REQUEST_OBJECT;
 use request::*;

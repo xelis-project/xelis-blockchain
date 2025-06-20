@@ -27,25 +27,12 @@ use xelis_common::{
     }
 };
 use super::{
-    packet::{
-        bootstrap::{
-            StepRequest,
-            BootstrapChainRequest,
-            StepResponse
-        },
-        chain::{
-            ChainRequest,
-            ChainResponse
-        },
-        object::{
-            ObjectRequest,
-            OwnedObjectResponse
-        },
-        Packet
+    super::{
+        Connection,
+        packet::*,
+        error::P2pError
     },
-    peer_list::SharedPeerList,
-    connection::Connection,
-    error::P2pError
+    SharedPeerList,
 };
 use std::{
     num::NonZeroUsize,

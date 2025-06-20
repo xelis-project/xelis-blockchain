@@ -1,34 +1,44 @@
-use crate::{
-    config::{
-        PEER_FAIL_TO_CONNECT_LIMIT,
-        PEER_TEMP_BAN_TIME_ON_CONNECT,
-        P2P_PEERLIST_RETRY_AFTER
-    },
-    p2p::packet::peer_disconnected::PacketPeerDisconnected
-};
-use super::{
-    disk_cache::{DiskCache, DiskError},
-    error::P2pError,
-    packet::Packet,
-    peer::Peer
-};
+mod disk_cache;
+mod peer;
+
 use std::{
-    collections::{HashMap, HashSet}, fmt::{self, Display, Formatter}, net::{IpAddr, SocketAddr}, sync::atomic::{AtomicUsize, Ordering}, time::Duration
+    collections::{HashMap, HashSet},
+    fmt::{self, Display, Formatter},
+    net::{IpAddr, SocketAddr},
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc
+    },
+    time::Duration
 };
 use futures::{stream, StreamExt};
 use humantime::format_duration;
 use metrics::gauge;
 use serde::{Serialize, Deserialize};
 use x25519_dalek::PublicKey;
+use bytes::Bytes;
+use log::{info, debug, trace, error};
 use xelis_common::{
     tokio::sync::{mpsc::Sender, RwLock},
     block::TopoHeight,
     serializer::{Reader, ReaderError, Serializer, Writer},
     time::{get_current_time_in_seconds, TimestampSeconds}
 };
-use std::sync::Arc;
-use bytes::Bytes;
-use log::{info, debug, trace, error};
+use crate::{
+    config::{
+        PEER_FAIL_TO_CONNECT_LIMIT,
+        PEER_TEMP_BAN_TIME_ON_CONNECT,
+        P2P_PEERLIST_RETRY_AFTER
+    },
+    p2p::packet::PacketPeerDisconnected
+};
+use super::{
+    error::P2pError,
+    packet::Packet,
+};
+
+pub use peer::*;
+pub use disk_cache::*;
 
 pub type SharedPeerList = Arc<PeerList>;
 

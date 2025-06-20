@@ -8,8 +8,11 @@ use xelis_common::{
 };
 use crate::p2p::{
     connection::Connection,
-    peer::{Peer, Rx},
-    peer_list::SharedPeerList
+    peer_list::{
+        SharedPeerList,
+        Peer,
+        Rx,
+    }
 };
 use std::{
     borrow::Cow,

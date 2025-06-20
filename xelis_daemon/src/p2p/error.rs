@@ -27,11 +27,12 @@ use crate::{
     config::{CHAIN_SYNC_RESPONSE_MAX_BLOCKS, CHAIN_SYNC_RESPONSE_MIN_BLOCKS}
 };
 use super::{
-    disk_cache::DiskError,
+    peer_list::DiskError,
     encryption::EncryptionError,
     packet::{
-        bootstrap::StepKind,
-        object::{ObjectRequest, OwnedObjectResponse},
+        StepKind,
+        ObjectRequest,
+        OwnedObjectResponse,
     }
 };
 
