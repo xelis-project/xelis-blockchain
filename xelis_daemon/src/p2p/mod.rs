@@ -360,50 +360,6 @@ impl<S: Storage> P2pServer<S> {
         self.is_running.load(Ordering::SeqCst)
     }
 
-    // every 10 seconds, verify and connect if necessary to a random node
-    async fn maintains_connection_to_nodes(self: &Arc<Self>, nodes: IndexSet<SocketAddr>, sender: mpsc::Sender<SocketAddr>) -> Result<(), P2pError> {
-        debug!("Starting maintains seed nodes task...");
-        let mut interval = interval(Duration::from_secs(P2P_AUTO_CONNECT_PRIORITY_NODES_DELAY));
-        let mut exit_receiver = self.exit_sender.subscribe();
-        loop {
-            select! {
-                biased;
-                _ = exit_receiver.recv() => {
-                    debug!("Received exit message, exiting maintains seed nodes task");
-                    break;
-                },
-                _ = interval.tick() => {
-                    if !self.is_running() {
-                        debug!("Maintains seed nodes task is stopped!");
-                        break;
-                    }
-
-                    let connect = if self.peer_list.size().await >= self.max_peers {
-                        // if we have already reached the limit, we ignore this new connection
-                        None
-                    } else {
-                        let mut potential_nodes = Vec::new();
-                        for node in &nodes {
-                            if !self.peer_list.is_connected_to_addr(&node).await {
-                                potential_nodes.push(node);
-                            }
-                        }
-
-                        potential_nodes.into_iter().choose(&mut rand::thread_rng()).copied()
-                    };
-                    if let Some(node) = connect {
-                        trace!("Trying to connect to priority node: {}", node);
-                        if let Err(e) = sender.send(node).await {
-                            error!("Error while sending priority node to connect: {}", e);
-                        }
-                    }
-                },
-            }
-        }
-
-        Ok(())
-    }
-
     // connect to seed nodes, start p2p server
     // and wait on all new connections
     async fn start(
@@ -421,24 +377,6 @@ impl<S: Storage> P2pServer<S> {
         if let Some((proxy, addr, auth)) = self.proxy.as_ref() {
             info!("Proxy to use: {} ({} with auth = {})", addr, proxy, auth.is_some());
         }
-
-        let mut exclusive_nodes = self.exclusive_nodes.clone();
-        if exclusive_nodes.is_empty() {
-            debug!("No exclusive nodes available, using seed nodes...");
-            let network = self.blockchain.get_network();
-            let seed_nodes = get_seed_nodes(&network);
-            exclusive_nodes = seed_nodes.iter().map(|s| s.parse().unwrap()).collect();
-        }
-
-        let (priority_sender, priority_connections) = mpsc::channel(1);
-        // create tokio task to maintains connection to exclusive nodes or seed nodes
-        let zelf = Arc::clone(self);
-        spawn_task("p2p-maintain-nodes", async move {
-            info!("Connecting to seed nodes...");
-            if let Err(e) = zelf.maintains_connection_to_nodes(exclusive_nodes, priority_sender).await {
-                error!("Error while maintening connection with seed nodes: {}", e);
-            };
-        });
 
         // start a new task for chain sync
         spawn_task("p2p-chain-sync", Arc::clone(&self).chain_sync_loop());
@@ -460,7 +398,7 @@ impl<S: Storage> P2pServer<S> {
         }
 
         let (tx, mut rx) = mpsc::channel(1);
-        spawn_task("p2p-outgoing-connections", Arc::clone(&self).handle_outgoing_connections(priority_connections, connections_receiver, tx.clone()));
+        spawn_task("p2p-outgoing-connections", Arc::clone(&self).handle_outgoing_connections(connections_receiver, tx.clone()));
         spawn_task("p2p-incoming-connections", Arc::clone(&self).handle_incoming_connections(listener, tx, concurrency));
 
         let mut exit_receiver = self.exit_sender.subscribe();
@@ -504,7 +442,7 @@ impl<S: Storage> P2pServer<S> {
     }
 
     // Handle outgoing connections task create a sequential task of potential peers to connect to.
-    async fn handle_outgoing_connections(self: Arc<Self>, mut priority_connections: mpsc::Receiver<SocketAddr>, mut receiver: mpsc::Receiver<(SocketAddr, bool)>, tx: mpsc::Sender<(Peer, Rx)>) {
+    async fn handle_outgoing_connections(self: Arc<Self>, mut receiver: mpsc::Receiver<(SocketAddr, bool)>, tx: mpsc::Sender<(Peer, Rx)>) {
         // only allocate one time the buffer for this packet
         let mut handshake_buffer = [0; 512];
         let mut exit_receiver = self.exit_sender.subscribe();
@@ -514,16 +452,6 @@ impl<S: Storage> P2pServer<S> {
                 _ = exit_receiver.recv() => {
                     debug!("Received exit message, exiting outgoing connections task");
                     break;
-                },
-                res = priority_connections.recv() => {
-                    trace!("New priority connection received");
-                    match res {
-                        Some(res) => (res, true),
-                        None => {
-                            error!("Error while receiving priority connection, exiting task");
-                            break;
-                        }
-                    }
                 },
                 res = receiver.recv() => {
                     match res {
@@ -1349,6 +1277,19 @@ impl<S: Storage> P2pServer<S> {
         }
     }
 
+    // Select a random socket address for our next outgoing peer to connect to
+    async fn select_random_socket_address(&self, addresses: impl Iterator<Item = SocketAddr>) -> Option<SocketAddr> {
+        let mut availables = Vec::new();
+        for node in addresses {
+            if !self.peer_list.is_connected_to_addr(&node).await {
+                availables.push(node);
+            }
+        }
+
+        availables.into_iter()
+            .choose(&mut rand::thread_rng())
+    }
+
     // try to extend our peerlist each time its possible by searching in known peerlist from disk
     async fn peerlist_loop(self: Arc<Self>) {
         debug!("Starting peerlist task...");
@@ -1361,20 +1302,33 @@ impl<S: Storage> P2pServer<S> {
             let mut should_wait = true;
             if self.accept_new_connections().await {
                 let peer = {
-                    trace!("Locking peer list write mode (peerlist loop)");
-                    match self.peer_list.find_peer_to_connect().await {
-                        Ok(peer) => peer,
-                        Err(e) => {
-                            error!("Error while finding peer to connect: {}", e);
-                            None
+                    if !self.exclusive_nodes.is_empty() {
+                        self.select_random_socket_address(self.exclusive_nodes.iter().copied()).await
+                            .map(|v| (v, true))
+                    } else {
+                        trace!("Locking peer list write mode (peerlist loop)");
+                        match self.peer_list.find_peer_to_connect().await {
+                            Ok(peer) => match peer {
+                                Some(v) => Some((v, false)),
+                                None => {
+                                    debug!("No peer found in peerlist, selecting a random seed node");
+                                    let seed_nodes = get_seed_nodes(self.blockchain.get_network());
+                                    self.select_random_socket_address(seed_nodes.iter().map(|v| v.parse().expect("seed node socket address"))).await
+                                        .map(|v| (v, true))
+                                },
+                            },
+                            Err(e) => {
+                                error!("Error while finding peer to connect: {}", e);
+                                None
+                            }
                         }
                     }
                 };
-                trace!("End locking peer list write mode (peerlist loop)");
 
-                if let Some(addr) = peer {
+                trace!("End locking peer list write mode (peerlist loop)");
+                if let Some((addr, priority)) = peer {
                     debug!("Found peer {}", addr);
-                    self.try_to_connect_to_peer(addr, false).await;
+                    self.try_to_connect_to_peer(addr, priority).await;
                     should_wait = false;
                 } else {
                     debug!("No peer found to connect to");

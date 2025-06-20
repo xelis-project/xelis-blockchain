@@ -386,7 +386,6 @@ impl<S: Storage> Blockchain<S> {
                 config.max_peers,
                 config.bind_address,
                 Arc::clone(&arc),
-                exclusive_nodes.is_empty(),
                 exclusive_nodes,
                 config.allow_fast_sync,
                 config.allow_boost_sync,
@@ -406,32 +405,37 @@ impl<S: Storage> Blockchain<S> {
                 proxy,
             ) {
                 Ok(p2p) => {
+                    *arc.p2p.write().await = Some(p2p.clone());
+
                     // connect to priority nodes
                     for addr in config.priority_nodes {
-                        for addr in addr.split(",") {
-                            let addr: SocketAddr = match addr.parse() {
+                        for origin in addr.split(",") {
+                            let addr: SocketAddr = match origin.parse() {
                                 Ok(addr) => addr,
                                 Err(e) => {
-                                    match lookup_host(&addr).await {
+                                    match lookup_host(&origin).await {
                                         Ok(it) => {
-                                            info!("Valid host found for {}", addr);
+                                            info!("Valid host found for {}", origin);
                                             for addr in it {
                                                 info!("Trying to connect to priority node with IP from DNS resolution: {}", addr);
-                                                p2p.try_to_connect_to_peer(addr, true).await;
+                                                if let Err(e) = p2p.try_to_connect_to_peer(addr, true).await {
+                                                    error!("Error while trying to connect to priority node {}: {}", origin, e);
+                                                }
                                             }
                                         },
                                         Err(e2) => {
-                                            error!("Error while parsing {} as priority node address: {}, {}", addr, e, e2);
+                                            error!("Error while parsing {} as priority node address: {}, {}", origin, e, e2);
                                         }
                                     };
                                     continue;
                                 }
                             };
                             info!("Trying to connect to priority node: {}", addr);
-                            p2p.try_to_connect_to_peer(addr, true).await;
+                            if let Err(e) = p2p.try_to_connect_to_peer(addr, true).await {
+                                error!("Error while trying to connect to priority node {}: {}", addr, e);
+                            }
                         }
                     }
-                    *arc.p2p.write().await = Some(p2p);
                 },
                 Err(e) => error!("Error while starting P2p server: {}", e)
             };

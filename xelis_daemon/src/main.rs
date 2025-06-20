@@ -1447,9 +1447,14 @@ async fn add_peer<S: Storage>(manager: &CommandManager, mut args: ArgumentManage
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     match blockchain.get_p2p().read().await.as_ref() {
         Some(p2p) => {
-            let addr: SocketAddr = args.get_value("address")?.to_string_value()?.parse().context("Error while parsing socket address")?;
-            p2p.try_to_connect_to_peer(addr, false).await;
+            let addr: SocketAddr = args.get_value("address")?
+                .to_string_value()?
+                .parse()
+                .context("Error while parsing socket address")?;
+
             manager.message(format!("Trying to connect to peer {}", addr));
+            p2p.try_to_connect_to_peer(addr, false).await
+                .context("Failed to connect to peer")?;
         },
         None => {
             manager.error("P2P is not enabled");
