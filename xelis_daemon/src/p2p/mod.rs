@@ -1759,7 +1759,8 @@ impl<S: Storage> P2pServer<S> {
                     if let Some((direction, is_common)) = txs_cache.get_mut(&hash) {
                         if !direction.update(Direction::In) && !*is_common {
                             warn!("{} send us a transaction ({}) already tracked by him ({:?})", peer, hash, direction);
-                            return Err(P2pError::AlreadyTrackedTx(hash.as_ref().clone(), *direction))
+                            // return Err(P2pError::AlreadyTrackedTx(hash.as_ref().clone(), *direction))
+                            return Ok(())
                         }
                     } else {
                         txs_cache.put(hash.clone(), (Direction::In, false));
@@ -1835,7 +1836,16 @@ impl<S: Storage> P2pServer<S> {
                     if let Some((origin, is_common)) = blocks_propagation.get_mut(&block_hash) {
                         if !origin.update(direction) && !*is_common {
                             warn!("{} send us a block ({}) already tracked by him ({:?} {})", peer, block_hash, origin, is_common);
-                            return Err(P2pError::AlreadyTrackedBlock(block_hash.as_ref().clone(), *origin))
+                            // Don't return an error because of the following edge case:
+                            // We have peer B as a common peer with our peer A
+                            // But the peer A isn't aware of it yet
+                            // We broadcast our block to both of them
+                            // But peer B is overloaded from our side (latency / several packets awaiting)
+                            // Peer A will naively broadcast the block to peer B
+                            // Peer B, still not aware that we send him our block, will broadcast it back
+                            // to us.
+                            // return Err(P2pError::AlreadyTrackedBlock(block_hash.as_ref().clone(), *origin))
+                            return Ok(())
                         }
 
                         if *is_common {
