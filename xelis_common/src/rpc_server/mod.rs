@@ -5,8 +5,7 @@ mod rpc_handler;
 use std::borrow::Cow;
 
 pub use error::{RpcResponseError, InternalRpcError};
-pub use rpc_handler::{RPCHandler, Handler};
-pub use rpc_handler::parse_params;
+pub use rpc_handler::*;
 
 use actix_web::{HttpResponse, web::{self, Data, Payload}, Responder, HttpRequest};
 use serde::{Deserialize, Serialize};

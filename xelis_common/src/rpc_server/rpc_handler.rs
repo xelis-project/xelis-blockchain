@@ -136,3 +136,17 @@ pub fn parse_params<P: DeserializeOwned>(mut value: Value) -> Result<P, Internal
 
     serde_json::from_value(value).map_err(|e| InternalRpcError::InvalidJSONParams(e))
 }
+
+// RPC Method with no params required
+// Check that the params field is either null or empty
+pub fn require_no_params(value: Value) -> Result<(), InternalRpcError> {
+    if let Some(array) = value.as_array() {
+        if !array.is_empty() {
+            return Err(InternalRpcError::UnexpectedParams)
+        }
+    } else if !value.is_null() {
+        return Err(InternalRpcError::UnexpectedParams)
+    }
+
+    Ok(())
+}
