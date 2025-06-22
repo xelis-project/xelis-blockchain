@@ -124,21 +124,25 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static> {
         .set_on_call(debug_fn);
 
     // Opaque type but we provide getters
-    let tx_type = Type::Opaque(env.register_opaque::<OpaqueTransaction>("Transaction"));
-    let hash_type = Type::Opaque(env.register_opaque::<Hash>("Hash"));
-    let address_type = Type::Opaque(env.register_opaque::<Address>("Address"));
-    let random_type = Type::Opaque(env.register_opaque::<OpaqueRandom>("Random"));
-    let block_type = Type::Opaque(env.register_opaque::<OpaqueBlock>("Block"));
-    let storage_type = Type::Opaque(env.register_opaque::<OpaqueStorage>("Storage"));
-    let read_only_storage_type = Type::Opaque(env.register_opaque::<OpaqueReadOnlyStorage>("ReadOnlyStorage"));
-    let memory_storage_type = Type::Opaque(env.register_opaque::<OpaqueMemoryStorage>("MemoryStorage"));
-    let asset_type = Type::Opaque(env.register_opaque::<Asset>("Asset"));
-    let signature_type = Type::Opaque(env.register_opaque::<Signature>("Signature"));
+    // All opaque types not allowed as entry input
+    let tx_type = Type::Opaque(env.register_opaque::<OpaqueTransaction>("Transaction", false));
+    let block_type = Type::Opaque(env.register_opaque::<OpaqueBlock>("Block", false));
+
+    let random_type = Type::Opaque(env.register_opaque::<OpaqueRandom>("Random", false));
+    let storage_type = Type::Opaque(env.register_opaque::<OpaqueStorage>("Storage", false));
+    let read_only_storage_type = Type::Opaque(env.register_opaque::<OpaqueReadOnlyStorage>("ReadOnlyStorage", false));
+    let memory_storage_type = Type::Opaque(env.register_opaque::<OpaqueMemoryStorage>("MemoryStorage", false));
+    let asset_type = Type::Opaque(env.register_opaque::<Asset>("Asset", false));
+
+    // All others opaque types accepted as input
+    let hash_type = Type::Opaque(env.register_opaque::<Hash>("Hash", true));
+    let address_type = Type::Opaque(env.register_opaque::<Address>("Address", true));
+    let signature_type = Type::Opaque(env.register_opaque::<Signature>("Signature", true));
 
     // Crypto
-    let ciphertext_type = Type::Opaque(env.register_opaque::<CiphertextCache>("Ciphertext"));
-    let _ = Type::Opaque(env.register_opaque::<CiphertextValidityProof>("CiphertextValidityProof"));
-    let _ = Type::Opaque(env.register_opaque::<RangeProofWrapper>("RangeProof"));
+    let ciphertext_type = Type::Opaque(env.register_opaque::<CiphertextCache>("Ciphertext", true));
+    let _ = Type::Opaque(env.register_opaque::<CiphertextValidityProof>("CiphertextValidityProof", true));
+    let _ = Type::Opaque(env.register_opaque::<RangeProofWrapper>("RangeProof", true));
 
     // Transaction
     {
