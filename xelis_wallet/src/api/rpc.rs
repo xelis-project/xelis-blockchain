@@ -14,6 +14,7 @@ use xelis_common::{
     crypto::{Hashable, KeyPair},
     rpc_server::{
         parse_params,
+        require_no_params,
         websocket::WebSocketSessionShared,
         InternalRpcError,
         RPCHandler
@@ -88,17 +89,13 @@ pub fn register_methods(handler: &mut RPCHandler<Arc<Wallet>>) {
 
 // Retrieve the version of the wallet
 async fn get_version(_: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    if body != Value::Null {
-        return Err(InternalRpcError::UnexpectedParams)
-    }
+    require_no_params(body)?;
     Ok(json!(VERSION))
 }
 
 // Retrieve the network of the wallet
 async fn get_network(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    if body != Value::Null {
-        return Err(InternalRpcError::UnexpectedParams)
-    }
+    require_no_params(body)?;
 
     let wallet: &Arc<Wallet> = context.get()?;
     let network = wallet.get_network();
@@ -107,9 +104,7 @@ async fn get_network(context: &Context, body: Value) -> Result<Value, InternalRp
 
 // Retrieve the current nonce of the wallet
 async fn get_nonce(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    if body != Value::Null {
-        return Err(InternalRpcError::UnexpectedParams)
-    }
+    require_no_params(body)?;
 
     let wallet: &Arc<Wallet> = context.get()?;
     let storage = wallet.get_storage().read().await;
@@ -119,9 +114,7 @@ async fn get_nonce(context: &Context, body: Value) -> Result<Value, InternalRpcE
 
 // Retrieve the current topoheight until which the wallet is synced
 async fn get_topoheight(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    if body != Value::Null {
-        return Err(InternalRpcError::UnexpectedParams)
-    }
+    require_no_params(body)?;
 
     let wallet: &Arc<Wallet> = context.get()?;
     let storage = wallet.get_storage().read().await;
@@ -177,9 +170,7 @@ async fn estimate_extra_data_size(_: &Context, body: Value) -> Result<Value, Int
 
 // Retrieve the network info
 async fn network_info(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    if body != Value::Null {
-        return Err(InternalRpcError::UnexpectedParams)
-    }
+    require_no_params(body)?;
 
     let wallet: &Arc<Wallet> = context.get()?;
     let network_handler = wallet.get_network_handler().lock().await;
@@ -625,9 +616,7 @@ async fn sign_unsigned_transaction(context: &Context, body: Value) -> Result<Val
 
 // Clear the transaction cache
 async fn clear_tx_cache(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    if body != Value::Null {
-        return Err(InternalRpcError::UnexpectedParams)
-    }
+    require_no_params(body)?;
 
     let wallet: &Arc<Wallet> = context.get()?;
     let mut storage = wallet.get_storage().write().await;
@@ -681,9 +670,7 @@ async fn list_transactions(context: &Context, body: Value) -> Result<Value, Inte
 
 // Check if the wallet is currently connected to a daemon
 async fn is_online(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    if body != Value::Null {
-        return Err(InternalRpcError::UnexpectedParams)
-    }
+    require_no_params(body)?;
 
     let wallet: &Arc<Wallet> = context.get()?;
     let is_connected = wallet.is_online().await;
@@ -706,9 +693,7 @@ async fn set_online_mode(context: &Context, body: Value) -> Result<Value, Intern
 
 // Connect the wallet to a daemon if not already connected
 async fn set_offline_mode(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    if body != Value::Null {
-        return Err(InternalRpcError::UnexpectedParams)
-    }
+    require_no_params(body)?;
 
     let wallet: &Arc<Wallet> = context.get()?;
     if !wallet.is_online().await {
