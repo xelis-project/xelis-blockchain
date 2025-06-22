@@ -55,6 +55,7 @@ use xelis_common::{
     immutable::Immutable,
     rpc_server::{
         parse_params,
+        require_no_params,
         RPCHandler
     },
     serializer::Serializer,
@@ -392,32 +393,24 @@ pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>
 }
 
 async fn version<S: Storage>(_: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    if body != Value::Null {
-        return Err(InternalRpcError::UnexpectedParams)
-    }
+    require_no_params(body)?;
     Ok(json!(VERSION))
 }
 
 async fn get_height<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    if body != Value::Null {
-        return Err(InternalRpcError::UnexpectedParams)
-    }
+    require_no_params(body)?;
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     Ok(json!(blockchain.get_height()))
 }
 
 async fn get_topoheight<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    if body != Value::Null {
-        return Err(InternalRpcError::UnexpectedParams)
-    }
+    require_no_params(body)?;
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     Ok(json!(blockchain.get_topo_height()))
 }
 
 async fn get_pruned_topoheight<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    if body != Value::Null {
-        return Err(InternalRpcError::UnexpectedParams)
-    }
+    require_no_params(body)?;
 
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let storage = blockchain.get_storage().read().await;
@@ -427,25 +420,19 @@ async fn get_pruned_topoheight<S: Storage>(context: &Context, body: Value) -> Re
 }
 
 async fn get_stable_height<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    if body != Value::Null {
-        return Err(InternalRpcError::UnexpectedParams)
-    }
+    require_no_params(body)?;
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     Ok(json!(blockchain.get_stable_height()))
 }
 
 async fn get_stable_topoheight<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    if body != Value::Null {
-        return Err(InternalRpcError::UnexpectedParams)
-    }
+    require_no_params(body)?;
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     Ok(json!(blockchain.get_stable_topoheight()))
 }
 
 async fn get_hard_forks<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    if body != Value::Null {
-        return Err(InternalRpcError::UnexpectedParams)
-    }
+    require_no_params(body)?;
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let hard_forks = get_configured_hard_forks(blockchain.get_network());
 
@@ -609,9 +596,7 @@ async fn has_balance<S: Storage>(context: &Context, body: Value) -> Result<Value
 }
 
 async fn get_info<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    if body != Value::Null {
-        return Err(InternalRpcError::UnexpectedParams)
-    }
+    require_no_params(body)?;
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let height = blockchain.get_height();
     let topoheight = blockchain.get_topo_height();
@@ -773,9 +758,7 @@ async fn get_assets<S: Storage>(context: &Context, body: Value) -> Result<Value,
 }
 
 async fn count_assets<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    if body != Value::Null {
-        return Err(InternalRpcError::UnexpectedParams)
-    }
+    require_no_params(body)?;
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let storage = blockchain.get_storage().read().await;
     let count = storage.count_assets().await.context("Error while retrieving assets count")?;
@@ -783,9 +766,7 @@ async fn count_assets<S: Storage>(context: &Context, body: Value) -> Result<Valu
 }
 
 async fn count_accounts<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    if body != Value::Null {
-        return Err(InternalRpcError::UnexpectedParams)
-    }
+    require_no_params(body)?;
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let storage = blockchain.get_storage().read().await;
     let count = storage.count_accounts().await.context("Error while retrieving accounts count")?;
@@ -793,9 +774,7 @@ async fn count_accounts<S: Storage>(context: &Context, body: Value) -> Result<Va
 }
 
 async fn count_transactions<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    if body != Value::Null {
-        return Err(InternalRpcError::UnexpectedParams)
-    }
+    require_no_params(body)?;
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let storage = blockchain.get_storage().read().await;
     let count = storage.count_transactions().await.context("Error while retrieving transactions count")?;
@@ -803,9 +782,7 @@ async fn count_transactions<S: Storage>(context: &Context, body: Value) -> Resul
 }
 
 async fn count_contracts<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    if body != Value::Null {
-        return Err(InternalRpcError::UnexpectedParams)
-    }
+    require_no_params(body)?;
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let storage = blockchain.get_storage().read().await;
     let count = storage.count_contracts().await.context("Error while retrieving contracts count")?;
@@ -856,9 +833,7 @@ async fn get_transaction_executor<S: Storage>(context: &Context, body: Value) ->
 }
 
 async fn p2p_status<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    if body != Value::Null {
-        return Err(InternalRpcError::UnexpectedParams)
-    }
+    require_no_params(body)?;
 
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let p2p = { blockchain.get_p2p().read().await.clone() };
@@ -887,9 +862,7 @@ async fn p2p_status<S: Storage>(context: &Context, body: Value) -> Result<Value,
 }
 
 async fn get_peers<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    if body != Value::Null {
-        return Err(InternalRpcError::UnexpectedParams)
-    }
+    require_no_params(body)?;
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let p2p = { blockchain.get_p2p().read().await.clone() };
     match p2p.as_ref() {
@@ -976,9 +949,7 @@ async fn get_mempool_summary<S: Storage>(context: &Context, body: Value) -> Resu
 
 
 async fn get_estimated_fee_rates<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    if body != Value::Null {
-        return Err(InternalRpcError::UnexpectedParams)
-    }
+    require_no_params(body)?;
 
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let mempool = blockchain.get_mempool().read().await;
@@ -999,9 +970,7 @@ async fn get_blocks_at_height<S: Storage>(context: &Context, body: Value) -> Res
 }
 
 async fn get_tips<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    if body != Value::Null {
-        return Err(InternalRpcError::UnexpectedParams)
-    }
+    require_no_params(body)?;
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let storage = blockchain.get_storage().read().await;
     let tips = storage.get_tips().await.context("Error while retrieving tips")?;
@@ -1480,18 +1449,14 @@ async fn is_tx_executed_in_block<S: Storage>(context: &Context, body: Value) -> 
 
 // Get the configured dev fees
 async fn get_dev_fee_thresholds<S: Storage>(_: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    if body != Value::Null {
-        return Err(InternalRpcError::UnexpectedParams)
-    }
+    require_no_params(body)?;
 
     Ok(json!(DEV_FEES))
 }
 
 // Get size on disk of the chain database
 async fn get_size_on_disk<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    if body != Value::Null {
-        return Err(InternalRpcError::UnexpectedParams)
-    }
+    require_no_params(body)?;
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let storage = blockchain.get_storage().read().await;
     let size_bytes = storage.get_size_on_disk().await.context("Error while retrieving size on disk")?;
@@ -1523,9 +1488,7 @@ async fn get_mempool_cache<S: Storage>(context: &Context, body: Value) -> Result
 }
 
 async fn get_difficulty<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    if body != Value::Null {
-        return Err(InternalRpcError::UnexpectedParams)
-    }
+    require_no_params(body)?;
 
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let difficulty = blockchain.get_difficulty().await;
