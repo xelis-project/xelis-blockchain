@@ -1,6 +1,7 @@
 use std::{
     borrow::Cow,
-    collections::HashMap
+    collections::HashMap,
+    sync::Arc
 };
 
 use anyhow::Context;
@@ -41,7 +42,7 @@ impl Transaction {
     // Note that the contract must be already loaded by calling
     // `is_contract_available`
     pub(super) async fn invoke_contract<'a, P: ContractProvider, E, B: BlockchainApplyState<'a, P, E>>(
-        &'a self,
+        self: &'a Arc<Self>,
         tx_hash: &'a Hash,
         state: &mut B,
         decompressed_deposits: &HashMap<&Hash, DecompressedDepositCt>,
