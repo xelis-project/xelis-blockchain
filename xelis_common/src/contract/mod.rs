@@ -117,10 +117,10 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static> {
     // Register the constructor hook
     env.register_hook("constructor", vec![], Some(Type::U64));
 
-    env.get_mut_function("println", None, vec![Type::Any])
+    env.get_mut_function("println", None)
         .set_on_call(println_fn);
 
-    env.get_mut_function("debug", None, vec![Type::Any])
+    env.get_mut_function("debug", None)
         .set_on_call(debug_fn);
 
     // Opaque type but we provide getters
