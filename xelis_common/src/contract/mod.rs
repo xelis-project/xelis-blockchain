@@ -897,6 +897,15 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static> {
             1000,
             Some(Type::Optional(Box::new(Type::Tuples(vec![Type::U64, ciphertext_type.clone()]))))
         );
+
+        env.register_native_function(
+            "get_gas_usage",
+            None,
+            vec![],
+            get_gas_usage,
+            1,
+            Some(Type::U64)
+        );
     }
 
     env
@@ -1175,4 +1184,9 @@ fn get_account_balance_of<P: ContractProvider>(_: FnInstance, mut params: FnPara
         .unwrap_or_default();
 
     Ok(Some(balance))
+}
+
+fn get_gas_usage(_: FnInstance, _: FnParams, context: &mut Context) -> FnReturnType {
+    let gas = context.current_gas_usage();
+    Ok(Some(Primitive::U64(gas).into()))
 }
