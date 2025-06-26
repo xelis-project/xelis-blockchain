@@ -510,7 +510,7 @@ async fn communication_task(daemon_address: String, job_sender: broadcast::Sende
                 Some(work) = block_receiver.recv() => { // send all valid blocks found to the daemon
                     info!("submitting new block found...");
                     let submit = serde_json::json!(SubmitMinerWorkParams { miner_work: work.to_hex() }).to_string();
-                    if let Err(e) = write.send(Message::Text(submit)).await {
+                    if let Err(e) = write.send(Message::Text(submit.into())).await {
                         error!("Error while sending the block found to the daemon: {}", e);
                         break;
                     }
