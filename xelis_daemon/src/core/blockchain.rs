@@ -261,11 +261,6 @@ impl<S: Storage> Blockchain<S> {
                 error!("P2P Proxy auth username/password mismatch");
                 return Err(BlockchainError::InvalidConfig.into())
             }
-
-            if config.p2p.max_peers < config.p2p.max_outgoing_peers {
-                error!("P2P Max peers cannot be below max outgoing peers");
-                return Err(BlockchainError::InvalidConfig.into())
-            }
         }
 
         let on_disk = storage.has_blocks().await?;

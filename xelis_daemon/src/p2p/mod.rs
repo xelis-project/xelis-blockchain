@@ -1224,7 +1224,7 @@ impl<S: Storage> P2pServer<S> {
             }
 
             let mut should_wait = true;
-            if self.accept_new_outgoing_connections() {
+            if self.accept_new_connections().await && self.accept_new_outgoing_connections() {
                 let peer = {
                     if !self.exclusive_nodes.is_empty() {
                         self.select_random_socket_address(self.exclusive_nodes.iter().copied()).await
