@@ -959,6 +959,7 @@ impl<S: Storage> P2pServer<S> {
         // Don't use it at all if its errored
         // the Peer ID, peer priority flag, error state
         let mut previous_peer: Option<(u64, bool, bool)> = None;
+        let mut warned = false;
         loop {
             // Detect exact time needed before next chain sync
             let current = get_current_time_in_millis();
@@ -1031,7 +1032,29 @@ impl<S: Storage> P2pServer<S> {
                 previous_peer = Some((peer.get_id(), peer.is_priority(), err));
                 // We are not syncing anymore
                 self.set_chain_syncing(false);
+                warned = false;
             } else {
+                if !self.allow_fast_sync() && self.get_peer_count().await > 0 && !warned {
+                    let our_topoheight = self.blockchain.get_topo_height();
+                    let has_peer = self.peer_list.get_cloned_peers().await
+                        .into_iter()
+                        .filter(|p| {
+                            if let Some(pruned_topoheight) = p.get_pruned_topoheight() {
+                                if pruned_topoheight >= our_topoheight {
+                                    return false;
+                                }
+                            }
+
+                            true
+                        })
+                        .next()
+                        .is_some();
+
+                    if !has_peer {
+                        warned = true;
+                        warn!("No compatible peer found to sync the chain from our topoheight {}!", our_topoheight);
+                    }
+                }
                 trace!("No peer found for chain sync, waiting before next check");
                 sleep(interval).await;
             }
@@ -1261,10 +1284,15 @@ impl<S: Storage> P2pServer<S> {
                 }
             }
 
-            if should_wait {
+            let duration = if should_wait {
                 debug!("Not accepting new connections or no potential peer found, waiting delay before next check");
-                sleep(Duration::from_secs(P2P_EXTEND_PEERLIST_DELAY)).await;
-            }
+                Duration::from_secs(P2P_EXTEND_PEERLIST_DELAY)
+            } else {
+                debug!("Waiting only for the init connection");
+                Duration::from_millis(PEER_TIMEOUT_INIT_CONNECTION)
+            };
+
+            sleep(duration).await;
         }
     }
 
