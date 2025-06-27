@@ -17,7 +17,7 @@ metrics = "0.24.2"
 anyhow = "1"
 thiserror = "2"
 log = "0.4"
-lru = "0.14"
+lru = "0.15"
 hex = "0.4.3"
 async-trait = "0.1.77"
 chrono = "0.4.38"
@@ -30,7 +30,7 @@ tokio = "1"
 actix-web = "4"
 futures-util = "0.3.30"
 clap = { version = "4.5.2", features = ["derive"] }
-indexmap = { version = "2.9.0", features = ["serde"] }
+indexmap = { version = "2.10.0", features = ["serde"] }
 serde = { version = "1", features = ["derive", "rc"] }
 strum = { version = "0.27.1", features = ["derive"] }
 

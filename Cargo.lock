@@ -1648,7 +1648,7 @@ dependencies = [
  "futures-sink",
  "futures-util",
  "http 0.2.12",
- "indexmap 2.9.0",
+ "indexmap 2.10.0",
  "slab",
  "tokio",
  "tokio-util",
@@ -1667,7 +1667,7 @@ dependencies = [
  "futures-core",
  "futures-sink",
  "http 1.3.1",
- "indexmap 2.9.0",
+ "indexmap 2.10.0",
  "slab",
  "tokio",
  "tokio-util",
@@ -2098,9 +2098,9 @@ dependencies = [
 
 [[package]]
 name = "indexmap"
-version = "2.9.0"
+version = "2.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cea70ddb795996207ad57735b50c5982d8844f38ba9ee5f1aedcfb708a2aa11e"
+checksum = "fe4cd85333e22411419a0bcae1297d25e58c9443848b11dc6a86fefe8c78a661"
 dependencies = [
  "equivalent",
  "hashbrown 0.15.4",
@@ -2352,9 +2352,9 @@ dependencies = [
 
 [[package]]
 name = "lru"
-version = "0.14.0"
+version = "0.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9f8cc7106155f10bdf99a6f379688f543ad6596a415375b36a59a054ceda1198"
+checksum = "0281c2e25e62316a5c9d98f2d2e9e95a37841afdaf4383c177dbb5c1dfab0568"
 dependencies = [
  "hashbrown 0.15.4",
 ]
@@ -2423,7 +2423,7 @@ dependencies = [
  "hyper 1.6.0",
  "hyper-rustls",
  "hyper-util",
- "indexmap 2.9.0",
+ "indexmap 2.10.0",
  "ipnet",
  "metrics",
  "metrics-util",
@@ -3849,7 +3849,7 @@ version = "0.22.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "41fe8c660ae4257887cf66394862d21dbca4a6ddd26f04a3560410406a2f819a"
 dependencies = [
- "indexmap 2.9.0",
+ "indexmap 2.10.0",
  "toml_datetime",
  "winnow",
 ]
@@ -4644,16 +4644,16 @@ dependencies = [
 [[package]]
 name = "xelis-ast"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#11f33771c7d26c8daa45553a9aa3de0be003a590"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#5a592dca82e76851523e908031ff175c51027045"
 dependencies = [
- "indexmap 2.9.0",
+ "indexmap 2.10.0",
  "xelis-types",
 ]
 
 [[package]]
 name = "xelis-builder"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#11f33771c7d26c8daa45553a9aa3de0be003a590"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#5a592dca82e76851523e908031ff175c51027045"
 dependencies = [
  "anyhow",
  "log",
@@ -4667,9 +4667,9 @@ dependencies = [
 [[package]]
 name = "xelis-bytecode"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#11f33771c7d26c8daa45553a9aa3de0be003a590"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#5a592dca82e76851523e908031ff175c51027045"
 dependencies = [
- "indexmap 2.9.0",
+ "indexmap 2.10.0",
  "serde",
  "xelis-types",
 ]
@@ -4677,12 +4677,12 @@ dependencies = [
 [[package]]
 name = "xelis-environment"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#11f33771c7d26c8daa45553a9aa3de0be003a590"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#5a592dca82e76851523e908031ff175c51027045"
 dependencies = [
  "anyhow",
  "better_any",
  "hashbrown 0.15.4",
- "indexmap 2.9.0",
+ "indexmap 2.10.0",
  "thiserror 2.0.12",
  "xelis-types",
 ]
@@ -4703,10 +4703,10 @@ dependencies = [
 [[package]]
 name = "xelis-types"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#11f33771c7d26c8daa45553a9aa3de0be003a590"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#5a592dca82e76851523e908031ff175c51027045"
 dependencies = [
  "anyhow",
- "indexmap 2.9.0",
+ "indexmap 2.10.0",
  "itertools 0.14.0",
  "lazy_static",
  "serde",
@@ -4717,9 +4717,9 @@ dependencies = [
 [[package]]
 name = "xelis-vm"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#11f33771c7d26c8daa45553a9aa3de0be003a590"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#5a592dca82e76851523e908031ff175c51027045"
 dependencies = [
- "indexmap 2.9.0",
+ "indexmap 2.10.0",
  "log",
  "thiserror 2.0.12",
  "xelis-bytecode",
@@ -4754,7 +4754,7 @@ dependencies = [
  "getrandom 0.2.16",
  "getrandom 0.3.3",
  "hex",
- "indexmap 2.9.0",
+ "indexmap 2.10.0",
  "lazy_static",
  "log",
  "log-panics",
@@ -4796,7 +4796,7 @@ dependencies = [
  "hex",
  "human_bytes",
  "humantime",
- "indexmap 2.9.0",
+ "indexmap 2.10.0",
  "itertools 0.14.0",
  "lazy_static",
  "linked-hash-map",
@@ -4856,7 +4856,7 @@ dependencies = [
  "crc32fast",
  "futures",
  "hex",
- "indexmap 2.9.0",
+ "indexmap 2.10.0",
  "lazy_static",
  "log",
  "lru",
@@ -5003,7 +5003,7 @@ checksum = "95ab361742de920c5535880f89bbd611ee62002bf11341d16a5f057bb8ba6899"
 dependencies = [
  "arbitrary",
  "crc32fast",
- "indexmap 2.9.0",
+ "indexmap 2.10.0",
  "memchr",
  "zstd",
 ]
