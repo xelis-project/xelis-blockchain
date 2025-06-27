@@ -1,5 +1,6 @@
 use std::{
     collections::VecDeque,
+    fmt,
     future::Future,
     pin::Pin,
     task::{Context, Poll}
@@ -14,6 +15,16 @@ enum State<F: Future> {
     Pending(Pin<Box<F>>),
     // Completed future
     Ready(F::Output),
+}
+
+impl<F: Future> fmt::Debug for State<F> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::New(opt) => write!(f, "State::New({})", opt.is_some()),
+            Self::Pending(_) => write!(f, "State::Pending"),
+            Self::Ready(_) => write!(f, "State::Ready"),
+        }
+    }
 }
 
 pin_project! {
@@ -173,7 +184,11 @@ mod tests {
         assert_eq!(scheduler.next().await, Some("third result"));
 
         scheduler.set_n(None);
+
+        // Poll it
+        scheduler.next().await;
+
         // Ensure ALL remaining futures were polled
-        assert!(scheduler.states.iter().all(|v| matches!(v, State::Pending(_))));
+        assert!(scheduler.states.iter().all(|v| !matches!(v, State::New(_))));
     }
 }

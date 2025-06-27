@@ -102,7 +102,7 @@ impl OwnershipProof {
 
         transcript.ownership_proof_domain_separator();
         transcript.append_u64(b"amount", self.amount);
-        transcript.append_commitment(b"commitment", &self.commitment);
+        transcript.validate_and_append_point(b"commitment", self.commitment.as_point())?;
         transcript.append_ciphertext(b"source_ct", &source_ciphertext.compress());
 
         // Decompress the commitment
