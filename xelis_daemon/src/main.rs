@@ -41,7 +41,7 @@ use xelis_common::{
     },
     rpc_server::WebSocketServerHandler,
     serializer::Serializer,
-    transaction::Transaction,
+    transaction::{verify::NoZKPCache, Transaction},
     utils::{
         format_difficulty,
         format_hashrate,
@@ -50,6 +50,7 @@ use xelis_common::{
 };
 use crate::config::MILLIS_PER_SECOND;
 use core::{
+    state::ChainState,
     blockchain::{
         get_block_reward,
         Blockchain,
@@ -74,7 +75,7 @@ use std::{
     net::{IpAddr, SocketAddr},
     path::Path,
     sync::Arc,
-    time::Duration
+    time::{Duration, Instant}
 };
 use clap::Parser;
 use anyhow::{
@@ -537,6 +538,8 @@ async fn verify_chain<S: Storage>(manager: &CommandManager, mut args: ArgumentMa
         }
 
         let mut burned_sum = 0;
+        let mut txs = Vec::new();
+        let mut outputs = 0;
         for tx_hash in header.get_transactions() {
             if storage.is_tx_executed_in_block(tx_hash, &hash_at_topo).context("Error while checking if tx is executed in block")? {
                 let transaction = storage.get_transaction(tx_hash).await
@@ -558,7 +561,20 @@ async fn verify_chain<S: Storage>(manager: &CommandManager, mut args: ArgumentMa
                 if let Some(burned) = transaction.get_burned_amount(&XELIS_ASSET) {
                     burned_sum += burned;
                 }
+
+                outputs += transaction.get_outputs_count();
+                txs.push((transaction.into_arc(), tx_hash));
             }
+        }
+
+        if !txs.is_empty() {
+            info!("Verifying {} txs ({} outputs) at {}", txs.len(), outputs, topo);
+            let start = Instant::now();
+            let mut state = ChainState::new(&*storage, blockchain.get_contract_environment(), 0, topo - 1, header.get_version());
+            Transaction::verify_batch(txs.iter(), &mut state, &NoZKPCache::default()).await
+                .context("Error while verifying txs")?;
+
+            info!("Verified in {}ms", start.elapsed().as_millis());
         }
 
         // Verify the burned supply

@@ -216,7 +216,7 @@ pub struct Blockchain<S: Storage> {
 }
 
 impl<S: Storage> Blockchain<S> {
-    pub async fn new(config: Config, network: Network, storage: S) -> Result<Arc<Self>, Error> {
+    pub async fn new(mut config: Config, network: Network, storage: S) -> Result<Arc<Self>, Error> {
         // Do some checks on config params
         {
             if config.simulator.is_some() && network != Network::Devnet {
@@ -260,6 +260,17 @@ impl<S: Storage> Blockchain<S> {
             if config.p2p.proxy.username.is_some() != config.p2p.proxy.password.is_some() {
                 error!("P2P Proxy auth username/password mismatch");
                 return Err(BlockchainError::InvalidConfig.into())
+            }
+
+            if config.p2p.max_outgoing_peers > config.p2p.max_peers {
+                warn!("max outgoing peers is above max peers, cap it to max peers");
+                config.p2p.max_outgoing_peers = config.p2p.max_peers;
+            }
+
+            let priority_len = config.p2p.priority_nodes.len();
+            if priority_len > config.p2p.max_outgoing_peers {
+                warn!("{} priority nodes configured while max outgoing peers is set to {}, increasing max outgoing peers", priority_len, config.p2p.max_outgoing_peers);
+                config.p2p.max_outgoing_peers = priority_len;
             }
         }
 
