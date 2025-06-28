@@ -2120,8 +2120,12 @@ impl<S: Storage> Blockchain<S> {
             // Simulator is enabled, we don't need to compute the PoW hash
             Hash::zero()
         } else {
+            let start = Instant::now();
             let algorithm = get_pow_algorithm_for_version(version);
-            block.get_pow_hash(algorithm)?
+            let hash = block.get_pow_hash(algorithm)?;
+
+            histogram!("block_pow_ms").record(start.elapsed().as_millis() as f64);
+            hash
         };
         debug!("POW hash: {}, skipped: {}", pow_hash, skip_pow);
         let (difficulty, p) = self.verify_proof_of_work(&*storage, &pow_hash, block.get_tips().iter()).await?;
@@ -2376,9 +2380,14 @@ impl<S: Storage> Blockchain<S> {
         let mut storage = self.storage.write().await;
 
         // Save transactions & block
-        debug!("Saving block {} on disk", block_hash);
-        storage.save_block(block.clone(), &txs, difficulty, cumulative_difficulty, p, Immutable::Arc(block_hash.clone())).await?;
-        storage.add_block_execution_to_order(&block_hash).await?;
+        {
+            debug!("Saving block {} on disk", block_hash);
+            let start = Instant::now();
+            storage.save_block(block.clone(), &txs, difficulty, cumulative_difficulty, p, Immutable::Arc(block_hash.clone())).await?;
+            storage.add_block_execution_to_order(&block_hash).await?;
+
+            histogram!("block_store_ms").record(start.elapsed().as_millis() as f64);
+        }
 
         debug!("Block {} saved on disk", block_hash);
 
@@ -2420,6 +2429,7 @@ impl<S: Storage> Blockchain<S> {
         // Tells if the new block added is ordered in DAG or not
         let block_is_ordered = full_order.contains(block_hash.as_ref());
         {
+            let start = Instant::now();
             let mut is_written = base_topo_height == 0;
             let mut skipped = 0;
             // detect which part of DAG reorg stay, for other part, undo all executed txs
@@ -2767,6 +2777,7 @@ impl<S: Storage> Blockchain<S> {
             // Record metrics
             counter!("txs_executed").increment(total_txs_executed as u64);
             histogram!("txs_execution_ms").record(elapsed.as_millis() as f64);
+            histogram!("dag_ordering_ms").record(start.elapsed().as_millis() as f64);
         }
 
         let best_height = storage.get_height_for_block_hash(best_tip).await?;
@@ -2987,9 +2998,12 @@ impl<S: Storage> Blockchain<S> {
                 if let Some(getwork) = rpc.getwork_server() {
                     let getwork = getwork.clone();
                     spawn_task("notify-new-job", async move {
+                        let start = Instant::now();
                         if let Err(e) = getwork.get_handler().notify_new_job().await {
                             debug!("Error while notifying new job to miners: {}", e);
                         }
+
+                        histogram!("notify_new_job_ms").record(start.elapsed().as_millis() as f64);
                     });
                 }
             }
@@ -3011,6 +3025,7 @@ impl<S: Storage> Blockchain<S> {
             let rpc = rpc.clone();
             // don't block mutex/lock more than necessary, we move it in another task
             spawn_task("rpc-notify-events", async move {
+                let start = Instant::now();
                 for (event, values) in events {
                     for value in values {
                         if let Err(e) = rpc.notify_clients(&event, value).await {
@@ -3018,6 +3033,8 @@ impl<S: Storage> Blockchain<S> {
                         }
                     }
                 }
+
+                histogram!("new_block_notify_events_ms").record(start.elapsed().as_millis() as f64);
             });
         }
 
