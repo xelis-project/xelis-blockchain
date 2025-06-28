@@ -78,7 +78,7 @@ const fn default_keep_max_log_files() -> usize {
 #[derive(Debug, Clone, clap::Args, Serialize, Deserialize)]
 pub struct GetWorkConfig {
     /// Disable GetWork Server (WebSocket for miners).
-    #[clap(name = "getwork-disable-server", long)]
+    #[clap(name = "disable-getwork-server", long)]
     #[serde(default)]
     pub disable: bool,
     /// Set the rate limit for GetWork server in milliseconds.
@@ -122,7 +122,7 @@ pub struct RPCConfig {
     pub prometheus: PrometheusConfig,
     /// Disable RPC Server
     /// This will also disable the GetWork Server as it is loaded on RPC server.
-    #[clap(name = "rpc-disable-server", long)]
+    #[clap(name = "disable-rpc-server", long)]
     #[serde(default)]
     pub disable: bool,
     /// RPC bind address to listen for HTTP requests
@@ -208,7 +208,7 @@ pub struct P2pConfig {
     /// Disable the P2P Server.
     /// No connections will be accepted.
     /// Node will not be able to communicate the network.
-    #[clap(name = "p2p-disable-server", long)]
+    #[clap(name = "disable-p2p-server", long)]
     #[serde(default)]
     pub disable: bool,
     /// Allow fast sync mode.
