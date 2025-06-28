@@ -80,11 +80,14 @@ impl CiphertextValidityProof {
         }
 
         let c = transcript.challenge_scalar(b"c");
-        transcript.challenge_scalar(b"w");
 
         // masked message and opening
         let z_r = &(&c * r) + &y_r;
         let z_x = &(&c * &x) + &y_x;
+
+        // transcript.append_scalar(b"z_r", &z_r);
+        // transcript.append_scalar(b"z_x", &z_x);
+        transcript.challenge_scalar(b"w");
 
         y_r.zeroize();
         y_x.zeroize();
@@ -215,7 +218,15 @@ impl CiphertextValidityProof {
         }
 
         let c = transcript.challenge_scalar(b"c");
-        let w = transcript.challenge_scalar(b"w");
+
+        let mut cloned = transcript.clone();
+        cloned.append_scalar(b"z_r", &self.z_r);
+        cloned.append_scalar(b"z_x", &self.z_x);
+
+        let w = cloned.challenge_scalar(b"w");
+
+        transcript.challenge_scalar(b"w");
+
         let ww = &w * &w;
 
         let w_negated = -&w;
