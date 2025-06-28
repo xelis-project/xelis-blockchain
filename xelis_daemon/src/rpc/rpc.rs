@@ -327,7 +327,9 @@ pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>
     handler.register_method("has_nonce", async_handler!(has_nonce::<S>));
     handler.register_method("get_nonce_at_topoheight", async_handler!(get_nonce_at_topoheight::<S>));
 
+    // Assets
     handler.register_method("get_asset", async_handler!(get_asset::<S>));
+    handler.register_method("get_asset_supply", async_handler!(get_asset_supply::<S>));
     handler.register_method("get_assets", async_handler!(get_assets::<S>));
 
     handler.register_method("count_assets", async_handler!(count_assets::<S>));
@@ -720,6 +722,21 @@ async fn get_asset<S: Storage>(context: &Context, body: Value) -> Result<Value, 
         inner: inner.take()
     }))
 }
+
+async fn get_asset_supply<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
+    let params: GetAssetParams = parse_params(body)?;
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    let storage = blockchain.get_storage().read().await;
+    let (topoheight, version) = storage.get_asset_supply_at_maximum_topoheight(&params.asset, blockchain.get_topo_height()).await
+        .context("Asset was not found")?
+        .context("No supply available")?;
+
+    Ok(json!(RPCVersioned {
+        topoheight,
+        version
+    }))
+}
+
 
 const MAX_ASSETS: usize = 100;
 
