@@ -147,7 +147,7 @@ impl PeerList {
         };
 
         trace!("Signaling exit of {}", peer);
-        gauge!("p2p_peers_current").set(peers.len() as f64);
+        gauge!("xelis_p2p_peers_current").set(peers.len() as f64);
 
         let res = peer.signal_exit().await;
  
@@ -215,7 +215,7 @@ impl PeerList {
             peers.len()
         };
         info!("New peer connected: {}", peer);
-        gauge!("p2p_peers_current").set(count as f64);
+        gauge!("xelis_p2p_peers_current").set(count as f64);
 
         if peer.is_out() {
             self.increment_outgoing_peers_count();

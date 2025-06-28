@@ -589,7 +589,7 @@ impl<S: Storage> Blockchain<S> {
 
         self.clear_caches().await;
 
-        counter!("blockchain_reload_from_disk").increment(1);
+        counter!("xelis_blockchain_reload_from_disk").increment(1);
         Ok(())
     }
 
@@ -742,7 +742,7 @@ impl<S: Storage> Blockchain<S> {
             // Update the pruned topoheight
             storage.set_pruned_topoheight(Some(located_sync_topoheight)).await?;
 
-            counter!("blockchain_prune_until_topoheight").increment(1);
+            counter!("xelis_blockchain_prune_until_topoheight").increment(1);
             Ok(located_sync_topoheight)
         } else {
             debug!("located_sync_topoheight <= topoheight, no pruning needed");
@@ -1577,8 +1577,8 @@ impl<S: Storage> Blockchain<S> {
             debug!("TX {} has been added to the mempool", hash);
 
             // Record the time taken to add the transaction to the mempool
-            histogram!("mempool_tx_added_ms").record(start.elapsed().as_millis() as f64);
-            counter!("txs_verified").increment(1u64);
+            histogram!("xelis_mempool_tx_added_ms").record(start.elapsed().as_millis() as f64);
+            counter!("xelis_txs_verified").increment(1u64);
 
             hash
         };
@@ -1804,7 +1804,7 @@ impl<S: Storage> Blockchain<S> {
         let height = blockdag::calculate_height_at_tips(storage, sorted_tips.iter()).await?;
         let block = BlockHeader::new(get_version_at_height(self.get_network(), height), height, timestamp, sorted_tips, extra_nonce, address, IndexSet::new());
 
-        histogram!("block_header_template_ms").record(start.elapsed().as_millis() as f64);
+        histogram!("xelis_block_header_template_ms").record(start.elapsed().as_millis() as f64);
 
         Ok(block)
     }
@@ -1948,8 +1948,8 @@ impl<S: Storage> Blockchain<S> {
             }
         }
 
-        histogram!("block_header_template_txs_selection_ms").record(start.elapsed().as_millis() as f64);
-        counter!("block_template").increment(1);
+        histogram!("xelis_block_header_template_txs_selection_ms").record(start.elapsed().as_millis() as f64);
+        counter!("xelis_block_template").increment(1);
 
         Ok(block)
     }
@@ -2124,7 +2124,7 @@ impl<S: Storage> Blockchain<S> {
             let algorithm = get_pow_algorithm_for_version(version);
             let hash = block.get_pow_hash(algorithm)?;
 
-            histogram!("block_pow_ms").record(start.elapsed().as_millis() as f64);
+            histogram!("xelis_block_pow_ms").record(start.elapsed().as_millis() as f64);
             hash
         };
         debug!("POW hash: {}, skipped: {}", pow_hash, skip_pow);
@@ -2316,8 +2316,8 @@ impl<S: Storage> Blockchain<S> {
                 debug!("Verified {} transactions in {}ms", total_txs, start.elapsed().as_millis());
 
                 // Record metrics
-                counter!("txs_verified").increment(total_txs as u64);
-                histogram!("txs_verification_ms").record(start.elapsed().as_millis() as f64);
+                counter!("xelis_txs_verified").increment(total_txs as u64);
+                histogram!("xelis_txs_verification_ms").record(start.elapsed().as_millis() as f64);
             }
         }
 
@@ -2375,7 +2375,7 @@ impl<S: Storage> Blockchain<S> {
         // Because we will re-lock it in write mode
         drop(storage);
 
-        counter!("block_added").increment(1);
+        counter!("xelis_block_added").increment(1);
 
         let mut storage = self.storage.write().await;
 
@@ -2386,7 +2386,7 @@ impl<S: Storage> Blockchain<S> {
             storage.save_block(block.clone(), &txs, difficulty, cumulative_difficulty, p, Immutable::Arc(block_hash.clone())).await?;
             storage.add_block_execution_to_order(&block_hash).await?;
 
-            histogram!("block_store_ms").record(start.elapsed().as_millis() as f64);
+            histogram!("xelis_block_store_ms").record(start.elapsed().as_millis() as f64);
         }
 
         debug!("Block {} saved on disk", block_hash);
@@ -2775,9 +2775,9 @@ impl<S: Storage> Blockchain<S> {
             debug!("Executed {} TXs in {:?}", total_txs_executed, elapsed);
 
             // Record metrics
-            counter!("txs_executed").increment(total_txs_executed as u64);
-            histogram!("txs_execution_ms").record(elapsed.as_millis() as f64);
-            histogram!("dag_ordering_ms").record(start.elapsed().as_millis() as f64);
+            counter!("xelis_txs_executed").increment(total_txs_executed as u64);
+            histogram!("xelis_txs_execution_ms").record(elapsed.as_millis() as f64);
+            histogram!("xelis_dag_ordering_ms").record(start.elapsed().as_millis() as f64);
         }
 
         let best_height = storage.get_height_for_block_hash(best_tip).await?;
@@ -2900,7 +2900,7 @@ impl<S: Storage> Blockchain<S> {
             let start = Instant::now();
             let res = mempool.clean_up(&*storage, &self.environment, base_topo_height, highest_topo, version).await;
             debug!("Took {:?} to clean mempool!", start.elapsed());
-            histogram!("mempool_clean_up_ms").record(start.elapsed().as_millis() as f64);
+            histogram!("xelis_mempool_clean_up_ms").record(start.elapsed().as_millis() as f64);
             res
         };
 
@@ -2933,7 +2933,7 @@ impl<S: Storage> Blockchain<S> {
 
         // Now we can try to add back all transactions
         {
-            counter!("orphaned_txs").increment(orphaned_transactions.len() as u64);
+            counter!("xelis_orphaned_txs").increment(orphaned_transactions.len() as u64);
 
             let start = Instant::now();
             for tx_hash in orphaned_transactions {
@@ -2966,7 +2966,7 @@ impl<S: Storage> Blockchain<S> {
                     }
                 }
             }
-            histogram!("orphaned_txs_add_back_ms").record(start.elapsed().as_millis() as f64);
+            histogram!("xelis_orphaned_txs_add_back_ms").record(start.elapsed().as_millis() as f64);
         }
 
         // Flush to the disk
@@ -2979,9 +2979,9 @@ impl<S: Storage> Blockchain<S> {
         info!("Processed block {} at height {} in {}ms with {} txs (DAG: {})", block_hash, block.get_height(), elapsed, block.get_txs_count(), block_is_ordered);
 
         // Record metrics
-        histogram!("block_processing_ms").record(elapsed as f64);
-        gauge!("block_height").set(current_height as f64);
-        gauge!("block_topoheight").set(current_topoheight as f64);
+        histogram!("xelis_block_processing_ms").record(elapsed as f64);
+        gauge!("xelis_block_height").set(current_height as f64);
+        gauge!("xelis_block_topoheight").set(current_topoheight as f64);
 
         if let Some(p2p) = self.p2p.read().await.as_ref().filter(|_| broadcast.p2p()) {
             trace!("P2p locked, ping peers");
@@ -3003,7 +3003,7 @@ impl<S: Storage> Blockchain<S> {
                             debug!("Error while notifying new job to miners: {}", e);
                         }
 
-                        histogram!("notify_new_job_ms").record(start.elapsed().as_millis() as f64);
+                        histogram!("xelis_notify_new_job_ms").record(start.elapsed().as_millis() as f64);
                     });
                 }
             }
@@ -3034,7 +3034,7 @@ impl<S: Storage> Blockchain<S> {
                     }
                 }
 
-                histogram!("new_block_notify_events_ms").record(start.elapsed().as_millis() as f64);
+                histogram!("xelis_new_block_notify_events_ms").record(start.elapsed().as_millis() as f64);
             });
         }
 
@@ -3193,8 +3193,8 @@ impl<S: Storage> Blockchain<S> {
     pub async fn rewind_chain_for_storage(&self, storage: &mut S, count: u64, stop_at_stable_height: bool) -> Result<(TopoHeight, Vec<(Hash, Immutable<Transaction>)>), BlockchainError> {
         trace!("rewind chain with count = {}", count);
 
-        counter!("rewind_chain").increment(1);
-        histogram!("rewind_chain_count").record(count as f64);
+        counter!("xelis_rewind_chain").increment(1);
+        histogram!("xelis_rewind_chain_count").record(count as f64);
 
         let current_height = self.get_height();
         let current_topoheight = self.get_topo_height();
@@ -3219,7 +3219,7 @@ impl<S: Storage> Blockchain<S> {
         let (new_height, new_topoheight, mut txs) = storage.pop_blocks(current_height, current_topoheight, count, until_topo_height).await?;
         debug!("New topoheight: {} (diff: {})", new_topoheight, current_topoheight - new_topoheight);
 
-        histogram!("rewind_chain_ms").record(start.elapsed().as_millis() as f64);
+        histogram!("xelis_rewind_chain_ms").record(start.elapsed().as_millis() as f64);
 
         // Clean mempool from old txs if the DAG has been updated
         {

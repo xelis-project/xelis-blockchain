@@ -491,7 +491,7 @@ impl<S: Storage> P2pServer<S> {
                 }
                 res = listener.accept() => {
                     trace!("New listener result received (is err: {})", res.is_err());
-                    counter!("p2p_incoming_connections_total").increment(1u64);
+                    counter!("xelis_p2p_incoming_connections_total").increment(1u64);
 
                     if !self.is_running() {
                         break;
@@ -667,7 +667,7 @@ impl<S: Storage> P2pServer<S> {
             trace!("End locking for PeerConnected event");
         }
 
-        counter!("p2p_peers_total").increment(1u64);
+        counter!("xelis_p2p_peers_total").increment(1u64);
         self.handle_connection(peer.clone(), rx).await
     }
 
@@ -681,7 +681,7 @@ impl<S: Storage> P2pServer<S> {
     // No check is done, this is done at the moment of the connection
     pub async fn try_to_connect_to_peer(&self, addr: SocketAddr, priority: bool) -> Result<(), P2pError> {
         debug!("try to connect to peer addr {}, priority: {}", addr, priority);
-        counter!("p2p_outgoing_connections_total").increment(1u64);
+        counter!("xelis_p2p_outgoing_connections_total").increment(1u64);
         let connection = match self.connect_to_peer(addr).await {
             Ok(connection) => connection,
             Err(e) => {
@@ -776,7 +776,7 @@ impl<S: Storage> P2pServer<S> {
     // if a peer is given, we will check and update the peers list
     async fn build_generic_ping_packet_with_storage(&self, storage: &S) -> Result<Ping<'_>, P2pError> {
         debug!("building generic ping packet");
-        counter!("p2p_ping_total").increment(1u64);
+        counter!("xelis_p2p_ping_total").increment(1u64);
         let (cumulative_difficulty, block_top_hash, pruned_topoheight) = {
             let pruned_topoheight = storage.get_pruned_topoheight().await?;
             let top_block_hash = storage.get_top_block_hash().await?;
@@ -1003,7 +1003,7 @@ impl<S: Storage> P2pServer<S> {
 
             if let Some(peer) = peer_selected {
                 debug!("Selected for chain sync is {}", peer);
-                counter!("p2p_chain_sync_total").increment(1u64);
+                counter!("xelis_p2p_chain_sync_total").increment(1u64);
 
                 // We are syncing the chain
                 self.set_chain_sync_rate_bps(0);
@@ -1397,7 +1397,7 @@ impl<S: Storage> P2pServer<S> {
                         continue;
                     }
 
-                    counter!("p2p_incoming_blocks_propagated_total").increment(1u64);
+                    counter!("xelis_p2p_incoming_blocks_propagated_total").increment(1u64);
 
                     let future = async {
                        let res = self.request_block(&peer, &block_hash, header).await;
@@ -1469,7 +1469,7 @@ impl<S: Storage> P2pServer<S> {
         }
 
         debug!("Requesting TX object {}", hash);
-        counter!("p2p_txs_requested_total").increment(1u64);
+        counter!("xelis_p2p_txs_requested_total").increment(1u64);
 
         let (tx, _) = peer.request_blocking_object(ObjectRequest::Transaction(Immutable::Arc(hash.clone()))).await?
             .into_transaction()?;
@@ -1506,7 +1506,7 @@ impl<S: Storage> P2pServer<S> {
                         continue;
                     }
 
-                    counter!("p2p_incoming_txs_propagated_total").increment(1u64);
+                    counter!("xelis_p2p_incoming_txs_propagated_total").increment(1u64);
 
                     let zelf = &self;
                     let mut peer_exit = peer.get_exit_receiver();
@@ -2471,7 +2471,7 @@ impl<S: Storage> P2pServer<S> {
     // We simply share its hash to nodes and others nodes can check if they have it already or not
     pub async fn broadcast_tx_hash(&self, tx: Arc<Hash>) {
         debug!("Broadcasting tx hash {}", tx);
-        counter!("p2p_broadcast_tx").increment(1u64);
+        counter!("xelis_p2p_broadcast_tx").increment(1u64);
 
         let ping = match self.build_generic_ping_packet().await {
             Ok(ping) => ping,
@@ -2545,7 +2545,7 @@ impl<S: Storage> P2pServer<S> {
     // Broadcast a block with a pre-built ping packet
     pub async fn broadcast_block_with_ping(&self, block: &BlockHeader, ping: Ping<'_>, hash: &Arc<Hash>, is_from_mining: bool, send_ping: bool) {
         debug!("Broadcasting block {} at height {}", hash, block.get_height());
-        counter!("p2p_broadcast_block").increment(1u64);
+        counter!("xelis_p2p_broadcast_block").increment(1u64);
 
         // Build the block propagation packet
         let block_packet = Packet::BlockPropagation(PacketWrapper::new(Cow::Borrowed(block), Cow::Borrowed(&ping)));
@@ -2687,7 +2687,7 @@ impl<S: Storage> P2pServer<S> {
         }
 
         debug!("Requesting inventory of {}", peer);
-        counter!("p2p_request_inventory").increment(1u64);
+        counter!("xelis_p2p_request_inventory").increment(1u64);
 
         let packet = Cow::Owned(NotifyInventoryRequest::new(None));
         let ping = Cow::Owned(self.build_generic_ping_packet().await?);

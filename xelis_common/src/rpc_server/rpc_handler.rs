@@ -96,7 +96,7 @@ where
             None => return Err(RpcResponseError::new(request.id, InternalRpcError::MethodNotFound(request.method)))
         };
         trace!("executing '{}' RPC method", request.method);
-        counter!("rpc_calls", "method" => request.method.clone()).increment(1);
+        counter!("xelis_rpc_calls", "method" => request.method.clone()).increment(1);
 
         let params = request.params.take().unwrap_or(Value::Null);
 
@@ -104,7 +104,7 @@ where
         let result = handler(context, params).await
             .map_err(|err| RpcResponseError::new(request.id.clone(), err))?;
 
-        histogram!("rpc_calls_ms", "method" => request.method).record(start.elapsed().as_millis() as f64);
+        histogram!("xelis_rpc_calls_ms", "method" => request.method).record(start.elapsed().as_millis() as f64);
 
         Ok(if request.id.is_some() {
             Some(json!({
