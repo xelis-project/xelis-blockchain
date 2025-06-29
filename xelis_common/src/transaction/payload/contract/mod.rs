@@ -274,7 +274,7 @@ impl Serializer for ValueCell {
                     let value = ValueCell::read(reader)?;
                     map.insert(key, value);
                 }
-                ValueCell::Map(map)
+                ValueCell::Map(Box::new(map))
             },
             _ => return Err(ReaderError::InvalidValue)
         })
@@ -304,7 +304,7 @@ impl Serializer for ValueCell {
                 ValueCell::Map(map) => {
                     // u32 len
                     total += 4;
-                    for (key, value) in map {
+                    for (key, value) in map.iter() {
                         stack.push(value);
                         stack.push(key);
                     }
@@ -454,8 +454,8 @@ mod tests {
             ValueCell::Default(Primitive::U64(42)),
             ValueCell::Default(Primitive::U64(42))
         ]));
-        test_serde_cell(ValueCell::Map([
+        test_serde_cell(ValueCell::Map(Box::new([
             (ValueCell::Default(Primitive::U64(42)), ValueCell::Default(Primitive::String("Hello World!".to_owned())),)
-        ].into_iter().collect()));
+        ].into_iter().collect())));
     }
 }
