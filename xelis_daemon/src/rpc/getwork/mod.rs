@@ -12,7 +12,6 @@ use std::{
         Arc
     }, time::Duration
 };
-use bytes::Bytes;
 use futures::{stream, StreamExt};
 use rand::{rngs::OsRng, RngCore};
 use actix_web::HttpResponse;
@@ -484,8 +483,8 @@ impl<S: Storage> WebSocketHandler for GetWorkServer<S> {
     }
 
     // called when a new message is received
-    async fn on_message(&self, session: &WebSocketSessionShared<Self>, body: Bytes) -> Result<(), anyhow::Error> {
-        let submitted_work: SubmitMinerWorkParams = serde_json::from_slice(&body)?;
+    async fn on_message(&self, session: &WebSocketSessionShared<Self>, body: &[u8]) -> Result<(), anyhow::Error> {
+        let submitted_work: SubmitMinerWorkParams = serde_json::from_slice(body)?;
         self.handle_block_for(session, submitted_work).await
     }
 
