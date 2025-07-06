@@ -4850,6 +4850,7 @@ dependencies = [
  "async-trait",
  "base64 0.22.1",
  "bytemuck",
+ "cfg-if",
  "chacha20poly1305",
  "chrono",
  "clap",

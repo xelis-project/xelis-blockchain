@@ -33,6 +33,7 @@ clap = { version = "4.5.2", features = ["derive"] }
 indexmap = { version = "2.10.0", features = ["serde"] }
 serde = { version = "1", features = ["derive", "rc"] }
 strum = { version = "0.27.1", features = ["derive"] }
+cfg-if = "1"
 
 # cargo run --profile release-with-lto
 [profile.release-with-lto]
