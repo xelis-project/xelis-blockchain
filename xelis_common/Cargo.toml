@@ -39,12 +39,14 @@ thiserror = { workspace = true }
 anyhow = { workspace = true }
 log = { workspace = true }
 rand = { workspace = true }
+indexmap = { workspace = true }
+async-trait = { workspace = true }
+cfg-if = { workspace = true }
+
 chrono = { workspace = true, optional = true }
 clap = { workspace = true, optional = true }
-indexmap = { workspace = true }
 actix-web = { workspace = true, optional = true }
 futures-util = { workspace = true, optional = true }
-async-trait = { workspace = true }
 futures = { workspace = true, optional = true }
 metrics = { workspace = true, optional = true }
 
@@ -57,7 +59,6 @@ primitive-types = { version = "0.13.1", features = ["serde"] }
 chacha20 = "0.9.1"
 better_any = "0.2.0"
 log-panics = { version = "2", features = ["with-backtrace"]}
-cfg-if = "1.0.0"
 
 [target.'cfg(windows)'.dependencies]
 win32console = "0.1.5"
