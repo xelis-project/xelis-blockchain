@@ -103,7 +103,7 @@ use {
     async_trait::async_trait,
     crate::api::{
         register_rpc_methods,
-        XSWD,
+        XSWDServer,
         WalletRpcServer,
         AuthConfig,
         APIServer,
@@ -610,7 +610,7 @@ impl Wallet {
         let mut rpc_handler = RPCHandler::new(self.clone());
         register_rpc_methods(&mut rpc_handler);
 
-        *lock = Some(APIServer::XSWD(XSWD::new(rpc_handler)?));
+        *lock = Some(APIServer::XSWD(XSWDServer::new(rpc_handler)?));
         Ok(receiver)
     }
 

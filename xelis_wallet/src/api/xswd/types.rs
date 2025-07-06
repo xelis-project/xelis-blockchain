@@ -9,11 +9,14 @@ use std::{
 };
 use xelis_common::{rpc_server::RpcRequest, tokio::sync::Mutex};
 
+// Used for context only
+pub struct XSWDAppId(pub Arc<String>);
+
 // Application state shared between all threads
 // Built from the application data
 pub struct AppState {
     // Application ID in hexadecimal format
-    id: String,
+    id: XSWDAppId,
     // Name of the app
     name: String,
     // Small description of the app
@@ -31,7 +34,7 @@ pub type AppStateShared = Arc<AppState>;
 impl AppState {
     pub fn new(data: ApplicationData) -> Self {
         Self {
-            id: data.id,
+            id: XSWDAppId(Arc::new(data.id)),
             name: data.name,
             description: data.description,
             url: data.url,
@@ -42,7 +45,7 @@ impl AppState {
 
     pub fn with_permissions(data: ApplicationData, permissions: IndexMap<String, Permission>) -> Self {
         Self {
-            id: data.id,
+            id: XSWDAppId(Arc::new(data.id)),
             name: data.name,
             description: data.description,
             url: data.url,
@@ -51,8 +54,8 @@ impl AppState {
         }
     }
 
-    pub fn get_id(&self) -> &String {
-        &self.id
+    pub fn get_id(&self) -> &str {
+        &self.id.0
     }
 
     pub fn get_name(&self) -> &String {

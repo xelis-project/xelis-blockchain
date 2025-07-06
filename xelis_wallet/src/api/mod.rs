@@ -3,7 +3,10 @@ mod rpc_server;
 mod xswd;
 
 use serde::ser::Serialize;
-use xelis_common::{api::wallet::NotifyEvent, rpc_server::WebSocketServerHandler};
+use xelis_common::{
+    api::wallet::NotifyEvent,
+    rpc_server::WebSocketServerHandler
+};
 
 pub use self::{
     rpc_server::{WalletRpcServer, WalletRpcServerShared, AuthConfig},
@@ -16,7 +19,7 @@ where
     W: Clone + Send + Sync + XSWDHandler + 'static
 {
     RPCServer(WalletRpcServerShared<W>),
-    XSWD(XSWD<W>)
+    XSWD(XSWDServer<W>)
 }
 
 impl<W> APIServer<W>

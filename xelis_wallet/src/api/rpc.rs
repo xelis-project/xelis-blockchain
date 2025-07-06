@@ -28,12 +28,16 @@ use xelis_common::{
 };
 use serde_json::{Value, json};
 use crate::{
+    api::XSWDAppId,
     error::WalletError,
     storage::Balance,
     transaction_builder::TransactionBuilderState,
     wallet::Wallet
 };
+
+#[cfg(feature = "api_server")]
 use super::xswd::XSWDWebSocketHandler;
+
 use log::{debug, info, warn};
 
 // Register all RPC methods
@@ -717,17 +721,14 @@ async fn sign_data(context: &Context, body: Value) -> Result<Value, InternalRpcE
 // In EncryptedStorage, custom trees are already prefixed
 async fn get_tree_name(context: &Context, tree: String) -> Result<String, InternalRpcError> {
     // If the API is not used through XSWD, we don't need to prefix the tree name with the app id
-    if !context.has::<&WebSocketSessionShared<XSWDWebSocketHandler<Arc<Wallet>>>>() {
+
+    if !context.has::<&XSWDAppId>() {
         return Ok(tree)
     }
 
     // Retrieve the app data to get its id and to have section of trees between differents dApps
-    let session: &WebSocketSessionShared<XSWDWebSocketHandler<Arc<Wallet>>> = context.get()?;
-    let xswd = session.get_server().get_handler();
-    let applications = xswd.get_applications().read().await;
-    let app = applications.get(session).ok_or_else(|| InternalRpcError::InvalidContext)?;
-
-    Ok(format!("{}-{}", app.get_id(), tree))
+    let xswd: &XSWDAppId = context.get()?;
+    Ok(format!("{}-{}", xswd.0, tree))
 }
 
 // Returns all keys available in the selected tree using the Query filter
