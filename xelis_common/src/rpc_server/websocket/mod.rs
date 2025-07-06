@@ -12,7 +12,7 @@ use std::{
 };
 use actix_web::{
     HttpRequest as ActixHttpRequest,
-    web::{Payload, Bytes},
+    web::Payload,
     HttpResponse
 };
 use actix_ws::{
@@ -199,7 +199,7 @@ pub trait WebSocketHandler: Sized + Sync + Send {
     }
 
     // called when a new message is received
-    async fn on_message(&self, _: &WebSocketSessionShared<Self>, _: Bytes) -> Result<(), anyhow::Error> {
+    async fn on_message(&self, _: &WebSocketSessionShared<Self>, _: &[u8]) -> Result<(), anyhow::Error> {
         Ok(())
     }
 
@@ -409,7 +409,7 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static + Send + Sync {
                     match msg {
                         AggregatedMessage::Text(text) => {
                             trace!("Received text message for session #{}: {}", session.id, text);
-                            if let Err(e) = self.handler.on_message(&session, text.into_bytes()).await {
+                            if let Err(e) = self.handler.on_message(&session, text.as_bytes()).await {
                                 debug!("Error while calling on_message: {}", e);
                             }
                         },

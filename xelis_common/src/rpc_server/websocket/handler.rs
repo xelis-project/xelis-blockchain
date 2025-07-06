@@ -1,5 +1,8 @@
-use std::{collections::{HashMap, HashSet}, hash::Hash, borrow::Cow};
-use actix_web::web::Bytes;
+use std::{
+    collections::{HashMap, HashSet},
+    hash::Hash,
+    borrow::Cow
+};
 use async_trait::async_trait;
 use futures::{stream, StreamExt};
 use log::{trace, debug};
@@ -158,8 +161,8 @@ where
     }
 
     // Handle the message received on the websocket
-    async fn on_message_internal<'a>(&'a self, session: &'a WebSocketSessionShared<Self>, message: Bytes) -> Result<Value, RpcResponseError> {
-        let request: Value = serde_json::from_slice(&message)
+    async fn on_message_internal<'a>(&'a self, session: &'a WebSocketSessionShared<Self>, message: &[u8]) -> Result<Value, RpcResponseError> {
+        let request: Value = serde_json::from_slice(message)
             .map_err(|_| RpcResponseError::new(None, InternalRpcError::ParseBodyError))?;
 
         let mut context = Context::default();
@@ -206,7 +209,7 @@ where
         Ok(())
     }
 
-    async fn on_message(&self, session: &WebSocketSessionShared<Self>, message: Bytes) -> Result<(), anyhow::Error> {
+    async fn on_message(&self, session: &WebSocketSessionShared<Self>, message: &[u8]) -> Result<(), anyhow::Error> {
         trace!("new message received on websocket");
         let response: Value = match self.on_message_internal(session, message).await {
             Ok(result) => result,
