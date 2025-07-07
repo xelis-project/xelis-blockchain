@@ -78,7 +78,7 @@ use xelis_common::{
     utils::{
         format_difficulty,
         format_hashrate,
-        sanitize_daemon_address
+        sanitize_ws_address
     }
 };
 use clap::Parser;
@@ -461,7 +461,7 @@ fn benchmark(threads: usize, iterations: usize, algorithm: Algorithm) {
 // This allow mining threads to only focus on mining and receiving jobs through memory channels.
 async fn communication_task(daemon_address: String, job_sender: broadcast::Sender<ThreadNotification<'_>>, mut block_receiver: mpsc::Receiver<MinerWork<'_>>, address: Address, worker: String) {
     info!("Starting communication task");
-    let daemon_address = sanitize_daemon_address(&daemon_address);
+    let daemon_address = sanitize_ws_address(&daemon_address);
     'main: loop {
         info!("Trying to connect to {}", daemon_address);
         let client = match connect_async(format!("{}/getwork/{}/{}", daemon_address, address.to_string(), worker)).await {
