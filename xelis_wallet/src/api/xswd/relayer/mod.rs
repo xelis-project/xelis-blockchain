@@ -7,7 +7,7 @@ use futures::{stream, StreamExt};
 use log::error;
 use serde_json::{json, Value};
 use xelis_common::{
-    api::wallet::NotifyEvent,
+    api::{wallet::NotifyEvent, EventResult},
     rpc::{
         Id,
         InternalRpcError,
@@ -66,6 +66,21 @@ where
 
         stream::iter(applications.drain())
             .for_each_concurrent(self.concurrency, |(_, (client, _))| async move { client.close().await })
+            .await;
+    }
+
+    // notify a new event to all connected WebSocket
+    pub async fn notify(&self, event: &NotifyEvent, value: Value) {
+        let value = json!(EventResult { event: Cow::Borrowed(event), value });
+        let applications = self.applications.read().await;
+
+        stream::iter(applications.values())
+            .for_each_concurrent(self.concurrency, |(client, subscriptions)| async {
+                if let Some(id) = subscriptions.get(event) {
+                    let response = json!(RpcResponse::new(Cow::Borrowed(&id), Cow::Borrowed(&value)));
+                    client.send_message(response.to_string()).await;
+                }
+            })
             .await;
     }
 

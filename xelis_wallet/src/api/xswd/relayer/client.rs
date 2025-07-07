@@ -10,7 +10,11 @@ use xelis_common::{
     tokio::{select, spawn_task, sync::mpsc}
 };
 
-use crate::api::{xswd::relayer::XSWDRelayerShared, AppStateShared, XSWDHandler};
+use crate::api::{
+    xswd::relayer::XSWDRelayerShared,
+    AppStateShared,
+    XSWDHandler
+};
 
 pub struct Client {
     sender: mpsc::Sender<InternalMessage>,
