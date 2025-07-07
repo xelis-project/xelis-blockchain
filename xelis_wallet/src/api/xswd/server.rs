@@ -184,7 +184,7 @@ where
     // This method will parse the message and call the appropriate method if app is registered
     // Otherwise, it expects a JSON object with the application data to register it
     async fn on_message_internal(&self, session: &WebSocketSessionShared<Self>, message: &[u8]) -> Result<Option<Value>, RpcResponseError> {
-        let (request, is_subscribe, is_unsubscribe) = {
+        let (request, id, is_subscribe, is_unsubscribe) = {
             let app_state = {
                 let applications = self.applications.read().await;
                 applications.get(session).cloned()
@@ -218,7 +218,7 @@ where
                 self.xswd.verify_permission_for_request(self, &self.handler, &app, &request).await?;
                 app.set_requesting(false);
 
-                (request, is_subscribe, is_unsubscribe)
+                (request, app.id(), is_subscribe, is_unsubscribe)
             } else {
                 let app_data: ApplicationData = serde_json::from_slice(&message)
                     .map_err(|_| RpcResponseError::new(None, XSWDError::InvalidApplicationData))?;
@@ -260,8 +260,8 @@ where
             // Call the method
             let mut context = Context::default();
             context.store(self.handler.get_data().clone());
-            // Store the session
-            context.store(session.clone());
+            // Store the app id
+            context.store(id);
             self.handler.execute_method(&context, request).await
         }
     }

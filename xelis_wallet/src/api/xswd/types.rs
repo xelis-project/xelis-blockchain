@@ -10,6 +10,7 @@ use std::{
 use xelis_common::{rpc_server::RpcRequest, tokio::sync::Mutex};
 
 // Used for context only
+#[derive(Clone)]
 pub struct XSWDAppId(pub Arc<String>);
 
 // Application state shared between all threads
@@ -52,6 +53,10 @@ impl AppState {
             permissions: Mutex::new(permissions),
             is_requesting: AtomicBool::new(false)
         }
+    }
+
+    pub fn id(&self) -> XSWDAppId {
+        self.id.clone()
     }
 
     pub fn get_id(&self) -> &str {
