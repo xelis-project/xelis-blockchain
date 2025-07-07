@@ -58,6 +58,7 @@ use xelis_common::{
     }, utils::{format_coin, format_xelis}
 };
 use crate::{
+    api::XSWDRelayer,
     cipher::Cipher,
     config::{
         PASSWORD_ALGORITHM,
@@ -215,6 +216,8 @@ pub struct Wallet {
     // All XSWD requests are routed through this channel
     #[cfg(feature = "xswd")]
     xswd_channel: RwLock<Option<UnboundedSender<XSWDEvent>>>,
+    // XSWD Relayer, to support XSWD but in client mode
+    xswd_relayer: RwLock<Option<XSWDRelayer<Arc<Self>>>>,
     // Event broadcaster
     event_broadcaster: Mutex<Option<broadcast::Sender<Event>>>,
     // If the wallet should scan also blocks and transactions history
@@ -296,6 +299,8 @@ impl Wallet {
             api_server: Mutex::new(None),
             #[cfg(feature = "xswd")]
             xswd_channel: RwLock::new(None),
+            #[cfg(feature = "xswd")]
+            xswd_relayer: RwLock::new(None),
             event_broadcaster: Mutex::new(None),
             history_scan: AtomicBool::new(true),
             force_stable_balance: AtomicBool::new(false),
@@ -431,13 +436,21 @@ impl Wallet {
                     server.stop().await;
                 }
             }
+        }
 
-            // Close XSWD channel in case it exists
+        #[cfg(feature = "xswd")]
+        // Close XSWD channel in case it exists
+        {
             {
-                let mut lock = self.xswd_channel.write().await;
-                if let Some(sender) = lock.take() {
-                    drop(sender);
-                }
+                self.xswd_channel.write()
+                    .await
+                    .take();
+            }
+
+            {
+                self.xswd_relayer.write()
+                    .await
+                    .take();
             }
         }
 
