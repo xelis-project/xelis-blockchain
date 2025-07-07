@@ -15,7 +15,6 @@ use xelis_common::{
     rpc_server::{
         parse_params,
         require_no_params,
-        websocket::WebSocketSessionShared,
         InternalRpcError,
         RPCHandler
     },
@@ -34,9 +33,6 @@ use crate::{
     transaction_builder::TransactionBuilderState,
     wallet::Wallet
 };
-
-#[cfg(feature = "api_server")]
-use super::xswd::XSWDWebSocketHandler;
 
 use log::{debug, info, warn};
 
