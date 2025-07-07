@@ -33,6 +33,7 @@ async-trait = { workspace = true }
 chrono = { workspace = true }
 futures = { workspace = true }
 cfg-if = { workspace = true }
+tokio-tungstenite-wasm = { workspace = true, optional = true }
 
 # WASM dependencies
 [target.'cfg(target_arch = "wasm32")'.dependencies]
@@ -43,10 +44,10 @@ wasm-bindgen-futures = "0.4.43"
 [features]
 # Set as default dependencies until https://github.com/rust-lang/cargo/issues/4663 is resolved for binary targets
 default = ["cli", "api_server", "tokio-multi-thread"]
-xswd = []
+xswd = ["dep:tokio-tungstenite-wasm"]
 cli = ["tokio-multi-thread", "dep:clap", "xelis_common/prompt"]
-network_handler = ["xelis_common/json_rpc"]
-api_server = ["xswd", "network_handler", "xelis_common/rpc_server", "dep:actix-web", "dep:actix-web-httpauth"]
+network_handler = ["xelis_common/rpc-client"]
+api_server = ["xswd", "network_handler", "xelis_common/rpc-server", "dep:actix-web", "dep:actix-web-httpauth"]
 tokio-multi-thread = ["xelis_common/tokio", "xelis_common/tokio-multi-thread"]
 
 [lib]

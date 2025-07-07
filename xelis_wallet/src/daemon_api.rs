@@ -10,7 +10,7 @@ use serde::Serialize;
 use serde_json::Value;
 use xelis_common::{
     tokio::sync::broadcast,
-    json_rpc::{
+    rpc::client::{
         WebSocketJsonRPCClient,
         WebSocketJsonRPCClientImpl,
         JsonRPCResult,

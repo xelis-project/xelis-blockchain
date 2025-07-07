@@ -19,8 +19,8 @@ use log::{debug, error, info};
 use serde_json::{json, Value};
 use xelis_common::{
     api::{wallet::NotifyEvent, EventResult},
-    rpc_server::{
-        websocket::{WebSocketHandler, WebSocketServer, WebSocketSessionShared},
+    rpc::{
+        server::websocket::{WebSocketHandler, WebSocketServer, WebSocketSessionShared},
         Id,
         InternalRpcError,
         RPCHandler,
@@ -174,7 +174,7 @@ where
     }
 
     // register a new event listener for the specified connection/application
-    async fn subscribe_session_to_event(&self, session: &WebSocketSessionShared<Self>, event: NotifyEvent, id: Option<Id>) -> Result<(), RpcResponseError> {
+    async fn subscribe_session_to_event(&self, session: &WebSocketSessionShared<Self>, event: NotifyEvent, id: Option<Id>) -> Result<Value, RpcResponseError> {
         let mut listeners = self.listeners.lock().await;
         let events = listeners.entry(session.clone()).or_insert_with(HashMap::new);
 
@@ -182,21 +182,21 @@ where
             return Err(RpcResponseError::new(id, InternalRpcError::EventAlreadySubscribed));
         }
 
+        let res = json!(RpcResponse::new(Cow::Borrowed(&id), Cow::Owned(Value::Bool(true))));
         events.insert(event, id);
 
-        Ok(())
+        Ok(res)
     }
 
     // unregister an event listener for the specified connection/application
-    async fn unsubscribe_session_from_event(&self, session: &WebSocketSessionShared<Self>, event: NotifyEvent, id: Option<Id>) -> Result<(), RpcResponseError> {
+    async fn unsubscribe_session_from_event(&self, session: &WebSocketSessionShared<Self>, event: NotifyEvent, id: Option<Id>) -> Result<Value, RpcResponseError> {
         let mut listeners = self.listeners.lock().await;
         let events = listeners.get_mut(session).ok_or_else(|| RpcResponseError::new(id.clone(), InternalRpcError::EventNotSubscribed))?;
 
         if events.remove(&event).is_none() {
             return Err(RpcResponseError::new(id, InternalRpcError::EventNotSubscribed));
         }
-
-        Ok(())
+        Ok(json!(RpcResponse::new(Cow::Borrowed(&id), Cow::Owned(Value::Bool(true)))))
     }
 
     // Internal method to handle the message received from the WebSocket connection
@@ -214,10 +214,10 @@ where
                 OnRequestResult::Return(v) => Ok(v),
                 OnRequestResult::Request { request, event, is_subscribe } => {
                     if is_subscribe {
-                        self.subscribe_session_to_event(session, event, request.id).await.map(|_| None)
+                        self.subscribe_session_to_event(session, event, request.id).await
                     } else {
-                        self.unsubscribe_session_from_event(session, event, request.id).await.map(|_| None)
-                    }
+                        self.unsubscribe_session_from_event(session, event, request.id).await
+                    }.map(Some)
                 }
             }
         } else {
@@ -264,13 +264,7 @@ where
         }
 
         if let Some(app) = app {
-            info!("Application {} has disconnected", app.get_name());
-            if app.is_requesting() {
-                debug!("Application {} is requesting a permission, aborting...", app.get_name());
-                self.xswd.handler().get_data().cancel_request_permission(&app).await?;
-            }
-
-            self.xswd.handler().get_data().on_app_disconnect(app).await?;
+            self.xswd.on_close(app).await?;
         }
 
         Ok(())

@@ -12,7 +12,7 @@ use xelis_common::{
     api::wallet::NotifyEvent,
     context::Context,
     crypto::elgamal::PublicKey as DecompressedPublicKey,
-    rpc_server::{
+    rpc::{
         InternalRpcError,
         RPCHandler,
         RpcRequest,
@@ -20,10 +20,11 @@ use xelis_common::{
     },
     tokio::sync::Semaphore
 };
-use log::debug;
+use log::{debug, info};
 
 pub use error::XSWDError;
 pub use types::*;
+pub use relayer::XSWDRelayer;
 
 // XSWD Protocol (XELIS Secure WebSocket DApp)
 // is a way to communicate with the XELIS Wallet
@@ -207,6 +208,16 @@ where
         )?;
 
         Ok(OnRequestResult::Request { event, request, is_subscribe })
+    }
+
+    pub async fn on_close(&self, app: AppStateShared) -> Result<(), Error> {
+        info!("Application {} has disconnected", app.get_name());
+        if app.is_requesting() {
+            debug!("Application {} is requesting a permission, aborting...", app.get_name());
+            self.handler.get_data().cancel_request_permission(&app).await?;
+        }
+
+        self.handler.get_data().on_app_disconnect(app).await
     }
 
     pub async fn execute_method(&self, id: XSWDAppId, request: RpcRequest) -> Result<Option<Value>, RpcResponseError> {

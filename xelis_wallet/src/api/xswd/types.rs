@@ -1,16 +1,17 @@
 use indexmap::{IndexMap, IndexSet};
 use serde::{Serialize, Deserialize};
 use std::{
+    fmt,
+    hash::{Hash, Hasher},
     sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering}
-    },
-    fmt
+        atomic::{AtomicBool, Ordering},
+        Arc
+    }
 };
-use xelis_common::{rpc_server::RpcRequest, tokio::sync::Mutex};
+use xelis_common::{rpc::RpcRequest, tokio::sync::Mutex};
 
 // Used for context only
-#[derive(Clone)]
+#[derive(Clone, Hash, PartialEq, Eq)]
 pub struct XSWDAppId(pub Arc<String>);
 
 // Application state shared between all threads
@@ -29,6 +30,20 @@ pub struct AppState {
     // Do we have a pending request?
     is_requesting: AtomicBool
 }
+
+impl Hash for AppState {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.id.0.hash(state);
+    }
+}
+
+impl PartialEq for AppState {
+    fn eq(&self, other: &Self) -> bool {
+        self.id.0.eq(&other.id.0)
+    }
+}
+
+impl Eq for AppState {}
 
 pub type AppStateShared = Arc<AppState>;
 

@@ -10,7 +10,7 @@ pub use rpc_server::{
 use serde::Serialize;
 use xelis_common::{
     api::wallet::NotifyEvent,
-    rpc_server::WebSocketServerHandler
+    rpc::server::WebSocketServerHandler
 };
 pub use xswd_server::{
     XSWDServer,

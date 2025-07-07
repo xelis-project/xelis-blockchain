@@ -1,5 +1,5 @@
 use thiserror::Error;
-use xelis_common::rpc_server::InternalRpcError;
+use xelis_common::rpc::InternalRpcError;
 
 #[derive(Error, Debug, Clone, Copy)]
 pub enum XSWDError {

@@ -13,17 +13,19 @@ use xelis_common::{
     },
     api::wallet::NotifyEvent,
     config,
-    rpc_server::{
-        json_rpc,
-        websocket,
-        websocket::{
-            EventWebSocketHandler,
-            WebSocketServer,
-            WebSocketServerShared
+    rpc::{
+        server::{
+            json_rpc,
+            websocket,
+            websocket::{
+                EventWebSocketHandler,
+                WebSocketServer,
+                WebSocketServerShared
+            },
+            RPCServerHandler,
+            WebSocketServerHandler
         },
         RPCHandler,
-        RPCServerHandler,
-        WebSocketServerHandler
     }
 };
 use actix_web::{

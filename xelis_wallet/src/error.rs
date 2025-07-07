@@ -9,7 +9,7 @@ use xelis_common::{
     utils::{format_coin, format_xelis}
 };
 #[cfg(feature = "api_server")]
-use xelis_common::rpc_server::InternalRpcError;
+use xelis_common::rpc::InternalRpcError;
 
 use anyhow::Error;
 

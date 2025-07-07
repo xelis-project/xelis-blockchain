@@ -78,7 +78,7 @@ use {
         wallet::XSWDEvent,
     },
     xelis_common::{
-        rpc_server::RpcRequest,
+        rpc::RpcRequest,
         prompt::ShareablePrompt,
         tokio::{
             spawn_task,

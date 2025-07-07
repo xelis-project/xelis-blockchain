@@ -12,7 +12,7 @@ use xelis_common::{
     config::{VERSION, XELIS_ASSET},
     context::Context,
     crypto::{Hashable, KeyPair},
-    rpc_server::{
+    rpc::{
         parse_params,
         require_no_params,
         InternalRpcError,

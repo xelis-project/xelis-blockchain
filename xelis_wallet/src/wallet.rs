@@ -113,7 +113,7 @@ use {
         XSWDHandler
     },
     xelis_common::{
-        rpc_server::{
+        rpc::{
             RPCHandler,
             RpcRequest,
             InternalRpcError,
