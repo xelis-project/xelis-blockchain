@@ -53,7 +53,7 @@ use xelis_common::{
         Difficulty
     },
     immutable::Immutable,
-    rpc_server::{
+    rpc::{
         parse_params,
         require_no_params,
         RPCHandler

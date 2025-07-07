@@ -39,7 +39,7 @@ use xelis_common::{
         ShareablePrompt,
         default_logs_datetime_format
     },
-    rpc_server::WebSocketServerHandler,
+    rpc::server::WebSocketServerHandler,
     serializer::Serializer,
     transaction::{verify::NoZKPCache, Transaction},
     utils::{

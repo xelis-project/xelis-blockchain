@@ -38,8 +38,8 @@ use xelis_common::{
     },
     difficulty::Difficulty,
     immutable::Immutable,
-    rpc_server::{
-        websocket::{WebSocketHandler, WebSocketSessionShared},
+    rpc::{
+        server::websocket::{WebSocketHandler, WebSocketSessionShared},
         InternalRpcError
     },
     serializer::Serializer,

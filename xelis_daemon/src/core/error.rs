@@ -16,7 +16,7 @@ use xelis_common::{
     block::TopoHeight,
     difficulty::DifficultyError,
     prompt::PromptError,
-    rpc_server::InternalRpcError,
+    rpc::InternalRpcError,
     serializer::ReaderError,
     time::TimestampMillis,
     transaction::verify::VerificationError,

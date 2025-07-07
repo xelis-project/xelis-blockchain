@@ -29,18 +29,20 @@ use xelis_common::{
     tokio::sync::Mutex,
     api::daemon::NotifyEvent,
     config,
-    rpc_server::{
-        json_rpc,
-        websocket,
-        websocket::{
-            EventWebSocketHandler,
-            WebSocketServer,
-            WebSocketServerShared
+    rpc::{
+        server::{
+            json_rpc,
+            websocket,
+            websocket::{
+                EventWebSocketHandler,
+                WebSocketServer,
+                WebSocketServerShared
+            },
+            WebSocketServerHandler,
+            RPCServerHandler,
         },
         InternalRpcError,
         RPCHandler,
-        RPCServerHandler,
-        WebSocketServerHandler
     },
     tokio::spawn_task
 };
