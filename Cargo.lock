@@ -4867,6 +4867,7 @@ dependencies = [
  "sled",
  "strum",
  "thiserror 2.0.12",
+ "tokio-tungstenite-wasm",
  "wasm-bindgen-futures",
  "web-sys",
  "xelis_common",
