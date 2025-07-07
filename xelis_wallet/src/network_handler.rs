@@ -40,7 +40,7 @@ use xelis_common::{
         MultiSigPayload,
         Role
     },
-    utils::sanitize_daemon_address
+    utils::sanitize_ws_address
 };
 use crate::{
     config::AUTO_RECONNECT_INTERVAL,
@@ -91,7 +91,7 @@ impl NetworkHandler {
     // This will create itself a DaemonAPI and verify if connection is possible
     pub async fn new<S: ToString>(wallet: Arc<Wallet>, daemon_address: S, concurrency: usize) -> Result<SharedNetworkHandler, Error> {
         let s = daemon_address.to_string();
-        let api = DaemonAPI::new(format!("{}/json_rpc", sanitize_daemon_address(s.as_str()))).await?;
+        let api = DaemonAPI::new(format!("{}/json_rpc", sanitize_ws_address(s.as_str()))).await?;
         Self::with_api(wallet, Arc::new(api), concurrency).await
     }
 
