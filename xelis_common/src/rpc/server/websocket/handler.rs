@@ -12,13 +12,13 @@ use crate::{
     tokio::sync::RwLock,
     api::{EventResult, SubscribeParams},
     context::Context,
-    rpc_server::{
-        Id,
+    rpc::{
+        RpcResponseError,
         InternalRpcError,
+        Id,
         RPCHandler,
         RpcRequest,
         RpcResponse,
-        RpcResponseError
     }
 };
 use super::{WebSocketSessionShared, WebSocketHandler};

@@ -20,14 +20,11 @@ pub mod versioned_type;
 
 pub mod tokio;
 
-#[cfg(feature = "json_rpc")]
-pub mod json_rpc;
+#[cfg(feature = "rpc")]
+pub mod rpc;
 
 #[cfg(feature = "prompt")]
 pub mod prompt;
-
-#[cfg(feature = "rpc_server")]
-pub mod rpc_server;
 
 #[cfg(feature = "clap")]
 // If clap feature is enabled, build the correct style for CLI

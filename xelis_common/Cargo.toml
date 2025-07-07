@@ -27,8 +27,9 @@ actix-ws = { version = "0.3.0", optional = true }
 zip = { version = "4", features = ["zstd"], default-features = false, optional = true }
 pin-project-lite = { version = "0.2.16", optional = true }
 console-subscriber = { version = "0.4.1", optional = true }
+
 # WebSocket support
-tokio-tungstenite-wasm = { version = "0.6.0", features = ["rustls-tls-webpki-roots"], optional = true }
+tokio-tungstenite-wasm = { workspace = true, optional = true }
 
 lazy_static = { workspace = true }
 hex = { workspace = true }
@@ -81,13 +82,16 @@ criterion = "0.6.0"
 
 [features]
 tokio = ["dep:tokio", "dep:tokio_with_wasm", "dep:futures", "dep:pin-project-lite"]
-json_rpc = ["tokio", "dep:reqwest", "dep:futures-util", "dep:tokio-tungstenite-wasm"]
-clap = ["dep:clap"]
-prompt = ["clap", "tokio", "dep:crossterm", "dep:chrono", "dep:zip"]
-rpc_server = ["dep:actix-rt", "dep:actix-web", "dep:actix-ws", "dep:futures-util", "tokio", "dep:reqwest", "dep:metrics"]
-tracing = ["dep:console-subscriber", "tokio", "tokio/tracing"]
 tokio-multi-thread = ["tokio", "tokio/rt-multi-thread", "tokio_with_wasm/rt-multi-thread"]
 deadlock-detection = ["tokio"]
+
+rpc = ["dep:metrics"]
+rpc-client = ["rpc", "tokio", "dep:reqwest", "dep:futures-util", "dep:tokio-tungstenite-wasm"]
+rpc-server = ["rpc", "dep:actix-rt", "dep:actix-web", "dep:actix-ws", "dep:futures-util", "tokio", "dep:reqwest"]
+
+clap = ["dep:clap"]
+prompt = ["clap", "tokio", "dep:crossterm", "dep:chrono", "dep:zip"]
+tracing = ["dep:console-subscriber", "tokio", "tokio/tracing"]
 
 [lib]
 crate-type = ["cdylib", "rlib"]

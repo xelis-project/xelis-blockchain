@@ -8,7 +8,13 @@ mod websocket;
 use tokio_tungstenite_wasm::Error as TungsteniteError;
 
 pub use http::JsonRPCClient;
-pub use websocket::{WebSocketJsonRPCClientImpl, WebSocketJsonRPCClient, EventReceiver};
+pub use websocket::{
+    WebSocketJsonRPCClientImpl,
+    WebSocketJsonRPCClient,
+    EventReceiver,
+    NoEvent,
+    InternalMessage
+};
 
 const JSON_RPC_VERSION: &str = "2.0";
 

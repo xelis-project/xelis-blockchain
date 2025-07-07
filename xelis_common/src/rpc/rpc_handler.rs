@@ -6,14 +6,20 @@ use std::{
 };
 use serde::de::DeserializeOwned;
 use serde_json::{json, Map, Value};
-use crate::context::Context;
 use metrics::{counter, histogram};
-
-use super::{InternalRpcError, RpcResponseError, RpcRequest, JSON_RPC_VERSION};
 use log::{error, trace};
 
-pub type Handler = fn(&'_ Context, Value) -> Pin<Box<dyn Future<Output = Result<Value, InternalRpcError>> + Send + '_>>;
+use crate::{
+    context::Context,
+    rpc::{
+        RpcRequest,
+        InternalRpcError,
+        RpcResponseError,
+        JSON_RPC_VERSION
+    }
+};
 
+pub type Handler = fn(&'_ Context, Value) -> Pin<Box<dyn Future<Output = Result<Value, InternalRpcError>> + Send + '_>>;
 pub const JSON_RPC_BATCH_LIMIT: usize = 20;
 
 pub struct RPCHandler<T: Send + Clone + 'static> {

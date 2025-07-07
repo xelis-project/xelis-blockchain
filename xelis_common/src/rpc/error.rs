@@ -1,11 +1,15 @@
 use std::fmt::{Display, Formatter};
+
+#[cfg(feature = "rpc-server")]
 use actix_web::{ResponseError, HttpResponse};
+
 use serde_json::{Value, Error as SerdeError, json};
 use thiserror::Error;
 use anyhow::Error as AnyError;
-use crate::{serializer::ReaderError, rpc_server::JSON_RPC_VERSION};
-
-use super::Id;
+use crate::{
+    serializer::ReaderError,
+    rpc::{Id, JSON_RPC_VERSION}
+};
 
 #[derive(Error, Debug)]
 pub enum InternalRpcError {
@@ -129,6 +133,7 @@ impl Display for RpcResponseError {
     }
 }
 
+#[cfg(feature = "rpc-server")]
 impl ResponseError for RpcResponseError {
     fn error_response(&self) -> HttpResponse {
         HttpResponse::Ok().json(self.to_json())

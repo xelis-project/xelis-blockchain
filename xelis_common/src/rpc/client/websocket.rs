@@ -14,7 +14,7 @@ use futures_util::{
     StreamExt,
     SinkExt
 };
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio_tungstenite_wasm::{
     WebSocketStream,
@@ -76,7 +76,10 @@ impl<T: DeserializeOwned> EventReceiver<T> {
 // it has a tokio task running in background to handle all incoming messages
 pub type WebSocketJsonRPCClient<E> = Arc<WebSocketJsonRPCClientImpl<E>>;
 
-enum InternalMessage {
+#[derive(Debug, Serialize, Deserialize, Hash, PartialEq, Eq, Clone)]
+pub struct NoEvent;
+
+pub enum InternalMessage {
     Send(String),
     Close,
 }
