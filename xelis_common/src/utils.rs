@@ -151,9 +151,9 @@ pub fn format_difficulty(mut difficulty: Difficulty) -> String {
     return format!("{}{}{}", difficulty, left_str, DIFFICULTY_FORMATS[count]);
 }
 
-// Sanitize a daemon address to make sure it's a valid websocket address
+// Sanitize a ws address to make sure it's a valid websocket address
 // By default, will use ws:// if no protocol is specified
-pub fn sanitize_daemon_address(target: &str) -> String {
+pub fn sanitize_ws_address(target: &str) -> String {
     let mut target = target.to_lowercase();
     if target.starts_with("https://") {
         target.replace_range(..8, "wss://");

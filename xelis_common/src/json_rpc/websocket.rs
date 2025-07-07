@@ -31,7 +31,7 @@ use crate::{
         select
     },
     api::SubscribeParams,
-    utils::sanitize_daemon_address
+    utils::sanitize_ws_address
 };
 
 use super::{JSON_RPC_VERSION, JsonRPCError, JsonRPCResponse, JsonRPCResult};
@@ -124,7 +124,7 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
 
     // Create a new WebSocketJsonRPCClient with the target address and timeout
     pub async fn with(mut target: String, timeout_after: Duration) -> Result<WebSocketJsonRPCClient<E>, JsonRPCError> {
-        target = sanitize_daemon_address(target.as_str());
+        target = sanitize_ws_address(target.as_str());
         let ws = connect(&target).await?;
 
         let (sender, receiver) = mpsc::channel(64);
