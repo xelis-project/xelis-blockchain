@@ -213,7 +213,7 @@ pub struct Wallet {
     #[cfg(feature = "api_server")]
     api_server: Mutex<Option<APIServer<Arc<Self>>>>,
     // All XSWD requests are routed through this channel
-    #[cfg(feature = "api_server")]
+    #[cfg(feature = "xswd")]
     xswd_channel: RwLock<Option<UnboundedSender<XSWDEvent>>>,
     // Event broadcaster
     event_broadcaster: Mutex<Option<broadcast::Sender<Event>>>,
@@ -294,7 +294,7 @@ impl Wallet {
             network,
             #[cfg(feature = "api_server")]
             api_server: Mutex::new(None),
-            #[cfg(feature = "api_server")]
+            #[cfg(feature = "xswd")]
             xswd_channel: RwLock::new(None),
             event_broadcaster: Mutex::new(None),
             history_scan: AtomicBool::new(true),
@@ -1232,7 +1232,7 @@ fn datetime_from_timestamp(timestamp: u64) -> Result<chrono::DateTime<chrono::Lo
     }
 }
 
-#[cfg(feature = "api_server")]
+#[cfg(feature = "xswd")]
 pub enum XSWDEvent {
     RequestPermission(AppStateShared, RpcRequest, oneshot::Sender<Result<PermissionResult, Error>>),
     RequestApplication(AppStateShared, oneshot::Sender<Result<PermissionResult, Error>>),
@@ -1240,7 +1240,7 @@ pub enum XSWDEvent {
     AppDisconnect(AppStateShared)
 }
 
-#[cfg(feature = "api_server")]
+#[cfg(feature = "xswd")]
 #[async_trait]
 impl XSWDHandler for Arc<Wallet> {
     async fn request_permission(&self, app_state: &AppStateShared, request: PermissionRequest<'_>) -> Result<PermissionResult, Error> {

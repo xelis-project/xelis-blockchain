@@ -67,7 +67,7 @@ use xelis_wallet::{
 #[cfg(feature = "network_handler")]
 use xelis_wallet::config::DEFAULT_DAEMON_ADDRESS;
 
-#[cfg(feature = "api_server")]
+#[cfg(feature = "xswd")]
 use {
     xelis_wallet::{
         api::{
@@ -177,7 +177,7 @@ async fn main() -> Result<()> {
 
         command_manager.register_default_commands()?;
 
-        apply_config(config, &wallet, #[cfg(feature = "api_server")] &prompt).await;
+        apply_config(config, &wallet, #[cfg(feature = "xswd")] &prompt).await;
         setup_wallet_command_manager(wallet, &command_manager).await?;
     } else {
         register_default_commands(&command_manager).await?;
@@ -209,7 +209,7 @@ async fn register_default_commands(manager: &CommandManager) -> Result<(), Comma
     Ok(())
 }
 
-#[cfg(feature = "api_server")]
+#[cfg(feature = "xswd")]
 // This must be run in a separate task
 async fn xswd_handler(mut receiver: UnboundedReceiver<XSWDEvent>, prompt: ShareablePrompt) {
     while let Some(event) = receiver.recv().await {
@@ -238,7 +238,7 @@ async fn xswd_handler(mut receiver: UnboundedReceiver<XSWDEvent>, prompt: Sharea
     }
 }
 
-#[cfg(feature = "api_server")]
+#[cfg(feature = "xswd")]
 async fn xswd_handle_request_application(prompt: &ShareablePrompt, app_state: AppStateShared) -> Result<PermissionResult, Error> {
     let mut message = format!("XSWD: Application {} ({}) request access to your wallet", app_state.get_name(), app_state.get_id());
     let permissions = app_state.get_permissions().lock().await;
@@ -258,7 +258,7 @@ async fn xswd_handle_request_application(prompt: &ShareablePrompt, app_state: Ap
     }
 }
 
-#[cfg(feature = "api_server")]
+#[cfg(feature = "xswd")]
 async fn xswd_handle_request_permission(prompt: &ShareablePrompt, app_state: AppStateShared, request: RpcRequest) -> Result<PermissionResult, Error> {
     let params = if let Some(params) = request.params {
         params.to_string()
@@ -284,7 +284,7 @@ async fn xswd_handle_request_permission(prompt: &ShareablePrompt, app_state: App
 }
 
 // Apply the config passed in params
-async fn apply_config(config: Config, wallet: &Arc<Wallet>, #[cfg(feature = "api_server")] prompt: &ShareablePrompt) {
+async fn apply_config(config: Config, wallet: &Arc<Wallet>, #[cfg(feature = "xswd")] prompt: &ShareablePrompt) {
     #[cfg(feature = "network_handler")]
     if !config.network_handler.offline_mode {
         info!("Trying to connect to daemon at '{}'", config.network_handler.daemon_address);
@@ -656,7 +656,7 @@ async fn open_wallet(manager: &CommandManager, _: ArgumentManager) -> Result<(),
     };
 
     manager.message("Wallet sucessfully opened");
-    apply_config(config, &wallet, #[cfg(feature = "api_server")] prompt).await;
+    apply_config(config, &wallet, #[cfg(feature = "xswd")] prompt).await;
 
     setup_wallet_command_manager(wallet, manager).await?;
 
@@ -704,7 +704,7 @@ async fn create_wallet(manager: &CommandManager, _: ArgumentManager) -> Result<(
     };
  
     manager.message("Wallet sucessfully created");
-    apply_config(config, &wallet, #[cfg(feature = "api_server")] prompt).await;
+    apply_config(config, &wallet, #[cfg(feature = "xswd")] prompt).await;
 
     // Display the seed in prompt
     {
@@ -786,7 +786,7 @@ async fn recover_wallet(manager: &CommandManager, _: ArgumentManager, seed: bool
     };
 
     manager.message("Wallet sucessfully recovered");
-    apply_config(config, &wallet, #[cfg(feature = "api_server")] prompt).await;
+    apply_config(config, &wallet, #[cfg(feature = "xswd")] prompt).await;
 
     setup_wallet_command_manager(wallet, manager).await?;
 
