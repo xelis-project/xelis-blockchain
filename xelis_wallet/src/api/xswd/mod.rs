@@ -1,8 +1,5 @@
 mod error;
 mod types;
-mod server;
-
-pub use server::*;
 
 use anyhow::Error;
 use async_trait::async_trait;
@@ -168,7 +165,7 @@ where
         }))
     }
 
-    async fn on_request<P>(&self, provider: &P, app: &AppStateShared, message: &[u8]) -> Result<OnRequestResult, RpcResponseError>
+    pub async fn on_request<P>(&self, provider: &P, app: &AppStateShared, message: &[u8]) -> Result<OnRequestResult, RpcResponseError>
     where
         P: XSWDProvider
     {

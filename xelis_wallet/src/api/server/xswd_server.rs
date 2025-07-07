@@ -1,6 +1,19 @@
-use std::{borrow::Cow, collections::{HashMap, HashSet}, sync::Arc};
+use std::{
+    borrow::Cow,
+    collections::{HashMap, HashSet},
+    sync::Arc
+};
 
-use actix_web::{dev::ServerHandle, get, web::{self, Data, Payload}, App, HttpRequest, HttpResponse, HttpServer, Responder};
+use actix_web::{
+    dev::ServerHandle,
+    get,
+    web::{self, Data, Payload},
+    App,
+    HttpRequest,
+    HttpResponse,
+    HttpServer,
+    Responder
+};
 use async_trait::async_trait;
 use log::{debug, error, info};
 use serde_json::{json, Value};
@@ -20,8 +33,19 @@ use xelis_common::{
     }
 };
 
-use crate::config::XSWD_BIND_ADDRESS;
-use super::*;
+use crate::{
+    api::{
+        AppState,
+        AppStateShared,
+        ApplicationData,
+        OnRequestResult,
+        XSWDError,
+        XSWDProvider,
+        XSWDHandler,
+        XSWD
+    },
+    config::XSWD_BIND_ADDRESS
+};
 
 pub struct XSWDServer<W>
 where
