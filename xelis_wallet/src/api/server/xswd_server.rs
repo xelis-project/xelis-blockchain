@@ -160,7 +160,8 @@ where
     // if the application is already registered, it will return an error
     async fn add_application(&self, session: &WebSocketSessionShared<Self>, app_data: ApplicationData) -> Result<Value, RpcResponseError> {
         // Sanity check
-        self.xswd.verify_application(self, &app_data).await?;
+        self.xswd.verify_application(self, &app_data).await
+            .map_err(|e| RpcResponseError::new(None, e))?;
 
         let state = Arc::new(AppState::new(app_data));
         {
@@ -169,6 +170,7 @@ where
         }
 
         self.xswd.add_application(&state).await
+            .map_err(|e| RpcResponseError::new(None, e))
     }
 
     // register a new event listener for the specified connection/application

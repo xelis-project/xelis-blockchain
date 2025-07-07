@@ -1,5 +1,6 @@
 mod error;
 mod types;
+mod relayer;
 
 use anyhow::Error;
 use async_trait::async_trait;
@@ -87,58 +88,58 @@ where
         &self.handler
     }
 
-    pub async fn verify_application<P>(&self, provider: &P, app_data: &ApplicationData) -> Result<(), RpcResponseError>
+    pub async fn verify_application<P>(&self, provider: &P, app_data: &ApplicationData) -> Result<(), XSWDError>
     where
         P: XSWDProvider,
     {
         if app_data.get_id().len() != 64 {
-            return Err(RpcResponseError::new(None, XSWDError::InvalidApplicationId))
+            return Err(XSWDError::InvalidApplicationId)
         }
 
         hex::decode(&app_data.get_id())
-            .map_err(|_| RpcResponseError::new(None, XSWDError::InvalidHexaApplicationId))?;
+            .map_err(|_| XSWDError::InvalidHexaApplicationId)?;
 
         if app_data.get_name().len() > 32 {
-            return Err(RpcResponseError::new(None, XSWDError::ApplicationNameTooLong))
+            return Err(XSWDError::ApplicationNameTooLong)
         }
 
         if app_data.get_description().len() > 255 {
-            return Err(RpcResponseError::new(None, XSWDError::ApplicationDescriptionTooLong))
+            return Err(XSWDError::ApplicationDescriptionTooLong)
         }
 
         if let Some(url) = &app_data.get_url() {
             if url.len() > 255 {
-                return Err(RpcResponseError::new(None, XSWDError::InvalidURLFormat))
+                return Err(XSWDError::InvalidURLFormat)
             }
 
             if !url.starts_with("http://") && !url.starts_with("https://") {
-                return Err(RpcResponseError::new(None, XSWDError::InvalidURLFormat))
+                return Err(XSWDError::InvalidURLFormat)
             }
         }
 
         if app_data.get_permissions().len() > 255 {
-            return Err(RpcResponseError::new(None, XSWDError::TooManyPermissions))
+            return Err(XSWDError::TooManyPermissions)
         }
 
         for perm in app_data.get_permissions() {
             if !self.handler.has_method(perm) {
                 debug!("Permission '{}' is unknown", perm);
-                return Err(RpcResponseError::new(None, XSWDError::UnknownMethodInPermissionsList))
+                return Err(XSWDError::UnknownMethodInPermissionsList)
             }
         }
 
         // Verify that this app ID is not already in use
         if provider.has_app_with_id(&app_data.get_id()).await {
-            return Err(RpcResponseError::new(None, XSWDError::ApplicationIdAlreadyUsed))
+            return Err(XSWDError::ApplicationIdAlreadyUsed)
         }
 
         Ok(())
     }
 
-    pub async fn add_application(&self, state: &AppStateShared) -> Result<Value, RpcResponseError> {
+    pub async fn add_application(&self, state: &AppStateShared) -> Result<Value, XSWDError> {
         // Request permission to user
         let _permit = self.semaphore.acquire().await
-            .map_err(|_| RpcResponseError::new(None, InternalRpcError::InternalError("Permission handler semaphore error")))?;
+            .map_err(|_| XSWDError::SemaphoreError)?;
 
         let wallet = self.handler.get_data();
         state.set_requesting(true);
@@ -152,7 +153,7 @@ where
         state.set_requesting(false);
 
         if !permission.is_positive() {
-            return Err(RpcResponseError::new(None, XSWDError::PermissionDenied))
+            return Err(XSWDError::PermissionDenied)
         }
 
         Ok(json!({
