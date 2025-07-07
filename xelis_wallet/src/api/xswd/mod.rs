@@ -11,6 +11,8 @@ use serde_json::{
     json
 };
 use xelis_common::{
+    api::wallet::NotifyEvent,
+    context::Context,
     crypto::elgamal::PublicKey as DecompressedPublicKey,
     rpc_server::{
         InternalRpcError,
@@ -33,8 +35,10 @@ pub use types::*;
 // by providing all the required permissions
 // Also, each permission will be re-asked to the user
 // to ensure he is validating each action.
-pub struct XSWD {
-    // websocket: Arc<WebSocketServer<XSWDWebSocketHandler<W>>>,
+pub struct XSWD<W>
+where
+    W: Clone + Send + Sync + XSWDHandler + 'static {
+    handler: RPCHandler<W>,
     // This is used to limit to one at a time a permission request
     semaphore: Semaphore
 }
@@ -62,16 +66,32 @@ pub trait XSWDProvider {
     async fn has_app_with_id(&self, id: &str) -> bool;
 }
 
-impl XSWD {
-    pub fn new() -> Self {
+pub enum OnRequestResult {
+    Return(Option<Value>),
+    Request {
+        request: RpcRequest,
+        event: NotifyEvent,
+        is_subscribe: bool,
+    }
+}
+
+impl<W> XSWD<W>
+where
+    W: Clone + Send + Sync + XSWDHandler + 'static
+{
+    pub fn new(handler: RPCHandler<W>) -> Self {
         Self {
+            handler,
             semaphore: Semaphore::new(1)
         }
     }
 
-    pub async fn verify_application<W, P>(&self, provider: &P, handler: &RPCHandler<W>, app_data: &ApplicationData) -> Result<(), RpcResponseError>
+    pub fn handler(&self) -> &RPCHandler<W> {
+        &self.handler
+    }
+
+    pub async fn verify_application<P>(&self, provider: &P, app_data: &ApplicationData) -> Result<(), RpcResponseError>
     where
-        W: Clone + Send + Sync + 'static,
         P: XSWDProvider,
     {
         if app_data.get_id().len() != 64 {
@@ -104,7 +124,7 @@ impl XSWD {
         }
 
         for perm in app_data.get_permissions() {
-            if !handler.has_method(perm) {
+            if !self.handler.has_method(perm) {
                 debug!("Permission '{}' is unknown", perm);
                 return Err(RpcResponseError::new(None, XSWDError::UnknownMethodInPermissionsList))
             }
@@ -118,15 +138,12 @@ impl XSWD {
         Ok(())
     }
 
-    pub async fn add_application<W>(&self, handler: &RPCHandler<W>, state: &AppStateShared) -> Result<Value, RpcResponseError>
-    where
-        W: Clone + Send + Sync + XSWDHandler + 'static
-    {
+    pub async fn add_application(&self, state: &AppStateShared) -> Result<Value, RpcResponseError> {
         // Request permission to user
         let _permit = self.semaphore.acquire().await
             .map_err(|_| RpcResponseError::new(None, InternalRpcError::InternalError("Permission handler semaphore error")))?;
 
-        let wallet = handler.get_data();
+        let wallet = self.handler.get_data();
         state.set_requesting(true);
         let permission = match wallet.request_permission(&state, PermissionRequest::Application).await {
             Ok(v) => v,
@@ -151,11 +168,62 @@ impl XSWD {
         }))
     }
 
+    async fn on_request<P>(&self, provider: &P, app: &AppStateShared, message: &[u8]) -> Result<OnRequestResult, RpcResponseError>
+    where
+        P: XSWDProvider
+    {
+        let mut request = self.handler.parse_request_from_bytes(message)?;
+        // Redirect all node methods to the node method handler
+        if request.method.starts_with("node.") {
+            // Remove the 5 first chars (node.)
+            request.method = request.method[5..].into();
+            return self.handler.get_data().call_node_with(request).await.map(|v| OnRequestResult::Return(Some(v)))
+        }
+
+        // Verify that the method start with "wallet."
+        if !request.method.starts_with("wallet.") {
+            return Err(RpcResponseError::new(request.id, InternalRpcError::MethodNotFound(request.method)))
+        }
+        request.method = request.method[7..].into();
+
+        // Verify first if the method exist (and that its not a built-in one)
+        let is_subscribe = request.method == "subscribe";
+        let is_unsubscribe = request.method == "unsubscribe";
+        if !self.handler.has_method(&request.method) && !is_subscribe && !is_unsubscribe {
+            return Err(RpcResponseError::new(request.id, InternalRpcError::MethodNotFound(request.method)))
+        }
+
+        // let's check the permission set by user for this method
+        app.set_requesting(true);
+        self.verify_permission_for_request(provider, &app, &request).await?;
+        app.set_requesting(false);
+
+        if !is_subscribe && !is_unsubscribe {
+            return self.execute_method(app.id(), request).await.map(OnRequestResult::Return)
+        }
+
+        let event = serde_json::from_value(
+            request.params.take()
+                .ok_or_else(|| RpcResponseError::new(request.id.clone(), InternalRpcError::ExpectedParams))?)
+            .map_err(|e| RpcResponseError::new(request.id.clone(), InternalRpcError::InvalidJSONParams(e))
+        )?;
+
+        Ok(OnRequestResult::Request { event, request, is_subscribe })
+    }
+
+    pub async fn execute_method(&self, id: XSWDAppId, request: RpcRequest) -> Result<Option<Value>, RpcResponseError> {
+        // Call the method
+        let mut context = Context::default();
+        context.store(self.handler.get_data().clone());
+        // Store the app id
+        context.store(id);
+        self.handler.execute_method(&context, request).await
+    }
+
     // verify the permission for a request
     // if the permission is not set, it will request it to the user
-    async fn verify_permission_for_request<W, P>(&self, provider: &P, handler: &RPCHandler<W>, app: &AppStateShared, request: &RpcRequest) -> Result<(), RpcResponseError>
+    pub async fn verify_permission_for_request<P>(&self, provider: &P, app: &AppStateShared, request: &RpcRequest) -> Result<(), RpcResponseError>
     where
-        W: Clone + Send + Sync + XSWDHandler + 'static,
         P: XSWDProvider,
     {
         let _permit = self.semaphore.acquire().await
@@ -182,7 +250,7 @@ impl XSWD {
             Some(Permission::Reject) => Err(RpcResponseError::new(request.id.clone(), XSWDError::PermissionDenied)),
             // Request permission from user
             Some(Permission::Ask) => {
-                let result = handler.get_data()
+                let result = self.handler.get_data()
                     .request_permission(app, PermissionRequest::Request(request)).await
                     .map_err(|err| RpcResponseError::new(request.id.clone(), InternalRpcError::CustomAny(0, err)))?;
 

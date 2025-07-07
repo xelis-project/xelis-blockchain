@@ -6,13 +6,11 @@ use log::{debug, error, info};
 use serde_json::{json, Value};
 use xelis_common::{
     api::{wallet::NotifyEvent, EventResult},
-    context::Context,
     rpc_server::{
         websocket::{WebSocketHandler, WebSocketServer, WebSocketSessionShared},
         Id,
         InternalRpcError,
         RPCHandler,
-        RpcRequest,
         RpcResponse,
         RpcResponseError
     },
@@ -23,9 +21,7 @@ use xelis_common::{
 };
 
 use crate::config::XSWD_BIND_ADDRESS;
-
 use super::*;
-
 
 pub struct XSWDServer<W>
 where
@@ -79,13 +75,11 @@ pub struct XSWDWebSocketHandler<W>
 where
     W: Clone + Send + Sync + XSWDHandler + 'static
 {
-    // RPC handler for methods
-    handler: RPCHandler<W>,
     // All applications connected to the wallet
     applications: RwLock<HashMap<WebSocketSessionShared<Self>, AppStateShared>>,
     // Applications listening for events
     listeners: Mutex<HashMap<WebSocketSessionShared<Self>, HashMap<NotifyEvent, Option<Id>>>>,
-    xswd: XSWD,
+    xswd: XSWD<W>,
 }
 
 impl<W> XSWDWebSocketHandler<W>
@@ -94,10 +88,9 @@ where
 {
     pub fn new(handler: RPCHandler<W>) -> Self {
         Self {
-            handler,
             applications: RwLock::new(HashMap::new()),
             listeners: Mutex::new(HashMap::new()),
-            xswd: XSWD::new(),
+            xswd: XSWD::new(handler),
         }
     }
 
@@ -143,7 +136,7 @@ where
     // if the application is already registered, it will return an error
     async fn add_application(&self, session: &WebSocketSessionShared<Self>, app_data: ApplicationData) -> Result<Value, RpcResponseError> {
         // Sanity check
-        self.xswd.verify_application(self, &self.handler, &app_data).await?;
+        self.xswd.verify_application(self, &app_data).await?;
 
         let state = Arc::new(AppState::new(app_data));
         {
@@ -151,7 +144,7 @@ where
             applications.insert(session.clone(), state.clone());
         }
 
-        self.xswd.add_application(&self.handler, &state).await
+        self.xswd.add_application(&state).await
     }
 
     // register a new event listener for the specified connection/application
@@ -184,85 +177,46 @@ where
     // This method will parse the message and call the appropriate method if app is registered
     // Otherwise, it expects a JSON object with the application data to register it
     async fn on_message_internal(&self, session: &WebSocketSessionShared<Self>, message: &[u8]) -> Result<Option<Value>, RpcResponseError> {
-        let (request, id, is_subscribe, is_unsubscribe) = {
-            let app_state = {
-                let applications = self.applications.read().await;
-                applications.get(session).cloned()
-            };
+        let app_state = {
+            let applications = self.applications.read().await;
+            applications.get(session).cloned()
+        };
 
-            // Application is already registered, verify permission and call the method
-            if let Some(app) = app_state {
-                let mut request: RpcRequest = self.handler.parse_request_from_bytes(message)?;
-                // Redirect all node methods to the node method handler
-                if request.method.starts_with("node.") {
-                    // Remove the 5 first chars (node.)
-                    request.method = request.method[5..].into();
-                    return self.handler.get_data().call_node_with(request).await.map(|v| Some(v))
-                }
-
-                // Verify that the method start with "wallet."
-                if !request.method.starts_with("wallet.") {
-                    return Err(RpcResponseError::new(request.id, InternalRpcError::MethodNotFound(request.method)))
-                }
-                request.method = request.method[7..].into();
-
-                // Verify first if the method exist (and that its not a built-in one)
-                let is_subscribe = request.method == "subscribe";
-                let is_unsubscribe = request.method == "unsubscribe";
-                if !self.handler.has_method(&request.method) && !is_subscribe && !is_unsubscribe {
-                    return Err(RpcResponseError::new(request.id, InternalRpcError::MethodNotFound(request.method)))
-                }
-
-                // let's check the permission set by user for this method
-                app.set_requesting(true);
-                self.xswd.verify_permission_for_request(self, &self.handler, &app, &request).await?;
-                app.set_requesting(false);
-
-                (request, app.id(), is_subscribe, is_unsubscribe)
-            } else {
-                let app_data: ApplicationData = serde_json::from_slice(&message)
-                    .map_err(|_| RpcResponseError::new(None, XSWDError::InvalidApplicationData))?;
-
-                // Application is not registered, register it
-                return match self.add_application(session, app_data).await {
-                    Ok(v) => Ok(Some(v)),
-                    Err(e) => {
-                        debug!("Error while adding application: {}", e);
-                        if !session.is_closed().await {
-                            // Send error message and then close the session
-                            if let Err(e) = session.send_text(&e.to_json().to_string()).await {
-                                error!("Error while sending error message to session: {}", e);
-                            }
-                        }
-
-                        if let Err(e) = session.close(None).await {
-                            error!("Error while closing session: {}", e);
-                        }
-
-                        Ok(None)
+        // Application is already registered, verify permission and call the method
+        if let Some(app) = app_state {
+            match self.xswd.on_request(self, &app, message).await? {
+                OnRequestResult::Return(v) => Ok(v),
+                OnRequestResult::Request { request, event, is_subscribe } => {
+                    if is_subscribe {
+                        self.subscribe_session_to_event(session, event, request.id).await.map(|_| None)
+                    } else {
+                        self.unsubscribe_session_from_event(session, event, request.id).await.map(|_| None)
                     }
                 }
             }
-        };
-
-        if is_subscribe || is_unsubscribe {
-            // retrieve the event variant
-            let event = serde_json::from_value(
-                request.params.ok_or_else(|| RpcResponseError::new(request.id.clone(), InternalRpcError::ExpectedParams))?)
-                .map_err(|e| RpcResponseError::new(request.id.clone(), InternalRpcError::InvalidJSONParams(e))
-            )?;
-            if is_subscribe {
-                self.subscribe_session_to_event(session, event, request.id).await.map(|_| None)
-            } else {
-                self.unsubscribe_session_from_event(session, event, request.id).await.map(|_| None)
-            }
         } else {
-            // Call the method
-            let mut context = Context::default();
-            context.store(self.handler.get_data().clone());
-            // Store the app id
-            context.store(id);
-            self.handler.execute_method(&context, request).await
+            let app_data: ApplicationData = serde_json::from_slice(&message)
+                .map_err(|_| RpcResponseError::new(None, XSWDError::InvalidApplicationData))?;
+
+            // Application is not registered, register it
+            match self.add_application(session, app_data).await {
+                Ok(v) => Ok(Some(v)),
+                Err(e) => {
+                    debug!("Error while adding application: {}", e);
+                    if !session.is_closed().await {
+                        // Send error message and then close the session
+                        if let Err(e) = session.send_text(&e.to_json().to_string()).await {
+                            error!("Error while sending error message to session: {}", e);
+                        }
+                    }
+
+                    if let Err(e) = session.close(None).await {
+                        error!("Error while closing session: {}", e);
+                    }
+
+                    Ok(None)
+                }
+            }
         }
     }
 }
@@ -287,10 +241,10 @@ where
             info!("Application {} has disconnected", app.get_name());
             if app.is_requesting() {
                 debug!("Application {} is requesting a permission, aborting...", app.get_name());
-                self.handler.get_data().cancel_request_permission(&app).await?;
+                self.xswd.handler().get_data().cancel_request_permission(&app).await?;
             }
 
-            self.handler.get_data().on_app_disconnect(app).await?;
+            self.xswd.handler().get_data().on_app_disconnect(app).await?;
         }
 
         Ok(())
