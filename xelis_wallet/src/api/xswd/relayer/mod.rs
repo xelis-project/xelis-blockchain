@@ -1,4 +1,5 @@
 mod client;
+mod cipher;
 
 use std::{borrow::Cow, collections::HashMap, sync::Arc};
 
@@ -19,12 +20,11 @@ use xelis_common::{
     tokio::sync::RwLock
 };
 
-use crate::api::XSWDError;
+use crate::api::{ApplicationDataRelayer, XSWDError};
 
 use super::{
     AppState,
     AppStateShared,
-    ApplicationData,
     OnRequestResult,
     XSWDHandler,
     XSWDProvider,
@@ -91,12 +91,12 @@ where
             .await;
     }
 
-    pub async fn add_application(self: &XSWDRelayerShared<W>, relayer: &str, app_data: ApplicationData) -> Result<(), anyhow::Error> {
+    pub async fn add_application(self: &XSWDRelayerShared<W>, app_data: ApplicationDataRelayer) -> Result<(), anyhow::Error> {
         // Sanity check
-        self.xswd.verify_application(self.as_ref(), &app_data).await?;
+        self.xswd.verify_application(self.as_ref(), &app_data.inner).await?;
 
-        let state = Arc::new(AppState::new(app_data));
-        let client = Client::new(relayer, Arc::clone(self), state.clone()).await?;
+        let state = Arc::new(AppState::new(app_data.inner));
+        let client = Client::new(app_data.relayer, Arc::clone(self), app_data.encryption_mode, state.clone()).await?;
 
         {
             let mut applications = self.applications.write().await;

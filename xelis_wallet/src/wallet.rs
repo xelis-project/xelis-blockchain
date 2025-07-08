@@ -103,7 +103,7 @@ use {
     serde_json::{json, Value},
     async_trait::async_trait,
     crate::api::{
-        ApplicationData,
+        ApplicationDataRelayer,
         XSWDRelayer,
         XSWDRelayerShared,
         register_rpc_methods,
@@ -658,7 +658,7 @@ impl Wallet {
     }
 
     #[cfg(feature = "xswd")]
-    pub async fn add_xswd_relayer(self: &Arc<Self>, target: &str, app_data: ApplicationData) -> Result<(), Error> {
+    pub async fn add_xswd_relayer(self: &Arc<Self>, app_data: ApplicationDataRelayer) -> Result<(), Error> {
         let mut xswd = self.xswd_relayer.lock().await;
         if xswd.is_none() {
             let handler = RPCHandler::new(Arc::clone(self));
@@ -666,7 +666,7 @@ impl Wallet {
         }
 
         if let Some(xswd) = xswd.as_ref() {
-            xswd.add_application(target, app_data).await?;
+            xswd.add_application(app_data).await?;
         }
 
         Ok(())

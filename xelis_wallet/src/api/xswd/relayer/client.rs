@@ -12,8 +12,12 @@ use xelis_common::tokio::{
 };
 
 use crate::api::{
-    xswd::relayer::XSWDRelayerShared,
+    xswd::relayer::{
+        cipher::Cipher,
+        XSWDRelayerShared
+    },
     AppStateShared,
+    EncryptionMode,
     XSWDHandler
 };
 
@@ -28,14 +32,17 @@ pub struct Client {
 }
 
 impl Client {
-    pub async fn new<W>(target: &str, relayer: XSWDRelayerShared<W>, state: AppStateShared) -> Result<Self, anyhow::Error>
+    pub async fn new<W>(target: String, relayer: XSWDRelayerShared<W>, encryption_mode: EncryptionMode, state: AppStateShared) -> Result<Self, anyhow::Error>
     where
         W: Clone + Send + Sync + XSWDHandler + 'static
     {
-        let ws = connect(target).await?;
+        // Create a cipher based on the provided encryption mode
+        let cipher = Cipher::new(encryption_mode)?;
+
+        let ws = connect(&target).await?;
         let (sender, receiver) = mpsc::channel(64);
         spawn_task(format!("xswd-relayer-{}", state.get_id()), async move {
-            if let Err(e) = Self::background_task(ws, &state, &relayer, receiver).await {
+            if let Err(e) = Self::background_task(ws, &state, &relayer, receiver, cipher).await {
                 debug!("Error on xswd relayer #{}: {}", state.get_id(), e);
             }
 
@@ -43,7 +50,7 @@ impl Client {
         });
 
         Ok(Self {
-            target: target.to_owned(),
+            target,
             sender,
         })
     }
@@ -68,7 +75,8 @@ impl Client {
         mut ws: WebSocketStream,
         state: &AppStateShared,
         relayer: &XSWDRelayerShared<W>,
-        mut receiver: mpsc::Receiver<InternalMessage>
+        mut receiver: mpsc::Receiver<InternalMessage>,
+        mut cipher: Cipher
     ) -> Result<(), anyhow::Error>
     where
         W: Clone + Send + Sync + XSWDHandler + 'static
@@ -88,7 +96,8 @@ impl Client {
                         }
                     };
 
-                    let response = match relayer.on_message(state, bytes).await {
+                    let output = cipher.decrypt(bytes)?;
+                    let response = match relayer.on_message(state, &output).await {
                         Ok(None) => continue,
                         Ok(Some(value)) => value,
                         Err(e) => e.to_json()
@@ -103,7 +112,9 @@ impl Client {
 
                     match msg {
                         InternalMessage::Send(msg) => {
-                            ws.send(Message::Text(msg.into())).await?;
+                            let output = cipher.encrypt(msg.as_bytes())?
+                                .into_owned();
+                            ws.send(Message::Binary(output.into())).await?;
                         },
                         InternalMessage::Close => break,
                     }

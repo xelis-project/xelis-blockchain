@@ -141,6 +141,33 @@ impl ApplicationData {
     }
 }
 
+pub type EncryptionKey = [u8; 32];
+
+#[derive(Serialize, Deserialize, Debug)]
+pub enum EncryptionMode {
+    // No encryption, just transfer the data as is (discouraged)
+    None,
+    // Encrypt the data using AES-GCM
+    AES {
+        key: EncryptionKey
+    },
+    // Encrypt the data using ChaCha20Poly1305 AEAD cipher
+    // Chacha20Poly1305 {
+    //     key: EncryptionKey
+    // }
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct ApplicationDataRelayer {
+    // Actual application data
+    pub inner: ApplicationData,
+    // Relayer URL where we should connect
+    // to communicate with the application
+    pub relayer: String,
+    // Encryption mode to use for the relayer
+    pub encryption_mode: EncryptionMode,
+}
+
 #[derive(Clone, Copy, Serialize, Deserialize, Debug)]
 #[serde(rename_all = "snake_case")]
 pub enum Permission {
