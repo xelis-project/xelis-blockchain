@@ -217,7 +217,8 @@ pub struct Wallet {
     #[cfg(feature = "xswd")]
     xswd_channel: RwLock<Option<UnboundedSender<XSWDEvent>>>,
     // XSWD Relayer, to support XSWD but in client mode
-    xswd_relayer: RwLock<Option<XSWDRelayer<Arc<Self>>>>,
+    #[cfg(feature = "xswd")]
+    xswd_relayer: Mutex<Option<XSWDRelayer<Arc<Self>>>>,
     // Event broadcaster
     event_broadcaster: Mutex<Option<broadcast::Sender<Event>>>,
     // If the wallet should scan also blocks and transactions history
@@ -300,7 +301,7 @@ impl Wallet {
             #[cfg(feature = "xswd")]
             xswd_channel: RwLock::new(None),
             #[cfg(feature = "xswd")]
-            xswd_relayer: RwLock::new(None),
+            xswd_relayer: Mutex::new(None),
             event_broadcaster: Mutex::new(None),
             history_scan: AtomicBool::new(true),
             force_stable_balance: AtomicBool::new(false),
@@ -448,7 +449,7 @@ impl Wallet {
             }
 
             {
-                self.xswd_relayer.write()
+                self.xswd_relayer.lock()
                     .await
                     .take();
             }
@@ -504,14 +505,23 @@ impl Wallet {
 
     // Propagate a new event to registered listeners
     pub async fn propagate_event(&self, event: Event) {
-        trace!("Propagate event: {:?}", event);
+        let kind = event.kind();
+        trace!("Propagate event {:?}: {:?}", kind, event);
         // Broadcast it to the API Server
         #[cfg(feature = "api_server")]
         {
             let mut lock = self.api_server.lock().await;
             if let Some(server) = lock.as_mut() {
-                let kind = event.kind();
                 server.notify_event(&kind, &event).await;
+            }
+        }
+
+        // Broadcast it to XSWD Relayer too
+        #[cfg(feature = "xswd")]
+        {
+            let xswd = self.xswd_relayer.lock().await;
+            if let Some(xswd) = xswd.as_ref() {
+                xswd.notify_event(&kind, &event).await;
             }
         }
 

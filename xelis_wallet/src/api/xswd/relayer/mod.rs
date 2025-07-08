@@ -5,6 +5,7 @@ use std::{borrow::Cow, collections::HashMap, sync::Arc};
 use async_trait::async_trait;
 use futures::{stream, StreamExt};
 use log::error;
+use serde::Serialize;
 use serde_json::{json, Value};
 use xelis_common::{
     api::{wallet::NotifyEvent, EventResult},
@@ -70,8 +71,8 @@ where
     }
 
     // notify a new event to all connected WebSocket
-    pub async fn notify(&self, event: &NotifyEvent, value: Value) {
-        let value = json!(EventResult { event: Cow::Borrowed(event), value });
+    pub async fn notify_event<V: Serialize>(&self, event: &NotifyEvent, value: V) {
+        let value = json!(EventResult { event: Cow::Borrowed(event), value: json!(value) });
         let applications = self.applications.read().await;
 
         stream::iter(applications.values())

@@ -8,6 +8,7 @@ pub use rpc_server::{
 };
 
 use serde::Serialize;
+use serde_json::json;
 use xelis_common::{
     api::wallet::NotifyEvent,
     rpc::server::WebSocketServerHandler
@@ -33,7 +34,7 @@ where
     W: Clone + Send + Sync + XSWDHandler + 'static
 {
     pub async fn notify_event<V: Serialize>(&self, event: &NotifyEvent, value: &V) {
-        let json = serde_json::to_value(value).unwrap();
+        let json = json!(value);
         match self {
             APIServer::RPCServer(server) => {
                 server.get_websocket().get_handler().notify(event, json).await;
