@@ -5,9 +5,10 @@ use tokio_tungstenite_wasm::{
     Message,
     connect,
 };
-use xelis_common::{
-    rpc::client::InternalMessage,
-    tokio::{select, spawn_task, sync::mpsc}
+use xelis_common::tokio::{
+    select,
+    spawn_task,
+    sync::mpsc
 };
 
 use crate::api::{
@@ -15,6 +16,11 @@ use crate::api::{
     AppStateShared,
     XSWDHandler
 };
+
+enum InternalMessage {
+    Send(String),
+    Close,
+}
 
 pub struct Client {
     target: String,

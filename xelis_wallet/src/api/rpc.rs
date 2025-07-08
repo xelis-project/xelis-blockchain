@@ -1,5 +1,6 @@
 use std::{sync::Arc, borrow::Cow};
 use anyhow::Context as AnyContext;
+use cfg_if::cfg_if;
 use xelis_common::{
     api::{
         wallet::*,
@@ -173,16 +174,23 @@ async fn network_info(context: &Context, body: Value) -> Result<Value, InternalR
     require_no_params(body)?;
 
     let wallet: &Arc<Wallet> = context.get()?;
-    let network_handler = wallet.get_network_handler().lock().await;
-    if let Some(handler) = network_handler.as_ref() {
-        let api = handler.get_api();
-        let inner = api.get_info().await?;
-        Ok(json!(NetworkInfoResult {
-            inner,
-            connected_to: api.get_client().get_target().to_owned(),
-        }))
-    } else {
-        Err(InternalRpcError::InvalidRequestStr("Wallet is not connected to a daemon"))
+
+    cfg_if! {
+        if #[cfg(feature = "network_handler")] {
+            let network_handler = wallet.get_network_handler().lock().await;
+            if let Some(handler) = network_handler.as_ref() {
+                let api = handler.get_api();
+                let inner = api.get_info().await?;
+                Ok(json!(NetworkInfoResult {
+                    inner,
+                    connected_to: api.get_client().get_target().to_owned(),
+                }))
+            } else {
+                Err(WalletError::NotOnlineMode.into())
+            }
+        } else {
+            Err(WalletError::Unsupported.into())
+        }
     }
 }
 
@@ -217,8 +225,16 @@ async fn decrypt_ciphertext(context: &Context, body: Value) -> Result<Value, Int
 async fn rescan(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: RescanParams = parse_params(body)?;
     let wallet: &Arc<Wallet> = context.get()?;
-    wallet.rescan(params.until_topoheight.unwrap_or(0), params.auto_reconnect).await?;
-    Ok(json!(true))
+
+    cfg_if! {
+        if #[cfg(feature = "network_handler")] {
+            wallet.rescan(params.until_topoheight.unwrap_or(0), params.auto_reconnect).await?;
+
+            Ok(json!(true))
+        } else {
+            Err(WalletError::Unsupported.into())
+        }
+    }
 }
 
 // Retrieve the balance of the wallet for a specific asset
@@ -686,9 +702,14 @@ async fn set_online_mode(context: &Context, body: Value) -> Result<Value, Intern
         return Err(InternalRpcError::InvalidRequestStr("Wallet is already connected to a daemon"))
     }
 
-    wallet.set_online_mode(&params.daemon_address, params.auto_reconnect).await?;
-
-    Ok(json!(true))
+    cfg_if! {
+        if #[cfg(feature = "network_handler")] {
+            wallet.set_online_mode(&params.daemon_address, params.auto_reconnect).await?;
+            Ok(json!(true))
+        } else {
+            Err(WalletError::Unsupported.into())
+        }
+    }
 }
 
 // Connect the wallet to a daemon if not already connected
@@ -700,9 +721,15 @@ async fn set_offline_mode(context: &Context, body: Value) -> Result<Value, Inter
         return Err(InternalRpcError::InvalidRequestStr("Wallet is already in offline mode"))
     }
 
-    wallet.set_offline_mode().await?;
+    cfg_if! {
+        if #[cfg(feature = "network_handler")] {
+            wallet.set_offline_mode().await?;
 
-    Ok(json!(true))
+            Ok(json!(true))
+        } else {
+            Err(WalletError::Unsupported.into())
+        }
+    }
 }
 
 // Sign any data converted in bytes format

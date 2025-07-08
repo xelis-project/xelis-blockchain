@@ -3,6 +3,12 @@ use std::{
     io::Write,
     sync::{atomic::{AtomicBool, Ordering}, Arc}
 };
+use rand::{rngs::OsRng, RngCore};
+use log::{
+    debug,
+    error,
+    trace
+};
 use anyhow::{Error, Context};
 use chrono::TimeZone;
 use serde::Serialize;
@@ -58,13 +64,6 @@ use xelis_common::{
     }, utils::{format_coin, format_xelis}
 };
 
-#[cfg(feature = "xswd")]
-use crate::api::{
-    ApplicationData,
-    XSWDRelayer,
-    XSWDRelayerShared,
-};
-
 use crate::{
     cipher::Cipher,
     config::{
@@ -98,23 +97,16 @@ use {
     },
     xelis_common::config::XELIS_ASSET,
 };
-use rand::{rngs::OsRng, RngCore};
-use log::{
-    debug,
-    error,
-    trace
-};
 
-#[cfg(feature = "api_server")]
+#[cfg(feature = "xswd")]
 use {
     serde_json::{json, Value},
     async_trait::async_trait,
     crate::api::{
+        ApplicationData,
+        XSWDRelayer,
+        XSWDRelayerShared,
         register_rpc_methods,
-        XSWDServer,
-        WalletRpcServer,
-        AuthConfig,
-        APIServer,
         AppStateShared,
         PermissionResult,
         PermissionRequest,
@@ -138,6 +130,14 @@ use {
         },
         crypto::elgamal::PublicKey as DecompressedPublicKey
     }
+};
+
+#[cfg(feature = "api_server")]
+use crate::api::{
+    XSWDServer,
+    WalletRpcServer,
+    AuthConfig,
+    APIServer,
 };
 
 // Recover option for wallet creation
@@ -1334,18 +1334,21 @@ impl XSWDHandler for Arc<Wallet> {
     }
 
     async fn call_node_with(&self, request: RpcRequest) -> Result<Value, RpcResponseError> {
-        let network_handler = self.network_handler.lock().await;
         let id = request.id;
-        if let Some(network_handler) = network_handler.as_ref() {
-            if network_handler.is_running().await {
-                let api = network_handler.get_api();
-                let response = api.call(&request.method, &request.params).await.map_err(|e| RpcResponseError::new(id.clone(), InternalRpcError::Custom(-31999, e.to_string())))?;
-
-                return Ok(json!({
-                    "jsonrpc": JSON_RPC_VERSION,
-                    "id": id,
-                    "result": response
-                }))
+        #[cfg(feature = "network_handler")]
+        {
+            let network_handler = self.network_handler.lock().await;
+            if let Some(network_handler) = network_handler.as_ref() {
+                if network_handler.is_running().await {
+                    let api = network_handler.get_api();
+                    let response = api.call(&request.method, &request.params).await.map_err(|e| RpcResponseError::new(id.clone(), InternalRpcError::Custom(-31999, e.to_string())))?;
+    
+                    return Ok(json!({
+                        "jsonrpc": JSON_RPC_VERSION,
+                        "id": id,
+                        "result": response
+                    }))
+                }
             }
         }
 

@@ -8,7 +8,7 @@ use xelis_common::{
     transaction::extra_data::CipherFormatError,
     utils::{format_coin, format_xelis}
 };
-#[cfg(feature = "api_server")]
+#[cfg(feature = "xswd")]
 use xelis_common::rpc::InternalRpcError;
 
 use anyhow::Error;
@@ -98,6 +98,8 @@ pub enum WalletError {
     NonceGeneration,
     #[error("Poison error")]
     PoisonError,
+    #[error("unsupported operation")]
+    Unsupported
 }
 
 impl WalletError {
@@ -107,7 +109,7 @@ impl WalletError {
     }
 }
 
-#[cfg(feature = "api_server")]
+#[cfg(feature = "xswd")]
 impl From<WalletError> for InternalRpcError {
     fn from(e: WalletError) -> Self {
         let id = e.id();
