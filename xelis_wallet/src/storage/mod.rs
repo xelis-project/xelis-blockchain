@@ -920,7 +920,7 @@ impl EncryptedStorage {
         for el in self.transactions_indexes.iter() {
             let (key, value) = el?;
 
-            if &value == &hashed_key {
+            if value.as_ref() == &hashed_key {
                 return Ok(Some(u64::from_bytes(&key)?))
             }
         }

@@ -1,3 +1,5 @@
+
+#[cfg(any(feature = "xswd", feature = "api_server"))]
 mod rpc;
 
 #[cfg(feature = "api_server")]

@@ -48,7 +48,7 @@ xswd = ["dep:tokio-tungstenite-wasm"]
 cli = ["tokio-multi-thread", "dep:clap", "xelis_common/prompt"]
 network_handler = ["xelis_common/rpc-client"]
 api_server = ["xswd", "network_handler", "xelis_common/rpc-server", "dep:actix-web", "dep:actix-web-httpauth"]
-tokio-multi-thread = ["xelis_common/tokio", "xelis_common/tokio-multi-thread"]
+tokio-multi-thread = ["xelis_common/tokio-multi-thread"]
 
 [lib]
 crate-type = ["cdylib", "rlib"]
