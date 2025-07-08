@@ -15,6 +15,8 @@ use anyhow::Error;
 
 #[derive(Error, Debug, EnumDiscriminants)]
 pub enum WalletError {
+    #[error("Cipher error")]
+    Cipher,
     #[error("Asset {0} is not tracked by wallet")]
     AssetNotTracked(Hash),
     #[error("Invalid datetime")]
@@ -92,6 +94,8 @@ pub enum WalletError {
     AEADCipherFormatError(#[from] CipherFormatError),
     #[error("No network handler available")]
     NoNetworkHandler,
+    #[error("Nonce generation")]
+    NonceGeneration,
     #[error("Poison error")]
     PoisonError,
 }
