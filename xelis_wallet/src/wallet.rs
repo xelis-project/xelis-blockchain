@@ -57,8 +57,15 @@ use xelis_common::{
         TxVersion
     }, utils::{format_coin, format_xelis}
 };
+
+#[cfg(feature = "xswd")]
+use crate::api::{
+    ApplicationData,
+    XSWDRelayer,
+    XSWDRelayerShared,
+};
+
 use crate::{
-    api::XSWDRelayer,
     cipher::Cipher,
     config::{
         PASSWORD_ALGORITHM,
@@ -218,7 +225,7 @@ pub struct Wallet {
     xswd_channel: RwLock<Option<UnboundedSender<XSWDEvent>>>,
     // XSWD Relayer, to support XSWD but in client mode
     #[cfg(feature = "xswd")]
-    xswd_relayer: Mutex<Option<XSWDRelayer<Arc<Self>>>>,
+    xswd_relayer: Mutex<Option<XSWDRelayerShared<Arc<Self>>>>,
     // Event broadcaster
     event_broadcaster: Mutex<Option<broadcast::Sender<Event>>>,
     // If the wallet should scan also blocks and transactions history
@@ -648,6 +655,26 @@ impl Wallet {
     #[cfg(feature = "api_server")]
     pub fn get_api_server(&self) -> &Mutex<Option<APIServer<Arc<Self>>>> {
         &self.api_server
+    }
+
+    #[cfg(feature = "xswd")]
+    pub async fn add_xswd_relayer(self: &Arc<Self>, target: &str, app_data: ApplicationData) -> Result<(), Error> {
+        let mut xswd = self.xswd_relayer.lock().await;
+        if xswd.is_none() {
+            let handler = RPCHandler::new(Arc::clone(self));
+            *xswd = Some(XSWDRelayer::new(handler, self.concurrency));
+        }
+
+        if let Some(xswd) = xswd.as_ref() {
+            xswd.add_application(target, app_data).await?;
+        }
+
+        Ok(())
+    }
+
+    #[cfg(feature = "xswd")]
+    pub fn xswd_relayer(&self) -> &Mutex<Option<XSWDRelayerShared<Arc<Self>>>> {
+        &self.xswd_relayer
     }
 
     // Verify if a password is valid or not

@@ -24,7 +24,7 @@ use log::{debug, info};
 
 pub use error::XSWDError;
 pub use types::*;
-pub use relayer::XSWDRelayer;
+pub use relayer::{XSWDRelayer, XSWDRelayerShared};
 
 // XSWD Protocol (XELIS Secure WebSocket DApp)
 // is a way to communicate with the XELIS Wallet

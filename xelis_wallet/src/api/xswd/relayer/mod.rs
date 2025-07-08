@@ -62,12 +62,18 @@ where
         })
     }
 
+    // On close delete all clients
     pub async fn close(&self) {
         let mut applications = self.applications.write().await;
 
         stream::iter(applications.drain())
             .for_each_concurrent(self.concurrency, |(_, (client, _))| async move { client.close().await })
             .await;
+    }
+
+    // All applications registered / connected
+    pub fn applications(&self) -> &RwLock<HashMap<AppStateShared, (Client, HashMap<NotifyEvent, Option<Id>>)>> {
+        &self.applications
     }
 
     // notify a new event to all connected WebSocket
@@ -85,12 +91,12 @@ where
             .await;
     }
 
-    pub async fn add_application(self: &XSWDRelayerShared<W>, relayer: String, app_data: ApplicationData) -> Result<(), anyhow::Error> {
+    pub async fn add_application(self: &XSWDRelayerShared<W>, relayer: &str, app_data: ApplicationData) -> Result<(), anyhow::Error> {
         // Sanity check
         self.xswd.verify_application(self.as_ref(), &app_data).await?;
 
         let state = Arc::new(AppState::new(app_data));
-        let client = Client::new(&relayer, Arc::clone(self), state.clone()).await?;
+        let client = Client::new(relayer, Arc::clone(self), state.clone()).await?;
 
         {
             let mut applications = self.applications.write().await;
@@ -132,7 +138,9 @@ where
     pub async fn on_close(&self, state: AppStateShared) {
         {
             let mut applications = self.applications.write().await;
-            applications.remove(&state);
+            if applications.remove(&state).is_none() {
+                return;
+            }
         }
 
         if let Err(e) = self.xswd.on_close(state).await {

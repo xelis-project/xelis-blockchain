@@ -17,6 +17,7 @@ use crate::api::{
 };
 
 pub struct Client {
+    target: String,
     sender: mpsc::Sender<InternalMessage>,
 }
 
@@ -36,8 +37,13 @@ impl Client {
         });
 
         Ok(Self {
+            target: target.to_owned(),
             sender,
         })
+    }
+
+    pub fn target(&self) -> &str {
+        &self.target
     }
 
     pub async fn send_message(&self, msg: String) {
