@@ -187,7 +187,7 @@ where
             trace!("tokio spawn blocking");
 
             // If tokio is enabled, we spawn a blocking task
-            return tokio::task::spawn_blocking(f)
+            return task::spawn_blocking(f)
                 .map_err(|e| anyhow::anyhow!("Failed to spawn blocking task: {}", e))
         } else {
             trace!("simulated spawn blocking");
