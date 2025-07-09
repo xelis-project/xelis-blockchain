@@ -623,15 +623,22 @@ impl Wallet {
         Ok(())
     }
 
+    #[cfg(feature = "xswd")]
+    async fn init_xswd_channel(&self) -> Option<UnboundedReceiver<XSWDEvent>> {
+        let mut channel = self.xswd_channel.write().await;
+        if channel.is_some() {
+            return None
+        }
+
+        let (sender, receiver) = unbounded_channel();
+        *channel = Some(sender);
+        Some(receiver)
+    }
+
     // Enable XSWD Protocol
     #[cfg(feature = "api_server")]
-    pub async fn enable_xswd(self: &Arc<Self>) -> Result<UnboundedReceiver<XSWDEvent>, Error> {
-        let receiver = {
-            let (sender, receiver) = unbounded_channel();
-            let mut channel = self.xswd_channel.write().await;
-            *channel = Some(sender);
-            receiver
-        };
+    pub async fn enable_xswd(self: &Arc<Self>) -> Result<Option<UnboundedReceiver<XSWDEvent>>, Error> {
+        let receiver =  self.init_xswd_channel().await;
 
         let mut lock = self.api_server.lock().await;
         if lock.is_some() {
@@ -641,6 +648,7 @@ impl Wallet {
         register_rpc_methods(&mut rpc_handler);
 
         *lock = Some(APIServer::XSWD(XSWDServer::new(rpc_handler)?));
+
         Ok(receiver)
     }
 
@@ -658,7 +666,8 @@ impl Wallet {
     }
 
     #[cfg(feature = "xswd")]
-    pub async fn add_xswd_relayer(self: &Arc<Self>, app_data: ApplicationDataRelayer) -> Result<(), Error> {
+    pub async fn add_xswd_relayer(self: &Arc<Self>, app_data: ApplicationDataRelayer) -> Result<Option<UnboundedReceiver<XSWDEvent>>, Error> {
+        let receiver = self.init_xswd_channel().await;
         let mut xswd = self.xswd_relayer.lock().await;
         if xswd.is_none() {
             let handler = RPCHandler::new(Arc::clone(self));
@@ -669,7 +678,7 @@ impl Wallet {
             xswd.add_application(app_data).await?;
         }
 
-        Ok(())
+        Ok(receiver)
     }
 
     #[cfg(feature = "xswd")]

@@ -323,9 +323,11 @@ async fn apply_config(config: Config, wallet: &Arc<Wallet>, #[cfg(feature = "xsw
         } else if config.enable_xswd {
             match wallet.enable_xswd().await {
                 Ok(receiver) => {
-                    // Only clone when its necessary
-                    let prompt = prompt.clone();
-                    spawn_task("xswd-handler", xswd_handler(receiver, prompt));
+                    if let Some(receiver) = receiver {
+                        // Only clone when its necessary
+                        let prompt = prompt.clone();
+                        spawn_task("xswd-handler", xswd_handler(receiver, prompt));
+                    }
                 },
                 Err(e) => error!("Error while enabling XSWD Server: {}", e)
             };
@@ -515,6 +517,16 @@ async fn setup_wallet_command_manager(wallet: Arc<Wallet>, command_manager: &Com
             "Stop the API (XSWD/RPC) Server",
             CommandHandler::Async(async_handler!(stop_api_server)))
         )?;
+    }
+
+    #[cfg(feature = "xswd")]
+    {
+        command_manager.add_command(Command::with_optional_arguments(
+            "add_xswd_relayer",
+            "Add a XSWD relayer to the wallet",
+            vec![Arg::new("app_data", ArgType::String)],
+            CommandHandler::Async(async_handler!(add_xswd_relayer))
+        ))?;
     }
 
     // Also add multisig commands
@@ -1644,8 +1656,43 @@ async fn start_xswd(manager: &CommandManager, _: ArgumentManager) -> Result<(), 
     let wallet: &Arc<Wallet> = context.get()?;
     match wallet.enable_xswd().await {
         Ok(receiver) => {
-            let prompt = manager.get_prompt().clone();
-            spawn_task("xswd", xswd_handler(receiver, prompt));
+            if let Some(receiver) = receiver {
+                let prompt = manager.get_prompt().clone();
+                spawn_task("xswd", xswd_handler(receiver, prompt));
+            }
+
+            manager.message("XSWD Server has been enabled");
+        },
+        Err(e) => manager.error(format!("Error while enabling XSWD Server: {}", e))
+    };
+
+    Ok(())
+}
+
+
+#[cfg(feature = "xswd")]
+async fn add_xswd_relayer(manager: &CommandManager, mut args: ArgumentManager) -> Result<(), CommandError> {
+    let context = manager.get_context().lock()?;
+    let wallet: &Arc<Wallet> = context.get()?;
+
+    let app_data = if args.has_argument("app_data") {
+        args.get_value("app_data")?.to_string_value()?
+    } else {
+        manager.get_prompt()
+            .read("App data").await
+            .context("Error while reading app data")?
+    };
+
+    let app_data = serde_json::from_str(&app_data)
+        .context("Error while parsing app data as JSON")?;
+
+    match wallet.add_xswd_relayer(app_data).await {
+        Ok(receiver) => {
+            if let Some(receiver) = receiver {
+                let prompt = manager.get_prompt().clone();
+                spawn_task("xswd", xswd_handler(receiver, prompt));
+            }
+
             manager.message("XSWD Server has been enabled");
         },
         Err(e) => manager.error(format!("Error while enabling XSWD Server: {}", e))
