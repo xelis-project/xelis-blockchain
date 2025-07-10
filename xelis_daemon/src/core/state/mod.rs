@@ -87,15 +87,23 @@ pub (super) async fn search_versioned_balance_for_reference<S: DagOrderProvider 
     let reference_block_topo = if storage.is_block_topological_ordered(&reference.hash).await? {
         let topo = storage.get_topo_height_for_hash(&reference.hash).await?;
         if topo == reference.topoheight {
+            trace!("reference topoheight {} is equal to block topoheight {}", reference.topoheight, topo);
             topo
         } else if reference.topoheight < current_topoheight {
+            trace!("reference topoheight {} is lower than current topoheight {}, using current topoheight", reference.topoheight, current_topoheight);
             reference.topoheight
         } else {
+            trace!("reference topoheight {} is higher than current topoheight {}, using current topoheight", reference.topoheight, current_topoheight);
             current_topoheight
         }
     } else if pruned_topoheight.filter(|v| *v > reference.topoheight).is_some() {
+        trace!("reference topoheight {} is below pruned point, using the reference topoheight", reference.topoheight);
+        reference.topoheight
+    } else if reference.topoheight < current_topoheight {
+        trace!("reference topoheight {} is below current topoheight {}, using reference topoheight", reference.topoheight, current_topoheight);
         reference.topoheight
     } else {
+        trace!("using current topoheight {} as reference", current_topoheight);
         current_topoheight
     };
 
@@ -124,18 +132,25 @@ pub (super) async fn search_versioned_balance_for_reference<S: DagOrderProvider 
             debug!("Scenario B: topo {} < reference {} or reference block topo {}", topo, reference.topoheight, reference_block_topo);
 
             version = storage.get_balance_at_maximum_topoheight(key, asset, topo.max(reference_block_topo)).await?
-                .map(|(_, v)| v);
+            .map(|(topo, v)| {
+                trace!("Found balance at topoheight {}", topo);
+                v
+            });
         } else {
             debug!("Scenario A (bis)");
             version = Some(v);
         }
     } else {
-        trace!("No output balance found (Scenario B)");
+        trace!("No output balance found (Scenario B), looking with topo {}", reference_block_topo);
         version = storage.get_balance_at_maximum_topoheight(key, asset, reference_block_topo).await?
-            .map(|(_, v)| v);
+            .map(|(topo, v)| {
+                trace!("Found balance at topoheight {}", topo);
+                v
+            });
     }
 
     let (new_version, version) = if let Some(version) = version {
+        trace!("Balance: {}", version);
         (false, version)
     } else {
         // Scenario A
