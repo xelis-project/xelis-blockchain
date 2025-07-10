@@ -279,7 +279,7 @@ impl Default for VersionedBalance {
 
 impl Display for VersionedBalance {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Balance[{}, previous: {:?}", self.final_balance, self.previous_topoheight)
+        write!(f, "Balance[{}, previous: {:?}]", self.final_balance, self.previous_topoheight)
     }
 }
 
