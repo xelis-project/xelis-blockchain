@@ -297,11 +297,9 @@ pub struct P2pConfig {
     #[clap(name = "p2p-fail-count-limit", long, default_value_t = default_p2p_fail_count_limit())]
     #[serde(default = "default_p2p_fail_count_limit")]
     pub fail_count_limit: u8,
-    /// Force the P2P to re-execute an orphaned block during chain sync.
-    /// If set to true, the P2P server will remove the block from storage
-    /// and re-add it to the chain.
-    /// This may be useful in case of an issue while syncing
-    /// NOTE: In versions 1.17 and below, this was the default behavior.
+    /// Disable the P2P to re-execute an orphaned block during chain sync.
+    /// If set to true, the P2P server will stop removing the block from storage
+    /// and prevent to re-execute it by re-adding it to the chain.
     #[clap(name = "p2p-disable-reexecute-blocks-on-sync", long)]
     #[serde(default)]
     pub disable_reexecute_blocks_on_sync: bool,
