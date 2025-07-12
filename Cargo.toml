@@ -8,10 +8,6 @@ members = [
     "xelis_daemon"
 ]
 
-# TODO: temporary until https://github.com/eira-fransham/crunchy/issues/15 is merged
-[patch.crates-io]
-crunchy = { git = "https://github.com/xelis-project/crunchy", branch = "master" }
-
 [workspace.dependencies]
 metrics = "0.24.2"
 anyhow = "1"
