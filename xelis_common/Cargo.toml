@@ -27,8 +27,6 @@ actix-ws = { version = "0.3.0", optional = true }
 zip = { version = "4", features = ["zstd"], default-features = false, optional = true }
 pin-project-lite = { version = "0.2.16", optional = true }
 console-subscriber = { version = "0.4.1", optional = true }
-# TODO: remove once fixed https://github.com/cross-rs/cross/issues/1689
-aws-lc-rs = { version = "*", features = ["bindgen"] }
 
 # WebSocket support
 tokio-tungstenite-wasm = { workspace = true, optional = true }
@@ -62,6 +60,10 @@ primitive-types = { version = "0.13.1", features = ["serde"] }
 chacha20 = "0.9.1"
 better_any = "0.2.0"
 log-panics = { version = "2", features = ["with-backtrace"]}
+
+[target.'cfg(not(windows))'.dependencies]
+# TODO: remove once fixed https://github.com/cross-rs/cross/issues/1689
+aws-lc-rs = { version = "*", features = ["bindgen"] }
 
 [target.'cfg(windows)'.dependencies]
 win32console = "0.1.5"
