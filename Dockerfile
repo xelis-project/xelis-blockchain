@@ -2,7 +2,7 @@ FROM lukemathwalker/cargo-chef:0.1.71-rust-1.86-slim-bookworm AS chef
 
 ENV BUILD_DIR=/tmp/xelis-build
 
-RUN apt-get update && apt-get install -y clang
+RUN apt-get update && apt-get install -y clang cmake libclang-dev
 RUN mkdir -p $BUILD_DIR
 WORKDIR $BUILD_DIR
 
