@@ -6,9 +6,17 @@ image = "ghcr.io/cross-rs/aarch64-unknown-linux-gnu:main"
 
 [target.x86_64-unknown-linux-gnu]
 image = "ghcr.io/cross-rs/x86_64-unknown-linux-gnu:main"
+pre-build = [
+    "apt-get update",
+    "apt-get install -y clang-10 libclang-10-dev"
+]
 
 [target.x86_64-pc-windows-gnu]
 image = "ghcr.io/cross-rs/x86_64-pc-windows-gnu:main"
 pre-build = [
-    "apt-get install -y gcc-mingw-w64-x86-64"
+    "apt-get update",
+    "apt-get install -y clang nasm mingw-w64 mingw-w64-x86-64-dev zlib1g-dev liblz4-dev libzstd-dev libsnappy-dev"
 ]
+
+[target.x86_64-pc-windows-gnu.env]
+passthrough = ["BINDGEN_EXTRA_CLANG_ARGS", "BINDGEN_EXTRA_CLANG_ARGS='--target=x86_64-w64-mingw32 -I/usr/x86_64-w64-mingw32/include'"]
