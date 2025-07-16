@@ -180,7 +180,7 @@ impl RocksStorage {
                 block_opts.set_block_cache(&cache);
             },
             CacheMode::HyperClock => {
-                let cache = Cache::new_lru_cache(config.cache_size as _);
+                let cache = Cache::new_hyper_clock_cache(config.cache_size as _, 1024);
                 block_opts.set_block_cache(&cache);
             }
         };
