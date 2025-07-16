@@ -6,9 +6,24 @@ image = "ghcr.io/cross-rs/aarch64-unknown-linux-gnu:main"
 
 [target.x86_64-unknown-linux-gnu]
 image = "ghcr.io/cross-rs/x86_64-unknown-linux-gnu:main"
+# Use clang instead of GCC / G++
+# See more about the bug: https://gcc.gnu.org/bugzilla/show_bug.cgi?id=95189
 pre-build = [
     "apt-get update",
-    "apt-get install -y clang-12 libclang-12-dev"
+    "DEBIAN_FRONTEND=noninteractive apt-get install -y wget gnupg software-properties-common",
+    "wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key | gpg --dearmor -o /usr/share/keyrings/llvm.gpg",
+    "echo \"deb [signed-by=/usr/share/keyrings/llvm.gpg] http://apt.llvm.org/bookworm/ llvm-toolchain-bookworm main\" > /etc/apt/sources.list.d/llvm.list",
+    "apt-get update",
+    "apt-get install -y clang-18 libclang-18-dev",
+    "update-alternatives --install /usr/bin/clang clang /usr/bin/clang-18 100",
+    "update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-18 100",
+]
+
+[target.x86_64-unknown-linux-gnu.env]
+passthrough = [
+    "CC=clang",
+    "CXX=clang++",
+    "AWS_LC_SYS_CC=clang",
 ]
 
 [target.x86_64-pc-windows-gnu]
