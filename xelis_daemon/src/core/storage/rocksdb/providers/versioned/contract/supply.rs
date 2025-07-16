@@ -31,11 +31,7 @@ impl VersionedAssetsSupplyProvider for RocksStorage {
             let mut asset = self.get_asset_type(&asset_hash)?;
 
             if asset.supply_pointer.is_none_or(|pointer| pointer >= topoheight) {
-                if let Some(prev_topo) = prev_topo {
-                    asset.supply_pointer = Some(prev_topo);
-                } else {
-                    asset.supply_pointer = None;
-                }
+                asset.supply_pointer = prev_topo;
 
                 Self::insert_into_disk_internal(&self.db, self.snapshot.as_mut(), Column::Assets, &asset_hash, &asset)?;
             }

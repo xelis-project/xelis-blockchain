@@ -38,11 +38,7 @@ impl VersionedNonceProvider for RocksStorage {
             let mut account = self.get_account_type(&account_key)?;
 
             if account.nonce_pointer.is_some_and(|pointer| pointer >= topoheight) {
-                if let Some(prev_topo) = prev_topo {
-                    account.nonce_pointer = Some(prev_topo);
-                } else {
-                    account.nonce_pointer = None;
-                }
+                account.nonce_pointer = prev_topo;
 
                 trace!("updating account {} with nonce set to {:?}", account_key.as_address(self.is_mainnet()), account.nonce_pointer);
                 Self::insert_into_disk_internal(&self.db, self.snapshot.as_mut(), Column::Account, account_key.as_bytes(), &account)?;
