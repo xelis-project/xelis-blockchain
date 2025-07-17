@@ -1738,7 +1738,7 @@ impl<S: Storage> P2pServer<S> {
         let peer_peers = {
             let lock = peer.get_peers().lock().await;
             lock.iter()
-                .map(|(addr, _)| addr.clone())
+                .map(|(addr, direction)| (*addr, *direction))
                 .collect::<Vec<_>>()
         };
         trace!("locked peers received (common peers)");
@@ -1746,7 +1746,12 @@ impl<S: Storage> P2pServer<S> {
         let peer_id = peer.get_id();
         let peer_list = &self.peer_list;
         stream::iter(peer_peers)
-            .filter_map(move |addr| async move {
+            .filter_map(move |(addr, direction)| async move {
+                // If we never received it from the peer, its not a common peer
+                if !direction.is_in() {
+                    return None
+                }
+
                 peer_list.get_peer_by_addr(&addr).await
                     .filter(|peer| peer.get_id() != peer_id)
             })
