@@ -1748,7 +1748,7 @@ impl<S: Storage> P2pServer<S> {
         stream::iter(peer_peers)
             .filter_map(move |(addr, direction)| async move {
                 // If we never received it from the peer, its not a common peer
-                if !direction.is_in() {
+                if !direction.contains_in() {
                     return None
                 }
 
