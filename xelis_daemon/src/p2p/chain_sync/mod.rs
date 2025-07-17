@@ -7,7 +7,7 @@ use std::{
     time::{Duration, Instant}
 };
 use futures::{
-    stream::FuturesOrdered,
+    stream::{self, FuturesOrdered},
     StreamExt,
     TryStreamExt
 };
@@ -655,25 +655,23 @@ impl<S: Storage> P2pServer<S> {
             }
         }
 
-        let peer_topoheight = peer.get_topoheight();
         // ask inventory of this peer if we sync from too far
         // if we are not further than one sync, request the inventory
-        if
-            blocks_len < requested_max_size
-            && peer_topoheight > our_previous_topoheight
-            && peer_topoheight - our_previous_topoheight > STABLE_LIMIT
-        {
+        if blocks_len > 0 && blocks_len < requested_max_size {
             let our_topoheight = self.blockchain.get_topo_height();
 
-            for peer in self.peer_list.get_cloned_peers().await {
-                let peer_topoheight = peer.get_topoheight();
-                // verify that we synced it partially well
-                if peer_topoheight >= our_topoheight && peer_topoheight - our_topoheight < STABLE_LIMIT {
-                    if let Err(e) = self.request_inventory_of(&peer).await {
-                        error!("Error while asking inventory to {}: {}", peer, e);
+            stream::iter(self.peer_list.get_cloned_peers().await)
+                .for_each_concurrent(None, |peer| async move {
+                    let peer_topoheight = peer.get_topoheight();
+                    // verify that we synced it partially well
+                    if peer_topoheight >= our_topoheight && peer_topoheight - our_topoheight < STABLE_LIMIT {
+                        if let Err(e) = self.request_inventory_of(&peer).await {
+                            error!("Error while asking inventory to {}: {}", peer, e);
+                        }
+                    } else {
+                        debug!("Skipping inventory request for {} because its topoheight {} is not in range of our topoheight {}", peer, peer_topoheight, our_topoheight);
                     }
-                }
-            }
+                }).await;
         }
 
         Ok(())
