@@ -169,15 +169,16 @@ impl Serializer for ApplicationData {
 
 pub type EncryptionKey = [u8; 32];
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Clone)]
+#[serde(tag = "mode")]
 pub enum EncryptionMode {
-    // No encryption, just transfer the data as is (discouraged)
-    None,
     // Encrypt the data using AES-GCM
+    #[serde(rename = "aes")]
     AES {
         key: EncryptionKey
     },
     // Encrypt the data using ChaCha20Poly1305 AEAD cipher
+    #[serde(rename = "chacha20poly1305")]
     Chacha20Poly1305 {
         key: EncryptionKey
     }
@@ -187,54 +188,56 @@ impl Serializer for EncryptionMode {
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
         let mode = reader.read_u8()?;
         match mode {
-            0 => Ok(Self::None),
-            1 => Ok(Self::AES { key: reader.read_bytes(32)? }),
-            2 => Ok(Self::Chacha20Poly1305 { key: reader.read_bytes(32)? }),
+            0 => Ok(Self::AES { key: reader.read_bytes(32)? }),
+            1 => Ok(Self::Chacha20Poly1305 { key: reader.read_bytes(32)? }),
             _ => Err(ReaderError::InvalidValue)
         }
     }
 
     fn write(&self, writer: &mut Writer) {
         match self {
-            Self::None => writer.write_u8(0),
             Self::AES { key } => {
-                writer.write_u8(1);
+                writer.write_u8(0);
                 key.write(writer);
             }
             Self::Chacha20Poly1305 { key } => {
-                writer.write_u8(2);
+                writer.write_u8(1);
                 key.write(writer);
             }
         }
+    }
+
+    fn size(&self) -> usize {
+        1 + 32 // 1 byte for mode + 32 bytes for key
     }
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ApplicationDataRelayer {
     // Actual application data
-    pub inner: ApplicationData,
+    pub app_data: ApplicationData,
     // Relayer URL where we should connect
     // to communicate with the application
     pub relayer: String,
     // Encryption mode to use for the relayer
-    pub encryption_mode: EncryptionMode,
+    pub encryption_mode: Option<EncryptionMode>,
 }
 
 impl Serializer for ApplicationDataRelayer {
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let inner = ApplicationData::read(reader)?;
+        let app_data = ApplicationData::read(reader)?;
         let n = reader.read_u16()?;
         let relayer = reader.read_string_with_size(n as _)?;
-        let encryption_mode = EncryptionMode::read(reader)?;
+        let encryption_mode = Option::read(reader)?;
         Ok(Self {
-            inner,
+            app_data,
             relayer,
             encryption_mode
         })
     }
 
     fn write(&self, writer: &mut Writer) {
-        self.inner.write(writer);
+        self.app_data.write(writer);
 
         let bytes = self.relayer.as_bytes();
         writer.write_u16(bytes.len() as u16);
@@ -280,5 +283,20 @@ impl PermissionResult {
             Self::Accept | Self::AlwaysAccept => true,
             _ => false
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_encryption_mode_serialization() {
+        let aes_mode = EncryptionMode::AES {
+            key: [0; 32]
+        };
+        let serialized = serde_json::to_string(&aes_mode).unwrap();
+        let deserialized: EncryptionMode = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(aes_mode, deserialized);
     }
 }

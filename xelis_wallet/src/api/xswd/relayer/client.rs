@@ -32,7 +32,7 @@ pub struct Client {
 }
 
 impl Client {
-    pub async fn new<W>(target: String, relayer: XSWDRelayerShared<W>, encryption_mode: EncryptionMode, state: AppStateShared) -> Result<Self, anyhow::Error>
+    pub async fn new<W>(target: String, relayer: XSWDRelayerShared<W>, encryption_mode: Option<EncryptionMode>, state: AppStateShared) -> Result<Self, anyhow::Error>
     where
         W: Clone + Send + Sync + XSWDHandler + 'static
     {

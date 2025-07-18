@@ -93,9 +93,9 @@ where
 
     pub async fn add_application(self: &XSWDRelayerShared<W>, app_data: ApplicationDataRelayer) -> Result<(), anyhow::Error> {
         // Sanity check
-        self.xswd.verify_application(self.as_ref(), &app_data.inner).await?;
+        self.xswd.verify_application(self.as_ref(), &app_data.app_data).await?;
 
-        let state = Arc::new(AppState::new(app_data.inner));
+        let state = Arc::new(AppState::new(app_data.app_data));
         let client = Client::new(app_data.relayer, Arc::clone(self), app_data.encryption_mode, state.clone()).await?;
 
         {
