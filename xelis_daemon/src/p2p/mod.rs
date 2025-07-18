@@ -844,12 +844,6 @@ impl<S: Storage> P2pServer<S> {
 
                 let peer_topoheight = p.get_topoheight();
                 if fast_sync {
-                    // Fast sync with nodes that are >=1.17.0 only
-                    if !hard_fork::is_version_matching_requirement(p.get_version(), "1.17.0").unwrap_or(false) {
-                        trace!("{} is not matching the version requirement (1.17.0), skipping...", p);
-                        return None;
-                    }
-
                     // if we want to fast sync, but this peer is not compatible, we skip it
                     // for this we check that the peer topoheight is not less than the prune safety limit
                     if peer_topoheight < PRUNE_SAFETY_LIMIT || our_topoheight + PRUNE_SAFETY_LIMIT > peer_topoheight {
