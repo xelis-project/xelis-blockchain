@@ -152,9 +152,9 @@ pub enum EncryptionMode {
         key: EncryptionKey
     },
     // Encrypt the data using ChaCha20Poly1305 AEAD cipher
-    // Chacha20Poly1305 {
-    //     key: EncryptionKey
-    // }
+    Chacha20Poly1305 {
+        key: EncryptionKey
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug)]
