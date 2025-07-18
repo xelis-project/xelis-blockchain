@@ -1,4 +1,6 @@
 use std::net::SocketAddr;
+use log::warn;
+
 use crate::{
     config::{
         COIN_DECIMALS,
@@ -10,6 +12,22 @@ use crate::{
     difficulty::Difficulty,
     varuint::VarUint
 };
+
+/// Static assert macro to check conditions at compile time
+/// Usage: `static_assert!(condition);` or `static_assert!(condition, "Error message");`
+#[macro_export]
+macro_rules! static_assert {
+    ($cond:expr $(,)?) => {
+        const _: () = {
+            assert!($cond);
+        };
+    };
+    ($cond:expr, $($arg:tt)+) => {
+        const _: () = {
+            assert!($cond, $($arg)+);
+        };
+    };
+}
 
 #[macro_export]
 macro_rules! async_handler {
@@ -63,6 +81,19 @@ pub fn from_coin(value: impl Into<String>, coin_decimals: u8) -> Option<u64> {
         Some(value)
     }
 }
+
+// Detect the available parallelism
+// Default to 1 on error
+pub fn detect_available_parallelism() -> usize {
+    match std::thread::available_parallelism() {
+        Ok(n) => n.get(),
+        Err(e) => {
+            warn!("Error while detecting parallelism, default to 1: {}", e);
+            1
+        }
+    }
+}
+
 
 // return the fee for a transaction based on its size in bytes
 // the fee is calculated in atomic units for XEL
@@ -120,9 +151,9 @@ pub fn format_difficulty(mut difficulty: Difficulty) -> String {
     return format!("{}{}{}", difficulty, left_str, DIFFICULTY_FORMATS[count]);
 }
 
-// Sanitize a daemon address to make sure it's a valid websocket address
+// Sanitize a ws address to make sure it's a valid websocket address
 // By default, will use ws:// if no protocol is specified
-pub fn sanitize_daemon_address(target: &str) -> String {
+pub fn sanitize_ws_address(target: &str) -> String {
     let mut target = target.to_lowercase();
     if target.starts_with("https://") {
         target.replace_range(..8, "wss://");
@@ -213,6 +244,9 @@ mod tests {
     fn test_high_difficulty() {
         let value: Difficulty = 1150_000_000u64.into();
         assert_eq!(format_difficulty(value), "1.15G");
+
+        let max: Difficulty = u64::MAX.into();
+        assert_eq!(format_difficulty(max), "18.44E");
     }
 
     #[test]

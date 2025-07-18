@@ -1,4 +1,8 @@
-use crate::config::{PEER_TIMEOUT_DISCONNECT, PEER_TIMEOUT_INIT_CONNECTION, PEER_SEND_BYTES_TIMEOUT};
+use crate::config::{
+    PEER_TIMEOUT_DISCONNECT,
+    PEER_TIMEOUT_INIT_CONNECTION,
+    PEER_SEND_BYTES_TIMEOUT
+};
 use super::{
     diffie_hellman,
     encryption::{Encryption, CipherSide},
@@ -18,18 +22,20 @@ use std::{
     },
     time::Duration
 };
+use chacha20poly1305::aead::Buffer;
 use human_bytes::human_bytes;
 use humantime::format_duration;
-use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
-    net::{
-        tcp::{OwnedReadHalf, OwnedWriteHalf},
-        TcpStream
-    },
-    sync::Mutex,
-    time::timeout
-};
+use metrics::counter;
 use xelis_common::{
+    tokio::{
+        io::{AsyncReadExt, AsyncWriteExt},
+        net::{
+            tcp::{OwnedReadHalf, OwnedWriteHalf},
+            TcpStream
+        },
+        sync::Mutex,
+        time::timeout
+    },
     time::{TimestampSeconds, get_current_time_in_seconds},
     serializer::{Reader, Serializer},
 };
@@ -111,8 +117,8 @@ impl Connection {
         // Send our key if we initiated the connection
         if self.is_out() {
             trace!("Sending our key to {}", self.addr);
-            let packet = self.rotate_key_packet().await?;
-            self.send_bytes(&packet).await?;
+            let mut packet = self.rotate_key_packet().await?;
+            self.send_bytes(&mut packet).await?;
             self.encryption.mark_ready();
         }
 
@@ -132,8 +138,8 @@ impl Connection {
         // Send back our key if we are the server
         if !self.is_out() {
             trace!("Replying with our key to {}", self.addr);
-            let packet = self.rotate_key_packet().await?;
-            self.send_bytes(&packet).await?;
+            let mut packet = self.rotate_key_packet().await?;
+            self.send_bytes(&mut packet).await?;
             self.encryption.mark_ready();
         }
 
@@ -165,7 +171,9 @@ impl Connection {
             trace!("Sending our DH key to {}", self.addr);
             let pk_bytes = keypair.get_public_key().as_bytes();
             let packet = Packet::KeyExchange(Cow::Borrowed(pk_bytes));
-            self.send_bytes(&packet.to_bytes()).await?;
+
+            let mut buffer = packet.to_bytes();
+            self.send_bytes(&mut buffer).await?;
         }
 
         // Wait for the peer to receive its key
@@ -206,8 +214,8 @@ impl Connection {
         {
             trace!("Sending our encryption key to {}", self.addr);
             self.encryption.rotate_key(secret, CipherSide::Both).await?;
-            let packet = self.rotate_key_packet().await?;
-            self.send_bytes(&packet).await?;
+            let mut packet = self.rotate_key_packet().await?;
+            self.send_bytes(&mut packet).await?;
         }
 
         // Mark the encryption as ready because we have shared our key
@@ -242,7 +250,7 @@ impl Connection {
     async fn rotate_key_packet(&self) -> P2pResult<Vec<u8>> {
         trace!("rotating our encryption key for peer {}", self.get_address());
         // Generate a new key to use
-        let new_key = self.encryption.generate_key();
+        let new_key = self.encryption.generate_key()?;
         self.generate_rotate_key_packet(new_key).await
     }
 
@@ -253,7 +261,7 @@ impl Connection {
 
         if self.encryption.is_write_ready().await {
             // Encrypt with the our previous key our new key
-            packet = self.encryption.encrypt_packet(&packet).await?;
+            self.encryption.encrypt_packet(&mut packet).await?;
         }
 
         // Rotate the key in our encryption state
@@ -261,6 +269,7 @@ impl Connection {
 
         // Increment the key rotation counter
         self.rotate_key_out.fetch_add(1, Ordering::Relaxed);
+        counter!("xelis_p2p_rotate_key_total").increment(1);
 
         // Reset the counter
         self.bytes_encrypted.store(0, Ordering::Relaxed);
@@ -286,6 +295,7 @@ impl Connection {
     // Otherwise, we can't know how much bytes to read for each ciphertext/packet
     async fn send_packet_bytes_internal(&self, stream: &mut OwnedWriteHalf, packet: &[u8]) -> P2pResult<()> {
         let packet_len = packet.len() as u32;
+        counter!("xelis_p2p_bytes_out_total").increment(packet_len as u64);
         stream.write_all(&packet_len.to_be_bytes()).await?;
         stream.write_all(packet).await?;
 
@@ -294,7 +304,7 @@ impl Connection {
 
     // Send bytes to the tcp stream with a timeout
     // if an error occurs, the connection is closed
-    pub async fn send_bytes(&self, packet: &[u8]) -> P2pResult<()> {
+    pub async fn send_bytes(&self, packet: &mut impl Buffer) -> P2pResult<()> {
         match timeout(Duration::from_millis(PEER_SEND_BYTES_TIMEOUT), self.send_bytes_internal(packet)).await {
             Ok(Ok(())) => Ok(()),
             Ok(Err(e)) => {
@@ -312,7 +322,7 @@ impl Connection {
 
     // Send bytes to the peer
     // Encrypt must be used all time starting handshake
-    async fn send_bytes_internal(&self, packet: &[u8]) -> P2pResult<()> {
+    async fn send_bytes_internal(&self, packet: &mut impl Buffer) -> P2pResult<()> {
         trace!("Sending {} bytes to {}", packet.len(), self.get_address());
         let mut stream = self.write.lock().await;
 
@@ -321,9 +331,9 @@ impl Connection {
 
         // We check if the encryption is enabled to manage it ourself here
         if self.encryption.is_ready() {
-            let buffer = self.encryption.encrypt_packet(packet).await?;
+            self.encryption.encrypt_packet(packet).await?;
             // Send the bytes in encrypted format
-            self.send_packet_bytes_internal(&mut stream, &buffer).await?;
+            self.send_packet_bytes_internal(&mut stream, packet.as_ref()).await?;
 
             // Count the bytes sent with the current key
             let sum = self.bytes_encrypted.fetch_add(packet.len(), Ordering::Relaxed) + packet.len();
@@ -338,7 +348,7 @@ impl Connection {
             }
         } else {
             // Send the bytes in raw format
-            self.send_packet_bytes_internal(&mut stream, &packet).await?;
+            self.send_packet_bytes_internal(&mut stream, packet.as_ref()).await?;
         }
 
         // Flush the stream
@@ -359,8 +369,7 @@ impl Connection {
         }
         trace!("Size received: {}", size);
 
-        let bytes = self.read_all_bytes(&mut stream, buf, size).await?;
-        Ok(bytes)
+        self.read_all_bytes(&mut stream, buf, size as usize).await
     }
 
     // Deserialize a packet from bytes and verify its integrity
@@ -371,6 +380,7 @@ impl Connection {
             debug!("read {:?} only {}/{} on bytes available from {}", packet, reader.total_read(), bytes.len(), self);
             return Err(P2pError::InvalidPacketNotFullRead)
         }
+
         Ok(packet)
     }
 
@@ -407,27 +417,29 @@ impl Connection {
 
     // Read all bytes until the the buffer is full with the requested size
     // This support fragmented packets and encryption
-    async fn read_all_bytes(&self, stream: &mut OwnedReadHalf, buf: &mut [u8], mut left: u32) -> P2pResult<Vec<u8>> {
-        let buf_size = buf.len() as u32;
-        let mut bytes = Vec::new();
+    async fn read_all_bytes(&self, stream: &mut OwnedReadHalf, buf: &mut [u8], mut left: usize) -> P2pResult<Vec<u8>> {
+        let buf_size = buf.len();
+        // Allocate a vector to store the bytes read
+        let mut bytes = Vec::with_capacity(left);
         while left > 0 {
             let max = if buf_size > left {
-                left as usize
+                left
             } else {
-                buf_size as usize
+                buf_size
             };
             let read = self.read_bytes_from_stream(stream, &mut buf[0..max]).await?;
-            left -= read as u32;
+            left -= read;
             bytes.extend(&buf[0..read]);
         }
 
+        counter!("xelis_p2p_bytes_in_total").increment(bytes.len() as u64);
+
         // If encryption is supported, use it
         if self.encryption.is_read_ready().await {
-            let content = self.encryption.decrypt_packet(&bytes).await?;
-            Ok(content)
-        } else {
-            Ok(bytes)
+            self.encryption.decrypt_packet(&mut bytes).await?;
         }
+
+        Ok(bytes)
     }
 
     // this function will wait until something is sent to the socket if it's in blocking mode

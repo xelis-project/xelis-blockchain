@@ -1,5 +1,20 @@
 #[cfg(feature = "tokio")]
+mod scheduler;
+
+#[cfg(feature = "tokio")]
+pub use scheduler::Scheduler;
+
+#[cfg(feature = "tokio")]
+mod executor;
+
+#[cfg(feature = "tokio")]
+pub use executor::Executor;
+
+#[cfg(feature = "tokio")]
 mod thread_pool;
+
+#[cfg(feature = "tokio")]
+pub mod sync;
 
 use std::future::Future;
 use cfg_if::cfg_if;
@@ -157,6 +172,34 @@ pub fn try_block_on<F: Future>(_future: F) -> Result<F::Output, anyhow::Error> {
     }
 }
 
+/// Spawn a blocking task that can be awaited
+/// This function is safe to use in both single-threaded and multi-threaded contexts.
+/// It will use the Tokio runtime if available, or fallback to a direct thread spawn and block
+pub fn spawn_blocking_safe<F, R>(f: F) -> impl Future<Output = Result<R, anyhow::Error>>
+where
+    F: FnOnce() -> R + Send + 'static,
+    R: Send + 'static,
+{
+    cfg_if! {
+        if #[cfg(feature = "tokio")] {
+            use futures::TryFutureExt;
+
+            trace!("tokio spawn blocking");
+
+            // If tokio is enabled, we spawn a blocking task
+            return task::spawn_blocking(f)
+                .map_err(|e| anyhow::anyhow!("Failed to spawn blocking task: {}", e))
+        } else {
+            trace!("simulated spawn blocking");
+            return async move {
+                // We can use the block_in_place_safe function to ensure we are blocking correctly
+                let res = block_in_place_safe(f);
+                Ok(res)
+            }
+        }
+    }
+}
+
 // Block in place if multi thread is supported
 // Otherwise, fallback by calling ourself the function
 // In a single threaded runtime, we would block the executor
@@ -194,9 +237,17 @@ where
     F: FnOnce() -> R,
 {
     trace!("tokio block in place internal");
+    let old = is_in_block_in_place();
     set_in_block_in_place(true);
-    let res = tokio::task::block_in_place(f);
-    set_in_block_in_place(false);
+    let res;
+    cfg_if! {
+        if #[cfg(feature = "tokio-multi-thread")] {
+            res = tokio::task::block_in_place(f);
+        } else {
+            res = f();
+        }
+    };
+    set_in_block_in_place(old);
 
     res
 }

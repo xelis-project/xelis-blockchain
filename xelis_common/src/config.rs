@@ -1,4 +1,8 @@
-use crate::{contract::register_opaque_types, crypto::Hash};
+use crate::{
+    contract::register_opaque_types,
+    crypto::Hash,
+    static_assert
+};
 
 pub const VERSION: &str = env!("BUILD_VERSION");
 pub const XELIS_ASSET: Hash = Hash::zero();
@@ -87,3 +91,8 @@ pub fn init() {
     // register the opaque types
     register_opaque_types();
 }
+
+
+// Static checks
+static_assert!(MAX_TRANSACTION_SIZE <= MAX_BLOCK_SIZE, "Max transaction size must be less than or equal to max block size");
+static_assert!(MAXIMUM_SUPPLY >= COIN_VALUE, "Maximum supply must be greater than or equal to coin value");

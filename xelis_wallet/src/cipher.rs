@@ -1,8 +1,6 @@
-use anyhow::Result;
 use chacha20poly1305::{
     aead::Aead,
     XNonce,
-    aead::OsRng,
     XChaCha20Poly1305,
     AeadCore,
     KeyInit
@@ -23,9 +21,9 @@ pub struct Cipher {
 impl Cipher {
     pub const NONCE_SIZE: usize = 24;
 
-    pub fn new(key: &[u8], salt: Option<[u8; SALT_SIZE]>) -> Result<Self> {
+    pub fn new(key: &[u8], salt: Option<[u8; SALT_SIZE]>) -> Result<Self, WalletError> {
         Ok(Self {
-            cipher: XChaCha20Poly1305::new_from_slice(key)?,
+            cipher: XChaCha20Poly1305::new_from_slice(key).map_err(|_| WalletError::Cipher)?,
             salt
         })
     }
@@ -34,7 +32,9 @@ impl Cipher {
     // a Nonce is generated randomly at each call
     pub fn encrypt_value(&self, value: &[u8]) -> Result<Vec<u8>, WalletError> {
         // generate unique random nonce
-        let nonce = XChaCha20Poly1305::generate_nonce(&mut OsRng);
+        let nonce = XChaCha20Poly1305::generate_nonce()
+            .map_err(|_| WalletError::NonceGeneration)?;
+
         self.encrypt_value_with_nonce(value, &nonce.into())
     }
 
@@ -48,7 +48,8 @@ impl Cipher {
         plaintext.extend_from_slice(value);
 
         // encrypt data using plaintext and nonce
-        let data = &self.cipher.encrypt(nonce.into(), plaintext.as_slice()).map_err(|e| WalletError::CryptoError(e))?;
+        let data = &self.cipher.encrypt(nonce.into(), plaintext.as_slice())
+            .map_err(|e| WalletError::CryptoError(e))?;
 
         // append unique nonce to the encrypted data
         let mut encrypted = Vec::with_capacity(Self::NONCE_SIZE + data.len());
@@ -59,16 +60,18 @@ impl Cipher {
     }
 
     // decrypt any value loaded from disk, with the format of above function
-    pub fn decrypt_value(&self, encrypted: &[u8]) -> Result<Vec<u8>> {
+    pub fn decrypt_value(&self, encrypted: &[u8]) -> Result<Vec<u8>, WalletError> {
         // nonce is 24 bytes and is mandatory in encrypted slice
         if encrypted.len() < 25 {
             return Err(WalletError::InvalidEncryptedValue.into())
         }
 
         // read the nonce for this data 
-        let nonce = XNonce::from_slice(&encrypted[0..24]);
+        let nonce = XNonce::try_from(&encrypted[0..24])
+            .map_err(|_| WalletError::NonceGeneration)?;
+
         // decrypt the value using the nonce previously decoded
-        let mut decrypted = self.cipher.decrypt(nonce, &encrypted[nonce.len()..]).map_err(|e| WalletError::CryptoError(e))?;
+        let mut decrypted = self.cipher.decrypt(&nonce, &encrypted[nonce.len()..]).map_err(|e| WalletError::CryptoError(e))?;
         // delete the salt from the decrypted slice
         if let Some(salt) = &self.salt {
             decrypted.drain(0..salt.len());

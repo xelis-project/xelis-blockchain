@@ -114,7 +114,6 @@ fn find_indices(words: &[&str]) -> Result<Option<(Vec<usize>, usize)>, Mnemonics
         let mut indices = Vec::new();
         for word in words.iter() {
             if let Some(index) = language.get_words().iter().position(|v| v.eq_ignore_ascii_case(word)) {
-                println!("{}: {}", word, index);
                 indices.push(index);
             } else {
                 // incorrect language for this word, try the next one

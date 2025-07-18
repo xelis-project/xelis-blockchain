@@ -1,26 +1,29 @@
 mod providers;
-mod sled;
 mod cache;
 
+pub mod sled;
+pub mod rocksdb;
+
 pub use self::{
-    sled::*,
-    providers::*
+    providers::*,
+    sled::SledStorage,
+    rocksdb::RocksStorage,
 };
 
-use std::{collections::HashSet, sync::Arc};
+use std::collections::HashSet;
 use async_trait::async_trait;
-use indexmap::IndexSet;
+use log::{debug, trace, warn};
 use xelis_common::{
     block::{
-        Block,
         BlockHeader,
         TopoHeight,
     },
     contract::ContractProvider as ContractInfoProvider,
     crypto::Hash,
-    transaction::Transaction,
+    immutable::Immutable,
+    transaction::Transaction
 };
-use crate::core::error::BlockchainError;
+use crate::{config::PRUNE_SAFETY_LIMIT, core::error::BlockchainError};
 
 // Represents the tips of the chain or of a block
 pub type Tips = HashSet<Hash>;
@@ -32,49 +35,139 @@ pub trait Storage:
     + MerkleHashProvider + NetworkProvider + MultiSigProvider + TipsProvider
     + CommitPointProvider + ContractProvider + ContractDataProvider + ContractOutputsProvider
     + ContractInfoProvider + ContractBalanceProvider + VersionedProvider + SupplyProvider
-    + CacheProvider
+    + CacheProvider + StateProvider
     + Sync + Send + 'static {
     // delete block at topoheight, and all pointers (hash_at_topo, topo_by_hash, reward, supply, diff, cumulative diff...)
-    async fn delete_block_at_topoheight(&mut self, topoheight: TopoHeight) -> Result<(Hash, Arc<BlockHeader>, Vec<(Hash, Arc<Transaction>)>), BlockchainError>;
+    async fn delete_block_at_topoheight(&mut self, topoheight: TopoHeight) -> Result<(Hash, Immutable<BlockHeader>, Vec<(Hash, Immutable<Transaction>)>), BlockchainError>;
 
     // Count is the number of blocks (topoheight) to rewind
-    async fn pop_blocks(&mut self, mut height: u64, mut topoheight: TopoHeight, count: u64, stable_height: u64) -> Result<(u64, TopoHeight, Vec<(Hash, Arc<Transaction>)>), BlockchainError>;
+    async fn pop_blocks(&mut self, mut height: u64, mut topoheight: TopoHeight, count: u64, until_topo_height: TopoHeight) -> Result<(u64, TopoHeight, Vec<(Hash, Immutable<Transaction>)>), BlockchainError> {
+        trace!("pop blocks from height: {}, topoheight: {}, count: {}", height, topoheight, count);
+        if topoheight < count as u64 { // also prevent removing genesis block
+            return Err(BlockchainError::NotEnoughBlocks);
+        }
 
-    // Get the top block hash of the chain
-    async fn get_top_block_hash(&self) -> Result<Hash, BlockchainError>;
-    
-    // Get the top block of the chain, based on top block hash
-    async fn get_top_block(&self) -> Result<Block, BlockchainError>;
+        let start_topoheight = topoheight;
+        // search the lowest topo height available based on count + 1
+        // (last lowest topo height accepted)
+        let mut lowest_topo = topoheight - count;
+        trace!("Lowest topoheight for rewind: {}", lowest_topo);
 
-    // Get the top block header of the chain, based on top block hash
-    async fn get_top_block_header(&self) -> Result<(Arc<BlockHeader>, Hash), BlockchainError>;
+        let pruned_topoheight = self.get_pruned_topoheight().await?.unwrap_or(0);
 
-    // Get the top topoheight of the chain
-    fn get_top_topoheight(&self) -> Result<u64, BlockchainError>;
+        // we must check that we are stopping a sync block
+        // easy way for this: check the block at topo is currently alone at height
+        while lowest_topo > pruned_topoheight {
+            let hash = self.get_hash_at_topo_height(lowest_topo).await?;
+            let block_height = self.get_height_for_block_hash(&hash).await?;
+            let blocks_at_height = self.get_blocks_at_height(block_height).await?;
+            if blocks_at_height.len() == 1 {
+                debug!("Sync block found at topoheight {}", lowest_topo);
+                break;
+            } else {
+                warn!("No sync block found at topoheight {} we must go lower if possible", lowest_topo);
+                lowest_topo -= 1;
+            }
+        }
 
-    // Set the top topoheight of the chain
-    fn set_top_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError>;
+        if pruned_topoheight != 0 {
+            let safety_pruned_topoheight = pruned_topoheight + PRUNE_SAFETY_LIMIT;
+            if lowest_topo <= safety_pruned_topoheight && until_topo_height != 0 {
+                warn!("Pruned topoheight is {}, lowest topoheight is {}, rewind only until {}", pruned_topoheight, lowest_topo, safety_pruned_topoheight);
+                lowest_topo = safety_pruned_topoheight;
+            }
+        }
 
-    // Get the top height of the chain
-    fn get_top_height(&self) -> Result<u64, BlockchainError>;
+        // new TIPS for chain
+        let mut tips = self.get_tips().await?;
 
-    // Set the top height of the chain
-    fn set_top_height(&mut self, height: u64) -> Result<(), BlockchainError>;
+        // Delete all orphaned blocks tips
+        for tip in tips.clone() {
+            if !self.is_block_topological_ordered(&tip).await? {
+                debug!("Tip {} is not ordered, removing", tip);
+                tips.remove(&tip);
+            }
+        }
+
+        // all txs to be rewinded
+        let mut txs = Vec::new();
+        let mut done = 0;
+        'main: loop {
+            // stop rewinding if its genesis block or if we reached the lowest topo
+            if topoheight <= lowest_topo || topoheight <= until_topo_height || topoheight == 0 { // prevent removing genesis block
+                trace!("Done: {done}, count: {count}, height: {height}, topoheight: {topoheight}, lowest topo: {lowest_topo}, stable topo: {until_topo_height}");
+                break 'main;
+            }
+
+            // Delete the hash at topoheight
+            let (hash, block, block_txs) = self.delete_block_at_topoheight(topoheight).await?;
+            self.delete_versioned_data_at_topoheight(topoheight).await?;
+
+            debug!("Block {} at topoheight {} deleted", hash, topoheight);
+            txs.extend(block_txs);
+
+            // generate new tips
+            trace!("Removing {} from {} tips", hash, tips.len());
+            tips.remove(&hash);
+ 
+            for hash in block.get_tips().iter() {
+                trace!("Adding {} to {} tips", hash, tips.len());
+                tips.insert(hash.clone());
+            }
+
+            if topoheight <= pruned_topoheight {
+                warn!("Pruned topoheight is reached, this is not healthy, starting from 0");
+                topoheight = 0;
+                height = 0;
+
+                // Remove total blocks
+                done = start_topoheight;
+
+                tips.clear();
+                tips.insert(self.get_hash_at_topo_height(0).await?);
+
+                self.set_pruned_topoheight(None).await?;
+
+                // Clear out ALL data
+                self.delete_versioned_data_above_topoheight(0).await?;
+
+                break 'main;
+            }
+
+            topoheight -= 1;
+            // height of old block become new height
+            if block.get_height() < height {
+                height = block.get_height();
+            }
+            done += 1;
+        }
+
+        warn!("Blocks rewinded: {}, new topoheight: {}, new height: {}", done, topoheight, height);
+
+        trace!("Cleaning caches");
+        // Clear all caches to not have old data after rewind
+        self.clear_caches().await?;
+
+        trace!("Storing new pointers");
+        // store the new tips and topo topoheight
+        self.store_tips(&tips).await?;
+        self.set_top_topoheight(topoheight).await?;
+        self.set_top_height(height).await?;
+
+        // Reduce the count of blocks stored
+        self.decrease_blocks_count(done).await?;
+
+        Ok((height, topoheight, txs))
+    }
 
     // Get the size of the chain on disk in bytes
     async fn get_size_on_disk(&self) -> Result<u64, BlockchainError>;
 
-    // Stop the storage and wait for it to finish
-    async fn stop(&mut self) -> Result<(), BlockchainError>;
-
-    // Get all the unexecuted transactions
-    async fn get_unexecuted_transactions(&self) -> Result<IndexSet<Hash>, BlockchainError>;
-
     // Estimate the size of the DB in bytes
     async fn estimate_size(&self) -> Result<u64, BlockchainError>;
 
-    // Get the number of blocks orphaned in the DB
-    async fn count_orphaned_blocks(&self) -> Result<u64, BlockchainError>;
+    // Stop the storage and wait for it to finish
+    async fn stop(&mut self) -> Result<(), BlockchainError>;
 
     // Flush the inner DB after a block being written
     async fn flush(&mut self) -> Result<(), BlockchainError>;

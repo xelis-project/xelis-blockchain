@@ -1,5 +1,6 @@
 use crate::p2p::error::P2pError;
 use std::sync::PoisonError;
+use strum::{EnumDiscriminants, IntoDiscriminant};
 use thiserror::Error;
 use xelis_common::{
     crypto::{
@@ -10,11 +11,12 @@ use xelis_common::{
         Hash,
         XelisHashError
     },
+    tokio::sync::AcquireError,
     account::Nonce,
     block::TopoHeight,
     difficulty::DifficultyError,
     prompt::PromptError,
-    rpc_server::InternalRpcError,
+    rpc::InternalRpcError,
     serializer::ReaderError,
     time::TimestampMillis,
     transaction::verify::VerificationError,
@@ -146,8 +148,7 @@ pub enum DiskContext {
     VersionedBalance,
 }
 
-#[repr(usize)]
-#[derive(Error, Debug)]
+#[derive(Error, Debug, EnumDiscriminants)]
 pub enum BlockchainError {
     #[error("Invalid configuration provided")]
     InvalidConfig,
@@ -253,8 +254,6 @@ pub enum BlockchainError {
     ErrorOnReader(#[from] ReaderError),
     #[error(transparent)]
     ErrorOnPrompt(#[from] PromptError),
-    #[error(transparent)]
-    ErrorOnSignature(#[from] ed25519_dalek::SignatureError),
     #[error("Poison Error: {}", _0)]
     PoisonError(String),
     #[error("Blockchain is syncing")]
@@ -345,8 +344,8 @@ pub enum BlockchainError {
     DecompressionError(#[from] DecompressionError),
     #[error(transparent)]
     Any(#[from] anyhow::Error),
-    #[error("Invalid nonce: expected {}, got {}", _0, _1)]
-    InvalidNonce(Nonce, Nonce),
+    #[error("Invalid nonce for TX {}: expected {}, got {}", _0, _1, _2)]
+    InvalidNonce(Hash, Nonce, Nonce),
     #[error("Sender cannot be receiver")]
     SenderIsReceiver,
     #[error("Invalid transaction proof: {}", _0)]
@@ -375,17 +374,21 @@ pub enum BlockchainError {
     ModuleError(String),
     #[error("Invalid transaction in block while verifying in multi-thread mode")]
     InvalidTransactionMultiThread,
+    #[error("Unknown account")]
+    UnknownAccount,
+    #[error(transparent)]
+    SemaphoreError(#[from] AcquireError),
 }
 
 impl BlockchainError {
-    pub unsafe fn id(&self) -> usize {
-        *(self as *const Self as *const _)
+    pub fn id(&self) -> usize {
+        self.discriminant() as usize
     }
 }
 
 impl From<BlockchainError> for InternalRpcError {
     fn from(value: BlockchainError) -> Self {
-        let id = unsafe { value.id() } as i16;
+        let id = value.id() as i16;
         InternalRpcError::CustomAny(200 + id, value.into())
     }
 }
@@ -399,7 +402,7 @@ impl<T> From<PoisonError<T>> for BlockchainError {
 impl From<VerificationError<BlockchainError>> for BlockchainError {
     fn from(value: VerificationError<BlockchainError>) -> Self {
         match value {
-            VerificationError::InvalidNonce(expected, got) => BlockchainError::InvalidNonce(expected, got),
+            VerificationError::InvalidNonce(tx, expected, got) => BlockchainError::InvalidNonce(tx, expected, got),
             VerificationError::SenderIsReceiver => BlockchainError::NoSenderOutput,
             VerificationError::InvalidSignature => BlockchainError::InvalidTransactionSignature,
             VerificationError::State(s) => s,

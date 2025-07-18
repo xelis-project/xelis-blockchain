@@ -51,6 +51,17 @@ fn bench_commitment_eq_proof(c: &mut Criterion) {
 
     group.bench_function("verify", |b| {
         b.iter(|| {
+            proof.verify(
+                keypair.get_public_key(),
+                &final_balance,
+                &commitment,
+                &mut Transcript::new(b"test"),
+            ).expect("Failed to verify proof");
+        })
+    });
+
+    group.bench_function("pre_verify + batch", |b| {
+        b.iter(|| {
             let mut batch_collector = BatchCollector::default();
             proof.pre_verify(
                 keypair.get_public_key(),
@@ -102,6 +113,21 @@ fn bench_ciphertext_validity_proof(c: &mut Criterion) {
     });
 
     group.bench_function("verify", |b| {
+        b.iter(|| {
+            // Verify the proof
+            proof.verify(
+                &commitment,
+                destination.get_public_key(),
+                source.get_public_key(),
+                &receiver_handle,
+                &sender_handle,
+                true,
+                &mut Transcript::new(b"test"),
+            ).expect("Failed to verify proof");
+        })
+    });
+
+    group.bench_function("pre_verify + batch", |b| {
         b.iter(|| {
             // Verify the proof
             let mut batch_collector = BatchCollector::default();

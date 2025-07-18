@@ -204,54 +204,12 @@ When a valid transaction is added in the daemon mempool.
     "id": 1,
     "jsonrpc": "2.0",
     "result": {
-        "blocks": null,
-        "data": {
-            "transfers": [
-                {
-                    "asset": "0000000000000000000000000000000000000000000000000000000000000000",
-                    "commitment": [...],
-                    "ct_validity_proof": {
-                        "Y_0": [...],
-                        "Y_1": [...],
-                        "z_r": [...],
-                        "z_x": [...]
-                    },
-                    "destination": "xel:qcd39a5u8cscztamjuyr7hdj6hh2wh9nrmhp86ljx2sz6t99ndjqqm7wxj8",
-                    "extra_data": [...],
-                    "receiver_handle": [...],
-                    "sender_handle": [...]
-                }
-            ]
-        },
         "event": "transaction_added_in_mempool",
-        "executed_in_block": null,
         "fee": 25000,
         "first_seen": 1723502900,
         "hash": "4951a4d10b8921c8e08d3c380993305a1e4706cbba606e2e79ffdfc06c54eb5f",
-        "in_mempool": true,
-        "nonce": 46056,
-        "range_proof": [...],
-        "reference": {
-            "hash": "547ef0b63e8b6b26b299e8764614e439a4106a22418ade7f8b0280da405ca5b2",
-            "topoheight": 641930
-        },
-        "signature": "9c0b4d7db7221e5866ad11ee495113b56b77360a5782b53ba189afb120b2a004678facbdb167cd9db0dd7d376caed2f24af781f2bae247b43779e54107e5f500",
         "size": 1517,
         "source": "xel:ntpjg269f0efkvft8rckyqd0dwq480jphngy0fujxal7ng6qmfxqqnp3r5l",
-        "source_commitments": [
-            {
-                "asset": "0000000000000000000000000000000000000000000000000000000000000000",
-                "commitment": [...],
-                "proof": {
-                    "Y_0": [...],
-                    "Y_1": [...],
-                    "Y_2": [...],
-                    "z_r": [...],
-                    "z_s": [...],
-                    "z_x": [...]
-                }
-            }
-        ],
         "version": 0
     }
 }
@@ -1804,8 +1762,22 @@ No parameters
                 "last_ping": 1711664680,
                 "local_port": 2125,
                 "peers": {
-                    "255.255.255.255:2125": "In",
-                    "74.208.251.149:2125": "Both"
+                    "255.255.255.255:2125": {
+                        "out": {
+                            "sent_at": 1746147705443
+                        }
+                    },
+                    "74.208.251.149:2125": {
+                        "both": {
+                            "received_at": 1745996467029,
+                            "sent_at": 1745953407894
+                        }
+                    },
+                    "74.208.251.149:2126": {
+                        "in": {
+                            "received_at": 1745996467029
+                        }
+                    }
                 },
                 "pruned_topoheight": null,
                 "tag": null,
@@ -1821,10 +1793,7 @@ No parameters
                 "id": 2448648666414530279,
                 "last_ping": 1711664682,
                 "local_port": 2125,
-                "peers": {
-                    "127.0.0.1:2125": "In",
-                    "127.0.0.1:2126": "Both"
-                },
+                "peers": {},
                 "pruned_topoheight": null,
                 "tag": null,
                 "top_block_hash": "0000000007eeed3fecdaedff82ad867a224826230c12465cf39186471e2e360e",
@@ -1994,12 +1963,15 @@ NOTE: result returned in `data` field can changes based on the Transaction Type 
 ```
 
 #### Get Mempool
-Fetch all transactions presents in the mempool
+Fetch transactions presents in the mempool
 
 ##### Method `get_mempool`
 
 ##### Parameters
-No parameters
+|   Name  |   Type  | Required |                Note                  |
+|:-------:|:-------:|:--------:|:------------------------------------:|
+|  skip   | Integer | Optional |         How many TXs to skip         |
+| maximum | Integer | Optional | Maximum TXs to fetch (limited to 20) |
 
 ##### Request
 ```json
@@ -2015,60 +1987,104 @@ No parameters
 {
     "id": 1,
     "jsonrpc": "2.0",
-    "result": [
-        {
-            "blocks": null,
-            "data": {
-                "transfers": [
+    "result": {
+        "transactions": [
+            {
+                "blocks": null,
+                "data": {
+                    "transfers": [
+                        {
+                            "asset": "0000000000000000000000000000000000000000000000000000000000000000",
+                            "commitment": [...],
+                            "ct_validity_proof": {
+                                "Y_0": [...],
+                                "Y_1": [...],
+                                "z_r": [...],
+                                "z_x": [...]
+                            },
+                            "destination": "xet:q622pz5exf5hmw98d73dlqhwjvfwd5g9k0tpuay90ga634c64cgsqczfmvx",
+                            "extra_data": null,
+                            "receiver_handle": [...],
+                            "sender_handle": [...]
+                        }
+                    ]
+                },
+                "executed_in_block": null,
+                "fee": 25000,
+                "first_seen": 1711665284,
+                "hash": "5c0c4a0d58cf678015af2e10f79119ed6d969dd3d1e98ca4ffefbb4439765658",
+                "in_mempool": true,
+                "nonce": 1461,
+                "range_proof": [...],
+                "reference": {
+                    "hash": "000000000bc1070fda6b86eb31fbf3f15e89be9c10928415b2254fcab96088a8",
+                    "topoheight": 22285
+                },
+                "size": 1517,
+                "signature": "b3362192f0ae054964279fc67e55f3dc2cde9c6d6d0c98b00a1c31672d6a330aa1cdad4929662d68fa0a830349da429eef342fef43125b97fea87c16fa2f6607",
+                "source": "xet:6eadzwf5xdacts6fs4y3csmnsmy4mcxewqt3xyygwfx0hm0tm32sqxdy9zk",
+                "source_commitments": [
                     {
                         "asset": "0000000000000000000000000000000000000000000000000000000000000000",
                         "commitment": [...],
-                        "ct_validity_proof": {
+                        "proof": {
                             "Y_0": [...],
                             "Y_1": [...],
+                            "Y_2": [...],
                             "z_r": [...],
+                            "z_s": [...],
                             "z_x": [...]
-                        },
-                        "destination": "xet:q622pz5exf5hmw98d73dlqhwjvfwd5g9k0tpuay90ga634c64cgsqczfmvx",
-                        "extra_data": null,
-                        "receiver_handle": [...],
-                        "sender_handle": [...]
+                        }
                     }
-                ]
-            },
-            "executed_in_block": null,
-            "fee": 25000,
-            "first_seen": 1711665284,
-            "hash": "5c0c4a0d58cf678015af2e10f79119ed6d969dd3d1e98ca4ffefbb4439765658",
-            "in_mempool": true,
-            "nonce": 1461,
-            "range_proof": [...],
-            "reference": {
-                "hash": "000000000bc1070fda6b86eb31fbf3f15e89be9c10928415b2254fcab96088a8",
-                "topoheight": 22285
-            },
-            "signature": "b3362192f0ae054964279fc67e55f3dc2cde9c6d6d0c98b00a1c31672d6a330aa1cdad4929662d68fa0a830349da429eef342fef43125b97fea87c16fa2f6607",
-            "source": "xet:6eadzwf5xdacts6fs4y3csmnsmy4mcxewqt3xyygwfx0hm0tm32sqxdy9zk",
-            "source_commitments": [
-                {
-                    "asset": "0000000000000000000000000000000000000000000000000000000000000000",
-                    "commitment": [...],
-                    "proof": {
-                        "Y_0": [...],
-                        "Y_1": [...],
-                        "Y_2": [...],
-                        "z_r": [...],
-                        "z_s": [...],
-                        "z_x": [...]
-                    }
-                }
-            ],
-            "version": 0
-        }
-    ]
+                ],
+                "version": 0
+            }
+        ],
+        "total": 1
+    }
 }
 ```
 
+
+#### Get Mempool Summary
+Fetch transactions summary presents in the mempool
+
+##### Method `get_mempool_summary`
+
+##### Parameters
+|   Name  |   Type  | Required |                 Note                   |
+|:-------:|:-------:|:--------:|:--------------------------------------:|
+|  skip   | Integer | Optional |          How many TXs to skip          |
+| maximum | Integer | Optional | Maximum TXs to fetch (limited to 1024) |
+
+##### Request
+```json
+{
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "get_mempool_summary"
+}
+```
+
+##### Response
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+        "transactions": [
+            {
+                "fee": 25000,
+                "first_seen": 1711665284,
+                "hash": "5c0c4a0d58cf678015af2e10f79119ed6d969dd3d1e98ca4ffefbb4439765658",
+                "source": "xet:6eadzwf5xdacts6fs4y3csmnsmy4mcxewqt3xyygwfx0hm0tm32sqxdy9zk",
+                "size": 1517
+            }
+        ],
+        "total": 1
+    }
+}
+```
 
 #### Get Transaction Executor
 Fetch the block hash where the transaction was executed and its topoheight.

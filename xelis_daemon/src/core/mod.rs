@@ -1,3 +1,5 @@
+mod tx_cache;
+
 pub mod config;
 pub mod blockchain;
 pub mod mempool;
@@ -12,3 +14,5 @@ pub mod state;
 pub mod merkle;
 
 pub mod hard_fork;
+
+pub use tx_cache::*;

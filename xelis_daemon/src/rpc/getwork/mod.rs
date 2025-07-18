@@ -1,7 +1,10 @@
 mod miner;
 
 use std::{
-    borrow::Cow, collections::HashMap, num::NonZeroUsize, sync::{
+    borrow::Cow,
+    collections::HashMap,
+    num::NonZeroUsize,
+    sync::{
         atomic::{
             AtomicBool,
             AtomicU64, Ordering
@@ -9,7 +12,6 @@ use std::{
         Arc
     }, time::Duration
 };
-use bytes::Bytes;
 use futures::{stream, StreamExt};
 use rand::{rngs::OsRng, RngCore};
 use actix_web::HttpResponse;
@@ -18,8 +20,8 @@ use async_trait::async_trait;
 use log::{debug, error, trace, warn};
 use lru::LruCache;
 use serde::Serialize;
-use tokio::{sync::Mutex, time::sleep};
 use xelis_common::{
+    tokio::{sync::Mutex, time::sleep},
     api::daemon::{
         GetBlockTemplateResult,
         GetMinerWorkResult,
@@ -36,8 +38,8 @@ use xelis_common::{
     },
     difficulty::Difficulty,
     immutable::Immutable,
-    rpc_server::{
-        websocket::{WebSocketHandler, WebSocketSessionShared},
+    rpc::{
+        server::websocket::{WebSocketHandler, WebSocketSessionShared},
         InternalRpcError
     },
     serializer::Serializer,
@@ -70,12 +72,15 @@ pub enum BlockResult {
 pub type SharedGetWorkServer<S> = Arc<GetWorkServer<S>>;
 
 pub struct GetWorkServer<S: Storage> {
+    // Contains all miners connected to the getwork server
+    // The key is the session, and the value is the representation of a miner statistics
     miners: Mutex<HashMap<WebSocketSessionShared<Self>, Miner>>,
     blockchain: Arc<Blockchain<S>>,
     // all potential jobs sent to miners
     // we can keep them in cache up to STABLE_LIMIT blocks
     // so even a late miner have a chance to not be orphaned and be included in chain
     mining_jobs: Mutex<LruCache<Hash, (BlockHeader, Difficulty)>>,
+    // last header hash used for job
     last_header_hash: Mutex<Option<Hash>>,
     // used only when a new TX is received in mempool
     last_notify: AtomicU64,
@@ -164,40 +169,53 @@ impl<S: Storage> GetWorkServer<S> {
     // then, send it
     async fn send_new_job(&self, session: &WebSocketSessionShared<Self>, key: &PublicKey) -> Result<(), anyhow::Error> {
         debug!("Sending new job to miner");
-        let (mut job, version, height, difficulty) = {
+        let (version, mut job, height, difficulty) = {
+            debug!("locking last header hashfor new job");
             let mut hash = self.last_header_hash.lock().await;
-            let mut mining_jobs = self.mining_jobs.lock().await;
-            let (version, job, height, difficulty);
 
             // if we have a job in cache, and we are rate limited, we can send it
             // otherwise, we generate a new job
             if let Some(hash) = hash.as_ref().filter(|_| self.is_rate_limited()) {
+                debug!("job found in cache, sending it");
+                let mining_jobs = self.mining_jobs.lock().await;
+                debug!("mining jobs locked for new job");
+
                 let (header, diff) = mining_jobs.peek(hash)
                     .ok_or(InternalRpcError::InternalError("No mining job found"))?;
 
-                job = MinerWork::new(header.get_work_hash(), get_current_time_in_millis());
-                height = header.get_height();
-                version = header.get_version();
-                difficulty = *diff;
+                let job = MinerWork::new(header.get_work_hash(), get_current_time_in_millis());
+                (header.get_version(), job, header.get_height(), *diff)
             } else {
                 // generate a mining job
-                let storage = self.blockchain.get_storage().read().await;
-                let header = self.blockchain.get_block_template_for_storage(&storage, DEV_PUBLIC_KEY.clone()).await
-                    .context("Error while retrieving block template")?;
-                (difficulty, _) = self.blockchain.get_difficulty_at_tips(&*storage, header.get_tips().iter()).await
-                    .context("Error while retrieving difficulty at tips")?;
+                let (header, difficulty) = {
+                    debug!("locking storage for mining job generation");
+                    let storage = self.blockchain.get_storage().read().await;
+                    debug!("storage read acquired for mining job generation");
+    
+                    let header = self.blockchain.get_block_template_for_storage(&storage, DEV_PUBLIC_KEY.clone()).await
+                        .context("Error while retrieving block template")?;
+                    let (difficulty, _) = self.blockchain.get_difficulty_at_tips(&*storage, header.get_tips().iter()).await
+                        .context("Error while retrieving difficulty at tips")?;
 
-                job = MinerWork::new(header.get_work_hash(), get_current_time_in_millis());
-                height = header.get_height();
-                version = header.get_version();
+                    (header, difficulty)
+                };
+
+                let job = MinerWork::new(header.get_work_hash(), get_current_time_in_millis());
+                let height = header.get_height();
+                let version = header.get_version();
 
                 // save the mining job, and set it as last job
                 let header_work_hash = job.get_header_work_hash();
                 *hash = Some(header_work_hash.clone());
-                mining_jobs.put(header_work_hash.clone(), (header, difficulty));
-            }
+                {
+                    debug!("job found in cache, sending it");
+                    let mut mining_jobs = self.mining_jobs.lock().await;
+                    debug!("mining jobs locked for new job");
+                    mining_jobs.put(header_work_hash.clone(), (header, difficulty));
+                }
 
-            (job, version, height, difficulty)
+                (version, job, height, difficulty)
+            }
         };
 
         // set miner key and random extra nonce
@@ -245,7 +263,10 @@ impl<S: Storage> GetWorkServer<S> {
         self.is_job_dirty.store(false, Ordering::SeqCst);
         debug!("Notify all miners for a new job");
         let (header, difficulty) = {
+            debug!("locking storage for new job");
             let storage = self.blockchain.get_storage().read().await;
+            debug!("storage read acquired for new job");
+
             let header = self.blockchain.get_block_template_for_storage(&storage, DEV_PUBLIC_KEY.clone()).await
                 .context("Error while retrieving block template when notifying new job")?;
             let (difficulty, _) = self.blockchain.get_difficulty_at_tips(&*storage, header.get_tips().iter()).await
@@ -264,6 +285,7 @@ impl<S: Storage> GetWorkServer<S> {
         let topoheight = self.blockchain.get_topo_height();
 
         if is_event_tracked {
+            debug!("Notifying RPC clients for new block template");
             let rpc = self.blockchain.get_rpc().read().await;
             if let Some(rpc) = rpc.as_ref() {
                 let value = GetBlockTemplateResult {
@@ -279,11 +301,18 @@ impl<S: Storage> GetWorkServer<S> {
         }
 
         // save the header used for job in cache
+        let header_work_hash = job.get_header_work_hash();
         {
-            let header_work_hash = job.get_header_work_hash();
+            debug!("locking last header hash for notify new job");
             let mut last_header_hash = self.last_header_hash.lock().await;
+            debug!("last header hash locked for notify new job");
             *last_header_hash = Some(header_work_hash.clone());
+        }
+
+        {
+            debug!("locking mining jobs for notify new job");
             let mut mining_jobs = self.mining_jobs.lock().await;
+            debug!("mining jobs locked for notify new job");
             mining_jobs.put(header_work_hash.clone(), (header, difficulty));
         }
 
@@ -339,8 +368,7 @@ impl<S: Storage> GetWorkServer<S> {
             };
         }
 
-        let block = self.blockchain.build_block_from_header(Immutable::Owned(miner_header)).await
-            .context("Error while building block from header")?;
+        let block = self.blockchain.build_block_from_header(Immutable::Owned(miner_header)).await?;
         let block_hash = Arc::new(block.hash());
 
         Ok(match self.blockchain.add_new_block(block, Some(Immutable::Arc(block_hash.clone())), BroadcastOption::All, true).await {
@@ -455,8 +483,8 @@ impl<S: Storage> WebSocketHandler for GetWorkServer<S> {
     }
 
     // called when a new message is received
-    async fn on_message(&self, session: &WebSocketSessionShared<Self>, body: Bytes) -> Result<(), anyhow::Error> {
-        let submitted_work: SubmitMinerWorkParams = serde_json::from_slice(&body)?;
+    async fn on_message(&self, session: &WebSocketSessionShared<Self>, body: &[u8]) -> Result<(), anyhow::Error> {
+        let submitted_work: SubmitMinerWorkParams = serde_json::from_slice(body)?;
         self.handle_block_for(session, submitted_work).await
     }
 

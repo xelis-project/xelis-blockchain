@@ -1,7 +1,14 @@
-use chacha20poly1305::{aead::AeadMut, ChaCha20Poly1305, KeyInit};
-use rand::rngs::OsRng;
+use chacha20poly1305::{
+    aead::{
+        rand_core::OsError,
+        AeadInOut,
+        Buffer
+    },
+    ChaCha20Poly1305,
+    KeyInit
+};
 use thiserror::Error;
-use tokio::sync::Mutex;
+use xelis_common::tokio::sync::Mutex;
 use log::trace;
 
 // This symetric key is used to encrypt/decrypt the data
@@ -65,6 +72,8 @@ pub enum EncryptionError {
     DecryptError,
     #[error("Not supported")]
     NotSupported,
+    #[error(transparent)]
+    RngError(#[from] OsError)
 }
 
 impl Encryption {
@@ -97,50 +106,54 @@ impl Encryption {
     }
 
     // Generate a new random key
-    pub fn generate_key(&self) -> EncryptionKey {
-        ChaCha20Poly1305::generate_key(&mut OsRng).into()
+    pub fn generate_key(&self) -> Result<EncryptionKey, EncryptionError> {
+        ChaCha20Poly1305::generate_key()
+            .map(Into::into)
+            .map_err(EncryptionError::from)
     }
 
     // Encrypt a packet using the shared symetric key
-    pub async fn encrypt_packet(&self, input: &[u8]) -> Result<Vec<u8>, EncryptionError> {
+    pub async fn encrypt_packet(&self, input: &mut impl Buffer) -> Result<(), EncryptionError> {
         trace!("Encrypting packet");
         let mut lock = self.our_cipher.lock().await;
 
         trace!("our cipher locked");
-        let cipher_state = lock.as_mut().ok_or(EncryptionError::WriteNotReady)?;
+        let cipher_state = lock.as_mut()
+            .ok_or(EncryptionError::WriteNotReady)?;
 
         // fill our buffer
         cipher_state.nonce_buffer[0..8].copy_from_slice(&cipher_state.nonce.to_be_bytes());
 
         // Encrypt the packet
-        let res = cipher_state.cipher.encrypt(&cipher_state.nonce_buffer.into(), input)
+        cipher_state.cipher.encrypt_in_place(&cipher_state.nonce_buffer.into(), &[], input)
             .map_err(|_| EncryptionError::EncryptError)?;
 
         // Increment the nonce so we don't use the same nonce twice
         cipher_state.nonce += 1;
 
-        Ok(res)
+        Ok(())
     }
 
     // Decrypt a packet using the shared symetric key
-    pub async fn decrypt_packet(&self, buf: &[u8]) -> Result<Vec<u8>, EncryptionError> {
+    pub async fn decrypt_packet(&self, buf: &mut impl Buffer) -> Result<(), EncryptionError> {
         trace!("Decrypting packet");
         let mut lock = self.peer_cipher.lock().await;
 
         trace!("peer cipher locked");
-        let cipher_state = lock.as_mut().ok_or(EncryptionError::ReadNotReady)?;
+        let cipher_state = lock.as_mut()
+            .ok_or(EncryptionError::ReadNotReady)?;
 
         // fill our buffer
         cipher_state.nonce_buffer[0..8].copy_from_slice(&cipher_state.nonce.to_be_bytes());
 
         // Decrypt packet
-        let res = cipher_state.cipher.decrypt(&cipher_state.nonce_buffer.into(), buf.as_ref())
+        cipher_state.cipher.decrypt_in_place(&cipher_state.nonce_buffer.into(), &[], buf)
             .map_err(|_| EncryptionError::DecryptError)?;
 
         // Increment the nonce so we don't use the same nonce twice
         cipher_state.nonce += 1;
 
-        Ok(res)
+        Ok(())
     }
 
     fn create_or_update_state(state: &mut Option<CipherState>, key: EncryptionKey) -> Result<(), EncryptionError> {

@@ -31,6 +31,9 @@ lazy_static! {
     // * 2 in case each transfer use a unique asset + 1 for xelis asset as fee and + 1 to be a power of 2
     pub static ref BP_GENS: BulletproofGens = BulletproofGens::new(BULLET_PROOF_SIZE, MAX_TRANSFER_COUNT * 2 + 2);
     pub static ref PC_GENS: PedersenGens = PedersenGens::default();
+    // Re-export the base points for convenience
+    pub static ref G: RistrettoPoint = PC_GENS.B;
+    pub static ref H: RistrettoPoint = PC_GENS.B_blinding;
 }
 
 #[derive(Error, Debug, Clone, Copy, Eq, PartialEq)]
@@ -91,8 +94,8 @@ impl BatchCollector {
             self.dynamic_points
                 .iter()
                 .cloned()
-                .chain(iter::once(PC_GENS.B))
-                .chain(iter::once(PC_GENS.B_blinding)),
+                .chain(iter::once(*G))
+                .chain(iter::once(*H)),
         );
 
         if mega_check.is_identity() {

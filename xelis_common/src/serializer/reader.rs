@@ -44,6 +44,10 @@ impl<'a> Reader<'a> {
         }
     }
 
+    pub fn bytes(&self) -> &[u8] {
+        self.bytes
+    }
+
     pub fn context_mut(&mut self) -> &mut Context {
         &mut self.context
     }

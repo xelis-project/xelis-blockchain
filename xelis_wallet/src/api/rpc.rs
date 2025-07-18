@@ -1,5 +1,6 @@
 use std::{sync::Arc, borrow::Cow};
 use anyhow::Context as AnyContext;
+use cfg_if::cfg_if;
 use xelis_common::{
     api::{
         wallet::*,
@@ -12,9 +13,9 @@ use xelis_common::{
     config::{VERSION, XELIS_ASSET},
     context::Context,
     crypto::{Hashable, KeyPair},
-    rpc_server::{
+    rpc::{
         parse_params,
-        websocket::WebSocketSessionShared,
+        require_no_params,
         InternalRpcError,
         RPCHandler
     },
@@ -27,12 +28,13 @@ use xelis_common::{
 };
 use serde_json::{Value, json};
 use crate::{
+    api::XSWDAppId,
     error::WalletError,
     storage::Balance,
     transaction_builder::TransactionBuilderState,
     wallet::Wallet
 };
-use super::xswd::XSWDWebSocketHandler;
+
 use log::{debug, info, warn};
 
 // Register all RPC methods
@@ -52,6 +54,7 @@ pub fn register_methods(handler: &mut RPCHandler<Arc<Wallet>>) {
     handler.register_method("get_assets", async_handler!(get_assets));
     handler.register_method("get_asset", async_handler!(get_asset));
     handler.register_method("get_transaction", async_handler!(get_transaction));
+    handler.register_method("search_transaction", async_handler!(search_transaction));
     handler.register_method("dump_transaction", async_handler!(dump_transaction));
     handler.register_method("build_transaction", async_handler!(build_transaction));
     handler.register_method("build_transaction_offline", async_handler!(build_transaction_offline));
@@ -87,17 +90,13 @@ pub fn register_methods(handler: &mut RPCHandler<Arc<Wallet>>) {
 
 // Retrieve the version of the wallet
 async fn get_version(_: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    if body != Value::Null {
-        return Err(InternalRpcError::UnexpectedParams)
-    }
+    require_no_params(body)?;
     Ok(json!(VERSION))
 }
 
 // Retrieve the network of the wallet
 async fn get_network(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    if body != Value::Null {
-        return Err(InternalRpcError::UnexpectedParams)
-    }
+    require_no_params(body)?;
 
     let wallet: &Arc<Wallet> = context.get()?;
     let network = wallet.get_network();
@@ -106,9 +105,7 @@ async fn get_network(context: &Context, body: Value) -> Result<Value, InternalRp
 
 // Retrieve the current nonce of the wallet
 async fn get_nonce(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    if body != Value::Null {
-        return Err(InternalRpcError::UnexpectedParams)
-    }
+    require_no_params(body)?;
 
     let wallet: &Arc<Wallet> = context.get()?;
     let storage = wallet.get_storage().read().await;
@@ -118,9 +115,7 @@ async fn get_nonce(context: &Context, body: Value) -> Result<Value, InternalRpcE
 
 // Retrieve the current topoheight until which the wallet is synced
 async fn get_topoheight(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    if body != Value::Null {
-        return Err(InternalRpcError::UnexpectedParams)
-    }
+    require_no_params(body)?;
 
     let wallet: &Arc<Wallet> = context.get()?;
     let storage = wallet.get_storage().read().await;
@@ -176,21 +171,26 @@ async fn estimate_extra_data_size(_: &Context, body: Value) -> Result<Value, Int
 
 // Retrieve the network info
 async fn network_info(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    if body != Value::Null {
-        return Err(InternalRpcError::UnexpectedParams)
-    }
+    require_no_params(body)?;
 
     let wallet: &Arc<Wallet> = context.get()?;
-    let network_handler = wallet.get_network_handler().lock().await;
-    if let Some(handler) = network_handler.as_ref() {
-        let api = handler.get_api();
-        let inner = api.get_info().await?;
-        Ok(json!(NetworkInfoResult {
-            inner,
-            connected_to: api.get_client().get_target().to_owned(),
-        }))
-    } else {
-        Err(InternalRpcError::InvalidRequestStr("Wallet is not connected to a daemon"))
+
+    cfg_if! {
+        if #[cfg(feature = "network_handler")] {
+            let network_handler = wallet.get_network_handler().lock().await;
+            if let Some(handler) = network_handler.as_ref() {
+                let api = handler.get_api();
+                let inner = api.get_info().await?;
+                Ok(json!(NetworkInfoResult {
+                    inner,
+                    connected_to: api.get_client().get_target().to_owned(),
+                }))
+            } else {
+                Err(WalletError::NotOnlineMode.into())
+            }
+        } else {
+            Err(WalletError::Unsupported.into())
+        }
     }
 }
 
@@ -199,7 +199,12 @@ async fn decrypt_extra_data(context: &Context, body: Value) -> Result<Value, Int
     let params: DecryptExtraDataParams = parse_params(body)?;
 
     let wallet: &Arc<Wallet> = context.get()?;
-    let data = wallet.decrypt_extra_data(params.extra_data.into_owned(), None, params.role)
+    let version = {
+        let storage = wallet.get_storage().read().await;
+        storage.get_tx_version().await?
+    };
+
+    let data = wallet.decrypt_extra_data(params.extra_data.into_owned(), None, params.role, version)
         .context("Error while decrypting extra data")?;
 
     Ok(json!(data))
@@ -210,7 +215,7 @@ async fn decrypt_ciphertext(context: &Context, body: Value) -> Result<Value, Int
 
     let wallet: &Arc<Wallet> = context.get()?;
     let decompressed = params.ciphertext.decompress().context("Error while decompressing ciphertext")?;
-    let amount = wallet.decrypt_ciphertext_with(&decompressed, None).await
+    let amount = wallet.decrypt_ciphertext_with(decompressed, None).await
         .context("Error while decrypting ciphertext")?;
 
     Ok(json!(amount))
@@ -220,8 +225,16 @@ async fn decrypt_ciphertext(context: &Context, body: Value) -> Result<Value, Int
 async fn rescan(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: RescanParams = parse_params(body)?;
     let wallet: &Arc<Wallet> = context.get()?;
-    wallet.rescan(params.until_topoheight.unwrap_or(0), params.auto_reconnect).await?;
-    Ok(json!(true))
+
+    cfg_if! {
+        if #[cfg(feature = "network_handler")] {
+            wallet.rescan(params.until_topoheight.unwrap_or(0), params.auto_reconnect).await?;
+
+            Ok(json!(true))
+        } else {
+            Err(WalletError::Unsupported.into())
+        }
+    }
 }
 
 // Retrieve the balance of the wallet for a specific asset
@@ -251,13 +264,24 @@ async fn has_balance(context: &Context, body: Value) -> Result<Value, InternalRp
 
 // Retrieve all tracked assets by wallet
 async fn get_tracked_assets(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    if body != Value::Null {
-        return Err(InternalRpcError::UnexpectedParams)
-    }
-
+    let params: GetAssetsParams = parse_params(body)?;
     let wallet: &Arc<Wallet> = context.get()?;
+    let maximum = if let Some(max) = params.maximum {
+        if max > MAX_ASSETS {
+            return Err(InternalRpcError::InvalidParams("Maximum is bigger than limit"))
+        }
+        max
+    } else {
+        MAX_ASSETS
+    };
+
+    // In case of a huge reorg, a tracked asset may be inexistant if the asset got removed temporarily
+    // This must be taken in count
     let storage = wallet.get_storage().read().await;
-    let tracked_assets = storage.get_assets().await?;
+    let tracked_assets = storage.get_tracked_assets()?
+        .skip(params.skip.unwrap_or(0))
+        .take(maximum)
+        .collect::<Result<Vec<_>, _>>()?;
 
     Ok(json!(tracked_assets))
 }
@@ -272,15 +296,28 @@ async fn get_asset_precision(context: &Context, body: Value) -> Result<Value, In
     Ok(json!(data.get_decimals()))
 }
 
-// Retrieve all assets tracked by the wallet
-async fn get_assets(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    if body != Value::Null {
-        return Err(InternalRpcError::UnexpectedParams)
-    }
+const MAX_ASSETS: usize = 100;
 
+// Retrieve all the assets that the wallet is aware of
+async fn get_assets(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
+    let params: GetAssetsParams = parse_params(body)?;
     let wallet: &Arc<Wallet> = context.get()?;
+
+    let maximum = if let Some(max) = params.maximum {
+        if max > MAX_ASSETS {
+            return Err(InternalRpcError::InvalidParams("Maximum is bigger than limit"))
+        }
+        max
+    } else {
+        MAX_ASSETS
+    };
+
     let storage = wallet.get_storage().read().await;
-    let assets = storage.get_assets_with_data().await?;
+    let assets = storage.get_assets_with_data().await?
+        .skip(params.skip.unwrap_or(0))
+        .take(maximum)
+        .collect::<Result<Vec<_>, _>>()?;
+
     Ok(json!(assets))
 }
 
@@ -300,9 +337,42 @@ async fn get_transaction(context: &Context, body: Value) -> Result<Value, Intern
 
     let wallet: &Arc<Wallet> = context.get()?;
     let storage = wallet.get_storage().read().await;
+    if !storage.has_transaction(&params.hash)? {
+        return Err(InternalRpcError::CustomStr(404, "Transaction is not found in wallet"))
+    }
+
     let transaction = storage.get_transaction(&params.hash)?;
 
     Ok(json!(transaction.serializable(wallet.get_network().is_mainnet())))
+}
+
+
+// Debug rpc method to perform a search across all entries for a transaction from the wallet storage using its hash
+async fn search_transaction(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
+    let params: SearchTransactionParams = parse_params(body)?;
+
+    let wallet: &Arc<Wallet> = context.get()?;
+    let storage = wallet.get_storage().read().await;
+
+    let index = storage.get_transaction_id(&params.hash)?;
+    if storage.has_transaction(&params.hash)? {
+        let transaction = storage.get_transaction(&params.hash)?;
+
+        return Ok(json!(SearchTransactionResult {
+            transaction: Some(transaction.serializable(wallet.get_network().is_mainnet())),
+            index,
+            is_raw_search: false
+        }))
+    }
+
+    let transaction = storage.search_transaction(&params.hash)?
+        .map(|transaction| transaction.serializable(wallet.get_network().is_mainnet()));
+
+    Ok(json!(SearchTransactionResult {
+        transaction,
+        index,
+        is_raw_search: true
+    }))
 }
 
 // Dump the TX in hex format
@@ -404,7 +474,7 @@ async fn build_transaction_offline(context: &Context, body: Value) -> Result<Val
     for (hash, mut ciphertext) in params.balances {
         let compressed = ciphertext.decompressed()
             .context(format!("Error decompressing ciphertext {}", hash))?;
-        let amount = wallet.decrypt_ciphertext_with(compressed, None).await?
+        let amount = wallet.decrypt_ciphertext_with(compressed.clone(), None).await?
             .context(format!("Couldn't decrypt ciphertext for asset {}", hash))?;
 
         state.add_balance(hash, Balance {
@@ -562,9 +632,7 @@ async fn sign_unsigned_transaction(context: &Context, body: Value) -> Result<Val
 
 // Clear the transaction cache
 async fn clear_tx_cache(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    if body != Value::Null {
-        return Err(InternalRpcError::UnexpectedParams)
-    }
+    require_no_params(body)?;
 
     let wallet: &Arc<Wallet> = context.get()?;
     let mut storage = wallet.get_storage().write().await;
@@ -618,9 +686,7 @@ async fn list_transactions(context: &Context, body: Value) -> Result<Value, Inte
 
 // Check if the wallet is currently connected to a daemon
 async fn is_online(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    if body != Value::Null {
-        return Err(InternalRpcError::UnexpectedParams)
-    }
+    require_no_params(body)?;
 
     let wallet: &Arc<Wallet> = context.get()?;
     let is_connected = wallet.is_online().await;
@@ -636,25 +702,34 @@ async fn set_online_mode(context: &Context, body: Value) -> Result<Value, Intern
         return Err(InternalRpcError::InvalidRequestStr("Wallet is already connected to a daemon"))
     }
 
-    wallet.set_online_mode(&params.daemon_address, params.auto_reconnect).await?;
-
-    Ok(json!(true))
+    cfg_if! {
+        if #[cfg(feature = "network_handler")] {
+            wallet.set_online_mode(&params.daemon_address, params.auto_reconnect).await?;
+            Ok(json!(true))
+        } else {
+            Err(WalletError::Unsupported.into())
+        }
+    }
 }
 
 // Connect the wallet to a daemon if not already connected
 async fn set_offline_mode(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    if body != Value::Null {
-        return Err(InternalRpcError::UnexpectedParams)
-    }
+    require_no_params(body)?;
 
     let wallet: &Arc<Wallet> = context.get()?;
     if !wallet.is_online().await {
         return Err(InternalRpcError::InvalidRequestStr("Wallet is already in offline mode"))
     }
 
-    wallet.set_offline_mode().await?;
+    cfg_if! {
+        if #[cfg(feature = "network_handler")] {
+            wallet.set_offline_mode().await?;
 
-    Ok(json!(true))
+            Ok(json!(true))
+        } else {
+            Err(WalletError::Unsupported.into())
+        }
+    }
 }
 
 // Sign any data converted in bytes format
@@ -669,17 +744,14 @@ async fn sign_data(context: &Context, body: Value) -> Result<Value, InternalRpcE
 // In EncryptedStorage, custom trees are already prefixed
 async fn get_tree_name(context: &Context, tree: String) -> Result<String, InternalRpcError> {
     // If the API is not used through XSWD, we don't need to prefix the tree name with the app id
-    if !context.has::<&WebSocketSessionShared<XSWDWebSocketHandler<Arc<Wallet>>>>() {
+
+    if !context.has::<&XSWDAppId>() {
         return Ok(tree)
     }
 
     // Retrieve the app data to get its id and to have section of trees between differents dApps
-    let session: &WebSocketSessionShared<XSWDWebSocketHandler<Arc<Wallet>>> = context.get()?;
-    let xswd = session.get_server().get_handler();
-    let applications = xswd.get_applications().read().await;
-    let app = applications.get(session).ok_or_else(|| InternalRpcError::InvalidContext)?;
-
-    Ok(format!("{}-{}", app.get_id(), tree))
+    let xswd: &XSWDAppId = context.get()?;
+    Ok(format!("{}-{}", xswd.0, tree))
 }
 
 // Returns all keys available in the selected tree using the Query filter

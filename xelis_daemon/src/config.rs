@@ -2,7 +2,7 @@ use lazy_static::lazy_static;
 use xelis_common::{
     api::daemon::{DevFeeThreshold, HardFork},
     block::BlockVersion,
-    config::MAX_BLOCK_SIZE,
+    config::BYTES_PER_KB,
     crypto::{
         Address,
         Hash,
@@ -10,7 +10,8 @@ use xelis_common::{
     },
     difficulty::Difficulty,
     network::Network,
-    time::TimestampSeconds
+    time::TimestampSeconds,
+    static_assert,
 };
 
 // In case of potential forks, have a unique network id to not connect to others compatible chains
@@ -27,26 +28,39 @@ pub const DEFAULT_CACHE_SIZE: usize = 1024;
 // Block rules
 // Millis per second, it is used to prevent having random 1000 values anywhere
 pub const MILLIS_PER_SECOND: u64 = 1000;
-// Block Time in milliseconds
-pub const BLOCK_TIME_MILLIS: u64 = 15 * MILLIS_PER_SECOND; // 15s block time
-// Minimum difficulty (each difficulty point is in H/s)
-// Current: BLOCK TIME in millis * 20 = 20 KH/s minimum
+
+// Constants for hashrate
+// Used for difficulty calculation
+// and to be easier to read
+pub const HASH: u64 = 1;
+pub const KILO_HASH: u64 = HASH * 1000;
+pub const MEGA_HASH: u64 = KILO_HASH * 1000;
+pub const GIGA_HASH: u64 = MEGA_HASH * 1000;
+pub const TERA_HASH: u64 = GIGA_HASH * 1000;
+
+// Minimum difficulty is calculated the following (each difficulty point is in H/s)
+// BLOCK TIME in millis * N = minimum hashrate
 // This is to prevent spamming the network with low difficulty blocks
-// This is active only on mainnet mode
-pub const MAINNET_MINIMUM_DIFFICULTY: Difficulty = Difficulty::from_u64(BLOCK_TIME_MILLIS * 20);
-// Testnet & Devnet minimum difficulty
-pub const OTHER_MINIMUM_DIFFICULTY: Difficulty = Difficulty::from_u64(BLOCK_TIME_MILLIS * 2);
+// and is only active on mainnet
+// Currently set to 20 KH/s
+pub const MAINNET_MINIMUM_HASHRATE: u64 = 20 * KILO_HASH;
+// Testnet & Devnet minimum hashrate
+// Currently set to 2 KH/s
+pub const DEFAULT_MINIMUM_HASHRATE: u64 = 2 * KILO_HASH;
+
 // This is also used as testnet and devnet minimum difficulty
-pub const GENESIS_BLOCK_DIFFICULTY: Difficulty = Difficulty::from_u64(1);
+pub const GENESIS_BLOCK_DIFFICULTY: Difficulty = Difficulty::from_u64(1 * HASH);
+
 // 2 seconds maximum in future (prevent any attack on reducing difficulty but keep margin for unsynced devices)
-pub const TIMESTAMP_IN_FUTURE_LIMIT: TimestampSeconds = 2 * 1000;
+pub const TIMESTAMP_IN_FUTURE_LIMIT: TimestampSeconds = 2 * MILLIS_PER_SECOND;
 
 // keep at least last N blocks until top topoheight when pruning the chain
 // WARNING: This must be at least 50 blocks for difficulty adjustement
 pub const PRUNE_SAFETY_LIMIT: u64 = STABLE_LIMIT * 10;
 
 // BlockDAG rules
-pub const STABLE_LIMIT: u64 = 8; // in how many height we consider the block stable
+// in how many height we consider the block stable
+pub const STABLE_LIMIT: u64 = 8;
 
 // Emission rules
 // 15% (6 months), 10% (6 months), 5% per block going to dev address
@@ -106,7 +120,7 @@ pub const CHAIN_SYNC_RESPONSE_MIN_BLOCKS: usize = 512;
 // Default response blocks sent/accepted
 pub const CHAIN_SYNC_DEFAULT_RESPONSE_BLOCKS: usize = 4096;
 // allows up to X blocks hashes sent for response
-pub const CHAIN_SYNC_RESPONSE_MAX_BLOCKS: usize = 16384;
+pub const CHAIN_SYNC_RESPONSE_MAX_BLOCKS: usize = u16::MAX as _;
 // send last 10 heights
 pub const CHAIN_SYNC_TOP_BLOCKS: usize = 10;
 
@@ -119,14 +133,14 @@ pub const P2P_PING_PEER_LIST_DELAY: u64 = 60 * 5;
 pub const P2P_PING_PEER_LIST_LIMIT: usize = 16;
 // default number of maximum peers
 pub const P2P_DEFAULT_MAX_PEERS: usize = 32;
+// default number of maximum outgoing peers
+pub const P2P_DEFAULT_MAX_OUTGOING_PEERS: usize = 8;
 // time in seconds between each time we try to connect to a new peer
 pub const P2P_EXTEND_PEERLIST_DELAY: u64 = 60;
 // time in seconds between each time we try to connect to a outgoing peer
 // At least 5 minutes of countdown to retry to connect to the same peer
 // This will be multiplied by the number of fails
 pub const P2P_PEERLIST_RETRY_AFTER: u64 = 60 * 15;
-// Peer wait on error accept new p2p connections in seconds
-pub const P2P_PEER_WAIT_ON_ERROR: u64 = 15;
 // Delay in second to connect to priority nodes
 pub const P2P_AUTO_CONNECT_PRIORITY_NODES_DELAY: u64 = 5;
 // Default number of concurrent tasks for incoming p2p connections
@@ -154,6 +168,8 @@ pub const PEER_TEMP_BAN_TIME_ON_CONNECT: u64 = 60;
 pub const PEER_TEMP_BAN_TIME: u64 = 15 * 60;
 // millis until we timeout
 pub const PEER_TIMEOUT_REQUEST_OBJECT: u64 = 15_000;
+// How many objects requests can be concurrently requested?
+pub const PEER_OBJECTS_CONCURRENCY: usize = 64;
 // millis until we timeout during a bootstrap request
 pub const PEER_TIMEOUT_BOOTSTRAP_STEP: u64 = 60_000;
 // millis until we timeout during a handshake
@@ -162,11 +178,11 @@ pub const PEER_TIMEOUT_INIT_CONNECTION: u64 = 5_000;
 pub const PEER_TIMEOUT_INIT_OUTGOING_CONNECTION: u64 = 30_000;
 // millis until we timeout during a handshake
 pub const PEER_TIMEOUT_DISCONNECT: u64 = 1_500;
-// 16 additional bytes are for AEAD from ChaCha20Poly1305
-pub const PEER_MAX_PACKET_SIZE: u32 = MAX_BLOCK_SIZE as u32 + 16;
+// Maximum packet size set to 5 MiB
+pub const PEER_MAX_PACKET_SIZE: u32 = 5 * (BYTES_PER_KB * BYTES_PER_KB) as u32;
 // Peer TX cache size
 // This is how many elements are stored in the LRU cache at maximum
-pub const PEER_TX_CACHE_SIZE: usize = 10240;
+pub const PEER_TX_CACHE_SIZE: usize = 1024;
 // How many peers propagated are stored per peer in the LRU cache at maximum
 pub const PEER_PEERS_CACHE_SIZE: usize = 1024;
 // Peer Block cache size
@@ -201,8 +217,8 @@ const HARD_FORKS: [HardFork; 3] = [
     }
 ];
 
-// Testnet / Devnet hard forks
-const TESTNET_HARD_FORKS: [HardFork; 4] = [
+// Testnet / Stagenet / Devnet hard forks
+const OTHERS_NETWORK_HARD_FORKS: [HardFork; 4] = [
     HardFork {
         height: 0,
         version: BlockVersion::V0,
@@ -269,22 +285,24 @@ const TESTNET_GENESIS_BLOCK_HASH: Hash = Hash::new([171, 50, 219, 186, 28, 164, 
 pub fn get_hex_genesis_block(network: &Network) -> Option<&str> {
     match network {
         Network::Mainnet => Some(MAINNET_GENESIS_BLOCK),
-        Network::Testnet => Some(TESTNET_GENESIS_BLOCK),
-        Network::Dev => None
+        Network::Testnet | Network::Stagenet => Some(TESTNET_GENESIS_BLOCK),
+        Network::Devnet => None
     }
 }
 
 lazy_static! {
     // Developer public key is lazily converted from address to support any network
-    pub static ref DEV_PUBLIC_KEY: PublicKey = Address::from_string(&DEV_ADDRESS).unwrap().to_public_key();
+    pub static ref DEV_PUBLIC_KEY: PublicKey = Address::from_string(&DEV_ADDRESS)
+        .expect("valid dev address")
+        .to_public_key();
 }
 
 // Genesis block hash based on network selected
 pub fn get_genesis_block_hash(network: &Network) -> Option<&'static Hash> {
     match network {
         Network::Mainnet => Some(&MAINNET_GENESIS_BLOCK_HASH),
-        Network::Testnet => Some(&TESTNET_GENESIS_BLOCK_HASH),
-        Network::Dev => None
+        Network::Testnet | Network::Stagenet => Some(&TESTNET_GENESIS_BLOCK_HASH),
+        Network::Devnet => None
     }
 }
 
@@ -293,28 +311,8 @@ pub const fn get_seed_nodes(network: &Network) -> &[&str] {
     match network {
         Network::Mainnet => &MAINNET_SEED_NODES,
         Network::Testnet => &TESTNET_SEED_NODES,
-        Network::Dev => &[],
-    }
-}
-
-// Get minimum difficulty based on the network
-// Mainnet has a minimum difficulty to prevent spamming the network
-// Testnet has a lower difficulty to allow faster block generation
-pub fn get_minimum_difficulty(network: &Network) -> Difficulty {
-    match network {
-        Network::Mainnet => MAINNET_MINIMUM_DIFFICULTY,
-        _ => OTHER_MINIMUM_DIFFICULTY,
-    }
-}
-
-pub fn get_difficulty_at_hard_fork(network: &Network, block_version: BlockVersion) -> Difficulty {
-    match network {
-        Network::Mainnet => match block_version {
-            BlockVersion::V0 | BlockVersion::V1 => MAINNET_MINIMUM_DIFFICULTY,
-            // 20 KH/s * 100 000 = 2 GH/s
-            _ => MAINNET_MINIMUM_DIFFICULTY * Difficulty::from_u64(100_000),
-        },
-        _ => OTHER_MINIMUM_DIFFICULTY,
+        Network::Stagenet => &[],
+        Network::Devnet => &[],
     }
 }
 
@@ -322,6 +320,24 @@ pub fn get_difficulty_at_hard_fork(network: &Network, block_version: BlockVersio
 pub const fn get_hard_forks(network: &Network) -> &[HardFork] {
     match network {
         Network::Mainnet => &HARD_FORKS,
-        _ => &TESTNET_HARD_FORKS,
+        _ => &OTHERS_NETWORK_HARD_FORKS,
     }
 }
+
+// Static checks
+static_assert!(
+    CHAIN_SYNC_RESPONSE_MAX_BLOCKS >= CHAIN_SYNC_RESPONSE_MIN_BLOCKS,
+    "Chain sync response max blocks must be greater than or equal to min blocks"
+);
+static_assert!(
+    CHAIN_SYNC_DEFAULT_RESPONSE_BLOCKS >= CHAIN_SYNC_RESPONSE_MIN_BLOCKS,
+    "Chain sync default response blocks must be greater than or equal to min blocks"
+);
+static_assert!(
+    CHAIN_SYNC_DEFAULT_RESPONSE_BLOCKS <= CHAIN_SYNC_RESPONSE_MAX_BLOCKS,
+    "Chain sync default response blocks must be less than or equal to max blocks"
+);
+static_assert!(
+    CHAIN_SYNC_RESPONSE_MAX_BLOCKS <= u16::MAX as usize,
+    "Chain sync response max blocks must be less than or equal to u16::MAX"
+);

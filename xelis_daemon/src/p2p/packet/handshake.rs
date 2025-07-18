@@ -8,8 +8,11 @@ use xelis_common::{
 };
 use crate::p2p::{
     connection::Connection,
-    peer::{Peer, Rx},
-    peer_list::SharedPeerList
+    peer_list::{
+        SharedPeerList,
+        Peer,
+        Rx,
+    }
 };
 use std::{
     borrow::Cow,
@@ -84,8 +87,23 @@ impl<'a> Handshake<'a> {
     }
 
     // Create a new peer using its connection and this handshake packet
-    pub fn create_peer(self, connection: Connection, priority: bool, peer_list: SharedPeerList) -> (Peer, Rx) {
-        Peer::new(connection, self.get_peer_id(), self.node_tag.into_owned(), self.local_port, self.version.into_owned(), self.top_hash.into_owned(), self.topoheight, self.height, self.pruned_topoheight, priority, self.cumulative_difficulty.into_owned(), peer_list, self.can_be_shared)
+    pub fn create_peer(self, connection: Connection, priority: bool, peer_list: SharedPeerList, propagate_txs: bool) -> (Peer, Rx) {
+        Peer::new(
+            connection,
+            self.get_peer_id(),
+            self.node_tag.into_owned(),
+            self.local_port,
+            self.version.into_owned(),
+            self.top_hash.into_owned(),
+            self.topoheight,
+            self.height,
+            self.pruned_topoheight,
+            priority,
+            self.cumulative_difficulty.into_owned(),
+            peer_list,
+            self.can_be_shared,
+            propagate_txs
+        )
     }
 
     pub fn get_local_port(&self) -> u16 {

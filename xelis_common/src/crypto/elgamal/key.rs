@@ -11,7 +11,7 @@ use crate::{
     api::DataElement,
     config::MAXIMUM_SUPPLY,
     crypto::{
-        proofs::PC_GENS,
+        proofs::H,
         Address,
         AddressType,
         Hash
@@ -62,7 +62,7 @@ impl PublicKey {
         let s = &secret.0;
         assert!(s != &Scalar::ZERO);
 
-        Self(s.invert() * PC_GENS.B_blinding)
+        Self(s.invert() * (*H))
     }
 
     // Encrypt an amount to a Ciphertext
@@ -193,7 +193,7 @@ impl KeyPair {
     // Sign a message with the private key
     pub fn sign(&self, message: &[u8]) -> Signature {
         let k = Scalar::random(&mut OsRng);
-        let r = k * PC_GENS.B_blinding;
+        let r = k * (*H);
         let e = hash_and_point_to_scalar(&self.public_key.compress(), message, &r);
         let s = self.private_key.as_scalar().invert() * e + k;
         Signature::new(s, e)

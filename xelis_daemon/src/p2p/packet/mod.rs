@@ -1,18 +1,11 @@
-pub mod handshake;
-pub mod chain;
-pub mod ping;
-pub mod object;
-pub mod inventory;
-pub mod bootstrap_chain;
-pub mod peer_disconnected;
+mod handshake;
+mod chain;
+mod ping;
+mod object;
+mod inventory;
+mod bootstrap;
+mod peer_disconnected;
 
-use self::bootstrap_chain::{BootstrapChainRequest, BootstrapChainResponse};
-use self::inventory::{NotifyInventoryResponse, NotifyInventoryRequest};
-use self::object::{ObjectRequest, ObjectResponse};
-use self::chain::{ChainRequest, ChainResponse};
-use self::handshake::Handshake;
-use self::peer_disconnected::PacketPeerDisconnected;
-use self::ping::Ping;
 use std::borrow::Cow;
 use log::{debug, trace};
 use xelis_common::{
@@ -20,8 +13,15 @@ use xelis_common::{
     block::BlockHeader,
     crypto::Hash
 };
-
 use super::EncryptionKey;
+
+pub use bootstrap::*;
+pub use inventory::*;
+pub use object::*;
+pub use chain::*;
+pub use handshake::*;
+pub use peer_disconnected::*;
+pub use ping::Ping;
 
 // All registered packet ids
 const KEY_EXCHANGE_ID: u8 = 0;
@@ -118,6 +118,19 @@ impl Packet<'_> {
             Packet::BootstrapChainResponse(_) => BOOTSTRAP_CHAIN_RESPONSE_ID,
             Packet::PeerDisconnected(_) => PEER_DISCONNECTED_ID,
             Packet::KeyExchange(_) => KEY_EXCHANGE_ID,
+        }
+    }
+
+    pub fn is_order_dependent(&self) -> bool {
+        match self {
+            Packet::ObjectRequest(_)
+            | Packet::ObjectResponse(_)
+            | Packet::ChainRequest(_) 
+            | Packet::ChainResponse(_)
+            | Packet::NotifyInventoryRequest(_)
+            | Packet::PeerDisconnected(_)
+            | Packet::Ping(_) => false,
+            _ => true,
         }
     }
 

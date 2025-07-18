@@ -1,13 +1,16 @@
 mod state;
 mod error;
 mod contract;
+mod zkp_cache;
 
 use std::{
     borrow::Cow,
     collections::HashMap,
-    iter
+    iter,
+    sync::Arc
 };
 
+use anyhow::Context;
 use bulletproofs::RangeProof;
 use curve25519_dalek::{
     ristretto::CompressedRistretto,
@@ -20,7 +23,7 @@ use log::{debug, trace};
 use merlin::Transcript;
 use xelis_vm::ModuleValidator;
 use crate::{
-    tokio::block_in_place_safe,
+    tokio::spawn_blocking_safe,
     account::Nonce,
     config::{BURN_PER_CONTRACT, MAX_GAS_USAGE_PER_TX, XELIS_ASSET},
     contract::ContractProvider,
@@ -66,6 +69,7 @@ use contract::InvokeContract;
 
 pub use state::*;
 pub use error::*;
+pub use zkp_cache::*;
 
 struct DecompressedTransferCt {
     commitment: PedersenCommitment,
@@ -395,6 +399,154 @@ impl Transaction {
         Ok(())
     }
 
+    async fn verify_dynamic_parts<'a, E, B: BlockchainVerificationState<'a, E>>(
+        &'a self,
+        tx_hash: &'a Hash,
+        state: &mut B,
+        sigma_batch_collector: &mut BatchCollector,
+    ) -> Result<(), VerificationError<E>> {
+        let mut transfers_decompressed = Vec::new();
+        let mut deposits_decompressed = HashMap::new();
+
+        trace!("Pre-verifying transaction on state");
+        state.pre_verify_tx(&self).await
+            .map_err(VerificationError::State)?;
+
+        // First, check the nonce
+        let account_nonce = state.get_account_nonce(&self.source).await
+            .map_err(VerificationError::State)?;
+
+        if account_nonce != self.nonce {
+            return Err(VerificationError::InvalidNonce(tx_hash.clone(), account_nonce, self.nonce));
+        }
+
+        // Nonce is valid, update it for next transactions if any
+        state
+            .update_account_nonce(&self.source, self.nonce + 1).await
+            .map_err(VerificationError::State)?;
+
+        match &self.data {
+            TransactionType::Transfers(transfers) => {
+                for transfer in transfers.iter() {
+                    let decompressed = DecompressedTransferCt::decompress(transfer)
+                        .map_err(ProofVerificationError::from)?;
+
+                    transfers_decompressed.push(decompressed);
+                }
+            },
+            TransactionType::Burn(_) => {},
+            TransactionType::MultiSig(payload) => {
+                let is_reset = payload.threshold == 0 && payload.participants.is_empty();
+                // If the multisig is reset, we need to check if it was already configured
+                if is_reset && state.get_multisig_state(&self.source).await.map_err(VerificationError::State)?.is_none() {
+                    return Err(VerificationError::MultiSigNotConfigured);
+                }
+            },
+            TransactionType::InvokeContract(payload) => {
+                self.verify_invoke_contract(
+                    &mut deposits_decompressed,
+                    &payload.deposits,
+                    payload.max_gas
+                )?;
+
+                // We need to load the contract module if not already in cache
+                if !self.is_contract_available(state, &payload.contract).await? {
+                    return Err(VerificationError::ContractNotFound);
+                }
+
+                let (module, environment) = state.get_contract_module_with_environment(&payload.contract).await
+                    .map_err(VerificationError::State)?;
+
+                if !module.is_entry_chunk(payload.chunk_id as usize) {
+                    return Err(VerificationError::InvalidInvokeContract);
+                }
+
+                let validator = ModuleValidator::new(module, environment);
+                for constant in payload.parameters.iter() {
+                    validator.verify_constant(&constant)
+                        .map_err(|err| VerificationError::ModuleError(format!("{:#}", err)))?;
+                }
+            },
+            TransactionType::DeployContract(payload) => {
+                if let Some(invoke) = payload.invoke.as_ref() {
+                    self.verify_invoke_contract(
+                        &mut deposits_decompressed,
+                        &invoke.deposits,
+                        invoke.max_gas
+                    )?;
+                }
+
+                let environment = state.get_environment().await
+                    .map_err(VerificationError::State)?;
+
+                let validator = ModuleValidator::new(&payload.module, environment);
+                validator.verify()
+                    .map_err(|err| VerificationError::ModuleError(format!("{:#}", err)))?;
+            }
+        };
+
+        let new_source_commitments_decompressed = self
+            .source_commitments
+            .iter()
+            .map(|commitment| commitment.get_commitment().decompress())
+            .collect::<Result<Vec<_>, DecompressionError>>()
+            .map_err(ProofVerificationError::from)?;
+
+        let source_decompressed = self
+            .source
+            .decompress()
+            .map_err(|err| VerificationError::Proof(err.into()))?;
+
+        let mut transcript = Self::prepare_transcript(self.version, &self.source, self.fee, self.nonce);
+
+        for (commitment, new_source_commitment) in self
+            .source_commitments
+            .iter()
+            .zip(&new_source_commitments_decompressed)
+        {
+            // Ciphertext containing all the funds spent for this commitment
+            let output = self.get_sender_output_ct(commitment.get_asset(), &transfers_decompressed, &deposits_decompressed)
+                .map_err(ProofVerificationError::from)?;
+
+            // Retrieve the balance of the sender
+            let source_verification_ciphertext = state
+                .get_sender_balance(&self.source, commitment.get_asset(), &self.reference).await
+                .map_err(VerificationError::State)?;
+
+            let source_ct_compressed = source_verification_ciphertext.compress();
+
+            // Compute the new final balance for account
+            *source_verification_ciphertext -= &output;
+            transcript.new_commitment_eq_proof_domain_separator();
+            transcript.append_hash(b"new_source_commitment_asset", commitment.get_asset());
+            transcript
+                .append_commitment(b"new_source_commitment", commitment.get_commitment());
+
+            if self.version >= TxVersion::V1 {
+                transcript.append_ciphertext(b"source_ct", &source_ct_compressed);
+            }
+
+            commitment.get_proof().pre_verify(
+                &source_decompressed,
+                &source_verification_ciphertext,
+                &new_source_commitment,
+                &mut transcript,
+                sigma_batch_collector,
+            )?;
+
+            // Update source balance
+            state
+                .add_sender_output(
+                    &self.source,
+                    commitment.get_asset(),
+                    output,
+                ).await
+                .map_err(VerificationError::State)?;
+        }
+
+        Ok(())
+    }
+
     // internal, does not verify the range proof
     // returns (transcript, commitments for range proof)
     async fn pre_verify<'a, E, B: BlockchainVerificationState<'a, E>>(
@@ -418,7 +570,7 @@ impl Transaction {
             .map_err(VerificationError::State)?;
 
         if account_nonce != self.nonce {
-            return Err(VerificationError::InvalidNonce(account_nonce, self.nonce));
+            return Err(VerificationError::InvalidNonce(tx_hash.clone(), account_nonce, self.nonce));
         }
 
         // Nonce is valid, update it for next transactions if any
@@ -811,79 +963,123 @@ impl Transaction {
         Ok((transcript, final_commitments))
     }
 
-    pub async fn verify_batch<'a, T: AsRef<Transaction>, H: AsRef<Hash>, E, B: BlockchainVerificationState<'a, E>>(
-        txs: &'a [(T, H)],
+    pub async fn verify_batch<'a, H, E, B, C>(
+        txs: impl Iterator<Item = &'a (Arc<Transaction>, H)>,
         state: &mut B,
-    ) -> Result<(), VerificationError<E>> {
-        trace!("Verifying batch of {} transactions", txs.len());
+        cache: &C,
+    ) -> Result<(), VerificationError<E>>
+    where
+        H: AsRef<Hash> + 'a,
+        B: BlockchainVerificationState<'a, E>,
+        C: ZKPCache<E>
+    {
+        trace!("Verifying batch of transactions");
         let mut sigma_batch_collector = BatchCollector::default();
-        let mut prepared = Vec::with_capacity(txs.len());
+        let mut prepared = Vec::new();
         for (tx, hash) in txs {
-            let (transcript, commitments) = tx.as_ref()
-                .pre_verify(hash.as_ref(), state, &mut sigma_batch_collector).await?;
-            prepared.push((transcript, commitments));
+            let hash = hash.as_ref();
+
+            // In case the cache already know this TX
+            // we don't need to spend time reverifying it again
+            // because a TX is immutable, we can just verify the mutable parts
+            // (balance & nonce related)
+            let dynamic_parts_only = cache.is_already_verified(hash).await
+                .map_err(VerificationError::State)?;
+            if dynamic_parts_only {
+                debug!("TX {} is known from ZKPCache, verifying dynamic parts only", hash);
+                tx.verify_dynamic_parts(hash, state, &mut sigma_batch_collector).await?;
+            } else {
+                let (transcript, commitments) = tx
+                    .pre_verify(hash, state, &mut sigma_batch_collector).await?;
+                prepared.push((tx.clone(), transcript, commitments));
+            }
         }
 
-        block_in_place_safe(|| {
+        // Spawn a dedicated thread for the ZK Proofs verification
+        // this prevent us from blocking the current thread
+        spawn_blocking_safe(move || {
             sigma_batch_collector
                 .verify()
                 .map_err(|_| ProofVerificationError::GenericProof)?;
-    
-            RangeProof::verify_batch(
-                txs.iter()
-                    .zip(&mut prepared)
-                    .map(|((tx, _), (transcript, commitments))| {
-                        tx.as_ref()
-                            .range_proof
-                            .verification_view(
-                                transcript,
-                                commitments,
-                                BULLET_PROOF_SIZE
-                            )
-                    }),
-                &BP_GENS,
-                &PC_GENS,
-            )
-            .map_err(ProofVerificationError::from)
-        })?;
+
+            if !prepared.is_empty() {
+                RangeProof::verify_batch(
+                    prepared.iter_mut()
+                        .map(|(tx, transcript, commitments)| {
+                            tx.range_proof
+                                .verification_view(
+                                    transcript,
+                                    commitments,
+                                    BULLET_PROOF_SIZE
+                                )
+                        }),
+                    &BP_GENS,
+                    &PC_GENS,
+                )
+                .map_err(ProofVerificationError::from)
+            } else {
+                debug!("no range proof to verify, skipping them");
+                Ok(())
+            }
+        }).await.context("spawning blocking thread for ZK verification")??;
 
         Ok(())
     }
 
     /// Verify one transaction. Use `verify_batch` to verify a batch of transactions.
-    pub async fn verify<'a, E, B: BlockchainVerificationState<'a, E>>(
-        &'a self,
+    pub async fn verify<'a, E, B, C>(
+        self: &'a Arc<Self>,
         tx_hash: &'a Hash,
         state: &mut B,
-    ) -> Result<(), VerificationError<E>> {
+        cache: &C,
+    ) -> Result<(), VerificationError<E>>
+    where
+        B: BlockchainVerificationState<'a, E>,
+        C: ZKPCache<E>
+    {
         let mut sigma_batch_collector = BatchCollector::default();
-        let (mut transcript, commitments) = self.pre_verify(tx_hash, state, &mut sigma_batch_collector).await?;
+        let dynamic_parts_only = cache.is_already_verified(tx_hash).await
+            .map_err(VerificationError::State)?;
+        let res = if dynamic_parts_only {
+            debug!("TX {} is known from ZKPCache, verifying dynamic parts only", tx_hash);
+            self.verify_dynamic_parts(tx_hash, state, &mut sigma_batch_collector).await?;
+            None
+        }
+        else {
+            let res = self.pre_verify(tx_hash, state, &mut sigma_batch_collector).await?;
+            Some((res, Arc::clone(&self)))
+        };
 
-        block_in_place_safe(|| {
+        // Block in place instead of spawning a dedicated thread to reduce overhead
+        // verification is expected to be fast enough to not block anything
+        spawn_blocking_safe(move || {
             trace!("Verifying sigma proofs");
             sigma_batch_collector
-            .verify()
-            .map_err(|_| ProofVerificationError::GenericProof)?;
+                .verify()
+                .map_err(|_| ProofVerificationError::GenericProof)?;
 
-            trace!("Verifying range proof");
-            RangeProof::verify_multiple(
-                &self.range_proof,
-                &BP_GENS,
-                &PC_GENS,
-                &mut transcript,
-                &commitments,
-                BULLET_PROOF_SIZE,
-            )
-            .map_err(ProofVerificationError::from)
-        })?;
-    
+            if let Some(((mut transcript, commitments), tx)) = res {
+                trace!("Verifying range proof");
+                RangeProof::verify_multiple(
+                    &tx.range_proof,
+                    &BP_GENS,
+                    &PC_GENS,
+                    &mut transcript,
+                    &commitments,
+                    BULLET_PROOF_SIZE,
+                ).map_err(ProofVerificationError::from)
+            } else {
+                Ok(())
+            }
+        }).await.context("spawning blocking thread for ZK verification")??;
+ 
         Ok(())
     }
 
     // Apply the transaction to the state
     // Arc is required around Self to be shared easily into the VM if needed
     async fn apply<'a, P: ContractProvider, E, B: BlockchainApplyState<'a, P, E>>(
-        &'a self,
+        self: &'a Arc<Self>,
         tx_hash: &'a Hash,
         state: &mut B,
         decompressed_deposits: &HashMap<&Hash, DecompressedDepositCt>,
@@ -974,7 +1170,7 @@ impl Transaction {
 
     /// Assume the tx is valid, apply it to `state`. May panic if a ciphertext is ill-formed.
     pub async fn apply_without_verify<'a, P: ContractProvider, E, B: BlockchainApplyState<'a, P, E>>(
-        &'a self,
+        self: &'a Arc<Self>,
         tx_hash: &'a Hash,
         state: &mut B,
     ) -> Result<(), VerificationError<E>> {
@@ -1041,7 +1237,7 @@ impl Transaction {
     /// Then apply ciphertexts to the state
     /// Checks done are: commitment eq proofs only
     pub async fn apply_with_partial_verify<'a, P: ContractProvider, E, B: BlockchainApplyState<'a, P, E>>(
-        &'a self,
+        self: &'a Arc<Self>,
         tx_hash: &'a Hash,
         state: &mut B
     ) -> Result<(), VerificationError<E>> {
@@ -1080,13 +1276,6 @@ impl Transaction {
             _ => {}
         }
 
-        let new_source_commitments_decompressed = self
-            .source_commitments
-            .iter()
-            .map(|commitment| commitment.get_commitment().decompress())
-            .collect::<Result<Vec<_>, DecompressionError>>()
-            .map_err(ProofVerificationError::from)?;
-
         let owner = self
             .source
             .decompress()
@@ -1097,13 +1286,15 @@ impl Transaction {
         trace!("verifying commitments eq proofs");
 
         // This contains sender balance updated, output ciphertext, asset commitment
-        let mut commitments_changes = Vec::new();
+        let mut commitments_changes = Vec::with_capacity(self.source_commitments.len());
 
-        for (commitment, new_source_commitment) in self
-            .source_commitments
-            .iter()
-            .zip(&new_source_commitments_decompressed)
+        for commitment in self.source_commitments.iter()
         {
+            // Decompress the commitment
+            let new_source_commitment = commitment.get_commitment()
+                .decompress()
+                .map_err(ProofVerificationError::from)?;
+
             // Ciphertext containing all the funds spent for this commitment
             let output = self.get_sender_output_ct(commitment.get_asset(), &transfers_decompressed, &deposits_decompressed)
                 .map_err(ProofVerificationError::from)?;

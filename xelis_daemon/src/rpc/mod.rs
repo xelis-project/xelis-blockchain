@@ -22,23 +22,27 @@ use actix_web::{
     dev::ServerHandle,
     error::Error
 };
+use anyhow::Context;
+use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
 use serde_json::{Value, json};
-use tokio::sync::Mutex;
 use xelis_common::{
+    tokio::sync::Mutex,
     api::daemon::NotifyEvent,
     config,
-    rpc_server::{
-        json_rpc,
-        websocket,
-        websocket::{
-            EventWebSocketHandler,
-            WebSocketServer,
-            WebSocketServerShared
+    rpc::{
+        server::{
+            json_rpc,
+            websocket,
+            websocket::{
+                EventWebSocketHandler,
+                WebSocketServer,
+                WebSocketServerShared
+            },
+            WebSocketServerHandler,
+            RPCServerHandler,
         },
         InternalRpcError,
         RPCHandler,
-        RPCServerHandler,
-        WebSocketServerHandler
     },
     tokio::spawn_task
 };
@@ -78,12 +82,12 @@ impl<S: Storage> DaemonRpcServer<S> {
         blockchain: Arc<Blockchain<S>>,
         config: RPCConfig
     ) -> Result<SharedDaemonRpcServer<S>, BlockchainError> {
-        let getwork = if !config.getwork.disable_getwork_server {
+        let getwork = if !config.getwork.disable {
             info!("Creating GetWork server...");
             Some(WebSocketServer::new(GetWorkServer::new(
                 blockchain.clone(),
-                config.getwork.getwork_rate_limit_ms,
-                config.getwork.getwork_notify_job_concurrency
+                config.getwork.rate_limit_ms,
+                config.getwork.notify_job_concurrency
             )))
         } else {
             None
@@ -91,10 +95,10 @@ impl<S: Storage> DaemonRpcServer<S> {
 
         // create the RPC Handler which will register and contains all available methods
         let mut rpc_handler = RPCHandler::new(blockchain);
-        rpc::register_methods(&mut rpc_handler, !config.getwork.disable_getwork_server);
+        rpc::register_methods(&mut rpc_handler, !config.getwork.disable);
 
         // create the default websocket server (support event & rpc methods)
-        let ws = WebSocketServer::new(EventWebSocketHandler::new(rpc_handler, config.rpc_notify_events_concurrency));
+        let ws = WebSocketServer::new(EventWebSocketHandler::new(rpc_handler, config.notify_events_concurrency));
 
         let server = Arc::new(Self {
             handle: Mutex::new(None),
@@ -102,22 +106,44 @@ impl<S: Storage> DaemonRpcServer<S> {
             getwork,
         });
 
+        let prometheus = if config.prometheus.enable {
+            let (recorder, _) = PrometheusBuilder::new()
+                .build()
+                .context("Failed to create Prometheus handler")?;
+
+            let handle = recorder.handle();
+            metrics::set_global_recorder(Box::new(recorder))
+                .context("Failed to set global recorder for Prometheus")?;
+
+            info!("Prometheus metrics enabled on route: {}", config.prometheus.route);
+            Some((config.prometheus.route, handle))
+        } else {
+            None
+        };
+
         {
             let clone = Arc::clone(&server);
             let builder = HttpServer::new(move || {
                 let server = Arc::clone(&clone);
-                App::new().app_data(web::Data::from(server))
+                let mut app = App::new()
+                    .app_data(web::Data::from(server))
+                    .app_data(web::Data::new(prometheus.as_ref().map(|(_, handle)| handle.clone())))
                     // Traditional HTTP
                     .route("/json_rpc", web::post().to(json_rpc::<Arc<Blockchain<S>>, DaemonRpcServer<S>>))
                     // WebSocket support
                     .route("/json_rpc", web::get().to(websocket::<EventWebSocketHandler<Arc<Blockchain<S>>, NotifyEvent>, DaemonRpcServer<S>>))
                     .route("/getwork/{address}/{worker}", web::get().to(getwork_endpoint::<S>))
-                    .service(index)
+                    .service(index);
+
+                if let Some((route, _)) = &prometheus {
+                    app = app.route(route, web::get().to(prometheus_metrics));
+                }
+                app
             })
             .disable_signals()
-            .bind(&config.rpc_bind_address)?;
+            .bind(&config.bind_address)?;
 
-            let http_server = builder.workers(config.rpc_threads).run();
+            let http_server = builder.workers(config.threads).run();
 
             { // save the server handle to be able to stop it later
                 let handle = http_server.handle();
@@ -181,6 +207,18 @@ impl<S: Storage> RPCServerHandler<Arc<Blockchain<S>>> for DaemonRpcServer<S> {
 #[get("/")]
 async fn index() -> impl Responder {
     HttpResponse::Ok().body(format!("Hello, world!\nRunning on: {}", config::VERSION))
+}
+
+async fn prometheus_metrics(handle: Data<Option<PrometheusHandle>>) -> Result<HttpResponse, Error> {
+    Ok(match handle.as_ref() {
+        Some(handle) => {
+            let metrics = handle.render();
+            HttpResponse::Ok()
+                .content_type("text/plain; version=0.0.4")
+                .body(metrics)
+        },
+        None => HttpResponse::NotFound().body("Prometheus metrics are not enabled")
+    })
 }
 
 async fn getwork_endpoint<S: Storage>(server: Data<DaemonRpcServer<S>>, request: HttpRequest, stream: Payload) -> Result<HttpResponse, Error> {

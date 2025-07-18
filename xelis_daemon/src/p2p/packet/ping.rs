@@ -19,7 +19,7 @@ use crate::{
     },
     p2p::{
         error::P2pError,
-        peer::Peer,
+        Peer,
         is_local_address,
     },
     rpc::rpc::get_peer_entry

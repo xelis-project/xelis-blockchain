@@ -4,6 +4,38 @@ This file contains all the changelogs to ensure that changes can be tracked and 
 
 To see the full history and exact changes, please refer to the commits history directly.
 
+## v1.18.0
+
+Bug fixes, performance improvements & new features.
+
+**Common**:
+- Updated XVM
+- new std for XVM
+- rework features for rpc
+- optimize daemon RPC events
+- bug fixes
+- metrics on RPC Server
+- fix reported bug of unlimited batch size in RPC
+
+**Daemon**:
+- Prometheus metrics export on `/metrics` (disabled by default)
+- Configurable outgoing P2P max peers
+- Support P2P Proxy SOCKS4/SOCKS5
+- ZK Proofs optimizations
+- optimizations related to the P2P
+- Fix mempool slowdown with >50k TXs propagated
+- Fix transaction broadcast during spam
+- Fix deadlock during heavy chain sync
+- RocksDB implementation as available DB backend
+- rework P2P peerlist, find new peers faster
+- rework fast sync for upcoming smart contracts to be more scalable
+- several bug fixes
+
+**Wallet**:
+- Tracking system for new assets (balances / TXs related to a new asset isn't tracked by default, to prevent overhead with unrequested assets)
+- XSWD Relayer WIP (allow to communicate from a dApp on a desktop to a wallet securely)
+- WASM compatibility
+
 ## v1.17.0
 
 Bug fixes for daemon & wallet, improvements & new features.

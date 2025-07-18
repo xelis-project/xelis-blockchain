@@ -76,8 +76,59 @@ pub struct RPCBlockResponse<'a> {
     pub extra_nonce: Cow<'a, [u8; EXTRA_NONCE_SIZE]>,
     pub miner: Cow<'a, Address>,
     pub txs_hashes: Cow<'a, IndexSet<Hash>>,
-    #[serde(default)]
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+    )]
     pub transactions: Vec<RPCTransaction<'a>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GetMempoolParams {
+    pub maximum: Option<usize>,
+    pub skip: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MempoolTransactionSummary<'a> {
+    // TX hash
+    pub hash: Cow<'a, Hash>,
+    // The current sender
+    pub source: Address,
+    // Fees expected to be paid
+    pub fee: u64,
+    // First time seen in the mempool
+    pub first_seen: TimestampSeconds,
+    // Size of the TX
+    pub size: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TransactionSummary<'a> {
+    // TX hash
+    pub hash: Cow<'a, Hash>,
+    // The current sender
+    pub source: Address,
+    // Fees expected to be paid
+    pub fee: u64,
+    // Size of the TX
+    pub size: usize,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct GetMempoolResult<'a> {
+    // The range of transactions requested
+    pub transactions: Vec<TransactionResponse<'a>>,
+    // How many TXs in total available in mempool
+    pub total: usize,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct GetMempoolSummaryResult<'a> {
+    // The range of transactions requested
+    pub transactions: Vec<MempoolTransactionSummary<'a>>,
+    // How many TXs in total available in mempool
+    pub total: usize,
 }
 
 pub type BlockResponse = RPCBlockResponse<'static>;
@@ -258,9 +309,10 @@ pub struct GetInfoResult {
     pub maximum_supply: u64,
     // Current difficulty at tips
     pub difficulty: Difficulty,
-    // Expected block time
+    // Expected block time in milliseconds
     pub block_time_target: u64,
     // Average block time of last 50 blocks
+    // in milliseconds
     pub average_block_time: u64,
     pub block_reward: u64,
     pub dev_reward: u64,
@@ -270,7 +322,12 @@ pub struct GetInfoResult {
     // software version on which the daemon is running
     pub version: String,
     // Network state (mainnet, testnet, devnet)
-    pub network: Network
+    pub network: Network,
+    // Current block version enabled
+    // Always returned by the daemon
+    // But for compatibility with previous nodes
+    // it is set to None
+    pub block_version: Option<BlockVersion>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -653,6 +710,14 @@ pub struct GetContractBalanceAtTopoHeightParams<'a> {
     pub topoheight: TopoHeight
 }
 
+
+#[derive(Serialize, Deserialize)]
+pub struct GetContractBalancesParams<'a> {
+    pub contract: Cow<'a, Hash>,
+    pub skip: Option<usize>,
+    pub maximum: Option<usize>
+}
+
 #[derive(Serialize, Deserialize)]
 pub struct RPCVersioned<T> {
     pub topoheight: TopoHeight,
@@ -672,7 +737,11 @@ pub struct P2pBlockPropagationResult {
 
 #[derive(Serialize, Deserialize)]
 pub struct GetP2pBlockPropagation<'a> {
-    pub hash: Cow<'a, Hash>
+    pub hash: Cow<'a, Hash>,
+    #[serde(default = "default_true_value")]
+    pub outgoing: bool,
+    #[serde(default = "default_true_value")]
+    pub incoming: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -783,7 +852,7 @@ pub struct StableTopoHeightChangedEvent {
 
 
 // Value of NotifyEvent::TransactionAddedInMempool
-pub type TransactionAddedInMempoolEvent = TransactionResponse<'static>;
+pub type TransactionAddedInMempoolEvent = MempoolTransactionSummary<'static>;
 // Value of NotifyEvent::TransactionOrphaned
 pub type TransactionOrphanedEvent = TransactionResponse<'static>;
 

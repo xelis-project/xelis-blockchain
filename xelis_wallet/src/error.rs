@@ -1,3 +1,4 @@
+use strum::{EnumDiscriminants, IntoDiscriminant};
 use thiserror::Error;
 use chacha20poly1305::Error as CryptoError;
 #[cfg(feature = "network_handler")]
@@ -7,14 +8,17 @@ use xelis_common::{
     transaction::extra_data::CipherFormatError,
     utils::{format_coin, format_xelis}
 };
-#[cfg(feature = "api_server")]
-use xelis_common::rpc_server::InternalRpcError;
+#[cfg(feature = "xswd")]
+use xelis_common::rpc::InternalRpcError;
 
 use anyhow::Error;
 
-#[repr(usize)]
-#[derive(Error, Debug)]
+#[derive(Error, Debug, EnumDiscriminants)]
 pub enum WalletError {
+    #[error("Cipher error")]
+    Cipher,
+    #[error("Asset {0} is not tracked by wallet")]
+    AssetNotTracked(Hash),
     #[error("Invalid datetime")]
     InvalidDatetime,
     #[error("Invalid builder state, tx hash not built")]
@@ -90,21 +94,25 @@ pub enum WalletError {
     AEADCipherFormatError(#[from] CipherFormatError),
     #[error("No network handler available")]
     NoNetworkHandler,
+    #[error("Nonce generation")]
+    NonceGeneration,
     #[error("Poison error")]
     PoisonError,
+    #[error("unsupported operation")]
+    Unsupported
 }
 
 impl WalletError {
     // Return the id for the variant
-    pub unsafe fn id(&self) -> usize {
-        *(self as *const Self as *const _)
+    pub  fn id(&self) -> usize {
+        self.discriminant() as usize
     }
 }
 
-#[cfg(feature = "api_server")]
+#[cfg(feature = "xswd")]
 impl From<WalletError> for InternalRpcError {
     fn from(e: WalletError) -> Self {
-        let id = unsafe { e.id() };
+        let id = e.id();
         InternalRpcError::Custom(100 + id as i16, e.to_string())
     }
 }

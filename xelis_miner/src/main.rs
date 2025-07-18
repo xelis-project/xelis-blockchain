@@ -69,7 +69,8 @@ use xelis_common::{
         LogLevel,
         ModuleConfig,
         Prompt,
-        ShareablePrompt
+        ShareablePrompt,
+        default_logs_datetime_format
     },
     serializer::Serializer,
     time::get_current_time_in_millis,
@@ -77,7 +78,7 @@ use xelis_common::{
     utils::{
         format_difficulty,
         format_hashrate,
-        sanitize_daemon_address
+        sanitize_ws_address
     }
 };
 use clap::Parser;
@@ -169,6 +170,14 @@ pub struct LogConfig {
     #[clap(long)]
     #[serde(default)]
     logs_modules: Vec<ModuleConfig>,
+    /// Disable the ascii art at startup
+    #[clap(long)]
+    #[serde(default)]
+    disable_ascii_art: bool,
+    /// Change the datetime format used by the logger
+    #[clap(long, default_value_t = default_logs_datetime_format())]
+    #[serde(default = "default_logs_datetime_format")]
+    datetime_format: String, 
 }
 
 #[derive(Parser, Serialize, Deserialize)]
@@ -290,7 +299,9 @@ async fn main() -> Result<()> {
         log.auto_compress_logs,
         !log.disable_interactive_mode,
         log.logs_modules,
-        log.file_log_level.unwrap_or(log.log_level)
+        log.file_log_level.unwrap_or(log.log_level),
+        !log.disable_ascii_art,
+        log.datetime_format.clone(),
     )?;
 
     // Prevent the user to block the program by selecting text in CLI
@@ -450,7 +461,7 @@ fn benchmark(threads: usize, iterations: usize, algorithm: Algorithm) {
 // This allow mining threads to only focus on mining and receiving jobs through memory channels.
 async fn communication_task(daemon_address: String, job_sender: broadcast::Sender<ThreadNotification<'_>>, mut block_receiver: mpsc::Receiver<MinerWork<'_>>, address: Address, worker: String) {
     info!("Starting communication task");
-    let daemon_address = sanitize_daemon_address(&daemon_address);
+    let daemon_address = sanitize_ws_address(&daemon_address);
     'main: loop {
         info!("Trying to connect to {}", daemon_address);
         let client = match connect_async(format!("{}/getwork/{}/{}", daemon_address, address.to_string(), worker)).await {
@@ -466,12 +477,7 @@ async fn communication_task(daemon_address: String, job_sender: broadcast::Sende
             },
             Err(e) => {
                 if let TungsteniteError::Http(e) = e {
-                    let body: String = e.into_body()
-                        .map_or(
-                            "Unknown error".to_owned(),
-                            |v| String::from_utf8_lossy(&v).to_string()
-                        );
-                    error!("Error while connecting to {}, got an unexpected response: {}", daemon_address, body);
+                    error!("Error while connecting to {}, got an unexpected response: {}", daemon_address, e.status());
                 } else {
                     error!("Error while connecting to {}: {}", daemon_address, e);
                 }
@@ -504,7 +510,7 @@ async fn communication_task(daemon_address: String, job_sender: broadcast::Sende
                 Some(work) = block_receiver.recv() => { // send all valid blocks found to the daemon
                     info!("submitting new block found...");
                     let submit = serde_json::json!(SubmitMinerWorkParams { miner_work: work.to_hex() }).to_string();
-                    if let Err(e) = write.send(Message::Text(submit)).await {
+                    if let Err(e) = write.send(Message::Text(submit.into())).await {
                         error!("Error while sending the block found to the daemon: {}", e);
                         break;
                     }

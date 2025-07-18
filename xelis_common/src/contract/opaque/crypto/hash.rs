@@ -41,7 +41,7 @@ pub fn hash_to_array_fn(zelf: FnInstance, _: FnParams, _: &mut Context) -> FnRet
         .map(|b| Primitive::U8(*b).into())
         .collect();
 
-    Ok(Some(ValueCell::Array(bytes)))
+    Ok(Some(ValueCell::Object(bytes)))
 }
 
 pub fn hash_from_bytes_fn(_: FnInstance, mut params: FnParams, _: &mut Context) -> FnReturnType {

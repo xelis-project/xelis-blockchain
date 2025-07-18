@@ -53,8 +53,31 @@ impl Serializer for ExtraDataType {
         Ok(match reader.read_u8()? {
             0 => Self::Private(ExtraData::read(reader)?),
             1 => Self::Public(PlaintextData(Vec::read(reader)?)),
-            2 => Self::Proprietary(Vec::read(reader)?),
+            2 => {
+                // We read manually to prevent the max default items limit
+                let len = reader.read_u16()?;
+                let values = reader.read_bytes(len as usize)?;
+                Self::Proprietary(values)
+            },
             _ => return Err(ReaderError::InvalidValue)
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{serializer::Serializer, transaction::extra_data::ExtraDataType};
+
+    #[test]
+    fn test_proprietary() {
+        let inner = vec![0; 2048];
+        let v = ExtraDataType::Proprietary(inner.clone());
+        let bytes = v.to_bytes();
+        let v2 = ExtraDataType::from_bytes(&bytes).unwrap();
+        let ExtraDataType::Proprietary(v2) = v2 else {
+            panic!("invalid variant");
+        };
+
+        assert!(inner == v2);
     }
 }

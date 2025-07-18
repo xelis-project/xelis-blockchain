@@ -1,21 +1,3 @@
-use crate::{
-    core::error::BlockchainError,
-    config::{CHAIN_SYNC_RESPONSE_MAX_BLOCKS, CHAIN_SYNC_RESPONSE_MIN_BLOCKS}
-};
-use anyhow::Error;
-use tokio::{
-    sync::{
-        AcquireError,
-        mpsc::error::SendError as TSendError,
-        oneshot::error::RecvError,
-    },
-    time::error::Elapsed
-};
-use xelis_common::{
-    api::daemon::{TimedDirection, Direction},
-    crypto::Hash,
-    serializer::ReaderError,
-};
 use std::{
     array::TryFromSliceError,
     net::{AddrParseError, SocketAddr},
@@ -26,12 +8,31 @@ use std::{
     io::Error as IOError
 };
 use thiserror::Error;
+use anyhow::Error;
+use xelis_common::{
+    tokio::{
+        sync::{
+            AcquireError,
+            mpsc::error::SendError as TSendError,
+            oneshot::error::RecvError,
+        },
+        time::error::Elapsed
+    },
+    api::daemon::{TimedDirection, Direction},
+    crypto::Hash,
+    serializer::ReaderError,
+};
+use crate::{
+    core::error::BlockchainError,
+    config::{CHAIN_SYNC_RESPONSE_MAX_BLOCKS, CHAIN_SYNC_RESPONSE_MIN_BLOCKS}
+};
 use super::{
-    disk_cache::DiskError,
+    peer_list::DiskError,
     encryption::EncryptionError,
     packet::{
-        bootstrap_chain::StepKind,
-        object::{ObjectRequest, OwnedObjectResponse},
+        StepKind,
+        ObjectRequest,
+        OwnedObjectResponse,
     }
 };
 
@@ -149,6 +150,8 @@ pub enum P2pError {
     RequestSyncChainTooFast,
     #[error(transparent)]
     AsyncTimeOut(#[from] Elapsed),
+    #[error("{0} has timed out")]
+    ObjectRequestTimedOut(ObjectRequest),
     #[error("No response received from peer")]
     NoResponse,
     #[error("Invalid object hash, expected: {}, got: {}", _0, _1)]
@@ -173,6 +176,8 @@ pub enum P2pError {
     BoostSyncModeFailed(Box<P2pError>),
     #[error("Expected a block type got {0}")]
     ExpectedBlock(OwnedObjectResponse),
+    #[error("Expected a block header type got {0}")]
+    ExpectedBlockHeader(OwnedObjectResponse),
     #[error("Expected a transaction type got {0}")]
     ExpectedTransaction(OwnedObjectResponse),
     #[error("Peer sent us a peerlist faster than protocol rules, expected to wait {} seconds more", _0)]

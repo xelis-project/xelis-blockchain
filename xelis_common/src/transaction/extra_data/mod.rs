@@ -7,8 +7,9 @@ mod typed;
 use std::borrow::Cow;
 
 use chacha20poly1305::{
-    aead::{Aead, Payload},
-    AeadInPlace, ChaCha20Poly1305, KeyInit,
+    aead::{Aead, Payload, AeadInOut},
+    ChaCha20Poly1305,
+    KeyInit,
 };
 use chacha20::{
     cipher::{KeyIvInit, StreamCipher},
@@ -27,7 +28,7 @@ use crate::{
             PedersenOpening,
             PrivateKey,
         },
-        proofs::PC_GENS
+        proofs::H
     },
     serializer::{
         Reader,
@@ -76,7 +77,7 @@ pub struct PlaintextData(pub Vec<u8>);
 
 /// See [`derive_shared_key`].
 pub fn derive_shared_key_from_opening(opening: &PedersenOpening) -> SharedKey {
-    derive_shared_key(&(opening.as_scalar() * &PC_GENS.B_blinding).compress())
+    derive_shared_key(&(opening.as_scalar() * (*H)).compress())
 }
 
 /// See [`derive_shared_key`].

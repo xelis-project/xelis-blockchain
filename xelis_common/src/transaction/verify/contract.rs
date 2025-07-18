@@ -1,6 +1,7 @@
 use std::{
     borrow::Cow,
-    collections::HashMap
+    collections::HashMap,
+    sync::Arc
 };
 
 use anyhow::Context;
@@ -41,7 +42,7 @@ impl Transaction {
     // Note that the contract must be already loaded by calling
     // `is_contract_available`
     pub(super) async fn invoke_contract<'a, P: ContractProvider, E, B: BlockchainApplyState<'a, P, E>>(
-        &'a self,
+        self: &'a Arc<Self>,
         tx_hash: &'a Hash,
         state: &mut B,
         decompressed_deposits: &HashMap<&Hash, DecompressedDepositCt>,
@@ -58,8 +59,10 @@ impl Transaction {
         // Total used gas by the VM
         let (used_gas, exit_code) = block_in_place_safe::<_, Result<_, anyhow::Error>>(|| {
             // Create the VM
-            let module = contract_environment.module;
-            let mut vm = VM::new(module, contract_environment.environment);
+            let mut vm = VM::new(contract_environment.environment);
+
+            // Insert the module to load
+            vm.append_module(contract_environment.module)?;
 
             // Invoke the needed chunk
             // This is the first chunk to be called

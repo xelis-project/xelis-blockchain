@@ -384,6 +384,11 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
         self.contract_manager.outputs.get(tx_hash)
     }
 
+    // Get the total amount of burned coins
+    pub fn get_burned_supply(&self) -> u64 {
+        self.burned_supply
+    }
+
     async fn remove_contract_module_internal(
         &mut self,
         hash: &'a Hash
@@ -522,13 +527,26 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
             }
         }
 
+        // Start by storing the contracts
+        debug!("Storing contracts");
+        for (hash, (state, module)) in self.inner.contracts.iter() {
+            if state.should_be_stored() {
+                trace!("Saving contract {} at topoheight {}", hash, self.inner.topoheight);
+                // Prevent cloning the value
+                let module = module.as_ref()
+                    .map(|v| Cow::Borrowed(v.as_ref()));
+                self.inner.storage.set_last_contract_to(&hash, self.inner.topoheight, &VersionedContract::new(module, state.get_topoheight())).await?;
+            }
+        }
+
+        debug!("Storing contract storage changes");
         // Apply all the contract storage changes
         for (contract, cache) in self.contract_manager.caches {
             // Apply all storage changes
             for (key, (state, value)) in cache.storage {
                 if state.should_be_stored() {
                     trace!("Saving contract data {} key {} at topoheight {}", contract, key, self.inner.topoheight);
-                    self.inner.storage.set_last_contract_data_to(&contract, &key, self.inner.topoheight, VersionedContractData::new(value, state.get_topoheight())).await?;
+                    self.inner.storage.set_last_contract_data_to(&contract, &key, self.inner.topoheight, &VersionedContractData::new(value, state.get_topoheight())).await?;
                 }
             }
 
@@ -542,6 +560,7 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
             }
         }
 
+        debug!("applying external transfers");
         // Apply all the transfers to the receiver accounts
         for (key, assets) in self.contract_manager.tracker.transfers {
             for (asset, amount) in assets {
@@ -551,27 +570,15 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
             }
         }
 
-        // Also store the contracts updated
-        for (hash, (state, module)) in self.inner.contracts {
-            if state.should_be_stored() {
-                trace!("Saving contract {} at topoheight {}", hash, self.inner.topoheight);
-                self.inner.storage.set_last_contract_to(&hash, self.inner.topoheight, VersionedContract::new(module, state.get_topoheight())).await?;
-            }
-        }
-
         // Apply all the contract outputs
+        debug!("storing contract outputs");
         for (key, outputs) in self.contract_manager.outputs {
-            self.inner.storage.set_contract_outputs_for_tx(&key, outputs).await?;
+            self.inner.storage.set_contract_outputs_for_tx(&key, &outputs).await?;
         }
 
         // Apply all balances changes at topoheight
         // We injected the sender balances in the receiver balances previously
         for (account, balances) in self.inner.receiver_balances {
-            for (asset, version) in balances {
-                trace!("Saving versioned balance {} for {} at topoheight {}", version, account.as_address(self.inner.storage.is_mainnet()), self.inner.topoheight);
-                self.inner.storage.set_last_balance_to(&account, &asset, self.inner.topoheight, &version).await?;
-            }
-
             // If the account has no nonce set, set it to 0
             if !self.inner.accounts.contains_key(account.as_ref()) && !self.inner.storage.has_nonce(&account).await? {
                 debug!("{} has now a balance but without any nonce registered, set default (0) nonce", account.as_address(self.inner.storage.is_mainnet()));
@@ -582,10 +589,12 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
             if !self.inner.storage.is_account_registered_for_topoheight(&account, self.inner.topoheight).await? {
                 self.inner.storage.set_account_registration_topoheight(&account, self.inner.topoheight).await?;
             }
-        }
 
-        trace!("Saving burned supply {} at topoheight {}", self.burned_supply, self.inner.topoheight);
-        self.inner.storage.set_burned_supply_at_topo_height(self.inner.topoheight, self.burned_supply)?;
+            for (asset, version) in balances {
+                trace!("Saving versioned balance {} for {} at topoheight {}", version, account.as_address(self.inner.storage.is_mainnet()), self.inner.topoheight);
+                self.inner.storage.set_last_balance_to(&account, &asset, self.inner.topoheight, &version).await?;
+            }
+        }
 
         Ok(())
     }

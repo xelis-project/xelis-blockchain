@@ -1,8 +1,10 @@
 use thiserror::Error;
-use xelis_common::rpc_server::InternalRpcError;
+use xelis_common::rpc::InternalRpcError;
 
 #[derive(Error, Debug, Clone, Copy)]
 pub enum XSWDError {
+    #[error("semaphore error")]
+    SemaphoreError,
     #[error("Permission denied")]
     PermissionDenied,
     #[error("Permission invalid: method wasn't mentionned during handshake")]

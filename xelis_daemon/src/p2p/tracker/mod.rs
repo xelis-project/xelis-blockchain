@@ -7,21 +7,21 @@ use std::{
     time::{Duration, Instant}
 };
 use bytes::Bytes;
-use tokio::{
-    sync::{
-        mpsc::{Sender, Receiver, self},
-        Mutex,
-        broadcast
-    },
-    select,
-    time::interval
-};
 use log::{
     trace,
     debug,
     warn,
 };
 use xelis_common::{
+    tokio::{
+        sync::{
+            mpsc::{Sender, Receiver, self},
+            Mutex,
+            broadcast
+        },
+        select,
+        time::interval
+    },
     crypto::Hash,
     queue::Queue,
     serializer::Serializer,
@@ -29,14 +29,12 @@ use xelis_common::{
 };
 use super::{
     packet::{
-        object::{
-            ObjectRequest,
-            OwnedObjectResponse
-        },
+        ObjectRequest,
+        OwnedObjectResponse,
         Packet
     },
     error::P2pError,
-    peer::Peer
+    peer_list::Peer
 };
 use crate::config::PEER_TIMEOUT_REQUEST_OBJECT;
 use request::*;

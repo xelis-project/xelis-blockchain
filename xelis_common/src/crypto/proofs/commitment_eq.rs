@@ -1,6 +1,6 @@
 use curve25519_dalek::{
     ristretto::CompressedRistretto,
-    traits::MultiscalarMul,
+    traits::{IsIdentity, MultiscalarMul, VartimeMultiscalarMul},
     RistrettoPoint,
     Scalar
 };
@@ -11,6 +11,7 @@ use crate::{
     crypto::{
         elgamal::{
             Ciphertext,
+            DecompressionError,
             PedersenCommitment,
             PedersenOpening,
             PublicKey,
@@ -22,7 +23,13 @@ use crate::{
     },
     serializer::{Reader, ReaderError, Serializer, Writer}
 };
-use super::{BatchCollector, ProofVerificationError, PC_GENS};
+use super::{
+    BatchCollector,
+    ProofVerificationError,
+    PC_GENS,
+    G,
+    H,
+};
 
 /// Proof that a commitment and ciphertext are equal.
 #[allow(non_snake_case)]
@@ -73,7 +80,7 @@ impl CommitmentEqProof {
 
         let Y_0 = (&y_s * P_source).compress();
         let Y_1 =
-            RistrettoPoint::multiscalar_mul([&y_x, &y_s], [&PC_GENS.B, D_source]).compress();
+            RistrettoPoint::multiscalar_mul([&y_x, &y_s], [&G, D_source]).compress();
         let Y_2 = PC_GENS.commit(y_x, y_r).compress();
 
         // record masking factors in the transcript
@@ -82,12 +89,17 @@ impl CommitmentEqProof {
         transcript.append_point(b"Y_2", &Y_2);
 
         let c = transcript.challenge_scalar(b"c");
-        transcript.challenge_scalar(b"w");
 
         // compute the masked values
         let z_s = &(&c * s) + &y_s;
         let z_x = &(&c * x) + &y_x;
         let z_r = &(&c * r) + &y_r;
+
+        // transcript.append_scalar(b"z_s", &z_s);
+        // transcript.append_scalar(b"z_x", &z_x);
+        // transcript.append_scalar(b"z_r", &z_r);
+
+        transcript.challenge_scalar(b"w");
 
         // zeroize random scalars
         y_s.zeroize();
@@ -104,6 +116,8 @@ impl CommitmentEqProof {
         }
     }
 
+    /// Verify that the commitment and ciphertext are equal.
+    /// This function is used for batch verification.
     pub fn pre_verify(
         &self,
         source_pubkey: &PublicKey,
@@ -126,7 +140,16 @@ impl CommitmentEqProof {
         transcript.validate_and_append_point(b"Y_2", &self.Y_2)?;
 
         let c = transcript.challenge_scalar(b"c");
-        let w = transcript.challenge_scalar(b"w"); // w used for batch verification
+
+        let mut cloned = transcript.clone();
+
+        cloned.append_scalar(b"z_s", &self.z_s);
+        cloned.append_scalar(b"z_x", &self.z_x);
+        cloned.append_scalar(b"z_r", &self.z_r);
+
+        let w = cloned.challenge_scalar(b"w"); // w used for batch verification
+        transcript.challenge_scalar(b"w");
+
         let ww = &w * &w;
 
         let w_negated = -&w;
@@ -136,15 +159,15 @@ impl CommitmentEqProof {
         let Y_0 = self
             .Y_0
             .decompress()
-            .ok_or(ProofVerificationError::CommitmentEqProof)?;
+            .ok_or(DecompressionError)?;
         let Y_1 = self
             .Y_1
             .decompress()
-            .ok_or(ProofVerificationError::CommitmentEqProof)?;
+            .ok_or(DecompressionError)?;
         let Y_2 = self
             .Y_2
             .decompress()
-            .ok_or(ProofVerificationError::CommitmentEqProof)?;
+            .ok_or(DecompressionError)?;
 
         let batch_factor = Scalar::random(&mut OsRng);
 
@@ -177,8 +200,91 @@ impl CommitmentEqProof {
 
         Ok(())
     }
-}
 
+    /// Verify that the commitment and ciphertext are equal.
+    /// This function is used for individual verification without batch collector.
+    pub fn verify(
+        &self,
+        source_pubkey: &PublicKey,
+        ciphertext: &Ciphertext,
+        commitment: &PedersenCommitment,
+        transcript: &mut Transcript,
+    ) -> Result<(), ProofVerificationError> {
+        transcript.equality_proof_domain_separator();
+
+        // extract the relevant scalar and Ristretto points from the inputs
+        let P = source_pubkey.as_point();
+        let C_ciphertext = ciphertext.commitment().as_point();
+        let D = ciphertext.handle().as_point();
+        let C_commitment = commitment.as_point();
+
+        // include Y_0, Y_1, Y_2 to transcript and extract challenges
+        transcript.validate_and_append_point(b"Y_0", &self.Y_0)?;
+        transcript.validate_and_append_point(b"Y_1", &self.Y_1)?;
+        transcript.validate_and_append_point(b"Y_2", &self.Y_2)?;
+
+        let c = transcript.challenge_scalar(b"c");
+
+        transcript.append_scalar(b"z_s", &self.z_s);
+        transcript.append_scalar(b"z_x", &self.z_x);
+        transcript.append_scalar(b"z_r", &self.z_r);
+
+        let w = transcript.challenge_scalar(b"w");
+        let ww = &w * &w;
+
+        let w_negated = -&w;
+        let ww_negated = -&ww;
+
+        // check that the required algebraic condition holds
+        let Y_0 = self
+            .Y_0
+            .decompress()
+            .ok_or(DecompressionError)?;
+        let Y_1 = self
+            .Y_1
+            .decompress()
+            .ok_or(DecompressionError)?;
+        let Y_2 = self
+            .Y_2
+            .decompress()
+            .ok_or(DecompressionError)?;
+
+        let check = RistrettoPoint::vartime_multiscalar_mul(
+            vec![
+                &self.z_s,           // z_s
+                &(-&c),              // -c
+                &(-&Scalar::ONE),    // -identity
+                &(&w * &self.z_x),   // w * z_x
+                &(&w * &self.z_s),   // w * z_s
+                &(&w_negated * &c),  // -w * c
+                &w_negated,          // -w
+                &(&ww * &self.z_x),  // ww * z_x
+                &(&ww * &self.z_r),  // ww * z_r
+                &(&ww_negated * &c), // -ww * c
+                &ww_negated,         // -ww
+            ],
+            vec![
+                P,            // P
+                &H,           // H
+                &Y_0,         // Y_0
+                &G,           // G
+                D,            // D
+                C_ciphertext, // C_ciphertext
+                &Y_1,         // Y_1
+                &G,           // G
+                &H,           // H
+                C_commitment, // C_commitment
+                &Y_2,         // Y_2
+            ],
+        );
+
+        if check.is_identity() {
+            Ok(())
+        } else {
+            Err(ProofVerificationError::CommitmentEqProof)
+        }
+    }
+}
 
 #[allow(non_snake_case)]
 impl Serializer for CommitmentEqProof {

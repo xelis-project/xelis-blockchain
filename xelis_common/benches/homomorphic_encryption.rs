@@ -1,4 +1,5 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{criterion_group, criterion_main, Criterion};
+use std::hint::black_box;
 use curve25519_dalek::Scalar;
 use xelis_common::crypto::KeyPair;
 
@@ -36,6 +37,20 @@ fn bench_he_operations(c: &mut Criterion) {
     group.bench_function("sub scalar", |b| {
         b.iter(|| {
             let _result = black_box(ct1.clone() - scalar);
+        })
+    });
+
+
+    group.bench_function("compress", |b| {
+        b.iter(|| {
+            let _ = black_box(ct1.compress());
+        })
+    });
+
+    let compressed = ct1.compress();
+    group.bench_function("decompress", |b| {
+        b.iter(|| {
+            let _ = black_box(compressed.decompress().unwrap());
         })
     });
 

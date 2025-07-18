@@ -171,6 +171,12 @@ pub struct ListTransactionsParams {
 }
 
 #[derive(Serialize, Deserialize)]
+pub struct GetAssetsParams {
+    pub skip: Option<usize>,
+    pub maximum: Option<usize>,
+}
+
+#[derive(Serialize, Deserialize)]
 pub struct TransactionResponse<'a> {
     #[serde(flatten)]
     pub inner: DataHash<'a, Transaction>,
@@ -218,6 +224,18 @@ pub struct GetBalanceParams {
 #[derive(Serialize, Deserialize)]
 pub struct GetTransactionParams {
     pub hash: Hash
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct SearchTransactionParams<'a> {
+    pub hash: Cow<'a, Hash>
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct SearchTransactionResult {
+    pub transaction: Option<TransactionEntry>,
+    pub index: Option<u64>,
+    pub is_raw_search: bool
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -295,7 +313,7 @@ pub struct DecryptCiphertextParams<'a> {
     pub ciphertext: Cow<'a, CompressedCiphertext>
 }
 
-#[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NotifyEvent {
     // When a new topoheight is detected by wallet
@@ -321,6 +339,10 @@ pub enum NotifyEvent {
     Online,
     // Same here
     Offline,
+    // Error occuring while syncing
+    SyncError,
+    TrackAsset,
+    UntrackAsset,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -343,6 +365,17 @@ pub struct TransferIn {
     pub amount: u64,
     // extra data
     pub extra_data: Option<PlaintextExtraData>
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeployInvoke {
+    // Additionnal fees to pay
+    // This is the maximum of gas that can be used by the contract
+    // If a contract uses more gas than this value, the transaction
+    // is still accepted by nodes but the contract execution is stopped
+    pub max_gas: u64,
+    // Assets deposited with this call
+    pub deposits: IndexMap<Hash, u64>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -397,7 +430,9 @@ pub enum EntryType {
         // Fee paid
         fee: u64,
         // Nonce used
-        nonce: u64
+        nonce: u64,
+        // constructor invoke
+        invoke: Option<DeployInvoke>
     }
 }
 

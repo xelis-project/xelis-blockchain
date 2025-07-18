@@ -1,4 +1,4 @@
-use std::{borrow::Cow, collections::HashMap};
+use std::{borrow::Cow, collections::HashMap, sync::Arc};
 use async_trait::async_trait;
 use curve25519_dalek::Scalar;
 use indexmap::IndexSet;
@@ -10,7 +10,7 @@ use crate::{
     config::{BURN_PER_CONTRACT, COIN_VALUE, XELIS_ASSET},
     crypto::{
         elgamal::{Ciphertext, PedersenOpening},
-        proofs::PC_GENS,
+        proofs::{G, ProofVerificationError},
         Address,
         Hash,
         Hashable,
@@ -23,6 +23,7 @@ use crate::{
         MultiSigPayload,
         TransactionType,
         TxVersion,
+        verify::{ZKPCache, NoZKPCache, VerificationError},
         MAX_TRANSFER_COUNT
     }
 };
@@ -47,11 +48,13 @@ use super::{
     Transaction
 };
 
+#[derive(Debug, Clone)]
 struct AccountChainState {
     balances: HashMap<Hash, Ciphertext>,
     nonce: Nonce,
 }
 
+#[derive(Debug, Clone)]
 struct ChainState {
     accounts: HashMap<PublicKey, AccountChainState>,
     multisig: HashMap<PublicKey, MultiSigPayload>,
@@ -111,7 +114,7 @@ struct AccountStateImpl {
     nonce: Nonce,
 }
 
-fn create_tx_for(account: Account, destination: Address, amount: u64, extra_data: Option<DataElement>) -> Transaction {
+fn create_tx_for(account: Account, destination: Address, amount: u64, extra_data: Option<DataElement>) -> Arc<Transaction> {
     let mut state = AccountStateImpl {
         balances: account.balances,
         nonce: account.nonce,
@@ -136,7 +139,7 @@ fn create_tx_for(account: Account, destination: Address, amount: u64, extra_data
     assert!(estimated_size == tx.size(), "expected {} bytes got {} bytes", tx.size(), estimated_size);
     assert!(tx.to_bytes().len() == estimated_size);
 
-    tx
+    Arc::new(tx)
 }
 
 #[test]
@@ -172,23 +175,22 @@ fn test_encrypt_decrypt_two_parties() {
     let cipher = transfer.get_extra_data().clone().unwrap();
     // Verify the extra data from alice (sender)
     {
-        let decrypted = cipher.decrypt(&alice.keypair.get_private_key(), None, Role::Sender).unwrap();
+        let decrypted = cipher.decrypt(&alice.keypair.get_private_key(), None, Role::Sender, TxVersion::V1).unwrap();
         assert_eq!(decrypted.data(), Some(&payload));
     }
 
     // Verify the extra data from bob (receiver)
     {
-        let decrypted = cipher.decrypt(&bob.keypair.get_private_key(), None, Role::Receiver).unwrap();
+        let decrypted = cipher.decrypt(&bob.keypair.get_private_key(), None, Role::Receiver, TxVersion::V1).unwrap();
         assert_eq!(decrypted.data(), Some(&payload));
     }
 
     // Verify the extra data from alice (sender) with the wrong key
     {
-        let decrypted = cipher.decrypt(&bob.keypair.get_private_key(), None, Role::Sender);
+        let decrypted = cipher.decrypt(&bob.keypair.get_private_key(), None, Role::Sender, TxVersion::V1);
         assert!(decrypted.is_err());
     }
 }
-
 
 #[tokio::test]
 async fn test_tx_verify() {
@@ -227,15 +229,80 @@ async fn test_tx_verify() {
     }
 
     let hash = tx.hash();
-    tx.verify(&hash, &mut state).await.unwrap();
+    tx.verify(&hash, &mut state, &NoZKPCache).await.unwrap();
 
     // Check Bob balance
     let balance = bob.keypair.decrypt_to_point(&state.accounts[&bob.keypair.get_public_key().compress()].balances[&XELIS_ASSET]);    
-    assert_eq!(balance, Scalar::from(50u64) * PC_GENS.B);
+    assert_eq!(balance, Scalar::from(50u64) * (*G));
 
     // Check Alice balance
     let balance = alice.keypair.decrypt_to_point(&state.accounts[&alice.keypair.get_public_key().compress()].balances[&XELIS_ASSET]);
-    assert_eq!(balance, Scalar::from((100u64 * COIN_VALUE) - (50 + tx.fee)) * PC_GENS.B);
+    assert_eq!(balance, Scalar::from((100u64 * COIN_VALUE) - (50 + tx.fee)) * (*G));
+}
+
+
+#[tokio::test]
+async fn test_tx_verify_with_zkp_cache() {
+    let mut alice = Account::new();
+    let mut bob = Account::new();
+
+    alice.set_balance(XELIS_ASSET, 100 * COIN_VALUE);
+    bob.set_balance(XELIS_ASSET, 0);
+
+    // Alice account is cloned to not be updated as it is used for verification and need current state
+    let tx = create_tx_for(alice.clone(), bob.address(), 50, None);
+
+    let mut state = ChainState::new();
+
+    // Create the chain state
+    {
+        let mut balances = HashMap::new();
+        for (asset, balance) in &alice.balances {
+            balances.insert(asset.clone(), balance.ciphertext.clone().take_ciphertext().unwrap());
+        }
+        state.accounts.insert(alice.keypair.get_public_key().compress(), AccountChainState {
+            balances,
+            nonce: alice.nonce,
+        });
+    }
+
+    {
+        let mut balances = HashMap::new();
+        for (asset, balance) in &bob.balances {
+            balances.insert(asset.clone(), balance.ciphertext.clone().take_ciphertext().unwrap());
+        }
+        state.accounts.insert(bob.keypair.get_public_key().compress(), AccountChainState {
+            balances,
+            nonce: alice.nonce,
+        });
+    }
+
+    let mut clean_state = state.clone();
+    let hash = tx.hash();
+    {
+        // Ensure the TX is valid first
+        assert!(tx.verify(&hash, &mut state, &NoZKPCache).await.is_ok());    
+    }
+
+    struct DummyCache;
+
+    #[async_trait]
+    impl<E> ZKPCache<E> for DummyCache {
+        async fn is_already_verified(&self, _: &Hash) -> Result<bool, E> {
+            Ok(true)
+        }
+    }
+
+    // Fix the nonce to pass the verification
+    state.accounts.get_mut(&alice.keypair.get_public_key().compress())
+        .unwrap()
+        .nonce = 0;
+
+    // Now, the chain state balances has changed, it should error even if the TX is in cache
+    assert!(matches!(tx.verify(&hash, &mut state, &DummyCache).await, Err(VerificationError::Proof(ProofVerificationError::GenericProof))));
+
+    // But should be fine for a clean state
+    assert!(tx.verify(&hash, &mut clean_state, &DummyCache).await.is_ok());
 }
 
 #[tokio::test]
@@ -263,7 +330,7 @@ async fn test_burn_tx_verify() {
         assert!(estimated_size == tx.size());
         assert!(tx.to_bytes().len() == estimated_size);
 
-        tx
+        Arc::new(tx)
     };
 
     let mut state = ChainState::new();
@@ -281,11 +348,11 @@ async fn test_burn_tx_verify() {
     }
 
     let hash = tx.hash();
-    tx.verify(&hash, &mut state).await.unwrap();
+    tx.verify(&hash, &mut state, &NoZKPCache).await.unwrap();
 
     // Check Alice balance
     let balance = alice.keypair.decrypt_to_point(&state.accounts[&alice.keypair.get_public_key().compress()].balances[&XELIS_ASSET]);
-    assert_eq!(balance, Scalar::from((100u64 * COIN_VALUE) - (50 * COIN_VALUE + tx.fee)) * PC_GENS.B);
+    assert_eq!(balance, Scalar::from((100u64 * COIN_VALUE) - (50 * COIN_VALUE + tx.fee)) * (*G));
 }
 
 #[tokio::test]
@@ -322,7 +389,7 @@ async fn test_tx_invoke_contract() {
         assert!(estimated_size == tx.size());
         assert!(tx.to_bytes().len() == estimated_size);
 
-        tx
+        Arc::new(tx)
     };
 
     let mut state = ChainState::new();
@@ -343,14 +410,14 @@ async fn test_tx_invoke_contract() {
     }
 
     let hash = tx.hash();
-    tx.verify(&hash, &mut state).await.unwrap();
+    tx.verify(&hash, &mut state, &NoZKPCache).await.unwrap();
 
     // Check Alice balance
     let balance = alice.keypair.decrypt_to_point(&state.accounts[&alice.keypair.get_public_key().compress()].balances[&XELIS_ASSET]);
     // 50 coins deposit + tx fee + 1000 gas fee
     let total_spend = (50 * COIN_VALUE) + tx.fee + 1000;
 
-    assert_eq!(balance, Scalar::from((100 * COIN_VALUE) - total_spend) * PC_GENS.B);
+    assert_eq!(balance, Scalar::from((100 * COIN_VALUE) - total_spend) * (*G));
 }
 
 
@@ -382,7 +449,7 @@ async fn test_tx_deploy_contract() {
         assert!(estimated_size == tx.size(), "expected {} bytes got {} bytes", tx.size(), estimated_size);
         assert!(tx.to_bytes().len() == estimated_size);
 
-        tx
+        Arc::new(tx)
     };
 
     let mut state = ChainState::new();
@@ -400,14 +467,14 @@ async fn test_tx_deploy_contract() {
     }
 
     let hash = tx.hash();
-    tx.verify(&hash, &mut state).await.unwrap();
+    tx.verify(&hash, &mut state, &NoZKPCache).await.unwrap();
 
     // Check Alice balance
     let balance = alice.keypair.decrypt_to_point(&state.accounts[&alice.keypair.get_public_key().compress()].balances[&XELIS_ASSET]);
     // 1 XEL for contract deploy, tx fee
     let total_spend = BURN_PER_CONTRACT + tx.fee;
 
-    assert_eq!(balance, Scalar::from((100 * COIN_VALUE) - total_spend) * PC_GENS.B);
+    assert_eq!(balance, Scalar::from((100 * COIN_VALUE) - total_spend) * (*G));
 }
 
 #[tokio::test]
@@ -446,7 +513,7 @@ async fn test_max_transfers() {
         assert!(estimated_size == tx.size());
         assert!(tx.to_bytes().len() == estimated_size);
 
-        tx
+        Arc::new(tx)
     };
 
     // Create the chain state
@@ -476,7 +543,7 @@ async fn test_max_transfers() {
         });
     }
     let hash = tx.hash();
-    tx.verify(&hash, &mut state).await.unwrap();
+    tx.verify(&hash, &mut state, &NoZKPCache).await.unwrap();
 }
 
 #[tokio::test]
@@ -508,7 +575,7 @@ async fn test_multisig_setup() {
         assert!(estimated_size == tx.size());
         assert!(tx.to_bytes().len() == estimated_size);
 
-        tx
+        Arc::new(tx)
     };
 
     let mut state = ChainState::new();
@@ -537,7 +604,7 @@ async fn test_multisig_setup() {
     }
 
     let hash = tx.hash();
-    tx.verify(&hash, &mut state).await.unwrap();
+    tx.verify(&hash, &mut state, &NoZKPCache).await.unwrap();
 
     assert!(state.multisig.contains_key(&alice.keypair.get_public_key().compress()));
 }
@@ -577,7 +644,7 @@ async fn test_multisig() {
         tx.sign_multisig(&charlie.keypair, 0);
         tx.sign_multisig(&dave.keypair, 1);
 
-        tx.finalize(&alice.keypair)
+        Arc::new(tx.finalize(&alice.keypair))
     };
 
     // Create the chain state
@@ -614,7 +681,7 @@ async fn test_multisig() {
     });
 
     let hash = tx.hash();
-    tx.verify(&hash, &mut state).await.unwrap();
+    tx.verify(&hash, &mut state, &NoZKPCache).await.unwrap();
 }
 
 #[async_trait]

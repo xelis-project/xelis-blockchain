@@ -1,24 +1,18 @@
 use std::{
+    collections::HashSet,
     io::Write,
-    sync::{atomic::{AtomicBool, Ordering},
-    Arc}
+    sync::{atomic::{AtomicBool, Ordering}, Arc}
+};
+use rand::{rngs::OsRng, RngCore};
+use log::{
+    debug,
+    error,
+    trace
 };
 use anyhow::{Error, Context};
 use chrono::TimeZone;
 use serde::Serialize;
 use xelis_common::{
-    tokio::{
-        sync::{
-            broadcast::{
-                Sender as BroadcastSender,
-                Receiver as BroadcastReceiver
-            },
-            Mutex,
-            RwLock,
-            broadcast,
-        },
-        block_in_place_safe
-    },
     api::{
         wallet::{
             BalanceChanged,
@@ -33,15 +27,25 @@ use xelis_common::{
             Ciphertext,
             DecryptHandle
         },
-        Hash,
         Address,
+        Hash,
         Hashable,
         KeyPair,
-        PublicKey,
         PrivateKey,
+        PublicKey,
         Signature
     },
     network::Network,
+    serializer::Serializer,
+    tokio::{
+        self,
+        sync::{
+            broadcast,
+            Mutex,
+            RwLock,
+            Semaphore
+        }
+    },
     transaction::{
         builder::{
             FeeBuilder,
@@ -49,15 +53,17 @@ use xelis_common::{
             TransactionTypeBuilder,
             UnsignedTransaction
         },
-        TxVersion,
-        extra_data::{UnknownExtraDataFormat, PlaintextExtraData},
+        extra_data::{
+            PlaintextExtraData,
+            UnknownExtraDataFormat
+        },
         Reference,
         Role,
-        Transaction
-    },
-    serializer::Serializer,
-    utils::{format_xelis, format_coin}
+        Transaction,
+        TxVersion
+    }, utils::{format_coin, format_xelis}
 };
+
 use crate::{
     cipher::Cipher,
     config::{
@@ -91,30 +97,23 @@ use {
     },
     xelis_common::config::XELIS_ASSET,
 };
-use rand::{rngs::OsRng, RngCore};
-use log::{
-    debug,
-    error,
-    trace
-};
 
-#[cfg(feature = "api_server")]
+#[cfg(feature = "xswd")]
 use {
     serde_json::{json, Value},
     async_trait::async_trait,
     crate::api::{
+        ApplicationDataRelayer,
+        XSWDRelayer,
+        XSWDRelayerShared,
         register_rpc_methods,
-        XSWD,
-        WalletRpcServer,
-        AuthConfig,
-        APIServer,
         AppStateShared,
         PermissionResult,
         PermissionRequest,
         XSWDHandler
     },
     xelis_common::{
-        rpc_server::{
+        rpc::{
             RPCHandler,
             RpcRequest,
             InternalRpcError,
@@ -131,6 +130,14 @@ use {
         },
         crypto::elgamal::PublicKey as DecompressedPublicKey
     }
+};
+
+#[cfg(feature = "api_server")]
+use crate::api::{
+    XSWDServer,
+    WalletRpcServer,
+    AuthConfig,
+    APIServer,
 };
 
 // Recover option for wallet creation
@@ -169,7 +176,16 @@ pub enum Event {
     // Wallet is now in online mode
     Online,
     // Wallet is now in offline mode
-    Offline
+    Offline,
+    SyncError {
+        message: String
+    },
+    TrackAsset {
+        asset: Hash
+    },
+    UntrackAsset {
+        asset: Hash
+    },
 }
 
 impl Event {
@@ -182,10 +198,12 @@ impl Event {
             Event::Rescan { .. } => NotifyEvent::Rescan,
             Event::HistorySynced { .. } => NotifyEvent::HistorySynced,
             Event::Online => NotifyEvent::Online,
-            Event::Offline => NotifyEvent::Offline
+            Event::Offline => NotifyEvent::Offline,
+            Event::SyncError { .. } => NotifyEvent::SyncError,
+            Event::TrackAsset { .. } => NotifyEvent::TrackAsset,
+            Event::UntrackAsset { .. } => NotifyEvent::UntrackAsset,
         }
     }
-
 }
 
 pub struct Wallet {
@@ -193,7 +211,7 @@ pub struct Wallet {
     storage: RwLock<EncryptedStorage>,
     // Inner account with keys and precomputed tables
     // so it can be shared to another thread for decrypting ciphertexts
-    inner: InnerAccount,
+    account: Account,
     // network handler for online mode to keep wallet synced
     #[cfg(feature = "network_handler")]
     network_handler: Mutex<Option<SharedNetworkHandler>>,
@@ -203,15 +221,20 @@ pub struct Wallet {
     #[cfg(feature = "api_server")]
     api_server: Mutex<Option<APIServer<Arc<Self>>>>,
     // All XSWD requests are routed through this channel
-    #[cfg(feature = "api_server")]
+    #[cfg(feature = "xswd")]
     xswd_channel: RwLock<Option<UnboundedSender<XSWDEvent>>>,
+    // XSWD Relayer, to support XSWD but in client mode
+    #[cfg(feature = "xswd")]
+    xswd_relayer: Mutex<Option<XSWDRelayerShared<Arc<Self>>>>,
     // Event broadcaster
-    event_broadcaster: Mutex<Option<BroadcastSender<Event>>>,
+    event_broadcaster: Mutex<Option<broadcast::Sender<Event>>>,
     // If the wallet should scan also blocks and transactions history
     // Set to true by default
     history_scan: AtomicBool,
     // flag to prioritize the usage of stable balance version when its online
     force_stable_balance: AtomicBool,
+    // Concurrency to use across the wallet
+    concurrency: usize,
 }
 
 struct InnerAccount {
@@ -219,31 +242,50 @@ struct InnerAccount {
     precomputed_tables: PrecomputedTablesShared,
     // Private & Public key linked for this wallet
     keypair: KeyPair,
-    // Compressed public key
-    public_key: PublicKey,
 }
 
-impl InnerAccount {
-    fn new(precomputed_tables: PrecomputedTablesShared, keypair: KeyPair) -> Self {
-        Self {
-            precomputed_tables,
-            public_key: keypair.get_public_key().compress(),
+struct Account {
+    inner: Arc<InnerAccount>,
+    // Compressed public key
+    public_key: PublicKey,
+    semaphore: Semaphore,
+}
+
+impl Account {
+    fn new(precomputed_tables: PrecomputedTablesShared, keypair: KeyPair, n_threads: usize) -> Self {
+        let inner = Arc::new(InnerAccount {
             keypair,
+            precomputed_tables
+        });
+
+        Self {
+            public_key: inner.keypair.get_public_key().compress(),
+            inner,
+            semaphore: Semaphore::new(n_threads)
         }
     }
 
-    pub fn decrypt_ciphertext(&self, ciphertext: &Ciphertext, max_supply: u64) -> Result<Option<u64>, WalletError> {
+    pub async fn decrypt_ciphertext(&self, ciphertext: Ciphertext, max_supply: u64) -> Result<Option<u64>, WalletError> {
+        let _permit = self.semaphore.acquire().await
+            .context("Error while acquiring semaphore for decryption")?;
+
         trace!("decrypt ciphertext with max supply {}", max_supply);
-        let point = self.keypair.get_private_key()
-            .decrypt_to_point(ciphertext);
 
-        let lock = self.precomputed_tables.read()
-            .map_err(|_| WalletError::PoisonError)?;
-        let view = lock.view();
+        let inner = Arc::clone(&self.inner);
+        let res = tokio::task::spawn_blocking(move || {
+            let point = inner.keypair.decrypt_to_point(&ciphertext);
+            let lock = inner.precomputed_tables.read()
+                .map_err(|_| WalletError::PoisonError)?;
 
-        Ok(self.keypair.get_private_key()
-            .decode_point_within_range(&view, point, 0, max_supply as i64)
-        )
+            let view = lock.view();
+            let result = inner.keypair.get_private_key()
+                .decode_point_within_range(&view, point, 0, max_supply as _);
+
+            Ok::<_, WalletError>(result)
+        }).await
+        .context("Error while waiting on decrypt thread")??;
+
+        Ok(res)
     }
 }
 
@@ -255,7 +297,7 @@ pub fn hash_password(password: &str, salt: &[u8]) -> Result<[u8; PASSWORD_HASH_S
 
 impl Wallet {
     // Create a new wallet with the specificed storage, keypair and its network
-    fn new(storage: EncryptedStorage, keypair: KeyPair, network: Network, precomputed_tables: PrecomputedTablesShared) -> Arc<Self> {
+    fn new(storage: EncryptedStorage, keypair: KeyPair, network: Network, precomputed_tables: PrecomputedTablesShared, n_threads: usize, concurrency: usize) -> Arc<Self> {
         let zelf = Self {
             storage: RwLock::new(storage),
             #[cfg(feature = "network_handler")]
@@ -263,19 +305,22 @@ impl Wallet {
             network,
             #[cfg(feature = "api_server")]
             api_server: Mutex::new(None),
-            #[cfg(feature = "api_server")]
+            #[cfg(feature = "xswd")]
             xswd_channel: RwLock::new(None),
+            #[cfg(feature = "xswd")]
+            xswd_relayer: Mutex::new(None),
             event_broadcaster: Mutex::new(None),
             history_scan: AtomicBool::new(true),
             force_stable_balance: AtomicBool::new(false),
-            inner: InnerAccount::new(precomputed_tables, keypair)
+            account: Account::new(precomputed_tables, keypair, n_threads),
+            concurrency,
         };
 
         Arc::new(zelf)
     }
 
     // Create a new wallet on disk
-    pub fn create(name: &str, password: &str, seed: Option<RecoverOption>, network: Network, precomputed_tables: PrecomputedTablesShared) -> Result<Arc<Self>, Error> {
+    pub async fn create<'a>(name: &'a str, password: &'a str, seed: Option<RecoverOption<'a>>, network: Network, precomputed_tables: PrecomputedTablesShared, n_threads: usize, concurrency: usize) -> Result<Arc<Self>, Error> {
         if name.is_empty() {
             return Err(WalletError::EmptyName.into())
         }
@@ -336,13 +381,13 @@ impl Wallet {
         storage.set_private_key(&keypair.get_private_key())?;
 
         // Flush the storage to be sure its written on disk
-        storage.flush()?;
+        storage.flush().await?;
 
-        Ok(Self::new(storage, keypair, network, precomputed_tables))
+        Ok(Self::new(storage, keypair, network, precomputed_tables, n_threads, concurrency))
     }
 
     // Open an existing wallet on disk
-    pub fn open(name: &str, password: &str, network: Network, precomputed_tables: PrecomputedTablesShared) -> Result<Arc<Self>, Error> {
+    pub fn open(name: &str, password: &str, network: Network, precomputed_tables: PrecomputedTablesShared, n_threads: usize, concurrency: usize) -> Result<Arc<Self>, Error> {
         if name.is_empty() {
             return Err(WalletError::EmptyName.into())
         }
@@ -381,7 +426,7 @@ impl Wallet {
         let private_key =  storage.get_private_key()?;
         let keypair = KeyPair::from_private_key(private_key);
 
-        Ok(Self::new(storage, keypair, network, precomputed_tables))
+        Ok(Self::new(storage, keypair, network, precomputed_tables, n_threads, concurrency))
     }
 
     // Close the wallet
@@ -399,13 +444,21 @@ impl Wallet {
                     server.stop().await;
                 }
             }
+        }
 
-            // Close XSWD channel in case it exists
+        #[cfg(feature = "xswd")]
+        // Close XSWD channel in case it exists
+        {
             {
-                let mut lock = self.xswd_channel.write().await;
-                if let Some(sender) = lock.take() {
-                    drop(sender);
-                }
+                self.xswd_channel.write()
+                    .await
+                    .take();
+            }
+
+            {
+                self.xswd_relayer.lock()
+                    .await
+                    .take();
             }
         }
 
@@ -431,6 +484,11 @@ impl Wallet {
         self.close_events_channel().await;
     }
 
+    // Retrieve the precomputed tables to either use it or update it
+    pub fn get_precomputed_tables(&self) -> &PrecomputedTablesShared {
+        &self.account.inner.precomputed_tables
+    }
+
     // Disable/enable the history scan
     // This is used by the network handler to avoid scanning history if requested
     pub fn set_history_scan(&self, value: bool) {
@@ -454,14 +512,23 @@ impl Wallet {
 
     // Propagate a new event to registered listeners
     pub async fn propagate_event(&self, event: Event) {
-        trace!("Propagate event: {:?}", event);
+        let kind = event.kind();
+        trace!("Propagate event {:?}: {:?}", kind, event);
         // Broadcast it to the API Server
         #[cfg(feature = "api_server")]
         {
             let mut lock = self.api_server.lock().await;
             if let Some(server) = lock.as_mut() {
-                let kind = event.kind();
                 server.notify_event(&kind, &event).await;
+            }
+        }
+
+        // Broadcast it to XSWD Relayer too
+        #[cfg(feature = "xswd")]
+        {
+            let xswd = self.xswd_relayer.lock().await;
+            if let Some(xswd) = xswd.as_ref() {
+                xswd.notify_event(&kind, &event).await;
             }
         }
 
@@ -477,8 +544,51 @@ impl Wallet {
         }
     }
 
+    // Mark an asset tracked by the wallet
+    pub async fn track_asset(&self, asset: Hash) -> Result<bool, WalletError> {
+        debug!("track asset {}", asset);
+        {
+            let mut storage = self.storage.write().await;
+            if storage.is_asset_tracked(&asset)? {
+                return Ok(false)
+            }
+
+            storage.track_asset(&asset)?;
+        }
+
+        self.propagate_event(Event::TrackAsset { asset: asset.clone() }).await;
+
+        #[cfg(feature = "network_handler")]
+        {
+            if let Some(network_handler) = self.network_handler.lock().await.as_ref() {
+                debug!("Syncing head state for newly tracked asset {}", asset);
+                network_handler.sync_head_state(&self.get_address(), Some(HashSet::from_iter([asset])), None, false, false).await?;
+            }
+        }
+
+        Ok(true)
+    }
+
+
+    // Mark an asset tracked by the wallet
+    pub async fn untrack_asset(&self, asset: Hash) -> Result<bool, WalletError> {
+        debug!("untrack asset {}", asset);
+        {
+            let mut storage = self.storage.write().await;
+            if !storage.is_asset_tracked(&asset)? {
+                return Ok(false)
+            }
+
+            storage.untrack_asset(&asset)?;
+        }
+
+        self.propagate_event(Event::UntrackAsset { asset }).await;
+
+        Ok(true)
+    }
+
     // Subscribe to events
-    pub async fn subscribe_events(&self) -> BroadcastReceiver<Event> {
+    pub async fn subscribe_events(&self) -> broadcast::Receiver<Event> {
         let mut broadcaster = self.event_broadcaster.lock().await;
         match broadcaster.as_ref() {
             Some(broadcaster) => broadcaster.subscribe(),
@@ -513,15 +623,22 @@ impl Wallet {
         Ok(())
     }
 
+    #[cfg(feature = "xswd")]
+    async fn init_xswd_channel(&self) -> Option<UnboundedReceiver<XSWDEvent>> {
+        let mut channel = self.xswd_channel.write().await;
+        if channel.is_some() {
+            return None
+        }
+
+        let (sender, receiver) = unbounded_channel();
+        *channel = Some(sender);
+        Some(receiver)
+    }
+
     // Enable XSWD Protocol
     #[cfg(feature = "api_server")]
-    pub async fn enable_xswd(self: &Arc<Self>) -> Result<UnboundedReceiver<XSWDEvent>, Error> {
-        let receiver = {
-            let (sender, receiver) = unbounded_channel();
-            let mut channel = self.xswd_channel.write().await;
-            *channel = Some(sender);
-            receiver
-        };
+    pub async fn enable_xswd(self: &Arc<Self>) -> Result<Option<UnboundedReceiver<XSWDEvent>>, Error> {
+        let receiver =  self.init_xswd_channel().await;
 
         let mut lock = self.api_server.lock().await;
         if lock.is_some() {
@@ -530,7 +647,8 @@ impl Wallet {
         let mut rpc_handler = RPCHandler::new(self.clone());
         register_rpc_methods(&mut rpc_handler);
 
-        *lock = Some(APIServer::XSWD(XSWD::new(rpc_handler)?));
+        *lock = Some(APIServer::XSWD(XSWDServer::new(rpc_handler)?));
+
         Ok(receiver)
     }
 
@@ -545,6 +663,27 @@ impl Wallet {
     #[cfg(feature = "api_server")]
     pub fn get_api_server(&self) -> &Mutex<Option<APIServer<Arc<Self>>>> {
         &self.api_server
+    }
+
+    #[cfg(feature = "xswd")]
+    pub async fn add_xswd_relayer(self: &Arc<Self>, app_data: ApplicationDataRelayer) -> Result<Option<UnboundedReceiver<XSWDEvent>>, Error> {
+        let receiver = self.init_xswd_channel().await;
+        let mut xswd = self.xswd_relayer.lock().await;
+        if xswd.is_none() {
+            let handler = RPCHandler::new(Arc::clone(self));
+            *xswd = Some(XSWDRelayer::new(handler, self.concurrency));
+        }
+
+        if let Some(xswd) = xswd.as_ref() {
+            xswd.add_application(app_data).await?;
+        }
+
+        Ok(receiver)
+    }
+
+    #[cfg(feature = "xswd")]
+    pub fn xswd_relayer(&self) -> &Mutex<Option<XSWDRelayerShared<Arc<Self>>>> {
+        &self.xswd_relayer
     }
 
     // Verify if a password is valid or not
@@ -602,23 +741,25 @@ impl Wallet {
 
     // Wallet has to be under a Arc to be shared to the spawn_blocking function
     // This will read the max supply from the storage
-    pub async fn decrypt_ciphertext_of_asset(&self, ciphertext: &Ciphertext, asset: &Hash) -> Result<Option<u64>, WalletError> {
+    pub async fn decrypt_ciphertext_of_asset(&self, ciphertext: Ciphertext, asset: &Hash) -> Result<Option<u64>, WalletError> {
         trace!("decrypt ciphertext of asset {}", asset);
-        let storage = self.storage.read().await;
-        let max_supply = storage.get_asset(asset).await?
-            .get_max_supply();
+        let max_supply = {
+            let storage = self.storage.read().await;
+            storage.get_asset(asset).await?
+                .get_max_supply()
+        };
         self.decrypt_ciphertext_with(ciphertext, max_supply).await
     }
 
-    pub async fn decrypt_ciphertext_with(&self, ciphertext: &Ciphertext, max_supply: Option<u64>) -> Result<Option<u64>, WalletError> {
+    pub async fn decrypt_ciphertext_with(&self, ciphertext: Ciphertext, max_supply: Option<u64>) -> Result<Option<u64>, WalletError> {
         trace!("decrypt ciphertext with max supply {:?}", max_supply);
-        block_in_place_safe(|| self.inner.decrypt_ciphertext(ciphertext, max_supply.unwrap_or(i64::MAX as _)))
+        self.account.decrypt_ciphertext(ciphertext, max_supply.unwrap_or(i64::MAX as _)).await
     }
 
     // Decrypt the extra data from a transfer
-    pub fn decrypt_extra_data(&self, cipher: UnknownExtraDataFormat, handle: Option<&DecryptHandle>, role: Role) -> Result<PlaintextExtraData, WalletError> {
+    pub fn decrypt_extra_data(&self, cipher: UnknownExtraDataFormat, handle: Option<&DecryptHandle>, role: Role, version: TxVersion) -> Result<PlaintextExtraData, WalletError> {
         trace!("decrypt extra data");
-        let res = cipher.decrypt(self.inner.keypair.get_private_key(), handle, role)?;
+        let res = cipher.decrypt(self.account.inner.keypair.get_private_key(), handle, role, version)?;
         Ok(res)
     }
 
@@ -748,7 +889,7 @@ impl Wallet {
                                     let max_supply = storage.get_asset(asset).await?
                                         .get_max_supply();
 
-                                    let amount = match self.decrypt_ciphertext_with(decompressed, max_supply).await? {
+                                    let amount = match self.decrypt_ciphertext_with(decompressed.clone(), max_supply).await? {
                                         Some(amount) => amount,
                                         None => {
                                             warn!("Couldn't decrypt the ciphertext for asset {}: no result found, skipping this stable balance", asset);
@@ -797,6 +938,10 @@ impl Wallet {
                 continue;
             }
 
+            if !storage.is_asset_tracked(asset)? {
+                return Err(WalletError::AssetNotTracked(asset.clone()))
+            }
+
             if !storage.has_balance_for(&asset).await? {
                 return Err(WalletError::BalanceNotFound(asset.clone()));
             }
@@ -815,7 +960,7 @@ impl Wallet {
         let builder = TransactionBuilder::new(tx_version, self.get_public_key().clone(), threshold, transaction_type, fee);
 
         // Build the final transaction
-        let transaction = builder.build(state, &self.inner.keypair)
+        let transaction = builder.build(state, self.get_keypair())
             .map_err(|e| WalletError::Any(e.into()))?;
 
         let tx_hash = transaction.hash();
@@ -829,7 +974,7 @@ impl Wallet {
     pub fn create_unsigned_transaction(&self, state: &mut TransactionBuilderState, threshold: Option<u8>, transaction_type: TransactionTypeBuilder, fee: FeeBuilder, tx_version: TxVersion) -> Result<UnsignedTransaction, WalletError> {
         trace!("create unsigned transaction");
         let builder = TransactionBuilder::new(tx_version, self.get_public_key().clone(), threshold, transaction_type, fee);
-        let unsigned = builder.build_unsigned(state, &self.inner.keypair)
+        let unsigned = builder.build_unsigned(state, self.get_keypair())
             .map_err(|e| WalletError::Any(e.into()))?;
 
         Ok(unsigned)
@@ -950,8 +1095,17 @@ impl Wallet {
 
                     writeln!(w, "{},{},{},{},{},{},{},{},{}", datetime_from_timestamp(tx.get_timestamp())?, tx.get_topoheight(), tx.get_hash(), "InvokeContract", contract, str_deposits.join("|"), chunk_id, format_xelis(*fee), nonce).context("Error while writing csv line")?;
                 },
-                EntryData::DeployContract { fee, nonce } => {
-                    writeln!(w, "{},{},{},{},-,-,-,{},{}", datetime_from_timestamp(tx.get_timestamp())?, tx.get_topoheight(), tx.get_hash(), "DeployContract", format_xelis(*fee), nonce).context("Error while writing csv line")?;
+                EntryData::DeployContract { fee, nonce, invoke } => {
+                    let mut str_deposits = Vec::new();
+                    if let Some(invoke) = invoke {
+                        str_deposits.push(format!("Gas:{}", format_xelis(invoke.max_gas)));
+                        for (asset, amount) in invoke.deposits.iter() {
+                            let data = storage.get_asset(&asset).await?;
+                            str_deposits.push(format!("{}:{}", data.get_name(), format_coin(*amount, data.get_decimals())));
+                        }
+                    }
+
+                    writeln!(w, "{},{},{},{},-,-,{},{},{}", datetime_from_timestamp(tx.get_timestamp())?, tx.get_topoheight(), tx.get_hash(), "DeployContract", str_deposits.join("|"), format_xelis(*fee), nonce).context("Error while writing csv line")?;
                 },
             }
         }
@@ -970,7 +1124,7 @@ impl Wallet {
         }
 
         // create the network handler
-        let network_handler = NetworkHandler::new(Arc::clone(&self), daemon_address).await?;
+        let network_handler = NetworkHandler::new(Arc::clone(&self), daemon_address, self.concurrency).await?;
         // start the task
         network_handler.start(auto_reconnect).await?;
         *self.network_handler.lock().await = Some(network_handler);
@@ -988,7 +1142,7 @@ impl Wallet {
         }
 
         // create the network handler
-        let network_handler = NetworkHandler::with_api(Arc::clone(&self), daemon_api).await?;
+        let network_handler = NetworkHandler::with_api(Arc::clone(&self), daemon_api, self.concurrency).await?;
         // start the task
         network_handler.start(auto_reconnect).await?;
         *self.network_handler.lock().await = Some(network_handler);
@@ -1049,15 +1203,9 @@ impl Wallet {
                 storage.delete_unconfirmed_balances().await;
                 storage.clear_tx_cache();
 
-                debug!("reconnect API");
-                network_handler.get_api().reconnect().await?;
-
-                if topoheight == 0 {
-                    debug!("Deleting all transactions for full rescan");
-                    storage.delete_transactions()?;
-                } else {
-                    debug!("Deleting transactions at or above {} for partial rescan", topoheight);
-                    storage.delete_transactions_at_or_above_topoheight(topoheight)?;
+                if !network_handler.get_api().is_online() {
+                    debug!("reconnect API");
+                    network_handler.get_api().reconnect().await?;
                 }
             }
             debug!("Starting again network handler");
@@ -1088,17 +1236,17 @@ impl Wallet {
 
     // Create a signature of the given data
     pub fn sign_data(&self, data: &[u8]) -> Signature {
-        self.inner.keypair.sign(data)
+        self.get_keypair().sign(data)
     }
 
-    // Get the public key of the wallet
+    // Get the compressed public key of the wallet
     pub fn get_public_key(&self) -> &PublicKey {
-        &self.inner.public_key
+        &self.account.public_key
     }
 
     // Get the keypair of the wallet
     pub fn get_keypair(&self) -> &KeyPair {
-        &self.inner.keypair
+        &self.account.inner.keypair
     }
 
     // Get the address of the wallet using its network used
@@ -1113,7 +1261,7 @@ impl Wallet {
 
     // Returns the seed using the language index provided
     pub fn get_seed(&self, language_index: usize) -> Result<String, Error> {
-        let words = mnemonics::key_to_words(self.inner.keypair.get_private_key(), language_index)?;
+        let words = mnemonics::key_to_words(self.get_keypair().get_private_key(), language_index)?;
         Ok(words.join(" "))
     }
 
@@ -1143,7 +1291,7 @@ fn datetime_from_timestamp(timestamp: u64) -> Result<chrono::DateTime<chrono::Lo
     }
 }
 
-#[cfg(feature = "api_server")]
+#[cfg(feature = "xswd")]
 pub enum XSWDEvent {
     RequestPermission(AppStateShared, RpcRequest, oneshot::Sender<Result<PermissionResult, Error>>),
     RequestApplication(AppStateShared, oneshot::Sender<Result<PermissionResult, Error>>),
@@ -1151,7 +1299,7 @@ pub enum XSWDEvent {
     AppDisconnect(AppStateShared)
 }
 
-#[cfg(feature = "api_server")]
+#[cfg(feature = "xswd")]
 #[async_trait]
 impl XSWDHandler for Arc<Wallet> {
     async fn request_permission(&self, app_state: &AppStateShared, request: PermissionRequest<'_>) -> Result<PermissionResult, Error> {
@@ -1191,22 +1339,25 @@ impl XSWDHandler for Arc<Wallet> {
     }
 
     async fn get_public_key(&self) -> Result<&DecompressedPublicKey, Error> {
-        Ok(self.inner.keypair.get_public_key())
+        Ok(self.get_keypair().get_public_key())
     }
 
     async fn call_node_with(&self, request: RpcRequest) -> Result<Value, RpcResponseError> {
-        let network_handler = self.network_handler.lock().await;
         let id = request.id;
-        if let Some(network_handler) = network_handler.as_ref() {
-            if network_handler.is_running().await {
-                let api = network_handler.get_api();
-                let response = api.call(&request.method, &request.params).await.map_err(|e| RpcResponseError::new(id.clone(), InternalRpcError::Custom(-31999, e.to_string())))?;
-
-                return Ok(json!({
-                    "jsonrpc": JSON_RPC_VERSION,
-                    "id": id,
-                    "result": response
-                }))
+        #[cfg(feature = "network_handler")]
+        {
+            let network_handler = self.network_handler.lock().await;
+            if let Some(network_handler) = network_handler.as_ref() {
+                if network_handler.is_running().await {
+                    let api = network_handler.get_api();
+                    let response = api.call(&request.method, &request.params).await.map_err(|e| RpcResponseError::new(id.clone(), InternalRpcError::Custom(-31999, e.to_string())))?;
+    
+                    return Ok(json!({
+                        "jsonrpc": JSON_RPC_VERSION,
+                        "id": id,
+                        "result": response
+                    }))
+                }
             }
         }
 

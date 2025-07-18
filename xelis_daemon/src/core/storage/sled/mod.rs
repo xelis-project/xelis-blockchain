@@ -1,21 +1,19 @@
 mod snapshot;
 mod migrations;
+mod providers;
 
 use async_trait::async_trait;
-use indexmap::IndexSet;
 use itertools::Either;
-use crate::{
-    config::PRUNE_SAFETY_LIMIT,
-    core::error::{BlockchainError, DiskContext}
-};
+use crate::core::error::{BlockchainError, DiskContext};
 use xelis_common::{
-    block::{TopoHeight, Block, BlockHeader},
+    block::BlockHeader,
     crypto::Hash,
     difficulty::{CumulativeDifficulty, Difficulty},
     immutable::Immutable,
     network::Network,
     serializer::Serializer,
-    transaction::Transaction
+    transaction::Transaction,
+    tokio::sync::Mutex
 };
 use std::{
     hash::Hash as StdHash,
@@ -24,10 +22,9 @@ use std::{
     sync::Arc
 };
 use serde::{Deserialize, Serialize};
-use tokio::sync::Mutex;
 use lru::LruCache;
 use sled::{IVec, Tree};
-use log::{debug, trace, warn, info, error};
+use log::{debug, trace, info, error};
 
 pub use snapshot::Snapshot;
 
@@ -155,7 +152,7 @@ pub struct SledStorage {
     pub(super) snapshot: Option<Snapshot>,
 }
 
-#[derive(Clone, Copy, clap::ValueEnum, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, clap::ValueEnum, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum StorageMode {
     HighThroughput,
@@ -447,7 +444,7 @@ impl SledStorage {
     // Or load it from cache if available
     // Note that the Snapshot has no cache and is priority over the cache
     // This mean, cache is never used if a snapshot is available
-    pub(super) async fn get_cacheable_arc_data<K: Eq + StdHash + Serializer + Clone, V: Serializer>(&self, tree: &Tree, cache: &Option<Mutex<LruCache<K, Arc<V>>>>, key: &K, context: DiskContext) -> Result<Arc<V>, BlockchainError> {
+    pub(super) async fn get_cacheable_arc_data<K: Eq + StdHash + Serializer + Clone, V: Serializer>(&self, tree: &Tree, cache: &Option<Mutex<LruCache<K, Arc<V>>>>, key: &K, context: DiskContext) -> Result<Immutable<V>, BlockchainError> {
         trace!("get cacheable arc data {:?}", context);
         let key_bytes = key.to_bytes();
         let value = if let Some(cache) = cache.as_ref()
@@ -460,7 +457,7 @@ impl SledStorage {
             let mut cache = cache.lock().await;
             if let Some(value) = cache.get(key) {
                 trace!("found key in cache, cloning Arc");
-                return Ok(Arc::clone(&value));
+                return Ok(Immutable::Arc(Arc::clone(&value)));
             }
 
             trace!("no arc found in cache, loading from disk");
@@ -468,9 +465,10 @@ impl SledStorage {
 
             trace!("inserting arced data into the cache");
             cache.put(key.clone(), Arc::clone(&value));
-            value
+            Immutable::Arc(value)
         } else {
-            Arc::new(self.load_from_disk(tree, &key_bytes, context)?)
+            trace!("no cache or snapshot enabled, load from disk");
+            Immutable::Owned(self.load_from_disk(tree, &key_bytes, context)?)
         };
 
         Ok(value)
@@ -512,51 +510,28 @@ impl SledStorage {
     // This data is not cached behind an Arc, but is cloned at each access
     pub(super) async fn get_cacheable_data<K: Eq + StdHash + Serializer + Clone, V: Serializer + Clone>(&self, tree: &Tree, cache: &Option<Mutex<LruCache<K, V>>>, key: &K, context: DiskContext) -> Result<V, BlockchainError> {
         trace!("get cacheable data {:?}", context);
-        let key_bytes = key.to_bytes();
-        let value = if let Some(cache) = cache.as_ref()
-            .filter(|_| self.snapshot.as_ref()
-                .map(|s| !s.contains_key(tree, &key_bytes))
-                .unwrap_or(true)
-            )
-        {
-            trace!("load from cache");
-            let mut cache = cache.lock().await;
-            if let Some(value) = cache.get(key) {
-                trace!("key found in cache");
-                return Ok(value.clone());
-            }
-
-            trace!("not found in cache, loading from disk");
-            let value: V = self.load_from_disk(tree, &key_bytes, context)?;
-
-            trace!("inserting disk value into cache");
-            cache.put(key.clone(), value.clone());
-            value
-        } else {
-            self.load_from_disk(tree, &key_bytes, context)?
-        };
-
-        Ok(value)
+        self.get_optional_cacheable_data(tree, cache, key).await?
+            .ok_or_else(|| BlockchainError::NotFoundOnDisk(DiskContext::LoadData))
     }
 
     pub(super) async fn delete_cacheable_data<K: Eq + StdHash + Serializer + Clone, V: Serializer>(snapshot: Option<&mut Snapshot>, tree: &Tree, cache: Option<&mut Mutex<LruCache<K, V>>>, key: &K) -> Result<V, BlockchainError> {
         trace!("delete cacheable data");
-        let value = match Self::remove_from_disk::<V>(snapshot, tree, &key.to_bytes())? {
-            Some(data) => data,
-            None => return Err(BlockchainError::NotFoundOnDisk(DiskContext::DeleteData))
-        };
+        let value = Self::remove_from_disk_internal(snapshot, tree, &key.to_bytes())?
+            .ok_or(BlockchainError::NotFoundOnDisk(DiskContext::DeleteData))?;
 
         if let Some(cache) = cache {
-            if cache.get_mut().pop(key).is_some() {
+            if let Some(v) = cache.get_mut().pop(key) {
                 trace!("data has been deleted from cache");
+                return Ok(v)
             }
         }
 
-        Ok(value)
+        // Lazy read
+        Ok(V::from_bytes(&value)?)
     }
 
     // Delete a cacheable data from disk and cache behind a Arc
-    pub(super) async fn delete_arc_cacheable_data<K: Eq + StdHash + Serializer + Clone, V: Serializer>(snapshot: Option<&mut Snapshot>, tree: &Tree, cache: Option<&mut Mutex<LruCache<K, Arc<V>>>>, key: &K) -> Result<Arc<V>, BlockchainError> {
+    pub(super) async fn delete_arc_cacheable_data<K: Eq + StdHash + Serializer + Clone, V: Serializer>(snapshot: Option<&mut Snapshot>, tree: &Tree, cache: Option<&mut Mutex<LruCache<K, Arc<V>>>>, key: &K) -> Result<Immutable<V>, BlockchainError> {
         trace!("delete arc cacheable data");
         let value = match Self::remove_from_disk::<V>(snapshot, tree, &key.to_bytes())? {
             Some(data) => data,
@@ -564,12 +539,13 @@ impl SledStorage {
         };
 
         if let Some(cache) = cache {
-            if cache.get_mut().pop(key).is_some() {
+            if let Some(v) = cache.get_mut().pop(key) {
                 trace!("data has been deleted from arc cache");
+                return Ok(Immutable::Arc(v))
             }
         }
 
-        Ok(Arc::new(value))
+        Ok(Immutable::Owned(value))
     }
 
     // Check if our DB contains a data in cache or on disk
@@ -626,7 +602,7 @@ impl SledStorage {
 #[async_trait]
 impl Storage for SledStorage {
     // Delete the whole block using its topoheight
-    async fn delete_block_at_topoheight(&mut self, topoheight: u64) -> Result<(Hash, Arc<BlockHeader>, Vec<(Hash, Arc<Transaction>)>), BlockchainError> {
+    async fn delete_block_at_topoheight(&mut self, topoheight: u64) -> Result<(Hash, Immutable<BlockHeader>, Vec<(Hash, Immutable<Transaction>)>), BlockchainError> {
         trace!("Delete block at topoheight {topoheight}");
 
         // delete topoheight<->hash pointers
@@ -675,17 +651,16 @@ impl Storage for SledStorage {
                 trace!("Tx was included in {}, blocks left: {}", blocks_len, blocks.into_iter().map(|b| b.to_string()).collect::<Vec<String>>().join(", "));
             }
 
-            if self.is_tx_executed_in_a_block(tx_hash)? {
+            if self.is_tx_executed_in_block(tx_hash, &hash)? {
                 trace!("Tx {} was executed, deleting", tx_hash);
-                self.remove_tx_executed(&tx_hash)?;
+                self.unmark_tx_from_executed(&tx_hash)?;
                 self.delete_contract_outputs_for_tx(&tx_hash).await?;
             }
 
-            // We have to check first as we may have already deleted it because of client protocol
-            // which allow multiple time the same txs in differents blocks
-            if should_delete && self.contains_data_cached(&self.transactions, &self.transactions_cache, tx_hash).await? {
+            // Because the TX is not linked to any other block, we can safely delete that block
+            if should_delete {
                 trace!("Deleting TX {} in block {}", tx_hash, hash);
-                let tx: Arc<Transaction> = Self::delete_arc_cacheable_data(self.snapshot.as_mut(), &self.transactions, self.cache.transactions_cache.as_mut(), tx_hash).await?;
+                let tx: Immutable<Transaction> = Self::delete_arc_cacheable_data(self.snapshot.as_mut(), &self.transactions, self.cache.transactions_cache.as_mut(), tx_hash).await?;
                 txs.push((tx_hash.clone(), tx));
             }
         }
@@ -695,177 +670,7 @@ impl Storage for SledStorage {
             self.remove_block_hash_at_height(&hash, block.get_height()).await?;
         }
 
-        // Delete cache of past blocks
-        if let Some(cache) = self.past_blocks_cache.as_mut() {
-            cache.get_mut().pop(&hash);
-        }
-
         Ok((hash, block, txs))
-    }
-
-    async fn pop_blocks(&mut self, mut height: u64, mut topoheight: TopoHeight, count: u64, until_topo_height: TopoHeight) -> Result<(u64, TopoHeight, Vec<(Hash, Arc<Transaction>)>), BlockchainError> {
-        trace!("pop blocks from height: {}, topoheight: {}, count: {}", height, topoheight, count);
-        if topoheight < count as u64 { // also prevent removing genesis block
-            return Err(BlockchainError::NotEnoughBlocks);
-        }
-
-        // search the lowest topo height available based on count + 1
-        // (last lowest topo height accepted)
-        let mut lowest_topo = topoheight - count;
-        trace!("Lowest topoheight for rewind: {}", lowest_topo);
-
-        let pruned_topoheight = self.get_pruned_topoheight().await?.unwrap_or(0);
-
-        // we must check that we are stopping a sync block
-        // easy way for this: check the block at topo is currently alone at height
-        while lowest_topo > pruned_topoheight {
-            let hash = self.get_hash_at_topo_height(lowest_topo).await?;
-            let block_height = self.get_height_for_block_hash(&hash).await?;
-            let blocks_at_height = self.get_blocks_at_height(block_height).await?;
-            info!("blocks at height: {}", blocks_at_height.len());
-            if blocks_at_height.len() == 1 {
-                info!("Sync block found at topoheight {}", lowest_topo);
-                break;
-            } else {
-                warn!("No sync block found at topoheight {} we must go lower if possible", lowest_topo);
-                lowest_topo -= 1;
-            }
-        }
-
-        if pruned_topoheight != 0 {
-            let safety_pruned_topoheight = pruned_topoheight + PRUNE_SAFETY_LIMIT;
-            if lowest_topo <= safety_pruned_topoheight && until_topo_height != 0 {
-                warn!("Pruned topoheight is {}, lowest topoheight is {}, rewind only until {}", pruned_topoheight, lowest_topo, safety_pruned_topoheight);
-                lowest_topo = safety_pruned_topoheight;
-            }
-        }
-
-        // new TIPS for chain
-        let mut tips = self.get_tips().await?;
-
-        // Delete all orphaned blocks tips
-        for tip in tips.clone() {
-            if !self.is_block_topological_ordered(&tip).await {
-                debug!("Tip {} is not ordered, removing", tip);
-                tips.remove(&tip);
-            }
-        }
-
-        // all txs to be rewinded
-        let mut txs = Vec::new();
-        let mut done = 0;
-        'main: loop {
-            // stop rewinding if its genesis block or if we reached the lowest topo
-            if topoheight <= lowest_topo || topoheight <= until_topo_height || topoheight == 0 { // prevent removing genesis block
-                trace!("Done: {done}, count: {count}, height: {height}, topoheight: {topoheight}, lowest topo: {lowest_topo}, stable topo: {until_topo_height}");
-                break 'main;
-            }
-
-            // Delete the hash at topoheight
-            let (hash, block, block_txs) = self.delete_block_at_topoheight(topoheight).await?;
-            self.delete_versioned_data_at_topoheight(topoheight).await?;
-
-            debug!("Block {} at topoheight {} deleted", hash, topoheight);
-            txs.extend(block_txs);
-
-            // generate new tips
-            trace!("Removing {} from {} tips", hash, tips.len());
-            tips.remove(&hash);
- 
-            for hash in block.get_tips() {
-                trace!("Adding {} to {} tips", hash, tips.len());
-                tips.insert(hash.clone());
-            }
-
-            if topoheight <= pruned_topoheight {
-                warn!("Pruned topoheight is reached, this is not healthy, starting from 0");
-                topoheight = 0;
-                height = 0;
-
-                tips.clear();
-                tips.insert(self.get_hash_at_topo_height(0).await?);
-
-                Self::remove_from_disk_without_reading(self.snapshot.as_mut(), &self.extra, PRUNED_TOPOHEIGHT)?;
-                self.cache.pruned_topoheight = None;
-
-                break 'main;
-            }
-
-            topoheight -= 1;
-            // height of old block become new height
-            if block.get_height() < height {
-                height = block.get_height();
-            }
-            done += 1;
-        }
-
-        warn!("Blocks rewinded: {}, new topoheight: {}, new height: {}", done, topoheight, height);
-
-        trace!("Cleaning caches");
-        // Clear all caches to not have old data after rewind
-        self.clear_caches().await?;
-
-        trace!("Storing new pointers");
-        // store the new tips and topo topoheight
-        self.store_tips(&tips)?;
-        self.set_top_topoheight(topoheight)?;
-        self.set_top_height(height)?;
-
-        // Reduce the count of blocks stored
-        let count = self.count_blocks().await? - done;
-        Self::insert_into_disk(self.snapshot.as_mut(), &self.extra, BLOCKS_COUNT, &count.to_be_bytes())?;
-
-        warn!("deleting versioned data above topoheight {}", topoheight);
-        // now delete all versioned balances and nonces above the new topoheight
-        // self.delete_versioned_data_above_topoheight(topoheight).await?;
-
-        Ok((height, topoheight, txs))
-    }
-
-    async fn get_top_block_hash(&self) -> Result<Hash, BlockchainError> {
-        trace!("get top block hash");
-        self.get_hash_at_topo_height(self.get_top_topoheight()?).await
-    }
-
-    fn get_top_topoheight(&self) -> Result<TopoHeight, BlockchainError> {
-        trace!("get top topoheight");
-        self.load_from_disk(&self.extra, TOP_TOPO_HEIGHT, DiskContext::TopTopoHeight)
-    }
-
-    fn set_top_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError> {
-        trace!("set new top topoheight at {}", topoheight);
-        Self::insert_into_disk(self.snapshot.as_mut(), &self.extra, TOP_TOPO_HEIGHT, &topoheight.to_be_bytes())?;
-        Ok(())
-    }
-
-    fn get_top_height(&self) -> Result<u64, BlockchainError> {
-        trace!("get top height");
-        self.load_from_disk(&self.extra, TOP_HEIGHT, DiskContext::TopHeight)
-    }
-
-    fn set_top_height(&mut self, height: u64) -> Result<(), BlockchainError> {
-        trace!("set new top height at {}", height);
-        Self::insert_into_disk(self.snapshot.as_mut(), &self.extra, TOP_HEIGHT, &height.to_be_bytes())?;
-        Ok(())
-    }
-
-    async fn get_top_block_header(&self) -> Result<(Arc<BlockHeader>, Hash), BlockchainError> {
-        trace!("get top block header");
-        let hash = self.get_top_block_hash().await?;
-        Ok((self.get_block_header_by_hash(&hash).await?, hash))
-    }
-
-    async fn get_top_block(&self) -> Result<Block, BlockchainError> {
-        trace!("get top block");
-        let (block, _) = self.get_top_block_header().await?;
-        let mut transactions = Vec::new();
-        for tx in block.get_transactions() {
-            let transaction = self.get_transaction(tx).await?;
-            transactions.push(Immutable::Arc(transaction));
-        }
-
-        let block = Block::new(Immutable::Arc(block), transactions);
-        Ok(block)
     }
 
     // Returns the current size on disk in bytes
@@ -879,20 +684,6 @@ impl Storage for SledStorage {
         self.db.flush_async().await?;
         info!("Sled database flushed");
         Ok(())
-    }
-
-    async fn get_unexecuted_transactions(&self) -> Result<IndexSet<Hash>, BlockchainError> {
-        trace!("get unexecuted transactions");
-        let mut txs = IndexSet::new();
-        for el in Self::iter_keys(self.snapshot.as_ref(), &self.transactions) {
-            let key = el?;
-            let tx_hash = Hash::from_bytes(&key)?;
-            if !self.is_tx_executed_in_a_block(&tx_hash)? {
-                txs.insert(tx_hash);
-            }
-        }
-
-        Ok(txs)
     }
 
     async fn estimate_size(&self) -> Result<u64, BlockchainError> {
@@ -909,19 +700,6 @@ impl Storage for SledStorage {
         }
 
         Ok(size as u64)
-    }
-
-    async fn count_orphaned_blocks(&self) -> Result<u64, BlockchainError> {
-        trace!("Counting orphaned blocks");
-        let mut count = 0;
-        for el in Self::iter_keys(self.snapshot.as_ref(), &self.blocks) {
-            let hash = Hash::from_bytes(&el?)?;
-            if !self.is_block_topological_ordered(&hash).await {
-                count += 1;
-            }
-        }
-
-        Ok(count)
     }
 
     async fn flush(&mut self) -> Result<(), BlockchainError> {

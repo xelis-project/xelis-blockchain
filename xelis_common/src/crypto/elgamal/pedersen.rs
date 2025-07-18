@@ -4,7 +4,7 @@ use curve25519_dalek::{RistrettoPoint, Scalar};
 use rand::rngs::OsRng;
 
 use crate::crypto::{
-    proofs::PC_GENS,
+    proofs::{G, PC_GENS},
     elgamal::{
         key::PublicKey,
         CompressedCommitment,
@@ -119,7 +119,7 @@ impl Add<Scalar> for PedersenCommitment {
     type Output = Self;
 
     fn add(self, rhs: Scalar) -> Self {
-        Self(self.0 + (rhs * PC_GENS.B))
+        Self(self.0 + (rhs * (*G)))
     }
 }
 
@@ -127,7 +127,7 @@ impl Add<&Scalar> for PedersenCommitment {
     type Output = Self;
 
     fn add(self, rhs: &Scalar) -> Self {
-        Self(self.0 + (rhs * PC_GENS.B))
+        Self(self.0 + (rhs * (*G)))
     }
 }
 
@@ -163,13 +163,13 @@ impl AddAssign<&PedersenCommitment> for PedersenCommitment {
 
 impl AddAssign<Scalar> for PedersenCommitment {
     fn add_assign(&mut self, rhs: Scalar) {
-        self.0 += rhs * PC_GENS.B;
+        self.0 += rhs * (*G);
     }
 }
 
 impl AddAssign<&Scalar> for PedersenCommitment {
     fn add_assign(&mut self, rhs: &Scalar) {
-        self.0 += rhs * PC_GENS.B;
+        self.0 += rhs * (*G);
     }
 }
 
@@ -207,7 +207,7 @@ impl Sub<Scalar> for PedersenCommitment {
     type Output = Self;
 
     fn sub(self, rhs: Scalar) -> Self {
-        Self(self.0 - rhs * PC_GENS.B)
+        Self(self.0 - rhs * (*G))
     }
 }
 
@@ -215,7 +215,7 @@ impl Sub<&Scalar> for PedersenCommitment {
     type Output = Self;
 
     fn sub(self, rhs: &Scalar) -> Self {
-        Self(self.0 - rhs * PC_GENS.B)
+        Self(self.0 - rhs * (*G))
     }
 }
 
@@ -251,13 +251,13 @@ impl SubAssign<&PedersenCommitment> for PedersenCommitment {
 
 impl SubAssign<Scalar> for PedersenCommitment {
     fn sub_assign(&mut self, rhs: Scalar) {
-        self.0 -= rhs * PC_GENS.B;
+        self.0 -= rhs * (*G);
     }
 }
 
 impl SubAssign<&Scalar> for PedersenCommitment {
     fn sub_assign(&mut self, rhs: &Scalar) {
-        self.0 -= rhs * PC_GENS.B;
+        self.0 -= rhs * (*G);
     }
 }
 

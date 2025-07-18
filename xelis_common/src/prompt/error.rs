@@ -13,6 +13,8 @@ use super::command::CommandError;
 pub enum PromptError {
     #[error("Logs path is not a folder, it must ends with /")]
     LogsPathNotFolder,
+    #[error("Filename for log cannot be a directory")]
+    FileNotDir,
     #[error("Auto compress logs is enabled but date based logs are disabled")]
     AutoCompressParam,
     #[error("Canceled read input")]

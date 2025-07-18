@@ -1,5 +1,6 @@
 use std::borrow::Cow;
 use anyhow::Error;
+use log::debug;
 
 use crate::{
     api::DataElement,
@@ -8,7 +9,7 @@ use crate::{
         PrivateKey
     },
     serializer::*,
-    transaction::Role
+    transaction::{Role, TxVersion}
 };
 use super::{
     derive_shared_key_from_handle,
@@ -88,18 +89,26 @@ impl UnknownExtraDataFormat {
 
     /// Decrypt the encrypted data by trying to determine which version to use.
     /// V2 should always be used if possible, but for retrocompatibility reasons, V1 is also supported.
-    pub fn decrypt(&self, private_key: &PrivateKey, handle: Option<&DecryptHandle>, role: Role) -> Result<PlaintextExtraData, Error> {
+    pub fn decrypt(&self, private_key: &PrivateKey, handle: Option<&DecryptHandle>, role: Role, version: TxVersion) -> Result<PlaintextExtraData, Error> {
         // Try to decrypt our new version supporting different formats
-        let mut res = self.decrypt_typed(private_key, role);
+        let res = if version >= TxVersion::V2 {
+            Some(self.decrypt_typed(private_key, role))
+        } else {
+            None
+        };
 
-        // Try the v2 if we had an error
-        if res.is_err() {
-            res = self.decrypt_v2(private_key, role);
-        }
+        // Try the v2 if we had an error or if it wasn't decrypted
+        let mut res = if let Some(res) = res.filter(|v| v.is_ok()) {
+            res
+        } else {
+            debug!("try decrypt v2");
+            self.decrypt_v2(private_key, role)
+        };
 
         // If we got an error during previous decoding
         // fallback on old version if the handle is provided
         if let Some(handle) = handle.filter(|_| res.is_err()) {
+            debug!("try decrypt v1");
             let data = self.decrypt_v1(private_key, handle)?;
             res = Ok(PlaintextExtraData::new(
                 None,

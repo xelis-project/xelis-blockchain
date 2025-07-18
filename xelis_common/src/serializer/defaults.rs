@@ -1,11 +1,20 @@
 use crate::crypto::{Hash, HASH_SIZE};
 use super::{Serializer, Writer, Reader, ReaderError};
 use std::{
-    collections::{HashSet, BTreeSet, HashMap},
     borrow::Cow,
+    collections::{
+        BTreeSet,
+        HashMap,
+        HashSet
+    },
     hash::Hash as StdHash,
-    net::{SocketAddr, IpAddr, Ipv4Addr, Ipv6Addr
-    }
+    net::{
+        IpAddr,
+        Ipv4Addr,
+        Ipv6Addr,
+        SocketAddr
+    },
+    sync::Arc
 };
 use indexmap::{IndexMap, IndexSet};
 use log::{error, warn};
@@ -164,7 +173,7 @@ impl<T: Serializer + std::hash::Hash + Ord> Serializer for BTreeSet<T> {
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
         let count = reader.read_u16()?;
         if count > DEFAULT_MAX_ITEMS as u16 {
-            warn!("Received {} while maximum is set to {}", count, DEFAULT_MAX_ITEMS);
+            warn!("Received {} in BTreeSet while maximum is set to {}", count, DEFAULT_MAX_ITEMS);
             return Err(ReaderError::InvalidSize)
         }
 
@@ -199,7 +208,7 @@ impl<T: Serializer + std::hash::Hash + Eq> Serializer for IndexSet<T> {
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
         let count = reader.read_u16()?;
         if count > DEFAULT_MAX_ITEMS as u16 {
-            warn!("Received {} while maximum is set to {}", count, DEFAULT_MAX_ITEMS);
+            warn!("Received {} in IndexSet while maximum is set to {}", count, DEFAULT_MAX_ITEMS);
             return Err(ReaderError::InvalidSize)
         }
 
@@ -287,7 +296,7 @@ impl<T: Serializer> Serializer for Vec<T> {
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
         let count = reader.read_u16()?;
         if count > DEFAULT_MAX_ITEMS as u16 {
-            warn!("Received {} while maximum is set to {}", count, DEFAULT_MAX_ITEMS);
+            warn!("Received {} in Vec while maximum is set to {}", count, DEFAULT_MAX_ITEMS);
             return Err(ReaderError::InvalidSize)
         }
 
@@ -560,5 +569,33 @@ impl<T: Serializer> Serializer for Box<T> {
 
     fn size(&self) -> usize {
         self.as_ref().size()
+    }
+}
+
+impl<T: Serializer> Serializer for Arc<T> {
+    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
+        Ok(Arc::new(T::read(reader)?))
+    }
+
+    fn write(&self, writer: &mut Writer) {
+        self.as_ref().write(writer);
+    }
+
+    fn size(&self) -> usize {
+        self.as_ref().size()
+    }
+}
+
+impl<'a> Serializer for &'a [u8] {
+    fn write(&self, writer: &mut Writer) {
+        writer.write_bytes(self);
+    }
+
+    fn read(_: &mut Reader) -> Result<Self, ReaderError> {
+        Err(ReaderError::ErrorTryInto)
+    }
+
+    fn size(&self) -> usize {
+        self.len()
     }
 }

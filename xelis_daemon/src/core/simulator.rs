@@ -7,13 +7,12 @@ use std::{
 use serde::{Serialize, Deserialize};
 use log::{info, error};
 use rand::{rngs::OsRng, Rng};
-use tokio::time::interval;
 use xelis_common::{
+    tokio::time::interval,
     crypto::KeyPair,
     config::TIPS_LIMIT,
     block::Block
 };
-use crate::config::BLOCK_TIME_MILLIS;
 use super::{
     blockchain::{
         Blockchain,
@@ -81,7 +80,7 @@ impl Simulator {
     pub async fn start<S: Storage>(&self, blockchain: Arc<Blockchain<S>>) {
         let millis_interval = match self {
             Self::Stress => 300,
-            _ => BLOCK_TIME_MILLIS
+            _ => 5000
         };
 
         let mut interval = interval(Duration::from_millis(millis_interval));

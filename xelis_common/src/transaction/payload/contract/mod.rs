@@ -229,7 +229,7 @@ impl Serializer for ValueCell {
                 writer.write_u32(&len);
                 writer.write_bytes(bytes);
             }
-            ValueCell::Array(values) => {
+            ValueCell::Object(values) => {
                 writer.write_u8(2);
                 let len = values.len() as u32;
                 writer.write_u32(&len);
@@ -264,7 +264,7 @@ impl Serializer for ValueCell {
                 for _ in 0..len {
                     values.push(ValueCell::read(reader)?);
                 }
-                ValueCell::Array(values)
+                ValueCell::Object(values)
             },
             3 => {
                 let len = reader.read_u32()? as usize;
@@ -274,7 +274,7 @@ impl Serializer for ValueCell {
                     let value = ValueCell::read(reader)?;
                     map.insert(key, value);
                 }
-                ValueCell::Map(map)
+                ValueCell::Map(Box::new(map))
             },
             _ => return Err(ReaderError::InvalidValue)
         })
@@ -294,7 +294,7 @@ impl Serializer for ValueCell {
                     total += 4;
                     total += bytes.len();
                 },
-                ValueCell::Array(values) => {
+                ValueCell::Object(values) => {
                     // u32 len
                     total += 4;
                     for value in values {
@@ -304,7 +304,7 @@ impl Serializer for ValueCell {
                 ValueCell::Map(map) => {
                     // u32 len
                     total += 4;
-                    for (key, value) in map {
+                    for (key, value) in map.iter() {
                         stack.push(value);
                         stack.push(key);
                     }
@@ -447,15 +447,15 @@ mod tests {
     #[test]
     fn test_serde_value_cell() {
         test_serde_cell(ValueCell::Bytes(vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]));
-        test_serde_cell(ValueCell::Array(vec![
+        test_serde_cell(ValueCell::Object(vec![
             ValueCell::Default(Primitive::U64(42)),
             ValueCell::Default(Primitive::U64(42)),
             ValueCell::Default(Primitive::U64(42)),
             ValueCell::Default(Primitive::U64(42)),
             ValueCell::Default(Primitive::U64(42))
         ]));
-        test_serde_cell(ValueCell::Map([
+        test_serde_cell(ValueCell::Map(Box::new([
             (ValueCell::Default(Primitive::U64(42)), ValueCell::Default(Primitive::String("Hello World!".to_owned())),)
-        ].into_iter().collect()));
+        ].into_iter().collect())));
     }
 }
