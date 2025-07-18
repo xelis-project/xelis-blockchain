@@ -8,7 +8,7 @@ use std::{
         Arc
     }
 };
-use xelis_common::{rpc::RpcRequest, tokio::sync::Mutex};
+use xelis_common::{rpc::RpcRequest, serializer::*, tokio::sync::Mutex};
 
 // Used for context only
 #[derive(Clone, Hash, PartialEq, Eq)]
@@ -141,6 +141,32 @@ impl ApplicationData {
     }
 }
 
+impl Serializer for ApplicationData {
+    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
+        let id = reader.read_string()?;
+        let name = reader.read_string()?;
+        let description = reader.read_string()?;
+        let url = Option::read(reader)?;
+        let permissions = IndexSet::read(reader)?;
+
+        Ok(Self {
+            id,
+            name,
+            description,
+            url,
+            permissions
+        })
+    }
+
+    fn write(&self, writer: &mut Writer) {
+        self.id.write(writer);
+        self.name.write(writer);
+        self.description.write(writer);
+        self.url.write(writer);
+        self.permissions.write(writer);
+    }
+}
+
 pub type EncryptionKey = [u8; 32];
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -157,6 +183,32 @@ pub enum EncryptionMode {
     }
 }
 
+impl Serializer for EncryptionMode {
+    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
+        let mode = reader.read_u8()?;
+        match mode {
+            0 => Ok(Self::None),
+            1 => Ok(Self::AES { key: reader.read_bytes(32)? }),
+            2 => Ok(Self::Chacha20Poly1305 { key: reader.read_bytes(32)? }),
+            _ => Err(ReaderError::InvalidValue)
+        }
+    }
+
+    fn write(&self, writer: &mut Writer) {
+        match self {
+            Self::None => writer.write_u8(0),
+            Self::AES { key } => {
+                writer.write_u8(1);
+                key.write(writer);
+            }
+            Self::Chacha20Poly1305 { key } => {
+                writer.write_u8(2);
+                key.write(writer);
+            }
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ApplicationDataRelayer {
     // Actual application data
@@ -166,6 +218,30 @@ pub struct ApplicationDataRelayer {
     pub relayer: String,
     // Encryption mode to use for the relayer
     pub encryption_mode: EncryptionMode,
+}
+
+impl Serializer for ApplicationDataRelayer {
+    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
+        let inner = ApplicationData::read(reader)?;
+        let n = reader.read_u16()?;
+        let relayer = reader.read_string_with_size(n as _)?;
+        let encryption_mode = EncryptionMode::read(reader)?;
+        Ok(Self {
+            inner,
+            relayer,
+            encryption_mode
+        })
+    }
+
+    fn write(&self, writer: &mut Writer) {
+        self.inner.write(writer);
+
+        let bytes = self.relayer.as_bytes();
+        writer.write_u16(bytes.len() as u16);
+        bytes.write(writer);
+
+        self.encryption_mode.write(writer);
+    }
 }
 
 #[derive(Clone, Copy, Serialize, Deserialize, Debug)]
