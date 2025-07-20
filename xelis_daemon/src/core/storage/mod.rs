@@ -2,13 +2,18 @@ mod providers;
 mod cache;
 
 pub mod sled;
+
+#[cfg(feature = "rocksdb")]
 pub mod rocksdb;
 
 pub use self::{
     providers::*,
     sled::SledStorage,
-    rocksdb::RocksStorage,
+    
 };
+
+#[cfg(feature = "rocksdb")]
+pub use rocksdb::RocksStorage;
 
 use std::collections::HashSet;
 use async_trait::async_trait;

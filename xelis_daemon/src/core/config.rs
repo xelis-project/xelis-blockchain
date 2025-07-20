@@ -12,7 +12,10 @@ use crate::{
     p2p::diffie_hellman::{KeyVerificationAction, WrappedSecret}
 };
 
-use super::{simulator::Simulator, storage::rocksdb::{CacheMode, CompressionMode}};
+use super::simulator::Simulator;
+
+#[cfg(feature = "rocksdb")]
+use super::storage::rocksdb::{CacheMode, CompressionMode};
 
 // Functions helpers for serde default values
 fn default_p2p_bind_address() -> String {
@@ -202,6 +205,7 @@ pub struct P2pConfig {
     pub priority_nodes: Vec<String>,
     /// An exclusive node is connected and its connection is maintained in case of disconnect
     /// it also replaces seed nodes.
+    /// NOTE: no others nodes will be accepted if an exclusive node is set.
     #[clap(long)]
     #[serde(default)]
     pub exclusive_nodes: Vec<String>,
@@ -322,6 +326,7 @@ pub struct P2pConfig {
 pub enum StorageBackend {
     #[serde(rename = "sled")]
     Sled,
+    #[cfg(feature = "rocksdb")]
     #[serde(rename = "rocksdb")]
     #[clap(name = "rocksdb")]
     RocksDB
@@ -383,10 +388,12 @@ pub struct RocksDBConfig {
     #[serde(default = "default_keep_max_log_files")]
     pub keep_max_log_files: usize,
     /// Compression mode to use for RocksDB.
+    #[cfg(feature = "rocksdb")]
     #[clap(name = "rocksdb-compression-mode", value_enum, long, default_value_t)]
     #[serde(default)]
     pub compression_mode: CompressionMode,
     /// RocksDB block based cache mode to use.
+    #[cfg(feature = "rocksdb")]
     #[clap(name = "rocksdb-cache-mode", value_enum, long, default_value_t)]
     #[serde(default)]
     pub cache_mode: CacheMode,
