@@ -33,7 +33,19 @@ for target in "${targets[@]}"; do
 
     # support the target to build it
     rustup target add $target
-    cross build --target $target --profile release-with-lto
+    if [[ "$target" == *"windows"* ]]; then
+        for binary in "${binaries[@]}"; do
+            if [[ "$target" == *"daemon"* ]]; then
+                cross build --target $target --profile release-with-lto
+            else
+                cross build --target $target --profile release-with-lto --no-default-features
+            fi
+
+
+        done
+    else
+        cross build --target $target --profile release-with-lto
+    fi
 
     mkdir -p build/$target
     # copy generated binaries to build directory
