@@ -35,7 +35,7 @@ for target in "${targets[@]}"; do
     rustup target add $target
     if [[ "$target" == *"windows"* ]]; then
         for binary in "${binaries[@]}"; do
-            if [[ "$target" == *"daemon"* ]]; then
+            if [[ "$binary" == *"daemon"* ]]; then
                 cross build --target $target --profile release-with-lto
             else
                 cross build --target $target --profile release-with-lto --no-default-features
