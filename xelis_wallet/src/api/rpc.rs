@@ -50,6 +50,9 @@ pub fn register_methods(handler: &mut RPCHandler<Arc<Wallet>>) {
     handler.register_method("get_balance", async_handler!(get_balance));
     handler.register_method("has_balance", async_handler!(has_balance));
     handler.register_method("get_tracked_assets", async_handler!(get_tracked_assets));
+    handler.register_method("is_asset_tracked", async_handler!(is_asset_tracked));
+    handler.register_method("track_asset", async_handler!(track_asset));
+    handler.register_method("untrack_asset", async_handler!(untrack_asset));
     handler.register_method("get_asset_precision", async_handler!(get_asset_precision));
     handler.register_method("get_assets", async_handler!(get_assets));
     handler.register_method("get_asset", async_handler!(get_asset));
@@ -284,6 +287,16 @@ async fn get_tracked_assets(context: &Context, body: Value) -> Result<Value, Int
         .collect::<Result<Vec<_>, _>>()?;
 
     Ok(json!(tracked_assets))
+}
+
+async fn is_asset_tracked(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
+    let params: IsAssetTrackedParams = parse_params(body)?;
+    let wallet: &Arc<Wallet> = context.get()?;
+    let storage = wallet.get_storage().read().await;
+
+    // Check if the asset is tracked
+    let is_tracked = storage.is_asset_tracked(&params.asset)?;
+    Ok(json!(is_tracked))
 }
 
 // Retrieve decimals used by an asset
@@ -848,4 +861,22 @@ async fn query_db(context: &Context, body: Value) -> Result<Value, InternalRpcEr
     let storage = wallet.get_storage().read().await;
     let result = storage.query_db(&tree, params.key, params.value, params.limit, params.skip)?;
     Ok(json!(result))
+}
+
+// Track a new wallet asset
+async fn track_asset(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
+    let params: TrackAssetParams = parse_params(body)?;
+
+    let wallet: &Arc<Wallet> = context.get()?;
+    let tracked = wallet.track_asset(params.asset.into_owned()).await?;
+
+    Ok(json!(tracked))
+}
+
+// Untrack a wallet asset
+async fn untrack_asset(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
+    let params: TrackAssetParams = parse_params(body)?;
+    let wallet: &Arc<Wallet> = context.get()?;
+    let untracked = wallet.untrack_asset(params.asset.into_owned()).await?;
+    Ok(json!(untracked))
 }

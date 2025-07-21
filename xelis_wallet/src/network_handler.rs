@@ -979,7 +979,7 @@ impl NetworkHandler {
                 // check if we have this asset locally
                 if !{
                     let storage = self.wallet.get_storage().read().await;
-                    storage.get_asset(&asset).await.is_ok()
+                    storage.has_asset(&asset).await?
                 } {
                     debug!("Discovered a new asset {}", asset);
                     let data = self.api.get_asset(&asset).await?;
