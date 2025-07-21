@@ -171,6 +171,18 @@ pub struct ListTransactionsParams {
 }
 
 #[derive(Serialize, Deserialize)]
+pub struct TrackAssetParams<'a> {
+    // Asset to track/untrack
+    pub asset: Cow<'a, Hash>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct IsAssetTrackedParams<'a> {
+    // Asset to check
+    pub asset: Cow<'a, Hash>,
+}
+
+#[derive(Serialize, Deserialize)]
 pub struct GetAssetsParams {
     pub skip: Option<usize>,
     pub maximum: Option<usize>,
