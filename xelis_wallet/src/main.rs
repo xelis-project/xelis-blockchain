@@ -959,9 +959,9 @@ async fn track_asset(manager: &CommandManager, mut args: ArgumentManager) -> Res
     };
 
     if wallet.track_asset(asset).await.context("Error while tracking asset")? {
-        manager.message("Asset ID is already tracked!");
-    } else {
         manager.message("Asset ID is now tracked");
+    } else {
+        manager.message("Asset ID is already tracked!");
     }
 
     Ok(())
