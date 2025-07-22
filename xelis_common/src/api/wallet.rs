@@ -429,6 +429,8 @@ pub enum EntryType {
         contract: Hash,
         // Deposits made
         deposits: IndexMap<Hash, u64>,
+        // Received assets from that call
+        received: IndexMap<Hash, u64>,
         // Chunk id invoked
         chunk_id: u16,
         // Fee paid
@@ -445,6 +447,12 @@ pub enum EntryType {
         nonce: u64,
         // constructor invoke
         invoke: Option<DeployInvoke>
+    },
+    IncomingContract {
+        // Contract address that was invoked by the TX
+        contract: Hash,
+        // Transfers received from the contract
+        transfers: IndexMap<Hash, u64>,
     }
 }
 
