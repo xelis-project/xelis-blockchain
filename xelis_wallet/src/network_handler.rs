@@ -548,57 +548,57 @@ impl NetworkHandler {
             .await?;
 
         for (entry, changes) in results {
-                assets_changed.extend(changes);
+            assets_changed.extend(changes);
 
-                if let Some((entry, tx_topoheight, tx_nonce)) = entry {
-                    // Find the highest nonce
-                    if let Some(tx_nonce) = tx_nonce {
-                        if our_highest_nonce.map(|n| tx_nonce > n).unwrap_or(true) {
-                            debug!("Found new highest nonce {} in TX {}", tx_nonce, entry.get_hash());
-                            our_highest_nonce = Some(tx_nonce);
-                        }
+            if let Some((entry, tx_topoheight, tx_nonce)) = entry {
+                // Find the highest nonce
+                if let Some(tx_nonce) = tx_nonce {
+                    if our_highest_nonce.map(|n| tx_nonce > n).unwrap_or(true) {
+                        debug!("Found new highest nonce {} in TX {}", tx_nonce, entry.get_hash());
+                        our_highest_nonce = Some(tx_nonce);
+                    }
+                }
+
+                debug!("storing new entry {} from block {}", entry.get_hash(), block_hash);
+                {
+                    let mut storage = self.wallet.get_storage().write().await;
+                    storage.save_transaction(entry.get_hash(), &entry)?;
+                    // Store the changes for history
+                    if !changes_stored {
+                        debug!("mark topoheight {} as changed", topoheight);
+                        storage.add_topoheight_to_changes(topoheight, &block_hash)?;
+                        changes_stored = true;
                     }
 
-                    debug!("storing new entry {} from block {}", entry.get_hash(), block_hash);
-                    {
-                        let mut storage = self.wallet.get_storage().write().await;
-                        storage.save_transaction(entry.get_hash(), &entry)?;
-                        // Store the changes for history
-                        if !changes_stored {
-                            debug!("mark topoheight {} as changed", topoheight);
-                            storage.add_topoheight_to_changes(topoheight, &block_hash)?;
-                            changes_stored = true;
-                        }
-
-                        if let EntryData::MultiSig { participants, threshold, .. } = entry.get_entry() {
-                            let multisig = MultiSig {
-                                payload: MultiSigPayload {
-                                    participants: participants.clone(),
-                                    threshold: *threshold
-                                },
-                                topoheight: tx_topoheight
-                            };
-                            let store = storage.get_multisig_state().await?
-                                .map(|m| m.topoheight < tx_topoheight)
-                                .unwrap_or(true);
-        
-                            if store {
-                                info!("Detected a multisig state change at topoheight {} from TX {}", tx_topoheight, entry.get_hash());
-                                if multisig.payload.is_delete() {
-                                    info!("Deleting multisig state");
-                                    storage.delete_multisig_state().await?;
-                                } else {
-                                    info!("Updating multisig state");
-                                    storage.set_multisig_state(multisig).await?;
-                                }
+                    if let EntryData::MultiSig { participants, threshold, .. } = entry.get_entry() {
+                        let multisig = MultiSig {
+                            payload: MultiSigPayload {
+                                participants: participants.clone(),
+                                threshold: *threshold
+                            },
+                            topoheight: tx_topoheight
+                        };
+                        let store = storage.get_multisig_state().await?
+                            .map(|m| m.topoheight < tx_topoheight)
+                            .unwrap_or(true);
+    
+                        if store {
+                            info!("Detected a multisig state change at topoheight {} from TX {}", tx_topoheight, entry.get_hash());
+                            if multisig.payload.is_delete() {
+                                info!("Deleting multisig state");
+                                storage.delete_multisig_state().await?;
+                            } else {
+                                info!("Updating multisig state");
+                                storage.set_multisig_state(multisig).await?;
                             }
                         }
                     }
-
-                    // Propagate the event to the wallet
-                    self.wallet.propagate_event(Event::NewTransaction(entry.serializable(self.wallet.get_network().is_mainnet()))).await;
                 }
+
+                // Propagate the event to the wallet
+                self.wallet.propagate_event(Event::NewTransaction(entry.serializable(self.wallet.get_network().is_mainnet()))).await;
             }
+        }
 
         // Also, verify the block version, so we handle smoothly a change in TX Version
         {
