@@ -874,11 +874,9 @@ pub struct NewAssetEvent<'a> {
 
 // Value of NotifyEvent::ContractTransfer
 #[derive(Serialize, Deserialize)]
-pub struct ContractTransferEvent<'a> {
-    // Asset hash that was transferred
-    pub asset: Cow<'a, Hash>,
-    // Total amount transferred
-    pub amount: u64,
+pub struct ContractTransfersEvent<'a> {
+    // Assets transferred to the key
+    pub transfers: Cow<'a, HashMap<Hash, u64>>,
     // Block hash in which this transfer happened
     pub block_hash: Cow<'a, Hash>,
     // Block timestamp

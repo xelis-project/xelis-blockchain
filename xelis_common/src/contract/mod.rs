@@ -102,8 +102,10 @@ pub struct ChainState<'a> {
 // Aggregate all events from all executed contracts to track in one structure
 #[derive(Debug, Clone, Default)]
 pub struct ContractEventTracker {
-    // All the transfers made by all contracts
-    pub transfers: HashMap<PublicKey, HashMap<Hash, u64>>,
+    // Each tx-contract pair has its own transfers
+    pub contracts_transfers: HashMap<(Hash, Hash), HashMap<PublicKey, HashMap<Hash, u64>>>,
+    // All the transfers made by all contracts aggregated per public key
+    pub aggregated_transfers: HashMap<PublicKey, HashMap<Hash, u64>>,
     // All assets registered by all contracts
     pub assets_created: HashSet<Hash>
 }
@@ -1121,7 +1123,15 @@ fn transfer<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &
     state.cache.balances.insert(asset.clone(), Some((balance_state, balance)));
 
     let key = destination.to_public_key();
-    state.tracker.transfers.entry(key.clone())
+    state.tracker.aggregated_transfers.entry(key.clone())
+        .or_insert_with(HashMap::new)
+        .entry(asset.clone())
+        .and_modify(|v| *v += amount)
+        .or_insert(amount);
+
+    state.tracker.contracts_transfers.entry((state.tx_hash.clone(), state.contract.clone()))
+        .or_insert_with(HashMap::new)
+        .entry(key.clone())
         .or_insert_with(HashMap::new)
         .entry(asset.clone())
         .and_modify(|v| *v += amount)
