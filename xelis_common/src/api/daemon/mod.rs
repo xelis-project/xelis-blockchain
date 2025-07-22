@@ -782,6 +782,12 @@ pub enum NotifyEvent {
     ContractTransfers {
         address: Address
     },
+    // When a contract call has failed for
+    // the given address
+    // It contains ContractCallError struct as value
+    InvokeContractError {
+        address: Address,
+    },
     // When a contract fire an event
     // It contains ContractEvent struct as value
     ContractEvent {
@@ -850,7 +856,6 @@ pub struct StableTopoHeightChangedEvent {
     pub new_stable_topoheight: TopoHeight
 }
 
-
 // Value of NotifyEvent::TransactionAddedInMempool
 pub type TransactionAddedInMempoolEvent = MempoolTransactionSummary<'static>;
 // Value of NotifyEvent::TransactionOrphaned
@@ -885,6 +890,22 @@ pub struct ContractTransfersEvent<'a> {
     pub tx_hash: Cow<'a, Hash>,
     // Contract address called,
     pub contract: Cow<'a, Hash>,
+    // Block topoheight in which this transfer happened
+    pub topoheight: TopoHeight,
+}
+
+// Value of NotifyEvent::ContractCallError
+#[derive(Serialize, Deserialize)]
+pub struct InvokeContractError<'a> {
+    // The error message that was returned by the contract
+    // maximum 256 characters, if it is longer, it will be truncated
+    pub error: Cow<'a, str>,
+    // TX Hash that triggered this error
+    pub tx_hash: Cow<'a, Hash>,
+    // Block hash in which this error was triggered
+    pub block_hash: Cow<'a, Hash>,
+    // Block timestamp
+    pub block_timestamp: TimestampMillis,
     // Block topoheight in which this transfer happened
     pub topoheight: TopoHeight,
 }
