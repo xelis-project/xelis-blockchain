@@ -778,8 +778,8 @@ pub enum NotifyEvent {
     },
     // When a contract has transfered any token
     // to the receiver address
-    // It contains ContractTransferEvent struct as value
-    ContractTransfer {
+    // It contains ContractTransfersEvent struct as value
+    ContractTransfers {
         address: Address
     },
     // When a contract fire an event
