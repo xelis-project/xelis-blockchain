@@ -1085,15 +1085,28 @@ impl Wallet {
                     let str_participants: Vec<String> = participants.iter().map(|p| p.as_address(self.get_network().is_mainnet()).to_string()).collect();
                     writeln!(w, "{},{},{},{},{},{},-,{},{}", datetime_from_timestamp(tx.get_timestamp())?, tx.get_topoheight(), tx.get_hash(), "MultiSig", str_participants.join("|"), threshold, format_xelis(*fee), nonce).context("Error while writing csv line")?;
                 },
-                EntryData::InvokeContract { contract, deposits, chunk_id, fee, max_gas, nonce } => {
-                    let mut str_deposits = Vec::new();
-                    str_deposits.push(format!("Gas:{}", format_xelis(*max_gas)));
-                    for (asset, amount) in deposits {
-                        let data = storage.get_asset(&asset).await?;
-                        str_deposits.push(format!("{}:{}", data.get_name(), format_coin(*amount, data.get_decimals())));
+                EntryData::InvokeContract { contract, deposits, received, chunk_id, fee, max_gas, nonce } => {
+                    let mut extra = Vec::new();
+                    extra.push(format!("Gas:{}", format_xelis(*max_gas)));
+                    if !deposits.is_empty() {
+                        extra.push("Deposits".to_owned());
                     }
 
-                    writeln!(w, "{},{},{},{},{},{},{},{},{}", datetime_from_timestamp(tx.get_timestamp())?, tx.get_topoheight(), tx.get_hash(), "InvokeContract", contract, str_deposits.join("|"), chunk_id, format_xelis(*fee), nonce).context("Error while writing csv line")?;
+                    for (asset, amount) in deposits {
+                        let data = storage.get_asset(&asset).await?;
+                        extra.push(format!("{}:{}", data.get_name(), format_coin(*amount, data.get_decimals())));
+                    }
+
+                    if !received.is_empty() {
+                        extra.push("Received".to_owned());
+                    }
+
+                    for (asset, amount) in received {
+                        let data = storage.get_asset(&asset).await?;
+                        extra.push(format!("{}:{}", data.get_name(), format_coin(*amount, data.get_decimals())));
+                    }
+
+                    writeln!(w, "{},{},{},{},{},{},{},{},{}", datetime_from_timestamp(tx.get_timestamp())?, tx.get_topoheight(), tx.get_hash(), "InvokeContract", contract, extra.join("|"), chunk_id, format_xelis(*fee), nonce).context("Error while writing csv line")?;
                 },
                 EntryData::DeployContract { fee, nonce, invoke } => {
                     let mut str_deposits = Vec::new();
@@ -1107,6 +1120,15 @@ impl Wallet {
 
                     writeln!(w, "{},{},{},{},-,-,{},{},{}", datetime_from_timestamp(tx.get_timestamp())?, tx.get_topoheight(), tx.get_hash(), "DeployContract", str_deposits.join("|"), format_xelis(*fee), nonce).context("Error while writing csv line")?;
                 },
+                EntryData::IncomingContract { contract, transfers } => {
+                    let mut assets = Vec::new();
+                    for (asset, amount) in transfers {
+                        let data = storage.get_asset(&asset).await?;
+                        assets.push(format!("{}:{}", data.get_name(), format_coin(*amount, data.get_decimals())));
+                    }
+
+                    writeln!(w, "{},{},{},{},{},{},-,-,-", datetime_from_timestamp(tx.get_timestamp())?, tx.get_topoheight(), tx.get_hash(), "IncomingContract", contract, assets.join("|")).context("Error while writing csv line")?;
+                }
             }
         }
     
