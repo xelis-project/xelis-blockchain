@@ -9,22 +9,22 @@ use anyhow::Result;
 use serde::Serialize;
 use serde_json::Value;
 use xelis_common::{
-    tokio::sync::broadcast,
-    rpc::client::{
-        WebSocketJsonRPCClient,
-        WebSocketJsonRPCClientImpl,
-        JsonRPCResult,
-        EventReceiver
-    },
-    api::daemon::*,
     account::VersionedBalance,
+    api::{daemon::*, RPCContractOutput},
+    asset::RPCAssetData,
     crypto::{
         Address,
         Hash
     },
-    transaction::Transaction,
+    rpc::client::{
+        EventReceiver,
+        JsonRPCResult,
+        WebSocketJsonRPCClient,
+        WebSocketJsonRPCClientImpl
+    },
     serializer::Serializer,
-    asset::RPCAssetData
+    tokio::sync::broadcast,
+    transaction::Transaction
 };
 use log::{debug, trace};
 
@@ -328,5 +328,13 @@ impl DaemonAPI {
             address: Cow::Borrowed(address),
         }).await?;
         Ok(multisig)
+    }
+
+    pub async fn get_contract_outputs(&self, tx_hash: &Hash) -> Result<Vec<RPCContractOutput>> {
+        trace!("get contract outputs");
+        let outputs = self.client.call_with("get_contract_outputs", &GetContractOutputsParams {
+            transaction: Cow::Borrowed(tx_hash)
+        }).await?;
+        Ok(outputs)
     }
 }

@@ -17,9 +17,7 @@ use xelis_common::{
             MultisigState,
             NewBlockEvent,
             RPCBlockResponse
-        },
-        wallet::BalanceChanged,
-        RPCTransactionType
+        }, wallet::BalanceChanged, RPCContractOutput, RPCTransactionType
     },
     config::XELIS_ASSET,
     crypto::{
@@ -414,7 +412,20 @@ impl NetworkHandler {
                                 debug!("Transaction invoke contract {} was already stored, skipping it", tx.hash);
                                 return Ok((None, assets_changed));
                             }
-    
+
+                            // Check outputs of the contract
+                            for output in self.api.get_contract_outputs(&tx.hash).await? {
+                                match output {
+                                    RPCContractOutput::Transfer { asset, destination, .. } => {
+                                        // If the contract call transferred anything to us
+                                        if *destination == *address {
+                                            assets_changed.insert(asset.into_owned());
+                                        }
+                                    },
+                                    _ => {}
+                                }
+                            }
+
                             let mut deposits = IndexMap::new();
                             for (asset, deposit) in payload.deposits {
                                 assets_changed.insert(asset.clone());
