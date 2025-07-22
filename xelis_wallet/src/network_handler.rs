@@ -1322,6 +1322,7 @@ impl NetworkHandler {
                             },
                             _ => {
                                 warn!("Transaction {} is not contract related, skipping it", tx_hash);
+                                continue;
                             }
                         };
                     }
