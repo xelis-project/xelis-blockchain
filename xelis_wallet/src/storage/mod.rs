@@ -1340,6 +1340,14 @@ impl EncryptedStorage {
         self.save_to_disk_with_key(&self.transactions, &key, &transaction.to_bytes())
     }
 
+    // Update the transaction with its TX hash as key
+    // This only updates the transaction data, not the index
+    pub fn update_transaction(&mut self, hash: &Hash, transaction: &TransactionEntry) -> Result<()> {
+        trace!("update transaction {}", hash);
+        let key = self.cipher.hash_key(hash.as_bytes());
+        self.save_to_disk_with_key(&self.transactions, &key, &transaction.to_bytes())
+    }
+
     // Reorg all the TXs written after a certain ID
     // To reorg them, we only need to reverse the order written
     pub fn reverse_transactions_indexes(&mut self, id: Option<u64>) -> Result<()> {

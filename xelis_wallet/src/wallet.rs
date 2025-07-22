@@ -562,7 +562,7 @@ impl Wallet {
         {
             if let Some(network_handler) = self.network_handler.lock().await.as_ref() {
                 debug!("Syncing head state for newly tracked asset {}", asset);
-                network_handler.sync_head_state(&self.get_address(), Some(HashSet::from_iter([asset])), None, false, false).await?;
+                network_handler.sync_head_state(&self.get_address(), Some(&HashSet::from_iter([asset])), None, false, false).await?;
             }
         }
 

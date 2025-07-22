@@ -879,7 +879,7 @@ impl NetworkHandler {
     // Sync the latest version of our balances and nonces and determine if we should parse all blocks
     // If assets are provided, we'll only sync these assets
     // If nonce is not provided, we will fetch it from the daemon
-    pub async fn sync_head_state(&self, address: &Address, assets: Option<HashSet<Hash>>, nonce: Option<u64>, sync_nonce: bool, sync_multisig: bool) -> Result<bool, Error> {
+    pub async fn sync_head_state(&self, address: &Address, assets: Option<&HashSet<Hash>>, nonce: Option<u64>, sync_nonce: bool, sync_multisig: bool) -> Result<bool, Error> {
         trace!("syncing head state");
         let new_nonce = if sync_nonce {
             debug!("no nonce provided, fetching it from daemon");
@@ -1003,7 +1003,7 @@ impl NetworkHandler {
 
             for asset in assets {
                 if storage.is_asset_tracked(&asset)? {
-                    tracked_assets.insert(asset);
+                    tracked_assets.insert(Cow::Borrowed(asset));
                 } else {
                     debug!("Asset {} was requested but its not tracked, skipping...", asset);
                 }
@@ -1020,7 +1020,7 @@ impl NetworkHandler {
             for res in iter {
                 let asset = res?;
                 if storage.has_asset(&asset).await? {
-                    tracked_assets.insert(asset);
+                    tracked_assets.insert(Cow::Owned(asset));
                 } else {
                     debug!("Tracked asset {} is not available", asset);
                 }
@@ -1031,7 +1031,7 @@ impl NetworkHandler {
 
         trace!("Tracked assets: {}", tracked_assets.len());
 
-        let mut should_sync_blocks = stream::iter(tracked_assets.into_iter())
+        let mut should_sync_blocks = stream::iter(tracked_assets.iter().map(Cow::as_ref))
             .map(|asset| async move {
                 trace!("requesting latest balance for {}", asset);
                 // get the balance for this asset
@@ -1101,6 +1101,7 @@ impl NetworkHandler {
                     Ok(false)
                 }
             })
+            .boxed()
             .buffer_unordered(self.concurrency)
             .try_fold(false, |acc, x| async move {
                 Ok(acc | x)
@@ -1128,6 +1129,7 @@ impl NetworkHandler {
         trace!("sync");
 
         // Should we sync new blocks ?
+        let mut assets = None;
         let mut sync_new_blocks = false;
 
         let wallet_topoheight: u64;
@@ -1140,8 +1142,8 @@ impl NetworkHandler {
             // We can safely handle it by hand because `locate_sync_topoheight_and_clean` secure us from being on a wrong chain
             if let Some(topoheight) = block.topoheight {
                 let block_hash = block.hash.as_ref().clone();
-                if let Some((assets, mut nonce)) = self.process_block(address, block, topoheight).await? {
-                    debug!("We must sync head state, assets: {}, nonce: {:?}", assets.iter().map(|a| a.to_string()).collect::<Vec<String>>().join(", "), nonce);
+                if let Some((detected_assets, mut nonce)) = self.process_block(address, block, topoheight).await? {
+                    debug!("We must sync head state, assets: {}, nonce: {:?}", detected_assets.iter().map(|a| a.to_string()).collect::<Vec<String>>().join(", "), nonce);
                     {
                         let storage = self.wallet.get_storage().read().await;
                         // Verify that its a higher nonce than our locally stored
@@ -1154,7 +1156,8 @@ impl NetworkHandler {
                         }
                     }
                     // A change happened in this block, lets update balance and nonce
-                    sync_new_blocks |= self.sync_head_state(&address, Some(assets), nonce, false, false).await?;
+                    sync_new_blocks |= self.sync_head_state(&address, Some(&detected_assets), nonce, false, false).await?;
+                    assets = Some(detected_assets);
                 }
 
                 wallet_topoheight = topoheight;
@@ -1188,7 +1191,7 @@ impl NetworkHandler {
         // prevent a double sync head state if history scan is disabled
         if sync_new_blocks && self.wallet.get_history_scan() {
             debug!("Syncing new blocks");
-            self.sync_new_blocks(address, wallet_topoheight, true).await?;
+            self.sync_new_blocks(address, wallet_topoheight, assets, true).await?;
         }
 
         {
@@ -1318,7 +1321,7 @@ impl NetworkHandler {
                                     assets.insert(asset);
                                 }
 
-                                storage.save_transaction(&tx_hash, &tx)?;
+                                storage.update_transaction(&tx_hash, &tx)?;
                             },
                             _ => {
                                 warn!("Transaction {} is not contract related, skipping it", tx_hash);
@@ -1329,7 +1332,7 @@ impl NetworkHandler {
 
                     // We only sync the head state if we have assets
                     // No need to sync the block because we would receive it by the on_block_ordered event
-                    self.sync_head_state(&address, Some(assets), None, false, false).await?;
+                    self.sync_head_state(&address, Some(&assets), None, false, false).await?;
                 },
                 // Detect network events
                 res = on_connection.recv() => {
@@ -1352,13 +1355,19 @@ impl NetworkHandler {
     // Sync all new blocks until the current topoheight
     // If balances is set to false, only the history will be updated
     // and not the nonce or balances
-    async fn sync_new_blocks(&self, address: &Address, current_topoheight: u64, balances: bool) -> Result<(), Error> {
+    async fn sync_new_blocks(&self, address: &Address, current_topoheight: u64, detected_assets: Option<HashSet<Hash>>, balances: bool) -> Result<(), Error> {
         debug!("Scanning history for each asset");
         // Retrieve the last transaction ID
         // We will need it to re-org all the TXs we have stored
         let (assets, last_tx_id) = {
             let storage = self.wallet.get_storage().read().await;
-            let assets = storage.get_assets().await?;
+            let assets = if let Some(assets) = detected_assets {
+                assets
+            } else {
+                // Only sync the tracked assets
+                storage.get_tracked_assets()?
+                    .collect::<Result<_, _>>()?
+            };
             let last_tx_id = storage.get_last_transaction_id()?;
             (assets, last_tx_id)
         };
@@ -1374,7 +1383,7 @@ impl NetworkHandler {
             // - Either reorder all TXs at the reverse txs indexes below
             // - Or memory intensive: each process block returns the list of TXs
             // and each iteration below populare a BTreeMap topoheight / list of all scanned TXs
-            // so we still hold the correct holder, but this is discouraged to support low devices
+            // so we still hold the correct order, but this is discouraged to support low devices
             for asset in assets {
                 debug!("fetch history for asset {}", asset);
                 if let Err(e) = self.get_balance_and_transactions(topoheight_processed.clone(), address, &asset, current_topoheight, balances, &mut highest_nonce).await {
@@ -1383,6 +1392,12 @@ impl NetworkHandler {
                 }
             }
         }
+
+        // TODO: bug bug bug
+        // We must re order all transactions indexes
+        // based on their topoheight and not just reverse them
+        // Because if we have asset A at topo 10, 5, and B at 11, 6
+        // this will give us 10, 5, 11, 6
 
         // Re-org all the TXs we have stored
         {
