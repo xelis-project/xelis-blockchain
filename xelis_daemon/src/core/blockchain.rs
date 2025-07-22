@@ -2713,7 +2713,7 @@ impl<S: Storage> Blockchain<S> {
 
                     for ((tx, contract), transfers) in contract_tracker.contracts_transfers.iter() {
                         for (key, assets) in transfers.iter() {
-                            let event = NotifyEvent::ContractTransfer {
+                            let event = NotifyEvent::ContractTransfers {
                                 address: key.as_address(is_mainnet),
                             };
 
