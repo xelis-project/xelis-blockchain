@@ -17,7 +17,9 @@ use xelis_common::{
             MultisigState,
             NewBlockEvent,
             RPCBlockResponse
-        }, wallet::BalanceChanged, RPCContractOutput, RPCTransactionType
+        },
+        wallet::BalanceChanged,
+        RPCTransactionType
     },
     config::XELIS_ASSET,
     crypto::{
@@ -413,19 +415,6 @@ impl NetworkHandler {
                                 return Ok((None, assets_changed));
                             }
 
-                            // Check outputs of the contract
-                            for output in self.api.get_contract_outputs(&tx.hash).await? {
-                                match output {
-                                    RPCContractOutput::Transfer { asset, destination, .. } => {
-                                        // If the contract call transferred anything to us
-                                        if *destination == *address {
-                                            assets_changed.insert(asset.into_owned());
-                                        }
-                                    },
-                                    _ => {}
-                                }
-                            }
-
                             let mut deposits = IndexMap::new();
                             for (asset, deposit) in payload.deposits {
                                 assets_changed.insert(asset.clone());
@@ -453,7 +442,7 @@ impl NetworkHandler {
                             }
 
                             if should_scan_history {
-                                Some(EntryData::InvokeContract { contract: payload.contract, deposits, chunk_id: payload.chunk_id, fee: tx.fee, max_gas: payload.max_gas, nonce: tx.nonce })
+                                Some(EntryData::InvokeContract { contract: payload.contract, deposits, received: IndexMap::new(), chunk_id: payload.chunk_id, fee: tx.fee, max_gas: payload.max_gas, nonce: tx.nonce })
                             } else {
                                 None
                             }
@@ -1306,17 +1295,40 @@ impl NetworkHandler {
                         storage.contains_asset(&event.asset).await?
                     };
 
-                    let sync_new_blocks = self.sync_head_state(&address, Some(HashSet::from_iter([event.asset.into_owned()])), None, false, false).await?;
+                    // We only want to sync this asset balance
+                    // No need to sync the block because we would receive it by the on_block_ordered event
+                    let asset = event.asset.into_owned();
+                    let sync_new_blocks = self.sync_head_state(&address, Some(HashSet::from_iter([asset.clone()])), None, false, false).await?;
                     debug!("sync new blocks: {}, contains asset: {}", sync_new_blocks, contains_asset);
-                    // If we already contains the asset we can sync new blocks in case we missed any
-                    // If we didn't loaded it before, we have no reason to go through chain
-                    // because it would have been detected earlier
-                    if contains_asset && sync_new_blocks {
-                        self.sync_new_blocks(&address, event.topoheight, false).await?;
-                    }
 
-                    // let mut storage = self.wallet.get_storage().write().await;
-                    // TODO: we need to store this output as a transaction so it appears in history
+                    let mut storage = self.wallet.get_storage().write().await;
+
+                    let tx_hash = event.tx_hash.into_owned();
+                    let mut tx = if storage.has_transaction(&tx_hash)? {
+                        storage.get_transaction(&tx_hash)?
+                    } else {
+                        TransactionEntry::new(
+                            tx_hash.clone(),
+                            event.topoheight,
+                            event.block_timestamp,
+                            EntryData::IncomingContract {
+                                contract: event.contract.into_owned(),
+                                transfers: IndexMap::new()
+                            },
+                        )
+                    };
+
+                    match tx.get_mut_entry() {
+                        EntryData::IncomingContract { transfers, .. } | EntryData::InvokeContract { received: transfers, .. }=> {
+                            *transfers.entry(asset)
+                                .or_insert(0) += event.amount;
+
+                            storage.save_transaction(&tx_hash, &tx)?;
+                        },
+                        _ => {
+                            warn!("Transaction {} is not contract related, skipping it", tx_hash);
+                        }
+                    };
                 },
                 // Detect network events
                 res = on_connection.recv() => {

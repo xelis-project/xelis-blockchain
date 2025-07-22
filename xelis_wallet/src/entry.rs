@@ -236,6 +236,8 @@ pub enum EntryData {
         contract: Hash,
         // Deposits made
         deposits: IndexMap<Hash, u64>,
+        // Any transfers received from the call
+        received: IndexMap<Hash, u64>,
         // Chunk id invoked
         chunk_id: u16,
         // Fee paid
@@ -252,6 +254,12 @@ pub enum EntryData {
         nonce: u64,
         // Invoke if any
         invoke: Option<DeployInvoke>
+    },
+    IncomingContract {
+        // Contract address that was invoked by the TX
+        contract: Hash,
+        // Transfers received from the contract
+        transfers: IndexMap<Hash, u64>,
     }
 }
 
@@ -311,10 +319,18 @@ impl Serializer for EntryData {
                     deposits.insert(asset, amount);
                 }
 
+                let received_size = reader.read_u16()? as usize;
+                let mut received = IndexMap::new();
+                for _ in 0..received_size {
+                    let asset = reader.read_hash()?;
+                    let amount = reader.read_u64()?;
+                    received.insert(asset, amount);
+                }
+
                 let fee = reader.read_u64()?;
                 let max_gas = reader.read_u64()?;
                 let nonce = reader.read_u64()?;
-                Self::InvokeContract { contract, deposits, chunk_id, fee, max_gas, nonce }
+                Self::InvokeContract { contract, deposits, received, chunk_id, fee, max_gas, nonce }
             },
             6 => {
                 let fee = reader.read_u64()?;
@@ -322,8 +338,19 @@ impl Serializer for EntryData {
                 let invoke = Option::read(reader)?;
                 Self::DeployContract { fee, nonce, invoke }
             }
-            _ => return Err(ReaderError::InvalidValue)
-        }) 
+            7 => {
+                let contract = reader.read_hash()?;
+                let transfers_size = reader.read_u16()? as usize;
+                let mut transfers = IndexMap::new();
+                for _ in 0..transfers_size {
+                    let asset = reader.read_hash()?;
+                    let amount = reader.read_u64()?;
+                    transfers.insert(asset, amount);
+                }
+                Self::IncomingContract { contract, transfers }
+            }
+            _ => return Err(ReaderError::InvalidValue),
+        })
     }
 
     fn write(&self, writer: &mut Writer) {
@@ -368,12 +395,18 @@ impl Serializer for EntryData {
                 writer.write_u64(fee);
                 writer.write_u64(nonce);
             },
-            Self::InvokeContract { contract, deposits, chunk_id, fee, max_gas, nonce } => {
+            Self::InvokeContract { contract, deposits, received, chunk_id, fee, max_gas, nonce } => {
                 writer.write_u8(5);
                 writer.write_hash(contract);
                 writer.write_u16(*chunk_id);
                 writer.write_u8(deposits.len() as u8);
                 for (asset, amount) in deposits {
+                    asset.write(writer);
+                    amount.write(writer);
+                }
+
+                writer.write_u16(received.len() as u16);
+                for (asset, amount) in received {
                     asset.write(writer);
                     amount.write(writer);
                 }
@@ -387,6 +420,15 @@ impl Serializer for EntryData {
                 writer.write_u64(fee);
                 writer.write_u64(nonce);
                 invoke.write(writer);
+            },
+            Self::IncomingContract { contract, transfers } => {
+                writer.write_u8(7);
+                writer.write_hash(contract);
+                writer.write_u16(transfers.len() as u16);
+                for (asset, amount) in transfers {
+                    asset.write(writer);
+                    amount.write(writer);
+                }
             }
         }
     }
@@ -404,11 +446,24 @@ impl Serializer for EntryData {
             Self::MultiSig { participants, threshold, fee, nonce } => {
                 1 + participants.iter().map(|k| k.size()).sum::<usize>() + threshold.size() + fee.size() + nonce.size()
             },
-            Self::InvokeContract { contract, deposits, chunk_id, fee, max_gas, nonce } => {
-                contract.size() + 2 + deposits.iter().map(|(a, b)| a.size() + b.size()).sum::<usize>() + chunk_id.size() + fee.size() + max_gas.size() + nonce.size()
+            Self::InvokeContract { contract, deposits, received, chunk_id, fee, max_gas, nonce } => {
+                contract.size()
+                + 1 + deposits.iter()
+                    .map(|(a, b)| a.size() + b.size())
+                    .sum::<usize>()
+                + 2 + received.iter()
+                    .map(|(a, b)| a.size() + b.size())
+                    .sum::<usize>()
+                + chunk_id.size()
+                + fee.size()
+                + max_gas.size()
+                + nonce.size()
             },
             Self::DeployContract { fee, nonce, invoke } => {
                 fee.size() + nonce.size() + invoke.size()
+            },
+            Self::IncomingContract { contract, transfers } => {
+                contract.size() + 2 + transfers.iter().map(|(a, b)| a.size() + b.size()).sum::<usize>()
             }
         }
     }
@@ -503,8 +558,8 @@ impl TransactionEntry {
                     let participants = participants.into_iter().map(|p| p.to_address(mainnet)).collect();
                     RPCEntryType::MultiSig { participants, threshold, fee, nonce }
                 },
-                EntryData::InvokeContract { contract, deposits, chunk_id, fee, max_gas, nonce } => {
-                    RPCEntryType::InvokeContract { contract, deposits, chunk_id, fee, max_gas, nonce }
+                EntryData::InvokeContract { contract, deposits, received, chunk_id, fee, max_gas, nonce } => {
+                    RPCEntryType::InvokeContract { contract, deposits, received, chunk_id, fee, max_gas, nonce }
                 },
                 EntryData::DeployContract { fee, nonce, invoke } => {
                     let invoke = invoke.map(|v| RPCDeployInvoke {
@@ -512,6 +567,10 @@ impl TransactionEntry {
                         deposits: v.deposits.clone()
                     });
                     RPCEntryType::DeployContract { fee, nonce, invoke }
+                },
+                EntryData::IncomingContract { contract, transfers } => {
+                    let transfers = transfers.into_iter().map(|(asset, amount)| (asset, amount)).collect();
+                    RPCEntryType::IncomingContract { contract, transfers }
                 }
             }
         }
@@ -556,17 +615,31 @@ impl TransactionEntry {
                 }
                 str
             },
-            EntryData::InvokeContract { contract, deposits, chunk_id, fee, max_gas, nonce } => {
+            EntryData::InvokeContract { contract, deposits, received, chunk_id, fee, max_gas, nonce } => {
                 let mut str = format!("Fee: {}, Nonce: {} ", format_xelis(*fee), nonce);
                 str.push_str(&format!("Invoke contract {} with chunk id {} (max gas: {})", contract, chunk_id, format_xelis(*max_gas)));
                 for (asset, amount) in deposits {
                     let data = storage.get_asset(&asset).await?;
                     str.push_str(&format!("Deposit {} {} ({}) to contract", format_coin(*amount, data.get_decimals()), data.get_name(), asset));
                 }
+
+                for (asset, amount) in received {
+                    let data = storage.get_asset(&asset).await?;
+                    str.push_str(&format!("Received {} {} ({}) from contract", format_coin(*amount, data.get_decimals()), data.get_name(), asset));
+                }
+
                 str
             },
             EntryData::DeployContract { fee, nonce, invoke } => {
                 format!("Fee: {}, Nonce: {} Deploy contract (constructor called: {})", format_xelis(*fee), nonce, invoke.is_some())
+            },
+            EntryData::IncomingContract { contract, transfers } => {
+                let mut str = format!("Incoming contract {}: ", contract);
+                for (asset, amount) in transfers {
+                    let data = storage.get_asset(&asset).await?;
+                    str.push_str(&format!("Received {} {} ({}) ", format_coin(*amount, data.get_decimals()), data.get_name(), asset));
+                }
+                str
             }
         };
 
