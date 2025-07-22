@@ -562,7 +562,7 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
 
         debug!("applying external transfers");
         // Apply all the transfers to the receiver accounts
-        for (key, assets) in self.contract_manager.tracker.transfers {
+        for (key, assets) in self.contract_manager.tracker.aggregated_transfers {
             for (asset, amount) in assets {
                 trace!("Transfering {} {} to {} at topoheight {}", amount, asset, key.as_address(self.inner.storage.is_mainnet()), self.inner.topoheight);
                 let receiver_balance = self.inner.internal_get_receiver_balance(Cow::Owned(key.clone()), Cow::Owned(asset)).await?;

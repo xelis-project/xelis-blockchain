@@ -18,7 +18,7 @@ use xelis_common::{
             NewContractEvent,
             InvokeContractEvent,
             NewAssetEvent,
-            ContractTransferEvent,
+            ContractTransfersEvent,
             ContractEvent,
             MempoolTransactionSummary,
         },
@@ -2711,20 +2711,25 @@ impl<S: Storage> Blockchain<S> {
                         }
                     }
 
-                    for (key, assets) in contract_tracker.transfers.iter() {
-                        let event = NotifyEvent::ContractTransfer { address: key.as_address(is_mainnet) };
-                        if should_track_events.contains(&event) {
-                            let entry = events.entry(event)
-                                .or_insert_with(Vec::new);
+                    for ((tx, contract), transfers) in contract_tracker.contracts_transfers.iter() {
+                        for (key, assets) in transfers.iter() {
+                            let event = NotifyEvent::ContractTransfer {
+                                address: key.as_address(is_mainnet),
+                            };
 
-                            for (asset, amount) in assets {
-                                let value = json!(ContractTransferEvent {
-                                    asset: Cow::Borrowed(asset),
-                                    amount: *amount,
+                            if should_track_events.contains(&event) {
+                                let entry = events.entry(event)
+                                    .or_insert_with(Vec::new);
+
+                                let value = json!(ContractTransfersEvent {
+                                    contract: Cow::Borrowed(contract),
+                                    tx_hash: Cow::Borrowed(tx),
+                                    transfers: Cow::Borrowed(assets),
+                                    block_timestamp: block.get_timestamp(),
                                     block_hash: Cow::Borrowed(&hash),
                                     topoheight: highest_topo,
                                 });
-                                
+
                                 entry.push(value);
                             }
                         }
