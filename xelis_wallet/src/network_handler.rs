@@ -1226,7 +1226,7 @@ impl NetworkHandler {
         let mut on_transaction_orphaned = self.api.on_transaction_orphaned_event().await?;
 
         // Track also the contract transfers to our address
-        let mut on_contract_transfer = self.api.on_contract_transfer_event(address.clone()).await?;
+        let mut on_contract_transfers = self.api.on_contract_transfers_event(address.clone()).await?;
 
         // Network events to detect if we are online or offline
         let mut on_connection = self.api.on_connection().await;
@@ -1286,49 +1286,49 @@ impl NetworkHandler {
                         storage.clear_tx_cache();
                     }
                 },
-                res = on_contract_transfer.next() => {
+                res = on_contract_transfers.next() => {
                     let event = res?;
-                    debug!("on contract transfer event asset {} at topo {} {}", event.asset, event.topoheight, event.block_hash);
-
-                    let contains_asset = {
-                        let storage = self.wallet.get_storage().read().await;
-                        storage.contains_asset(&event.asset).await?
-                    };
-
-                    // We only want to sync this asset balance
-                    // No need to sync the block because we would receive it by the on_block_ordered event
-                    let asset = event.asset.into_owned();
-                    let sync_new_blocks = self.sync_head_state(&address, Some(HashSet::from_iter([asset.clone()])), None, false, false).await?;
-                    debug!("sync new blocks: {}, contains asset: {}", sync_new_blocks, contains_asset);
-
-                    let mut storage = self.wallet.get_storage().write().await;
+                    debug!("on contract transfers event at topo {} {}", event.topoheight, event.block_hash);
 
                     let tx_hash = event.tx_hash.into_owned();
-                    let mut tx = if storage.has_transaction(&tx_hash)? {
-                        storage.get_transaction(&tx_hash)?
-                    } else {
-                        TransactionEntry::new(
-                            tx_hash.clone(),
-                            event.topoheight,
-                            event.block_timestamp,
-                            EntryData::IncomingContract {
-                                contract: event.contract.into_owned(),
-                                transfers: IndexMap::new()
+                    let contract = event.contract.into_owned();
+
+                    let mut assets = HashSet::new();
+                    {
+                        let mut storage = self.wallet.get_storage().write().await;
+                        let mut tx = if storage.has_transaction(&tx_hash)? {
+                            storage.get_transaction(&tx_hash)?
+                        } else {
+                            TransactionEntry::new(
+                                tx_hash.clone(),
+                                event.topoheight,
+                                event.block_timestamp,
+                                EntryData::IncomingContract {
+                                    contract,
+                                    transfers: IndexMap::new()
+                                },
+                            )
+                        };
+
+                        match tx.get_mut_entry() {
+                            EntryData::IncomingContract { transfers, .. } | EntryData::InvokeContract { received: transfers, .. } => {
+                                for (asset, amount) in event.transfers.into_owned() {    
+                                    *transfers.entry(asset.clone())
+                                        .or_insert(0) += amount;    
+                                    assets.insert(asset);
+                                }
+
+                                storage.save_transaction(&tx_hash, &tx)?;
                             },
-                        )
-                    };
+                            _ => {
+                                warn!("Transaction {} is not contract related, skipping it", tx_hash);
+                            }
+                        };
+                    }
 
-                    match tx.get_mut_entry() {
-                        EntryData::IncomingContract { transfers, .. } | EntryData::InvokeContract { received: transfers, .. }=> {
-                            *transfers.entry(asset)
-                                .or_insert(0) += event.amount;
-
-                            storage.save_transaction(&tx_hash, &tx)?;
-                        },
-                        _ => {
-                            warn!("Transaction {} is not contract related, skipping it", tx_hash);
-                        }
-                    };
+                    // We only sync the head state if we have assets
+                    // No need to sync the block because we would receive it by the on_block_ordered event
+                    self.sync_head_state(&address, Some(assets), None, false, false).await?;
                 },
                 // Detect network events
                 res = on_connection.recv() => {
