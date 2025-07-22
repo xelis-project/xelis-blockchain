@@ -51,7 +51,7 @@ where
 // example: balance, tracked assets etc is grouped into one
 // modal that propose to the user to set them in "always allow"
 #[derive(Serialize, Deserialize)]
-pub struct InternalGroupedPermissions<'a> {
+pub struct InternalPrefetchPermissions<'a> {
     // Description to be shown to the user
     pub message: Cow<'a, String>,
     // Request these permissions in advance
@@ -77,7 +77,7 @@ pub trait XSWDHandler {
 
     // On grouped permissions request
     // This is optional and can be ignored by default
-    async fn on_prefetch_permissions_request<'a>(&self, _: &AppStateShared, _: InternalGroupedPermissions<'a>) -> Result<(), Error> {
+    async fn on_prefetch_permissions_request<'a>(&self, _: &AppStateShared, _: InternalPrefetchPermissions<'a>) -> Result<(), Error> {
         Ok(())
     }
 }
@@ -190,6 +190,9 @@ where
     }
 
     async fn on_internal_request(&self, app: &AppStateShared, mut request: RpcRequest) -> Result<OnRequestResult, RpcResponseError> {
+        let _permit = self.semaphore.acquire().await
+            .map_err(|_| RpcResponseError::new(request.id.clone(), InternalRpcError::InternalError("Permission handler semaphore error")))?;
+
         match request.method.as_str() {
             "prefetch_permissions" => {
                 let wallet = self.handler.get_data();
