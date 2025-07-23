@@ -1043,7 +1043,7 @@ impl NetworkHandler {
                         return Ok(false)
                     }
                 };
-                trace!("found balance at topoheight: {}", result.topoheight);
+                trace!("found balance {} at topoheight: {}", asset, result.topoheight);
 
                 let mut ciphertext = result.version.take_balance();
                 let topoheight = result.topoheight;
@@ -1052,11 +1052,15 @@ impl NetworkHandler {
                     let must_update = match storage.get_balance_for(&asset).await {
                         Ok(mut previous) => previous.ciphertext.compressed() != ciphertext.compressed(),
                         // If we don't have a balance for this asset, we should update it
-                        Err(_) => true
+                        Err(e) => {
+                            debug!("No balance found for asset {}: {}, we should update it", asset, e);
+                            true
+                        }
                     };
 
                     // If we must update, check if we have a cache for this balance
                     let balance_cache = if must_update {
+                        debug!("balance for asset {} is not up-to-date, checking cache", asset);
                         storage.get_unconfirmed_balance_decoded_for(&asset, &ciphertext.compressed()).await?
                     } else {
                         None
