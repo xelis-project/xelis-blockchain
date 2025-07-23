@@ -1066,18 +1066,6 @@ impl EncryptedStorage {
             }
         }
 
-        // If we didn’t find an exact match but nearest is true, return nearest higher topoheight
-        if result.is_none() && nearest {
-            // left should points to the insertion point where its the first topoheight above requested
-            let tx_hash_opt = self.transactions_indexes.get(&left.to_be_bytes())?;
-            if let Some(tx_hash) = tx_hash_opt {
-                let entry: Skip<HASH_SIZE, TopoHeight> = self.load_from_disk_with_key(&self.transactions, &tx_hash)?;
-                if entry.0 > topoheight {
-                    return Ok(Some(left));
-                }
-            }
-        }
-    
         Ok(result)
     }
 
