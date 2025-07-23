@@ -1057,7 +1057,7 @@ impl EncryptedStorage {
                 }
                 Ordering::Greater => {
                     // potential "nearest higher" if exact not found
-                    result = result.or(Some(mid));
+                    result = Some(mid);
                     if mid == 0 {
                         break;
                     }
