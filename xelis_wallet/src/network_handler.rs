@@ -529,7 +529,7 @@ impl NetworkHandler {
 
                     // Save the transaction
                     let entry = TransactionEntry::new(tx.hash.into_owned(), tx_topoheight, tx_timestamp, entry);
-                    let tx_nonce = if is_owner{
+                    let tx_nonce = if is_owner {
                         Some(tx.nonce)
                     } else {
                         None
@@ -1129,7 +1129,6 @@ impl NetworkHandler {
         trace!("sync");
 
         // Should we sync new blocks ?
-        let mut assets = None;
         let mut sync_new_blocks = false;
 
         let wallet_topoheight: u64;
@@ -1155,9 +1154,13 @@ impl NetworkHandler {
                             nonce = None;
                         }
                     }
+
                     // A change happened in this block, lets update balance and nonce
-                    sync_new_blocks |= self.sync_head_state(&address, Some(&detected_assets), nonce, false, false).await?;
-                    assets = Some(detected_assets);
+                    self.sync_head_state(&address, Some(&detected_assets), nonce, false, false).await?;
+
+                    // We don't have to sync new blocks because we just processed this one
+                    // And the balances were already updated with above head state sync
+                    sync_new_blocks = false;
                 }
 
                 wallet_topoheight = topoheight;
@@ -1191,7 +1194,7 @@ impl NetworkHandler {
         // prevent a double sync head state if history scan is disabled
         if sync_new_blocks && self.wallet.get_history_scan() {
             debug!("Syncing new blocks");
-            self.sync_new_blocks(address, wallet_topoheight, assets, true).await?;
+            self.sync_new_blocks(address, wallet_topoheight, None, true).await?;
         }
 
         {
@@ -1393,7 +1396,6 @@ impl NetworkHandler {
             }
         }
 
-        // TODO: bug bug bug
         // We must re order all transactions indexes
         // based on their topoheight and not just reverse them
         // Because if we have asset A at topo 10, 5, and B at 11, 6
@@ -1403,7 +1405,7 @@ impl NetworkHandler {
         {
             debug!("reverse txs indexes");
             let mut storage = self.wallet.get_storage().write().await;
-            storage.reverse_transactions_indexes(last_tx_id)?;
+            storage.reorder_transactions_indexes(last_tx_id)?;
             debug!("txs indexes reversed successfully");
         }
 

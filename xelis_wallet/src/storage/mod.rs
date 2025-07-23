@@ -963,6 +963,7 @@ impl EncryptedStorage {
             let tx_hash = el?;
             let entry: TransactionEntry = self.load_from_disk_with_key(&self.transactions, &tx_hash)?;
             if entry.is_outgoing() {
+                debug!("Found last outgoing transaction: {:?}", entry);
                 last_tx = Some(entry);
                 break;
             }
@@ -1350,38 +1351,40 @@ impl EncryptedStorage {
 
     // Reorg all the TXs written after a certain ID
     // To reorg them, we only need to reverse the order written
-    pub fn reverse_transactions_indexes(&mut self, id: Option<u64>) -> Result<()> {
+    // This currently keeping in memory all the transactions after the specified ID,
+    // sorts them by topoheight, and rewrites the indexes in reverse order.
+    pub fn reorder_transactions_indexes(&mut self, id: Option<u64>) -> Result<()> {
         trace!("reverse transactions indexes after {:?}", id);
         let Some(end_id) = self.get_last_transaction_id()? else {
             debug!("no transactions indexes to reverse");
             return Ok(());
         };
 
-        // Start from the first ID to reverse
-        let mut low_id = id.map(|v| v + 1)
-            .unwrap_or(0);
-        // End at the last ID
-        let mut high_id = end_id;
-
-        while low_id < high_id {
-            // Load TX hashes for swapping
-            let Some(low_tx_hash) = self.transactions_indexes.get(&low_id.to_be_bytes())? else {
-                warn!("No transaction index found for low {}", low_id);
-                return Ok(());
-            };
-            let Some(high_tx_hash) = self.transactions_indexes.get(&high_id.to_be_bytes())? else {
-                warn!("No transaction index found for high {}", high_id);
-                return Ok(()); 
+        let start_id = id.map(|v| v + 1).unwrap_or(0);
+        // Collect transactions after start_id
+        let mut txs_with_topoheight = Vec::new();
+        for tx_id in start_id..=end_id {
+            let Some(tx_hash) = self.transactions_indexes.get(&tx_id.to_be_bytes())? else {
+                warn!("Missing tx hash at index {tx_id}");
+                continue;
             };
 
-            // Swap the transaction indexes on disk
-            self.transactions_indexes.insert(low_id.to_be_bytes(), high_tx_hash)?;
-            self.transactions_indexes.insert(high_id.to_be_bytes(), low_tx_hash)?;
-
-            // Move pointers inward
-            low_id += 1;
-            high_id -= 1;
+            let topoheight: Skip<HASH_SIZE, TopoHeight> = self.load_from_disk_with_key(&self.transactions, &tx_hash)?;
+            txs_with_topoheight.push((topoheight.0, tx_hash));
         }
+
+        // Sort transactions by topoheight
+        txs_with_topoheight.sort_by_key(|(topoheight, _)| *topoheight);
+
+        // Rewrite the transactions_indexes tree from start_id onward
+        // We write it in the reverse order to keep the latest topoheight at the end
+        let len = txs_with_topoheight.len();
+        for (i, (_, tx_hash)) in txs_with_topoheight.into_iter().enumerate().rev() {
+            let new_index = start_id + i as u64;
+            self.transactions_indexes.insert(new_index.to_be_bytes(), tx_hash)?;
+        }
+
+        debug!("Reordered {} transactions indexes from ID {}", len, start_id);
 
         Ok(())
     }
