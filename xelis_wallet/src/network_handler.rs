@@ -1387,13 +1387,17 @@ impl NetworkHandler {
             // - Or memory intensive: each process block returns the list of TXs
             // and each iteration below populare a BTreeMap topoheight / list of all scanned TXs
             // so we still hold the correct order, but this is discouraged to support low devices
-            for asset in assets {
-                debug!("fetch history for asset {}", asset);
-                if let Err(e) = self.get_balance_and_transactions(topoheight_processed.clone(), address, &asset, current_topoheight, balances, &mut highest_nonce).await {
-                    error!("Error while syncing balance for asset {}: {}", asset, e);
-                    self.wallet.propagate_event(Event::SyncError { message: e.to_string() }).await;
+            let topoheight_processed = &topoheight_processed;
+            stream::iter(assets.into_iter())
+            .for_each_concurrent(self.concurrency, |asset| {
+                async move {
+                    debug!("fetch history for asset {}", asset);
+                    if let Err(e) = self.get_balance_and_transactions(topoheight_processed.clone(), address, &asset, current_topoheight, balances, &mut highest_nonce).await {
+                        error!("Error while syncing balance for asset {}: {}", asset, e);
+                        self.wallet.propagate_event(Event::SyncError { message: e.to_string() }).await;
+                    }
                 }
-            }
+            }).await;
         }
 
         // We must re order all transactions indexes
