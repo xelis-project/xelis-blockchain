@@ -8,11 +8,11 @@ use anyhow::Context;
 use curve25519_dalek::Scalar;
 use log::{debug, trace, warn};
 use indexmap::IndexMap;
-use xelis_vm::{ValueCell, VM};
+use xelis_vm::{Reference, ValueCell, VM};
 
 use crate::{
     config::{TX_GAS_BURN_PERCENT, XELIS_ASSET},
-    contract::{ContractOutput, ContractProvider, ContractProviderWrapper},
+    contract::{ContractOutput, ContractProvider, ContractProviderWrapper, ModuleMetadata},
     crypto::{elgamal::Ciphertext, Hash},
     tokio::block_in_place_safe,
     transaction::{ContractDeposit, Transaction}
@@ -62,7 +62,8 @@ impl Transaction {
             let mut vm = VM::new(contract_environment.environment);
 
             // Insert the module to load
-            vm.append_module(contract_environment.module)?;
+            // TODO: module metadata should be passed to the VM
+            vm.append_module(contract_environment.module, Reference::Borrowed(&ModuleMetadata))?;
 
             // Invoke the needed chunk
             // This is the first chunk to be called

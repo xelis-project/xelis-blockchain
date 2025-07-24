@@ -12,7 +12,8 @@ use crate::{
         ContractCache,
         ContractEventTracker,
         ContractOutput,
-        ContractProvider
+        ContractProvider,
+        ModuleMetadata
     },
     crypto::{
         elgamal::{
@@ -98,7 +99,7 @@ pub trait BlockchainVerificationState<'a, E> {
     ) -> Result<Option<&MultiSigPayload>, E>;
 
     /// Get the environment
-    async fn get_environment(&mut self) -> Result<&Environment, E>;
+    async fn get_environment(&mut self) -> Result<&Environment<ModuleMetadata>, E>;
 
     /// Set the contract module
     async fn set_contract_module(
@@ -120,12 +121,12 @@ pub trait BlockchainVerificationState<'a, E> {
     async fn get_contract_module_with_environment(
         &self,
         hash: &'a Hash
-    ) -> Result<(&Module, &Environment), E>;
+    ) -> Result<(&Module, &Environment<ModuleMetadata>), E>;
 }
 
 pub struct ContractEnvironment<'a, P: ContractProvider> {
     // Environment with the embed stdlib
-    pub environment: &'a Environment,
+    pub environment: &'a Environment<ModuleMetadata>,
     // Module to execute
     pub module: &'a Module,
     // Provider for the contract

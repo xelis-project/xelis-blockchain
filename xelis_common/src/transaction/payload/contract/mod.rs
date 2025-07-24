@@ -5,6 +5,7 @@ use anyhow::Context;
 use indexmap::{IndexMap, IndexSet};
 use serde::{Deserialize, Serialize};
 use xelis_vm::{
+    Access,
     Chunk,
     Module,
     OpaqueWrapper,
@@ -326,21 +327,20 @@ impl Serializer for Module {
 
         let chunks = self.chunks();
         writer.write_u16(chunks.len() as u16);
-        for chunk in chunks {
+        for (chunk, access) in chunks {
             let instructions = chunk.get_instructions();
             let len = instructions.len() as u32;
             writer.write_u32(&len);
             writer.write_bytes(instructions);
-        }
-
-        // Write entry ids
-        let entry_ids = self.chunks_entry_ids();
-        // We can have only up to u16::MAX chunks, so same for entry ids
-        let len = entry_ids.len() as u16;
-        writer.write_u16(len);
-
-        for entry_id in entry_ids {
-            writer.write_u16(*entry_id as u16);
+            match access {
+                Access::All => writer.write_u8(0),
+                Access::Internal => writer.write_u8(1),
+                Access::Entry => writer.write_u8(2),
+                Access::Hook { id } => {
+                    writer.write_u8(3);
+                    writer.write_u8(*id);
+                }
+            }
         }
 
         let hooks = self.hook_chunk_ids();
@@ -369,8 +369,21 @@ impl Serializer for Module {
 
         for _ in 0..chunks_len {
             let instructions_len = reader.read_u32()? as usize;
-            let instructions: Vec<u8> = reader.read_bytes(instructions_len)?;
-            chunks.push(Chunk::from_instructions(instructions));
+            let instructions = reader.read_bytes(instructions_len)?;
+            let chunk = Chunk::from_instructions(instructions);
+
+            let access = match reader.read_u8()? {
+                0 => Access::All,
+                1 => Access::Internal,
+                2 => Access::Entry,
+                3 => {
+                    let id = reader.read_u8()?;
+                    Access::Hook { id }
+                }
+                _ => return Err(ReaderError::InvalidValue)
+            };
+
+            chunks.push((chunk, access));
         }
 
         let entry_ids_len = reader.read_u16()?;
@@ -402,7 +415,7 @@ impl Serializer for Module {
             }
         }
 
-        Ok(Module::with(constants, chunks, entry_ids, hooks))
+        Ok(Module::with(constants, chunks, hooks))
     }
 }
 
@@ -415,7 +428,6 @@ mod tests {
     fn test_serde_module() {
         let hex = "000302000000020008000b48656c6c6f20576f726c64020000000102000000060004000000000000000000040000000000000001000400000000000000020004000000000000000300040000000000000004000400000000000000050008000568656c6c6f000400000000000000000001000000211874000000020000000000020100010000000100010100187700010207000200140001000000";
         let module = Module::from_hex(hex).unwrap();
-        assert_eq!(module.chunks_entry_ids().len(), 1);
         assert_eq!(module.constants().len(), 3);
 
         assert_eq!(hex.len() / 2, module.size());

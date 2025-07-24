@@ -8,11 +8,12 @@ use xelis_vm::{
     FnParams,
     FnReturnType,
     Primitive,
+    SysCallResult,
     ValueError
 };
 
 use crate::{
-    contract::SIGNATURE_OPAQUE_ID,
+    contract::{ModuleMetadata, SIGNATURE_OPAQUE_ID},
     crypto::{Address, Signature, SIGNATURE_SIZE},
     serializer::{Serializer, Writer}
 };
@@ -44,7 +45,7 @@ impl Serializable for Signature {
     }
 }
 
-pub fn signature_from_bytes_fn(_: FnInstance, mut params: FnParams, _: &mut Context) -> FnReturnType {
+pub fn signature_from_bytes_fn(_: FnInstance, mut params: FnParams, _: &mut Context) -> FnReturnType<ModuleMetadata> {
     let param = params.remove(0)
         .into_owned()?;
     let param = param.as_vec()?;
@@ -59,10 +60,10 @@ pub fn signature_from_bytes_fn(_: FnInstance, mut params: FnParams, _: &mut Cont
 
     let signature = Signature::from_bytes(&bytes)
         .context("signature from bytes")?;
-    Ok(Some(Primitive::Opaque(signature.into()).into()))
+    Ok(SysCallResult::Return(Primitive::Opaque(signature.into()).into()))
 }
 
-pub fn signature_verify_fn(zelf: FnInstance, mut params: FnParams, _: &mut Context) -> FnReturnType {
+pub fn signature_verify_fn(zelf: FnInstance, mut params: FnParams, _: &mut Context) -> FnReturnType<ModuleMetadata> {
     let signature: &Signature = zelf?.as_opaque_type()?;
 
     let address: Address = params.remove(0)
@@ -79,7 +80,7 @@ pub fn signature_verify_fn(zelf: FnInstance, mut params: FnParams, _: &mut Conte
     let key = address.to_public_key()
         .decompress()
         .context("decompress key for signature")?;
-    Ok(Some(Primitive::Boolean(signature.verify(&data, &key)).into()))
+    Ok(SysCallResult::Return(Primitive::Boolean(signature.verify(&data, &key)).into()))
 }
 
 #[cfg(test)]

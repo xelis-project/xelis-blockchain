@@ -5,12 +5,13 @@ use xelis_vm::{
     FnInstance,
     FnParams,
     FnReturnType,
-    Primitive
+    Primitive,
+    SysCallResult
 };
 use crate::{
     asset::{AssetData, AssetOwner},
     config::COST_PER_TOKEN,
-    contract::{from_context, get_optional_asset_from_cache, AssetChanges, ContractOutput, ContractProvider},
+    contract::{from_context, get_optional_asset_from_cache, AssetChanges, ContractOutput, ContractProvider, ModuleMetadata},
     crypto::{Hash, HASH_SIZE},
     versioned_type::VersionedState
 };
@@ -43,7 +44,7 @@ fn is_valid_char_for_asset(c: char, whitespace: bool, uppercase_only: bool) -> b
 
 // Create a new asset
 // Return None if the asset already exists
-pub fn asset_create<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType {
+pub fn asset_create<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType<ModuleMetadata> {
     let (provider, chain_state) = from_context::<P>(context)?;
 
     let max_supply = match params.remove(4).into_owned()?.take_as_optional()? {
@@ -89,7 +90,7 @@ pub fn asset_create<P: ContractProvider>(_: FnInstance, mut params: FnParams, co
     let asset_hash = Hash::new(hash(&buffer).into());
     // We must be sure that we don't have this asset already
     if get_optional_asset_from_cache(provider, chain_state, asset_hash.clone())?.is_some() {
-        return Ok(Some(Primitive::Null.into()));
+        return Ok(SysCallResult::Return(Primitive::Null.into()));
     }
 
     let data = AssetData::new(decimals, name, ticker, max_supply, Some(AssetOwner::new(chain_state.contract.clone(), id)));
@@ -112,10 +113,10 @@ pub fn asset_create<P: ContractProvider>(_: FnInstance, mut params: FnParams, co
     let asset = Asset {
         hash: asset_hash
     };
-    Ok(Some(Primitive::Opaque(asset.into()).into()))
+    Ok(SysCallResult::Return(Primitive::Opaque(asset.into()).into()))
 }
 
-pub fn asset_get_by_id<P: ContractProvider>(_: FnInstance, params: FnParams, context: &mut Context) -> FnReturnType {
+pub fn asset_get_by_id<P: ContractProvider>(_: FnInstance, params: FnParams, context: &mut Context) -> FnReturnType<ModuleMetadata> {
     let id = params[0].as_u64()?;
     let (provider, chain_state) = from_context::<P>(context)?;
 
@@ -125,16 +126,16 @@ pub fn asset_get_by_id<P: ContractProvider>(_: FnInstance, params: FnParams, con
 
     let asset_hash = Hash::new(hash(&buffer).into());
     if get_optional_asset_from_cache(provider, chain_state, asset_hash.clone())?.is_none() {
-        return Ok(Some(Primitive::Null.into()))
+        return Ok(SysCallResult::Return(Primitive::Null.into()))
     }
 
     let asset = Asset {
         hash: asset_hash
     };
-    Ok(Some(Primitive::Opaque(asset.into()).into()))
+    Ok(SysCallResult::Return(Primitive::Opaque(asset.into()).into()))
 }
 
-pub fn asset_get_by_hash<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType {
+pub fn asset_get_by_hash<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType<ModuleMetadata> {
     let hash: Hash = params.remove(0)
         .into_owned()?
         .into_opaque_type()?;
@@ -142,13 +143,13 @@ pub fn asset_get_by_hash<P: ContractProvider>(_: FnInstance, mut params: FnParam
     let (provider, chain_state) = from_context::<P>(context)?;
 
     if get_optional_asset_from_cache(provider, chain_state, hash.clone())?.is_none() {
-        return Ok(Some(Primitive::Null.into()))
+        return Ok(SysCallResult::Return(Primitive::Null.into()))
     }
 
     let asset = Asset {
         hash
     };
-    Ok(Some(Primitive::Opaque(asset.into()).into()))
+    Ok(SysCallResult::Return(Primitive::Opaque(asset.into()).into()))
 }
 
 #[cfg(test)]

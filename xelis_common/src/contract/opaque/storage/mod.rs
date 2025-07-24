@@ -8,12 +8,13 @@ use xelis_vm::{
     FnReturnType,
     OpaqueWrapper,
     Primitive,
+    SysCallResult,
     ValueCell
 };
 use crate::{
     block::TopoHeight,
     config::{FEE_PER_BYTE_STORED_CONTRACT, FEE_PER_STORE_CONTRACT},
-    contract::{from_context, ContractProvider},
+    contract::{from_context, ContractProvider, ModuleMetadata},
     crypto::Hash,
     versioned_type::VersionedState
 };
@@ -48,11 +49,11 @@ impl JSONHelper for OpaqueStorage {}
 
 impl Serializable for OpaqueStorage {}
 
-pub fn storage(_: FnInstance, _: FnParams, _: &mut Context) -> FnReturnType {
-    Ok(Some(Primitive::Opaque(OpaqueWrapper::new(OpaqueStorage)).into()))
+pub fn storage(_: FnInstance, _: FnParams, _: &mut Context) -> FnReturnType<ModuleMetadata> {
+    Ok(SysCallResult::Return(Primitive::Opaque(OpaqueWrapper::new(OpaqueStorage)).into()))
 }
 
-pub fn storage_load<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType {
+pub fn storage_load<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType<ModuleMetadata> {
     let (storage, state) = from_context::<P>(context)?;
 
     let key = params.remove(0)
@@ -69,10 +70,10 @@ pub fn storage_load<P: ContractProvider>(_: FnInstance, mut params: FnParams, co
         }
     };
 
-    Ok(Some(value.unwrap_or_default()))
+    Ok(SysCallResult::Return(value.unwrap_or_default()))
 }
 
-pub fn storage_has<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType {
+pub fn storage_has<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType<ModuleMetadata> {
     let (storage, state) = from_context::<P>(context)?;
 
     let key = params.remove(0)
@@ -83,10 +84,10 @@ pub fn storage_has<P: ContractProvider>(_: FnInstance, mut params: FnParams, con
         None => storage.has_data(state.contract, &key, state.topoheight)?
     };
 
-    Ok(Some(Primitive::Boolean(contains).into()))
+    Ok(SysCallResult::Return(Primitive::Boolean(contains).into()))
 }
 
-pub fn storage_store<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType {
+pub fn storage_store<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType<ModuleMetadata> {
     let key = params.remove(0)
         .into_owned()?;
 
@@ -127,10 +128,10 @@ pub fn storage_store<P: ContractProvider>(_: FnInstance, mut params: FnParams, c
         .flatten()
         .unwrap_or_default();
 
-    Ok(Some(value))
+    Ok(SysCallResult::Return(value))
 }
 
-pub fn storage_delete<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType {
+pub fn storage_delete<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType<ModuleMetadata> {
     let (storage, state) = from_context::<P>(context)?;
 
     let key = params.remove(0)
@@ -140,7 +141,7 @@ pub fn storage_delete<P: ContractProvider>(_: FnInstance, mut params: FnParams, 
         Some((s, _)) => match s {
             VersionedState::New => {
                 let value = state.cache.storage.remove(&key);
-                return Ok(Some(value.map(|(_, v)| v).flatten().unwrap_or_default()));
+                return Ok(SysCallResult::Return(value.map(|(_, v)| v).flatten().unwrap_or_default()));
             },
             VersionedState::FetchedAt(topoheight) => VersionedState::Updated(*topoheight),
             VersionedState::Updated(topoheight) => VersionedState::Updated(*topoheight),
@@ -149,7 +150,7 @@ pub fn storage_delete<P: ContractProvider>(_: FnInstance, mut params: FnParams, 
             // We need to retrieve the latest topoheight version
             match storage.load_data_latest_topoheight(&state.contract, &key, state.topoheight)? {
                 Some(topoheight) => VersionedState::Updated(topoheight),
-                None => return Ok(Some(Default::default())),
+                None => return Ok(SysCallResult::Return(Default::default())),
             }
         }
     };
@@ -159,5 +160,5 @@ pub fn storage_delete<P: ContractProvider>(_: FnInstance, mut params: FnParams, 
         .flatten()
         .unwrap_or_default();
 
-    Ok(Some(value))
+    Ok(SysCallResult::Return(value))
 }

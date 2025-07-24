@@ -7,17 +7,19 @@ use xelis_vm::{
     FnInstance,
     FnParams,
     FnReturnType,
-    Primitive
+    Primitive,
+    SysCallResult
 };
 use crate::{
     contract::{
         from_context,
-        get_balance_from_cache,
         get_asset_changes_for_hash,
         get_asset_changes_for_hash_mut,
+        get_balance_from_cache,
         ChainState,
         ContractOutput,
-        ContractProvider
+        ContractProvider,
+        ModuleMetadata
     },
     crypto::Hash,
     versioned_type::VersionedState
@@ -50,7 +52,7 @@ impl Serializable for Asset {}
 impl JSONHelper for Asset {}
 
 // Maximum supply set for this asset
-pub fn asset_get_max_supply<P: ContractProvider>(zelf: FnInstance, _: FnParams, context: &mut Context) -> FnReturnType {
+pub fn asset_get_max_supply<P: ContractProvider>(zelf: FnInstance, _: FnParams, context: &mut Context) -> FnReturnType<ModuleMetadata> {
     let asset: &Asset = zelf?.as_opaque_type()?;
     let state: &ChainState = context.get()
         .context("Chain state not found")?;
@@ -59,11 +61,11 @@ pub fn asset_get_max_supply<P: ContractProvider>(zelf: FnInstance, _: FnParams, 
         .map(|v| Primitive::U64(v).into())
         .unwrap_or_default();
 
-    Ok(Some(value))
+    Ok(SysCallResult::Return(value))
 }
 
 // Contract hash that created this asset
-pub fn asset_get_contract_hash<P: ContractProvider>(zelf: FnInstance, _: FnParams, context: &mut Context) -> FnReturnType {
+pub fn asset_get_contract_hash<P: ContractProvider>(zelf: FnInstance, _: FnParams, context: &mut Context) -> FnReturnType<ModuleMetadata> {
     let asset: &Asset = zelf?.as_opaque_type()?;
     let state: &ChainState = context.get()
         .context("Chain state not found")?;
@@ -73,11 +75,11 @@ pub fn asset_get_contract_hash<P: ContractProvider>(zelf: FnInstance, _: FnParam
         .map(|v| Primitive::Opaque(v.get_contract().clone().into()))
         .unwrap_or_default();
 
-    Ok(Some(hash.into()))
+    Ok(SysCallResult::Return(hash.into()))
 }
 
 // Contract hash that created this asset
-pub fn asset_get_contract_id<P: ContractProvider>(zelf: FnInstance, _: FnParams, context: &mut Context) -> FnReturnType {
+pub fn asset_get_contract_id<P: ContractProvider>(zelf: FnInstance, _: FnParams, context: &mut Context) -> FnReturnType<ModuleMetadata> {
     let asset: &Asset = zelf?.as_opaque_type()?;
     let state: &ChainState = context.get()
         .context("Chain state not found")?;
@@ -87,18 +89,18 @@ pub fn asset_get_contract_id<P: ContractProvider>(zelf: FnInstance, _: FnParams,
         .map(|v| Primitive::U64(v.get_id()))
         .unwrap_or_default();
 
-    Ok(Some(id.into()))
+    Ok(SysCallResult::Return(id.into()))
 }
 
 // Emitted supply for this asset
-pub fn asset_get_supply<P: ContractProvider>(zelf: FnInstance, _: FnParams, context: &mut Context) -> FnReturnType {
+pub fn asset_get_supply<P: ContractProvider>(zelf: FnInstance, _: FnParams, context: &mut Context) -> FnReturnType<ModuleMetadata> {
     let asset: &Asset = zelf?.as_opaque_type()?;
     let (provider, state) = from_context::<P>(context)?;
 
     let topoheight = state.topoheight;
     let changes = get_asset_changes_for_hash_mut(state, &asset.hash)?;
     if let Some((_, supply)) = changes.supply {
-        return Ok(Some(Primitive::U64(supply).into()))
+        return Ok(SysCallResult::Return(Primitive::U64(supply).into()))
     }
 
     let supply = provider.load_asset_supply(&asset.hash, topoheight)?
@@ -106,35 +108,35 @@ pub fn asset_get_supply<P: ContractProvider>(zelf: FnInstance, _: FnParams, cont
         .unwrap_or((VersionedState::New, 0));
 
     changes.supply = Some(supply);
-    Ok(Some(Primitive::U64(supply.1).into()))
+    Ok(SysCallResult::Return(Primitive::U64(supply.1).into()))
 }
 
 // Get the self claimed asset name
-pub fn asset_get_name(zelf: FnInstance, _: FnParams, context: &mut Context) -> FnReturnType {
+pub fn asset_get_name(zelf: FnInstance, _: FnParams, context: &mut Context) -> FnReturnType<ModuleMetadata> {
     let asset: &Asset = zelf?.as_opaque_type()?;
     let state: &ChainState = context.get()
         .context("Chain state not found")?;
     let changes = get_asset_changes_for_hash(state, &asset.hash)?;
-    Ok(Some(Primitive::String(changes.data.1.get_name().to_owned()).into()))
+    Ok(SysCallResult::Return(Primitive::String(changes.data.1.get_name().to_owned()).into()))
 }
 
 // Get the hash representation of the asset
-pub fn asset_get_hash(zelf: FnInstance, _: FnParams, _: &mut Context) -> FnReturnType {
+pub fn asset_get_hash(zelf: FnInstance, _: FnParams, _: &mut Context) -> FnReturnType<ModuleMetadata> {
     let asset: &Asset = zelf?.as_opaque_type()?;
-    Ok(Some(Primitive::Opaque(asset.hash.clone().into()).into()))
+    Ok(SysCallResult::Return(Primitive::Opaque(asset.hash.clone().into()).into()))
 }
 
 // Get the hash representation of the asset
-pub fn asset_get_ticker(zelf: FnInstance, _: FnParams, context: &mut Context) -> FnReturnType {
+pub fn asset_get_ticker(zelf: FnInstance, _: FnParams, context: &mut Context) -> FnReturnType<ModuleMetadata> {
     let asset: &Asset = zelf?.as_opaque_type()?;
     let state: &ChainState = context.get()
         .context("Chain state not found")?;
     let changes = get_asset_changes_for_hash(state, &asset.hash)?;
-    Ok(Some(Primitive::String(changes.data.1.get_ticker().to_owned()).into()))
+    Ok(SysCallResult::Return(Primitive::String(changes.data.1.get_ticker().to_owned()).into()))
 }
 
 // are we the owner of this or not
-pub fn asset_is_read_only(zelf: FnInstance, _: FnParams, context: &mut Context) -> FnReturnType {
+pub fn asset_is_read_only(zelf: FnInstance, _: FnParams, context: &mut Context) -> FnReturnType<ModuleMetadata> {
     let asset: &Asset = zelf?.as_opaque_type()?;
     let state: &ChainState = context.get()
         .context("Chain state not found")?;
@@ -145,10 +147,10 @@ pub fn asset_is_read_only(zelf: FnInstance, _: FnParams, context: &mut Context) 
         .as_ref()
         .map(|v| v.get_contract()) != Some(state.contract);
 
-    Ok(Some(Primitive::Boolean(read_only).into()))
+    Ok(SysCallResult::Return(Primitive::Boolean(read_only).into()))
 }
 
-pub fn asset_transfer_ownership<P: ContractProvider>(zelf: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType {
+pub fn asset_transfer_ownership<P: ContractProvider>(zelf: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType<ModuleMetadata> {
     let param: Hash = params.remove(0)
         .into_owned()?
         .into_opaque_type()?;
@@ -158,12 +160,12 @@ pub fn asset_transfer_ownership<P: ContractProvider>(zelf: FnInstance, mut param
 
     // Ensure that the contract hash is a valid one
     if !provider.has_contract(&asset.hash, state.topoheight)? {
-        return Ok(Some(Primitive::Boolean(false).into()))
+        return Ok(SysCallResult::Return(Primitive::Boolean(false).into()))
     }
 
     let contract = state.contract.clone();
     let changes = get_asset_changes_for_hash_mut(state, &asset.hash)?;
-    Ok(Some(match changes.data.1.get_owner_mut() {
+    Ok(SysCallResult::Return(match changes.data.1.get_owner_mut() {
         Some(data) if *data.get_contract() == contract => {
             data.set_contract(param);
             changes.data.0.mark_updated();
@@ -173,7 +175,7 @@ pub fn asset_transfer_ownership<P: ContractProvider>(zelf: FnInstance, mut param
     }.into()))
 }
 
-pub fn asset_mint<P: ContractProvider>(zelf: FnInstance, params: FnParams, context: &mut Context) -> FnReturnType {
+pub fn asset_mint<P: ContractProvider>(zelf: FnInstance, params: FnParams, context: &mut Context) -> FnReturnType<ModuleMetadata> {
     let asset: &mut Asset = zelf?.as_opaque_type_mut()?;
     let (provider, chain_state) = from_context::<P>(context)?;
 
@@ -187,7 +189,7 @@ pub fn asset_mint<P: ContractProvider>(zelf: FnInstance, params: FnParams, conte
         .map(|v| v.get_contract()) != Some(&contract);
 
     if read_only {
-        return Ok(Some(Primitive::Boolean(false).into()))
+        return Ok(SysCallResult::Return(Primitive::Boolean(false).into()))
     }
 
     let amount = params[0].as_u64()?;
@@ -195,7 +197,7 @@ pub fn asset_mint<P: ContractProvider>(zelf: FnInstance, params: FnParams, conte
     // Check that we don't have any max supply set
     {
         if asset_data.get_max_supply().is_some() {
-            return Ok(Some(Primitive::Boolean(false).into()))
+            return Ok(SysCallResult::Return(Primitive::Boolean(false).into()))
         }
 
         // Track supply changes
@@ -235,5 +237,5 @@ pub fn asset_mint<P: ContractProvider>(zelf: FnInstance, params: FnParams, conte
         amount,
     });
 
-    Ok(Some(Primitive::Boolean(true).into()))
+    Ok(SysCallResult::Return(Primitive::Boolean(true).into()))
 }

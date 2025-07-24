@@ -7,9 +7,10 @@ use xelis_vm::{
     FnReturnType,
     OpaqueWrapper,
     Primitive,
+    SysCallResult,
     ValueCell
 };
-use crate::crypto::Address;
+use crate::{contract::ModuleMetadata, crypto::Address};
 
 use super::{Serializer, Writer, ADDRESS_OPAQUE_ID};
 
@@ -30,25 +31,25 @@ impl Serializable for Address {
     }
 }
 
-pub fn address_is_mainnet(zelf: FnInstance, _: FnParams, _: &mut Context) -> FnReturnType {
+pub fn address_is_mainnet(zelf: FnInstance, _: FnParams, _: &mut Context) -> FnReturnType<ModuleMetadata> {
     let address: &Address = zelf?.as_opaque_type()?;
-    Ok(Some(Primitive::Boolean(address.is_mainnet()).into()))
+    Ok(SysCallResult::Return(Primitive::Boolean(address.is_mainnet()).into()))
 }
 
-pub fn address_is_normal(zelf: FnInstance, _: FnParams, _: &mut Context) -> FnReturnType {
+pub fn address_is_normal(zelf: FnInstance, _: FnParams, _: &mut Context) -> FnReturnType<ModuleMetadata> {
     let address: &Address = zelf?.as_opaque_type()?;
-    Ok(Some(Primitive::Boolean(address.is_normal()).into()))
+    Ok(SysCallResult::Return(Primitive::Boolean(address.is_normal()).into()))
 }
 
-pub fn address_public_key_bytes(zelf: FnInstance, _: FnParams, _: &mut Context) -> FnReturnType {
+pub fn address_public_key_bytes(zelf: FnInstance, _: FnParams, _: &mut Context) -> FnReturnType<ModuleMetadata> {
     let address: &Address = zelf?.as_opaque_type()?;
     let bytes = address.get_public_key()
         .as_bytes();
 
-    Ok(Some(ValueCell::Bytes(bytes.into())))
+    Ok(SysCallResult::Return(ValueCell::Bytes(bytes.into())))
 }
 
-pub fn address_from_string(_: FnInstance, mut params: FnParams, _: &mut Context) -> FnReturnType {
+pub fn address_from_string(_: FnInstance, mut params: FnParams, _: &mut Context) -> FnReturnType<ModuleMetadata> {
     let param = params.remove(0)
         .into_owned()?;
     let string = param.as_string()?;
@@ -56,5 +57,5 @@ pub fn address_from_string(_: FnInstance, mut params: FnParams, _: &mut Context)
     let address = Address::from_string(string)
         .map_err(|_| EnvironmentError::InvalidParameter)?;
 
-    Ok(Some(Primitive::Opaque(OpaqueWrapper::new(address)).into()))
+    Ok(SysCallResult::Return(Primitive::Opaque(OpaqueWrapper::new(address)).into()))
 }

@@ -7,10 +7,11 @@ use xelis_vm::{
     FnParams,
     FnReturnType,
     OpaqueWrapper,
-    Primitive
+    Primitive,
+    SysCallResult
 };
 use crate::{
-    contract::ChainState,
+    contract::{ChainState, ModuleMetadata},
     crypto::Hash,
     transaction::Transaction
 };
@@ -39,44 +40,44 @@ impl JSONHelper for OpaqueTransaction {}
 
 impl Serializable for OpaqueTransaction {}
 
-pub fn transaction(_: FnInstance, _: FnParams, context: &mut Context) -> FnReturnType {
+pub fn transaction(_: FnInstance, _: FnParams, context: &mut Context) -> FnReturnType<ModuleMetadata> {
     let tx: &Arc<Transaction> = context.get()
         .context("current transaction not found")?;
     let state: &ChainState = context.get()
         .context("chain state not found")?;
 
-    Ok(Some(Primitive::Opaque(OpaqueWrapper::new(OpaqueTransaction {
+    Ok(SysCallResult::Return(Primitive::Opaque(OpaqueWrapper::new(OpaqueTransaction {
         inner: tx.clone(),
         hash: state.tx_hash.clone()
     })).into()))
 }
 
-pub fn transaction_nonce(zelf: FnInstance, _: FnParams, _: &mut Context) -> FnReturnType {
+pub fn transaction_nonce(zelf: FnInstance, _: FnParams, _: &mut Context) -> FnReturnType<ModuleMetadata> {
     let tx: &OpaqueTransaction = zelf?.as_opaque_type()?;
-    Ok(Some(Primitive::U64(tx.inner.get_nonce()).into()))
+    Ok(SysCallResult::Return(Primitive::U64(tx.inner.get_nonce()).into()))
 }
 
-pub fn transaction_hash(zelf: FnInstance, _: FnParams, _: &mut Context) -> FnReturnType {
+pub fn transaction_hash(zelf: FnInstance, _: FnParams, _: &mut Context) -> FnReturnType<ModuleMetadata> {
     let tx: &OpaqueTransaction = zelf?.as_opaque_type()?;
-    Ok(Some(Primitive::Opaque(OpaqueWrapper::new(tx.hash.clone())).into()))
+    Ok(SysCallResult::Return(Primitive::Opaque(OpaqueWrapper::new(tx.hash.clone())).into()))
 }
 
-pub fn transaction_source(zelf: FnInstance, _: FnParams, context: &mut Context) -> FnReturnType {
+pub fn transaction_source(zelf: FnInstance, _: FnParams, context: &mut Context) -> FnReturnType<ModuleMetadata> {
     let tx: &OpaqueTransaction = zelf?.as_opaque_type()?;
     let state: &ChainState = context.get().context("chain state not found")?;
 
     let address = tx.inner.get_source()
         .as_address(state.mainnet);
 
-    Ok(Some(Primitive::Opaque(OpaqueWrapper::new(address)).into()))
+    Ok(SysCallResult::Return(Primitive::Opaque(OpaqueWrapper::new(address)).into()))
 }
 
-pub fn transaction_fee(zelf: FnInstance, _: FnParams, _: &mut Context) -> FnReturnType {
+pub fn transaction_fee(zelf: FnInstance, _: FnParams, _: &mut Context) -> FnReturnType<ModuleMetadata> {
     let tx: &OpaqueTransaction = zelf?.as_opaque_type()?;
-    Ok(Some(Primitive::U64(tx.inner.get_fee()).into()))
+    Ok(SysCallResult::Return(Primitive::U64(tx.inner.get_fee()).into()))
 }
 
-pub fn transaction_signature(zelf: FnInstance, _: FnParams, _: &mut Context) -> FnReturnType {
+pub fn transaction_signature(zelf: FnInstance, _: FnParams, _: &mut Context) -> FnReturnType<ModuleMetadata> {
     let tx: &OpaqueTransaction = zelf?.as_opaque_type()?;
-    Ok(Some(Primitive::Opaque(OpaqueWrapper::new(tx.inner.get_signature().clone())).into()))
+    Ok(SysCallResult::Return(Primitive::Opaque(OpaqueWrapper::new(tx.inner.get_signature().clone())).into()))
 }

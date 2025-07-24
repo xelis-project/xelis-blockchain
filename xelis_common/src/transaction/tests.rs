@@ -8,9 +8,10 @@ use crate::{
     api::{DataElement, DataValue},
     block::BlockVersion,
     config::{BURN_PER_CONTRACT, COIN_VALUE, XELIS_ASSET},
+    contract::ModuleMetadata,
     crypto::{
         elgamal::{Ciphertext, PedersenOpening},
-        proofs::{G, ProofVerificationError},
+        proofs::{ProofVerificationError, G},
         Address,
         Hash,
         Hashable,
@@ -20,10 +21,10 @@ use crate::{
     serializer::Serializer,
     transaction::{
         builder::{ContractDepositBuilder, DeployContractBuilder, InvokeContractBuilder},
+        verify::{NoZKPCache, VerificationError, ZKPCache},
         MultiSigPayload,
         TransactionType,
         TxVersion,
-        verify::{ZKPCache, NoZKPCache, VerificationError},
         MAX_TRANSFER_COUNT
     }
 };
@@ -59,7 +60,7 @@ struct ChainState {
     accounts: HashMap<PublicKey, AccountChainState>,
     multisig: HashMap<PublicKey, MultiSigPayload>,
     contracts: HashMap<Hash, Module>,
-    env: Environment,
+    env: Environment<ModuleMetadata>,
 }
 
 impl ChainState {
@@ -438,7 +439,7 @@ async fn test_tx_deploy_contract() {
         };
 
         let mut module = Module::new();
-        module.add_chunk(Chunk::new());
+        module.add_internal_chunk(Chunk::new());
         let data = TransactionTypeBuilder::DeployContract(DeployContractBuilder {
             module: module.to_hex(),
             invoke: None
@@ -761,7 +762,7 @@ impl<'a> BlockchainVerificationState<'a, ()> for ChainState {
         Ok(self.multisig.get(account))
     }
 
-    async fn get_environment(&mut self) -> Result<&Environment, ()> {
+    async fn get_environment(&mut self) -> Result<&Environment<ModuleMetadata>, ()> {
         Ok(&self.env)
     }
 
@@ -784,7 +785,7 @@ impl<'a> BlockchainVerificationState<'a, ()> for ChainState {
     async fn get_contract_module_with_environment(
         &self,
         contract: &'a Hash
-    ) -> Result<(&Module, &Environment), ()> {
+    ) -> Result<(&Module, &Environment<ModuleMetadata>), ()> {
         let module = self.contracts.get(contract).ok_or(())?;
         Ok((module, &self.env))
     }

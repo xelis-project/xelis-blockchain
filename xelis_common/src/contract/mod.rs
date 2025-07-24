@@ -3,6 +3,7 @@ mod random;
 mod output;
 mod provider;
 mod cache;
+mod metadata;
 
 use std::{
     any::TypeId,
@@ -20,6 +21,7 @@ use xelis_vm::{
     FnReturnType,
     OpaqueWrapper,
     Primitive,
+    SysCallResult,
     Type,
     ValueCell
 };
@@ -48,6 +50,7 @@ pub use output::*;
 pub use opaque::*;
 pub use provider::*;
 pub use cache::*;
+pub use metadata::*;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TransferOutput {
@@ -111,7 +114,7 @@ pub struct ContractEventTracker {
 }
 
 // Build the environment for the contract
-pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static> {
+pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, ModuleMetadata> {
     debug!("Building environment for contract");
 
     let mut env = EnvironmentBuilder::default();
@@ -1002,7 +1005,7 @@ pub fn get_asset_from_provider<P: ContractProvider>(provider: &P, topoheight: To
     }
 }
 
-fn fire_event_fn(_: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType {
+fn fire_event_fn(_: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType<ModuleMetadata> {
     let data = params.remove(1);
     let id = params.remove(0)
         .as_u64()?;
@@ -1019,33 +1022,33 @@ fn fire_event_fn(_: FnInstance, mut params: FnParams, context: &mut Context) -> 
 
     entry.push(constant);
 
-    Ok(None)
+    Ok(SysCallResult::None)
 }
 
-fn println_fn(_: FnInstance, params: FnParams, context: &mut Context) -> FnReturnType {
+fn println_fn(_: FnInstance, params: FnParams, context: &mut Context) -> FnReturnType<ModuleMetadata> {
     let state: &ChainState = context.get().context("chain state not found")?;
     if state.debug_mode {
         info!("[{}]: {}", state.contract, params[0].as_ref()?);
     }
 
-    Ok(None)
+    Ok(SysCallResult::None)
 }
 
-fn debug_fn(_: FnInstance, params: FnParams, context: &mut Context) -> FnReturnType {
+fn debug_fn(_: FnInstance, params: FnParams, context: &mut Context) -> FnReturnType<ModuleMetadata> {
     let state: &ChainState = context.get().context("chain state not found")?;
     if state.debug_mode {
         debug!("{:?}", params[0].as_ref()?);
     }
 
-    Ok(None)
+    Ok(SysCallResult::None)
 }
 
-fn get_contract_hash(_: FnInstance, _: FnParams, context: &mut Context) -> FnReturnType {
+fn get_contract_hash(_: FnInstance, _: FnParams, context: &mut Context) -> FnReturnType<ModuleMetadata> {
     let state: &ChainState = context.get().context("chain state not found")?;
-    Ok(Some(Primitive::Opaque(OpaqueWrapper::new(state.contract.clone())).into()))
+    Ok(SysCallResult::Return(Primitive::Opaque(OpaqueWrapper::new(state.contract.clone())).into()))
 }
 
-fn get_deposit_for_asset(_: FnInstance, params: FnParams, context: &mut Context) -> FnReturnType {
+fn get_deposit_for_asset(_: FnInstance, params: FnParams, context: &mut Context) -> FnReturnType<ModuleMetadata> {
     let param = params[0].as_ref()?;
     let asset: &Hash = param
         .as_opaque_type()
@@ -1058,10 +1061,10 @@ fn get_deposit_for_asset(_: FnInstance, params: FnParams, context: &mut Context)
         _ => Default::default()
     };
 
-    Ok(Some(value))
+    Ok(SysCallResult::Return(value))
 }
 
-fn get_balance_for_asset<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType {
+fn get_balance_for_asset<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType<ModuleMetadata> {
     let (provider, state) = from_context::<P>(context)?;
 
     let asset: Hash = params.remove(0)
@@ -1072,10 +1075,10 @@ fn get_balance_for_asset<P: ContractProvider>(_: FnInstance, mut params: FnParam
         .map(|(_, v)| Primitive::U64(v).into())
         .unwrap_or_default();
 
-    Ok(Some(balance))
+    Ok(SysCallResult::Return(balance))
 }
 
-fn transfer<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType {
+fn transfer<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType<ModuleMetadata> {
     debug!("Transfer called {:?}", params);
 
     let asset: Hash = params.remove(2)
@@ -1091,7 +1094,7 @@ fn transfer<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &
         .into_opaque_type()?;
 
     if !destination.is_normal() {
-        return Ok(Some(Primitive::Boolean(false).into()));
+        return Ok(Primitive::Boolean(false).into());
     }
 
     {
@@ -1104,16 +1107,16 @@ fn transfer<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &
 
     let (provider, state) = from_context::<P>(context)?;
     if destination.is_mainnet() != state.mainnet {
-        return Ok(Some(Primitive::Boolean(false).into()));
+        return Ok(SysCallResult::Return(Primitive::Boolean(false).into()));
     }
 
     let Some((mut balance_state, mut balance)) = get_balance_from_cache(provider, state, asset.clone())? else {
-        return Ok(Some(Primitive::Boolean(false).into()));
+        return Ok(SysCallResult::Return(Primitive::Boolean(false).into()));
     };
 
     // We have to check if the contract has enough balance to transfer
     if balance < amount || amount == 0 {
-        return Ok(Some(Primitive::Boolean(false).into()));
+        return Ok(SysCallResult::Return(Primitive::Boolean(false).into()));
     }
 
     // Update the balance
@@ -1140,10 +1143,10 @@ fn transfer<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &
     // Add the output
     state.outputs.push(ContractOutput::Transfer { destination: key, amount, asset });
 
-    Ok(Some(Primitive::Boolean(true).into()))
+    Ok(SysCallResult::Return(Primitive::Boolean(true).into()))
 }
 
-fn burn<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType {
+fn burn<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType<ModuleMetadata> {
     let (provider, state) = from_context::<P>(context)?;
 
     let asset: Hash = params.remove(1)
@@ -1154,12 +1157,12 @@ fn burn<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &mut 
         .to_u64()?;
 
     let Some((mut balance_state, mut balance)) = get_balance_from_cache(provider, state, asset.clone())? else {
-        return Ok(Some(Primitive::Boolean(false).into()));
+        return Ok(SysCallResult::Return(Primitive::Boolean(false).into()));
     };
 
     // We have to check if the contract has enough balance to transfer
     if balance < amount || amount == 0 {
-        return Ok(Some(Primitive::Boolean(false).into()));
+        return Ok(SysCallResult::Return(Primitive::Boolean(false).into()));
     }
 
     // Update the balance
@@ -1172,10 +1175,10 @@ fn burn<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &mut 
     // Add the output
     state.outputs.push(ContractOutput::Burn { asset, amount });
 
-    Ok(Some(Primitive::Boolean(true).into()))
+    Ok(SysCallResult::Return(Primitive::Boolean(true).into()))
 }
 
-fn get_account_balance_of<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType {
+fn get_account_balance_of<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType<ModuleMetadata> {
     let (provider, state) = from_context::<P>(context)?;
 
     let asset: Hash = params.remove(1)
@@ -1193,10 +1196,10 @@ fn get_account_balance_of<P: ContractProvider>(_: FnInstance, mut params: FnPara
         ]))
         .unwrap_or_default();
 
-    Ok(Some(balance))
+    Ok(SysCallResult::Return(balance))
 }
 
-fn get_gas_usage(_: FnInstance, _: FnParams, context: &mut Context) -> FnReturnType {
+fn get_gas_usage(_: FnInstance, _: FnParams, context: &mut Context) -> FnReturnType<ModuleMetadata> {
     let gas = context.current_gas_usage();
-    Ok(Some(Primitive::U64(gas).into()))
+    Ok(SysCallResult::Return(Primitive::U64(gas).into()))
 }
