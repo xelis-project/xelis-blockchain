@@ -74,7 +74,7 @@ use xelis_common::{
         sync::{Mutex, RwLock, Semaphore}
     },
     varuint::VarUint,
-    contract::build_environment,
+    contract::{ModuleMetadata, build_environment},
 };
 use xelis_vm::Environment;
 use crate::{
@@ -173,7 +173,7 @@ pub struct Blockchain<S: Storage> {
     // verifying more than one block at a time
     add_block_semaphore: Semaphore,
     // Contract environment stdlib
-    environment: Environment,
+    environment: Environment<ModuleMetadata>,
     // P2p module
     p2p: RwLock<Option<Arc<P2pServer<S>>>>,
     // RPC module
@@ -482,7 +482,7 @@ impl<S: Storage> Blockchain<S> {
     }
 
     // get the environment stdlib for contract execution
-    pub fn get_contract_environment(&self) -> &Environment {
+    pub fn get_contract_environment(&self) -> &Environment<ModuleMetadata> {
         &self.environment
     }
 

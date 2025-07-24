@@ -2,6 +2,7 @@ use std::{borrow::Cow, collections::{hash_map::Entry, HashMap}};
 use async_trait::async_trait;
 use xelis_common::{
     account::Nonce,
+    contract::ModuleMetadata,
     block::{BlockVersion, TopoHeight},
     crypto::{
         elgamal::Ciphertext,
@@ -44,7 +45,7 @@ pub struct MempoolState<'a, S: Storage> {
     // Storage in case sender balances aren't in mempool cache
     storage: &'a S,
     // Contract environment
-    environment: &'a Environment,
+    environment: &'a Environment<ModuleMetadata>,
     // Receiver balances
     receiver_balances: HashMap<Cow<'a, PublicKey>, HashMap<Cow<'a, Hash>, Ciphertext>>,
     // Sender accounts
@@ -61,7 +62,7 @@ pub struct MempoolState<'a, S: Storage> {
 }
 
 impl<'a, S: Storage> MempoolState<'a, S> {
-    pub fn new(mempool: &'a Mempool, storage: &'a S, environment: &'a Environment, stable_topoheight: TopoHeight, topoheight: TopoHeight, block_version: BlockVersion, mainnet: bool) -> Self {
+    pub fn new(mempool: &'a Mempool, storage: &'a S, environment: &'a Environment<ModuleMetadata>, stable_topoheight: TopoHeight, topoheight: TopoHeight, block_version: BlockVersion, mainnet: bool) -> Self {
         Self {
             mainnet,
             mempool,
@@ -290,7 +291,7 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for Mempoo
     }
 
     /// Get the contract environment
-    async fn get_environment(&mut self) -> Result<&Environment, BlockchainError> {
+    async fn get_environment(&mut self) -> Result<&Environment<ModuleMetadata>, BlockchainError> {
         Ok(self.environment)
     }
 
@@ -329,7 +330,7 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for Mempoo
     async fn get_contract_module_with_environment(
         &self,
         hash: &'a Hash
-    ) -> Result<(&Module, &Environment), BlockchainError> {
+    ) -> Result<(&Module, &Environment<ModuleMetadata>), BlockchainError> {
         let module = self.contracts.get(hash)
             .ok_or_else(|| BlockchainError::ContractNotFound(hash.clone()))?;
 
