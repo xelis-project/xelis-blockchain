@@ -439,7 +439,7 @@ async fn test_tx_deploy_contract() {
         };
 
         let mut module = Module::new();
-        module.add_internal_chunk(Chunk::new());
+        module.add_entry_chunk(Chunk::new());
         let data = TransactionTypeBuilder::DeployContract(DeployContractBuilder {
             module: module.to_hex(),
             invoke: None

@@ -342,15 +342,6 @@ impl Serializer for Module {
                 }
             }
         }
-
-        let hooks = self.hook_chunk_ids();
-        // We have only up to 255 hooks
-        writer.write_u8(hooks.len() as u8);
-
-        for (hook, chunk) in hooks {
-            writer.write_u8(*hook);
-            writer.write_u16(*chunk as u16);
-        }
     }
 
     fn read(reader: &mut Reader) -> Result<Module, ReaderError> {
@@ -366,8 +357,9 @@ impl Serializer for Module {
 
         let chunks_len = reader.read_u16()?;
         let mut chunks = Vec::with_capacity(chunks_len as usize);
+        let mut hooks = IndexMap::new();
 
-        for _ in 0..chunks_len {
+        for i in 0..chunks_len {
             let instructions_len = reader.read_u32()? as usize;
             let instructions = reader.read_bytes(instructions_len)?;
             let chunk = Chunk::from_instructions(instructions);
@@ -378,41 +370,14 @@ impl Serializer for Module {
                 2 => Access::Entry,
                 3 => {
                     let id = reader.read_u8()?;
+
+                    hooks.insert(id, i as _);
                     Access::Hook { id }
                 }
                 _ => return Err(ReaderError::InvalidValue)
             };
 
             chunks.push((chunk, access));
-        }
-
-        let entry_ids_len = reader.read_u16()?;
-        if entry_ids_len > chunks_len {
-            return Err(ReaderError::InvalidValue);
-        }
-
-        let mut entry_ids = IndexSet::with_capacity(entry_ids_len as usize);
-        for _ in 0..entry_ids_len {
-            let id = reader.read_u16()?;
-            if id > chunks_len {
-                return Err(ReaderError::InvalidValue);
-            }
-
-            if !entry_ids.insert(id as usize) {
-                return Err(ReaderError::InvalidValue);
-            }
-        }
-
-        let hooks_len = reader.read_u8()?;
-        let mut hooks = IndexMap::with_capacity(hooks_len as usize);
-        for _ in 0..hooks_len {
-            let hook_id = reader.read_u8()?;
-            let chunk_id = reader.read_u16()?;
-
-            // Hook can be registered one time only
-            if hooks.insert(hook_id, chunk_id as usize).is_some() {
-                return Err(ReaderError::InvalidValue);
-            }
         }
 
         Ok(Module::with(constants, chunks, hooks))
