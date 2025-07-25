@@ -464,7 +464,7 @@ impl Storage for RocksStorage {
         for tx_hash in block.get_transactions() {
             // Should we delete the tx too or only unlink it
             let mut should_delete = true;
-            if self.has_tx_blocks(tx_hash)? {
+            if self.has_tx_blocks(tx_hash).await? {
                 let mut blocks: Tips = self.load_from_disk(Column::TransactionInBlocks, tx_hash)?;
                 self.remove_from_disk(Column::TransactionInBlocks, tx_hash)?;
 
@@ -473,15 +473,15 @@ impl Storage for RocksStorage {
                 should_delete = blocks.is_empty();
 
                 if !should_delete {
-                    self.set_blocks_for_tx(tx_hash, &blocks)?;
+                    self.set_blocks_for_tx(tx_hash, &blocks).await?;
                 }
 
                 trace!("Tx was included in {} blocks, now: {}", blocks_len, blocks.len());
             }
 
-            if self.is_tx_executed_in_block(tx_hash, &hash)? {
+            if self.is_tx_executed_in_block(tx_hash, &hash).await? {
                 trace!("Tx {} was executed in block {}, deleting", topoheight, tx_hash);
-                self.unmark_tx_from_executed(&tx_hash)?;
+                self.unmark_tx_from_executed(&tx_hash).await?;
                 self.delete_contract_outputs_for_tx(&tx_hash).await?;
             }
 

@@ -98,7 +98,7 @@ where
         (
             Some(topoheight),
             Some(provider.get_supply_at_topo_height(topoheight).await.context("Error while retrieving supply")?),
-            Some(provider.get_block_reward_at_topo_height(topoheight).context("Error while retrieving block reward")?),
+            Some(provider.get_block_reward_at_topo_height(topoheight).await.context("Error while retrieving block reward")?),
         )
     } else {
         (
@@ -130,7 +130,7 @@ where
         for (tx, tx_hash) in block.get_transactions().iter().zip(block.get_txs_hashes()) {
             // check that the TX was correctly executed in this block
             // retrieve all fees for valid txs
-            if provider.is_tx_executed_in_block(tx_hash, &hash).context("Error while checking if tx was executed")? {
+            if provider.is_tx_executed_in_block(tx_hash, &hash).await.context("Error while checking if tx was executed")? {
                 total_fees += tx.get_fee();
             }
         }
@@ -244,14 +244,14 @@ pub async fn get_block_response_for_hash<S: Storage>(blockchain: &Blockchain<S>,
 
 // Transaction response based on data in chain/mempool and from parameters
 pub async fn get_transaction_response<'a, S: Storage>(storage: &S, tx: &'a Transaction, hash: &'a Hash, in_mempool: bool, first_seen: Option<TimestampSeconds>) -> Result<TransactionResponse<'a>, InternalRpcError> {
-    let blocks = if storage.has_tx_blocks(hash).context("Error while checking if tx in included in blocks")? {
-        Some(storage.get_blocks_for_tx(hash).context("Error while retrieving in which blocks its included")?)
+    let blocks = if storage.has_tx_blocks(hash).await.context("Error while checking if tx in included in blocks")? {
+        Some(storage.get_blocks_for_tx(hash).await.context("Error while retrieving in which blocks its included")?)
     } else {
         None
     };
 
     let data = RPCTransaction::from_tx(tx, hash, storage.is_mainnet());
-    let executed_in_block = storage.get_block_executor_for_tx(hash).ok();
+    let executed_in_block = storage.get_block_executor_for_tx(hash).await.ok();
     Ok(TransactionResponse { blocks, executed_in_block, data, in_mempool, first_seen })
 }
 
@@ -836,7 +836,7 @@ async fn get_transaction_executor<S: Storage>(context: &Context, body: Value) ->
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let storage = blockchain.get_storage().read().await;
 
-    let block_executor = storage.get_block_executor_for_tx(&params.hash)?;
+    let block_executor = storage.get_block_executor_for_tx(&params.hash).await?;
     let block_topoheight = storage.get_topo_height_for_hash(&block_executor).await?;
     let block_timestamp = storage.get_timestamp_for_block_hash(&block_executor).await?;
 
@@ -1214,7 +1214,7 @@ async fn get_account_history<S: Storage>(context: &Context, body: Value) -> Resu
         if params.asset == XELIS_ASSET {
             let is_miner = *block_header.get_miner() == *key;
             if (is_miner || is_dev_address) && params.incoming_flow {
-                let mut reward = storage.get_block_reward_at_topo_height(topo).context(format!("Error while retrieving reward at topo height {topo}"))?;
+                let mut reward = storage.get_block_reward_at_topo_height(topo).await.context(format!("Error while retrieving reward at topo height {topo}"))?;
                 // subtract dev fee if any
                 let dev_fee_percentage = get_block_dev_fee(block_header.get_height());
                 if dev_fee_percentage != 0 {
@@ -1245,7 +1245,7 @@ async fn get_account_history<S: Storage>(context: &Context, body: Value) -> Resu
         // Reverse the order of transactions to get the latest first
         for tx_hash in block_header.get_transactions().iter().rev() {
             // Don't show unexecuted TXs in the history
-            if !storage.is_tx_executed_in_block(tx_hash, &hash)? {
+            if !storage.is_tx_executed_in_block(tx_hash, &hash).await? {
                 continue;
             }
 
@@ -1461,7 +1461,7 @@ async fn is_tx_executed_in_block<S: Storage>(context: &Context, body: Value) -> 
     let params: IsTxExecutedInBlockParams = parse_params(body)?;
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let storage = blockchain.get_storage().read().await;
-    Ok(json!(storage.is_tx_executed_in_block(&params.tx_hash, &params.block_hash).context("Error while checking if tx was executed in block")?))
+    Ok(json!(storage.is_tx_executed_in_block(&params.tx_hash, &params.block_hash).await.context("Error while checking if tx was executed in block")?))
 }
 
 // Get the configured dev fees

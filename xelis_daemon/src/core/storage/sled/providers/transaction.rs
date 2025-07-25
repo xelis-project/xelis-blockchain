@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 use async_trait::async_trait;
+use futures::{stream, Stream, StreamExt};
 use log::trace;
 use xelis_common::{
     crypto::Hash,
@@ -68,19 +69,19 @@ impl TransactionProvider for SledStorage {
         Ok(count)
     }
 
-    async fn get_unexecuted_transactions<'a>(&'a self) -> Result<impl Iterator<Item = Result<Hash, BlockchainError>> + 'a, BlockchainError> {
+    async fn get_unexecuted_transactions<'a>(&'a self) -> Result<impl Stream<Item = Result<Hash, BlockchainError>> + 'a, BlockchainError> {
         trace!("get unexecuted transactions");
-        Ok(Self::iter_keys(self.snapshot.as_ref(), &self.transactions)
-            .map(|res| {
+        Ok(stream::iter(Self::iter_keys(self.snapshot.as_ref(), &self.transactions))
+            .map(move |res| async move {
                 let key = res?;
                 let tx_hash = Hash::from_bytes(&key)?;
-                if !self.is_tx_executed_in_a_block(&tx_hash)? {
+                if !self.is_tx_executed_in_a_block(&tx_hash).await? {
                     return Ok(None);
                 }
 
                 Ok(Some(tx_hash))
             })
-            .filter_map(Result::transpose)
+            .filter_map(|v| async move { v.await.transpose() })
         )
     }
 

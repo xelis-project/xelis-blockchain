@@ -329,7 +329,7 @@ impl<S: Storage> P2pServer<S> {
                         let hash = storage.get_hash_at_topo_height(topoheight).await?;
                         let supply = storage.get_supply_at_topo_height(topoheight).await?;
                         let burned_supply = storage.get_burned_supply_at_topo_height(topoheight).await?;
-                        let reward = storage.get_block_reward_at_topo_height(topoheight)?;
+                        let reward = storage.get_block_reward_at_topo_height(topoheight).await?;
                         let difficulty = storage.get_difficulty_for_block_hash(&hash).await?;
                         let cumulative_difficulty = storage.get_cumulative_difficulty_for_block_hash(&hash).await?;
                         let p = storage.get_estimated_covariance_for_block_hash(&hash).await?;
@@ -339,7 +339,7 @@ impl<S: Storage> P2pServer<S> {
                         {
                             let header = storage.get_block_header_by_hash(&hash).await?;
                             for tx_hash in header.get_txs_hashes() {
-                                if storage.is_tx_executed_in_block(tx_hash, &hash)? {
+                                if storage.is_tx_executed_in_block(tx_hash, &hash).await? {
                                     executed_transactions.insert(tx_hash.clone());
                                 }
                             }
@@ -552,7 +552,7 @@ impl<S: Storage> P2pServer<S> {
                             // link its TX to the block
                             let mut storage = self.blockchain.get_storage().write().await;
                             for tx_hash in header.get_txs_hashes() {
-                                storage.add_block_linked_to_tx_if_not_present(tx_hash, &hash)?;
+                                storage.add_block_linked_to_tx_if_not_present(tx_hash, &hash).await?;
                             }
     
                             // save metadata of this block
@@ -561,17 +561,17 @@ impl<S: Storage> P2pServer<S> {
                                 metadata.reward,
                                 metadata.supply,
                                 metadata.burned_supply
-                            )?;
+                            ).await?;
 
                             storage.set_topo_height_for_block(&hash, topoheight).await?;
 
                             // Mark needed TXs as executed
                             for tx in metadata.executed_transactions {
-                                if !header.get_txs_hashes().contains(&tx) || storage.is_tx_executed_in_a_block(&tx)? {
+                                if !header.get_txs_hashes().contains(&tx) || storage.is_tx_executed_in_a_block(&tx).await? {
                                     return Err(P2pError::InvalidBlockMetadata.into())
                                 }
 
-                                storage.mark_tx_as_executed_in_block(&tx, &hash)?;
+                                storage.mark_tx_as_executed_in_block(&tx, &hash).await?;
                             }
 
                             // save the block with its transactions, difficulty

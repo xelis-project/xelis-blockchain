@@ -1535,7 +1535,7 @@ impl<S: Storage> Blockchain<S> {
         }
 
         // check that the TX is not already in blockchain
-        if storage.is_tx_executed_in_a_block(&hash)? {
+        if storage.is_tx_executed_in_a_block(&hash).await? {
             return Err(BlockchainError::TxAlreadyInBlockchain(hash.into_owned()))
         }
 
@@ -1691,7 +1691,7 @@ impl<S: Storage> Blockchain<S> {
         {
             let storage = self.storage.read().await;
             debug!("storage read acquired for is tx {} compatible", hash);
-            if storage.is_tx_executed_in_a_block(hash)? {
+            if storage.is_tx_executed_in_a_block(hash).await? {
                 debug!("TX {} found in storage", hash);
                 return Ok(true)
             }
@@ -1876,7 +1876,7 @@ impl<S: Storage> Blockchain<S> {
             // We will compute the exact expected balances/nonces after the orphaned TXs
             if !self.skip_block_template_txs_verification && is_v3_enabled {
                 for hash in processed_txs.iter() {
-                    if storage.is_tx_executed_in_a_block(&hash)? {
+                    if storage.is_tx_executed_in_a_block(&hash).await? {
                         // If the TX is executed in a block, we can skip it
                         debug!("Skipping TX {} because it is already executed in a block", hash);
                         continue;
@@ -2188,7 +2188,7 @@ impl<S: Storage> Blockchain<S> {
                 // to re inject them in case of orphaned blocks
                 debug!("Grouping all TXs from parents by source for block {}", block_hash);
                 for hash in parents_txs.iter() {
-                    if storage.is_tx_executed_in_a_block(hash)? {
+                    if storage.is_tx_executed_in_a_block(hash).await? {
                         debug!("TX {} from parent is executed, skipping it", hash);
                         continue;
                     }
@@ -2221,9 +2221,9 @@ impl<S: Storage> Blockchain<S> {
 
                 debug!("Verifying TX {}", tx_hash);
                 // check that the TX included is not executed in stable height
-                let is_executed = storage.is_tx_executed_in_a_block(hash)?;
+                let is_executed = storage.is_tx_executed_in_a_block(hash).await?;
                 if is_executed {
-                    let block_executor = storage.get_block_executor_for_tx(hash)?;
+                    let block_executor = storage.get_block_executor_for_tx(hash).await?;
                     debug!("Tx {} was executed in {}", hash, block_executor);
                     let block_executor_height = storage.get_height_for_block_hash(&block_executor).await?;
                     // if the tx was executed below stable height, reject whole block!
@@ -2472,9 +2472,9 @@ impl<S: Storage> Blockchain<S> {
 
                     // mark txs as unexecuted if it was executed in this block
                     for tx_hash in block.get_txs_hashes() {
-                        if storage.is_tx_executed_in_block(tx_hash, &hash_at_topo)? {
+                        if storage.is_tx_executed_in_block(tx_hash, &hash_at_topo).await? {
                             debug!("Removing execution of {}", tx_hash);
-                            storage.unmark_tx_from_executed(tx_hash)?;
+                            storage.unmark_tx_from_executed(tx_hash).await?;
                             storage.delete_contract_outputs_for_tx(tx_hash).await?;
 
                             if is_orphaned {
@@ -2577,12 +2577,12 @@ impl<S: Storage> Blockchain<S> {
                 // compute rewards & execute txs
                 for (tx, tx_hash) in block.get_transactions().iter().zip(block.get_txs_hashes()) { // execute all txs
                     // Link the transaction hash to this block
-                    if !chain_state.get_mut_storage().add_block_linked_to_tx_if_not_present(&tx_hash, &hash)? {
+                    if !chain_state.get_mut_storage().add_block_linked_to_tx_if_not_present(&tx_hash, &hash).await? {
                         trace!("Block {} is now linked to tx {}", hash, tx_hash);
                     }
 
                     // check that the tx was not yet executed in another tip branch
-                    if chain_state.get_storage().is_tx_executed_in_a_block(tx_hash)? {
+                    if chain_state.get_storage().is_tx_executed_in_a_block(tx_hash).await? {
                         trace!("Tx {} was already executed in a previous block, skipping...", tx_hash);
                     } else {
                         // tx was not executed, but lets check that it is not a potential double spending
@@ -2615,7 +2615,7 @@ impl<S: Storage> Blockchain<S> {
                         }
 
                         // mark tx as executed
-                        chain_state.get_mut_storage().mark_tx_as_executed_in_block(tx_hash, &hash)?;
+                        chain_state.get_mut_storage().mark_tx_as_executed_in_block(tx_hash, &hash).await?;
 
                         // Delete the transaction from  the list if it was marked as orphaned
                         if orphaned_transactions.shift_remove(tx_hash) {
@@ -2764,7 +2764,7 @@ impl<S: Storage> Blockchain<S> {
                 chain_state.apply_changes().await?;
 
                 let emitted_supply = past_emitted_supply + block_reward;
-                storage.set_topoheight_metadata(highest_topo, block_reward, emitted_supply, burned_supply)?;
+                storage.set_topoheight_metadata(highest_topo, block_reward, emitted_supply, burned_supply).await?;
 
                 if should_track_events.contains(&NotifyEvent::BlockOrdered) {
                     let value = json!(BlockOrderedEvent {
@@ -2826,7 +2826,7 @@ impl<S: Storage> Blockchain<S> {
         if !block_is_ordered {
             debug!("Block {} is orphaned, marking all TXs as linked to it", block_hash);
             for tx_hash in block.get_txs_hashes() {
-                storage.add_block_linked_to_tx_if_not_present(&tx_hash, &block_hash)?;
+                storage.add_block_linked_to_tx_if_not_present(&tx_hash, &block_hash).await?;
             }
         }
 
@@ -2919,7 +2919,7 @@ impl<S: Storage> Blockchain<S> {
                 }
 
                 // Verify that the TX was not executed in a block
-                if storage.is_tx_executed_in_a_block(&tx_hash)? {
+                if storage.is_tx_executed_in_a_block(&tx_hash).await? {
                     trace!("Transaction {} was executed in a block, skipping orphaned event", tx_hash);
                     continue;
                 }
@@ -2945,7 +2945,7 @@ impl<S: Storage> Blockchain<S> {
                 debug!("Trying to add orphaned tx {} back in mempool", tx_hash);
                 // It is verified in add_tx_to_mempool function too
                 // But to prevent loading the TX from storage and to fire wrong event
-                if !storage.is_tx_executed_in_a_block(&tx_hash)? {
+                if !storage.is_tx_executed_in_a_block(&tx_hash).await? {
                     let tx = match storage.get_transaction(&tx_hash).await {
                         Ok(tx) => tx.into_arc(),
                         Err(e) => {
@@ -3109,7 +3109,7 @@ impl<S: Storage> Blockchain<S> {
                     // Check that we don't have it yet
                     if !hashes.contains(tx) {
                         // Then check that it's executed in this block
-                        if !executed_only || (executed_only && provider.is_tx_executed_in_block(tx, &hash)?) {
+                        if !executed_only || (executed_only && provider.is_tx_executed_in_block(tx, &hash).await?) {
                             // add it to the list
                             hashes.insert(tx.clone());
                         }

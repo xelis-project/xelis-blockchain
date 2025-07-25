@@ -4,11 +4,13 @@ pub mod core;
 pub mod config;
 
 use config::{DEV_PUBLIC_KEY, STABLE_LIMIT};
+use futures::StreamExt;
 use human_bytes::human_bytes;
 use humantime::{format_duration, Duration as HumanDuration};
 use log::{debug, error, info, trace, warn};
 use rpc::rpc::get_block_response_for_hash;
 use serde::{Deserialize, Serialize};
+use tokio::pin;
 use xelis_common::{
     async_handler,
     config::{init, VERSION, XELIS_ASSET},
@@ -510,7 +512,7 @@ async fn verify_chain<S: Storage>(manager: &CommandManager, mut args: ArgumentMa
         let hash_at_topo = storage.get_hash_at_topo_height(topo).await.context("Error while retrieving hash at topo")?;
         let block_reward = if pruned_topoheight == 0 || topo - pruned_topoheight > STABLE_LIMIT {
             let block_reward = blockchain.get_block_reward(&*storage, &hash_at_topo, expected_supply, topo).await.context("Error while calculating block reward")?;
-            let expected_block_reward = storage.get_block_reward_at_topo_height(topo).context("Error while retrieving block reward")?;
+            let expected_block_reward = storage.get_block_reward_at_topo_height(topo).await.context("Error while retrieving block reward")?;
             // Verify the saved block reward
             if block_reward != expected_block_reward {
                 manager.error(format!("Block reward saved is incorrect for {} at topoheight {}, got {} while expecting {}", hash_at_topo, topo, format_xelis(block_reward), format_xelis(expected_block_reward)));
@@ -520,7 +522,7 @@ async fn verify_chain<S: Storage>(manager: &CommandManager, mut args: ArgumentMa
         } else {
             // We are too near from the pruned topoheight, as we don't know previous blocks we can't verify if block was side block or not for rewards
             // Let's trust its stored reward
-            storage.get_block_reward_at_topo_height(topo).context("Error while retrieving block reward for pruned topo")?
+            storage.get_block_reward_at_topo_height(topo).await.context("Error while retrieving block reward for pruned topo")?
         };
 
         let supply = storage.get_supply_at_topo_height(topo).await
@@ -545,7 +547,7 @@ async fn verify_chain<S: Storage>(manager: &CommandManager, mut args: ArgumentMa
         let mut txs = Vec::new();
         let mut outputs = 0;
         for tx_hash in header.get_transactions() {
-            if storage.is_tx_executed_in_block(tx_hash, &hash_at_topo).context("Error while checking if tx is executed in block")? {
+            if storage.is_tx_executed_in_block(tx_hash, &hash_at_topo).await.context("Error while checking if tx is executed in block")? {
                 let transaction = storage.get_transaction(tx_hash).await
                     .context("Error while retrieving transaction")?;
 
@@ -606,11 +608,13 @@ async fn list_unexecuted_transactions<S: Storage>(manager: &CommandManager, _: A
         .context("Error while retrieving unexecuted transactions")?;
 
     let mut count = 0;
-    for res in unexecuted {
+    pin!(unexecuted);
+    while let Some(res) = unexecuted.next().await {
         count += 1;
         let tx = res.context("Error on unexecuted tx hash")?;
         manager.message(format!("- {}", tx));
     }
+
     manager.message(format!("{} TXs were not executed by the DAG", count));
 
     Ok(())

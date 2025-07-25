@@ -642,18 +642,18 @@ impl Storage for SledStorage {
         for tx_hash in block.get_transactions() {
             // Should we delete the tx too or only unlink it
             let mut should_delete = true;
-            if self.has_tx_blocks(tx_hash)? {
+            if self.has_tx_blocks(tx_hash).await? {
                 let mut blocks: Tips = Self::delete_cacheable_data(self.snapshot.as_mut(), &self.tx_blocks, None, tx_hash).await?;
                 let blocks_len =  blocks.len();
                 blocks.remove(&hash);
                 should_delete = blocks.is_empty();
-                self.set_blocks_for_tx(tx_hash, &blocks)?;
+                self.set_blocks_for_tx(tx_hash, &blocks).await?;
                 trace!("Tx was included in {}, blocks left: {}", blocks_len, blocks.into_iter().map(|b| b.to_string()).collect::<Vec<String>>().join(", "));
             }
 
-            if self.is_tx_executed_in_block(tx_hash, &hash)? {
+            if self.is_tx_executed_in_block(tx_hash, &hash).await? {
                 trace!("Tx {} was executed, deleting", tx_hash);
-                self.unmark_tx_from_executed(&tx_hash)?;
+                self.unmark_tx_from_executed(&tx_hash).await?;
                 self.delete_contract_outputs_for_tx(&tx_hash).await?;
             }
 

@@ -30,7 +30,7 @@ impl BlockDagProvider for RocksStorage {
     }
 
     // Get the block reward from using topoheight
-    fn get_block_reward_at_topo_height(&self, topoheight: TopoHeight) -> Result<u64, BlockchainError> {
+    async fn get_block_reward_at_topo_height(&self, topoheight: TopoHeight) -> Result<u64, BlockchainError> {
         trace!("get block reward at topoheight {}", topoheight);
         self.get_metadata_at_topoheight(topoheight)
             .map(|metadata| metadata.rewards)
@@ -51,7 +51,7 @@ impl BlockDagProvider for RocksStorage {
     }
 
     // Set the metadata for topoheight
-    fn set_topoheight_metadata(&mut self, topoheight: TopoHeight, rewards: u64, emitted_supply: u64, burned_supply: u64) -> Result<(), BlockchainError> {
+    async fn set_topoheight_metadata(&mut self, topoheight: TopoHeight, rewards: u64, emitted_supply: u64, burned_supply: u64) -> Result<(), BlockchainError> {
         trace!("set topoheight metadata {}", topoheight);
         let metadata = TopoHeightMetadata {
             rewards,

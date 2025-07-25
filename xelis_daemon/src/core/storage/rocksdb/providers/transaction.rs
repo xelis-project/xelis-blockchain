@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use futures::{stream, Stream, StreamExt};
 use log::trace;
 use xelis_common::{
     crypto::Hash,
@@ -40,20 +41,20 @@ impl TransactionProvider for RocksStorage {
 
     // Get all the unexecuted transactions
     // Those were not executed by the DAG
-    async fn get_unexecuted_transactions<'a>(&'a self) -> Result<impl Iterator<Item = Result<Hash, BlockchainError>> + 'a, BlockchainError> {
+    async fn get_unexecuted_transactions<'a>(&'a self) -> Result<impl Stream<Item = Result<Hash, BlockchainError>> + 'a, BlockchainError> {
         trace!("get unexecuted transactions");
-        let iter = self.iter_keys(Column::Transactions, IteratorMode::Start)?;
+        let iter = stream::iter(self.iter_keys(Column::Transactions, IteratorMode::Start)?);
         Ok(
-            iter.map(|res| {
+            iter.map(move |res| async move {
                 let hash = res?;
 
-                if self.is_tx_executed_in_a_block(&hash)? {
+                if self.is_tx_executed_in_a_block(&hash).await? {
                     return Ok(None);
                 }
 
                 Ok(Some(hash))
             })
-            .filter_map(Result::transpose)
+            .filter_map(|v| async move { v.await.transpose() })
         )
     }
 
