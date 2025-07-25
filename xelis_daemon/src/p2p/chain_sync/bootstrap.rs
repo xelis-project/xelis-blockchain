@@ -3,6 +3,7 @@ use std::{borrow::Cow, collections::HashSet, sync::Arc, time::Instant};
 use futures::{stream, StreamExt, TryStreamExt};
 use indexmap::{IndexMap, IndexSet};
 use log::{debug, error, info, trace, warn};
+use metrics::histogram;
 use tokio::try_join;
 use xelis_common::{
     account::{VersionedBalance, VersionedNonce},
@@ -83,6 +84,7 @@ impl<S: Storage> P2pServer<S> {
                     return Err(P2pError::InvalidPacket.into())
                 }
 
+                let start = Instant::now();
                 let page = page.unwrap_or(0);
                 let assets = storage.get_assets_with_data_in_range(Some(min), Some(max)).await?
                     .skip(page as usize * MAX_ITEMS_PER_PAGE)
@@ -92,6 +94,8 @@ impl<S: Storage> P2pServer<S> {
                         Err(e) => Err(e)
                     })
                     .collect::<Result<IndexMap<_, _>, _>>()?;
+
+                histogram!("xelis_p2p_assets_ms").record(start.elapsed().as_millis() as f64);
 
                 let page = if assets.len() == MAX_ITEMS_PER_PAGE {
                     Some(page + 1)
@@ -106,6 +110,7 @@ impl<S: Storage> P2pServer<S> {
                     return Err(P2pError::InvalidPacket.into())
                 }
 
+                let start = Instant::now();
                 let page = page.unwrap_or(0);
                 let assets = storage.get_assets_for(&key).await?
                     .skip(page as usize * MAX_ITEMS_PER_PAGE)
@@ -125,6 +130,8 @@ impl<S: Storage> P2pServer<S> {
                     .try_collect::<IndexMap<_, _>>()
                     .await?;
 
+                histogram!("xelis_p2p_key_balances_ms").record(start.elapsed().as_millis() as f64);
+
                 let page = if assets.len() == MAX_ITEMS_PER_PAGE {
                     Some(page + 1)
                 } else {
@@ -143,7 +150,9 @@ impl<S: Storage> P2pServer<S> {
                     return Err(P2pError::InvalidRequestedTopoheight.into())
                 }
 
+                let start = Instant::now();
                 let (balances, mut next_max) = storage.get_spendable_balances_for(&key, &asset, min, max, MAX_ITEMS_PER_PAGE).await?;
+                histogram!("xelis_p2p_spendable_balances_ms").record(start.elapsed().as_millis() as f64);
 
                 // Because the dev public key may be updated at EACH block
                 // it will create a huge amount of data to load
