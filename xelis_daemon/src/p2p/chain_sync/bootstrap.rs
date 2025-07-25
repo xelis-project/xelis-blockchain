@@ -13,7 +13,7 @@ use xelis_common::{
 };
 
 use crate::{
-    config::PRUNE_SAFETY_LIMIT,
+    config::{DEV_PUBLIC_KEY, PRUNE_SAFETY_LIMIT},
     core::{
         error::BlockchainError,
         storage::{
@@ -25,18 +25,18 @@ use crate::{
         }
     },
     p2p::{
-        P2pServer,
-        Peer,
         error::P2pError,
         packet::{
             BlockMetadata,
             BootstrapChainResponse,
-            StepRequest,
-            StepResponse,
             ObjectRequest,
             Packet,
-            MAX_ITEMS_PER_PAGE,
-        }
+            StepRequest,
+            StepResponse,
+            MAX_ITEMS_PER_PAGE
+        },
+        P2pServer,
+        Peer
     }
 };
 
@@ -143,7 +143,15 @@ impl<S: Storage> P2pServer<S> {
                     return Err(P2pError::InvalidRequestedTopoheight.into())
                 }
 
-                let (balances, next_max) = storage.get_spendable_balances_for(&key, &asset, min, max, MAX_ITEMS_PER_PAGE).await?;
+                let (balances, mut next_max) = storage.get_spendable_balances_for(&key, &asset, min, max, MAX_ITEMS_PER_PAGE).await?;
+
+                // Because the dev public key may be updated at EACH block
+                // it will create a huge amount of data to load
+                // So we only give one round for it
+                if next_max.is_some() && &*key == &*DEV_PUBLIC_KEY {
+                    next_max = None;
+                }
+
                 StepResponse::SpendableBalances(balances, next_max)
             },
             StepRequest::Accounts(min, max, keys) => {
