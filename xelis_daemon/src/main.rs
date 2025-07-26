@@ -1115,7 +1115,6 @@ async fn clear_mempool<S: Storage>(manager: &CommandManager, _: ArgumentManager)
 async fn snapshot_mode<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
     let context = manager.get_context().lock()?;
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
-    manager.message("Starting snapshot mode...");
     let mut storage = blockchain.get_storage().write().await;
     if storage.has_commit_point().await.context("checking has commit point")? {
         manager.message("Snapshot mode is already enabled, do you want to apply it?");
@@ -1125,6 +1124,7 @@ async fn snapshot_mode<S: Storage>(manager: &CommandManager, _: ArgumentManager)
         storage.end_commit_point(apply).await
             .context("End commit point")?;
     } else {
+        manager.message("Starting snapshot mode...");
         storage.start_commit_point().await
             .context("Error on commit point")?;
         manager.message("Snapshot mode enabled");
