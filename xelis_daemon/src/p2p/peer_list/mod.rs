@@ -169,7 +169,7 @@ impl PeerList {
                     // Because its a common peer, we can expect that he will send us the same packet
                     if let Some(direction) = shared_peers.pop(addr) {
                         // If its a outgoing direction, send a packet to notify that the peer disconnected
-                        if !direction.is_in() {
+                        if direction.contains_out() {
                             debug!("Sending PeerDisconnected packet to peer {} for {}", peer.get_outgoing_address(), addr);
                             // we send the packet to notify the peer that we don't have it in common anymore
                             if let Err(e) = peer.send_bytes(packet.clone()).await {
@@ -180,14 +180,20 @@ impl PeerList {
                 }).await;
         }
 
+        self.remove_peer_internal(peer).await?;
+
+        res
+    }
+
+    // Internal function that update the peer and send it to the channel
+    // It doesn't contains the packet broadcast notifying others peers about its
+    // disconnect
+    async fn remove_peer_internal(&self, peer: Arc<Peer>) -> Result<(), P2pError> {
         info!("Peer disconnected: {}", peer);
-        if peer.is_out() {
-            self.decrement_outgoing_peers_count();
-        }
 
         // Update the peerlist entry
-        self.update_peer(&peer).await?;
-        
+        self.update_peer(&peer, true).await?;
+
         if let Some(peer_disconnect_channel) = &self.peer_disconnect_channel {
             debug!("Notifying server that {} disconnected", peer);
             if let Err(e) = peer_disconnect_channel.send(peer).await {
@@ -195,7 +201,7 @@ impl PeerList {
             }
         }
 
-        res
+        Ok(())
     }
 
     // Add a new peer to the list
@@ -217,17 +223,13 @@ impl PeerList {
         info!("New peer connected: {}", peer);
         gauge!("xelis_p2p_peers_current").set(count as f64);
 
-        if peer.is_out() {
-            self.increment_outgoing_peers_count();
-        }
-
-        self.update_peer(&peer).await?;
+        self.update_peer(&peer, false).await?;
 
         Ok(())
     }
 
     // Update a peer in the stored peerlist
-    async fn update_peer(&self, peer: &Peer) -> Result<(), P2pError> {
+    async fn update_peer(&self, peer: &Peer, close: bool) -> Result<(), P2pError> {
         let addr = peer.get_outgoing_address();
         let ip = addr.ip();
         if self.cache.has_peerlist_entry(&ip)? {
@@ -255,6 +257,14 @@ impl PeerList {
             entry.set_last_connection_try(None);
 
             self.cache.set_peerlist_entry(&ip, entry)?;
+        }
+
+        if peer.is_out() {
+            if close {
+                self.decrement_outgoing_peers_count();
+            } else {
+                self.increment_outgoing_peers_count();
+            }
         }
 
         Ok(())
@@ -305,7 +315,7 @@ impl PeerList {
                     error!("Error while trying to signal exit to {}: {}", peer, e);
                 }
     
-                if let Err(e) = self.update_peer(&peer).await {
+                if let Err(e) = self.remove_peer_internal(peer.clone()).await {
                     error!("Error while updating peer {}: {}", peer, e);
                 }
             })
@@ -314,6 +324,8 @@ impl PeerList {
         if let Err(e) = self.cache.flush().await {
             error!("Error while flushing cache to disk: {}", e);
         }
+
+        debug!("close all end");
     }
 
     // Returns the highest topoheight of all peers
