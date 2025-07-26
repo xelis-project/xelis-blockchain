@@ -1117,9 +1117,18 @@ async fn snapshot_mode<S: Storage>(manager: &CommandManager, _: ArgumentManager)
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     manager.message("Starting snapshot mode...");
     let mut storage = blockchain.get_storage().write().await;
-    storage.start_commit_point().await
-        .context("Error on commit point")?;
-    manager.message("Snapshot mode enabled");
+    if storage.has_commit_point().await.context("checking has commit point")? {
+        manager.message("Snapshot mode is already enabled, do you want to apply it?");
+        let apply = manager.get_prompt()
+            .ask_confirmation().await?;
+
+        storage.end_commit_point(apply).await
+            .context("End commit point")?;
+    } else {
+        storage.start_commit_point().await
+            .context("Error on commit point")?;
+        manager.message("Snapshot mode enabled");
+    }
 
     Ok(())
 }
