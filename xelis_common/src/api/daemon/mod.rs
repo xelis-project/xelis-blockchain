@@ -776,6 +776,11 @@ pub enum NotifyEvent {
     InvokeContract {
         contract: Hash
     },
+    // TODO: Placeholder for retro-compatibility
+    // Remove once wallets are updated
+    ContractTransfer {
+        address: Address,
+    },
     // When a contract has transfered any token
     // to the receiver address
     // It contains ContractTransfersEvent struct as value
