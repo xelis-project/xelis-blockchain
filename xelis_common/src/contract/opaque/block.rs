@@ -64,7 +64,7 @@ pub fn block_tips(_: FnInstance, _: FnParams, context: &mut Context) -> FnReturn
         .map(|tip| Primitive::Opaque(OpaqueWrapper::new(tip.clone())).into())
         .collect();
 
-    Ok(SysCallResult::Return(ValueCell::Object(tips)))
+    Ok(SysCallResult::Return(ValueCell::Object(tips).into()))
 }
 
 pub fn block_transactions_hashes(_: FnInstance, _: FnParams, context: &mut Context) -> FnReturnType<ModuleMetadata> {
@@ -75,7 +75,7 @@ pub fn block_transactions_hashes(_: FnInstance, _: FnParams, context: &mut Conte
         .map(|hash| Primitive::Opaque(OpaqueWrapper::new(hash.clone())).into())
         .collect();
 
-    Ok(SysCallResult::Return(ValueCell::Object(hashes)))
+    Ok(SysCallResult::Return(ValueCell::Object(hashes).into()))
 }
 
 pub fn block_transactions(_: FnInstance, _: FnParams, context: &mut Context) -> FnReturnType<ModuleMetadata> {
@@ -90,7 +90,7 @@ pub fn block_transactions(_: FnInstance, _: FnParams, context: &mut Context) -> 
         })).into())
         .collect();
 
-    Ok(SysCallResult::Return(ValueCell::Object(txs)))
+    Ok(SysCallResult::Return(ValueCell::Object(txs).into()))
 }
 
 pub fn block_transactions_count(_: FnInstance, _: FnParams, context: &mut Context) -> FnReturnType<ModuleMetadata> {
@@ -110,5 +110,5 @@ pub fn block_extra_nonce(_: FnInstance, _: FnParams, context: &mut Context) -> F
         .map(|v| Primitive::U8(*v).into())
         .collect();
 
-    Ok(SysCallResult::Return(ValueCell::Object(extra_nonce)))
+    Ok(SysCallResult::Return(ValueCell::Object(extra_nonce).into()))
 }

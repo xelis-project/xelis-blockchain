@@ -47,7 +47,7 @@ impl Serializable for Signature {
 
 pub fn signature_from_bytes_fn(_: FnInstance, mut params: FnParams, _: &mut Context) -> FnReturnType<ModuleMetadata> {
     let param = params.remove(0)
-        .into_owned()?;
+        .into_owned();
     let param = param.as_vec()?;
 
     if param.len() != SIGNATURE_SIZE {
@@ -55,7 +55,7 @@ pub fn signature_from_bytes_fn(_: FnInstance, mut params: FnParams, _: &mut Cont
     }
 
     let bytes = param.iter()
-        .map(|v| v.as_u8())
+        .map(|v| v.as_ref().as_u8())
         .collect::<Result<Vec<_>, ValueError>>()?;
 
     let signature = Signature::from_bytes(&bytes)
@@ -67,14 +67,14 @@ pub fn signature_verify_fn(zelf: FnInstance, mut params: FnParams, _: &mut Conte
     let signature: &Signature = zelf?.as_opaque_type()?;
 
     let address: Address = params.remove(0)
-        .into_owned()?
+        .into_owned()
         .into_opaque_type()?;
 
     let param = params.remove(0)
-        .into_owned()?;
+        .into_owned();
     let data = param.as_vec()?
         .iter()
-        .map(|v| v.as_u8())
+        .map(|v| v.as_ref().as_u8())
         .collect::<Result<Vec<_>, ValueError>>()?;
 
     let key = address.to_public_key()

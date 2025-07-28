@@ -46,12 +46,12 @@ pub fn address_public_key_bytes(zelf: FnInstance, _: FnParams, _: &mut Context) 
     let bytes = address.get_public_key()
         .as_bytes();
 
-    Ok(SysCallResult::Return(ValueCell::Bytes(bytes.into())))
+    Ok(SysCallResult::Return(ValueCell::Bytes(bytes.into()).into()))
 }
 
 pub fn address_from_string(_: FnInstance, mut params: FnParams, _: &mut Context) -> FnReturnType<ModuleMetadata> {
     let param = params.remove(0)
-        .into_owned()?;
+        .into_owned();
     let string = param.as_string()?;
 
     let address = Address::from_string(string)

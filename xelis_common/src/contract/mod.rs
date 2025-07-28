@@ -1011,7 +1011,7 @@ fn fire_event_fn(_: FnInstance, mut params: FnParams, context: &mut Context) -> 
     let id = params.remove(0)
         .as_u64()?;
 
-    let constant = data.into_owned()?;
+    let constant = data.into_owned();
 
     let size = constant.size();
     let cost = FEE_PER_BYTE_OF_EVENT_DATA * size as u64;
@@ -1029,7 +1029,7 @@ fn fire_event_fn(_: FnInstance, mut params: FnParams, context: &mut Context) -> 
 fn println_fn(_: FnInstance, params: FnParams, context: &mut Context) -> FnReturnType<ModuleMetadata> {
     let state: &ChainState = context.get().context("chain state not found")?;
     if state.debug_mode {
-        info!("[{}]: {}", state.contract, params[0].as_ref()?);
+        info!("[{}]: {}", state.contract, params[0].as_ref());
     }
 
     Ok(SysCallResult::None)
@@ -1038,7 +1038,7 @@ fn println_fn(_: FnInstance, params: FnParams, context: &mut Context) -> FnRetur
 fn debug_fn(_: FnInstance, params: FnParams, context: &mut Context) -> FnReturnType<ModuleMetadata> {
     let state: &ChainState = context.get().context("chain state not found")?;
     if state.debug_mode {
-        debug!("{:?}", params[0].as_ref()?);
+        debug!("{:?}", params[0].as_ref());
     }
 
     Ok(SysCallResult::None)
@@ -1050,7 +1050,7 @@ fn get_contract_hash(_: FnInstance, _: FnParams, context: &mut Context) -> FnRet
 }
 
 fn get_deposit_for_asset(_: FnInstance, params: FnParams, context: &mut Context) -> FnReturnType<ModuleMetadata> {
-    let param = params[0].as_ref()?;
+    let param = params[0].as_ref();
     let asset: &Hash = param
         .as_opaque_type()
         .context("invalid asset")?;
@@ -1059,39 +1059,39 @@ fn get_deposit_for_asset(_: FnInstance, params: FnParams, context: &mut Context)
 
     let value = match chain_state.deposits.get(asset) {
         Some(ContractDeposit::Public(amount)) => Primitive::U64(*amount).into(),
-        _ => Default::default()
+        _ => ValueCell::default()
     };
 
-    Ok(SysCallResult::Return(value))
+    Ok(SysCallResult::Return(value.into()))
 }
 
 fn get_balance_for_asset<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType<ModuleMetadata> {
     let (provider, state) = from_context::<P>(context)?;
 
     let asset: Hash = params.remove(0)
-        .into_owned()?
+        .into_owned()
         .into_opaque_type()?;
 
-    let balance = get_balance_from_cache(provider, state, asset)?
+    let balance: ValueCell = get_balance_from_cache(provider, state, asset)?
         .map(|(_, v)| Primitive::U64(v).into())
         .unwrap_or_default();
 
-    Ok(SysCallResult::Return(balance))
+    Ok(SysCallResult::Return(balance.into()))
 }
 
 fn transfer<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType<ModuleMetadata> {
     debug!("Transfer called {:?}", params);
 
     let asset: Hash = params.remove(2)
-        .into_owned()?
+        .into_owned()
         .into_opaque_type()?;
 
     let amount = params.remove(1)
-        .into_owned()?
+        .into_owned()
         .to_u64()?;
 
     let destination: Address = params.remove(0)
-        .into_owned()?
+        .into_owned()
         .into_opaque_type()?;
 
     if !destination.is_normal() {
@@ -1151,10 +1151,10 @@ fn burn<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &mut 
     let (provider, state) = from_context::<P>(context)?;
 
     let asset: Hash = params.remove(1)
-        .into_owned()?
+        .into_owned()
         .into_opaque_type()?;
     let amount = params.remove(0)
-        .into_owned()?
+        .into_owned()
         .to_u64()?;
 
     let Some((mut balance_state, mut balance)) = get_balance_from_cache(provider, state, asset.clone())? else {
@@ -1183,11 +1183,11 @@ fn get_account_balance_of<P: ContractProvider>(_: FnInstance, mut params: FnPara
     let (provider, state) = from_context::<P>(context)?;
 
     let asset: Hash = params.remove(1)
-        .into_owned()?
+        .into_owned()
         .into_opaque_type()?;
 
     let address: Address = params.remove(0)
-        .into_owned()?
+        .into_owned()
         .into_opaque_type()?;
 
     let balance = provider.get_account_balance_for_asset(address.get_public_key(), &asset, state.topoheight)?
@@ -1197,7 +1197,7 @@ fn get_account_balance_of<P: ContractProvider>(_: FnInstance, mut params: FnPara
         ]))
         .unwrap_or_default();
 
-    Ok(SysCallResult::Return(balance))
+    Ok(SysCallResult::Return(balance.into()))
 }
 
 fn get_gas_usage(_: FnInstance, _: FnParams, context: &mut Context) -> FnReturnType<ModuleMetadata> {

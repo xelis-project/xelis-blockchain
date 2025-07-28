@@ -47,16 +47,16 @@ fn is_valid_char_for_asset(c: char, whitespace: bool, uppercase_only: bool) -> b
 pub fn asset_create<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType<ModuleMetadata> {
     let (provider, chain_state) = from_context::<P>(context)?;
 
-    let max_supply = match params.remove(4).into_owned()?.take_as_optional()? {
+    let max_supply = match params.remove(4).into_owned().take_as_optional()? {
         Some(v) => Some(v.to_u64()?),
         _ => None,
     };
     let decimals = params.remove(3)
-        .into_owned()?
+        .into_owned()
         .to_u8()?;
 
     let ticker = params.remove(2)
-        .into_owned()?
+        .into_owned()
         .into_string()?;
 
     if ticker.len() > TICKER_LEN {
@@ -70,7 +70,7 @@ pub fn asset_create<P: ContractProvider>(_: FnInstance, mut params: FnParams, co
     }
 
     let name = params.remove(1)
-        .into_owned()?
+        .into_owned()
         .into_string()?;
     if name.len() > u8::MAX as usize {
         return Err(EnvironmentError::Expect("Asset name is too long".to_owned()).into());
@@ -137,7 +137,7 @@ pub fn asset_get_by_id<P: ContractProvider>(_: FnInstance, params: FnParams, con
 
 pub fn asset_get_by_hash<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType<ModuleMetadata> {
     let hash: Hash = params.remove(0)
-        .into_owned()?
+        .into_owned()
         .into_opaque_type()?;
 
     let (provider, chain_state) = from_context::<P>(context)?;

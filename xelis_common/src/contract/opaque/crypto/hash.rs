@@ -32,7 +32,7 @@ impl Serializable for Hash {
 pub fn hash_to_bytes_fn(zelf: FnInstance, _: FnParams, _: &mut Context) -> FnReturnType<ModuleMetadata> {
     let hash: &Hash = zelf?.as_opaque_type()?;
     let bytes = ValueCell::Bytes(hash.as_bytes().into());
-    Ok(SysCallResult::Return(bytes))
+    Ok(SysCallResult::Return(bytes.into()))
 }
 
 pub fn hash_to_array_fn(zelf: FnInstance, _: FnParams, _: &mut Context) -> FnReturnType<ModuleMetadata> {
@@ -42,12 +42,12 @@ pub fn hash_to_array_fn(zelf: FnInstance, _: FnParams, _: &mut Context) -> FnRet
         .map(|b| Primitive::U8(*b).into())
         .collect();
 
-    Ok(SysCallResult::Return(ValueCell::Object(bytes)))
+    Ok(SysCallResult::Return(ValueCell::Object(bytes).into()))
 }
 
 pub fn hash_from_bytes_fn(_: FnInstance, mut params: FnParams, _: &mut Context) -> FnReturnType<ModuleMetadata> {
     let param = params.remove(0)
-        .into_owned()?;
+        .into_owned();
     let bytes = param.as_bytes()?;
 
     if bytes.len() != HASH_SIZE {
@@ -62,18 +62,16 @@ pub fn hash_from_bytes_fn(_: FnInstance, mut params: FnParams, _: &mut Context) 
 
 pub fn hash_from_array_fn(_: FnInstance, mut params: FnParams, _: &mut Context) -> FnReturnType<ModuleMetadata> {
     let param = params.remove(0)
-        .into_owned()?;
+        .into_owned();
     let values = param.as_vec()?;
 
     if values.len() != HASH_SIZE {
         return Err(EnvironmentError::InvalidParameter);
     }
 
-    let mut bytes = Vec::with_capacity(HASH_SIZE);
-    for value in values {
-        let byte = value.as_u8()?;
-        bytes.push(byte);
-    }
+    let bytes = values.into_iter()
+        .map(|v| v.as_ref().as_u8())
+        .collect::<Result<Vec<_>, _>>()?;
 
     let hash = Hash::from_bytes(&bytes)
         .context("failed to create hash from bytes")?;
@@ -83,7 +81,7 @@ pub fn hash_from_array_fn(_: FnInstance, mut params: FnParams, _: &mut Context) 
 
 pub fn hash_from_u256_fn(_: FnInstance, mut params: FnParams, _: &mut Context) -> FnReturnType<ModuleMetadata> {
     let param = params.remove(0)
-        .into_owned()?;
+        .into_owned();
 
     let value = param.as_u256()?;
     let hash = Hash::from_bytes(&value.to_be_bytes())
@@ -104,7 +102,7 @@ pub fn hash_to_hex_fn(zelf: FnInstance, _: FnParams, _: &mut Context) -> FnRetur
 
 pub fn hash_from_hex_fn(_: FnInstance, mut params: FnParams, _: &mut Context) -> FnReturnType<ModuleMetadata> {
     let param = params.remove(0)
-        .into_owned()?;
+        .into_owned();
     let hex = param.as_string()?;
 
     if hex.len() != HASH_SIZE * 2 {
@@ -129,10 +127,10 @@ pub fn hash_max_fn(_: FnInstance, _: FnParams, _: &mut Context) -> FnReturnType<
 
 pub fn blake3_fn(_: FnInstance, mut params: FnParams, _: &mut Context) -> FnReturnType<ModuleMetadata> {
     let input = params.remove(0)
-        .into_owned()?
+        .into_owned()
         .as_vec()?
         .iter()
-        .map(|v| v.as_u8())
+        .map(|v| v.as_ref().as_u8())
         .collect::<Result<Vec<u8>, ValueError>>()?;
 
     let hash = hash(&input);
@@ -141,10 +139,10 @@ pub fn blake3_fn(_: FnInstance, mut params: FnParams, _: &mut Context) -> FnRetu
 
 pub fn sha256_fn(_: FnInstance, mut params: FnParams, _: &mut Context) -> FnReturnType<ModuleMetadata> {
     let input = params.remove(0)
-        .into_owned()?
+        .into_owned()
         .as_vec()?
         .into_iter()
-        .map(|v| v.as_u8())
+        .map(|v| v.as_ref().as_u8())
         .collect::<Result<Vec<u8>, ValueError>>()?;
 
     let hash = Hash::new(Sha3_256::digest(&input).into());

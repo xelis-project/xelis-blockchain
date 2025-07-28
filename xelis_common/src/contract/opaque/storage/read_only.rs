@@ -23,7 +23,7 @@ impl Serializable for OpaqueReadOnlyStorage {}
 pub fn read_only_storage<P: ContractProvider>(_: FnInstance, mut parameters: FnParams, context: &mut Context) -> FnReturnType<ModuleMetadata> {
     let (storage, state) = from_context::<P>(context)?;
     let hash: Hash = parameters.remove(0)
-        .into_owned()?
+        .into_owned()
         .into_opaque_type()?;
 
     if !state.global_caches.contains_key(&hash) && !storage.has_contract(&hash, state.topoheight)? {
@@ -39,7 +39,7 @@ pub fn read_only_storage_load<P: ContractProvider>(zelf: FnInstance, mut params:
         .as_opaque_type()?;
 
     let key = params.remove(0)
-        .into_owned()?;
+        .into_owned();
 
     // Read from global cache first, then fallback to provider
     let value = match state.global_caches.get(&zelf.0)
@@ -50,7 +50,7 @@ pub fn read_only_storage_load<P: ContractProvider>(zelf: FnInstance, mut params:
                 .flatten()
     };
 
-    Ok(SysCallResult::Return(value.unwrap_or_default()))
+    Ok(SysCallResult::Return(value.unwrap_or_default().into()))
 }
 
 pub fn read_only_storage_has<P: ContractProvider>(zelf: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType<ModuleMetadata> {
@@ -59,7 +59,7 @@ pub fn read_only_storage_has<P: ContractProvider>(zelf: FnInstance, mut params: 
         .as_opaque_type()?;
 
     let key = params.remove(0)
-        .into_owned()?;
+        .into_owned();
 
     // Read from global cache first, then fallback to provider
     let contains = match state.global_caches.get(&zelf.0)

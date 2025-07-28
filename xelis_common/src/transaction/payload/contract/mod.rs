@@ -235,7 +235,7 @@ impl Serializer for ValueCell {
                 let len = values.len() as u32;
                 writer.write_u32(&len);
                 for value in values.iter() {
-                    value.write(writer);
+                    value.as_ref().write(writer);
                 }
             },
             ValueCell::Map(map) => {
@@ -244,7 +244,7 @@ impl Serializer for ValueCell {
                 writer.write_u32(&len);
                 for (key, value) in map.iter() {
                     key.write(writer);
-                    value.write(writer);
+                    value.as_ref().write(writer);
                 }
             }
         };
@@ -263,7 +263,7 @@ impl Serializer for ValueCell {
                 let len = reader.read_u32()? as usize;
                 let mut values = Vec::new();
                 for _ in 0..len {
-                    values.push(ValueCell::read(reader)?);
+                    values.push(ValueCell::read(reader)?.into());
                 }
                 ValueCell::Object(values)
             },
@@ -273,7 +273,7 @@ impl Serializer for ValueCell {
                 for _ in 0..len {
                     let key = ValueCell::read(reader)?;
                     let value = ValueCell::read(reader)?;
-                    map.insert(key, value);
+                    map.insert(key, value.into());
                 }
                 ValueCell::Map(Box::new(map))
             },
@@ -299,14 +299,14 @@ impl Serializer for ValueCell {
                     // u32 len
                     total += 4;
                     for value in values {
-                        stack.push(value);
+                        stack.push(value.as_ref());
                     }
                 },
                 ValueCell::Map(map) => {
                     // u32 len
                     total += 4;
                     for (key, value) in map.iter() {
-                        stack.push(value);
+                        stack.push(value.as_ref());
                         stack.push(key);
                     }
                 }
@@ -425,14 +425,14 @@ mod tests {
     fn test_serde_value_cell() {
         test_serde_cell(ValueCell::Bytes(vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]));
         test_serde_cell(ValueCell::Object(vec![
-            ValueCell::Default(Primitive::U64(42)),
-            ValueCell::Default(Primitive::U64(42)),
-            ValueCell::Default(Primitive::U64(42)),
-            ValueCell::Default(Primitive::U64(42)),
-            ValueCell::Default(Primitive::U64(42))
+            Primitive::U64(42).into(),
+            Primitive::U64(42).into(),
+            Primitive::U64(42).into(),
+            Primitive::U64(42).into(),
+            Primitive::U64(42).into()
         ]));
         test_serde_cell(ValueCell::Map(Box::new([
-            (ValueCell::Default(Primitive::U64(42)), ValueCell::Default(Primitive::String("Hello World!".to_owned())),)
+            (Primitive::U64(42).into(), Primitive::String("Hello World!".to_owned()).into())
         ].into_iter().collect())));
     }
 }

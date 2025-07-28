@@ -110,10 +110,10 @@ pub fn ciphertext_sub_plaintext(zelf: FnInstance, mut params: FnParams, _: &mut 
 
 pub fn ciphertext_new(_: FnInstance, mut params: FnParams, _: &mut Context) -> FnReturnType<ModuleMetadata> {
     let amount = params.remove(1)
-        .into_owned()?
+        .into_owned()
         .as_u64()?;
     let address: Address = params.remove(0)
-        .into_owned()?
+        .into_owned()
         .into_opaque_type()?;
 
     let key = address.get_public_key()

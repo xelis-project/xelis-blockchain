@@ -8,7 +8,8 @@ use xelis_vm::{
     FnParams,
     FnReturnType,
     Primitive,
-    SysCallResult
+    SysCallResult,
+    ValueCell
 };
 use crate::{
     contract::{
@@ -57,11 +58,11 @@ pub fn asset_get_max_supply<P: ContractProvider>(zelf: FnInstance, _: FnParams, 
     let state: &ChainState = context.get()
         .context("Chain state not found")?;
     let changes = get_asset_changes_for_hash(state, &asset.hash)?;
-    let value = changes.data.1.get_max_supply()
+    let value: ValueCell = changes.data.1.get_max_supply()
         .map(|v| Primitive::U64(v).into())
         .unwrap_or_default();
 
-    Ok(SysCallResult::Return(value))
+    Ok(SysCallResult::Return(value.into()))
 }
 
 // Contract hash that created this asset
@@ -152,7 +153,7 @@ pub fn asset_is_read_only(zelf: FnInstance, _: FnParams, context: &mut Context) 
 
 pub fn asset_transfer_ownership<P: ContractProvider>(zelf: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType<ModuleMetadata> {
     let param: Hash = params.remove(0)
-        .into_owned()?
+        .into_owned()
         .into_opaque_type()?;
 
     let asset: &Asset = zelf?.as_opaque_type()?;

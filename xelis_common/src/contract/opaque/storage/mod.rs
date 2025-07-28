@@ -57,7 +57,7 @@ pub fn storage_load<P: ContractProvider>(_: FnInstance, mut params: FnParams, co
     let (storage, state) = from_context::<P>(context)?;
 
     let key = params.remove(0)
-        .into_owned()?;
+        .into_owned();
 
     let value = match state.cache.storage.get(&key) {
         Some((_, value)) => value.clone(),
@@ -70,14 +70,14 @@ pub fn storage_load<P: ContractProvider>(_: FnInstance, mut params: FnParams, co
         }
     };
 
-    Ok(SysCallResult::Return(value.unwrap_or_default()))
+    Ok(SysCallResult::Return(value.unwrap_or_default().into()))
 }
 
 pub fn storage_has<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType<ModuleMetadata> {
     let (storage, state) = from_context::<P>(context)?;
 
     let key = params.remove(0)
-        .into_owned()?;
+        .into_owned();
 
     let contains = match state.cache.storage.get(&key) {
         Some((_, value)) => value.is_some(),
@@ -89,7 +89,7 @@ pub fn storage_has<P: ContractProvider>(_: FnInstance, mut params: FnParams, con
 
 pub fn storage_store<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType<ModuleMetadata> {
     let key = params.remove(0)
-        .into_owned()?;
+        .into_owned();
 
     let key_size = key.size();
     if key_size > MAX_KEY_SIZE {
@@ -97,7 +97,7 @@ pub fn storage_store<P: ContractProvider>(_: FnInstance, mut params: FnParams, c
     }
 
     let value = params.remove(0)
-        .into_owned()?;
+        .into_owned();
 
     let value_size = value.size();
     if value_size > MAX_VALUE_SIZE {
@@ -128,20 +128,20 @@ pub fn storage_store<P: ContractProvider>(_: FnInstance, mut params: FnParams, c
         .flatten()
         .unwrap_or_default();
 
-    Ok(SysCallResult::Return(value))
+    Ok(SysCallResult::Return(value.into()))
 }
 
 pub fn storage_delete<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType<ModuleMetadata> {
     let (storage, state) = from_context::<P>(context)?;
 
     let key = params.remove(0)
-        .into_owned()?;
+        .into_owned();
 
     let data_state = match state.cache.storage.get(&key) {
         Some((s, _)) => match s {
             VersionedState::New => {
                 let value = state.cache.storage.remove(&key);
-                return Ok(SysCallResult::Return(value.map(|(_, v)| v).flatten().unwrap_or_default()));
+                return Ok(SysCallResult::Return(value.map(|(_, v)| v).flatten().unwrap_or_default().into()));
             },
             VersionedState::FetchedAt(topoheight) => VersionedState::Updated(*topoheight),
             VersionedState::Updated(topoheight) => VersionedState::Updated(*topoheight),
@@ -160,5 +160,5 @@ pub fn storage_delete<P: ContractProvider>(_: FnInstance, mut params: FnParams, 
         .flatten()
         .unwrap_or_default();
 
-    Ok(SysCallResult::Return(value))
+    Ok(SysCallResult::Return(value.into()))
 }
