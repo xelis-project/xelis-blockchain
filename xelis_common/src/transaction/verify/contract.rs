@@ -12,10 +12,19 @@ use xelis_vm::{Reference, ValueCell, VM};
 
 use crate::{
     config::{TX_GAS_BURN_PERCENT, XELIS_ASSET},
-    contract::{ContractOutput, ContractProvider, ContractProviderWrapper, ModuleMetadata},
+    contract::{
+        ChainState,
+        ContractOutput,
+        ContractProvider,
+        ContractProviderWrapper,
+        ModuleMetadata
+    },
     crypto::{elgamal::Ciphertext, Hash},
-    tokio::block_in_place_safe,
-    transaction::{ContractDeposit, Transaction}
+    transaction::{
+        verify::ContractEnvironment,
+        ContractDeposit,
+        Transaction
+    }
 };
 
 use super::{BlockchainApplyState, BlockchainVerificationState, DecompressedDepositCt, VerificationError};
@@ -38,6 +47,84 @@ impl Transaction {
             .map_err(VerificationError::State)
     }
 
+    // Create the VM and run the required contrac twith all needed functions
+    async fn run_virtual_machine<'a, P: ContractProvider>(
+        transaction: &Arc<Transaction>,
+        contract_environment: ContractEnvironment<'a, P>,
+        chain_state: &mut ChainState<'a>,
+        invoke: InvokeContract,
+        contract: &'a Hash,
+        tx_hash: &'a Hash,
+        parameters: impl DoubleEndedIterator<Item = ValueCell>,
+        max_gas: u64,
+    ) -> Result<(u64, Option<u64>), anyhow::Error> {
+        let mut vm = VM::new(&contract_environment.environment);
+
+        // Insert the module to load
+        // TODO: module metadata should be passed to the VM
+        vm.append_module(contract_environment.module, Reference::Borrowed(&ModuleMetadata))?;
+
+        // Invoke the needed chunk
+        // This is the first chunk to be called
+        match invoke {
+            InvokeContract::Entry(entry) => {
+                vm.invoke_entry_chunk(entry)
+                    .context("invoke entry chunk")?;
+            },
+            InvokeContract::Hook(hook) => {
+                if !vm.invoke_hook_id(hook).context("invoke hook")? {
+                    warn!("Invoke contract {} from TX {} hook {} not found", contract, tx_hash, hook);
+                    return Ok((0, None))
+                }
+            }
+        }
+
+        // We need to push it in reverse order because the VM will pop them in reverse order
+        for constant in parameters.rev() {
+            trace!("Pushing constant: {}", constant);
+            vm.push_stack(constant)
+                .context("push param")?;
+        }
+
+        let context = vm.context_mut();
+
+        // Set the gas limit for the VM
+        context.set_gas_limit(max_gas);
+
+        // Configure the context
+        // Note that the VM already include the environment in Context
+        context.insert_ref(transaction);
+        // insert the chain state separetly to avoid to give the S type
+        context.insert_mut(chain_state);
+        // insert the storage through our wrapper
+        // so it can be easily mocked
+        context.insert(ContractProviderWrapper(contract_environment.provider));
+
+        // We need to handle the result of the VM
+        let res = vm.run().await;
+
+        // To be sure that we don't have any overflow
+        // We take the minimum between the gas used and the max gas
+        let gas_usage = vm.context()
+            .current_gas_usage()
+            .min(max_gas);
+
+        let exit_code = match res {
+            Ok(res) => {
+                debug!("Invoke contract {} from TX {} result: {:#}", contract, tx_hash, res);
+                // If the result return 0 as exit code, it means that everything went well
+                let exit_code = res.as_u64().ok();
+                exit_code
+            },
+            Err(err) => {
+                debug!("Invoke contract {} from TX {} error: {:#}", contract, tx_hash, err);
+                None
+            }
+        };
+
+        Ok((gas_usage, exit_code))
+    }
+
     // Invoke a contract from a transaction
     // Note that the contract must be already loaded by calling
     // `is_contract_available`
@@ -55,77 +142,10 @@ impl Transaction {
         debug!("Invoking contract {} from TX {}: {:?}", contract, tx_hash, invoke);
         let (contract_environment, mut chain_state) = state.get_contract_environment_for(contract, deposits, tx_hash).await
             .map_err(VerificationError::State)?;
-    
+
         // Total used gas by the VM
-        let (used_gas, exit_code) = block_in_place_safe::<_, Result<_, anyhow::Error>>(|| {
-            // Create the VM
-            let mut vm = VM::new(contract_environment.environment);
+        let (used_gas, exit_code) = Self::run_virtual_machine(self, contract_environment, &mut chain_state, invoke, contract, tx_hash, parameters, max_gas).await?;
 
-            // Insert the module to load
-            // TODO: module metadata should be passed to the VM
-            vm.append_module(contract_environment.module, Reference::Borrowed(&ModuleMetadata))?;
-
-            // Invoke the needed chunk
-            // This is the first chunk to be called
-            match invoke {
-                InvokeContract::Entry(entry) => {
-                    vm.invoke_entry_chunk(entry)
-                        .context("invoke entry chunk")?;
-                },
-                InvokeContract::Hook(hook) => {
-                    if !vm.invoke_hook_id(hook).context("invoke hook")? {
-                        warn!("Invoke contract {} from TX {} hook {} not found", contract, tx_hash, hook);
-                        return Ok((0, None))
-                    }
-                }
-            }
- 
-            // We need to push it in reverse order because the VM will pop them in reverse order
-            for constant in parameters.rev() {
-                trace!("Pushing constant: {}", constant);
-                vm.push_stack(constant)
-                    .context("push param")?;
-            }
-
-            let context = vm.context_mut();
-    
-            // Set the gas limit for the VM
-            context.set_gas_limit(max_gas);
-    
-            // Configure the context
-            // Note that the VM already include the environment in Context
-            context.insert_ref(self);
-            // insert the chain state separetly to avoid to give the S type
-            context.insert_mut(&mut chain_state);
-            // insert the storage through our wrapper
-            // so it can be easily mocked
-            context.insert(ContractProviderWrapper(contract_environment.provider));
-    
-            // We need to handle the result of the VM
-            let res = vm.run();
-    
-            // To be sure that we don't have any overflow
-            // We take the minimum between the gas used and the max gas
-            let gas_usage = vm.context()
-                .current_gas_usage()
-                .min(max_gas);
-    
-            let exit_code = match res {
-                Ok(res) => {
-                    debug!("Invoke contract {} from TX {} result: {:#}", contract, tx_hash, res);
-                    // If the result return 0 as exit code, it means that everything went well
-                    let exit_code = res.as_u64().ok();
-                    exit_code
-                },
-                Err(err) => {
-                    debug!("Invoke contract {} from TX {} error: {:#}", contract, tx_hash, err);
-                    None
-                }
-            };
-    
-            Ok((gas_usage, exit_code))
-        })?;
-    
         let is_success = exit_code == Some(0);
         let mut outputs = chain_state.outputs;
         // If the contract execution was successful, we need to merge the cache

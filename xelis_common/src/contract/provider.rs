@@ -9,7 +9,7 @@ use crate::{
 
 use super::ContractStorage;
 
-pub trait ContractProvider: ContractStorage + 'static {
+pub trait ContractProvider: ContractStorage + Send + Sync + 'static {
     // Returns the balance of the contract
     fn get_contract_balance_for_asset(&self, contract: &Hash, asset: &Hash, topoheight: TopoHeight) -> Result<Option<(TopoHeight, u64)>, anyhow::Error>;
 

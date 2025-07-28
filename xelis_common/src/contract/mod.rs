@@ -19,6 +19,7 @@ use xelis_vm::{
     FnInstance,
     FnParams,
     FnReturnType,
+    FunctionHandler,
     OpaqueWrapper,
     Primitive,
     SysCallResult,
@@ -123,10 +124,10 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
     env.register_hook("constructor", vec![], Some(Type::U64));
 
     env.get_mut_function("println", None)
-        .set_on_call(println_fn);
+        .set_on_call(FunctionHandler::Sync(println_fn));
 
     env.get_mut_function("debug", None)
-        .set_on_call(debug_fn);
+        .set_on_call(FunctionHandler::Sync(debug_fn));
 
     // Opaque type but we provide getters
     // All opaque types not allowed as entry input
@@ -156,7 +157,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             "current",
             tx_type.clone(),
             vec![],
-            transaction,
+            FunctionHandler::Sync(transaction),
             5,
             Some(tx_type.clone())
         );
@@ -164,7 +165,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             "nonce",
             Some(tx_type.clone()),
             vec![],
-            transaction_nonce,
+            FunctionHandler::Sync(transaction_nonce),
             5,
             Some(Type::U64)
         );
@@ -172,7 +173,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             "hash",
             Some(tx_type.clone()),
             vec![],
-            transaction_hash,
+            FunctionHandler::Sync(transaction_hash),
             5,
             Some(hash_type.clone())
         );
@@ -180,7 +181,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             "source",
             Some(tx_type.clone()),
             vec![],
-            transaction_source,
+            FunctionHandler::Sync(transaction_source),
             5,
             Some(address_type.clone())
         );
@@ -188,7 +189,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             "fee",
             Some(tx_type.clone()),
             vec![],
-            transaction_fee,
+            FunctionHandler::Sync(transaction_fee),
             5,
             Some(Type::U64)
         );
@@ -196,7 +197,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             "signature",
             Some(tx_type.clone()),
             vec![],
-            transaction_signature,
+            FunctionHandler::Sync(transaction_signature),
             5,
             Some(signature_type.clone())
         );
@@ -209,7 +210,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             "current",
             block_type.clone(),
             vec![],
-            block_current,
+            FunctionHandler::Sync(block_current),
             5,
             Some(block_type.clone())
         );
@@ -217,7 +218,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             "nonce",
             Some(block_type.clone()),
             vec![],
-            block_nonce,
+            FunctionHandler::Sync(block_nonce),
             5,
             Some(Type::U64)
         );
@@ -225,7 +226,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             "timestamp",
             Some(block_type.clone()),
             vec![],
-            block_timestamp,
+            FunctionHandler::Sync(block_timestamp),
             5,
             Some(Type::U64)
         );
@@ -233,7 +234,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             "height",
             Some(block_type.clone()),
             vec![],
-            block_height,
+            FunctionHandler::Sync(block_height),
             5,
             Some(Type::U64)
         );
@@ -241,7 +242,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             "extra_nonce",
             Some(block_type.clone()),
             vec![],
-            block_extra_nonce,
+            FunctionHandler::Sync(block_extra_nonce),
             5,
             Some(Type::Array(Box::new(Type::U8)))
         );
@@ -249,7 +250,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             "hash",
             Some(block_type.clone()),
             vec![],
-            block_hash,
+            FunctionHandler::Sync(block_hash),
             5,
             Some(hash_type.clone())
         );
@@ -257,7 +258,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             "miner",
             Some(block_type.clone()),
             vec![],
-            block_miner,
+            FunctionHandler::Sync(block_miner),
             5,
             Some(address_type.clone())
         );
@@ -265,7 +266,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             "version",
             Some(block_type.clone()),
             vec![],
-            block_version,
+            FunctionHandler::Sync(block_version),
             5,
             Some(Type::U8)
         );
@@ -273,7 +274,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             "tips",
             Some(block_type.clone()),
             vec![],
-            block_tips,
+            FunctionHandler::Sync(block_tips),
             5,
             Some(Type::Array(Box::new(hash_type.clone())))
         );
@@ -281,7 +282,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             "transactions_hashes",
             Some(block_type.clone()),
             vec![],
-            block_transactions_hashes,
+            FunctionHandler::Sync(block_transactions_hashes),
             50,
             Some(Type::Array(Box::new(hash_type.clone())))
         );
@@ -289,7 +290,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             "transactions",
             Some(block_type.clone()),
             vec![],
-            block_transactions,
+            FunctionHandler::Sync(block_transactions),
             250,
             Some(Type::Array(Box::new(tx_type.clone())))
         );
@@ -297,7 +298,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             "transactions_count",
             Some(block_type.clone()),
             vec![],
-            block_transactions_count,
+            FunctionHandler::Sync(block_transactions_count),
             1,
             Some(Type::U32)
         );
@@ -310,7 +311,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             "new",
             storage_type.clone(),
             vec![],
-            storage,
+            FunctionHandler::Sync(storage),
             5,
             Some(storage_type.clone())
         );
@@ -318,7 +319,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             "load",
             Some(storage_type.clone()),
             vec![("key", Type::Any)],
-            storage_load::<P>,
+            FunctionHandler::Sync(storage_load::<P>),
             50,
             Some(Type::Optional(Box::new(Type::Any)))
         );
@@ -326,7 +327,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             "has",
             Some(storage_type.clone()),
             vec![("key", Type::Any)],
-            storage_has::<P>,
+            FunctionHandler::Sync(storage_has::<P>),
             25,
             Some(Type::Bool)
         );
@@ -334,7 +335,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             "store",
             Some(storage_type.clone()),
             vec![("key", Type::Any), ("value", Type::Any)],
-            storage_store::<P>,
+            FunctionHandler::Sync(storage_store::<P>),
             50,
             Some(Type::Optional(Box::new(Type::Any)))
         );
@@ -342,7 +343,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             "delete",
             Some(storage_type.clone()),
             vec![("key", Type::Any)],
-            storage_delete::<P>,
+            FunctionHandler::Sync(storage_delete::<P>),
             50,
             Some(Type::Optional(Box::new(Type::Any)))
         );
@@ -355,7 +356,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             "new",
             read_only_storage_type.clone(),
             vec![("contract", hash_type.clone())],
-            read_only_storage::<P>,
+            FunctionHandler::Sync(read_only_storage::<P>),
             15,
             Some(Type::Optional(Box::new(read_only_storage_type.clone())))
         );
@@ -363,7 +364,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             "load",
             Some(read_only_storage_type.clone()),
             vec![("key", Type::Any)],
-            read_only_storage_load::<P>,
+            FunctionHandler::Sync(read_only_storage_load::<P>),
             50,
             Some(Type::Optional(Box::new(Type::Any)))
         );
@@ -371,7 +372,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             "has",
             Some(read_only_storage_type.clone()),
             vec![("key", Type::Any)],
-            read_only_storage_has::<P>,
+            FunctionHandler::Sync(read_only_storage_has::<P>),
             25,
             Some(Type::Bool)
         );
@@ -384,7 +385,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             "new",
             memory_storage_type.clone(),
             vec![],
-            memory_storage,
+            FunctionHandler::Sync(memory_storage),
             5,
             Some(memory_storage_type.clone())
         );
@@ -392,7 +393,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             "load",
             Some(memory_storage_type.clone()),
             vec![("key", Type::Any)],
-            memory_storage_load::<P>,
+            FunctionHandler::Sync(memory_storage_load::<P>),
             50,
             Some(Type::Optional(Box::new(Type::Any)))
         );
@@ -400,7 +401,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             "has",
             Some(memory_storage_type.clone()),
             vec![("key", Type::Any)],
-            memory_storage_has::<P>,
+            FunctionHandler::Sync(memory_storage_has::<P>),
             25,
             Some(Type::Bool)
         );
@@ -408,7 +409,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             "store",
             Some(memory_storage_type.clone()),
             vec![("key", Type::Any), ("value", Type::Any)],
-            memory_storage_store::<P>,
+            FunctionHandler::Sync(memory_storage_store::<P>),
             50,
             Some(Type::Optional(Box::new(Type::Any)))
         );
@@ -416,7 +417,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             "delete",
             Some(memory_storage_type.clone()),
             vec![("key", Type::Any)],
-            memory_storage_delete::<P>,
+            FunctionHandler::Sync(memory_storage_delete::<P>),
             50,
             Some(Type::Optional(Box::new(Type::Any)))
         );
@@ -428,7 +429,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             "is_mainnet",
             Some(address_type.clone()),
             vec![],
-            address_is_mainnet,
+            FunctionHandler::Sync(address_is_mainnet),
             5,
             Some(Type::Bool)
         );
@@ -436,7 +437,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             "is_normal",
             Some(address_type.clone()),
             vec![],
-            address_is_normal,
+            FunctionHandler::Sync(address_is_normal),
             5,
             Some(Type::Bool)
         );
@@ -444,7 +445,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             "to_public_key_bytes",
             Some(address_type.clone()),
             vec![],
-            address_public_key_bytes,
+            FunctionHandler::Sync(address_public_key_bytes),
             10,
             Some(Type::Bytes)
         );
@@ -452,7 +453,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             "from_string",
             address_type.clone(),
             vec![("address", Type::String)],
-            address_from_string,
+            FunctionHandler::Sync(address_from_string),
             75,
             Some(address_type.clone())
         );
@@ -464,7 +465,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             "to_bytes",
             Some(hash_type.clone()),
             vec![],
-            hash_to_bytes_fn,
+            FunctionHandler::Sync(hash_to_bytes_fn),
             5,
             Some(Type::Bytes)
         );
@@ -472,7 +473,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             "to_array",
             Some(hash_type.clone()),
             vec![],
-            hash_to_array_fn,
+            FunctionHandler::Sync(hash_to_array_fn),
             5,
             Some(Type::Array(Box::new(Type::U8)))
         );
@@ -480,7 +481,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             "to_u256",
             Some(hash_type.clone()),
             vec![],
-            hash_to_u256_fn,
+            FunctionHandler::Sync(hash_to_u256_fn),
             5,
             Some(Type::U256)
         );
@@ -488,7 +489,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             "to_hex",
             Some(hash_type.clone()),
             vec![],
-            hash_to_hex_fn,
+            FunctionHandler::Sync(hash_to_hex_fn),
             20,
             Some(Type::String)
         );
@@ -496,7 +497,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             "from_bytes",
             hash_type.clone(),
             vec![("bytes", Type::Bytes)],
-            hash_from_bytes_fn,
+            FunctionHandler::Sync(hash_from_bytes_fn),
             75,
             Some(hash_type.clone())
         );
@@ -504,7 +505,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             "from_array",
             hash_type.clone(),
             vec![("bytes", Type::Array(Box::new(Type::U8)))],
-            hash_from_array_fn,
+            FunctionHandler::Sync(hash_from_array_fn),
             75,
             Some(hash_type.clone())
         );
@@ -512,7 +513,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             "from_u256",
             hash_type.clone(),
             vec![("value", Type::U256)],
-            hash_from_u256_fn,
+            FunctionHandler::Sync(hash_from_u256_fn),
             75,
             Some(hash_type.clone())
         );
@@ -520,7 +521,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             "from_hex",
             hash_type.clone(),
             vec![("hex", Type::String)],
-            hash_from_hex_fn,
+            FunctionHandler::Sync(hash_from_hex_fn),
             75,
             Some(hash_type.clone())
         );
@@ -528,7 +529,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             "blake3",
             hash_type.clone(),
             vec![("input", Type::Array(Box::new(Type::U8)))],
-            blake3_fn,
+            FunctionHandler::Sync(blake3_fn),
             3000,
             Some(hash_type.clone())
         );
@@ -536,7 +537,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             "sha256",
             hash_type.clone(),
             vec![("input", Type::Array(Box::new(Type::U8)))],
-            sha256_fn,
+            FunctionHandler::Sync(sha256_fn),
             7500,
             Some(hash_type.clone())
         );
@@ -544,7 +545,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             "zero",
             hash_type.clone(),
             vec![],
-            hash_zero_fn,
+            FunctionHandler::Sync(hash_zero_fn),
             1,
             Some(hash_type.clone())
         );
@@ -552,7 +553,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             "max",
             hash_type.clone(),
             vec![],
-            hash_max_fn,
+            FunctionHandler::Sync(hash_max_fn),
             1,
             Some(hash_type.clone())
         );
@@ -565,7 +566,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             "new",
             random_type.clone(),
             vec![],
-            random_fn,
+            FunctionHandler::Sync(random_fn),
             5,
             Some(random_type.clone())
         );
@@ -573,7 +574,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             "next_u8",
             Some(random_type.clone()),
             vec![],
-            random_u8,
+            FunctionHandler::Sync(random_u8),
             5,
             Some(Type::U8)
         );
@@ -581,7 +582,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             "next_u16",
             Some(random_type.clone()),
             vec![],
-            random_u16,
+            FunctionHandler::Sync(random_u16),
             5,
             Some(Type::U16)
         );
@@ -589,7 +590,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             "next_u32",
             Some(random_type.clone()),
             vec![],
-            random_u32,
+            FunctionHandler::Sync(random_u32),
             5,
             Some(Type::U32)
         );
@@ -597,7 +598,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             "next_u64",
             Some(random_type.clone()),
             vec![],
-            random_u64,
+            FunctionHandler::Sync(random_u64),
             5,
             Some(Type::U64)
         );
@@ -605,7 +606,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             "next_u128",
             Some(random_type.clone()),
             vec![],
-            random_u128,
+            FunctionHandler::Sync(random_u128),
             5,
             Some(Type::U128)
         );
@@ -613,7 +614,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             "next_u256",
             Some(random_type.clone()),
             vec![],
-            random_u256,
+            FunctionHandler::Sync(random_u256),
             5,
             Some(Type::U256)
         );
@@ -621,7 +622,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             "next_bool",
             Some(random_type.clone()),
             vec![],
-            random_bool,
+            FunctionHandler::Sync(random_bool),
             5,
             Some(Type::Bool)
         );
@@ -633,7 +634,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             "get_by_id",
             asset_type.clone(),
             vec![("id", Type::U64)],
-            asset_get_by_id::<P>,
+            FunctionHandler::Sync(asset_get_by_id::<P>),
             1000,
             Some(Type::Optional(Box::new(asset_type.clone())))
         );
@@ -647,7 +648,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
                 ("decimals", Type::U8),
                 ("max_supply", Type::Optional(Box::new(Type::U64))),
             ],
-            asset_create::<P>,
+            FunctionHandler::Sync(asset_create::<P>),
             2500,
             Some(Type::Optional(Box::new(asset_type.clone())))
         );
@@ -655,7 +656,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             "get_by_hash",
             asset_type.clone(),
             vec![("hash", hash_type.clone())],
-            asset_get_by_hash::<P>,
+            FunctionHandler::Sync(asset_get_by_hash::<P>),
             500,
             Some(Type::Optional(Box::new(asset_type.clone())))
         );
@@ -663,7 +664,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             "get_max_supply",
             Some(asset_type.clone()),
             vec![],
-            asset_get_max_supply::<P>,
+            FunctionHandler::Sync(asset_get_max_supply::<P>),
             5,
             Some(Type::Optional(Box::new(Type::U64)))
         );
@@ -671,7 +672,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             "get_supply",
             Some(asset_type.clone()),
             vec![],
-            asset_get_supply::<P>,
+            FunctionHandler::Sync(asset_get_supply::<P>),
             15,
             Some(Type::U64)
         );
@@ -679,7 +680,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             "get_name",
             Some(asset_type.clone()),
             vec![],
-            asset_get_name,
+            FunctionHandler::Sync(asset_get_name),
             5,
             Some(Type::String)
         );
@@ -687,7 +688,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             "get_ticker",
             Some(asset_type.clone()),
             vec![],
-            asset_get_ticker,
+            FunctionHandler::Sync(asset_get_ticker),
             5,
             Some(Type::String)
         );
@@ -695,7 +696,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             "get_hash",
             Some(asset_type.clone()),
             vec![],
-            asset_get_hash,
+            FunctionHandler::Sync(asset_get_hash),
             5,
             Some(hash_type.clone())
         );
@@ -703,7 +704,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             "mint",
             Some(asset_type.clone()),
             vec![("amount", Type::U64)],
-            asset_mint::<P>,
+            FunctionHandler::Sync(asset_mint::<P>),
             500,
             Some(Type::Bool)
         );
@@ -711,7 +712,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             "is_read_only",
             Some(asset_type.clone()),
             vec![],
-            asset_is_read_only,
+            FunctionHandler::Sync(asset_is_read_only),
             5,
             Some(Type::Bool)
         );
@@ -719,7 +720,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             "get_contract_hash",
             Some(asset_type.clone()),
             vec![],
-            asset_get_contract_hash::<P>,
+            FunctionHandler::Sync(asset_get_contract_hash::<P>),
             5,
             Some(hash_type.clone())
         );
@@ -727,7 +728,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             "get_id",
             Some(asset_type.clone()),
             vec![],
-            asset_get_contract_id::<P>,
+            FunctionHandler::Sync(asset_get_contract_id::<P>),
             5,
             Some(Type::Optional(Box::new(Type::U64)))
         );
@@ -735,7 +736,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             "transfer_ownership",
             Some(asset_type.clone()),
             vec![("contract", hash_type.clone())],
-            asset_transfer_ownership::<P>,
+            FunctionHandler::Sync(asset_transfer_ownership::<P>),
             250,
             Some(Type::Bool)
         );
@@ -748,7 +749,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             "get_contract_hash",
             None,
             vec![],
-            get_contract_hash,
+            FunctionHandler::Sync(get_contract_hash),
             5,
             Some(hash_type.clone())
         );
@@ -758,7 +759,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             "get_deposit_for_asset",
             None,
             vec![("asset", hash_type.clone())],
-            get_deposit_for_asset,
+            FunctionHandler::Sync(get_deposit_for_asset),
             5,
             Some(Type::Optional(Box::new(Type::U64)))
         );
@@ -768,7 +769,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             "get_balance_for_asset",
             None,
             vec![("asset", hash_type.clone())],
-            get_balance_for_asset::<P>,
+            FunctionHandler::Sync(get_balance_for_asset::<P>),
             25,
             Some(Type::U64)
         );
@@ -781,7 +782,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
                 ("amount", Type::U64),
                 ("asset", hash_type.clone()),
             ],
-            transfer::<P>,
+            FunctionHandler::Sync(transfer::<P>),
             500,
             Some(Type::Bool)
         );
@@ -793,7 +794,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
                 ("amount", Type::U64),
                 ("asset", hash_type.clone()),
             ],
-            burn::<P>,
+            FunctionHandler::Sync(burn::<P>),
             500,
             Some(Type::Bool)
         );
@@ -808,7 +809,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
                 ("data", Type::Array(Box::new(Type::U8))),
                 ("address", address_type.clone()),
             ],
-            signature_verify_fn,
+            FunctionHandler::Sync(signature_verify_fn),
             500,
             Some(Type::Bool)
         );
@@ -816,7 +817,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             "from_bytes",
             signature_type.clone(),
             vec![("bytes", Type::Array(Box::new(Type::U8)))],
-            signature_from_bytes_fn,
+            FunctionHandler::Sync(signature_from_bytes_fn),
             75,
             Some(signature_type.clone())
         );
@@ -829,7 +830,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             ("id", Type::U64),
             ("data", Type::Any)
         ],
-        fire_event_fn,
+        FunctionHandler::Sync(fire_event_fn),
         250,
         None
     );
@@ -842,7 +843,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             vec![
                 ("value", Type::U64)
             ],
-            ciphertext_add_plaintext,
+            FunctionHandler::Sync(ciphertext_add_plaintext),
             500,
             None
         );
@@ -852,7 +853,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             vec![
                 ("value", Type::U64)
             ],
-            ciphertext_sub_plaintext,
+            FunctionHandler::Sync(ciphertext_sub_plaintext),
             500,
             None
         );
@@ -862,7 +863,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             vec![
                 ("value", Type::U64)
             ],
-            ciphertext_mul_plaintext,
+            FunctionHandler::Sync(ciphertext_mul_plaintext),
             1000,
             None
         );
@@ -872,7 +873,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             vec![
                 ("value", Type::U64)
             ],
-            ciphertext_div_plaintext,
+            FunctionHandler::Sync(ciphertext_div_plaintext),
             5000,
             None
         );
@@ -883,7 +884,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
                 ("address", address_type.clone()),
                 ("amount", Type::U64)
             ],
-            ciphertext_new,
+            FunctionHandler::Sync(ciphertext_new),
             1000,
             Some(ciphertext_type.clone())
         );
@@ -898,7 +899,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
                 ("address", address_type.clone()),
                 ("asset", hash_type.clone())
             ],
-            get_account_balance_of::<P>,
+            FunctionHandler::Sync(get_account_balance_of::<P>),
             1000,
             Some(Type::Optional(Box::new(Type::Tuples(vec![Type::U64, ciphertext_type.clone()]))))
         );
@@ -907,7 +908,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             "get_gas_usage",
             None,
             vec![],
-            get_gas_usage,
+            FunctionHandler::Sync(get_gas_usage),
             1,
             Some(Type::U64)
         );
