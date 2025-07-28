@@ -2303,7 +2303,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "07033963ba89ebaf1584d767badaa2e8fcec21aedea6b8c0346d487d49c28667"
 dependencies = [
  "cfg-if",
- "windows-targets 0.53.2",
+ "windows-targets 0.53.3",
 ]
 
 [[package]]
@@ -2358,9 +2358,9 @@ checksum = "241eaef5fd12c88705a01fc1066c48c4b36e0dd4377dcdc7ec3942cea7a69956"
 
 [[package]]
 name = "litrs"
-version = "0.4.1"
+version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b4ce301924b7887e9d637144fdade93f9dfff9b60981d4ac161db09720d39aa5"
+checksum = "f5e54036fe321fd421e10d732f155734c4e4afd610dd556d9a82833ab3ee0bed"
 
 [[package]]
 name = "local-channel"
@@ -2666,7 +2666,7 @@ checksum = "bc838d2a56b5b1a6c25f55575dfc605fabb63bb2365f6c2353ef9159aa69e4a5"
 dependencies = [
  "cfg-if",
  "libc",
- "redox_syscall 0.5.15",
+ "redox_syscall 0.5.17",
  "smallvec",
  "windows-targets 0.52.6",
 ]
@@ -3064,9 +3064,9 @@ dependencies = [
 
 [[package]]
 name = "redox_syscall"
-version = "0.5.15"
+version = "0.5.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7e8af0dde094006011e6a740d4879319439489813bd0bcdc7d821beaeeff48ec"
+checksum = "5407465600fb0548f1442edf71dd20683c6ed326200ace4b1ef0763521bb3b77"
 dependencies = [
  "bitflags 2.9.1",
 ]
@@ -3192,9 +3192,9 @@ dependencies = [
 
 [[package]]
 name = "rustc-demangle"
-version = "0.1.25"
+version = "0.1.26"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "989e6739f80c4ad5b13e0fd7fe89531180375b18520cc8c82080e4dc4035b84f"
+checksum = "56f7d92ca342cea22a06f2121d944b4fd82af56988c270852495420f961d4ace"
 
 [[package]]
 name = "rustc-hash"
@@ -3762,9 +3762,9 @@ dependencies = [
 
 [[package]]
 name = "tokio"
-version = "1.46.1"
+version = "1.47.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0cc3a2344dafbe23a245241fe8b09735b521110d30fcefbbd5feb1797ca35d17"
+checksum = "43864ed400b6043a4757a25c7a64a8efde741aed79a056a2fb348a406701bb35"
 dependencies = [
  "backtrace",
  "bytes",
@@ -3775,10 +3775,10 @@ dependencies = [
  "pin-project-lite",
  "signal-hook-registry",
  "slab",
- "socket2 0.5.10",
+ "socket2 0.6.0",
  "tokio-macros",
  "tracing",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -4475,7 +4475,7 @@ version = "0.60.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f2f500e4d28234f72040990ec9d39e3a6b950f9f22d3dba18416c35882612bcb"
 dependencies = [
- "windows-targets 0.53.2",
+ "windows-targets 0.53.3",
 ]
 
 [[package]]
@@ -4511,10 +4511,11 @@ dependencies = [
 
 [[package]]
 name = "windows-targets"
-version = "0.53.2"
+version = "0.53.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c66f69fcc9ce11da9966ddb31a40968cad001c5bedeb5c2b82ede4253ab48aef"
+checksum = "d5fe6031c4041849d7c496a8ded650796e7b6ecc19df1a431c1a363342e5dc91"
 dependencies = [
+ "windows-link",
  "windows_aarch64_gnullvm 0.53.0",
  "windows_aarch64_msvc 0.53.0",
  "windows_i686_gnu 0.53.0",
@@ -4721,7 +4722,7 @@ dependencies = [
 [[package]]
 name = "xelis-ast"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#b54e1540e858f27dc4a1ff99b2f779ea0220d74d"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#deb1d7ae9c25a635c780f0c4592ea0728ef725d1"
 dependencies = [
  "indexmap 2.10.0",
  "xelis-types",
@@ -4730,7 +4731,7 @@ dependencies = [
 [[package]]
 name = "xelis-builder"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#b54e1540e858f27dc4a1ff99b2f779ea0220d74d"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#deb1d7ae9c25a635c780f0c4592ea0728ef725d1"
 dependencies = [
  "anyhow",
  "log",
@@ -4744,7 +4745,7 @@ dependencies = [
 [[package]]
 name = "xelis-bytecode"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#b54e1540e858f27dc4a1ff99b2f779ea0220d74d"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#deb1d7ae9c25a635c780f0c4592ea0728ef725d1"
 dependencies = [
  "indexmap 2.10.0",
  "serde",
@@ -4754,10 +4755,11 @@ dependencies = [
 [[package]]
 name = "xelis-environment"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#b54e1540e858f27dc4a1ff99b2f779ea0220d74d"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#deb1d7ae9c25a635c780f0c4592ea0728ef725d1"
 dependencies = [
  "anyhow",
  "better_any",
+ "futures",
  "hashbrown 0.15.4",
  "indexmap 2.10.0",
  "thiserror 2.0.12",
@@ -4781,7 +4783,7 @@ dependencies = [
 [[package]]
 name = "xelis-types"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#b54e1540e858f27dc4a1ff99b2f779ea0220d74d"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#deb1d7ae9c25a635c780f0c4592ea0728ef725d1"
 dependencies = [
  "anyhow",
  "indexmap 2.10.0",
@@ -4795,8 +4797,9 @@ dependencies = [
 [[package]]
 name = "xelis-vm"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#b54e1540e858f27dc4a1ff99b2f779ea0220d74d"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#deb1d7ae9c25a635c780f0c4592ea0728ef725d1"
 dependencies = [
+ "futures",
  "indexmap 2.10.0",
  "log",
  "thiserror 2.0.12",
