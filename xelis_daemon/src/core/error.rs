@@ -2,6 +2,7 @@ use crate::p2p::error::P2pError;
 use std::sync::PoisonError;
 use strum::{EnumDiscriminants, IntoDiscriminant};
 use thiserror::Error;
+use tokio::task::JoinError;
 use xelis_common::{
     crypto::{
         bech32::Bech32Error,
@@ -150,6 +151,8 @@ pub enum DiskContext {
 
 #[derive(Error, Debug, EnumDiscriminants)]
 pub enum BlockchainError {
+    #[error(transparent)]
+    JoinError(#[from] JoinError),
     #[error("Invalid configuration provided")]
     InvalidConfig,
     #[error("Invalid data on disk: corrupted")]

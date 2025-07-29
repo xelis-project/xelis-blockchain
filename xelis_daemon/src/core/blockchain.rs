@@ -46,6 +46,7 @@ use xelis_common::{
         Hash,
         Hashable,
         PublicKey,
+        pow_hash,
         HASH_SIZE
     },
     difficulty::{
@@ -70,6 +71,7 @@ use xelis_common::{
     tokio::{
         spawn_task,
         is_multi_threads_supported,
+        task::spawn_blocking,
         net::lookup_host,
         sync::{Mutex, RwLock, Semaphore}
     },
@@ -670,6 +672,7 @@ impl<S: Storage> Blockchain<S> {
             let (difficulty, _) = self.get_difficulty_at_tips(&*storage, block.get_tips().iter()).await?;
             (block, difficulty)
         };
+
         let algorithm = get_pow_algorithm_for_version(header.get_version());
         let mut hash = header.get_pow_hash(algorithm)?;
         let mut current_height = self.get_height();
@@ -2122,7 +2125,10 @@ impl<S: Storage> Blockchain<S> {
         } else {
             let start = Instant::now();
             let algorithm = get_pow_algorithm_for_version(version);
-            let hash = block.get_pow_hash(algorithm)?;
+            let pow_challenge = block.get_pow_challenge();
+
+            // Spawn a thread for the CPU bound PoW computation
+            let hash = spawn_blocking(move || pow_hash(&pow_challenge, algorithm)).await??;
 
             histogram!("xelis_block_pow_ms").record(start.elapsed().as_millis() as f64);
             hash
