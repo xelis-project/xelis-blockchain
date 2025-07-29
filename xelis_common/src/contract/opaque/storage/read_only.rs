@@ -20,20 +20,20 @@ impl JSONHelper for OpaqueReadOnlyStorage {}
 
 impl Serializable for OpaqueReadOnlyStorage {}
 
-pub fn read_only_storage<P: ContractProvider>(_: FnInstance, mut parameters: FnParams, context: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub async fn read_only_storage<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut parameters: FnParams, context: &mut Context<'ty, 'r>) -> FnReturnType<ModuleMetadata> {
     let (storage, state) = from_context::<P>(context)?;
     let hash: Hash = parameters.remove(0)
         .into_owned()
         .into_opaque_type()?;
 
-    if !state.global_caches.contains_key(&hash) && !storage.has_contract(&hash, state.topoheight)? {
+    if !state.global_caches.contains_key(&hash) && !storage.has_contract(&hash, state.topoheight).await? {
         return Ok(SysCallResult::Return(Primitive::Null.into()))
     }
 
     Ok(SysCallResult::Return(Primitive::Opaque(OpaqueWrapper::new(OpaqueReadOnlyStorage(hash))).into()))
 }
 
-pub fn read_only_storage_load<P: ContractProvider>(zelf: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub async fn read_only_storage_load<'a, 'ty, 'r, P: ContractProvider>(zelf: FnInstance<'a>, mut params: FnParams, context: &mut Context<'ty, 'r>) -> FnReturnType<ModuleMetadata> {
     let (storage, state) = from_context::<P>(context)?;
     let zelf: &OpaqueReadOnlyStorage = zelf?
         .as_opaque_type()?;
@@ -45,7 +45,7 @@ pub fn read_only_storage_load<P: ContractProvider>(zelf: FnInstance, mut params:
     let value = match state.global_caches.get(&zelf.0)
         .and_then(|cache| cache.storage.get(&key).map(|(_, v)| v)) {
             Some(v) => v.clone(),
-            None => storage.load_data(&zelf.0, &key, state.topoheight)?
+            None => storage.load_data(&zelf.0, &key, state.topoheight).await?
                 .map(|(_, v)| v)
                 .flatten()
     };
@@ -53,7 +53,7 @@ pub fn read_only_storage_load<P: ContractProvider>(zelf: FnInstance, mut params:
     Ok(SysCallResult::Return(value.unwrap_or_default().into()))
 }
 
-pub fn read_only_storage_has<P: ContractProvider>(zelf: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub async fn read_only_storage_has<'a, 'ty, 'r, P: ContractProvider>(zelf: FnInstance<'a>, mut params: FnParams, context: &mut Context<'ty, 'r>) -> FnReturnType<ModuleMetadata> {
     let (storage, state) = from_context::<P>(context)?;
     let zelf: &OpaqueReadOnlyStorage = zelf?
         .as_opaque_type()?;
@@ -65,7 +65,7 @@ pub fn read_only_storage_has<P: ContractProvider>(zelf: FnInstance, mut params: 
     let contains = match state.global_caches.get(&zelf.0)
         .and_then(|cache| cache.storage.get(&key).map(|(_, v)| v)) {
             Some(v) => v.is_some(),
-            None => storage.has_data(&zelf.0, &key, state.topoheight)?
+            None => storage.has_data(&zelf.0, &key, state.topoheight).await?
     };
 
     Ok(SysCallResult::Return(Primitive::Boolean(contains).into()))

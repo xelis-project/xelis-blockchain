@@ -1,5 +1,6 @@
 mod read_only;
 
+use async_trait::async_trait;
 use xelis_vm::{
     traits::{JSONHelper, Serializable},
     Context,
@@ -31,18 +32,19 @@ pub const MAX_VALUE_SIZE: usize = 4096;
 // Maximum size of a key in the storage
 pub const MAX_KEY_SIZE: usize = 256;
 
+#[async_trait]
 pub trait ContractStorage {
     // load a value from the storage
-    fn load_data(&self, contract: &Hash, key: &ValueCell, topoheight: TopoHeight) -> Result<Option<(TopoHeight, Option<ValueCell>)>, anyhow::Error>;
+    async fn load_data(&self, contract: &Hash, key: &ValueCell, topoheight: TopoHeight) -> Result<Option<(TopoHeight, Option<ValueCell>)>, anyhow::Error>;
 
     // load the latest topoheight from the storage
-    fn load_data_latest_topoheight(&self, contract: &Hash, key: &ValueCell, topoheight: TopoHeight) -> Result<Option<TopoHeight>, anyhow::Error>;
+    async fn load_data_latest_topoheight(&self, contract: &Hash, key: &ValueCell, topoheight: TopoHeight) -> Result<Option<TopoHeight>, anyhow::Error>;
 
     // check if a key exists in the storage
-    fn has_data(&self, contract: &Hash, key: &ValueCell, topoheight: TopoHeight) -> Result<bool, anyhow::Error>;
+    async fn has_data(&self, contract: &Hash, key: &ValueCell, topoheight: TopoHeight) -> Result<bool, anyhow::Error>;
 
     // check if a contract hash exists in the storage
-    fn has_contract(&self, contract: &Hash, topoheight: TopoHeight) -> Result<bool, anyhow::Error>;
+    async fn has_contract(&self, contract: &Hash, topoheight: TopoHeight) -> Result<bool, anyhow::Error>;
 }
 
 impl JSONHelper for OpaqueStorage {}
@@ -53,7 +55,7 @@ pub fn storage(_: FnInstance, _: FnParams, _: &mut Context) -> FnReturnType<Modu
     Ok(SysCallResult::Return(Primitive::Opaque(OpaqueWrapper::new(OpaqueStorage)).into()))
 }
 
-pub fn storage_load<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub async fn storage_load<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: FnParams, context: &mut Context<'ty, 'r>) -> FnReturnType<ModuleMetadata> {
     let (storage, state) = from_context::<P>(context)?;
 
     let key = params.remove(0)
@@ -61,7 +63,7 @@ pub fn storage_load<P: ContractProvider>(_: FnInstance, mut params: FnParams, co
 
     let value = match state.cache.storage.get(&key) {
         Some((_, value)) => value.clone(),
-        None => match storage.load_data(&state.contract, &key, state.topoheight)? {
+        None => match storage.load_data(&state.contract, &key, state.topoheight).await? {
             Some((topoheight, constant)) => {
                 state.cache.storage.insert(key.clone(), (VersionedState::FetchedAt(topoheight), constant.clone()));
                 constant
@@ -73,7 +75,7 @@ pub fn storage_load<P: ContractProvider>(_: FnInstance, mut params: FnParams, co
     Ok(SysCallResult::Return(value.unwrap_or_default().into()))
 }
 
-pub fn storage_has<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub async fn storage_has<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: FnParams, context: &mut Context<'ty, 'r>) -> FnReturnType<ModuleMetadata> {
     let (storage, state) = from_context::<P>(context)?;
 
     let key = params.remove(0)
@@ -81,13 +83,13 @@ pub fn storage_has<P: ContractProvider>(_: FnInstance, mut params: FnParams, con
 
     let contains = match state.cache.storage.get(&key) {
         Some((_, value)) => value.is_some(),
-        None => storage.has_data(state.contract, &key, state.topoheight)?
+        None => storage.has_data(state.contract, &key, state.topoheight).await?
     };
 
     Ok(SysCallResult::Return(Primitive::Boolean(contains).into()))
 }
 
-pub fn storage_store<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub async fn storage_store<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: FnParams, context: &mut Context<'ty, 'r>) -> FnReturnType<ModuleMetadata> {
     let key = params.remove(0)
         .into_owned();
 
@@ -117,7 +119,7 @@ pub fn storage_store<P: ContractProvider>(_: FnInstance, mut params: FnParams, c
         },
         None => {
             // We need to retrieve the latest topoheight version
-            storage.load_data_latest_topoheight(&state.contract, &key, state.topoheight)?
+            storage.load_data_latest_topoheight(&state.contract, &key, state.topoheight).await?
                 .map(|topoheight| VersionedState::Updated(topoheight))
                 .unwrap_or(VersionedState::New)
         }
@@ -131,7 +133,7 @@ pub fn storage_store<P: ContractProvider>(_: FnInstance, mut params: FnParams, c
     Ok(SysCallResult::Return(value.into()))
 }
 
-pub fn storage_delete<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub async fn storage_delete<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: FnParams, context: &mut Context<'ty, 'r>) -> FnReturnType<ModuleMetadata> {
     let (storage, state) = from_context::<P>(context)?;
 
     let key = params.remove(0)
@@ -148,7 +150,7 @@ pub fn storage_delete<P: ContractProvider>(_: FnInstance, mut params: FnParams, 
         },
         None => {
             // We need to retrieve the latest topoheight version
-            match storage.load_data_latest_topoheight(&state.contract, &key, state.topoheight)? {
+            match storage.load_data_latest_topoheight(&state.contract, &key, state.topoheight).await? {
                 Some(topoheight) => VersionedState::Updated(topoheight),
                 None => return Ok(SysCallResult::Return(Default::default())),
             }

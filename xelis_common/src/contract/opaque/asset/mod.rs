@@ -94,7 +94,7 @@ pub fn asset_get_contract_id<P: ContractProvider>(zelf: FnInstance, _: FnParams,
 }
 
 // Emitted supply for this asset
-pub fn asset_get_supply<P: ContractProvider>(zelf: FnInstance, _: FnParams, context: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub async fn asset_get_supply<'a, 'ty, 'r, P: ContractProvider>(zelf: FnInstance<'a>, _: FnParams, context: &mut Context<'ty, 'r>) -> FnReturnType<ModuleMetadata> {
     let asset: &Asset = zelf?.as_opaque_type()?;
     let (provider, state) = from_context::<P>(context)?;
 
@@ -104,7 +104,7 @@ pub fn asset_get_supply<P: ContractProvider>(zelf: FnInstance, _: FnParams, cont
         return Ok(SysCallResult::Return(Primitive::U64(supply).into()))
     }
 
-    let supply = provider.load_asset_supply(&asset.hash, topoheight)?
+    let supply = provider.load_asset_supply(&asset.hash, topoheight).await?
         .map(|(topo, v)| (VersionedState::FetchedAt(topo), v))
         .unwrap_or((VersionedState::New, 0));
 
@@ -151,7 +151,7 @@ pub fn asset_is_read_only(zelf: FnInstance, _: FnParams, context: &mut Context) 
     Ok(SysCallResult::Return(Primitive::Boolean(read_only).into()))
 }
 
-pub fn asset_transfer_ownership<P: ContractProvider>(zelf: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub async fn asset_transfer_ownership<'a, 'ty, 'r, P: ContractProvider>(zelf: FnInstance<'a>, mut params: FnParams, context: &mut Context<'ty, 'r>) -> FnReturnType<ModuleMetadata> {
     let param: Hash = params.remove(0)
         .into_owned()
         .into_opaque_type()?;
@@ -160,7 +160,7 @@ pub fn asset_transfer_ownership<P: ContractProvider>(zelf: FnInstance, mut param
     let (provider, state) = from_context::<P>(context)?;
 
     // Ensure that the contract hash is a valid one
-    if !provider.has_contract(&asset.hash, state.topoheight)? {
+    if !provider.has_contract(&asset.hash, state.topoheight).await? {
         return Ok(SysCallResult::Return(Primitive::Boolean(false).into()))
     }
 
@@ -176,7 +176,7 @@ pub fn asset_transfer_ownership<P: ContractProvider>(zelf: FnInstance, mut param
     }.into()))
 }
 
-pub fn asset_mint<P: ContractProvider>(zelf: FnInstance, params: FnParams, context: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub async fn asset_mint<'a, 'ty, 'r, P: ContractProvider>(zelf: FnInstance<'a>, params: FnParams, context: &mut Context<'ty, 'r>) -> FnReturnType<ModuleMetadata> {
     let asset: &mut Asset = zelf?.as_opaque_type_mut()?;
     let (provider, chain_state) = from_context::<P>(context)?;
 
@@ -205,7 +205,7 @@ pub fn asset_mint<P: ContractProvider>(zelf: FnInstance, params: FnParams, conte
         // Also update the asset supply
         let (mut supply_state, supply) = match changes.supply {
             Some((state, supply)) => (state, supply),
-            None => provider.load_asset_supply(&asset.hash, topoheight)?
+            None => provider.load_asset_supply(&asset.hash, topoheight).await?
                 .map(|(topoheight, supply)| (VersionedState::FetchedAt(topoheight), supply))
                 // No supply yet, lets init it to zero
                 .unwrap_or((VersionedState::New, 0)),
@@ -219,7 +219,7 @@ pub fn asset_mint<P: ContractProvider>(zelf: FnInstance, params: FnParams, conte
     }
 
     // Update the contract balance
-    match get_balance_from_cache(provider, chain_state, asset.hash.clone())? {
+    match get_balance_from_cache(provider, chain_state, asset.hash.clone()).await? {
         Some((state, balance)) => {
             let new_balance = balance.checked_add(amount)
             .context("Overflow while minting balance")?;

@@ -114,6 +114,15 @@ pub struct ContractEventTracker {
     pub assets_created: HashSet<Hash>
 }
 
+macro_rules! async_handler {
+    ($func: expr) => {
+        move |a, b, c| {
+          Box::pin($func(a, b, c))
+        }
+    };
+}
+
+
 // Build the environment for the contract
 pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, ModuleMetadata> {
     debug!("Building environment for contract");
@@ -319,7 +328,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             "load",
             Some(storage_type.clone()),
             vec![("key", Type::Any)],
-            FunctionHandler::Sync(storage_load::<P>),
+            FunctionHandler::Async(async_handler!(storage_load::<P>)),
             50,
             Some(Type::Optional(Box::new(Type::Any)))
         );
@@ -327,7 +336,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             "has",
             Some(storage_type.clone()),
             vec![("key", Type::Any)],
-            FunctionHandler::Sync(storage_has::<P>),
+            FunctionHandler::Async(async_handler!(storage_has::<P>)),
             25,
             Some(Type::Bool)
         );
@@ -335,7 +344,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             "store",
             Some(storage_type.clone()),
             vec![("key", Type::Any), ("value", Type::Any)],
-            FunctionHandler::Sync(storage_store::<P>),
+            FunctionHandler::Async(async_handler!(storage_store::<P>)),
             50,
             Some(Type::Optional(Box::new(Type::Any)))
         );
@@ -343,7 +352,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             "delete",
             Some(storage_type.clone()),
             vec![("key", Type::Any)],
-            FunctionHandler::Sync(storage_delete::<P>),
+            FunctionHandler::Async(async_handler!(storage_delete::<P>)),
             50,
             Some(Type::Optional(Box::new(Type::Any)))
         );
@@ -356,7 +365,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             "new",
             read_only_storage_type.clone(),
             vec![("contract", hash_type.clone())],
-            FunctionHandler::Sync(read_only_storage::<P>),
+            FunctionHandler::Async(async_handler!(read_only_storage::<P>)),
             15,
             Some(Type::Optional(Box::new(read_only_storage_type.clone())))
         );
@@ -364,7 +373,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             "load",
             Some(read_only_storage_type.clone()),
             vec![("key", Type::Any)],
-            FunctionHandler::Sync(read_only_storage_load::<P>),
+            FunctionHandler::Async(async_handler!(read_only_storage_load::<P>)),
             50,
             Some(Type::Optional(Box::new(Type::Any)))
         );
@@ -372,7 +381,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             "has",
             Some(read_only_storage_type.clone()),
             vec![("key", Type::Any)],
-            FunctionHandler::Sync(read_only_storage_has::<P>),
+            FunctionHandler::Async(async_handler!(read_only_storage_has::<P>)),
             25,
             Some(Type::Bool)
         );
@@ -634,7 +643,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             "get_by_id",
             asset_type.clone(),
             vec![("id", Type::U64)],
-            FunctionHandler::Sync(asset_get_by_id::<P>),
+            FunctionHandler::Async(async_handler!(asset_get_by_id::<P>)),
             1000,
             Some(Type::Optional(Box::new(asset_type.clone())))
         );
@@ -648,7 +657,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
                 ("decimals", Type::U8),
                 ("max_supply", Type::Optional(Box::new(Type::U64))),
             ],
-            FunctionHandler::Sync(asset_create::<P>),
+            FunctionHandler::Async(async_handler!(asset_create::<P>)),
             2500,
             Some(Type::Optional(Box::new(asset_type.clone())))
         );
@@ -656,7 +665,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             "get_by_hash",
             asset_type.clone(),
             vec![("hash", hash_type.clone())],
-            FunctionHandler::Sync(asset_get_by_hash::<P>),
+            FunctionHandler::Async(async_handler!(asset_get_by_hash::<P>)),
             500,
             Some(Type::Optional(Box::new(asset_type.clone())))
         );
@@ -672,7 +681,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             "get_supply",
             Some(asset_type.clone()),
             vec![],
-            FunctionHandler::Sync(asset_get_supply::<P>),
+            FunctionHandler::Async(async_handler!(asset_get_supply::<P>)),
             15,
             Some(Type::U64)
         );
@@ -704,7 +713,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             "mint",
             Some(asset_type.clone()),
             vec![("amount", Type::U64)],
-            FunctionHandler::Sync(asset_mint::<P>),
+            FunctionHandler::Async(async_handler!(asset_mint::<P>)),
             500,
             Some(Type::Bool)
         );
@@ -736,7 +745,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             "transfer_ownership",
             Some(asset_type.clone()),
             vec![("contract", hash_type.clone())],
-            FunctionHandler::Sync(asset_transfer_ownership::<P>),
+            FunctionHandler::Async(async_handler!(asset_transfer_ownership::<P>)),
             250,
             Some(Type::Bool)
         );
@@ -769,7 +778,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             "get_balance_for_asset",
             None,
             vec![("asset", hash_type.clone())],
-            FunctionHandler::Sync(get_balance_for_asset::<P>),
+            FunctionHandler::Async(async_handler!(get_balance_for_asset::<P>)),
             25,
             Some(Type::U64)
         );
@@ -782,7 +791,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
                 ("amount", Type::U64),
                 ("asset", hash_type.clone()),
             ],
-            FunctionHandler::Sync(transfer::<P>),
+            FunctionHandler::Async(async_handler!(transfer::<P>)),
             500,
             Some(Type::Bool)
         );
@@ -794,7 +803,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
                 ("amount", Type::U64),
                 ("asset", hash_type.clone()),
             ],
-            FunctionHandler::Sync(burn::<P>),
+            FunctionHandler::Async(async_handler!(burn::<P>)),
             500,
             Some(Type::Bool)
         );
@@ -899,7 +908,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
                 ("address", address_type.clone()),
                 ("asset", hash_type.clone())
             ],
-            FunctionHandler::Sync(get_account_balance_of::<P>),
+            FunctionHandler::Async(async_handler!(get_account_balance_of::<P>)),
             1000,
             Some(Type::Optional(Box::new(Type::Tuples(vec![Type::U64, ciphertext_type.clone()]))))
         );
@@ -946,26 +955,26 @@ pub fn from_context<'a, 'ty, 'r, P: ContractProvider>(context: &'a mut Context<'
 
 // Function helper to get the balance for the given asset
 // This will first check in our current changes, then in the previous execution cache
-pub fn get_balance_from_cache<'a, P: ContractProvider>(provider: &P, state: &'a mut ChainState, asset: Hash) -> Result<&'a mut Option<(VersionedState, u64)>, anyhow::Error> {
+pub async fn get_balance_from_cache<'a, 'b: 'a, P: ContractProvider>(provider: &P, state: &'a mut ChainState<'b>, asset: Hash) -> Result<&'a mut Option<(VersionedState, u64)>, anyhow::Error> {
     Ok(match state.cache.balances.entry(asset.clone()) {
         Entry::Occupied(entry) => entry.into_mut(),
         Entry::Vacant(entry) => {
-            let v = get_balance_from_provider(provider, state.topoheight, state.contract, &asset)?;
+            let v = get_balance_from_provider(provider, state.topoheight, state.contract, &asset).await?;
             entry.insert(v)
         }
     })
 }
 
-pub fn get_balance_from_provider<P: ContractProvider>(provider: &P, topoheight: TopoHeight, contract: &Hash, asset: &Hash) -> Result<Option<(VersionedState, u64)>, anyhow::Error> {
-    let balance = provider.get_contract_balance_for_asset(contract, asset, topoheight)?;
+pub async fn get_balance_from_provider<P: ContractProvider>(provider: &P, topoheight: TopoHeight, contract: &Hash, asset: &Hash) -> Result<Option<(VersionedState, u64)>, anyhow::Error> {
+    let balance = provider.get_contract_balance_for_asset(contract, asset, topoheight).await?;
     Ok(balance.map(|(topoheight, balance)| (VersionedState::FetchedAt(topoheight), balance)))
 }
 
-pub fn get_optional_asset_from_cache<'a, P: ContractProvider>(provider: &P, state: &'a mut ChainState, asset: Hash) -> Result<&'a mut Option<AssetChanges>, anyhow::Error> {
+pub async fn get_optional_asset_from_cache<'a, 'b: 'a, P: ContractProvider>(provider: &P, state: &'a mut ChainState<'b>, asset: Hash) -> Result<&'a mut Option<AssetChanges>, anyhow::Error> {
     Ok(match state.assets.entry(asset.clone()) {
         Entry::Occupied(entry) => entry.into_mut(),
         Entry::Vacant(entry) => {
-            let v = get_asset_from_provider(provider, state.topoheight, &asset)?;
+            let v = get_asset_from_provider(provider, state.topoheight, &asset).await?;
             entry.insert(v)
         }
     })
@@ -985,16 +994,16 @@ pub fn get_asset_changes_for_hash_mut<'a>(state: &'a mut ChainState, hash: &'a H
         .context("Asset not found in cache")
 }
 
-pub fn get_asset_from_cache<'a, P: ContractProvider>(provider: &P, state: &'a mut ChainState, asset: Hash) -> Result<&'a mut AssetChanges, anyhow::Error> {
-    get_optional_asset_from_cache(provider, state, asset)?
+pub async fn get_asset_from_cache<'a, 'b, P: ContractProvider>(provider: &P, state: &'a mut ChainState<'b>, asset: Hash) -> Result<&'a mut AssetChanges, anyhow::Error> {
+    get_optional_asset_from_cache(provider, state, asset).await?
         .as_mut()
         .context("Asset not found for provided hash")
 }
 
-pub fn get_asset_from_provider<P: ContractProvider>(provider: &P, topoheight: TopoHeight, asset: &Hash) -> Result<Option<AssetChanges>, anyhow::Error> {
-    match provider.load_asset_data(asset, topoheight)? {
+pub async fn get_asset_from_provider<P: ContractProvider>(provider: &P, topoheight: TopoHeight, asset: &Hash) -> Result<Option<AssetChanges>, anyhow::Error> {
+    match provider.load_asset_data(asset, topoheight).await? {
         Some((topo, data)) => {
-            let supply = provider.load_asset_supply(asset, topoheight)?
+            let supply = provider.load_asset_supply(asset, topoheight).await?
                 .map(|(topo, v)| (VersionedState::FetchedAt(topo), v));
 
             Ok(Some(AssetChanges {
@@ -1065,21 +1074,21 @@ fn get_deposit_for_asset(_: FnInstance, params: FnParams, context: &mut Context)
     Ok(SysCallResult::Return(value.into()))
 }
 
-fn get_balance_for_asset<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType<ModuleMetadata> {
+async fn get_balance_for_asset<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: FnParams, context: &mut Context<'ty, 'r>) -> FnReturnType<ModuleMetadata> {
     let (provider, state) = from_context::<P>(context)?;
 
     let asset: Hash = params.remove(0)
         .into_owned()
         .into_opaque_type()?;
 
-    let balance: ValueCell = get_balance_from_cache(provider, state, asset)?
+    let balance: ValueCell = get_balance_from_cache(provider, state, asset).await?
         .map(|(_, v)| Primitive::U64(v).into())
         .unwrap_or_default();
 
     Ok(SysCallResult::Return(balance.into()))
 }
 
-fn transfer<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType<ModuleMetadata> {
+async fn transfer<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: FnParams, context: &mut Context<'ty, 'r>) -> FnReturnType<ModuleMetadata> {
     debug!("Transfer called {:?}", params);
 
     let asset: Hash = params.remove(2)
@@ -1101,7 +1110,7 @@ fn transfer<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &
     {
         let (provider, chain_state) = from_context::<P>(context)?;
         // verify that the address is well registered, otherwise: pay extra fees
-        if !provider.account_exists(destination.get_public_key(), chain_state.topoheight)? {
+        if !provider.account_exists(destination.get_public_key(), chain_state.topoheight).await? {
             context.increase_gas_usage(FEE_PER_ACCOUNT_CREATION)?;
         }
     }
@@ -1111,7 +1120,7 @@ fn transfer<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &
         return Ok(SysCallResult::Return(Primitive::Boolean(false).into()));
     }
 
-    let Some((mut balance_state, mut balance)) = get_balance_from_cache(provider, state, asset.clone())? else {
+    let Some((mut balance_state, mut balance)) = get_balance_from_cache(provider, state, asset.clone()).await? else {
         return Ok(SysCallResult::Return(Primitive::Boolean(false).into()));
     };
 
@@ -1147,7 +1156,7 @@ fn transfer<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &
     Ok(SysCallResult::Return(Primitive::Boolean(true).into()))
 }
 
-fn burn<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType<ModuleMetadata> {
+async fn burn<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: FnParams, context: &mut Context<'ty, 'r>) -> FnReturnType<ModuleMetadata> {
     let (provider, state) = from_context::<P>(context)?;
 
     let asset: Hash = params.remove(1)
@@ -1157,7 +1166,7 @@ fn burn<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &mut 
         .into_owned()
         .to_u64()?;
 
-    let Some((mut balance_state, mut balance)) = get_balance_from_cache(provider, state, asset.clone())? else {
+    let Some((mut balance_state, mut balance)) = get_balance_from_cache(provider, state, asset.clone()).await? else {
         return Ok(SysCallResult::Return(Primitive::Boolean(false).into()));
     };
 
@@ -1179,7 +1188,7 @@ fn burn<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &mut 
     Ok(SysCallResult::Return(Primitive::Boolean(true).into()))
 }
 
-fn get_account_balance_of<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType<ModuleMetadata> {
+async fn get_account_balance_of<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: FnParams, context: &mut Context<'ty, 'r>) -> FnReturnType<ModuleMetadata> {
     let (provider, state) = from_context::<P>(context)?;
 
     let asset: Hash = params.remove(1)
@@ -1190,7 +1199,7 @@ fn get_account_balance_of<P: ContractProvider>(_: FnInstance, mut params: FnPara
         .into_owned()
         .into_opaque_type()?;
 
-    let balance = provider.get_account_balance_for_asset(address.get_public_key(), &asset, state.topoheight)?
+    let balance = provider.get_account_balance_for_asset(address.get_public_key(), &asset, state.topoheight).await?
         .map(|(topoheight, ciphertext)| ValueCell::Object(vec![
             Primitive::U64(topoheight).into(),
             Primitive::Opaque(ciphertext.into()).into()
