@@ -60,8 +60,9 @@ pub struct BlockHeader {
 }
 
 impl BlockHeader {
+    #[inline]
     pub fn new(version: BlockVersion, height: u64, timestamp: TimestampMillis, tips: impl Into<Immutable<IndexSet<Hash>>>, extra_nonce: [u8; EXTRA_NONCE_SIZE], miner: CompressedPublicKey, txs_hashes: IndexSet<Hash>) -> Self {
-        BlockHeader {
+        Self {
             version,
             height,
             timestamp,
@@ -82,31 +83,42 @@ impl BlockHeader {
         self.extra_nonce = extra_nonce;
     }
 
+    #[inline]
     pub fn get_version(&self) -> BlockVersion {
         self.version
     }
 
+    #[inline]
     pub fn set_miner(&mut self, key: CompressedPublicKey) {
         self.miner = key;
     }
 
+    #[inline]
     pub fn set_extra_nonce(&mut self, values: [u8; EXTRA_NONCE_SIZE]) {
         self.extra_nonce = values;
     }
 
+    #[inline]
     pub fn get_height(&self) -> u64 {
         self.height
     }
 
+    #[inline]
     pub fn get_timestamp(&self) -> TimestampMillis {
         self.timestamp
     }
 
+    #[inline]
     pub fn get_tips(&self) -> &IndexSet<Hash> {
         &self.tips
     }
 
+    #[inline]
+    pub fn get_tips_count(&self) -> usize {
+        self.tips.len()
+    }
 
+    #[inline]
     pub fn get_immutable_tips(&self) -> &Immutable<IndexSet<Hash>> {
         &self.tips
     }
@@ -122,22 +134,27 @@ impl BlockHeader {
         hash(&bytes)
     }
 
+    #[inline]
     pub fn get_nonce(&self) -> u64 {
         self.nonce
     }
 
+    #[inline]
     pub fn get_miner(&self) -> &CompressedPublicKey {
         &self.miner
     }
 
+    #[inline]
     pub fn get_extra_nonce(&self) -> &[u8; EXTRA_NONCE_SIZE] {
         &self.extra_nonce
     }
 
+    #[inline]
     pub fn get_txs_hashes(&self) -> &IndexSet<Hash> {
         &self.txs_hashes
     }
 
+    #[inline]
     pub fn take_txs_hashes(self) -> IndexSet<Hash> {
         self.txs_hashes
     }
@@ -152,6 +169,7 @@ impl BlockHeader {
         hash(&bytes)
     }
 
+    #[inline]
     pub fn get_txs_count(&self) -> usize {
         self.txs_hashes.len()
     }
@@ -173,6 +191,7 @@ impl BlockHeader {
     }
 
     // compute the header work hash (immutable part in mining process)
+    #[inline]
     pub fn get_work_hash(&self) -> Hash {
         hash(&self.get_work())
     }
@@ -192,10 +211,12 @@ impl BlockHeader {
     }
 
     // compute the block POW hash
+    #[inline]
     pub fn get_pow_hash(&self, algorithm: Algorithm) -> Result<Hash, XelisHashError> {
         pow_hash(&self.get_serialized_header(), algorithm)
     }
 
+    #[inline]
     pub fn get_transactions(&self) -> &IndexSet<Hash> {
         &self.txs_hashes
     }

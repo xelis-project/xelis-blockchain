@@ -23,29 +23,35 @@ pub struct Block {
 }
 
 impl Block {
+    #[inline]
     pub fn new(header: Immutable<BlockHeader>, transactions: Vec<Arc<Transaction>>) -> Self {
-        Block {
+        Self {
             header,
             transactions
         }
     }
 
+    #[inline]
     pub fn to_header(self) -> Arc<BlockHeader> {
         self.header.into_arc()
     }
 
+    #[inline]
     pub fn get_header(&self) -> &BlockHeader {
         &self.header
     }
 
+    #[inline]
     pub fn get_txs_count(&self) -> usize {
         self.transactions.len()
     }
 
+    #[inline]
     pub fn get_transactions(&self) -> &Vec<Arc<Transaction>> {
         &self.transactions
     }
 
+    #[inline]
     pub fn split(self) -> (Immutable<BlockHeader>, Vec<Arc<Transaction>>) {
         (self.header, self.transactions)
     }
