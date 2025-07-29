@@ -197,7 +197,7 @@ impl BlockHeader {
     }
 
     // This is similar to MinerWork
-    fn get_serialized_header(&self) -> Vec<u8> {
+    pub fn get_pow_challenge(&self) -> Vec<u8> {
         let mut bytes = Vec::with_capacity(BLOCK_WORK_SIZE);
         bytes.extend(self.get_work_hash().to_bytes());
         bytes.extend(self.timestamp.to_be_bytes());
@@ -213,7 +213,7 @@ impl BlockHeader {
     // compute the block POW hash
     #[inline]
     pub fn get_pow_hash(&self, algorithm: Algorithm) -> Result<Hash, XelisHashError> {
-        pow_hash(&self.get_serialized_header(), algorithm)
+        pow_hash(&self.get_pow_challenge(), algorithm)
     }
 
     #[inline]
@@ -307,7 +307,7 @@ impl Hashable for BlockHeader {
     // this function has the same behavior as the get_pow_hash function
     // but we use a fast algorithm here
     fn hash(&self) -> Hash {
-        hash(&self.get_serialized_header())
+        hash(&self.get_pow_challenge())
     }
 }
 
