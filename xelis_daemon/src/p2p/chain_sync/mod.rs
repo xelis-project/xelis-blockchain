@@ -598,6 +598,15 @@ impl<S: Storage> P2pServer<S> {
                             match res {
                                 Ok(response) => match response {
                                     ResponseHelper::Requested(block, pre_verify) => {
+                                        if let Some(hash) = pre_verify.get_block_hash() {
+                                            // Block has been added already
+                                            // This can occurs when the block is requested
+                                            // and propagated at same time
+                                            if self.blockchain.has_block(&hash).await? {
+                                                return Ok(true)
+                                            }
+                                        }
+
                                         if let Err(e) = self.blockchain.add_new_block(block, pre_verify, BroadcastOption::Miners, false).await {
                                             self.object_tracker.mark_group_as_fail(group_id).await;
                                             return Err(e)

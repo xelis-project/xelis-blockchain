@@ -167,6 +167,16 @@ pub enum PreVerifyBlock {
     None,
 }
 
+impl PreVerifyBlock {
+    pub fn get_block_hash(&self) -> Option<&Hash> {
+        match self {
+            Self::Hash(v) => Some(v),
+            Self::Partial { block_hash, .. } => Some(&block_hash),
+            Self::None => None,
+        }
+    }
+}
+
 pub struct Blockchain<S: Storage> {
     // current block height
     height: AtomicU64,
