@@ -62,7 +62,7 @@ impl BlockProvider for RocksStorage {
             transactions.push(transaction.into_arc());
         }
 
-        Ok(Block::new(header, transactions))
+        Ok(Block::new(header.into_arc(), transactions))
     }
 
     // Save a new block with its transactions and difficulty

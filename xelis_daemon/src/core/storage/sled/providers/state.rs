@@ -62,7 +62,7 @@ impl StateProvider for SledStorage {
             transactions.push(transaction.into_arc());
         }
 
-        let block = Block::new(header, transactions);
+        let block = Block::new(header.into_arc(), transactions);
         Ok(block)
     }
 }

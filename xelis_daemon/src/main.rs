@@ -56,7 +56,8 @@ use core::{
     blockchain::{
         get_block_reward,
         Blockchain,
-        BroadcastOption
+        BroadcastOption,
+        PreVerifyBlock,
     },
     blockdag,
     config::{Config as InnerConfig, StorageBackend},
@@ -1469,7 +1470,7 @@ async fn mine_block<S: Storage>(manager: &CommandManager, mut arguments: Argumen
         let block_hash = block.hash();
         manager.message(format!("Block mined: {}", block_hash));
 
-        blockchain.add_new_block(block, Some(Immutable::Owned(block_hash)), BroadcastOption::All, true).await
+        blockchain.add_new_block(block, PreVerifyBlock::Hash(Immutable::Owned(block_hash)), BroadcastOption::All, true).await
             .context("Error while adding block to chain")?;
     }
     Ok(())

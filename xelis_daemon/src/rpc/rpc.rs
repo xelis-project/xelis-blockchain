@@ -10,7 +10,8 @@ use crate::{
             get_block_dev_fee,
             get_block_reward,
             Blockchain,
-            BroadcastOption
+            BroadcastOption,
+            PreVerifyBlock,
         },
         error::BlockchainError,
         hard_fork::{
@@ -52,7 +53,6 @@ use xelis_common::{
         CumulativeDifficulty,
         Difficulty
     },
-    immutable::Immutable,
     rpc::{
         parse_params,
         require_no_params,
@@ -527,8 +527,8 @@ async fn submit_block<S: Storage>(context: &Context, body: Value) -> Result<Valu
 
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
 
-    let block = blockchain.build_block_from_header(Immutable::Owned(header)).await?;
-    blockchain.add_new_block(block, None, BroadcastOption::All, true).await?;
+    let block = blockchain.build_block_from_header(header).await?;
+    blockchain.add_new_block(block, PreVerifyBlock::None, BroadcastOption::All, true).await?;
     Ok(json!(true))
 }
 

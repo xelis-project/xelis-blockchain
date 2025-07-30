@@ -80,7 +80,11 @@ use xelis_common::{
 use crate::{
     config::*,
     core::{
-        blockchain::{Blockchain, BroadcastOption},
+        blockchain::{
+            Blockchain,
+            BroadcastOption,
+            PreVerifyBlock,
+        },
         error::BlockchainError,
         hard_fork,
         storage::Storage,
@@ -1356,7 +1360,7 @@ impl<S: Storage> P2pServer<S> {
             .context("Error while collecting all TXs")?;
 
         // build the final block with TXs
-        let block = Block::new(Immutable::Owned(header), txs);
+        let block = Block::new(header, txs);
         Ok(block)
     }
 
@@ -1425,7 +1429,7 @@ impl<S: Storage> P2pServer<S> {
                                 }
     
                                 debug!("Adding received block {} from {} to chain", block_hash, peer);
-                                if let Err(e) = zelf.blockchain.add_new_block(block, Some(Immutable::Arc(block_hash.clone())), BroadcastOption::All, false).await {
+                                if let Err(e) = zelf.blockchain.add_new_block(block, PreVerifyBlock::Hash(Immutable::Arc(block_hash.clone())), BroadcastOption::All, false).await {
                                     warn!("Error while adding new block {} from {}: {}", block_hash, peer, e);
                                     peer.increment_fail_count();
                                 }

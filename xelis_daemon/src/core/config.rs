@@ -462,6 +462,11 @@ pub struct Config {
     #[clap(long, default_value_t = detect_available_parallelism())]
     #[serde(default = "detect_available_parallelism")]
     pub txs_verification_threads_count: usize,
+    /// Se the threads count to use during block pre verification.
+    /// By default, will detect the best value.
+    #[clap(long, default_value_t = detect_available_parallelism())]
+    #[serde(default = "detect_available_parallelism")]
+    pub pre_verify_block_threads_count: usize,
     /// Enable the DB integrity check that happen on chain initialization.
     /// This may take some times on huge DB as it's iterating through all versioned data
     /// to verify that no pointer or version is above our current topoheight.

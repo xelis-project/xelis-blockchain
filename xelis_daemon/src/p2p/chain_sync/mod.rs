@@ -25,7 +25,7 @@ use xelis_common::{
 use crate::{
     config::{CHAIN_SYNC_TOP_BLOCKS, PEER_OBJECTS_CONCURRENCY, STABLE_LIMIT},
     core::{
-        blockchain::BroadcastOption,
+        blockchain::{BroadcastOption, PreVerifyBlock},
         error::BlockchainError,
         hard_fork,
         storage::Storage
@@ -50,7 +50,7 @@ use super::{
 pub use chain_validator::*;
 
 enum ResponseHelper {
-    Requested(Block, Immutable<Hash>),
+    Requested(Block, PreVerifyBlock),
     NotRequested(Immutable<Hash>)
 }
 
@@ -257,7 +257,7 @@ impl<S: Storage> P2pServer<S> {
                             } else {
                                 let transactions = futures.try_collect().await?;
                                 // Assemble back the block and add it to the chain
-                                Block::new(Immutable::Arc(header), transactions)
+                                Block::new(header, transactions)
                             }
                         },
                         None => {
@@ -267,7 +267,8 @@ impl<S: Storage> P2pServer<S> {
                         }
                     };
 
-                    Ok::<_, BlockchainError>(ResponseHelper::Requested(block, hash))
+                    let pre_verify = self.blockchain.pre_verify_block(&block, Some(hash)).await?;
+                    Ok::<_, BlockchainError>(ResponseHelper::Requested(block, pre_verify))
                 } else {
                     Ok(ResponseHelper::NotRequested(hash))
                 }
@@ -289,7 +290,7 @@ impl<S: Storage> P2pServer<S> {
                 Some(res) = scheduler.next() => {
                     let future = async move {
                         match res? {
-                            ResponseHelper::Requested(block, hash) => self.blockchain.add_new_block(block, Some(hash), BroadcastOption::Miners, false).await,
+                            ResponseHelper::Requested(block, pre_verify) => self.blockchain.add_new_block(block, pre_verify, BroadcastOption::Miners, false).await,
                             ResponseHelper::NotRequested(hash) => self.try_re_execution_block(hash).await,
                         }
                     };
@@ -546,10 +547,12 @@ impl<S: Storage> P2pServer<S> {
                     let hash = Immutable::Arc(Arc::new(hash));
                     if !self.blockchain.has_block(&hash).await? {
                         debug!("Requesting boost sync block {}", hash);
-                        peer.request_blocking_object(ObjectRequest::Block(hash.clone()))
+                        let (block, _) = peer.request_blocking_object(ObjectRequest::Block(hash.clone()))
                             .await?
-                            .into_block()
-                            .map(|(block, _)| ResponseHelper::Requested(block, hash))
+                            .into_block()?;
+
+                        let pre_verify = self.blockchain.pre_verify_block(&block, Some(hash)).await?;
+                        Ok::<_, BlockchainError>(ResponseHelper::Requested(block, pre_verify))
                     } else {
                         debug!("Block {} is already in chain or being processed, verify if its in DAG", hash);
                         Ok(ResponseHelper::NotRequested(hash))
@@ -594,17 +597,10 @@ impl<S: Storage> P2pServer<S> {
                         let future = async {
                             match res {
                                 Ok(response) => match response {
-                                    ResponseHelper::Requested(block, hash) => {
-                                        // Lets ensure that the block is not already in chain
-                                        // This may happen if we try to chain sync with peer
-                                        // while we got the block through propagation
-                                        if !self.blockchain.has_block(&hash).await? {
-                                            if let Err(e) = self.blockchain.add_new_block(block, Some(hash), BroadcastOption::Miners, false).await {
-                                                self.object_tracker.mark_group_as_fail(group_id).await;
-                                                return Err(e)
-                                            }
-                                        } else {
-                                            debug!("Block {} is already in chain despite requesting it, skipping it..", hash);
+                                    ResponseHelper::Requested(block, pre_verify) => {
+                                        if let Err(e) = self.blockchain.add_new_block(block, pre_verify, BroadcastOption::Miners, false).await {
+                                            self.object_tracker.mark_group_as_fail(group_id).await;
+                                            return Err(e)
                                         }
 
                                         Ok(true)
@@ -710,6 +706,6 @@ impl<S: Storage> P2pServer<S> {
         };
 
         // Replicate same behavior as above branch
-        self.blockchain.add_new_block(block, Some(hash), BroadcastOption::Miners, false).await
+        self.blockchain.add_new_block(block, PreVerifyBlock::Hash(hash), BroadcastOption::Miners, false).await
     }
 }

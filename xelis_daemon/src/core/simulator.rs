@@ -16,7 +16,8 @@ use xelis_common::{
 use super::{
     blockchain::{
         Blockchain,
-        BroadcastOption
+        BroadcastOption,
+        PreVerifyBlock,
     },
     storage::Storage
 };
@@ -107,7 +108,7 @@ impl Simulator {
 
             // Add all blocks to the chain
             for block in blocks {
-                match blockchain.add_new_block(block, None, BroadcastOption::None, false).await {
+                match blockchain.add_new_block(block, PreVerifyBlock::None, BroadcastOption::None, false).await {
                     Ok(_) => {},
                     Err(e) => {
                         error!("Error while adding block: {}", e);

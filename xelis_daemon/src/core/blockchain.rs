@@ -46,7 +46,7 @@ use xelis_common::{
         Hash,
         Hashable,
         PublicKey,
-        pow_hash,
+        pow_hash as compute_pow_hash,
         HASH_SIZE
     },
     difficulty::{
@@ -157,6 +157,16 @@ impl BroadcastOption {
     }
 }
 
+#[derive(Debug, Clone)]
+pub enum PreVerifyBlock {
+    Hash(Immutable<Hash>),
+    Partial {
+        block_hash: Immutable<Hash>,
+        pow_hash: Hash
+    },
+    None,
+}
+
 pub struct Blockchain<S: Storage> {
     // current block height
     height: AtomicU64,
@@ -174,6 +184,9 @@ pub struct Blockchain<S: Storage> {
     // Current semaphore used to prevent
     // verifying more than one block at a time
     add_block_semaphore: Semaphore,
+    // Pre verify N blocks at same time
+    // By default, set to N threads available
+    pre_verify_block_semaphore: Semaphore,
     // Contract environment stdlib
     environment: Environment<ModuleMetadata>,
     // P2p module
@@ -296,6 +309,7 @@ impl<S: Storage> Blockchain<S> {
             mempool: RwLock::new(Mempool::new(network, config.disable_zkp_cache)),
             storage: RwLock::new(storage),
             add_block_semaphore: Semaphore::new(1),
+            pre_verify_block_semaphore: Semaphore::new(config.pre_verify_block_threads_count),
             environment,
             p2p: RwLock::new(None),
             rpc: RwLock::new(None),
@@ -632,7 +646,7 @@ impl<S: Storage> Blockchain<S> {
                 warn!("No genesis block found!");
                 info!("Generating a new genesis block...");
                 let header = BlockHeader::new(BlockVersion::V0, 0, get_current_time_in_millis(), IndexSet::new(), [0u8; EXTRA_NONCE_SIZE], DEV_PUBLIC_KEY.clone(), IndexSet::new());
-                let block = Block::new(Immutable::Owned(header), Vec::new());
+                let block = Block::new(header, Vec::new());
                 let block_hash = block.hash();
                 info!("Genesis generated: {} with {:?} {}", block.to_hex(), block_hash, block_hash);
                 (block, block_hash)
@@ -657,7 +671,7 @@ impl<S: Storage> Blockchain<S> {
             genesis_block
         };
 
-        self.add_new_block(genesis_block, None, BroadcastOption::Miners, false).await?;
+        self.add_new_block(genesis_block, PreVerifyBlock::None, BroadcastOption::Miners, false).await?;
 
         Ok(())
     }
@@ -686,7 +700,7 @@ impl<S: Storage> Blockchain<S> {
             hash = header.get_pow_hash(algorithm)?;
         }
 
-        let block = self.build_block_from_header(Immutable::Owned(header)).await?;
+        let block = self.build_block_from_header(header).await?;
         let block_height = block.get_height();
         debug!("Mined a new block {} at height {}", hash, block_height);
         Ok(block)
@@ -1958,7 +1972,8 @@ impl<S: Storage> Blockchain<S> {
     }
 
     // Build a block using the header and search for TXs in mempool and storage
-    pub async fn build_block_from_header(&self, header: Immutable<BlockHeader>) -> Result<Block, BlockchainError> {
+    pub async fn build_block_from_header(&self, header: impl Into<Arc<BlockHeader>>) -> Result<Block, BlockchainError> {
+        let header = header.into();
         trace!("Searching TXs for block at height {}", header.get_height());
         let mut transactions = Vec::with_capacity(header.get_txs_count());
 
@@ -1984,12 +1999,41 @@ impl<S: Storage> Blockchain<S> {
         Ok(block)
     }
 
+    // Pre verify a block by computing its hashes in a dedicated thread
+    // Partial check is only done, everything must be rechecked except the hashes
+    pub async fn pre_verify_block(&self, block: &Block, block_hash: Option<Immutable<Hash>>) -> Result<PreVerifyBlock, BlockchainError> {
+        let _permit = self.pre_verify_block_semaphore.acquire().await?;
+
+        // NOTE: Height will be verified at the add_new_block function
+        let expected_version = get_version_at_height(&self.network, block.get_height());
+        if expected_version != block.get_version() {
+            return Err(BlockchainError::InvalidBlockVersion)
+        }
+
+        let algorithm = get_pow_algorithm_for_version(expected_version);
+
+        // Clone the Arc'ed header so we can move it to the thread
+        let header = block.get_header().clone();
+        // Compute the block hash and the PoW hash in a blocking thread
+        spawn_blocking(move || {
+            let start = Instant::now();
+
+            let block_hash = block_hash.unwrap_or_else(|| Immutable::Owned(header.hash()));
+            let pow_challenge = header.get_pow_challenge();
+            let pow_hash = compute_pow_hash(&pow_challenge, algorithm)?;
+
+            histogram!("xelis_block_pow_ms").record(start.elapsed().as_millis() as f64);
+
+            Ok::<_, BlockchainError>(PreVerifyBlock::Partial { block_hash, pow_hash })
+        }).await?
+    }
+
     // Add a new block in chain
     // Note that this will lock Storage and Mempool
     // Verification is done using read guards,
     // once the block is fully verified, we can include it
     // in our chain by acquiring a write guard
-    pub async fn add_new_block(&self, block: Block, block_hash: Option<Immutable<Hash>>, broadcast: BroadcastOption, mining: bool) -> Result<(), BlockchainError> {
+    pub async fn add_new_block(&self, block: Block, pre_verify: PreVerifyBlock, broadcast: BroadcastOption, mining: bool) -> Result<(), BlockchainError> {
         let start = Instant::now();
 
         // Expected version for this block
@@ -2001,10 +2045,10 @@ impl<S: Storage> Blockchain<S> {
         }
 
         // Either check or use the precomputed one
-        let block_hash = if let Some(hash) = block_hash {
-            hash
-        } else {
-            Immutable::Owned(block.hash())
+        let (block_hash, pow_hash) = match pre_verify {
+            PreVerifyBlock::Hash(hash) => (hash, None),
+            PreVerifyBlock::Partial { block_hash, pow_hash } => (block_hash, Some(pow_hash)),
+            PreVerifyBlock::None => (Immutable::Owned(block.hash()), None),
         };
 
         // Semaphore is required to ensure sequential verification of blocks
@@ -2122,13 +2166,17 @@ impl<S: Storage> Blockchain<S> {
         let pow_hash = if skip_pow {
             // Simulator is enabled, we don't need to compute the PoW hash
             Hash::zero()
+        } else if let Some(hash) = pow_hash {
+            // PoW Hash was pre computed, use it
+            hash
         } else {
+            // We have to precompute it ourself
             let start = Instant::now();
             let algorithm = get_pow_algorithm_for_version(version);
             let pow_challenge = block.get_pow_challenge();
 
             // Spawn a thread for the CPU bound PoW computation
-            let hash = spawn_blocking(move || pow_hash(&pow_challenge, algorithm)).await??;
+            let hash = spawn_blocking(move || compute_pow_hash(&pow_challenge, algorithm)).await??;
 
             histogram!("xelis_block_pow_ms").record(start.elapsed().as_millis() as f64);
             hash
@@ -2347,7 +2395,6 @@ impl<S: Storage> Blockchain<S> {
         debug!("Cumulative difficulty for block {}: {}", block_hash, cumulative_difficulty);
 
         let (block, txs) = block.split();
-        let block = block.into_arc();
         let block_hash = block_hash.into_arc();
 
         // Broadcast to p2p nodes the block asap as its valid
@@ -3023,7 +3070,7 @@ impl<S: Storage> Blockchain<S> {
             trace!("Notifying websocket clients");
             if should_track_events.contains(&NotifyEvent::NewBlock) {
                 // We are not including the transactions in `NewBlock` event to prevent spamming
-                match get_block_response(self, &*storage, &block_hash, &Block::new(Immutable::Arc(block), Vec::new()), block_size).await {
+                match get_block_response(self, &*storage, &block_hash, &Block::new(block, Vec::new()), block_size).await {
                     Ok(response) => {
                         events.entry(NotifyEvent::NewBlock).or_insert_with(Vec::new).push(response);
                     },
