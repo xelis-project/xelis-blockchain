@@ -2173,10 +2173,13 @@ impl<S: Storage> Blockchain<S> {
             // We have to precompute it ourself
             let start = Instant::now();
             let algorithm = get_pow_algorithm_for_version(version);
-            let pow_challenge = block.get_pow_challenge();
+            let header = block.get_header().clone();
 
             // Spawn a thread for the CPU bound PoW computation
-            let hash = spawn_blocking(move || compute_pow_hash(&pow_challenge, algorithm)).await??;
+            let hash = spawn_blocking(move || {
+                let pow_challenge = header.get_pow_challenge();
+                compute_pow_hash(&pow_challenge, algorithm)
+            }).await??;
 
             histogram!("xelis_block_pow_ms").record(start.elapsed().as_millis() as f64);
             hash
