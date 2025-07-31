@@ -7,7 +7,8 @@ use std::{
     borrow::Cow,
     collections::HashMap,
     iter,
-    sync::Arc
+    sync::Arc,
+    time::Instant
 };
 
 use anyhow::Context;
@@ -21,6 +22,7 @@ use curve25519_dalek::{
 use indexmap::IndexMap;
 use log::{debug, trace};
 use merlin::Transcript;
+use metrics::histogram;
 use xelis_vm::ModuleValidator;
 use crate::{
     tokio::spawn_blocking_safe,
@@ -976,6 +978,8 @@ impl Transaction {
         trace!("Verifying batch of transactions");
         let mut sigma_batch_collector = BatchCollector::default();
         let mut prepared = Vec::new();
+        let start = Instant::now();
+
         for (tx, hash) in txs {
             let hash = hash.as_ref();
 
@@ -995,14 +999,21 @@ impl Transaction {
             }
         }
 
+        // Pre-verification time
+        histogram!("xelis_verify_batch_pre_ms").record(start.elapsed().as_millis() as f64);
+
         // Spawn a dedicated thread for the ZK Proofs verification
         // this prevent us from blocking the current thread
         spawn_blocking_safe(move || {
+            let start = Instant::now();
             sigma_batch_collector
                 .verify()
                 .map_err(|_| ProofVerificationError::GenericProof)?;
 
+            histogram!("xelis_verify_batch_collector_ms").record(start.elapsed().as_millis() as f64);
+
             if !prepared.is_empty() {
+                let start = Instant::now();
                 RangeProof::verify_batch(
                     prepared.iter_mut()
                         .map(|(tx, transcript, commitments)| {
@@ -1016,12 +1027,17 @@ impl Transaction {
                     &BP_GENS,
                     &PC_GENS,
                 )
-                .map_err(ProofVerificationError::from)
+                .map_err(ProofVerificationError::from)?;
+
+                histogram!("xelis_verify_batch_range_ms").record(start.elapsed().as_millis() as f64);
             } else {
                 debug!("no range proof to verify, skipping them");
-                Ok(())
             }
+
+            Ok::<_, ProofVerificationError>(())
         }).await.context("spawning blocking thread for ZK verification")??;
+
+        histogram!("xelis_verify_batch_ms").record(start.elapsed().as_millis() as f64);
 
         Ok(())
     }
