@@ -552,13 +552,13 @@ impl PeerList {
 
             // Check for out success only
             if out_success_only && !entry.is_out_success() {
-                debug!("{} was never reached by us, skip it", ip);
+                trace!("{} was never reached by us, skip it", ip);
                 continue;
             }
 
             // If the peer is blacklisted or temp banned, skip it
             if *entry.get_state() == PeerListEntryState::Blacklist || entry.get_temp_ban_until().map(|temp_ban_until| temp_ban_until > current_time).unwrap_or(false) {
-                debug!("Skipping {} because it's blacklisted or temp banned ({})", ip, format_duration(Duration::from_secs(entry.get_temp_ban_until().map(|v| v - current_time).unwrap_or(0))));
+                trace!("Skipping {} because it's blacklisted or temp banned ({})", ip, format_duration(Duration::from_secs(entry.get_temp_ban_until().map(|v| v - current_time).unwrap_or(0))));
                 continue;
             }
 
@@ -587,7 +587,7 @@ impl PeerList {
                     debug!("{} can try to connect to {}: {}, not in peerlist: {}", entry, ip, try_connect, not_in_peerlist);
                 }
             } else {
-                debug!("Skipping {} because it has no local port", ip);
+                trace!("Skipping {} because it has no local port", ip);
             }
         }
 
