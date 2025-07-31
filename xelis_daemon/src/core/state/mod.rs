@@ -117,6 +117,8 @@ pub (super) async fn search_versioned_balance_for_reference<S: DagOrderProvider 
 
     debug!("Search output balance in range {} to {}", min_topo, current_topoheight);
     let last_output = storage.get_output_balance_in_range(key, asset, min_topo, current_topoheight).await?;
+    debug!("output balance found: {}", last_output.is_some());
+
     // We have a output balance
     if let Some((topo, v)) = last_output {
         trace!("Found output balance at topoheight {}", topo);
