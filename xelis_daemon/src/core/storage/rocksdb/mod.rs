@@ -114,6 +114,12 @@ pub enum IteratorMode<'a> {
     From(&'a [u8], Direction),
     // Strict prefix to all keys
     WithPrefix(&'a [u8], Direction),
+    Range {
+        lower_bound: &'a [u8],
+        // NOTE: upper bound is NEVER included
+        upper_bound: &'a [u8],
+        direction: Direction,
+    }
 }
 
 impl<'a> IteratorMode<'a> {
@@ -126,6 +132,15 @@ impl<'a> IteratorMode<'a> {
             Self::WithPrefix(prefix, direction) => {
                 opts.set_prefix_same_as_start(true);
                 InternalIteratorMode::From(prefix, direction)
+            },
+            Self::Range { lower_bound, upper_bound, direction } => {
+                opts.set_iterate_upper_bound(upper_bound);
+                opts.set_iterate_lower_bound(lower_bound);
+
+                match direction {
+                    Direction::Forward => InternalIteratorMode::Start,
+                    Direction::Reverse => InternalIteratorMode::End,
+                }
             }
         };
 
@@ -593,13 +608,14 @@ mod tests {
             key.extend_from_slice(suffix);
             key
         }
-    
+
         // Insert three test entries
         db.put(make_key(0, b"zero"), b"value0").unwrap();
         db.put(make_key(1, b"aaaa"), b"value1").unwrap();
         db.put(make_key(2, b"bbbb"), b"value2").unwrap();
 
         // First test: iterator on range
+        // It must skip the zeroed prefix
         {
             let prefix = 1u64.to_be_bytes();
             let iter = db.iterator(IteratorMode::From(&prefix, Direction::Forward));
@@ -625,6 +641,8 @@ mod tests {
         }
 
         // Second test: reverse iterator on range
+        // Should starts from the end until the first
+        // value2 is skipped because upper bound is < not <=
         {
             let prefix = 2u64.to_be_bytes();
             let iter = db.iterator(IteratorMode::From(&prefix, Direction::Reverse));
@@ -650,7 +668,7 @@ mod tests {
         }
 
         // Third test: iterator on prefix only
-        // First test: iterator on range
+        // Only keys with the prefix 1 must be returned
         {
             let prefix = 1u64.to_be_bytes();
             let iter = db.prefix_iterator(prefix);

@@ -84,7 +84,6 @@ impl VersionedAssetProvider for RocksStorage {
     // delete versioned assets below topoheight
     async fn delete_versioned_assets_below_topoheight(&mut self, topoheight: TopoHeight, keep_last: bool) -> Result<(), BlockchainError> {
         trace!("delete versioned assets below topoheight {}", topoheight);
-        let start = topoheight.to_be_bytes();
         if keep_last {
             for res in Self::iter_owned_internal::<(), Asset>(&self.db, self.snapshot.as_ref(), IteratorMode::Start, Column::Assets)? {
                 let (_, asset) = res?;
@@ -116,7 +115,8 @@ impl VersionedAssetProvider for RocksStorage {
                 }
             }
         } else {
-            for res in Self::iter_owned_internal::<RawBytes, ()>(&self.db, self.snapshot.as_ref(), IteratorMode::From(&start, Direction::Forward), Column::VersionedAssets)? {
+            let start = topoheight.to_be_bytes();
+            for res in Self::iter_owned_internal::<RawBytes, ()>(&self.db, self.snapshot.as_ref(), IteratorMode::From(&start, Direction::Reverse), Column::VersionedAssets)? {
                 let (key, _) = res?;
                 Self::remove_from_disk_internal(&self.db, self.snapshot.as_mut(), Column::VersionedAssets, &key)?;
             }

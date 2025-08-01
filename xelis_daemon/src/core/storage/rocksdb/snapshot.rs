@@ -189,35 +189,55 @@ impl Snapshot {
                         }
                     }).filter_map(Result::transpose);
 
-                let mem_iter = match mode {
-                    IteratorMode::Start => Either::Left(Either::Left(tree.writes.iter().filter_map(|(k, v)| v.as_ref().map(|v| (k, v))))),
-                    IteratorMode::End => Either::Left(Either::Right(tree.writes.iter().rev().filter_map(|(k, v)| v.as_ref().map(|v| (k, v))))),
+                let mem_iter: Box<dyn Iterator<Item = (&'a Bytes, &'a Bytes)> + Send + Sync> = match mode {
+                    IteratorMode::Start => {
+                        Box::new(tree.writes.iter()
+                            .filter_map(|(k, v)| v.as_ref().map(|v| (k, v)))
+                        )
+                    },
+                    IteratorMode::End => {
+                        Box::new(tree.writes.iter().rev()
+                            .filter_map(|(k, v)| v.as_ref().map(|v| (k, v)))
+                        )
+                    },
                     IteratorMode::WithPrefix(prefix, direction) => {
+                        let prefix = prefix.to_vec();
                         let iter = match direction {
                             Direction::Forward => Either::Left(tree.writes.iter()),
-                            Direction::Reverse => Either::Right(tree.writes.iter().rev())
+                            Direction::Reverse => Either::Right(tree.writes.iter().rev()),
                         };
-
-                        let cloned = prefix.to_vec();
-                        Either::Right(Either::Left(iter.filter_map(move |(k, v)| {
-                            if let Some(v) = v {
-                                if k.starts_with(&cloned) {
-                                    return Some((k, v))
+                        Box::new(iter
+                            .filter_map(move |(k, v)| {
+                                if let Some(v) = v {
+                                    if k.starts_with(&prefix) {
+                                        return Some((k, v));
+                                    }
                                 }
-                            }
-
-                            None
-                        })))
+                                None
+                            })
+                        )
                     },
                     IteratorMode::From(start, direction) => {
                         let start = Bytes::from(start.to_vec());
                         let iter = match direction {
                             Direction::Forward => Either::Left(tree.writes.range(start..)),
-                            Direction::Reverse => Either::Right(tree.writes.range(..=start).rev())
+                            Direction::Reverse => Either::Right(tree.writes.range(..=start).rev()),
                         };
-
-                        Either::Right(Either::Right(iter.filter_map(|(k, v)| v.as_ref().map(|v| (k, v)))))
-                    }
+                        Box::new(iter
+                            .filter_map(|(k, v)| v.as_ref().map(|v| (k, v)))
+                        )
+                    },
+                    IteratorMode::Range { lower_bound, upper_bound, direction } => {
+                        let lower = Bytes::from(lower_bound.to_vec());
+                        let upper = Bytes::from(upper_bound.to_vec());
+                        let iter = match direction {
+                            Direction::Forward => Either::Left(tree.writes.range(lower..upper)),
+                            Direction::Reverse => Either::Right(tree.writes.range(lower..upper).rev()),
+                        };
+                        Box::new(iter
+                            .filter_map(|(k, v)| v.as_ref().map(|v| (k, v)))
+                        )
+                    },
                 };
 
                 let mem_iter = mem_iter.into_iter()
@@ -276,43 +296,60 @@ impl Snapshot {
                     .map(|res| {
                         let (key, value) = res.context("Internal error in snapshot iterator")?;
 
-                        // Snapshot doesn't contains the key,
-                        // We can use the one from disk
+                        // Snapshot doesn't contain the key,
+                        // so we can use the one from disk
                         if !tree.writes.contains_key(&*key) {
                             Ok(Some((K::from_bytes(&key)?, V::from_bytes(&value)?)))
                         } else {
                             Ok(None)
                         }
-                    }).filter_map(Result::transpose);
+                    })
+                    .filter_map(Result::transpose);
 
-                let mem_iter = match mode {
-                    IteratorMode::Start => Either::Left(Either::Left(tree.writes.iter().filter_map(|(k, v)| v.as_ref().map(|v| (k, v))))),
-                    IteratorMode::End => Either::Left(Either::Right(tree.writes.iter().rev().filter_map(|(k, v)| v.as_ref().map(|v| (k, v))))),
+                let mem_iter: Box<dyn Iterator<Item = (&Bytes, &Bytes)> + Send + Sync> = match mode {
+                    IteratorMode::Start => {
+                        Box::new(tree.writes.iter()
+                            .filter_map(|(k, v)| v.as_ref().map(|v| (k, v))))
+                    }
+                    IteratorMode::End => {
+                        Box::new(tree.writes.iter().rev()
+                            .filter_map(|(k, v)| v.as_ref().map(|v| (k, v))))
+                    }
                     IteratorMode::WithPrefix(prefix, direction) => {
+                        let prefix = prefix.to_vec();
                         let iter = match direction {
                             Direction::Forward => Either::Left(tree.writes.iter()),
-                            Direction::Reverse => Either::Right(tree.writes.iter().rev())
+                            Direction::Reverse => Either::Right(tree.writes.iter().rev()),
                         };
-
-                        let cloned = prefix.to_vec();
-                        Either::Right(Either::Left(iter.filter_map(move |(k, v)| {
+                        Box::new(iter.filter_map(move |(k, v)| {
                             if let Some(v) = v {
-                                if k.starts_with(&cloned) {
-                                    return Some((k, v))
+                                if k.starts_with(&prefix) {
+                                    return Some((k, v));
                                 }
                             }
-
                             None
-                        })))
-                    },
+                        }))
+                    }
                     IteratorMode::From(start, direction) => {
                         let start = Bytes::from(start.to_vec());
                         let iter = match direction {
                             Direction::Forward => Either::Left(tree.writes.range(start..)),
-                            Direction::Reverse => Either::Right(tree.writes.range(..=start).rev())
+                            Direction::Reverse => Either::Right(tree.writes.range(..=start).rev()),
                         };
-
-                        Either::Right(Either::Right(iter.filter_map(|(k, v)| v.as_ref().map(|v| (k, v)))))
+                        Box::new(iter.filter_map(|(k, v)| v.as_ref().map(|v| (k, v))))
+                    }
+                    IteratorMode::Range {
+                        lower_bound,
+                        upper_bound,
+                        direction,
+                    } => {
+                        let lower = Bytes::from(lower_bound.to_vec());
+                        let upper = Bytes::from(upper_bound.to_vec());
+                        let iter = match direction {
+                            Direction::Forward => Either::Left(tree.writes.range(lower..upper)),
+                            Direction::Reverse => Either::Right(tree.writes.range(lower..upper).rev()),
+                        };
+                        Box::new(iter.filter_map(|(k, v)| v.as_ref().map(|v| (k, v))))
                     }
                 };
 
@@ -320,13 +357,12 @@ impl Snapshot {
                     .map(|(k, v)| Ok((K::from_bytes(k)?, V::from_bytes(v)?)));
 
                 Either::Left(disk_iter.chain(mem_iter).collect::<Vec<_>>().into_iter())
-            },
+            }
             None => {
-                let disk_iter = iterator
-                    .map(|res| {
-                        let (key, value) = res.context("Internal error in snapshot iterator")?;
-                        Ok((K::from_bytes(&key)?, V::from_bytes(&value)?))
-                    });
+                let disk_iter = iterator.map(|res| {
+                    let (key, value) = res.context("Internal error in snapshot iterator")?;
+                    Ok((K::from_bytes(&key)?, V::from_bytes(&value)?))
+                });
 
                 Either::Right(disk_iter)
             }

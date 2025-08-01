@@ -39,7 +39,7 @@ impl VersionedRegistrationsProvider for RocksStorage {
 
     // delete versioned registrations above topoheight
     async fn delete_versioned_registrations_above_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError> {
-        let prefix = topoheight.to_be_bytes();
+        let prefix = (topoheight + 1).to_be_bytes();
         for res in Self::iter_owned_internal::<RawBytes, ()>(&self.db, self.snapshot.as_ref(), IteratorMode::From(&prefix, Direction::Forward), Column::PrefixedRegistrations)? {
             let (key, _) = res?;
             Self::remove_from_disk_internal(&self.db, self.snapshot.as_mut(), Column::PrefixedRegistrations, &key)?;

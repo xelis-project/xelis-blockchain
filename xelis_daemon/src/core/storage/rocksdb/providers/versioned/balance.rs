@@ -29,7 +29,6 @@ impl VersionedBalanceProvider for RocksStorage {
     // Difference is, if we have
     async fn delete_versioned_balances_below_topoheight(&mut self, topoheight: TopoHeight, keep_last: bool) -> Result<(), BlockchainError> {
         trace!("delete versioned balances below topoheight {}", topoheight);
-        let start = topoheight.to_be_bytes();
         if keep_last {
             for res in Self::iter_owned_internal::<(AccountId, AssetId), TopoHeight>(&self.db, self.snapshot.as_ref(), IteratorMode::Start, Column::Balances)? {
                 let ((account_id, asset_id), pointer) = res?;
@@ -58,7 +57,8 @@ impl VersionedBalanceProvider for RocksStorage {
                 }
             }
         } else {
-            for res in Self::iter_owned_internal::<RawBytes, ()>(&self.db, self.snapshot.as_ref(), IteratorMode::From(&start, Direction::Forward), Column::VersionedBalances)? {
+            let start = topoheight.to_be_bytes();
+            for res in Self::iter_owned_internal::<RawBytes, ()>(&self.db, self.snapshot.as_ref(), IteratorMode::From(&start, Direction::Reverse), Column::VersionedBalances)? {
                 let (key, _) = res?;
                 Self::remove_from_disk_internal(&self.db, self.snapshot.as_mut(), Column::VersionedBalances, &key)?;
             }
