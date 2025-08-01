@@ -112,14 +112,10 @@ impl VersionedContractProvider for RocksStorage {
                     }
                 }
             }
-        } else {
-            let start = topoheight.to_be_bytes();
-            for res in Self::iter_owned_internal::<RawBytes, ()>(&self.db, self.snapshot.as_ref(), IteratorMode::From(&start, Direction::Reverse), Column::VersionedContracts)? {
-                let (key, _) = res?;
-                Self::remove_from_disk_internal(&self.db, self.snapshot.as_mut(), Column::VersionedContracts, &key)?;
-            }
-        }
 
-        Ok(())
+            Ok(())
+        } else {
+            self.delete_versioned_data_below_topoheight(Column::VersionedContracts, topoheight)
+        }
     }
 }

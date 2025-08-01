@@ -587,7 +587,7 @@ impl Storage for RocksStorage {
 #[cfg(test)]
 mod tests {
     use itertools::Itertools;
-    use rocksdb::{Direction, IteratorMode, Options, SliceTransform, DB};
+    use rocksdb::{Direction, IteratorMode, Options, ReadOptions, SliceTransform, DB};
     use tempdir::TempDir;
 
     #[test]
@@ -601,7 +601,7 @@ mod tests {
         opts.set_prefix_extractor(SliceTransform::create_fixed_prefix(8));
 
         let db = DB::open(&opts, tmp_dir.path()).unwrap();
-    
+
         // Helper to encode a u64 prefix + suffix
         fn make_key(prefix: u64, suffix: &[u8]) -> Vec<u8> {
             let mut key = prefix.to_be_bytes().to_vec();
@@ -691,5 +691,59 @@ mod tests {
             assert_eq!(prefixes, vec![1]);
             assert_eq!(results[0].1, b"value1");
         }
+    }
+
+
+    #[test]
+    fn test_rocks_db_iterator_range() {
+        // Create a temporary RocksDB instance
+        let tmp_dir = TempDir::new("rocksdb-iterator").unwrap();
+
+        let mut opts = Options::default();
+        opts.create_if_missing(true);
+        opts.create_missing_column_families(true);
+        opts.set_prefix_extractor(SliceTransform::create_fixed_prefix(4));
+
+        let db = DB::open(&opts, tmp_dir.path()).unwrap();
+
+        // Helper to encode a u64 prefix + suffix
+        fn make_key(prefix: &[u8], suffix: u64) -> Vec<u8> {
+            let mut key = prefix.to_vec();
+            key.extend_from_slice(&suffix.to_be_bytes());
+            key
+        }
+
+        db.put(make_key(&[10, 10, 10, 50], 50), &[]).unwrap();
+        db.put(make_key(&[10, 10, 10, 50], 30), &[]).unwrap();
+        db.put(make_key(&[10, 10, 10, 50], 70), &[]).unwrap();
+        db.put(make_key(&[10, 10, 10, 50], 15), &[]).unwrap();
+        db.put(make_key(&[10, 10, 10, 50], 69), &[]).unwrap();
+        db.put(make_key(&[10, 10, 10, 50], 0), &[]).unwrap();
+
+        db.put(make_key(&[10, 99, 10, 50], 50), &[]).unwrap();
+        db.put(make_key(&[6, 40, 10, 50], 30), &[]).unwrap();
+        db.put(make_key(&[0, 0, 0, 0], 70), &[]).unwrap();
+        db.put(make_key(&[0, 0, 0, 0], 50), &[]).unwrap();
+        db.put(make_key(&[255, 0, 0, 0], 30), &[]).unwrap();
+
+        let mut opts = ReadOptions::default();
+        opts.set_iterate_upper_bound(make_key(&[10, 10, 10, 50], 70));
+        opts.set_iterate_lower_bound(make_key(&[10, 10, 10, 50], 0));
+
+        let iter = db.iterator_opt(IteratorMode::End, opts);
+        let results = iter.filter_map_ok(|(k, _)|Some(k.to_vec()))
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+
+        let mut suffix = vec![];
+        for r in results {
+            assert!(r[0..4] == [10, 10, 10, 50]);
+
+            let mut buf = [0u8; 8];
+            buf.copy_from_slice(&r[4..12]);
+            suffix.push(u64::from_be_bytes(buf));
+        }
+
+        assert!(suffix == vec![69, 50, 30, 15, 0]);
     }
 }

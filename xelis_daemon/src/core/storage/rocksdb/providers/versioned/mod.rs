@@ -102,12 +102,18 @@ impl RocksStorage {
                     }
                 }
             }
+
+            Ok(())
         } else {
-            let start = topoheight.to_be_bytes();
-            for res in Self::iter_owned_internal::<RawBytes, ()>(&self.db, self.snapshot.as_ref(), IteratorMode::From(&start, Direction::Reverse), column_versioned)? {
-                let (key, _) = res?;
-                Self::remove_from_disk_internal(&self.db, self.snapshot.as_mut(), column_versioned, &key)?;
-            }
+            self.delete_versioned_data_below_topoheight(column_versioned, topoheight)
+        }
+    }
+
+    fn delete_versioned_data_below_topoheight(&mut self, column: Column, topoheight: TopoHeight) -> Result<(), BlockchainError> {
+        let start = topoheight.to_be_bytes();
+        for res in Self::iter_owned_internal::<RawBytes, ()>(&self.db, self.snapshot.as_ref(), IteratorMode::From(&start, Direction::Reverse), column)? {
+            let (key, _) = res?;
+            Self::remove_from_disk_internal(&self.db, self.snapshot.as_mut(), column, &key)?;
         }
 
         Ok(())
