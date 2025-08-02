@@ -36,7 +36,7 @@ fn random_fill_buffer(random: Option<&mut DeterministicRandom>, buffer: &mut [u8
         .context("filling random buffer")
 }
 
-pub fn random_fn(_: FnInstance, _: FnParams, context: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn random_fn(_: FnInstance, _: FnParams, _: &ModuleMetadata, context: &mut Context) -> FnReturnType<ModuleMetadata> {
 
     // Create a deterministic random for the contract
     let state: &mut ChainState = context.get_mut()
@@ -50,7 +50,7 @@ pub fn random_fn(_: FnInstance, _: FnParams, context: &mut Context) -> FnReturnT
     Ok(SysCallResult::Return(Primitive::Opaque(OpaqueWrapper::new(OpaqueRandom)).into()))
 }
 
-pub fn random_u8(_: FnInstance, _: FnParams, context: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn random_u8(_: FnInstance, _: FnParams, _: &ModuleMetadata, context: &mut Context) -> FnReturnType<ModuleMetadata> {
     let state: &mut ChainState = context.get_mut()
         .context("chain state not found")?;
 
@@ -61,7 +61,7 @@ pub fn random_u8(_: FnInstance, _: FnParams, context: &mut Context) -> FnReturnT
     Ok(SysCallResult::Return(Primitive::U8(value).into()))
 }
 
-pub fn random_u16(_: FnInstance, _: FnParams, context: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn random_u16(_: FnInstance, _: FnParams, _: &ModuleMetadata, context: &mut Context) -> FnReturnType<ModuleMetadata> {
     let state: &mut ChainState = context.get_mut()
         .context("chain state not found")?;
 
@@ -72,7 +72,7 @@ pub fn random_u16(_: FnInstance, _: FnParams, context: &mut Context) -> FnReturn
     Ok(SysCallResult::Return(Primitive::U16(value).into()))
 }
 
-pub fn random_u32(_: FnInstance, _: FnParams, context: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn random_u32(_: FnInstance, _: FnParams, _: &ModuleMetadata, context: &mut Context) -> FnReturnType<ModuleMetadata> {
     let state: &mut ChainState = context.get_mut()
         .context("chain state not found")?;
 
@@ -83,7 +83,7 @@ pub fn random_u32(_: FnInstance, _: FnParams, context: &mut Context) -> FnReturn
     Ok(SysCallResult::Return(Primitive::U32(value).into()))
 }
 
-pub fn random_u64(_: FnInstance, _: FnParams, context: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn random_u64(_: FnInstance, _: FnParams, _: &ModuleMetadata, context: &mut Context) -> FnReturnType<ModuleMetadata> {
     let state: &mut ChainState = context.get_mut()
         .context("chain state not found")?;
 
@@ -94,7 +94,7 @@ pub fn random_u64(_: FnInstance, _: FnParams, context: &mut Context) -> FnReturn
     Ok(SysCallResult::Return(Primitive::U64(value).into()))
 }
 
-pub fn random_u128(_: FnInstance, _: FnParams, context: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn random_u128(_: FnInstance, _: FnParams, _: &ModuleMetadata, context: &mut Context) -> FnReturnType<ModuleMetadata> {
     let state: &mut ChainState = context.get_mut()
         .context("chain state not found")?;
 
@@ -105,7 +105,7 @@ pub fn random_u128(_: FnInstance, _: FnParams, context: &mut Context) -> FnRetur
     Ok(SysCallResult::Return(Primitive::U128(value).into()))
 }
 
-pub fn random_u256(_: FnInstance, _: FnParams, context: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn random_u256(_: FnInstance, _: FnParams, _: &ModuleMetadata, context: &mut Context) -> FnReturnType<ModuleMetadata> {
     let state: &mut ChainState = context.get_mut()
         .context("chain state not found")?;
 
@@ -115,7 +115,7 @@ pub fn random_u256(_: FnInstance, _: FnParams, context: &mut Context) -> FnRetur
     Ok(SysCallResult::Return(Primitive::U256(value).into()))
 }
 
-pub fn random_bool(_: FnInstance, _: FnParams, context: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn random_bool(_: FnInstance, _: FnParams, _: &ModuleMetadata, context: &mut Context) -> FnReturnType<ModuleMetadata> {
     let state: &mut ChainState = context.get_mut()
         .context("chain state not found")?;
 

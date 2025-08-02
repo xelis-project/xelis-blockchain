@@ -23,11 +23,11 @@ impl Serializable for OpaqueMemoryStorage {}
 
 impl JSONHelper for OpaqueMemoryStorage {}
 
-pub fn memory_storage(_: FnInstance, _: FnParams, _: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn memory_storage(_: FnInstance, _: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
     Ok(SysCallResult::Return(Primitive::Opaque(OpaqueWrapper::new(OpaqueMemoryStorage)).into()))
 }
 
-pub fn memory_storage_load<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn memory_storage_load<P: ContractProvider>(_: FnInstance, mut params: FnParams, _: &ModuleMetadata, context: &mut Context) -> FnReturnType<ModuleMetadata> {
     let state: &mut ChainState = context.get_mut()
         .context("No chain state for memory storage")?;
 
@@ -41,7 +41,7 @@ pub fn memory_storage_load<P: ContractProvider>(_: FnInstance, mut params: FnPar
     Ok(SysCallResult::Return(value.into()))
 }
 
-pub fn memory_storage_has<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn memory_storage_has<P: ContractProvider>(_: FnInstance, mut params: FnParams, _: &ModuleMetadata, context: &mut Context) -> FnReturnType<ModuleMetadata> {
     let state: &mut ChainState = context.get_mut()
         .context("No chain state for memory storage")?;
 
@@ -52,7 +52,7 @@ pub fn memory_storage_has<P: ContractProvider>(_: FnInstance, mut params: FnPara
     Ok(SysCallResult::Return(Primitive::Boolean(contains).into()))
 }
 
-pub fn memory_storage_store<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn memory_storage_store<P: ContractProvider>(_: FnInstance, mut params: FnParams, _: &ModuleMetadata, context: &mut Context) -> FnReturnType<ModuleMetadata> {
     let key = params.remove(0)
         .into_owned();
 
@@ -80,7 +80,7 @@ pub fn memory_storage_store<P: ContractProvider>(_: FnInstance, mut params: FnPa
     Ok(SysCallResult::Return(value.into()))
 }
 
-pub fn memory_storage_delete<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn memory_storage_delete<P: ContractProvider>(_: FnInstance, mut params: FnParams, _: &ModuleMetadata, context: &mut Context) -> FnReturnType<ModuleMetadata> {
     let state: &mut ChainState = context.get_mut()
         .context("No chain state for memory storage")?;
 

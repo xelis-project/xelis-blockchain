@@ -116,8 +116,8 @@ pub struct ContractEventTracker {
 
 macro_rules! async_handler {
     ($func: expr) => {
-        move |a, b, c| {
-          Box::pin($func(a, b, c))
+        move |a, b, c, d| {
+          Box::pin($func(a, b, c, d))
         }
     };
 }
@@ -1015,7 +1015,7 @@ pub async fn get_asset_from_provider<P: ContractProvider>(provider: &P, topoheig
     }
 }
 
-fn fire_event_fn(_: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType<ModuleMetadata> {
+fn fire_event_fn(_: FnInstance, mut params: FnParams, _: &ModuleMetadata, context: &mut Context) -> FnReturnType<ModuleMetadata> {
     let data = params.remove(1);
     let id = params.remove(0)
         .as_u64()?;
@@ -1035,7 +1035,7 @@ fn fire_event_fn(_: FnInstance, mut params: FnParams, context: &mut Context) -> 
     Ok(SysCallResult::None)
 }
 
-fn println_fn(_: FnInstance, params: FnParams, context: &mut Context) -> FnReturnType<ModuleMetadata> {
+fn println_fn(_: FnInstance, params: FnParams, _: &ModuleMetadata, context: &mut Context) -> FnReturnType<ModuleMetadata> {
     let state: &ChainState = context.get().context("chain state not found")?;
     if state.debug_mode {
         info!("[{}]: {}", state.contract, params[0].as_ref());
@@ -1044,7 +1044,7 @@ fn println_fn(_: FnInstance, params: FnParams, context: &mut Context) -> FnRetur
     Ok(SysCallResult::None)
 }
 
-fn debug_fn(_: FnInstance, params: FnParams, context: &mut Context) -> FnReturnType<ModuleMetadata> {
+fn debug_fn(_: FnInstance, params: FnParams, _: &ModuleMetadata, context: &mut Context) -> FnReturnType<ModuleMetadata> {
     let state: &ChainState = context.get().context("chain state not found")?;
     if state.debug_mode {
         debug!("{:?}", params[0].as_ref());
@@ -1053,12 +1053,12 @@ fn debug_fn(_: FnInstance, params: FnParams, context: &mut Context) -> FnReturnT
     Ok(SysCallResult::None)
 }
 
-fn get_contract_hash(_: FnInstance, _: FnParams, context: &mut Context) -> FnReturnType<ModuleMetadata> {
+fn get_contract_hash(_: FnInstance, _: FnParams, _: &ModuleMetadata, context: &mut Context) -> FnReturnType<ModuleMetadata> {
     let state: &ChainState = context.get().context("chain state not found")?;
     Ok(SysCallResult::Return(Primitive::Opaque(OpaqueWrapper::new(state.contract.clone())).into()))
 }
 
-fn get_deposit_for_asset(_: FnInstance, params: FnParams, context: &mut Context) -> FnReturnType<ModuleMetadata> {
+fn get_deposit_for_asset(_: FnInstance, params: FnParams, _: &ModuleMetadata, context: &mut Context) -> FnReturnType<ModuleMetadata> {
     let param = params[0].as_ref();
     let asset: &Hash = param
         .as_opaque_type()
@@ -1074,7 +1074,7 @@ fn get_deposit_for_asset(_: FnInstance, params: FnParams, context: &mut Context)
     Ok(SysCallResult::Return(value.into()))
 }
 
-async fn get_balance_for_asset<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: FnParams, context: &mut Context<'ty, 'r>) -> FnReturnType<ModuleMetadata> {
+async fn get_balance_for_asset<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: FnParams, _: &ModuleMetadata, context: &mut Context<'ty, 'r>) -> FnReturnType<ModuleMetadata> {
     let (provider, state) = from_context::<P>(context)?;
 
     let asset: Hash = params.remove(0)
@@ -1088,7 +1088,7 @@ async fn get_balance_for_asset<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'
     Ok(SysCallResult::Return(balance.into()))
 }
 
-async fn transfer<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: FnParams, context: &mut Context<'ty, 'r>) -> FnReturnType<ModuleMetadata> {
+async fn transfer<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: FnParams, _: &ModuleMetadata, context: &mut Context<'ty, 'r>) -> FnReturnType<ModuleMetadata> {
     debug!("Transfer called {:?}", params);
 
     let asset: Hash = params.remove(2)
@@ -1156,7 +1156,7 @@ async fn transfer<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut param
     Ok(SysCallResult::Return(Primitive::Boolean(true).into()))
 }
 
-async fn burn<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: FnParams, context: &mut Context<'ty, 'r>) -> FnReturnType<ModuleMetadata> {
+async fn burn<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: FnParams, _: &ModuleMetadata, context: &mut Context<'ty, 'r>) -> FnReturnType<ModuleMetadata> {
     let (provider, state) = from_context::<P>(context)?;
 
     let asset: Hash = params.remove(1)
@@ -1188,7 +1188,7 @@ async fn burn<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: F
     Ok(SysCallResult::Return(Primitive::Boolean(true).into()))
 }
 
-async fn get_account_balance_of<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: FnParams, context: &mut Context<'ty, 'r>) -> FnReturnType<ModuleMetadata> {
+async fn get_account_balance_of<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: FnParams, _: &ModuleMetadata, context: &mut Context<'ty, 'r>) -> FnReturnType<ModuleMetadata> {
     let (provider, state) = from_context::<P>(context)?;
 
     let asset: Hash = params.remove(1)
@@ -1209,7 +1209,7 @@ async fn get_account_balance_of<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<
     Ok(SysCallResult::Return(balance.into()))
 }
 
-fn get_gas_usage(_: FnInstance, _: FnParams, context: &mut Context) -> FnReturnType<ModuleMetadata> {
+fn get_gas_usage(_: FnInstance, _: FnParams, _: &ModuleMetadata, context: &mut Context) -> FnReturnType<ModuleMetadata> {
     let gas = context.current_gas_usage();
     Ok(SysCallResult::Return(Primitive::U64(gas).into()))
 }

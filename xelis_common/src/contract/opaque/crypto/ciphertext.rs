@@ -52,7 +52,7 @@ impl_opaque!(
     json
 );
 
-pub fn ciphertext_mul_plaintext(zelf: FnInstance, mut params: FnParams, _: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn ciphertext_mul_plaintext(zelf: FnInstance, mut params: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
     let zelf: &mut CiphertextCache = zelf?.as_opaque_type_mut()?;
     let value = params.remove(0)
         .as_u64()?;
@@ -65,7 +65,7 @@ pub fn ciphertext_mul_plaintext(zelf: FnInstance, mut params: FnParams, _: &mut 
     Ok(SysCallResult::None)
 }
 
-pub fn ciphertext_div_plaintext(zelf: FnInstance, mut params: FnParams, _: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn ciphertext_div_plaintext(zelf: FnInstance, mut params: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
     let zelf: &mut CiphertextCache = zelf?.as_opaque_type_mut()?;
     let value = params.remove(0)
         .as_u64()?;
@@ -82,7 +82,7 @@ pub fn ciphertext_div_plaintext(zelf: FnInstance, mut params: FnParams, _: &mut 
     Ok(SysCallResult::None)
 }
 
-pub fn ciphertext_add_plaintext(zelf: FnInstance, mut params: FnParams, _: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn ciphertext_add_plaintext(zelf: FnInstance, mut params: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
     let zelf: &mut CiphertextCache = zelf?.as_opaque_type_mut()?;
     let value = params.remove(0)
         .as_u64()?;
@@ -95,7 +95,7 @@ pub fn ciphertext_add_plaintext(zelf: FnInstance, mut params: FnParams, _: &mut 
     Ok(SysCallResult::None)
 }
 
-pub fn ciphertext_sub_plaintext(zelf: FnInstance, mut params: FnParams, _: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn ciphertext_sub_plaintext(zelf: FnInstance, mut params: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
     let zelf: &mut CiphertextCache = zelf?.as_opaque_type_mut()?;
     let value = params.remove(0)
         .as_u64()?;
@@ -108,7 +108,7 @@ pub fn ciphertext_sub_plaintext(zelf: FnInstance, mut params: FnParams, _: &mut 
     Ok(SysCallResult::None)
 }
 
-pub fn ciphertext_new(_: FnInstance, mut params: FnParams, _: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn ciphertext_new(_: FnInstance, mut params: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
     let amount = params.remove(1)
         .into_owned()
         .as_u64()?;

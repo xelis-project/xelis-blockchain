@@ -45,7 +45,7 @@ impl Serializable for Signature {
     }
 }
 
-pub fn signature_from_bytes_fn(_: FnInstance, mut params: FnParams, _: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn signature_from_bytes_fn(_: FnInstance, mut params: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
     let param = params.remove(0)
         .into_owned();
     let param = param.as_vec()?;
@@ -63,7 +63,7 @@ pub fn signature_from_bytes_fn(_: FnInstance, mut params: FnParams, _: &mut Cont
     Ok(SysCallResult::Return(Primitive::Opaque(signature.into()).into()))
 }
 
-pub fn signature_verify_fn(zelf: FnInstance, mut params: FnParams, _: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn signature_verify_fn(zelf: FnInstance, mut params: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
     let signature: &Signature = zelf?.as_opaque_type()?;
 
     let address: Address = params.remove(0)

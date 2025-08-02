@@ -29,13 +29,13 @@ impl Serializable for Hash {
     }
 }
 
-pub fn hash_to_bytes_fn(zelf: FnInstance, _: FnParams, _: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn hash_to_bytes_fn(zelf: FnInstance, _: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
     let hash: &Hash = zelf?.as_opaque_type()?;
     let bytes = ValueCell::Bytes(hash.as_bytes().into());
     Ok(SysCallResult::Return(bytes.into()))
 }
 
-pub fn hash_to_array_fn(zelf: FnInstance, _: FnParams, _: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn hash_to_array_fn(zelf: FnInstance, _: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
     let hash: &Hash = zelf?.as_opaque_type()?;
     let bytes = hash.as_bytes()
         .into_iter()
@@ -45,7 +45,7 @@ pub fn hash_to_array_fn(zelf: FnInstance, _: FnParams, _: &mut Context) -> FnRet
     Ok(SysCallResult::Return(ValueCell::Object(bytes).into()))
 }
 
-pub fn hash_from_bytes_fn(_: FnInstance, mut params: FnParams, _: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn hash_from_bytes_fn(_: FnInstance, mut params: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
     let param = params.remove(0)
         .into_owned();
     let bytes = param.as_bytes()?;
@@ -60,7 +60,7 @@ pub fn hash_from_bytes_fn(_: FnInstance, mut params: FnParams, _: &mut Context) 
     Ok(SysCallResult::Return(Primitive::Opaque(OpaqueWrapper::new(hash)).into()))
 }
 
-pub fn hash_from_array_fn(_: FnInstance, mut params: FnParams, _: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn hash_from_array_fn(_: FnInstance, mut params: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
     let param = params.remove(0)
         .into_owned();
     let values = param.as_vec()?;
@@ -79,7 +79,7 @@ pub fn hash_from_array_fn(_: FnInstance, mut params: FnParams, _: &mut Context) 
     Ok(SysCallResult::Return(Primitive::Opaque(OpaqueWrapper::new(hash)).into()))
 }
 
-pub fn hash_from_u256_fn(_: FnInstance, mut params: FnParams, _: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn hash_from_u256_fn(_: FnInstance, mut params: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
     let param = params.remove(0)
         .into_owned();
 
@@ -90,17 +90,17 @@ pub fn hash_from_u256_fn(_: FnInstance, mut params: FnParams, _: &mut Context) -
     Ok(SysCallResult::Return(Primitive::Opaque(OpaqueWrapper::new(hash)).into()))
 }
 
-pub fn hash_to_u256_fn(zelf: FnInstance, _: FnParams, _: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn hash_to_u256_fn(zelf: FnInstance, _: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
     let hash: &Hash = zelf?.as_opaque_type()?;
     Ok(SysCallResult::Return(Primitive::U256(U256::from_be_bytes(*hash.as_bytes())).into()))
 }
 
-pub fn hash_to_hex_fn(zelf: FnInstance, _: FnParams, _: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn hash_to_hex_fn(zelf: FnInstance, _: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
     let hash: &Hash = zelf?.as_opaque_type()?;
     Ok(SysCallResult::Return(Primitive::String(hex::encode(hash.as_bytes())).into()))
 }
 
-pub fn hash_from_hex_fn(_: FnInstance, mut params: FnParams, _: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn hash_from_hex_fn(_: FnInstance, mut params: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
     let param = params.remove(0)
         .into_owned();
     let hex = param.as_string()?;
@@ -115,17 +115,17 @@ pub fn hash_from_hex_fn(_: FnInstance, mut params: FnParams, _: &mut Context) ->
     Ok(SysCallResult::Return(Primitive::Opaque(OpaqueWrapper::new(hash)).into()))
 }
 
-pub fn hash_zero_fn(_: FnInstance, _: FnParams, _: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn hash_zero_fn(_: FnInstance, _: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
     let hash = Hash::zero();
     Ok(SysCallResult::Return(Primitive::Opaque(OpaqueWrapper::new(hash)).into()))
 }
 
-pub fn hash_max_fn(_: FnInstance, _: FnParams, _: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn hash_max_fn(_: FnInstance, _: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
     let hash = Hash::max();
     Ok(SysCallResult::Return(Primitive::Opaque(OpaqueWrapper::new(hash)).into()))
 }
 
-pub fn blake3_fn(_: FnInstance, mut params: FnParams, _: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn blake3_fn(_: FnInstance, mut params: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
     let input = params.remove(0)
         .into_owned()
         .as_vec()?
@@ -137,7 +137,7 @@ pub fn blake3_fn(_: FnInstance, mut params: FnParams, _: &mut Context) -> FnRetu
     Ok(SysCallResult::Return(Primitive::Opaque(OpaqueWrapper::new(hash)).into()))
 }
 
-pub fn sha256_fn(_: FnInstance, mut params: FnParams, _: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn sha256_fn(_: FnInstance, mut params: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
     let input = params.remove(0)
         .into_owned()
         .as_vec()?

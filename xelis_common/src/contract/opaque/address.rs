@@ -31,17 +31,17 @@ impl Serializable for Address {
     }
 }
 
-pub fn address_is_mainnet(zelf: FnInstance, _: FnParams, _: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn address_is_mainnet(zelf: FnInstance, _: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
     let address: &Address = zelf?.as_opaque_type()?;
     Ok(SysCallResult::Return(Primitive::Boolean(address.is_mainnet()).into()))
 }
 
-pub fn address_is_normal(zelf: FnInstance, _: FnParams, _: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn address_is_normal(zelf: FnInstance, _: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
     let address: &Address = zelf?.as_opaque_type()?;
     Ok(SysCallResult::Return(Primitive::Boolean(address.is_normal()).into()))
 }
 
-pub fn address_public_key_bytes(zelf: FnInstance, _: FnParams, _: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn address_public_key_bytes(zelf: FnInstance, _: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
     let address: &Address = zelf?.as_opaque_type()?;
     let bytes = address.get_public_key()
         .as_bytes();
@@ -49,7 +49,7 @@ pub fn address_public_key_bytes(zelf: FnInstance, _: FnParams, _: &mut Context) 
     Ok(SysCallResult::Return(ValueCell::Bytes(bytes.into()).into()))
 }
 
-pub fn address_from_string(_: FnInstance, mut params: FnParams, _: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn address_from_string(_: FnInstance, mut params: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
     let param = params.remove(0)
         .into_owned();
     let string = param.as_string()?;
