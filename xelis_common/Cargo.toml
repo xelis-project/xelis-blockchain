@@ -43,13 +43,13 @@ rand = { workspace = true }
 indexmap = { workspace = true }
 async-trait = { workspace = true }
 cfg-if = { workspace = true }
+metrics = { workspace = true }
 
 chrono = { workspace = true, optional = true }
 clap = { workspace = true, optional = true }
 actix-web = { workspace = true, optional = true }
 futures-util = { workspace = true, optional = true }
 futures = { workspace = true, optional = true }
-metrics = { workspace = true, optional = true }
 
 # Query system
 regex = "1"
@@ -89,7 +89,7 @@ tokio = ["dep:tokio", "dep:tokio_with_wasm", "dep:futures", "dep:pin-project-lit
 tokio-multi-thread = ["tokio", "tokio/rt-multi-thread", "tokio_with_wasm/rt-multi-thread"]
 deadlock-detection = ["tokio"]
 
-rpc = ["dep:metrics"]
+rpc = []
 rpc-client = ["rpc", "tokio", "dep:reqwest", "dep:futures-util", "dep:tokio-tungstenite-wasm"]
 rpc-server = ["rpc", "dep:actix-rt", "dep:actix-web", "dep:actix-ws", "dep:futures-util", "tokio", "dep:reqwest"]
 
