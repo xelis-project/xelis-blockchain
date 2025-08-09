@@ -44,7 +44,7 @@ use super::{ChainState, StorageReference, Echange};
 
 struct ContractManager<'a> {
     outputs: HashMap<&'a Hash, Vec<ContractOutput>>,
-    caches: HashMap<&'a Hash, ContractCache>,
+    caches: HashMap<Hash, ContractCache>,
     // global assets cache
     assets: HashMap<Hash, Option<AssetChanges>>,
     tracker: ContractEventTracker,
@@ -251,14 +251,13 @@ impl<'a, S: Storage> BlockchainApplyState<'a, S, BlockchainError> for Applicable
         let state = ContractChainState {
             debug_mode: true,
             mainnet: self.inner.storage.is_mainnet(),
-            contract,
+            entry_contract: contract,
             topoheight: self.inner.topoheight,
             block_hash: self.block_hash,
             block: self.block,
             deposits,
-            random: None,
             tx_hash,
-            cache,
+            caches: [(contract.clone(), cache)].into_iter().collect(),
             outputs: Vec::new(),
             // Event trackers
             tracker: self.contract_manager.tracker.clone(),
@@ -280,19 +279,21 @@ impl<'a, S: Storage> BlockchainApplyState<'a, S, BlockchainError> for Applicable
     async fn merge_contract_changes(
         &mut self,
         hash: &'a Hash,
-        cache: ContractCache,
+        caches: HashMap<Hash, ContractCache>,
         tracker: ContractEventTracker,
         assets: HashMap<Hash, Option<AssetChanges>>
     ) -> Result<(), BlockchainError> {
-        match self.contract_manager.caches.entry(hash) {
-            Entry::Occupied(mut o) => {
-                let current = o.get_mut();
-                *current = cache;
-            },
-            Entry::Vacant(e) => {
-                e.insert(cache);
-            }
-        };
+        for (contract, cache) in caches {
+            match self.contract_manager.caches.entry(contract) {
+                Entry::Occupied(mut o) => {
+                    let current = o.get_mut();
+                    *current = cache;
+                },
+                Entry::Vacant(e) => {
+                    e.insert(cache);
+                }
+            };
+        }
 
         self.contract_manager.tracker = tracker;
         self.contract_manager.assets = assets;
@@ -371,7 +372,7 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
     }
 
     // Get the contracts cache
-    pub fn get_contracts_cache(&self) -> &HashMap<&Hash, ContractCache> {
+    pub fn get_contracts_cache(&self) -> &HashMap<Hash, ContractCache> {
         &self.contract_manager.caches
     }
 
