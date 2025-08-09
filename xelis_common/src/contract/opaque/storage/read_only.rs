@@ -9,7 +9,7 @@ use xelis_vm::{
     SysCallResult
 };
 use crate::{
-    contract::{from_context, ContractProvider, ModuleMetadata},
+    contract::{from_context, get_optional_cache_for_contract, ContractProvider, ModuleMetadata},
     crypto::Hash
 };
 
@@ -26,7 +26,9 @@ pub async fn read_only_storage<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'
         .into_owned()
         .into_opaque_type()?;
 
-    if !state.global_caches.contains_key(&hash) && !storage.has_contract(&hash, state.topoheight).await? {
+    // If we don't have a global cache or an actual local cache for this contract
+    // OR the contract does not exist in the storage, we return null
+    if get_optional_cache_for_contract(&state.caches, state.global_caches, &hash).is_none() && !storage.has_contract(&hash, state.topoheight).await? {
         return Ok(SysCallResult::Return(Primitive::Null.into()))
     }
 
@@ -42,7 +44,7 @@ pub async fn read_only_storage_load<'a, 'ty, 'r, P: ContractProvider>(zelf: FnIn
         .into_owned();
 
     // Read from global cache first, then fallback to provider
-    let value = match state.global_caches.get(&zelf.0)
+    let value = match get_optional_cache_for_contract(&state.caches, state.global_caches, &zelf.0)
         .and_then(|cache| cache.storage.get(&key).map(|(_, v)| v)) {
             Some(v) => v.clone(),
             None => storage.load_data(&zelf.0, &key, state.topoheight).await?
@@ -62,7 +64,7 @@ pub async fn read_only_storage_has<'a, 'ty, 'r, P: ContractProvider>(zelf: FnIns
         .into_owned();
 
     // Read from global cache first, then fallback to provider
-    let contains = match state.global_caches.get(&zelf.0)
+    let contains = match get_optional_cache_for_contract(&state.caches, state.global_caches, &zelf.0)
         .and_then(|cache| cache.storage.get(&key).map(|(_, v)| v)) {
             Some(v) => v.is_some(),
             None => storage.has_data(&zelf.0, &key, state.topoheight).await?

@@ -11,7 +11,7 @@ use xelis_vm::{
 };
 use crate::{
     config::FEE_PER_BYTE_IN_CONTRACT_MEMORY,
-    contract::{ChainState, ContractProvider, ModuleMetadata},
+    contract::{get_cache_for_contract, get_optional_cache_for_contract, ChainState, ContractProvider, ModuleMetadata},
 };
 use super::{Serializer, MAX_KEY_SIZE, MAX_VALUE_SIZE};
 
@@ -27,32 +27,34 @@ pub fn memory_storage(_: FnInstance, _: FnParams, _: &ModuleMetadata, _: &mut Co
     Ok(SysCallResult::Return(Primitive::Opaque(OpaqueWrapper::new(OpaqueMemoryStorage)).into()))
 }
 
-pub fn memory_storage_load<P: ContractProvider>(_: FnInstance, mut params: FnParams, _: &ModuleMetadata, context: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn memory_storage_load<P: ContractProvider>(_: FnInstance, mut params: FnParams, metadata: &ModuleMetadata, context: &mut Context) -> FnReturnType<ModuleMetadata> {
     let state: &mut ChainState = context.get_mut()
         .context("No chain state for memory storage")?;
 
     let key = params.remove(0)
         .into_owned();
 
-    let value = state.cache.memory.get(&key)
-        .cloned()
+    let value = get_optional_cache_for_contract(&state.caches, state.global_caches, &metadata.contract)
+        .and_then(|cache| cache.memory.get(&key).cloned())
         .unwrap_or_default();
 
     Ok(SysCallResult::Return(value.into()))
 }
 
-pub fn memory_storage_has<P: ContractProvider>(_: FnInstance, mut params: FnParams, _: &ModuleMetadata, context: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn memory_storage_has<P: ContractProvider>(_: FnInstance, mut params: FnParams, metadata: &ModuleMetadata, context: &mut Context) -> FnReturnType<ModuleMetadata> {
     let state: &mut ChainState = context.get_mut()
         .context("No chain state for memory storage")?;
 
     let key = params.remove(0)
         .into_owned();
 
-    let contains = state.cache.memory.contains_key(&key);
+    let contains = get_optional_cache_for_contract(&state.caches, state.global_caches, &metadata.contract)
+        .map_or(false, |cache| cache.memory.contains_key(&key));
+
     Ok(SysCallResult::Return(Primitive::Boolean(contains).into()))
 }
 
-pub fn memory_storage_store<P: ContractProvider>(_: FnInstance, mut params: FnParams, _: &ModuleMetadata, context: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn memory_storage_store<P: ContractProvider>(_: FnInstance, mut params: FnParams, metadata: &ModuleMetadata, context: &mut Context) -> FnReturnType<ModuleMetadata> {
     let key = params.remove(0)
         .into_owned();
 
@@ -75,19 +77,25 @@ pub fn memory_storage_store<P: ContractProvider>(_: FnInstance, mut params: FnPa
 
     let state: &mut ChainState = context.get_mut()
         .context("No chain state for memory storage")?;
-    let value = state.cache.memory.insert(key, value)
+
+    let value = get_cache_for_contract(&mut state.caches, state.global_caches, metadata.contract.clone())
+        .memory
+        .insert(key, value)
         .unwrap_or_default();
+
     Ok(SysCallResult::Return(value.into()))
 }
 
-pub fn memory_storage_delete<P: ContractProvider>(_: FnInstance, mut params: FnParams, _: &ModuleMetadata, context: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn memory_storage_delete<P: ContractProvider>(_: FnInstance, mut params: FnParams, metadata: &ModuleMetadata, context: &mut Context) -> FnReturnType<ModuleMetadata> {
     let state: &mut ChainState = context.get_mut()
         .context("No chain state for memory storage")?;
 
     let key = params.remove(0)
         .into_owned();
 
-    let value = state.cache.memory.remove(&key)
+    let value = get_cache_for_contract(&mut state.caches, state.global_caches, metadata.contract.clone())
+        .memory
+        .remove(&key)
         .unwrap_or_default();
 
     Ok(SysCallResult::Return(value.into()))

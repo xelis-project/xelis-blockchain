@@ -11,7 +11,7 @@ use xelis_vm::{
 use crate::{
     asset::{AssetData, AssetOwner},
     config::COST_PER_TOKEN,
-    contract::{from_context, get_optional_asset_from_cache, AssetChanges, ContractOutput, ContractProvider, ModuleMetadata},
+    contract::{from_context, get_cache_for_contract, get_optional_asset_from_cache, AssetChanges, ContractOutput, ContractProvider, ModuleMetadata},
     crypto::{Hash, HASH_SIZE},
     versioned_type::VersionedState
 };
@@ -44,8 +44,8 @@ fn is_valid_char_for_asset(c: char, whitespace: bool, uppercase_only: bool) -> b
 
 // Create a new asset
 // Return None if the asset already exists
-pub async fn asset_create<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: FnParams, _: &ModuleMetadata, context: &mut Context<'ty, 'r>) -> FnReturnType<ModuleMetadata> {
-    let (provider, chain_state) = from_context::<P>(context)?;
+pub async fn asset_create<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata, context: &mut Context<'ty, 'r>) -> FnReturnType<ModuleMetadata> {
+    let (provider, state) = from_context::<P>(context)?;
 
     let max_supply = match params.remove(4).into_owned().take_as_optional()? {
         Some(v) => Some(v.to_u64()?),
@@ -84,17 +84,17 @@ pub async fn asset_create<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, m
     let id = params.remove(0).as_u64()?;
 
     let mut buffer = [0u8; 40];
-    buffer[0..HASH_SIZE].copy_from_slice(chain_state.contract.as_bytes());
+    buffer[0..HASH_SIZE].copy_from_slice(metadata.contract.as_bytes());
     buffer[HASH_SIZE..].copy_from_slice(&id.to_be_bytes());
 
     let asset_hash = Hash::new(hash(&buffer).into());
     // We must be sure that we don't have this asset already
-    if get_optional_asset_from_cache(provider, chain_state, asset_hash.clone()).await?.is_some() {
+    if get_optional_asset_from_cache(provider, state, asset_hash.clone()).await?.is_some() {
         return Ok(SysCallResult::Return(Primitive::Null.into()));
     }
 
-    let data = AssetData::new(decimals, name, ticker, max_supply, Some(AssetOwner::new(chain_state.contract.clone(), id)));
-    chain_state.assets.insert(asset_hash.clone(), Some(AssetChanges {
+    let data = AssetData::new(decimals, name, ticker, max_supply, Some(AssetOwner::new(metadata.contract.clone(), id)));
+    state.assets.insert(asset_hash.clone(), Some(AssetChanges {
         data: (VersionedState::New, data.clone()),
         supply: None
     }));
@@ -102,10 +102,12 @@ pub async fn asset_create<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, m
     // If we have a max supply, we need to mint it to the contract
     if let Some(max_supply) = max_supply {
         // We don't bother to check if it already exists, because it shouldn't exist before we create it.
-        chain_state.cache.balances.insert(asset_hash.clone(), Some((VersionedState::New, max_supply)));
+        get_cache_for_contract(&mut state.caches, state.global_caches, metadata.contract.clone())
+            .balances
+            .insert(asset_hash.clone(), Some((VersionedState::New, max_supply)));
     }
 
-    chain_state.outputs.push(ContractOutput::NewAsset { asset: asset_hash.clone() });
+    state.outputs.push(ContractOutput::NewAsset { asset: asset_hash.clone() });
 
     // Pay the cost for a new token
     context.increase_gas_usage(COST_PER_TOKEN)?;
@@ -116,12 +118,12 @@ pub async fn asset_create<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, m
     Ok(SysCallResult::Return(Primitive::Opaque(asset.into()).into()))
 }
 
-pub async fn asset_get_by_id<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, params: FnParams, _: &ModuleMetadata, context: &mut Context<'ty, 'r>) -> FnReturnType<ModuleMetadata> {
+pub async fn asset_get_by_id<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, params: FnParams, metadata: &ModuleMetadata, context: &mut Context<'ty, 'r>) -> FnReturnType<ModuleMetadata> {
     let id = params[0].as_u64()?;
     let (provider, chain_state) = from_context::<P>(context)?;
 
     let mut buffer = [0u8; 40];
-    buffer[0..HASH_SIZE].copy_from_slice(chain_state.contract.as_bytes());
+    buffer[0..HASH_SIZE].copy_from_slice(metadata.contract.as_bytes());
     buffer[HASH_SIZE..].copy_from_slice(&id.to_be_bytes());
 
     let asset_hash = Hash::new(hash(&buffer).into());

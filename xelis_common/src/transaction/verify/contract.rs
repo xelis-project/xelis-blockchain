@@ -62,7 +62,10 @@ impl Transaction {
 
         // Insert the module to load
         // TODO: module metadata should be passed to the VM
-        vm.append_module(contract_environment.module, Reference::Borrowed(&ModuleMetadata))?;
+        let metadata = ModuleMetadata {
+            contract: contract.clone(),
+        };
+        vm.append_module(contract_environment.module, Reference::Shared(Arc::new(metadata)))?;
 
         // Invoke the needed chunk
         // This is the first chunk to be called
@@ -150,12 +153,12 @@ impl Transaction {
         let mut outputs = chain_state.outputs;
         // If the contract execution was successful, we need to merge the cache
         if is_success {
-            let cache = chain_state.cache;
+            let caches = chain_state.caches;
             let tracker = chain_state.tracker;
             let assets = chain_state.assets;
             state.merge_contract_changes(
                 &contract,
-                cache,
+                caches,
                 tracker,
                 assets
             ).await

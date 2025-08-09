@@ -1,4 +1,8 @@
+use crate::crypto::Hash;
 
 // TODO: include the contract hash, etc
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ModuleMetadata;
+#[derive(Debug, Clone)]
+pub struct ModuleMetadata {
+    // Contract hash of the module invoked
+    pub contract: Hash,
+}

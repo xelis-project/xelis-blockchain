@@ -12,7 +12,7 @@ use xelis_vm::{
     U256
 };
 
-use crate::contract::{ChainState, DeterministicRandom, ModuleMetadata};
+use crate::contract::{get_cache_for_contract, ChainState, DeterministicRandom, ModuleMetadata};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct OpaqueRandom;
@@ -36,91 +36,102 @@ fn random_fill_buffer(random: Option<&mut DeterministicRandom>, buffer: &mut [u8
         .context("filling random buffer")
 }
 
-pub fn random_fn(_: FnInstance, _: FnParams, _: &ModuleMetadata, context: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn random_fn(_: FnInstance, _: FnParams, metadata: &ModuleMetadata, context: &mut Context) -> FnReturnType<ModuleMetadata> {
 
     // Create a deterministic random for the contract
     let state: &mut ChainState = context.get_mut()
         .context("chain state not found")?;
 
-    if state.random.is_none() {
+    let cache = get_cache_for_contract(&mut state.caches, state.global_caches, metadata.contract.clone());
+
+    if cache.random.is_none() {
         debug!("initializing deterministic random for {}", state.tx_hash);
-        state.random = Some(DeterministicRandom::new(state.contract, state.block_hash, state.tx_hash));
+        // NOTE: the DeterministicRandom is sandboxed PER contract to prevent any cross-contract interference
+        cache.random = Some(DeterministicRandom::new(state.entry_contract, state.block_hash, state.tx_hash));
     }
 
     Ok(SysCallResult::Return(Primitive::Opaque(OpaqueWrapper::new(OpaqueRandom)).into()))
 }
 
-pub fn random_u8(_: FnInstance, _: FnParams, _: &ModuleMetadata, context: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn random_u8(_: FnInstance, _: FnParams, metadata: &ModuleMetadata, context: &mut Context) -> FnReturnType<ModuleMetadata> {
     let state: &mut ChainState = context.get_mut()
         .context("chain state not found")?;
 
+    let cache = get_cache_for_contract(&mut state.caches, state.global_caches, metadata.contract.clone());
+
     let mut buffer = [0; 1];
-    random_fill_buffer(state.random.as_mut(), &mut buffer)?;
+    random_fill_buffer(cache.random.as_mut(), &mut buffer)?;
     let value = buffer[0];
 
     Ok(SysCallResult::Return(Primitive::U8(value).into()))
 }
 
-pub fn random_u16(_: FnInstance, _: FnParams, _: &ModuleMetadata, context: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn random_u16(_: FnInstance, _: FnParams, metadata: &ModuleMetadata, context: &mut Context) -> FnReturnType<ModuleMetadata> {
     let state: &mut ChainState = context.get_mut()
         .context("chain state not found")?;
 
+    let cache = get_cache_for_contract(&mut state.caches, state.global_caches, metadata.contract.clone());
     let mut buffer = [0; 2];
-    random_fill_buffer(state.random.as_mut(), &mut buffer)?;
+    random_fill_buffer(cache.random.as_mut(), &mut buffer)?;
     let value = u16::from_le_bytes(buffer);
 
     Ok(SysCallResult::Return(Primitive::U16(value).into()))
 }
 
-pub fn random_u32(_: FnInstance, _: FnParams, _: &ModuleMetadata, context: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn random_u32(_: FnInstance, _: FnParams, metadata: &ModuleMetadata, context: &mut Context) -> FnReturnType<ModuleMetadata> {
     let state: &mut ChainState = context.get_mut()
         .context("chain state not found")?;
 
+    let cache = get_cache_for_contract(&mut state.caches, state.global_caches, metadata.contract.clone());
     let mut buffer = [0; 4];
-    random_fill_buffer(state.random.as_mut(), &mut buffer)?;
+    random_fill_buffer(cache.random.as_mut(), &mut buffer)?;
     let value = u32::from_le_bytes(buffer);
 
     Ok(SysCallResult::Return(Primitive::U32(value).into()))
 }
 
-pub fn random_u64(_: FnInstance, _: FnParams, _: &ModuleMetadata, context: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn random_u64(_: FnInstance, _: FnParams, metadata: &ModuleMetadata, context: &mut Context) -> FnReturnType<ModuleMetadata> {
     let state: &mut ChainState = context.get_mut()
         .context("chain state not found")?;
 
+    let cache = get_cache_for_contract(&mut state.caches, state.global_caches, metadata.contract.clone());
     let mut buffer = [0; 8];
-    random_fill_buffer(state.random.as_mut(), &mut buffer)?;
+    random_fill_buffer(cache.random.as_mut(), &mut buffer)?;
     let value = u64::from_le_bytes(buffer);
 
     Ok(SysCallResult::Return(Primitive::U64(value).into()))
 }
 
-pub fn random_u128(_: FnInstance, _: FnParams, _: &ModuleMetadata, context: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn random_u128(_: FnInstance, _: FnParams, metadata: &ModuleMetadata, context: &mut Context) -> FnReturnType<ModuleMetadata> {
     let state: &mut ChainState = context.get_mut()
         .context("chain state not found")?;
 
+    let cache = get_cache_for_contract(&mut state.caches, state.global_caches, metadata.contract.clone());
     let mut buffer = [0; 16];
-    random_fill_buffer(state.random.as_mut(), &mut buffer)?;
+    random_fill_buffer(cache.random.as_mut(), &mut buffer)?;
     let value = u128::from_le_bytes(buffer);
 
     Ok(SysCallResult::Return(Primitive::U128(value).into()))
 }
 
-pub fn random_u256(_: FnInstance, _: FnParams, _: &ModuleMetadata, context: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn random_u256(_: FnInstance, _: FnParams, metadata: &ModuleMetadata, context: &mut Context) -> FnReturnType<ModuleMetadata> {
     let state: &mut ChainState = context.get_mut()
         .context("chain state not found")?;
 
+    let cache = get_cache_for_contract(&mut state.caches, state.global_caches, metadata.contract.clone());
     let mut buffer = [0; 32];
-    random_fill_buffer(state.random.as_mut(), &mut buffer)?;
+    random_fill_buffer(cache.random.as_mut(), &mut buffer)?;
     let value = U256::from_le_bytes(buffer);
     Ok(SysCallResult::Return(Primitive::U256(value).into()))
 }
 
-pub fn random_bool(_: FnInstance, _: FnParams, _: &ModuleMetadata, context: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn random_bool(_: FnInstance, _: FnParams, metadata: &ModuleMetadata, context: &mut Context) -> FnReturnType<ModuleMetadata> {
     let state: &mut ChainState = context.get_mut()
         .context("chain state not found")?;
 
+    let cache = get_cache_for_contract(&mut state.caches, state.global_caches, metadata.contract.clone());
     let mut buffer = [0; 1];
-    random_fill_buffer(state.random.as_mut(), &mut buffer)?;
+    random_fill_buffer(cache.random.as_mut(), &mut buffer)?;
     let value = buffer[0] & 1 == 1;
 
     Ok(SysCallResult::Return(Primitive::Boolean(value).into()))

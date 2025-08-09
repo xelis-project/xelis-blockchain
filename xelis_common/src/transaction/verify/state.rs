@@ -171,7 +171,7 @@ pub trait BlockchainApplyState<'a, P: ContractProvider, E>: BlockchainVerificati
     async fn merge_contract_changes(
         &mut self,
         hash: &'a Hash,
-        cache: ContractCache,
+        caches: HashMap<Hash, ContractCache>,
         tracker: ContractEventTracker,
         assets: HashMap<Hash, Option<AssetChanges>>
     ) -> Result<(), E>;
