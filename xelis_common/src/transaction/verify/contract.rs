@@ -157,7 +157,6 @@ impl Transaction {
             let tracker = chain_state.tracker;
             let assets = chain_state.assets;
             state.merge_contract_changes(
-                &contract,
                 caches,
                 tracker,
                 assets

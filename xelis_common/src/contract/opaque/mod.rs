@@ -6,6 +6,7 @@ mod storage;
 mod asset;
 mod crypto;
 mod memory_storage;
+mod module;
 
 use bulletproofs::RangeProof;
 use log::debug;
@@ -31,6 +32,7 @@ pub use address::*;
 pub use asset::*;
 pub use crypto::*;
 pub use memory_storage::*;
+pub use module::*;
 
 // Unique IDs for opaque types serialization
 pub const HASH_OPAQUE_ID: u8 = 0;
@@ -79,6 +81,10 @@ impl_opaque!(
 impl_opaque!(
     "Asset",
     Asset
+);
+impl_opaque!(
+    "OpaqueModule",
+    OpaqueModule
 );
 
 // Injectable context data

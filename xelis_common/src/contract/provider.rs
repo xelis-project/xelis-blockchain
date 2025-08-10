@@ -1,5 +1,7 @@
+use std::sync::Arc;
+
 use async_trait::async_trait;
-use xelis_vm::tid;
+use xelis_vm::{tid, Module};
 
 use crate::{
     account::CiphertextCache,
@@ -29,6 +31,9 @@ pub trait ContractProvider: ContractStorage + Send + Sync + 'static {
 
     // Verify if the address is well registered
     async fn account_exists(&self, key: &PublicKey, topoheight: TopoHeight) -> Result<bool, anyhow::Error>;
+
+    // Load a contract module
+    async fn load_contract_module(&self, contract: &Hash) -> Result<Option<Arc<Module>>, anyhow::Error>;
 }
 
 // This is a wrapper around the storage to allow for the storage to be passed in the Context

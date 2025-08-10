@@ -13,7 +13,8 @@ use crate::{
         ContractEventTracker,
         ContractOutput,
         ContractProvider,
-        ModuleMetadata
+        ModuleMetadata,
+        OpaqueModule
     },
     crypto::{
         elgamal::{
@@ -167,10 +168,17 @@ pub trait BlockchainApplyState<'a, P: ContractProvider, E>: BlockchainVerificati
         tx_hash: &'b Hash
     ) -> Result<(ContractEnvironment<'b, P>, ChainState<'b>), E>;
 
+    /// Set the updated contract caches
+    /// This is used to update the caches after the contract execution
+    /// Even if the execution failed, the caches should be updated
+    async fn set_modules_cache(
+        &mut self,
+        modules: HashMap<Hash, Option<OpaqueModule>>,
+    ) -> Result<(), E>;
+
     /// Merge the contract cache with the stored one
     async fn merge_contract_changes(
         &mut self,
-        hash: &'a Hash,
         caches: HashMap<Hash, ContractCache>,
         tracker: ContractEventTracker,
         assets: HashMap<Hash, Option<AssetChanges>>

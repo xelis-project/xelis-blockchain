@@ -84,6 +84,9 @@ pub struct ChainState<'a> {
     // The contract cache
     // If the contract was called already, we may have a cache with data
     pub caches: HashMap<Hash, ContractCache>,
+    // All modules loaded
+    // This is persisted across the calls
+    pub modules: HashMap<Hash, Option<OpaqueModule>>,
     // The contract outputs
     // This is similar to an event log
     pub outputs: Vec<ContractOutput>,
@@ -153,6 +156,8 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
     let ciphertext_type = Type::Opaque(env.register_opaque::<CiphertextCache>("Ciphertext", true));
     let _ = Type::Opaque(env.register_opaque::<CiphertextValidityProof>("CiphertextValidityProof", true));
     let _ = Type::Opaque(env.register_opaque::<RangeProofWrapper>("RangeProof", true));
+
+    let module_type = Type::Opaque(env.register_opaque::<OpaqueModule>("Module", true));
 
     // Transaction
     {
@@ -900,6 +905,32 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             FunctionHandler::Sync(ciphertext_new),
             1000,
             Some(ciphertext_type.clone())
+        );
+    }
+
+    // Module Opaque
+    {
+        env.register_static_function(
+            "new",
+            module_type.clone(),
+            vec![
+                ("contract", hash_type.clone()),
+            ],
+            FunctionHandler::Async(async_handler!(module_new::<P>)),
+            125,
+            Some(Type::Optional(Box::new(module_type.clone())))
+        );
+
+        env.register_native_function(
+            "invoke",
+            Some(module_type.clone()),
+            vec![
+                ("chunk_id", Type::U16),
+                ("args", Type::Any),
+            ],
+            FunctionHandler::Async(async_handler!(module_invoke)),
+            1,
+            Some(Type::Any)
         );
     }
 
