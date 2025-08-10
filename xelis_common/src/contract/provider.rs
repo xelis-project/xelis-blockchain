@@ -33,7 +33,7 @@ pub trait ContractProvider: ContractStorage + Send + Sync + 'static {
     async fn account_exists(&self, key: &PublicKey, topoheight: TopoHeight) -> Result<bool, anyhow::Error>;
 
     // Load a contract module
-    async fn load_contract_module(&self, contract: &Hash) -> Result<Option<Arc<Module>>, anyhow::Error>;
+    async fn load_contract_module(&self, contract: &Hash, topoheight: TopoHeight) -> Result<Option<Arc<Module>>, anyhow::Error>;
 }
 
 // This is a wrapper around the storage to allow for the storage to be passed in the Context

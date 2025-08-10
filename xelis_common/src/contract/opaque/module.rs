@@ -60,7 +60,7 @@ pub async fn module_new<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut
     let module = match state.modules.entry(contract.clone()) {
         Entry::Occupied(entry) => entry.get().clone(),
         Entry::Vacant(entry) => {
-            let module = provider.load_contract_module(&contract).await?
+            let module = provider.load_contract_module(&contract, state.topoheight).await?
                 .map(|module| OpaqueModule {
                 module,
                 metadata: Arc::new(ModuleMetadata { contract }),
