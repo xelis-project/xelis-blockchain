@@ -181,13 +181,12 @@ pub async fn asset_mint<'a, 'ty, 'r, P: ContractProvider>(zelf: FnInstance<'a>, 
     let (provider, state) = from_context::<P>(context)?;
 
     let topoheight = state.topoheight;
-    let contract = state.entry_contract.clone();
     let changes = get_asset_changes_for_hash_mut(state, &asset.hash)?;
     let asset_data = &mut changes.data.1;
     let read_only = asset_data
         .get_owner()
         .as_ref()
-        .map(|v| v.get_contract()) != Some(&contract);
+        .map(|v| v.get_contract()) != Some(&metadata.contract);
 
     if read_only {
         return Ok(SysCallResult::Return(Primitive::Boolean(false).into()))

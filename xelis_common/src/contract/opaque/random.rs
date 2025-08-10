@@ -47,7 +47,7 @@ pub fn random_fn(_: FnInstance, _: FnParams, metadata: &ModuleMetadata, context:
     if cache.random.is_none() {
         debug!("initializing deterministic random for {}", state.tx_hash);
         // NOTE: the DeterministicRandom is sandboxed PER contract to prevent any cross-contract interference
-        cache.random = Some(DeterministicRandom::new(state.entry_contract, state.block_hash, state.tx_hash));
+        cache.random = Some(DeterministicRandom::new(&metadata.contract, state.block_hash, state.tx_hash));
     }
 
     Ok(SysCallResult::Return(Primitive::Opaque(OpaqueWrapper::new(OpaqueRandom)).into()))

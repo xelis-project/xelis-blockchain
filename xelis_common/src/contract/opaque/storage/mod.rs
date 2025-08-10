@@ -64,7 +64,7 @@ pub async fn storage_load<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, m
     let cache = get_cache_for_contract(&mut state.caches, state.global_caches, metadata.contract.clone());
     let value = match cache.storage.get(&key) {
         Some((_, value)) => value.clone(),
-        None => match storage.load_data(&state.entry_contract, &key, state.topoheight).await? {
+        None => match storage.load_data(&metadata.contract, &key, state.topoheight).await? {
             Some((topoheight, constant)) => {
                 cache.storage.insert(key, (VersionedState::FetchedAt(topoheight), constant.clone()));
                 constant
@@ -85,7 +85,7 @@ pub async fn storage_has<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mu
     let cache = get_cache_for_contract(&mut state.caches, state.global_caches, metadata.contract.clone());
     let contains = match cache.storage.get(&key) {
         Some((_, value)) => value.is_some(),
-        None => storage.has_data(state.entry_contract, &key, state.topoheight).await?
+        None => storage.has_data(&metadata.contract, &key, state.topoheight).await?
     };
 
     Ok(SysCallResult::Return(Primitive::Boolean(contains).into()))
@@ -122,7 +122,7 @@ pub async fn storage_store<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, 
         },
         None => {
             // We need to retrieve the latest topoheight version
-            storage.load_data_latest_topoheight(&state.entry_contract, &key, state.topoheight).await?
+            storage.load_data_latest_topoheight(&metadata.contract, &key, state.topoheight).await?
                 .map(|topoheight| VersionedState::Updated(topoheight))
                 .unwrap_or(VersionedState::New)
         }
@@ -154,7 +154,7 @@ pub async fn storage_delete<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>,
         },
         None => {
             // We need to retrieve the latest topoheight version
-            match storage.load_data_latest_topoheight(&state.entry_contract, &key, state.topoheight).await? {
+            match storage.load_data_latest_topoheight(&metadata.contract, &key, state.topoheight).await? {
                 Some(topoheight) => VersionedState::Updated(topoheight),
                 None => return Ok(SysCallResult::Return(Default::default())),
             }

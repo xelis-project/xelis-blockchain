@@ -1005,10 +1005,10 @@ pub fn from_context<'a, 'ty, 'r, P: ContractProvider>(context: &'a mut Context<'
 // Function helper to get the balance for the given asset
 // This will first check in our current changes, then in the previous execution cache
 pub async fn get_balance_from_cache<'a, 'b: 'a, P: ContractProvider>(provider: &P, state: &'a mut ChainState<'b>, contract: Hash, asset: Hash) -> Result<&'a mut Option<(VersionedState, u64)>, anyhow::Error> {
-    Ok(match get_cache_for_contract(&mut state.caches, state.global_caches, contract).balances.entry(asset.clone()) {
+    Ok(match get_cache_for_contract(&mut state.caches, state.global_caches, contract.clone()).balances.entry(asset.clone()) {
         Entry::Occupied(entry) => entry.into_mut(),
         Entry::Vacant(entry) => {
-            let v = get_balance_from_provider(provider, state.topoheight, state.entry_contract, &asset).await?;
+            let v = get_balance_from_provider(provider, state.topoheight, &contract, &asset).await?;
             entry.insert(v)
         }
     })
