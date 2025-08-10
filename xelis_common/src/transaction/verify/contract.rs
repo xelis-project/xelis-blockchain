@@ -55,6 +55,7 @@ impl Transaction {
         invoke: InvokeContract,
         contract: &'a Hash,
         tx_hash: &'a Hash,
+        deposits: IndexMap<Hash, ContractDeposit>,
         parameters: impl DoubleEndedIterator<Item = ValueCell>,
         max_gas: u64,
     ) -> Result<(u64, Option<u64>), anyhow::Error> {
@@ -64,6 +65,8 @@ impl Transaction {
         // TODO: module metadata should be passed to the VM
         let metadata = ModuleMetadata {
             contract: contract.clone(),
+            caller: None,
+            deposits,
         };
         vm.append_module(contract_environment.module, Reference::Shared(Arc::new(metadata)))?;
 
@@ -143,11 +146,22 @@ impl Transaction {
         invoke: InvokeContract,
     ) -> Result<bool, VerificationError<E>> {
         debug!("Invoking contract {} from TX {}: {:?}", contract, tx_hash, invoke);
+        // Deposits are actually added to each balance
         let (contract_environment, mut chain_state) = state.get_contract_environment_for(contract, deposits, tx_hash).await
             .map_err(VerificationError::State)?;
 
         // Total used gas by the VM
-        let (used_gas, exit_code) = Self::run_virtual_machine(self, contract_environment, &mut chain_state, invoke, contract, tx_hash, parameters, max_gas).await?;
+        let (used_gas, exit_code) = Self::run_virtual_machine(
+            self,
+            contract_environment,
+            &mut chain_state,
+            invoke,
+            contract,
+            tx_hash,
+            deposits.clone(),
+            parameters,
+            max_gas
+        ).await?;
 
         let is_success = exit_code == Some(0);
         let mut outputs = chain_state.outputs;

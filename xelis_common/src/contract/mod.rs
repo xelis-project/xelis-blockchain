@@ -11,7 +11,6 @@ use std::{
 };
 use anyhow::Context as AnyhowContext;
 use better_any::Tid;
-use indexmap::IndexMap;
 use log::{debug, info};
 use xelis_builder::EnvironmentBuilder;
 use xelis_vm::{
@@ -79,8 +78,6 @@ pub struct ChainState<'a> {
     pub block: &'a Block,
     // Tx hash in which the contract is executed
     pub tx_hash: &'a Hash,
-    // All deposits made by the caller
-    pub deposits: &'a IndexMap<Hash, ContractDeposit>,
     // The contract cache
     // If the contract was called already, we may have a cache with data
     pub caches: HashMap<Hash, ContractCache>,
@@ -762,14 +759,26 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             5,
             Some(hash_type.clone())
         );
+
         // Get the initial contract hash used as an entry point
         env.register_native_function(
-            "get_contract_entry_hash",
+            "get_contract_entry",
             None,
             vec![],
-            FunctionHandler::Sync(get_contract_entry_hash),
+            FunctionHandler::Sync(get_contract_entry),
             5,
             Some(hash_type.clone())
+        );
+
+        // Get the contract caller if any
+        // Useful to know if it was called by another contract
+        env.register_native_function(
+            "get_contract_caller",
+            None,
+            vec![],
+            FunctionHandler::Sync(get_contract_caller),
+            5,
+            Some(Type::Optional(Box::new(hash_type.clone())))
         );
 
         // Retrieve the deposit for the given asset
@@ -1127,20 +1136,27 @@ fn get_contract_hash(_: FnInstance, _: FnParams, metadata: &ModuleMetadata, _: &
     Ok(SysCallResult::Return(Primitive::Opaque(OpaqueWrapper::new(metadata.contract.clone())).into()))
 }
 
-fn get_contract_entry_hash(_: FnInstance, _: FnParams, _: &ModuleMetadata,context: &mut Context) -> FnReturnType<ModuleMetadata> {
+fn get_contract_entry(_: FnInstance, _: FnParams, _: &ModuleMetadata,context: &mut Context) -> FnReturnType<ModuleMetadata> {
     let chain_state: &ChainState = context.get().context("chain state not found")?;
     Ok(SysCallResult::Return(Primitive::Opaque(OpaqueWrapper::new(chain_state.entry_contract.clone())).into()))
 }
 
-fn get_deposit_for_asset(_: FnInstance, params: FnParams, _: &ModuleMetadata, context: &mut Context) -> FnReturnType<ModuleMetadata> {
+fn get_contract_caller(_: FnInstance, _: FnParams, metadata: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
+    let value = metadata.caller
+        .as_ref()
+        .map(|v| Primitive::Opaque(OpaqueWrapper::new(v.clone())).into())
+        .unwrap_or_default();
+
+    Ok(SysCallResult::Return(value))
+}
+
+fn get_deposit_for_asset(_: FnInstance, params: FnParams, metadata: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
     let param = params[0].as_ref();
     let asset: &Hash = param
         .as_opaque_type()
         .context("invalid asset")?;
 
-    let chain_state: &ChainState = context.get().context("chain state not found")?;
-
-    let value = match chain_state.deposits.get(asset) {
+    let value = match metadata.deposits.get(asset) {
         Some(ContractDeposit::Public(amount)) => Primitive::U64(*amount).into(),
         _ => ValueCell::default()
     };

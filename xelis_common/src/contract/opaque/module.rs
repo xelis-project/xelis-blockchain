@@ -19,13 +19,15 @@ use crate::{
 
 #[derive(Clone, Debug)]
 pub struct OpaqueModule {
-    pub metadata: Arc<ModuleMetadata>,
+    // Contract module hash
+    pub contract: Hash,
+    // Actual module
     pub module: Arc<Module>
 }
 
 impl PartialEq for OpaqueModule {
     fn eq(&self, other: &Self) -> bool {
-        self.metadata == other.metadata
+        self.contract == other.contract
     }
 }
 
@@ -33,7 +35,7 @@ impl Eq for OpaqueModule {}
 
 impl hash::Hash for OpaqueModule {
     fn hash<H: hash::Hasher>(&self, state: &mut H) {
-        self.metadata.hash(state);
+        self.contract.hash(state);
     }
 }
 
@@ -63,7 +65,7 @@ pub async fn module_new<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut
             let module = provider.load_contract_module(&contract, state.topoheight).await?
                 .map(|module| OpaqueModule {
                 module,
-                metadata: Arc::new(ModuleMetadata { contract }),
+                contract,
             });
 
             entry.insert(module).clone()
@@ -77,7 +79,7 @@ pub async fn module_new<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut
     Ok(SysCallResult::Return(StackValue::Owned(Primitive::Opaque(OpaqueWrapper::new(module)).into())))
 }
 
-pub async fn module_invoke<'a, 'ty, 'r>(zelf: FnInstance<'a>, mut params: FnParams, _: &ModuleMetadata, _: &mut Context<'ty, 'r>) -> FnReturnType<ModuleMetadata> {
+pub async fn module_invoke<'a, 'ty, 'r>(zelf: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata, _: &mut Context<'ty, 'r>) -> FnReturnType<ModuleMetadata> {
     let module: &OpaqueModule = zelf?.as_opaque_type()?;
     let p = params.remove(1)
         .into_owned()
@@ -92,7 +94,12 @@ pub async fn module_invoke<'a, 'ty, 'r>(zelf: FnInstance<'a>, mut params: FnPara
 
     Ok(SysCallResult::ModuleCall {
         module: module.module.clone(),
-        metadata: module.metadata.clone(),
+        metadata: Arc::new(ModuleMetadata {
+            contract: module.contract.clone(),
+            caller: Some(metadata.contract.clone()),
+            // TODO: deposits
+            deposits: Default::default(),
+        }),
         chunk: chunk_id,
         params: p,
     })
@@ -113,7 +120,7 @@ pub async fn module_delegate<'a, 'ty, 'r>(zelf: FnInstance<'a>, mut params: FnPa
 
     Ok(SysCallResult::ModuleCall {
         module: module.module.clone(),
-        // TODO rework
+        // Reuse the metadata from the module
         metadata: Arc::new(metadata.clone()),
         chunk: chunk_id,
         params: p,
