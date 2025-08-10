@@ -257,7 +257,6 @@ impl<'a, S: Storage> BlockchainApplyState<'a, S, BlockchainError> for Applicable
             topoheight: self.inner.topoheight,
             block_hash: self.block_hash,
             block: self.block,
-            deposits,
             tx_hash,
             caches: [(contract.clone(), cache)].into_iter().collect(),
             outputs: Vec::new(),
