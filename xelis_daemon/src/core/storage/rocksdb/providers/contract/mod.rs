@@ -4,6 +4,7 @@ mod balance;
 mod supply;
 mod r#impl;
 
+use std::sync::Arc;
 use async_trait::async_trait;
 use log::trace;
 use xelis_common::{
@@ -13,7 +14,7 @@ use xelis_common::{
     account::CiphertextCache,
     crypto::{Hash, PublicKey},
 };
-use xelis_vm::ValueCell;
+use xelis_vm::{Module, ValueCell};
 use crate::core::storage::{
     AccountProvider,
     AssetProvider,
@@ -98,5 +99,12 @@ impl ContractProvider for RocksStorage {
         trace!("get account {} balance for asset {} at topoheight {}", key.as_address(self.is_mainnet()), asset, topoheight);
         let res = self.get_balance_at_maximum_topoheight(key, asset, topoheight).await?;
         Ok(res.map(|(topoheight, balance)| (topoheight, balance.take_balance())))
+    }
+
+    // Load a contract module
+    async fn load_contract_module(&self, contract: &Hash, topoheight: TopoHeight) -> Result<Option<Arc<Module>>, anyhow::Error> {
+        trace!("load contract module for contract {} at topoheight {}", contract, topoheight);
+        let res = self.get_contract_at_maximum_topoheight_for(contract, topoheight).await?;
+        Ok(res.and_then(|(_, module)| module.take().map(|v| Arc::new(v.into_owned()))))
     }
 }

@@ -16,7 +16,8 @@ use xelis_common::{
         ContractCache,
         ContractEventTracker,
         ContractOutput,
-        ModuleMetadata
+        ModuleMetadata,
+        OpaqueModule
     },
     crypto::{elgamal::Ciphertext, Hash, PublicKey},
     transaction::{
@@ -48,6 +49,7 @@ struct ContractManager<'a> {
     // global assets cache
     assets: HashMap<Hash, Option<AssetChanges>>,
     tracker: ContractEventTracker,
+    modules: HashMap<Hash, Option<OpaqueModule>>,
 }
 
 // Chain State that can be applied to the mutable storage
@@ -263,6 +265,7 @@ impl<'a, S: Storage> BlockchainApplyState<'a, S, BlockchainError> for Applicable
             tracker: self.contract_manager.tracker.clone(),
             // Assets cache owned by this contract
             assets: self.contract_manager.assets.clone(),
+            modules: self.contract_manager.modules.clone(),
             // Global caches (all contracts)
             global_caches: &self.contract_manager.caches
         };
@@ -276,9 +279,17 @@ impl<'a, S: Storage> BlockchainApplyState<'a, S, BlockchainError> for Applicable
         Ok((contract_environment, state))
     }
 
+    async fn set_modules_cache(
+        &mut self,
+        modules: HashMap<Hash, Option<OpaqueModule>>,
+    ) -> Result<(), BlockchainError> {
+        self.contract_manager.modules = modules;
+
+        Ok(())
+    }
+
     async fn merge_contract_changes(
         &mut self,
-        hash: &'a Hash,
         caches: HashMap<Hash, ContractCache>,
         tracker: ContractEventTracker,
         assets: HashMap<Hash, Option<AssetChanges>>
@@ -359,6 +370,7 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
                 outputs: HashMap::new(),
                 caches: HashMap::new(),
                 assets: HashMap::new(),
+                modules: HashMap::new(),
                 tracker: ContractEventTracker::default(),
             },
             block_hash,
