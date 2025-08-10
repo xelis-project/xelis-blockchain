@@ -936,9 +936,12 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             vec![
                 ("chunk_id", Type::U16),
                 ("args", Type::Any),
+                // Funds we want to transfer to this contract
+                // Those funds are taken from the current contract
+                ("deposits", Type::Map(Box::new(hash_type.clone()), Box::new(Type::U64))),
             ],
-            FunctionHandler::Async(async_handler!(module_invoke)),
-            1,
+            FunctionHandler::Async(async_handler!(module_invoke::<P>)),
+            50,
             Some(Type::Any)
         );
 
@@ -1022,6 +1025,29 @@ pub async fn get_balance_from_cache<'a, 'b: 'a, P: ContractProvider>(provider: &
         }
     })
 }
+
+pub async fn get_mut_balance_for_contract<'a, 'b: 'a, P: ContractProvider>(provider: &P, state: &'a mut ChainState<'b>, contract: Hash, asset: Hash) -> Result<&'a mut (VersionedState, u64), anyhow::Error> {
+    Ok(match get_cache_for_contract(&mut state.caches, state.global_caches, contract.clone()).balances.entry(asset.clone()) {
+        Entry::Occupied(entry) => {
+            let v = entry.into_mut();
+            if v.is_none() {
+                *v = Some((VersionedState::New, 0));
+            }
+
+            v.as_mut()
+                .expect("Balance should be inserted")
+        },
+        Entry::Vacant(entry) => {
+            let v = get_balance_from_provider(provider, state.topoheight, &contract, &asset).await?
+                .unwrap_or_else(|| (VersionedState::New, 0));
+
+            entry.insert(Some(v))
+                .as_mut()
+                .expect("Balance should be inserted")
+        }
+    })
+}
+
 
 pub fn get_cache_for_contract<'a>(caches: &'a mut HashMap<Hash, ContractCache>, global_caches: &'a HashMap<Hash, ContractCache>, contract: Hash) -> &'a mut ContractCache {
     match caches.entry(contract) {
@@ -1219,7 +1245,6 @@ async fn transfer<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut param
         return Ok(SysCallResult::Return(Primitive::Boolean(false).into()));
     }
 
-    // Update the balance
     balance -= amount;
     balance_state.mark_updated();
 
