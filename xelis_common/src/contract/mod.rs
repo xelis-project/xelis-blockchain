@@ -932,6 +932,20 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             1,
             Some(Type::Any)
         );
+
+        // Similar to invoke, but allows to delegate the call to another contract
+        // So it will act as your own contract
+        env.register_native_function(
+            "delegate",
+            Some(module_type.clone()),
+            vec![
+                ("chunk_id", Type::U16),
+                ("args", Type::Any),
+            ],
+            FunctionHandler::Async(async_handler!(module_delegate)),
+            1,
+            Some(Type::Any)
+        );
     }
 
     // Misc

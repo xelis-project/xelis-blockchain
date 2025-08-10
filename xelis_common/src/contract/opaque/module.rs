@@ -77,7 +77,6 @@ pub async fn module_new<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut
     Ok(SysCallResult::Return(StackValue::Owned(Primitive::Opaque(OpaqueWrapper::new(module)).into())))
 }
 
-
 pub async fn module_invoke<'a, 'ty, 'r>(zelf: FnInstance<'a>, mut params: FnParams, _: &ModuleMetadata, _: &mut Context<'ty, 'r>) -> FnReturnType<ModuleMetadata> {
     let module: &OpaqueModule = zelf?.as_opaque_type()?;
     let p = params.remove(1)
@@ -94,6 +93,28 @@ pub async fn module_invoke<'a, 'ty, 'r>(zelf: FnInstance<'a>, mut params: FnPara
     Ok(SysCallResult::ModuleCall {
         module: module.module.clone(),
         metadata: module.metadata.clone(),
+        chunk: chunk_id,
+        params: p,
+    })
+}
+
+pub async fn module_delegate<'a, 'ty, 'r>(zelf: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata, _: &mut Context<'ty, 'r>) -> FnReturnType<ModuleMetadata> {
+    let module: &OpaqueModule = zelf?.as_opaque_type()?;
+    let p = params.remove(1)
+        .into_owned()
+        .to_vec()?
+        .into_iter()
+        .map(|v| v.to_owned().into())
+        .collect::<VecDeque<_>>();
+
+    let chunk_id = params.remove(0)
+        .into_owned()
+        .as_u16()?;
+
+    Ok(SysCallResult::ModuleCall {
+        module: module.module.clone(),
+        // TODO rework
+        metadata: Arc::new(metadata.clone()),
         chunk: chunk_id,
         params: p,
     })
