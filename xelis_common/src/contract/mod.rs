@@ -935,7 +935,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             Some(module_type.clone()),
             vec![
                 ("chunk_id", Type::U16),
-                ("args", Type::Any),
+                ("args", Type::Array(Box::new(Type::Any))),
                 // Funds we want to transfer to this contract
                 // Those funds are taken from the current contract
                 ("deposits", Type::Map(Box::new(hash_type.clone()), Box::new(Type::U64))),
