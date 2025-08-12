@@ -355,9 +355,6 @@ impl<S: Storage> GetWorkServer<S> {
     // when it's found, we merge the miner job inside the block header
     async fn accept_miner_job(&self, job: MinerWork<'_>) -> Result<BlockResult, InternalRpcError> {
         trace!("accept miner job");
-        if job.get_miner().is_none() {
-            return Err(InternalRpcError::InvalidJSONRequest);
-        }
 
         let mut miner_header;
         {
@@ -365,7 +362,9 @@ impl<S: Storage> GetWorkServer<S> {
             if let Some((header, _)) = mining_jobs.peek(job.get_header_work_hash()) {
                 // job is found in cache, clone it and put miner data inside
                 miner_header = header.clone();
-                miner_header.apply_miner_work(job);
+                if !miner_header.apply_miner_work(job) {
+                    return Err(InternalRpcError::InvalidJSONRequest);
+                }
             } else {
                 // really old job, or miner send invalid job
                 debug!("Job {} was not found in cache", job.get_header_work_hash());

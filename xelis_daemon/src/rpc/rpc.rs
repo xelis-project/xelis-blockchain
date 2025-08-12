@@ -522,7 +522,9 @@ async fn submit_block<S: Storage>(context: &Context, body: Value) -> Result<Valu
     let mut header = BlockHeader::from_hex(&params.block_template)?;
     if let Some(work) = params.miner_work {
         let work = MinerWork::from_hex(&work)?;
-        header.apply_miner_work(work);
+        if !header.apply_miner_work(work) {
+            return Err(InternalRpcError::InvalidJSONRequest);
+        }
     }
 
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
