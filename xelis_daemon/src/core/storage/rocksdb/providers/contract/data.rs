@@ -29,7 +29,7 @@ impl ContractDataProvider for RocksStorage {
         let versioned_key = Self::get_versioned_contract_data_key(contract_id, contract_data_id, topoheight);
 
         self.insert_into_disk(Column::VersionedContractsData, &versioned_key, version)?;
-        self.insert_into_disk(Column::ContractsStorage, &versioned_key[8..], &topoheight.to_be_bytes())
+        self.insert_into_disk(Column::ContractsData, &versioned_key[8..], &topoheight.to_be_bytes())
     }
 
     // Retrieve the last topoheight for a given contract data
@@ -43,7 +43,7 @@ impl ContractDataProvider for RocksStorage {
         };
 
         let key = Self::get_contract_data_key(contract_id, contract_data_id);
-        self.load_optional_from_disk(Column::ContractsStorage, &key)
+        self.load_optional_from_disk(Column::ContractsData, &key)
     }
 
     // Retrieve a contract data at a given topoheight
@@ -78,7 +78,7 @@ impl ContractDataProvider for RocksStorage {
         };
 
         let mut versioned_key = Self::get_versioned_contract_data_key(contract_id, contract_data_id, maximum_topoheight);
-        let mut prev_topo: Option<TopoHeight> = self.load_optional_from_disk(Column::ContractsStorage, &versioned_key[8..])?;
+        let mut prev_topo: Option<TopoHeight> = self.load_optional_from_disk(Column::ContractsData, &versioned_key[8..])?;
 
         while let Some(topo) = prev_topo {
             versioned_key[0..8].copy_from_slice(&topo.to_be_bytes());
@@ -105,7 +105,7 @@ impl ContractDataProvider for RocksStorage {
         };
 
         let mut versioned_key = Self::get_versioned_contract_data_key(contract_id, contract_data_id, maximum_topoheight);
-        let mut prev_topo: Option<TopoHeight> = self.load_optional_from_disk(Column::ContractsStorage, &versioned_key[8..])?;
+        let mut prev_topo: Option<TopoHeight> = self.load_optional_from_disk(Column::ContractsData, &versioned_key[8..])?;
 
         while let Some(topo) = prev_topo {
             versioned_key[0..8].copy_from_slice(&topo.to_be_bytes());
@@ -131,11 +131,11 @@ impl ContractDataProvider for RocksStorage {
     }
 
     async fn get_contract_data_entries_at_maximum_topoheight<'a>(&'a self, contract: &'a Hash, topoheight: TopoHeight) -> Result<impl Stream<Item = Result<(ValueCell, ValueCell), BlockchainError>> + Send + 'a, BlockchainError> {
-        let iterator = self.iter_keys::<u64>(Column::ContractsStorage, IteratorMode::WithPrefix(contract.as_bytes(), Direction::Forward))?;
+        let iterator = self.iter_keys::<u64>(Column::ContractsData, IteratorMode::WithPrefix(contract.as_bytes(), Direction::Forward))?;
         Ok(stream::iter(iterator)
             .map(move |res| async move {
                 let id = res?;
-                let key = self.load_from_disk(Column::ContractDataById, &id.to_be_bytes())?;
+                let key = self.load_from_disk(Column::ContractDataTableById, &id.to_be_bytes())?;
                 let value = self.get_contract_data_at_maximum_topoheight_for(contract, &key, topoheight).await?;
                 Ok(value.and_then(|(_, v)| v.take().map(|v| (key, v))))
             })
@@ -163,11 +163,11 @@ impl RocksStorage {
     }
 
     fn get_contract_data_id(&self, key: &ValueCell) -> Result<ContractDataId, BlockchainError> {
-        self.load_from_disk(Column::ContractData, &key.to_bytes())
+        self.load_from_disk(Column::ContractDataTable, &key.to_bytes())
     }
 
     fn get_optional_contract_data_id(&self, key: &ValueCell) -> Result<Option<ContractDataId>, BlockchainError> {
-        self.load_optional_from_disk(Column::ContractData, &key.to_bytes())
+        self.load_optional_from_disk(Column::ContractDataTable, &key.to_bytes())
     }
 
     fn get_or_create_contract_data_id(&mut self, key: &ValueCell) -> Result<ContractDataId, BlockchainError> {
@@ -177,8 +177,8 @@ impl RocksStorage {
             Some(id) => Ok(id),
             None => {
                 let id = self.get_next_contract_data_id()?;
-                self.insert_into_disk(Column::ContractData, &bytes, &id.to_be_bytes())?;
-                self.insert_into_disk(Column::ContractDataById, &id.to_be_bytes(), &bytes)?;
+                self.insert_into_disk(Column::ContractDataTable, &bytes, &id.to_be_bytes())?;
+                self.insert_into_disk(Column::ContractDataTableById, &id.to_be_bytes(), &bytes)?;
 
                 Ok(id)
             }

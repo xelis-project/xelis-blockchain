@@ -86,19 +86,19 @@ pub enum Column {
     // We map it to a u64
     // We don't store a reverse index because we can't delete
     // this one, we may never know if its still used or not
-    // {key} => {contract_key_id}
-    ContractData,
-    // {contract_key_id} => {key}
-    ContractDataById,
+    // {key} => {contract_data_id}
+    ContractDataTable,
+    // {contract_data_id} => {key}
+    ContractDataTableById,
 
     // {topoheight}{contract_id} => {version}
     VersionedContracts,
-    // {topoheight}{contract_id}{data_key} => {version}
-    VersionedContractsData,
     // Represent the link between a contract and a data stored
     // in its storage part
-    // {contract_id}{data_key} => {topoheight}
-    ContractsStorage,
+    // {contract_id}{contract_data_id} => {topoheight}
+    ContractsData,
+    // {topoheight}{contract_id}{contract_data_id} => {version}
+    VersionedContractsData,
 
     // {contract}{asset} => {topoheight}
     ContractsBalances,
@@ -125,7 +125,7 @@ impl Column {
             | PrefixedRegistrations => Some(PREFIX_TOPOHEIGHT_LEN),
 
             ContractsBalances
-            | ContractsStorage
+            | ContractsData
             | Balances => Some(PREFIX_ID_LEN),
 
             _ => None,
