@@ -151,7 +151,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
 
     // Crypto
     let ciphertext_type = Type::Opaque(env.register_opaque::<CiphertextCache>("Ciphertext", true));
-    let _ = Type::Opaque(env.register_opaque::<CiphertextValidityProof>("CiphertextValidityProof", true));
+    let zk_xt_validity_type = Type::Opaque(env.register_opaque::<CiphertextValidityProof>("CiphertextValidityProof", true));
     let _ = Type::Opaque(env.register_opaque::<RangeProofWrapper>("RangeProof", true));
 
     let module_type = Type::Opaque(env.register_opaque::<OpaqueModule>("Module", true));
@@ -917,6 +917,11 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
         );
     }
 
+    // CiphertextValidityProof
+    {
+        
+    }
+
     // Module Opaque
     {
         env.register_static_function(
@@ -962,6 +967,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
 
     // Misc
     {
+        // Retrieve the ciphertext and the topoheight at which it got fetched
         env.register_native_function(
             "get_account_balance_of",
             None,

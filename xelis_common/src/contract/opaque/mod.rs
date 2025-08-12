@@ -9,6 +9,7 @@ mod memory_storage;
 mod module;
 
 use bulletproofs::RangeProof;
+use curve25519_dalek::{ristretto::CompressedRistretto, RistrettoPoint, Scalar};
 use log::debug;
 use xelis_types::{
     register_opaque_json,
@@ -41,6 +42,8 @@ pub const SIGNATURE_OPAQUE_ID: u8 = 2;
 pub const CIPHERTEXT_OPAQUE_ID: u8 = 3;
 pub const CIPHERTEXT_VALIDITY_PROOF_OPAQUE_ID: u8 = 4;
 pub const RANGE_PROOF_OPAQUE_ID: u8 = 5;
+pub const RISTRETTO_OPAQUE_ID: u8 = 6;
+pub const SCALAR_OPAQUE_ID: u8 = 7;
 
 impl_opaque!(
     "Hash",
@@ -102,6 +105,8 @@ pub fn register_opaque_types() {
     register_opaque_json!(registry, "Ciphertext", CiphertextCache);
     register_opaque_json!(registry, "CiphertextValidityProof", CiphertextValidityProof);
     register_opaque_json!(registry, "RangeProof", RangeProofWrapper);
+    register_opaque_json!(registry, "RistrettoPoint", OpaqueRistrettoPoint);
+    register_opaque_json!(registry, "Scalar", OpaqueScalar);
 }
 
 impl Serializer for OpaqueWrapper {
@@ -117,6 +122,8 @@ impl Serializer for OpaqueWrapper {
             CIPHERTEXT_OPAQUE_ID => OpaqueWrapper::new(CiphertextCache::read(reader)?),
             CIPHERTEXT_VALIDITY_PROOF_OPAQUE_ID => OpaqueWrapper::new(CiphertextValidityProof::read(reader)?),
             RANGE_PROOF_OPAQUE_ID => OpaqueWrapper::new(RangeProofWrapper(RangeProof::read(reader)?)),
+            RISTRETTO_OPAQUE_ID => OpaqueWrapper::new(OpaqueRistrettoPoint(CompressedRistretto::read(reader)?)),
+            SCALAR_OPAQUE_ID => OpaqueWrapper::new(OpaqueScalar(Scalar::read(reader)?)),
             _ => return Err(ReaderError::InvalidValue)
         })
     }
