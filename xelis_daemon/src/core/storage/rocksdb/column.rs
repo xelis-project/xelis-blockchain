@@ -80,17 +80,25 @@ pub enum Column {
     // {contract_id} => {contract_hash}
     ContractById,
 
+    // This index is generalized, and not contract-dependent
+    // So we may have unused values in it
+    // Contains the storage key used in a contract
+    // We map it to a u64
+    // We don't store a reverse index because we can't delete
+    // this one, we may never know if its still used or not
+    // {key} => {contract_key_id}
+    ContractData,
+    // {contract_key_id} => {key}
+    ContractDataById,
+
     // {topoheight}{contract_id} => {version}
     VersionedContracts,
     // {topoheight}{contract_id}{data_key} => {version}
     VersionedContractsData,
-    // Represent the link between a contract and a data
+    // Represent the link between a contract and a data stored
+    // in its storage part
     // {contract_id}{data_key} => {topoheight}
-    ContractsData,
-
-    // A contract data accessible by its ID
-    // {data_id} => {data}
-    ContractDataById,
+    ContractsStorage,
 
     // {contract}{asset} => {topoheight}
     ContractsBalances,
@@ -116,8 +124,9 @@ impl Column {
             | VersionedContractsData
             | PrefixedRegistrations => Some(PREFIX_TOPOHEIGHT_LEN),
 
-            ContractsBalances => Some(PREFIX_ID_LEN),
-            Balances => Some(PREFIX_ID_LEN),
+            ContractsBalances
+            | ContractsStorage
+            | Balances => Some(PREFIX_ID_LEN),
 
             _ => None,
         }
