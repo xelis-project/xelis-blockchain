@@ -75,12 +75,18 @@ impl BlockHeader {
     }
 
     // Apply a MinerWork to this block header to match the POW hash
-    pub fn apply_miner_work(&mut self, work: MinerWork) {
+    pub fn apply_miner_work(&mut self, work: MinerWork) -> bool {
         let (_, timestamp, nonce, miner, extra_nonce) = work.take();
-        self.miner = miner.unwrap().into_owned();
+        let Some(miner) = miner else {
+            return false
+        };
+
+        self.miner = miner.into_owned();
         self.timestamp = timestamp;
         self.nonce = nonce;
         self.extra_nonce = extra_nonce;
+
+        true
     }
 
     #[inline]
