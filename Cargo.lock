@@ -392,9 +392,9 @@ dependencies = [
 
 [[package]]
 name = "anyhow"
-version = "1.0.98"
+version = "1.0.99"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e16d2d3311acee920a9eb8d33b8cbc1787ce4a264e85f964c2404b969bdcd487"
+checksum = "b0674a1ddeecb70197781e945de4b3b8ffb61fa939a5597bcf48503737663100"
 
 [[package]]
 name = "arbitrary"
@@ -922,9 +922,9 @@ dependencies = [
 
 [[package]]
 name = "clap"
-version = "4.5.43"
+version = "4.5.45"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "50fd97c9dc2399518aa331917ac6f274280ec5eb34e555dd291899745c48ec6f"
+checksum = "1fc0e74a703892159f5ae7d3aac52c8e6c392f5ae5f359c70b5881d60aaac318"
 dependencies = [
  "clap_builder",
  "clap_derive",
@@ -932,9 +932,9 @@ dependencies = [
 
 [[package]]
 name = "clap_builder"
-version = "4.5.43"
+version = "4.5.44"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c35b5830294e1fa0462034af85cc95225a4cb07092c088c55bda3147cfcd8f65"
+checksum = "b3e7f4214277f3c7aa526a59dd3fbe306a370daee1f8b7b8c987069cd8e888a8"
 dependencies = [
  "anstream",
  "anstyle",
@@ -944,9 +944,9 @@ dependencies = [
 
 [[package]]
 name = "clap_derive"
-version = "4.5.41"
+version = "4.5.45"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ef4f52386a59ca4c860f7393bcf8abd8dfd91ecccc0f774635ff68e92eeef491"
+checksum = "14cb31bb0a7d536caef2639baa7fad459e15c3144efefa6dbd1c84562c4739f6"
 dependencies = [
  "heck",
  "proc-macro2",
@@ -2483,7 +2483,7 @@ dependencies = [
  "metrics",
  "metrics-util",
  "quanta",
- "thiserror 2.0.12",
+ "thiserror 2.0.14",
  "tokio",
  "tracing",
 ]
@@ -2844,9 +2844,9 @@ dependencies = [
 
 [[package]]
 name = "proc-macro2"
-version = "1.0.96"
+version = "1.0.97"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "beef09f85ae72cea1ef96ba6870c51e6382ebfa4f0e85b643459331f3daa5be0"
+checksum = "d61789d7719defeb74ea5fe81f2fdfdbd28a803847077cecce2ff14e1472f6f1"
 dependencies = [
  "unicode-ident",
 ]
@@ -3026,9 +3026,9 @@ dependencies = [
 
 [[package]]
 name = "rayon"
-version = "1.10.0"
+version = "1.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b418a60154510ca1a002a752ca9714984e21e4241e804d32555251faf8b78ffa"
+checksum = "368f01d005bf8fd9b1206fb6fa653e6c4a81ceb1466406b81792d87c5677a58f"
 dependencies = [
  "either",
  "rayon-core",
@@ -3036,9 +3036,9 @@ dependencies = [
 
 [[package]]
 name = "rayon-core"
-version = "1.12.1"
+version = "1.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1465873a3dfdaa8ae7cb14b4383657caab0b3e8a0aa9ae8e04b044854c8dfce2"
+checksum = "22e18b0f0062d30d4230b2e85ff77fdfe4326feb054b9783a3460d8435c8ab91"
 dependencies = [
  "crossbeam-deque",
  "crossbeam-utils",
@@ -3662,11 +3662,11 @@ dependencies = [
 
 [[package]]
 name = "thiserror"
-version = "2.0.12"
+version = "2.0.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "567b8a2dae586314f7be2a752ec7474332959c6460e02bde30d702a66d488708"
+checksum = "0b0949c3a6c842cbde3f1686d6eea5a010516deb7085f79db747562d4102f41e"
 dependencies = [
- "thiserror-impl 2.0.12",
+ "thiserror-impl 2.0.14",
 ]
 
 [[package]]
@@ -3682,9 +3682,9 @@ dependencies = [
 
 [[package]]
 name = "thiserror-impl"
-version = "2.0.12"
+version = "2.0.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7f7cf42b4507d8ea322120659672cf1b9dbb93f8f2d4ecfd6e51350ff5b17a1d"
+checksum = "cc5b44b4ab9c2fdd0e0512e6bece8388e214c0749f5862b114cc5b7a25daf227"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3870,7 +3870,7 @@ dependencies = [
  "httparse",
  "js-sys",
  "rustls",
- "thiserror 2.0.12",
+ "thiserror 2.0.14",
  "tokio",
  "tokio-tungstenite 0.26.2",
  "wasm-bindgen",
@@ -4076,7 +4076,7 @@ dependencies = [
  "rustls",
  "rustls-pki-types",
  "sha1",
- "thiserror 2.0.12",
+ "thiserror 2.0.14",
  "utf-8",
 ]
 
@@ -4095,7 +4095,7 @@ dependencies = [
  "rustls",
  "rustls-pki-types",
  "sha1",
- "thiserror 2.0.12",
+ "thiserror 2.0.14",
  "utf-8",
 ]
 
@@ -4722,7 +4722,7 @@ dependencies = [
 [[package]]
 name = "xelis-ast"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#b3ea0acdd3f3e6e8dd283b1fe4333cbe91c59002"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#62922420b2bac8299a1f8e717c6528e1b06342b3"
 dependencies = [
  "indexmap 2.10.0",
  "xelis-types",
@@ -4731,12 +4731,12 @@ dependencies = [
 [[package]]
 name = "xelis-builder"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#b3ea0acdd3f3e6e8dd283b1fe4333cbe91c59002"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#62922420b2bac8299a1f8e717c6528e1b06342b3"
 dependencies = [
  "anyhow",
  "log",
  "paste",
- "thiserror 2.0.12",
+ "thiserror 2.0.14",
  "xelis-ast",
  "xelis-environment",
  "xelis-types",
@@ -4745,7 +4745,7 @@ dependencies = [
 [[package]]
 name = "xelis-bytecode"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#b3ea0acdd3f3e6e8dd283b1fe4333cbe91c59002"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#62922420b2bac8299a1f8e717c6528e1b06342b3"
 dependencies = [
  "indexmap 2.10.0",
  "serde",
@@ -4755,14 +4755,14 @@ dependencies = [
 [[package]]
 name = "xelis-environment"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#b3ea0acdd3f3e6e8dd283b1fe4333cbe91c59002"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#62922420b2bac8299a1f8e717c6528e1b06342b3"
 dependencies = [
  "anyhow",
  "better_any",
  "futures",
  "hashbrown 0.15.5",
  "indexmap 2.10.0",
- "thiserror 2.0.12",
+ "thiserror 2.0.14",
  "xelis-bytecode",
  "xelis-types",
 ]
@@ -4783,7 +4783,7 @@ dependencies = [
 [[package]]
 name = "xelis-types"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#b3ea0acdd3f3e6e8dd283b1fe4333cbe91c59002"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#62922420b2bac8299a1f8e717c6528e1b06342b3"
 dependencies = [
  "anyhow",
  "indexmap 2.10.0",
@@ -4791,18 +4791,19 @@ dependencies = [
  "lazy_static",
  "serde",
  "serde_json",
- "thiserror 2.0.12",
+ "thiserror 2.0.14",
 ]
 
 [[package]]
 name = "xelis-vm"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#b3ea0acdd3f3e6e8dd283b1fe4333cbe91c59002"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#62922420b2bac8299a1f8e717c6528e1b06342b3"
 dependencies = [
+ "anyhow",
  "futures",
  "indexmap 2.10.0",
  "log",
- "thiserror 2.0.12",
+ "thiserror 2.0.14",
  "xelis-bytecode",
  "xelis-environment",
  "xelis-types",
@@ -4851,7 +4852,7 @@ dependencies = [
  "serde_json",
  "serde_regex",
  "sha3",
- "thiserror 2.0.12",
+ "thiserror 2.0.14",
  "tokio",
  "tokio-tungstenite-wasm",
  "tokio_with_wasm",
@@ -4894,7 +4895,7 @@ dependencies = [
  "sled",
  "strum",
  "tempdir",
- "thiserror 2.0.12",
+ "thiserror 2.0.14",
  "tokio",
  "tokio-socks",
  "x25519-dalek",
@@ -4948,7 +4949,7 @@ dependencies = [
  "serde_json",
  "sled",
  "strum",
- "thiserror 2.0.12",
+ "thiserror 2.0.14",
  "tokio-tungstenite-wasm",
  "wasm-bindgen-futures",
  "web-sys",
