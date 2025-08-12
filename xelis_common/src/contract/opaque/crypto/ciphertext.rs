@@ -14,7 +14,7 @@ use xelis_vm::{
 };
 use crate::{
     account::CiphertextCache,
-    contract::{ModuleMetadata, CIPHERTEXT_OPAQUE_ID},
+    contract::{ModuleMetadata, OpaqueRistrettoPoint, CIPHERTEXT_OPAQUE_ID},
     crypto::{elgamal::RISTRETTO_COMPRESSED_SIZE, Address},
     serializer::{Serializer, Writer}
 };
@@ -122,4 +122,26 @@ pub fn ciphertext_new(_: FnInstance, mut params: FnParams, _: &ModuleMetadata, _
 
     let ciphertext = CiphertextCache::Decompressed(key.encrypt(amount));
     Ok(SysCallResult::Return(Primitive::Opaque(ciphertext.into()).into()))
+}
+
+pub fn ciphertext_commitment(zelf: FnInstance, _: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
+    let zelf: &mut CiphertextCache = zelf?.as_opaque_type_mut()?;
+    let commitment = zelf.decompressed()
+        .context("Ciphertext not decompressed")?
+        .commitment()
+        .as_point()
+        .clone();
+
+    Ok(SysCallResult::Return(OpaqueRistrettoPoint::Decompressed(commitment.compress(), commitment).into()))
+}
+
+pub fn ciphertext_handle(zelf: FnInstance, _: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
+    let zelf: &mut CiphertextCache = zelf?.as_opaque_type_mut()?;
+    let handle = zelf.decompressed()
+        .context("Ciphertext not decompressed")?
+        .handle()
+        .as_point()
+        .clone();
+
+    Ok(SysCallResult::Return(OpaqueRistrettoPoint::Decompressed(handle.compress(), handle).into()))
 }

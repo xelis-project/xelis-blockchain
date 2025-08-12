@@ -8,9 +8,8 @@ use xelis_vm::{
     OpaqueWrapper,
     Primitive,
     SysCallResult,
-    ValueCell
 };
-use crate::{contract::ModuleMetadata, crypto::Address};
+use crate::{contract::{ModuleMetadata, OpaqueRistrettoPoint}, crypto::Address};
 
 use super::{Serializer, Writer, ADDRESS_OPAQUE_ID};
 
@@ -41,12 +40,13 @@ pub fn address_is_normal(zelf: FnInstance, _: FnParams, _: &ModuleMetadata, _: &
     Ok(SysCallResult::Return(Primitive::Boolean(address.is_normal()).into()))
 }
 
-pub fn address_public_key_bytes(zelf: FnInstance, _: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn address_to_point(zelf: FnInstance, _: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
     let address: &Address = zelf?.as_opaque_type()?;
-    let bytes = address.get_public_key()
-        .as_bytes();
+    let point = address.get_public_key()
+        .as_point()
+        .clone();
 
-    Ok(SysCallResult::Return(ValueCell::Bytes(bytes.into()).into()))
+    Ok(SysCallResult::Return(OpaqueRistrettoPoint::Compressed(point).into()))
 }
 
 pub fn address_from_string(_: FnInstance, mut params: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {

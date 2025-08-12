@@ -11,6 +11,7 @@ use std::{
 };
 use anyhow::Context as AnyhowContext;
 use better_any::Tid;
+use curve25519_dalek::Scalar;
 use log::{debug, info};
 use xelis_builder::EnvironmentBuilder;
 use xelis_vm::{
@@ -33,7 +34,7 @@ use crate::{
         FEE_PER_BYTE_OF_EVENT_DATA
     },
     crypto::{
-        proofs::CiphertextValidityProof,
+        proofs::{CiphertextValidityProof, G, H},
         Address,
         Hash,
         PublicKey,
@@ -151,7 +152,9 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
 
     // Crypto
     let ciphertext_type = Type::Opaque(env.register_opaque::<CiphertextCache>("Ciphertext", true));
-    let zk_xt_validity_type = Type::Opaque(env.register_opaque::<CiphertextValidityProof>("CiphertextValidityProof", true));
+    let ristretto_type = Type::Opaque(env.register_opaque::<OpaqueRistrettoPoint>("RistrettoPoint", true));
+    let scalar_type = Type::Opaque(env.register_opaque::<OpaqueScalar>("Scalar", true));
+    let _ = Type::Opaque(env.register_opaque::<CiphertextValidityProof>("CiphertextValidityProof", true));
     let _ = Type::Opaque(env.register_opaque::<RangeProofWrapper>("RangeProof", true));
 
     let module_type = Type::Opaque(env.register_opaque::<OpaqueModule>("Module", true));
@@ -448,12 +451,12 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             Some(Type::Bool)
         );
         env.register_native_function(
-            "to_public_key_bytes",
+            "to_point",
             Some(address_type.clone()),
             vec![],
-            FunctionHandler::Sync(address_public_key_bytes),
+            FunctionHandler::Sync(address_to_point),
             10,
-            Some(Type::Bytes)
+            Some(ristretto_type.clone())
         );
         env.register_static_function(
             "from_string",
@@ -914,6 +917,228 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             FunctionHandler::Sync(ciphertext_new),
             1000,
             Some(ciphertext_type.clone())
+        );
+
+        // commitment
+        env.register_native_function(
+            "commitment",
+            Some(ciphertext_type.clone()),
+            vec![],
+            FunctionHandler::Sync(ciphertext_commitment),
+            5,
+            Some(ristretto_type.clone())
+        );
+
+        // handle
+        env.register_native_function(
+            "handle",
+            Some(ciphertext_type.clone()),
+            vec![],
+            FunctionHandler::Sync(ciphertext_handle),
+            5,
+            Some(ristretto_type.clone())
+        );
+    }
+
+    // RistrettoPoint
+    // it is not ideal to not return the type each time
+    // or creating a new value per call, but this is more optimized
+    // You can still create your own wrapper around it
+    {
+        env.register_constant(ristretto_type.clone(), "G", OpaqueRistrettoPoint::Decompressed(G.compress(), *G).into());
+        env.register_constant(scalar_type.clone(), "H", OpaqueRistrettoPoint::Decompressed(H.compress(), *H).into());
+
+        // P + (s * G)
+        env.register_native_function(
+            "add_scalar",
+            Some(ristretto_type.clone()),
+            vec![
+                ("value", scalar_type.clone())
+            ],
+            FunctionHandler::Sync(ristretto_add_scalar),
+            300,
+            None
+        );
+        // P - (s * G)
+        env.register_native_function(
+            "sub_scalar",
+            Some(ristretto_type.clone()),
+            vec![
+                ("value", scalar_type.clone())
+            ],
+            FunctionHandler::Sync(ristretto_sub_scalar),
+            300,
+            None
+        );
+        // P + P2
+        env.register_native_function(
+            "add",
+            Some(ristretto_type.clone()),
+            vec![
+                ("value", ristretto_type.clone())
+            ],
+            FunctionHandler::Sync(ristretto_add),
+            250,
+            None
+        );
+        // P - P2
+        env.register_native_function(
+            "sub",
+            Some(ristretto_type.clone()),
+            vec![
+                ("value", ristretto_type.clone())
+            ],
+            FunctionHandler::Sync(ristretto_sub),
+            250,
+            None
+        );
+        // P * s
+        env.register_native_function(
+            "mul_scalar",
+            Some(ristretto_type.clone()),
+            vec![
+                ("value", scalar_type.clone())
+            ],
+            FunctionHandler::Sync(ristretto_mul_scalar),
+            300,
+            None
+        );
+        // P / s (ensure s != 0)
+        env.register_native_function(
+            "div_scalar",
+            Some(ciphertext_type.clone()),
+            vec![
+                ("value", Type::U64)
+            ],
+            FunctionHandler::Sync(ristretto_div_scalar),
+            5000,
+            None
+        );
+        // From bytes
+        env.register_static_function(
+            "from_bytes",
+            ristretto_type.clone(),
+            vec![("bytes", Type::Bytes)],
+            FunctionHandler::Sync(ristretto_from_bytes),
+            75,
+            Some(ristretto_type.clone())
+        );
+        // To bytes
+        env.register_native_function(
+            "to_bytes",
+            Some(ristretto_type.clone()),
+            vec![],
+            FunctionHandler::Sync(ristretto_to_bytes),
+            5,
+            Some(Type::Bytes)
+        );
+    }
+
+    // Scalar
+    {
+        env.register_constant(scalar_type.clone(), "ZERO", OpaqueScalar(Scalar::ZERO).into());
+        env.register_constant(scalar_type.clone(), "ONE", OpaqueScalar(Scalar::ONE).into());
+
+        // From u64
+        env.register_static_function(
+            "from_u64",
+            scalar_type.clone(),
+            vec![("value", Type::U64)],
+            FunctionHandler::Sync(scalar_from_u64),
+            25,
+            Some(scalar_type.clone())
+        );
+
+        // Invert the scalar
+        env.register_native_function(
+            "invert",
+            Some(scalar_type.clone()),
+            vec![],
+            FunctionHandler::Sync(scalar_invert),
+            500,
+            Some(scalar_type.clone())
+        );
+
+        // is zero
+        env.register_native_function(
+            "is_zero",
+            Some(scalar_type.clone()),
+            vec![],
+            FunctionHandler::Sync(scalar_is_zero),
+            1,
+            Some(Type::Bool)
+        );
+
+        // s * G
+        env.register_native_function(
+            "mul_base",
+            Some(ristretto_type.clone()),
+            vec![],
+            FunctionHandler::Sync(scalar_mul_base),
+            300,
+            Some(ristretto_type.clone())
+        );
+        // s + s2
+        env.register_native_function(
+            "add",
+            Some(scalar_type.clone()),
+            vec![
+                ("value", scalar_type.clone())
+            ],
+            FunctionHandler::Sync(scalar_add),
+            250,
+            Some(scalar_type.clone())
+        );
+        // s - s2
+        env.register_native_function(
+            "sub",
+            Some(scalar_type.clone()),
+            vec![
+                ("value", scalar_type.clone())
+            ],
+            FunctionHandler::Sync(scalar_sub),
+            250,
+            Some(scalar_type.clone())
+        );
+        // s * s2
+        env.register_native_function(
+            "mul",
+            Some(scalar_type.clone()),
+            vec![
+                ("value", scalar_type.clone())
+            ],
+            FunctionHandler::Sync(scalar_mul),
+            250,
+            Some(scalar_type.clone())
+        );
+        // s / s2 (ensure s2 != 0)
+        env.register_native_function(
+            "div",
+            Some(scalar_type.clone()),
+            vec![
+                ("value", Type::U64)
+            ],
+            FunctionHandler::Sync(scalar_div),
+            5000,
+            Some(scalar_type.clone())
+        );
+        // From bytes
+        env.register_static_function(
+            "from_bytes",
+            scalar_type.clone(),
+            vec![("bytes", Type::Bytes)],
+            FunctionHandler::Sync(scalar_from_bytes),
+            75,
+            Some(scalar_type.clone())
+        );
+        // To bytes
+        env.register_native_function(
+            "to_bytes",
+            Some(scalar_type.clone()),
+            vec![],
+            FunctionHandler::Sync(scalar_to_bytes),
+            5,
+            Some(Type::Bytes)
         );
     }
 

@@ -9,7 +9,7 @@ mod memory_storage;
 mod module;
 
 use bulletproofs::RangeProof;
-use curve25519_dalek::{ristretto::CompressedRistretto, RistrettoPoint, Scalar};
+use curve25519_dalek::{ristretto::CompressedRistretto, Scalar};
 use log::debug;
 use xelis_types::{
     register_opaque_json,
@@ -122,7 +122,7 @@ impl Serializer for OpaqueWrapper {
             CIPHERTEXT_OPAQUE_ID => OpaqueWrapper::new(CiphertextCache::read(reader)?),
             CIPHERTEXT_VALIDITY_PROOF_OPAQUE_ID => OpaqueWrapper::new(CiphertextValidityProof::read(reader)?),
             RANGE_PROOF_OPAQUE_ID => OpaqueWrapper::new(RangeProofWrapper(RangeProof::read(reader)?)),
-            RISTRETTO_OPAQUE_ID => OpaqueWrapper::new(OpaqueRistrettoPoint(CompressedRistretto::read(reader)?)),
+            RISTRETTO_OPAQUE_ID => OpaqueWrapper::new(OpaqueRistrettoPoint::Compressed(CompressedRistretto::read(reader)?)),
             SCALAR_OPAQUE_ID => OpaqueWrapper::new(OpaqueScalar(Scalar::read(reader)?)),
             _ => return Err(ReaderError::InvalidValue)
         })
