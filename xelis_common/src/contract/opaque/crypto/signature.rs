@@ -13,8 +13,8 @@ use xelis_vm::{
 };
 
 use crate::{
-    contract::{ModuleMetadata, SIGNATURE_OPAQUE_ID},
-    crypto::{Address, Signature, SIGNATURE_SIZE},
+    contract::{ModuleMetadata, OpaqueRistrettoPoint, SIGNATURE_OPAQUE_ID},
+    crypto::{Signature, SIGNATURE_SIZE},
     serializer::{Serializer, Writer}
 };
 
@@ -66,7 +66,7 @@ pub fn signature_from_bytes_fn(_: FnInstance, mut params: FnParams, _: &ModuleMe
 pub fn signature_verify_fn(zelf: FnInstance, mut params: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
     let signature: &Signature = zelf?.as_opaque_type()?;
 
-    let address: Address = params.remove(0)
+    let mut point: OpaqueRistrettoPoint = params.remove(0)
         .into_owned()
         .into_opaque_type()?;
 
@@ -77,10 +77,8 @@ pub fn signature_verify_fn(zelf: FnInstance, mut params: FnParams, _: &ModuleMet
         .map(|v| v.as_ref().as_u8())
         .collect::<Result<Vec<_>, ValueError>>()?;
 
-    let key = address.to_public_key()
-        .decompress()
-        .context("decompress key for signature")?;
-    Ok(SysCallResult::Return(Primitive::Boolean(signature.verify(&data, &key)).into()))
+    let (compressed, key) = point.both()?;
+    Ok(SysCallResult::Return(Primitive::Boolean(signature.verify_internal(&data, &key, compressed)).into()))
 }
 
 #[cfg(test)]

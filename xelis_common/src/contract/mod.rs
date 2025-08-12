@@ -837,7 +837,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             Some(signature_type.clone()),
             vec![
                 ("data", Type::Array(Box::new(Type::U8))),
-                ("address", address_type.clone()),
+                ("point", ristretto_type.clone()),
             ],
             FunctionHandler::Sync(signature_verify_fn),
             500,
@@ -947,6 +947,26 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
     {
         env.register_constant(ristretto_type.clone(), "G", OpaqueRistrettoPoint::Decompressed(G.compress(), *G).into());
         env.register_constant(scalar_type.clone(), "H", OpaqueRistrettoPoint::Decompressed(H.compress(), *H).into());
+
+        // Is Identity
+        env.register_native_function(
+            "is_identity",
+            Some(ristretto_type.clone()),
+            vec![],
+            FunctionHandler::Sync(ristretto_is_identity),
+            1,
+            Some(Type::Bool)
+        );
+
+        // RistrettoPoint::Identity
+        env.register_static_function(
+            "identity",
+            ristretto_type.clone(),
+            vec![],
+            FunctionHandler::Sync(ristretto_identity),
+            1,
+            Some(ristretto_type.clone())
+        );
 
         // P + (s * G)
         env.register_native_function(

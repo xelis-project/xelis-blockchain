@@ -1,7 +1,7 @@
 use core::hash;
 
 use anyhow::Context as _;
-use curve25519_dalek::{ristretto::CompressedRistretto, RistrettoPoint, Scalar};
+use curve25519_dalek::{ristretto::CompressedRistretto, traits::{Identity, IsIdentity}, RistrettoPoint, Scalar};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use xelis_vm::{
     impl_opaque,
@@ -11,6 +11,7 @@ use xelis_vm::{
     FnInstance,
     FnParams,
     FnReturnType,
+    Primitive,
     SysCallResult,
     ValueCell
 };
@@ -58,23 +59,35 @@ impl OpaqueRistrettoPoint {
         }
     }
 
-    pub fn computable(&mut self) -> Option<&mut RistrettoPoint> {
+    fn decompress_internal(&mut self) -> Result<(), EnvironmentError> {
         match self {
             OpaqueRistrettoPoint::Compressed(c) => {
-                let decompressed = c.decompress()?;
-                *self = OpaqueRistrettoPoint::Decompressed(
-                    c.clone(),
-                    decompressed,
-                );
-
-                let OpaqueRistrettoPoint::Decompressed(_, point) = self else {
-                    unreachable!();
-                };
-
-                Some(point)
+                let decompressed = c.decompress()
+                    .ok_or(EnvironmentError::Static("Failed to decompress Ristretto point"))?;
+                *self = OpaqueRistrettoPoint::Decompressed(c.clone(), decompressed);
+                Ok(())
             }
-            OpaqueRistrettoPoint::Decompressed(_, point) => Some(point),
+            OpaqueRistrettoPoint::Decompressed(_, _) => Ok(()),
         }
+    }
+
+    pub fn computable(&mut self) -> Result<&mut RistrettoPoint, EnvironmentError> {
+        self.decompress_internal()?;
+
+         let OpaqueRistrettoPoint::Decompressed(_, point) = self else {
+            unreachable!();
+        };
+
+        Ok(point)
+    }
+
+    pub fn both(&mut self) -> Result<(&CompressedRistretto, &RistrettoPoint), EnvironmentError> {
+        self.decompress_internal()?;
+        let OpaqueRistrettoPoint::Decompressed(compressed, point) = self else {
+            unreachable!();
+        };
+
+        Ok((compressed, point))
     }
 
     pub fn into_point(self) -> Result<RistrettoPoint, EnvironmentError> {
@@ -122,6 +135,17 @@ impl Serializable for OpaqueRistrettoPoint {
     }
 }
 
+pub fn ristretto_is_identity(zelf: FnInstance, _: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
+    let zelf: &OpaqueRistrettoPoint = zelf?.as_opaque_type()?;
+    let compressed = zelf.compressed();
+    Ok(SysCallResult::Return(Primitive::Boolean(compressed.is_identity()).into()))
+}
+
+pub fn ristretto_identity(_: FnInstance, _: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
+    let point = OpaqueRistrettoPoint::Compressed(CompressedRistretto::identity());
+    Ok(SysCallResult::Return(point.into()))
+}
+
 pub fn ristretto_add_scalar(zelf: FnInstance, params: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
     let zelf: &mut OpaqueRistrettoPoint = zelf?.as_opaque_type_mut()?;
     let scalar: &OpaqueScalar = params[0]
@@ -142,8 +166,7 @@ pub fn ristretto_sub_scalar(zelf: FnInstance, params: FnParams, _: &ModuleMetada
         .as_ref()
         .as_opaque_type()?;
 
-    let computable = zelf.computable()
-        .context("Ciphertext not computable")?;
+    let computable = zelf.computable()?;
 
     *computable -= scalar.0 * (*G);
 
@@ -156,8 +179,7 @@ pub fn ristretto_add(zelf: FnInstance, mut params: FnParams, _: &ModuleMetadata,
         .into_owned()
         .into_opaque_type()?;
 
-    let computable = zelf.computable()
-        .context("left point not computable")?;
+    let computable = zelf.computable()?;
 
     *computable += point.into_point()?;
 
@@ -170,8 +192,7 @@ pub fn ristretto_sub(zelf: FnInstance, mut params: FnParams, _: &ModuleMetadata,
         .into_owned()
         .into_opaque_type()?;
 
-    let computable = zelf.computable()
-        .context("left point not computable")?;
+    let computable = zelf.computable()?;
 
     *computable -= point.into_point()?;
 
@@ -184,8 +205,7 @@ pub fn ristretto_mul_scalar(zelf: FnInstance, params: FnParams, _: &ModuleMetada
         .as_ref()
         .as_opaque_type()?;
 
-    let computable = zelf.computable()
-        .context("Ciphertext not computable")?;
+    let computable = zelf.computable()?;
 
     *computable *= scalar.0;
 
@@ -202,8 +222,7 @@ pub fn ristretto_div_scalar(zelf: FnInstance, params: FnParams, _: &ModuleMetada
         return Err(EnvironmentError::Static("Scalar cannot be zero for division"));
     }
 
-    let computable = zelf.computable()
-        .context("Ciphertext not computable")?;
+    let computable = zelf.computable()?;
 
     *computable *= scalar.0.invert();
 
