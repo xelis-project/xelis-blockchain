@@ -82,9 +82,8 @@ pub fn scalar_mul_base(zelf: FnInstance, _: FnParams, _: &ModuleMetadata, _: &mu
     let point = zelf.0 * (*G);
 
     Ok(SysCallResult::Return(OpaqueRistrettoPoint::Decompressed(
-        point.compress(),
+        None,
         point,
-        false,
     ).into()))
 }
 

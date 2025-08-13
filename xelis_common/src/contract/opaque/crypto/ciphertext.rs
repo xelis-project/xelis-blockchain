@@ -132,7 +132,7 @@ pub fn ciphertext_commitment(zelf: FnInstance, _: FnParams, _: &ModuleMetadata, 
         .as_point()
         .clone();
 
-    Ok(SysCallResult::Return(OpaqueRistrettoPoint::Decompressed(commitment.compress(), commitment, false).into()))
+    Ok(SysCallResult::Return(OpaqueRistrettoPoint::Decompressed(None, commitment).into()))
 }
 
 pub fn ciphertext_handle(zelf: FnInstance, _: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
@@ -143,5 +143,5 @@ pub fn ciphertext_handle(zelf: FnInstance, _: FnParams, _: &ModuleMetadata, _: &
         .as_point()
         .clone();
 
-    Ok(SysCallResult::Return(OpaqueRistrettoPoint::Decompressed(handle.compress(), handle, false).into()))
+    Ok(SysCallResult::Return(OpaqueRistrettoPoint::Decompressed(None, handle).into()))
 }

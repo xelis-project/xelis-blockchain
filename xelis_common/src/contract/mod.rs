@@ -154,7 +154,8 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
     let ciphertext_type = Type::Opaque(env.register_opaque::<CiphertextCache>("Ciphertext", true));
     let ristretto_type = Type::Opaque(env.register_opaque::<OpaqueRistrettoPoint>("RistrettoPoint", true));
     let scalar_type = Type::Opaque(env.register_opaque::<OpaqueScalar>("Scalar", true));
-    let _ = Type::Opaque(env.register_opaque::<CiphertextValidityProof>("CiphertextValidityProof", true));
+    let transcript_type = Type::Opaque(env.register_opaque::<OpaqueTranscript>("Transcript", true));
+    let ct_validity_proof_type = Type::Opaque(env.register_opaque::<CiphertextValidityProof>("CiphertextValidityProof", true));
     let _ = Type::Opaque(env.register_opaque::<RangeProofWrapper>("RangeProof", true));
 
     let module_type = Type::Opaque(env.register_opaque::<OpaqueModule>("Module", true));
@@ -1162,9 +1163,96 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
         );
     }
 
+    // Transcript
+    {
+        // Transcript::new()
+        env.register_static_function(
+            "new",
+            transcript_type.clone(),
+            vec![("label", Type::Bytes)],
+            FunctionHandler::Sync(transcript_new),
+            50,
+            Some(transcript_type.clone())
+        );
+
+        // challenge scalar
+        env.register_native_function(
+            "challenge_scalar",
+            Some(transcript_type.clone()),
+            vec![("label", Type::Bytes)],
+            FunctionHandler::Sync(transcript_challenge_scalar),
+            100,
+            Some(scalar_type.clone())
+        );
+
+        // challenge bytes
+        env.register_native_function(
+            "challenge_bytes",
+            Some(transcript_type.clone()),
+            vec![
+                ("label", Type::Bytes),
+                ("n", Type::U32),
+            ],
+            FunctionHandler::Sync(transcript_challenge_bytes),
+            100,
+            Some(Type::Bytes)
+        );
+
+        // append_message
+        env.register_native_function(
+            "append_message",
+            Some(transcript_type.clone()),
+            vec![
+                ("label", Type::Bytes),
+                ("message", Type::Bytes),
+            ],
+            FunctionHandler::Sync(transcript_append_message),
+            75,
+            None
+        );
+
+        // Append point
+        env.register_native_function(
+            "append_point",
+            Some(transcript_type.clone()),
+            vec![
+                ("label", Type::Bytes),
+                ("point", ristretto_type.clone()),
+            ],
+            FunctionHandler::Sync(transcript_append_point),
+            75,
+            None
+        );
+        // Validate and append point
+        env.register_native_function(
+            "validate_and_append_point",
+            Some(transcript_type.clone()),
+            vec![
+                ("label", Type::Bytes),
+                ("point", ristretto_type.clone()),
+            ],
+            FunctionHandler::Sync(transcript_validate_and_append_point),
+            75,
+            None
+        );
+
+        // Append scalar
+        env.register_native_function(
+            "append_scalar",
+            Some(transcript_type.clone()),
+            vec![
+                ("label", Type::Bytes),
+                ("scalar", scalar_type.clone()),
+            ],
+            FunctionHandler::Sync(transcript_append_scalar),
+            75,
+            None
+        );
+    }
+
     // CiphertextValidityProof
     {
-        
+
     }
 
     // Module Opaque
