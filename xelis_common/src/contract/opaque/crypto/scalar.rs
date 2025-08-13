@@ -84,6 +84,7 @@ pub fn scalar_mul_base(zelf: FnInstance, _: FnParams, _: &ModuleMetadata, _: &mu
     Ok(SysCallResult::Return(OpaqueRistrettoPoint::Decompressed(
         point.compress(),
         point,
+        false,
     ).into()))
 }
 

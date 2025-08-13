@@ -945,8 +945,8 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
     // or creating a new value per call, but this is more optimized
     // You can still create your own wrapper around it
     {
-        env.register_constant(ristretto_type.clone(), "G", OpaqueRistrettoPoint::Decompressed(G.compress(), *G).into());
-        env.register_constant(scalar_type.clone(), "H", OpaqueRistrettoPoint::Decompressed(H.compress(), *H).into());
+        env.register_constant(ristretto_type.clone(), "G", OpaqueRistrettoPoint::Decompressed(G.compress(), *G, false).into());
+        env.register_constant(scalar_type.clone(), "H", OpaqueRistrettoPoint::Decompressed(H.compress(), *H, false).into());
 
         // Is Identity
         env.register_native_function(

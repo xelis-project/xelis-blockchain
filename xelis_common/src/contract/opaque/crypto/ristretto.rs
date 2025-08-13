@@ -1,4 +1,5 @@
 use core::hash;
+use std::borrow::Cow;
 
 use anyhow::Context as _;
 use curve25519_dalek::{ristretto::CompressedRistretto, traits::{Identity, IsIdentity}, RistrettoPoint, Scalar};
@@ -31,15 +32,12 @@ pub enum OpaqueRistrettoPoint {
     Compressed(CompressedRistretto),
     /// Decompressed representation of a Ristretto point
     /// Contains both the compressed form and the decompressed point
-    Decompressed(CompressedRistretto, RistrettoPoint),
+    Decompressed(CompressedRistretto, RistrettoPoint, bool),
 }
 
 impl hash::Hash for OpaqueRistrettoPoint {
     fn hash<H: hash::Hasher>(&self, state: &mut H) {
-        match self {
-            OpaqueRistrettoPoint::Compressed(c) => c.hash(state),
-            OpaqueRistrettoPoint::Decompressed(c, _) => c.hash(state),
-        }
+        self.compressed().hash(state);
     }
 }
 
@@ -49,13 +47,19 @@ impl OpaqueRistrettoPoint {
     }
 
     pub fn is_decompressed(&self) -> bool {
-        matches!(self, OpaqueRistrettoPoint::Decompressed(_, _))
+        matches!(self, OpaqueRistrettoPoint::Decompressed(_, _, _))
     }
 
-    pub fn compressed(&self) -> &CompressedRistretto {
+    pub fn compressed<'a>(&'a self) -> Cow<'a, CompressedRistretto> {
         match self {
-            OpaqueRistrettoPoint::Compressed(c) => c,
-            OpaqueRistrettoPoint::Decompressed(c, _) => c,
+            OpaqueRistrettoPoint::Compressed(c) => Cow::Borrowed(c),
+            OpaqueRistrettoPoint::Decompressed(c, point, dirty) => {
+                if *dirty {
+                    Cow::Owned(point.compress())
+                } else {
+                    Cow::Borrowed(c)
+                }
+            },
         }
     }
 
@@ -64,28 +68,37 @@ impl OpaqueRistrettoPoint {
             OpaqueRistrettoPoint::Compressed(c) => {
                 let decompressed = c.decompress()
                     .ok_or(EnvironmentError::Static("Failed to decompress Ristretto point"))?;
-                *self = OpaqueRistrettoPoint::Decompressed(c.clone(), decompressed);
+
+                *self = OpaqueRistrettoPoint::Decompressed(c.clone(), decompressed, false);
                 Ok(())
             }
-            OpaqueRistrettoPoint::Decompressed(_, _) => Ok(()),
+            OpaqueRistrettoPoint::Decompressed(_, _, _) => Ok(()),
         }
     }
 
     pub fn computable(&mut self) -> Result<&mut RistrettoPoint, EnvironmentError> {
         self.decompress_internal()?;
 
-         let OpaqueRistrettoPoint::Decompressed(_, point) = self else {
+         let OpaqueRistrettoPoint::Decompressed(_, point, dirty) = self else {
             unreachable!();
         };
+
+        *dirty = true;
 
         Ok(point)
     }
 
     pub fn both(&mut self) -> Result<(&CompressedRistretto, &RistrettoPoint), EnvironmentError> {
         self.decompress_internal()?;
-        let OpaqueRistrettoPoint::Decompressed(compressed, point) = self else {
+
+        let OpaqueRistrettoPoint::Decompressed(compressed, point, dirty) = self else {
             unreachable!();
         };
+
+        if *dirty {
+            *compressed = point.compress();
+            *dirty = false;
+        }
 
         Ok((compressed, point))
     }
@@ -94,7 +107,7 @@ impl OpaqueRistrettoPoint {
         match self {
             OpaqueRistrettoPoint::Compressed(c) => c.decompress()
                 .ok_or(EnvironmentError::Static("Failed to decompress Ristretto point")),
-            OpaqueRistrettoPoint::Decompressed(_, point) => Ok(point),
+            OpaqueRistrettoPoint::Decompressed(_, point, _) => Ok(point),
         }
     }
 }
