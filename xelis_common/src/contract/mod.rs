@@ -154,11 +154,11 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
     let ciphertext_type = Type::Opaque(env.register_opaque::<CiphertextCache>("Ciphertext", true));
     let ristretto_type = Type::Opaque(env.register_opaque::<OpaqueRistrettoPoint>("RistrettoPoint", true));
     let scalar_type = Type::Opaque(env.register_opaque::<OpaqueScalar>("Scalar", true));
-    let transcript_type = Type::Opaque(env.register_opaque::<OpaqueTranscript>("Transcript", true));
+    let transcript_type = Type::Opaque(env.register_opaque::<OpaqueTranscript>("Transcript", false));
     let ct_validity_proof_type = Type::Opaque(env.register_opaque::<CiphertextValidityProof>("CiphertextValidityProof", true));
-    let _ = Type::Opaque(env.register_opaque::<RangeProofWrapper>("RangeProof", true));
+    let range_proof_type = Type::Opaque(env.register_opaque::<RangeProofWrapper>("RangeProof", true));
 
-    let module_type = Type::Opaque(env.register_opaque::<OpaqueModule>("Module", true));
+    let module_type = Type::Opaque(env.register_opaque::<OpaqueModule>("Module", false));
 
     // Transaction
     {
@@ -946,8 +946,8 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
     // or creating a new value per call, but this is more optimized
     // You can still create your own wrapper around it
     {
-        env.register_constant(ristretto_type.clone(), "G", OpaqueRistrettoPoint::Decompressed(G.compress(), *G, false).into());
-        env.register_constant(scalar_type.clone(), "H", OpaqueRistrettoPoint::Decompressed(H.compress(), *H, false).into());
+        env.register_constant(ristretto_type.clone(), "G", OpaqueRistrettoPoint::Decompressed(None, *G).into());
+        env.register_constant(scalar_type.clone(), "H", OpaqueRistrettoPoint::Decompressed(None, *H).into());
 
         // Is Identity
         env.register_native_function(
@@ -1252,7 +1252,38 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
 
     // CiphertextValidityProof
     {
+        // verify
+        env.register_native_function(
+            "verify",
+            Some(ct_validity_proof_type.clone()),
+            vec![
+                ("commitment", ristretto_type.clone()),
+                ("dest_pubkey", ristretto_type.clone()),
+                ("source_pubkey", ristretto_type.clone()),
+                ("dest_handle", ristretto_type.clone()),
+                ("source_handle", ristretto_type.clone()),
+                ("transcript", transcript_type.clone()),
+            ],
+            FunctionHandler::Sync(ciphertext_validity_proof_verify),
+            15000,
+            Some(Type::Bool)
+        );
+    }
 
+    // RangeProof
+    {
+        // verify
+        env.register_native_function(
+            "verify",
+            Some(range_proof_type.clone()),
+            vec![
+                ("commitments", Type::Array(Box::new(ristretto_type.clone()))),
+                ("transcript", transcript_type.clone()),
+            ],
+            FunctionHandler::Sync(range_proof_verify),
+            500_000,
+            Some(Type::Bool)
+        );
     }
 
     // Module Opaque

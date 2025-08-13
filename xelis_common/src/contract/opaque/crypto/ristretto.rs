@@ -89,6 +89,16 @@ impl OpaqueRistrettoPoint {
         Ok(point)
     }
 
+    pub fn decompressed(&mut self) -> Result<&RistrettoPoint, EnvironmentError> {
+        self.decompress_internal()?;
+
+        let OpaqueRistrettoPoint::Decompressed(_, point) = self else {
+            unreachable!();
+        };
+
+        Ok(point)
+    }
+
     pub fn both(&mut self) -> Result<(&CompressedRistretto, &RistrettoPoint), EnvironmentError> {
         self.decompress_internal()?;
 
