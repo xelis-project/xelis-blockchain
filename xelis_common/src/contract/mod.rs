@@ -1274,14 +1274,27 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
     {
         // verify
         env.register_native_function(
-            "verify",
+            "verify_single",
+            Some(range_proof_type.clone()),
+            vec![
+                ("commitment", ristretto_type.clone()),
+                ("transcript", transcript_type.clone()),
+            ],
+            FunctionHandler::Sync(range_proof_verify_single),
+            500_000,
+            Some(Type::Bool)
+        );
+
+        // verify
+        env.register_native_function(
+            "verify_multiple",
             Some(range_proof_type.clone()),
             vec![
                 ("commitments", Type::Array(Box::new(ristretto_type.clone()))),
                 ("transcript", transcript_type.clone()),
             ],
-            FunctionHandler::Sync(range_proof_verify),
-            500_000,
+            FunctionHandler::Sync(range_proof_verify_multiple),
+            515_000,
             Some(Type::Bool)
         );
     }

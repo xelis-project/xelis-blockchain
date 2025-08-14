@@ -1,5 +1,6 @@
 use std::hash::Hasher;
 
+use anyhow::Context as _;
 use bulletproofs::RangeProof;
 use serde::{Deserialize, Serialize};
 use xelis_vm::{
@@ -20,7 +21,7 @@ use crate::{
         OpaqueRistrettoPoint,
         OpaqueTranscript
     },
-    crypto::proofs::{BP_GENS, BULLET_PROOF_SIZE, PC_GENS},
+    crypto::proofs::{BP_GENS, PC_GENS},
     serializer::*
 };
 
@@ -61,7 +62,36 @@ impl Serializable for RangeProofWrapper {
     }
 }
 
-pub fn range_proof_verify(zelf: FnInstance, mut params: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn range_proof_verify_single(zelf: FnInstance, mut params: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {    
+    let proof_size = params[2].as_ref()
+        .as_u8()?;
+
+    if proof_size == 0 || proof_size > 64 {
+        return Err(EnvironmentError::Static("proof size must be between 1 and 64"));
+    }
+
+    let [left, right] = params.get_disjoint_mut([0, 1])
+        .context("disjoint mut")?;
+
+    let commitment: &mut OpaqueRistrettoPoint = left
+        .as_mut()
+        .as_opaque_type_mut()?;
+
+    let transcript: &mut OpaqueTranscript = right
+        .as_mut()
+        .as_opaque_type_mut()?;
+
+    let zelf: &RangeProofWrapper = zelf?.as_opaque_type()?;
+    let (compressed, decompressed) = commitment.both()?;
+    let value = (decompressed.clone(), compressed.clone());
+
+    let valid = zelf.0.verify_single(&BP_GENS, &PC_GENS, &mut transcript.0, &value, proof_size as _)
+        .is_ok();
+
+    Ok(SysCallResult::Return(Primitive::Boolean(valid).into()))
+}
+
+pub fn range_proof_verify_multiple(zelf: FnInstance, mut params: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
     let commitments = params[0]
         .as_mut()
         .as_mut_vec()?
@@ -74,12 +104,19 @@ pub fn range_proof_verify(zelf: FnInstance, mut params: FnParams, _: &ModuleMeta
         })
         .collect::<Result<Vec<_>, EnvironmentError>>()?;
 
+    let proof_size = params[2].as_ref()
+        .as_u8()?;
+
+    if proof_size == 0 || proof_size > 64 {
+        return Err(EnvironmentError::Static("proof size must be between 1 and 64"));
+    }
+
     let transcript: &mut OpaqueTranscript = params[1]
         .as_mut()
         .as_opaque_type_mut()?;
 
     let zelf: &RangeProofWrapper = zelf?.as_opaque_type()?;
-    let valid = zelf.0.verify_multiple(&BP_GENS, &PC_GENS, &mut transcript.0, &commitments, BULLET_PROOF_SIZE)
+    let valid = zelf.0.verify_multiple(&BP_GENS, &PC_GENS, &mut transcript.0, &commitments, proof_size as _)
         .is_ok();
 
     Ok(SysCallResult::Return(Primitive::Boolean(valid).into()))
