@@ -1272,7 +1272,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
 
     // RangeProof
     {
-        // verify
+        // verify single
         env.register_native_function(
             "verify_single",
             Some(range_proof_type.clone()),
@@ -1285,7 +1285,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             Some(Type::Bool)
         );
 
-        // verify
+        // verify multiple
         env.register_native_function(
             "verify_multiple",
             Some(range_proof_type.clone()),
