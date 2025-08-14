@@ -63,6 +63,13 @@ impl OpaqueRistrettoPoint {
         }
     }
 
+    pub fn is_identity(&self) -> bool {
+        match self {
+            OpaqueRistrettoPoint::Compressed(c) => c.is_identity(),
+            OpaqueRistrettoPoint::Decompressed(_, point) => point.is_identity()
+        }
+    }
+
     fn decompress_internal(&mut self) -> Result<(), EnvironmentError> {
         match self {
             OpaqueRistrettoPoint::Compressed(c) => {
@@ -163,8 +170,7 @@ impl Serializable for OpaqueRistrettoPoint {
 
 pub fn ristretto_is_identity(zelf: FnInstance, _: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
     let zelf: &OpaqueRistrettoPoint = zelf?.as_opaque_type()?;
-    let compressed = zelf.compressed();
-    Ok(SysCallResult::Return(Primitive::Boolean(compressed.is_identity()).into()))
+    Ok(SysCallResult::Return(Primitive::Boolean(zelf.is_identity()).into()))
 }
 
 pub fn ristretto_identity(_: FnInstance, _: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
