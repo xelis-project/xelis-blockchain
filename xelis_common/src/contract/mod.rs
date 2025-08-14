@@ -1279,6 +1279,8 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             vec![
                 ("commitment", ristretto_type.clone()),
                 ("transcript", transcript_type.clone()),
+                // Proof bits
+                ("n", Type::U64),
             ],
             FunctionHandler::Sync(range_proof_verify_single),
             500_000,
@@ -1292,6 +1294,8 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             vec![
                 ("commitments", Type::Array(Box::new(ristretto_type.clone()))),
                 ("transcript", transcript_type.clone()),
+                // Proof bits
+                ("n", Type::U64),
             ],
             FunctionHandler::Sync(range_proof_verify_multiple),
             515_000,
