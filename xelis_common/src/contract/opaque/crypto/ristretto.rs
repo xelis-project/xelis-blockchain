@@ -180,78 +180,78 @@ pub fn ristretto_identity(_: FnInstance, _: FnParams, _: &ModuleMetadata, _: &mu
 
 pub fn ristretto_add_scalar(zelf: FnInstance, params: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
     let mut zelf = zelf?;
-    let zelf: &mut OpaqueRistrettoPoint = zelf.as_opaque_type_mut()?;
+    let opaque: &mut OpaqueRistrettoPoint = zelf.as_opaque_type_mut()?;
     let scalar: &OpaqueScalar = params[0]
         .as_ref()
         .as_opaque_type()?;
 
-    let computable = zelf.computable()
+    let computable = opaque.computable()
         .context("Ciphertext not computable")?;
 
     *computable += scalar.0 * (*G);
 
-    Ok(SysCallResult::None)
+    Ok(SysCallResult::Return(zelf))
 }
 
 pub fn ristretto_sub_scalar(zelf: FnInstance, params: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
     let mut zelf = zelf?;
-    let zelf: &mut OpaqueRistrettoPoint = zelf.as_opaque_type_mut()?;
+    let opaque: &mut OpaqueRistrettoPoint = zelf.as_opaque_type_mut()?;
     let scalar: &OpaqueScalar = params[0]
         .as_ref()
         .as_opaque_type()?;
 
-    let computable = zelf.computable()?;
+    let computable = opaque.computable()?;
 
     *computable -= scalar.0 * (*G);
 
-    Ok(SysCallResult::None)
+    Ok(SysCallResult::Return(zelf))
 }
 
 pub fn ristretto_add(zelf: FnInstance, mut params: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
     let mut zelf = zelf?;
-    let zelf: &mut OpaqueRistrettoPoint = zelf.as_opaque_type_mut()?;
+    let opaque: &mut OpaqueRistrettoPoint = zelf.as_opaque_type_mut()?;
     let point: OpaqueRistrettoPoint = params.remove(0)
         .into_owned()
         .into_opaque_type()?;
 
-    let computable = zelf.computable()?;
+    let computable = opaque.computable()?;
 
     *computable += point.into_point()?;
 
-    Ok(SysCallResult::None)
+    Ok(SysCallResult::Return(zelf))
 }
 
 pub fn ristretto_sub(zelf: FnInstance, mut params: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
     let mut zelf = zelf?;
-    let zelf: &mut OpaqueRistrettoPoint = zelf.as_opaque_type_mut()?;
+    let opaque: &mut OpaqueRistrettoPoint = zelf.as_opaque_type_mut()?;
     let point: OpaqueRistrettoPoint = params.remove(0)
         .into_owned()
         .into_opaque_type()?;
 
-    let computable = zelf.computable()?;
+    let computable = opaque.computable()?;
 
     *computable -= point.into_point()?;
 
-    Ok(SysCallResult::None)
+    Ok(SysCallResult::Return(zelf))
 }
 
 pub fn ristretto_mul_scalar(zelf: FnInstance, params: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
     let mut zelf = zelf?;
-    let zelf: &mut OpaqueRistrettoPoint = zelf.as_opaque_type_mut()?;
+    let opaque: &mut OpaqueRistrettoPoint = zelf.as_opaque_type_mut()?;
     let scalar: &OpaqueScalar = params[0]
         .as_ref()
         .as_opaque_type()?;
 
-    let computable = zelf.computable()?;
+    let computable = opaque.computable()?;
 
     *computable *= scalar.0;
 
-    Ok(SysCallResult::None)
+    Ok(SysCallResult::Return(zelf))
 }
 
 pub fn ristretto_div_scalar(zelf: FnInstance, params: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
     let mut zelf = zelf?;
-    let zelf: &mut OpaqueRistrettoPoint = zelf.as_opaque_type_mut()?;
+    let opaque: &mut OpaqueRistrettoPoint = zelf.as_opaque_type_mut()?;
     let scalar: &OpaqueScalar = params[0]
         .as_ref()
         .as_opaque_type()?;
@@ -260,11 +260,11 @@ pub fn ristretto_div_scalar(zelf: FnInstance, params: FnParams, _: &ModuleMetada
         return Err(EnvironmentError::Static("Scalar cannot be zero for division"));
     }
 
-    let computable = zelf.computable()?;
+    let computable = opaque.computable()?;
 
     *computable *= scalar.0.invert();
 
-    Ok(SysCallResult::None)
+    Ok(SysCallResult::Return(zelf))
 }
 
 pub fn ristretto_from_bytes(_: FnInstance, params: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {

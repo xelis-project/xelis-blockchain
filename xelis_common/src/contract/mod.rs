@@ -942,9 +942,6 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
     }
 
     // RistrettoPoint
-    // it is not ideal to not return the type each time
-    // or creating a new value per call, but this is more optimized
-    // You can still create your own wrapper around it
     {
         env.register_constant(ristretto_type.clone(), "G", OpaqueRistrettoPoint::Decompressed(None, *G).into());
         env.register_constant(scalar_type.clone(), "H", OpaqueRistrettoPoint::Decompressed(None, *H).into());
@@ -978,7 +975,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             ],
             FunctionHandler::Sync(ristretto_add_scalar),
             300,
-            None
+            Some(ristretto_type.clone())
         );
         // P - (s * G)
         env.register_native_function(
@@ -989,7 +986,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             ],
             FunctionHandler::Sync(ristretto_sub_scalar),
             300,
-            None
+            Some(ristretto_type.clone())
         );
         // P + P2
         env.register_native_function(
@@ -1000,7 +997,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             ],
             FunctionHandler::Sync(ristretto_add),
             250,
-            None
+            Some(ristretto_type.clone())
         );
         // P - P2
         env.register_native_function(
@@ -1011,7 +1008,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             ],
             FunctionHandler::Sync(ristretto_sub),
             250,
-            None
+            Some(ristretto_type.clone())
         );
         // P * s
         env.register_native_function(
@@ -1022,7 +1019,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             ],
             FunctionHandler::Sync(ristretto_mul_scalar),
             300,
-            None
+            Some(ristretto_type.clone())
         );
         // P / s (ensure s != 0)
         env.register_native_function(
@@ -1033,7 +1030,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             ],
             FunctionHandler::Sync(ristretto_div_scalar),
             5000,
-            None
+            Some(ristretto_type.clone())
         );
         // From bytes
         env.register_static_function(
