@@ -169,7 +169,8 @@ impl Serializable for OpaqueRistrettoPoint {
 }
 
 pub fn ristretto_is_identity(zelf: FnInstance, _: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
-    let zelf: &OpaqueRistrettoPoint = zelf?.as_opaque_type()?;
+    let zelf = zelf?;
+    let zelf: &OpaqueRistrettoPoint = zelf.as_opaque_type()?;
     Ok(SysCallResult::Return(Primitive::Boolean(zelf.is_identity()).into()))
 }
 

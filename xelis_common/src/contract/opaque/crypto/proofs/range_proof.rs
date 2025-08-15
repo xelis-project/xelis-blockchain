@@ -81,7 +81,8 @@ pub fn range_proof_verify_single(zelf: FnInstance, mut params: FnParams, _: &Mod
         .as_mut()
         .as_opaque_type_mut()?;
 
-    let zelf: &RangeProofWrapper = zelf?.as_opaque_type()?;
+    let zelf = zelf?;
+    let zelf: &RangeProofWrapper = zelf.as_opaque_type()?;
     let (compressed, decompressed) = commitment.both()?;
     let value = (decompressed.clone(), compressed.clone());
 
@@ -115,7 +116,8 @@ pub fn range_proof_verify_multiple(zelf: FnInstance, mut params: FnParams, _: &M
         .as_mut()
         .as_opaque_type_mut()?;
 
-    let zelf: &RangeProofWrapper = zelf?.as_opaque_type()?;
+    let zelf = zelf?;
+    let zelf: &RangeProofWrapper = zelf.as_opaque_type()?;
     let valid = zelf.0.verify_multiple(&BP_GENS, &PC_GENS, &mut transcript.0, &commitments, proof_size as _)
         .is_ok();
 
