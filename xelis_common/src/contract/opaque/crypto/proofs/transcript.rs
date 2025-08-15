@@ -77,7 +77,8 @@ pub fn transcript_new(_: FnInstance, params: FnParams, _: &ModuleMetadata, _: &m
 }
 
 pub fn transcript_challenge_scalar(zelf: FnInstance, params: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
-    let zelf: &mut OpaqueTranscript = zelf?.as_opaque_type_mut()?;
+    let mut zelf = zelf?;
+    let zelf: &mut OpaqueTranscript = zelf.as_opaque_type_mut()?;
 
     let label = params[0]
         .as_ref()
@@ -88,7 +89,8 @@ pub fn transcript_challenge_scalar(zelf: FnInstance, params: FnParams, _: &Modul
 }
 
 pub fn transcript_challenge_bytes(zelf: FnInstance, params: FnParams, _: &ModuleMetadata, context: &mut Context) -> FnReturnType<ModuleMetadata> {
-    let zelf: &mut OpaqueTranscript = zelf?.as_opaque_type_mut()?;
+    let mut zelf = zelf?;
+    let zelf: &mut OpaqueTranscript = zelf.as_opaque_type_mut()?;
 
     let label = params[0]
         .as_ref()
@@ -115,7 +117,8 @@ pub fn transcript_challenge_bytes(zelf: FnInstance, params: FnParams, _: &Module
 }
 
 pub fn transcript_append_message(zelf: FnInstance, params: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
-    let zelf: &mut OpaqueTranscript = zelf?.as_opaque_type_mut()?;
+    let mut zelf = zelf?;
+    let zelf: &mut OpaqueTranscript = zelf.as_opaque_type_mut()?;
 
     let label = params[0]
         .as_ref()
@@ -131,7 +134,8 @@ pub fn transcript_append_message(zelf: FnInstance, params: FnParams, _: &ModuleM
 }
 
 pub fn transcript_append_point(zelf: FnInstance, params: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
-    let zelf: &mut OpaqueTranscript = zelf?.as_opaque_type_mut()?;
+    let mut zelf = zelf?;
+    let zelf: &mut OpaqueTranscript = zelf.as_opaque_type_mut()?;
 
     let label = params[0]
         .as_ref()
@@ -147,7 +151,8 @@ pub fn transcript_append_point(zelf: FnInstance, params: FnParams, _: &ModuleMet
 }
 
 pub fn transcript_validate_and_append_point(zelf: FnInstance, params: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
-    let zelf: &mut OpaqueTranscript = zelf?.as_opaque_type_mut()?;
+    let mut zelf = zelf?;
+    let zelf: &mut OpaqueTranscript = zelf.as_opaque_type_mut()?;
 
     let label = params[0]
         .as_ref()
@@ -164,7 +169,8 @@ pub fn transcript_validate_and_append_point(zelf: FnInstance, params: FnParams, 
 }
 
 pub fn transcript_append_scalar(zelf: FnInstance, params: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
-    let zelf: &mut OpaqueTranscript = zelf?.as_opaque_type_mut()?;
+    let mut zelf = zelf?;
+    let zelf: &mut OpaqueTranscript = zelf.as_opaque_type_mut()?;
 
     let label = params[0]
         .as_ref()

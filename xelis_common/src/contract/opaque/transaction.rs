@@ -53,17 +53,20 @@ pub fn transaction(_: FnInstance, _: FnParams, _: &ModuleMetadata, context: &mut
 }
 
 pub fn transaction_nonce(zelf: FnInstance, _: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
-    let tx: &OpaqueTransaction = zelf?.as_opaque_type()?;
+    let zelf = zelf?;
+    let tx: &OpaqueTransaction = zelf.as_opaque_type()?;
     Ok(SysCallResult::Return(Primitive::U64(tx.inner.get_nonce()).into()))
 }
 
 pub fn transaction_hash(zelf: FnInstance, _: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
-    let tx: &OpaqueTransaction = zelf?.as_opaque_type()?;
+    let zelf = zelf?;
+    let tx: &OpaqueTransaction = zelf.as_opaque_type()?;
     Ok(SysCallResult::Return(Primitive::Opaque(OpaqueWrapper::new(tx.hash.clone())).into()))
 }
 
 pub fn transaction_source(zelf: FnInstance, _: FnParams, _: &ModuleMetadata, context: &mut Context) -> FnReturnType<ModuleMetadata> {
-    let tx: &OpaqueTransaction = zelf?.as_opaque_type()?;
+    let zelf = zelf?;
+    let tx: &OpaqueTransaction = zelf.as_opaque_type()?;
     let state: &ChainState = context.get().context("chain state not found")?;
 
     let address = tx.inner.get_source()
@@ -73,11 +76,13 @@ pub fn transaction_source(zelf: FnInstance, _: FnParams, _: &ModuleMetadata, con
 }
 
 pub fn transaction_fee(zelf: FnInstance, _: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
-    let tx: &OpaqueTransaction = zelf?.as_opaque_type()?;
+    let zelf = zelf?;
+    let tx: &OpaqueTransaction = zelf.as_opaque_type()?;
     Ok(SysCallResult::Return(Primitive::U64(tx.inner.get_fee()).into()))
 }
 
 pub fn transaction_signature(zelf: FnInstance, _: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
-    let tx: &OpaqueTransaction = zelf?.as_opaque_type()?;
+    let zelf = zelf?;
+    let tx: &OpaqueTransaction = zelf.as_opaque_type()?;
     Ok(SysCallResult::Return(Primitive::Opaque(OpaqueWrapper::new(tx.inner.get_signature().clone())).into()))
 }

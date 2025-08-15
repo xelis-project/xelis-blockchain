@@ -64,7 +64,8 @@ pub fn signature_from_bytes_fn(_: FnInstance, mut params: FnParams, _: &ModuleMe
 }
 
 pub fn signature_verify_fn(zelf: FnInstance, mut params: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
-    let signature: &Signature = zelf?.as_opaque_type()?;
+    let zelf = zelf?;
+    let signature: &Signature = zelf.as_opaque_type()?;
 
     let mut point: OpaqueRistrettoPoint = params.remove(0)
         .into_owned()

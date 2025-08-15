@@ -90,7 +90,8 @@ pub fn ciphertext_validity_proof_verify(zelf: FnInstance, mut params: FnParams, 
         .as_mut()
         .as_opaque_type_mut()?;
 
-    let zelf: &CiphertextValidityProof = zelf?.as_opaque_type()?;
+    let zelf = zelf?;
+    let zelf: &CiphertextValidityProof = zelf.as_opaque_type()?;
     let valid = zelf.verify(&commitment, &dest_pubkey, &source_pubkey, &dest_handle, &source_handle, true, &mut transcript.0)
         .is_ok();
 

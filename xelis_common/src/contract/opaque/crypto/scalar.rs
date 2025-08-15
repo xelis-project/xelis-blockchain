@@ -59,7 +59,8 @@ pub fn scalar_from_u64(_: FnInstance, params: FnParams, _: &ModuleMetadata, _: &
 }
 
 pub fn scalar_invert(zelf: FnInstance, _: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
-    let zelf: &OpaqueScalar = zelf?.as_opaque_type()?;
+    let zelf = zelf?;
+    let zelf: &OpaqueScalar = zelf.as_opaque_type()?;
 
     if zelf.0 == Scalar::ZERO {
         return Err(EnvironmentError::Static("Division by zero"));
@@ -70,14 +71,16 @@ pub fn scalar_invert(zelf: FnInstance, _: FnParams, _: &ModuleMetadata, _: &mut 
 }
 
 pub fn scalar_is_zero(zelf: FnInstance, _: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
-    let zelf: &OpaqueScalar = zelf?.as_opaque_type()?;
+    let zelf = zelf?;
+    let zelf: &OpaqueScalar = zelf.as_opaque_type()?;
     let is_zero = zelf.0 == Scalar::ZERO;
 
     Ok(SysCallResult::Return(Primitive::Boolean(is_zero).into()))
 }
 
 pub fn scalar_mul_base(zelf: FnInstance, _: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
-    let zelf: &OpaqueScalar = zelf?.as_opaque_type()?;
+    let zelf = zelf?;
+    let zelf: &OpaqueScalar = zelf.as_opaque_type()?;
 
     let point = zelf.0 * (*G);
 
@@ -88,7 +91,8 @@ pub fn scalar_mul_base(zelf: FnInstance, _: FnParams, _: &ModuleMetadata, _: &mu
 }
 
 pub fn scalar_add(zelf: FnInstance, params: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
-    let zelf: &OpaqueScalar = zelf?.as_opaque_type()?;
+    let zelf = zelf?;
+    let zelf: &OpaqueScalar = zelf.as_opaque_type()?;
     let other: &OpaqueScalar = params[0]
         .as_ref()
         .as_opaque_type()?;
@@ -98,7 +102,8 @@ pub fn scalar_add(zelf: FnInstance, params: FnParams, _: &ModuleMetadata, _: &mu
 }
 
 pub fn scalar_sub(zelf: FnInstance, params: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
-    let zelf: &OpaqueScalar = zelf?.as_opaque_type()?;
+    let zelf = zelf?;
+    let zelf: &OpaqueScalar = zelf.as_opaque_type()?;
     let other: &OpaqueScalar = params[0]
         .as_ref()
         .as_opaque_type()?;
@@ -108,7 +113,8 @@ pub fn scalar_sub(zelf: FnInstance, params: FnParams, _: &ModuleMetadata, _: &mu
 }
 
 pub fn scalar_mul(zelf: FnInstance, params: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
-    let zelf: &OpaqueScalar = zelf?.as_opaque_type()?;
+    let zelf = zelf?;
+    let zelf: &OpaqueScalar = zelf.as_opaque_type()?;
     let other: &OpaqueScalar = params[0]
         .as_ref()
         .as_opaque_type()?;
@@ -118,7 +124,8 @@ pub fn scalar_mul(zelf: FnInstance, params: FnParams, _: &ModuleMetadata, _: &mu
 }
 
 pub fn scalar_div(zelf: FnInstance, params: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
-    let zelf: &OpaqueScalar = zelf?.as_opaque_type()?;
+    let zelf = zelf?;
+    let zelf: &OpaqueScalar = zelf.as_opaque_type()?;
     let other: &OpaqueScalar = params[0]
         .as_ref()
         .as_opaque_type()?;
@@ -145,7 +152,8 @@ pub fn scalar_from_bytes(_: FnInstance, mut params: FnParams, _: &ModuleMetadata
 }
 
 pub fn scalar_to_bytes(zelf: FnInstance, _: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
-    let zelf: &OpaqueScalar = zelf?.as_opaque_type()?;
+    let zelf = zelf?;
+    let zelf: &OpaqueScalar = zelf.as_opaque_type()?;
     let bytes = zelf.0.to_bytes().to_vec();
 
     Ok(SysCallResult::Return(ValueCell::Bytes(bytes).into()))

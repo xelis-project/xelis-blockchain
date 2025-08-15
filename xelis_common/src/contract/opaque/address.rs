@@ -31,17 +31,20 @@ impl Serializable for Address {
 }
 
 pub fn address_is_mainnet(zelf: FnInstance, _: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
-    let address: &Address = zelf?.as_opaque_type()?;
+    let zelf = zelf?;
+    let address: &Address = zelf.as_opaque_type()?;
     Ok(SysCallResult::Return(Primitive::Boolean(address.is_mainnet()).into()))
 }
 
 pub fn address_is_normal(zelf: FnInstance, _: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
-    let address: &Address = zelf?.as_opaque_type()?;
+    let zelf = zelf?;
+    let address: &Address = zelf.as_opaque_type()?;
     Ok(SysCallResult::Return(Primitive::Boolean(address.is_normal()).into()))
 }
 
 pub fn address_to_point(zelf: FnInstance, _: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
-    let address: &Address = zelf?.as_opaque_type()?;
+    let zelf = zelf?;
+    let address: &Address = zelf.as_opaque_type()?;
     let point = address.get_public_key()
         .as_point()
         .clone();

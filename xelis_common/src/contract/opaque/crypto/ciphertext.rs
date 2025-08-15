@@ -53,7 +53,8 @@ impl_opaque!(
 );
 
 pub fn ciphertext_mul_plaintext(zelf: FnInstance, mut params: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
-    let zelf: &mut CiphertextCache = zelf?.as_opaque_type_mut()?;
+    let mut zelf = zelf?;
+    let zelf: &mut CiphertextCache = zelf.as_opaque_type_mut()?;
     let value = params.remove(0)
         .as_u64()?;
 
@@ -66,7 +67,8 @@ pub fn ciphertext_mul_plaintext(zelf: FnInstance, mut params: FnParams, _: &Modu
 }
 
 pub fn ciphertext_div_plaintext(zelf: FnInstance, mut params: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
-    let zelf: &mut CiphertextCache = zelf?.as_opaque_type_mut()?;
+    let mut zelf = zelf?;
+    let zelf: &mut CiphertextCache = zelf.as_opaque_type_mut()?;
     let value = params.remove(0)
         .as_u64()?;
 
@@ -83,7 +85,8 @@ pub fn ciphertext_div_plaintext(zelf: FnInstance, mut params: FnParams, _: &Modu
 }
 
 pub fn ciphertext_add_plaintext(zelf: FnInstance, mut params: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
-    let zelf: &mut CiphertextCache = zelf?.as_opaque_type_mut()?;
+    let mut zelf = zelf?;
+    let zelf: &mut CiphertextCache = zelf.as_opaque_type_mut()?;
     let value = params.remove(0)
         .as_u64()?;
 
@@ -96,7 +99,8 @@ pub fn ciphertext_add_plaintext(zelf: FnInstance, mut params: FnParams, _: &Modu
 }
 
 pub fn ciphertext_sub_plaintext(zelf: FnInstance, mut params: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
-    let zelf: &mut CiphertextCache = zelf?.as_opaque_type_mut()?;
+    let mut zelf = zelf?;
+    let zelf: &mut CiphertextCache = zelf.as_opaque_type_mut()?;
     let value = params.remove(0)
         .as_u64()?;
 
@@ -125,7 +129,8 @@ pub fn ciphertext_new(_: FnInstance, mut params: FnParams, _: &ModuleMetadata, _
 }
 
 pub fn ciphertext_commitment(zelf: FnInstance, _: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
-    let zelf: &mut CiphertextCache = zelf?.as_opaque_type_mut()?;
+    let mut zelf = zelf?;
+    let zelf: &mut CiphertextCache = zelf.as_opaque_type_mut()?;
     let commitment = zelf.decompressed()
         .context("Ciphertext not decompressed")?
         .commitment()
@@ -136,7 +141,8 @@ pub fn ciphertext_commitment(zelf: FnInstance, _: FnParams, _: &ModuleMetadata, 
 }
 
 pub fn ciphertext_handle(zelf: FnInstance, _: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
-    let zelf: &mut CiphertextCache = zelf?.as_opaque_type_mut()?;
+    let mut zelf = zelf?;
+    let zelf: &mut CiphertextCache = zelf.as_opaque_type_mut()?;
     let handle = zelf.decompressed()
         .context("Ciphertext not decompressed")?
         .handle()
