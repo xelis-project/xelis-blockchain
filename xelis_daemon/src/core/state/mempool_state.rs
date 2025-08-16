@@ -57,12 +57,13 @@ pub struct MempoolState<'a, S: Storage> {
     stable_topoheight: TopoHeight,
     // The current topoheight of the chain
     topoheight: TopoHeight,
+    tx_base_fee: u64,
     // Block header version
     block_version: BlockVersion,
 }
 
 impl<'a, S: Storage> MempoolState<'a, S> {
-    pub fn new(mempool: &'a Mempool, storage: &'a S, environment: &'a Environment<ModuleMetadata>, stable_topoheight: TopoHeight, topoheight: TopoHeight, block_version: BlockVersion, mainnet: bool) -> Self {
+    pub fn new(mempool: &'a Mempool, storage: &'a S, environment: &'a Environment<ModuleMetadata>, stable_topoheight: TopoHeight, topoheight: TopoHeight, block_version: BlockVersion, mainnet: bool, tx_base_fee: u64) -> Self {
         Self {
             mainnet,
             mempool,
@@ -73,6 +74,7 @@ impl<'a, S: Storage> MempoolState<'a, S> {
             contracts: HashMap::new(),
             stable_topoheight,
             topoheight,
+            tx_base_fee,
             block_version,
         }
     }
@@ -208,7 +210,7 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for Mempoo
         &'b mut self,
         tx: &Transaction,
     ) -> Result<(), BlockchainError> {
-        super::pre_verify_tx(self.storage, tx, self.stable_topoheight, self.topoheight, self.get_block_version()).await
+        super::pre_verify_tx(self.storage, tx, self.stable_topoheight, self.topoheight, self.tx_base_fee, self.get_block_version()).await
     }
 
     /// Get the balance ciphertext for a receiver account

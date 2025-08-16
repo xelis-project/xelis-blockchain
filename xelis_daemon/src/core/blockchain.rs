@@ -40,7 +40,8 @@ use xelis_common::{
         MAX_TRANSACTION_SIZE,
         MAX_BLOCK_SIZE,
         TIPS_LIMIT,
-        XELIS_ASSET
+        XELIS_ASSET,
+        FEE_PER_KB
     },
     crypto::{
         Hash,
@@ -85,7 +86,8 @@ use crate::{
         DEV_FEES, DEV_PUBLIC_KEY, EMISSION_SPEED_FACTOR, GENESIS_BLOCK_DIFFICULTY,
         MILLIS_PER_SECOND, SIDE_BLOCK_REWARD_MAX_BLOCKS, PRUNE_SAFETY_LIMIT,
         SIDE_BLOCK_REWARD_PERCENT, SIDE_BLOCK_REWARD_MIN_PERCENT, STABLE_LIMIT,
-        TIMESTAMP_IN_FUTURE_LIMIT, DEFAULT_CACHE_SIZE,
+        TIMESTAMP_IN_FUTURE_LIMIT, DEFAULT_CACHE_SIZE, CHAIN_AVERAGE_BLOCK_TIME_N,
+        CHAIN_AVERAGE_BLOCKS_SIZE_MAX_DEPTH,
     },
     core::{
         config::Config,
@@ -95,7 +97,12 @@ use crate::{
         mempool::Mempool,
         nonce_checker::NonceChecker,
         simulator::Simulator,
-        storage::{DagOrderProvider, DifficultyProvider, Storage},
+        storage::{
+            BlockProvider,
+            DagOrderProvider,
+            DifficultyProvider,
+            Storage
+        },
         tx_selector::{TxSelector, TxSelectorEntry},
         state::{ChainState, ApplicableChainState},
         hard_fork::*,
@@ -1566,6 +1573,9 @@ impl<S: Storage> Blockchain<S> {
             return Err(BlockchainError::TxAlreadyInBlockchain(hash.into_owned()))
         }
 
+        let tips = storage.get_tips().await?;
+        let base_fee = self.get_required_base_fee(storage, tips.iter()).await?;
+
         let hash = {
             debug!("locking mempool to add tx");
             let mut mempool = self.mempool.write().await;
@@ -1599,7 +1609,7 @@ impl<S: Storage> Blockchain<S> {
 
             let start = Instant::now();
             let version = get_version_at_height(self.get_network(), self.get_height());
-            mempool.add_tx(storage, &self.environment, stable_topoheight, current_topoheight, hash.clone(), tx.clone(), tx_size, version).await?;
+            mempool.add_tx(storage, &self.environment, stable_topoheight, current_topoheight, base_fee, hash.clone(), tx.clone(), tx_size, version).await?;
 
             debug!("TX {} has been added to the mempool", hash);
 
@@ -1880,7 +1890,17 @@ impl<S: Storage> Blockchain<S> {
         let topoheight = self.get_topo_height();
 
         trace!("build chain state for block template");
-        let mut chain_state = ChainState::new(storage, &self.environment, stable_topoheight, topoheight, block.get_version());
+
+        // V3 is used to group with orphaned TXs from our tips and calculate
+        // the base fee
+        let is_v3_enabled = block.get_version() >= BlockVersion::V3;
+        let base_fee = if is_v3_enabled {
+            self.get_required_base_fee(&*storage, block.get_tips().iter()).await?
+        } else {
+            FEE_PER_KB
+        };
+
+        let mut chain_state = ChainState::new(storage, &self.environment, stable_topoheight, topoheight, block.get_version(), base_fee);
 
         if !tx_selector.is_empty() {
             let tx_cache = TxCache::new(storage, &mempool, self.disable_zkp_cache);
@@ -1895,7 +1915,6 @@ impl<S: Storage> Blockchain<S> {
             // Keep track of processed sources to avoid re-verifying them
             let mut processed_sources = HashSet::new();
 
-            let is_v3_enabled = block.get_version() >= BlockVersion::V3;
 
             // If we are not skipping block template TXs verification,
             // we need to detect any orphaned TXs that were processed in the tips
@@ -2199,6 +2218,20 @@ impl<S: Storage> Blockchain<S> {
         debug!("PoW is valid for difficulty {}", difficulty);
 
         let mut current_topoheight = self.get_topo_height();
+
+        // V3 group transactions from orphaned blocks per source to re inject them for verification
+        // This is required in case of complex DAG reorgs where we have orphaned blocks with TXs referencing to
+        // each other
+        // Because these TXs were already verified, their cost should be amortized by the batching verification
+        let is_v3_enabled = version >= BlockVersion::V3;
+
+        // Required base fee per KB to prevent low-fee spam attacks
+        let base_fee = if is_v3_enabled {
+            self.get_required_base_fee(&*storage, block.get_tips().iter()).await?
+        } else {
+            FEE_PER_KB
+        };
+
         // Transaction verification
         // Here we are going to verify all TXs in the block
         // For this, we must select TXs that are not doing collisions with other TXs in block
@@ -2226,11 +2259,6 @@ impl<S: Storage> Blockchain<S> {
             // that are not only executed, but also just in block tips to prevent re integration
             // as we know that if current block would be accepted, its tips would be also executed in DAG
             let is_v2_enabled = version >= BlockVersion::V2;
-            // V3 group transactions from orphaned blocks per source to re inject them for verification
-            // This is required in case of complex DAG reorgs where we have orphaned blocks with TXs referencing to
-            // each other
-            // Because these TXs were already verified, their cost should be amortized by the batching verification
-            let is_v3_enabled = version >= BlockVersion::V3;
 
             // All transactions grouped per source key
             // used for batch verifications
@@ -2340,6 +2368,7 @@ impl<S: Storage> Blockchain<S> {
 
                 // Track how much time it takes to verify them all
                 let start = Instant::now();
+
                 let stable_topoheight = self.get_stable_topoheight();
                 // If multi thread is enabled and we have more than one source
                 // Otherwise its not worth-it to move it on another thread
@@ -2369,12 +2398,12 @@ impl<S: Storage> Blockchain<S> {
                     // it will be multi-threaded by N threads
                     stream::iter(batches.into_iter().map(Ok))
                         .try_for_each_concurrent(self.txs_verification_threads_count, async |txs| {
-                            let mut chain_state = ChainState::new(storage, environment, stable_topoheight, current_topoheight, version);
+                            let mut chain_state = ChainState::new(storage, environment, stable_topoheight, current_topoheight, version, base_fee);
                             Transaction::verify_batch(txs.iter(), &mut chain_state, cache).await
                         }).await?;
                 } else {
                     // Verify all valid transactions in one batch
-                    let mut chain_state = ChainState::new(&*storage, &self.environment, stable_topoheight, current_topoheight, version);
+                    let mut chain_state = ChainState::new(&*storage, &self.environment, stable_topoheight, current_topoheight, version, base_fee);
                     let iter = txs_grouped.values()
                         .flatten();
                     Transaction::verify_batch(iter, &mut chain_state, &tx_cache).await?;
@@ -2636,6 +2665,7 @@ impl<S: Storage> Blockchain<S> {
                     past_burned_supply,
                     &hash,
                     &block,
+                    base_fee,
                 );
 
                 total_txs_executed += block.get_txs_count();
@@ -2969,7 +2999,7 @@ impl<S: Storage> Blockchain<S> {
             debug!("mempool write mode ok");
             let version = get_version_at_height(self.get_network(), current_height);
             let start = Instant::now();
-            let res = mempool.clean_up(&*storage, &self.environment, base_topo_height, highest_topo, version).await;
+            let res = mempool.clean_up(&*storage, &self.environment, base_topo_height, highest_topo, version, base_fee).await;
             debug!("Took {:?} to clean mempool!", start.elapsed());
             histogram!("xelis_mempool_clean_up_ms").record(start.elapsed().as_millis() as f64);
             res
@@ -3387,8 +3417,8 @@ impl<S: Storage> Blockchain<S> {
         // we need to get the block hash at topoheight - 50 to compare
         // if topoheight is 0, returns the target as we don't have any block
         // otherwise returns topoheight
-        let mut count = if topoheight > 50 {
-            50
+        let mut count = if topoheight > CHAIN_AVERAGE_BLOCK_TIME_N {
+            CHAIN_AVERAGE_BLOCK_TIME_N
         } else if topoheight <= 1 {
             let version = get_version_at_height(self.get_network(), self.get_height());
             return Ok(get_block_time_target_for_version(version));
@@ -3412,11 +3442,97 @@ impl<S: Storage> Blockchain<S> {
         let diff = now_timestamp - count_timestamp;
         Ok(diff / count)
     }
+
+    // Calculate the block size EMA over N last blocks based on block tips
+    // The idea is to increase fees when the average block size reach over 10% of the block max size
+    // We increase them proportionally to prevent any TX spam attack due to our low fees system.
+    pub async fn get_blocks_size_ema_for<P>(&self, provider: &P, tips: impl Iterator<Item = &Hash>) -> Result<usize, BlockchainError>
+    where
+        P: BlockProvider
+    {
+        trace!("calculate average blocks size");
+
+        // Bigger alpha means faster responsiveness
+        // Best to keep it in range 0.1..=0.2
+        const ALPHA: f64 = 0.18;
+
+        // Calculated EMA
+        let mut ema = 0f64;
+        let mut total_size = 0;
+        // Total unique blocks scanned
+        let mut total_blocks = 0;
+        let mut stack = IndexSet::new();
+        stack.extend(tips.map(|v| (Cow::Borrowed(v), 0)));
+
+        // All processed block hashes to prevent re processing a block twice
+        let mut processed = IndexSet::new();
+
+        while let Some((hash, depth)) = stack.pop() {
+            if !processed.insert(hash.clone()) {
+                debug!("Block hash {} was already processed for EMA, skipping it", hash);
+                continue;
+            }
+
+            let block_size = provider.get_block_size(&hash).await?;
+            total_size += block_size;
+            ema = ALPHA * (block_size as f64) + (1.0 - ALPHA) * ema;
+
+            total_blocks += 1;
+
+            let new_depth = depth + 1;
+            if new_depth < CHAIN_AVERAGE_BLOCKS_SIZE_MAX_DEPTH {
+                let tips = provider.get_past_blocks_for_block_hash(&hash).await?;
+                stack.extend(
+                    tips.into_owned()
+                        .into_iter()
+                        .map(|v| (Cow::Owned(v), new_depth))
+                );
+            }
+        }
+
+        debug!(
+            "{} blocks with a total size of {} (avg {}) and EMA {}",
+            total_blocks,
+            human_bytes::human_bytes(total_size as f64),
+            human_bytes::human_bytes(if total_blocks > 0 {
+                total_size / total_blocks
+            } else {
+                total_size
+            } as f64),
+            human_bytes::human_bytes(ema)
+        );
+
+        Ok(ema as usize)
+    }
+
+    pub async fn get_average_blocks_size<P>(&self, storage: &S) -> Result<usize, BlockchainError> {
+        let tips = storage.get_tips().await?;
+        self.get_blocks_size_ema_for(storage, tips.iter()).await
+    }
+
+    // Calculate the required base fee, by default its `FEE_PER_KB`
+    // fees should get exponential if we are above 10% of the max block size
+    pub async fn get_required_base_fee<P>(&self, provider: &P, tips: impl Iterator<Item = &Hash>) -> Result<u64, BlockchainError>
+    where
+        P: BlockProvider
+    {
+        let mut avg_block_size = self.get_blocks_size_ema_for(provider, tips).await?;
+
+        const TEN_PERCENTAGE: usize = MAX_BLOCK_SIZE / 10;
+
+        let mut base_fee = FEE_PER_KB;
+        while avg_block_size > TEN_PERCENTAGE {
+            avg_block_size -= TEN_PERCENTAGE;
+            base_fee *= 2;
+        }
+
+        Ok(base_fee)
+    }
 }
 
 // Estimate the required fees for a transaction
 // For V1, new keys are only counted one time for creation fee instead of N transfers to it
-pub async fn estimate_required_tx_fees<P: AccountProvider>(provider: &P, current_topoheight: TopoHeight, tx: &Transaction, _: BlockVersion) -> Result<u64, BlockchainError> {
+pub async fn estimate_required_tx_fees<P: AccountProvider>(provider: &P, current_topoheight: TopoHeight, tx: &Transaction, base_fee: u64, _: BlockVersion) -> Result<u64, BlockchainError> {
     let mut output_count = 0;
     let mut processed_keys = HashSet::new();
     if let TransactionType::Transfers(transfers) = tx.get_data() {
@@ -3429,7 +3545,7 @@ pub async fn estimate_required_tx_fees<P: AccountProvider>(provider: &P, current
         }
     }
 
-    Ok(calculate_tx_fee(tx.size(), output_count, processed_keys.len(), tx.get_multisig_count()))
+    Ok(calculate_tx_fee(base_fee, tx.size(), output_count, processed_keys.len(), tx.get_multisig_count()))
 }
 
 // Get the block reward for a side block based on how many side blocks exists at same height
