@@ -397,7 +397,7 @@ impl TransactionBuilder {
                     (0, 0)
                 };
 
-                let expected_fee = calculate_tx_fee(size, transfers, new_addresses, self.required_thresholds.unwrap_or(0) as usize);
+                let expected_fee = calculate_tx_fee(state.get_base_fee(), size, transfers, new_addresses, self.required_thresholds.unwrap_or(0) as usize);
                 match self.fee_builder {
                     FeeBuilder::Multiplier(multiplier) => (expected_fee as f64 * multiplier) as u64,
                     FeeBuilder::Boost(boost) => expected_fee + boost,
