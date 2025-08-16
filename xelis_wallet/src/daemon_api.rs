@@ -305,6 +305,12 @@ impl DaemonAPI {
         Ok(topoheight)
     }
 
+    pub async fn get_estimated_fee_per_kb(&self) -> Result<u64> {
+        trace!("get_estimated_fee_per_kbable_topoheight");
+        let base_fee = self.client.call("get_estimated_fee_per_kb").await?;
+        Ok(base_fee)
+    }
+
     pub async fn get_stable_balance(&self, address: &Address, asset: &Hash) -> Result<GetStableBalanceResult> {
         trace!("get_stable_balance");
         let balance = self.client.call_with("get_stable_balance", &GetBalanceParams {
