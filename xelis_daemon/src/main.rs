@@ -1226,7 +1226,7 @@ async fn status<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Res
     manager.message(format!("Difficulty: {}", format_difficulty(difficulty)));
     manager.message(format!("Network Hashrate: {}", format_hashrate((difficulty / (block_time_target / MILLIS_PER_SECOND)).into())));
     manager.message(format!("Top block hash: {}", top_block_hash));
-    manager.message(format!("Block Size EMA: {}", human_bytes(block_size_ema as f64)));
+    manager.message(format!("Block Size EMA: {}", human_bytes(block_size_ema.current())));
     manager.message(format!("Average Block Time: {:.2}s", avg_block_time as f64 / MILLIS_PER_SECOND as f64));
     manager.message(format!("Target Block Time: {:.2}s", block_time_target as f64 / MILLIS_PER_SECOND as f64));
     manager.message(format!("Required base fee: {} XELIS / min: {} XELIS", format_xelis(required_base_fee), format_xelis(FEE_PER_KB)));

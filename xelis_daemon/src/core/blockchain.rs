@@ -107,6 +107,7 @@ use crate::{
         state::{ChainState, ApplicableChainState},
         hard_fork::*,
         TxCache,
+        BlockSizeEma,
     },
     p2p::P2pServer,
     rpc::{
@@ -1939,7 +1940,7 @@ impl<S: Storage> Blockchain<S> {
             }
 
             while let Some(TxSelectorEntry { size, hash, tx }) = tx_selector.next() {
-                if block_size + total_txs_size + size >= MAX_BLOCK_SIZE || block.txs_hashes.len() >= u16::MAX as usize {
+                if block_size + HASH_SIZE + total_txs_size + size >= MAX_BLOCK_SIZE || block.txs_hashes.len() >= u16::MAX as usize {
                     debug!("Stopping to include new TXs in this block, final size: {}, count: {}", human_bytes::human_bytes((block_size + total_txs_size) as f64), block.txs_hashes.len());
                     break;
                 }
@@ -3446,18 +3447,16 @@ impl<S: Storage> Blockchain<S> {
     // Calculate the block size EMA over N last blocks based on block tips
     // The idea is to increase fees when the average block size reach over 10% of the block max size
     // We increase them proportionally to prevent any TX spam attack due to our low fees system.
-    pub async fn get_blocks_size_ema_for<P>(&self, provider: &P, tips: impl Iterator<Item = &Hash>) -> Result<usize, BlockchainError>
+    pub async fn get_blocks_size_ema_for<P>(&self, provider: &P, tips: impl Iterator<Item = &Hash>) -> Result<BlockSizeEma, BlockchainError>
     where
         P: BlockProvider
     {
         trace!("calculate average blocks size");
 
+        // Calculated EMA
         // Bigger alpha means faster responsiveness
         // Best to keep it in range 0.1..=0.2
-        const ALPHA: f64 = 0.18;
-
-        // Calculated EMA
-        let mut ema = 0f64;
+        let mut ema = BlockSizeEma::new(0.18);
         let mut total_size = 0;
         // Total unique blocks scanned
         let mut total_blocks = 0;
@@ -3475,7 +3474,7 @@ impl<S: Storage> Blockchain<S> {
 
             let block_size = provider.get_block_size(&hash).await?;
             total_size += block_size;
-            ema = ALPHA * (block_size as f64) + (1.0 - ALPHA) * ema;
+            ema.add(block_size as f64);
 
             total_blocks += 1;
 
@@ -3499,13 +3498,13 @@ impl<S: Storage> Blockchain<S> {
             } else {
                 total_size
             } as f64),
-            human_bytes::human_bytes(ema)
+            human_bytes::human_bytes(ema.current())
         );
 
-        Ok(ema as usize)
+        Ok(ema)
     }
 
-    pub async fn get_average_blocks_size<P>(&self, storage: &S) -> Result<usize, BlockchainError> {
+    pub async fn get_average_blocks_size<P>(&self, storage: &S) -> Result<BlockSizeEma, BlockchainError> {
         let tips = storage.get_tips().await?;
         self.get_blocks_size_ema_for(storage, tips.iter()).await
     }
@@ -3516,18 +3515,46 @@ impl<S: Storage> Blockchain<S> {
     where
         P: BlockProvider
     {
-        let mut avg_block_size = self.get_blocks_size_ema_for(provider, tips).await?;
+        let ema = self.get_blocks_size_ema_for(provider, tips).await?
+            .current() as usize;
 
-        const TEN_PERCENTAGE: usize = MAX_BLOCK_SIZE / 10;
+        Ok(calculate_required_base_fee_for_ema(ema))
+    }
 
-        let mut base_fee = FEE_PER_KB;
-        while avg_block_size > TEN_PERCENTAGE {
-            avg_block_size -= TEN_PERCENTAGE;
-            base_fee *= 2;
+    // Same as `get_required_base_fee` but estimate next blocks by including mempool pending txs
+    pub async fn predicate_required_base_fee(&self) -> Result<u64, BlockchainError> {
+        let (mut ema, header) = {
+            let storage = self.storage.read().await;
+            let tips = storage.get_tips().await?;
+            let ema = self.get_blocks_size_ema_for(&*storage, tips.iter()).await?;
+            let header = self.get_block_header_template_for_storage(&*storage, DEV_PUBLIC_KEY.clone()).await?;
+            (ema, header)
+        };
+
+        let mut block_size = header.size();
+        {
+            let mempool = self.mempool.read().await;
+            for (_, tx) in mempool.get_txs() {
+                block_size += tx.get_size() + HASH_SIZE;
+            }
         }
 
-        Ok(base_fee)
+        ema.add(block_size as f64);
+
+        Ok(calculate_required_base_fee_for_ema(ema.current() as usize))
     }
+}
+
+pub fn calculate_required_base_fee_for_ema(mut ema: usize) -> u64 {
+    const TEN_PERCENTAGE: usize = MAX_BLOCK_SIZE / 10;
+
+    let mut base_fee = FEE_PER_KB;
+    while ema > TEN_PERCENTAGE {
+        ema -= TEN_PERCENTAGE;
+        base_fee *= 2;
+    }
+
+    base_fee
 }
 
 // Estimate the required fees for a transaction
