@@ -90,18 +90,21 @@ impl Mempool {
         }
     }
 
-    fn internal_estimate_fee_rates(mut fee_rates: Vec<u64>) -> FeeRatesEstimated {
+    fn internal_estimate_fee_rates(mut fee_rates: Vec<u64>, base_fee: u64) -> FeeRatesEstimated {
         let len = fee_rates.len();
         // Top 30%
         let high_priority_count = len * 30 / 100;
         // Next 40%
         let normal_priority_count = len * 40 / 100;
 
+        let default_high = base_fee * 3;
+        let default_medium = base_fee * 2;
+        let default_low = base_fee;
         if len == 0 || high_priority_count == 0 || normal_priority_count == 0 {
             return FeeRatesEstimated {
-                high: FEE_PER_KB,
-                medium: FEE_PER_KB,
-                low: FEE_PER_KB,
+                high: default_high,
+                medium: default_medium,
+                low: default_low,
                 default: FEE_PER_KB
             };
         }
@@ -122,21 +125,21 @@ impl Mempool {
             .sum::<u64>() / (len - high_priority_count - normal_priority_count) as u64;
 
         FeeRatesEstimated {
-            high,
-            medium,
-            low,
+            high: high.max(default_high),
+            medium: medium.max(default_medium),
+            low: low.max(default_low),
             default: FEE_PER_KB
         }
     }
 
     // Find the fee per kB rate estimation for the priority levels
     // For this, we need to get the median fee rate for each priority level
-    pub fn estimate_fee_rates(&self) -> Result<FeeRatesEstimated, BlockchainError> { 
+    pub fn estimate_fee_rates(&self, base_fee: u64) -> Result<FeeRatesEstimated, BlockchainError> { 
         let fee_rates: Vec<_> = self.txs.values()
             .map(SortedTx::get_fee_rate_per_kb)
             .collect();
 
-        Ok(Self::internal_estimate_fee_rates(fee_rates))
+        Ok(Self::internal_estimate_fee_rates(fee_rates, base_fee))
     }
 
     // All checks are made in Blockchain before calling this function
@@ -618,7 +621,7 @@ mod tests {
         // Let say we have the following TXs:
         // 0.0001 XEL per KB, 0.0002 XEL per KB, 0.0003 XEL per KB, 0.0004 XEL per KB, 0.0005 XEL per KB
         let fee_rates = vec![10000, 20000, 30000, 40000, 50000];
-        let estimated = super::Mempool::internal_estimate_fee_rates(fee_rates);
+        let estimated = super::Mempool::internal_estimate_fee_rates(fee_rates, FEE_PER_KB);
         assert_eq!(estimated.high, 50000);
         assert_eq!(estimated.medium, 35000);
         assert_eq!(estimated.low, 15000);
@@ -627,7 +630,7 @@ mod tests {
 
     #[test]
     fn test_estimated_fee_rates_no_tx() {
-        let estimated = super::Mempool::internal_estimate_fee_rates(Vec::new());
+        let estimated = super::Mempool::internal_estimate_fee_rates(Vec::new(), FEE_PER_KB);
         assert_eq!(estimated.high, FEE_PER_KB);
         assert_eq!(estimated.medium, FEE_PER_KB);
         assert_eq!(estimated.low, FEE_PER_KB);
@@ -637,14 +640,14 @@ mod tests {
     #[test]
     fn test_estimated_fee_rates_expensive_tx() {
         let fee_rates = vec![FEE_PER_KB * 1000];
-        let estimated = super::Mempool::internal_estimate_fee_rates(fee_rates);
+        let estimated = super::Mempool::internal_estimate_fee_rates(fee_rates, FEE_PER_KB);
         assert_eq!(estimated.high, FEE_PER_KB);
         assert_eq!(estimated.medium, FEE_PER_KB);
         assert_eq!(estimated.low, FEE_PER_KB);
         assert_eq!(estimated.default, FEE_PER_KB);
 
         let fee_rates = vec![FEE_PER_KB * 2, FEE_PER_KB * 2, FEE_PER_KB * 3, FEE_PER_KB * 2, FEE_PER_KB * 1000];
-        let estimated = super::Mempool::internal_estimate_fee_rates(fee_rates);
+        let estimated = super::Mempool::internal_estimate_fee_rates(fee_rates, FEE_PER_KB);
         assert_eq!(estimated.high, FEE_PER_KB * 1000);
         assert_eq!(estimated.medium, (FEE_PER_KB as f64 * 2.5) as u64);
         assert_eq!(estimated.low, FEE_PER_KB * 2);
