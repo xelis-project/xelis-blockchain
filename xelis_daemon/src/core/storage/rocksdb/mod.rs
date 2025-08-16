@@ -260,7 +260,6 @@ impl RocksStorage {
         Ok(iterator.next().is_none())
     }
 
-
     // Count how many entries we have stored in a column
     pub fn count_entries(&self, column: Column) -> Result<usize, BlockchainError> {
         trace!("count entries {:?}", column);

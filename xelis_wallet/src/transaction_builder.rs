@@ -12,13 +12,15 @@ use crate::{error::WalletError, storage::{Balance, EncryptedStorage, TxCache}};
 // We need to give this information during the estimation of fees
 pub struct EstimateFeesState {
     // this is containing the registered keys that we are aware of
-    registered_keys: HashSet<PublicKey>
+    registered_keys: HashSet<PublicKey>,
+    base_fee: Option<u64>,
 }
 
 impl EstimateFeesState {
     pub fn new() -> Self {
         Self {
-            registered_keys: HashSet::new()
+            registered_keys: HashSet::new(),
+            base_fee: None
         }
     }
 
@@ -29,6 +31,10 @@ impl EstimateFeesState {
     pub fn add_registered_key(&mut self, key: PublicKey) {
         self.registered_keys.insert(key);
     }
+
+    pub fn set_base_fee(&mut self, base_fee: impl Into<Option<u64>>) {
+        self.base_fee = base_fee.into();
+    }
 }
 
 impl FeeHelper for EstimateFeesState {
@@ -36,6 +42,10 @@ impl FeeHelper for EstimateFeesState {
 
     fn account_exists(&self, key: &PublicKey) -> Result<bool, Self::Error> {
         Ok(self.registered_keys.contains(key))
+    }
+
+    fn get_base_fee(&self) -> Option<u64> {
+        self.base_fee
     }
 }
 
@@ -62,9 +72,7 @@ pub struct TransactionBuilderState {
 impl TransactionBuilderState {
     pub fn new(mainnet: bool, reference: Reference, nonce: u64) -> Self {
         Self {
-            inner: EstimateFeesState {
-                registered_keys: HashSet::new(),
-            },
+            inner: EstimateFeesState::new(),
             mainnet,
             balances: HashMap::new(),
             reference,

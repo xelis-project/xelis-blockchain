@@ -351,6 +351,7 @@ pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>
     handler.register_method("get_mempool_summary", async_handler!(get_mempool_summary::<S>));
     handler.register_method("get_mempool_cache", async_handler!(get_mempool_cache::<S>));
     handler.register_method("get_estimated_fee_rates", async_handler!(get_estimated_fee_rates::<S>));
+    handler.register_method("get_estimated_fee_per_kb", async_handler!(get_estimated_fee_per_kb::<S>));
 
     handler.register_method("get_dag_order", async_handler!(get_dag_order::<S>));
     handler.register_method("get_blocks_range_by_topoheight", async_handler!(get_blocks_range_by_topoheight::<S>));
@@ -966,13 +967,25 @@ async fn get_mempool_summary<S: Storage>(context: &Context, body: Value) -> Resu
     }))
 }
 
+async fn get_estimated_fee_per_kb<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
+    require_no_params(body)?;
+
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    let base_fee = blockchain.predicate_required_base_fee().await?;
+
+    Ok(json!(base_fee))
+}
 
 async fn get_estimated_fee_rates<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
     require_no_params(body)?;
 
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    let storage = blockchain.get_storage().read().await;
+    let tips = storage.get_tips().await?;
+    let base_fee = blockchain.get_required_base_fee(&*storage, tips.iter()).await?;
+
     let mempool = blockchain.get_mempool().read().await;
-    let estimated = mempool.estimate_fee_rates()?;
+    let estimated = mempool.estimate_fee_rates(base_fee)?;
     Ok(json!(estimated))
 }
 

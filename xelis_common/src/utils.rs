@@ -5,9 +5,9 @@ use crate::{
     config::{
         COIN_DECIMALS,
         FEE_PER_ACCOUNT_CREATION,
-        FEE_PER_KB,
         FEE_PER_TRANSFER,
-        BYTES_PER_KB
+        BYTES_PER_KB,
+        FEE_PER_KB,
     },
     difficulty::Difficulty,
     varuint::VarUint
@@ -100,7 +100,7 @@ pub fn detect_available_parallelism() -> usize {
 // Sending to a newly created address will increase the fee
 // Each transfers output will also increase the fee
 // Each signature of a multisig add a small overhead due to the verfications
-pub fn calculate_tx_fee(tx_size: usize, output_count: usize, new_addresses: usize, multisig: usize) -> u64 {
+pub fn calculate_tx_fee(base_fee: impl Into<Option<u64>>, tx_size: usize, output_count: usize, new_addresses: usize, multisig: usize) -> u64 {
     let mut size_in_kb = tx_size as u64 / BYTES_PER_KB as u64;
 
     // we consume a full kb for fee
@@ -108,7 +108,7 @@ pub fn calculate_tx_fee(tx_size: usize, output_count: usize, new_addresses: usiz
         size_in_kb += 1;
     }
 
-    size_in_kb * FEE_PER_KB
+    size_in_kb * base_fee.into().unwrap_or(FEE_PER_KB)
     + output_count as u64 * FEE_PER_TRANSFER
     + new_addresses as u64 * FEE_PER_ACCOUNT_CREATION
     + multisig as u64 * FEE_PER_TRANSFER

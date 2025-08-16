@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use tokio::pin;
 use xelis_common::{
     async_handler,
-    config::{init, VERSION, XELIS_ASSET},
+    config::{init, VERSION, XELIS_ASSET, FEE_PER_KB},
     context::Context,
     crypto::{
         Address,
@@ -577,7 +577,10 @@ async fn verify_chain<S: Storage>(manager: &CommandManager, mut args: ArgumentMa
         if !txs.is_empty() {
             info!("Verifying {} txs ({} outputs) at {}", txs.len(), outputs, topo);
             let start = Instant::now();
-            let mut state = ChainState::new(&*storage, blockchain.get_contract_environment(), 0, topo - 1, header.get_version());
+            let required_base_fee = blockchain.get_required_base_fee(&*storage, header.get_tips().iter()).await
+                .context("Error while calculating required base fee")?;
+
+            let mut state = ChainState::new(&*storage, blockchain.get_contract_environment(), 0, topo - 1, header.get_version(), required_base_fee);
             Transaction::verify_batch(txs.iter(), &mut state, &NoZKPCache::default()).await
                 .context("Error while verifying txs")?;
 
@@ -1187,17 +1190,32 @@ async fn status<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Res
     debug!("storage read lock acquired");
 
     let tips = storage.get_tips().await.context("Error while retrieving tips")?;
-    let top_block_hash = blockchain.get_top_block_hash_for_storage(&storage).await.context("Error while retrieving top block hash")?;
-    let avg_block_time = blockchain.get_average_block_time::<S>(&storage).await.context("Error while retrieving average block time")?;
-    let emitted_supply = storage.get_supply_at_topo_height(topoheight).await.context("Error while retrieving supply")?;
-    let burned_supply = storage.get_burned_supply_at_topo_height(topoheight).await.context("Error while retrieving burned supply")?;
-    let accounts_count = storage.count_accounts().await.context("Error while counting accounts")?;
-    let transactions_count = storage.count_transactions().await.context("Error while counting transactions")?;
-    let blocks_count = storage.count_blocks().await.context("Error while counting blocks")?;
-    let assets = storage.count_assets().await.context("Error while counting assets")?;
-    let contracts = storage.count_contracts().await.context("Error while counting contracts")?;
-    let pruned_topoheight = storage.get_pruned_topoheight().await.context("Error while retrieving pruned topoheight")?;
-    let snapshot = storage.has_commit_point().await.context("Error while checking snapshot")?;
+    let top_block_hash = blockchain.get_top_block_hash_for_storage(&storage).await
+        .context("Error while retrieving top block hash")?;
+    let avg_block_time = blockchain.get_average_block_time::<S>(&storage).await
+        .context("Error while retrieving average block time")?;
+    let block_size_ema = blockchain.get_blocks_size_ema_for::<S>(&storage, tips.iter()).await
+        .context("Error while retrieving average block size")?;
+    let required_base_fee = blockchain.get_required_base_fee::<S>(&storage, tips.iter()).await
+        .context("Error while calculating required base fee")?;
+    let emitted_supply = storage.get_supply_at_topo_height(topoheight).await
+        .context("Error while retrieving supply")?;
+    let burned_supply = storage.get_burned_supply_at_topo_height(topoheight).await
+        .context("Error while retrieving burned supply")?;
+    let accounts_count = storage.count_accounts().await
+        .context("Error while counting accounts")?;
+    let transactions_count = storage.count_transactions().await
+        .context("Error while counting transactions")?;
+    let blocks_count = storage.count_blocks().await
+        .context("Error while counting blocks")?;
+    let assets = storage.count_assets().await
+        .context("Error while counting assets")?;
+    let contracts = storage.count_contracts().await
+        .context("Error while counting contracts")?;
+    let pruned_topoheight = storage.get_pruned_topoheight().await
+        .context("Error while retrieving pruned topoheight")?;
+    let snapshot = storage.has_commit_point().await
+        .context("Error while checking snapshot")?;
     let version = get_version_at_height(blockchain.get_network(), height);
     let block_time_target = get_block_time_target_for_version(version);
 
@@ -1208,8 +1226,10 @@ async fn status<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Res
     manager.message(format!("Difficulty: {}", format_difficulty(difficulty)));
     manager.message(format!("Network Hashrate: {}", format_hashrate((difficulty / (block_time_target / MILLIS_PER_SECOND)).into())));
     manager.message(format!("Top block hash: {}", top_block_hash));
+    manager.message(format!("Block Size EMA: {}", human_bytes(block_size_ema.current())));
     manager.message(format!("Average Block Time: {:.2}s", avg_block_time as f64 / MILLIS_PER_SECOND as f64));
     manager.message(format!("Target Block Time: {:.2}s", block_time_target as f64 / MILLIS_PER_SECOND as f64));
+    manager.message(format!("Required base fee: {} XELIS / min: {} XELIS", format_xelis(required_base_fee), format_xelis(FEE_PER_KB)));
     manager.message(format!("Emitted Supply: {} XELIS", format_xelis(emitted_supply)));
     manager.message(format!("Burned Supply: {} XELIS", format_xelis(burned_supply)));
     manager.message(format!("Circulating Supply: {} XELIS", format_xelis(emitted_supply - burned_supply)));

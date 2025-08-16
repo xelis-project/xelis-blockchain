@@ -68,6 +68,17 @@ impl BlockProvider for SledStorage {
         self.contains_data_cached(&self.blocks, &self.blocks_cache, hash).await
     }
 
+    async fn get_block_size(&self, hash: &Hash) -> Result<usize, BlockchainError> {
+        trace!("get block size");
+        let header = self.get_block_header_by_hash(hash).await?;
+        let mut size = header.size();
+        for hash in header.get_txs_hashes() {
+            size += self.get_transaction_size(hash).await?;
+        }
+
+        Ok(size)
+    }
+
     async fn save_block(&mut self, block: Arc<BlockHeader>, txs: &[Arc<Transaction>], difficulty: Difficulty, cumulative_difficulty: CumulativeDifficulty, p: VarUint, hash: Immutable<Hash>) -> Result<(), BlockchainError> {
         debug!("Storing new {} with hash: {}, difficulty: {}, snapshot mode: {}", block, hash, difficulty, self.snapshot.is_some());
 

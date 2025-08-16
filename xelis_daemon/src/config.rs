@@ -123,6 +123,10 @@ pub const CHAIN_SYNC_DEFAULT_RESPONSE_BLOCKS: usize = 4096;
 pub const CHAIN_SYNC_RESPONSE_MAX_BLOCKS: usize = u16::MAX as _;
 // send last 10 heights
 pub const CHAIN_SYNC_TOP_BLOCKS: usize = 10;
+// average block time is calculated on the last N topoheight
+pub const CHAIN_AVERAGE_BLOCK_TIME_N: u64 = 50;
+// max depth used when calculating the average blocks size
+pub const CHAIN_AVERAGE_BLOCKS_SIZE_MAX_DEPTH: u64 = 64;
 
 // P2p rules
 // time between each ping

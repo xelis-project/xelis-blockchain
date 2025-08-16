@@ -27,6 +27,12 @@ pub trait FeeHelper {
         1f64
     }
 
+    // Get the default base fee per KB
+    // By default, returns None to use the minimal required
+    fn get_base_fee(&self) -> Option<u64> {
+        None
+    }
+
     /// Verify if the account exists or if we should pay more fees for account creation
     fn account_exists(&self, account: &CompressedPublicKey) -> Result<bool, Self::Error>;
 }

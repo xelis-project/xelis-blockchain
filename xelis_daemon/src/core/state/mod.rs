@@ -26,14 +26,14 @@ use super::{
 
 // Verify a transaction before adding it to mempool/chain state
 // We only verify the reference and the required fees
-pub (super) async fn pre_verify_tx<P: AccountProvider + BalanceProvider>(provider: &P, tx: &Transaction, stable_topoheight: TopoHeight, topoheight: TopoHeight, block_version: BlockVersion) -> Result<(), BlockchainError> {
+pub (super) async fn pre_verify_tx<P: AccountProvider + BalanceProvider>(provider: &P, tx: &Transaction, stable_topoheight: TopoHeight, topoheight: TopoHeight, tx_base_fee: u64, block_version: BlockVersion) -> Result<(), BlockchainError> {
     debug!("Pre-verify TX at topoheight {} and stable topoheight {}", topoheight, stable_topoheight);
     if !hard_fork::is_tx_version_allowed_in_block_version(tx.get_version(), block_version) {
         debug!("Invalid version {} in block {}", tx.get_version(), block_version);
         return Err(BlockchainError::InvalidTxVersion);
     }
 
-    let required_fees = blockchain::estimate_required_tx_fees(provider, topoheight, tx, block_version).await?;
+    let required_fees = blockchain::estimate_required_tx_fees(provider, topoheight, tx, tx_base_fee, block_version).await?;
     if required_fees > tx.get_fee() {
         debug!("Invalid fees: {} required, {} provided", format_xelis(required_fees), format_xelis(tx.get_fee()));
         return Err(BlockchainError::InvalidTxFee(required_fees, tx.get_fee()));

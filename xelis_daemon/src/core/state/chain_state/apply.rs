@@ -355,6 +355,7 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
         burned_supply: u64,
         block_hash: &'a Hash,
         block: &'a Block,
+        tx_base_fee: u64,
     ) -> Self {
         Self {
             inner: ChainState::with(
@@ -363,6 +364,7 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
                 stable_topoheight,
                 topoheight,
                 block_version,
+                tx_base_fee,
             ),
             burned_supply,
             contract_manager: ContractManager {

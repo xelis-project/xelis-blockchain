@@ -7,7 +7,8 @@ use xelis_common::{
     difficulty::{CumulativeDifficulty, Difficulty},
     immutable::Immutable,
     transaction::Transaction,
-    varuint::VarUint
+    varuint::VarUint,
+    serializer::Serializer,
 };
 use crate::core::{
     error::BlockchainError,
@@ -63,6 +64,17 @@ impl BlockProvider for RocksStorage {
         }
 
         Ok(Block::new(header.into_arc(), transactions))
+    }
+
+    async fn get_block_size(&self, hash: &Hash) -> Result<usize, BlockchainError> {
+        trace!("get block size");
+        let header = self.get_block_header_by_hash(hash).await?;
+        let mut size = header.size();
+        for hash in header.get_txs_hashes() {
+            size += self.get_transaction_size(hash).await?;
+        }
+
+        Ok(size)
     }
 
     // Save a new block with its transactions and difficulty
