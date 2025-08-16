@@ -84,7 +84,8 @@ pub async fn module_new<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut
 }
 
 pub async fn module_invoke<'a, 'ty, 'r, P: ContractProvider>(zelf: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata, context: &mut Context<'ty, 'r>) -> FnReturnType<ModuleMetadata> {
-    let module: &OpaqueModule = zelf?.as_opaque_type()?;
+    let zelf = zelf?;
+    let module: &OpaqueModule = zelf.as_opaque_type()?;
 
     let assets = params.remove(2)
         .into_owned()
@@ -142,7 +143,8 @@ pub async fn module_invoke<'a, 'ty, 'r, P: ContractProvider>(zelf: FnInstance<'a
 }
 
 pub async fn module_delegate<'a, 'ty, 'r>(zelf: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata, _: &mut Context<'ty, 'r>) -> FnReturnType<ModuleMetadata> {
-    let module: &OpaqueModule = zelf?.as_opaque_type()?;
+    let zelf = zelf?;
+    let module: &OpaqueModule = zelf.as_opaque_type()?;
     let p = params.remove(1)
         .into_owned()
         .to_vec()?

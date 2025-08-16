@@ -194,7 +194,7 @@ impl KeyPair {
     pub fn sign(&self, message: &[u8]) -> Signature {
         let k = Scalar::random(&mut OsRng);
         let r = k * (*H);
-        let e = hash_and_point_to_scalar(&self.public_key.compress(), message, &r);
+        let e = hash_and_point_to_scalar(&self.public_key.as_point().compress(), message, &r);
         let s = self.private_key.as_scalar().invert() * e + k;
         Signature::new(s, e)
     }

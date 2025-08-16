@@ -138,6 +138,10 @@ impl CompressedPublicKey {
     pub fn to_address_with(self, mainnet: bool, data: DataElement) -> Address {
         Address::new(mainnet, AddressType::Data(data), self)
     }
+
+    pub fn as_point(&self) -> &CompressedRistretto {
+        &self.0
+    }
 }
 
 impl Serializer for CompressedRistretto {

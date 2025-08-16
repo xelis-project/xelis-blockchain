@@ -30,13 +30,15 @@ impl Serializable for Hash {
 }
 
 pub fn hash_to_bytes_fn(zelf: FnInstance, _: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
-    let hash: &Hash = zelf?.as_opaque_type()?;
+    let zelf = zelf?;
+    let hash: &Hash = zelf.as_opaque_type()?;
     let bytes = ValueCell::Bytes(hash.as_bytes().into());
     Ok(SysCallResult::Return(bytes.into()))
 }
 
 pub fn hash_to_array_fn(zelf: FnInstance, _: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
-    let hash: &Hash = zelf?.as_opaque_type()?;
+    let zelf = zelf?;
+    let hash: &Hash = zelf.as_opaque_type()?;
     let bytes = hash.as_bytes()
         .into_iter()
         .map(|b| Primitive::U8(*b).into())
@@ -91,12 +93,14 @@ pub fn hash_from_u256_fn(_: FnInstance, mut params: FnParams, _: &ModuleMetadata
 }
 
 pub fn hash_to_u256_fn(zelf: FnInstance, _: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
-    let hash: &Hash = zelf?.as_opaque_type()?;
+    let zelf = zelf?;
+    let hash: &Hash = zelf.as_opaque_type()?;
     Ok(SysCallResult::Return(Primitive::U256(U256::from_be_bytes(*hash.as_bytes())).into()))
 }
 
 pub fn hash_to_hex_fn(zelf: FnInstance, _: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
-    let hash: &Hash = zelf?.as_opaque_type()?;
+    let zelf = zelf?;
+    let hash: &Hash = zelf.as_opaque_type()?;
     Ok(SysCallResult::Return(Primitive::String(hex::encode(hash.as_bytes())).into()))
 }
 

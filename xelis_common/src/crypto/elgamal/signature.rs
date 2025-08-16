@@ -1,4 +1,4 @@
-use curve25519_dalek::{RistrettoPoint, Scalar};
+use curve25519_dalek::{ristretto::CompressedRistretto, RistrettoPoint, Scalar};
 use serde::{de::Error, Serialize};
 use sha3::{Digest, Sha3_512};
 use crate::{
@@ -10,7 +10,7 @@ use crate::{
         Writer
     }
 };
-use super::{CompressedPublicKey, PublicKey, SCALAR_SIZE};
+use super::{PublicKey, SCALAR_SIZE};
 
 pub const SIGNATURE_SIZE: usize = SCALAR_SIZE * 2;
 
@@ -26,15 +26,21 @@ impl Signature {
     }
 
     // Verify the signature using the Public Key and the hash of the message
-    pub fn verify(&self, message: &[u8], key: &PublicKey) -> bool {
-        let r = (*H) * &self.s + key.as_point() * -self.e;
-        let calculated = hash_and_point_to_scalar(&key.compress(), message, &r);
+    pub fn verify_internal(&self, message: &[u8], key: &RistrettoPoint, key_compressed: &CompressedRistretto) -> bool {
+        let r = (*H) * &self.s + key * -self.e;
+        let calculated = hash_and_point_to_scalar(&key_compressed, message, &r);
         self.e == calculated
+    }
+
+    // Verify the signature using the Public Key and the hash of the message
+    pub fn verify(&self, message: &[u8], key: &PublicKey) -> bool {
+        let key_compressed = key.as_point().compress();
+        self.verify_internal(message, &key.as_point(), &key_compressed)
     }
 }
 
 // Create a Scalar from Public Key, Hash of the message, and selected point
-pub fn hash_and_point_to_scalar(key: &CompressedPublicKey, message: &[u8], point: &RistrettoPoint) -> Scalar {
+pub fn hash_and_point_to_scalar(key: &CompressedRistretto, message: &[u8], point: &RistrettoPoint) -> Scalar {
     let mut hasher = Sha3_512::new();
     hasher.update(key.as_bytes());
     hasher.update(message);

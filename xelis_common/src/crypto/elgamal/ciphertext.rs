@@ -18,7 +18,7 @@ impl Ciphertext {
     pub fn new(commitment: PedersenCommitment, handle: DecryptHandle) -> Self {
         Self { commitment, handle }
     }
-    
+
     // Create a ciphertext with a zero value
     pub fn zero() -> Self {
         Self {

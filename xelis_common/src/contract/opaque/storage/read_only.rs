@@ -37,7 +37,8 @@ pub async fn read_only_storage<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'
 
 pub async fn read_only_storage_load<'a, 'ty, 'r, P: ContractProvider>(zelf: FnInstance<'a>, mut params: FnParams, _: &ModuleMetadata, context: &mut Context<'ty, 'r>) -> FnReturnType<ModuleMetadata> {
     let (storage, state) = from_context::<P>(context)?;
-    let zelf: &OpaqueReadOnlyStorage = zelf?
+    let zelf = zelf?;
+    let zelf: &OpaqueReadOnlyStorage = zelf
         .as_opaque_type()?;
 
     let key = params.remove(0)
@@ -57,7 +58,8 @@ pub async fn read_only_storage_load<'a, 'ty, 'r, P: ContractProvider>(zelf: FnIn
 
 pub async fn read_only_storage_has<'a, 'ty, 'r, P: ContractProvider>(zelf: FnInstance<'a>, mut params: FnParams, _: &ModuleMetadata, context: &mut Context<'ty, 'r>) -> FnReturnType<ModuleMetadata> {
     let (storage, state) = from_context::<P>(context)?;
-    let zelf: &OpaqueReadOnlyStorage = zelf?
+    let zelf = zelf?;
+    let zelf: &OpaqueReadOnlyStorage = zelf
         .as_opaque_type()?;
 
     let key = params.remove(0)

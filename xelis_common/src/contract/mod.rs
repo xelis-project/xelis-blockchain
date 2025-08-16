@@ -11,6 +11,7 @@ use std::{
 };
 use anyhow::Context as AnyhowContext;
 use better_any::Tid;
+use curve25519_dalek::Scalar;
 use log::{debug, info};
 use xelis_builder::EnvironmentBuilder;
 use xelis_vm::{
@@ -33,7 +34,7 @@ use crate::{
         FEE_PER_BYTE_OF_EVENT_DATA
     },
     crypto::{
-        proofs::CiphertextValidityProof,
+        proofs::{CiphertextValidityProof, G, H},
         Address,
         Hash,
         PublicKey,
@@ -151,10 +152,13 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
 
     // Crypto
     let ciphertext_type = Type::Opaque(env.register_opaque::<CiphertextCache>("Ciphertext", true));
-    let _ = Type::Opaque(env.register_opaque::<CiphertextValidityProof>("CiphertextValidityProof", true));
-    let _ = Type::Opaque(env.register_opaque::<RangeProofWrapper>("RangeProof", true));
+    let ristretto_type = Type::Opaque(env.register_opaque::<OpaqueRistrettoPoint>("RistrettoPoint", true));
+    let scalar_type = Type::Opaque(env.register_opaque::<OpaqueScalar>("Scalar", true));
+    let transcript_type = Type::Opaque(env.register_opaque::<OpaqueTranscript>("Transcript", false));
+    let ct_validity_proof_type = Type::Opaque(env.register_opaque::<CiphertextValidityProof>("CiphertextValidityProof", true));
+    let range_proof_type = Type::Opaque(env.register_opaque::<RangeProofWrapper>("RangeProof", true));
 
-    let module_type = Type::Opaque(env.register_opaque::<OpaqueModule>("Module", true));
+    let module_type = Type::Opaque(env.register_opaque::<OpaqueModule>("Module", false));
 
     // Transaction
     {
@@ -448,12 +452,12 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             Some(Type::Bool)
         );
         env.register_native_function(
-            "to_public_key_bytes",
+            "to_point",
             Some(address_type.clone()),
             vec![],
-            FunctionHandler::Sync(address_public_key_bytes),
+            FunctionHandler::Sync(address_to_point),
             10,
-            Some(Type::Bytes)
+            Some(ristretto_type.clone())
         );
         env.register_static_function(
             "from_string",
@@ -834,7 +838,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             Some(signature_type.clone()),
             vec![
                 ("data", Type::Array(Box::new(Type::U8))),
-                ("address", address_type.clone()),
+                ("point", ristretto_type.clone()),
             ],
             FunctionHandler::Sync(signature_verify_fn),
             500,
@@ -915,6 +919,385 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             1000,
             Some(ciphertext_type.clone())
         );
+
+        // commitment
+        env.register_native_function(
+            "commitment",
+            Some(ciphertext_type.clone()),
+            vec![],
+            FunctionHandler::Sync(ciphertext_commitment),
+            5,
+            Some(ristretto_type.clone())
+        );
+
+        // handle
+        env.register_native_function(
+            "handle",
+            Some(ciphertext_type.clone()),
+            vec![],
+            FunctionHandler::Sync(ciphertext_handle),
+            5,
+            Some(ristretto_type.clone())
+        );
+    }
+
+    // RistrettoPoint
+    {
+        env.register_constant(ristretto_type.clone(), "G", OpaqueRistrettoPoint::Decompressed(None, *G).into());
+        env.register_constant(scalar_type.clone(), "H", OpaqueRistrettoPoint::Decompressed(None, *H).into());
+
+        // Is Identity
+        env.register_native_function(
+            "is_identity",
+            Some(ristretto_type.clone()),
+            vec![],
+            FunctionHandler::Sync(ristretto_is_identity),
+            1,
+            Some(Type::Bool)
+        );
+
+        // RistrettoPoint::Identity
+        env.register_static_function(
+            "identity",
+            ristretto_type.clone(),
+            vec![],
+            FunctionHandler::Sync(ristretto_identity),
+            1,
+            Some(ristretto_type.clone())
+        );
+
+        // P + (s * G)
+        env.register_native_function(
+            "add_scalar",
+            Some(ristretto_type.clone()),
+            vec![
+                ("value", scalar_type.clone())
+            ],
+            FunctionHandler::Sync(ristretto_add_scalar),
+            300,
+            Some(ristretto_type.clone())
+        );
+        // P - (s * G)
+        env.register_native_function(
+            "sub_scalar",
+            Some(ristretto_type.clone()),
+            vec![
+                ("value", scalar_type.clone())
+            ],
+            FunctionHandler::Sync(ristretto_sub_scalar),
+            300,
+            Some(ristretto_type.clone())
+        );
+        // P + P2
+        env.register_native_function(
+            "add",
+            Some(ristretto_type.clone()),
+            vec![
+                ("value", ristretto_type.clone())
+            ],
+            FunctionHandler::Sync(ristretto_add),
+            250,
+            Some(ristretto_type.clone())
+        );
+        // P - P2
+        env.register_native_function(
+            "sub",
+            Some(ristretto_type.clone()),
+            vec![
+                ("value", ristretto_type.clone())
+            ],
+            FunctionHandler::Sync(ristretto_sub),
+            250,
+            Some(ristretto_type.clone())
+        );
+        // P * s
+        env.register_native_function(
+            "mul_scalar",
+            Some(ristretto_type.clone()),
+            vec![
+                ("value", scalar_type.clone())
+            ],
+            FunctionHandler::Sync(ristretto_mul_scalar),
+            300,
+            Some(ristretto_type.clone())
+        );
+        // P / s (ensure s != 0)
+        env.register_native_function(
+            "div_scalar",
+            Some(ciphertext_type.clone()),
+            vec![
+                ("value", Type::U64)
+            ],
+            FunctionHandler::Sync(ristretto_div_scalar),
+            5000,
+            Some(ristretto_type.clone())
+        );
+        // From bytes
+        env.register_static_function(
+            "from_bytes",
+            ristretto_type.clone(),
+            vec![("bytes", Type::Bytes)],
+            FunctionHandler::Sync(ristretto_from_bytes),
+            75,
+            Some(ristretto_type.clone())
+        );
+        // To bytes
+        env.register_native_function(
+            "to_bytes",
+            Some(ristretto_type.clone()),
+            vec![],
+            FunctionHandler::Sync(ristretto_to_bytes),
+            5,
+            Some(Type::Bytes)
+        );
+    }
+
+    // Scalar
+    {
+        env.register_constant(scalar_type.clone(), "ZERO", OpaqueScalar(Scalar::ZERO).into());
+        env.register_constant(scalar_type.clone(), "ONE", OpaqueScalar(Scalar::ONE).into());
+
+        // From u64
+        env.register_static_function(
+            "from_u64",
+            scalar_type.clone(),
+            vec![("value", Type::U64)],
+            FunctionHandler::Sync(scalar_from_u64),
+            25,
+            Some(scalar_type.clone())
+        );
+
+        // Invert the scalar
+        env.register_native_function(
+            "invert",
+            Some(scalar_type.clone()),
+            vec![],
+            FunctionHandler::Sync(scalar_invert),
+            500,
+            Some(scalar_type.clone())
+        );
+
+        // is zero
+        env.register_native_function(
+            "is_zero",
+            Some(scalar_type.clone()),
+            vec![],
+            FunctionHandler::Sync(scalar_is_zero),
+            1,
+            Some(Type::Bool)
+        );
+
+        // s * G
+        env.register_native_function(
+            "mul_base",
+            Some(ristretto_type.clone()),
+            vec![],
+            FunctionHandler::Sync(scalar_mul_base),
+            300,
+            Some(ristretto_type.clone())
+        );
+        // s + s2
+        env.register_native_function(
+            "add",
+            Some(scalar_type.clone()),
+            vec![
+                ("value", scalar_type.clone())
+            ],
+            FunctionHandler::Sync(scalar_add),
+            250,
+            Some(scalar_type.clone())
+        );
+        // s - s2
+        env.register_native_function(
+            "sub",
+            Some(scalar_type.clone()),
+            vec![
+                ("value", scalar_type.clone())
+            ],
+            FunctionHandler::Sync(scalar_sub),
+            250,
+            Some(scalar_type.clone())
+        );
+        // s * s2
+        env.register_native_function(
+            "mul",
+            Some(scalar_type.clone()),
+            vec![
+                ("value", scalar_type.clone())
+            ],
+            FunctionHandler::Sync(scalar_mul),
+            250,
+            Some(scalar_type.clone())
+        );
+        // s / s2 (ensure s2 != 0)
+        env.register_native_function(
+            "div",
+            Some(scalar_type.clone()),
+            vec![
+                ("value", Type::U64)
+            ],
+            FunctionHandler::Sync(scalar_div),
+            5000,
+            Some(scalar_type.clone())
+        );
+        // From bytes
+        env.register_static_function(
+            "from_bytes",
+            scalar_type.clone(),
+            vec![("bytes", Type::Bytes)],
+            FunctionHandler::Sync(scalar_from_bytes),
+            75,
+            Some(scalar_type.clone())
+        );
+        // To bytes
+        env.register_native_function(
+            "to_bytes",
+            Some(scalar_type.clone()),
+            vec![],
+            FunctionHandler::Sync(scalar_to_bytes),
+            5,
+            Some(Type::Bytes)
+        );
+    }
+
+    // Transcript
+    {
+        // Transcript::new()
+        env.register_static_function(
+            "new",
+            transcript_type.clone(),
+            vec![("label", Type::Bytes)],
+            FunctionHandler::Sync(transcript_new),
+            50,
+            Some(transcript_type.clone())
+        );
+
+        // challenge scalar
+        env.register_native_function(
+            "challenge_scalar",
+            Some(transcript_type.clone()),
+            vec![("label", Type::Bytes)],
+            FunctionHandler::Sync(transcript_challenge_scalar),
+            100,
+            Some(scalar_type.clone())
+        );
+
+        // challenge bytes
+        env.register_native_function(
+            "challenge_bytes",
+            Some(transcript_type.clone()),
+            vec![
+                ("label", Type::Bytes),
+                ("n", Type::U32),
+            ],
+            FunctionHandler::Sync(transcript_challenge_bytes),
+            100,
+            Some(Type::Bytes)
+        );
+
+        // append_message
+        env.register_native_function(
+            "append_message",
+            Some(transcript_type.clone()),
+            vec![
+                ("label", Type::Bytes),
+                ("message", Type::Bytes),
+            ],
+            FunctionHandler::Sync(transcript_append_message),
+            75,
+            None
+        );
+
+        // Append point
+        env.register_native_function(
+            "append_point",
+            Some(transcript_type.clone()),
+            vec![
+                ("label", Type::Bytes),
+                ("point", ristretto_type.clone()),
+            ],
+            FunctionHandler::Sync(transcript_append_point),
+            75,
+            None
+        );
+        // Validate and append point
+        env.register_native_function(
+            "validate_and_append_point",
+            Some(transcript_type.clone()),
+            vec![
+                ("label", Type::Bytes),
+                ("point", ristretto_type.clone()),
+            ],
+            FunctionHandler::Sync(transcript_validate_and_append_point),
+            75,
+            None
+        );
+
+        // Append scalar
+        env.register_native_function(
+            "append_scalar",
+            Some(transcript_type.clone()),
+            vec![
+                ("label", Type::Bytes),
+                ("scalar", scalar_type.clone()),
+            ],
+            FunctionHandler::Sync(transcript_append_scalar),
+            75,
+            None
+        );
+    }
+
+    // CiphertextValidityProof
+    {
+        // verify
+        env.register_native_function(
+            "verify",
+            Some(ct_validity_proof_type.clone()),
+            vec![
+                ("commitment", ristretto_type.clone()),
+                ("dest_pubkey", ristretto_type.clone()),
+                ("source_pubkey", ristretto_type.clone()),
+                ("dest_handle", ristretto_type.clone()),
+                ("source_handle", ristretto_type.clone()),
+                ("transcript", transcript_type.clone()),
+            ],
+            FunctionHandler::Sync(ciphertext_validity_proof_verify),
+            15000,
+            Some(Type::Bool)
+        );
+    }
+
+    // RangeProof
+    {
+        // verify single
+        env.register_native_function(
+            "verify_single",
+            Some(range_proof_type.clone()),
+            vec![
+                ("commitment", ristretto_type.clone()),
+                ("transcript", transcript_type.clone()),
+                // Proof bits
+                ("n", Type::U64),
+            ],
+            FunctionHandler::Sync(range_proof_verify_single),
+            500_000,
+            Some(Type::Bool)
+        );
+
+        // verify multiple
+        env.register_native_function(
+            "verify_multiple",
+            Some(range_proof_type.clone()),
+            vec![
+                ("commitments", Type::Array(Box::new(ristretto_type.clone()))),
+                ("transcript", transcript_type.clone()),
+                // Proof bits
+                ("n", Type::U64),
+            ],
+            FunctionHandler::Sync(range_proof_verify_multiple),
+            515_000,
+            Some(Type::Bool)
+        );
     }
 
     // Module Opaque
@@ -962,6 +1345,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
 
     // Misc
     {
+        // Retrieve the ciphertext and the topoheight at which it got fetched
         env.register_native_function(
             "get_account_balance_of",
             None,
