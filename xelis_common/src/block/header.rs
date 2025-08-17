@@ -6,7 +6,10 @@ use crate::{
     block::{BLOCK_WORK_SIZE, HEADER_WORK_SIZE, BlockVersion},
     config::TIPS_LIMIT,
     crypto::{
-        elgamal::CompressedPublicKey,
+        elgamal::{
+            CompressedPublicKey,
+            RISTRETTO_COMPRESSED_SIZE
+        },
         hash,
         pow_hash,
         Hash,
@@ -225,6 +228,24 @@ impl BlockHeader {
     #[inline]
     pub fn get_transactions(&self) -> &IndexSet<Hash> {
         &self.txs_hashes
+    }
+
+    pub fn estimate_size(tips_len: usize) -> usize {
+        // additional byte for tips count
+        let tips_size = 1 + tips_len * HASH_SIZE;
+        // 2 bytes for txs count (u16)
+        let txs_size = 2;
+        // Version is u8
+        let version_size = 1;
+
+        EXTRA_NONCE_SIZE
+        + tips_size
+        + txs_size
+        + version_size
+        + RISTRETTO_COMPRESSED_SIZE // miner key
+        + 8 // timestamp
+        + 8 // height
+        + 8 // nonce
     }
 }
 
