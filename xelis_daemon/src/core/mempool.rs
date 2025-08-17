@@ -97,14 +97,11 @@ impl Mempool {
         // Next 40%
         let normal_priority_count = len * 40 / 100;
 
-        let default_high = base_fee * 3;
-        let default_medium = base_fee * 2;
-        let default_low = base_fee;
         if len == 0 || high_priority_count == 0 || normal_priority_count == 0 {
             return FeeRatesEstimated {
-                high: default_high,
-                medium: default_medium,
-                low: default_low,
+                high: base_fee,
+                medium: base_fee,
+                low: base_fee,
                 default: FEE_PER_KB
             };
         }
@@ -125,9 +122,9 @@ impl Mempool {
             .sum::<u64>() / (len - high_priority_count - normal_priority_count) as u64;
 
         FeeRatesEstimated {
-            high: high.max(default_high),
-            medium: medium.max(default_medium),
-            low: low.max(default_low),
+            high: high.max(base_fee),
+            medium: medium.max(base_fee),
+            low: low.max(base_fee),
             default: FEE_PER_KB
         }
     }

@@ -126,7 +126,7 @@ pub const CHAIN_SYNC_TOP_BLOCKS: usize = 10;
 // average block time is calculated on the last N topoheight
 pub const CHAIN_AVERAGE_BLOCK_TIME_N: u64 = 50;
 // max depth used when calculating the average blocks size
-pub const CHAIN_AVERAGE_BLOCKS_SIZE_MAX_DEPTH: u64 = 64;
+pub const CHAIN_AVERAGE_BLOCKS_SIZE_MAX_DEPTH: usize = 64;
 
 // P2p rules
 // time between each ping

@@ -232,6 +232,8 @@ pub struct Blockchain<S: Storage> {
     tip_work_score_cache: Mutex<LruCache<(Hash, Hash, u64), (HashSet<Hash>, CumulativeDifficulty)>>,
     // using base hash, current tip hash and base height, this cache is used to store the DAG order
     full_order_cache: Mutex<LruCache<(Hash, Hash, u64), IndexSet<Hash>>>,
+    // Cache containing the block size per cache
+    block_size_cache: Mutex<LruCache<Hash, usize>>,
     // auto prune mode if enabled, will delete all blocks every N and keep only N top blocks (topoheight based)
     auto_prune_keep_n_blocks: Option<u64>,
     // Flush storage manually to the disk every N blocks (topoheight based)
@@ -339,6 +341,7 @@ impl<S: Storage> Blockchain<S> {
             tip_work_score_cache: Mutex::new(LruCache::new(NonZeroUsize::new(DEFAULT_CACHE_SIZE).expect("Default cache size for tip work score must be above 0"))),
             common_base_cache: Mutex::new(LruCache::new(NonZeroUsize::new(DEFAULT_CACHE_SIZE).expect("Default cache size for common base must be above 0"))),
             full_order_cache: Mutex::new(LruCache::new(NonZeroUsize::new(DEFAULT_CACHE_SIZE).expect("Default cache size for full order must be above 0"))),
+            block_size_cache: Mutex::new(LruCache::new(NonZeroUsize::new(DEFAULT_CACHE_SIZE).expect("Default cache size for block size must be above 0"))),
             auto_prune_keep_n_blocks: config.auto_prune_keep_n_blocks,
             skip_block_template_txs_verification: config.skip_block_template_txs_verification,
             checkpoints: config.checkpoints.into_iter().collect(),
@@ -1574,8 +1577,8 @@ impl<S: Storage> Blockchain<S> {
             return Err(BlockchainError::TxAlreadyInBlockchain(hash.into_owned()))
         }
 
-        let tips = storage.get_tips().await?;
-        let base_fee = self.get_required_base_fee(storage, tips.iter()).await?;
+        // Compute the expected base fee
+        let base_fee = self.predicate_required_base_fee_internal(storage).await?;
 
         let hash = {
             debug!("locking mempool to add tx");
@@ -3453,10 +3456,9 @@ impl<S: Storage> Blockchain<S> {
     {
         trace!("calculate average blocks size");
 
-        // Calculated EMA
-        // Bigger alpha means faster responsiveness
-        // Best to keep it in range 0.1..=0.2
-        let mut ema = BlockSizeEma::new(0.18);
+        let mut cache = self.block_size_cache.lock().await;
+        let start = Instant::now();
+
         let mut total_size = 0;
         // Total unique blocks scanned
         let mut total_blocks = 0;
@@ -3465,18 +3467,14 @@ impl<S: Storage> Blockchain<S> {
 
         // All processed block hashes to prevent re processing a block twice
         let mut processed = IndexSet::new();
+        // Vector (depth, size) for sorting due to DAG branches
+        let mut blocks: Vec<(usize, usize)> = Vec::new();
 
         while let Some((hash, depth)) = stack.pop() {
             if !processed.insert(hash.clone()) {
                 debug!("Block hash {} was already processed for EMA, skipping it", hash);
                 continue;
             }
-
-            let block_size = provider.get_block_size(&hash).await?;
-            total_size += block_size;
-            ema.add(block_size as f64);
-
-            total_blocks += 1;
 
             let new_depth = depth + 1;
             if new_depth < CHAIN_AVERAGE_BLOCKS_SIZE_MAX_DEPTH {
@@ -3487,10 +3485,34 @@ impl<S: Storage> Blockchain<S> {
                         .map(|v| (Cow::Owned(v), new_depth))
                 );
             }
+
+            let block_size = if let Some(size) = cache.peek(&hash).copied() {
+                size
+            } else {
+                let size = provider.get_block_size(&hash).await?;
+                cache.put(hash.into_owned(), size);
+                size
+            };
+
+            total_size += block_size;
+            blocks.push((depth, block_size));
+
+            total_blocks += 1;
+        }
+
+        // sort blocks by depth so EMA see them in proper order
+        blocks.sort_by_key(|(depth, _)| *depth);
+
+        // Calculated EMA
+        // Bigger alpha means faster responsiveness
+        // Best to keep it in range 0.1..=0.2
+        let mut ema = BlockSizeEma::new(0.18);
+        for (_, size) in blocks {
+            ema.add(size as f64);
         }
 
         debug!(
-            "{} blocks with a total size of {} (avg {}) and EMA {}",
+            "{} blocks with a total size of {} (avg {}) and EMA {} in {:?}",
             total_blocks,
             human_bytes::human_bytes(total_size as f64),
             human_bytes::human_bytes(if total_blocks > 0 {
@@ -3498,7 +3520,8 @@ impl<S: Storage> Blockchain<S> {
             } else {
                 total_size
             } as f64),
-            human_bytes::human_bytes(ema.current())
+            human_bytes::human_bytes(ema.current()),
+            start.elapsed()
         );
 
         Ok(ema)
@@ -3522,16 +3545,11 @@ impl<S: Storage> Blockchain<S> {
     }
 
     // Same as `get_required_base_fee` but estimate next blocks by including mempool pending txs
-    pub async fn predicate_required_base_fee(&self) -> Result<u64, BlockchainError> {
-        let (mut ema, header) = {
-            let storage = self.storage.read().await;
-            let tips = storage.get_tips().await?;
-            let ema = self.get_blocks_size_ema_for(&*storage, tips.iter()).await?;
-            let header = self.get_block_header_template_for_storage(&*storage, DEV_PUBLIC_KEY.clone()).await?;
-            (ema, header)
-        };
+    async fn predicate_required_base_fee_internal(&self, storage: &S) -> Result<u64, BlockchainError> {
+        let tips = storage.get_tips().await?;
+        let mut ema = self.get_blocks_size_ema_for(&*storage, tips.iter()).await?;
+        let mut block_size = BlockHeader::estimate_size(tips.len().min(TIPS_LIMIT));
 
-        let mut block_size = header.size();
         {
             let mempool = self.mempool.read().await;
             for (_, tx) in mempool.get_txs() {
@@ -3540,17 +3558,31 @@ impl<S: Storage> Blockchain<S> {
         }
 
         ema.add(block_size as f64);
+        let ema = ema.current();
+        let fee_per_kb = calculate_required_base_fee_for_ema(ema as usize);
+        info!(
+            "Predicated block size EMA for next block {} with fee per kb {}",
+            human_bytes::human_bytes(ema),
+            fee_per_kb
+        );
 
-        Ok(calculate_required_base_fee_for_ema(ema.current() as usize))
+        Ok(fee_per_kb)
+    }
+
+    // Same as `get_required_base_fee` but estimate next blocks by including mempool pending txs
+    pub async fn predicate_required_base_fee(&self) -> Result<u64, BlockchainError> {
+        let storage = self.storage.read().await;
+        self.predicate_required_base_fee_internal(&*storage).await
     }
 }
 
 pub fn calculate_required_base_fee_for_ema(mut ema: usize) -> u64 {
-    const TEN_PERCENTAGE: usize = MAX_BLOCK_SIZE / 10;
+    // every 8% of the max block size, double the base fee
+    const PERCENT: usize = MAX_BLOCK_SIZE * 8 / 100;
 
     let mut base_fee = FEE_PER_KB;
-    while ema > TEN_PERCENTAGE {
-        ema -= TEN_PERCENTAGE;
+    while ema >= PERCENT {
+        ema -= PERCENT;
         base_fee *= 2;
     }
 
