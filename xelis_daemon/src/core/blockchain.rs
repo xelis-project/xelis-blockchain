@@ -3560,7 +3560,7 @@ impl<S: Storage> Blockchain<S> {
         ema.add(block_size as f64);
         let ema = ema.current();
         let fee_per_kb = calculate_required_base_fee_for_ema(ema as usize);
-        info!(
+        debug!(
             "Predicated block size EMA for next block {} with fee per kb {}",
             human_bytes::human_bytes(ema),
             fee_per_kb
