@@ -3507,7 +3507,7 @@ impl<S: Storage> Blockchain<S> {
         // Bigger alpha means faster responsiveness
         // Best to keep it in range 0.1..=0.2
         let mut ema = BlockSizeEma::new(0.18);
-        for (_, size) in blocks {
+        for (_, size) in blocks.into_iter().rev() {
             ema.add(size as f64);
         }
 
