@@ -465,6 +465,13 @@ impl<S: Storage> P2pServer<S> {
                             if let Some((block, hash)) = res? {
                                 chain_validator.insert_block(hash, block, expected_topoheight).await?;
                                 expected_topoheight += 1;
+
+                                if chain_validator.has_higher_cumulative_difficulty().await? {
+                                    debug!("higher cumulative difficulty found");
+                                    drop(futures);
+
+                                    break 'main;
+                                }
                             }
                         }
                     };
