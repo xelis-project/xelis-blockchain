@@ -1568,8 +1568,6 @@ impl<S: Storage> Blockchain<S> {
         self.add_tx_to_mempool_with_storage_and_hash(&storage, tx, hash, broadcast).await
     }
 
-    // Add a tx to the mempool with the given hash, it will verify the TX and check that it is not already in mempool or in blockchain
-    // and its validity (nonce, balance, etc...)
     pub async fn add_tx_to_mempool_with_storage_and_hash(&self, storage: &S, tx: Arc<Transaction>, hash: Immutable<Hash>, broadcast: bool) -> Result<(), BlockchainError> {
         debug!("add tx to mempool with storage and hash {} (broadcast = {})", hash, broadcast);
         let tx_size = tx.size();
@@ -1582,14 +1580,30 @@ impl<S: Storage> Blockchain<S> {
             return Err(BlockchainError::TxAlreadyInBlockchain(hash.into_owned()))
         }
 
+        debug!("locking mempool to add tx");
+        let mut mempool = self.mempool.write().await;
+        debug!("mempool locked to add tx");
+
+        self.add_tx_to_mempool_internal(storage, &mut *mempool, tx, tx_size, hash, broadcast).await
+    }
+
+    // Add a tx to the mempool with the given hash, it will verify the TX and check that it is not already in mempool or in blockchain
+    // and its validity (nonce, balance, etc...)
+    pub async fn add_tx_to_mempool_internal(
+        &self,
+        storage: &S,
+        mempool: &mut Mempool,
+        tx: Arc<Transaction>,
+        tx_size: usize,
+        hash: Immutable<Hash>,
+        broadcast: bool
+    ) -> Result<(), BlockchainError> {
+        debug!("add tx to mempool internal {} (broadcast = {})", hash, broadcast);
+
         // Compute the expected base fee
         let base_fee = self.predicate_required_base_fee_internal(storage).await?;
 
         let hash = {
-            debug!("locking mempool to add tx");
-            let mut mempool = self.mempool.write().await;
-            debug!("mempool locked to add tx");
-
             if mempool.contains_tx(&hash) {
                 return Err(BlockchainError::TxAlreadyInMempool(hash.into_owned()))
             }
@@ -3012,6 +3026,45 @@ impl<S: Storage> Blockchain<S> {
         // Check if the event is tracked
         let orphan_event_tracked = should_track_events.contains(&NotifyEvent::TransactionOrphaned);
 
+        // Now we can try to add back all transactions that got orphaned during the chain reorg
+        {
+            counter!("xelis_orphaned_txs").increment(orphaned_transactions.len() as u64);
+
+            let mut mempool = self.mempool.write().await;
+            let start = Instant::now();
+            for tx_hash in orphaned_transactions {
+                debug!("Trying to add orphaned tx {} back in mempool", tx_hash);
+                // It is verified in add_tx_to_mempool function too
+                // But to prevent loading the TX from storage and to fire wrong event
+                if !mempool.contains_tx(&tx_hash) && !storage.is_tx_executed_in_a_block(&tx_hash).await? {
+                    let tx = match storage.get_transaction(&tx_hash).await {
+                        Ok(tx) => tx.into_arc(),
+                        Err(e) => {
+                            warn!("Error while loading orphaned tx: {}", e);
+                            continue;
+                        }
+                    };
+
+                    if let Err(e) = self.add_tx_to_mempool_internal(&*storage, &mut *mempool, tx.clone(), tx.size(), Immutable::Owned(tx_hash.clone()), false).await {
+                        warn!("Error while adding back orphaned tx {}: {}", tx_hash, e);
+                        if !orphan_event_tracked {
+                            // We couldn't add it back to mempool, let's notify this event
+                            let data = RPCTransaction::from_tx(&tx, &tx_hash, storage.is_mainnet());
+                            let data = TransactionResponse {
+                                blocks: None,
+                                executed_in_block: None,
+                                in_mempool: false,
+                                first_seen: None,
+                                data,
+                            };
+                            events.entry(NotifyEvent::TransactionOrphaned).or_insert_with(Vec::new).push(json!(data));
+                        }
+                    }
+                }
+            }
+            histogram!("xelis_orphaned_txs_add_back_ms").record(start.elapsed().as_millis() as f64);
+        }
+
         // Clean mempool from old txs if the DAG has been updated
         let mempool_deleted_txs = if extended {
             debug!("Locking mempool write mode");
@@ -3031,13 +3084,6 @@ impl<S: Storage> Blockchain<S> {
 
         if orphan_event_tracked {
             for (tx_hash, sorted_tx) in mempool_deleted_txs {
-                // Delete it from our orphaned transactions list
-                // This save some performances as it will not try to add it back and
-                // consume resources for verifying the ZK Proof if we already know the answer
-                if orphaned_transactions.shift_remove(tx_hash.as_ref()) {
-                    debug!("Transaction {} was marked as orphaned, but got deleted from mempool. Prevent adding it back", tx_hash);
-                }
-
                 // Verify that the TX was not executed in a block
                 if storage.is_tx_executed_in_a_block(&tx_hash).await? {
                     trace!("Transaction {} was executed in a block, skipping orphaned event", tx_hash);
@@ -3054,44 +3100,6 @@ impl<S: Storage> Blockchain<S> {
                 };
                 events.entry(NotifyEvent::TransactionOrphaned).or_insert_with(Vec::new).push(json!(data));
             }
-        }
-
-        // Now we can try to add back all transactions
-        {
-            counter!("xelis_orphaned_txs").increment(orphaned_transactions.len() as u64);
-
-            let start = Instant::now();
-            for tx_hash in orphaned_transactions {
-                debug!("Trying to add orphaned tx {} back in mempool", tx_hash);
-                // It is verified in add_tx_to_mempool function too
-                // But to prevent loading the TX from storage and to fire wrong event
-                if !storage.is_tx_executed_in_a_block(&tx_hash).await? {
-                    let tx = match storage.get_transaction(&tx_hash).await {
-                        Ok(tx) => tx.into_arc(),
-                        Err(e) => {
-                            warn!("Error while loading orphaned tx: {}", e);
-                            continue;
-                        }
-                    };
-    
-                    if let Err(e) = self.add_tx_to_mempool_with_storage_and_hash(&*storage, tx.clone(), Immutable::Owned(tx_hash.clone()), false).await {
-                        warn!("Error while adding back orphaned tx {}: {}", tx_hash, e);
-                        if !orphan_event_tracked {
-                            // We couldn't add it back to mempool, let's notify this event
-                            let data = RPCTransaction::from_tx(&tx, &tx_hash, storage.is_mainnet());
-                            let data = TransactionResponse {
-                                blocks: None,
-                                executed_in_block: None,
-                                in_mempool: false,
-                                first_seen: None,
-                                data,
-                            };
-                            events.entry(NotifyEvent::TransactionOrphaned).or_insert_with(Vec::new).push(json!(data));
-                        }
-                    }
-                }
-            }
-            histogram!("xelis_orphaned_txs_add_back_ms").record(start.elapsed().as_millis() as f64);
         }
 
         // Flush to the disk
