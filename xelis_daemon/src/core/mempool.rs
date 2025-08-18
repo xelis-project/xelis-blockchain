@@ -365,7 +365,7 @@ impl Mempool {
                     // We get an error while retrieving the last nonce for this key,
                     // that means the key is not in storage anymore, so we can delete safely
                     // we just have to skip this iteration so it's not getting re-injected
-                    warn!("No nonce found for source {}, deleting whole cache", key.as_address(self.mainnet));
+                    warn!("No nonce found for source {} at topoheight {}, deleting whole cache (commit point: {})", key.as_address(self.mainnet), topoheight, storage.has_commit_point().await?);
 
                     // Delete all txs from this cache
                     for tx in cache.txs {
