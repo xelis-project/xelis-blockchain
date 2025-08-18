@@ -821,12 +821,11 @@ impl Wallet {
         );
 
         #[cfg(feature = "network_handler")]
-        self.retrieve_data_for_fees_estimation(state.as_mut(), fee, transaction_type).await?;
-
-        // Lets prevent any front running due to mining
-        #[cfg(feature = "network_handler")]
         {
+            self.retrieve_data_for_fees_estimation(state.as_mut(), fee, transaction_type).await?;
+
             let force_stable_balance = self.should_force_stable_balance();
+            // Lets prevent any front running due to mining
             // Reference must be none in order to use the last stable balance
             // Otherwise that mean we're still waiting on a TX to be confirmed
             if generated && (used_assets.contains(&XELIS_ASSET) || force_stable_balance) {

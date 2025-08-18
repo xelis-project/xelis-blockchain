@@ -175,6 +175,10 @@ impl FeeHelper for TransactionBuilderState {
     fn account_exists(&self, key: &PublicKey) -> Result<bool, Self::Error> {
         self.inner.account_exists(key)
     }
+
+    fn get_base_fee(&self) -> Option<u64> {
+        self.inner.base_fee
+    }
 }
 
 impl AccountState for TransactionBuilderState {
