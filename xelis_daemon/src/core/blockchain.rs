@@ -41,7 +41,8 @@ use xelis_common::{
         MAX_BLOCK_SIZE,
         TIPS_LIMIT,
         XELIS_ASSET,
-        FEE_PER_KB
+        FEE_PER_KB,
+        BYTES_PER_KB,
     },
     crypto::{
         Hash,
@@ -68,7 +69,11 @@ use xelis_common::{
         Transaction,
         TransactionType
     },
-    utils::{calculate_tx_fee, format_xelis},
+    utils::{
+        calculate_tx_fee_extra,
+        calculate_tx_fee_per_kb,
+        format_xelis
+    },
     tokio::{
         spawn_task,
         is_multi_threads_supported,
@@ -1876,7 +1881,8 @@ impl<S: Storage> Blockchain<S> {
                     Ok(TxSelectorEntry {
                         size: sorted_tx.get_size(),
                         hash: tx_hash,
-                        tx: sorted_tx.get_tx()
+                        tx: sorted_tx.get_tx(),
+                        fee_per_kb: sorted_tx.get_fee_per_kb(),
                     })
                 })
                 .collect::<Result<VecDeque<_>, BlockchainError>>()?;
@@ -1942,7 +1948,7 @@ impl<S: Storage> Blockchain<S> {
                 }
             }
 
-            while let Some(TxSelectorEntry { size, hash, tx }) = tx_selector.next() {
+            while let Some(TxSelectorEntry { size, hash, tx, fee_per_kb }) = tx_selector.next() {
                 if block_size + HASH_SIZE + total_txs_size + size >= MAX_BLOCK_SIZE || block.txs_hashes.len() >= u16::MAX as usize {
                     debug!("Stopping to include new TXs in this block, final size: {}, count: {}", human_bytes::human_bytes((block_size + total_txs_size) as f64), block.txs_hashes.len());
                     break;
@@ -1954,15 +1960,26 @@ impl<S: Storage> Blockchain<S> {
                     continue;
                 }
 
+                // Check that the dynamic base fee is valid
+                let source = tx.get_source();
+                if fee_per_kb < base_fee {
+                    debug!("Skipping TX {} because it has a lower fee per kb ({}) than required base fee ({})", hash, format_xelis(fee_per_kb), format_xelis(base_fee));
+
+                    // Source is marked as failed because if we can't select
+                    // the first TX with a lower fee, we can't select any
+                    // following TX
+                    failed_sources.insert(source);
+                    continue;
+                }
+
+                if failed_sources.contains(source) {
+                    debug!("Skipping TX {} because its source has failed before", hash);
+                    continue;
+                }
+
                 if !self.skip_block_template_txs_verification {
                     // Check if the TX is valid for this potential block
                     trace!("Checking TX {} with nonce {}, {}", hash, tx.get_nonce(), tx.get_source().as_address(self.network.is_mainnet()));
-
-                    let source = tx.get_source();
-                    if failed_sources.contains(source) {
-                        debug!("Skipping TX {} because its source has failed before", hash);
-                        continue;
-                    }
 
                     // Verify the TX against the chain state
                     // if we have any orphaned TXs, verify them one time only
@@ -3589,13 +3606,12 @@ pub fn calculate_required_base_fee_for_ema(mut ema: usize) -> u64 {
     base_fee
 }
 
-// Estimate the required fees for a transaction
-// For V1, new keys are only counted one time for creation fee instead of N transfers to it
-pub async fn estimate_required_tx_fees<P: AccountProvider>(provider: &P, current_topoheight: TopoHeight, tx: &Transaction, base_fee: u64, _: BlockVersion) -> Result<u64, BlockchainError> {
-    let mut output_count = 0;
+// Esimate the required TX fee extra part
+// which is based on the TX outputs, newly generated addresses
+// and multsig signatures count
+pub async fn estimate_required_tx_fee_extra<P: AccountProvider>(provider: &P, current_topoheight: TopoHeight, tx: &Transaction) -> Result<u64, BlockchainError> {
     let mut processed_keys = HashSet::new();
     if let TransactionType::Transfers(transfers) = tx.get_data() {
-        output_count = transfers.len();
         for transfer in transfers {
             if !processed_keys.contains(transfer.get_destination()) && !provider.is_account_registered_for_topoheight(transfer.get_destination(), current_topoheight).await? {
                 debug!("Account {} is not registered for topoheight {}", transfer.get_destination().as_address(provider.is_mainnet()), current_topoheight);
@@ -3604,7 +3620,26 @@ pub async fn estimate_required_tx_fees<P: AccountProvider>(provider: &P, current
         }
     }
 
-    Ok(calculate_tx_fee(base_fee, tx.size(), output_count, processed_keys.len(), tx.get_multisig_count()))
+    Ok(calculate_tx_fee_extra(tx.get_outputs_count(), processed_keys.len(), tx.get_multisig_count()))
+}
+
+// Estimate the TX fee per kB by calculating and sub the fee extra part
+// NOTE: tx size is in bytes, not kB
+pub async fn estimate_tx_fee_per_kb<P: AccountProvider>(provider: &P, current_topoheight: TopoHeight, tx: &Transaction, tx_size: u64) -> Result<u64, BlockchainError> {
+    let fee_extra = estimate_required_tx_fee_extra(provider, current_topoheight, tx).await?;
+    let fee = tx.get_fee() - fee_extra;
+
+    Ok(fee / (tx_size / BYTES_PER_KB as u64))
+}
+
+// Estimate the required final fee for TX
+// This is based on the outputs/transfers in the TX, but also
+// based on the newly generated addresses
+// Multisig signatures also increase the extra fee due to more computation being required
+// This returns one final (total) fee required for a TX
+pub async fn estimate_required_tx_fees<P: AccountProvider>(provider: &P, current_topoheight: TopoHeight, tx: &Transaction, base_fee: u64) -> Result<u64, BlockchainError> {
+    let fee_extra = estimate_required_tx_fee_extra(provider, current_topoheight, tx).await?;
+    Ok(calculate_tx_fee_per_kb(base_fee, tx.size()) + fee_extra)
 }
 
 // Get the block reward for a side block based on how many side blocks exists at same height

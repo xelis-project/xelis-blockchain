@@ -33,7 +33,7 @@ pub (super) async fn pre_verify_tx<P: AccountProvider + BalanceProvider>(provide
         return Err(BlockchainError::InvalidTxVersion);
     }
 
-    let required_fees = blockchain::estimate_required_tx_fees(provider, topoheight, tx, tx_base_fee, block_version).await?;
+    let required_fees = blockchain::estimate_required_tx_fees(provider, topoheight, tx, tx_base_fee).await?;
     if required_fees > tx.get_fee() {
         debug!("Invalid fees: {} required, {} provided", format_xelis(required_fees), format_xelis(tx.get_fee()));
         return Err(BlockchainError::InvalidTxFee(required_fees, tx.get_fee()));

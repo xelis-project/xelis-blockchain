@@ -2,7 +2,8 @@ use super::{
     error::BlockchainError,
     state::MempoolState,
     storage::Storage,
-    TxCache
+    TxCache,
+    blockchain::estimate_tx_fee_per_kb,
 };
 use std::{
     collections::HashMap,
@@ -17,7 +18,7 @@ use xelis_common::{
     account::Nonce,
     api::daemon::FeeRatesEstimated,
     block::{BlockVersion, TopoHeight},
-    config::{BYTES_PER_KB, FEE_PER_KB},
+    config::FEE_PER_KB,
     crypto::{
         elgamal::Ciphertext,
         Hash,
@@ -38,8 +39,10 @@ use xelis_vm::Environment;
 #[derive(serde::Serialize)]
 pub struct SortedTx {
     tx: Arc<Transaction>,
-    first_seen: TimestampSeconds, // timestamp when the tx was added
-    size: usize
+    // timestamp when the tx was added
+    first_seen: TimestampSeconds,
+    size: usize,
+    fee_per_kb: u64,
 }
 
 // This struct is used to keep nonce cache for a specific key for faster verification
@@ -133,7 +136,7 @@ impl Mempool {
     // For this, we need to get the median fee rate for each priority level
     pub fn estimate_fee_rates(&self, base_fee: u64) -> Result<FeeRatesEstimated, BlockchainError> { 
         let fee_rates: Vec<_> = self.txs.values()
-            .map(SortedTx::get_fee_rate_per_kb)
+            .map(SortedTx::get_fee_per_kb)
             .collect();
 
         Ok(Self::internal_estimate_fee_rates(fee_rates, base_fee))
@@ -177,10 +180,14 @@ impl Mempool {
             self.caches.insert(tx.get_source().clone(), cache);
         }
 
+        let fee_per_kb = estimate_tx_fee_per_kb(storage, topoheight, &tx, size as u64).await?;
+        debug!("fee per kb {} for TX {}", fee_per_kb, hash);
+
         let sorted_tx = SortedTx {
             size,
             first_seen: get_current_time_in_seconds(),
-            tx
+            fee_per_kb,
+            tx,
         };
 
         // insert in map
@@ -509,31 +516,37 @@ impl Mempool {
 
 impl SortedTx {
     // Get the inner TX
+    #[inline(always)]
     pub fn get_tx(&self) -> &Arc<Transaction> {
         &self.tx
     }
 
     // Get the fee for this TX
+    #[inline(always)]
     pub fn get_fee(&self) -> u64 {
         self.tx.get_fee()
     }
 
     // Get the fee rate per kB for this TX
-    pub fn get_fee_rate_per_kb(&self) -> u64 {
-        self.get_fee() / (self.size as u64 / BYTES_PER_KB as u64)
+    #[inline(always)]
+    pub fn get_fee_per_kb(&self) -> u64 {
+        self.fee_per_kb
     }
 
     // Get the stored size of this TX
+    #[inline(always)]
     pub fn get_size(&self) -> usize {
         self.size
     }
 
     // Get the timestamp when this TX was added to mempool
+    #[inline(always)]
     pub fn get_first_seen(&self) -> TimestampSeconds {
         self.first_seen
     }
 
     // Consume the TX and return it
+    #[inline(always)]
     pub fn consume(self) -> Arc<Transaction> {
         self.tx
     }
