@@ -3003,7 +3003,7 @@ impl<S: Storage> Blockchain<S> {
             debug!("mempool write mode ok");
             let version = get_version_at_height(self.get_network(), current_height);
             let start = Instant::now();
-            let res = mempool.clean_up(&*storage, &self.environment, base_topo_height, highest_topo, version, base_fee).await;
+            let res = mempool.clean_up(&*storage, &self.environment, base_topo_height, highest_topo, version).await;
             debug!("Took {:?} to clean mempool!", start.elapsed());
             histogram!("xelis_mempool_clean_up_ms").record(start.elapsed().as_millis() as f64);
             res
@@ -3450,7 +3450,7 @@ impl<S: Storage> Blockchain<S> {
     // Calculate the block size EMA over N last blocks based on block tips
     // The idea is to increase fees when the average block size reach over 10% of the block max size
     // We increase them proportionally to prevent any TX spam attack due to our low fees system.
-    pub async fn get_blocks_size_ema_for<P>(&self, provider: &P, tips: impl Iterator<Item = &Hash>) -> Result<BlockSizeEma, BlockchainError>
+    pub async fn get_blocks_size_ema_at_tips<P>(&self, provider: &P, tips: impl Iterator<Item = &Hash>) -> Result<BlockSizeEma, BlockchainError>
     where
         P: BlockProvider
     {
@@ -3529,7 +3529,7 @@ impl<S: Storage> Blockchain<S> {
 
     pub async fn get_average_blocks_size<P>(&self, storage: &S) -> Result<BlockSizeEma, BlockchainError> {
         let tips = storage.get_tips().await?;
-        self.get_blocks_size_ema_for(storage, tips.iter()).await
+        self.get_blocks_size_ema_at_tips(storage, tips.iter()).await
     }
 
     // Calculate the required base fee, by default its `FEE_PER_KB`
@@ -3538,7 +3538,7 @@ impl<S: Storage> Blockchain<S> {
     where
         P: BlockProvider
     {
-        let ema = self.get_blocks_size_ema_for(provider, tips).await?
+        let ema = self.get_blocks_size_ema_at_tips(provider, tips).await?
             .current() as usize;
 
         Ok(calculate_required_base_fee_for_ema(ema))
@@ -3547,7 +3547,7 @@ impl<S: Storage> Blockchain<S> {
     // Same as `get_required_base_fee` but estimate next blocks by including mempool pending txs
     async fn predicate_required_base_fee_internal(&self, storage: &S) -> Result<u64, BlockchainError> {
         let tips = storage.get_tips().await?;
-        let mut ema = self.get_blocks_size_ema_for(&*storage, tips.iter()).await?;
+        let mut ema = self.get_blocks_size_ema_at_tips(&*storage, tips.iter()).await?;
         let mut block_size = BlockHeader::estimate_size(tips.len().min(TIPS_LIMIT));
 
         {

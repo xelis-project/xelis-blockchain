@@ -1194,7 +1194,7 @@ async fn status<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Res
         .context("Error while retrieving top block hash")?;
     let avg_block_time = blockchain.get_average_block_time::<S>(&storage).await
         .context("Error while retrieving average block time")?;
-    let block_size_ema = blockchain.get_blocks_size_ema_for::<S>(&storage, tips.iter()).await
+    let block_size_ema = blockchain.get_blocks_size_ema_at_tips::<S>(&storage, tips.iter()).await
         .context("Error while retrieving average block size")?;
     let required_base_fee = blockchain.get_required_base_fee::<S>(&storage, tips.iter()).await
         .context("Error while calculating required base fee")?;
