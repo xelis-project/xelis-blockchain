@@ -97,10 +97,7 @@ pub fn detect_available_parallelism() -> usize {
 
 // return the fee for a transaction based on its size in bytes
 // the fee is calculated in atomic units for XEL
-// Sending to a newly created address will increase the fee
-// Each transfers output will also increase the fee
-// Each signature of a multisig add a small overhead due to the verfications
-pub fn calculate_tx_fees(base_fee: impl Into<Option<u64>>, tx_size: usize, output_count: usize, new_addresses: usize, multisig: usize) -> (u64, u64) {
+pub fn calculate_tx_fee_per_kb(base_fee: impl Into<Option<u64>>, tx_size: usize) -> u64 {
     let mut size_in_kb = tx_size as u64 / BYTES_PER_KB as u64;
 
     // we consume a full kb for fee
@@ -108,21 +105,27 @@ pub fn calculate_tx_fees(base_fee: impl Into<Option<u64>>, tx_size: usize, outpu
         size_in_kb += 1;
     }
 
-    let fee_per_kb = size_in_kb * base_fee.into()
-        .unwrap_or(FEE_PER_KB);
+    size_in_kb * base_fee.into()
+        .unwrap_or(FEE_PER_KB)
+}
 
-    let fee_extra = output_count as u64 * FEE_PER_TRANSFER
+// Calculated the extra cost for a TX based on few variables
+// This is used to scale based on the computation weight and have a good
+// balance/ratio between computation/fee
+pub fn calculate_tx_fee_extra(output_count: usize, new_addresses: usize, multisig: usize) -> u64 {
+    output_count as u64 * FEE_PER_TRANSFER
     + new_addresses as u64 * FEE_PER_ACCOUNT_CREATION
-    + multisig as u64 * FEE_PER_TRANSFER;
-
-    (fee_per_kb, fee_extra) 
+    + multisig as u64 * FEE_PER_TRANSFER
 }
 
 // Calculate TX fee and sum both TX fee per kb and extra fee in one
-// See `calculate_tx_fees`
+// Sending to a newly created address will increase the fee
+// Each transfers output will also increase the fee
+// Each signature of a multisig add a small overhead due to the verfications
+// See `calculate_tx_fee_per_kb` and `calculate_tx_fee_extra`
+#[inline]
 pub fn calculate_tx_fee(base_fee: impl Into<Option<u64>>, tx_size: usize, output_count: usize, new_addresses: usize, multisig: usize) -> u64 {
-    let (fee_per_kb, fee_extra) = calculate_tx_fees(base_fee, tx_size, output_count, new_addresses, multisig);
-    fee_per_kb + fee_extra
+    calculate_tx_fee_per_kb(base_fee, tx_size) + calculate_tx_fee_extra(output_count, new_addresses, multisig)
 }
 
 const HASHRATE_FORMATS: [&str; 7] = ["H/s", "KH/s", "MH/s", "GH/s", "TH/s", "PH/s", "EH/s"];
