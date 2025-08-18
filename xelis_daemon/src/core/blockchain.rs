@@ -1925,7 +1925,6 @@ impl<S: Storage> Blockchain<S> {
             // Keep track of processed sources to avoid re-verifying them
             let mut processed_sources = HashSet::new();
 
-
             // If we are not skipping block template TXs verification,
             // we need to detect any orphaned TXs that were processed in the tips
             // This is required in order to include the next TXs
@@ -3020,7 +3019,7 @@ impl<S: Storage> Blockchain<S> {
             debug!("mempool write mode ok");
             let version = get_version_at_height(self.get_network(), current_height);
             let start = Instant::now();
-            let res = mempool.clean_up(&*storage, &self.environment, base_topo_height, highest_topo, version).await;
+            let res = mempool.clean_up(&*storage, &self.environment, base_topo_height, highest_topo, version).await?;
             debug!("Took {:?} to clean mempool!", start.elapsed());
             histogram!("xelis_mempool_clean_up_ms").record(start.elapsed().as_millis() as f64);
             res
@@ -3629,7 +3628,7 @@ pub async fn estimate_tx_fee_per_kb<P: AccountProvider>(provider: &P, current_to
     let fee_extra = estimate_required_tx_fee_extra(provider, current_topoheight, tx).await?;
     let fee = tx.get_fee() - fee_extra;
 
-    Ok(fee / (tx_size / BYTES_PER_KB as u64))
+    Ok(fee * BYTES_PER_KB as u64 / tx_size)
 }
 
 // Estimate the required final fee for TX

@@ -340,7 +340,14 @@ impl Mempool {
     // This is cleaning all TXs with the minimal TX fee per KB
     // instead of the actual required base fee to not invalid them and simply
     // deplay them until its free again
-    pub async fn clean_up<S: Storage>(&mut self, storage: &S, environment: &Environment<ModuleMetadata>, stable_topoheight: TopoHeight, topoheight: TopoHeight, block_version: BlockVersion) -> Vec<(Arc<Hash>, SortedTx)> {
+    pub async fn clean_up<S: Storage>(
+        &mut self,
+        storage: &S,
+        environment: &Environment<ModuleMetadata>,
+        stable_topoheight: TopoHeight,
+        topoheight: TopoHeight,
+        block_version: BlockVersion,
+    ) -> Result<Vec<(Arc<Hash>, SortedTx)>, BlockchainError> {
         trace!("Cleaning up mempool...");
 
         // All deleted sorted txs with their hashes
@@ -351,28 +358,27 @@ impl Mempool {
         std::mem::swap(&mut caches, &mut self.caches);
 
         for (key, mut cache) in caches {
-            debug!("Cleaning up mempool for owner {}", key.as_address(self.mainnet));
-            let nonce = match storage.get_last_nonce(&key).await {
-                Ok((_, version)) => version.get_nonce(),
-                Err(e) => {
+            debug!("cleaning up mempool for source {} at topoheight {}", key.as_address(self.mainnet), topoheight);
+            let nonce = match storage.get_nonce_at_maximum_topoheight(&key, topoheight).await? {
+                Some((_, version)) => version.get_nonce(),
+                None => {
                     // We get an error while retrieving the last nonce for this key,
                     // that means the key is not in storage anymore, so we can delete safely
                     // we just have to skip this iteration so it's not getting re-injected
-                    warn!("Error while getting nonce for owner {}, he maybe has no nonce anymore, skipping: {}", key.as_address(self.mainnet), e);
+                    warn!("No nonce found for source {}, deleting whole cache", key.as_address(self.mainnet));
 
                     // Delete all txs from this cache
                     for tx in cache.txs {
-                        if let Some(sorted_tx) = self.txs.remove(&tx) {
-                            deleted_transactions.push((tx, sorted_tx));
-                        } else {
-                            warn!("TX {} not found in mempool while deleting due to nonce error", tx);
-                        }
+                        let sorted_tx = self.txs.remove(&tx)
+                            .ok_or_else(|| BlockchainError::TxNotFound(tx.as_ref().clone()))?;
+
+                        deleted_transactions.push((tx, sorted_tx));
                     }
 
                     continue;
                 }
             };
-            debug!("Owner {} has nonce {}, cache min: {}, max: {}", key.as_address(self.mainnet), nonce, cache.get_min(), cache.get_max());
+            debug!("source {} has nonce {} and cache [{}-{}]", key.as_address(self.mainnet), nonce, cache.get_min(), cache.get_max());
 
             let mut delete_cache = false;
             // Check if the account nonce is below cache lowest nonce, that means
@@ -384,12 +390,10 @@ impl Mempool {
 
                 // Don't let ghost TXs in mempool
                 for tx in cache.txs.drain(..) {
-                    if let Some(sorted_tx) = self.txs.remove(&tx) {
-                        debug!("Deleting ghost TX {} with {} and nonce {}", tx, sorted_tx.get_tx().get_reference(), sorted_tx.get_tx().get_nonce());
-                        deleted_transactions.push((tx, sorted_tx));
-                    } else {
-                        warn!("Ghost TX {} not found in mempool (orphaned due to nonce)", tx);
-                    }
+                    let sorted_tx = self.txs.remove(&tx)
+                        .ok_or_else(|| BlockchainError::TxNotFound(tx.as_ref().clone()))?;
+
+                    deleted_transactions.push((tx, sorted_tx));
                 }
 
                 delete_cache = true;
@@ -485,16 +489,16 @@ impl Mempool {
                 }
 
                 // now delete all necessary txs
-                for hash in deleted_txs_hashes {
-                    debug!("Deleting TX {} for source {}", hash, key.as_address(self.mainnet));
-                    if let Some(sorted_tx) = self.txs.remove(&hash) {
-                        deleted_transactions.push((hash, sorted_tx));
-                    } else {
-                        // This should never happen, but better to put a warning here
-                        // in case of a lurking bug
-                        warn!("TX {} not found in mempool while deleting", hash);
-                    }
+                for tx in deleted_txs_hashes {
+                    let sorted_tx = self.txs.remove(&tx)
+                        .ok_or_else(|| BlockchainError::TxNotFound(tx.as_ref().clone()))?;
+                    debug!("Deleted TX {} for source {} with nonce {}, txs left: {}", tx, key.as_address(self.mainnet), sorted_tx.get_tx().get_nonce(), cache.txs.len());
+
+                    deleted_transactions.push((tx, sorted_tx));
                 }
+
+                // Delete the cache if its empty
+                delete_cache |= cache.txs.is_empty();
             } else {
                 debug!("{} hasn't changed, skipping it", key.as_address(self.mainnet));
             }
@@ -505,7 +509,7 @@ impl Mempool {
             }
         }
 
-        deleted_transactions
+        Ok(deleted_transactions)
     }
 
     pub async fn stop(&mut self) {

@@ -207,12 +207,8 @@ pub enum BlockchainError {
     InvalidTxInBlock(Hash),
     #[error("Tx {} not found in mempool", _0)]
     TxNotFound(Hash),
-    #[error("Tx {} was present in mempool but not in sorted list!", _0)]
-    TxNotFoundInSortedList(Hash),
     #[error("Tx {} already in mempool", _0)]
     TxAlreadyInMempool(Hash),
-    #[error("Normal Tx {} is empty", _0)]
-    TxEmpty(Hash),
     #[error("Transaction has an invalid reference: block hash not found")]
     InvalidReferenceHash,
     #[error("Transaction has an invalid reference: topoheight {0} is higher than our topoheight {1}")]
