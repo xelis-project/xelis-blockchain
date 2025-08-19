@@ -19,13 +19,14 @@ use xelis_common::{
     api::daemon::FeeRatesEstimated,
     block::{BlockVersion, TopoHeight},
     config::FEE_PER_KB,
+    contract::ModuleMetadata,
     crypto::{
         elgamal::Ciphertext,
         Hash,
         PublicKey
     },
-    contract::ModuleMetadata,
     network::Network,
+    serializer::Serializer,
     time::{get_current_time_in_seconds, TimestampSeconds},
     transaction::{
         MultiSigPayload,
@@ -330,6 +331,62 @@ impl Mempool {
         self.caches.clear();
 
         txs
+    }
+
+    pub async fn try_add_back_txs<S: Storage>(
+        &mut self,
+        storage: &S,
+        transactions: impl Iterator<Item = Hash>,
+        environment: &Environment<ModuleMetadata>,
+        stable_topoheight: TopoHeight,
+        topoheight: TopoHeight,
+        block_version: BlockVersion,
+        tx_base_fee: u64,
+    ) -> Result<Vec<(Arc<Hash>, Arc<Transaction>)>, BlockchainError> {
+        trace!("try add back txs");
+
+        // Group the TXs per source
+        let mut grouped = HashMap::new();
+        for hash in transactions {
+            let tx = storage.get_transaction(&hash).await?
+                .into_arc();
+
+            grouped.entry(tx.get_source().clone())
+                .or_insert_with(Vec::new)
+                .push((Arc::new(hash), tx.size(), tx));
+        }
+
+        let mut orphaned = Vec::new();
+        for (source, mut txs) in grouped {
+            let cache = self.caches.remove(&source);
+
+            // append TXs that were previously in the cache
+            if let Some(cache) = cache {
+                for hash in cache.txs.into_iter() {
+                    let tx = self.txs.remove(&hash)
+                        .ok_or_else(|| BlockchainError::TxNotFound(hash.as_ref().clone()))?;
+
+                    txs.push((hash, tx.size, tx.tx));
+                }
+            }
+
+            // Process TXs normally
+            // TODO: maybe we can batch it for faster results
+            // We can also mark them as verified in ZKP Cache to only check
+            // dynamic
+            for (hash, size, transaction) in txs {
+                if self.contains_tx(&hash) {
+                    continue;
+                }
+
+                if let Err(e) = self.add_tx(storage, environment, stable_topoheight, topoheight, tx_base_fee, hash.clone(), transaction.clone(), size, block_version).await {
+                    warn!("Error while adding back TX {} for {}: {}", hash, source.as_address(self.mainnet), e);
+                    orphaned.push((hash, transaction));
+                }
+            }
+        }
+
+        Ok(orphaned)
     }
 
     // delete all old txs not compatible anymore with current state of chain

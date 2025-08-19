@@ -303,6 +303,8 @@ pub enum BlockchainError {
     InvalidGenesisHash,
     #[error("Invalid tx {} nonce (got {} expected {}) for {}", _0, _1, _2, _3)]
     InvalidTxNonce(Hash, Nonce, Nonce, Address),
+    #[error("Mempool cache not found")]
+    MempoolCacheNotFound,
     #[error("Invalid tx nonce {} for mempool cache, range: [{}-{}]", _0, _1, _2)]
     InvalidTxNonceMempoolCache(Nonce, Nonce, Nonce),
     #[error("Invalid asset ID: {}", _0)]
