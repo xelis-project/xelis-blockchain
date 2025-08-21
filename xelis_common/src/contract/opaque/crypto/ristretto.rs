@@ -113,12 +113,10 @@ impl OpaqueRistrettoPoint {
             unreachable!();
         };
 
-        if compressed.is_none() {
-            *compressed = Some(point.compress());
-        }
-
-        let compressed = compressed.as_ref()
-            .ok_or(EnvironmentError::Static("Compressed point is not available"))?;
+        let compressed = match compressed {
+            Some(ct) => ct,
+            None => compressed.insert(point.compress()),
+        };
 
         Ok((compressed, point))
     }

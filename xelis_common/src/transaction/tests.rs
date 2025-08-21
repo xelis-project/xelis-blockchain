@@ -100,7 +100,7 @@ impl Account {
         let ciphertext = self.keypair.get_public_key().encrypt(balance);
         self.balances.insert(asset, Balance {
             balance,
-            ciphertext: CiphertextCache::Decompressed(ciphertext),
+            ciphertext: CiphertextCache::Decompressed(None, ciphertext),
         });
     }
 
@@ -161,7 +161,7 @@ fn test_encrypt_decrypt_two_parties() {
     let mut alice = Account::new();
     alice.balances.insert(XELIS_ASSET, Balance {
         balance: 100 * COIN_VALUE,
-        ciphertext: CiphertextCache::Decompressed(alice.keypair.get_public_key().encrypt(100 * COIN_VALUE)),
+        ciphertext: CiphertextCache::Decompressed(None, alice.keypair.get_public_key().encrypt(100 * COIN_VALUE)),
     });
 
     let bob = Account::new();
@@ -819,7 +819,7 @@ impl AccountState for AccountStateImpl {
     fn update_account_balance(&mut self, asset: &Hash, balance: u64, ciphertext: Ciphertext) -> Result<(), Self::Error> {
         self.balances.insert(asset.clone(), Balance {
             balance,
-            ciphertext: CiphertextCache::Decompressed(ciphertext),
+            ciphertext: CiphertextCache::Decompressed(None, ciphertext),
         });
         Ok(())
     }

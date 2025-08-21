@@ -27,9 +27,7 @@ use crate::{
 #[derive(Clone, Debug)]
 pub enum CiphertextCache {
     Compressed(CompressedCiphertext),
-    Decompressed(Ciphertext),
-    // Bool represents the flag "dirty" to know if the decompressed ciphertext has been modified
-    Both(CompressedCiphertext, Ciphertext, bool)
+    Decompressed(Option<CompressedCiphertext>, Ciphertext),
 }
 
 impl CiphertextCache {
@@ -37,29 +35,27 @@ impl CiphertextCache {
         Ok(match self {
             Self::Compressed(c) => {
                 let decompressed = c.decompress()?;
-                *self = Self::Decompressed(decompressed);
+                *self = Self::Decompressed(Some(c.clone()), decompressed);
                 match self {
-                    Self::Decompressed(e) => e,
+                    Self::Decompressed(_, e) => e,
                     _ => unreachable!()
                 }
             },
-            Self::Decompressed(e) => e,
-            Self::Both(_, e, dirty) => {
-                *dirty = true;
+            Self::Decompressed(compressed, e) => {
+                // Delete the compressed cache to prevent any issue
+                *compressed = None;
                 e
-            }
+            },
         })
     }
 
     pub fn compress<'a>(&'a self) -> Cow<'a, CompressedCiphertext> {
         match self {
             Self::Compressed(c) => Cow::Borrowed(c),
-            Self::Decompressed(e) => Cow::Owned(e.compress()),
-            Self::Both(c, e, dirty) => if *dirty {
-                Cow::Owned(e.compress())
-            } else {
-                Cow::Borrowed(c)
-            }
+            Self::Decompressed(e, d) => match e {
+                Some(c) => Cow::Borrowed(c),
+                None => Cow::Owned(d.compress())
+            },
         }
     }
 
@@ -67,19 +63,10 @@ impl CiphertextCache {
     pub fn compressed<'a>(&'a mut self) -> &'a CompressedCiphertext {
         match self {
             Self::Compressed(c) => c,
-            Self::Decompressed(e) => {
-                *self = Self::Both(e.compress(), e.clone(), false);
-                match self {
-                    Self::Both(c, _, _) => c,
-                    _ => unreachable!()
-                }
+            Self::Decompressed(e, d) => match e {
+                Some(c) => c,
+                None => e.insert(d.compress())
             },
-            Self::Both(c, d, dirty) => {
-                if *dirty {
-                    *c = d.compress();
-                }
-                c
-            }
         }
     }
 
@@ -88,40 +75,33 @@ impl CiphertextCache {
         match self {
             Self::Compressed(c) => {
                 let decompressed = c.decompress()?;
-                *self = Self::Both(c.clone(), decompressed, false);
+                *self = Self::Decompressed(Some(c.clone()), decompressed);
                 match self {
-                    Self::Both(_, e, _) => Ok(e),
+                    Self::Decompressed(_, e) => Ok(e),
                     _ => unreachable!()
                 }
             },
-            Self::Decompressed(e) => Ok(e),
-            Self::Both(_, e, _) => Ok(e)
+            Self::Decompressed(_, e) => Ok(e),
         }
     }
 
     pub fn both(&mut self) -> Result<(&CompressedCiphertext, &Ciphertext), DecompressionError> {
         match self {
-            Self::Both(c, e, dirty) => {
-                if *dirty {
-                    *c = e.compress();
-                }
-                Ok((c, e))
-            },
             Self::Compressed(c) => {
                 let decompressed = c.decompress()?;
-                *self = Self::Both(c.clone(), decompressed, false);
+                *self = Self::Decompressed(Some(c.clone()), decompressed);
                 match self {
-                    Self::Both(c, e, _) => Ok((c, e)),
+                    Self::Decompressed(Some(c), e) => Ok((c, e)),
                     _ => unreachable!()
                 }
             },
-            Self::Decompressed(e) => {
-                let compressed = e.compress();
-                *self = Self::Both(compressed, e.clone(), false);
-                match self {
-                    Self::Both(c, e, _) => Ok((c, e)),
-                    _ => unreachable!()
-                }
+            Self::Decompressed(c, e) => {
+                let compressed = match c {
+                    Some(c) => c,
+                    None => c.insert(e.compress()),
+                };
+
+                Ok((compressed, e))
             }
         }
     }
@@ -129,8 +109,7 @@ impl CiphertextCache {
     pub fn take_ciphertext(self) -> Result<Ciphertext, DecompressionError> {
         Ok(match self {
             Self::Compressed(c) => c.decompress()?,
-            Self::Decompressed(e) => e,
-            Self::Both(_, e, _) => e
+            Self::Decompressed(_, e) => e,
         })
     }
 }
@@ -172,8 +151,7 @@ impl Display for CiphertextCache {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, "CiphertextCache[{}]", match self {
             Self::Compressed(c) => format!("Compressed({})", hex::encode(&c.to_bytes())),
-            Self::Decompressed(e) => format!("Decompressed({})", hex::encode(&e.compress().to_bytes())),
-            Self::Both(c, d, dirty) => format!("Both(c: {}, d: {}, dirty: {dirty})", hex::encode(&c.to_bytes()), hex::encode(&d.compress().to_bytes()))
+            Self::Decompressed(c, e) => format!("Decompressed({}, {})", c.as_ref().map(|v| hex::encode(&v.to_bytes())).unwrap_or_default(), hex::encode(&e.compress().to_bytes())),
         })
     }
 }

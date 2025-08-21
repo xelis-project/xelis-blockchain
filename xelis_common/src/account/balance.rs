@@ -86,7 +86,7 @@ impl VersionedBalance {
 
     pub fn zero() -> Self {
         let zero = Ciphertext::zero();
-        Self::new(CiphertextCache::Decompressed(zero), None)
+        Self::new(CiphertextCache::Decompressed(Some(CompressedCiphertext::zero()), zero), None)
     }
 
     pub fn prepare_new(&mut self, previous_topoheight: Option<TopoHeight>) {
@@ -348,7 +348,7 @@ mod tests {
     fn serde_versioned_balance_both() {
         let mut zero = VersionedBalance::zero();
         zero.set_balance_type(BalanceType::Both);
-        zero.set_output_balance(Some(CiphertextCache::Decompressed(Ciphertext::zero())));
+        zero.set_output_balance(Some(CiphertextCache::Decompressed(None, Ciphertext::zero())));
 
         let zero_bis = VersionedBalance::from_bytes(&zero.to_bytes()).unwrap();
         assert_eq!(zero, zero_bis);
@@ -358,7 +358,7 @@ mod tests {
     fn serde_versioned_balance_output_previous_topo() {
         let mut zero = VersionedBalance::zero();
         zero.set_balance_type(BalanceType::Both);
-        zero.set_output_balance(Some(CiphertextCache::Decompressed(Ciphertext::zero())));
+        zero.set_output_balance(Some(CiphertextCache::Decompressed(None, Ciphertext::zero())));
         zero.set_previous_topoheight(Some(42));
 
         let zero_bis = VersionedBalance::from_bytes(&zero.to_bytes()).unwrap();

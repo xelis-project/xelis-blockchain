@@ -1,4 +1,4 @@
-use curve25519_dalek::{ristretto::CompressedRistretto, Scalar};
+use curve25519_dalek::{ristretto::CompressedRistretto, traits::Identity, Scalar};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use crate::{api::DataElement, crypto::{Address, AddressType}, serializer::{Reader, ReaderError, Serializer, Writer}};
@@ -75,6 +75,14 @@ impl CompressedCiphertext {
     // Create a new compressed ciphertext
     pub fn new(commitment: CompressedCommitment, handle: CompressedHandle) -> Self {
         Self { commitment, handle }
+    }
+
+    // Create a ciphertext representing ZERO
+    pub fn zero() -> Self {
+        Self {
+            commitment: CompressedCommitment::new(CompressedRistretto::identity()),
+            handle: CompressedHandle::new(CompressedRistretto::identity()),
+        }
     }
 
     // Serialized commitment

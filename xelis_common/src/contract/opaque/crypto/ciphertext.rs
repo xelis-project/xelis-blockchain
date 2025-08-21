@@ -124,7 +124,7 @@ pub fn ciphertext_new(_: FnInstance, mut params: FnParams, _: &ModuleMetadata, _
         .decompress()
         .context("Invalid public key")?;
 
-    let ciphertext = CiphertextCache::Decompressed(key.encrypt(amount));
+    let ciphertext = CiphertextCache::Decompressed(None, key.encrypt(amount));
     Ok(SysCallResult::Return(Primitive::Opaque(ciphertext.into()).into()))
 }
 
