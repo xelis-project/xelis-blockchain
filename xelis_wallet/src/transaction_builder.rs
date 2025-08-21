@@ -201,7 +201,7 @@ impl AccountState for TransactionBuilderState {
     fn update_account_balance(&mut self, asset: &Hash, new_balance: u64, ciphertext: Ciphertext) -> Result<(), Self::Error> {
         self.balances.insert(asset.clone(), Balance {
             amount: new_balance,
-            ciphertext: CiphertextCache::Decompressed(ciphertext)
+            ciphertext: CiphertextCache::Decompressed(None, ciphertext)
         });
         Ok(())
     }
