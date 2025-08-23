@@ -35,7 +35,7 @@ impl CiphertextCache {
         Ok(match self {
             Self::Compressed(c) => {
                 let decompressed = c.decompress()?;
-                *self = Self::Decompressed(Some(c.clone()), decompressed);
+                *self = Self::Decompressed(None, decompressed);
                 match self {
                     Self::Decompressed(_, e) => e,
                     _ => unreachable!()
