@@ -2259,11 +2259,13 @@ impl<S: Storage> Blockchain<S> {
         let is_v3_enabled = version >= BlockVersion::V3;
 
         // Required base fee per KB to prevent low-fee spam attacks
-        let base_fee = if is_v3_enabled {
-            self.get_required_base_fee(&*storage, block.get_tips().iter()).await?
-        } else {
-            FEE_PER_KB
-        };
+        // TODO: re-enable it
+        let base_fee = FEE_PER_KB;
+        // let base_fee = if is_v3_enabled {
+        //     self.get_required_base_fee(&*storage, block.get_tips().iter()).await?
+        // } else {
+        //     FEE_PER_KB
+        // };
 
         // Transaction verification
         // Here we are going to verify all TXs in the block
