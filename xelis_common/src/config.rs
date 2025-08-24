@@ -17,10 +17,9 @@ pub const FEE_PER_ACCOUNT_CREATION: u64 = 100000;
 // 0.00005000 XEL per KB
 // Each transfer has a overhead of 5000 atomic units
 pub const FEE_PER_TRANSFER: u64 = 5000;
-
-// 0.000500 XEL per multisig signature
-// Each signature of a multisig has a overhead of 500 atomic units
-pub const FEE_PER_MULTISIG_SIGNATURE: u64 = 500;
+// 0.00005000 XEL per KB
+// Each signature from multisig has a overhead of 5000 atomic units
+pub const FEE_PER_EXTRA_SIGNATURE: u64 = 5000;
 
 // Contracts rules
 // 1 XEL per contract deployed

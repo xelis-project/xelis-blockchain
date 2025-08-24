@@ -193,6 +193,9 @@ impl Transaction {
     // Get the total outputs count per TX
     // default is 1
     // Transfers / Deposits are their own len
+    // This max it against source commitments
+    // this allows us to determine how many HE operations
+    // will occurs just for the source side
     pub fn get_outputs_count(&self) -> usize {
         match &self.data {
             TransactionType::Transfers(transfers) => transfers.len(),
@@ -200,7 +203,7 @@ impl Transaction {
             TransactionType::DeployContract(payload) => payload.invoke.as_ref()
                 .map_or(1, |v| v.deposits.len().max(1)),
             _ => 1
-        }
+        }.max(self.source_commitments.len())
     }
 
     // Consume the transaction by returning the source public key and the transaction type

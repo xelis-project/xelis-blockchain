@@ -6,6 +6,7 @@ use crate::{
         COIN_DECIMALS,
         FEE_PER_ACCOUNT_CREATION,
         FEE_PER_TRANSFER,
+        FEE_PER_EXTRA_SIGNATURE,
         BYTES_PER_KB,
         FEE_PER_KB,
     },
@@ -112,10 +113,10 @@ pub fn calculate_tx_fee_per_kb(base_fee: impl Into<Option<u64>>, tx_size: usize)
 // Calculated the extra cost for a TX based on few variables
 // This is used to scale based on the computation weight and have a good
 // balance/ratio between computation/fee
-pub fn calculate_tx_fee_extra(output_count: usize, new_addresses: usize, multisig: usize) -> u64 {
-    output_count as u64 * FEE_PER_TRANSFER
+pub fn calculate_tx_fee_extra(outputs: usize, new_addresses: usize, multisig: usize) -> u64 {
+    outputs as u64 * FEE_PER_TRANSFER
     + new_addresses as u64 * FEE_PER_ACCOUNT_CREATION
-    + multisig as u64 * FEE_PER_TRANSFER
+    + multisig as u64 * FEE_PER_EXTRA_SIGNATURE
 }
 
 // Calculate TX fee and sum both TX fee per kb and extra fee in one
@@ -124,8 +125,8 @@ pub fn calculate_tx_fee_extra(output_count: usize, new_addresses: usize, multisi
 // Each signature of a multisig add a small overhead due to the verfications
 // See `calculate_tx_fee_per_kb` and `calculate_tx_fee_extra`
 #[inline]
-pub fn calculate_tx_fee(base_fee: impl Into<Option<u64>>, tx_size: usize, output_count: usize, new_addresses: usize, multisig: usize) -> u64 {
-    calculate_tx_fee_per_kb(base_fee, tx_size) + calculate_tx_fee_extra(output_count, new_addresses, multisig)
+pub fn calculate_tx_fee(base_fee: impl Into<Option<u64>>, tx_size: usize, outputs: usize, new_addresses: usize, multisig: usize) -> u64 {
+    calculate_tx_fee_per_kb(base_fee, tx_size) + calculate_tx_fee_extra(outputs, new_addresses, multisig)
 }
 
 const HASHRATE_FORMATS: [&str; 7] = ["H/s", "KH/s", "MH/s", "GH/s", "TH/s", "PH/s", "EH/s"];

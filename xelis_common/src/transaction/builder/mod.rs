@@ -386,6 +386,8 @@ impl TransactionBuilder {
                 let size = self.estimate_size();
 
                 // By default, one output (sender spending)
+                // this is compared to the source commitments out
+                // and the higher value between both is taken
                 let mut outputs = 1;
                 let mut new_addresses = 0;
 
@@ -397,20 +399,23 @@ impl TransactionBuilder {
                             }
                         }
 
+                        // outputs is transfers count
                         outputs = transfers.len();
                     },
                     TransactionTypeBuilder::DeployContract(contract) => {
                         if let Some(invoke) = contract.invoke.as_ref() {
+                            // 1 + deposits
                             outputs += invoke.deposits.len();
                         }
                     },
                     TransactionTypeBuilder::InvokeContract(invoke) => {
+                        // 1 + deposits
                         outputs += invoke.deposits.len();
                     },
                     _ => {}
                 }
 
-                let expected_fee = calculate_tx_fee(state.get_base_fee(), size, outputs, new_addresses, self.required_thresholds.unwrap_or(0) as usize);
+                let expected_fee = calculate_tx_fee(state.get_base_fee(), size, outputs.max(self.data.used_assets().len()), new_addresses, self.required_thresholds.unwrap_or(0) as usize);
                 match self.fee_builder {
                     FeeBuilder::Multiplier(multiplier) => (expected_fee as f64 * multiplier) as u64,
                     FeeBuilder::Boost(boost) => expected_fee + boost,
