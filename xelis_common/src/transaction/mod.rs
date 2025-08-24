@@ -197,6 +197,8 @@ impl Transaction {
         match &self.data {
             TransactionType::Transfers(transfers) => transfers.len(),
             TransactionType::InvokeContract(payload) => payload.deposits.len().max(1),
+            TransactionType::DeployContract(payload) => payload.invoke.as_ref()
+                .map_or(1, |v| v.deposits.len().max(1)),
             _ => 1
         }
     }

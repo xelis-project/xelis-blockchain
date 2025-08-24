@@ -384,20 +384,33 @@ impl TransactionBuilder {
             _ => {
                 // Compute the size and transfers count
                 let size = self.estimate_size();
-                let (transfers, new_addresses) = if let TransactionTypeBuilder::Transfers(transfers) = &self.data {
-                    let mut new_addresses = 0;
-                    for transfer in transfers {
-                        if !state.account_exists(&transfer.destination.get_public_key()).map_err(GenerationError::State)? {
-                            new_addresses += 1;
+
+                // By default, one output (sender spending)
+                let mut outputs = 1;
+                let mut new_addresses = 0;
+
+                match &self.data {
+                    TransactionTypeBuilder::Transfers(transfers) => {
+                        for transfer in transfers {
+                            if !state.account_exists(&transfer.destination.get_public_key()).map_err(GenerationError::State)? {
+                                new_addresses += 1;
+                            }
                         }
-                    }
 
-                    (transfers.len(), new_addresses)
-                } else {
-                    (0, 0)
-                };
+                        outputs = transfers.len();
+                    },
+                    TransactionTypeBuilder::DeployContract(contract) => {
+                        if let Some(invoke) = contract.invoke.as_ref() {
+                            outputs += invoke.deposits.len();
+                        }
+                    },
+                    TransactionTypeBuilder::InvokeContract(invoke) => {
+                        outputs += invoke.deposits.len();
+                    },
+                    _ => {}
+                }
 
-                let expected_fee = calculate_tx_fee(state.get_base_fee(), size, transfers, new_addresses, self.required_thresholds.unwrap_or(0) as usize);
+                let expected_fee = calculate_tx_fee(state.get_base_fee(), size, outputs, new_addresses, self.required_thresholds.unwrap_or(0) as usize);
                 match self.fee_builder {
                     FeeBuilder::Multiplier(multiplier) => (expected_fee as f64 * multiplier) as u64,
                     FeeBuilder::Boost(boost) => expected_fee + boost,
