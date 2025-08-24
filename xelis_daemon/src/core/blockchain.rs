@@ -3607,8 +3607,9 @@ pub fn calculate_required_base_fee_for_ema(mut ema: usize) -> u64 {
 // Esimate the required TX fee extra part
 // which is based on the TX outputs, newly generated addresses
 // and multsig signatures count
-pub async fn estimate_required_tx_fee_extra<P: AccountProvider>(provider: &P, current_topoheight: TopoHeight, tx: &Transaction) -> Result<u64, BlockchainError> {
+pub async fn estimate_required_tx_fee_extra<P: AccountProvider>(provider: &P, current_topoheight: TopoHeight, tx: &Transaction, block_version: BlockVersion) -> Result<u64, BlockchainError> {
     let mut processed_keys = HashSet::new();
+    let mut transfers_len = 0;
     if let TransactionType::Transfers(transfers) = tx.get_data() {
         for transfer in transfers {
             if !processed_keys.contains(transfer.get_destination()) && !provider.is_account_registered_for_topoheight(transfer.get_destination(), current_topoheight).await? {
@@ -3616,15 +3617,23 @@ pub async fn estimate_required_tx_fee_extra<P: AccountProvider>(provider: &P, cu
                 processed_keys.insert(transfer.get_destination());
             }
         }
+
+        transfers_len = transfers.len();
     }
 
-    Ok(calculate_tx_fee_extra(tx.get_outputs_count(), processed_keys.len(), tx.get_multisig_count()))
+    let outputs = if block_version >= BlockVersion::V3 {
+        tx.get_outputs_count()
+    } else {
+        transfers_len
+    };
+
+    Ok(calculate_tx_fee_extra(outputs, processed_keys.len(), tx.get_multisig_count()))
 }
 
 // Estimate the TX fee per kB by calculating and sub the fee extra part
 // NOTE: tx size is in bytes, not kB
-pub async fn estimate_tx_fee_per_kb<P: AccountProvider>(provider: &P, current_topoheight: TopoHeight, tx: &Transaction, tx_size: u64) -> Result<u64, BlockchainError> {
-    let fee_extra = estimate_required_tx_fee_extra(provider, current_topoheight, tx).await?;
+pub async fn estimate_tx_fee_per_kb<P: AccountProvider>(provider: &P, current_topoheight: TopoHeight, tx: &Transaction, tx_size: u64, block_version: BlockVersion) -> Result<u64, BlockchainError> {
+    let fee_extra = estimate_required_tx_fee_extra(provider, current_topoheight, tx, block_version).await?;
     let fee = tx.get_fee() - fee_extra;
 
     Ok(fee * BYTES_PER_KB as u64 / tx_size)
@@ -3635,8 +3644,8 @@ pub async fn estimate_tx_fee_per_kb<P: AccountProvider>(provider: &P, current_to
 // based on the newly generated addresses
 // Multisig signatures also increase the extra fee due to more computation being required
 // This returns one final (total) fee required for a TX
-pub async fn estimate_required_tx_fees<P: AccountProvider>(provider: &P, current_topoheight: TopoHeight, tx: &Transaction, base_fee: u64) -> Result<u64, BlockchainError> {
-    let fee_extra = estimate_required_tx_fee_extra(provider, current_topoheight, tx).await?;
+pub async fn estimate_required_tx_fees<P: AccountProvider>(provider: &P, current_topoheight: TopoHeight, tx: &Transaction, base_fee: u64, block_version: BlockVersion) -> Result<u64, BlockchainError> {
+    let fee_extra = estimate_required_tx_fee_extra(provider, current_topoheight, tx, block_version).await?;
     Ok(calculate_tx_fee_per_kb(base_fee, tx.size()) + fee_extra)
 }
 
