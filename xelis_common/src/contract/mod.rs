@@ -819,6 +819,19 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
         );
 
         env.register_native_function(
+            "transfer_contract",
+            None,
+            vec![
+                ("contract", hash_type.clone()),
+                ("amount", Type::U64),
+                ("asset", hash_type.clone()),
+            ],
+            FunctionHandler::Async(async_handler!(transfer_contract::<P>)),
+            250,
+            Some(Type::Bool)
+        );
+
+        env.register_native_function(
             "burn",
             None,
             vec![
@@ -1653,6 +1666,56 @@ async fn transfer<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut param
 
     // Add the output
     state.outputs.push(ContractOutput::Transfer { destination: key, amount, asset });
+
+    Ok(SysCallResult::Return(Primitive::Boolean(true).into()))
+}
+
+async fn transfer_contract<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata, context: &mut Context<'ty, 'r>) -> FnReturnType<ModuleMetadata> {
+    debug!("Transfer contract called {:?}", params);
+
+    let asset: Hash = params.remove(2)
+        .into_owned()
+        .into_opaque_type()?;
+
+    let amount = params.remove(1)
+        .into_owned()
+        .to_u64()?;
+
+    let destination: Hash = params.remove(0)
+        .into_owned()
+        .into_opaque_type()?;
+    {
+        let (provider, chain_state) = from_context::<P>(context)?;
+        // verify that the address is well registered, otherwise: pay extra fees
+        if !provider.has_contract(&destination, chain_state.topoheight).await? {
+            context.increase_gas_usage(FEE_PER_ACCOUNT_CREATION)?;
+        }
+    }
+
+    let (provider, state) = from_context::<P>(context)?;
+
+    let Some((mut balance_state, mut balance)) = get_balance_from_cache(provider, state, metadata.contract.clone(), asset.clone()).await? else {
+        return Ok(SysCallResult::Return(Primitive::Boolean(false).into()));
+    };
+
+    // We have to check if the contract has enough balance to transfer
+    if balance < amount || amount == 0 {
+        return Ok(SysCallResult::Return(Primitive::Boolean(false).into()));
+    }
+
+    balance -= amount;
+    balance_state.mark_updated();
+
+    get_cache_for_contract(&mut state.caches, state.global_caches, metadata.contract.clone())
+        .balances
+        .insert(asset.clone(), Some((balance_state, balance)));
+
+    let (destination_state, destination_balance) = get_mut_balance_for_contract(provider, state, destination.clone(), asset.clone()).await?;
+    *destination_balance += amount;
+    destination_state.mark_updated();
+
+    // Add the output
+    state.outputs.push(ContractOutput::TransferContract { destination, amount, asset });
 
     Ok(SysCallResult::Return(Primitive::Boolean(true).into()))
 }

@@ -17,6 +17,14 @@ pub enum ContractOutput {
         /// The destination of the transfer
         destination: PublicKey
     },
+    TransferContract {
+        /// The amount that is transferred
+        amount: u64,
+        /// The asset for this output
+        asset: Hash,
+        /// The contract destination of the transfer
+        destination: Hash
+    },
     // When a contract mint an asset
     Mint {
         asset: Hash,
@@ -53,26 +61,32 @@ impl Serializer for ContractOutput {
                 asset.write(writer);
                 destination.write(writer);
             },
-            ContractOutput::Mint { asset, amount } => {
+            ContractOutput::TransferContract { amount, asset, destination } => {
                 writer.write_u8(2);
-                asset.write(writer);
                 amount.write(writer);
+                asset.write(writer);
+                destination.write(writer);
             },
-            ContractOutput::Burn { asset, amount } => {
+            ContractOutput::Mint { asset, amount } => {
                 writer.write_u8(3);
                 asset.write(writer);
                 amount.write(writer);
             },
-            ContractOutput::NewAsset { asset } => {
+            ContractOutput::Burn { asset, amount } => {
                 writer.write_u8(4);
+                asset.write(writer);
+                amount.write(writer);
+            },
+            ContractOutput::NewAsset { asset } => {
+                writer.write_u8(5);
                 asset.write(writer);
             },
             ContractOutput::ExitCode(code) => {
-                writer.write_u8(5);
+                writer.write_u8(6);
                 code.write(writer);
             },
             ContractOutput::RefundDeposits => {
-                writer.write_u8(6);
+                writer.write_u8(7);
             }
         }
     }
@@ -90,21 +104,27 @@ impl Serializer for ContractOutput {
                 Ok(ContractOutput::Transfer { amount, asset, destination })
             },
             2 => {
-                let asset = Hash::read(reader)?;
                 let amount = u64::read(reader)?;
-                Ok(ContractOutput::Mint { asset, amount })
+                let asset = Hash::read(reader)?;
+                let destination = Hash::read(reader)?;
+                Ok(ContractOutput::TransferContract { amount, asset, destination })
             },
             3 => {
                 let asset = Hash::read(reader)?;
                 let amount = u64::read(reader)?;
-                Ok(ContractOutput::Burn { asset, amount })
+                Ok(ContractOutput::Mint { asset, amount })
             },
             4 => {
                 let asset = Hash::read(reader)?;
+                let amount = u64::read(reader)?;
+                Ok(ContractOutput::Burn { asset, amount })
+            },
+            5 => {
+                let asset = Hash::read(reader)?;
                 Ok(ContractOutput::NewAsset { asset })
             },
-            5 => Ok(ContractOutput::ExitCode(Option::read(reader)?)),
-            6 => Ok(ContractOutput::RefundDeposits),
+            6 => Ok(ContractOutput::ExitCode(Option::read(reader)?)),
+            7 => Ok(ContractOutput::RefundDeposits),
             _ => Err(ReaderError::InvalidValue)
         }
     }
@@ -113,6 +133,7 @@ impl Serializer for ContractOutput {
         match self {
             ContractOutput::RefundGas { amount } => 1 + amount.size(),
             ContractOutput::Transfer { amount, asset, destination } => 1 + amount.size() + asset.size() + destination.size(),
+            ContractOutput::TransferContract { amount, asset, destination } => 1 + amount.size() + asset.size() + destination.size(),
             ContractOutput::Mint { asset, amount } => 1 + asset.size() + amount.size(),
             ContractOutput::Burn { asset, amount } => 1 + asset.size() + amount.size(),
             ContractOutput::NewAsset { asset } => 1 + asset.size(),
