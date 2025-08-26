@@ -53,7 +53,9 @@ pub async fn read_only_storage_load<'a, 'ty, 'r, P: ContractProvider>(zelf: FnIn
                 .flatten()
     };
 
-    Ok(SysCallResult::Return(value.unwrap_or_default().into()))
+    // We are forced to do a deep clone in case a contract try to attack
+    // another contract memory due to how XVM handle references
+    Ok(SysCallResult::Return(value.map(|v| v.deep_clone()).unwrap_or_default().into()))
 }
 
 pub async fn read_only_storage_has<'a, 'ty, 'r, P: ContractProvider>(zelf: FnInstance<'a>, mut params: FnParams, _: &ModuleMetadata, context: &mut Context<'ty, 'r>) -> FnReturnType<ModuleMetadata> {
