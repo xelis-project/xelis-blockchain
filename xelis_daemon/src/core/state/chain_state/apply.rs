@@ -207,6 +207,8 @@ impl<'a, S: Storage> BlockchainApplyState<'a, S, BlockchainError> for Applicable
     }
 
     async fn get_contract_environment_for<'b>(&'b mut self, contract: &'b Hash, deposits: &'b IndexMap<Hash, ContractDeposit>, tx_hash: &'b Hash) -> Result<(ContractEnvironment<'b, S>, ContractChainState<'b>), BlockchainError> {
+        debug!("get contract environment for contract {} tx {}", contract, tx_hash);
+
         // Find the contract module in our cache
         // We don't use the function `get_contract_module_with_environment` because we need to return the mutable storage
         let module = self.inner.contracts.get(contract)
@@ -236,6 +238,7 @@ impl<'a, S: Storage> BlockchainApplyState<'a, S, BlockchainError> for Applicable
                         }
                     },
                     Entry::Vacant(e) => {
+                        debug!("loading balance {} for contract {} at maximum topoheight {}", asset, contract, self.topoheight);
                         let (mut state, balance) = self.storage.get_contract_balance_at_maximum_topoheight(contract, asset, self.topoheight).await?
                             .map(|(topo, balance)| (VersionedState::FetchedAt(topo), balance.take()))
                             .unwrap_or((VersionedState::New, 0));

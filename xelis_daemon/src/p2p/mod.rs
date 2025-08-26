@@ -1595,7 +1595,7 @@ impl<S: Storage> P2pServer<S> {
                 Some(bytes) = rx.recv() => {
                     // there is a overhead of 4 for each packet (packet size u32 4 bytes, packet id u8 is counted in the packet size)
                     trace!("Sending packet with real length: {}", bytes.len());
-                    trace!("Packet id #{} : {:?}", bytes[0], bytes);
+                    trace!("Packet id #{} : {:?}", bytes[0], bytes.as_ref());
                     let mut buffer = BytesMut::from(bytes);
                     peer.get_connection().send_bytes(&mut buffer).await?;
                     trace!("data sucessfully sent!");
