@@ -27,7 +27,7 @@ pub struct ContractCache {
     pub random: Option<DeterministicRandom>,
     // The storage of the contract
     // All the changes made by the contract are stored here
-    pub storage: HashMap<ValueCell, (VersionedState, Option<ValueCell>)>,
+    pub storage: HashMap<ValueCell, Option<(VersionedState, Option<ValueCell>)>>,
     // The contract balances
     // Those already present are loaded due to the deposits to be added
     // If its none, it means we don't have any balance yet

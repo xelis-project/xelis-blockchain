@@ -1,5 +1,7 @@
 mod read_only;
 
+use std::collections::hash_map::Entry;
+
 use async_trait::async_trait;
 use xelis_vm::{
     traits::{JSONHelper, Serializable},
@@ -40,9 +42,6 @@ pub trait ContractStorage {
     // load the latest topoheight from the storage
     async fn load_data_latest_topoheight(&self, contract: &Hash, key: &ValueCell, topoheight: TopoHeight) -> Result<Option<TopoHeight>, anyhow::Error>;
 
-    // check if a key exists in the storage
-    async fn has_data(&self, contract: &Hash, key: &ValueCell, topoheight: TopoHeight) -> Result<bool, anyhow::Error>;
-
     // check if a contract hash exists in the storage
     async fn has_contract(&self, contract: &Hash, topoheight: TopoHeight) -> Result<bool, anyhow::Error>;
 }
@@ -62,14 +61,20 @@ pub async fn storage_load<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, m
         .into_owned();
 
     let cache = get_cache_for_contract(&mut state.caches, state.global_caches, metadata.contract.clone());
-    let value = match cache.storage.get(&key) {
-        Some((_, value)) => value.clone(),
-        None => match storage.load_data(&metadata.contract, &key, state.topoheight).await? {
+    let value = match cache.storage.entry(key.clone()) {
+        Entry::Occupied(v) => v.get()
+            .as_ref()
+            .map(|(_, v)| v.clone())
+            .flatten(),
+        Entry::Vacant(v) => match storage.load_data(&metadata.contract, &key, state.topoheight).await? {
             Some((topoheight, constant)) => {
-                cache.storage.insert(key, (VersionedState::FetchedAt(topoheight), constant.clone()));
+                v.insert(Some((VersionedState::FetchedAt(topoheight), constant.clone())));
                 constant
             },
-            None => None
+            None => {
+                v.insert(None);
+                None
+            }
         }
     };
 
@@ -83,9 +88,20 @@ pub async fn storage_has<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mu
         .into_owned();
 
     let cache = get_cache_for_contract(&mut state.caches, state.global_caches, metadata.contract.clone());
-    let contains = match cache.storage.get(&key) {
-        Some((_, value)) => value.is_some(),
-        None => storage.has_data(&metadata.contract, &key, state.topoheight).await?
+    let contains = match cache.storage.entry(key.clone()) {
+        Entry::Occupied(v) => v.get()
+            .as_ref()
+            .map_or(false, |(_, v)| v.is_some()),
+        Entry::Vacant(v) => match storage.load_data(&metadata.contract, &key, state.topoheight).await? {
+            Some((topoheight, constant)) => {
+                v.insert(Some((VersionedState::FetchedAt(topoheight), constant)));
+                true
+            },
+            None => {
+                v.insert(None);
+                false
+            }
+        }
     };
 
     Ok(SysCallResult::Return(Primitive::Boolean(contains).into()))
@@ -115,11 +131,14 @@ pub async fn storage_store<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, 
     let (storage, state) = from_context::<P>(context)?;
 
     let cache = get_cache_for_contract(&mut state.caches, state.global_caches, metadata.contract.clone());
+
+    // We do it in two times: first we retrieve the VersionedState to update it
     let data_state = match cache.storage.get(&key) {
-        Some((mut state, _)) => {
+        Some(Some((mut state, _))) => {
             state.mark_updated();
             state
         },
+        Some(None) => VersionedState::New,
         None => {
             // We need to retrieve the latest topoheight version
             storage.load_data_latest_topoheight(&metadata.contract, &key, state.topoheight).await?
@@ -128,9 +147,9 @@ pub async fn storage_store<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, 
         }
     };
 
-    let value = cache.storage.insert(key, (data_state, Some(value)))
-        .map(|(_, v)| v)
-        .flatten()
+    // then, we replace the value if it exists (or simply insert it)
+    let value = cache.storage.insert(key, Some((data_state, Some(value))))
+        .and_then(|v| v.and_then(|(_, v)| v))
         .unwrap_or_default();
 
     Ok(SysCallResult::Return(value.into()))
@@ -139,19 +158,24 @@ pub async fn storage_store<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, 
 pub async fn storage_delete<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata, context: &mut Context<'ty, 'r>) -> FnReturnType<ModuleMetadata> {
     let (storage, state) = from_context::<P>(context)?;
 
+    // into_owned calls `deep_clone`
     let key = params.remove(0)
         .into_owned();
 
     let cache = get_cache_for_contract(&mut state.caches, state.global_caches, metadata.contract.clone());
     let data_state = match cache.storage.get(&key) {
-        Some((s, _)) => match s {
+        Some(Some((s, _))) => match s {
             VersionedState::New => {
-                let value = cache.storage.remove(&key);
-                return Ok(SysCallResult::Return(value.map(|(_, v)| v).flatten().unwrap_or_default().into()));
+                let value = cache.storage.remove(&key)
+                    .and_then(|v| v.and_then(|(_, v)| v))
+                    .unwrap_or_default();
+
+                return Ok(SysCallResult::Return(value.into()));
             },
             VersionedState::FetchedAt(topoheight) => VersionedState::Updated(*topoheight),
             VersionedState::Updated(topoheight) => VersionedState::Updated(*topoheight),
         },
+        Some(None) => return Ok(SysCallResult::Return(Default::default())),
         None => {
             // We need to retrieve the latest topoheight version
             match storage.load_data_latest_topoheight(&metadata.contract, &key, state.topoheight).await? {
@@ -161,9 +185,8 @@ pub async fn storage_delete<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>,
         }
     };
 
-    let value = cache.storage.insert(key, (data_state, None))
-        .map(|(_, v)| v)
-        .flatten()
+    let value = cache.storage.insert(key, Some((data_state, None)))
+        .and_then(|v| v.and_then(|(_, v)| v))
         .unwrap_or_default();
 
     Ok(SysCallResult::Return(value.into()))

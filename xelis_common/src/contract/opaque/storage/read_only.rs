@@ -1,3 +1,5 @@
+use std::collections::hash_map::Entry;
+
 use xelis_vm::{
     traits::{JSONHelper, Serializable},
     Context,
@@ -9,8 +11,15 @@ use xelis_vm::{
     SysCallResult
 };
 use crate::{
-    contract::{from_context, get_optional_cache_for_contract, ContractProvider, ModuleMetadata},
-    crypto::Hash
+    contract::{
+        from_context,
+        get_cache_for_contract,
+        get_optional_cache_for_contract,
+        ContractProvider,
+        ModuleMetadata
+    },
+    crypto::Hash,
+    versioned_type::VersionedState
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -45,12 +54,20 @@ pub async fn read_only_storage_load<'a, 'ty, 'r, P: ContractProvider>(zelf: FnIn
         .into_owned();
 
     // Read from global cache first, then fallback to provider
-    let value = match get_optional_cache_for_contract(&state.caches, state.global_caches, &zelf.0)
-        .and_then(|cache| cache.storage.get(&key).map(|(_, v)| v)) {
-            Some(v) => v.clone(),
-            None => storage.load_data(&zelf.0, &key, state.topoheight).await?
-                .map(|(_, v)| v)
-                .flatten()
+    let value = match get_cache_for_contract(&mut state.caches, state.global_caches, zelf.0.clone())
+        .storage
+        .entry(key.clone()) {
+            Entry::Occupied(v) => v.get()
+                .as_ref()
+                .and_then(|(_, v)| v.clone()),
+            Entry::Vacant(v) => {
+                let data = storage.load_data(&zelf.0, &key, state.topoheight).await?
+                    .map(|(topo, v)| (VersionedState::FetchedAt(topo), v));
+
+                v.insert(data)
+                    .as_ref()
+                    .and_then(|(_, v)| v.clone())
+            }
     };
 
     // We are forced to do a deep clone in case a contract try to attack
@@ -68,10 +85,20 @@ pub async fn read_only_storage_has<'a, 'ty, 'r, P: ContractProvider>(zelf: FnIns
         .into_owned();
 
     // Read from global cache first, then fallback to provider
-    let contains = match get_optional_cache_for_contract(&state.caches, state.global_caches, &zelf.0)
-        .and_then(|cache| cache.storage.get(&key).map(|(_, v)| v)) {
-            Some(v) => v.is_some(),
-            None => storage.has_data(&zelf.0, &key, state.topoheight).await?
+    let contains = match get_cache_for_contract(&mut state.caches, state.global_caches, zelf.0.clone())
+        .storage
+        .entry(key.clone()) {
+            Entry::Occupied(v) => v.get()
+                .as_ref()
+                .map_or(false, |(_, v)| v.is_some()),
+            Entry::Vacant(v) => {
+                let data = storage.load_data(&zelf.0, &key, state.topoheight).await?
+                    .map(|(topo, v)| (VersionedState::FetchedAt(topo), v));
+
+                v.insert(data)
+                    .as_ref()
+                    .map_or(false, |(_, v)| v.is_some())
+            }
     };
 
     Ok(SysCallResult::Return(Primitive::Boolean(contains).into()))
