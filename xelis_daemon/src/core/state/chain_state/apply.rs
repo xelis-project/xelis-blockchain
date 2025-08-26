@@ -558,10 +558,12 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
         // Apply all the contract storage changes
         for (contract, cache) in self.contract_manager.caches {
             // Apply all storage changes
-            for (key, (state, value)) in cache.storage {
-                if state.should_be_stored() {
-                    trace!("Saving contract data {} key {} at topoheight {}", contract, key, self.inner.topoheight);
-                    self.inner.storage.set_last_contract_data_to(&contract, &key, self.inner.topoheight, &VersionedContractData::new(value, state.get_topoheight())).await?;
+            for (key, value) in cache.storage {
+                if let Some((state, value)) = value {
+                    if state.should_be_stored() {
+                        trace!("Saving contract data {} key {} at topoheight {}", contract, key, self.inner.topoheight);
+                        self.inner.storage.set_last_contract_data_to(&contract, &key, self.inner.topoheight, &VersionedContractData::new(value, state.get_topoheight())).await?;
+                    }
                 }
             }
 

@@ -42,12 +42,6 @@ impl ContractStorage for RocksStorage {
         }
     }
 
-    async fn has_data(&self, contract: &Hash, key: &ValueCell, topoheight: TopoHeight) -> Result<bool, anyhow::Error> {
-        trace!("check if contract {} key {} data exists at topoheight {}", contract, key, topoheight);
-        let contains = self.has_contract_data_at_maximum_topoheight(contract, &key, topoheight).await?;
-        Ok(contains)
-    }
-
     async fn load_data_latest_topoheight(&self, contract: &Hash, key: &ValueCell, topoheight: TopoHeight) -> Result<Option<TopoHeight>, anyhow::Error> {
         trace!("load data latest topoheight for contract {} key {} at topoheight {}", contract, key, topoheight);
         let res = self.get_contract_data_topoheight_at_maximum_topoheight_for(contract, &key, topoheight).await?;
