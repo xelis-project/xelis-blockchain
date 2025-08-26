@@ -228,6 +228,11 @@ pub enum RPCContractOutput<'a> {
         asset: Cow<'a, Hash>,
         destination: Cow<'a, Address>
     },
+    TransferContract {
+        amount: u64,
+        asset: Cow<'a, Hash>,
+        destination: Cow<'a, Hash>
+    },
     Mint {
         asset: Cow<'a, Hash>,
         amount: u64
@@ -251,6 +256,11 @@ impl<'a> RPCContractOutput<'a> {
                 amount: *amount,
                 asset: Cow::Borrowed(asset),
                 destination: Cow::Owned(destination.as_address(mainnet))
+            },
+            ContractOutput::TransferContract { amount, asset, destination } => RPCContractOutput::TransferContract {
+                amount: *amount,
+                asset: Cow::Borrowed(asset),
+                destination: Cow::Borrowed(destination)
             },
             ContractOutput::Mint { asset, amount } => RPCContractOutput::Mint {
                 asset: Cow::Borrowed(asset),
@@ -277,6 +287,11 @@ impl<'a> From<RPCContractOutput<'a>> for ContractOutput {
                 amount,
                 asset: asset.into_owned(),
                 destination: destination.into_owned().to_public_key()
+            },
+            RPCContractOutput::TransferContract { amount, asset, destination } => ContractOutput::TransferContract {
+                amount,
+                asset: asset.into_owned(),
+                destination: destination.into_owned()
             },
             RPCContractOutput::Mint { asset, amount } => ContractOutput::Mint {
                 asset: asset.into_owned(),

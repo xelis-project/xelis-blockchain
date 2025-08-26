@@ -1445,7 +1445,6 @@ pub async fn get_mut_balance_for_contract<'a, 'b: 'a, P: ContractProvider>(provi
     })
 }
 
-
 pub fn get_cache_for_contract<'a>(caches: &'a mut HashMap<Hash, ContractCache>, global_caches: &'a HashMap<Hash, ContractCache>, contract: Hash) -> &'a mut ContractCache {
     match caches.entry(contract) {
         Entry::Occupied(entry) => entry.into_mut(),

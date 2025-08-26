@@ -37,7 +37,6 @@ fn random_fill_buffer(random: Option<&mut DeterministicRandom>, buffer: &mut [u8
 }
 
 pub fn random_fn(_: FnInstance, _: FnParams, metadata: &ModuleMetadata, context: &mut Context) -> FnReturnType<ModuleMetadata> {
-
     // Create a deterministic random for the contract
     let state: &mut ChainState = context.get_mut()
         .context("chain state not found")?;
