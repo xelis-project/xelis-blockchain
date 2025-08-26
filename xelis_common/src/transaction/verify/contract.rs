@@ -59,6 +59,7 @@ impl Transaction {
         parameters: impl DoubleEndedIterator<Item = ValueCell>,
         max_gas: u64,
     ) -> Result<(u64, Option<u64>), anyhow::Error> {
+        debug!("run virtual machine for tx {} and max as {}", tx_hash, max_gas);
         let mut vm = VM::new(&contract_environment.environment);
 
         // Insert the module to load
