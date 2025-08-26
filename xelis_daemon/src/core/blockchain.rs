@@ -2880,6 +2880,8 @@ impl<S: Storage> Blockchain<S> {
 
                                 for el in elements {
                                     entry.push(json!(ContractEvent {
+                                        topoheight: highest_topo,
+                                        block_hash: Cow::Borrowed(&hash),
                                         data: Cow::Borrowed(el)
                                     }));
                                 }
