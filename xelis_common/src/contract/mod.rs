@@ -16,6 +16,7 @@ use log::{debug, info};
 use xelis_builder::EnvironmentBuilder;
 use xelis_vm::{
     Context,
+    EnvironmentError,
     FnInstance,
     FnParams,
     FnReturnType,
@@ -1525,6 +1526,11 @@ fn fire_event_fn(_: FnInstance, mut params: FnParams, metadata: &ModuleMetadata,
     let size = constant.size();
     let cost = FEE_PER_BYTE_OF_EVENT_DATA * size as u64;
     context.increase_gas_usage(cost)?;
+
+    // Ensure that the event is actually serializable
+    if !constant.is_json_serializable() {
+        return Err(EnvironmentError::Static("Event not serializable"))
+    }
 
     let state: &mut ChainState = context.get_mut().context("chain state not found")?;
     let entry = get_cache_for_contract(&mut state.caches, state.global_caches, metadata.contract.clone())

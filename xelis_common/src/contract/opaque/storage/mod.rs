@@ -6,6 +6,7 @@ use async_trait::async_trait;
 use xelis_vm::{
     traits::{JSONHelper, Serializable},
     Context,
+    EnvironmentError,
     FnInstance,
     FnParams,
     FnReturnType,
@@ -122,6 +123,10 @@ pub async fn storage_store<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, 
     let value_size = value.size();
     if value_size > MAX_VALUE_SIZE {
         return Err(anyhow::anyhow!("Value is too large").into());
+    }
+
+    if !key.is_serializable() || !value.is_serializable() {
+        return Err(EnvironmentError::Static("Key / value is not serializable"))
     }
 
     let total_size = (key_size + value_size) as u64;
