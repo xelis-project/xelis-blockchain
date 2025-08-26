@@ -918,6 +918,10 @@ pub struct InvokeContractError<'a> {
 // Value of NotifyEvent::ContractEvent
 #[derive(Serialize, Deserialize)]
 pub struct ContractEvent<'a> {
+    // at which topoheight this occured
+    pub topoheight: TopoHeight,
+    // which block is the TX executor
+    pub block_hash: Cow<'a, Hash>,
     pub data: Cow<'a, ValueCell>
 }
 
