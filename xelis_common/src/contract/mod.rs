@@ -1426,22 +1426,14 @@ pub async fn get_balance_from_cache<'a, 'b: 'a, P: ContractProvider>(provider: &
 
 pub async fn get_mut_balance_for_contract<'a, 'b: 'a, P: ContractProvider>(provider: &P, state: &'a mut ChainState<'b>, contract: Hash, asset: Hash) -> Result<&'a mut (VersionedState, u64), anyhow::Error> {
     Ok(match get_cache_for_contract(&mut state.caches, state.global_caches, contract.clone()).balances.entry(asset.clone()) {
-        Entry::Occupied(entry) => {
-            let v = entry.into_mut();
-            if v.is_none() {
-                *v = Some((VersionedState::New, 0));
-            }
-
-            v.as_mut()
-                .expect("Balance should be inserted")
-        },
+        Entry::Occupied(entry) => entry.into_mut()
+            .get_or_insert((VersionedState::New, 0)),
         Entry::Vacant(entry) => {
+            let ptr = entry.insert(None);
             let v = get_balance_from_provider(provider, state.topoheight, &contract, &asset).await?
                 .unwrap_or_else(|| (VersionedState::New, 0));
 
-            entry.insert(Some(v))
-                .as_mut()
-                .expect("Balance should be inserted")
+            ptr.insert(v)
         }
     })
 }
