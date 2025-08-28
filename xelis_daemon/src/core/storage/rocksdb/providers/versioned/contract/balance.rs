@@ -12,7 +12,7 @@ use crate::core::{
 
 #[async_trait]
 impl VersionedContractBalanceProvider for RocksStorage {
-    async fn delete_versioned_contract_balances_data_at_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError> {
+    async fn delete_versioned_contract_balances_at_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError> {
         trace!("delete versioned contract balances at topoheight {}", topoheight);
         self.delete_versioned_at_topoheight(Column::ContractsBalances, Column::VersionedContractsBalances, topoheight)
     }
