@@ -3,6 +3,7 @@ use std::collections::hash_map::Entry;
 use xelis_vm::{
     traits::{JSONHelper, Serializable},
     Context,
+    EnvironmentError,
     FnInstance,
     FnParams,
     FnReturnType,
@@ -53,6 +54,10 @@ pub async fn read_only_storage_load<'a, 'ty, 'r, P: ContractProvider>(zelf: FnIn
     let key = params.remove(0)
         .into_owned();
 
+    if !key.is_serializable() {
+        return Err(EnvironmentError::Static("Key is not serializable"))
+    }
+
     // Read from global cache first, then fallback to provider
     let value = match get_cache_for_contract(&mut state.caches, state.global_caches, zelf.0.clone())
         .storage
@@ -83,6 +88,10 @@ pub async fn read_only_storage_has<'a, 'ty, 'r, P: ContractProvider>(zelf: FnIns
 
     let key = params.remove(0)
         .into_owned();
+
+    if !key.is_serializable() {
+        return Err(EnvironmentError::Static("Key is not serializable"))
+    }
 
     // Read from global cache first, then fallback to provider
     let contains = match get_cache_for_contract(&mut state.caches, state.global_caches, zelf.0.clone())

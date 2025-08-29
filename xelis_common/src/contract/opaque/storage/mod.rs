@@ -61,6 +61,10 @@ pub async fn storage_load<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, m
     let key = params.remove(0)
         .into_owned();
 
+    if !key.is_serializable() {
+        return Err(EnvironmentError::Static("Key is not serializable"))
+    }
+
     let cache = get_cache_for_contract(&mut state.caches, state.global_caches, metadata.contract.clone());
     let value = match cache.storage.entry(key.clone()) {
         Entry::Occupied(v) => v.get()
@@ -87,6 +91,10 @@ pub async fn storage_has<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mu
 
     let key = params.remove(0)
         .into_owned();
+
+    if !key.is_serializable() {
+        return Err(EnvironmentError::Static("Key is not serializable"))
+    }
 
     let cache = get_cache_for_contract(&mut state.caches, state.global_caches, metadata.contract.clone());
     let contains = match cache.storage.entry(key.clone()) {
@@ -166,6 +174,10 @@ pub async fn storage_delete<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>,
     // into_owned calls `deep_clone`
     let key = params.remove(0)
         .into_owned();
+
+    if !key.is_serializable() {
+        return Err(EnvironmentError::Static("Key is not serializable"))
+    }
 
     let cache = get_cache_for_contract(&mut state.caches, state.global_caches, metadata.contract.clone());
     let data_state = match cache.storage.get(&key) {
