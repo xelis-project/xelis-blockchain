@@ -27,6 +27,14 @@ impl Serializable for Hash {
         self.write(&mut writer);
         writer.total_write()
     }
+
+    fn is_serializable(&self) -> bool {
+        true
+    }
+
+    fn get_size(&self) -> usize {
+        HASH_SIZE
+    }
 }
 
 pub fn hash_to_bytes_fn(zelf: FnInstance, _: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
