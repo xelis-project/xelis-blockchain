@@ -43,15 +43,7 @@ impl DynHash for OpaqueTranscript {
     }
 }
 
-impl JSONHelper for OpaqueTranscript {
-    fn is_json_supported(&self) -> bool {
-        false
-    }
-
-    fn serialize_json(&self) -> Result<serde_json::Value, anyhow::Error> {
-        Err(anyhow::anyhow!("OpaqueTranscript does not support JSON serialization"))
-    }
-}
+impl JSONHelper for OpaqueTranscript {}
 
 impl Serializable for OpaqueTranscript {
     fn serialize(&self, _: &mut Vec<u8>) -> usize {

@@ -43,17 +43,9 @@ impl hash::Hash for OpaqueModule {
     }
 }
 
-impl Serializable for OpaqueModule {
-    fn is_serializable(&self) -> bool {
-        false
-    }
-}
+impl Serializable for OpaqueModule {}
 
-impl JSONHelper for OpaqueModule {
-    fn is_json_supported(&self) -> bool {
-        false
-    }
-}
+impl JSONHelper for OpaqueModule {}
 
 pub async fn module_new<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: FnParams, _: &ModuleMetadata, context: &mut Context<'ty, 'r>) -> FnReturnType<ModuleMetadata> {
     let (provider, state) = from_context::<P>(context)?;

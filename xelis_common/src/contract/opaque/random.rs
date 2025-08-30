@@ -17,17 +17,9 @@ use crate::contract::{get_cache_for_contract, ChainState, DeterministicRandom, M
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct OpaqueRandom;
 
-impl Serializable for OpaqueRandom {
-    fn is_serializable(&self) -> bool {
-        false
-    }
-}
+impl Serializable for OpaqueRandom {}
 
-impl JSONHelper for OpaqueRandom {
-    fn is_json_supported(&self) -> bool {
-        false
-    }
-}
+impl JSONHelper for OpaqueRandom {}
 
 fn random_fill_buffer(random: Option<&mut DeterministicRandom>, buffer: &mut [u8]) -> anyhow::Result<()> {
     random
