@@ -1496,12 +1496,11 @@ pub async fn get_asset_from_cache<'a, 'b, P: ContractProvider>(provider: &P, sta
 pub async fn get_asset_from_provider<P: ContractProvider>(provider: &P, topoheight: TopoHeight, asset: &Hash) -> Result<Option<AssetChanges>, anyhow::Error> {
     match provider.load_asset_data(asset, topoheight).await? {
         Some((topo, data)) => {
-            let supply = provider.load_asset_supply(asset, topoheight).await?
-                .map(|(topo, v)| (VersionedState::FetchedAt(topo), v));
+            let (supply_topo, supply) = provider.load_asset_circulating_supply(asset, topoheight).await?;
 
             Ok(Some(AssetChanges {
                 data: (VersionedState::FetchedAt(topo), data),
-                supply
+                circulating_supply: (VersionedState::FetchedAt(supply_topo), supply)
             }))
         },
         None => Ok(None)
@@ -1745,22 +1744,14 @@ async fn burn<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: F
         .balances
         .insert(asset.clone(), Some((balance_state, balance)));
 
-    let topoheight = state.topoheight;
-    let changes = get_asset_changes_for_hash_mut(state, &asset)?;
-    let (mut supply_state, supply) = match changes.supply {
-        Some((state, supply)) => (state, supply),
-        None => provider.load_asset_supply(&asset, topoheight).await?
-            .map(|(topoheight, supply)| (VersionedState::FetchedAt(topoheight), supply))
-            // No supply yet, lets init it to zero
-            .unwrap_or((VersionedState::New, 0)),
-    };
-
-    // Update the supply
-    let new_supply = supply.checked_sub(amount)
+    // Track the burn in the circulating supply
+    // We expect that the asset changes exists
+    let changes = get_asset_from_cache(provider, state, asset.clone()).await?;
+    let new_supply = changes.circulating_supply.1.checked_sub(amount)
         .context("Overflow while burning supply")?;
-    supply_state.mark_updated();
 
-    changes.supply = Some((supply_state, new_supply));
+    changes.circulating_supply.1 = new_supply;
+    changes.circulating_supply.0.mark_updated();
 
     // Add the output
     state.outputs.push(ContractOutput::Burn { asset, amount });

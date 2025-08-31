@@ -98,7 +98,7 @@ pub async fn asset_create<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, m
     let data = AssetData::new(decimals, name, ticker, max_supply, Some(AssetOwner::new(metadata.contract.clone(), id)));
     *asset_cache = Some(AssetChanges {
         data: (VersionedState::New, data.clone()),
-        supply: None
+        circulating_supply: (VersionedState::New, max_supply.unwrap_or(0)),
     });
 
     // If we have a max supply, we need to mint it to the contract

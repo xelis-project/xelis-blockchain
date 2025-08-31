@@ -13,7 +13,7 @@ pub struct AssetChanges {
     // The asset data
     pub data: (VersionedState, AssetData),
     // The supply of the asset
-    pub supply: Option<(VersionedState, u64)>,
+    pub circulating_supply: (VersionedState, u64),
 }
 
 // Contract cache containing all the changes/cache made by the contract

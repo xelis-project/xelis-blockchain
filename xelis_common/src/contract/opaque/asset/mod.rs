@@ -100,20 +100,9 @@ pub fn asset_get_contract_id<P: ContractProvider>(zelf: FnInstance, _: FnParams,
 pub async fn asset_get_supply<'a, 'ty, 'r, P: ContractProvider>(zelf: FnInstance<'a>, _: FnParams, _: &ModuleMetadata, context: &mut Context<'ty, 'r>) -> FnReturnType<ModuleMetadata> {
     let zelf = zelf?;
     let asset: &Asset = zelf.as_opaque_type()?;
-    let (provider, state) = from_context::<P>(context)?;
-
-    let topoheight = state.topoheight;
+    let (_, state) = from_context::<P>(context)?;
     let changes = get_asset_changes_for_hash_mut(state, &asset.hash)?;
-    if let Some((_, supply)) = changes.supply {
-        return Ok(SysCallResult::Return(Primitive::U64(supply).into()))
-    }
-
-    let supply = provider.load_asset_supply(&asset.hash, topoheight).await?
-        .map(|(topo, v)| (VersionedState::FetchedAt(topo), v))
-        .unwrap_or((VersionedState::New, 0));
-
-    changes.supply = Some(supply);
-    Ok(SysCallResult::Return(Primitive::U64(supply.1).into()))
+    Ok(SysCallResult::Return(Primitive::U64(changes.circulating_supply.1).into()))
 }
 
 // Get the self claimed asset name
@@ -190,7 +179,6 @@ pub async fn asset_mint<'a, 'ty, 'r, P: ContractProvider>(zelf: FnInstance<'a>, 
     let asset: &mut Asset = zelf.as_opaque_type_mut()?;
     let (provider, state) = from_context::<P>(context)?;
 
-    let topoheight = state.topoheight;
     let changes = get_asset_changes_for_hash_mut(state, &asset.hash)?;
     let asset_data = &mut changes.data.1;
     let read_only = asset_data
@@ -212,19 +200,13 @@ pub async fn asset_mint<'a, 'ty, 'r, P: ContractProvider>(zelf: FnInstance<'a>, 
 
         // Track supply changes
         // Also update the asset supply
-        let (mut supply_state, supply) = match changes.supply {
-            Some((state, supply)) => (state, supply),
-            None => provider.load_asset_supply(&asset.hash, topoheight).await?
-                .map(|(topoheight, supply)| (VersionedState::FetchedAt(topoheight), supply))
-                // No supply yet, lets init it to zero
-                .unwrap_or((VersionedState::New, 0)),
-        };
 
         // Update the supply
-        let new_supply = supply.checked_add(amount)
+        let new_supply = changes.circulating_supply.1.checked_add(amount)
             .context("Overflow while minting supply")?;
-        supply_state.mark_updated();
-        changes.supply = Some((supply_state, new_supply));
+
+        changes.circulating_supply.0.mark_updated();
+        changes.circulating_supply.1 = new_supply;
     }
 
     // Update the contract balance

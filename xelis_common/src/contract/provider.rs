@@ -28,7 +28,7 @@ pub trait ContractProvider: ContractStorage + Send + Sync + 'static {
 
     // Load the asset supply
     // Supply is the current circulating supply
-    async fn load_asset_supply(&self, asset: &Hash, topoheight: TopoHeight) -> Result<Option<(TopoHeight, u64)>, anyhow::Error>;
+    async fn load_asset_circulating_supply(&self, asset: &Hash, topoheight: TopoHeight) -> Result<(TopoHeight, u64), anyhow::Error>;
 
     // Verify if the address is well registered
     async fn account_exists(&self, key: &PublicKey, topoheight: TopoHeight) -> Result<bool, anyhow::Error>;
