@@ -1923,7 +1923,7 @@ impl<S: Storage> Blockchain<S> {
             // Search all txs that were processed in tips
             // This help us to determine if a TX was already included or not based on our DAG
             // Hopefully, this should never be triggered because the mempool is cleaned based on our state
-            let processed_txs = self.get_all_txs_until_height(storage, stable_height, block.get_tips().iter().cloned(), false).await?;
+            let processed_txs = self.get_all_txs_until_height(storage, stable_height, block.get_tips().iter().cloned(), false, true).await?;
 
             // Grouped per source each TXs that were contained in blocks (orphaned) tips
             let mut grouped_orphaned_txs = HashMap::new();
@@ -2299,7 +2299,8 @@ impl<S: Storage> Blockchain<S> {
                     &*storage,
                     stable_height,
                     block.get_tips().iter().cloned(),
-                    !is_v2_enabled
+                    !is_v2_enabled,
+                    is_v3_enabled,
                 ).await?
             } else {
                 IndexSet::new()
@@ -3192,9 +3193,9 @@ impl<S: Storage> Blockchain<S> {
 
     // retrieve all txs hashes until height or until genesis block
     // for this we get all tips and recursively retrieve all txs from tips until we reach height
-    async fn get_all_txs_until_height<P>(&self, provider: &P, until_height: u64, tips: impl Iterator<Item = Hash>, executed_only: bool) -> Result<IndexSet<Hash>, BlockchainError>
+    async fn get_all_txs_until_height<P>(&self, provider: &P, until_height: u64, tips: impl Iterator<Item = Hash>, txs_executed_only: bool, blocks_orphaned_only: bool) -> Result<IndexSet<Hash>, BlockchainError>
     where
-        P: DifficultyProvider + ClientProtocolProvider
+        P: DifficultyProvider + ClientProtocolProvider + DagOrderProvider
     {
         trace!("get all txs until height {}", until_height);
         // All transactions hashes found under the stable height
@@ -3207,6 +3208,11 @@ impl<S: Storage> Blockchain<S> {
 
         // get last element from queue (order doesn't matter and its faster than moving all elements)
         while let Some(hash) = queue.pop() {
+            // Only go through orphaned blocks if required
+            if blocks_orphaned_only && provider.is_block_topological_ordered(&hash).await? {
+                continue;
+            }
+
             let block = provider.get_block_header_by_hash(&hash).await?;
 
             // check that the block height is higher than the height passed in param
@@ -3216,7 +3222,7 @@ impl<S: Storage> Blockchain<S> {
                     // Check that we don't have it yet
                     if !hashes.contains(tx) {
                         // Then check that it's executed in this block
-                        if !executed_only || (executed_only && provider.is_tx_executed_in_block(tx, &hash).await?) {
+                        if !txs_executed_only || (txs_executed_only && provider.is_tx_executed_in_block(tx, &hash).await?) {
                             // add it to the list
                             hashes.insert(tx.clone());
                         }
