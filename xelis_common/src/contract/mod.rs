@@ -32,7 +32,7 @@ use crate::{
     block::{Block, TopoHeight},
     config::{
         FEE_PER_ACCOUNT_CREATION,
-        FEE_PER_BYTE_OF_EVENT_DATA
+        FEE_PER_BYTE_OF_EVENT_DATA,
     },
     crypto::{
         proofs::{CiphertextValidityProof, G, H},
@@ -1744,6 +1744,23 @@ async fn burn<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: F
     get_cache_for_contract(&mut state.caches, state.global_caches, metadata.contract.clone())
         .balances
         .insert(asset.clone(), Some((balance_state, balance)));
+
+    let topoheight = state.topoheight;
+    let changes = get_asset_changes_for_hash_mut(state, &asset)?;
+    let (mut supply_state, supply) = match changes.supply {
+        Some((state, supply)) => (state, supply),
+        None => provider.load_asset_supply(&asset, topoheight).await?
+            .map(|(topoheight, supply)| (VersionedState::FetchedAt(topoheight), supply))
+            // No supply yet, lets init it to zero
+            .unwrap_or((VersionedState::New, 0)),
+    };
+
+    // Update the supply
+    let new_supply = supply.checked_sub(amount)
+        .context("Overflow while burning supply")?;
+    supply_state.mark_updated();
+
+    changes.supply = Some((supply_state, new_supply));
 
     // Add the output
     state.outputs.push(ContractOutput::Burn { asset, amount });

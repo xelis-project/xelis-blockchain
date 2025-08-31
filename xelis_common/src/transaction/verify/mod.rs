@@ -1126,10 +1126,8 @@ impl Transaction {
                 }
             },
             TransactionType::Burn(payload) => {
-                if payload.asset == XELIS_ASSET {
-                    state.add_burned_coins(payload.amount).await
-                        .map_err(VerificationError::State)?;
-                }
+                state.add_burned_coins(&payload.asset, payload.amount).await
+                    .map_err(VerificationError::State)?;
             },
             TransactionType::MultiSig(payload) => {
                 state.set_multisig_state(&self.source, payload).await.map_err(VerificationError::State)?;

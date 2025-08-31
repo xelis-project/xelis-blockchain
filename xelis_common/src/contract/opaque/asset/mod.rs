@@ -96,7 +96,7 @@ pub fn asset_get_contract_id<P: ContractProvider>(zelf: FnInstance, _: FnParams,
     Ok(SysCallResult::Return(id.into()))
 }
 
-// Emitted supply for this asset
+// Circulating supply for this asset
 pub async fn asset_get_supply<'a, 'ty, 'r, P: ContractProvider>(zelf: FnInstance<'a>, _: FnParams, _: &ModuleMetadata, context: &mut Context<'ty, 'r>) -> FnReturnType<ModuleMetadata> {
     let zelf = zelf?;
     let asset: &Asset = zelf.as_opaque_type()?;

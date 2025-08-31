@@ -222,7 +222,7 @@ impl Transaction {
             .ok_or(VerificationError::GasOverflow)?;
 
         debug!("Invoke contract used gas: {}, burned: {}, fee: {}, refund: {}", used_gas, burned_gas, gas_fee, refund_gas);
-        state.add_burned_coins(burned_gas).await
+        state.add_burned_coins(&XELIS_ASSET, burned_gas).await
             .map_err(VerificationError::State)?;
 
         state.add_gas_fee(gas_fee).await

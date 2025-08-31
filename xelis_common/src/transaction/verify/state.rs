@@ -137,7 +137,7 @@ pub struct ContractEnvironment<'a, P: ContractProvider> {
 #[async_trait]
 pub trait BlockchainApplyState<'a, P: ContractProvider, E>: BlockchainVerificationState<'a, E> {
     /// Add burned XELIS
-    async fn add_burned_coins(&mut self, amount: u64) -> Result<(), E>;
+    async fn add_burned_coins(&mut self, asset: &Hash, amount: u64) -> Result<(), E>;
 
     /// Add fee XELIS
     async fn add_gas_fee(&mut self, amount: u64) -> Result<(), E>;

@@ -88,16 +88,18 @@ pub async fn asset_create<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, m
     buffer[HASH_SIZE..].copy_from_slice(&id.to_be_bytes());
 
     let asset_hash = Hash::new(hash(&buffer).into());
+
     // We must be sure that we don't have this asset already
-    if get_optional_asset_from_cache(provider, state, asset_hash.clone()).await?.is_some() {
+    let asset_cache = get_optional_asset_from_cache(provider, state, asset_hash.clone()).await?;
+    if asset_cache.is_some() {
         return Ok(SysCallResult::Return(Primitive::Null.into()));
     }
 
     let data = AssetData::new(decimals, name, ticker, max_supply, Some(AssetOwner::new(metadata.contract.clone(), id)));
-    state.assets.insert(asset_hash.clone(), Some(AssetChanges {
+    *asset_cache = Some(AssetChanges {
         data: (VersionedState::New, data.clone()),
         supply: None
-    }));
+    });
 
     // If we have a max supply, we need to mint it to the contract
     if let Some(max_supply) = max_supply {
