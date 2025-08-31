@@ -95,8 +95,6 @@ pub struct SledStorage {
     // Versioned assets supply
     // Key is topoheight+asset->Versioned supply
     pub(super) versioned_assets_supply: Tree,
-    // burned supply for each block topoheight
-    pub(super) burned_supply: Tree,
     // difficulty for each block hash
     pub(super) difficulty: Tree,
     // tree to store all blocks hashes where a tx was included in 
@@ -228,7 +226,6 @@ impl SledStorage {
             nonces: sled.open_tree("nonces")?,
             rewards: sled.open_tree("rewards")?,
             supply: sled.open_tree("supply")?,
-            burned_supply: sled.open_tree("burned_supply")?,
             difficulty: sled.open_tree("difficulty")?,
             tx_blocks: sled.open_tree("tx_blocks")?,
             versioned_nonces: sled.open_tree("versioned_nonces")?,
@@ -622,10 +619,6 @@ impl Storage for SledStorage {
         trace!("Deleting supply");
         let supply: u64 = Self::delete_cacheable_data(self.snapshot.as_mut(), &self.supply, None, &topoheight).await?;
         trace!("Supply was {}", supply);
-
-        trace!("Deleting burned supply");
-        let burned_supply: u64 = Self::delete_cacheable_data(self.snapshot.as_mut(), &self.burned_supply, None, &topoheight).await?;
-        trace!("Burned supply was {}", burned_supply);
 
         trace!("Deleting rewards");
         let reward: u64 = Self::delete_cacheable_data(self.snapshot.as_mut(), &self.rewards, None, &topoheight).await?;

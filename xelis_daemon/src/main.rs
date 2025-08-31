@@ -490,16 +490,14 @@ async fn verify_chain<S: Storage>(manager: &CommandManager, mut args: ArgumentMa
 
     let storage = blockchain.get_storage().read().await;
     let mut pruned_topoheight = storage.get_pruned_topoheight().await.context("Error on pruned topoheight")?.unwrap_or(0);
-    let (mut expected_supply, mut expected_burned_supply) = if pruned_topoheight > 0 {
+    let mut expected_supply = if pruned_topoheight > 0 {
         let supply = storage.get_supply_at_topo_height(pruned_topoheight).await
-            .context("Error while retrieving starting expected supply")?;
-        let burned_supply = storage.get_burned_supply_at_topo_height(pruned_topoheight).await
             .context("Error while retrieving starting expected supply")?;
         pruned_topoheight += 1;
 
-        (supply, burned_supply)
+        supply
     } else {
-        (0, 0)
+        0
     };
 
     let topoheight = if args.has_argument("topoheight") {
@@ -544,7 +542,6 @@ async fn verify_chain<S: Storage>(manager: &CommandManager, mut args: ArgumentMa
             return Ok(())
         }
 
-        let mut burned_sum = 0;
         let mut txs = Vec::new();
         let mut outputs = 0;
         for tx_hash in header.get_transactions() {
@@ -564,11 +561,6 @@ async fn verify_chain<S: Storage>(manager: &CommandManager, mut args: ArgumentMa
                     }
                 }
 
-                // TODO: with upcoming smart contracts, this may be biased due to the gas fee
-                if let Some(burned) = transaction.get_burned_amount(&XELIS_ASSET) {
-                    burned_sum += burned;
-                }
-
                 outputs += transaction.get_outputs_count();
                 txs.push((transaction.into_arc(), tx_hash));
             }
@@ -585,17 +577,6 @@ async fn verify_chain<S: Storage>(manager: &CommandManager, mut args: ArgumentMa
                 .context("Error while verifying txs")?;
 
             info!("Verified in {}ms", start.elapsed().as_millis());
-        }
-
-        // Verify the burned supply
-        let burned_supply = storage.get_burned_supply_at_topo_height(topo).await
-            .with_context(|| format!("Error while retrieving burned supply at topoheight {topo}"))?;
-
-        expected_burned_supply += burned_sum;
-
-        if burned_supply != expected_burned_supply {
-            manager.error(format!("Error for block {} at topoheight {}, expected burned supply {} found {}", hash_at_topo, topo, format_xelis(expected_burned_supply), format_xelis(burned_supply)));
-            return Ok(())
         }
     }
     manager.message("Supply is valid");
@@ -1200,8 +1181,10 @@ async fn status<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Res
         .context("Error while calculating required base fee")?;
     let emitted_supply = storage.get_supply_at_topo_height(topoheight).await
         .context("Error while retrieving supply")?;
-    let burned_supply = storage.get_burned_supply_at_topo_height(topoheight).await
-        .context("Error while retrieving burned supply")?;
+    let circulating_supply = storage.get_circulating_supply_for_asset_at_maximum_topoheight(&XELIS_ASSET, topoheight).await
+        .context("Error while retrieving burned supply")?
+        .map(|(_, v)| v.take())
+        .unwrap_or(0);
     let accounts_count = storage.count_accounts().await
         .context("Error while counting accounts")?;
     let transactions_count = storage.count_transactions().await
@@ -1219,6 +1202,8 @@ async fn status<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Res
     let version = get_version_at_height(blockchain.get_network(), height);
     let block_time_target = get_block_time_target_for_version(version);
 
+    let burned_supply = emitted_supply - circulating_supply;
+
     manager.message(format!("Height: {}", height));
     manager.message(format!("Stable Height: {}", stableheight));
     manager.message(format!("Stable Topo Height: {}", stable_topoheight));
@@ -1232,7 +1217,7 @@ async fn status<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Res
     manager.message(format!("Required base fee: {} XELIS / min: {} XELIS", format_xelis(required_base_fee), format_xelis(FEE_PER_KB)));
     manager.message(format!("Emitted Supply: {} XELIS", format_xelis(emitted_supply)));
     manager.message(format!("Burned Supply: {} XELIS", format_xelis(burned_supply)));
-    manager.message(format!("Circulating Supply: {} XELIS", format_xelis(emitted_supply - burned_supply)));
+    manager.message(format!("Circulating Supply: {} XELIS", format_xelis(circulating_supply)));
     manager.message(format!("Current Block Reward: {} XELIS", format_xelis(get_block_reward(emitted_supply, block_time_target))));
     manager.message(format!("Accounts/Transactions/Blocks/Assets/Contracts: {}/{}/{}/{}/{}", accounts_count, transactions_count, blocks_count, assets, contracts));
     manager.message(format!("Block Version: {}", version));

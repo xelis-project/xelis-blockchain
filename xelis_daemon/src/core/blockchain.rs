@@ -848,14 +848,6 @@ impl<S: Storage> Blockchain<S> {
         storage.get_supply_at_topo_height(self.get_topo_height()).await
     }
 
-    // Get the current burned supply of XELIS at current topoheight
-    pub async fn get_burned_supply(&self) -> Result<u64, BlockchainError> {
-        debug!("get burned supply");
-        let storage = self.storage.read().await;
-        debug!("storage read acquired for get burned supply");
-        storage.get_burned_supply_at_topo_height(self.get_topo_height()).await
-    }
-
     // Get the count of transactions available in the mempool
     pub async fn get_mempool_size(&self) -> usize {
         trace!("get mempool size");
@@ -2649,13 +2641,10 @@ impl<S: Storage> Blockchain<S> {
                 trace!("Ordering block {} at topoheight {}", hash, highest_topo);
 
                 storage.set_topo_height_for_block(&hash, highest_topo).await?;
-                let (past_emitted_supply, past_burned_supply) = if highest_topo == 0 {
-                    (0, 0)
+                let past_emitted_supply = if highest_topo == 0 {
+                    0
                 } else {
-                    (
-                        storage.get_supply_at_topo_height(highest_topo - 1).await?,
-                        storage.get_burned_supply_at_topo_height(highest_topo - 1).await?
-                    )
+                    storage.get_supply_at_topo_height(highest_topo - 1).await?
                 };
 
                 // Block for this hash
@@ -2697,7 +2686,6 @@ impl<S: Storage> Blockchain<S> {
                     base_topo_height,
                     highest_topo,
                     version,
-                    past_burned_supply,
                     &hash,
                     &block,
                     base_fee,
@@ -2893,11 +2881,10 @@ impl<S: Storage> Blockchain<S> {
                 }
 
                 // apply changes from Chain State
-                let burned_supply = chain_state.get_burned_supply();
                 chain_state.apply_changes().await?;
 
                 let emitted_supply = past_emitted_supply + block_reward;
-                storage.set_topoheight_metadata(highest_topo, block_reward, emitted_supply, burned_supply).await?;
+                storage.set_topoheight_metadata(highest_topo, block_reward, emitted_supply).await?;
 
                 if should_track_events.contains(&NotifyEvent::BlockOrdered) {
                     let value = json!(BlockOrderedEvent {
@@ -2905,7 +2892,10 @@ impl<S: Storage> Blockchain<S> {
                         block_type: get_block_type_for_block(self, &*storage, &hash).await.unwrap_or(BlockType::Normal),
                         topoheight: highest_topo,
                     });
-                    events.entry(NotifyEvent::BlockOrdered).or_insert_with(Vec::new).push(value);
+
+                    events.entry(NotifyEvent::BlockOrdered)
+                        .or_insert_with(Vec::new)
+                        .push(value);
                 }
             }
 

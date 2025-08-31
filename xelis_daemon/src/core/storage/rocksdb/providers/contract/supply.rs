@@ -5,14 +5,17 @@ use xelis_common::{
     crypto::Hash,
     versioned_type::Versioned
 };
-use crate::core::{error::BlockchainError, storage::{rocksdb::Column, RocksStorage, SupplyProvider}};
+use crate::core::{
+    error::BlockchainError,
+    storage::{rocksdb::Column, RocksStorage, CirculatingSupplyProvider}
+};
 
 pub type VersionedSupply = Versioned<u64>;
 
 #[async_trait]
-impl SupplyProvider for RocksStorage {
+impl CirculatingSupplyProvider for RocksStorage {
     // Verify if we have a supply already set for this asset
-    async fn has_supply_for_asset(&self, asset: &Hash) -> Result<bool, BlockchainError> {
+    async fn has_circulating_supply_for_asset(&self, asset: &Hash) -> Result<bool, BlockchainError> {
         trace!("has supply for asset {}", asset);
         let Some(asset) = self.get_optional_asset_type(asset)? else {
             return Ok(false)
@@ -21,7 +24,7 @@ impl SupplyProvider for RocksStorage {
     }
 
     // Verify if we have a versioned data at exact topoheight
-    async fn has_asset_supply_at_exact_topoheight(&self, asset: &Hash, topoheight: TopoHeight) -> Result<bool, BlockchainError> {
+    async fn has_circulating_supply_for_asset_at_exact_topoheight(&self, asset: &Hash, topoheight: TopoHeight) -> Result<bool, BlockchainError> {
         trace!("has asset {} supply at exact topoheight {}", asset, topoheight);
         let asset_id = self.get_asset_id(asset)?;
         let key = Self::get_asset_versioned_key(asset_id, topoheight);
@@ -29,7 +32,7 @@ impl SupplyProvider for RocksStorage {
     }
 
     // Get the supply at the maximum topoheight
-    async fn get_asset_supply_at_maximum_topoheight(&self, asset: &Hash, maximum_topoheight: TopoHeight) -> Result<Option<(TopoHeight, VersionedSupply)>, BlockchainError> {
+    async fn get_circulating_supply_for_asset_at_maximum_topoheight(&self, asset: &Hash, maximum_topoheight: TopoHeight) -> Result<Option<(TopoHeight, VersionedSupply)>, BlockchainError> {
         trace!("get asset {} supply at maximum topoheight {}", asset, maximum_topoheight);
         let Some(asset) = self.get_optional_asset_type(asset)? else {
             return Ok(None)
@@ -59,7 +62,7 @@ impl SupplyProvider for RocksStorage {
     }
 
     // Set the latest supply pointer for this asset and store the versioned data
-    async fn set_last_supply_for_asset(&mut self, hash: &Hash, topoheight: TopoHeight, supply: &VersionedSupply) -> Result<(), BlockchainError> {
+    async fn set_last_circulating_supply_for_asset(&mut self, hash: &Hash, topoheight: TopoHeight, supply: &VersionedSupply) -> Result<(), BlockchainError> {
         trace!("set last supply for asset {} at topoheight {}", hash, topoheight);
         let mut asset = self.get_asset_type(hash)?;
         asset.supply_pointer = Some(topoheight);

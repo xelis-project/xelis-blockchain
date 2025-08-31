@@ -5,6 +5,7 @@ mod supply;
 mod r#impl;
 
 use std::sync::Arc;
+use anyhow::Context;
 use async_trait::async_trait;
 use log::trace;
 use xelis_common::{
@@ -24,7 +25,7 @@ use crate::core::storage::{
     ContractProvider as _,
     NetworkProvider,
     RocksStorage,
-    SupplyProvider
+    CirculatingSupplyProvider
 };
 
 #[async_trait]
@@ -83,10 +84,11 @@ impl ContractProvider for RocksStorage {
         Ok(res.map(|(topo, v)| (topo, v.take())))
     }
 
-    async fn load_asset_supply(&self, asset: &Hash, topoheight: TopoHeight) -> Result<Option<(TopoHeight, u64)>, anyhow::Error> {
+    async fn load_asset_circulating_supply(&self, asset: &Hash, topoheight: TopoHeight) -> Result<(TopoHeight, u64), anyhow::Error> {
         trace!("load asset supply for asset {} at topoheight {}", asset, topoheight);
-        let res = self.get_asset_supply_at_maximum_topoheight(asset, topoheight).await?;
-        Ok(res.map(|(topoheight, supply)| (topoheight, supply.take())))
+        self.get_circulating_supply_for_asset_at_maximum_topoheight(asset, topoheight).await?
+            .map(|(topo, v)| (topo, v.take()))
+            .context("Asset circulating supply not found")
     }
 
     async fn get_account_balance_for_asset(&self, key: &PublicKey, asset: &Hash, topoheight: TopoHeight) -> Result<Option<(TopoHeight, CiphertextCache)>, anyhow::Error> {

@@ -22,7 +22,8 @@ use crate::{
             VersionedContract,
             VersionedContractBalance,
             VersionedContractData,
-            VersionedMultiSig
+            VersionedMultiSig,
+            VersionedSupply
         }
     },
     p2p::{
@@ -103,6 +104,23 @@ impl<S: Storage> P2pServer<S> {
                     None
                 };
                 StepResponse::Assets(assets, page)
+            },
+            StepRequest::AssetsSupply(topoheight, assets) => {
+                // move references only
+                let storage = &storage;
+
+                let assets_supply: Vec<Option<u64>> = stream::iter(assets.into_owned().into_iter())
+                    .map(|asset| async move {
+                        let supply = storage.get_circulating_supply_for_asset_at_maximum_topoheight(&asset, topoheight).await?
+                            .map(|(_, v)| v.take());
+
+                        Ok::<_, BlockchainError>(supply)
+                    })
+                    .buffered(self.stream_concurrency)
+                    .try_collect()
+                    .await?;
+
+                StepResponse::AssetsSupply(assets_supply)
             },
             StepRequest::KeyBalances(key, min, max, page) => {
                 if min > max {
@@ -328,7 +346,6 @@ impl<S: Storage> P2pServer<S> {
                     .map(|topoheight| async move {
                         let hash = storage.get_hash_at_topo_height(topoheight).await?;
                         let supply = storage.get_supply_at_topo_height(topoheight).await?;
-                        let burned_supply = storage.get_burned_supply_at_topo_height(topoheight).await?;
                         let reward = storage.get_block_reward_at_topo_height(topoheight).await?;
                         let difficulty = storage.get_difficulty_for_block_hash(&hash).await?;
                         let cumulative_difficulty = storage.get_cumulative_difficulty_for_block_hash(&hash).await?;
@@ -345,7 +362,7 @@ impl<S: Storage> P2pServer<S> {
                             }
                         }
 
-                        Ok::<_, BlockchainError>(BlockMetadata { hash, supply, burned_supply, reward, difficulty, cumulative_difficulty, p, executed_transactions })
+                        Ok::<_, BlockchainError>(BlockMetadata { hash, supply, reward, difficulty, cumulative_difficulty, p, executed_transactions })
                     })
                     .buffered(self.stream_concurrency)
                     .try_collect()
@@ -430,15 +447,60 @@ impl<S: Storage> P2pServer<S> {
                     top_block_hash = Some(hash);
                     stable_topoheight = topoheight;
 
+                    // Request the supply for each local asset we have
+                    {
+                        let mut storage = self.blockchain.get_storage().write().await;
+                        let mut skip = 0;
+                        loop {
+                            let assets = storage.get_assets().await?
+                                .skip(skip)
+                                .take(MAX_ITEMS_PER_PAGE)
+                                .collect::<Result<IndexSet<_>, _>>()?;
+    
+                            if assets.is_empty() {
+                                break;
+                            }
+
+                            skip += assets.len();
+
+                            let StepResponse::AssetsSupply(supply) = peer.request_boostrap_chain(StepRequest::AssetsSupply(stable_topoheight, Cow::Borrowed(&assets))).await? else {
+                                // shouldn't happen
+                                error!("Received an invalid StepResponse (how ?) while fetching local assets supply");
+                                return Err(P2pError::InvalidPacket.into())
+                            };
+
+                            for (asset, supply) in assets.into_iter().zip(supply) {
+                                if let Some(supply) = supply {
+                                    storage.set_last_circulating_supply_for_asset(&asset, stable_topoheight, &VersionedSupply::new(supply, None)).await?;
+                                } else {
+                                    warn!("No supply found for local asset {}", asset);
+                                }
+                            }
+                        }
+                    }
+
                     Some(StepRequest::Assets(our_topoheight, topoheight, None))
                 },
                 // fetch all assets from peer
                 StepResponse::Assets(assets, next_page) => {
+                    let hashes = assets.keys().cloned().collect();
+                    let StepResponse::AssetsSupply(supply) = peer.request_boostrap_chain(StepRequest::AssetsSupply(stable_topoheight, Cow::Owned(hashes))).await? else {
+                        // shouldn't happen
+                        error!("Received an invalid StepResponse (how ?) while fetching assets supply");
+                        return Err(P2pError::InvalidPacket.into())
+                    };
+
                     {
                         let mut storage = self.blockchain.get_storage().write().await;
-                        for (asset, data) in assets {
+                        for ((asset, data), supply) in assets.into_iter().zip(supply) {
                             info!("Saving asset {} at topoheight {}", asset, stable_topoheight);
                             storage.add_asset(&asset, stable_topoheight, VersionedAssetData::new(data, None)).await?;
+
+                            if let Some(supply) = supply {
+                                storage.set_last_circulating_supply_for_asset(&asset, stable_topoheight, &VersionedSupply::new(supply, None)).await?;
+                            } else {
+                                warn!("No asset supply found for {}", asset);
+                            }
                         }
                     }
 
@@ -560,7 +622,6 @@ impl<S: Storage> P2pServer<S> {
                                 topoheight,
                                 metadata.reward,
                                 metadata.supply,
-                                metadata.burned_supply
                             ).await?;
 
                             storage.set_topo_height_for_block(&hash, topoheight).await?;

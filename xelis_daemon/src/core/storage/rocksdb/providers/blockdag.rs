@@ -43,20 +43,12 @@ impl BlockDagProvider for RocksStorage {
             .map(|metadata| metadata.emitted_supply)
     }
 
-    // Get the burned supply from topoheight
-    async fn get_burned_supply_at_topo_height(&self, topoheight: TopoHeight) -> Result<u64, BlockchainError> {
-        trace!("get burned supply at topoheight {}", topoheight);
-        self.get_metadata_at_topoheight(topoheight)
-        .map(|metadata| metadata.burned_supply)
-    }
-
     // Set the metadata for topoheight
-    async fn set_topoheight_metadata(&mut self, topoheight: TopoHeight, rewards: u64, emitted_supply: u64, burned_supply: u64) -> Result<(), BlockchainError> {
+    async fn set_topoheight_metadata(&mut self, topoheight: TopoHeight, rewards: u64, emitted_supply: u64) -> Result<(), BlockchainError> {
         trace!("set topoheight metadata {}", topoheight);
         let metadata = TopoHeightMetadata {
             rewards,
             emitted_supply,
-            burned_supply
         };
 
         self.insert_into_disk(Column::TopoHeightMetadata, &topoheight.to_be_bytes(), &metadata)

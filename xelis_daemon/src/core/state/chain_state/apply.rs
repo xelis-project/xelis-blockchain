@@ -3,6 +3,7 @@ use std::{
     collections::{hash_map::Entry, HashMap},
     ops::{Deref, DerefMut}
 };
+use anyhow::Context;
 use async_trait::async_trait;
 use log::{debug, trace};
 use indexmap::IndexMap;
@@ -58,7 +59,6 @@ pub struct ApplicableChainState<'a, S: Storage> {
     block_hash: &'a Hash,
     block: &'a Block,
     contract_manager: ContractManager<'a>,
-    burned_supply: u64,
 }
 
 #[async_trait]
@@ -166,8 +166,33 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for Applic
 #[async_trait]
 impl<'a, S: Storage> BlockchainApplyState<'a, S, BlockchainError> for ApplicableChainState<'a, S> {
     /// Track burned supply
-    async fn add_burned_coins(&mut self, amount: u64) -> Result<(), BlockchainError> {
-        self.burned_supply += amount;
+    async fn add_burned_coins(&mut self, asset: &Hash, amount: u64) -> Result<(), BlockchainError> {
+        let changes = match self.contract_manager.assets.entry(asset.clone()) {
+            Entry::Occupied(entry) => entry.into_mut(),
+            Entry::Vacant(entry) => {
+                let topoheight = self.inner.topoheight;
+                let changes = match self.inner.storage.load_asset_data(asset, topoheight).await? {
+                    Some((topo, data)) => {
+                        let (supply_topo, supply) = self.inner.storage.load_asset_circulating_supply(asset, topoheight).await?;
+
+                        Some(AssetChanges {
+                            data: (VersionedState::FetchedAt(topo), data),
+                            circulating_supply: (VersionedState::FetchedAt(supply_topo), supply),
+                        })
+                    },
+                    None => None
+                };
+
+                entry.insert(changes)
+            }
+        }.as_mut().ok_or_else(|| BlockchainError::AssetNotFound(asset.clone()))?;
+
+        let new_supply = changes.circulating_supply.1.checked_sub(amount)
+            .context("Circulating supply is lower than burn")?;
+
+        changes.circulating_supply.1 = new_supply;
+        changes.circulating_supply.0.mark_updated();
+
         Ok(())
     }
 
@@ -355,7 +380,6 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
         stable_topoheight: TopoHeight,
         topoheight: TopoHeight,
         block_version: BlockVersion,
-        burned_supply: u64,
         block_hash: &'a Hash,
         block: &'a Block,
         tx_base_fee: u64,
@@ -369,7 +393,6 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
                 block_version,
                 tx_base_fee,
             ),
-            burned_supply,
             contract_manager: ContractManager {
                 outputs: HashMap::new(),
                 caches: HashMap::new(),
@@ -400,11 +423,6 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
     // Get the contract outputs for TX
     pub fn get_contract_outputs_for_tx(&self, tx_hash: &Hash) -> Option<&Vec<ContractOutput>> {
         self.contract_manager.outputs.get(tx_hash)
-    }
-
-    // Get the total amount of burned coins
-    pub fn get_burned_supply(&self) -> u64 {
-        self.burned_supply
     }
 
     async fn remove_contract_module_internal(
@@ -536,11 +554,10 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
                     self.inner.storage.add_asset(&asset, self.inner.topoheight, VersionedAssetData::new(data, state.get_topoheight())).await?;
                 }
 
-                if let Some((state, supply)) = changes.supply {
-                    if state.should_be_stored() {
-                        trace!("Saving supply {} for {} at topoheight {}", supply, asset, self.inner.topoheight);
-                        self.inner.storage.set_last_supply_for_asset(&asset, self.inner.topoheight, &VersionedSupply::new(supply, state.get_topoheight())).await?;
-                    }
+                let (state, supply) = changes.circulating_supply;
+                if state.should_be_stored() {
+                    trace!("Saving supply {} for {} at topoheight {}", supply, asset, self.inner.topoheight);
+                    self.inner.storage.set_last_circulating_supply_for_asset(&asset, self.inner.topoheight, &VersionedSupply::new(supply, state.get_topoheight())).await?;
                 }
             }
         }

@@ -606,14 +606,19 @@ async fn get_info<S: Storage>(context: &Context, body: Value) -> Result<Value, I
     let height = blockchain.get_height();
     let topoheight = blockchain.get_topo_height();
     let stableheight = blockchain.get_stable_height();
-    let (top_block_hash, emitted_supply, burned_supply, pruned_topoheight, average_block_time) = {
+    let (top_block_hash, emitted_supply, circulating_supply, pruned_topoheight, average_block_time) = {
         let storage = blockchain.get_storage().read().await;
-        let top_block_hash = storage.get_hash_at_topo_height(topoheight).await.context("Error while retrieving hash at topo height")?;
-        let emitted_supply = storage.get_supply_at_topo_height(topoheight).await.context("Error while retrieving supply at topo height")?;
-        let burned_supply = storage.get_burned_supply_at_topo_height(topoheight).await.context("Error while retrieving burned supply at topoheight")?;
+        let top_block_hash = storage.get_hash_at_topo_height(topoheight).await
+            .context("Error while retrieving hash at topo height")?;
+        let emitted_supply = storage.get_supply_at_topo_height(topoheight).await
+            .context("Error while retrieving supply at topo height")?;
+        let circulating_supply = storage.get_circulating_supply_for_asset_at_maximum_topoheight(&XELIS_ASSET, topoheight).await
+            .context("Error while retrieving burned supply at topoheight")?
+            .map(|(_, v)| v.take())
+            .unwrap_or(0);
         let pruned_topoheight = storage.get_pruned_topoheight().await.context("Error while retrieving pruned topoheight")?;
         let average_block_time = blockchain.get_average_block_time::<S>(&storage).await.context("Error while retrieving average block time")?;
-        (top_block_hash, emitted_supply, burned_supply, pruned_topoheight, average_block_time)
+        (top_block_hash, emitted_supply, circulating_supply, pruned_topoheight, average_block_time)
     };
     let difficulty = blockchain.get_difficulty().await;
 
@@ -632,8 +637,8 @@ async fn get_info<S: Storage>(context: &Context, body: Value) -> Result<Value, I
         stableheight,
         pruned_topoheight,
         top_block_hash,
-        circulating_supply: emitted_supply - burned_supply,
-        burned_supply,
+        circulating_supply,
+        burned_supply: emitted_supply - circulating_supply,
         emitted_supply,
         maximum_supply: MAXIMUM_SUPPLY,
         difficulty,
@@ -730,7 +735,7 @@ async fn get_asset_supply<S: Storage>(context: &Context, body: Value) -> Result<
     let params: GetAssetParams = parse_params(body)?;
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let storage = blockchain.get_storage().read().await;
-    let (topoheight, version) = storage.get_asset_supply_at_maximum_topoheight(&params.asset, blockchain.get_topo_height()).await
+    let (topoheight, version) = storage.get_circulating_supply_for_asset_at_maximum_topoheight(&params.asset, blockchain.get_topo_height()).await
         .context("Asset was not found")?
         .context("No supply available")?;
 
