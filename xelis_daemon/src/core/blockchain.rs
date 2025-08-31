@@ -144,6 +144,7 @@ use log::{info, error, debug, warn, trace};
 use rand::Rng;
 
 use super::storage::{
+    VersionedSupply,
     AccountProvider,
     BlocksAtHeightProvider,
     ClientProtocolProvider,
@@ -2643,6 +2644,9 @@ impl<S: Storage> Blockchain<S> {
 
                 storage.set_topo_height_for_block(&hash, highest_topo).await?;
                 let past_emitted_supply = if highest_topo == 0 {
+                    // TODO: better handling
+                    storage.set_last_circulating_supply_for_asset(&XELIS_ASSET, 0, &VersionedSupply::new(0, None)).await?;
+
                     0
                 } else {
                     storage.get_supply_at_topo_height(highest_topo - 1).await?
@@ -2691,6 +2695,10 @@ impl<S: Storage> Blockchain<S> {
                     &block,
                     base_fee,
                 );
+
+                let changes = chain_state.get_asset_changes_for(&XELIS_ASSET).await?;
+                changes.circulating_supply.1 += block_reward;
+                changes.circulating_supply.0.mark_updated();
 
                 total_txs_executed += block.get_txs_count();
 

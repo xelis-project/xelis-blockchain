@@ -167,25 +167,7 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for Applic
 impl<'a, S: Storage> BlockchainApplyState<'a, S, BlockchainError> for ApplicableChainState<'a, S> {
     /// Track burned supply
     async fn add_burned_coins(&mut self, asset: &Hash, amount: u64) -> Result<(), BlockchainError> {
-        let changes = match self.contract_manager.assets.entry(asset.clone()) {
-            Entry::Occupied(entry) => entry.into_mut(),
-            Entry::Vacant(entry) => {
-                let topoheight = self.inner.topoheight;
-                let changes = match self.inner.storage.load_asset_data(asset, topoheight).await? {
-                    Some((topo, data)) => {
-                        let (supply_topo, supply) = self.inner.storage.load_asset_circulating_supply(asset, topoheight).await?;
-
-                        Some(AssetChanges {
-                            data: (VersionedState::FetchedAt(topo), data),
-                            circulating_supply: (VersionedState::FetchedAt(supply_topo), supply),
-                        })
-                    },
-                    None => None
-                };
-
-                entry.insert(changes)
-            }
-        }.as_mut().ok_or_else(|| BlockchainError::AssetNotFound(asset.clone()))?;
+        let changes = self.get_asset_changes_for(asset).await?;
 
         let new_supply = changes.circulating_supply.1.checked_sub(amount)
             .context("Circulating supply is lower than burn")?;
@@ -403,6 +385,28 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
             block_hash,
             block
         }
+    }
+
+    pub async fn get_asset_changes_for(&mut self, asset: &Hash) -> Result<&mut AssetChanges, BlockchainError> {
+        match self.contract_manager.assets.entry(asset.clone()) {
+            Entry::Occupied(entry) => entry.into_mut(),
+            Entry::Vacant(entry) => {
+                let topoheight = self.inner.topoheight;
+                let changes = match self.inner.storage.load_asset_data(asset, topoheight).await? {
+                    Some((topo, data)) => {
+                        let (supply_topo, supply) = self.inner.storage.load_asset_circulating_supply(asset, topoheight).await?;
+
+                        Some(AssetChanges {
+                            data: (VersionedState::FetchedAt(topo), data),
+                            circulating_supply: (VersionedState::FetchedAt(supply_topo), supply),
+                        })
+                    },
+                    None => None
+                };
+
+                entry.insert(changes)
+            }
+        }.as_mut().ok_or_else(|| BlockchainError::AssetNotFound(asset.clone()))
     }
 
     // Get the storage used by the chain state
