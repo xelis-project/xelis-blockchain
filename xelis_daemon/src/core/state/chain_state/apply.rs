@@ -572,7 +572,7 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
 
                 let (state, supply) = changes.circulating_supply;
                 if state.should_be_stored() {
-                    trace!("Saving supply {} for {} at topoheight {}", supply, asset, self.inner.topoheight);
+                    trace!("Saving supply {} for {} at topoheight {} with prev {:?}", supply, asset, self.inner.topoheight, state.get_topoheight());
                     self.inner.storage.set_last_circulating_supply_for_asset(&asset, self.inner.topoheight, &VersionedSupply::new(supply, state.get_topoheight())).await?;
                 }
             }
