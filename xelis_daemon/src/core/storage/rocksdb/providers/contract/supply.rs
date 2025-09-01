@@ -27,14 +27,14 @@ impl CirculatingSupplyProvider for RocksStorage {
     async fn has_circulating_supply_for_asset_at_exact_topoheight(&self, asset: &Hash, topoheight: TopoHeight) -> Result<bool, BlockchainError> {
         trace!("has asset {} supply at exact topoheight {}", asset, topoheight);
         let asset_id = self.get_asset_id(asset)?;
-        let key = Self::get_asset_versioned_key(asset_id, topoheight);
+        let key = Self::get_asset_versioned_key(topoheight, asset_id);
         self.contains_data(Column::VersionedAssetsSupply, &key)
     }
 
     async fn get_circulating_supply_for_asset_at_exact_topoheight(&self, asset: &Hash, topoheight: TopoHeight) -> Result<VersionedSupply, BlockchainError> {
         trace!("get circulating supply for asset {} at topoheight {}", asset, topoheight);
         let asset_id = self.get_asset_id(asset)?;
-        let key = Self::get_asset_versioned_key(asset_id, topoheight);
+        let key = Self::get_asset_versioned_key(topoheight, asset_id);
 
         self.load_from_disk(Column::VersionedAssetsSupply, &key)
     }
