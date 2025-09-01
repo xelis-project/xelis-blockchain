@@ -44,6 +44,10 @@ impl CirculatingSupplyProvider for SledStorage {
         trace!("has asset {} supply at exact topoheight {}", asset, topoheight);
         self.contains_data(&self.versioned_assets_supply, &Self::get_versioned_key(asset, topoheight))
     }
+    async fn get_circulating_supply_for_asset_at_exact_topoheight(&self, asset: &Hash, topoheight: TopoHeight) -> Result<VersionedSupply, BlockchainError> {
+        trace!("get circulating supply for asset {} at topoheight {}", asset, topoheight);
+        self.load_from_disk(&self.versioned_assets_supply, &Self::get_versioned_key(asset, topoheight), DiskContext::AssetSupplyAtTopoHeight(topoheight))
+    }
 
     async fn has_circulating_supply_for_asset(&self, asset: &Hash) -> Result<bool, BlockchainError> {
         trace!("has supply for asset {}", asset);

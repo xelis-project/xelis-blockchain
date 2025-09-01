@@ -1145,9 +1145,8 @@ async fn circulating_supply_dataset<S: Storage>(manager: &CommandManager, mut ar
     let mut prev_topo = Some(blockchain.get_topo_height());
 
     while let Some(topo) = prev_topo.take() {
-        let (_, version) = storage.get_circulating_supply_for_asset_at_maximum_topoheight(&asset, topo).await
-                .context("Error while retrieving supply at topo")?
-                .context("Supply not found")?;
+        let version = storage.get_circulating_supply_for_asset_at_exact_topoheight(&asset, topo).await
+                .context("Error while retrieving circulating supply")?;
 
         // Write to file
         file.write(format!("{},{}\n", topo, version.get()).as_bytes())

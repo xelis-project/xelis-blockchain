@@ -21,6 +21,9 @@ pub trait CirculatingSupplyProvider {
     // Verify if we have a versioned data at exact topoheight
     async fn has_circulating_supply_for_asset_at_exact_topoheight(&self, asset: &Hash, topoheight: TopoHeight) -> Result<bool, BlockchainError>;
 
+    // Get the supply at exact topoheight
+    async fn get_circulating_supply_for_asset_at_exact_topoheight(&self, asset: &Hash, topoheight: TopoHeight) -> Result<VersionedSupply, BlockchainError>;
+
     // Get the supply at the maximum topoheight
     async fn get_circulating_supply_for_asset_at_maximum_topoheight(&self, asset: &Hash, topoheight: TopoHeight) -> Result<Option<(TopoHeight, VersionedSupply)>, BlockchainError>;
 
