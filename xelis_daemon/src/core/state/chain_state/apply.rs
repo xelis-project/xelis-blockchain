@@ -167,7 +167,7 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for Applic
 impl<'a, S: Storage> BlockchainApplyState<'a, S, BlockchainError> for ApplicableChainState<'a, S> {
     /// Track burned supply
     async fn add_burned_coins(&mut self, asset: &Hash, amount: u64) -> Result<(), BlockchainError> {
-        let changes = self.get_asset_changes_for(asset).await?;
+        let changes = self.get_asset_changes_for(asset, false).await?;
 
         let new_supply = changes.circulating_supply.1.checked_sub(amount)
             .context("Circulating supply is lower than burn")?;
@@ -387,18 +387,30 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
         }
     }
 
-    pub async fn get_asset_changes_for(&mut self, asset: &Hash) -> Result<&mut AssetChanges, BlockchainError> {
+    // Load the asset changes for supply changes
+    pub async fn get_asset_changes_for(&mut self, asset: &Hash, default: bool) -> Result<&mut AssetChanges, BlockchainError> {
         match self.contract_manager.assets.entry(asset.clone()) {
             Entry::Occupied(entry) => entry.into_mut(),
             Entry::Vacant(entry) => {
                 let topoheight = self.inner.topoheight;
-                let changes = match self.inner.storage.load_asset_data(asset, topoheight).await? {
+                let changes = match self.inner.storage.get_asset_at_maximum_topoheight(asset, topoheight).await? {
                     Some((topo, data)) => {
-                        let (supply_topo, supply) = self.inner.storage.load_asset_circulating_supply(asset, topoheight).await?;
+                        let (supply_state, supply) = match self.inner.storage.get_circulating_supply_for_asset_at_maximum_topoheight(asset, topoheight).await? {
+                            Some((topo, supply)) => (VersionedState::FetchedAt(topo), supply.take()),
+                            None => {
+                                // if default is not enabled,
+                                // return an error about supply
+                                if !default {
+                                    return Err(BlockchainError::NoCirculatingSupply(asset.clone()))
+                                }
+
+                                (VersionedState::New, 0)
+                            }
+                        };
 
                         Some(AssetChanges {
-                            data: (VersionedState::FetchedAt(topo), data),
-                            circulating_supply: (VersionedState::FetchedAt(supply_topo), supply),
+                            data: (VersionedState::FetchedAt(topo), data.take()),
+                            circulating_supply: (supply_state, supply),
                         })
                     },
                     None => None

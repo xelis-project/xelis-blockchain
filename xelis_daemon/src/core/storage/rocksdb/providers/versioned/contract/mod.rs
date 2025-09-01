@@ -35,7 +35,7 @@ impl VersionedContractProvider for RocksStorage {
             let contract_hash = self.get_contract_from_id(contract_id)?;
             let mut contract = self.get_contract_type(&contract_hash)?;
 
-            if contract.module_pointer.is_none_or(|pointer| pointer >= topoheight) {
+            if contract.module_pointer.is_some_and(|pointer| pointer >= topoheight) {
                 if contract.module_pointer != prev_topo {
                     contract.module_pointer = prev_topo;
                     Self::insert_into_disk_internal(&self.db, self.snapshot.as_mut(), Column::Contracts, &contract_hash, &contract)?;

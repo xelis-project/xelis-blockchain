@@ -151,6 +151,8 @@ pub enum DiskContext {
 
 #[derive(Error, Debug, EnumDiscriminants)]
 pub enum BlockchainError {
+    #[error("no circulating supply for asset {0}")]
+    NoCirculatingSupply(Hash),
     #[error(transparent)]
     JoinError(#[from] JoinError),
     #[error("Invalid configuration provided")]

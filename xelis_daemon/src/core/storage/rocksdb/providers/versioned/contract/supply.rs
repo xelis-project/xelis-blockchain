@@ -25,12 +25,12 @@ impl VersionedAssetsSupplyProvider for RocksStorage {
             Self::remove_from_disk_internal(&self.db, self.snapshot.as_mut(), Column::VersionedAssetsSupply, &versioned_key)?;
 
             let key_without_prefix = &versioned_key[8..];
-            
+
             let asset_id = AssetId::from_bytes(&key_without_prefix[0..8])?;
             let asset_hash = self.get_asset_hash_from_id(asset_id)?;
             let mut asset = self.get_asset_type(&asset_hash)?;
 
-            if asset.supply_pointer.is_none_or(|pointer| pointer >= topoheight) {
+            if asset.supply_pointer.is_some_and(|pointer| pointer >= topoheight) {
                 asset.supply_pointer = prev_topo;
 
                 Self::insert_into_disk_internal(&self.db, self.snapshot.as_mut(), Column::Assets, &asset_hash, &asset)?;
