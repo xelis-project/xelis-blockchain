@@ -404,6 +404,7 @@ impl Mempool {
         stable_topoheight: TopoHeight,
         topoheight: TopoHeight,
         block_version: BlockVersion,
+        tx_base_fee: u64,
     ) -> Result<Vec<(Arc<Hash>, SortedTx)>, BlockchainError> {
         trace!("Cleaning up mempool...");
 
@@ -524,7 +525,7 @@ impl Mempool {
 
                     let tx_cache = TxCache::new(storage, &self, self.disable_zkp_cache);
                     if let Some((next_tx, tx_hash)) = first_tx {
-                        let mut state = MempoolState::new(&self, storage, environment, stable_topoheight, topoheight, block_version, self.mainnet, FEE_PER_KB);
+                        let mut state = MempoolState::new(&self, storage, environment, stable_topoheight, topoheight, block_version, self.mainnet, tx_base_fee);
                         if let Err(e) = Transaction::verify(next_tx.get_tx(), &tx_hash, &mut state, &tx_cache).await {
                             warn!("Error while verifying TXs for source {}: {}", key.as_address(self.mainnet), e);
 

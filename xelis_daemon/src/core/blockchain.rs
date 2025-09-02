@@ -1587,9 +1587,6 @@ impl<S: Storage> Blockchain<S> {
     ) -> Result<(), BlockchainError> {
         debug!("add tx to mempool internal {} (broadcast = {})", hash, broadcast);
 
-        // Compute the expected base fee
-        let base_fee = self.predicate_required_base_fee_internal(storage).await?;
-
         let hash = {
             debug!("locking mempool to add tx");
             let mut mempool = self.mempool.write().await;
@@ -1623,7 +1620,9 @@ impl<S: Storage> Blockchain<S> {
 
             let start = Instant::now();
             let version = get_version_at_height(self.get_network(), self.get_height());
-            mempool.add_tx(storage, &self.environment, stable_topoheight, current_topoheight, base_fee, hash.clone(), tx.clone(), tx_size, version).await?;
+            // NOTE: we do not verify / clean against requested base fee
+            // to ensure no TX is orphaned, but only delayed until the chain congestion reduce
+            mempool.add_tx(storage, &self.environment, stable_topoheight, current_topoheight, FEE_PER_KB, hash.clone(), tx.clone(), tx_size, version).await?;
 
             debug!("TX {} has been added to the mempool", hash);
 
@@ -3058,7 +3057,8 @@ impl<S: Storage> Blockchain<S> {
             let version = get_version_at_height(self.get_network(), current_height);
 
             let start = Instant::now();
-            let res = mempool.clean_up(&*storage, &self.environment, base_topo_height, highest_topo, version).await?;
+            // NOTE: we don't remove any under-paid TX, they stay in mempool until fixed
+            let res = mempool.clean_up(&*storage, &self.environment, base_topo_height, highest_topo, version, FEE_PER_KB).await?;
             debug!("Took {:?} to clean mempool!", start.elapsed());
             histogram!("xelis_mempool_clean_up_ms").record(start.elapsed().as_millis() as f64);
 
