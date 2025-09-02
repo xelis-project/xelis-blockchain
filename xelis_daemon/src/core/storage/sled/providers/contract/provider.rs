@@ -19,7 +19,7 @@ use crate::core::storage::{
     ContractProvider as _,
     NetworkProvider,
     SledStorage,
-    CirculatingSupplyProvider
+    AssetCirculatingSupplyProvider
 };
 
 #[async_trait]

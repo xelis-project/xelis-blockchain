@@ -10,12 +10,12 @@ use crate::core::{
     storage::{
         rocksdb::{Asset, AssetId, Column, IteratorMode},
         RocksStorage,
-        VersionedAssetsSupplyProvider
+        VersionedAssetsCirculatingSupplyProvider
     }
 };
 
 #[async_trait]
-impl VersionedAssetsSupplyProvider for RocksStorage {
+impl VersionedAssetsCirculatingSupplyProvider for RocksStorage {
     async fn delete_versioned_assets_supply_at_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError> {
         trace!("delete versioned assets supply at topoheight {}", topoheight);
         let prefix = topoheight.to_be_bytes();

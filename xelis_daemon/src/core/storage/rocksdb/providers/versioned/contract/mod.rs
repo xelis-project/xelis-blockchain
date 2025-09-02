@@ -1,6 +1,5 @@
 mod data;
 mod balance;
-mod supply;
 
 use log::trace;
 use async_trait::async_trait;

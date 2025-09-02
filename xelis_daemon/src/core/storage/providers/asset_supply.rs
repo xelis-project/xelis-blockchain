@@ -14,7 +14,7 @@ pub type VersionedSupply = Versioned<u64>;
 // (in case of mint/burn mechanisms).
 // Only the circulating supply can be ensured to be valid in the 0..2^64 range
 #[async_trait]
-pub trait CirculatingSupplyProvider {
+pub trait AssetCirculatingSupplyProvider {
     // Verify if we have a supply already set for this asset
     async fn has_circulating_supply_for_asset(&self, asset: &Hash) -> Result<bool, BlockchainError>;
 

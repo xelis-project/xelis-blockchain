@@ -6,6 +6,7 @@ mod registrations;
 mod asset;
 mod cache;
 mod dag_order;
+mod asset_supply;
 
 use log::{debug, trace};
 use sled::Tree;

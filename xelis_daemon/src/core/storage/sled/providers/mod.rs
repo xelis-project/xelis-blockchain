@@ -1,4 +1,5 @@
 mod asset;
+mod asset_supply;
 mod blocks_at_height;
 mod dag_order;
 mod difficulty;

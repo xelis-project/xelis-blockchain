@@ -22,6 +22,7 @@ mod registrations;
 mod asset;
 mod cache;
 mod dag_order;
+mod asset_supply;
 
 impl VersionedProvider for RocksStorage {}
 

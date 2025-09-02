@@ -7,11 +7,11 @@ use xelis_common::{
 };
 use crate::core::{
     error::{BlockchainError, DiskContext},
-    storage::{SledStorage, CirculatingSupplyProvider, VersionedSupply}
+    storage::{SledStorage, AssetCirculatingSupplyProvider, VersionedSupply}
 };
 
 #[async_trait]
-impl CirculatingSupplyProvider for SledStorage {
+impl AssetCirculatingSupplyProvider for SledStorage {
     async fn get_circulating_supply_for_asset_at_maximum_topoheight(&self, asset: &Hash, topoheight: TopoHeight) -> Result<Option<(TopoHeight, VersionedSupply)>, BlockchainError> {
         trace!("get asset {} supply at maximum topoheight {}", asset, topoheight);
 

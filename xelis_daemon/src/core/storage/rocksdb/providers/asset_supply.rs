@@ -7,13 +7,13 @@ use xelis_common::{
 };
 use crate::core::{
     error::BlockchainError,
-    storage::{rocksdb::Column, RocksStorage, CirculatingSupplyProvider}
+    storage::{rocksdb::Column, RocksStorage, AssetCirculatingSupplyProvider}
 };
 
 pub type VersionedSupply = Versioned<u64>;
 
 #[async_trait]
-impl CirculatingSupplyProvider for RocksStorage {
+impl AssetCirculatingSupplyProvider for RocksStorage {
     // Verify if we have a supply already set for this asset
     async fn has_circulating_supply_for_asset(&self, asset: &Hash) -> Result<bool, BlockchainError> {
         trace!("has supply for asset {}", asset);

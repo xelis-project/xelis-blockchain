@@ -39,7 +39,7 @@ pub trait Storage:
     + NonceProvider + AccountProvider + ClientProtocolProvider + BlockDagProvider
     + MerkleHashProvider + NetworkProvider + MultiSigProvider + TipsProvider
     + CommitPointProvider + ContractProvider + ContractDataProvider + ContractOutputsProvider
-    + ContractInfoProvider + ContractBalanceProvider + VersionedProvider + CirculatingSupplyProvider
+    + ContractInfoProvider + ContractBalanceProvider + VersionedProvider + AssetCirculatingSupplyProvider
     + CacheProvider + StateProvider
     + Sync + Send + 'static {
     // delete block at topoheight, and all pointers (hash_at_topo, topo_by_hash, reward, supply, diff, cumulative diff...)

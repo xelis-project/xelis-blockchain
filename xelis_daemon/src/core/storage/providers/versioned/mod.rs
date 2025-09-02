@@ -6,6 +6,7 @@ mod registrations;
 mod asset;
 mod cache;
 mod dag_order;
+mod asset_supply;
 
 use async_trait::async_trait;
 use log::debug;
@@ -20,6 +21,7 @@ pub use registrations::*;
 pub use asset::*;
 pub use cache::*;
 pub use dag_order::*;
+pub use asset_supply::*;
 
 // Every versioned key should start with the topoheight in order to be able to delete them easily
 #[async_trait]
@@ -32,7 +34,7 @@ pub trait VersionedProvider:
     + VersionedContractDataProvider
     + VersionedContractBalanceProvider
     + VersionedAssetProvider
-    + VersionedAssetsSupplyProvider
+    + VersionedAssetsCirculatingSupplyProvider
     + VersionedCacheProvider
     + VersionedDagOrderProvider {
 

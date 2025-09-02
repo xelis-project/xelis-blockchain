@@ -1,6 +1,5 @@
 mod data;
 mod balance;
-mod supply;
 
 use async_trait::async_trait;
 use xelis_common::block::TopoHeight;
@@ -8,7 +7,6 @@ use crate::core::error::BlockchainError;
 
 pub use data::*;
 pub use balance::*;
-pub use supply::*;
 
 #[async_trait]
 pub trait VersionedContractProvider {

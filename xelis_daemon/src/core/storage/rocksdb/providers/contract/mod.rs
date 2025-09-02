@@ -1,7 +1,6 @@
 mod data;
 mod output;
 mod balance;
-mod supply;
 mod r#impl;
 
 use std::sync::Arc;
@@ -25,7 +24,7 @@ use crate::core::storage::{
     ContractProvider as _,
     NetworkProvider,
     RocksStorage,
-    CirculatingSupplyProvider
+    AssetCirculatingSupplyProvider
 };
 
 #[async_trait]
