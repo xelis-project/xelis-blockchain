@@ -95,7 +95,7 @@ use {
         daemon_api::DaemonAPI,
         storage::Balance,
     },
-    xelis_common::config::XELIS_ASSET,
+    xelis_common::config::{XELIS_ASSET, FEE_PER_KB},
 };
 
 #[cfg(feature = "xswd")]
@@ -1025,7 +1025,13 @@ impl Wallet {
                 }
 
                 // Fetch the required base fee for TX
-                let base_fee = network_handler.get_api().get_estimated_fee_per_kb().await?;
+                let base_fee = match network_handler.get_api().get_estimated_fee_per_kb().await {
+                    Ok(base_fee) => base_fee,
+                    Err(e) => {
+                        warn!("Couldn't retrieve dynamic fee per kb: {}, fallback to default", e);
+                        FEE_PER_KB
+                    }
+                };
                 debug!("Estimated base fee from daemon: {} ({} XEL)", base_fee, format_xelis(base_fee));
                 state.set_base_fee(base_fee);
             }
