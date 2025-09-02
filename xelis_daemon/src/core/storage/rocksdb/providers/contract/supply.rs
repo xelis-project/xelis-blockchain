@@ -50,12 +50,13 @@ impl CirculatingSupplyProvider for RocksStorage {
         };
 
         let versioned_key = Self::get_asset_versioned_key(maximum_topoheight, asset.id);
-        let mut prev_topo = if pointer > maximum_topoheight && self.contains_data(Column::VersionedAssetsSupply, &versioned_key)? {
-            Some(self.load_from_disk(Column::VersionedAssetsSupply, &versioned_key)?)
+        let start_topo = if pointer > maximum_topoheight && self.contains_data(Column::VersionedAssetsSupply, &versioned_key)? {
+            maximum_topoheight
         } else {
-            Some(pointer)
+            pointer
         };
 
+        let mut prev_topo = Some(start_topo);
         while let Some(topo) = prev_topo {
             let versioned_key = Self::get_asset_versioned_key(topo, asset.id);
             if topo <= maximum_topoheight {
