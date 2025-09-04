@@ -48,6 +48,7 @@ use crate::{
         SIGNATURE_SIZE
     },
     serializer::Serializer,
+    transaction::builder::fee::ExtraFeeMode,
     utils::calculate_tx_fee
 };
 use thiserror::Error;
@@ -380,7 +381,7 @@ impl TransactionBuilder {
     pub fn estimate_fees<B: FeeHelper>(&self, state: &mut B) -> Result<u64, GenerationError<B::Error>> {
         let calculated_fee = match self.fee_builder {
             // If the value is set, use it
-            FeeBuilder::Value(value) => value,
+            FeeBuilder::Fixed(value) => value,
             _ => {
                 // Compute the size and transfers count
                 let size = self.estimate_size();
@@ -415,12 +416,16 @@ impl TransactionBuilder {
                     _ => {}
                 }
 
-                let expected_fee = calculate_tx_fee(state.get_base_fee(), size, outputs.max(self.data.used_assets().len()), new_addresses, self.required_thresholds.unwrap_or(0) as usize);
-                match self.fee_builder {
-                    FeeBuilder::Multiplier(multiplier) => (expected_fee as f64 * multiplier) as u64,
-                    FeeBuilder::Boost(boost) => expected_fee + boost,
-                    _ => expected_fee,
+                let mut expected_fee = calculate_tx_fee(state.get_base_fee(), size, outputs.max(self.data.used_assets().len()), new_addresses, self.required_thresholds.unwrap_or(0) as usize);
+                if let FeeBuilder::Extra(extra) = self.fee_builder {
+                    match extra {
+                        ExtraFeeMode::Multiplier(multiplier) => expected_fee = (expected_fee as f64 * multiplier) as u64,
+                        ExtraFeeMode::Tip(tip) => expected_fee += tip,
+                        ExtraFeeMode::None => {},
+                    }
                 }
+
+                expected_fee
             },
         };
 

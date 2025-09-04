@@ -2,20 +2,31 @@ use serde::{Deserialize, Serialize};
 
 use crate::crypto::elgamal::CompressedPublicKey;
 
+#[derive(Serialize, Deserialize, Clone, Debug, Copy, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ExtraFeeMode {
+    #[default]
+    None,
+    // how much we want to pay above the calculated/required fees.
+    // This is useful to have more chance to get included first
+    Tip(u64),
+    // multiply the calculated fee,
+    Multiplier(f64),
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, Copy)]
 #[serde(rename_all = "snake_case")]
 pub enum FeeBuilder {
-    // calculate tx fees based on its size and multiply by this value
-    Multiplier(f64),
-    // set a direct value of how much fees you want to pay exactly
-    Value(u64),
-    // how much we want to pay above the calculated/needed fees.
-    Boost(u64)
+    // Fixed fee amount to use for the TX
+    Fixed(u64),
+    // Determined either by the wallet, or by the given constraints
+    Extra(ExtraFeeMode)
+    // TODO: support a "maximum fee" for future
 }
 
 impl Default for FeeBuilder {
     fn default() -> Self {
-        FeeBuilder::Boost(0)
+        FeeBuilder::Extra(ExtraFeeMode::None)
     }
 }
 
