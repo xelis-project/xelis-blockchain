@@ -3592,17 +3592,19 @@ impl<S: Storage> Blockchain<S> {
     }
 }
 
-pub fn calculate_required_base_fee_for_ema(mut ema: usize) -> u64 {
+pub const fn calculate_required_base_fee_for_ema(ema: usize) -> u64 {
     // every 8% of the max block size, double the base fee
+    // 1,25 MB bytes * 8% = ~100 KB
+    // in 100 KB, we can have ~ 60 TXs at an avg of 1,60 KB per TX
+    // which mean we should have at least N last blocks with 60 TXs each
+    // to start doubling the base fee
     const PERCENT: usize = MAX_BLOCK_SIZE * 8 / 100;
 
-    let mut base_fee = FEE_PER_KB;
-    while ema >= PERCENT {
-        ema -= PERCENT;
-        base_fee *= 2;
-    }
+    // how many full "chunks" of PERCENT fit into ema
+    let multiplier = ema / PERCENT;
 
-    base_fee
+    // each chunk doubles the base fee -> 2^multiplier * base_fee
+    FEE_PER_KB.saturating_mul(1u64 << multiplier)
 }
 
 // Esimate the required TX fee extra part
