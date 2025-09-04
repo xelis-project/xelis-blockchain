@@ -1128,15 +1128,11 @@ async fn transfer(manager: &CommandManager, mut args: ArgumentManager) -> Result
         ).await.context("Error while reading amount")?
     };
 
-    let amount = from_coin(amount, asset_data.get_decimals()).context("Invalid amount")?;
+    let amount = from_coin(amount, asset_data.get_decimals())
+        .context("Invalid amount")?;
+
     manager.message(format!("Sending {} of {} ({}) to {}", format_coin(amount, asset_data.get_decimals()), asset_data.get_name(), asset, address.to_string()));
 
-    if !args.get_flag("confirm")? && !prompt.ask_confirmation().await.context("Error while confirming action")? {
-        manager.message("Transaction has been aborted");
-        return Ok(())
-    }
-
-    manager.message("Building transaction...");
     let transfer = TransferBuilder {
         destination: address,
         amount,
@@ -1145,6 +1141,16 @@ async fn transfer(manager: &CommandManager, mut args: ArgumentManager) -> Result
         encrypt_extra_data: true
     };
     let tx_type = TransactionTypeBuilder::Transfers(vec![transfer]);
+    let estimated_fee = wallet.estimate_fees(tx_type.clone(), FeeBuilder::default()).await
+        .context("Error while estimating TX fee")?;
+
+    manager.message(format!("Estimated TX fee is {}", format_xelis(estimated_fee)));
+    if !args.get_flag("confirm")? && !prompt.ask_confirmation().await.context("Error while confirming action")? {
+        manager.message("Transaction has been aborted");
+        return Ok(())
+    }
+
+    manager.message("Building transaction...");
     let tx = if let Some(multisig) = multisig {
         create_transaction_with_multisig(manager, prompt, wallet, tx_type, multisig.payload).await?
     } else {
