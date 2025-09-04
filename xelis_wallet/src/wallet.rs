@@ -17,7 +17,8 @@ use xelis_common::{
         wallet::{
             BalanceChanged,
             NotifyEvent,
-            TransactionEntry
+            TransactionEntry,
+            BaseFeeMode
         },
         DataElement
     },
@@ -765,10 +766,10 @@ impl Wallet {
 
     // Create a transaction with the given transaction type and fee
     // this will apply the changes to the storage if the transaction
-    pub async fn create_transaction(&self, transaction_type: TransactionTypeBuilder, fee: FeeBuilder) -> Result<Transaction, WalletError> {
+    pub async fn create_transaction(&self, transaction_type: TransactionTypeBuilder, fee: FeeBuilder, base_fee: BaseFeeMode) -> Result<Transaction, WalletError> {
         trace!("create transaction");
         let mut storage = self.storage.write().await;
-        let (tx, mut state) = self.create_transaction_with_storage(&storage, transaction_type, fee).await?;
+        let (tx, mut state) = self.create_transaction_with_storage(&storage, transaction_type, fee, base_fee).await?;
         state.apply_changes(&mut storage).await?;
 
         Ok(tx)
@@ -776,9 +777,9 @@ impl Wallet {
 
     // Create a transaction with the given transaction type and fee
     // this will apply the changes to the storage if the transaction
-    pub async fn create_transaction_with_storage(&self, storage: &EncryptedStorage, transaction_type: TransactionTypeBuilder, fee: FeeBuilder) -> Result<(Transaction, TransactionBuilderState), WalletError> {
+    pub async fn create_transaction_with_storage(&self, storage: &EncryptedStorage, transaction_type: TransactionTypeBuilder, fee: FeeBuilder, base_fee: BaseFeeMode) -> Result<(Transaction, TransactionBuilderState), WalletError> {
         trace!("create transaction with storage");
-        let mut state = self.create_transaction_state_with_storage(&storage, &transaction_type, &fee, None).await?;
+        let mut state = self.create_transaction_state_with_storage(&storage, &transaction_type, fee, base_fee, None).await?;
         let threshold = storage.get_multisig_state().await?
             .map(|m| m.payload.threshold);
         let tx_version = storage.get_tx_version().await?;
@@ -792,7 +793,7 @@ impl Wallet {
     // This will returns the transaction builder state along the transaction
     // You must handle "apply changes" to the storage
     // Warning: this is locking the network handler to access to the daemon api
-    pub async fn create_transaction_state_with_storage(&self, storage: &EncryptedStorage, transaction_type: &TransactionTypeBuilder, fee: &FeeBuilder, nonce: Option<u64>) -> Result<TransactionBuilderState, WalletError> {
+    pub async fn create_transaction_state_with_storage(&self, storage: &EncryptedStorage, transaction_type: &TransactionTypeBuilder, fee: FeeBuilder, base_fee: BaseFeeMode, nonce: Option<u64>) -> Result<TransactionBuilderState, WalletError> {
         trace!("create transaction with storage");
         let nonce = match nonce {
             Some(n) => n,
@@ -822,7 +823,7 @@ impl Wallet {
 
         #[cfg(feature = "network_handler")]
         {
-            self.retrieve_data_for_fees_estimation(state.as_mut(), fee, transaction_type).await?;
+            self.retrieve_data_for_fees_estimation(state.as_mut(), fee, base_fee, transaction_type).await?;
 
             let force_stable_balance = self.should_force_stable_balance();
             // Lets prevent any front running due to mining
@@ -997,9 +998,9 @@ impl Wallet {
 
     // Search if possible all registered keys for the transaction type
     #[cfg(feature = "network_handler")]
-    pub async fn retrieve_data_for_fees_estimation(&self, state: &mut EstimateFeesState, fee: &FeeBuilder, transaction_type: &TransactionTypeBuilder) -> Result<(), WalletError> {
+    pub async fn retrieve_data_for_fees_estimation(&self, state: &mut EstimateFeesState, fee: FeeBuilder, base_fee: BaseFeeMode, transaction_type: &TransactionTypeBuilder) -> Result<(), WalletError> {
         trace!("add registered keys for fees estimation");
-        if matches!(fee, FeeBuilder::Value(_)) {
+        if matches!(fee, FeeBuilder::Fixed(_)) {
             return Ok(())
         }
 
@@ -1025,15 +1026,25 @@ impl Wallet {
                 }
 
                 // Fetch the required base fee for TX
-                let base_fee = match network_handler.get_api().get_estimated_fee_per_kb().await {
-                    Ok(base_fee) => base_fee,
-                    Err(e) => {
-                        warn!("Couldn't retrieve dynamic fee per kb: {}, fallback to default", e);
-                        FEE_PER_KB
+                let mut calculated = match base_fee {
+                    BaseFeeMode::Fixed(base_fee) => base_fee,
+                    _ => match network_handler.get_api().get_estimated_fee_per_kb().await {
+                        Ok(base_fee) => base_fee,
+                        Err(e) => {
+                            warn!("Couldn't retrieve dynamic fee per kb: {}, fallback to default", e);
+                            FEE_PER_KB
+                        }
                     }
                 };
-                debug!("Estimated base fee from daemon: {} ({} XEL)", base_fee, format_xelis(base_fee));
-                state.set_base_fee(base_fee);
+
+                if let BaseFeeMode::Capped(cap) = base_fee {
+                    if cap < calculated {
+                        debug!("Capping the dynamic base fee {} to {}", calculated, cap);
+                        calculated = cap;
+                    }
+                }
+                debug!("Estimated base fee from daemon: {} ({} XEL)", calculated, format_xelis(calculated));
+                state.set_base_fee(calculated);
             }
         }
 
@@ -1046,12 +1057,12 @@ impl Wallet {
 
     // Estimate fees for a given transaction type
     // Estimated fees returned are the minimum required to be valid on chain
-    pub async fn estimate_fees(&self, tx_type: TransactionTypeBuilder, fee: FeeBuilder) -> Result<u64, WalletError> {
-        trace!("estimate fees");
+    pub async fn estimate_fees(&self, tx_type: TransactionTypeBuilder, fee: FeeBuilder, base_fee: BaseFeeMode) -> Result<u64, WalletError> {
+        trace!("estimate fees with {:?} and base fee {:?}", fee, base_fee);
         let mut state = EstimateFeesState::new();
 
         #[cfg(feature = "network_handler")]
-        self.retrieve_data_for_fees_estimation(&mut state, &fee, &tx_type).await?;
+        self.retrieve_data_for_fees_estimation(&mut state, fee, base_fee, &tx_type).await?;
 
         let (threshold, version) = {
             let storage = self.storage.read().await;

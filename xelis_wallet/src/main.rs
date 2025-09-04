@@ -1014,11 +1014,10 @@ async fn create_transaction_with_multisig(manager: &CommandManager, prompt: &Pro
     manager.message(format!("Multisig detected, you need to sign the transaction with {} keys.", payload.threshold));
 
     let mut storage = wallet.get_storage().write().await;
-    let fee = FeeBuilder::default();
-    let mut state = wallet.create_transaction_state_with_storage(&storage, &tx_type, &fee, None).await
+    let mut state = wallet.create_transaction_state_with_storage(&storage, &tx_type, Default::default(), Default::default(), None).await
         .context("Error while creating transaction state")?;
 
-    let mut unsigned = wallet.create_unsigned_transaction(&mut state, Some(payload.threshold), tx_type, fee, storage.get_tx_version().await?)
+    let mut unsigned = wallet.create_unsigned_transaction(&mut state, Some(payload.threshold), tx_type, Default::default(), storage.get_tx_version().await?)
         .context("Error while building unsigned transaction")?;
 
     let mut multisig = MultiSig::new();
@@ -1141,7 +1140,7 @@ async fn transfer(manager: &CommandManager, mut args: ArgumentManager) -> Result
         encrypt_extra_data: true
     };
     let tx_type = TransactionTypeBuilder::Transfers(vec![transfer]);
-    let estimated_fee = wallet.estimate_fees(tx_type.clone(), FeeBuilder::default()).await
+    let estimated_fee = wallet.estimate_fees(tx_type.clone(), Default::default(), Default::default()).await
         .context("Error while estimating TX fee")?;
 
     manager.message(format!("Estimated TX fee is {}", format_xelis(estimated_fee)));
@@ -1154,7 +1153,7 @@ async fn transfer(manager: &CommandManager, mut args: ArgumentManager) -> Result
     let tx = if let Some(multisig) = multisig {
         create_transaction_with_multisig(manager, prompt, wallet, tx_type, multisig.payload).await?
     } else {
-        match wallet.create_transaction(tx_type, FeeBuilder::default()).await {
+        match wallet.create_transaction(tx_type, Default::default(), Default::default()).await {
             Ok(tx) => tx,
             Err(e) => {
                 manager.error(&format!("Error while creating transaction: {}", e));
@@ -1210,7 +1209,7 @@ async fn transfer_all(manager: &CommandManager, mut args: ArgumentManager) -> Re
         encrypt_extra_data: true
     };
     let tx_type = TransactionTypeBuilder::Transfers(vec![transfer]);
-    let estimated_fees = wallet.estimate_fees(tx_type.clone(), FeeBuilder::default()).await.context("Error while estimating fees")?;
+    let estimated_fees = wallet.estimate_fees(tx_type.clone(), FeeBuilder::default(), Default::default()).await.context("Error while estimating fees")?;
 
     if asset == XELIS_ASSET {
         amount = amount.checked_sub(estimated_fees).context("Insufficient balance to pay fees")?;
@@ -1235,7 +1234,7 @@ async fn transfer_all(manager: &CommandManager, mut args: ArgumentManager) -> Re
     let tx = if let Some(multisig) = multisig {
         create_transaction_with_multisig(manager, prompt, wallet, tx_type, multisig.payload).await?
     } else {
-        match wallet.create_transaction(tx_type, FeeBuilder::default()).await {
+        match wallet.create_transaction(tx_type, Default::default(), Default::default()).await {
             Ok(tx) => tx,
             Err(e) => {
                 manager.error(&format!("Error while creating transaction: {}", e));
@@ -1296,7 +1295,7 @@ async fn burn(manager: &CommandManager, mut args: ArgumentManager) -> Result<(),
     let tx = if let Some(multisig) = multisig {
         create_transaction_with_multisig(manager, prompt, wallet, tx_type, multisig.payload).await?
     } else {
-        match wallet.create_transaction(tx_type, FeeBuilder::default()).await {
+        match wallet.create_transaction(tx_type, Default::default(), Default::default()).await {
             Ok(tx) => tx,
             Err(e) => {
                 manager.error(&format!("Error while creating transaction: {}", e));
@@ -1826,7 +1825,7 @@ async fn multisig_setup(manager: &CommandManager, mut args: ArgumentManager) -> 
     let tx = if let Some(multisig) = multisig {
         create_transaction_with_multisig(manager, prompt, wallet, tx_type, multisig.payload).await?
     } else {
-        match wallet.create_transaction(tx_type, FeeBuilder::default()).await {
+        match wallet.create_transaction(tx_type, Default::default(), Default::default()).await {
             Ok(tx) => tx,
             Err(e) => {
                 manager.error(&format!("Error while creating transaction: {}", e));

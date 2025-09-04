@@ -21,7 +21,7 @@ use xelis_common::{
     },
     serializer::Serializer,
     transaction::{
-        builder::{FeeBuilder, TransactionBuilder},
+        builder::TransactionBuilder,
         extra_data::ExtraData,
         multisig::{MultiSig, SignatureId}
     },
@@ -427,13 +427,12 @@ async fn build_transaction(context: &Context, body: Value) -> Result<Value, Inte
         storage.get_tx_version().await?
     };
 
-    let fee = params.fee.unwrap_or_default();
-    let mut state = wallet.create_transaction_state_with_storage(&storage, &params.tx_type, &fee, params.nonce).await?;
+    let mut state = wallet.create_transaction_state_with_storage(&storage, &params.tx_type, params.fee, params.base_fee, params.nonce).await?;
 
     let tx = if params.signers.is_empty() {
-        wallet.create_transaction_with(&mut state, None, version, params.tx_type, fee)?
+        wallet.create_transaction_with(&mut state, None, version, params.tx_type, params.fee)?
     } else {
-        let builder = TransactionBuilder::new(version, wallet.get_public_key().clone(), Some(params.signers.len() as u8), params.tx_type, fee);
+        let builder = TransactionBuilder::new(version, wallet.get_public_key().clone(), Some(params.signers.len() as u8), params.tx_type, params.fee);
         let mut unsigned = builder.build_unsigned(&mut state, wallet.get_keypair())
             .context("Error while building unsigned transaction")?;
 
@@ -546,15 +545,14 @@ async fn build_unsigned_transaction(context: &Context, body: Value) -> Result<Va
     // The lock is kept until the TX is applied to the storage
     // So even if we have few requests building a TX, they wait for the previous one to be applied
     let mut storage = wallet.get_storage().write().await;
-    let fee = params.fee.unwrap_or_default();
-    let mut state = wallet.create_transaction_state_with_storage(&storage, &params.tx_type, &fee, params.nonce).await?;
+    let mut state = wallet.create_transaction_state_with_storage(&storage, &params.tx_type, params.fee, params.base_fee, params.nonce).await?;
 
     let version = storage.get_tx_version().await?;
     let threshold = storage.get_multisig_state().await?
         .map(|state| state.payload.threshold);
 
     // Generate the TX
-    let builder = TransactionBuilder::new(version, wallet.get_public_key().clone(), threshold, params.tx_type, fee);
+    let builder = TransactionBuilder::new(version, wallet.get_public_key().clone(), threshold, params.tx_type, params.fee);
     let unsigned = builder.build_unsigned(&mut state, wallet.get_keypair())
         .context("Error while building unsigned transaction")?;
 
@@ -658,7 +656,7 @@ async fn clear_tx_cache(context: &Context, body: Value) -> Result<Value, Interna
 async fn estimate_fees(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: EstimateFeesParams = parse_params(body)?;
     let wallet: &Arc<Wallet> = context.get()?;
-    let fees = wallet.estimate_fees(params.tx_type, FeeBuilder::default()).await?;
+    let fees = wallet.estimate_fees(params.tx_type, params.fee, params.base_fee).await?;
 
     Ok(json!(fees))
 }
