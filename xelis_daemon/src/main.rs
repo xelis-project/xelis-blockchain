@@ -1219,7 +1219,7 @@ async fn status<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Res
         .context("Error while retrieving top block hash")?;
     let avg_block_time = blockchain.get_average_block_time::<S>(&storage).await
         .context("Error while retrieving average block time")?;
-    let block_size_ema = blockchain.get_blocks_size_ema_at_tips::<S>(&storage, tips.iter()).await
+    let block_size_median = blockchain.get_blocks_size_median_at_tips::<S>(&storage, tips.iter()).await
         .context("Error while retrieving average block size")?;
     let required_base_fee = blockchain.get_required_base_fee::<S>(&storage, tips.iter()).await
         .context("Error while calculating required base fee")?;
@@ -1255,7 +1255,7 @@ async fn status<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Res
     manager.message(format!("Difficulty: {}", format_difficulty(difficulty)));
     manager.message(format!("Network Hashrate: {}", format_hashrate((difficulty / (block_time_target / MILLIS_PER_SECOND)).into())));
     manager.message(format!("Top block hash: {}", top_block_hash));
-    manager.message(format!("Block Size EMA: {}", human_bytes(block_size_ema.current())));
+    manager.message(format!("Block Size median: {}", human_bytes(block_size_median as f64)));
     manager.message(format!("Average Block Time: {:.2}s", avg_block_time as f64 / MILLIS_PER_SECOND as f64));
     manager.message(format!("Target Block Time: {:.2}s", block_time_target as f64 / MILLIS_PER_SECOND as f64));
     manager.message(format!("Required base fee: {} XELIS / min: {} XELIS", format_xelis(required_base_fee), format_xelis(FEE_PER_KB)));
