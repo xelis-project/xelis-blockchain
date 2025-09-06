@@ -13,7 +13,7 @@ impl BlockSizeEma {
     pub const K: u128 = 10 * Self::SCALE;
 
     pub fn default(initial: usize) -> Self {
-        Self::new(initial, 0.11)
+        Self::new(initial, 0.05)
     }
 
     pub fn new(initial: usize, alpha: f64) -> Self {
@@ -30,7 +30,6 @@ impl BlockSizeEma {
         let block_scaled = (block_size as u128) * Self::SCALE;
 
         // EMA formula: ema = alpha * x + (1 - alpha) * ema
-        // rewritten for integer math
         self.value = (self.alpha * block_scaled
             + (Self::SCALE - self.alpha) * self.value)
             / Self::SCALE;
@@ -44,6 +43,7 @@ impl BlockSizeEma {
 
 #[cfg(test)]
 mod tests {
+    use xelis_common::config::MAX_BLOCK_SIZE;
     use super::*;
 
     #[test]
@@ -56,7 +56,30 @@ mod tests {
         }
 
         // Check value is deterministic
-        assert_eq!(ema.current(), 2034);
+        assert_eq!(ema.current(), 1102);
+    }
+
+    #[test]
+    fn test_ema_increase() {
+        // initial block empty
+        let mut ema = BlockSizeEma::default(124);
+        ema.add(MAX_BLOCK_SIZE);
+
+        assert_eq!(ema.current(), 65_653);
+
+        ema.add(MAX_BLOCK_SIZE);
+        assert_eq!(ema.current(), 127_907);
+    }
+
+    #[test]
+    fn test_ema_decrease() {
+        // initial full block
+        let mut ema = BlockSizeEma::default(MAX_BLOCK_SIZE);
+        ema.add(124);
+        assert_eq!(ema.current(), 1_245_190);
+
+        ema.add(124);
+        assert_eq!(ema.current(), 1_182_936);
     }
 
     #[test]

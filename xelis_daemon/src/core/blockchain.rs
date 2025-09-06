@@ -3600,7 +3600,7 @@ pub fn calculate_required_base_fee(ema: usize) -> u64 {
     // fee = FEE_PER_KB * (1 + k * usage^exp / SCALE)
     let fee = (FEE_PER_KB as u128 * (SCALE + (K * usage_pow_scaled) / SCALE)) / SCALE;
 
-    fee as u64
+    (fee as u64).max(FEE_PER_KB)
 }
 
 // Esimate the required TX fee extra part
