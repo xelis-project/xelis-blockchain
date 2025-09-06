@@ -66,7 +66,6 @@ impl Serializer for VarUint {
     }
 
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let mut buffer = [0u8; 32];
         let len = reader.read_u8()? as usize;
 
         if len > MAX_VARUINT_SIZE {
@@ -79,6 +78,8 @@ impl Serializer for VarUint {
         }
 
         let bytes = reader.read_bytes_ref(len)?;
+
+        let mut buffer = [0u8; 32];
         buffer[0..len].copy_from_slice(bytes);
 
         Ok(Self(U256::from_big_endian(&buffer)))
@@ -114,6 +115,12 @@ impl From<u128> for VarUint {
 impl From<u64> for VarUint {
     fn from(u: u64) -> Self {
         Self::from_u64(u)
+    }
+}
+
+impl From<u32> for VarUint {
+    fn from(u: u32) -> Self {
+        Self::from_u64(u as u64)
     }
 }
 
