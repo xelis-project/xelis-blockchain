@@ -350,6 +350,7 @@ impl<S: Storage> P2pServer<S> {
                         let difficulty = storage.get_difficulty_for_block_hash(&hash).await?;
                         let cumulative_difficulty = storage.get_cumulative_difficulty_for_block_hash(&hash).await?;
                         let p = storage.get_estimated_covariance_for_block_hash(&hash).await?;
+                        let size_ema = storage.get_block_size_ema(&hash).await?;
 
                         // Also track all executions
                         let mut executed_transactions = IndexSet::new();
@@ -362,7 +363,7 @@ impl<S: Storage> P2pServer<S> {
                             }
                         }
 
-                        Ok::<_, BlockchainError>(BlockMetadata { hash, supply, reward, difficulty, cumulative_difficulty, p, executed_transactions })
+                        Ok::<_, BlockchainError>(BlockMetadata { hash, supply, reward, difficulty, cumulative_difficulty, p, size_ema, executed_transactions })
                     })
                     .buffered(self.stream_concurrency)
                     .try_collect()
@@ -636,7 +637,7 @@ impl<S: Storage> P2pServer<S> {
                             }
 
                             // save the block with its transactions, difficulty
-                            storage.save_block(Arc::new(header), &txs, metadata.difficulty, metadata.cumulative_difficulty, metadata.p, Immutable::Owned(hash)).await?;
+                            storage.save_block(Arc::new(header), &txs, metadata.difficulty, metadata.cumulative_difficulty, metadata.p, metadata.size_ema, Immutable::Owned(hash)).await?;
 
                             Ok(())
                         }).await?;

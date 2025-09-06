@@ -1,5 +1,4 @@
 use std::hash::{Hasher, Hash as StdHash};
-
 use indexmap::IndexSet;
 use xelis_common::{
     crypto::Hash,
@@ -7,7 +6,6 @@ use xelis_common::{
     varuint::VarUint,
     serializer::*
 };
-
 
 #[derive(Debug)]
 pub struct BlockMetadata {
@@ -23,6 +21,8 @@ pub struct BlockMetadata {
     pub cumulative_difficulty: CumulativeDifficulty,
     // Difficulty P variable
     pub p: VarUint,
+    // Block size EMA
+    pub size_ema: u32,
     // All transactions marked as executed in this block
     pub executed_transactions: IndexSet<Hash>
 }
@@ -49,6 +49,7 @@ impl Serializer for BlockMetadata {
         let difficulty = Difficulty::read(reader)?;
         let cumulative_difficulty = CumulativeDifficulty::read(reader)?;
         let p = VarUint::read(reader)?;
+        let size_ema = u32::read(reader)?;
 
         // We don't write it through IndexSet impl directly
         // as we must support any u16 len same as a BlockHeader
@@ -69,6 +70,7 @@ impl Serializer for BlockMetadata {
             difficulty,
             cumulative_difficulty,
             p,
+            size_ema,
             executed_transactions
         })
     }
@@ -80,6 +82,7 @@ impl Serializer for BlockMetadata {
         self.difficulty.write(writer);
         self.cumulative_difficulty.write(writer);
         self.p.write(writer);
+        self.size_ema.write(writer);
         self.executed_transactions.write(writer);
     }
 
