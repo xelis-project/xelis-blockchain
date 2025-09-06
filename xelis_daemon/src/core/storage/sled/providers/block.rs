@@ -11,7 +11,7 @@ use xelis_common::{
     varuint::VarUint
 };
 use crate::core::{
-    error::BlockchainError,
+    error::{BlockchainError, DiskContext},
     storage::{
         sled::BLOCKS_COUNT,
         BlockProvider,
@@ -69,7 +69,7 @@ impl BlockProvider for SledStorage {
     }
 
     async fn get_block_size(&self, hash: &Hash) -> Result<usize, BlockchainError> {
-        trace!("get block size");
+        trace!("get block size {}", hash);
         let header = self.get_block_header_by_hash(hash).await?;
         let mut size = header.size();
         for hash in header.get_txs_hashes() {
@@ -79,7 +79,12 @@ impl BlockProvider for SledStorage {
         Ok(size)
     }
 
-    async fn save_block(&mut self, block: Arc<BlockHeader>, txs: &[Arc<Transaction>], difficulty: Difficulty, cumulative_difficulty: CumulativeDifficulty, p: VarUint, hash: Immutable<Hash>) -> Result<(), BlockchainError> {
+    async fn get_block_size_ema(&self, hash: &Hash) -> Result<u32, BlockchainError> {
+        trace!("get block size ema {}", hash);
+        self.load_from_disk(&self.block_size_ema, hash.as_bytes(), DiskContext::BlockSizeEma)
+    }
+
+    async fn save_block(&mut self, block: Arc<BlockHeader>, txs: &[Arc<Transaction>], difficulty: Difficulty, cumulative_difficulty: CumulativeDifficulty, p: VarUint, size_ema: u32, hash: Immutable<Hash>) -> Result<(), BlockchainError> {
         debug!("Storing new {} with hash: {}, difficulty: {}, snapshot mode: {}", block, hash, difficulty, self.snapshot.is_some());
 
         // Store transactions
@@ -110,6 +115,9 @@ impl BlockProvider for SledStorage {
 
         // Store P
         Self::insert_into_disk(self.snapshot.as_mut(), &self.difficulty_covariance, hash.as_bytes(), p.to_bytes())?;
+
+        // Store EMA
+        Self::insert_into_disk(self.snapshot.as_mut(), &self.block_size_ema, hash.as_bytes(), size_ema.to_bytes())?;
 
         self.add_block_hash_at_height(&hash, block.get_height()).await?;
 

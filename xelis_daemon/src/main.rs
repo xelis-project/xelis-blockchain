@@ -327,6 +327,7 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
     command_manager.add_command(Command::new("clear_p2p_peerlist", "Clear P2P peerlist", CommandHandler::Async(async_handler!(clear_p2p_peerlist::<S>))))?;
     command_manager.add_command(Command::with_optional_arguments("difficulty_dataset", "Create a dataset for difficulty from chain", vec![Arg::new("output", ArgType::String)], CommandHandler::Async(async_handler!(difficulty_dataset::<S>))))?;
     command_manager.add_command(Command::with_optional_arguments("circulating_supply_dataset", "Create a dataset for circulating supply of specific asset from chain", vec![Arg::new("output", ArgType::String), Arg::new("asset", ArgType::Hash)], CommandHandler::Async(async_handler!(circulating_supply_dataset::<S>))))?;
+    command_manager.add_command(Command::with_optional_arguments("block_size_dataset", "Create a dataset for block size from chain", vec![Arg::new("output", ArgType::String)], CommandHandler::Async(async_handler!(block_size_dataset::<S>))))?;
     command_manager.add_command(Command::with_optional_arguments("mine_block", "Mine a block on testnet", vec![Arg::new("count", ArgType::Number)], CommandHandler::Async(async_handler!(mine_block::<S>))))?;
     command_manager.add_command(Command::with_required_arguments("add_peer", "Connect to a new peer using ip:port format", vec![Arg::new("address", ArgType::String)], CommandHandler::Async(async_handler!(add_peer::<S>))))?;
     command_manager.add_command(Command::new("list_unexecuted_transactions", "List all unexecuted transactions", CommandHandler::Async(async_handler!(list_unexecuted_transactions::<S>))))?;
@@ -570,7 +571,7 @@ async fn verify_chain<S: Storage>(manager: &CommandManager, mut args: ArgumentMa
         if !txs.is_empty() {
             info!("Verifying {} txs ({} outputs) at {}", txs.len(), outputs, topo);
             let start = Instant::now();
-            let required_base_fee = blockchain.get_required_base_fee(&*storage, header.get_tips().iter()).await
+            let (required_base_fee, _) = blockchain.get_required_base_fee(&*storage, header.get_tips().iter()).await
                 .context("Error while calculating required base fee")?;
 
             let mut state = ChainState::new(&*storage, blockchain.get_contract_environment(), 0, topo - 1, header.get_version(), required_base_fee);
@@ -1119,6 +1120,48 @@ async fn snapshot_mode<S: Storage>(manager: &CommandManager, _: ArgumentManager)
     Ok(())
 }
 
+async fn block_size_dataset<S: Storage>(manager: &CommandManager, mut arguments: ArgumentManager) -> Result<(), CommandError> {
+    let output_path: String = if arguments.has_argument("output") {
+        arguments.get_value("output")?.to_string_value()?
+    } else {
+        "block_size_dataset.csv".to_string()
+    };
+
+    manager.message(format!("Creating file {}...", output_path));
+    let mut file = File::create(&output_path).context("Error while creating file")?;
+    file.write(b"topoheight,block_size,block_size_ema,base_fee\n")
+        .context("Error while writing header to file")?;
+
+    let context = manager.get_context().lock()?;
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+
+    manager.message("Creating block size dataset...");
+    let storage = blockchain.get_storage().read().await;
+
+    for topoheight in (0..=blockchain.get_topo_height()).rev() {
+        let hash_at_topo = storage.get_hash_at_topo_height(topoheight).await
+            .context("Fetching hash at topo")?;
+        let tips = storage.get_past_blocks_for_block_hash(&hash_at_topo).await
+            .context("Fetching past blocks")?;
+        let block_size = storage.get_block_size(&hash_at_topo).await
+            .context("Fetching block size")?;
+        let (base_fee, _) = blockchain.get_required_base_fee(&*storage, tips.iter()).await
+            .context("Calculating base fee")?;
+        let block_size_ema = storage.get_block_size_ema(&hash_at_topo).await
+            .context("Fetching new block size ema")?;
+
+        // Write to file
+        file.write(format!("{},{},{},{}\n", topoheight, block_size, block_size_ema, base_fee).as_bytes())
+            .context("Error while writing to file")?;
+    }
+
+    manager.message("Flushing file...");
+    file.flush().context("Error while flushing file")?;
+    manager.message(format!("Dataset written to {}", output_path));
+
+    Ok(())
+}
+
 async fn circulating_supply_dataset<S: Storage>(manager: &CommandManager, mut arguments: ArgumentManager) -> Result<(), CommandError> {
     let output_path = if arguments.has_argument("output") {
         arguments.get_value("output")?.to_string_value()?
@@ -1219,9 +1262,9 @@ async fn status<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Res
         .context("Error while retrieving top block hash")?;
     let avg_block_time = blockchain.get_average_block_time::<S>(&storage).await
         .context("Error while retrieving average block time")?;
-    let block_size_median = blockchain.get_blocks_size_median_at_tips::<S>(&storage, tips.iter()).await
+    let avg_block_size = blockchain.get_average_block_size::<S>(&storage).await
         .context("Error while retrieving average block size")?;
-    let required_base_fee = blockchain.get_required_base_fee::<S>(&storage, tips.iter()).await
+    let (required_base_fee, ema_block_size) = blockchain.get_required_base_fee::<S>(&storage, tips.iter()).await
         .context("Error while calculating required base fee")?;
     let emitted_supply = storage.get_supply_at_topo_height(topoheight).await
         .context("Error while retrieving supply")?;
@@ -1255,7 +1298,8 @@ async fn status<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Res
     manager.message(format!("Difficulty: {}", format_difficulty(difficulty)));
     manager.message(format!("Network Hashrate: {}", format_hashrate((difficulty / (block_time_target / MILLIS_PER_SECOND)).into())));
     manager.message(format!("Top block hash: {}", top_block_hash));
-    manager.message(format!("Block Size median: {}", human_bytes(block_size_median as f64)));
+    manager.message(format!("Block Size EMA: {}", human_bytes(ema_block_size as f64)));
+    manager.message(format!("Average Block Size: {}", human_bytes(avg_block_size as f64)));
     manager.message(format!("Average Block Time: {:.2}s", avg_block_time as f64 / MILLIS_PER_SECOND as f64));
     manager.message(format!("Target Block Time: {:.2}s", block_time_target as f64 / MILLIS_PER_SECOND as f64));
     manager.message(format!("Required base fee: {} XELIS / min: {} XELIS", format_xelis(required_base_fee), format_xelis(FEE_PER_KB)));

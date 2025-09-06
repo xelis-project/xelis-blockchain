@@ -65,6 +65,8 @@ pub enum DiskContext {
     BlocksAtHeight(u64),
     #[error("get block executor for tx")]
     BlockExecutorForTx,
+    #[error("get block size ema")]
+    BlockSizeEma,
     #[error("get blocks for tx")]
     TxBlocks,
     #[error("get difficulty for block hash")]

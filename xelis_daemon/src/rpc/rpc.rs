@@ -987,7 +987,7 @@ async fn get_estimated_fee_rates<S: Storage>(context: &Context, body: Value) -> 
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let storage = blockchain.get_storage().read().await;
     let tips = storage.get_tips().await?;
-    let base_fee = blockchain.get_required_base_fee(&*storage, tips.iter()).await?;
+    let (base_fee, _) = blockchain.get_required_base_fee(&*storage, tips.iter()).await?;
 
     let mempool = blockchain.get_mempool().read().await;
     let estimated = mempool.estimate_fee_rates(base_fee)?;

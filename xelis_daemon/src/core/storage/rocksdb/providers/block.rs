@@ -14,7 +14,7 @@ use crate::core::{
     error::BlockchainError,
     storage::{
         rocksdb::{
-            BlockDifficulty,
+            BlockMetadata,
             Column,
         },
         sled::{BLOCKS_COUNT, TXS_COUNT},
@@ -77,10 +77,14 @@ impl BlockProvider for RocksStorage {
         Ok(size)
     }
 
+    async fn get_block_size_ema(&self, hash: &Hash) -> Result<u32, BlockchainError> {
+        self.load_block_metadata(hash).map(|m| m.size_ema)
+    }
+
     // Save a new block with its transactions and difficulty
     // Hash is Immutable to be stored efficiently in caches and sharing the same object
     // with others caches (like P2p or GetWork)
-    async fn save_block(&mut self, block: Arc<BlockHeader>, txs: &[Arc<Transaction>], difficulty: Difficulty, cumulative_difficulty: CumulativeDifficulty, covariance: VarUint, hash: Immutable<Hash>) -> Result<(), BlockchainError> {
+    async fn save_block(&mut self, block: Arc<BlockHeader>, txs: &[Arc<Transaction>], difficulty: Difficulty, cumulative_difficulty: CumulativeDifficulty, covariance: VarUint, size_ema: u32, hash: Immutable<Hash>) -> Result<(), BlockchainError> {
         trace!("save block");
 
         let mut count_txs = 0;
@@ -93,12 +97,13 @@ impl BlockProvider for RocksStorage {
 
         self.insert_into_disk(Column::Blocks, hash.as_bytes(), &block)?;
 
-        let block_difficulty = BlockDifficulty {
+        let block_difficulty = BlockMetadata {
             covariance,
             difficulty,
-            cumulative_difficulty
+            cumulative_difficulty,
+            size_ema
         };
-        self.insert_into_disk(Column::BlockDifficulty, hash.as_bytes(), &block_difficulty)?;
+        self.insert_into_disk(Column::BlockMetadata, hash.as_bytes(), &block_difficulty)?;
 
         self.add_block_hash_at_height(&hash, block.get_height()).await?;
 
@@ -118,5 +123,12 @@ impl BlockProvider for RocksStorage {
         self.remove_from_disk(Column::Blocks, hash)?;
 
         Ok(block)
+    }
+}
+
+impl RocksStorage {
+    pub fn load_block_metadata(&self, hash: &Hash) -> Result<BlockMetadata, BlockchainError> {
+        trace!("load block difficulty {}", hash);
+        self.load_from_disk(Column::BlockMetadata, hash)
     }
 }

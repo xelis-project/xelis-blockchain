@@ -471,7 +471,7 @@ impl Storage for RocksStorage {
         trace!("topoheight metadata deleted");
 
         trace!("deleting block difficulty");
-        self.remove_from_disk(Column::BlockDifficulty, &hash)?;
+        self.remove_from_disk(Column::BlockMetadata, &hash)?;
         trace!("block deleted");
 
         let mut txs = Vec::with_capacity(block.get_txs_count());

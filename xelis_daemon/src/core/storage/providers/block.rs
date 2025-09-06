@@ -31,6 +31,10 @@ pub trait BlockProvider: TransactionProvider + DifficultyProvider + BlocksAtHeig
     // Get the block size with txs included
     async fn get_block_size(&self, hash: &Hash) -> Result<usize, BlockchainError>;
 
+    // Get the block size with txs included
+    // EMA is in bytes
+    async fn get_block_size_ema(&self, hash: &Hash) -> Result<u32, BlockchainError>;
+
     // Save a new block with its transactions and difficulty
     // Hash is Immutable to be stored efficiently in caches and sharing the same object
     // with others caches (like P2p or GetWork)
@@ -41,6 +45,7 @@ pub trait BlockProvider: TransactionProvider + DifficultyProvider + BlocksAtHeig
         difficulty: Difficulty,
         cumulative_difficulty: CumulativeDifficulty,
         p: VarUint,
+        size_ema: u32,
         hash: Immutable<Hash>
     ) -> Result<(), BlockchainError>;
 

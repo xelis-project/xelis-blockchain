@@ -74,6 +74,8 @@ pub struct SledStorage {
     pub(super) cumulative_difficulty: Tree,
     // Difficulty estimated covariance (P)
     pub(super) difficulty_covariance: Tree,
+    // Block size ema
+    pub(super) block_size_ema: Tree,
     // keep tracks of all available assets on network
     // Key is the asset hash, value is the topoheight
     pub(super) assets: Tree,
@@ -221,6 +223,7 @@ impl SledStorage {
             hash_at_topo: sled.open_tree("hash_at_topo")?,
             cumulative_difficulty: sled.open_tree("cumulative_difficulty")?,
             difficulty_covariance: sled.open_tree("difficulty_covariance")?,
+            block_size_ema: sled.open_tree("block_size_ema")?,
             assets: sled.open_tree("assets")?,
             versioned_assets: sled.open_tree("versioned_assets")?,
             nonces: sled.open_tree("nonces")?,

@@ -35,9 +35,9 @@ pub enum Column {
     // Hash at a topoheight
     // {topoheight} => {block_hash}
     HashAtTopo,
-    // Block difficulty / cumulative difficulty / covariance
-    // {block_hash} => {difficulty}
-    BlockDifficulty,
+    // Block difficulty / cumulative difficulty / covariance / ema size
+    // {block_hash} => {metadata}
+    BlockMetadata,
     // Misc data with no specific rules
     Common,
     // Topoheight Metadata

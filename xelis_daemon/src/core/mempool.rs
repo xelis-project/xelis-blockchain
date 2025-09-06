@@ -181,7 +181,7 @@ impl Mempool {
             self.caches.insert(tx.get_source().clone(), cache);
         }
 
-        let fee_per_kb = estimate_tx_fee_per_kb(storage, topoheight, &tx, size as u64, block_version).await?;
+        let fee_per_kb = estimate_tx_fee_per_kb(storage, topoheight, &tx, size, block_version).await?;
         debug!("fee per kb {} for TX {}", fee_per_kb, hash);
 
         let sorted_tx = SortedTx {

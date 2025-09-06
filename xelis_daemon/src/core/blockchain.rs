@@ -92,7 +92,6 @@ use crate::{
         MILLIS_PER_SECOND, SIDE_BLOCK_REWARD_MAX_BLOCKS, PRUNE_SAFETY_LIMIT,
         SIDE_BLOCK_REWARD_PERCENT, SIDE_BLOCK_REWARD_MIN_PERCENT, STABLE_LIMIT,
         TIMESTAMP_IN_FUTURE_LIMIT, DEFAULT_CACHE_SIZE, CHAIN_AVERAGE_BLOCK_TIME_N,
-        CHAIN_AVERAGE_BLOCKS_SIZE_MAX_DEPTH,
     },
     core::{
         config::Config,
@@ -112,6 +111,7 @@ use crate::{
         state::{ChainState, ApplicableChainState},
         hard_fork::*,
         TxCache,
+        BlockSizeEma,
     },
     p2p::P2pServer,
     rpc::{
@@ -236,8 +236,6 @@ pub struct Blockchain<S: Storage> {
     tip_work_score_cache: Mutex<LruCache<(Hash, Hash, u64), (HashSet<Hash>, CumulativeDifficulty)>>,
     // using base hash, current tip hash and base height, this cache is used to store the DAG order
     full_order_cache: Mutex<LruCache<(Hash, Hash, u64), IndexSet<Hash>>>,
-    // Cache containing the block size per cache
-    block_size_cache: Mutex<LruCache<Hash, usize>>,
     // auto prune mode if enabled, will delete all blocks every N and keep only N top blocks (topoheight based)
     auto_prune_keep_n_blocks: Option<u64>,
     // Flush storage manually to the disk every N blocks (topoheight based)
@@ -345,7 +343,6 @@ impl<S: Storage> Blockchain<S> {
             tip_work_score_cache: Mutex::new(LruCache::new(NonZeroUsize::new(DEFAULT_CACHE_SIZE).expect("Default cache size for tip work score must be above 0"))),
             common_base_cache: Mutex::new(LruCache::new(NonZeroUsize::new(DEFAULT_CACHE_SIZE).expect("Default cache size for common base must be above 0"))),
             full_order_cache: Mutex::new(LruCache::new(NonZeroUsize::new(DEFAULT_CACHE_SIZE).expect("Default cache size for full order must be above 0"))),
-            block_size_cache: Mutex::new(LruCache::new(NonZeroUsize::new(DEFAULT_CACHE_SIZE).expect("Default cache size for block size must be above 0"))),
             auto_prune_keep_n_blocks: config.auto_prune_keep_n_blocks,
             skip_block_template_txs_verification: config.skip_block_template_txs_verification,
             checkpoints: config.checkpoints.into_iter().collect(),
@@ -1908,7 +1905,7 @@ impl<S: Storage> Blockchain<S> {
         // the base fee
         let is_v3_enabled = block.get_version() >= BlockVersion::V3;
         let base_fee = if is_v3_enabled {
-            self.get_required_base_fee(&*storage, block.get_tips().iter()).await?
+            self.get_required_base_fee(&*storage, block.get_tips().iter()).await?.0
         } else {
             FEE_PER_KB
         };
@@ -2249,10 +2246,10 @@ impl<S: Storage> Blockchain<S> {
         let is_v3_enabled = version >= BlockVersion::V3;
 
         // Required base fee per KB to prevent low-fee spam attacks
-        let base_fee = if is_v3_enabled {
+        let (base_fee, block_size_ema) = if is_v3_enabled {
             self.get_required_base_fee(&*storage, block.get_tips().iter()).await?
         } else {
-            FEE_PER_KB
+            (FEE_PER_KB, self.get_blocks_size_ema_at_tips(&*storage, block.get_tips().iter()).await?)
         };
 
         // Transaction verification
@@ -2488,6 +2485,12 @@ impl<S: Storage> Blockchain<S> {
             debug!("Not broadcasting block {} because broadcast is disabled", block_hash);
         }
 
+        // Calculate the new block size ema for this block
+        // so it can be used as base for next block
+        let mut ema = BlockSizeEma::default(block_size_ema);
+        ema.add(block_size);
+        let new_block_size_ema = ema.current();
+
         // If we have reached this part, it means the block is valid and we can start integrating it
 
         // Start by dropping the read guard
@@ -2496,19 +2499,13 @@ impl<S: Storage> Blockchain<S> {
 
         counter!("xelis_block_added").increment(1);
 
-        // Store the block size in our cache for later usage
-        {
-            let mut block_size_cache = self.block_size_cache.lock().await;
-            block_size_cache.put(block_hash.as_ref().clone(), block_size);
-        }
-
         let mut storage = self.storage.write().await;
 
         // Save transactions & block
         {
             debug!("Saving block {} on disk", block_hash);
             let start = Instant::now();
-            storage.save_block(block.clone(), &txs, difficulty, cumulative_difficulty, p, Immutable::Arc(block_hash.clone())).await?;
+            storage.save_block(block.clone(), &txs, difficulty, cumulative_difficulty, p, new_block_size_ema, Immutable::Arc(block_hash.clone())).await?;
             storage.add_block_execution_to_order(&block_hash).await?;
 
             histogram!("xelis_block_store_ms").record(start.elapsed().as_millis() as f64);
@@ -3468,102 +3465,83 @@ impl<S: Storage> Blockchain<S> {
         Ok(diff / count)
     }
 
-    pub async fn get_blocks_size_at_tips<P>(&self, provider: &P, tips: impl Iterator<Item = &Hash>) -> Result<Vec<usize>, BlockchainError>
+    // Get the average block size over the last N ordered blocks
+    pub async fn get_average_block_size<P>(&self, provider: &P) -> Result<usize, BlockchainError>
     where
-        P: BlockProvider
+        P: BlockProvider + PrunedTopoheightProvider + DagOrderProvider
     {
-        trace!("get blocks size at tips");
+        // current topoheight
+        let topoheight = self.get_topo_height();
 
-        let mut cache = self.block_size_cache.lock().await;
-        let mut stack = IndexSet::new();
-        stack.extend(tips.map(|v| (Cow::Borrowed(v), 0)));
+        let mut count = if topoheight >= CHAIN_AVERAGE_BLOCK_TIME_N {
+            CHAIN_AVERAGE_BLOCK_TIME_N
+        } else {
+            topoheight
+        };
 
-        // All processed block hashes to prevent re processing a block twice
-        let mut processed = IndexSet::new();
-        // Vector size for sorting due to DAG branches
-        let mut blocks: Vec<usize> = Vec::new();
-
-        while let Some((hash, depth)) = stack.pop() {
-            if !processed.insert(hash.clone()) {
-                debug!("Block hash {} was already processed for EMA, skipping it", hash);
-                continue;
+        // check that we are not under the pruned topoheight
+        if let Some(pruned_topoheight) = provider.get_pruned_topoheight().await? {
+            if topoheight - count < pruned_topoheight {
+                count = pruned_topoheight
             }
-
-            let new_depth = depth + 1;
-            if new_depth < CHAIN_AVERAGE_BLOCKS_SIZE_MAX_DEPTH {
-                let tips = provider.get_past_blocks_for_block_hash(&hash).await?;
-                stack.extend(
-                    tips.into_owned()
-                        .into_iter()
-                        .map(|v| (Cow::Owned(v), new_depth))
-                );
-            }
-
-            let block_size = if let Some(size) = cache.peek(&hash).copied() {
-                size
-            } else {
-                let size = provider.get_block_size(&hash).await?;
-                cache.put(hash.into_owned(), size);
-                size
-            };
-
-            blocks.push(block_size);
         }
 
-        Ok(blocks)
+        let mut total = 0;
+        for topoheight in topoheight-count..topoheight {
+            let block_hash = provider.get_hash_at_topo_height(topoheight).await?;
+            let block_size = provider.get_block_size(&block_hash).await?;
+
+            total += block_size;
+        }
+
+        Ok(total / count as usize)
     }
 
-    // Calculate the block size median over N last blocks based on block tips
-    // The idea is to increase fees when the average block size reach over 10% of the block max size
-    // We increase them proportionally to prevent any TX spam attack due to our low fees system.
-    pub async fn get_blocks_size_median_at_tips<P>(&self, provider: &P, tips: impl Iterator<Item = &Hash>) -> Result<usize, BlockchainError>
+    // Calculate the block size EMA at tips weighted by the cumulative difficulty of each branch
+    // Weight per cumulative difficulty is required to avoid weak forks/branches to easily skew the EMA
+    pub async fn get_blocks_size_ema_at_tips<'a, P>(&self, provider: &P, tips: impl Iterator<Item = &Hash>) -> Result<usize, BlockchainError>
     where
         P: BlockProvider
     {
-        trace!("get blocks size median at tips");
-        let start = Instant::now();
-        let mut blocks = self.get_blocks_size_at_tips(provider, tips).await?;
+        trace!("get blocks size ema at tips");
 
-        let median = median(&mut blocks);
+        let mut total = CumulativeDifficulty::zero();
+        let mut sum = CumulativeDifficulty::zero();
 
-        let total_blocks = blocks.len();
-        let total_size = blocks.iter().sum::<usize>() as f64;
+        for tip in tips {
+            let cumulative_difficulty = provider.get_cumulative_difficulty_for_block_hash(tip).await?;
+            let ema = provider.get_block_size_ema(tip).await?;
 
-        info!(
-            "{} blocks with a total size of {} (avg {}) and median {} in {:?}",
-            total_blocks,
-            human_bytes::human_bytes(total_size),
-            human_bytes::human_bytes(if total_blocks > 0 {
-                total_size / total_blocks as f64
-            } else {
-                total_size
-            }),
-            human_bytes::human_bytes(median as f64),
-            start.elapsed()
-        );
+            total += cumulative_difficulty;
+            sum += CumulativeDifficulty::from(ema) * cumulative_difficulty;
+        }
 
-        Ok(median)
-    }
+        let ema = if total == CumulativeDifficulty::zero() {
+            0
+        } else {
+            let result: u64 = (sum / total).into();
+            result as usize
+        };
 
-    pub async fn get_blocks_size_median<P>(&self, storage: &S) -> Result<usize, BlockchainError> {
-        let tips = storage.get_tips().await?;
-        self.get_blocks_size_median_at_tips(storage, tips.iter()).await
+        Ok(ema)
     }
 
     // Calculate the required base fee, by default its `FEE_PER_KB`
     // fees should get exponential if we are above 10% of the max block size
-    pub async fn get_required_base_fee<P>(&self, provider: &P, tips: impl Iterator<Item = &Hash>) -> Result<u64, BlockchainError>
+    // Returns the required base fee and the block size EMA used
+    pub async fn get_required_base_fee<P>(&self, provider: &P, tips: impl Iterator<Item = &Hash>) -> Result<(u64, usize), BlockchainError>
     where
         P: BlockProvider
     {
-        let median = self.get_blocks_size_median_at_tips(provider, tips).await?;
-        Ok(calculate_required_base_fee(median))
+        let ema = self.get_blocks_size_ema_at_tips(provider, tips).await?;
+        let base_fee = calculate_required_base_fee(ema);
+        Ok((base_fee, ema))
     }
 
     // Same as `get_required_base_fee` but estimate next blocks by including mempool pending txs
     async fn predicate_required_base_fee_internal(&self, storage: &S) -> Result<u64, BlockchainError> {
         let tips = storage.get_tips().await?;
-        let mut blocks = self.get_blocks_size_at_tips(&*storage, tips.iter()).await?;
+        let mut ema = self.get_blocks_size_ema_at_tips(&*storage, tips.iter()).await?;
         let mut block_size = BlockHeader::estimate_size(tips.len().min(TIPS_LIMIT));
 
         {
@@ -3573,14 +3551,19 @@ impl<S: Storage> Blockchain<S> {
             }
         }
 
-        // Inject our fake block
-        blocks.push(block_size);
-        let median = median(&mut blocks);
+        // if the block size is above the EMA
+        // Estimate it by injecting a new block size and all the TXs pending in the mempool
+        if block_size > ema {
+            let mut tmp = BlockSizeEma::default(ema);
+            tmp.add(block_size);
+    
+            ema = tmp.current() as usize;
+        }
 
-        let fee_per_kb = calculate_required_base_fee(median);
+        let fee_per_kb = calculate_required_base_fee(ema);
         debug!(
             "Predicated block size median for next block {} with fee per kb {}",
-            human_bytes::human_bytes(median as f64),
+            human_bytes::human_bytes(ema as f64),
             fee_per_kb
         );
 
@@ -3594,43 +3577,27 @@ impl<S: Storage> Blockchain<S> {
     }
 }
 
-// Compute the median of values
-pub fn median(values: &mut Vec<usize>) -> usize {
-    // Sort the blocks size
-    values.sort();
-
-    if values.is_empty() {
-        0
-    } else if values.len() % 2 == 1 {
-        values[values.len() / 2]
-    } else {
-        let mid = values.len() / 2;
-        (values[mid - 1] + values[mid]) / 2
-    }
-}
-
-// Calculate the required dynamic base fee based on the block size median
+// Calculate the required dynamic base fee based on the block size EMA
 // It must handles congestion by raising fees smoothly until we start to
 // reach the max block size.
 // NOTE: we don't use f64 to prevent any issue that could occurs
 // based on the platform/rust version differences
 // see `f64::powf`
-pub fn calculate_required_base_fee(median: usize) -> u64 {
-    // fixed-point precision (6 decimals)
+pub fn calculate_required_base_fee(ema: usize) -> u64 {
     const SCALE: u128 = 1_000_000;
     const EXP: u32 = 3;
     const K: u128 = 10 * SCALE;
 
-    // scaled [0..=SCALE]
-    let usage = (median as u128 * SCALE) / MAX_BLOCK_SIZE as u128;
+    // scaled usage [0..=SCALE]
+    let usage = (ema as u128 * SCALE) / MAX_BLOCK_SIZE as u128;
 
     // usage^EXP (still scaled^EXP)
     let usage_pow = usage.pow(EXP);
-    
-    // scale back: usage_pow is SCALE^EXP, so divide
-    let usage_pow_scaled = usage_pow / SCALE.pow(EXP);
 
-    // fee = FEE_PER_KB * (1 + k * usage^exp)
+    // scale back: divide by SCALE^(EXP-1)
+    let usage_pow_scaled = usage_pow / SCALE.pow(EXP - 1);
+
+    // fee = FEE_PER_KB * (1 + k * usage^exp / SCALE)
     let fee = (FEE_PER_KB as u128 * (SCALE + (K * usage_pow_scaled) / SCALE)) / SCALE;
 
     fee as u64
@@ -3664,11 +3631,14 @@ pub async fn estimate_required_tx_fee_extra<P: AccountProvider>(provider: &P, cu
 
 // Estimate the TX fee per kB by calculating and sub the fee extra part
 // NOTE: tx size is in bytes, not kB
-pub async fn estimate_tx_fee_per_kb<P: AccountProvider>(provider: &P, current_topoheight: TopoHeight, tx: &Transaction, tx_size: u64, block_version: BlockVersion) -> Result<u64, BlockchainError> {
+pub async fn estimate_tx_fee_per_kb<P: AccountProvider>(provider: &P, current_topoheight: TopoHeight, tx: &Transaction, tx_size: usize, block_version: BlockVersion) -> Result<u64, BlockchainError> {
     let fee_extra = estimate_required_tx_fee_extra(provider, current_topoheight, tx, block_version).await?;
     let fee = tx.get_fee() - fee_extra;
 
-    Ok(fee * BYTES_PER_KB as u64 / tx_size)
+    // We round it up to the next kB because
+    // the verification part is doing it
+    let tx_size_rounded = (tx_size + (BYTES_PER_KB - 1)) / BYTES_PER_KB;
+    Ok(fee / tx_size_rounded as u64)
 }
 
 // Estimate the required final fee for TX
