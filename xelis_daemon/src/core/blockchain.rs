@@ -3585,7 +3585,7 @@ impl<S: Storage> Blockchain<S> {
 // see `f64::powf`
 pub fn calculate_required_base_fee(ema: usize) -> u64 {
     const SCALE: u128 = 1_000_000;
-    const EXP: u32 = 3;
+    const EXP: u32 = 2;
     const K: u128 = 10 * SCALE;
 
     // scaled usage [0..=SCALE]
