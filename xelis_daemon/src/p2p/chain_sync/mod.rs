@@ -7,9 +7,8 @@ use std::{
     time::{Duration, Instant}
 };
 use futures::{
-    stream::{self, FuturesOrdered},
+    stream,
     StreamExt,
-    TryStreamExt
 };
 use indexmap::IndexSet;
 use log::{debug, error, info, trace, warn};
@@ -226,46 +225,7 @@ impl<S: Storage> P2pServer<S> {
                 // we don't already have this block, lets retrieve its txs and add in our chain
                 if !self.blockchain.has_block(&hash).await? {
                     let block = match header {
-                        Some(header) => {
-                            let mut futures = FuturesOrdered::new();
-                            let mut txs_to_request = 0;
-                            for tx_hash in header.get_txs_hashes() {
-                                let tx = self.blockchain.get_tx(tx_hash).await.ok();
-                                if tx.is_none() {
-                                    txs_to_request += 1;
-                                }
-    
-                                let fut = async move {
-                                    // check first on disk in case it was already fetch by a previous block
-                                    // it can happens as TXs can be integrated in multiple blocks and executed only one time
-                                    // check if we find it
-                                    if let Some(tx) = tx {
-                                        trace!("Found the transaction {} on disk", tx_hash);
-                                        Ok(tx.into_arc())
-                                    } else {
-                                        // otherwise, ask it from peer
-                                        // But because we may have the same TX in several blocks, lets request it using object tracker
-                                        peer.request_blocking_object(ObjectRequest::Transaction(Immutable::Owned(tx_hash.clone())))
-                                            .await?
-                                            .into_transaction()
-                                            .map(|(tx, _)| Arc::new(tx))
-                                    }
-                                };
-                                futures.push_back(fut);
-                            }
-    
-                            // If we have more than one request, lets request big block (for one time big packet)
-                            if txs_to_request > 1 {
-                                debug!("requesting big block {} because we have more than one TX to request from peer", hash);
-                                peer.request_blocking_object(ObjectRequest::Block(hash.clone())).await?
-                                    .into_block()?
-                                    .0
-                            } else {
-                                let transactions = futures.try_collect().await?;
-                                // Assemble back the block and add it to the chain
-                                Block::new(header, transactions)
-                            }
-                        },
+                        Some(header) => self.request_block(peer, &hash, header).await?,
                         None => {
                             peer.request_blocking_object(ObjectRequest::Block(hash.clone())).await?
                                 .into_block()?
@@ -571,7 +531,6 @@ impl<S: Storage> P2pServer<S> {
             };
 
             let mut futures = Scheduler::new(capacity);
-            let group_id = self.object_tracker.next_group_id();
 
             for hash in blocks {
                 debug!("processing block request {}", hash);
@@ -627,38 +586,29 @@ impl<S: Storage> P2pServer<S> {
                     // we must ensure we don't miss a block
                     Some(res) = futures.next() => {
                         let future = async {
-                            match res {
-                                Ok(response) => match response {
-                                    ResponseHelper::Requested(block, pre_verify) => {
-                                        if let Some(hash) = pre_verify.get_block_hash() {
-                                            // Block has been added already
-                                            // This can occurs when the block is requested
-                                            // and propagated at same time
-                                            if self.blockchain.has_block(&hash).await? {
-                                                return Ok(true)
-                                            }
+                            match res? {
+                                ResponseHelper::Requested(block, pre_verify) => {
+                                    if let Some(hash) = pre_verify.get_block_hash() {
+                                        // Block has been added already
+                                        // This can occurs when the block is requested
+                                        // and propagated at same time
+                                        if self.blockchain.has_block(&hash).await? {
+                                            return Ok(true)
                                         }
-
-                                        if let Err(e) = self.blockchain.add_new_block(block, pre_verify, BroadcastOption::Miners, false).await {
-                                            self.object_tracker.mark_group_as_fail(group_id).await;
-                                            return Err(e)
-                                        }
-
-                                        Ok(true)
-                                    },
-                                    ResponseHelper::NotRequested(hash) => {
-                                        if let Err(e) = self.try_re_execution_block(hash).await {
-                                            self.object_tracker.mark_group_as_fail(group_id).await;
-                                            return Err(e)
-                                        }
-
-                                        Ok(false)
                                     }
+
+                                    if let Err(e) = self.blockchain.add_new_block(block, pre_verify, BroadcastOption::Miners, false).await {
+                                        return Err(e)
+                                    }
+
+                                    Ok(true)
                                 },
-                                Err(e) => {
-                                    debug!("Unregistering group id {} due to error {}", group_id, e);
-                                    self.object_tracker.mark_group_as_fail(group_id).await;
-                                    Err(e.into())
+                                ResponseHelper::NotRequested(hash) => {
+                                    if let Err(e) = self.try_re_execution_block(hash).await {
+                                        return Err(e)
+                                    }
+
+                                    Ok(false)
                                 }
                             }
                         };

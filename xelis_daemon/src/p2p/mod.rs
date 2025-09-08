@@ -4,7 +4,6 @@ pub mod packet;
 pub mod peer_list;
 pub mod diffie_hellman;
 
-mod tracker;
 mod encryption;
 mod chain_sync;
 
@@ -109,7 +108,6 @@ use crate::{
             TaskState,
             Rx
         },
-        tracker::{ObjectTracker, SharedObjectTracker},
         packet::{
             CommonPoint,
             NotifyInventoryRequest,
@@ -138,8 +136,6 @@ pub struct P2pServer<S: Storage> {
     peer_list: SharedPeerList,
     // reference to the chain to add blocks/txs
     blockchain: Arc<Blockchain<S>>,
-    // used to requests objects to peers and avoid requesting the same object to multiple peers
-    object_tracker: SharedObjectTracker,
     // used to check if the server is running or not in tasks
     is_running: AtomicBool,
     // Sender channel to pass a newly connected peer to the handler
@@ -271,8 +267,7 @@ impl<S: Storage> P2pServer<S> {
         let (txs_processor, txs_processor_receiver) = mpsc::channel(TRANSACTIONS_CHANNEL_CAPACITY);
 
         // Channel used to broadcast the stop message
-        let (exit_sender, exit_receiver) = broadcast::channel(1);
-        let object_tracker = ObjectTracker::new(exit_receiver);
+        let (exit_sender, _) = broadcast::channel(1);
 
         let (ping_sender, ping_receiver) = mpsc::channel(1);
 
@@ -284,7 +279,6 @@ impl<S: Storage> P2pServer<S> {
             Some(sender)
         )?;
 
-
         let (peer_sender, peer_receiver) = mpsc::channel(1);
         let server = Self {
             peer_id,
@@ -293,7 +287,6 @@ impl<S: Storage> P2pServer<S> {
             bind_address,
             peer_list,
             blockchain,
-            object_tracker,
             is_running: AtomicBool::new(true),
             peer_sender,
             blocks_propagation_queue: RwLock::new(LruCache::new(NonZeroUsize::new(STABLE_LIMIT as usize * TIPS_LIMIT).expect("non-zero blocks propagation queue"))),
@@ -1327,40 +1320,57 @@ impl<S: Storage> P2pServer<S> {
         debug!("Event loop task is stopped!");
     }
 
-    async fn request_block(&self, peer: &Arc<Peer>, block_hash: &Hash, header: BlockHeader) -> Result<Block, BlockchainError> {
+    // Request a block using its block hash if we don't have enough TXs locally
+    async fn request_block(&self, peer: &Arc<Peer>, block_hash: &Hash, header: impl Into<Arc<BlockHeader>>) -> Result<Block, BlockchainError> {
+        let header = header.into();
+
         // All futures containing the TXs requested
         let mut txs_futures = FuturesOrdered::new();
-        for hash in header.get_txs_hashes().iter().cloned() {
-            let future = async {
-                if let Ok(tx) = self.blockchain.get_tx(&hash).await {
-                    debug!("tx {} found in chain", hash);
+        // used to know if we request the whole block or only some TXs
+        // Currently, if we have at least one TX missing, we request them all
+        let mut txs_to_request = 0;
+
+        for tx_hash in header.get_txs_hashes() {
+            let tx = self.blockchain.get_tx(tx_hash).await.ok();
+            if tx.is_none() {
+                txs_to_request += 1;
+                if txs_to_request > 1 {
+                    // no need to continue, we will request the whole block
+                    break;
+                }
+            }
+
+            let fut = async move {
+                // check first on disk in case it was already fetch by a previous block
+                // it can happens as TXs can be integrated in multiple blocks and executed only one time
+                // check if we find it
+                if let Some(tx) = tx {
+                    trace!("Found the transaction {} on disk", tx_hash);
                     Ok(tx.into_arc())
                 } else {
-                    debug!("Cache missed for TX {} in block propagation {}, will request it from peer", hash, block_hash);
-
-                    // request it from peer
-                    // TODO: rework object tracker
-                    let mut listener = self.object_tracker.request_object_from_peer_with_or_get_notified(
-                        Arc::clone(&peer),
-                        ObjectRequest::Transaction(Immutable::Owned(hash)),
-                        None
-                    ).await?;
-
-                    listener.recv().await
-                        .context("Error while reading transaction for block")?
+                    // otherwise, ask it from peer
+                    // But because we may have the same TX in several blocks, lets request it using object tracker
+                    peer.request_blocking_object(ObjectRequest::Transaction(Immutable::Owned(tx_hash.clone())))
+                        .await?
                         .into_transaction()
                         .map(|(tx, _)| Arc::new(tx))
                 }
             };
-            txs_futures.push_back(future);
+            txs_futures.push_back(fut);
         }
 
-        // Now collect all the futures
-        let txs = txs_futures.try_collect::<Vec<_>>().await
-            .context("Error while collecting all TXs")?;
+        // If we have more than one request, lets request big block (for one time big packet)
+        let block = if txs_to_request > 1 {
+            debug!("requesting big block {} because we have more than one TX to request from peer", block_hash);
+            peer.request_blocking_object(ObjectRequest::Block(Immutable::Owned(block_hash.clone()))).await?
+                .into_block()?
+                .0
+        } else {
+            let transactions = txs_futures.try_collect().await?;
+            // Assemble back the block and add it to the chain
+            Block::new(header, transactions)
+        };
 
-        // build the final block with TXs
-        let block = Block::new(header, txs);
         Ok(block)
     }
 
@@ -2120,7 +2130,7 @@ impl<S: Storage> P2pServer<S> {
                     // handle the response
                     sender.send(response)
                         .with_context(|| format!("Cannot notify listener for {}", request))?;
-                } else if !self.object_tracker.handle_object_response(response).await? {
+                } else {
                     return Err(P2pError::ObjectNotRequested(request))
                 }
             },
