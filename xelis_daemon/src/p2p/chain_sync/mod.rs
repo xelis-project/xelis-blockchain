@@ -18,7 +18,13 @@ use xelis_common::{
     crypto::Hash,
     immutable::Immutable,
     time::{get_current_time_in_millis, TimestampMillis},
-    tokio::{select, time::interval, Executor, Scheduler},
+    tokio::{
+        select,
+        time::interval,
+        sync::Mutex,
+        Executor,
+        Scheduler
+    },
     transaction::Transaction
 };
 
@@ -447,36 +453,55 @@ impl<S: Storage> P2pServer<S> {
                     futures.push_back(fut);
                 }
 
-                let mut expected_topoheight = common_topoheight + 1;
-                let mut chain_validator = ChainValidator::new(&self.blockchain);
-                let mut exit_signal = self.exit_sender.subscribe();
-                'main: loop {
-                    select! {
-                        _ = exit_signal.recv() => {
-                            debug!("Stopping chain validator due to exit signal");
-                            break 'main;
-                        },
-                        next = futures.next() => {
-                            let Some(res) = next else {
-                                debug!("No more items in futures for chain validator");
+                // Put it behind a Mutex to we can share it between tasks
+                let chain_validator = Mutex::new(ChainValidator::new(&self.blockchain));
+                {
+                    let mut expected_topoheight = common_topoheight + 1;
+                    // Blocks executor for sequential processing
+                    let mut blocks_executor = Executor::new();
+    
+                    let mut exit_signal = self.exit_sender.subscribe();
+                    'main: loop {
+                        select! {
+                            biased;
+                            _ = exit_signal.recv() => {
+                                debug!("Stopping chain validator due to exit signal");
                                 break 'main;
-                            };
-
-                            if let Some((block, hash)) = res? {
-                                chain_validator.insert_block(hash, block, expected_topoheight).await?;
-                                expected_topoheight += 1;
-
-                                if chain_validator.has_higher_cumulative_difficulty().await? {
+                            },
+                            Some(res) = blocks_executor.next() => {
+                                if res? {
                                     debug!("higher cumulative difficulty found");
                                     drop(futures);
-
                                     break 'main;
                                 }
+                                // Increase by one the limit again
+                                // allow to request one new block
+                                futures.increment_n();
+                            },
+                            next = futures.next() => {
+                                let Some(res) = next else {
+                                    debug!("No more items in futures for chain validator");
+                                    break 'main;
+                                };
+    
+                                if let Some((block, hash)) = res? {
+                                    futures.decrement_n();
+                                    let chain_validator = &chain_validator;
+                                    blocks_executor.push_back(async move {
+                                        let mut chain_validator = chain_validator.lock().await;
+                                        chain_validator.insert_block(hash, block, expected_topoheight).await?;
+    
+                                        chain_validator.has_higher_cumulative_difficulty().await
+                                    });
+                                    
+                                    expected_topoheight += 1;
+                                }
                             }
-                        }
-                    };
+                        };
+                    }
                 }
 
+                let chain_validator = chain_validator.into_inner();
                 // Verify that it has a higher cumulative difficulty than us
                 // Otherwise we don't switch to his chain
                 if !chain_validator.has_higher_cumulative_difficulty().await? {
