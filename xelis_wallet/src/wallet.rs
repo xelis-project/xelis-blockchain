@@ -616,7 +616,7 @@ impl Wallet {
         if lock.is_some() {
             return Err(WalletError::RPCServerAlreadyRunning.into())
         }
-        let mut rpc_handler = RPCHandler::new(self.clone());
+        let mut rpc_handler = RPCHandler::new(self.clone(), None);
         register_rpc_methods(&mut rpc_handler);
 
         let rpc_server = WalletRpcServer::new(bind_address, rpc_handler, config, threads).await?;
@@ -645,7 +645,7 @@ impl Wallet {
         if lock.is_some() {
             return Err(WalletError::RPCServerAlreadyRunning.into())
         }
-        let mut rpc_handler = RPCHandler::new(self.clone());
+        let mut rpc_handler = RPCHandler::new(self.clone(), None);
         register_rpc_methods(&mut rpc_handler);
 
         *lock = Some(APIServer::XSWD(XSWDServer::new(rpc_handler)?));
@@ -671,7 +671,7 @@ impl Wallet {
         let receiver = self.init_xswd_channel().await;
         let mut xswd = self.xswd_relayer.lock().await;
         if xswd.is_none() {
-            let handler = RPCHandler::new(Arc::clone(self));
+            let handler = RPCHandler::new(Arc::clone(self), None);
             *xswd = Some(XSWDRelayer::new(handler, self.concurrency));
         }
 
