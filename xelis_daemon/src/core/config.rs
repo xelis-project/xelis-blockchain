@@ -4,7 +4,6 @@ use serde::{Deserialize, Serialize};
 use xelis_common::{
     crypto::Hash,
     prompt::LogLevel,
-    rpc::DEFAULT_JSON_RPC_BATCH_LIMIT,
     utils::detect_available_parallelism
 };
 use crate::{
@@ -80,7 +79,7 @@ const fn default_keep_max_log_files() -> usize {
 }
 
 const fn default_rpc_batch_limit() -> usize {
-    DEFAULT_JSON_RPC_BATCH_LIMIT
+    20
 }
 
 #[derive(Debug, Clone, clap::Args, Serialize, Deserialize)]
