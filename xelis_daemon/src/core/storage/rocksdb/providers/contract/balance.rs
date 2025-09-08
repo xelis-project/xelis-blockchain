@@ -104,7 +104,8 @@ impl ContractBalanceProvider for RocksStorage {
     // Get all the contract balances assets
     async fn get_contract_assets_for<'a>(&'a self, contract: &'a Hash) -> Result<impl Iterator<Item = Result<Hash, BlockchainError>> + 'a, BlockchainError> {
         trace!("get contract {} assets", contract);
-        self.iter_keys::<Skip<8, AssetId>>(Column::ContractsBalances, IteratorMode::WithPrefix(contract.as_bytes(), Direction::Forward))
+        let contract_id = self.get_contract_id(contract)?;
+        self.iter_keys::<Skip<8, AssetId>>(Column::ContractsBalances, IteratorMode::WithPrefix(&contract_id.to_be_bytes(), Direction::Forward))
             .map(|iter| iter.map(|res| {
                 let k = res?;
                 self.get_asset_hash_from_id(k.0)
