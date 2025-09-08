@@ -93,7 +93,7 @@ impl ContractBalanceProvider for RocksStorage {
         let asset_id = self.get_asset_id(asset)?;
 
         let key = Self::get_contract_balance_key(contract_id, asset_id);
-        let pointer = self.load_from_disk(Column::ContractsBalances, &key[8..])?;
+        let pointer = self.load_from_disk(Column::ContractsBalances, &key)?;
 
         let versioned_key = Self::get_versioned_contract_balance_key(contract_id, asset_id, pointer);
         let version = self.load_from_disk(Column::VersionedContractsBalances, &versioned_key)?;
