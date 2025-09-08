@@ -20,13 +20,12 @@ use crate::{
 };
 
 pub type Handler = fn(&'_ Context, Value) -> Pin<Box<dyn Future<Output = Result<Value, InternalRpcError>> + Send + '_>>;
-pub const DEFAULT_JSON_RPC_BATCH_LIMIT: usize = 20;
 
 pub struct RPCHandler<T: Send + Clone + 'static> {
     // all RPC methods registered
     methods: HashMap<String, Handler>,
     data: T,
-    batch_limit: usize
+    batch_limit: Option<usize>
 }
 
 impl<T> RPCHandler<T>
@@ -37,7 +36,7 @@ where
         Self {
             methods: HashMap::new(),
             data,
-            batch_limit: batch_limit.into().unwrap_or(DEFAULT_JSON_RPC_BATCH_LIMIT)
+            batch_limit: batch_limit.into()
         }
     }
 
@@ -57,7 +56,7 @@ where
         match request {
             e @ Value::Object(_) => self.execute_method(&context, self.parse_request(e)?).await.map(|e| e.unwrap_or(Value::Null)),
             Value::Array(requests) => {
-                if requests.len() > self.batch_limit {
+                if self.batch_limit.is_some_and(|v| requests.len() > v) {
                     return Err(RpcResponseError::new(None, InternalRpcError::BatchLimitExceeded))
                 }
 
