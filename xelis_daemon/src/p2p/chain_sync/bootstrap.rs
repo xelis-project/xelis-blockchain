@@ -592,7 +592,7 @@ impl<S: Storage> P2pServer<S> {
                             }
 
                             debug!("Saving block metadata {}", metadata.hash);
-                            let (header, hash) = peer.request_blocking_object(ObjectRequest::BlockHeader(Immutable::Owned(metadata.hash))).await?
+                            let (header, hash) = self.request_blocking_object_from_peer(peer, ObjectRequest::BlockHeader(Immutable::Owned(metadata.hash))).await?
                                 .into_block_header()?;
 
                             let mut txs = Vec::with_capacity(header.get_txs_hashes().len());
@@ -603,7 +603,7 @@ impl<S: Storage> P2pServer<S> {
                                     self.blockchain.get_tx(tx_hash).await?
                                         .into_arc()
                                 } else {
-                                    let (tx, _) = peer.request_blocking_object(ObjectRequest::Transaction(Immutable::Owned(tx_hash.clone()))).await?
+                                    let (tx, _) = self.request_blocking_object_from_peer(peer, ObjectRequest::Transaction(Immutable::Owned(tx_hash.clone()))).await?
                                         .into_transaction()?;
                                     Arc::new(tx)
                                 };

@@ -1,4 +1,4 @@
-use crate::p2p::error::P2pError;
+use crate::p2p::P2pError;
 use std::sync::PoisonError;
 use strum::{EnumDiscriminants, IntoDiscriminant};
 use thiserror::Error;

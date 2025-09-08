@@ -1,15 +1,21 @@
-pub mod connection;
-pub mod error;
-pub mod packet;
-pub mod peer_list;
-pub mod diffie_hellman;
+mod connection;
+mod error;
+mod packet;
+mod peer_list;
+mod diffie_hellman;
 
 mod encryption;
 mod chain_sync;
+mod expirable_cache;
+
+pub use encryption::EncryptionKey;
+pub use connection::*;
+pub use packet::*;
+pub use peer_list::*;
+pub use error::*;
+pub use diffie_hellman::*;
 
 use anyhow::Context;
-pub use encryption::EncryptionKey;
-
 use log::{debug, error, info, log, trace, warn};
 use metrics::counter;
 use std::{
@@ -89,34 +95,9 @@ use crate::{
         storage::Storage,
         config::ProxyKind,
     },
-    p2p::{
-        connection::{Connection, State},
-        error::P2pError,
-        packet::{
-            BlockId,
-            Handshake,
-            ObjectRequest,
-            ObjectResponse,
-            Ping,
-            Packet,
-            PacketWrapper
-        },
-        peer_list::{
-            PeerList,
-            SharedPeerList,
-            Peer,
-            TaskState,
-            Rx
-        },
-        packet::{
-            CommonPoint,
-            NotifyInventoryRequest,
-            NotifyInventoryResponse,
-            NOTIFY_MAX_LEN
-        }
-    },
     rpc::rpc::get_peer_entry
 };
+use expirable_cache::ExpirableCache;
 
 pub const TRANSACTIONS_CHANNEL_CAPACITY: usize = 128;
 
@@ -208,6 +189,8 @@ pub struct P2pServer<S: Storage> {
     // Proxy address to use in case we try to connect
     // to an outgoing peer
     proxy: Option<(ProxyKind, SocketAddr, Option<(String, String)>)>,
+    // Requested objects from various peers
+    requests_cache: ExpirableCache,
 }
 
 impl<S: Storage> P2pServer<S> {
@@ -313,7 +296,8 @@ impl<S: Storage> P2pServer<S> {
             block_propagation_log_level,
             disable_fetching_txs_propagated,
             handle_peer_packets_in_dedicated_task,
-            proxy
+            proxy,
+            requests_cache: ExpirableCache::new(),
         };
 
         let arc = Arc::new(server);
@@ -390,6 +374,8 @@ impl<S: Storage> P2pServer<S> {
         spawn_task("p2p-peerlist", Arc::clone(&self).peerlist_loop());
 
         spawn_task("p2p-incoming-connections", Arc::clone(&self).handle_incoming_connections(listener, concurrency));
+
+        spawn_task("p2p-requests-cache", Arc::clone(&self).requests_cache_task());
 
         let mut exit_receiver = self.exit_sender.subscribe();
         loop {
@@ -1215,6 +1201,37 @@ impl<S: Storage> P2pServer<S> {
         }
     }
 
+    // Clean every PEER_TIMEOUT_REQUEST_OBJECT ms the requests cache to remove old entries
+    // this is used to prevent holding too many entries in memory
+    async fn requests_cache_task(self: Arc<Self>) {
+        debug!("Starting requests cache cleaning task...");
+        let duration = Duration::from_millis(PEER_TIMEOUT_REQUEST_OBJECT);
+        loop {
+            if !self.is_running() {
+                debug!("Requests cache cleaning task is stopped!");
+                break;
+            }
+
+            sleep(duration).await;
+            debug!("Cleaning requests cache...");
+            self.requests_cache.clean(duration).await;
+        }
+    }
+
+    async fn request_blocking_object_from_peer(&self, peer: &Arc<Peer>, request: ObjectRequest) -> Result<OwnedObjectResponse, P2pError> {
+        // Insert it into our cache
+        let hash = request.get_hash().clone();
+        self.requests_cache.insert(hash.clone()).await;
+
+        debug!("Requesting blocking object {:?} from {}", request, peer);
+        counter!("xelis_p2p_request_blocking_object_total").increment(1u64);
+        let response = peer.request_blocking_object(request).await;
+
+        // Remove it from cache because we got our response
+        self.requests_cache.remove(&hash).await;
+
+        response
+    }
     // Select a random socket address for our next outgoing peer to connect to
     async fn select_random_socket_address(&self, addresses: impl Iterator<Item = SocketAddr>) -> Option<SocketAddr> {
         let mut availables = Vec::new();
@@ -1350,7 +1367,7 @@ impl<S: Storage> P2pServer<S> {
                 } else {
                     // otherwise, ask it from peer
                     // But because we may have the same TX in several blocks, lets request it using object tracker
-                    peer.request_blocking_object(ObjectRequest::Transaction(Immutable::Owned(tx_hash.clone())))
+                    self.request_blocking_object_from_peer(peer, ObjectRequest::Transaction(Immutable::Owned(tx_hash.clone())))
                         .await?
                         .into_transaction()
                         .map(|(tx, _)| Arc::new(tx))
@@ -1362,7 +1379,7 @@ impl<S: Storage> P2pServer<S> {
         // If we have more than one request, lets request big block (for one time big packet)
         let block = if txs_to_request > 1 {
             debug!("requesting big block {} because we have more than one TX to request from peer", block_hash);
-            peer.request_blocking_object(ObjectRequest::Block(Immutable::Owned(block_hash.clone()))).await?
+            self.request_blocking_object_from_peer(peer, ObjectRequest::Block(Immutable::Owned(block_hash.clone()))).await?
                 .into_block()?
                 .0
         } else {
@@ -1479,7 +1496,7 @@ impl<S: Storage> P2pServer<S> {
         debug!("Requesting TX object {}", hash);
         counter!("xelis_p2p_txs_requested_total").increment(1u64);
 
-        let (tx, _) = peer.request_blocking_object(ObjectRequest::Transaction(Immutable::Arc(hash.clone()))).await?
+        let (tx, _) = self.request_blocking_object_from_peer(peer, ObjectRequest::Transaction(Immutable::Arc(hash.clone()))).await?
             .into_transaction()?;
 
         Ok(Some(Arc::new(tx)))
@@ -2130,7 +2147,7 @@ impl<S: Storage> P2pServer<S> {
                     // handle the response
                     sender.send(response)
                         .with_context(|| format!("Cannot notify listener for {}", request))?;
-                } else {
+                } else if !self.requests_cache.remove(request.get_hash()).await {
                     return Err(P2pError::ObjectNotRequested(request))
                 }
             },
@@ -2292,7 +2309,7 @@ impl<S: Storage> P2pServer<S> {
                         let packet_id = packet.get_id();
                         trace!("handling received packet #{} from {}", packet_id, peer);
                         if let Err(e) = zelf.handle_incoming_packet(&peer, packet).await {
-                            error!("Error while handling packet #{} from {}: {}", packet_id, peer, e);
+                            warn!("Error while handling packet #{} from {}: {}", packet_id, peer, e);
                             // check that we don't have too many fails
                             // otherwise disconnect peer
                             // Priority nodes are not disconnected

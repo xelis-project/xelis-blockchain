@@ -227,7 +227,7 @@ impl<S: Storage> P2pServer<S> {
                     let block = match header {
                         Some(header) => self.request_block(peer, &hash, header).await?,
                         None => {
-                            peer.request_blocking_object(ObjectRequest::Block(hash.clone())).await?
+                            self.request_blocking_object_from_peer(peer, ObjectRequest::Block(hash.clone())).await?
                                 .into_block()?
                                 .0
                         }
@@ -405,7 +405,7 @@ impl<S: Storage> P2pServer<S> {
                             return Ok(None)
                         }
 
-                        peer.request_blocking_object(ObjectRequest::BlockHeader(Immutable::Owned(hash))).await?
+                        self.request_blocking_object_from_peer(peer, ObjectRequest::BlockHeader(Immutable::Owned(hash))).await?
                             .into_block_header()
                             .map(Some)
                     };
@@ -538,7 +538,7 @@ impl<S: Storage> P2pServer<S> {
                     let hash = Immutable::Arc(Arc::new(hash));
                     if !self.blockchain.has_block(&hash).await? {
                         debug!("Requesting boost sync block {}", hash);
-                        let (block, _) = peer.request_blocking_object(ObjectRequest::Block(hash.clone()))
+                        let (block, _) = self.request_blocking_object_from_peer(peer, ObjectRequest::Block(hash.clone()))
                             .await?
                             .into_block()?;
 

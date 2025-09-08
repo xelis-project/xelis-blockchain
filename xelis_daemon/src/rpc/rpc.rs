@@ -22,7 +22,7 @@ use crate::{
         mempool::Mempool,
         storage::*,
     },
-    p2p::peer_list::Peer,
+    p2p::Peer,
 };
 use super::{InternalRpcError, ApiError};
 use xelis_common::{

@@ -9,7 +9,7 @@ use xelis_common::{
 use crate::{
     config::*,
     core::storage::sled::StorageMode,
-    p2p::diffie_hellman::{KeyVerificationAction, WrappedSecret}
+    p2p::{KeyVerificationAction, WrappedSecret}
 };
 
 use super::simulator::Simulator;
