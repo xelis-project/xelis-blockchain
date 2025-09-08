@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use xelis_common::{
     crypto::Hash,
     prompt::LogLevel,
+    rpc::DEFAULT_JSON_RPC_BATCH_LIMIT,
     utils::detect_available_parallelism
 };
 use crate::{
@@ -78,6 +79,10 @@ const fn default_keep_max_log_files() -> usize {
     4
 }
 
+const fn default_rpc_batch_limit() -> usize {
+    DEFAULT_JSON_RPC_BATCH_LIMIT
+}
+
 #[derive(Debug, Clone, clap::Args, Serialize, Deserialize)]
 pub struct GetWorkConfig {
     /// Disable GetWork Server (WebSocket for miners).
@@ -103,7 +108,7 @@ pub struct GetWorkConfig {
 pub struct PrometheusConfig {
     /// Enable Prometheus metrics server
     /// This only works if the RPC server is enabled.
-    #[clap(long = "prometheus-enable")]
+    #[clap(long = "enable-prometheus")]
     #[serde(default)]
     pub enable: bool,
     /// Route for the Prometheus metrics export
@@ -145,6 +150,13 @@ pub struct RPCConfig {
     #[clap(name = "rpc-notify-events-concurrency", long, default_value_t = detect_available_parallelism())]
     #[serde(default = "detect_available_parallelism")]
     pub notify_events_concurrency: usize,
+    /// Configure the maximum batch size for JSON-RPC requests.
+    /// This is used to prevent DoS attacks by limiting the number of requests
+    /// that can be sent in a single batch.
+    /// Default is 20 requests per batch.
+    #[clap(name = "rpc-json-rpc-batch-limit", long, default_value_t = default_rpc_batch_limit())]
+    #[serde(default = "default_rpc_batch_limit")]
+    pub batch_limit: usize,
 }
 
 #[derive(Debug, Clone, Copy, clap::ValueEnum, Serialize, Deserialize, strum::Display)]
@@ -304,7 +316,7 @@ pub struct P2pConfig {
     /// Disable the P2P to re-execute an orphaned block during chain sync.
     /// If set to true, the P2P server will stop removing the block from storage
     /// and prevent to re-execute it by re-adding it to the chain.
-    #[clap(name = "p2p-disable-reexecute-blocks-on-sync", long)]
+    #[clap(name = "disable-p2p-reexecute-blocks-on-sync", long)]
     #[serde(default)]
     pub disable_reexecute_blocks_on_sync: bool,
     /// P2P log level for the block propagation
@@ -314,7 +326,7 @@ pub struct P2pConfig {
     #[serde(default = "debug_log_level")]
     pub block_propagation_log_level: LogLevel,
     /// Disable requesting P2P transactions propagated
-    #[clap(name = "p2p-disable-fetching-txs-propagated", long)]
+    #[clap(name = "disable-p2p-fetching-txs-propagated", long)]
     #[serde(default)]
     pub disable_fetching_txs_propagated: bool,
     #[clap(name = "p2p-handle-peer-packets-in-dedicated-task", long)]
