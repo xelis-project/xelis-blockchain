@@ -693,6 +693,12 @@ impl<S: Storage> P2pServer<S> {
                 storage.store_tips(&tips).await?;
             }
 
+            let mut blocks = storage.get_blocks_at_height(block.get_height()).await?;
+            if blocks.shift_remove(hash.as_ref()) {
+                debug!("Block {} was at height {}, removing it from blocks at height", hash, block);
+                storage.set_blocks_at_height(&blocks, block.get_height()).await?;
+            }
+
             block
         };
 
