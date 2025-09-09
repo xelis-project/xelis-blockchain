@@ -3584,7 +3584,7 @@ impl<S: Storage> Blockchain<S> {
 // based on the platform/rust version differences
 // see `f64::powf`
 pub fn calculate_required_base_fee(ema: usize) -> u64 {
-    const SCALE: u128 = 1_000_000;
+    const SCALE: u128 = BlockSizeEma::SCALE;
     const EXP: u32 = 2;
     const K: u128 = 10 * SCALE;
 

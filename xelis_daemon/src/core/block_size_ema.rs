@@ -9,8 +9,6 @@ pub struct BlockSizeEma {
 impl BlockSizeEma {
     // 6 decimals precision
     pub const SCALE: u128 = 1_000_000;
-    pub const EXP: u32 = 3;
-    pub const K: u128 = 10 * Self::SCALE;
 
     pub fn default(initial: usize) -> Self {
         Self::new(initial, 0.05)
