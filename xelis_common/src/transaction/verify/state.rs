@@ -41,6 +41,10 @@ pub trait BlockchainVerificationState<'a, E> {
     // See: https://play.rust-lang.org/?version=stable&mode=debug&edition=2021&gist=aaa6065daaab514e638b2333703765c7
     // type Error;
 
+    /// Verify the TX fee and returns, if required, how much we should refund from
+    /// `fee_max` (left over of fees)
+    async fn verify_fee<'b>(&'b mut self, tx: &Transaction) -> Result<u64, E>;
+
     /// Pre-verify the TX
     async fn pre_verify_tx<'b>(
         &'b mut self,

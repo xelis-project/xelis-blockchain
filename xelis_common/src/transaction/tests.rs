@@ -687,6 +687,10 @@ async fn test_multisig() {
 
 #[async_trait]
 impl<'a> BlockchainVerificationState<'a, ()> for ChainState {
+    /// Left over fee to pay back
+    async fn verify_fee<'b>(&'b mut self, tx: &Transaction) -> Result<u64, ()> {
+        Ok(tx.get_fee_max() - tx.get_fee())
+    }
 
     /// Pre-verify the TX
     async fn pre_verify_tx<'b>(
