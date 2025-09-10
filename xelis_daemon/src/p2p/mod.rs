@@ -2145,8 +2145,10 @@ impl<S: Storage> P2pServer<S> {
                 let request = response.get_request();
                 if let Some(sender) = peer.remove_object_request(&request).await {
                     // handle the response
-                    sender.send(response)
-                        .with_context(|| format!("Cannot notify listener for {}", request))?;
+                    // if we can't notify and its not in the cache, warn about it
+                    if sender.send(response).is_err() && !self.requests_cache.remove(request.get_hash()).await {
+                        warn!("Couldn't notify {} for {}", peer, request);
+                    }
                 } else if !self.requests_cache.remove(request.get_hash()).await {
                     return Err(P2pError::ObjectNotRequested(request))
                 }
