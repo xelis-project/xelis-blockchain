@@ -264,6 +264,11 @@ impl TransactionBuilder {
             size += 1;
         }
 
+        if self.version >= TxVersion::V2 {
+            // Fee max u64
+            size += 8;
+        }
+
         if let Some(threshold) = self.required_thresholds {
             // 1 for Multisig participants count byte
             size += 1 + (threshold as usize * (SIGNATURE_SIZE + 1))

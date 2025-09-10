@@ -387,7 +387,7 @@ async fn test_tx_invoke_contract() {
         let builder = TransactionBuilder::new(TxVersion::V2, alice.keypair.get_public_key().compress(), None, data, FeeBuilder::default());
         let estimated_size = builder.estimate_size();
         let tx = builder.build(&mut state, &alice.keypair).unwrap();
-        assert!(estimated_size == tx.size());
+        assert!(estimated_size == tx.size(), "expected {} bytes got {} bytes", tx.size(), estimated_size);
         assert!(tx.to_bytes().len() == estimated_size);
 
         Arc::new(tx)
