@@ -21,7 +21,8 @@ use crate::{
         ReaderError,
         Serializer,
         Writer
-    }
+    },
+    transaction::TxVersion
 };
 
 /// A balance proof is a cryptographic proof to reveal the balance of an account securely.
@@ -63,7 +64,7 @@ impl BalanceProof {
         let zeroed_balance = ciphertext - ct;
 
         // Generate the proof that the final balance is 0 after applying the commitment.
-        let commitment_eq_proof = CommitmentEqProof::new(keypair, &zeroed_balance, &Self::OPENING, 0, transcript);
+        let commitment_eq_proof = CommitmentEqProof::new(keypair, &zeroed_balance, &Self::OPENING, 0u64, TxVersion::V2, transcript);
 
         Self::from(amount, commitment_eq_proof)
     }
@@ -81,7 +82,7 @@ impl BalanceProof {
         let ct = public_key.encrypt_with_opening(self.amount, &Self::OPENING);
         let zeroed_balance = source_ciphertext - ct;
 
-        self.commitment_eq_proof.pre_verify(public_key, &zeroed_balance, &destination_commitment, transcript, batch_collector)?;
+        self.commitment_eq_proof.pre_verify(public_key, &zeroed_balance, &destination_commitment, TxVersion::V2, transcript, batch_collector)?;
 
         Ok(())
     }

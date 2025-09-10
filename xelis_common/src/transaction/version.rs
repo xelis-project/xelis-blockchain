@@ -8,7 +8,7 @@ pub enum TxVersion {
     V0,
     // Multisig
     V1,
-    // Deploy Contract, Invoke Contract
+    // Smart Contracts
     V2
 }
 
@@ -127,6 +127,9 @@ mod tests {
     fn test_tx_version_ord() {
         let version0 = TxVersion::V0;
         let version1 = TxVersion::V1;
+        let version2 = TxVersion::V2;
         assert!(version0 < version1);
+        assert!(version1 < version2);
+        assert!(version0 < version2);
     }
 }

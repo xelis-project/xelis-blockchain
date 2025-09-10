@@ -33,6 +33,7 @@ pub struct UnsignedTransaction {
     source: PublicKey,
     data: TransactionType,
     fee: u64,
+    fee_max: u64,
     nonce: Nonce,
     source_commitments: Vec<SourceCommitment>,
     reference: Reference,
@@ -47,6 +48,7 @@ impl UnsignedTransaction {
         source: PublicKey,
         data: TransactionType,
         fee: u64,
+        fee_max: u64,
         nonce: Nonce,
         source_commitments: Vec<SourceCommitment>,
         reference: Reference,
@@ -57,6 +59,7 @@ impl UnsignedTransaction {
             source,
             data,
             fee,
+            fee_max,
             nonce,
             source_commitments,
             reference,
@@ -86,6 +89,9 @@ impl UnsignedTransaction {
         self.source.write(writer);
         self.data.write(writer);
         self.fee.write(writer);
+        if self.version >= TxVersion::V2 {
+            self.fee_max.write(writer);
+        }
         self.nonce.write(writer);
 
         writer.write_u8(self.source_commitments.len() as u8);
@@ -124,6 +130,7 @@ impl UnsignedTransaction {
             self.source,
             self.data,
             self.fee,
+            self.fee_max,
             self.nonce,
             self.source_commitments,
             self.range_proof,
@@ -147,6 +154,12 @@ impl Serializer for UnsignedTransaction {
         let source = PublicKey::read(reader)?;
         let data = TransactionType::read(reader)?;
         let fee = reader.read_u64()?;
+        let fee_max = if version >= TxVersion::V2 {
+            reader.read_u64()?
+        } else {
+            fee
+        };
+
         let nonce = Nonce::read(reader)?;
 
         let source_commitments_len = reader.read_u8()?;
@@ -169,6 +182,7 @@ impl Serializer for UnsignedTransaction {
             source,
             data,
             fee,
+            fee_max,
             nonce,
             source_commitments,
             reference,
@@ -194,6 +208,10 @@ impl Serializer for UnsignedTransaction {
 
         if self.version != TxVersion::V0 {
             size += self.multisig.size();
+        }
+
+        if self.version >= TxVersion::V2 {
+            size += self.fee_max.size();
         }
 
         size

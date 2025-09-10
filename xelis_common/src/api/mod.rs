@@ -144,6 +144,8 @@ pub struct RPCTransaction<'a> {
     pub data: RPCTransactionType<'a>,
     /// Fees in XELIS
     pub fee: u64,
+    // Maximum fee allowed to be paid
+    pub fee_max: u64,
     /// nonce must be equal to the one on chain account
     /// used to prevent replay attacks and have ordered transactions
     pub nonce: Nonce,
@@ -169,6 +171,7 @@ impl<'a> RPCTransaction<'a> {
             source: tx.get_source().as_address(mainnet),
             data: RPCTransactionType::from_type(tx.get_data(), mainnet),
             fee: tx.get_fee(),
+            fee_max: tx.get_fee_max(),
             nonce: tx.get_nonce(),
             source_commitments: Cow::Borrowed(tx.get_source_commitments()),
             range_proof: Cow::Borrowed(tx.get_range_proof()),
@@ -187,6 +190,7 @@ impl<'a> From<RPCTransaction<'a>> for Transaction {
             tx.source.to_public_key(),
             tx.data.into(),
             tx.fee,
+            tx.fee_max,
             tx.nonce,
             tx.source_commitments.into_owned(),
             tx.range_proof.into_owned(),

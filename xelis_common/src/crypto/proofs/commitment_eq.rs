@@ -21,7 +21,8 @@ use crate::{
         KeyPair,
         ProtocolTranscript
     },
-    serializer::{Reader, ReaderError, Serializer, Writer}
+    serializer::{Reader, ReaderError, Serializer, Writer},
+    transaction::TxVersion
 };
 use super::{
     BatchCollector,
@@ -50,18 +51,8 @@ impl CommitmentEqProof {
         source_keypair: &KeyPair,
         source_ciphertext: &Ciphertext,
         opening: &PedersenOpening,
-        amount: u64,
-        transcript: &mut Transcript,
-    ) -> Self {
-        Self::new_with_scalar(source_keypair, source_ciphertext, opening, Scalar::from(amount), transcript)
-    }
-
-    // warning: caller must make sure not to forget to hash the public key, ciphertext, commitment in the transcript as it is not done here
-    pub fn new_with_scalar(
-        source_keypair: &KeyPair,
-        source_ciphertext: &Ciphertext,
-        opening: &PedersenOpening,
-        x: Scalar,
+        x: impl Into<Scalar>,
+        tx_version: TxVersion,
         transcript: &mut Transcript,
     ) -> Self {
         transcript.equality_proof_domain_separator();
@@ -92,12 +83,14 @@ impl CommitmentEqProof {
 
         // compute the masked values
         let z_s = &(&c * s) + &y_s;
-        let z_x = &(&c * x) + &y_x;
+        let z_x = &(&c * x.into()) + &y_x;
         let z_r = &(&c * r) + &y_r;
 
-        // transcript.append_scalar(b"z_s", &z_s);
-        // transcript.append_scalar(b"z_x", &z_x);
-        // transcript.append_scalar(b"z_r", &z_r);
+        if tx_version >= TxVersion::V2 {
+            transcript.append_scalar(b"z_s", &z_s);
+            transcript.append_scalar(b"z_x", &z_x);
+            transcript.append_scalar(b"z_r", &z_r);
+        }
 
         transcript.challenge_scalar(b"w");
 
@@ -123,6 +116,7 @@ impl CommitmentEqProof {
         source_pubkey: &PublicKey,
         source_ciphertext: &Ciphertext,
         destination_commitment: &PedersenCommitment,
+        tx_version: TxVersion,
         transcript: &mut Transcript,
         batch_collector: &mut BatchCollector,
     ) -> Result<(), ProofVerificationError> {
@@ -141,14 +135,14 @@ impl CommitmentEqProof {
 
         let c = transcript.challenge_scalar(b"c");
 
-        let mut cloned = transcript.clone();
+        if tx_version >= TxVersion::V2 {
+            transcript.append_scalar(b"z_s", &self.z_s);
+            transcript.append_scalar(b"z_x", &self.z_x);
+            transcript.append_scalar(b"z_r", &self.z_r);
+        }
 
-        cloned.append_scalar(b"z_s", &self.z_s);
-        cloned.append_scalar(b"z_x", &self.z_x);
-        cloned.append_scalar(b"z_r", &self.z_r);
-
-        let w = cloned.challenge_scalar(b"w"); // w used for batch verification
-        transcript.challenge_scalar(b"w");
+        // w used for batch verification
+        let w = transcript.challenge_scalar(b"w");
 
         let ww = &w * &w;
 
@@ -337,7 +331,7 @@ mod tests {
         let final_balance = source_balance - ciphertext;
 
         // Generate the proof
-        let proof = CommitmentEqProof::new(&keypair, &final_balance, &opening, balance - amount, &mut transcript);
+        let proof = CommitmentEqProof::new(&keypair, &final_balance, &opening, balance - amount, TxVersion::V2, &mut transcript);
 
         // Generate a new transcript
         let mut transcript = Transcript::new(b"test");
@@ -348,6 +342,7 @@ mod tests {
             keypair.get_public_key(),
             &final_balance,
             &commitment,
+            TxVersion::V2,
             &mut transcript,
             &mut batch_collector,
         );

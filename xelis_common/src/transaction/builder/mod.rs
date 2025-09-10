@@ -502,12 +502,12 @@ impl TransactionBuilder {
     }
 
     /// Compute the full cost of the transaction
-    pub fn get_transaction_cost(&self, fee: u64, asset: &Hash) -> u64 {
+    pub fn get_transaction_cost(&self, fee_max: u64, asset: &Hash) -> u64 {
         let mut cost = 0;
 
         if *asset == XELIS_ASSET {
             // Fees are applied to the native blockchain asset only.
-            cost += fee;
+            cost += fee_max;
         }
 
         match &self.data {
@@ -597,6 +597,7 @@ impl TransactionBuilder {
         payload_deposits: &mut IndexMap<Hash, ContractDepositBuilder>,
         deposits_commitments: HashMap<Hash, DepositWithCommitment>,
         source_keypair: &KeyPair,
+        tx_version: TxVersion,
         contract_key: &Option<PublicKey>,
     ) -> IndexMap<Hash, ContractDeposit> {
         range_proof_openings.reserve(deposits_commitments.len());
@@ -618,9 +619,10 @@ impl TransactionBuilder {
 
                 let ct_validity_proof = CiphertextValidityProof::new(
                     contract_key.as_ref().expect("Contract key is required"),
-                    Some(source_keypair.get_public_key()),
+                    source_keypair.get_public_key(),
                     deposit.amount,
                     &deposit.amount_opening,
+                    tx_version,
                     transcript,
                 );
 
@@ -661,6 +663,8 @@ impl TransactionBuilder {
     ) -> Result<UnsignedTransaction, GenerationError<B::Error>> {
         // Compute the fees
         let fee = self.estimate_fees(state)?;
+        // Use the configured max fee, otherwise fallback to estimated fee
+        let fee_max = state.get_max_fee().unwrap_or(fee);
 
         // Get the nonce
         let nonce = state.get_nonce().map_err(GenerationError::State)?;
@@ -779,7 +783,7 @@ impl TransactionBuilder {
         let mut range_proof_values: Vec<_> = used_assets
             .iter()
             .map(|asset| {
-                let cost = self.get_transaction_cost(fee, &asset);
+                let cost = self.get_transaction_cost(fee_max, &asset);
                 let current_balance = state
                 .get_account_balance(asset)
                 .map_err(GenerationError::State)?;
@@ -796,7 +800,7 @@ impl TransactionBuilder {
             .collect::<Result<Vec<_>, GenerationError<B::Error>>>()?;
 
         // Prepare the transcript used for proofs
-        let mut transcript = Transaction::prepare_transcript(self.version, &self.source, fee, nonce);
+        let mut transcript = Transaction::prepare_transcript(self.version, &self.source, fee, fee_max, nonce);
 
         let source_commitments = used_assets
             .into_iter()
@@ -835,6 +839,7 @@ impl TransactionBuilder {
                     &new_source_ciphertext,
                     &new_source_opening,
                     source_new_balance,
+                    self.version,
                     &mut transcript,
                 );
 
@@ -847,6 +852,7 @@ impl TransactionBuilder {
             })
             .collect::<Result<Vec<_>, GenerationError<B::Error>>>()?;
 
+        let source_pubkey = source_keypair.get_public_key();
         let mut transfers = Vec::new();
         let mut deposits = IndexMap::new();
         match &mut self.data {
@@ -868,17 +874,12 @@ impl TransactionBuilder {
                         transcript.append_handle(b"amount_sender_handle", &sender_handle);
                         transcript.append_handle(b"amount_receiver_handle", &receiver_handle);
     
-                        let source_pubkey = if self.version >= TxVersion::V1 {
-                            Some(source_keypair.get_public_key())
-                        } else {
-                            None
-                        };
-    
                         let ct_validity_proof = CiphertextValidityProof::new(
                             &transfer.destination,
                             source_pubkey,
                             transfer.inner.amount,
                             &transfer.amount_opening,
+                            self.version,
                             &mut transcript,
                         );
     
@@ -943,7 +944,8 @@ impl TransactionBuilder {
                     &mut payload.deposits,
                     deposits_commitments,
                     source_keypair,
-                    &None
+                    self.version,
+                    &None,
                 );
             },
             TransactionTypeBuilder::DeployContract(payload) => {
@@ -955,7 +957,8 @@ impl TransactionBuilder {
                         &mut invoke.deposits,
                         deposits_commitments,
                         source_keypair,
-                        &None
+                        self.version,
+                        &None,
                     );
                 }
             }
@@ -1078,6 +1081,7 @@ impl TransactionBuilder {
             self.source,
             data,
             fee,
+            fee_max,
             nonce,
             source_commitments,
             reference,

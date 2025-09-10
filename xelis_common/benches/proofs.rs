@@ -1,17 +1,20 @@
 use bulletproofs::RangeProof;
 use criterion::{criterion_group, criterion_main, Criterion};
 use merlin::Transcript;
-use xelis_common::crypto::{
-    elgamal::{PedersenCommitment, PedersenOpening},
-    proofs::{
-        BatchCollector,
-        CiphertextValidityProof,
-        CommitmentEqProof,
-        BP_GENS,
-        PC_GENS,
-        BULLET_PROOF_SIZE,
+use xelis_common::{
+    crypto::{
+        elgamal::{PedersenCommitment, PedersenOpening},
+        proofs::{
+            BatchCollector,
+            CiphertextValidityProof,
+            CommitmentEqProof,
+            BP_GENS,
+            PC_GENS,
+            BULLET_PROOF_SIZE,
+        },
+        KeyPair
     },
-    KeyPair
+    transaction::TxVersion
 };
 
 // CommitmentEqProof is a ZK Proof proving that the final balance (commitment) is equal to the initial balance minus the amount
@@ -35,7 +38,7 @@ fn bench_commitment_eq_proof(c: &mut Criterion) {
     
     let mut transcript = Transcript::new(b"test");
     // Generate the proof
-    let proof = CommitmentEqProof::new(&keypair, &final_balance, &opening, balance - amount, &mut transcript);
+    let proof = CommitmentEqProof::new(&keypair, &final_balance, &opening, balance - amount, TxVersion::V2, &mut transcript);
 
     group.bench_function("pre_verify", |b| {
         b.iter(|| {
@@ -43,6 +46,7 @@ fn bench_commitment_eq_proof(c: &mut Criterion) {
                 keypair.get_public_key(),
                 &final_balance,
                 &commitment,
+                TxVersion::V2,
                 &mut Transcript::new(b"test"),
                 &mut BatchCollector::default()
             ).expect("Failed to verify proof");
@@ -67,6 +71,7 @@ fn bench_commitment_eq_proof(c: &mut Criterion) {
                 keypair.get_public_key(),
                 &final_balance,
                 &commitment,
+                TxVersion::V2,
                 &mut Transcript::new(b"test"),
                 &mut batch_collector
             ).expect("Failed to verify proof");
@@ -94,7 +99,7 @@ fn bench_ciphertext_validity_proof(c: &mut Criterion) {
 
     // Generate the proof
     let mut transcript = Transcript::new(b"test");
-    let proof = CiphertextValidityProof::new(destination.get_public_key(), Some(source.get_public_key()), amount, &opening, &mut transcript);
+    let proof = CiphertextValidityProof::new(destination.get_public_key(), source.get_public_key(), amount, &opening, TxVersion::V2, &mut transcript);
 
     group.bench_function("pre_verify", |b| {
         b.iter(|| {
@@ -105,7 +110,7 @@ fn bench_ciphertext_validity_proof(c: &mut Criterion) {
                 source.get_public_key(),
                 &receiver_handle,
                 &sender_handle,
-                true,
+                TxVersion::V2,
                 &mut Transcript::new(b"test"),
                 &mut BatchCollector::default(),
             ).expect("Failed to verify proof");
@@ -121,7 +126,6 @@ fn bench_ciphertext_validity_proof(c: &mut Criterion) {
                 source.get_public_key(),
                 &receiver_handle,
                 &sender_handle,
-                true,
                 &mut Transcript::new(b"test"),
             ).expect("Failed to verify proof");
         })
@@ -137,7 +141,7 @@ fn bench_ciphertext_validity_proof(c: &mut Criterion) {
                 source.get_public_key(),
                 &receiver_handle,
                 &sender_handle,
-                true,
+                TxVersion::V2,
                 &mut Transcript::new(b"test"),
                 &mut batch_collector,
             ).expect("Failed to verify proof");

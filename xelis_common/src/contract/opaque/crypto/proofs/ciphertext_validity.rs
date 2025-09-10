@@ -92,7 +92,7 @@ pub fn ciphertext_validity_proof_verify(zelf: FnInstance, mut params: FnParams, 
 
     let zelf = zelf?;
     let zelf: &CiphertextValidityProof = zelf.as_opaque_type()?;
-    let valid = zelf.verify(&commitment, &dest_pubkey, &source_pubkey, &dest_handle, &source_handle, true, &mut transcript.0)
+    let valid = zelf.verify(&commitment, &dest_pubkey, &source_pubkey, &dest_handle, &source_handle, &mut transcript.0)
         .is_ok();
 
     Ok(SysCallResult::Return(Primitive::Boolean(valid).into()))

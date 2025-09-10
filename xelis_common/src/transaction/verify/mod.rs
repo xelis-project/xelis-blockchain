@@ -110,6 +110,12 @@ struct DecompressedDepositCt {
 impl Transaction {
     // This function will be used to verify the transaction format
     pub fn has_valid_version_format(&self) -> bool {
+        // Verify that the fee format is correct
+        // max should never be below fee
+        if self.fee_max < self.fee {
+            return false;
+        }
+
         match self.version {
             // V0 don't support MultiSig format
             TxVersion::V0 => {
@@ -147,7 +153,7 @@ impl Transaction {
 
         if *asset == XELIS_ASSET {
             // Fees are applied to the native blockchain asset only.
-            output += Scalar::from(self.fee);
+            output += Scalar::from(self.fee_max);
         }
 
         match &self.data {
@@ -254,16 +260,21 @@ impl Transaction {
         Ok(outputs)
     }
 
+    // Create the transcript for ZK proofs
     pub(crate) fn prepare_transcript(
         version: TxVersion,
         source_pubkey: &CompressedPublicKey,
         fee: u64,
+        fee_max: u64,
         nonce: Nonce,
     ) -> Transcript {
         let mut transcript = Transcript::new(b"transaction-proof");
         transcript.append_u64(b"version", version.into());
         transcript.append_public_key(b"source_pubkey", source_pubkey);
         transcript.append_u64(b"fee", fee);
+        if version >= TxVersion::V2 {
+            transcript.append_u64(b"fee_max", fee_max);
+        }
         transcript.append_u64(b"nonce", nonce);
         transcript
     }
@@ -388,7 +399,7 @@ impl Transaction {
                        &source_decompressed,
                         &decompressed.receiver_handle,
                         &decompressed.sender_handle,
-                        true,
+                        self.version,
                         transcript,
                         sigma_batch_collector
                     )?;
@@ -499,7 +510,7 @@ impl Transaction {
             .decompress()
             .map_err(|err| VerificationError::Proof(err.into()))?;
 
-        let mut transcript = Self::prepare_transcript(self.version, &self.source, self.fee, self.nonce);
+        let mut transcript = Self::prepare_transcript(self.version, &self.source, self.fee, self.fee_max, self.nonce);
 
         for (commitment, new_source_commitment) in self
             .source_commitments
@@ -532,6 +543,7 @@ impl Transaction {
                 &source_decompressed,
                 &source_verification_ciphertext,
                 &new_source_commitment,
+                self.version,
                 &mut transcript,
                 sigma_batch_collector,
             )?;
@@ -718,7 +730,7 @@ impl Transaction {
             .decompress()
             .map_err(|err| VerificationError::Proof(err.into()))?;
 
-        let mut transcript = Self::prepare_transcript(self.version, &self.source, self.fee, self.nonce);
+        let mut transcript = Self::prepare_transcript(self.version, &self.source, self.fee, self.fee_max, self.nonce);
 
         // 0.a Verify Signature
         let bytes = self.to_bytes();
@@ -798,6 +810,7 @@ impl Transaction {
                 &source_decompressed,
                 &source_verification_ciphertext,
                 &new_source_commitment,
+                self.version,
                 &mut transcript,
                 sigma_batch_collector,
             )?;
@@ -855,7 +868,7 @@ impl Transaction {
                         &source_decompressed,
                         &decompressed.receiver_handle,
                         &decompressed.sender_handle,
-                        self.version >= TxVersion::V1,
+                        self.version,
                         &mut transcript,
                         sigma_batch_collector,
                     )?;
@@ -1295,7 +1308,7 @@ impl Transaction {
             .decompress()
             .map_err(|err| VerificationError::Proof(err.into()))?;
 
-        let mut transcript = Self::prepare_transcript(self.version, &self.source, self.fee, self.nonce);
+        let mut transcript = Self::prepare_transcript(self.version, &self.source, self.fee, self.fee_max, self.nonce);
 
         trace!("verifying commitments eq proofs");
 
@@ -1336,6 +1349,7 @@ impl Transaction {
                 &owner,
                 &source_verification_ciphertext,
                 &new_source_commitment,
+                self.version,
                 &mut transcript,
                 &mut sigma_batch_collector,
             )?;

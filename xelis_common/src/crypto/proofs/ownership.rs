@@ -18,7 +18,8 @@ use crate::{
         ReaderError,
         Serializer,
         Writer
-    }
+    },
+    transaction::TxVersion
 };
 use super::{
     BatchCollector,
@@ -85,7 +86,7 @@ impl OwnershipProof {
         let ct_left = ciphertext - ct;
 
         // Generate the proof that the final balance is ? minus N after applying the commitment.
-        let commitment_eq_proof = CommitmentEqProof::new(keypair, &ct_left, &opening, left, transcript);
+        let commitment_eq_proof = CommitmentEqProof::new(keypair, &ct_left, &opening, left, TxVersion::V2, transcript);
 
         // Create a range proof to prove that whats left is >= 0
         let (range_proof, range_commitment) = RangeProof::prove_single(&BP_GENS, &PC_GENS, transcript, left, &opening.as_scalar(), BULLET_PROOF_SIZE)?;
@@ -112,7 +113,7 @@ impl OwnershipProof {
         let ct = public_key.encrypt_with_opening(self.amount, &Self::OPENING);
         let balance_left = source_ciphertext - ct;
 
-        self.commitment_eq_proof.pre_verify(public_key, &balance_left, &commitment, transcript, batch_collector)?;
+        self.commitment_eq_proof.pre_verify(public_key, &balance_left, &commitment, TxVersion::V2, transcript, batch_collector)?;
 
         self.range_proof.verify_single(&BP_GENS, &PC_GENS, transcript, &(commitment.as_point().clone(), self.commitment.as_point().clone()), BULLET_PROOF_SIZE)?;
 
@@ -257,7 +258,7 @@ mod tests {
         // expected left balance + the inflated amount
         let left_scalar = Scalar::from(left) - Scalar::from(inflate);
 
-        let commitment_eq_proof = CommitmentEqProof::new_with_scalar(&keypair, &ct_left, &opening, left_scalar, &mut transcript);
+        let commitment_eq_proof = CommitmentEqProof::new(&keypair, &ct_left, &opening, left_scalar, TxVersion::V2, &mut transcript);
 
         // Range proof prevent such exploit by making sure our balance left commitment is >= 0
         let (range_proof, _) = RangeProof::prove_single(&BP_GENS, &PC_GENS, &mut transcript, left, &opening.as_scalar(), BULLET_PROOF_SIZE).unwrap();

@@ -44,6 +44,12 @@ pub trait FeeHelper {
         None
     }
 
+    // Get the maximum fee to pay in case of higher base fee
+    // By default, returns None to use the same as TX fee
+    fn get_max_fee(&self) -> Option<u64> {
+        None
+    }
+
     /// Verify if the account exists or if we should pay more fees for account creation
     fn account_exists(&self, account: &CompressedPublicKey) -> Result<bool, Self::Error>;
 }
