@@ -240,9 +240,9 @@ pub struct Blockchain<S: Storage> {
     auto_prune_keep_n_blocks: Option<u64>,
     // Flush storage manually to the disk every N blocks (topoheight based)
     flush_db_every_n_blocks: Option<u64>,
-    // Blocks hashes checkpoints
+    // Blocks hashes checkpoints expected to be ordered by topoheight
     // No rewind can be done below these blocks
-    checkpoints: HashSet<Hash>,
+    checkpoints: IndexSet<Hash>,
     // Threads count to use during a block verification
     // If more than one thread is used, it will use batch TXs
     // in differents groups and will verify them in parallel
@@ -3328,12 +3328,16 @@ impl<S: Storage> Blockchain<S> {
             0
         };
 
-        for hash in self.checkpoints.iter() {
+
+        // iterate through the checkpoints in reverse order
+        // to find the newest checkpoint hash
+        for hash in self.checkpoints.iter().rev() {
             if storage.is_block_topological_ordered(hash).await? {
                 let topo = storage.get_topo_height_for_hash(hash).await?;
                 if until_topo_height <= topo {
                     info!("Configured checkpoint {} is at topoheight {}. Prevent to rewind below", hash, topo);
                     until_topo_height = topo;
+                    break;
                 }
             }
         }
