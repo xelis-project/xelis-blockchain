@@ -19,7 +19,12 @@ use xelis_vm::{tid, traits::JSON_REGISTRY, OpaqueWrapper};
 use crate::{
     account::CiphertextCache,
     block::Block,
-    crypto::{proofs::CiphertextValidityProof, Address, Hash, Signature},
+    crypto::{
+        proofs::{CiphertextValidityProof, CommitmentEqProof},
+        Address,
+        Hash,
+        Signature
+    },
     serializer::*,
     transaction::Transaction
 };
@@ -41,9 +46,10 @@ pub const ADDRESS_OPAQUE_ID: u8 = 1;
 pub const SIGNATURE_OPAQUE_ID: u8 = 2;
 pub const CIPHERTEXT_OPAQUE_ID: u8 = 3;
 pub const CIPHERTEXT_VALIDITY_PROOF_OPAQUE_ID: u8 = 4;
-pub const RANGE_PROOF_OPAQUE_ID: u8 = 5;
-pub const RISTRETTO_OPAQUE_ID: u8 = 6;
-pub const SCALAR_OPAQUE_ID: u8 = 7;
+pub const COMMITMENT_EQUALITY_PROOF_OPAQUE_ID: u8 = 5;
+pub const RANGE_PROOF_OPAQUE_ID: u8 = 6;
+pub const RISTRETTO_OPAQUE_ID: u8 = 7;
+pub const SCALAR_OPAQUE_ID: u8 = 8;
 
 impl_opaque!(
     "Hash",
@@ -96,6 +102,7 @@ tid!(Hash);
 tid!(Transaction);
 tid!(Block);
 
+// Register opaques types compatible with JSON serialization
 pub fn register_opaque_types() {
     debug!("Registering opaque types");
     let mut registry = JSON_REGISTRY.write().expect("Failed to lock JSON_REGISTRY");
@@ -104,6 +111,7 @@ pub fn register_opaque_types() {
     register_opaque_json!(registry, "Signature", Signature);
     register_opaque_json!(registry, "Ciphertext", CiphertextCache);
     register_opaque_json!(registry, "CiphertextValidityProof", CiphertextValidityProof);
+    register_opaque_json!(registry, "CommitmentEqualityProof", CommitmentEqProof);
     register_opaque_json!(registry, "RangeProof", RangeProofWrapper);
     register_opaque_json!(registry, "RistrettoPoint", OpaqueRistrettoPoint);
     register_opaque_json!(registry, "Scalar", OpaqueScalar);
@@ -121,6 +129,7 @@ impl Serializer for OpaqueWrapper {
             SIGNATURE_OPAQUE_ID => OpaqueWrapper::new(Signature::read(reader)?),
             CIPHERTEXT_OPAQUE_ID => OpaqueWrapper::new(CiphertextCache::read(reader)?),
             CIPHERTEXT_VALIDITY_PROOF_OPAQUE_ID => OpaqueWrapper::new(CiphertextValidityProof::read(reader)?),
+            COMMITMENT_EQUALITY_PROOF_OPAQUE_ID => OpaqueWrapper::new(CommitmentEqProof::read(reader)?),
             RANGE_PROOF_OPAQUE_ID => OpaqueWrapper::new(RangeProofWrapper(RangeProof::read(reader)?)),
             RISTRETTO_OPAQUE_ID => OpaqueWrapper::new(OpaqueRistrettoPoint::Compressed(CompressedRistretto::read(reader)?)),
             SCALAR_OPAQUE_ID => OpaqueWrapper::new(OpaqueScalar(Scalar::read(reader)?)),

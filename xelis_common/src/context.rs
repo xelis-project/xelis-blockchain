@@ -67,7 +67,7 @@ impl Context {
     }
 
     pub fn get_copy<T: 'static + Copy>(&self) -> Result<T> {
-        self.get().map(|v| *v)
+        self.get().copied()
     }
 }
 

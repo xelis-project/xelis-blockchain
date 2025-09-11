@@ -35,7 +35,7 @@ use crate::{
         FEE_PER_BYTE_OF_EVENT_DATA,
     },
     crypto::{
-        proofs::{CiphertextValidityProof, G, H},
+        proofs::{CiphertextValidityProof, CommitmentEqProof, G, H},
         Address,
         Hash,
         PublicKey,
@@ -157,6 +157,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
     let scalar_type = Type::Opaque(env.register_opaque::<OpaqueScalar>("Scalar", true));
     let transcript_type = Type::Opaque(env.register_opaque::<OpaqueTranscript>("Transcript", false));
     let ct_validity_proof_type = Type::Opaque(env.register_opaque::<CiphertextValidityProof>("CiphertextValidityProof", true));
+    let commitment_equality_proof_type = Type::Opaque(env.register_opaque::<CommitmentEqProof>("CommitmentEqualityProof", true));
     let range_proof_type = Type::Opaque(env.register_opaque::<RangeProofWrapper>("RangeProof", true));
 
     let module_type = Type::Opaque(env.register_opaque::<OpaqueModule>("Module", false));
@@ -868,18 +869,6 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
         );
     }
 
-    env.register_native_function(
-        "fire_event",
-        None,
-        vec![
-            ("id", Type::U64),
-            ("data", Type::Any)
-        ],
-        FunctionHandler::Sync(fire_event_fn),
-        250,
-        None
-    );
-
     // Ciphertext
     {
         env.register_native_function(
@@ -889,7 +878,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
                 ("value", Type::U64)
             ],
             FunctionHandler::Sync(ciphertext_add_plaintext),
-            500,
+            1500,
             None
         );
         env.register_native_function(
@@ -899,7 +888,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
                 ("value", Type::U64)
             ],
             FunctionHandler::Sync(ciphertext_sub_plaintext),
-            500,
+            1500,
             None
         );
         env.register_native_function(
@@ -909,7 +898,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
                 ("value", Type::U64)
             ],
             FunctionHandler::Sync(ciphertext_mul_plaintext),
-            1000,
+            2000,
             None
         );
         env.register_native_function(
@@ -919,7 +908,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
                 ("value", Type::U64)
             ],
             FunctionHandler::Sync(ciphertext_div_plaintext),
-            5000,
+            7500,
             None
         );
         env.register_static_function(
@@ -966,7 +955,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             Some(ristretto_type.clone()),
             vec![],
             FunctionHandler::Sync(ristretto_is_identity),
-            1,
+            5,
             Some(Type::Bool)
         );
 
@@ -976,7 +965,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             ristretto_type.clone(),
             vec![],
             FunctionHandler::Sync(ristretto_identity),
-            1,
+            50,
             Some(ristretto_type.clone())
         );
 
@@ -988,7 +977,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
                 ("value", scalar_type.clone())
             ],
             FunctionHandler::Sync(ristretto_add_scalar),
-            300,
+            500,
             Some(ristretto_type.clone())
         );
         // P - (s * G)
@@ -999,7 +988,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
                 ("value", scalar_type.clone())
             ],
             FunctionHandler::Sync(ristretto_sub_scalar),
-            300,
+            500,
             Some(ristretto_type.clone())
         );
         // P + P2
@@ -1010,7 +999,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
                 ("value", ristretto_type.clone())
             ],
             FunctionHandler::Sync(ristretto_add),
-            250,
+            500,
             Some(ristretto_type.clone())
         );
         // P - P2
@@ -1021,7 +1010,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
                 ("value", ristretto_type.clone())
             ],
             FunctionHandler::Sync(ristretto_sub),
-            250,
+            500,
             Some(ristretto_type.clone())
         );
         // P * s
@@ -1052,7 +1041,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             ristretto_type.clone(),
             vec![("bytes", Type::Bytes)],
             FunctionHandler::Sync(ristretto_from_bytes),
-            75,
+            100,
             Some(ristretto_type.clone())
         );
         // To bytes
@@ -1061,7 +1050,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             Some(ristretto_type.clone()),
             vec![],
             FunctionHandler::Sync(ristretto_to_bytes),
-            5,
+            100,
             Some(Type::Bytes)
         );
     }
@@ -1182,7 +1171,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             transcript_type.clone(),
             vec![("label", Type::Bytes)],
             FunctionHandler::Sync(transcript_new),
-            50,
+            500,
             Some(transcript_type.clone())
         );
 
@@ -1192,7 +1181,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             Some(transcript_type.clone()),
             vec![("label", Type::Bytes)],
             FunctionHandler::Sync(transcript_challenge_scalar),
-            100,
+            1000,
             Some(scalar_type.clone())
         );
 
@@ -1205,7 +1194,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
                 ("n", Type::U32),
             ],
             FunctionHandler::Sync(transcript_challenge_bytes),
-            100,
+            1000,
             Some(Type::Bytes)
         );
 
@@ -1218,7 +1207,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
                 ("message", Type::Bytes),
             ],
             FunctionHandler::Sync(transcript_append_message),
-            75,
+            750,
             None
         );
 
@@ -1276,7 +1265,25 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
                 ("transcript", transcript_type.clone()),
             ],
             FunctionHandler::Sync(ciphertext_validity_proof_verify),
-            15000,
+            150_000,
+            Some(Type::Bool)
+        );
+    }
+
+    // CommitmentEqProof
+    {
+        // verify
+        env.register_native_function(
+            "verify",
+            Some(commitment_equality_proof_type.clone()),
+            vec![
+                ("source_pubkey", ristretto_type.clone()),
+                ("ciphertext", ciphertext_type.clone()),
+                ("commitment", ristretto_type.clone()),
+                ("transcript", transcript_type.clone()),
+            ],
+            FunctionHandler::Sync(commitment_eq_proof_verify),
+            150_000,
             Some(Type::Bool)
         );
     }
@@ -1294,7 +1301,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
                 ("n", Type::U64),
             ],
             FunctionHandler::Sync(range_proof_verify_single),
-            500_000,
+            1_500_000,
             Some(Type::Bool)
         );
 
@@ -1309,7 +1316,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
                 ("n", Type::U64),
             ],
             FunctionHandler::Sync(range_proof_verify_multiple),
-            515_000,
+            1_515_000,
             Some(Type::Bool)
         );
     }
@@ -1359,6 +1366,21 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
 
     // Misc
     {
+        // Generate a RPC event from contract
+        // this is useful for applications that want to be 
+        // dynamic and raise events on a specific action
+        env.register_native_function(
+            "fire_event",
+            None,
+            vec![
+                ("id", Type::U64),
+                ("data", Type::Any)
+            ],
+            FunctionHandler::Sync(fire_event_fn),
+            250,
+            None
+        );
+
         // Retrieve the ciphertext and the topoheight at which it got fetched
         env.register_native_function(
             "get_account_balance_of",

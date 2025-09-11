@@ -9,17 +9,17 @@ pub const XELIS_ASSET: Hash = Hash::zero();
 
 // Lowest fee per KB possible on the network
 // 0.00010000 XEL per KB
-pub const FEE_PER_KB: u64 = 10000;
+pub const FEE_PER_KB: u64 = 10_000;
 // 0.00100000 XEL per account creation
 // User can create an account with 0.001 XEL
 // Or can mine a block to be registered for free
-pub const FEE_PER_ACCOUNT_CREATION: u64 = 100000;
+pub const FEE_PER_ACCOUNT_CREATION: u64 = 100_000;
 // 0.00005000 XEL per KB
 // Each transfer has a overhead of 5000 atomic units
-pub const FEE_PER_TRANSFER: u64 = 5000;
+pub const FEE_PER_TRANSFER: u64 = 5_000;
 // 0.00005000 XEL per KB
 // Each signature from multisig has a overhead of 5000 atomic units
-pub const FEE_PER_EXTRA_SIGNATURE: u64 = 5000;
+pub const FEE_PER_EXTRA_SIGNATURE: u64 = 5_000;
 
 // Contracts rules
 // 1 XEL per contract deployed

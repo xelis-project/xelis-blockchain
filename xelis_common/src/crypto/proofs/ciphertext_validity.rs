@@ -309,11 +309,13 @@ impl Serializer for CiphertextValidityProof {
     }
 
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let version: TxVersion = reader.context()
-            .get_copy()?;
+        let bit = reader.context()
+            .get_optional::<TxVersion>()
+            .map_or(true, |version| *version >= TxVersion::V1);
+
         let Y_0 = CompressedRistretto::read(reader)?;
         let Y_1 = CompressedRistretto::read(reader)?;
-        let Y_2 = if version >= TxVersion::V1 {
+        let Y_2 = if bit {
             Some(CompressedRistretto::read(reader)?)
         } else {
             None
