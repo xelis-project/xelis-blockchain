@@ -24,19 +24,40 @@ use super::{
     storage::{AccountProvider, BalanceProvider, DagOrderProvider, PrunedTopoheightProvider}
 };
 
+// Verify the transaction fee and returns the leftover from fee max
+pub(super) async fn verify_fee<P: AccountProvider + BalanceProvider>(provider: &P, tx: &Transaction, topoheight: TopoHeight, tx_base_fee: u64, block_version: BlockVersion) -> Result<u64, BlockchainError> {
+    let required_fees = blockchain::estimate_required_tx_fees(provider, topoheight, tx, tx_base_fee, block_version).await?;
+
+    // Check if we pay enough fee in this TX
+    let refund = if required_fees > tx.get_fee() {
+        // We don't, but maybe our fee max allows it
+        if required_fees > tx.get_fee_max() {
+            debug!("Invalid fees: {} required, {} provided", format_xelis(required_fees), format_xelis(tx.get_fee()));
+            return Err(BlockchainError::InvalidTxFee(required_fees, tx.get_fee()));
+        }
+
+        // Calculate the left over from fee max against required fee
+        tx.get_fee_max() - required_fees
+    } else {
+        // We may pay above the required fee
+        // so we simply sub it from fee max
+        // It should be safe without the checked_sub
+        // because `pre_verify` check fee_max >= fee
+        tx.get_fee_max().checked_sub(tx.get_fee())
+            .ok_or(BlockchainError::InvalidTxFee(required_fees, tx.get_fee()))?
+    };
+
+    Ok(refund)
+}
+
+
 // Verify a transaction before adding it to mempool/chain state
 // We only verify the reference and the required fees
-pub (super) async fn pre_verify_tx<P: AccountProvider + BalanceProvider>(provider: &P, tx: &Transaction, stable_topoheight: TopoHeight, topoheight: TopoHeight, tx_base_fee: u64, block_version: BlockVersion) -> Result<(), BlockchainError> {
+pub(super) async fn pre_verify_tx(tx: &Transaction, stable_topoheight: TopoHeight, topoheight: TopoHeight, block_version: BlockVersion) -> Result<(), BlockchainError> {
     debug!("Pre-verify TX at topoheight {} and stable topoheight {}", topoheight, stable_topoheight);
     if !hard_fork::is_tx_version_allowed_in_block_version(tx.get_version(), block_version) {
         debug!("Invalid version {} in block {}", tx.get_version(), block_version);
         return Err(BlockchainError::InvalidTxVersion);
-    }
-
-    let required_fees = blockchain::estimate_required_tx_fees(provider, topoheight, tx, tx_base_fee, block_version).await?;
-    if required_fees > tx.get_fee() {
-        debug!("Invalid fees: {} required, {} provided", format_xelis(required_fees), format_xelis(tx.get_fee()));
-        return Err(BlockchainError::InvalidTxFee(required_fees, tx.get_fee()));
     }
 
     let reference = tx.get_reference();

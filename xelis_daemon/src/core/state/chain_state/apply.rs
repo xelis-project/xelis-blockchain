@@ -22,6 +22,7 @@ use xelis_common::{
     },
     crypto::{elgamal::Ciphertext, Hash, PublicKey},
     transaction::{
+        Transaction,
         verify::{BlockchainApplyState, BlockchainVerificationState, ContractEnvironment},
         ContractDeposit,
         MultiSigPayload,
@@ -63,10 +64,16 @@ pub struct ApplicableChainState<'a, S: Storage> {
 
 #[async_trait]
 impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for ApplicableChainState<'a, S> {
+    /// Verify the TX fee and returns, if required, how much we should refund from
+    /// `fee_max` (left over of fees)
+    async fn verify_fee<'b>(&'b mut self, tx: &Transaction) -> Result<u64, BlockchainError> {
+        self.inner.verify_fee(tx).await
+    }
+
     /// Pre-verify the TX
     async fn pre_verify_tx<'b>(
         &'b mut self,
-        tx: &xelis_common::transaction::Transaction,
+        tx: &Transaction,
     ) -> Result<(), BlockchainError> {
         self.inner.pre_verify_tx(tx).await
     }

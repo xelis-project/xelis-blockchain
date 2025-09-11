@@ -37,6 +37,9 @@ struct Account<'a> {
     multisig: Option<MultiSigPayload>
 }
 
+// It is the same as ChainState, but it differs in few points:
+// - we lookup first for balances in our cache per source, those are maintained
+// - we also cache the nonce and multisig if updated
 pub struct MempoolState<'a, S: Storage> {
     // If the provider is mainnet or not
     mainnet: bool,
@@ -205,12 +208,17 @@ impl<'a, S: Storage> MempoolState<'a, S> {
 
 #[async_trait]
 impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for MempoolState<'a, S> {
+    /// Left over fee to pay back
+    async fn verify_fee<'b>(&'b mut self, tx: &Transaction) -> Result<u64, BlockchainError> {
+        super::verify_fee(self.storage, tx, self.topoheight, self.tx_base_fee, self.block_version).await
+    }
+
     /// Verify the TX version and reference
     async fn pre_verify_tx<'b>(
         &'b mut self,
         tx: &Transaction,
     ) -> Result<(), BlockchainError> {
-        super::pre_verify_tx(self.storage, tx, self.stable_topoheight, self.topoheight, self.tx_base_fee, self.get_block_version()).await
+        super::pre_verify_tx(tx, self.stable_topoheight, self.topoheight, self.get_block_version()).await
     }
 
     /// Get the balance ciphertext for a receiver account

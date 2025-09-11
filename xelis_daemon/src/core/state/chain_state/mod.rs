@@ -332,12 +332,17 @@ impl<'a, S: Storage> ChainState<'a, S> {
 
 #[async_trait]
 impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for ChainState<'a, S> {
+    /// Left over fee to pay back
+    async fn verify_fee<'b>(&'b mut self, tx: &Transaction) -> Result<u64, BlockchainError> {
+        super::verify_fee(self.storage.as_ref(), tx, self.topoheight, self.tx_base_fee, self.block_version).await
+    }
+
     /// Verify the TX version and reference
     async fn pre_verify_tx<'b>(
         &'b mut self,
         tx: &Transaction,
     ) -> Result<(), BlockchainError> {
-        super::pre_verify_tx(self.storage.as_ref(), tx, self.stable_topoheight, self.topoheight, self.tx_base_fee, self.get_block_version()).await
+        super::pre_verify_tx(tx, self.stable_topoheight, self.topoheight, self.block_version).await
     }
 
     /// Get the balance ciphertext for a receiver account
