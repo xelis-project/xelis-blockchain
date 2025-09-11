@@ -1014,7 +1014,7 @@ async fn create_transaction_with_multisig(manager: &CommandManager, prompt: &Pro
     manager.message(format!("Multisig detected, you need to sign the transaction with {} keys.", payload.threshold));
 
     let mut storage = wallet.get_storage().write().await;
-    let mut state = wallet.create_transaction_state_with_storage(&storage, &tx_type, Default::default(), Default::default(), None).await
+    let mut state = wallet.create_transaction_state_with_storage(&storage, &tx_type, Default::default(), Default::default(), None, None).await
         .context("Error while creating transaction state")?;
 
     let mut unsigned = wallet.create_unsigned_transaction(&mut state, Some(payload.threshold), tx_type, Default::default(), storage.get_tx_version().await?)
@@ -1153,7 +1153,7 @@ async fn transfer(manager: &CommandManager, mut args: ArgumentManager) -> Result
     let tx = if let Some(multisig) = multisig {
         create_transaction_with_multisig(manager, prompt, wallet, tx_type, multisig.payload).await?
     } else {
-        match wallet.create_transaction(tx_type, Default::default(), Default::default()).await {
+        match wallet.create_transaction(tx_type, Default::default(), Default::default(), None).await {
             Ok(tx) => tx,
             Err(e) => {
                 manager.error(&format!("Error while creating transaction: {}", e));
@@ -1233,7 +1233,7 @@ async fn transfer_all(manager: &CommandManager, mut args: ArgumentManager) -> Re
     let tx = if let Some(multisig) = multisig {
         create_transaction_with_multisig(manager, prompt, wallet, tx_type, multisig.payload).await?
     } else {
-        match wallet.create_transaction(tx_type, Default::default(), Default::default()).await {
+        match wallet.create_transaction(tx_type, Default::default(), Default::default(), None).await {
             Ok(tx) => tx,
             Err(e) => {
                 manager.error(&format!("Error while creating transaction: {}", e));
@@ -1294,7 +1294,7 @@ async fn burn(manager: &CommandManager, mut args: ArgumentManager) -> Result<(),
     let tx = if let Some(multisig) = multisig {
         create_transaction_with_multisig(manager, prompt, wallet, tx_type, multisig.payload).await?
     } else {
-        match wallet.create_transaction(tx_type, Default::default(), Default::default()).await {
+        match wallet.create_transaction(tx_type, Default::default(), Default::default(), None).await {
             Ok(tx) => tx,
             Err(e) => {
                 manager.error(&format!("Error while creating transaction: {}", e));
@@ -1824,7 +1824,7 @@ async fn multisig_setup(manager: &CommandManager, mut args: ArgumentManager) -> 
     let tx = if let Some(multisig) = multisig {
         create_transaction_with_multisig(manager, prompt, wallet, tx_type, multisig.payload).await?
     } else {
-        match wallet.create_transaction(tx_type, Default::default(), Default::default()).await {
+        match wallet.create_transaction(tx_type, Default::default(), Default::default(), None).await {
             Ok(tx) => tx,
             Err(e) => {
                 manager.error(&format!("Error while creating transaction: {}", e));
