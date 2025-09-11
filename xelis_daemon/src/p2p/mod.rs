@@ -1666,7 +1666,7 @@ impl<S: Storage> P2pServer<S> {
                 debug!("write task for {} has finished, stopping...", peer);
             },
             res = read_packet => {
-                debug!("read packet task for {} has  finished", peer);
+                debug!("read packet task for {} has finished", peer);
                 res.context("Error while joining read packet task")??;
             },
             res = self.listen_connection(&peer, receiver) => {
@@ -1721,7 +1721,11 @@ impl<S: Storage> P2pServer<S> {
                 let addr = *peer.get_connection().get_address();
                 trace!("Handle connection read side task for {} has been started", addr);
                 if let Err(e) = zelf.handle_connection_read_side(&peer, write_task).await {
-                    debug!("Error while running read part from {}: {}", peer, e);
+                    if let P2pError::Disconnected = e {
+                        debug!("{} has disconnected", peer);
+                    } else {
+                        warn!("Error while running read part from {}: {}", peer, e);
+                    }
 
                     peer.set_read_task_state(TaskState::Exiting).await;
 
