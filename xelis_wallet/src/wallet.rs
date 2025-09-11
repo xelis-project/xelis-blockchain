@@ -766,10 +766,10 @@ impl Wallet {
 
     // Create a transaction with the given transaction type and fee
     // this will apply the changes to the storage if the transaction
-    pub async fn create_transaction(&self, transaction_type: TransactionTypeBuilder, fee: FeeBuilder, base_fee: BaseFeeMode) -> Result<Transaction, WalletError> {
+    pub async fn create_transaction(&self, transaction_type: TransactionTypeBuilder, fee: FeeBuilder, base_fee: BaseFeeMode, max_fee: Option<u64>) -> Result<Transaction, WalletError> {
         trace!("create transaction");
         let mut storage = self.storage.write().await;
-        let (tx, mut state) = self.create_transaction_with_storage(&storage, transaction_type, fee, base_fee).await?;
+        let (tx, mut state) = self.create_transaction_with_storage(&storage, transaction_type, fee, base_fee, max_fee).await?;
         state.apply_changes(&mut storage).await?;
 
         Ok(tx)
@@ -777,9 +777,9 @@ impl Wallet {
 
     // Create a transaction with the given transaction type and fee
     // this will apply the changes to the storage if the transaction
-    pub async fn create_transaction_with_storage(&self, storage: &EncryptedStorage, transaction_type: TransactionTypeBuilder, fee: FeeBuilder, base_fee: BaseFeeMode) -> Result<(Transaction, TransactionBuilderState), WalletError> {
+    pub async fn create_transaction_with_storage(&self, storage: &EncryptedStorage, transaction_type: TransactionTypeBuilder, fee: FeeBuilder, base_fee: BaseFeeMode, max_fee: Option<u64>) -> Result<(Transaction, TransactionBuilderState), WalletError> {
         trace!("create transaction with storage");
-        let mut state = self.create_transaction_state_with_storage(&storage, &transaction_type, fee, base_fee, None).await?;
+        let mut state = self.create_transaction_state_with_storage(&storage, &transaction_type, fee, base_fee, None, max_fee).await?;
         let threshold = storage.get_multisig_state().await?
             .map(|m| m.payload.threshold);
         let tx_version = storage.get_tx_version().await?;
@@ -793,7 +793,7 @@ impl Wallet {
     // This will returns the transaction builder state along the transaction
     // You must handle "apply changes" to the storage
     // Warning: this is locking the network handler to access to the daemon api
-    pub async fn create_transaction_state_with_storage(&self, storage: &EncryptedStorage, transaction_type: &TransactionTypeBuilder, fee: FeeBuilder, base_fee: BaseFeeMode, nonce: Option<u64>) -> Result<TransactionBuilderState, WalletError> {
+    pub async fn create_transaction_state_with_storage(&self, storage: &EncryptedStorage, transaction_type: &TransactionTypeBuilder, fee: FeeBuilder, base_fee: BaseFeeMode, nonce: Option<u64>, max_fee: Option<u64>) -> Result<TransactionBuilderState, WalletError> {
         trace!("create transaction with storage");
         let nonce = match nonce {
             Some(n) => n,
@@ -818,7 +818,8 @@ impl Wallet {
         let mut state = TransactionBuilderState::new(
             self.network.is_mainnet(),
             reference,
-            nonce
+            nonce,
+            max_fee
         );
 
         #[cfg(feature = "network_handler")]

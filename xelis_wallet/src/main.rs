@@ -1143,7 +1143,7 @@ async fn transfer(manager: &CommandManager, mut args: ArgumentManager) -> Result
     let estimated_fee = wallet.estimate_fees(tx_type.clone(), Default::default(), Default::default()).await
         .context("Error while estimating TX fee")?;
 
-    manager.message(format!("Estimated TX fee is {}", format_xelis(estimated_fee)));
+    manager.message(format!("Estimated TX fee is {} XELIS", format_xelis(estimated_fee)));
     if !args.get_flag("confirm")? && !prompt.ask_confirmation().await.context("Error while confirming action")? {
         manager.message("Transaction has been aborted");
         return Ok(())
@@ -1161,7 +1161,6 @@ async fn transfer(manager: &CommandManager, mut args: ArgumentManager) -> Result
             }
         }
     };
-
 
     broadcast_tx(wallet, manager, tx).await;
     Ok(())

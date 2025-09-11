@@ -427,7 +427,7 @@ async fn build_transaction(context: &Context, body: Value) -> Result<Value, Inte
         storage.get_tx_version().await?
     };
 
-    let mut state = wallet.create_transaction_state_with_storage(&storage, &params.tx_type, params.fee, params.base_fee, params.nonce).await?;
+    let mut state = wallet.create_transaction_state_with_storage(&storage, &params.tx_type, params.fee, params.base_fee, params.nonce, params.fee_max).await?;
 
     let tx = if params.signers.is_empty() {
         wallet.create_transaction_with(&mut state, None, version, params.tx_type, params.fee)?
@@ -481,7 +481,8 @@ async fn build_transaction_offline(context: &Context, body: Value) -> Result<Val
     let wallet: &Arc<Wallet> = context.get()?;
 
     // Create the state with the provided balances
-    let mut state = TransactionBuilderState::new(wallet.get_network().is_mainnet(), params.reference, params.nonce);
+    let mut state = TransactionBuilderState::new(wallet.get_network().is_mainnet(), params.reference, params.nonce, params.fee_max);
+    state.set_base_fee(params.base_fee);
 
     for (hash, mut ciphertext) in params.balances {
         let compressed = ciphertext.decompressed()
@@ -545,7 +546,7 @@ async fn build_unsigned_transaction(context: &Context, body: Value) -> Result<Va
     // The lock is kept until the TX is applied to the storage
     // So even if we have few requests building a TX, they wait for the previous one to be applied
     let mut storage = wallet.get_storage().write().await;
-    let mut state = wallet.create_transaction_state_with_storage(&storage, &params.tx_type, params.fee, params.base_fee, params.nonce).await?;
+    let mut state = wallet.create_transaction_state_with_storage(&storage, &params.tx_type, params.fee, params.base_fee, params.nonce, params.fee_max).await?;
 
     let version = storage.get_tx_version().await?;
     let threshold = storage.get_multisig_state().await?

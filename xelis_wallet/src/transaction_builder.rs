@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::{collections::{HashMap, HashSet}, ops::{Deref, DerefMut}};
 use log::{debug, trace};
 use xelis_common::{
     account::CiphertextCache,
@@ -67,16 +67,19 @@ pub struct TransactionBuilderState {
     // The stable topoheight detected during the TX building
     // This is used to update the last coinbase reward topoheight
     stable_topoheight: Option<u64>,
+    // Fee max to pay
+    fee_max: Option<u64>,
 }
 
 impl TransactionBuilderState {
-    pub fn new(mainnet: bool, reference: Reference, nonce: u64) -> Self {
+    pub fn new(mainnet: bool, reference: Reference, nonce: u64, fee_max: Option<u64>) -> Self {
         Self {
             inner: EstimateFeesState::new(),
             mainnet,
             balances: HashMap::new(),
             reference,
             nonce,
+            fee_max,
             tx_hash_built: None,
             stable_topoheight: None,
         }
@@ -99,7 +102,7 @@ impl TransactionBuilderState {
     }
 
     pub async fn from_tx(storage: &EncryptedStorage, transaction: &Transaction, mainnet: bool) -> Result<Self, WalletError> {
-        let mut state = Self::new(mainnet, transaction.get_reference().clone(), transaction.get_nonce());
+        let mut state = Self::new(mainnet, transaction.get_reference().clone(), transaction.get_nonce(), Some(transaction.get_fee_max()));
         let ciphertexts = transaction.get_expected_sender_outputs()
             .map_err(|e| WalletError::Any(e.into()))?;
 
@@ -172,6 +175,10 @@ impl TransactionBuilderState {
 impl FeeHelper for TransactionBuilderState {
     type Error = WalletError;
 
+    fn get_max_fee(&self) -> Option<u64> {
+        self.fee_max        
+    }
+
     fn account_exists(&self, key: &PublicKey) -> Result<bool, Self::Error> {
         self.inner.account_exists(key)
     }
@@ -218,6 +225,20 @@ impl AccountState for TransactionBuilderState {
 
 impl AsMut<EstimateFeesState> for TransactionBuilderState {
     fn as_mut(&mut self) -> &mut EstimateFeesState {
+        &mut self.inner
+    }
+}
+
+impl Deref for TransactionBuilderState {
+    type Target = EstimateFeesState;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+impl DerefMut for TransactionBuilderState {
+    fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.inner
     }
 }
