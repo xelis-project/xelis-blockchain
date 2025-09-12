@@ -175,8 +175,8 @@ impl TransactionBuilderState {
 impl FeeHelper for TransactionBuilderState {
     type Error = WalletError;
 
-    fn get_max_fee(&self) -> Option<u64> {
-        self.fee_max        
+    fn get_max_fee(&self, fee: u64) -> u64 {
+        self.fee_max.unwrap_or(fee)
     }
 
     fn account_exists(&self, key: &PublicKey) -> Result<bool, Self::Error> {
