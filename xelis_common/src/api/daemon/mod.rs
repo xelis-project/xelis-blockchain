@@ -101,6 +101,8 @@ pub struct MempoolTransactionSummary<'a> {
     pub first_seen: TimestampSeconds,
     // Size of the TX
     pub size: usize,
+    // Fee per KB
+    pub fee_per_kb: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
