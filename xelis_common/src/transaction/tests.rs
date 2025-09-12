@@ -134,11 +134,19 @@ fn create_tx_for(account: Account, destination: Address, amount: u64, extra_data
     }]);
 
 
+    let balance = state.balances[&XELIS_ASSET].balance;
     let builder = TransactionBuilder::new(TxVersion::V1, account.keypair.get_public_key().compress(), None, data, FeeBuilder::default());
     let estimated_size = builder.estimate_size();
     let tx = builder.build(&mut state, &account.keypair).unwrap();
     assert!(estimated_size == tx.size(), "expected {} bytes got {} bytes", tx.size(), estimated_size);
     assert!(tx.to_bytes().len() == estimated_size);
+    // this is done by the AccountStateImpl
+    assert!(tx.fee * 2 == tx.fee_max);
+
+    let total_spend = amount + tx.fee_max;
+    let new_balance = state.balances[&XELIS_ASSET].balance;
+    let expected_balance = balance - total_spend;
+    assert!(new_balance == expected_balance, "expected balance {} got {}", expected_balance, new_balance);
 
     Arc::new(tx)
 }
@@ -240,7 +248,6 @@ async fn test_tx_verify() {
     let balance = alice.keypair.decrypt_to_point(&state.accounts[&alice.keypair.get_public_key().compress()].balances[&XELIS_ASSET]);
     assert_eq!(balance, Scalar::from((100u64 * COIN_VALUE) - (50 + tx.fee)) * (*G));
 }
-
 
 #[tokio::test]
 async fn test_tx_verify_with_zkp_cache() {
@@ -420,7 +427,6 @@ async fn test_tx_invoke_contract() {
 
     assert_eq!(balance, Scalar::from((100 * COIN_VALUE) - total_spend) * (*G));
 }
-
 
 #[tokio::test]
 async fn test_tx_deploy_contract() {
@@ -797,6 +803,10 @@ impl<'a> BlockchainVerificationState<'a, ()> for ChainState {
 
 impl FeeHelper for AccountStateImpl {
     type Error = ();
+
+    fn get_max_fee(&self, fee: u64) -> u64 {
+        fee * 2
+    }
 
     fn account_exists(&self, _: &PublicKey) -> Result<bool, Self::Error> {
         Ok(false)
