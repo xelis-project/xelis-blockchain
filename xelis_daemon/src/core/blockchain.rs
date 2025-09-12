@@ -61,7 +61,6 @@ use xelis_common::{
     serializer::Serializer,
     time::{
         get_current_time_in_millis,
-        get_current_time_in_seconds,
         TimestampMillis
     },
     transaction::{
@@ -1653,14 +1652,21 @@ impl<S: Storage> Blockchain<S> {
                 }
 
                 if rpc.is_event_tracked(&NotifyEvent::TransactionAddedInMempool).await {
-                    let data = MempoolTransactionSummary {
-                        size: tx_size,
-                        hash: Cow::Borrowed(&hash),
-                        fee: tx.get_fee(),
-                        source: tx.get_source().as_address(self.network.is_mainnet()),
-                        first_seen: get_current_time_in_seconds(),
+                    let json = {
+                        let mempool = self.mempool.read().await;
+                        let sorted_tx = mempool.get_sorted_tx(&hash)?;
+    
+                        let data = MempoolTransactionSummary {
+                            size: sorted_tx.get_size(),
+                            hash: Cow::Borrowed(&hash),
+                            fee: tx.get_fee(),
+                            source: tx.get_source().as_address(self.network.is_mainnet()),
+                            first_seen: sorted_tx.get_first_seen(),
+                            fee_per_kb: sorted_tx.get_fee_per_kb()
+                        };
+
+                        json!(data)
                     };
-                    let json = json!(data);
 
                     let rpc = rpc.clone();
                     spawn_task("rpc-notify-tx", async move {
