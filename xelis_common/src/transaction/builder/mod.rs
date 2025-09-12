@@ -443,14 +443,14 @@ impl TransactionBuilder {
     fn get_new_source_ct(
         &self,
         mut ct: Ciphertext,
-        fee: u64,
+        fee_max: u64,
         asset: &Hash,
         transfers: &[TransferWithCommitment],
         deposits: &HashMap<Hash, DepositWithCommitment>,
     ) -> Ciphertext {
         if asset == &XELIS_ASSET {
             // Fees are applied to the native blockchain asset only.
-            ct -= Scalar::from(fee);
+            ct -= Scalar::from(fee_max);
         }
 
         match &self.data {
@@ -832,7 +832,7 @@ impl TransactionBuilder {
                     .compress();
 
                 let new_source_ciphertext =
-                    self.get_new_source_ct(source_current_ciphertext, fee, &asset, &transfers_commitments, &deposits_commitments);
+                    self.get_new_source_ct(source_current_ciphertext, fee_max, &asset, &transfers_commitments, &deposits_commitments);
 
                 // 1. Make the CommitmentEqProof
 
