@@ -117,6 +117,8 @@ pub enum GenerationError<T> {
     InvalidModule,
     #[error("Configured max gas is above the network limit")]
     MaxGasReached,
+    #[error("Fee max is lower than calculated fee")]
+    FeeMax,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -669,7 +671,12 @@ impl TransactionBuilder {
         // Compute the fees
         let fee = self.estimate_fees(state)?;
         // Use the configured max fee, otherwise fallback to estimated fee
-        let fee_max = state.get_max_fee().unwrap_or(fee);
+        let max_fee = state.get_max_fee();
+        if max_fee.is_some_and(|max| fee > max) {
+            return Err(GenerationError::FeeMax);
+        }
+
+        let fee_max = max_fee.unwrap_or(fee);
 
         // Get the nonce
         let nonce = state.get_nonce().map_err(GenerationError::State)?;
