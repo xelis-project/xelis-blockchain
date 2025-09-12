@@ -961,6 +961,7 @@ async fn get_mempool_summary<S: Storage>(context: &Context, body: Value) -> Resu
             fee: sorted_tx.get_fee(),
             first_seen: sorted_tx.get_first_seen(),
             size: sorted_tx.get_size(),
+            fee_per_kb: sorted_tx.get_fee_per_kb(),
         };
 
         transactions.push(tx);
