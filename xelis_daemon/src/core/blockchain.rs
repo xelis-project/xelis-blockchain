@@ -3728,4 +3728,14 @@ mod tests {
         assert_eq!(get_block_dev_fee(DEV_FEES[1].height), 5);
         assert_eq!(get_block_dev_fee(DEV_FEES[1].height + 1), 5);
     }
+
+    #[test]
+    fn test_base_fee() {
+        // EMA block size below 1024 bytes is the minimum fee
+        assert_eq!(calculate_required_base_fee(0), FEE_PER_KB);
+        assert_eq!(calculate_required_base_fee(1024), FEE_PER_KB);
+
+        // Max block size EMA is up to x11 the required base fee
+        assert_eq!(calculate_required_base_fee(MAX_BLOCK_SIZE), FEE_PER_KB * 11);
+    }
 }
