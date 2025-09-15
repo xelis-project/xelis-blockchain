@@ -324,10 +324,22 @@ pub struct P2pConfig {
     #[clap(name = "p2p-block-propagation-log-level", long, value_enum, default_value_t = LogLevel::Debug)]
     #[serde(default = "debug_log_level")]
     pub block_propagation_log_level: LogLevel,
-    /// Disable requesting P2P transactions propagated
+    /// Disable requesting P2P transactions propagated.
+    /// No transaction being broadcasted across the p2p network will be requested.
+    /// This may leads to mempool being not synchronized at all.
+    /// It is discouraged to enable this config in a small p2p network.
     #[clap(name = "disable-p2p-fetching-txs-propagated", long)]
     #[serde(default)]
     pub disable_fetching_txs_propagated: bool,
+    /// Handle peer packets in parallel by creating a new dedicated task.
+    /// Each packet has its own dedicated task expect those which are
+    /// order dependent. They are set in an sequential executor to ensure
+    /// that the order stay the same despite this config enabled.
+    /// Creating a dedicated task per packet handling is useful for
+    /// reducing latency during heavy network usage but may increase
+    /// heavily the network usage under high load.
+    /// By default, all p2p packets are handled sequentially
+    /// in a single task per peer.
     #[clap(name = "p2p-handle-peer-packets-in-dedicated-task", long)]
     #[serde(default)]
     pub handle_peer_packets_in_dedicated_task: bool,
