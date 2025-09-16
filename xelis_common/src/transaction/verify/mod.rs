@@ -421,6 +421,11 @@ impl Transaction {
         let mut transfers_decompressed = Vec::new();
         let mut deposits_decompressed = HashMap::new();
 
+        trace!("verify fee to pay");
+        // Verify the required fee, if fee_max is not fully used, refund the left-over later
+        let refund = state.verify_fee(self, tx_hash).await
+            .map_err(VerificationError::State)?;
+
         trace!("Pre-verifying transaction on state");
         state.pre_verify_tx(&self).await
             .map_err(VerificationError::State)?;
@@ -556,6 +561,20 @@ impl Transaction {
                     output,
                 ).await
                 .map_err(VerificationError::State)?;
+        }
+
+        // Refund the left-over TX fee if any
+        if refund > 0 {
+            // Get the balance as a receiver to prevent breaking the link between ZK Proofs
+            // in case we have more than one TX executed from the same source key
+            let balance = state
+                .get_receiver_balance(
+                    Cow::Borrowed(&self.source),
+                    Cow::Borrowed(&XELIS_ASSET)
+                ).await
+                .map_err(VerificationError::State)?;
+
+            *balance += Scalar::from(refund);
         }
 
         Ok(())

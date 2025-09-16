@@ -11,6 +11,7 @@ use xelis_common::{
     account::{BalanceType, Nonce, VersionedNonce},
     asset::VersionedAssetData,
     block::{Block, BlockVersion, TopoHeight},
+    config::{EXTRA_BASE_FEE_BURN_PERCENT, FEE_PER_KB, XELIS_ASSET},
     contract::{
         AssetChanges,
         ChainState as ContractChainState,
@@ -21,17 +22,21 @@ use xelis_common::{
         OpaqueModule
     },
     crypto::{elgamal::Ciphertext, Hash, PublicKey},
+    serializer::Serializer,
     transaction::{
-        Transaction,
         verify::{BlockchainApplyState, BlockchainVerificationState, ContractEnvironment},
         ContractDeposit,
         MultiSigPayload,
-        Reference
+        Reference,
+        Transaction
     },
+    utils::format_xelis,
     versioned_type::VersionedState
 };
 use xelis_vm::Environment;
 use crate::core::{
+    blockchain::tx_kb_size_rounded,
+    state::verify_fee,
     error::BlockchainError,
     storage::{
         Storage,
@@ -60,14 +65,44 @@ pub struct ApplicableChainState<'a, S: Storage> {
     block_hash: &'a Hash,
     block: &'a Block,
     contract_manager: ContractManager<'a>,
+    total_fees: u64,
+    total_fees_burned: u64,
 }
 
 #[async_trait]
 impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for ApplicableChainState<'a, S> {
     /// Verify the TX fee and returns, if required, how much we should refund from
     /// `fee_max` (left over of fees)
-    async fn verify_fee<'b>(&'b mut self, tx: &Transaction) -> Result<u64, BlockchainError> {
-        self.inner.verify_fee(tx).await
+    async fn verify_fee<'b>(&'b mut self, tx: &Transaction, tx_hash: &Hash) -> Result<u64, BlockchainError> {
+        let tx_size = tx.size();
+        let (mut fees_paid, refund) = verify_fee(self.storage.as_ref(), tx, tx_size, self.topoheight, self.tx_base_fee, self.block_version).await?;
+        // Starting V3: burn a % of the extra base fee
+        if self.block_version >= BlockVersion::V3 {
+            // The extra base fee is (TX FEE PER KB - MIN. FEE PER KB)
+            let extra_base_fee = self.tx_base_fee - FEE_PER_KB;
+            let tx_base_fee = extra_base_fee * tx_kb_size_rounded(tx.size()) as u64;
+            // The burned part is computed above the extra base fee
+            let burned_part = tx_base_fee * EXTRA_BASE_FEE_BURN_PERCENT / 100;
+
+            debug!(
+                "TX {} fees paid: {} XEL, computed TX base fee: {} XEL, extra base fee: {} XEL, burned part: {} XEL",
+                tx_hash,
+                format_xelis(fees_paid),
+                format_xelis(tx_base_fee),
+                format_xelis(extra_base_fee),
+                format_xelis(burned_part),
+            );
+
+            // Burn a part of the fee
+            self.total_fees_burned += burned_part;
+
+            // Remove the burned part from fee
+            fees_paid -= burned_part;
+        }
+
+        self.total_fees += fees_paid;
+
+        Ok(refund)
     }
 
     /// Pre-verify the TX
@@ -382,6 +417,8 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
                 block_version,
                 tx_base_fee,
             ),
+            total_fees: 0,
+            total_fees_burned: 0,
             contract_manager: ContractManager {
                 outputs: HashMap::new(),
                 caches: HashMap::new(),
@@ -392,6 +429,12 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
             block_hash,
             block
         }
+    }
+
+    // total fees to be paid to the miner
+    #[inline]
+    pub fn get_total_fees(&self) -> u64 {
+        self.total_fees
     }
 
     // Load the asset changes for supply changes
@@ -465,6 +508,17 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
     // This will consume ChainState and apply all changes to the storage
     // In case of incoming and outgoing transactions in same state, the final balance will be computed
     pub async fn apply_changes(mut self) -> Result<(), BlockchainError> {
+        trace!("apply changes");
+
+        // Copy the value to prevent immutable borrow
+        let total_fees_burned = self.total_fees_burned;
+        // if we have some burned fees, reduce it from supply
+        if total_fees_burned > 0 {
+            let changes = self.get_asset_changes_for(&XELIS_ASSET, false).await?;
+            changes.circulating_supply.1 -= total_fees_burned;
+            changes.circulating_supply.0.mark_updated();
+        }
+
         // Apply changes for sender accounts
         for (key, account) in &mut self.inner.accounts {
             trace!("Saving nonce {} for {} at topoheight {}", account.nonce, key.as_address(self.inner.storage.is_mainnet()), self.inner.topoheight);

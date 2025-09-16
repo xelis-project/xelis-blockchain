@@ -25,11 +25,18 @@ use super::{
 };
 
 // Verify the transaction fee and returns the leftover from fee max
-pub(super) async fn verify_fee<P: AccountProvider + BalanceProvider>(provider: &P, tx: &Transaction, topoheight: TopoHeight, tx_base_fee: u64, block_version: BlockVersion) -> Result<u64, BlockchainError> {
-    let required_fees = blockchain::estimate_required_tx_fees(provider, topoheight, tx, tx_base_fee, block_version).await?;
+pub(super) async fn verify_fee<P: AccountProvider + BalanceProvider>(
+    provider: &P,
+    tx: &Transaction,
+    tx_size: usize,
+    topoheight: TopoHeight,
+    tx_base_fee: u64,
+    block_version: BlockVersion
+) -> Result<(u64, u64), BlockchainError> {
+    let required_fees = blockchain::estimate_required_tx_fees(provider, topoheight, tx, tx_size, tx_base_fee, block_version).await?;
 
     // Check if we pay enough fee in this TX
-    let refund = if required_fees > tx.get_fee() {
+    let (fee_paid, refund) = if required_fees > tx.get_fee() {
         // We don't, but maybe our fee max allows it
         if required_fees > tx.get_fee_max() {
             debug!("Invalid fees: {} required, {} provided", format_xelis(required_fees), format_xelis(tx.get_fee()));
@@ -37,17 +44,21 @@ pub(super) async fn verify_fee<P: AccountProvider + BalanceProvider>(provider: &
         }
 
         // Calculate the left over from fee max against required fee
-        tx.get_fee_max() - required_fees
+        let refund = tx.get_fee_max() - required_fees;
+        (required_fees, refund)
     } else {
         // We may pay above the required fee
         // so we simply sub it from fee max
         // It should be safe without the checked_sub
         // because `pre_verify` check fee_max >= fee
-        tx.get_fee_max().checked_sub(tx.get_fee())
-            .ok_or(BlockchainError::InvalidTxFee(required_fees, tx.get_fee()))?
+        let refund = tx.get_fee_max()
+            .checked_sub(tx.get_fee())
+            .ok_or(BlockchainError::InvalidTxFee(required_fees, tx.get_fee()))?;
+
+        (tx.get_fee(), refund)
     };
 
-    Ok(refund)
+    Ok((fee_paid, refund))
 }
 
 

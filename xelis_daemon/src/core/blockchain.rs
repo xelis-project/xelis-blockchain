@@ -43,7 +43,6 @@ use xelis_common::{
         XELIS_ASSET,
         FEE_PER_KB,
         BYTES_PER_KB,
-        EXTRA_BASE_FEE_BURN_PERCENT,
     },
     crypto::{
         Hash,
@@ -2683,13 +2682,6 @@ impl<S: Storage> Blockchain<S> {
                     *side_blocks_count += 1;
                 }
 
-                // All fees from the transactions executed in this block minus the burned part
-                let mut total_fees = 0;
-                // Every TX fee with a higher base fee than the minimum required
-                // is burned at a `EXTRA_BASE_FEE_BURN_PERCENT` rate to ensure no miners spam itself the chain
-                // in order to raise the fees to others users
-                let mut total_fees_burned = 0;
-
                 // Chain State used for the verification
                 trace!("building chain state to execute TXs in block {}", block_hash);
                 let mut chain_state = ApplicableChainState::new(
@@ -2810,53 +2802,7 @@ impl<S: Storage> Blockchain<S> {
                             }
                             _ => {}
                         }
-
-                        // Increase total tx fees for miner
-                        let mut fee = tx.get_fee();
-
-                        // Starting V3: burn a % of the extra base fee
-                        if is_v3_enabled {
-                            // The extra base fee is (TX FEE PER KB - MIN. FEE PER KB)
-                            let extra_base_fee = base_fee - FEE_PER_KB;
-                            let tx_base_fee = extra_base_fee * tx_kb_size_rounded(tx.size()) as u64;
-                            // The burned part is computed above the extra base fee
-                            let burned_part = tx_base_fee * EXTRA_BASE_FEE_BURN_PERCENT / 100;
-    
-                            debug!(
-                                "TX {} fee: {} XEL, computed TX base fee: {} XEL, extra base fee: {} XEL, burned part: {} XEL",
-                                tx_hash,
-                                format_xelis(fee),
-                                format_xelis(tx_base_fee),
-                                format_xelis(extra_base_fee),
-                                format_xelis(burned_part),
-                            );
-
-                            // Burn a part of the fee
-                            total_fees_burned += burned_part;
-
-                            // Remove the burned part from fee
-                            fee -= burned_part;
-                        }
-
-                        // Pay the fee to the miner
-                        total_fees += fee;
                     }
-                }
-
-                // If we have any burn fee to track
-                if total_fees_burned > 0 {
-                    debug!(
-                        "Fees burned: {} ({} XEL) on {} ({} XEL) total fees paid",
-                        total_fees_burned,
-                        format_xelis(total_fees_burned),
-                        total_fees,
-                        format_xelis(total_fees),
-                    );
-
-                    // It has been accessed before TXs execution
-                    let changes = chain_state.get_asset_changes_for(&XELIS_ASSET, false).await?;
-                    changes.circulating_supply.1 -= total_fees_burned;
-                    changes.circulating_supply.0.mark_updated();
                 }
 
                 let dev_fee_percentage = get_block_dev_fee(block.get_height());
@@ -2872,6 +2818,7 @@ impl<S: Storage> Blockchain<S> {
                 // reward the miner
                 // Miner gets the block reward + total fees + gas fee
                 let gas_fee = chain_state.get_gas_fee();
+                let total_fees = chain_state.get_total_fees();
                 chain_state.reward_miner(block.get_miner(), miner_reward + total_fees + gas_fee).await?;
 
                 // Fire all the contract events
@@ -3719,9 +3666,9 @@ pub const fn tx_kb_size_rounded(bytes: usize) -> usize {
 // based on the newly generated addresses
 // Multisig signatures also increase the extra fee due to more computation being required
 // This returns one final (total) fee required for a TX
-pub async fn estimate_required_tx_fees<P: AccountProvider>(provider: &P, current_topoheight: TopoHeight, tx: &Transaction, base_fee: u64, block_version: BlockVersion) -> Result<u64, BlockchainError> {
+pub async fn estimate_required_tx_fees<P: AccountProvider>(provider: &P, current_topoheight: TopoHeight, tx: &Transaction, tx_size: usize, base_fee: u64, block_version: BlockVersion) -> Result<u64, BlockchainError> {
     let fee_extra = estimate_required_tx_fee_extra(provider, current_topoheight, tx, block_version).await?;
-    Ok(calculate_tx_fee_per_kb(base_fee, tx.size()) + fee_extra)
+    Ok(calculate_tx_fee_per_kb(base_fee, tx_size) + fee_extra)
 }
 
 // Get the block reward for a side block based on how many side blocks exists at same height
