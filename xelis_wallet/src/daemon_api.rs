@@ -305,7 +305,7 @@ impl DaemonAPI {
         Ok(topoheight)
     }
 
-    pub async fn get_estimated_fee_per_kb(&self) -> Result<u64> {
+    pub async fn get_estimated_fee_per_kb(&self) -> Result<PredicatedBaseFeeResult> {
         trace!("get_estimated_fee_per_kbable_topoheight");
         let base_fee = self.client.call("get_estimated_fee_per_kb").await?;
         Ok(base_fee)

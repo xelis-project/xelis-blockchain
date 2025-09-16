@@ -1030,7 +1030,8 @@ impl Wallet {
                 let mut calculated = match base_fee {
                     BaseFeeMode::Fixed(base_fee) => base_fee,
                     _ => match network_handler.get_api().get_estimated_fee_per_kb().await {
-                        Ok(base_fee) => base_fee,
+                        // We use the predicted fee per kb as base fee to ensure our TX will be accepted
+                        Ok(result) => result.predicated_fee_per_kb,
                         Err(e) => {
                             warn!("Couldn't retrieve dynamic fee per kb: {}, fallback to default", e);
                             FEE_PER_KB
