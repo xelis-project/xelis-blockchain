@@ -577,7 +577,7 @@ impl Transaction {
 
         trace!("verify fee");
         // Verify the required fee, if fee_max is not fully used, refund the left-over later
-        let refund = state.verify_fee(self).await
+        let refund = state.verify_fee(self, tx_hash).await
             .map_err(VerificationError::State)?;
 
         trace!("Pre-verifying transaction on state");
