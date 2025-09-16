@@ -73,7 +73,7 @@ pub struct ApplicableChainState<'a, S: Storage> {
 impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for ApplicableChainState<'a, S> {
     /// Verify the TX fee and returns, if required, how much we should refund from
     /// `fee_max` (left over of fees)
-    async fn verify_fee<'b>(&'b mut self, tx: &Transaction, tx_hash: &Hash) -> Result<u64, BlockchainError> {
+    async fn handle_tx_fee<'b>(&'b mut self, tx: &Transaction, tx_hash: &Hash) -> Result<u64, BlockchainError> {
         let tx_size = tx.size();
         let (mut fees_paid, refund) = verify_fee(self.storage.as_ref(), tx, tx_size, self.topoheight, self.tx_base_fee, self.block_version).await?;
         // Starting V3: burn a % of the extra base fee

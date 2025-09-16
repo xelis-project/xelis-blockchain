@@ -210,7 +210,7 @@ impl<'a, S: Storage> MempoolState<'a, S> {
 #[async_trait]
 impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for MempoolState<'a, S> {
     /// Left over fee to pay back
-    async fn verify_fee<'b>(&'b mut self, tx: &Transaction, _: &Hash) -> Result<u64, BlockchainError> {
+    async fn handle_tx_fee<'b>(&'b mut self, tx: &Transaction, _: &Hash) -> Result<u64, BlockchainError> {
         let (_, refund) = super::verify_fee(self.storage, tx, tx.size(), self.topoheight, self.tx_base_fee, self.block_version).await?;
         Ok(refund)
     }
