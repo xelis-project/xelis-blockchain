@@ -21,6 +21,7 @@ use xelis_common::{
         Hash,
         PublicKey
     },
+    serializer::Serializer,
     transaction::{
         verify::BlockchainVerificationState,
         MultiSigPayload,
@@ -76,9 +77,8 @@ impl Echange {
     fn get_balance(&mut self) -> &mut CiphertextCache {
         let output = self.output_balance_used || self.allow_output_balance;
         let (ct, used) = self.version.select_balance(output);
-        if !self.output_balance_used {
-            self.output_balance_used = used;
-        }
+        self.output_balance_used |= used;
+
         ct
     }
 
@@ -333,8 +333,9 @@ impl<'a, S: Storage> ChainState<'a, S> {
 #[async_trait]
 impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for ChainState<'a, S> {
     /// Left over fee to pay back
-    async fn verify_fee<'b>(&'b mut self, tx: &Transaction) -> Result<u64, BlockchainError> {
-        super::verify_fee(self.storage.as_ref(), tx, self.topoheight, self.tx_base_fee, self.block_version).await
+    async fn verify_fee<'b>(&'b mut self, tx: &Transaction, _: &Hash) -> Result<u64, BlockchainError> {
+        let (_, refund) = super::verify_fee(self.storage.as_ref(), tx, tx.size(), self.topoheight, self.tx_base_fee, self.block_version).await?;
+        Ok(refund)
     }
 
     /// Verify the TX version and reference
