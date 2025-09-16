@@ -43,6 +43,7 @@ use xelis_common::{
         XELIS_ASSET,
         FEE_PER_KB,
         BYTES_PER_KB,
+        EXTRA_BASE_FEE_BURN_PERCENT,
     },
     crypto::{
         Hash,
@@ -2682,8 +2683,13 @@ impl<S: Storage> Blockchain<S> {
                     *side_blocks_count += 1;
                 }
 
-                // All fees from the transactions executed in this block
+                // All fees from the transactions executed in this block minus the burned part
                 let mut total_fees = 0;
+                // Every TX fee with a higher base fee than the minimum required
+                // is burned at a `EXTRA_BASE_FEE_BURN_PERCENT` rate to ensure no miners spam itself the chain
+                // in order to raise the fees to others users
+                let mut total_fees_burned = 0;
+
                 // Chain State used for the verification
                 trace!("building chain state to execute TXs in block {}", block_hash);
                 let mut chain_state = ApplicableChainState::new(
@@ -2762,6 +2768,7 @@ impl<S: Storage> Blockchain<S> {
                             events.entry(NotifyEvent::TransactionExecuted).or_insert_with(Vec::new).push(value);
                         }
 
+                        // Check TX type for RPC events
                         match tx.get_data() {
                             TransactionType::InvokeContract(payload) => {
                                 let event = NotifyEvent::InvokeContract {
@@ -2782,7 +2789,10 @@ impl<S: Storage> Blockchain<S> {
                                             topoheight: highest_topo,
                                             contract_outputs,
                                         });
-                                        events.entry(event).or_insert_with(Vec::new).push(value);
+
+                                        events.entry(event)
+                                            .or_insert_with(Vec::new)
+                                            .push(value);
                                     }
                                 }
                             },
@@ -2793,15 +2803,60 @@ impl<S: Storage> Blockchain<S> {
                                         block_hash: Cow::Borrowed(&hash),
                                         topoheight: highest_topo,
                                     });
-                                    events.entry(NotifyEvent::DeployContract).or_insert_with(Vec::new).push(value);
+                                    events.entry(NotifyEvent::DeployContract)
+                                        .or_insert_with(Vec::new)
+                                        .push(value);
                                 }
                             }
                             _ => {}
                         }
 
                         // Increase total tx fees for miner
-                        total_fees += tx.get_fee();
+                        let mut fee = tx.get_fee();
+
+                        // Starting V3: burn a % of the extra base fee
+                        if is_v3_enabled {
+                            // The extra base fee is (TX FEE PER KB - MIN. FEE PER KB)
+                            let extra_base_fee = base_fee - FEE_PER_KB;
+                            let tx_base_fee = extra_base_fee * tx_kb_size_rounded(tx.size()) as u64;
+                            // The burned part is computed above the extra base fee
+                            let burned_part = tx_base_fee * EXTRA_BASE_FEE_BURN_PERCENT / 100;
+    
+                            debug!(
+                                "TX {} fee: {} XEL, computed TX base fee: {} XEL, extra base fee: {} XEL, burned part: {} XEL",
+                                tx_hash,
+                                format_xelis(fee),
+                                format_xelis(tx_base_fee),
+                                format_xelis(extra_base_fee),
+                                format_xelis(burned_part),
+                            );
+
+                            // Burn a part of the fee
+                            total_fees_burned += burned_part;
+
+                            // Remove the burned part from fee
+                            fee -= burned_part;
+                        }
+
+                        // Pay the fee to the miner
+                        total_fees += fee;
                     }
+                }
+
+                // If we have any burn fee to track
+                if total_fees_burned > 0 {
+                    debug!(
+                        "Fees burned: {} ({} XEL) on {} ({} XEL) total fees paid",
+                        total_fees_burned,
+                        format_xelis(total_fees_burned),
+                        total_fees,
+                        format_xelis(total_fees),
+                    );
+
+                    // It has been accessed before TXs execution
+                    let changes = chain_state.get_asset_changes_for(&XELIS_ASSET, false).await?;
+                    changes.circulating_supply.1 -= total_fees_burned;
+                    changes.circulating_supply.0.mark_updated();
                 }
 
                 let dev_fee_percentage = get_block_dev_fee(block.get_height());
@@ -3643,12 +3698,20 @@ pub async fn estimate_required_tx_fee_extra<P: AccountProvider>(provider: &P, cu
 // NOTE: tx size is in bytes, not kB
 pub async fn estimate_tx_fee_per_kb<P: AccountProvider>(provider: &P, current_topoheight: TopoHeight, tx: &Transaction, tx_size: usize, block_version: BlockVersion) -> Result<u64, BlockchainError> {
     let fee_extra = estimate_required_tx_fee_extra(provider, current_topoheight, tx, block_version).await?;
-    let fee = tx.get_fee() - fee_extra;
+    let fee = tx.get_fee().checked_sub(fee_extra)
+        .ok_or(BlockchainError::InvalidTxFee(fee_extra, tx.get_fee()))?;
 
     // We round it up to the next kB because
     // the verification part is doing it
-    let tx_size_rounded = (tx_size + (BYTES_PER_KB - 1)) / BYTES_PER_KB;
+    let tx_size_rounded = tx_kb_size_rounded(tx_size);
     Ok(fee / tx_size_rounded as u64)
+}
+
+// Count how many kB is counted for TX size in bytes
+// NOTE: Even if a kB is not fully consumed, it is counted as is
+#[inline(always)]
+pub const fn tx_kb_size_rounded(bytes: usize) -> usize {
+    (bytes + (BYTES_PER_KB - 1)) / BYTES_PER_KB
 }
 
 // Estimate the required final fee for TX

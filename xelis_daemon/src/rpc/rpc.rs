@@ -235,7 +235,7 @@ pub async fn get_block_response_for_hash<S: Storage>(blockchain: &Blockchain<S>,
             miner: Cow::Owned(header.get_miner().as_address(mainnet)),
             tips: Cow::Borrowed(header.get_tips()),
             txs_hashes: Cow::Borrowed(header.get_txs_hashes()),
-            transactions: Vec::with_capacity(0),
+            transactions: Vec::new(),
         })
     };
 
