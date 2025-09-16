@@ -423,7 +423,7 @@ impl Transaction {
 
         trace!("verify fee to pay");
         // Verify the required fee, if fee_max is not fully used, refund the left-over later
-        let refund = state.verify_fee(self, tx_hash).await
+        let refund = state.handle_tx_fee(self, tx_hash).await
             .map_err(VerificationError::State)?;
 
         trace!("Pre-verifying transaction on state");
@@ -596,7 +596,7 @@ impl Transaction {
 
         trace!("verify fee");
         // Verify the required fee, if fee_max is not fully used, refund the left-over later
-        let refund = state.verify_fee(self, tx_hash).await
+        let refund = state.handle_tx_fee(self, tx_hash).await
             .map_err(VerificationError::State)?;
 
         trace!("Pre-verifying transaction on state");
@@ -1152,6 +1152,11 @@ impl Transaction {
         decompressed_deposits: &HashMap<&Hash, DecompressedDepositCt>,
     ) -> Result<(), VerificationError<E>> {
         trace!("Applying transaction data");
+
+        // Handle the fee
+        state.handle_tx_fee(self, tx_hash).await
+            .map_err(VerificationError::State)?;
+
         // Update nonce
         state.update_account_nonce(self.get_source(), self.nonce + 1).await
             .map_err(VerificationError::State)?;
