@@ -20,6 +20,14 @@ pub const FEE_PER_TRANSFER: u64 = 5_000;
 // 0.00005000 XEL per KB
 // Each signature from multisig has a overhead of 5000 atomic units
 pub const FEE_PER_EXTRA_SIGNATURE: u64 = 5_000;
+// 30% of the extra TX base fee is burned.
+// extra TX base fee is calculated such as:
+// extra = required base fee - FEE_PER_KB
+// on the extra base fee, we take configured percentage
+// that is burned by the protocol.
+// This way, we ensures no dishonest miner can cheat by spamming
+// free heavy TXs to increase the base fee.
+pub const EXTRA_BASE_FEE_BURN_PERCENT: u64 = 30;
 
 // Contracts rules
 // 1 XEL per contract deployed
