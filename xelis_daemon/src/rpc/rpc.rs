@@ -313,11 +313,13 @@ pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>
     handler.register_method("get_stable_topoheight", async_handler!(get_stable_topoheight::<S>));
     handler.register_method("get_hard_forks", async_handler!(get_hard_forks::<S>));
 
+    // Blocks
     handler.register_method("get_block_at_topoheight", async_handler!(get_block_at_topoheight::<S>));
     handler.register_method("get_blocks_at_height", async_handler!(get_blocks_at_height::<S>));
     handler.register_method("get_block_by_hash", async_handler!(get_block_by_hash::<S>));
     handler.register_method("get_top_block", async_handler!(get_top_block::<S>));
 
+    // Balances
     handler.register_method("get_balance", async_handler!(get_balance::<S>));
     handler.register_method("get_stable_balance", async_handler!(get_stable_balance::<S>));
     handler.register_method("has_balance", async_handler!(has_balance::<S>));
@@ -337,6 +339,7 @@ pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>
     handler.register_method("count_transactions", async_handler!(count_transactions::<S>));
     handler.register_method("count_contracts", async_handler!(count_contracts::<S>));
 
+    // Transactions
     handler.register_method("submit_transaction", async_handler!(submit_transaction::<S>));
     handler.register_method("get_transaction_executor", async_handler!(get_transaction_executor::<S>));
     handler.register_method("get_transaction", async_handler!(get_transaction::<S>));
@@ -344,19 +347,24 @@ pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>
     handler.register_method("get_transactions_summary", async_handler!(get_transactions_summary::<S>));
     handler.register_method("is_tx_executed_in_block", async_handler!(is_tx_executed_in_block::<S>));
 
+    // P2p
     handler.register_method("p2p_status", async_handler!(p2p_status::<S>));
     handler.register_method("get_peers", async_handler!(get_peers::<S>));
+    handler.register_method("get_p2p_block_propagation", async_handler!(get_p2p_block_propagation::<S>));
 
+    // Mempool
     handler.register_method("get_mempool", async_handler!(get_mempool::<S>));
     handler.register_method("get_mempool_summary", async_handler!(get_mempool_summary::<S>));
     handler.register_method("get_mempool_cache", async_handler!(get_mempool_cache::<S>));
     handler.register_method("get_estimated_fee_rates", async_handler!(get_estimated_fee_rates::<S>));
     handler.register_method("get_estimated_fee_per_kb", async_handler!(get_estimated_fee_per_kb::<S>));
 
+    // DAG
     handler.register_method("get_dag_order", async_handler!(get_dag_order::<S>));
     handler.register_method("get_blocks_range_by_topoheight", async_handler!(get_blocks_range_by_topoheight::<S>));
     handler.register_method("get_blocks_range_by_height", async_handler!(get_blocks_range_by_height::<S>));
 
+    // Accounts
     handler.register_method("get_account_history", async_handler!(get_account_history::<S>));
     handler.register_method("get_account_assets", async_handler!(get_account_assets::<S>));
     handler.register_method("get_accounts", async_handler!(get_accounts::<S>));
@@ -384,9 +392,6 @@ pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>
     handler.register_method("get_contract_balance", async_handler!(get_contract_balance::<S>));
     handler.register_method("get_contract_balance_at_topoheight", async_handler!(get_contract_balance_at_topoheight::<S>));
     handler.register_method("get_contract_assets", async_handler!(get_contract_assets::<S>));
-
-    // P2p
-    handler.register_method("get_p2p_block_propagation", async_handler!(get_p2p_block_propagation::<S>));
 
     if allow_mining_methods {
         handler.register_method("get_block_template", async_handler!(get_block_template::<S>));
@@ -441,7 +446,6 @@ async fn get_hard_forks<S: Storage>(context: &Context, body: Value) -> Result<Va
 
     Ok(json!(hard_forks))
 }
-
 
 async fn get_block_at_topoheight<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: GetBlockAtTopoHeightParams = parse_params(body)?;
