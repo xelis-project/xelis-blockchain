@@ -117,6 +117,14 @@ pub struct TransactionSummary<'a> {
     pub size: usize,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PredicatedBaseFeeResult {
+    // Current fee per KB based on the blockchain state
+    pub fee_per_kb: u64,
+    // Predicated fee per KB based on the mempool state
+    pub predicated_fee_per_kb: u64,
+}
+
 #[derive(Serialize, Deserialize)]
 pub struct GetMempoolResult<'a> {
     // The range of transactions requested
