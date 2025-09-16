@@ -3551,39 +3551,61 @@ impl<S: Storage> Blockchain<S> {
     }
 
     // Same as `get_required_base_fee` but estimate next blocks by including mempool pending txs
-    async fn predicate_required_base_fee_internal(&self, storage: &S) -> Result<u64, BlockchainError> {
+    // Returns the base fee based on current EMA at tips and the predicated one
+    async fn predicate_required_base_fee_internal(&self, storage: &S) -> Result<(u64, u64), BlockchainError> {
         let tips = storage.get_tips().await?;
-        let mut ema = self.get_blocks_size_ema_at_tips(&*storage, tips.iter()).await?;
-        let mut block_size = BlockHeader::estimate_size(tips.len().min(TIPS_LIMIT));
+        let initial_ema = self.get_blocks_size_ema_at_tips(&*storage, tips.iter()).await?;
+        let mut ema = initial_ema;
 
         {
+            let mut tmp = BlockSizeEma::default(ema);
+            let header_size = BlockHeader::estimate_size(tips.len().min(TIPS_LIMIT));
             let mempool = self.mempool.read().await;
+
+            let mut block_size = header_size;
+
+            // Go through all mempool txs and try to fit as many as possible in a block
+            // we may have more than one block if we exceed the max block size
+            // we don't care about the txs order here, just the size to predicate the EMA
             for (_, tx) in mempool.get_txs() {
-                block_size += tx.get_size() + HASH_SIZE;
+                let tx_size = tx.get_size() + HASH_SIZE;
+                let new_size = block_size + tx_size;
+                if new_size > MAX_BLOCK_SIZE {
+                    tmp.add(block_size);
+
+                    // re init the block size with header size only and current tx
+                    block_size = header_size + tx_size;
+
+                    let current = tmp.current() as usize;
+
+                    // if the EMA has increased, update it
+                    // only expect the EMA to grow
+                    if current > ema {
+                        ema = current;
+                    }
+                } else {
+                    block_size = new_size;
+                }
             }
         }
 
-        // if the block size is above the EMA
-        // Estimate it by injecting a new block size and all the TXs pending in the mempool
-        if block_size > ema {
-            let mut tmp = BlockSizeEma::default(ema);
-            tmp.add(block_size);
-    
-            ema = tmp.current() as usize;
-        }
+        
 
-        let fee_per_kb = calculate_required_base_fee(ema);
+        let fee_per_kb = calculate_required_base_fee(initial_ema);
+        let predicated_fee_per_kb = calculate_required_base_fee(ema);
         debug!(
-            "Predicated block size median for next block {} with fee per kb {}",
+            "Predicated block size median for next block {} with fee per kb {} (current was {} with fee per kb {})",
+            human_bytes::human_bytes(initial_ema as f64),
+            fee_per_kb,
             human_bytes::human_bytes(ema as f64),
-            fee_per_kb
+            predicated_fee_per_kb
         );
 
-        Ok(fee_per_kb)
+        Ok((fee_per_kb, predicated_fee_per_kb))
     }
 
     // Same as `get_required_base_fee` but estimate next blocks by including mempool pending txs
-    pub async fn predicate_required_base_fee(&self) -> Result<u64, BlockchainError> {
+    pub async fn predicate_required_base_fee(&self) -> Result<(u64, u64), BlockchainError> {
         let storage = self.storage.read().await;
         self.predicate_required_base_fee_internal(&*storage).await
     }

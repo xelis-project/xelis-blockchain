@@ -981,9 +981,12 @@ async fn get_estimated_fee_per_kb<S: Storage>(context: &Context, body: Value) ->
     require_no_params(body)?;
 
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
-    let base_fee = blockchain.predicate_required_base_fee().await?;
+    let (fee_per_kb, predicated_fee_per_kb) = blockchain.predicate_required_base_fee().await?;
 
-    Ok(json!(base_fee))
+    Ok(json!(PredicatedBaseFeeResult {
+        fee_per_kb,
+        predicated_fee_per_kb
+    }))
 }
 
 async fn get_estimated_fee_rates<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
