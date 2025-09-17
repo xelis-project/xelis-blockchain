@@ -146,6 +146,9 @@ pub trait BlockchainApplyState<'a, P: ContractProvider, E>: BlockchainVerificati
     /// Add fee XELIS
     async fn add_gas_fee(&mut self, amount: u64) -> Result<(), E>;
 
+    /// Add burned XELIS fee
+    async fn add_burned_fee(&mut self, amount: u64) -> Result<(), E>;
+
     /// Get the hash of the block
     fn get_block_hash(&self) -> &Hash;
 
