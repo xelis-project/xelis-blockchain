@@ -16,7 +16,6 @@ use crate::{
         Hash,
         Signature
     },
-    serializer::Serializer,
     contract::ContractOutput,
     transaction::{
         extra_data::UnknownExtraDataFormat,
@@ -164,7 +163,7 @@ pub struct RPCTransaction<'a> {
 }
 
 impl<'a> RPCTransaction<'a> {
-    pub fn from_tx(tx: &'a Transaction, hash: &'a Hash, mainnet: bool) -> Self {
+    pub fn from_tx(tx: &'a Transaction, hash: &'a Hash, size: usize, mainnet: bool) -> Self {
         Self {
             hash: Cow::Borrowed(hash),
             version: tx.get_version(),
@@ -178,7 +177,7 @@ impl<'a> RPCTransaction<'a> {
             reference: Cow::Borrowed(tx.get_reference()),
             multisig: Cow::Borrowed(tx.get_multisig()),
             signature: Cow::Borrowed(tx.get_signature()),
-            size: tx.size()
+            size
         }
     }
 }
