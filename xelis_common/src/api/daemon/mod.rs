@@ -2,8 +2,8 @@ mod direction;
 
 use std::{
     borrow::Cow,
-    collections::{HashSet, HashMap},
-    net::SocketAddr
+    collections::{HashMap, HashSet},
+    net::SocketAddr, ops::{Deref, DerefMut}
 };
 use indexmap::IndexSet;
 use serde::{
@@ -108,6 +108,20 @@ pub struct RPCBlockResponse<'a> {
     pub header: RPCBlockHeaderResponse<'a>,
     #[serde(default)]
     pub transactions: Vec<RPCTransaction<'a>>,
+}
+
+impl<'a> Deref for RPCBlockResponse<'a> {
+    type Target = RPCBlockHeaderResponse<'a>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.header
+    }
+}
+
+impl<'a> DerefMut for RPCBlockResponse<'a> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.header
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
