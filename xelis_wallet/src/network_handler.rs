@@ -214,6 +214,8 @@ impl NetworkHandler {
     // Or that we mined it
     // Returns assets that changed and returns the highest nonce if we send a transaction
     async fn process_block(&self, address: &Address, block: BlockResponse, topoheight: u64) -> Result<Option<(HashSet<Hash>, Option<u64>)>, Error> {
+        let transactions = block.transactions;
+        let block = block.header;
         let block_hash = block.hash.into_owned();
         debug!("Processing block {} at topoheight {}", block_hash, topoheight);
 
@@ -233,7 +235,7 @@ impl NetworkHandler {
         // create Coinbase entry if its our address and we're looking for XELIS asset
         if miner == *address.get_public_key() {
             debug!("Block {} at topoheight {} is mined by us", block_hash, topoheight);
-            if let Some(reward) = block.miner_reward {
+            if let Some(reward) = block.metadata.map(|m| m.miner_reward) {
                 assets_changed.insert(XELIS_ASSET);
                 
                 if should_scan_history {
@@ -276,7 +278,7 @@ impl NetworkHandler {
         let mut our_highest_nonce = None;
 
         let block_hash = &block_hash;
-        let results: Vec<(Option<(TransactionEntry, u64, Option<u64>)>, HashSet<Hash>)> = stream::iter(block.transactions.into_iter())
+        let results: Vec<(Option<(TransactionEntry, u64, Option<u64>)>, HashSet<Hash>)> = stream::iter(transactions.into_iter())
             .map(|tx| async move {
                 let mut assets_changed = HashSet::new();
 
@@ -792,8 +794,8 @@ impl NetworkHandler {
 
                 if synced_topoheight > pruned_topoheight {
                     // Check if it's still a correct block
-                    let header = self.api.get_block_at_topoheight(synced_topoheight).await?;
-                    let block_hash = header.hash.into_owned();
+                    let block = self.api.get_block_at_topoheight(synced_topoheight).await?;
+                    let block_hash = block.header.hash.into_owned();
                     if block_hash == top_block_hash {
                         // topoheight and block hash are equal, we are still on right chain
                         return Ok((daemon_topoheight, daemon_block_hash, synced_topoheight))
@@ -834,8 +836,8 @@ impl NetworkHandler {
 
             // Check if we are on the same chain
             debug!("Checking if we are on the same chain at topoheight {}", maximum);
-            let header = self.api.get_block_at_topoheight(maximum).await?;
-            let block_hash = header.hash.into_owned();
+            let block = self.api.get_block_at_topoheight(maximum).await?;
+            let block_hash = block.header.hash.into_owned();
             if block_hash == local_hash {
                 break Some(local_hash);
             }
@@ -848,8 +850,8 @@ impl NetworkHandler {
         let block_hash = if let Some(block_hash) = block_hash {
             block_hash
         } else {
-            let response = self.api.get_block_at_topoheight(maximum).await?;
-            response.hash.into_owned()
+            let block = self.api.get_block_at_topoheight(maximum).await?;
+            block.header.hash.into_owned()
         };
 
         let mut storage = self.wallet.get_storage().write().await;
@@ -1143,8 +1145,8 @@ impl NetworkHandler {
         if let Some(block) = event {
             trace!("new block event received");
             // We can safely handle it by hand because `locate_sync_topoheight_and_clean` secure us from being on a wrong chain
-            if let Some(topoheight) = block.topoheight {
-                let block_hash = block.hash.as_ref().clone();
+            if let Some(topoheight) = block.header.metadata.as_ref().map(|m| m.topoheight) {
+                let block_hash = block.header.hash.as_ref().clone();
                 if let Some((detected_assets, mut nonce)) = self.process_block(address, block, topoheight).await? {
                     debug!("We must sync head state, assets: {}, nonce: {:?}", detected_assets.iter().map(|a| a.to_string()).collect::<Vec<String>>().join(", "), nonce);
                     {
