@@ -136,7 +136,7 @@ where
     let transactions = block.get_transactions()
         .iter()
         .zip(block.get_txs_hashes())
-        .map(|(tx, hash)| RPCTransaction::from_tx(tx, hash, mainnet))
+        .map(|(tx, hash)| RPCTransaction::from_tx(tx, hash, tx.size(), mainnet))
         .collect::<Vec<RPCTransaction<'_>>>();
 
     let header = RPCBlockHeaderResponse {
@@ -225,7 +225,7 @@ pub async fn get_transaction_response<'a, S: Storage>(storage: &S, tx: &'a Trans
         None
     };
 
-    let data = RPCTransaction::from_tx(tx, hash, storage.is_mainnet());
+    let data = RPCTransaction::from_tx(tx, hash, tx.size(), storage.is_mainnet());
     let executed_in_block = storage.get_block_executor_for_tx(hash).await.ok();
     Ok(TransactionResponse { blocks, executed_in_block, data, in_mempool, first_seen })
 }

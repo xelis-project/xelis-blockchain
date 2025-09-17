@@ -3040,7 +3040,7 @@ impl<S: Storage> Blockchain<S> {
             if !orphan_event_tracked {
                 for (tx_hash, tx) in orphaned {
                     // We couldn't add it back to mempool, let's notify this event
-                    let data = RPCTransaction::from_tx(&tx, &tx_hash, storage.is_mainnet());
+                    let data = RPCTransaction::from_tx(&tx, &tx_hash, tx.size(), storage.is_mainnet());
                     let data = TransactionResponse {
                         blocks: None,
                         executed_in_block: None,
@@ -3080,7 +3080,7 @@ impl<S: Storage> Blockchain<S> {
                     continue;
                 }
 
-                let data = RPCTransaction::from_tx(&sorted_tx.get_tx(), &tx_hash, storage.is_mainnet());
+                let data = RPCTransaction::from_tx(&sorted_tx.get_tx(), &tx_hash, sorted_tx.get_size(), storage.is_mainnet());
                 let data = TransactionResponse {
                     blocks: None,
                     executed_in_block: None,
