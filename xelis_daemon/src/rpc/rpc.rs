@@ -85,7 +85,7 @@ pub async fn get_block_type_for_block<S: Storage, P: DifficultyProvider + DagOrd
     })
 }
 
-async fn get_block_data<S: Storage, P>(blockchain: &Blockchain<S>, provider: &P, hash: &Hash) -> Result<(Option<TopoHeight>, Option<u64>, Option<u64>, BlockType, CumulativeDifficulty, Difficulty), InternalRpcError>
+async fn get_block_data<S: Storage, P>(blockchain: &Blockchain<S>, provider: &P, height: u64, hash: &Hash) -> Result<(Option<RPCTopoHeightMetadata>, BlockType, CumulativeDifficulty, Difficulty), InternalRpcError>
 where
     P: DifficultyProvider
     + DagOrderProvider
@@ -93,28 +93,33 @@ where
     + PrunedTopoheightProvider
     + BlockDagProvider
 {
-    let (topoheight, supply, reward) = if provider.is_block_topological_ordered(hash).await? {
+    let opt = if provider.is_block_topological_ordered(hash).await? {
         let topoheight = provider.get_topo_height_for_hash(&hash).await.context("Error while retrieving topo height")?;
-        (
-            Some(topoheight),
-            Some(provider.get_supply_at_topo_height(topoheight).await.context("Error while retrieving supply")?),
-            Some(provider.get_block_reward_at_topo_height(topoheight).await.context("Error while retrieving block reward")?),
-        )
+        let metadata = provider.get_metadata_at_topoheight(topoheight).await
+            .context("Error while retrieving topo height metadata")?;
+
+        let (dev_reward, miner_reward) = get_block_rewards(height, metadata.block_reward);
+        Some(RPCTopoHeightMetadata {
+            topoheight,
+            reward: metadata.block_reward,
+            miner_reward,
+            dev_reward,
+            supply: metadata.emitted_supply,
+            total_fees: metadata.total_fees,
+            total_fees_burned: metadata.total_fees_burned,
+        })
     } else {
-        (
-            None,
-            None,
-            None,
-        )
+        None
     };
 
     let block_type = get_block_type_for_block(&blockchain, &*provider, hash).await?;
     let cumulative_difficulty = provider.get_cumulative_difficulty_for_block_hash(hash).await.context("Error while retrieving cumulative difficulty")?;
     let difficulty = provider.get_difficulty_for_block_hash(&hash).await.context("Error while retrieving difficulty")?;
 
-    Ok((topoheight, supply, reward, block_type, cumulative_difficulty, difficulty))
+    Ok((opt, block_type, cumulative_difficulty, difficulty))
 }
 
+// Get a full block RPC response based on data in chain and from parameters
 pub async fn get_block_response<S: Storage, P>(blockchain: &Blockchain<S>, provider: &P, hash: &Hash, block: &Block, total_size_in_bytes: usize) -> Result<Value, InternalRpcError>
 where
     P: DifficultyProvider
@@ -124,17 +129,7 @@ where
     + BlockDagProvider
     + ClientProtocolProvider
 {
-    let (topoheight, supply, reward, block_type, cumulative_difficulty, difficulty) = get_block_data(blockchain, provider, hash).await?;
-    let mut total_fees = 0;
-    if block_type != BlockType::Orphaned {
-        for (tx, tx_hash) in block.get_transactions().iter().zip(block.get_txs_hashes()) {
-            // check that the TX was correctly executed in this block
-            // retrieve all fees for valid txs
-            if provider.is_tx_executed_in_block(tx_hash, &hash).await.context("Error while checking if tx was executed")? {
-                total_fees += tx.get_fee();
-            }
-        }
-    }
+    let (metadata, block_type, cumulative_difficulty, difficulty) = get_block_data(blockchain, provider, block.get_height(), hash).await?;
 
     let mainnet = blockchain.get_network().is_mainnet();
     let header = block.get_header();
@@ -144,21 +139,12 @@ where
         .map(|(tx, hash)| RPCTransaction::from_tx(tx, hash, mainnet))
         .collect::<Vec<RPCTransaction<'_>>>();
 
-    let (dev_reward, miner_reward) = get_optional_block_rewards(header.get_height(), reward).map(|(dev_reward, miner_reward)| {
-        (Some(dev_reward), Some(miner_reward))
-    }).unwrap_or((None, None));
-
-    Ok(json!(RPCBlockResponse {
+    let header = RPCBlockHeaderResponse {
         hash: Cow::Borrowed(hash),
-        topoheight,
+        metadata,
         block_type,
         cumulative_difficulty: Cow::Borrowed(&cumulative_difficulty),
         difficulty: Cow::Borrowed(&difficulty),
-        supply,
-        reward,
-        dev_reward,
-        miner_reward,
-        total_fees: Some(total_fees),
         total_size_in_bytes,
         extra_nonce: Cow::Borrowed(header.get_extra_nonce()),
         timestamp: header.get_timestamp(),
@@ -168,7 +154,11 @@ where
         miner: Cow::Owned(header.get_miner().as_address(mainnet)),
         tips: Cow::Borrowed(header.get_tips()),
         txs_hashes: Cow::Borrowed(header.get_txs_hashes()),
-        transactions
+    };
+
+    Ok(json!(RPCBlockResponse {
+        header,
+        transactions,
     }))
 }
 
@@ -181,15 +171,6 @@ fn get_block_rewards(height: u64, reward: u64) -> (u64, u64) {
     (dev_reward, miner_reward)
 }
 
-// Get optional block rewards based on height and reward
-fn get_optional_block_rewards(height: u64, reward: Option<u64>) -> Option<(u64, u64)> {
-    if let Some(reward) = reward {
-        Some(get_block_rewards(height, reward))
-    } else {
-        None
-    }
-}
-
 // Get a block response based on data in chain and from parameters
 pub async fn get_block_response_for_hash<S: Storage>(blockchain: &Blockchain<S>, storage: &S, hash: &Hash, include_txs: bool) -> Result<Value, InternalRpcError> {
     if !storage.has_block_with_hash(&hash).await.context("Error while checking if block exist")? {
@@ -197,35 +178,30 @@ pub async fn get_block_response_for_hash<S: Storage>(blockchain: &Blockchain<S>,
     }
 
     let value: Value = if include_txs {
-        let block = storage.get_block_by_hash(&hash).await.context("Error while retrieving full block")?;
+        let block = storage.get_block_by_hash(&hash).await
+            .context("Error while retrieving full block")?;
         let total_size_in_bytes = block.size();
         get_block_response(blockchain, storage, hash, &block, total_size_in_bytes).await?
     } else {
-        let (topoheight, supply, reward, block_type, cumulative_difficulty, difficulty) = get_block_data(blockchain, storage, hash).await?;
-        let header = storage.get_block_header_by_hash(&hash).await.context("Error while retrieving full block")?;
+        let header = storage.get_block_header_by_hash(&hash).await
+            .context("Error while retrieving full block")?;
+
+        let (metadata, block_type, cumulative_difficulty, difficulty) = get_block_data(blockchain, storage, header.get_height(), hash).await?;
 
         // calculate total size in bytes
         let mut total_size_in_bytes = header.size();
         for tx_hash in header.get_txs_hashes() {
-            total_size_in_bytes += storage.get_transaction_size(tx_hash).await.context(format!("Error while retrieving transaction {tx_hash} size"))?;
+            total_size_in_bytes += storage.get_transaction_size(tx_hash).await
+                .context(format!("Error while retrieving transaction {tx_hash} size"))?;
         }
 
         let mainnet = blockchain.get_network().is_mainnet();
-        let (dev_reward, miner_reward) = get_optional_block_rewards(header.get_height(), reward).map(|(dev_reward, miner_reward)| {
-            (Some(dev_reward), Some(miner_reward))
-        }).unwrap_or((None, None));
-
-        json!(RPCBlockResponse {
+        json!(RPCBlockHeaderResponse {
             hash: Cow::Borrowed(hash),
-            topoheight,
+            metadata,
             block_type,
             cumulative_difficulty: Cow::Owned(cumulative_difficulty),
             difficulty: Cow::Owned(difficulty),
-            supply,
-            reward,
-            dev_reward,
-            miner_reward,
-            total_fees: None,
             total_size_in_bytes,
             extra_nonce: Cow::Borrowed(header.get_extra_nonce()),
             timestamp: header.get_timestamp(),
@@ -235,7 +211,6 @@ pub async fn get_block_response_for_hash<S: Storage>(blockchain: &Blockchain<S>,
             miner: Cow::Owned(header.get_miner().as_address(mainnet)),
             tips: Cow::Borrowed(header.get_tips()),
             txs_hashes: Cow::Borrowed(header.get_txs_hashes()),
-            transactions: Vec::new(),
         })
     };
 
