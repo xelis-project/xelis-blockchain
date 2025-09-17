@@ -1,6 +1,7 @@
 mod providers;
 mod cache;
 
+pub mod types;
 pub mod sled;
 
 #[cfg(feature = "rocksdb")]

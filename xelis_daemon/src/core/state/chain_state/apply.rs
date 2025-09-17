@@ -39,6 +39,7 @@ use crate::core::{
     state::verify_fee,
     error::BlockchainError,
     storage::{
+        types::TopoHeightMetadata,
         Storage,
         VersionedContract,
         VersionedContractBalance,
@@ -513,7 +514,7 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
     // This function is called after the verification of all needed transactions
     // This will consume ChainState and apply all changes to the storage
     // In case of incoming and outgoing transactions in same state, the final balance will be computed
-    pub async fn apply_changes(mut self) -> Result<(), BlockchainError> {
+    pub async fn apply_changes(mut self, past_emitted_supply: u64, block_reward: u64) -> Result<(), BlockchainError> {
         trace!("apply changes");
 
         // Copy the value to prevent immutable borrow
@@ -713,6 +714,18 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
                 self.inner.storage.set_last_balance_to(&account, &asset, self.inner.topoheight, &version).await?;
             }
         }
+
+        // Finally, update the topoheight metadata
+        debug!("updating topoheight metadata to {}", self.inner.topoheight);
+        let emitted_supply = past_emitted_supply + block_reward;
+        let metadata = TopoHeightMetadata {
+            block_reward,
+            emitted_supply,
+            total_fees: self.total_fees,
+            total_fees_burned,
+        };
+
+        self.inner.storage.set_metadata_at_topoheight(self.inner.topoheight, metadata).await?;
 
         Ok(())
     }

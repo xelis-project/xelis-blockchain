@@ -3,12 +3,14 @@ use log::trace;
 use xelis_common::{
     block::{BlockHeader, TopoHeight},
     crypto::Hash,
-    immutable::Immutable
+    immutable::Immutable,
+    serializer::Serializer
 };
 
 use crate::core::{
     error::{BlockchainError, DiskContext},
     storage::{
+        types::TopoHeightMetadata,
         BlockDagProvider,
         DagOrderProvider,
         DifficultyProvider,
@@ -27,20 +29,27 @@ impl BlockDagProvider for SledStorage {
 
     async fn get_block_reward_at_topo_height(&self, topoheight: TopoHeight) -> Result<u64, BlockchainError> {
         trace!("get block reward at topo height {}", topoheight);
-        Ok(self.load_from_disk(&self.rewards, &topoheight.to_be_bytes(), DiskContext::BlockRewardAtTopoHeight(topoheight))?)
+        self.get_metadata_at_topoheight(topoheight).await
+            .map(|metadata| metadata.block_reward)
     }
 
     async fn get_supply_at_topo_height(&self, topoheight: TopoHeight) -> Result<u64, BlockchainError> {
         trace!("get supply at topo height {}", topoheight);
-        self.load_from_disk(&self.supply, &topoheight.to_be_bytes(), DiskContext::SupplyAtTopoHeight(topoheight))
+        self.get_metadata_at_topoheight(topoheight).await
+            .map(|metadata| metadata.emitted_supply)
+    }
+
+    async fn get_metadata_at_topoheight(&self, topoheight: TopoHeight) -> Result<TopoHeightMetadata, BlockchainError> {
+        trace!("get metadata at topoheight {}", topoheight);
+        // TODO: maybe use a cache
+        self.load_from_disk(&self.topoheight_metadata, &topoheight.to_be_bytes(), DiskContext::MetadataAtTopoHeight(topoheight))
     }
 
     // Set the metadata for topoheight
-    async fn set_topoheight_metadata(&mut self, topoheight: TopoHeight, block_reward: u64, supply: u64) -> Result<(), BlockchainError> {
+    async fn set_metadata_at_topoheight(&mut self, topoheight: TopoHeight, metadata: TopoHeightMetadata) -> Result<(), BlockchainError> {
         trace!("set topoheight metadata at {}", topoheight);
 
-        Self::insert_into_disk(self.snapshot.as_mut(), &self.rewards, &topoheight.to_be_bytes(), &block_reward.to_be_bytes())?;
-        Self::insert_into_disk(self.snapshot.as_mut(), &self.supply, &topoheight.to_be_bytes(), &supply.to_be_bytes())?;
+        Self::insert_into_disk(self.snapshot.as_mut(), &self.topoheight_metadata, &topoheight.to_be_bytes(), metadata.to_bytes())?;
 
         Ok(())
     }

@@ -2894,10 +2894,7 @@ impl<S: Storage> Blockchain<S> {
                 }
 
                 // apply changes from Chain State
-                chain_state.apply_changes().await?;
-
-                let emitted_supply = past_emitted_supply + block_reward;
-                storage.set_topoheight_metadata(highest_topo, block_reward, emitted_supply).await?;
+                chain_state.apply_changes(past_emitted_supply, block_reward).await?;
 
                 if should_track_events.contains(&NotifyEvent::BlockOrdered) {
                     let value = json!(BlockOrderedEvent {

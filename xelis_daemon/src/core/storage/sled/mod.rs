@@ -85,11 +85,7 @@ pub struct SledStorage {
     // account nonces to prevent TX replay attack
     pub(super) nonces: Tree,
     // block reward for each block topoheight
-    pub(super) rewards: Tree,
-    // supply for each block topoheight
-    // This is only used by XELIS due to the minting at EVERY block
-    // topoheight->supply
-    pub(super) supply: Tree,
+    pub(super) topoheight_metadata: Tree,
     // Supply tracked for each asset
     // This tree store the latest topoheight pointer
     // asset->topoheight
@@ -227,8 +223,7 @@ impl SledStorage {
             assets: sled.open_tree("assets")?,
             versioned_assets: sled.open_tree("versioned_assets")?,
             nonces: sled.open_tree("nonces")?,
-            rewards: sled.open_tree("rewards")?,
-            supply: sled.open_tree("supply")?,
+            topoheight_metadata: sled.open_tree("topoheight_metadata")?,
             difficulty: sled.open_tree("difficulty")?,
             tx_blocks: sled.open_tree("tx_blocks")?,
             versioned_nonces: sled.open_tree("versioned_nonces")?,
@@ -619,13 +614,8 @@ impl Storage for SledStorage {
         let block = Self::delete_arc_cacheable_data(self.snapshot.as_mut(), &self.blocks, self.cache.blocks_cache.as_mut(), &hash).await?;
         trace!("block header deleted successfully");
 
-        trace!("Deleting supply");
-        let supply: u64 = Self::delete_cacheable_data(self.snapshot.as_mut(), &self.supply, None, &topoheight).await?;
-        trace!("Supply was {}", supply);
-
-        trace!("Deleting rewards");
-        let reward: u64 = Self::delete_cacheable_data(self.snapshot.as_mut(), &self.rewards, None, &topoheight).await?;
-        trace!("Reward for block {} was: {}", hash, reward);
+        trace!("Deleting topoheight metadata");
+        let _: () = Self::delete_cacheable_data(self.snapshot.as_mut(), &self.topoheight_metadata, None, &topoheight).await?;
 
         trace!("Deleting difficulty");
         let _: Difficulty = Self::delete_cacheable_data(self.snapshot.as_mut(), &self.difficulty, None, &hash).await?;

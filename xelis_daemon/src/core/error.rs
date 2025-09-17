@@ -55,12 +55,8 @@ pub enum DiskContext {
     BalanceAtTopoHeight(TopoHeight),
     #[error("get last topoheight for balance")]
     LastTopoHeightForBalance,
-    #[error("get block reward at topoheight {0}")]
-    BlockRewardAtTopoHeight(TopoHeight),
-    #[error("get supply at topoheight {0}")]
-    SupplyAtTopoHeight(TopoHeight),
-    #[error("get burned supply at topoheight {0}")]
-    BurnedSupplyAtTopoHeight(TopoHeight),
+    #[error("get metadata at topoheight {0}")]
+    MetadataAtTopoHeight(TopoHeight),
     #[error("get blocks at height {0}")]
     BlocksAtHeight(u64),
     #[error("get block executor for tx")]
