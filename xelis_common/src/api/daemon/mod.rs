@@ -49,37 +49,64 @@ pub fn deserialize_extra_nonce<'de, 'a, D: Deserializer<'de>>(deserializer: D) -
     Ok(Cow::Owned(extra_nonce))
 }
 
+#[derive(Serialize, Deserialize)]
+pub struct RPCTopoHeightMetadata {
+    // TopoHeight of the block
+    pub topoheight: TopoHeight,
+    // Total Block reward
+    pub reward: u64,
+    // Miner reward (the one that found the block)
+    pub miner_reward: u64,
+    // And Dev Fee reward if any
+    pub dev_reward: u64,
+    // emitted supply at this topoheight
+    pub supply: u64,
+    // Total fees paid in this block
+    pub total_fees: u64,
+    // Total fees burned in this block
+    pub total_fees_burned: u64
+}
+
 // Structure used to map the public key to a human readable address
 #[derive(Serialize, Deserialize)]
-pub struct RPCBlockResponse<'a> {
+pub struct RPCBlockHeaderResponse<'a> {
+    // Block hash
     pub hash: Cow<'a, Hash>,
-    pub topoheight: Option<TopoHeight>,
+    // Metadata related to the topoheight if the block
+    // is ordered in the DAG
+    #[serde(flatten)]
+    pub metadata: Option<RPCTopoHeightMetadata>,
+    // Type of the block (sync, side, orphaned, normal)
     pub block_type: BlockType,
+    // Difficulty of the block
     pub difficulty: Cow<'a, Difficulty>,
-    pub supply: Option<u64>,
-    // Reward can be split into two parts
-    pub reward: Option<u64>,
-    // Miner reward (the one that found the block)
-    pub miner_reward: Option<u64>,
-    // And Dev Fee reward if enabled
-    pub dev_reward: Option<u64>,
+    // Cumulative difficulty up to this block
     pub cumulative_difficulty: Cow<'a, CumulativeDifficulty>,
-    pub total_fees: Option<u64>,
+    // Total size of the block including TXs in bytes
     pub total_size_in_bytes: usize,
+    // Block version
     pub version: BlockVersion,
+    // Previous block hashes
     pub tips: Cow<'a, IndexSet<Hash>>,
+    // timestamp of the block in milliseconds
     pub timestamp: TimestampMillis,
+    // Height of the block
     pub height: u64,
+    // Nonce used to mine the block
     pub nonce: Nonce,
     #[serde(serialize_with = "serialize_extra_nonce")]
     #[serde(deserialize_with = "deserialize_extra_nonce")]
     pub extra_nonce: Cow<'a, [u8; EXTRA_NONCE_SIZE]>,
     pub miner: Cow<'a, Address>,
     pub txs_hashes: Cow<'a, IndexSet<Hash>>,
-    #[serde(
-        default,
-        skip_serializing_if = "Vec::is_empty",
-    )]
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct RPCBlockResponse<'a> {
+    // Block hash
+    #[serde(flatten)]
+    pub header: RPCBlockHeaderResponse<'a>,
+    #[serde(default)]
     pub transactions: Vec<RPCTransaction<'a>>,
 }
 
