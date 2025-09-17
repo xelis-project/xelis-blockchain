@@ -226,6 +226,12 @@ impl<'a, S: Storage> BlockchainApplyState<'a, S, BlockchainError> for Applicable
         Ok(())
     }
 
+    /// Add burned XELIS fee
+    async fn add_burned_fee(&mut self, amount: u64) -> Result<(), BlockchainError> {
+        self.total_fees_burned += amount;
+        Ok(())
+    }
+
     fn get_block_hash(&self) -> &Hash {
         &self.block_hash
     }
@@ -514,9 +520,7 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
         let total_fees_burned = self.total_fees_burned;
         // if we have some burned fees, reduce it from supply
         if total_fees_burned > 0 {
-            let changes = self.get_asset_changes_for(&XELIS_ASSET, false).await?;
-            changes.circulating_supply.1 -= total_fees_burned;
-            changes.circulating_supply.0.mark_updated();
+            self.add_burned_coins(&XELIS_ASSET, total_fees_burned).await?;
         }
 
         // Apply changes for sender accounts

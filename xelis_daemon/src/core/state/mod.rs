@@ -61,7 +61,6 @@ pub(super) async fn verify_fee<P: AccountProvider + BalanceProvider>(
     Ok((fee_paid, refund))
 }
 
-
 // Verify a transaction before adding it to mempool/chain state
 // We only verify the reference and the required fees
 pub(super) async fn pre_verify_tx(tx: &Transaction, stable_topoheight: TopoHeight, topoheight: TopoHeight, block_version: BlockVersion) -> Result<(), BlockchainError> {
