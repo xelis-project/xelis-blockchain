@@ -981,9 +981,9 @@ async fn untrack_asset(manager: &CommandManager, mut args: ArgumentManager) -> R
     if asset == XELIS_ASSET {
         manager.message("XELIS asset cannot be untracked");
     } else if wallet.untrack_asset(asset).await.context("Error while untracking asset")? {
-        manager.message("Asset ID is not marked as tracked!");
-    } else {
         manager.message("Asset ID is not tracked anymore");
+    } else {
+        manager.message("Asset ID is not marked as tracked!");
     }
 
     Ok(())
