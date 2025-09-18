@@ -68,18 +68,18 @@ pub struct TransactionBuilderState {
     // This is used to update the last coinbase reward topoheight
     stable_topoheight: Option<u64>,
     // Fee max to pay
-    fee_max: Option<u64>,
+    fee_limit: Option<u64>,
 }
 
 impl TransactionBuilderState {
-    pub fn new(mainnet: bool, reference: Reference, nonce: u64, fee_max: Option<u64>) -> Self {
+    pub fn new(mainnet: bool, reference: Reference, nonce: u64, fee_limit: Option<u64>) -> Self {
         Self {
             inner: EstimateFeesState::new(),
             mainnet,
             balances: HashMap::new(),
             reference,
             nonce,
-            fee_max,
+            fee_limit,
             tx_hash_built: None,
             stable_topoheight: None,
         }
@@ -102,7 +102,7 @@ impl TransactionBuilderState {
     }
 
     pub async fn from_tx(storage: &EncryptedStorage, transaction: &Transaction, mainnet: bool) -> Result<Self, WalletError> {
-        let mut state = Self::new(mainnet, transaction.get_reference().clone(), transaction.get_nonce(), Some(transaction.get_fee_max()));
+        let mut state = Self::new(mainnet, transaction.get_reference().clone(), transaction.get_nonce(), Some(transaction.get_fee_limit()));
         let ciphertexts = transaction.get_expected_sender_outputs()
             .map_err(|e| WalletError::Any(e.into()))?;
 
@@ -176,7 +176,7 @@ impl FeeHelper for TransactionBuilderState {
     type Error = WalletError;
 
     fn get_max_fee(&self, fee: u64) -> u64 {
-        self.fee_max.unwrap_or(fee)
+        self.fee_limit.unwrap_or(fee)
     }
 
     fn account_exists(&self, key: &PublicKey) -> Result<bool, Self::Error> {
