@@ -343,6 +343,15 @@ pub struct P2pConfig {
     #[clap(name = "p2p-handle-peer-packets-in-dedicated-task", long)]
     #[serde(default)]
     pub handle_peer_packets_in_dedicated_task: bool,
+    /// Experimental: Enable the compression for packets being sent to peers.
+    /// Compression is done using the Snappy algorithm.
+    /// It is only used for packets greater than 1 KiB.
+    /// This is useful to reduce the bandwidth usage when having several peers.
+    /// Note that it may increase the CPU usage due to the compression/decompression.
+    /// By default, it is disabled.
+    #[clap(name = "enable-p2p-compression", long)]
+    #[serde(default)]
+    pub enable_compression: bool,
 }
 
 #[derive(Debug, Clone, Copy, clap::ValueEnum, Serialize, Deserialize)]

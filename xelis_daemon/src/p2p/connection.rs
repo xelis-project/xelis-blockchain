@@ -1,7 +1,10 @@
-use crate::config::{
-    PEER_TIMEOUT_DISCONNECT,
-    PEER_TIMEOUT_INIT_CONNECTION,
-    PEER_SEND_BYTES_TIMEOUT
+use crate::{
+    config::{
+        PEER_SEND_BYTES_TIMEOUT,
+        PEER_TIMEOUT_DISCONNECT,
+        PEER_TIMEOUT_INIT_CONNECTION
+    },
+    p2p::compression::Compression
 };
 use super::{
     diffie_hellman,
@@ -81,7 +84,9 @@ pub struct Connection {
     // How many key rotation we sent
     rotate_key_out: AtomicUsize,
     // Encryption state used for packets
-    encryption: Encryption
+    encryption: Encryption,
+    // Compression state used for packets
+    compression: Compression,
 }
 
 // We are rotating every 1GB sent
@@ -104,6 +109,7 @@ impl Connection {
             rotate_key_in: AtomicUsize::new(0),
             rotate_key_out: AtomicUsize::new(0),
             encryption: Encryption::new(),
+            compression: Compression::new(),
         }
     }
 
@@ -203,6 +209,11 @@ impl Connection {
     // Verify if its a outgoing connection
     pub fn is_out(&self) -> bool {
         self.out
+    }
+
+    // Get the compression state
+    pub fn compression(&self) -> &Compression {
+        &self.compression
     }
 
     // Generate a new key and rotate the current key

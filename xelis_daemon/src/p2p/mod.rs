@@ -5,6 +5,7 @@ mod peer_list;
 mod diffie_hellman;
 
 mod encryption;
+mod compression;
 mod chain_sync;
 mod expirable_cache;
 
@@ -145,9 +146,6 @@ pub struct P2pServer<S: Storage> {
     // Configured exclusive nodes
     // If not empty, no other peer than those listed can connect to this node
     exclusive_nodes: IndexSet<SocketAddr>,
-    // Are we allowing others nodes to share us as a potential peer ?
-    // Also if we allows to be listed in get_peers RPC API
-    sharable: bool,
     // How many outgoing peers we want to have
     // Set to 0 for none
     max_outgoing_peers: usize,
@@ -191,6 +189,8 @@ pub struct P2pServer<S: Storage> {
     proxy: Option<(ProxyKind, SocketAddr, Option<(String, String)>)>,
     // Requested objects from various peers
     requests_cache: ExpirableCache,
+    // Flags to use in handshake
+    flags: Flags,
 }
 
 impl<S: Storage> P2pServer<S> {
@@ -217,6 +217,7 @@ impl<S: Storage> P2pServer<S> {
         block_propagation_log_level: log::Level,
         disable_fetching_txs_propagated: bool,
         handle_peer_packets_in_dedicated_task: bool,
+        enable_compression: bool,
         proxy: Option<(ProxyKind, SocketAddr, Option<(String, String)>)>,
     ) -> Result<Arc<Self>, P2pError> {
         if tag.as_ref().is_some_and(|tag| tag.len() == 0 || tag.len() > 16) {
@@ -262,6 +263,15 @@ impl<S: Storage> P2pServer<S> {
             Some(sender)
         )?;
 
+        // Set our flags
+        let mut flags = Flags::new(Flags::NONE);
+        if sharable {
+            flags.insert(Flags::SHARED);
+        }
+        if enable_compression {
+            flags.insert(Flags::COMPRESSION);
+        }
+
         let (peer_sender, peer_receiver) = mpsc::channel(1);
         let server = Self {
             peer_id,
@@ -280,7 +290,6 @@ impl<S: Storage> P2pServer<S> {
             allow_boost_sync_mode,
             max_chain_response_size,
             exclusive_nodes: IndexSet::from_iter(exclusive_nodes.into_iter()),
-            sharable,
             allow_priority_blocks,
             is_syncing: AtomicBool::new(false),
             syncing_rate_bps: AtomicU64::new(0),
@@ -298,6 +307,7 @@ impl<S: Storage> P2pServer<S> {
             handle_peer_packets_in_dedicated_task,
             proxy,
             requests_cache: ExpirableCache::new(),
+            flags,
         };
 
         let arc = Arc::new(server);
@@ -563,13 +573,7 @@ impl<S: Storage> P2pServer<S> {
             }
         };
 
-        // Our flags shared with the peer
-        let mut flags = Flags::new(Flags::NONE);
-        if self.sharable {
-            flags.insert(Flags::SHARED);
-        }
-
-        let handshake = Handshake::new(Cow::Owned(VERSION.to_owned()), *self.blockchain.get_network(), Cow::Borrowed(self.get_tag()), Cow::Borrowed(&NETWORK_ID), self.get_peer_id(), self.bind_address.port(), get_current_time_in_seconds(), topoheight, block.get_height(), pruned_topoheight, Cow::Borrowed(&top_hash), genesis_block, Cow::Borrowed(&cumulative_difficulty), flags);
+        let handshake = Handshake::new(Cow::Owned(VERSION.to_owned()), *self.blockchain.get_network(), Cow::Borrowed(self.get_tag()), Cow::Borrowed(&NETWORK_ID), self.get_peer_id(), self.bind_address.port(), get_current_time_in_seconds(), topoheight, block.get_height(), pruned_topoheight, Cow::Borrowed(&top_hash), genesis_block, Cow::Borrowed(&cumulative_difficulty), self.flags);
         Ok(Packet::Handshake(Cow::Owned(handshake)).to_bytes())
     }
 
@@ -592,8 +596,7 @@ impl<S: Storage> P2pServer<S> {
             mempool.size() > 0
         };
 
-        let (peer, rx) = handshake.create_peer(connection, priority, self.peer_list.clone(), !has_any_tx);
-        Ok((peer, rx))
+        handshake.create_peer(connection, priority, self.peer_list.clone(), !has_any_tx).await
     }
 
     // this function handle all new connections

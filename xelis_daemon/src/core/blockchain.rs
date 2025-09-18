@@ -445,6 +445,7 @@ impl<S: Storage> Blockchain<S> {
                 config.block_propagation_log_level.into(),
                 config.disable_fetching_txs_propagated,
                 config.handle_peer_packets_in_dedicated_task,
+                config.enable_compression,
                 proxy,
             ) {
                 Ok(p2p) => {
