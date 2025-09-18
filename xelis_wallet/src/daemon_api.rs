@@ -115,7 +115,7 @@ impl DaemonAPI {
         Ok(receiver)
     }
 
-    pub async fn on_block_ordered_event(&self) -> Result<EventReceiver<BlockOrderedEvent>> {
+    pub async fn on_block_ordered_event(&self) -> Result<EventReceiver<BlockOrderedEvent<'static>>> {
         trace!("on_block_ordered_event");
         let receiver = self.client.subscribe_event(NotifyEvent::BlockOrdered, self.capacity).await?;
         Ok(receiver)
@@ -145,7 +145,7 @@ impl DaemonAPI {
         Ok(receiver)
     }
 
-    pub async fn on_contract_transfers_event(&self, address: Address) -> Result<EventReceiver<ContractTransfersEvent>> {
+    pub async fn on_contract_transfers_event(&self, address: Address) -> Result<EventReceiver<ContractTransfersEvent<'static>>> {
         trace!("on_contract_transfers_event");
         let receiver = self.client.subscribe_event(NotifyEvent::ContractTransfers { address }, self.capacity).await?;
         Ok(receiver)
@@ -193,7 +193,7 @@ impl DaemonAPI {
         Ok(count)
     }
 
-    pub async fn get_assets(&self, skip: Option<usize>, maximum: Option<usize>, minimum_topoheight: Option<u64>, maximum_topoheight: Option<u64>) -> Result<Vec<RPCAssetData>> {
+    pub async fn get_assets(&self, skip: Option<usize>, maximum: Option<usize>, minimum_topoheight: Option<u64>, maximum_topoheight: Option<u64>) -> Result<Vec<RPCAssetData<'static>>> {
         trace!("get_assets");
         let assets = self.client.call_with("get_assets", &GetAssetsParams {
             maximum,
@@ -249,7 +249,7 @@ impl DaemonAPI {
         Ok(tx)
     }
 
-    pub async fn get_transaction_executor(&self, hash: &Hash) -> Result<GetTransactionExecutorResult> {
+    pub async fn get_transaction_executor(&self, hash: &Hash) -> Result<GetTransactionExecutorResult<'static>> {
         trace!("get_transaction_executor");
         let executor = self.client.call_with("get_transaction_executor", &GetTransactionExecutorParams {
             hash: Cow::Borrowed(hash)
@@ -336,7 +336,7 @@ impl DaemonAPI {
         Ok(multisig)
     }
 
-    pub async fn get_contract_outputs(&self, tx_hash: &Hash) -> Result<Vec<RPCContractOutput>> {
+    pub async fn get_contract_outputs(&self, tx_hash: &Hash) -> Result<Vec<RPCContractOutput<'static>>> {
         trace!("get contract outputs");
         let outputs = self.client.call_with("get_contract_outputs", &GetContractOutputsParams {
             transaction: Cow::Borrowed(tx_hash)
