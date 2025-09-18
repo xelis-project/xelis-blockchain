@@ -3592,6 +3592,11 @@ impl<S: Storage> Blockchain<S> {
                     block_size = new_size;
                 }
             }
+
+            let current = tmp.current() as usize;
+            if current > ema {
+                ema = current;
+            }
         }
 
         
@@ -3600,10 +3605,10 @@ impl<S: Storage> Blockchain<S> {
         let predicated_fee_per_kb = calculate_required_base_fee(ema);
         debug!(
             "Predicated block size median for next block {} with fee per kb {} (current was {} with fee per kb {})",
+            human_bytes::human_bytes(ema as f64),
+            predicated_fee_per_kb,
             human_bytes::human_bytes(initial_ema as f64),
             fee_per_kb,
-            human_bytes::human_bytes(ema as f64),
-            predicated_fee_per_kb
         );
 
         Ok((fee_per_kb, predicated_fee_per_kb))
