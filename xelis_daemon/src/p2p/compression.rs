@@ -129,3 +129,23 @@ impl Compression {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_compression() {
+        let compression = Compression::new();
+        compression.enable().await.unwrap();
+
+        let data = vec![0u8; 2048];
+        let mut buffer = data.clone();
+
+        compression.compress(&mut buffer).await.unwrap();
+        assert!(buffer.len() < data.len() + 1); // +1 for the compression flag
+
+        compression.decompress(&mut buffer).await.unwrap();
+        assert_eq!(&buffer[..data.len()], &data[..]);
+    }
+}
