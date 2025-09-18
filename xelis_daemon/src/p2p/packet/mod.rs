@@ -5,6 +5,7 @@ mod object;
 mod inventory;
 mod bootstrap;
 mod peer_disconnected;
+mod flags;
 
 use std::borrow::Cow;
 use log::{debug, trace};
@@ -22,6 +23,7 @@ pub use chain::*;
 pub use handshake::*;
 pub use peer_disconnected::*;
 pub use ping::Ping;
+pub use flags::Flags;
 
 // All registered packet ids
 const KEY_EXCHANGE_ID: u8 = 0;

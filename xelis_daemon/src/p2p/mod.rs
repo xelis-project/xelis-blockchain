@@ -562,7 +562,14 @@ impl<S: Storage> P2pServer<S> {
                 Cow::Owned(storage.get_hash_at_topo_height(0).await?)
             }
         };
-        let handshake = Handshake::new(Cow::Owned(VERSION.to_owned()), *self.blockchain.get_network(), Cow::Borrowed(self.get_tag()), Cow::Borrowed(&NETWORK_ID), self.get_peer_id(), self.bind_address.port(), get_current_time_in_seconds(), topoheight, block.get_height(), pruned_topoheight, Cow::Borrowed(&top_hash), genesis_block, Cow::Borrowed(&cumulative_difficulty), self.sharable);
+
+        // Our flags shared with the peer
+        let mut flags = Flags::new(Flags::NONE);
+        if self.sharable {
+            flags.insert(Flags::SHARED);
+        }
+
+        let handshake = Handshake::new(Cow::Owned(VERSION.to_owned()), *self.blockchain.get_network(), Cow::Borrowed(self.get_tag()), Cow::Borrowed(&NETWORK_ID), self.get_peer_id(), self.bind_address.port(), get_current_time_in_seconds(), topoheight, block.get_height(), pruned_topoheight, Cow::Borrowed(&top_hash), genesis_block, Cow::Borrowed(&cumulative_difficulty), flags);
         Ok(Packet::Handshake(Cow::Owned(handshake)).to_bytes())
     }
 

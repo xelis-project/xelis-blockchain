@@ -143,7 +143,7 @@ pub struct Peer {
     // IP address with local port
     outgoing_address: SocketAddr,
     // Determine if this peer allows to be shared to others and/or through API
-    sharable: bool,
+    flags: Flags,
     // Channel to send bytes to the writer task
     tx: Tx,
     // Channel to notify the tasks to exit
@@ -174,7 +174,7 @@ impl Peer {
         priority: bool,
         cumulative_difficulty: CumulativeDifficulty,
         peer_list: SharedPeerList,
-        sharable: bool,
+        flags: Flags,
         propagate_txs: bool
     ) -> (Self, Rx) {
         let mut outgoing_address = *connection.get_address();
@@ -212,7 +212,7 @@ impl Peer {
             bootstrap_requests: Mutex::new(VecDeque::new()),
             sync_chain: Mutex::new(None),
             outgoing_address,
-            sharable,
+            flags,
             exit_channel,
             tx,
             read_task: Mutex::new(TaskState::Inactive),
@@ -355,7 +355,7 @@ impl Peer {
 
     // Get the sharable flag of the peer
     pub fn sharable(&self) -> bool {
-        self.sharable
+        self.flags.contains(Flags::SHARED)
     }
 
     // Get the last time we got a fail from the peer
