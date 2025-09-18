@@ -599,7 +599,7 @@ impl<S: Storage> P2pServer<S> {
     // this function handle all new connections
     // A new connection have to send an Handshake
     // if the handshake is valid, we accept it & register it on server
-    async fn verify_connection(&self, buf: &mut [u8], connection: &mut Connection) -> Result<Handshake, P2pError> {
+    async fn verify_connection(&self, buf: &mut [u8], connection: &mut Connection) -> Result<Handshake<'static>, P2pError> {
         trace!("New connection: {}", connection);
 
         // Exchange encryption keys
@@ -614,7 +614,7 @@ impl<S: Storage> P2pServer<S> {
         }
 
         // wait on the handshake packet
-        let mut handshake: Handshake<'_> = match timeout(Duration::from_millis(PEER_TIMEOUT_INIT_CONNECTION), connection.read_packet(buf, buf.len() as u32)).await?? {
+        let mut handshake: Handshake<'static> = match timeout(Duration::from_millis(PEER_TIMEOUT_INIT_CONNECTION), connection.read_packet(buf, buf.len() as u32)).await?? {
             // only allow handshake packet
             Packet::Handshake(h) => h.into_owned(),
             _ => return Err(P2pError::ExpectedHandshake)
