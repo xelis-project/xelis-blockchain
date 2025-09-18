@@ -1890,6 +1890,7 @@ impl<S: Storage> Blockchain<S> {
                         hash: tx_hash,
                         tx: sorted_tx.get_tx(),
                         fee_per_kb: sorted_tx.get_fee_per_kb(),
+                        fee_limit_per_kb: sorted_tx.get_fee_limit_per_kb(),
                     })
                 })
                 .collect::<Result<VecDeque<_>, BlockchainError>>()?;
@@ -1954,7 +1955,7 @@ impl<S: Storage> Blockchain<S> {
                 }
             }
 
-            while let Some(TxSelectorEntry { size, hash, tx, fee_per_kb }) = tx_selector.next() {
+            while let Some(TxSelectorEntry { size, hash, tx, fee_per_kb, fee_limit_per_kb }) = tx_selector.next() {
                 if block_size + HASH_SIZE + total_txs_size + size >= MAX_BLOCK_SIZE || block.txs_hashes.len() >= u16::MAX as usize {
                     debug!("Stopping to include new TXs in this block, final size: {}, count: {}", human_bytes::human_bytes((block_size + total_txs_size) as f64), block.txs_hashes.len());
                     break;
@@ -1968,8 +1969,9 @@ impl<S: Storage> Blockchain<S> {
 
                 // Check that the dynamic base fee is valid
                 let source = tx.get_source();
-                if fee_per_kb < base_fee {
-                    debug!("Skipping TX {} because it has a lower fee per kb ({}) than required base fee ({})", hash, format_xelis(fee_per_kb), format_xelis(base_fee));
+                // TODO: rework priority based on fee limit per kb
+                if fee_per_kb < base_fee && fee_limit_per_kb < base_fee {
+                    debug!("Skipping TX {} because it has a lower fee per kb ({}, limit {}) than required base fee ({})", hash, format_xelis(fee_per_kb), format_xelis(fee_limit_per_kb), format_xelis(base_fee));
 
                     // Source is marked as failed because if we can't select
                     // the first TX with a lower fee, we can't select any
@@ -3668,15 +3670,23 @@ pub async fn estimate_required_tx_fee_extra<P: AccountProvider>(provider: &P, cu
 
 // Estimate the TX fee per kB by calculating and sub the fee extra part
 // NOTE: tx size is in bytes, not kB
-pub async fn estimate_tx_fee_per_kb<P: AccountProvider>(provider: &P, current_topoheight: TopoHeight, tx: &Transaction, tx_size: usize, block_version: BlockVersion) -> Result<u64, BlockchainError> {
+pub async fn estimate_tx_fee_per_kb<P: AccountProvider>(provider: &P, current_topoheight: TopoHeight, tx: &Transaction, tx_size: usize, block_version: BlockVersion) -> Result<(u64, u64), BlockchainError> {
     let fee_extra = estimate_required_tx_fee_extra(provider, current_topoheight, tx, block_version).await?;
-    let fee = tx.get_fee().checked_sub(fee_extra)
+    let fee = tx.get_fee()
+        .checked_sub(fee_extra)
         .ok_or(BlockchainError::InvalidTxFee(fee_extra, tx.get_fee()))?;
+
+    let fee_limit = tx.get_fee_limit()
+        .checked_sub(fee_extra)
+        .ok_or(BlockchainError::InvalidTxFee(fee_extra, tx.get_fee_limit()))?;
 
     // We round it up to the next kB because
     // the verification part is doing it
-    let tx_size_rounded = tx_kb_size_rounded(tx_size);
-    Ok(fee / tx_size_rounded as u64)
+    let tx_size_rounded = tx_kb_size_rounded(tx_size) as u64;
+    let fee_per_kb = fee / tx_size_rounded;
+    let fee_limit_per_kb = fee_limit / tx_size_rounded;
+
+    Ok((fee_per_kb, fee_limit_per_kb))
 }
 
 // Count how many kB is counted for TX size in bytes

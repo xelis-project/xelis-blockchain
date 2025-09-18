@@ -27,6 +27,8 @@ pub struct TxSelectorEntry<'a> {
     // Calculated fee per kB
     // Doesn't contains the fee extra
     pub fee_per_kb: u64,
+    // Calculated fee limit per kB
+    pub fee_limit_per_kb: u64
 }
 
 impl PartialEq for TxSelectorEntry<'_> {
@@ -88,17 +90,18 @@ impl<'a> TxSelector<'a> {
     // Create a TxSelector from a list of transactions with their hash and size
     pub fn new<I>(iter: I) -> Self
     where
-        I: Iterator<Item = (usize, &'a Arc<Hash>, &'a Arc<Transaction>, u64)>
+        I: Iterator<Item = (usize, &'a Arc<Hash>, &'a Arc<Transaction>, u64, u64)>
     {
         let mut groups: HashMap<&PublicKey, Vec<TxSelectorEntry>> = HashMap::new();
 
         // Create groups of transactions
-        for (size, hash, tx, fee_per_kb) in iter {
+        for (size, hash, tx, fee_per_kb, fee_limit_per_kb) in iter {
             let entry = TxSelectorEntry {
                 hash,
                 tx,
                 size,
-                fee_per_kb
+                fee_per_kb,
+                fee_limit_per_kb,
             };
 
             match groups.entry(tx.get_source()) {

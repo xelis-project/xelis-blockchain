@@ -38,20 +38,20 @@ pub(super) async fn verify_fee<P: AccountProvider + BalanceProvider>(
     // Check if we pay enough fee in this TX
     let (fee_paid, refund) = if required_fees > tx.get_fee() {
         // We don't, but maybe our fee max allows it
-        if required_fees > tx.get_fee_max() {
+        if required_fees > tx.get_fee_limit() {
             debug!("Invalid fees: {} required, {} provided", format_xelis(required_fees), format_xelis(tx.get_fee()));
             return Err(BlockchainError::InvalidTxFee(required_fees, tx.get_fee()));
         }
 
         // Calculate the left over from fee max against required fee
-        let refund = tx.get_fee_max() - required_fees;
+        let refund = tx.get_fee_limit() - required_fees;
         (required_fees, refund)
     } else {
         // We may pay above the required fee
         // so we simply sub it from fee max
         // It should be safe without the checked_sub
-        // because `pre_verify` check fee_max >= fee
-        let refund = tx.get_fee_max()
+        // because `pre_verify` check fee_limit >= fee
+        let refund = tx.get_fee_limit()
             .checked_sub(tx.get_fee())
             .ok_or(BlockchainError::InvalidTxFee(required_fees, tx.get_fee()))?;
 

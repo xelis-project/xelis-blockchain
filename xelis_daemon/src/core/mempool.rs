@@ -44,6 +44,7 @@ pub struct SortedTx {
     first_seen: TimestampSeconds,
     size: usize,
     fee_per_kb: u64,
+    fee_limit_per_kb: u64,
 }
 
 // This struct is used to keep nonce cache for a specific key for faster verification
@@ -181,13 +182,14 @@ impl Mempool {
             self.caches.insert(tx.get_source().clone(), cache);
         }
 
-        let fee_per_kb = estimate_tx_fee_per_kb(storage, topoheight, &tx, size, block_version).await?;
+        let (fee_per_kb, fee_limit_per_kb) = estimate_tx_fee_per_kb(storage, stable_topoheight, &tx, size, block_version).await?;
         debug!("fee per kb {} for TX {}", fee_per_kb, hash);
 
         let sorted_tx = SortedTx {
             size,
             first_seen: get_current_time_in_seconds(),
             fee_per_kb,
+            fee_limit_per_kb,
             tx,
         };
 
@@ -593,6 +595,12 @@ impl SortedTx {
     #[inline(always)]
     pub fn get_fee_per_kb(&self) -> u64 {
         self.fee_per_kb
+    }
+
+    // Get the fee limit per kB for this TX
+    #[inline(always)]
+    pub fn get_fee_limit_per_kb(&self) -> u64 {
+        self.fee_limit_per_kb
     }
 
     // Get the stored size of this TX
