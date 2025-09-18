@@ -33,7 +33,7 @@ pub struct UnsignedTransaction {
     source: PublicKey,
     data: TransactionType,
     fee: u64,
-    fee_max: u64,
+    fee_limit: u64,
     nonce: Nonce,
     source_commitments: Vec<SourceCommitment>,
     reference: Reference,
@@ -48,7 +48,7 @@ impl UnsignedTransaction {
         source: PublicKey,
         data: TransactionType,
         fee: u64,
-        fee_max: u64,
+        fee_limit: u64,
         nonce: Nonce,
         source_commitments: Vec<SourceCommitment>,
         reference: Reference,
@@ -59,7 +59,7 @@ impl UnsignedTransaction {
             source,
             data,
             fee,
-            fee_max,
+            fee_limit,
             nonce,
             source_commitments,
             reference,
@@ -90,7 +90,7 @@ impl UnsignedTransaction {
         self.data.write(writer);
         self.fee.write(writer);
         if self.version >= TxVersion::V2 {
-            self.fee_max.write(writer);
+            self.fee_limit.write(writer);
         }
         self.nonce.write(writer);
 
@@ -130,7 +130,7 @@ impl UnsignedTransaction {
             self.source,
             self.data,
             self.fee,
-            self.fee_max,
+            self.fee_limit,
             self.nonce,
             self.source_commitments,
             self.range_proof,
@@ -154,7 +154,7 @@ impl Serializer for UnsignedTransaction {
         let source = PublicKey::read(reader)?;
         let data = TransactionType::read(reader)?;
         let fee = reader.read_u64()?;
-        let fee_max = if version >= TxVersion::V2 {
+        let fee_limit = if version >= TxVersion::V2 {
             reader.read_u64()?
         } else {
             fee
@@ -182,7 +182,7 @@ impl Serializer for UnsignedTransaction {
             source,
             data,
             fee,
-            fee_max,
+            fee_limit,
             nonce,
             source_commitments,
             reference,
@@ -211,7 +211,7 @@ impl Serializer for UnsignedTransaction {
         }
 
         if self.version >= TxVersion::V2 {
-            size += self.fee_max.size();
+            size += self.fee_limit.size();
         }
 
         size

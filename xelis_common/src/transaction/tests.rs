@@ -141,9 +141,9 @@ fn create_tx_for(account: Account, destination: Address, amount: u64, extra_data
     assert!(estimated_size == tx.size(), "expected {} bytes got {} bytes", tx.size(), estimated_size);
     assert!(tx.to_bytes().len() == estimated_size);
     // this is done by the AccountStateImpl
-    assert!(tx.fee * 2 == tx.fee_max);
+    assert!(tx.fee * 2 == tx.fee_limit);
 
-    let total_spend = amount + tx.fee_max;
+    let total_spend = amount + tx.fee_limit;
     let new_balance = state.balances[&XELIS_ASSET].balance;
     let expected_balance = balance - total_spend;
     assert!(new_balance == expected_balance, "expected balance {} got {}", expected_balance, new_balance);
@@ -695,7 +695,7 @@ async fn test_multisig() {
 impl<'a> BlockchainVerificationState<'a, ()> for ChainState {
     /// Left over fee to pay back
     async fn handle_tx_fee<'b>(&'b mut self, tx: &Transaction, _: &Hash) -> Result<u64, ()> {
-        Ok(tx.get_fee_max() - tx.get_fee())
+        Ok(tx.get_fee_limit() - tx.get_fee())
     }
 
     /// Pre-verify the TX

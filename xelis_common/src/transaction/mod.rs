@@ -77,7 +77,7 @@ pub struct Transaction {
     fee: u64,
     /// Maximum allowed fee to be spent by source
     /// In XELIS
-    fee_max: u64,
+    fee_limit: u64,
     /// nonce must be equal to the one on chain account
     /// used to prevent replay attacks and have ordered transactions
     nonce: Nonce,
@@ -102,7 +102,7 @@ impl Transaction {
         source: CompressedPublicKey,
         data: TransactionType,
         fee: u64,
-        fee_max: u64,
+        fee_limit: u64,
         nonce: Nonce,
         source_commitments: Vec<SourceCommitment>,
         range_proof: RangeProof,
@@ -115,7 +115,7 @@ impl Transaction {
             source,
             data,
             fee,
-            fee_max,
+            fee_limit,
             nonce,
             source_commitments,
             range_proof,
@@ -151,8 +151,8 @@ impl Transaction {
 
     // Get the fee max
     #[inline(always)]
-    pub fn get_fee_max(&self) -> u64 {
-        self.fee_max
+    pub fn get_fee_limit(&self) -> u64 {
+        self.fee_limit
     }
 
     // Get the nonce used
@@ -313,7 +313,7 @@ impl Serializer for Transaction {
         self.data.write(writer);
         self.fee.write(writer);
         if self.version >= TxVersion::V2 {
-            self.fee_max.write(writer);
+            self.fee_limit.write(writer);
         }
 
         self.nonce.write(writer);
@@ -342,7 +342,7 @@ impl Serializer for Transaction {
         let source = CompressedPublicKey::read(reader)?;
         let data = TransactionType::read(reader)?;
         let fee = reader.read_u64()?;
-        let fee_max = if version >= TxVersion::V2 {
+        let fee_limit = if version >= TxVersion::V2 {
             reader.read_u64()?
         } else {
             fee
@@ -375,7 +375,7 @@ impl Serializer for Transaction {
             source,
             data,
             fee,
-            fee_max,
+            fee_limit,
             nonce,
             source_commitments,
             range_proof,
@@ -404,7 +404,7 @@ impl Serializer for Transaction {
         }
 
         if self.version >= TxVersion::V2 {
-            size += self.fee_max.size();
+            size += self.fee_limit.size();
         }
 
         size

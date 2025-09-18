@@ -112,7 +112,7 @@ impl Transaction {
     pub fn has_valid_version_format(&self) -> bool {
         // Verify that the fee format is correct
         // max should never be below fee
-        if self.fee_max < self.fee {
+        if self.fee_limit < self.fee {
             return false;
         }
 
@@ -153,7 +153,7 @@ impl Transaction {
 
         if *asset == XELIS_ASSET {
             // Fees are applied to the native blockchain asset only.
-            output += Scalar::from(self.fee_max);
+            output += Scalar::from(self.fee_limit);
         }
 
         match &self.data {
@@ -265,7 +265,7 @@ impl Transaction {
         version: TxVersion,
         source_pubkey: &CompressedPublicKey,
         fee: u64,
-        fee_max: u64,
+        fee_limit: u64,
         nonce: Nonce,
     ) -> Transcript {
         let mut transcript = Transcript::new(b"transaction-proof");
@@ -273,7 +273,7 @@ impl Transaction {
         transcript.append_public_key(b"source_pubkey", source_pubkey);
         transcript.append_u64(b"fee", fee);
         if version >= TxVersion::V2 {
-            transcript.append_u64(b"fee_max", fee_max);
+            transcript.append_u64(b"fee_limit", fee_limit);
         }
         transcript.append_u64(b"nonce", nonce);
         transcript
@@ -422,7 +422,7 @@ impl Transaction {
         let mut deposits_decompressed = HashMap::new();
 
         trace!("verify fee to pay");
-        // Verify the required fee, if fee_max is not fully used, refund the left-over later
+        // Verify the required fee, if fee_limit is not fully used, refund the left-over later
         let refund = state.handle_tx_fee(self, tx_hash).await
             .map_err(VerificationError::State)?;
 
@@ -515,7 +515,7 @@ impl Transaction {
             .decompress()
             .map_err(|err| VerificationError::Proof(err.into()))?;
 
-        let mut transcript = Self::prepare_transcript(self.version, &self.source, self.fee, self.fee_max, self.nonce);
+        let mut transcript = Self::prepare_transcript(self.version, &self.source, self.fee, self.fee_limit, self.nonce);
 
         for (commitment, new_source_commitment) in self
             .source_commitments
@@ -595,7 +595,7 @@ impl Transaction {
         }
 
         trace!("verify fee");
-        // Verify the required fee, if fee_max is not fully used, refund the left-over later
+        // Verify the required fee, if fee_limit is not fully used, refund the left-over later
         let refund = state.handle_tx_fee(self, tx_hash).await
             .map_err(VerificationError::State)?;
 
@@ -754,7 +754,7 @@ impl Transaction {
             .decompress()
             .map_err(|err| VerificationError::Proof(err.into()))?;
 
-        let mut transcript = Self::prepare_transcript(self.version, &self.source, self.fee, self.fee_max, self.nonce);
+        let mut transcript = Self::prepare_transcript(self.version, &self.source, self.fee, self.fee_limit, self.nonce);
 
         // 0.a Verify Signature
         let bytes = self.to_bytes();
@@ -1351,7 +1351,7 @@ impl Transaction {
             .decompress()
             .map_err(|err| VerificationError::Proof(err.into()))?;
 
-        let mut transcript = Self::prepare_transcript(self.version, &self.source, self.fee, self.fee_max, self.nonce);
+        let mut transcript = Self::prepare_transcript(self.version, &self.source, self.fee, self.fee_limit, self.nonce);
 
         trace!("verifying commitments eq proofs");
 

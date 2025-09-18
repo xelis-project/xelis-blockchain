@@ -42,7 +42,7 @@ pub trait BlockchainVerificationState<'a, E> {
     // type Error;
 
     /// Verify the TX fee and returns, if required, how much we should refund from
-    /// `fee_max` (left over of fees)
+    /// `fee_limit` (left over of fees)
     async fn handle_tx_fee<'b>(&'b mut self, tx: &Transaction, tx_hash: &Hash) -> Result<u64, E>;
 
     /// Pre-verify the TX

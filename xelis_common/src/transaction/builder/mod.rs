@@ -443,14 +443,14 @@ impl TransactionBuilder {
     fn get_new_source_ct(
         &self,
         mut ct: Ciphertext,
-        fee_max: u64,
+        fee_limit: u64,
         asset: &Hash,
         transfers: &[TransferWithCommitment],
         deposits: &HashMap<Hash, DepositWithCommitment>,
     ) -> Ciphertext {
         if asset == &XELIS_ASSET {
             // Fees are applied to the native blockchain asset only.
-            ct -= Scalar::from(fee_max);
+            ct -= Scalar::from(fee_limit);
         }
 
         match &self.data {
@@ -509,12 +509,12 @@ impl TransactionBuilder {
     }
 
     /// Compute the full cost of the transaction
-    pub fn get_transaction_cost(&self, fee_max: u64, asset: &Hash) -> u64 {
+    pub fn get_transaction_cost(&self, fee_limit: u64, asset: &Hash) -> u64 {
         let mut cost = 0;
 
         if *asset == XELIS_ASSET {
             // Fees are applied to the native blockchain asset only.
-            cost += fee_max;
+            cost += fee_limit;
         }
 
         match &self.data {
@@ -671,8 +671,8 @@ impl TransactionBuilder {
         // Compute the fees
         let fee = self.estimate_fees(state)?;
         // Use the configured max fee, otherwise fallback to estimated fee
-        let fee_max = state.get_max_fee(fee);
-        if fee > fee_max {
+        let fee_limit = state.get_max_fee(fee);
+        if fee > fee_limit {
             return Err(GenerationError::FeeMax);
         }
 
@@ -793,7 +793,7 @@ impl TransactionBuilder {
         let mut range_proof_values: Vec<_> = used_assets
             .iter()
             .map(|asset| {
-                let cost = self.get_transaction_cost(fee_max, &asset);
+                let cost = self.get_transaction_cost(fee_limit, &asset);
                 let current_balance = state
                 .get_account_balance(asset)
                 .map_err(GenerationError::State)?;
@@ -810,7 +810,7 @@ impl TransactionBuilder {
             .collect::<Result<Vec<_>, GenerationError<B::Error>>>()?;
 
         // Prepare the transcript used for proofs
-        let mut transcript = Transaction::prepare_transcript(self.version, &self.source, fee, fee_max, nonce);
+        let mut transcript = Transaction::prepare_transcript(self.version, &self.source, fee, fee_limit, nonce);
 
         let source_commitments = used_assets
             .into_iter()
@@ -832,7 +832,7 @@ impl TransactionBuilder {
                     .compress();
 
                 let new_source_ciphertext =
-                    self.get_new_source_ct(source_current_ciphertext, fee_max, &asset, &transfers_commitments, &deposits_commitments);
+                    self.get_new_source_ct(source_current_ciphertext, fee_limit, &asset, &transfers_commitments, &deposits_commitments);
 
                 // 1. Make the CommitmentEqProof
 
@@ -1091,7 +1091,7 @@ impl TransactionBuilder {
             self.source,
             data,
             fee,
-            fee_max,
+            fee_limit,
             nonce,
             source_commitments,
             reference,
