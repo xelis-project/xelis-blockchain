@@ -107,47 +107,6 @@ impl Connection {
         }
     }
 
-    // Exchange keys in the old way for compatibility reasons
-    pub async fn exchange_keys_old(&mut self, buffer: &mut [u8]) -> P2pResult<()> {
-        trace!("Exchanging keys with {}", self.addr);
-
-        // Update our state
-        self.set_state(State::KeyExchange);
-
-        // Send our key if we initiated the connection
-        if self.is_out() {
-            trace!("Sending our key to {}", self.addr);
-            let mut packet = self.rotate_key_packet().await?;
-            self.send_bytes(&mut packet).await?;
-            self.encryption.mark_ready();
-        }
-
-        trace!("Waiting for key from {}", self.addr);
-        // Wait for the peer to receive its key
-        let Packet::KeyExchange(peer_key) = timeout(
-            Duration::from_millis(PEER_TIMEOUT_INIT_CONNECTION),
-            self.read_packet(buffer, 256)
-        ).await?? else {
-            error!("Expected KeyExchange packet");
-            return Err(P2pError::InvalidPacket);
-        };
-
-        // Now that we got the peer key, update our encryption state
-        self.rotate_peer_key(peer_key.into_owned()).await?;
-
-        // Send back our key if we are the server
-        if !self.is_out() {
-            trace!("Replying with our key to {}", self.addr);
-            let mut packet = self.rotate_key_packet().await?;
-            self.send_bytes(&mut packet).await?;
-            self.encryption.mark_ready();
-        }
-
-        trace!("Key exchange with {} successful", self.addr);
-
-        Ok(())
-    }
-
     // Do a key exchange with the peer
     // We use the Diffie-Hellman key exchange to generate a shared secret
     // The shared secret is used to encrypt the generated (symetric) encryption key
