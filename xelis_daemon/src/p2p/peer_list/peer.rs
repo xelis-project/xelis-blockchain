@@ -161,7 +161,7 @@ pub struct Peer {
 }
 
 impl Peer {
-    pub async fn new(
+    pub fn new(
         connection: Connection,
         id: u64,
         node_tag: Option<String>,
@@ -176,20 +176,14 @@ impl Peer {
         peer_list: SharedPeerList,
         flags: Flags,
         propagate_txs: bool
-    ) -> Result<(Self, Rx), P2pError> {
+    ) -> (Self, Rx) {
         let mut outgoing_address = *connection.get_address();
         outgoing_address.set_port(local_port);
 
         let (exit_channel, _) = broadcast::channel(1);
         let (tx, rx) = mpsc::channel(PEER_PACKET_CHANNEL_SIZE);
 
-        // Verify if we contains the compression flag, if yes, enable it
-        if flags.contains(Flags::COMPRESSION) {
-            debug!("Enabling compression for peer {}", connection.get_address());
-            connection.compression().enable().await?;
-        }
-
-        Ok((Self {
+        (Self {
             connection,
             id,
             node_tag,
@@ -225,7 +219,13 @@ impl Peer {
             write_task: Mutex::new(TaskState::Inactive),
             objects_semaphore: Semaphore::new(PEER_OBJECTS_CONCURRENCY),
             propagate_txs: AtomicBool::new(propagate_txs),
-        }, rx))
+        }, rx)
+    }
+
+    // Flags enabled by the peer
+    #[inline]
+    pub fn flags(&self) -> Flags {
+        self.flags
     }
 
     // This is used to mark that peer is ready to get our propagated transactions
@@ -357,6 +357,11 @@ impl Peer {
     // If the peer is a seed node or added manually by the user, it should be trusted
     pub fn is_priority(&self) -> bool {
         self.priority
+    }
+
+    // Get the compression flag of the peer
+    pub fn compression(&self) -> bool {
+        self.flags.contains(Flags::COMPRESSION)
     }
 
     // Get the sharable flag of the peer

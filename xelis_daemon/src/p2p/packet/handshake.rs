@@ -14,7 +14,6 @@ use crate::p2p::{
         Rx,
     },
     Flags,
-    P2pError
 };
 use std::{
     borrow::Cow,
@@ -104,7 +103,7 @@ impl<'a> Handshake<'a> {
     }
 
     // Create a new peer using its connection and this handshake packet
-    pub async fn create_peer(self, connection: Connection, priority: bool, peer_list: SharedPeerList, propagate_txs: bool) -> Result<(Peer, Rx), P2pError> {
+    pub fn create_peer(self, connection: Connection, priority: bool, peer_list: SharedPeerList, propagate_txs: bool) -> (Peer, Rx) {
         Peer::new(
             connection,
             self.get_peer_id(),
@@ -120,7 +119,11 @@ impl<'a> Handshake<'a> {
             peer_list,
             self.flags,
             propagate_txs
-        ).await
+        )
+    }
+
+    pub fn flags(&self) -> Flags {
+        self.flags
     }
 
     pub fn get_local_port(&self) -> u16 {

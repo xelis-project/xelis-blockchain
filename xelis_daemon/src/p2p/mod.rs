@@ -596,7 +596,7 @@ impl<S: Storage> P2pServer<S> {
             mempool.size() > 0
         };
 
-        handshake.create_peer(connection, priority, self.peer_list.clone(), !has_any_tx).await
+        Ok(handshake.create_peer(connection, priority, self.peer_list.clone(), !has_any_tx))
     }
 
     // this function handle all new connections
@@ -636,6 +636,13 @@ impl<S: Storage> P2pServer<S> {
 
         // if we reach here, handshake is all good, we can start listening this new peer
         connection.set_state(State::Success);
+
+        // Enable compression
+        // Verify if compression mode is supported
+        if self.flags.contains(Flags::COMPRESSION) && handshake.flags().contains(Flags::COMPRESSION) {
+            info!("Enabling compression mode with peer {}", connection.get_address());
+            connection.compression_mut().enable()?;
+        }
 
         Ok(handshake)
     }
@@ -690,7 +697,7 @@ impl<S: Storage> P2pServer<S> {
         };
 
         let mut buffer = [0; 512];
-        let peer = match self.create_verified_peer(&mut buffer, connection, priority).await {
+        let (peer, rx) = match self.create_verified_peer(&mut buffer, connection, priority).await {
             Ok(handshake) => handshake,
             Err(e) => {
                 debug!("Error while verifying connection to address {}: {}", addr, e);
@@ -706,7 +713,7 @@ impl<S: Storage> P2pServer<S> {
 
         debug!("sending newly connected peer to the task");
         // Peer is valid, send it to connect
-        self.peer_sender.send(peer).await
+        self.peer_sender.send((peer, rx)).await
             .context("Error while sending peer to task")?;
 
         Ok(())

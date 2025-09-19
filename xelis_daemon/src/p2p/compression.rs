@@ -1,5 +1,8 @@
+use std::time::Instant;
+
 use chacha20poly1305::aead::Buffer;
 use human_bytes::human_bytes;
+use metrics::histogram;
 use snap::raw::{Decoder, Encoder};
 use thiserror::Error;
 use log::trace;
@@ -24,65 +27,59 @@ pub enum CompressionError {
 pub struct Compression {
     // Encoder & Decoder for compressing/decompressing packets
     // they both have their own buffer to avoid reallocating all the time
-    encoder: Mutex<Option<(Encoder, Vec<u8>)>>,
-    decoder: Mutex<Option<(Decoder, Vec<u8>)>>,
+    // Both are in their own Mutex to allow read & write at same time
+    encoder: Option<Mutex<(Encoder, Vec<u8>)>>,
+    decoder: Option<Mutex<(Decoder, Vec<u8>)>>,
 }
 
 impl Compression {
     pub fn new() -> Self {
         Self {
-            encoder: Mutex::new(None),
-            decoder: Mutex::new(None),
+            encoder: None,
+            decoder: None,
         }
     }
 
     // Is compression supported
     #[inline]
-    pub async fn is_enabled(&self) -> bool {
-        self.encoder.lock().await.is_some()
+    pub fn is_enabled(&self) -> bool {
+        self.encoder.is_some()
     }
 
     // Setup the encoder & decoder with their buffers
-    pub async fn enable(&self) -> Result<(), CompressionError> {
-        {
-            let mut lock = self.encoder.lock().await;
-            if lock.is_some() {
-                return Err(CompressionError::Initialized);
-            }
-
-            let buffer = vec![0; snap::raw::max_compress_len(PEER_MAX_PACKET_SIZE as usize)];
-            *lock = Some((Encoder::new(), buffer));
+    pub fn enable(&mut self) -> Result<(), CompressionError> {
+        if self.encoder.is_some() || self.decoder.is_some() {
+            return Err(CompressionError::Initialized);
         }
 
-        {
-            let mut lock = self.decoder.lock().await;
-            if lock.is_some() {
-                return Err(CompressionError::Initialized);
-            }
+        let buffer = vec![0; snap::raw::max_compress_len(PEER_MAX_PACKET_SIZE as usize)];
+        self.encoder = Some(Mutex::new((Encoder::new(), buffer)));
 
-            let buffer = vec![0; PEER_MAX_PACKET_SIZE as usize];
-            *lock = Some((Decoder::new(), buffer));
-        }
+        let buffer = vec![0; PEER_MAX_PACKET_SIZE as usize];
+        self.decoder = Some(Mutex::new((Decoder::new(), buffer)));
 
-        Ok(())
-        
+        Ok(())        
     }
 
     // Compress the input buffer if its size is greater than COMPRESSION_THRESHOLD
+    // If it was not enabled, it will simply be a no-op
     pub async fn compress(&self, input: &mut impl Buffer) -> Result<(), CompressionError> {
-        if let Some((encoder, buffer)) = self.encoder.lock().await.as_mut() {
+        if let Some(mutex) = self.encoder.as_ref() {
             let should_compress = input.len() > COMPRESSION_THRESHOLD;
             if should_compress {    
+                let start = Instant::now();
+
+                let mut lock = mutex.lock().await;
+                let (encoder, buffer) = &mut *lock;
+
                 let mut n = encoder.compress(input.as_ref(), buffer)
                 .map_err(|_| CompressionError::Compression)?;
 
-                trace!("Packet compressed from {} to {}", human_bytes(input.len() as f64), human_bytes(n as f64));
-                if input.len() < n {
-                    trace!("Packet size increased after compression: {} -> {}", input.len(), n);
-                    input.extend_from_slice(&buffer[input.len()..n])
+                let len = input.len();
+                if len < n {
+                    input.extend_from_slice(&buffer[len..n])
                         .map_err(|_| CompressionError::Buffer)?;
     
-                    trace!("New packet size: {}", input.len());
                     n = input.len();
                 } else {
                     input.truncate(n);
@@ -90,6 +87,10 @@ impl Compression {
 
                 // now, re inject the compressed data in our input buffer
                 input.as_mut().copy_from_slice(&buffer[..n]);
+
+                let elapsed = start.elapsed();
+                trace!("Packet compressed from {} to {} in {:?}", human_bytes(len as f64), human_bytes(n as f64), elapsed);
+                histogram!("xelis_p2p_compress").record(elapsed.as_millis() as f64);
             }
 
             // if the packet was compressed, we need to add a byte at the end to indicate that
@@ -101,25 +102,29 @@ impl Compression {
     }
 
     // Decompress the input buffer if the last byte indicates that it was compressed
+    // If it was not enabled, it will simply be a no-op
     pub async fn decompress(&self, buf: &mut impl Buffer) -> Result<(), CompressionError> {
-        if let Some((decoder, buffer)) = self.decoder.lock().await.as_mut() {
+        if let Some(mutex) = self.decoder.as_ref() {
             if buf.len() < 1 {
                 return Err(CompressionError::Buffer);
             }
-    
+
             // check that we have the compression flag at the end
             let compressed = buf.as_ref()[buf.len() - 1] == 1;
             buf.truncate(buf.len() - 1);
 
             if compressed {
+                let start = Instant::now();
+                let mut lock = mutex.lock().await;
+                let (decoder, buffer) = &mut *lock;
+
                 let mut n = decoder.decompress(buf.as_ref(), buffer)
                     .map_err(|_| CompressionError::Decompression)?;
-    
-                trace!("Packet decompressed from {} to {}", buf.len(), n);
 
+                let len = buf.len();
                 // now, assemble the buffer by calculating the new length
-                if n > buf.len() {
-                    buf.extend_from_slice(&buffer[buf.len()..n])
+                if n > len {
+                    buf.extend_from_slice(&buffer[len..n])
                         .map_err(|_| CompressionError::Buffer)?;
     
                     n = buf.len();
@@ -129,6 +134,10 @@ impl Compression {
 
                 // reinject in our buffer the decompressed data
                 buf.as_mut().copy_from_slice(&buffer[..n]);
+
+                let elapsed = start.elapsed();
+                trace!("Packet decompressed from {} to {} in {:?}", human_bytes(len as f64), human_bytes(n as f64), elapsed);
+                histogram!("xelis_p2p_decompress").record(elapsed.as_millis() as f64);
             }
         }
 
@@ -142,8 +151,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_compression() {
-        let compression = Compression::new();
-        compression.enable().await.unwrap();
+        let mut compression = Compression::new();
+        compression.enable().unwrap();
 
         let data = vec![0u8; 2048];
         let mut buffer = data.clone();
