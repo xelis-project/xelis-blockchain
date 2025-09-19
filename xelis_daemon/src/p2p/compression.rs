@@ -36,6 +36,12 @@ impl Compression {
         }
     }
 
+    // Is compression supported
+    #[inline]
+    pub async fn is_enabled(&self) -> bool {
+        self.encoder.lock().await.is_some()
+    }
+
     // Setup the encoder & decoder with their buffers
     pub async fn enable(&self) -> Result<(), CompressionError> {
         {
@@ -64,12 +70,12 @@ impl Compression {
 
     // Compress the input buffer if its size is greater than COMPRESSION_THRESHOLD
     pub async fn compress(&self, input: &mut impl Buffer) -> Result<(), CompressionError> {
-        if let Some((encoder, buffer)) = self.encoder.lock().await.as_mut() {     
+        if let Some((encoder, buffer)) = self.encoder.lock().await.as_mut() {
             let should_compress = input.len() > COMPRESSION_THRESHOLD;
             if should_compress {    
                 let mut n = encoder.compress(input.as_ref(), buffer)
                 .map_err(|_| CompressionError::Compression)?;
-            
+
                 trace!("Packet compressed from {} to {}", human_bytes(input.len() as f64), human_bytes(n as f64));
                 if input.len() < n {
                     trace!("Packet size increased after compression: {} -> {}", input.len(), n);
@@ -81,11 +87,11 @@ impl Compression {
                 } else {
                     input.truncate(n);
                 }
-    
+
                 // now, re inject the compressed data in our input buffer
                 input.as_mut().copy_from_slice(&buffer[..n]);
             }
-    
+
             // if the packet was compressed, we need to add a byte at the end to indicate that
             input.extend_from_slice(&[should_compress as u8])
                 .map_err(|_| CompressionError::Buffer)?;
@@ -104,13 +110,13 @@ impl Compression {
             // check that we have the compression flag at the end
             let compressed = buf.as_ref()[buf.len() - 1] == 1;
             buf.truncate(buf.len() - 1);
-    
-            if compressed {    
+
+            if compressed {
                 let mut n = decoder.decompress(buf.as_ref(), buffer)
                     .map_err(|_| CompressionError::Decompression)?;
     
                 trace!("Packet decompressed from {} to {}", buf.len(), n);
-    
+
                 // now, assemble the buffer by calculating the new length
                 if n > buf.len() {
                     buf.extend_from_slice(&buffer[buf.len()..n])
@@ -120,7 +126,7 @@ impl Compression {
                 } else {
                     buf.truncate(n);
                 }
-    
+
                 // reinject in our buffer the decompressed data
                 buf.as_mut().copy_from_slice(&buffer[..n]);
             }
@@ -146,6 +152,6 @@ mod tests {
         assert!(buffer.len() < data.len() + 1); // +1 for the compression flag
 
         compression.decompress(&mut buffer).await.unwrap();
-        assert_eq!(&buffer[..data.len()], &data[..]);
+        assert_eq!(buffer, data);
     }
 }
