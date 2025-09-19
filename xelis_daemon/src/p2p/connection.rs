@@ -230,6 +230,10 @@ impl Connection {
         let mut packet = Packet::KeyExchange(Cow::Borrowed(&new_key)).to_bytes();
 
         if self.encryption.is_write_ready().await {
+            if self.compression.is_enabled().await {
+                self.compression.compress(&mut packet).await?;
+            }
+
             // Encrypt with the our previous key our new key
             self.encryption.encrypt_packet(&mut packet).await?;
         }
@@ -301,6 +305,10 @@ impl Connection {
 
         // We check if the encryption is enabled to manage it ourself here
         if self.encryption.is_ready() {
+            if self.compression.is_enabled().await {
+                self.compression.compress(packet).await?;
+            }
+
             self.encryption.encrypt_packet(packet).await?;
             // Send the bytes in encrypted format
             self.send_packet_bytes_internal(&mut stream, packet.as_ref()).await?;
@@ -407,6 +415,10 @@ impl Connection {
         // If encryption is supported, use it
         if self.encryption.is_read_ready().await {
             self.encryption.decrypt_packet(&mut bytes).await?;
+
+            if self.compression.is_enabled().await {
+                self.compression.decompress(&mut bytes).await?;
+            }
         }
 
         Ok(bytes)
