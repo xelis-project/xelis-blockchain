@@ -3599,8 +3599,6 @@ impl<S: Storage> Blockchain<S> {
             }
         }
 
-        
-
         let fee_per_kb = calculate_required_base_fee(initial_ema);
         let predicated_fee_per_kb = calculate_required_base_fee(ema);
         debug!(
