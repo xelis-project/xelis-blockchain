@@ -2,6 +2,7 @@ use std::{collections::{hash_map::Entry, VecDeque}, hash, sync::Arc};
 
 use anyhow::Context as _;
 use indexmap::IndexMap;
+use log::debug;
 use xelis_vm::{
     traits::{JSONHelper, Serializable},
     Context,
@@ -104,10 +105,11 @@ pub async fn module_invoke<'a, 'ty, 'r, P: ContractProvider>(zelf: FnInstance<'a
         state.mark_updated();
 
         // Insert the deposit to the called contract
-        let (state, balance) = get_mut_balance_for_contract(provider, chain_state, metadata.contract.clone(), asset.clone()).await?;
+        let (state, balance) = get_mut_balance_for_contract(provider, chain_state, module.contract.clone(), asset.clone()).await?;
         *balance += amount;
         state.mark_updated();
 
+        debug!("Transfering {} of {} to {} from {}", amount, asset, module.contract, metadata.contract);
         deposits.insert(asset, ContractDeposit::Public(amount));
     }
 
