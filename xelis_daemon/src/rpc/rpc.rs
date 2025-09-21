@@ -48,7 +48,7 @@ use xelis_common::{
         XELIS_ASSET
     },
     context::Context,
-    crypto::{Address, AddressType, Hash},
+    crypto::{Address, AddressType, Hash, PublicKey},
     difficulty::{
         CumulativeDifficulty,
         Difficulty
@@ -351,6 +351,7 @@ pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>
     handler.register_method("validate_address", async_handler!(validate_address::<S>));
     handler.register_method("split_address", async_handler!(split_address::<S>));
     handler.register_method("extract_key_from_address", async_handler!(extract_key_from_address::<S>));
+    handler.register_method("key_to_address", async_handler!(key_to_address::<S>));
     handler.register_method("make_integrated_address", async_handler!(make_integrated_address::<S>));
     handler.register_method("decrypt_extra_data", async_handler!(decrypt_extra_data::<S>));
 
@@ -1554,6 +1555,20 @@ async fn extract_key_from_address<S: Storage>(context: &Context, body: Value) ->
     } else {
         Ok(json!(ExtractKeyFromAddressResult::Bytes(params.address.get_public_key().to_bytes())))
     }
+}
+
+async fn key_to_address<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
+    let param: KeyToAddressParams = parse_params(body)?;
+
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+
+    let key = match param {
+        KeyToAddressParams::Bytes(bytes) => PublicKey::from_bytes(&bytes),
+        KeyToAddressParams::Hex(hex) => PublicKey::from_hex(&hex),
+    }.context("Error on provided key")?;
+
+    let address = key.to_address(blockchain.get_network().is_mainnet());
+    Ok(json!(address))
 }
 
 // Split an integrated address into its address and data
