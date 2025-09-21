@@ -1317,7 +1317,7 @@ async fn get_account_history<S: Storage>(context: &Context, body: Value) -> Resu
                             hash: tx_hash.clone(),
                             history_type: AccountHistoryType::InvokeContract {
                                 contract: payload.contract.clone(),
-                                chunk_id: payload.chunk_id,
+                                entry_id: payload.entry_id,
                             },
                             block_timestamp: block_header.get_timestamp()
                         });
