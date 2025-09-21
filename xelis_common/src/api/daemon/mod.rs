@@ -15,9 +15,9 @@ use serde::{
 };
 use xelis_vm::ValueCell;
 use crate::{
-    account::{Nonce, CiphertextCache, VersionedBalance, VersionedNonce},
-    block::{TopoHeight, Algorithm, BlockVersion, EXTRA_NONCE_SIZE},
-    crypto::{Address, Hash},
+    account::{CiphertextCache, Nonce, VersionedBalance, VersionedNonce},
+    block::{Algorithm, BlockVersion, TopoHeight, EXTRA_NONCE_SIZE},
+    crypto::{elgamal::RISTRETTO_COMPRESSED_SIZE, Address, Hash},
     difficulty::{CumulativeDifficulty, Difficulty},
     network::Network,
     time::{TimestampMillis, TimestampSeconds},
@@ -655,6 +655,13 @@ pub struct ExtractKeyFromAddressParams<'a> {
     pub address: Cow<'a, Address>,
     #[serde(default)]
     pub as_hex: bool
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum KeyToAddressParams {
+    Bytes([u8; RISTRETTO_COMPRESSED_SIZE]),
+    Hex(String)
 }
 
 #[derive(Serialize, Deserialize)]
