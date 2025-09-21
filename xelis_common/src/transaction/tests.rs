@@ -381,7 +381,7 @@ async fn test_tx_invoke_contract() {
 
         let data = TransactionTypeBuilder::InvokeContract(InvokeContractBuilder {
             contract: Hash::zero(),
-            chunk_id: 0,
+            entry_id: 0,
             max_gas: 1000,
             parameters: Vec::new(),
             deposits: [

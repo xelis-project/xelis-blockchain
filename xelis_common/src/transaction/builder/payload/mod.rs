@@ -40,7 +40,7 @@ pub struct ContractDepositBuilder {
 pub struct InvokeContractBuilder {
     pub contract: Hash,
     pub max_gas: u64,
-    pub chunk_id: u16,
+    pub entry_id: u16,
     pub parameters: Vec<ValueCell>,
     #[serde(default)]
     pub deposits: IndexMap<Hash, ContractDepositBuilder>,
@@ -75,7 +75,7 @@ mod tests {
         let builder = InvokeContractBuilder {
             contract: XELIS_ASSET,
             max_gas: 1000,
-            chunk_id: 0,
+            entry_id: 0,
             parameters: vec![ValueCell::Default(Primitive::U64(100))],
             deposits: indexmap! {
                 XELIS_ASSET => ContractDepositBuilder {

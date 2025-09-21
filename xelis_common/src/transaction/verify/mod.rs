@@ -475,7 +475,7 @@ impl Transaction {
                 let (module, environment) = state.get_contract_module_with_environment(&payload.contract).await
                     .map_err(VerificationError::State)?;
 
-                if !module.is_entry_chunk(payload.chunk_id as usize) {
+                if !module.is_entry_chunk(payload.entry_id as usize) {
                     return Err(VerificationError::InvalidInvokeContract);
                 }
 
@@ -714,7 +714,7 @@ impl Transaction {
                 let (module, environment) = state.get_contract_module_with_environment(&payload.contract).await
                     .map_err(VerificationError::State)?;
 
-                if !module.is_entry_chunk(payload.chunk_id as usize) {
+                if !module.is_entry_chunk(payload.entry_id as usize) {
                     return Err(VerificationError::InvalidInvokeContract);
                 }
 
@@ -1198,7 +1198,7 @@ impl Transaction {
                         &payload.deposits,
                         payload.parameters.iter().cloned(),
                         payload.max_gas,
-                        InvokeContract::Entry(payload.chunk_id)
+                        InvokeContract::Entry(payload.entry_id)
                     ).await?;
                 } else {
                     debug!("Contract {} invoked from {} not available", payload.contract, tx_hash);
