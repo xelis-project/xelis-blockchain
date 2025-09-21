@@ -1115,7 +1115,7 @@ impl Wallet {
                     let str_participants: Vec<String> = participants.iter().map(|p| p.as_address(self.get_network().is_mainnet()).to_string()).collect();
                     writeln!(w, "{},{},{},{},{},{},-,{},{}", datetime_from_timestamp(tx.get_timestamp())?, tx.get_topoheight(), tx.get_hash(), "MultiSig", str_participants.join("|"), threshold, format_xelis(*fee), nonce).context("Error while writing csv line")?;
                 },
-                EntryData::InvokeContract { contract, deposits, received, chunk_id, fee, max_gas, nonce } => {
+                EntryData::InvokeContract { contract, deposits, received, entry_id: chunk_id, fee, max_gas, nonce } => {
                     let mut extra = Vec::new();
                     extra.push(format!("Gas:{}", format_xelis(*max_gas)));
                     if !deposits.is_empty() {
