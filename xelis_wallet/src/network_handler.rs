@@ -278,16 +278,20 @@ impl NetworkHandler {
         let mut our_highest_nonce = None;
 
         let block_hash = &block_hash;
-        let results: Vec<(Option<(TransactionEntry, u64, Option<u64>)>, HashSet<Hash>)> = stream::iter(transactions.into_iter())
+        let results: Vec<(Option<TransactionEntry>, Option<u64>, HashSet<Hash>)> = stream::iter(transactions.into_iter())
             .map(|tx| async move {
                 let mut assets_changed = HashSet::new();
 
                 trace!("Checking transaction {}", tx.hash);
                 let is_owner = *tx.source.get_public_key() == *address.get_public_key();
-                if is_owner {
+                let tx_nonce = if is_owner {
                     debug!("Transaction {} is from us", tx.hash);
                     assets_changed.insert(XELIS_ASSET);
-                }
+
+                    Some(tx.nonce)
+                } else {
+                    None
+                };
 
                 let entry: Option<EntryData> = match tx.data {
                     RPCTransactionType::Burn(payload) => {
@@ -297,7 +301,7 @@ impl NetworkHandler {
 
                             if !should_scan_history || self.has_tx_stored(&tx.hash).await? {
                                 debug!("Transaction burn {} was already stored, skipping it", tx.hash);
-                                return Ok((None, assets_changed));
+                                return Ok((None, tx_nonce, assets_changed));
                             }
     
                             Some(EntryData::Burn { asset: payload.asset, amount: payload.amount, fee: tx.fee, nonce: tx.nonce })
@@ -322,7 +326,7 @@ impl NetworkHandler {
                                     // Check if we already stored this TX
                                     if self.has_tx_stored(&tx.hash).await? {
                                         debug!("Transaction {} was already stored, skipping it", tx.hash);
-                                        return Ok((None, assets_changed));
+                                        return Ok((None, tx_nonce, assets_changed));
                                     }
                                     checked = true;
                                 }
@@ -401,7 +405,7 @@ impl NetworkHandler {
                         if is_owner {
                             if !should_scan_history || self.has_tx_stored(&tx.hash).await? {
                                 debug!("Transaction multisig setup {} was already stored, skipping it", tx.hash);
-                                return Ok((None, assets_changed));
+                                return Ok((None, tx_nonce, assets_changed));
                             }
     
                             Some(EntryData::MultiSig { participants: payload.participants, threshold: payload.threshold, fee: tx.fee, nonce: tx.nonce })
@@ -414,7 +418,7 @@ impl NetworkHandler {
                         if is_owner {
                             if self.has_tx_stored(&tx.hash).await? {
                                 debug!("Transaction invoke contract {} was already stored, skipping it", tx.hash);
-                                return Ok((None, assets_changed));
+                                return Ok((None, tx_nonce, assets_changed));
                             }
 
                             let mut deposits = IndexMap::new();
@@ -456,7 +460,7 @@ impl NetworkHandler {
                         if is_owner {
                             if self.has_tx_stored(&tx.hash).await? {
                                 debug!("Transaction deploy contract {} was already stored, skipping it", tx.hash);
-                                return Ok((None, assets_changed));
+                                return Ok((None, tx_nonce, assets_changed));
                             }
 
                             let payload = payload.into_owned();
@@ -506,7 +510,7 @@ impl NetworkHandler {
                     }
                 };
 
-                let result = if let Some(entry) = entry {
+                let entry = if let Some(entry) = entry {
                     // Transaction found at which topoheight it was executed
                     let mut tx_topoheight = topoheight;
                     let mut tx_timestamp = block.timestamp;
@@ -524,43 +528,40 @@ impl NetworkHandler {
                             Err(e) => {
                                 // Tx is maybe not executed, this is really rare event
                                 warn!("Error while fetching topoheight execution of transaction {}: {}", tx.hash, e);
-                                return Ok((None, assets_changed));
+                                return Ok((None, tx_nonce, assets_changed));
                             }
                         }
                     }
 
                     // Save the transaction
                     let entry = TransactionEntry::new(tx.hash.into_owned(), tx_topoheight, tx_timestamp, entry);
-                    let tx_nonce = if is_owner {
-                        Some(tx.nonce)
-                    } else {
-                        None
-                    };
 
-                    Some((entry, tx_topoheight, tx_nonce))
+                    Some(entry)
                 } else {
                     None
                 };
 
-                Ok::<_, Error>((result, assets_changed))
+                Ok::<_, Error>((entry, tx_nonce, assets_changed))
             })
             .boxed()
             .buffered(self.concurrency)
             .try_collect()
             .await?;
 
-        for (entry, changes) in results {
+        for (entry, tx_nonce, changes) in results {
             assets_changed.extend(changes);
 
-            if let Some((entry, tx_topoheight, tx_nonce)) = entry {
-                // Find the highest nonce
-                if let Some(tx_nonce) = tx_nonce {
-                    if our_highest_nonce.map(|n| tx_nonce > n).unwrap_or(true) {
+            // Find the highest nonce
+            if let Some(tx_nonce) = tx_nonce {
+                if our_highest_nonce.map(|n| tx_nonce > n).unwrap_or(true) {
+                    if let Some(entry) = entry.as_ref() {
                         debug!("Found new highest nonce {} in TX {}", tx_nonce, entry.get_hash());
-                        our_highest_nonce = Some(tx_nonce);
                     }
+                    our_highest_nonce = Some(tx_nonce);
                 }
+            }
 
+            if let Some(entry) = entry {
                 debug!("storing new entry {} from block {}", entry.get_hash(), block_hash);
                 {
                     let mut storage = self.wallet.get_storage().write().await;
@@ -572,20 +573,21 @@ impl NetworkHandler {
                         changes_stored = true;
                     }
 
+                    // Check if the multisig state must be updated
                     if let EntryData::MultiSig { participants, threshold, .. } = entry.get_entry() {
                         let multisig = MultiSig {
                             payload: MultiSigPayload {
                                 participants: participants.clone(),
                                 threshold: *threshold
                             },
-                            topoheight: tx_topoheight
+                            topoheight: entry.get_topoheight()
                         };
                         let store = storage.get_multisig_state().await?
-                            .map(|m| m.topoheight < tx_topoheight)
+                            .map(|m| m.topoheight < entry.get_topoheight())
                             .unwrap_or(true);
     
                         if store {
-                            info!("Detected a multisig state change at topoheight {} from TX {}", tx_topoheight, entry.get_hash());
+                            info!("Detected a multisig state change at topoheight {} from TX {}", entry.get_topoheight(), entry.get_hash());
                             if multisig.payload.is_delete() {
                                 info!("Deleting multisig state");
                                 storage.delete_multisig_state().await?;
@@ -612,7 +614,7 @@ impl NetworkHandler {
             }
         }
 
-        if !changes_stored || assets_changed.is_empty() {
+        if (!changes_stored && should_scan_history) || assets_changed.is_empty() {
             debug!("No changes found in block {} at topoheight {}, assets: {}, changes stored: {}", block_hash, topoheight, assets_changed.len(), changes_stored);
             Ok(None)
         } else {
