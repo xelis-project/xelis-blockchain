@@ -288,21 +288,24 @@ impl NetworkHandler {
                     debug!("Transaction {} is from us", tx.hash);
                     assets_changed.insert(XELIS_ASSET);
 
+                    // Check that we haven't already processed it
+                    if self.has_tx_stored(&tx.hash).await? {
+                        debug!("Transaction {} was already stored, skipping it", tx.hash);
+                        return Ok((None, Some(tx.nonce), assets_changed));
+                    }
+
                     Some(tx.nonce)
                 } else {
                     None
                 };
 
+                // if we don't want to scan the history by decoding txs and such
+                // it will simply returns none
                 let entry: Option<EntryData> = match tx.data {
                     RPCTransactionType::Burn(payload) => {
-                        let payload = payload.into_owned();
                         if is_owner {
+                            let payload = payload.into_owned();
                             assets_changed.insert(payload.asset.clone());
-
-                            if !should_scan_history || self.has_tx_stored(&tx.hash).await? {
-                                debug!("Transaction burn {} was already stored, skipping it", tx.hash);
-                                return Ok((None, tx_nonce, assets_changed));
-                            }
     
                             Some(EntryData::Burn { asset: payload.asset, amount: payload.amount, fee: tx.fee, nonce: tx.nonce })
                         } else {
@@ -312,14 +315,18 @@ impl NetworkHandler {
                     RPCTransactionType::Transfers(txs) => {
                         let mut transfers_in: Vec<TransferIn> = Vec::new();
                         let mut transfers_out: Vec<TransferOut> = Vec::new();
-    
+
                         // Used to check only once if we have processed this TX already
-                        let mut checked = false;
+                        let mut checked = is_owner;
                         for (i, transfer) in txs.into_iter().enumerate() {
                             let destination = transfer.destination.to_public_key();
                             if is_owner || destination == *address.get_public_key() {
                                 let asset = transfer.asset.into_owned();
                                 assets_changed.insert(asset.clone());
+
+                                if !should_scan_history {
+                                    continue;
+                                }
 
                                 // Check only once if we have processed this TX already
                                 if !checked {
@@ -331,10 +338,6 @@ impl NetworkHandler {
                                     checked = true;
                                 }
 
-                                if !should_scan_history {
-                                    continue;
-                                }
-
                                 // Get the right handle
                                 let (role, handle) = if is_owner {
                                     (Role::Sender, transfer.sender_handle)
@@ -343,22 +346,10 @@ impl NetworkHandler {
                                 };
     
                                 // Decompress commitment it if possible
-                                let commitment = match transfer.commitment.decompress() {
-                                    Ok(c) => c,
-                                    Err(e) => {
-                                        error!("Error while decompressing commitment of TX {}: {}", tx.hash, e);
-                                        continue;
-                                    }
-                                };
+                                let commitment = transfer.commitment.decompress()?;
     
                                 // Same for handle
-                                let handle = match handle.decompress() {
-                                    Ok(h) => h,
-                                    Err(e) => {
-                                        error!("Error while decompressing handle of TX {}: {}", tx.hash, e);
-                                        continue;
-                                    }
-                                };
+                                let handle = handle.decompress()?;
     
                                 let extra_data = if let Some(cipher) = transfer.extra_data.into_owned() {
                                     match self.wallet.decrypt_extra_data(cipher,  Some(&handle), role, tx.version) {
@@ -391,7 +382,7 @@ impl NetworkHandler {
                                 }
                             }
                         }
-    
+
                         if is_owner && !transfers_out.is_empty() { // check that we are owner of this TX
                             Some(EntryData::Outgoing { transfers: transfers_out, fee: tx.fee, nonce: tx.nonce })
                         } else if !transfers_in.is_empty() { // otherwise, check that we received one or few transfers from it
@@ -401,31 +392,63 @@ impl NetworkHandler {
                         }
                     },
                     RPCTransactionType::MultiSig(payload) => {
-                        let payload = payload.into_owned();
                         if is_owner {
-                            if !should_scan_history || self.has_tx_stored(&tx.hash).await? {
-                                debug!("Transaction multisig setup {} was already stored, skipping it", tx.hash);
-                                return Ok((None, tx_nonce, assets_changed));
-                            }
-    
+                            let payload = payload.into_owned();
+
                             Some(EntryData::MultiSig { participants: payload.participants, threshold: payload.threshold, fee: tx.fee, nonce: tx.nonce })
                         } else {
                             None
                         }
                     },
                     RPCTransactionType::InvokeContract(payload) => {
-                        let payload = payload.into_owned();
                         if is_owner {
-                            if self.has_tx_stored(&tx.hash).await? {
-                                debug!("Transaction invoke contract {} was already stored, skipping it", tx.hash);
-                                return Ok((None, tx_nonce, assets_changed));
-                            }
-
+                            let payload = payload.into_owned();
                             let mut deposits = IndexMap::new();
+
                             for (asset, deposit) in payload.deposits {
                                 assets_changed.insert(asset.clone());
 
-                                if should_scan_history {
+                                if !should_scan_history {
+                                    continue;
+                                }
+
+                                match deposit {
+                                    ContractDeposit::Public(amount) => {
+                                        deposits.insert(asset, amount);
+                                    },
+                                    ContractDeposit::Private { commitment, sender_handle, ..} => {
+                                        let commitment = commitment.decompress()?;
+                                        let handle = sender_handle.decompress()?;
+                                        let ciphertext = Ciphertext::new(commitment, handle);
+                                        let amount = match self.wallet.decrypt_ciphertext_of_asset(ciphertext, &asset).await? {
+                                            Some(v) => v,
+                                            None => {
+                                                warn!("Couldn't decrypt deposit ciphertext for asset {}. Skipping it", asset);
+                                                continue;
+                                            }
+                                        };
+                                        deposits.insert(asset, amount);
+                                    }
+                                }
+                            }
+
+                            Some(EntryData::InvokeContract { contract: payload.contract, deposits, received: IndexMap::new(), entry_id: payload.entry_id, fee: tx.fee, max_gas: payload.max_gas, nonce: tx.nonce })
+                        } else {
+                            None
+                        }
+                    },
+                    RPCTransactionType::DeployContract(payload) => {
+                        if is_owner {
+                            let payload = payload.into_owned();
+                            let invoke = if let Some(invoke) = payload.invoke {
+                                let mut deposits = IndexMap::new();
+                                for (asset, deposit) in invoke.deposits {
+                                    assets_changed.insert(asset.clone());
+
+                                    if !should_scan_history {
+                                        continue;
+                                    }
+
                                     match deposit {
                                         ContractDeposit::Public(amount) => {
                                             deposits.insert(asset, amount);
@@ -445,51 +468,6 @@ impl NetworkHandler {
                                         }
                                     }
                                 }
-                            }
-
-                            if should_scan_history {
-                                Some(EntryData::InvokeContract { contract: payload.contract, deposits, received: IndexMap::new(), entry_id: payload.entry_id, fee: tx.fee, max_gas: payload.max_gas, nonce: tx.nonce })
-                            } else {
-                                None
-                            }
-                        } else {
-                            None
-                        }
-                    },
-                    RPCTransactionType::DeployContract(payload) => {
-                        if is_owner {
-                            if self.has_tx_stored(&tx.hash).await? {
-                                debug!("Transaction deploy contract {} was already stored, skipping it", tx.hash);
-                                return Ok((None, tx_nonce, assets_changed));
-                            }
-
-                            let payload = payload.into_owned();
-                            let invoke = if let Some(invoke) = payload.invoke {
-                                let mut deposits = IndexMap::new();
-                                for (asset, deposit) in invoke.deposits {
-                                    assets_changed.insert(asset.clone());
-
-                                    if should_scan_history {
-                                        match deposit {
-                                            ContractDeposit::Public(amount) => {
-                                                deposits.insert(asset, amount);
-                                            },
-                                            ContractDeposit::Private { commitment, sender_handle, ..} => {
-                                                let commitment = commitment.decompress()?;
-                                                let handle = sender_handle.decompress()?;
-                                                let ciphertext = Ciphertext::new(commitment, handle);
-                                                let amount = match self.wallet.decrypt_ciphertext_of_asset(ciphertext, &asset).await? {
-                                                    Some(v) => v,
-                                                    None => {
-                                                        warn!("Couldn't decrypt deposit ciphertext for asset {}. Skipping it", asset);
-                                                        continue;
-                                                    }
-                                                };
-                                                deposits.insert(asset, amount);
-                                            }
-                                        }
-                                    }
-                                }
 
                                 Some(DeployInvoke {
                                     max_gas: invoke.max_gas,
@@ -499,18 +477,14 @@ impl NetworkHandler {
                                 None
                             };
 
-                            if should_scan_history {
-                                Some(EntryData::DeployContract { fee: tx.fee, nonce: tx.nonce, invoke })
-                            } else {
-                                None
-                            }
+                            Some(EntryData::DeployContract { fee: tx.fee, nonce: tx.nonce, invoke })
                         } else {
                             None
                         }
                     }
                 };
 
-                let entry = if let Some(entry) = entry {
+                let entry = if let Some(entry) = entry.filter(|_| should_scan_history) {
                     // Transaction found at which topoheight it was executed
                     let mut tx_topoheight = topoheight;
                     let mut tx_timestamp = block.timestamp;
