@@ -36,9 +36,9 @@ pub fn random_fn(_: FnInstance, _: FnParams, metadata: &ModuleMetadata, context:
     let cache = get_cache_for_contract(&mut state.caches, state.global_caches, metadata.contract.clone());
 
     if cache.random.is_none() {
-        debug!("initializing deterministic random for {}", state.tx_hash);
+        debug!("initializing deterministic random");
         // NOTE: the DeterministicRandom is sandboxed PER contract to prevent any cross-contract interference
-        cache.random = Some(DeterministicRandom::new(&metadata.contract, state.block_hash, state.tx_hash));
+        cache.random = Some(DeterministicRandom::new(&metadata.contract, state.block_hash, state.topoheight, state.tx_hash));
     }
 
     Ok(SysCallResult::Return(Primitive::Opaque(OpaqueWrapper::new(OpaqueRandom)).into()))

@@ -1,7 +1,7 @@
 use anyhow::Context;
 use blake3::OutputReader;
 
-use crate::crypto::Hash;
+use crate::{block::TopoHeight, crypto::Hash};
 
 // Deterministic random number generator
 // This is used to generate random numbers in a deterministic way
@@ -15,15 +15,20 @@ pub struct DeterministicRandom {
 }
 
 impl DeterministicRandom {
-    pub fn new(contract: &Hash, block: &Hash, transaction: &Hash) -> Self {
-        let reader = blake3::Hasher::new()
+    pub fn new(contract: &Hash, block: &Hash, topoheight: TopoHeight, transaction: Option<&Hash>) -> Self {
+        let mut hasher = blake3::Hasher::new();
+
+        hasher
             .update(contract.as_bytes())
             .update(block.as_bytes())
-            .update(transaction.as_bytes())
-            .finalize_xof();
+            .update(&topoheight.to_be_bytes());
+
+        if let Some(transaction) = transaction {
+            hasher.update(transaction.as_bytes());
+        }
 
         Self {
-            reader,
+            reader: hasher.finalize_xof(),
         }
     }
 

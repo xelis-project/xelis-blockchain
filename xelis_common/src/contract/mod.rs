@@ -7,7 +7,8 @@ mod metadata;
 
 use std::{
     any::TypeId,
-    collections::{hash_map::Entry, HashMap, HashSet}
+    collections::{hash_map::Entry, HashMap, HashSet},
+    sync::Arc
 };
 use anyhow::Context as AnyhowContext;
 use better_any::Tid;
@@ -44,7 +45,7 @@ use crate::{
         Signature
     },
     serializer::Serializer,
-    transaction::ContractDeposit,
+    transaction::{ContractDeposit, Transaction},
     versioned_type::VersionedState
 };
 
@@ -81,7 +82,9 @@ pub struct ChainState<'a> {
     // The block in which the contract is executed
     pub block: &'a Block,
     // Tx hash in which the contract is executed
-    pub tx_hash: &'a Hash,
+    // If None, this means the contract was not
+    // invoked by a TX.
+    pub tx_hash: Option<&'a Hash>,
     // The contract cache
     // If the contract was called already, we may have a cache with data
     pub caches: HashMap<Hash, ContractCache>,
@@ -110,7 +113,7 @@ pub struct ChainState<'a> {
 #[derive(Debug, Clone, Default)]
 pub struct ContractEventTracker {
     // Each tx-contract pair has its own transfers
-    pub contracts_transfers: HashMap<(Hash, Hash), HashMap<PublicKey, HashMap<Hash, u64>>>,
+    pub contracts_transfers: HashMap<(Option<Hash>, Hash), HashMap<PublicKey, HashMap<Hash, u64>>>,
     // All the transfers made by all contracts aggregated per public key
     pub aggregated_transfers: HashMap<PublicKey, HashMap<Hash, u64>>,
     // All assets registered by all contracts
@@ -178,7 +181,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             vec![],
             FunctionHandler::Sync(transaction),
             5,
-            Some(tx_type.clone())
+            Some(Type::Optional(Box::new(tx_type.clone())))
         );
         env.register_native_function(
             "nonce",
@@ -1450,6 +1453,16 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             1,
             Some(Type::U64)
         );
+
+        // Get the caller address if any
+        env.register_native_function(
+            "get_caller",
+            None,
+            vec![],
+            FunctionHandler::Sync(get_caller),
+            20,
+            Some(Type::Optional(Box::new(address_type.clone())))
+        );
     }
 
     env
@@ -1740,7 +1753,7 @@ async fn transfer<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut param
         .and_modify(|v| *v += amount)
         .or_insert(amount);
 
-    state.tracker.contracts_transfers.entry((state.tx_hash.clone(), metadata.contract.clone()))
+    state.tracker.contracts_transfers.entry((state.tx_hash.cloned(), metadata.contract.clone()))
         .or_insert_with(HashMap::new)
         .entry(key.clone())
         .or_insert_with(HashMap::new)
@@ -1912,4 +1925,17 @@ fn get_current_topoheight(_: FnInstance, _: FnParams, _: &ModuleMetadata, contex
         .context("ChainState not present in Context")?;
 
     Ok(SysCallResult::Return(Primitive::U64(state.topoheight).into()))
+}
+
+// Returns the address that called this contract if any
+fn get_caller(_: FnInstance, _: FnParams, _: &ModuleMetadata, context: &mut Context) -> FnReturnType<ModuleMetadata> {
+    let state: &ChainState = context.get()
+        .context("ChainState not present in Context")?;
+
+    let mainnet = state.mainnet;
+    let caller = context.get::<Arc<Transaction>>()
+        .map(|tx| Primitive::Opaque(tx.get_source().as_address(mainnet).into()))
+        .unwrap_or_default();
+
+    Ok(SysCallResult::Return(caller.into()))
 }

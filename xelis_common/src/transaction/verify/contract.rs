@@ -149,7 +149,7 @@ impl Transaction {
     ) -> Result<bool, VerificationError<E>> {
         debug!("Invoking contract {} from TX {}: {:?}", contract, tx_hash, invoke);
         // Deposits are actually added to each balance
-        let (contract_environment, mut chain_state) = state.get_contract_environment_for(contract, deposits, tx_hash).await
+        let (contract_environment, mut chain_state) = state.get_contract_environment_for(contract, deposits, Some(tx_hash)).await
             .map_err(VerificationError::State)?;
 
         // Total used gas by the VM

@@ -41,15 +41,20 @@ impl JSONHelper for OpaqueTransaction {}
 impl Serializable for OpaqueTransaction {}
 
 pub fn transaction(_: FnInstance, _: FnParams, _: &ModuleMetadata, context: &mut Context) -> FnReturnType<ModuleMetadata> {
-    let tx: &Arc<Transaction> = context.get()
-        .context("current transaction not found")?;
-    let state: &ChainState = context.get()
-        .context("chain state not found")?;
+    if let Some(tx) = context.get::<Arc<Transaction>>() {
+        let state: &ChainState = context.get()
+            .context("chain state not found")?;
 
-    Ok(SysCallResult::Return(Primitive::Opaque(OpaqueWrapper::new(OpaqueTransaction {
-        inner: tx.clone(),
-        hash: state.tx_hash.clone()
-    })).into()))
+        let hash = state.tx_hash.cloned()
+            .context("tx hash not found")?;
+
+        return Ok(SysCallResult::Return(OpaqueTransaction {
+            inner: tx.clone(),
+            hash,
+        }.into()).into())
+    }
+
+    Ok(SysCallResult::Return(Primitive::Null.into()))
 }
 
 pub fn transaction_nonce(zelf: FnInstance, _: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
