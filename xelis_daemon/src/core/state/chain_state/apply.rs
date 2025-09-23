@@ -262,8 +262,8 @@ impl<'a, S: Storage> BlockchainApplyState<'a, S, BlockchainError> for Applicable
         Ok(())
     }
 
-    async fn get_contract_environment_for<'b>(&'b mut self, contract: &'b Hash, deposits: &'b IndexMap<Hash, ContractDeposit>, tx_hash: &'b Hash) -> Result<(ContractEnvironment<'b, S>, ContractChainState<'b>), BlockchainError> {
-        debug!("get contract environment for contract {} tx {}", contract, tx_hash);
+    async fn get_contract_environment_for<'b>(&'b mut self, contract: &'b Hash, deposits: &'b IndexMap<Hash, ContractDeposit>, tx_hash: Option<&'b Hash>) -> Result<(ContractEnvironment<'b, S>, ContractChainState<'b>), BlockchainError> {
+        debug!("get contract environment for contract {} tx {}", contract, tx_hash.is_some());
 
         // Find the contract module in our cache
         // We don't use the function `get_contract_module_with_environment` because we need to return the mutable storage
@@ -325,7 +325,8 @@ impl<'a, S: Storage> BlockchainApplyState<'a, S, BlockchainError> for Applicable
             assets: self.contract_manager.assets.clone(),
             modules: self.contract_manager.modules.clone(),
             // Global caches (all contracts)
-            global_caches: &self.contract_manager.caches
+            global_caches: &self.contract_manager.caches,
+            injected_gas: IndexMap::new(),
         };
 
         let contract_environment = ContractEnvironment {

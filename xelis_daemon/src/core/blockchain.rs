@@ -2858,7 +2858,7 @@ impl<S: Storage> Blockchain<S> {
 
                                 let value = json!(ContractTransfersEvent {
                                     contract: Cow::Borrowed(contract),
-                                    tx_hash: Cow::Borrowed(tx),
+                                    tx_hash: Cow::Borrowed(tx.as_ref().unwrap_or(&block_hash)),
                                     transfers: Cow::Borrowed(assets),
                                     block_timestamp: block.get_timestamp(),
                                     block_hash: Cow::Borrowed(&hash),
