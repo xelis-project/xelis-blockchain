@@ -1277,8 +1277,7 @@ impl NetworkHandler {
                 res = on_contract_transfers.next() => {
                     let event = res?;
                     debug!("on contract transfers event at topo {} {}", event.topoheight, event.block_hash);
-
-                    let tx_hash = event.tx_hash.into_owned();
+                    let tx_hash = event.tx_hash.unwrap_or(event.block_hash).into_owned();
                     let contract = event.contract.into_owned();
 
                     let mut assets = HashSet::new();
