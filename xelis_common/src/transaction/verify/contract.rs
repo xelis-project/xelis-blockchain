@@ -176,11 +176,11 @@ impl Transaction {
             if vm_max_gas > max_gas && !gas_injections.is_empty() {
                 let mut gas_refund_left = if used_gas > max_gas {
                     // Refund based on whats left unused
-                    vm_max_gas - used_gas
+                    vm_max_gas.checked_sub(used_gas)
                 } else {
                     // Refund the whole extra gas given by contracts
-                    vm_max_gas - max_gas
-                };
+                    vm_max_gas.checked_sub(max_gas)
+                }.ok_or(VerificationError::GasOverflow)?;
 
                 // Reverse the iterator so the latest entry is the first to be refund
                 for (contract, gas) in gas_injections.into_iter().rev() {
