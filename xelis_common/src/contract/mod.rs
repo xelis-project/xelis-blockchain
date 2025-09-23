@@ -1416,6 +1416,15 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             1,
             Some(Type::U64)
         );
+
+        env.register_native_function(
+            "get_current_topoheight",
+            None,
+            vec![],
+            FunctionHandler::Sync(get_current_topoheight),
+            1,
+            Some(Type::U64)
+        );
     }
 
     env
@@ -1837,4 +1846,11 @@ async fn get_account_balance_for_asset<'a, 'ty, 'r, P: ContractProvider>(_: FnIn
 fn get_gas_usage(_: FnInstance, _: FnParams, _: &ModuleMetadata, context: &mut Context) -> FnReturnType<ModuleMetadata> {
     let gas = context.current_gas_usage();
     Ok(SysCallResult::Return(Primitive::U64(gas).into()))
+}
+
+fn get_current_topoheight(_: FnInstance, _: FnParams, _: &ModuleMetadata, context: &mut Context) -> FnReturnType<ModuleMetadata> {
+    let state: &ChainState = context.get()
+        .context("ChainState not present in Context")?;
+
+    Ok(SysCallResult::Return(Primitive::U64(state.topoheight).into()))
 }
