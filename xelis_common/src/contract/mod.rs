@@ -1418,6 +1418,15 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
         );
 
         env.register_native_function(
+            "get_gas_limit",
+            None,
+            vec![],
+            FunctionHandler::Sync(get_gas_limit),
+            1,
+            Some(Type::U64)
+        );
+
+        env.register_native_function(
             "get_current_topoheight",
             None,
             vec![],
@@ -1845,6 +1854,11 @@ async fn get_account_balance_for_asset<'a, 'ty, 'r, P: ContractProvider>(_: FnIn
 
 fn get_gas_usage(_: FnInstance, _: FnParams, _: &ModuleMetadata, context: &mut Context) -> FnReturnType<ModuleMetadata> {
     let gas = context.current_gas_usage();
+    Ok(SysCallResult::Return(Primitive::U64(gas).into()))
+}
+
+fn get_gas_limit(_: FnInstance, _: FnParams, _: &ModuleMetadata, context: &mut Context) -> FnReturnType<ModuleMetadata> {
+    let gas = context.get_gas_limit();
     Ok(SysCallResult::Return(Primitive::U64(gas).into()))
 }
 
