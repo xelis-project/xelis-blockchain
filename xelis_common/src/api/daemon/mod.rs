@@ -951,8 +951,8 @@ pub struct ContractTransfersEvent<'a> {
     pub block_timestamp: TimestampMillis,
     // Transaction hash that triggered this transfer
     // If the contract was not executed by a TX,
-    // it contains the block hash in which it was executed
-    pub tx_hash: Cow<'a, Hash>,
+    // it is set to None
+    pub tx_hash: Option<Cow<'a, Hash>>,
     // Contract address called,
     pub contract: Cow<'a, Hash>,
     // Block topoheight in which this transfer happened
