@@ -58,7 +58,7 @@ impl Transaction {
         deposits: IndexMap<Hash, ContractDeposit>,
         parameters: impl DoubleEndedIterator<Item = ValueCell>,
         max_gas: u64,
-    ) -> Result<(u64, Option<u64>), anyhow::Error> {
+    ) -> Result<(u64, u64, Option<u64>), anyhow::Error> {
         debug!("run virtual machine for tx {} and max as {}", tx_hash, max_gas);
         let mut vm = VM::new(&contract_environment.environment);
 
@@ -80,7 +80,7 @@ impl Transaction {
             InvokeContract::Hook(hook) => {
                 if !vm.invoke_hook_id(hook).context("invoke hook")? {
                     warn!("Invoke contract {} from TX {} hook {} not found", contract, tx_hash, hook);
-                    return Ok((0, None))
+                    return Ok((0, max_gas, None))
                 }
             }
         }
@@ -111,9 +111,11 @@ impl Transaction {
 
         // To be sure that we don't have any overflow
         // We take the minimum between the gas used and the max gas
-        let gas_usage = vm.context()
+        let context = vm.context();
+        let gas_usage = context
             .current_gas_usage()
             .min(max_gas);
+        let vm_max_gas = context.get_gas_limit();
 
         let exit_code = match res {
             Ok(res) => {
@@ -128,7 +130,7 @@ impl Transaction {
             }
         };
 
-        Ok((gas_usage, exit_code))
+        Ok((gas_usage, vm_max_gas, exit_code))
     }
 
     // Invoke a contract from a transaction
@@ -151,7 +153,7 @@ impl Transaction {
             .map_err(VerificationError::State)?;
 
         // Total used gas by the VM
-        let (used_gas, exit_code) = Self::run_virtual_machine(
+        let (used_gas, vm_max_gas, exit_code) = Self::run_virtual_machine(
             self,
             contract_environment,
             &mut chain_state,
@@ -164,12 +166,52 @@ impl Transaction {
         ).await?;
 
         let is_success = exit_code == Some(0);
-        let mut outputs = chain_state.outputs;
         // If the contract execution was successful, we need to merge the cache
+        let mut outputs = chain_state.outputs;
         if is_success {
-            let caches = chain_state.caches;
+            let mut caches = chain_state.caches;
+            let gas_injections = chain_state.injected_gas;
+
+            // Some contract have injected gas to users
+            if vm_max_gas > max_gas && !gas_injections.is_empty() {
+                let mut gas_refund_left = if used_gas > max_gas {
+                    // Refund based on whats left unused
+                    vm_max_gas - used_gas
+                } else {
+                    // Refund the whole extra gas given by contracts
+                    vm_max_gas - max_gas
+                };
+
+                // Reverse the iterator so the latest entry is the first to be refund
+                for (contract, gas) in gas_injections.into_iter().rev() {
+                    // the gas provided by the contract
+                    // is lower or equal to whats left to refund
+                    let cache = caches.get_mut(&contract)
+                        .context("Contract cache not found for gas refund")?;
+
+                    let (state, balance) = cache.balances.get_mut(&XELIS_ASSET)
+                        .context("Gas balance not found for contract")?
+                        .as_mut()
+                        .context("No gas balance found for contract")?;
+
+                    state.mark_updated();
+
+                    // Refund the smaller of what was injected or what's left
+                    let refund = gas.min(gas_refund_left);
+                    debug!("Refund {} XEL to contract {} for gas fee", refund, contract);
+                    *balance += refund;
+
+                    gas_refund_left -= refund;
+
+                    if gas_refund_left == 0 {
+                        break;
+                    }
+                }
+            }
+
             let tracker = chain_state.tracker;
             let assets = chain_state.assets;
+
             state.merge_contract_changes(
                 caches,
                 tracker,
@@ -191,9 +233,9 @@ impl Transaction {
         // Push the exit code to the outputs
         outputs.push(ContractOutput::ExitCode(exit_code));
 
-        // We must refund all the gas not used by the contract
         let refund_gas = self.handle_gas(state, used_gas, max_gas).await?;
         debug!("used gas: {}, refund gas: {}", used_gas, refund_gas);
+
         if refund_gas > 0 {
             outputs.push(ContractOutput::RefundGas { amount: refund_gas });
         }
@@ -209,7 +251,7 @@ impl Transaction {
         &'a self,
         state: &mut B,
         used_gas: u64,
-        max_gas: u64
+        tx_max_gas: u64,
     ) -> Result<u64, VerificationError<E>> {
         // Part of the gas is burned
         let burned_gas = used_gas * TX_GAS_BURN_PERCENT / 100;
@@ -217,8 +259,13 @@ impl Transaction {
         let gas_fee = used_gas.checked_sub(burned_gas)
             .ok_or(VerificationError::GasOverflow)?;
         // The remaining gas is refunded to the sender
-        let refund_gas = max_gas.checked_sub(used_gas)
-            .ok_or(VerificationError::GasOverflow)?;
+        // if used gas is above tx max gas, we don't
+        // refund any gas to user
+        let refund_gas = if used_gas > tx_max_gas {
+            0
+        } else {
+            tx_max_gas - used_gas
+        };
 
         debug!("Invoke contract used gas: {}, burned: {}, fee: {}, refund: {}", used_gas, burned_gas, gas_fee, refund_gas);
         state.add_burned_fee(burned_gas).await

@@ -12,6 +12,7 @@ use std::{
 use anyhow::Context as AnyhowContext;
 use better_any::Tid;
 use curve25519_dalek::Scalar;
+use indexmap::IndexMap;
 use log::{debug, info};
 use xelis_builder::EnvironmentBuilder;
 use xelis_vm::{
@@ -33,6 +34,7 @@ use crate::{
     config::{
         FEE_PER_ACCOUNT_CREATION,
         FEE_PER_BYTE_OF_EVENT_DATA,
+        XELIS_ASSET,
     },
     crypto::{
         proofs::{CiphertextValidityProof, CommitmentEqProof, G, H},
@@ -98,6 +100,10 @@ pub struct ChainState<'a> {
     // This either contains loaded assets, or registered
     // If its none, it means we didn't found the asset in storage
     pub assets: HashMap<Hash, Option<AssetChanges>>,
+    // gas being injected to the invoke gas limit by contracts
+    // it is kept in insertion order to rollback funds to contract
+    // in case they were not fully used
+    pub injected_gas: IndexMap<Hash, u64>
 }
 
 // Aggregate all events from all executed contracts to track in one structure
@@ -1426,6 +1432,16 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             Some(Type::U64)
         );
 
+        // Increase the gas limit for the caller using contract funds
+        env.register_native_function(
+            "increase_gas_limit",
+            None,
+            vec![],
+            FunctionHandler::Async(async_handler!(increase_gas_limit::<P>)),
+            150,
+            Some(Type::U64)
+        );
+
         env.register_native_function(
             "get_current_topoheight",
             None,
@@ -1860,6 +1876,35 @@ fn get_gas_usage(_: FnInstance, _: FnParams, _: &ModuleMetadata, context: &mut C
 fn get_gas_limit(_: FnInstance, _: FnParams, _: &ModuleMetadata, context: &mut Context) -> FnReturnType<ModuleMetadata> {
     let gas = context.get_gas_limit();
     Ok(SysCallResult::Return(Primitive::U64(gas).into()))
+}
+
+// Increase the gas limit using contract balance
+async fn increase_gas_limit<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, params: FnParams, metadata: &ModuleMetadata, context: &mut Context<'ty, 'r>) -> FnReturnType<ModuleMetadata> {
+    let amount = params[0].as_u64()?;
+    let (provider, state) = from_context::<P>(context)?;
+
+    let res = get_balance_from_cache(provider, state, metadata.contract.clone(), XELIS_ASSET).await?
+        .as_mut();
+
+    let Some((balance_state, balance)) = res else {
+        return Ok(SysCallResult::Return(Primitive::Boolean(false).into()));
+    };
+
+    // Check we have at least amount in balance
+    if *balance < amount {
+        return Ok(SysCallResult::Return(Primitive::Boolean(false).into()));
+    }
+
+    *balance -= amount;
+    balance_state.mark_updated();
+
+    // Track that each contract have injected N gas
+    *state.injected_gas.entry(metadata.contract.clone())
+        .or_insert(0) += amount;
+
+    context.increase_gas_limit(amount)?;
+
+    Ok(SysCallResult::Return(Primitive::Boolean(true).into()))
 }
 
 fn get_current_topoheight(_: FnInstance, _: FnParams, _: &ModuleMetadata, context: &mut Context) -> FnReturnType<ModuleMetadata> {
