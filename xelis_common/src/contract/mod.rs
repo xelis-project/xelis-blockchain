@@ -160,6 +160,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
     let commitment_equality_proof_type = Type::Opaque(env.register_opaque::<CommitmentEqProof>("CommitmentEqualityProof", true));
     let range_proof_type = Type::Opaque(env.register_opaque::<RangeProofWrapper>("RangeProof", true));
 
+    // Misc
     let module_type = Type::Opaque(env.register_opaque::<OpaqueModule>("Module", false));
 
     // Transaction
@@ -754,7 +755,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
         );
     }
 
-    // Asset related functions
+    // Misc functions
     {
         // Get the current contract hash
         env.register_native_function(
@@ -805,6 +806,19 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             FunctionHandler::Async(async_handler!(get_balance_for_asset::<P>)),
             25,
             Some(Type::U64)
+        );
+
+        // Retrieve the balance for the given asset of a contract
+        env.register_native_function(
+            "get_contract_balance_for_asset",
+            None,
+            vec![
+                ("contract", hash_type.clone()),
+                ("asset", hash_type.clone())
+            ],
+            FunctionHandler::Async(async_handler!(get_contract_balance_for_asset::<P>)),
+            250,
+            Some(Type::Optional(Box::new(Type::U64)))
         );
 
         env.register_native_function(
@@ -1383,13 +1397,13 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
 
         // Retrieve the ciphertext and the topoheight at which it got fetched
         env.register_native_function(
-            "get_account_balance_of",
+            "get_account_balance_for_asset",
             None,
             vec![
                 ("address", address_type.clone()),
                 ("asset", hash_type.clone())
             ],
-            FunctionHandler::Async(async_handler!(get_account_balance_of::<P>)),
+            FunctionHandler::Async(async_handler!(get_account_balance_for_asset::<P>)),
             1000,
             Some(Type::Optional(Box::new(Type::Tuples(vec![Type::U64, ciphertext_type.clone()]))))
         );
@@ -1619,6 +1633,24 @@ async fn get_balance_for_asset<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'
     Ok(SysCallResult::Return(balance.into()))
 }
 
+async fn get_contract_balance_for_asset<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: FnParams, _: &ModuleMetadata, context: &mut Context<'ty, 'r>) -> FnReturnType<ModuleMetadata> {
+    let (provider, state) = from_context::<P>(context)?;
+
+    let contract: Hash = params.remove(0)
+        .into_owned()
+        .into_opaque_type()?;
+
+    let asset: Hash = params.remove(1)
+        .into_owned()
+        .into_opaque_type()?;
+
+    let balance: ValueCell = get_balance_from_cache(provider, state, contract, asset).await?
+        .map(|(_, v)| Primitive::U64(v).into())
+        .unwrap_or_default();
+
+    Ok(SysCallResult::Return(balance.into()))
+}
+
 async fn transfer<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata, context: &mut Context<'ty, 'r>) -> FnReturnType<ModuleMetadata> {
     debug!("Transfer called {:?}", params);
 
@@ -1781,7 +1813,7 @@ async fn burn<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: F
     Ok(SysCallResult::Return(Primitive::Boolean(true).into()))
 }
 
-async fn get_account_balance_of<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: FnParams, _: &ModuleMetadata, context: &mut Context<'ty, 'r>) -> FnReturnType<ModuleMetadata> {
+async fn get_account_balance_for_asset<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: FnParams, _: &ModuleMetadata, context: &mut Context<'ty, 'r>) -> FnReturnType<ModuleMetadata> {
     let (provider, state) = from_context::<P>(context)?;
 
     let asset: Hash = params.remove(1)

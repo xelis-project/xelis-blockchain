@@ -63,7 +63,6 @@ impl Transaction {
         let mut vm = VM::new(&contract_environment.environment);
 
         // Insert the module to load
-        // TODO: module metadata should be passed to the VM
         let metadata = ModuleMetadata {
             contract: contract.clone(),
             caller: None,
