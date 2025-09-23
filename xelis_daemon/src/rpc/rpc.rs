@@ -1153,7 +1153,10 @@ const MAX_HISTORY: usize = 20;
 async fn get_account_history<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: GetAccountHistoryParams = parse_params(body)?;
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
-    if params.address.is_mainnet() != blockchain.get_network().is_mainnet() {
+
+
+    let is_mainnet = blockchain.get_network().is_mainnet();
+    if params.address.is_mainnet() != is_mainnet {
         return Err(InternalRpcError::InvalidParamsAny(BlockchainError::InvalidNetwork.into()))
     }
 
@@ -1170,12 +1173,13 @@ async fn get_account_history<S: Storage>(context: &Context, body: Value) -> Resu
             return Err(InternalRpcError::InvalidParams("Maximum topoheight is lower than pruned topoheight"));
         }
 
-
         // if incoming flows aren't accepted
         // use nonce versions to determine topoheight
         if !params.incoming_flow {
-            if let Some((topo, nonce)) = storage.get_nonce_at_maximum_topoheight(key, topo).await.context("Error while retrieving last nonce")? {
-                let version = storage.get_balance_at_exact_topoheight(key, &params.asset, topo).await.context(format!("Error while retrieving balance at nonce topo height {topo}"))?;
+            if let Some((topo, nonce)) = storage.get_nonce_at_maximum_topoheight(key, topo).await
+                .context("Error while retrieving last nonce")? {
+                let version = storage.get_balance_at_exact_topoheight(key, &params.asset, topo).await
+                    .context(format!("Error while retrieving balance at nonce topo height {topo}"))?;
                 Some((topo, nonce.get_previous_topoheight(), version))
             } else {
                 None
@@ -1213,13 +1217,16 @@ async fn get_account_history<S: Storage>(context: &Context, body: Value) -> Resu
 
         // Get the block header at topoheight
         // we will scan it below for transactions and rewards
-        let (hash, block_header) = storage.get_block_header_at_topoheight(topo).await.context(format!("Error while retrieving block header at topo height {topo}"))?;
+        let (hash, block_header) = storage.get_block_header_at_topoheight(topo).await
+            .context(format!("Error while retrieving block header at topo height {topo}"))?;
 
         // Block reward is only paid in XELIS
         if params.asset == XELIS_ASSET {
             let is_miner = *block_header.get_miner() == *key;
             if (is_miner || is_dev_address) && params.incoming_flow {
-                let mut reward = storage.get_block_reward_at_topo_height(topo).await.context(format!("Error while retrieving reward at topo height {topo}"))?;
+                let mut reward = storage.get_block_reward_at_topo_height(topo).await
+                    .context(format!("Error while retrieving reward at topo height {topo}"))?;
+
                 // subtract dev fee if any
                 let dev_fee_percentage = get_block_dev_fee(block_header.get_height());
                 if dev_fee_percentage != 0 {
@@ -1255,7 +1262,9 @@ async fn get_account_history<S: Storage>(context: &Context, body: Value) -> Resu
             }
 
             trace!("Searching tx {} in block {}", tx_hash, hash);
-            let tx = storage.get_transaction(tx_hash).await.context(format!("Error while retrieving transaction {tx_hash} from block {hash}"))?;
+            let tx = storage.get_transaction(tx_hash).await
+                .context(format!("Error while retrieving transaction {tx_hash} from block {hash}"))?;
+
             let is_sender = *tx.get_source() == *key;
             match tx.get_data() {
                 TransactionType::Transfers(transfers) => {
@@ -1266,7 +1275,7 @@ async fn get_account_history<S: Storage>(context: &Context, body: Value) -> Resu
                                     topoheight: topo,
                                     hash: tx_hash.clone(),
                                     history_type: AccountHistoryType::Incoming {
-                                        from: tx.get_source().as_address(blockchain.get_network().is_mainnet())
+                                        from: tx.get_source().as_address(is_mainnet)
                                     },
                                     block_timestamp: block_header.get_timestamp()
                                 });
@@ -1277,7 +1286,7 @@ async fn get_account_history<S: Storage>(context: &Context, body: Value) -> Resu
                                     topoheight: topo,
                                     hash: tx_hash.clone(),
                                     history_type: AccountHistoryType::Outgoing {
-                                        to: transfer.get_destination().as_address(blockchain.get_network().is_mainnet())
+                                        to: transfer.get_destination().as_address(is_mainnet)
                                     },
                                     block_timestamp: block_header.get_timestamp()
                                 });
@@ -1299,12 +1308,11 @@ async fn get_account_history<S: Storage>(context: &Context, body: Value) -> Resu
                 },
                 TransactionType::MultiSig(payload) => {
                     if is_sender {
-                        let mainnet = blockchain.get_network().is_mainnet();
                         history.push(AccountHistoryEntry {
                             topoheight: topo,
                             hash: tx_hash.clone(),
                             history_type: AccountHistoryType::MultiSig {
-                                participants: payload.participants.iter().map(|p| p.as_address(mainnet)).collect(),
+                                participants: payload.participants.iter().map(|p| p.as_address(is_mainnet)).collect(),
                                 threshold: payload.threshold,
                             },
                             block_timestamp: block_header.get_timestamp()
@@ -1345,14 +1353,22 @@ async fn get_account_history<S: Storage>(context: &Context, body: Value) -> Resu
         // if incoming flows aren't accepted
         // use nonce versions to determine topoheight
         if let Some(previous) = prev_nonce.filter(|_| !params.incoming_flow) {
-            let nonce_version = storage.get_nonce_at_exact_topoheight(key, previous).await.context(format!("Error while retrieving nonce at topo height {previous}"))?;
-            version = Some((previous, nonce_version.get_previous_topoheight(), storage.get_balance_at_exact_topoheight(key, &params.asset, previous).await.context(format!("Error while retrieving previous balance at topo height {previous}"))?));
+            let nonce_version = storage.get_nonce_at_exact_topoheight(key, previous).await
+                .context(format!("Error while retrieving nonce at topo height {previous}"))?;
+
+            let balance = storage.get_balance_at_exact_topoheight(key, &params.asset, previous).await
+                .context(format!("Error while retrieving previous balance at topo height {previous}"))?;
+
+            version = Some((previous, nonce_version.get_previous_topoheight(), balance));
         } else if let Some(previous) = versioned_balance.get_previous_topoheight().filter(|_| params.incoming_flow) {
             if previous < pruned_topoheight {
                 break;
             }
 
-            version = Some((previous, None, storage.get_balance_at_exact_topoheight(key, &params.asset, previous).await.context(format!("Error while retrieving previous balance at topo height {previous}"))?));
+            let balance = storage.get_balance_at_exact_topoheight(key, &params.asset, previous).await
+                .context(format!("Error while retrieving previous balance at topo height {previous}"))?;
+
+            version = Some((previous, None, balance));
         }
     }
 
