@@ -72,6 +72,23 @@ use serde_json::{json, Value};
 use std::{borrow::Cow, collections::HashMap, sync::Arc};
 use log::{info, debug, trace};
 
+// limit the result returned per `get_dag_order` rpc method
+const MAX_DAG_ORDER: u64 = 64;
+// limit the returned result per contract / account assets rpc methods
+const MAX_ASSETS: usize = 64;
+// limit the count of TXs summary returned per rpc method call
+const MAX_MEMPOOL_TXS_SUMMARY: usize = 1024;
+// Maximum TXs summary from disk returned
+const MAX_TXS_SUMMARY: usize = 64;
+// Maximum range available for fetching blocks
+const MAX_BLOCKS: u64 = 20;
+// Maximum TXs fetch per call
+const MAX_TXS: usize = 20;
+// Maximum history (versions fetched) per call
+const MAX_ACCOUNT_HISTORY: usize = 20;
+// Maximum accounts to fetch per call
+const MAX_ACCOUNTS: usize = 100;
+
 // Get the block type using the block hash and the blockchain current state
 pub async fn get_block_type_for_block<S: Storage, P: DifficultyProvider + DagOrderProvider + BlocksAtHeightProvider + PrunedTopoheightProvider>(blockchain: &Blockchain<S>, provider: &P, hash: &Hash) -> Result<BlockType, InternalRpcError> {
     Ok(if blockchain.is_block_orphaned_for_storage(provider, hash).await? {
@@ -726,9 +743,6 @@ async fn get_asset_supply<S: Storage>(context: &Context, body: Value) -> Result<
     }))
 }
 
-
-const MAX_ASSETS: usize = 100;
-
 async fn get_assets<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: GetAssetsParams = parse_params(body)?;
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
@@ -918,13 +932,11 @@ async fn get_mempool<S: Storage>(context: &Context, body: Value) -> Result<Value
     }))
 }
 
-pub const MAX_SUMMARY: usize = 1024;
-
 async fn get_mempool_summary<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: GetMempoolParams = parse_params(body)?;
 
-    let maximum = params.maximum.filter(|v| *v <= MAX_SUMMARY)
-        .unwrap_or(MAX_SUMMARY);
+    let maximum = params.maximum.filter(|v| *v <= MAX_MEMPOOL_TXS_SUMMARY)
+        .unwrap_or(MAX_MEMPOOL_TXS_SUMMARY);
 
     let skip = params.skip.unwrap_or(0);
 
@@ -999,7 +1011,6 @@ async fn get_tips<S: Storage>(context: &Context, body: Value) -> Result<Value, I
     Ok(json!(tips))
 }
 
-const MAX_DAG_ORDER: u64 = 64;
 // get dag order based on params
 // if no params found, get order of last 64 blocks
 async fn get_dag_order<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
@@ -1019,8 +1030,6 @@ async fn get_dag_order<S: Storage>(context: &Context, body: Value) -> Result<Val
 
     Ok(json!(order))
 }
-
-const MAX_BLOCKS: u64 = 20;
 
 fn get_range(start: Option<TopoHeight>, end: Option<TopoHeight>, maximum: u64, current: TopoHeight) -> Result<(TopoHeight, TopoHeight), InternalRpcError> {
     let range_start = start.unwrap_or_else(|| {
@@ -1088,7 +1097,6 @@ async fn get_blocks_range_by_height<S: Storage>(context: &Context, body: Value) 
     Ok(json!(blocks))
 }
 
-const MAX_TXS: usize = 20;
 // get up to 20 transactions at once
 // if a tx hash is not present, we keep the order and put json "null" value
 async fn get_transactions<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
@@ -1117,9 +1125,7 @@ async fn get_transactions<S: Storage>(context: &Context, body: Value) -> Result<
     Ok(json!(transactions))
 }
 
-const MAX_TXS_SUMMARY: usize = 100;
-
-// get up to 100 transactions summary at once
+// get up to N transactions summary at once
 // if a tx hash is not present, we keep the order and put json "null" value
 async fn get_transactions_summary<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: GetTransactionsParams = parse_params(body)?;
@@ -1130,25 +1136,26 @@ async fn get_transactions_summary<S: Storage>(context: &Context, body: Value) ->
     }
 
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    let mainnet = blockchain.get_network().is_mainnet();
     let mut transactions = Vec::with_capacity(hashes.len());
     for hash in hashes {
-        let tx = if let Some(tx)  = blockchain.get_tx(&hash).await.ok() {
-            Some(TransactionSummary {
-                hash: Cow::Owned(hash),
-                source: tx.get_source().as_address(blockchain.get_network().is_mainnet()),
-                fee: tx.get_fee(),
-                size: tx.size()
-            })
-        } else {
-            None
-        };
+        let tx = blockchain.get_tx(&hash).await
+            .ok()
+            .map(|tx|
+                Some(TransactionSummary {
+                    hash: Cow::Owned(hash),
+                    source: tx.get_source().as_address(mainnet),
+                    fee: tx.get_fee(),
+                    size: tx.size()
+                })
+            );
+
         transactions.push(tx);
     }
 
     Ok(json!(transactions))
 }
 
-const MAX_HISTORY: usize = 20;
 // retrieve all history changes for an account on an asset
 async fn get_account_history<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: GetAccountHistoryParams = parse_params(body)?;
@@ -1346,7 +1353,7 @@ async fn get_account_history<S: Storage>(context: &Context, body: Value) -> Resu
         }
 
         history_count += 1;
-        if history_count >= MAX_HISTORY {
+        if history_count >= MAX_ACCOUNT_HISTORY {
             break;
         }
 
@@ -1383,12 +1390,12 @@ async fn get_account_assets<S: Storage>(context: &Context, body: Value) -> Resul
     }
 
     let maximum = if let Some(maximum) = params.maximum {
-        if maximum > MAX_ACCOUNTS {
-            return Err(InternalRpcError::InvalidJSONRequest).context(format!("Maximum accounts requested cannot be greater than {}", MAX_ACCOUNTS))?
+        if maximum > MAX_ASSETS {
+            return Err(InternalRpcError::InvalidJSONRequest).context(format!("Maximum assets requested cannot be greater than {}", MAX_ASSETS))?
         }
         maximum
     } else {
-        MAX_ACCOUNTS
+        MAX_ASSETS
     };
     let skip = params.skip.unwrap_or(0);
 
@@ -1402,37 +1409,43 @@ async fn get_account_assets<S: Storage>(context: &Context, body: Value) -> Resul
     Ok(json!(assets))
 }
 
-const MAX_ACCOUNTS: usize = 100;
 // retrieve all available accounts (each account got at least one interaction on chain)
 async fn get_accounts<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: GetAccountsParams = parse_params(body)?;
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let topoheight = blockchain.get_topo_height();
+
     let maximum = if let Some(maximum) = params.maximum {
         if maximum > MAX_ACCOUNTS {
-            return Err(InternalRpcError::InvalidJSONRequest).context(format!("Maximum accounts requested cannot be greater than {}", MAX_ACCOUNTS))?
+            return Err(InternalRpcError::InvalidJSONRequest)
+                .context(format!("Maximum accounts requested cannot be greater than {}", MAX_ACCOUNTS))?
         }
         maximum
     } else {
         MAX_ACCOUNTS
     };
+
     let skip = params.skip.unwrap_or(0);
     let minimum_topoheight = if let Some(minimum) = params.minimum_topoheight {
         if minimum > topoheight {
-            return Err(InternalRpcError::InvalidJSONRequest).context(format!("Minimum topoheight requested cannot be greater than {}", topoheight))?
+            return Err(InternalRpcError::InvalidJSONRequest)
+                .context(format!("Minimum topoheight requested cannot be greater than {}", topoheight))?
         }
 
         minimum
     } else {
         0
     };
+
     let maximum_topoheight = if let Some(maximum) = params.maximum_topoheight {
         if maximum > topoheight {
-            return Err(InternalRpcError::InvalidJSONRequest).context(format!("Maximum topoheight requested cannot be greater than {}", topoheight))?
+            return Err(InternalRpcError::InvalidJSONRequest)
+                .context(format!("Maximum topoheight requested cannot be greater than {}", topoheight))?
         }
 
         if maximum < minimum_topoheight {
-            return Err(InternalRpcError::InvalidJSONRequest).context(format!("Maximum topoheight requested must be greater or equal to {}", minimum_topoheight))?
+            return Err(InternalRpcError::InvalidJSONRequest)
+                .context(format!("Maximum topoheight requested must be greater or equal to {}", minimum_topoheight))?
         }
         maximum
     } else {
