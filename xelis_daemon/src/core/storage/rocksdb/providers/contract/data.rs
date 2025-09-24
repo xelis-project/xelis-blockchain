@@ -131,7 +131,9 @@ impl ContractDataProvider for RocksStorage {
     }
 
     async fn get_contract_data_entries_at_maximum_topoheight<'a>(&'a self, contract: &'a Hash, topoheight: TopoHeight) -> Result<impl Stream<Item = Result<(ValueCell, ValueCell), BlockchainError>> + Send + 'a, BlockchainError> {
-        let iterator = self.iter_keys::<u64>(Column::ContractsData, IteratorMode::WithPrefix(contract.as_bytes(), Direction::Forward))?;
+        trace!("get contract {} data entries at maximum topoheight {}", contract, topoheight);
+        let contract_id = self.get_contract_id(contract)?;
+        let iterator = self.iter_keys::<u64>(Column::ContractsData, IteratorMode::WithPrefix(&contract_id.to_be_bytes(), Direction::Forward))?;
         Ok(stream::iter(iterator)
             .map(move |res| async move {
                 let id = res?;
