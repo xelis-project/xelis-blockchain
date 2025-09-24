@@ -764,111 +764,6 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
         );
     }
 
-    // Misc functions
-    {
-        // Get the current contract hash
-        env.register_native_function(
-            "get_contract_hash",
-            None,
-            vec![],
-            FunctionHandler::Sync(get_contract_hash),
-            5,
-            Some(hash_type.clone())
-        );
-
-        // Get the initial contract hash used as an entry point
-        env.register_native_function(
-            "get_contract_entry",
-            None,
-            vec![],
-            FunctionHandler::Sync(get_contract_entry),
-            5,
-            Some(hash_type.clone())
-        );
-
-        // Get the contract caller if any
-        // Useful to know if it was called by another contract
-        env.register_native_function(
-            "get_contract_caller",
-            None,
-            vec![],
-            FunctionHandler::Sync(get_contract_caller),
-            5,
-            Some(Type::Optional(Box::new(hash_type.clone())))
-        );
-
-        // Retrieve the deposit for the given asset
-        env.register_native_function(
-            "get_deposit_for_asset",
-            None,
-            vec![("asset", hash_type.clone())],
-            FunctionHandler::Sync(get_deposit_for_asset),
-            5,
-            Some(Type::Optional(Box::new(Type::U64)))
-        );
-
-        // Retrieve the balance for the given asset
-        env.register_native_function(
-            "get_balance_for_asset",
-            None,
-            vec![("asset", hash_type.clone())],
-            FunctionHandler::Async(async_handler!(get_balance_for_asset::<P>)),
-            25,
-            Some(Type::U64)
-        );
-
-        // Retrieve the balance for the given asset of a contract
-        env.register_native_function(
-            "get_contract_balance_for_asset",
-            None,
-            vec![
-                ("contract", hash_type.clone()),
-                ("asset", hash_type.clone())
-            ],
-            FunctionHandler::Async(async_handler!(get_contract_balance_for_asset::<P>)),
-            250,
-            Some(Type::Optional(Box::new(Type::U64)))
-        );
-
-        env.register_native_function(
-            "transfer",
-            None,
-            vec![
-                ("destination", address_type.clone()),
-                ("amount", Type::U64),
-                ("asset", hash_type.clone()),
-            ],
-            FunctionHandler::Async(async_handler!(transfer::<P>)),
-            500,
-            Some(Type::Bool)
-        );
-
-        env.register_native_function(
-            "transfer_contract",
-            None,
-            vec![
-                ("contract", hash_type.clone()),
-                ("amount", Type::U64),
-                ("asset", hash_type.clone()),
-            ],
-            FunctionHandler::Async(async_handler!(transfer_contract::<P>)),
-            250,
-            Some(Type::Bool)
-        );
-
-        env.register_native_function(
-            "burn",
-            None,
-            vec![
-                ("amount", Type::U64),
-                ("asset", hash_type.clone()),
-            ],
-            FunctionHandler::Async(async_handler!(burn::<P>)),
-            500,
-            Some(Type::Bool)
-        );
-    }
-
     // Signature
     {
         env.register_native_function(
@@ -1389,6 +1284,111 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
 
     // Misc
     {
+        // Get the current contract hash
+        env.register_native_function(
+            "get_contract_hash",
+            None,
+            vec![],
+            FunctionHandler::Sync(get_contract_hash),
+            5,
+            Some(hash_type.clone())
+        );
+
+        // Get the initial contract hash used as an entry point
+        env.register_native_function(
+            "get_contract_entry",
+            None,
+            vec![],
+            FunctionHandler::Sync(get_contract_entry),
+            5,
+            Some(hash_type.clone())
+        );
+
+        // Get the contract caller if any
+        // Useful to know if it was called by another contract
+        env.register_native_function(
+            "get_contract_caller",
+            None,
+            vec![],
+            FunctionHandler::Sync(get_contract_caller),
+            5,
+            Some(Type::Optional(Box::new(hash_type.clone())))
+        );
+
+        // Retrieve the deposit for the given asset
+        env.register_native_function(
+            "get_deposit_for_asset",
+            None,
+            vec![("asset", hash_type.clone())],
+            FunctionHandler::Sync(get_deposit_for_asset),
+            5,
+            Some(Type::Optional(Box::new(Type::U64)))
+        );
+
+        // Retrieve the balance for the given asset
+        env.register_native_function(
+            "get_balance_for_asset",
+            None,
+            vec![("asset", hash_type.clone())],
+            FunctionHandler::Async(async_handler!(get_balance_for_asset::<P>)),
+            25,
+            Some(Type::U64)
+        );
+
+        // Retrieve the balance for the given asset of a contract
+        env.register_native_function(
+            "get_contract_balance_for_asset",
+            None,
+            vec![
+                ("contract", hash_type.clone()),
+                ("asset", hash_type.clone())
+            ],
+            FunctionHandler::Async(async_handler!(get_contract_balance_for_asset::<P>)),
+            250,
+            Some(Type::Optional(Box::new(Type::U64)))
+        );
+
+        // Transfer asset to an account
+        env.register_native_function(
+            "transfer",
+            None,
+            vec![
+                ("destination", address_type.clone()),
+                ("amount", Type::U64),
+                ("asset", hash_type.clone()),
+            ],
+            FunctionHandler::Async(async_handler!(transfer::<P>)),
+            500,
+            Some(Type::Bool)
+        );
+
+        // Transfer asset to a contract
+        env.register_native_function(
+            "transfer_contract",
+            None,
+            vec![
+                ("contract", hash_type.clone()),
+                ("amount", Type::U64),
+                ("asset", hash_type.clone()),
+            ],
+            FunctionHandler::Async(async_handler!(transfer_contract::<P>)),
+            250,
+            Some(Type::Bool)
+        );
+
+        // Burn an asset
+        env.register_native_function(
+            "burn",
+            None,
+            vec![
+                ("amount", Type::U64),
+                ("asset", hash_type.clone()),
+            ],
+            FunctionHandler::Async(async_handler!(burn::<P>)),
+            500,
+            Some(Type::Bool)
+        );
+
         // Generate a RPC event from contract
         // this is useful for applications that want to be 
         // dynamic and raise events on a specific action
@@ -1417,6 +1417,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             Some(Type::Optional(Box::new(Type::Tuples(vec![Type::U64, ciphertext_type.clone()]))))
         );
 
+        // Get the current gas usage
         env.register_native_function(
             "get_gas_usage",
             None,
@@ -1426,6 +1427,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             Some(Type::U64)
         );
 
+        // Current gas limit allowed by the VM
         env.register_native_function(
             "get_gas_limit",
             None,
@@ -1445,6 +1447,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             Some(Type::U64)
         );
 
+        // Current block topoheight in which we are executing this contract
         env.register_native_function(
             "get_current_topoheight",
             None,
@@ -1455,6 +1458,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
         );
 
         // Get the caller address if any
+        // This may returns null if no address is available
         env.register_native_function(
             "get_caller",
             None,
