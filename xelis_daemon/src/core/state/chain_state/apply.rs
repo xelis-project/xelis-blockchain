@@ -309,9 +309,11 @@ impl<'a, S: Storage> BlockchainApplyState<'a, S, BlockchainError> for Applicable
             }
         }
 
+        let mainnet = self.inner.storage.is_mainnet();
         let state = ContractChainState {
-            debug_mode: true,
-            mainnet: self.inner.storage.is_mainnet(),
+            // TODO: only available on mainnet & enabled by a config
+            debug_mode: !mainnet,
+            mainnet,
             entry_contract: contract,
             topoheight: self.inner.topoheight,
             block_hash: self.block_hash,
