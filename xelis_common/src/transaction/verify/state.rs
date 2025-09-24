@@ -28,7 +28,8 @@ use crate::{
         MultiSigPayload,
         Reference,
         Transaction
-    }
+    },
+    versioned_type::VersionedState
 };
 
 /// This trait is used by the batch verification function.
@@ -190,6 +191,12 @@ pub trait BlockchainApplyState<'a, P: ContractProvider, E>: BlockchainVerificati
         tracker: ContractEventTracker,
         assets: HashMap<Hash, Option<AssetChanges>>
     ) -> Result<(), E>;
+
+    /// Retrieve the contract balance used to pay gas
+    async fn get_contract_balance_for_gas<'b>(
+        &'b mut self,
+        contract: &'b Hash,
+    ) -> Result<&'b mut (VersionedState, u64), E>;
 
     /// Remove the contract module
     /// This will mark the contract

@@ -1443,7 +1443,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             None,
             vec![],
             FunctionHandler::Async(async_handler!(increase_gas_limit::<P>)),
-            150,
+            250,
             Some(Type::U64)
         );
 
@@ -1900,6 +1900,39 @@ async fn increase_gas_limit<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>,
     let amount = params[0].as_u64()?;
     let (provider, state) = from_context::<P>(context)?;
 
+    // We have to ensure that before the deposit with current invoke,
+    // we currently have ENOUGH coins before any deposit, contract transfer and such
+    // For this, we check in the global cache which is the current cache state before
+    // the invoke but still up to date with others (valid) changes that occured.
+    // This is required to prevent free-invoke attacks where the contract pay a high gas fee
+    // and emit an error on purpose to get fully refunded.
+    // Even if the contract is exiting with an error to not apply changes, the code has been executed
+    // and gas limit will be paid to the miners
+    {
+        // Ensure that we check against the overall amount
+        let mut total_amount = 0;
+        if let Some(amount) = state.injected_gas.get(&metadata.contract) {
+            total_amount += amount;
+        }
+
+        let balance = match state.global_caches.get(&metadata.contract)
+            .and_then(|cache| cache.balances.get(&XELIS_ASSET).map(Option::as_ref).flatten()) {
+                Some((_, balance)) => *balance,
+                None => {
+                    let (_, balance) = provider.get_contract_balance_for_asset(&metadata.contract, &XELIS_ASSET, state.topoheight).await?
+                        .context("No native balance found for contract")?;
+    
+                    balance
+                }
+            };
+
+        // Not enough balance before invoke
+        if balance < total_amount {
+            return Ok(SysCallResult::Return(Primitive::Boolean(false).into()));
+        }
+    }
+
+    // And we check with current cache if any and then apply if correct
     let res = get_balance_from_cache(provider, state, metadata.contract.clone(), XELIS_ASSET).await?
         .as_mut();
 

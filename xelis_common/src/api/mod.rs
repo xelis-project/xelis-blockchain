@@ -248,7 +248,11 @@ pub enum RPCContractOutput<'a> {
         asset: Cow<'a, Hash>
     },
     ExitCode(Option<u64>),
-    RefundDeposits
+    RefundDeposits,
+    GasInjection {
+        contract: Cow<'a, Hash>,
+        amount: u64,
+    }
 }
 
 impl<'a> RPCContractOutput<'a> {
@@ -278,6 +282,7 @@ impl<'a> RPCContractOutput<'a> {
             },
             ContractOutput::ExitCode(code) => RPCContractOutput::ExitCode(code.clone()),
             ContractOutput::RefundDeposits => RPCContractOutput::RefundDeposits,
+            ContractOutput::GasInjection { contract, amount } => RPCContractOutput::GasInjection { contract: Cow::Borrowed(contract), amount: *amount }
         }
     }
 }
@@ -309,6 +314,10 @@ impl<'a> From<RPCContractOutput<'a>> for ContractOutput {
             },
             RPCContractOutput::ExitCode(code) => ContractOutput::ExitCode(code),
             RPCContractOutput::RefundDeposits => ContractOutput::RefundDeposits,
+            RPCContractOutput::GasInjection { contract, amount } => ContractOutput::GasInjection {
+                contract: contract.into_owned(),
+                amount
+            }
         }
     }
 }

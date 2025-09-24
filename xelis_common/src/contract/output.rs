@@ -45,7 +45,12 @@ pub enum ContractOutput {
     // If Some(n), the contract exited with code n (state not applied!)
     ExitCode(Option<u64>),
     // Inform that we refund the deposits
-    RefundDeposits
+    RefundDeposits,
+    // Increase the gas limit by a contract
+    GasInjection {
+        contract: Hash,
+        amount: u64,
+    }
 }
 
 impl Serializer for ContractOutput {
@@ -87,46 +92,56 @@ impl Serializer for ContractOutput {
             },
             ContractOutput::RefundDeposits => {
                 writer.write_u8(7);
+            },
+            ContractOutput::GasInjection { contract, amount } => {
+                contract.write(writer);
+                amount.write(writer);
             }
         }
     }
 
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        match reader.read_u8()? {
+        Ok(match reader.read_u8()? {
             0 => {
                 let amount = u64::read(reader)?;
-                Ok(ContractOutput::RefundGas { amount })
+                ContractOutput::RefundGas { amount }
             },
             1 => {
                 let amount = u64::read(reader)?;
                 let asset = Hash::read(reader)?;
                 let destination = PublicKey::read(reader)?;
-                Ok(ContractOutput::Transfer { amount, asset, destination })
+                ContractOutput::Transfer { amount, asset, destination }
             },
             2 => {
                 let amount = u64::read(reader)?;
                 let asset = Hash::read(reader)?;
                 let destination = Hash::read(reader)?;
-                Ok(ContractOutput::TransferContract { amount, asset, destination })
+                ContractOutput::TransferContract { amount, asset, destination }
             },
             3 => {
                 let asset = Hash::read(reader)?;
                 let amount = u64::read(reader)?;
-                Ok(ContractOutput::Mint { asset, amount })
+                ContractOutput::Mint { asset, amount }
             },
             4 => {
                 let asset = Hash::read(reader)?;
                 let amount = u64::read(reader)?;
-                Ok(ContractOutput::Burn { asset, amount })
+                ContractOutput::Burn { asset, amount }
             },
             5 => {
                 let asset = Hash::read(reader)?;
-                Ok(ContractOutput::NewAsset { asset })
+                ContractOutput::NewAsset { asset }
             },
-            6 => Ok(ContractOutput::ExitCode(Option::read(reader)?)),
-            7 => Ok(ContractOutput::RefundDeposits),
-            _ => Err(ReaderError::InvalidValue)
-        }
+            6 => ContractOutput::ExitCode(Option::read(reader)?),
+            7 => ContractOutput::RefundDeposits,
+            8 => {
+                ContractOutput::GasInjection {
+                    contract: Hash::read(reader)?,
+                    amount: u64::read(reader)?
+                }
+            }
+            _ => return Err(ReaderError::InvalidValue)
+        })
     }
 
     fn size(&self) -> usize {
@@ -138,7 +153,8 @@ impl Serializer for ContractOutput {
             ContractOutput::Burn { asset, amount } => 1 + asset.size() + amount.size(),
             ContractOutput::NewAsset { asset } => 1 + asset.size(),
             ContractOutput::ExitCode(code) => 1 + code.size(),
-            ContractOutput::RefundDeposits => 1
+            ContractOutput::RefundDeposits => 1,
+            ContractOutput::GasInjection { contract, amount } => contract.size() + amount.size(),
         }
     }
 }

@@ -168,9 +168,9 @@ impl Transaction {
         let is_success = exit_code == Some(0);
         // If the contract execution was successful, we need to merge the cache
         let mut outputs = chain_state.outputs;
+        let gas_injections = chain_state.injected_gas;
         if is_success {
             let mut caches = chain_state.caches;
-            let gas_injections = chain_state.injected_gas;
 
             // Some contract have injected gas to users
             if vm_max_gas > max_gas && !gas_injections.is_empty() {
@@ -190,21 +190,31 @@ impl Transaction {
                         .context("Contract cache not found for gas refund")?;
 
                     let (state, balance) = cache.balances.get_mut(&XELIS_ASSET)
-                        .context("Gas balance not found for contract")?
+                        .context("Gas balance cache not found for contract")?
                         .as_mut()
                         .context("No gas balance found for contract")?;
 
-                    state.mark_updated();
+                    if gas_refund_left > 0 {
+                        // Refund the smaller of what was injected or what's left
+                        let refund = gas.min(gas_refund_left);
+                        debug!("Refund {} XEL to contract {} for gas fee", refund, contract);
+                        *balance += refund;
+                        state.mark_updated();
 
-                    // Refund the smaller of what was injected or what's left
-                    let refund = gas.min(gas_refund_left);
-                    debug!("Refund {} XEL to contract {} for gas fee", refund, contract);
-                    *balance += refund;
+                        let consumed = gas - refund;
 
-                    gas_refund_left -= refund;
+                        debug!("Contract {} injected {}, refunded {}, consumed {}", contract, gas, refund, consumed);
 
-                    if gas_refund_left == 0 {
-                        break;
+                        // if we have consumed any, track it
+                        if consumed > 0 {
+                            outputs.push(ContractOutput::GasInjection { contract, amount: consumed });
+                        }
+
+                        gas_refund_left -= refund;
+                    } else {
+                        // Nothing left to refund, so this contract's full injection was consumed
+                        debug!("Contract {} fully consumed {} gas", contract, gas);
+                        outputs.push(ContractOutput::GasInjection { contract, amount: gas });
                     }
                 }
             }
@@ -221,7 +231,37 @@ impl Transaction {
         } else {
             // Otherwise, something was wrong, we delete the outputs made by the contract
             outputs.clear();
-    
+
+            // But, if we got any gas injection, fully consume it despite the error returned
+            // otherwise it allows free invoke attacks
+            if used_gas > max_gas && !gas_injections.is_empty() {
+                let mut extra_gas = max_gas - used_gas;
+                for (contract, gas) in gas_injections.into_iter() {
+                    // Retrieve the balance before execution
+                    // we will apply the gas fee on it
+                    let (versioned_state, balance) = state.get_contract_balance_for_gas(&contract).await
+                        .map_err(VerificationError::State)?;
+
+                    versioned_state.mark_updated();
+
+                    // Consume as much as possible from this contract’s injection
+                    let consumed = gas.min(extra_gas);
+
+                    *balance = balance
+                        .checked_sub(consumed)
+                        .ok_or(VerificationError::GasOverflow)?;
+
+                    outputs.push(ContractOutput::GasInjection { contract, amount: consumed });
+
+                    // Decrease what’s left to cover
+                    extra_gas -= consumed;
+
+                    if extra_gas == 0 {
+                        break;
+                    }
+                }
+            }
+
             if !deposits.is_empty() {
                 // It was not successful, we need to refund the deposits
                 self.refund_deposits(state, deposits, decompressed_deposits).await?;
