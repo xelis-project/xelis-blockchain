@@ -1441,7 +1441,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
         env.register_native_function(
             "increase_gas_limit",
             None,
-            vec![],
+            vec![("amount", Type::U64)],
             FunctionHandler::Async(async_handler!(increase_gas_limit::<P>)),
             250,
             Some(Type::U64)
