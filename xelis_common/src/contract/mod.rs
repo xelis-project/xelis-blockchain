@@ -1898,6 +1898,12 @@ fn get_gas_limit(_: FnInstance, _: FnParams, _: &ModuleMetadata, context: &mut C
 // Increase the gas limit using contract balance
 async fn increase_gas_limit<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, params: FnParams, metadata: &ModuleMetadata, context: &mut Context<'ty, 'r>) -> FnReturnType<ModuleMetadata> {
     let amount = params[0].as_u64()?;
+
+    // Zero amount is rejected
+    if amount == 0 {
+        return Ok(SysCallResult::Return(Primitive::Boolean(false).into())); 
+    }
+
     let (provider, state) = from_context::<P>(context)?;
 
     // We have to ensure that before the deposit with current invoke,
