@@ -338,6 +338,35 @@ impl<'a, S: Storage> BlockchainApplyState<'a, S, BlockchainError> for Applicable
         Ok((contract_environment, state))
     }
 
+    /// Retrieve the contract balance used to pay gas
+    async fn get_contract_balance_for_gas<'b>(
+        &'b mut self,
+        contract: &'b Hash,
+    ) -> Result<&'b mut (VersionedState, u64), BlockchainError> {
+        debug!("get contract {} balance for gas", contract);
+
+        let cache = match self.contract_manager.caches.entry(contract.clone()) {
+            Entry::Occupied(o) => o.into_mut(),
+            Entry::Vacant(e) => e.insert(Default::default())
+        };
+
+        Ok(match cache.balances.entry(XELIS_ASSET) {
+            Entry::Occupied(e) => e.into_mut()
+                .as_mut()
+                .ok_or_else(|| BlockchainError::NoContractBalance)?,
+            Entry::Vacant(e) => {
+                 debug!("loading gas balance for contract {} at maximum topoheight {}", contract, self.inner.topoheight);
+                let (mut state, balance) = self.inner.storage.get_contract_balance_at_maximum_topoheight(contract, &XELIS_ASSET, self.inner.topoheight).await?
+                    .map(|(topo, balance)| (VersionedState::FetchedAt(topo), balance.take()))
+                    .unwrap_or((VersionedState::New, 0));
+
+                state.mark_updated();
+                e.insert(Some((state, balance)));
+                todo!()
+            }
+        })
+    }
+
     async fn set_modules_cache(
         &mut self,
         modules: HashMap<Hash, Option<OpaqueModule>>,
