@@ -61,8 +61,8 @@ pub const FEE_PER_BYTE_IN_CONTRACT_MEMORY: u64 = 1;
 // Data is not stored, but only exposed to websocket listeners
 pub const FEE_PER_BYTE_OF_EVENT_DATA: u64 = 2;
 // Max gas usage available per block
-// Currently, set to 10 XEL per transaction
-pub const MAX_GAS_USAGE_PER_TX: u64 = COIN_VALUE * 10;
+// Currently, set to 0.5 XEL per transaction
+pub const MAX_GAS_USAGE_PER_TX: u64 = COIN_VALUE / 2;
 
 // 8 decimals numbers
 pub const COIN_DECIMALS: u8 = 8;
