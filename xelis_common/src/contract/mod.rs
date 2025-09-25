@@ -1594,6 +1594,20 @@ pub async fn get_asset_from_cache<'a, 'b, P: ContractProvider>(provider: &P, sta
         .context("Asset not found for provided hash")
 }
 
+// Record a burn in the asset supply
+pub async fn record_burned_asset<'a, 'b, P: ContractProvider>(provider: &P, state: &'a mut ChainState<'b>, asset: Hash, amount: u64) -> Result<(), anyhow::Error> {
+    let asset = get_asset_from_cache(provider, state, asset).await?;
+
+    let new_supply = asset.circulating_supply.1
+        .checked_sub(amount)
+        .context("Overflow while burning supply")?;
+
+    asset.circulating_supply.1 = new_supply;
+    asset.circulating_supply.0.mark_updated();
+
+    Ok(())
+}
+
 pub async fn get_asset_from_provider<P: ContractProvider>(provider: &P, topoheight: TopoHeight, asset: &Hash) -> Result<Option<AssetChanges>, anyhow::Error> {
     match provider.load_asset_data(asset, topoheight).await? {
         Some((topo, data)) => {
@@ -1865,12 +1879,7 @@ async fn burn<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: F
 
     // Track the burn in the circulating supply
     // We expect that the asset changes exists
-    let changes = get_asset_from_cache(provider, state, asset.clone()).await?;
-    let new_supply = changes.circulating_supply.1.checked_sub(amount)
-        .context("Overflow while burning supply")?;
-
-    changes.circulating_supply.1 = new_supply;
-    changes.circulating_supply.0.mark_updated();
+    record_burned_asset(provider, state, asset.clone(), amount).await?;
 
     // Add the output
     state.outputs.push(ContractOutput::Burn { asset, amount });

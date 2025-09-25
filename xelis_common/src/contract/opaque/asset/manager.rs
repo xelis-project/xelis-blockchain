@@ -11,7 +11,18 @@ use xelis_vm::{
 use crate::{
     asset::{AssetData, AssetOwner},
     config::{COST_PER_TOKEN, XELIS_ASSET},
-    contract::{from_context, get_balance_from_cache, get_cache_for_contract, get_mut_balance_for_contract, get_optional_asset_from_cache, AssetChanges, ContractOutput, ContractProvider, ModuleMetadata},
+    contract::{
+        from_context,
+        get_balance_from_cache,
+        get_cache_for_contract,
+        get_mut_balance_for_contract,
+        get_optional_asset_from_cache,
+        record_burned_asset,
+        AssetChanges,
+        ContractOutput,
+        ContractProvider,
+        ModuleMetadata
+    },
     crypto::{Hash, HASH_SIZE},
     versioned_type::VersionedState
 };
@@ -108,10 +119,15 @@ pub async fn asset_create<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, m
         circulating_supply: (VersionedState::New, max_supply.unwrap_or(0)),
     });
 
-    // Pay the fee
-    let (versioned_state, balance) = get_mut_balance_for_contract(provider, state, metadata.contract.clone(), XELIS_ASSET).await?;
-    *balance -= COST_PER_TOKEN;
-    versioned_state.mark_updated();
+    // Pay the fee by reducing the contract balance
+    // and record the burn in the circulating supply
+    {
+        let (versioned_state, balance) = get_mut_balance_for_contract(provider, state, metadata.contract.clone(), XELIS_ASSET).await?;
+        *balance -= COST_PER_TOKEN;
+        versioned_state.mark_updated();
+    
+        record_burned_asset(provider, state, XELIS_ASSET, COST_PER_TOKEN).await?;
+    }
 
     // If we have a max supply, we need to mint it to the contract
     if let Some(max_supply) = max_supply {
