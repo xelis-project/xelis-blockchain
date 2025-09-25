@@ -1,4 +1,4 @@
-use std::{borrow::Cow, collections::HashMap};
+use std::{borrow::Cow, collections::HashMap, sync::Arc};
 
 use async_trait::async_trait;
 use indexmap::IndexMap;
@@ -14,7 +14,6 @@ use crate::{
         ContractOutput,
         ContractProvider,
         ModuleMetadata,
-        OpaqueModule
     },
     crypto::{
         elgamal::{
@@ -181,7 +180,7 @@ pub trait BlockchainApplyState<'a, P: ContractProvider, E>: BlockchainVerificati
     /// Even if the execution failed, the caches should be updated
     async fn set_modules_cache(
         &mut self,
-        modules: HashMap<Hash, Option<OpaqueModule>>,
+        modules: HashMap<Hash, Option<Arc<Module>>>,
     ) -> Result<(), E>;
 
     /// Merge the contract cache with the stored one

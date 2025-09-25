@@ -28,7 +28,8 @@ use xelis_vm::{
     Primitive,
     SysCallResult,
     Type,
-    ValueCell
+    ValueCell,
+    Module,
 };
 use crate::{
     account::CiphertextCache,
@@ -96,7 +97,7 @@ pub struct ChainState<'a> {
     pub caches: HashMap<Hash, ContractCache>,
     // All modules loaded
     // This is persisted across the calls
-    pub modules: HashMap<Hash, Option<OpaqueModule>>,
+    pub modules: HashMap<Hash, Option<Arc<Module>>>,
     // The contract outputs
     // This is similar to an event log
     pub outputs: Vec<ContractOutput>,

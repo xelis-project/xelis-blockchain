@@ -11,9 +11,7 @@ use xelis_vm::{
     FnParams,
     FnReturnType,
     Module,
-    OpaqueWrapper,
     Primitive,
-    StackValue,
     SysCallResult,
 };
 use crate::{
@@ -57,23 +55,22 @@ pub async fn module_new<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut
 
     // Load the module from the provider
     let module = match state.modules.entry(contract.clone()) {
-        Entry::Occupied(entry) => entry.get().clone(),
+        Entry::Occupied(entry) => entry.into_mut(),
         Entry::Vacant(entry) => {
-            let module = provider.load_contract_module(&contract, state.topoheight).await?
-                .map(|module| OpaqueModule {
-                    module,
-                    contract,
-                });
-
-            entry.insert(module).clone()
+            let module = provider.load_contract_module(&contract, state.topoheight).await?;
+            entry.insert(module)
         }
-    };
+    }.clone();
 
     let Some(module) = module else {
         return Ok(SysCallResult::Return(Primitive::Null.into()));
     };
 
-    Ok(SysCallResult::Return(StackValue::Owned(Primitive::Opaque(OpaqueWrapper::new(module)).into())))
+    let opaque = OpaqueModule {
+        module,
+        contract,
+    };
+    Ok(SysCallResult::Return(opaque.into()))
 }
 
 pub async fn module_invoke<'a, 'ty, 'r, P: ContractProvider>(zelf: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata, context: &mut Context<'ty, 'r>) -> FnReturnType<ModuleMetadata> {
