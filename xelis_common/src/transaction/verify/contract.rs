@@ -276,15 +276,15 @@ impl Transaction {
         state.set_modules_cache(modules).await
             .map_err(VerificationError::State)?;
 
-        // Push the exit code to the outputs
-        outputs.push(ContractOutput::ExitCode(exit_code));
-
         let refund_gas = self.handle_gas(state, used_gas, max_gas).await?;
         debug!("used gas: {}, refund gas: {}", used_gas, refund_gas);
 
         if refund_gas > 0 {
             outputs.push(ContractOutput::RefundGas { amount: refund_gas });
         }
+
+        // Push the exit code to the outputs
+        outputs.push(ContractOutput::ExitCode(exit_code));
 
         // Track the outputs
         state.set_contract_outputs(tx_hash, outputs).await
