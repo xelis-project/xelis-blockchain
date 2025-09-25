@@ -10,8 +10,8 @@ use xelis_vm::{
 };
 use crate::{
     asset::{AssetData, AssetOwner},
-    config::COST_PER_TOKEN,
-    contract::{from_context, get_cache_for_contract, get_optional_asset_from_cache, AssetChanges, ContractOutput, ContractProvider, ModuleMetadata},
+    config::{COST_PER_TOKEN, XELIS_ASSET},
+    contract::{from_context, get_balance_from_cache, get_cache_for_contract, get_mut_balance_for_contract, get_optional_asset_from_cache, AssetChanges, ContractOutput, ContractProvider, ModuleMetadata},
     crypto::{Hash, HASH_SIZE},
     versioned_type::VersionedState
 };
@@ -81,6 +81,13 @@ pub async fn asset_create<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, m
         return Err(EnvironmentError::Expect("Asset name must be ASCII only".to_owned()).into());
     }
 
+    // Check that we have enough XEL in the balance
+    let balance = get_balance_from_cache(provider, state, metadata.contract.clone(), XELIS_ASSET).await?;
+    if balance.is_none_or(|(_, balance)| balance < COST_PER_TOKEN) {
+        return Err(EnvironmentError::Expect("Insufficient XEL funds in contract balance for token creation".to_owned()).into());
+    }
+
+    // Now proceed to generate the asset hash
     let id = params.remove(0).as_u64()?;
 
     let mut buffer = [0u8; 40];
@@ -101,6 +108,11 @@ pub async fn asset_create<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, m
         circulating_supply: (VersionedState::New, max_supply.unwrap_or(0)),
     });
 
+    // Pay the fee
+    let (versioned_state, balance) = get_mut_balance_for_contract(provider, state, metadata.contract.clone(), XELIS_ASSET).await?;
+    *balance -= COST_PER_TOKEN;
+    versioned_state.mark_updated();
+
     // If we have a max supply, we need to mint it to the contract
     if let Some(max_supply) = max_supply {
         // We don't bother to check if it already exists, because it shouldn't exist before we create it.
@@ -110,9 +122,6 @@ pub async fn asset_create<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, m
     }
 
     state.outputs.push(ContractOutput::NewAsset { asset: asset_hash.clone() });
-
-    // Pay the cost for a new token
-    context.increase_gas_usage(COST_PER_TOKEN)?;
 
     let asset = Asset {
         hash: asset_hash
