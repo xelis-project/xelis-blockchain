@@ -1,7 +1,8 @@
 use std::{
     borrow::Cow,
     collections::{hash_map::Entry, HashMap},
-    ops::{Deref, DerefMut}
+    ops::{Deref, DerefMut},
+    sync::Arc
 };
 use anyhow::Context;
 use async_trait::async_trait;
@@ -19,7 +20,6 @@ use xelis_common::{
         ContractEventTracker,
         ContractOutput,
         ModuleMetadata,
-        OpaqueModule
     },
     crypto::{elgamal::Ciphertext, Hash, PublicKey},
     serializer::Serializer,
@@ -33,7 +33,7 @@ use xelis_common::{
     utils::format_xelis,
     versioned_type::VersionedState
 };
-use xelis_vm::Environment;
+use xelis_vm::{Environment, Module};
 use crate::core::{
     blockchain::tx_kb_size_rounded,
     state::verify_fee,
@@ -57,7 +57,7 @@ struct ContractManager<'a> {
     // global assets cache
     assets: HashMap<Hash, Option<AssetChanges>>,
     tracker: ContractEventTracker,
-    modules: HashMap<Hash, Option<OpaqueModule>>,
+    modules: HashMap<Hash, Option<Arc<Module>>>,
 }
 
 // Chain State that can be applied to the mutable storage
@@ -319,6 +319,8 @@ impl<'a, S: Storage> BlockchainApplyState<'a, S, BlockchainError> for Applicable
             block_hash: self.block_hash,
             block: self.block,
             tx_hash,
+            // We only provide the current contract cache available
+            // others can be lazily added to it
             caches: [(contract.clone(), cache)].into_iter().collect(),
             outputs: Vec::new(),
             // Event trackers
@@ -329,6 +331,8 @@ impl<'a, S: Storage> BlockchainApplyState<'a, S, BlockchainError> for Applicable
             // Global caches (all contracts)
             global_caches: &self.contract_manager.caches,
             injected_gas: IndexMap::new(),
+            delayed_executions: HashMap::new(),
+            planned_executions: Vec::new(),
         };
 
         let contract_environment = ContractEnvironment {
@@ -371,7 +375,7 @@ impl<'a, S: Storage> BlockchainApplyState<'a, S, BlockchainError> for Applicable
 
     async fn set_modules_cache(
         &mut self,
-        modules: HashMap<Hash, Option<OpaqueModule>>,
+        modules: HashMap<Hash, Option<Arc<Module>>>,
     ) -> Result<(), BlockchainError> {
         self.contract_manager.modules = modules;
 
