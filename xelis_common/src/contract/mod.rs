@@ -1801,9 +1801,9 @@ async fn transfer_contract<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, 
         .into_opaque_type()?;
     {
         let (provider, chain_state) = from_context::<P>(context)?;
-        // verify that the address is well registered, otherwise: pay extra fees
+        // verify that the contract exists
         if !provider.has_contract(&destination, chain_state.topoheight).await? {
-            context.increase_gas_usage(FEE_PER_ACCOUNT_CREATION)?;
+            return Ok(SysCallResult::Return(Primitive::Boolean(false).into()));
         }
     }
 
