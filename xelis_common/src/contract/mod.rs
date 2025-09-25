@@ -37,7 +37,8 @@ use crate::{
     config::{
         FEE_PER_ACCOUNT_CREATION,
         FEE_PER_BYTE_OF_EVENT_DATA,
-        XELIS_ASSET,
+        MAX_GAS_USAGE_PER_TX,
+        XELIS_ASSET
     },
     crypto::{
         proofs::{CiphertextValidityProof, CommitmentEqProof, G, H},
@@ -1912,8 +1913,13 @@ fn get_gas_limit(_: FnInstance, _: FnParams, _: &ModuleMetadata, context: &mut C
 async fn increase_gas_limit<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, params: FnParams, metadata: &ModuleMetadata, context: &mut Context<'ty, 'r>) -> FnReturnType<ModuleMetadata> {
     let amount = params[0].as_u64()?;
 
+    // Ensure we're still below the TX max usage
+    let below_limit = context.get_gas_limit()
+        .checked_add(amount)
+        .map_or(false, |gas| gas <= MAX_GAS_USAGE_PER_TX);
+
     // Zero amount is rejected
-    if amount == 0 {
+    if amount == 0 || !below_limit {
         return Ok(SysCallResult::Return(Primitive::Boolean(false).into())); 
     }
 
