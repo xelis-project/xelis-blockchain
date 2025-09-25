@@ -169,6 +169,8 @@ impl Transaction {
         // If the contract execution was successful, we need to merge the cache
         let mut outputs = chain_state.outputs;
         let gas_injections = chain_state.injected_gas;
+        let modules = chain_state.modules;
+
         if is_success {
             let mut caches = chain_state.caches;
 
@@ -269,6 +271,10 @@ impl Transaction {
                 outputs.push(ContractOutput::RefundDeposits);
             }
         }
+
+        // Keep modules cache that have been loaded already
+        state.set_modules_cache(modules).await
+            .map_err(VerificationError::State)?;
 
         // Push the exit code to the outputs
         outputs.push(ContractOutput::ExitCode(exit_code));

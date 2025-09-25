@@ -4,6 +4,7 @@ mod output;
 mod provider;
 mod cache;
 mod metadata;
+mod delayed_execution;
 
 use std::{
     any::TypeId,
@@ -56,6 +57,7 @@ pub use opaque::*;
 pub use provider::*;
 pub use cache::*;
 pub use metadata::*;
+pub use delayed_execution::*;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TransferOutput {
@@ -67,6 +69,10 @@ pub struct TransferOutput {
     pub asset: Hash,
 }
 
+// ChainState shared across each executions
+// The ChainState must be cloned before being used.
+// If the contract execution is a success, the updated version
+// replace the one in the cache.
 pub struct ChainState<'a> {
     // Are we in debug mode
     // used by the contract to print debug information
@@ -106,7 +112,14 @@ pub struct ChainState<'a> {
     // gas being injected to the invoke gas limit by contracts
     // it is kept in insertion order to rollback funds to contract
     // in case they were not fully used
-    pub injected_gas: IndexMap<Hash, u64>
+    pub injected_gas: IndexMap<Hash, u64>,
+    // Delayed executions planned for another topoheight
+    // Those executions will be executed before ANY transaction
+    // We can safely use a HashMap because the order of storing is not
+    // important
+    pub delayed_executions: HashMap<TopoHeight, Vec<DelayedExecution>>,
+    // Each executions planned at the end of this block per contract
+    pub planned_executions: Vec<DelayedExecution>,
 }
 
 // Aggregate all events from all executed contracts to track in one structure
@@ -127,7 +140,6 @@ macro_rules! async_handler {
         }
     };
 }
-
 
 // Build the environment for the contract
 pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, ModuleMetadata> {
