@@ -1267,7 +1267,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
         );
 
         env.register_native_function(
-            "invoke",
+            "call",
             Some(module_type.clone()),
             vec![
                 ("chunk_id", Type::U16),
@@ -1279,6 +1279,20 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             FunctionHandler::Async(async_handler!(module_invoke::<P>)),
             50,
             Some(Type::Any)
+        );
+
+        // Exact same as `call` but return no value
+        env.register_native_function(
+            "execute",
+            Some(module_type.clone()),
+            vec![
+                ("chunk_id", Type::U16),
+                ("args", Type::Array(Box::new(Type::Any))),
+                ("deposits", Type::Map(Box::new(hash_type.clone()), Box::new(Type::U64))),
+            ],
+            FunctionHandler::Async(async_handler!(module_invoke::<P>)),
+            50,
+            None
         );
 
         // Similar to invoke, but allows to delegate the call to another contract
