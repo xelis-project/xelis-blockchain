@@ -14,7 +14,7 @@ use std::{
 use anyhow::Context as AnyhowContext;
 use better_any::Tid;
 use curve25519_dalek::Scalar;
-use indexmap::IndexMap;
+use indexmap::{IndexMap, IndexSet};
 use log::{debug, info};
 use xelis_builder::EnvironmentBuilder;
 use xelis_vm::{
@@ -119,9 +119,11 @@ pub struct ChainState<'a> {
     // Those executions will be executed before ANY transaction
     // We can safely use a HashMap because the order of storing is not
     // important
-    pub delayed_executions: HashMap<TopoHeight, Vec<DelayedExecution>>,
+    // Each contract can have one delayed execution at most
+    pub delayed_executions: HashMap<TopoHeight, IndexSet<DelayedExecution>>,
     // Each executions planned at the end of this block per contract
-    pub planned_executions: Vec<DelayedExecution>,
+    // Each contract can have one delayed execution at most
+    pub planned_executions: IndexSet<DelayedExecution>,
 }
 
 // Aggregate all events from all executed contracts to track in one structure
@@ -1466,6 +1468,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
         );
 
         // Increase the gas limit for the caller using contract funds
+        // It is limited to `MAX_GAS_USAGE_PER_TX` in total
         env.register_native_function(
             "increase_gas_limit",
             None,
