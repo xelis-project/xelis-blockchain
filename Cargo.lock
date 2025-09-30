@@ -351,9 +351,9 @@ dependencies = [
 
 [[package]]
 name = "anstyle"
-version = "1.0.12"
+version = "1.0.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c900954614442c827787a2ffcd8c0602eb53ff7b95a8fbfcdaf5e406197bf3be"
+checksum = "5192cca8006f1fd4f7237516f40fa183bb07f8fbdfedaa0036de5ea9b0b45e78"
 
 [[package]]
 name = "anstyle-parse"
@@ -1892,9 +1892,9 @@ checksum = "135b12329e5e3ce057a9f972339ea52bc954fe1e9358ef27f95e89716fbc5424"
 
 [[package]]
 name = "hybrid-array"
-version = "0.4.4"
+version = "0.4.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2bad028b20a90afcdb5e28a53392562f1db2bdfa238aa1a978b911461bfffb92"
+checksum = "f471e0a81b2f90ffc0cb2f951ae04da57de8baa46fa99112b062a5173a5088d0"
 dependencies = [
  "typenum",
 ]
@@ -4801,7 +4801,7 @@ dependencies = [
 [[package]]
 name = "xelis-ast"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#4ccd6481fe943063a1ea06b4eb84a245c33d9b0d"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#14562a0fe809529adf03f55ec4a4b7c379a9bb75"
 dependencies = [
  "indexmap 2.11.4",
  "xelis-types",
@@ -4810,7 +4810,7 @@ dependencies = [
 [[package]]
 name = "xelis-builder"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#4ccd6481fe943063a1ea06b4eb84a245c33d9b0d"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#14562a0fe809529adf03f55ec4a4b7c379a9bb75"
 dependencies = [
  "anyhow",
  "hex",
@@ -4825,7 +4825,7 @@ dependencies = [
 [[package]]
 name = "xelis-bytecode"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#4ccd6481fe943063a1ea06b4eb84a245c33d9b0d"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#14562a0fe809529adf03f55ec4a4b7c379a9bb75"
 dependencies = [
  "indexmap 2.11.4",
  "serde",
@@ -4836,7 +4836,7 @@ dependencies = [
 [[package]]
 name = "xelis-environment"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#4ccd6481fe943063a1ea06b4eb84a245c33d9b0d"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#14562a0fe809529adf03f55ec4a4b7c379a9bb75"
 dependencies = [
  "anyhow",
  "better_any",
@@ -4864,7 +4864,7 @@ dependencies = [
 [[package]]
 name = "xelis-types"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#4ccd6481fe943063a1ea06b4eb84a245c33d9b0d"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#14562a0fe809529adf03f55ec4a4b7c379a9bb75"
 dependencies = [
  "anyhow",
  "indexmap 2.11.4",
@@ -4878,7 +4878,7 @@ dependencies = [
 [[package]]
 name = "xelis-vm"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#4ccd6481fe943063a1ea06b4eb84a245c33d9b0d"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#14562a0fe809529adf03f55ec4a4b7c379a9bb75"
 dependencies = [
  "anyhow",
  "futures",
@@ -5105,9 +5105,9 @@ dependencies = [
 
 [[package]]
 name = "zeroize"
-version = "1.8.1"
+version = "1.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ced3678a2879b30306d323f4542626697a464a97c0a07c9aebf7ebca65cd4dde"
+checksum = "b97154e67e32c85465826e8bcc1c59429aaaf107c1e4a9e53c8d8ccd5eff88d0"
 dependencies = [
  "zeroize_derive",
 ]
