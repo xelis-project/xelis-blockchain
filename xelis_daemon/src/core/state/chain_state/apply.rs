@@ -7,7 +7,7 @@ use std::{
 use anyhow::Context;
 use async_trait::async_trait;
 use log::{debug, trace};
-use indexmap::IndexMap;
+use indexmap::{IndexMap, IndexSet};
 use xelis_common::{
     account::{BalanceType, Nonce, VersionedNonce},
     asset::VersionedAssetData,
@@ -332,7 +332,7 @@ impl<'a, S: Storage> BlockchainApplyState<'a, S, BlockchainError> for Applicable
             global_caches: &self.contract_manager.caches,
             injected_gas: IndexMap::new(),
             delayed_executions: HashMap::new(),
-            planned_executions: Vec::new(),
+            planned_executions: IndexSet::new(),
         };
 
         let contract_environment = ContractEnvironment {
