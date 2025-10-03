@@ -112,8 +112,13 @@ pub async fn module_invoke<'a, 'ty, 'r, P: ContractProvider>(zelf: FnInstance<'a
 
     let p = params.remove(1)
         .into_owned()
-        .to_vec()?
-        .into_iter()
+        .to_vec()?;
+
+    if p.len() > (u8::MAX - 1) as usize {
+        return Err(EnvironmentError::Static("Too many parameters"));
+    }
+
+    let p = p.into_iter()
         .map(|v| v.to_owned().into())
         .collect::<VecDeque<_>>();
 

@@ -50,6 +50,13 @@ pub enum ContractOutput {
     GasInjection {
         contract: Hash,
         amount: u64,
+    },
+    // Contract registered a delayed execution
+    DelayedExecution {
+        // Contract hash
+        contract: Hash,
+        // at which topoheight it will be called
+        topoheight: u64,
     }
 }
 
@@ -94,8 +101,14 @@ impl Serializer for ContractOutput {
                 writer.write_u8(7);
             },
             ContractOutput::GasInjection { contract, amount } => {
+                writer.write_u8(8);
                 contract.write(writer);
                 amount.write(writer);
+            },
+            ContractOutput::DelayedExecution { contract, topoheight } => {
+                writer.write_u8(9);
+                contract.write(writer);
+                topoheight.write(writer);
             }
         }
     }
@@ -134,27 +147,30 @@ impl Serializer for ContractOutput {
             },
             6 => ContractOutput::ExitCode(Option::read(reader)?),
             7 => ContractOutput::RefundDeposits,
-            8 => {
-                ContractOutput::GasInjection {
-                    contract: Hash::read(reader)?,
-                    amount: u64::read(reader)?
-                }
-            }
+            8 => ContractOutput::GasInjection {
+                contract: Hash::read(reader)?,
+                amount: u64::read(reader)?
+            },
+            9 => ContractOutput::DelayedExecution {
+                contract: Hash::read(reader)?,
+                topoheight: u64::read(reader)?,
+            },
             _ => return Err(ReaderError::InvalidValue)
         })
     }
 
     fn size(&self) -> usize {
-        match self {
-            ContractOutput::RefundGas { amount } => 1 + amount.size(),
-            ContractOutput::Transfer { amount, asset, destination } => 1 + amount.size() + asset.size() + destination.size(),
-            ContractOutput::TransferContract { amount, asset, destination } => 1 + amount.size() + asset.size() + destination.size(),
-            ContractOutput::Mint { asset, amount } => 1 + asset.size() + amount.size(),
-            ContractOutput::Burn { asset, amount } => 1 + asset.size() + amount.size(),
-            ContractOutput::NewAsset { asset } => 1 + asset.size(),
-            ContractOutput::ExitCode(code) => 1 + code.size(),
-            ContractOutput::RefundDeposits => 1,
+        1 + match self {
+            ContractOutput::RefundGas { amount } => amount.size(),
+            ContractOutput::Transfer { amount, asset, destination } => amount.size() + asset.size() + destination.size(),
+            ContractOutput::TransferContract { amount, asset, destination } => amount.size() + asset.size() + destination.size(),
+            ContractOutput::Mint { asset, amount } => asset.size() + amount.size(),
+            ContractOutput::Burn { asset, amount } => asset.size() + amount.size(),
+            ContractOutput::NewAsset { asset } => asset.size(),
+            ContractOutput::ExitCode(code) => code.size(),
+            ContractOutput::RefundDeposits => 0,
             ContractOutput::GasInjection { contract, amount } => contract.size() + amount.size(),
+            ContractOutput::DelayedExecution { contract, topoheight } => contract.size() + topoheight.size(),
         }
     }
 }

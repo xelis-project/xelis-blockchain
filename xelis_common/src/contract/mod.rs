@@ -187,6 +187,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
 
     // Misc
     let module_type = Type::Opaque(env.register_opaque::<OpaqueModule>("Module", false));
+    let delayed_execution_type = Type::Opaque(env.register_opaque::<OpaqueDelayedExecution>("DelayedExecution", false));
 
     // Transaction
     {
@@ -1312,6 +1313,24 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
         );
     }
 
+    // Delayed Execution
+    {
+        env.register_static_function(
+            "program",
+            delayed_execution_type.clone(),
+            vec![
+                ("topoheight", Type::U64),
+                ("chunk_id", Type::U16),
+                ("max_gas", Type::U64),
+                ("args", Type::Array(Box::new(Type::Any))),
+            ],
+            FunctionHandler::Async(async_handler!(delayed_execution_new::<P>)),
+            150,
+            Some(Type::Bool)
+        );
+
+    }
+
     // Misc
     {
         // Get the current contract hash
@@ -1613,14 +1632,17 @@ pub async fn get_asset_from_cache<'a, 'b, P: ContractProvider>(provider: &P, sta
 
 // Record a burn in the asset supply
 pub async fn record_burned_asset<'a, 'b, P: ContractProvider>(provider: &P, state: &'a mut ChainState<'b>, asset: Hash, amount: u64) -> Result<(), anyhow::Error> {
-    let asset = get_asset_from_cache(provider, state, asset).await?;
+    let changes = get_asset_from_cache(provider, state, asset.clone()).await?;
 
-    let new_supply = asset.circulating_supply.1
+    let new_supply = changes.circulating_supply.1
         .checked_sub(amount)
         .context("Overflow while burning supply")?;
 
-    asset.circulating_supply.1 = new_supply;
-    asset.circulating_supply.0.mark_updated();
+    changes.circulating_supply.1 = new_supply;
+    changes.circulating_supply.0.mark_updated();
+
+    // Add the output
+    state.outputs.push(ContractOutput::Burn { asset, amount });
 
     Ok(())
 }
@@ -1897,9 +1919,6 @@ async fn burn<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: F
     // Track the burn in the circulating supply
     // We expect that the asset changes exists
     record_burned_asset(provider, state, asset.clone(), amount).await?;
-
-    // Add the output
-    state.outputs.push(ContractOutput::Burn { asset, amount });
 
     Ok(SysCallResult::Return(Primitive::Boolean(true).into()))
 }

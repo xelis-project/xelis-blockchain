@@ -19,6 +19,7 @@ use xelis_vm::{tid, traits::JSON_REGISTRY, OpaqueWrapper};
 use crate::{
     account::CiphertextCache,
     block::Block,
+    contract::OpaqueDelayedExecution,
     crypto::{
         proofs::{CiphertextValidityProof, CommitmentEqProof},
         Address,
@@ -94,6 +95,10 @@ impl_opaque!(
 impl_opaque!(
     "OpaqueModule",
     OpaqueModule
+);
+impl_opaque!(
+    "OpaqueDelayedExecution",
+    OpaqueDelayedExecution
 );
 
 // Injectable context data

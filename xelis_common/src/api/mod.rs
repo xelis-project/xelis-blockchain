@@ -252,6 +252,10 @@ pub enum RPCContractOutput<'a> {
     GasInjection {
         contract: Cow<'a, Hash>,
         amount: u64,
+    },
+    DelayedExecution {
+        contract: Cow<'a, Hash>,
+        topoheight: u64,
     }
 }
 
@@ -282,7 +286,8 @@ impl<'a> RPCContractOutput<'a> {
             },
             ContractOutput::ExitCode(code) => RPCContractOutput::ExitCode(code.clone()),
             ContractOutput::RefundDeposits => RPCContractOutput::RefundDeposits,
-            ContractOutput::GasInjection { contract, amount } => RPCContractOutput::GasInjection { contract: Cow::Borrowed(contract), amount: *amount }
+            ContractOutput::GasInjection { contract, amount } => RPCContractOutput::GasInjection { contract: Cow::Borrowed(contract), amount: *amount },
+            ContractOutput::DelayedExecution { contract, topoheight } => RPCContractOutput::DelayedExecution { contract: Cow::Borrowed(contract), topoheight: *topoheight },
         }
     }
 }
@@ -317,6 +322,10 @@ impl<'a> From<RPCContractOutput<'a>> for ContractOutput {
             RPCContractOutput::GasInjection { contract, amount } => ContractOutput::GasInjection {
                 contract: contract.into_owned(),
                 amount
+            },
+            RPCContractOutput::DelayedExecution { contract, topoheight } => ContractOutput::DelayedExecution {
+                contract: contract.into_owned(),
+                topoheight
             }
         }
     }
