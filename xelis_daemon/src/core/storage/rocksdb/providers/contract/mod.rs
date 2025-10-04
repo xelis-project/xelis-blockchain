@@ -76,6 +76,13 @@ impl ContractProvider for RocksStorage {
         Ok(contains)
     }
 
+    // Verify if we have already a registered execution for such contract at a specific topoheight
+    async fn has_delayed_execution_at_topoheight(&self, contract: &Hash, topoheight: TopoHeight) -> Result<bool, anyhow::Error> {
+        trace!("has delayed execution for contract {} at topoheight {}", contract, topoheight);
+        // TODO
+        Ok(false)
+    }
+
     // Load the asset data from the storage
     async fn load_asset_data(&self, asset: &Hash, topoheight: TopoHeight) -> Result<Option<(TopoHeight, AssetData)>, anyhow::Error> {
         trace!("load asset data for asset {} at topoheight {}", asset, topoheight);
