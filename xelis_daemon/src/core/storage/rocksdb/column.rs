@@ -100,6 +100,9 @@ pub enum Column {
     // {topoheight}{contract_id}{contract_data_id} => {version}
     VersionedContractsData,
 
+    // {topoheight}{contract_id}
+    DelayedExecution,
+
     // {contract}{asset} => {topoheight}
     ContractsBalances,
     // {topoheight}{contract}{asset} => {version}
@@ -122,7 +125,9 @@ impl Column {
             | VersionedContracts
             | VersionedContractsBalances
             | VersionedContractsData
-            | PrefixedRegistrations => Some(PREFIX_TOPOHEIGHT_LEN),
+            | PrefixedRegistrations
+            // Special case: prefixed with topoheight too
+            | DelayedExecution => Some(PREFIX_TOPOHEIGHT_LEN),
 
             ContractsBalances
             | ContractsData

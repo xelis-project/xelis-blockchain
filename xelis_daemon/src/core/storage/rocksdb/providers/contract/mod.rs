@@ -2,6 +2,7 @@ mod data;
 mod output;
 mod balance;
 mod r#impl;
+mod delayed_execution;
 
 use std::sync::Arc;
 use anyhow::Context;

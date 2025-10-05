@@ -24,7 +24,6 @@ use xelis_common::{
         BlockHeader,
         TopoHeight,
     },
-    contract::ContractProvider as ContractInfoProvider,
     crypto::Hash,
     immutable::Immutable,
     transaction::Transaction
@@ -39,8 +38,7 @@ pub trait Storage:
     BlockExecutionOrderProvider + DagOrderProvider + PrunedTopoheightProvider
     + NonceProvider + AccountProvider + ClientProtocolProvider + BlockDagProvider
     + MerkleHashProvider + NetworkProvider + MultiSigProvider + TipsProvider
-    + CommitPointProvider + ContractProvider + ContractDataProvider + ContractOutputsProvider
-    + ContractInfoProvider + ContractBalanceProvider + VersionedProvider + AssetCirculatingSupplyProvider
+    + CommitPointProvider + ContractProvider + VersionedProvider + AssetCirculatingSupplyProvider
     + CacheProvider + StateProvider
     + Sync + Send + 'static {
     // delete block at topoheight, and all pointers (hash_at_topo, topo_by_hash, reward, supply, diff, cumulative diff...)

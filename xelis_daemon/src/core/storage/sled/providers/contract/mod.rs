@@ -2,6 +2,7 @@ mod data;
 mod output;
 mod provider;
 mod balance;
+mod delayed_execution;
 
 use async_trait::async_trait;
 use xelis_common::{

@@ -1,6 +1,7 @@
 mod data;
 mod output;
 mod balance;
+mod delayed_execution;
 
 use std::borrow::Cow;
 
@@ -8,7 +9,8 @@ use async_trait::async_trait;
 use xelis_common::{
     block::TopoHeight,
     crypto::Hash,
-    versioned_type::Versioned
+    versioned_type::Versioned,
+    contract::ContractProvider as ContractInfoProvider,
 };
 use xelis_vm::Module;
 use crate::core::error::BlockchainError;
@@ -16,12 +18,13 @@ use crate::core::error::BlockchainError;
 pub use data::*;
 pub use output::*;
 pub use balance::*;
+pub use delayed_execution::*;
 
 // A versioned contract is a contract that can be updated or deleted
 pub type VersionedContract<'a> = Versioned<Option<Cow<'a, Module>>>;
 
 #[async_trait]
-pub trait ContractProvider {
+pub trait ContractProvider: ContractDataProvider + ContractOutputsProvider + ContractInfoProvider + ContractBalanceProvider + ContractDelayedExecutionProvider {
     // Deploy a contract
     async fn set_last_contract_to<'a>(&mut self, hash: &Hash, topoheight: TopoHeight, contract: &VersionedContract<'a>) -> Result<(), BlockchainError>;
 

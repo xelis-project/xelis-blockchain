@@ -138,6 +138,9 @@ pub struct SledStorage {
     // Contract outputs per TX
     // Key is the TX Hash that called the contract, value is a list of contract outputs
     pub(super) contracts_outputs: Tree,
+    // Tree in {topoheight}{contract} format for delayed executions
+    pub(super) contracts_delayed_executions: Tree,
+
     // opened DB used for assets to create dynamic assets
     pub(super) db: sled::Db,
 
@@ -241,6 +244,7 @@ impl SledStorage {
             contracts_balances: sled.open_tree("contracts_balances")?,
             versioned_contracts_balances: sled.open_tree("versioned_contracts_balances")?,
             contracts_outputs: sled.open_tree("contracts_outputs")?,
+            contracts_delayed_executions: sled.open_tree("contracts_delayed_executions")?,
             assets_supply: sled.open_tree("assets_supply")?,
             versioned_assets_supply: sled.open_tree("versioned_assets_supply")?,
             db: sled,
