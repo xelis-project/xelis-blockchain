@@ -377,7 +377,9 @@ impl<S: Storage> P2pServer<S> {
                 self.blockchain.rewind_chain(pop_count, false).await?;
             } else {
                 // Verify that someone isn't trying to trick us
-                if pop_count > blocks_len as u64 {
+                // Fast check: because each block represent a topoheight, it should contains
+                // at least the same blockchain size to try to replace it on our side
+                if pop_count > blocks_len as u64 && blocks_len < requested_max_size {
                     // TODO: maybe we could request its whole chain for comparison until chain validator has_higher_cumulative_difficulty ?
                     // If after going through all its chain and we still have a higher cumulative difficulty, we should not rewind 
                     warn!("{} sent us a pop count of {} but only sent us {} blocks, ignoring", peer, pop_count, blocks_len);
@@ -412,6 +414,9 @@ impl<S: Storage> P2pServer<S> {
 
                     futures.push_back(fut);
                 }
+
+                // Retrieve the current cumulative difficulty
+                let current_cumulative_difficulty = self.blockchain.get_cumulative_difficulty().await?;
 
                 // Put it behind a Mutex to we can share it between tasks
                 let chain_validator = Mutex::new(ChainValidator::new(&self.blockchain));
@@ -451,7 +456,7 @@ impl<S: Storage> P2pServer<S> {
                                         let mut chain_validator = chain_validator.lock().await;
                                         chain_validator.insert_block(hash, block, expected_topoheight).await?;
     
-                                        chain_validator.has_higher_cumulative_difficulty().await
+                                        chain_validator.has_higher_cumulative_difficulty(&current_cumulative_difficulty).await
                                     });
                                     
                                     expected_topoheight += 1;
@@ -464,7 +469,7 @@ impl<S: Storage> P2pServer<S> {
                 let chain_validator = chain_validator.into_inner();
                 // Verify that it has a higher cumulative difficulty than us
                 // Otherwise we don't switch to his chain
-                if !chain_validator.has_higher_cumulative_difficulty().await? {
+                if !chain_validator.has_higher_cumulative_difficulty(&current_cumulative_difficulty).await? {
                     error!("{} sent us a chain response with lower cumulative difficulty than ours", peer);
                     return Err(BlockchainError::LowerCumulativeDifficulty)
                 }
@@ -479,8 +484,12 @@ impl<S: Storage> P2pServer<S> {
                 let mut res = self.handle_chain_validator_with_rewind(peer, pop_count, chain_validator, blocks).await;
                 {
                     info!("Ending commit point for chain validator");
-                    let apply = res.as_ref()
-                        .map_or(false, |(_, v)| v.is_ok());
+                    let apply = match res.as_ref() {
+                        // In case we got a partially good chain only, and that its still better than ours
+                        // we can partially switch to it if the topoheight AND the cumulative difficulty is bigger
+                        Ok((_, res)) => res.is_ok() || (our_previous_topoheight < self.blockchain.get_topo_height() && current_cumulative_difficulty < self.blockchain.get_cumulative_difficulty().await?),
+                        Err(_) => false,
+                    };
 
                     {
                         debug!("locking storage write mode for commit point");

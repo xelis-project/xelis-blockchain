@@ -79,20 +79,11 @@ impl<'a, S: Storage> ChainValidator<'a, S> {
 
     // Check if the chain validator has a higher cumulative difficulty than our blockchain
     // This is used to determine if we should switch to the new chain by popping blocks or not
-    pub async fn has_higher_cumulative_difficulty(&self) -> Result<bool, BlockchainError> {
+    pub async fn has_higher_cumulative_difficulty(&self, current_cumulative_difficulty: &CumulativeDifficulty) -> Result<bool, BlockchainError> {
         let new_cumulative_difficulty = self.get_expected_chain_cumulative_difficulty()
             .ok_or(BlockchainError::NotEnoughBlocks)?;
 
-        // Retrieve the current cumulative difficulty
-        let current_cumulative_difficulty = {
-            debug!("locking storage for cumulative difficulty");
-            let storage = self.blockchain.get_storage().read().await;
-            debug!("storage lock acquired for cumulative difficulty");
-            let top_block_hash = self.blockchain.get_top_block_hash_for_storage(&storage).await?;
-            storage.get_cumulative_difficulty_for_block_hash(&top_block_hash).await?
-        };
-
-        Ok(*new_cumulative_difficulty > current_cumulative_difficulty)
+        Ok(*new_cumulative_difficulty > *current_cumulative_difficulty)
     }
 
     // Retrieve the cumulative difficulty of the chain validator

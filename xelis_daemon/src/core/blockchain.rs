@@ -836,6 +836,15 @@ impl<S: Storage> Blockchain<S> {
         &self.network
     }
 
+    // Retrieve the cumulative difficulty of the chain
+    pub async fn get_cumulative_difficulty(&self) -> Result<CumulativeDifficulty, BlockchainError> {
+        debug!("get cumulative difficulty");
+        let storage = self.storage.read().await;
+        debug!("storage lock acquired for cumulative difficulty");
+        let top_block_hash = self.get_top_block_hash_for_storage(&storage).await?;
+        storage.get_cumulative_difficulty_for_block_hash(&top_block_hash).await
+    }
+
     // Get the current emitted supply of XELIS at current topoheight
     pub async fn get_supply(&self) -> Result<u64, BlockchainError> {
         debug!("get supply");
