@@ -1328,7 +1328,6 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             150,
             Some(Type::Bool)
         );
-
     }
 
     // Misc

@@ -15,7 +15,8 @@ use xelis_vm::{
 use crate::{
     config::{COST_PER_DELAYED_EXECUTION, FEE_PER_BYTE_STORED_CONTRACT, XELIS_ASSET},
     contract::{from_context, get_balance_from_cache, get_mut_balance_for_contract, record_burned_asset, ContractProvider, ModuleMetadata, MAX_VALUE_SIZE},
-    crypto::Hash, serializer::Serializer
+    crypto::Hash,
+    serializer::*
 };
 
 // Delayed executions are unique per contract
@@ -46,6 +47,24 @@ impl PartialEq for DelayedExecution {
 }
 
 impl Eq for DelayedExecution {}
+
+impl Serializer for DelayedExecution {
+    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
+        Ok(Self {
+            contract: Hash::read(reader)?,
+            chunk_id: u16::read(reader)?,
+            params: Vec::read(reader)?,
+            max_gas: u64::read(reader)?,
+        })
+    }
+
+    fn write(&self, writer: &mut Writer) {
+        self.contract.write(writer);
+        self.chunk_id.write(writer);
+        self.params.write(writer);
+        self.max_gas.write(writer);
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct OpaqueDelayedExecution;
