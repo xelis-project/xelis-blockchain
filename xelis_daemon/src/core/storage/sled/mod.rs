@@ -138,8 +138,10 @@ pub struct SledStorage {
     // Contract outputs per TX
     // Key is the TX Hash that called the contract, value is a list of contract outputs
     pub(super) contracts_outputs: Tree,
-    // Tree in {topoheight}{contract} format for delayed executions
+    // Tree in {execution_topoheight}{contract} format for delayed executions
     pub(super) contracts_delayed_executions: Tree,
+    // Tree in {topoheight}{contract}{execution_topoheight} => [empty]
+    pub(super) contracts_delayed_executions_registrations: Tree,
 
     // opened DB used for assets to create dynamic assets
     pub(super) db: sled::Db,
@@ -245,6 +247,7 @@ impl SledStorage {
             versioned_contracts_balances: sled.open_tree("versioned_contracts_balances")?,
             contracts_outputs: sled.open_tree("contracts_outputs")?,
             contracts_delayed_executions: sled.open_tree("contracts_delayed_executions")?,
+            contracts_delayed_executions_registrations: sled.open_tree("contracts_delayed_executions_registrations")?,
             assets_supply: sled.open_tree("assets_supply")?,
             versioned_assets_supply: sled.open_tree("versioned_assets_supply")?,
             db: sled,
@@ -359,11 +362,19 @@ impl SledStorage {
             .ok_or(BlockchainError::NotFoundOnDisk(context))
     }
 
+    // Scan prefix over keys only
+    pub(super) fn scan_prefix_keys(snapshot: Option<&Snapshot>, tree: &Tree, prefix: &[u8]) -> impl Iterator<Item = sled::Result<IVec>> {
+        match snapshot {
+            Some(snapshot) => Either::Left(snapshot.scan_prefix_keys(tree, prefix)),
+            None => Either::Right(tree.scan_prefix(prefix).into_iter().keys())
+        }
+    }
+
     // Scan prefix
-    pub(super) fn scan_prefix(snapshot: Option<&Snapshot>, tree: &Tree, prefix: &[u8]) -> impl Iterator<Item = sled::Result<IVec>> {
+    pub(super) fn scan_prefix(snapshot: Option<&Snapshot>, tree: &Tree, prefix: &[u8]) -> impl Iterator<Item = sled::Result<(IVec, IVec)>> {
         match snapshot {
             Some(snapshot) => Either::Left(snapshot.scan_prefix(tree, prefix)),
-            None => Either::Right(tree.scan_prefix(prefix).into_iter().keys())
+            None => Either::Right(tree.scan_prefix(prefix).into_iter())
         }
     }
 

@@ -1,9 +1,11 @@
 use async_trait::async_trait;
+use futures::{stream, Stream};
 use log::trace;
+use rocksdb::Direction;
 use xelis_common::{block::TopoHeight, contract::DelayedExecution, crypto::Hash};
 use crate::core::{
     error::BlockchainError,
-    storage::{rocksdb::{Column, ContractId}, ContractDelayedExecutionProvider, RocksStorage}
+    storage::{rocksdb::{Column, ContractId, IteratorMode}, ContractDelayedExecutionProvider, RocksStorage}
 };
 
 #[async_trait]
@@ -11,13 +13,15 @@ impl ContractDelayedExecutionProvider for RocksStorage {
     // Set contract delayed execution at provided topoheight
     // Caller must ensures that the topoheight configured is >= current topoheight & no other execution was there
     // otherwise, it will get overwritted
-    async fn set_contract_delayed_execution_at_topoheight(&mut self, contract: &Hash, topoheight: TopoHeight, execution: &DelayedExecution) -> Result<(), BlockchainError> {
+    async fn set_contract_delayed_execution_at_topoheight(&mut self, contract: &Hash, topoheight: TopoHeight, execution: &DelayedExecution, execution_topoheight: TopoHeight) -> Result<(), BlockchainError> {
         trace!("set contract {} delayed execution at topoheight {}", contract, topoheight);
 
         let contract_id = self.get_contract_id(contract)?;
         let key = Self::get_contract_delayed_execution_key(contract_id, topoheight);
+        self.insert_into_disk(Column::DelayedExecution, &key, execution)?;
 
-        self.insert_into_disk(Column::DelayedExecution, &key, execution)
+        let key = Self::get_contract_delayed_execution_registration_key(topoheight, contract_id, execution_topoheight);
+        self.insert_into_disk(Column::DelayedExecutionRegistrations, &key, &[])
     }
 
     // Has a contract delayed execution registered at the provided topoheight?
@@ -39,6 +43,22 @@ impl ContractDelayedExecutionProvider for RocksStorage {
 
         self.load_from_disk(Column::DelayedExecution, &key)
     }
+
+    async fn get_registered_contract_delayed_executions_at_topoheight<'a>(&'a self, topoheight: TopoHeight) -> Result<impl Stream<Item = Result<(TopoHeight, Hash), BlockchainError>> + 'a, BlockchainError> {
+        let prefix = topoheight.to_be_bytes();
+        self.iter_keys::<(TopoHeight, ContractId, TopoHeight)>(Column::DelayedExecutionRegistrations, IteratorMode::WithPrefix(&prefix, Direction::Forward))
+            .map(|iter| stream::iter(iter.map(|res| {
+                let (_, contract_id, topoheight) = res?;
+                let contract = self.get_contract_from_id(contract_id)?;
+                Ok((topoheight, contract))
+            })))
+    }
+
+    async fn get_contract_delayed_executions_at_topoheight<'a>(&'a self, topoheight: TopoHeight) -> Result<impl Stream<Item = Result<DelayedExecution, BlockchainError>> + 'a, BlockchainError> {
+        let prefix = topoheight.to_be_bytes();
+        self.iter::<(), DelayedExecution>(Column::DelayedExecution, IteratorMode::WithPrefix(&prefix, Direction::Forward))
+            .map(|iter| stream::iter(iter.map(|res| res.map(|(_, v)| v))))
+    }
 }
 
 impl RocksStorage {
@@ -46,6 +66,15 @@ impl RocksStorage {
         let mut buf = [0; 16];
         buf[0..8].copy_from_slice(&topoheight.to_be_bytes());
         buf[8..].copy_from_slice(&contract.to_be_bytes());
+
+        buf
+    }
+
+    pub fn get_contract_delayed_execution_registration_key(topoheight: TopoHeight, contract: ContractId, execution_topoheight: TopoHeight) -> [u8; 24] {
+        let mut buf = [0; 24];
+        buf[0..8].copy_from_slice(&topoheight.to_be_bytes());
+        buf[8..].copy_from_slice(&contract.to_be_bytes());
+        buf[16..].copy_from_slice(&execution_topoheight.to_be_bytes());
 
         buf
     }

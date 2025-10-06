@@ -159,7 +159,7 @@ impl Snapshot {
         self.trees.insert(tree_name.as_ref().into(), None).is_some()
     }
 
-    pub fn scan_prefix(&self, tree: &Tree, prefix: &[u8]) -> impl Iterator<Item = sled::Result<IVec>> {
+    pub fn scan_prefix_keys(&self, tree: &Tree, prefix: &[u8]) -> impl Iterator<Item = sled::Result<IVec>> {
         match self.trees.get(&tree.name()) {
             Some(Some(entries)) => {
                 let original =  tree.scan_prefix(prefix)
@@ -182,6 +182,35 @@ impl Snapshot {
                 Either::Left(changes)
             },
             _ => Either::Right(tree.scan_prefix(prefix).keys())
+        }
+    }
+
+    pub fn scan_prefix(&self, tree: &Tree, prefix: &[u8]) -> impl Iterator<Item = sled::Result<(IVec, IVec)>> {
+        match self.trees.get(&tree.name()) {
+            Some(Some(entries)) => {
+                let original =  tree.scan_prefix(prefix)
+                    .filter_map_ok(|(k, v)| {
+                        if !entries.writes.contains_key(&k) {
+                            Some((k, v))
+                        } else {
+                            None
+                        }
+                    });
+
+                let changes = entries.writes.iter()
+                    .filter_map(|(k, v)| {
+                        match v.as_ref() {
+                            Some(value) if k.starts_with(prefix) => Some(Ok((k.clone(), value.clone()))),
+                            _ => None
+                        }
+                    })
+                    .chain(original)
+                    .collect::<Vec<_>>()
+                    .into_iter();
+
+                Either::Left(changes)
+            },
+            _ => Either::Right(tree.scan_prefix(prefix))
         }
     }
 

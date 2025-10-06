@@ -55,7 +55,7 @@ impl ContractBalanceProvider for SledStorage {
 
     async fn get_contract_assets_for<'a>(&'a self, contract: &'a Hash) -> Result<impl Iterator<Item = Result<Hash, BlockchainError>> + 'a, BlockchainError> {
         trace!("get contract assets for {}", contract);
-        Ok(Self::scan_prefix(self.snapshot.as_ref(), &self.contracts_balances, contract.as_bytes())
+        Ok(Self::scan_prefix_keys(self.snapshot.as_ref(), &self.contracts_balances, contract.as_bytes())
             .map(|res| {
                 let bytes = res?;
                 let hash = Hash::from_bytes(&bytes[HASH_SIZE..])?;

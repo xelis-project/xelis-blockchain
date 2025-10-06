@@ -100,8 +100,10 @@ pub enum Column {
     // {topoheight}{contract_id}{contract_data_id} => {version}
     VersionedContractsData,
 
-    // {topoheight}{contract_id}
+    // {topoheight}{contract_id} => {execution}
     DelayedExecution,
+    // {topoheight}{contract_id}{execution_topoheight} => []
+    DelayedExecutionRegistrations,
 
     // {contract}{asset} => {topoheight}
     ContractsBalances,
