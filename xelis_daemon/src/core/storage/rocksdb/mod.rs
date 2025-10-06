@@ -718,7 +718,10 @@ mod tests {
         db.put(make_key(&[10, 10, 10, 50], 15), &[]).unwrap();
         db.put(make_key(&[10, 10, 10, 50], 69), &[]).unwrap();
         db.put(make_key(&[10, 10, 10, 50], 0), &[]).unwrap();
+        db.put(make_key(&[10, 10, 10, 50], 150), &[]).unwrap();
 
+        db.put(make_key(&[10, 10, 10, 49], 50), &[]).unwrap();
+        db.put(make_key(&[10, 10, 10, 51], 50), &[]).unwrap();
         db.put(make_key(&[10, 99, 10, 50], 50), &[]).unwrap();
         db.put(make_key(&[6, 40, 10, 50], 30), &[]).unwrap();
         db.put(make_key(&[0, 0, 0, 0], 70), &[]).unwrap();
@@ -743,6 +746,7 @@ mod tests {
             suffix.push(u64::from_be_bytes(buf));
         }
 
+        // Bounds are inclusive, and 150 isn't included
         assert!(suffix == vec![69, 50, 30, 15, 0]);
     }
 }
