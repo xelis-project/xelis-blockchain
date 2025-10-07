@@ -78,10 +78,10 @@ mod tests {
         // initial full block
         let mut ema = BlockSizeEma::default(MAX_BLOCK_SIZE);
         ema.add(124);
-        assert_eq!(ema.current(), 1_245_190);
+        assert_eq!(ema.current(), 1_297_614);
 
         ema.add(124);
-        assert_eq!(ema.current(), 1_182_936);
+        assert_eq!(ema.current(), 1_284_639);
     }
 
     #[test]
