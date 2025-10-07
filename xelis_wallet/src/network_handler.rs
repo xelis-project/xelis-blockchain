@@ -405,7 +405,7 @@ impl NetworkHandler {
                             let payload = payload.into_owned();
                             let mut deposits = IndexMap::new();
 
-                            for (asset, deposit) in payload.deposits {
+                            for (asset, deposit) in payload.deposits.0 {
                                 assets_changed.insert(asset.clone());
 
                                 if !should_scan_history {
@@ -441,8 +441,9 @@ impl NetworkHandler {
                         if is_owner {
                             let payload = payload.into_owned();
                             let invoke = if let Some(invoke) = payload.invoke {
+                                let max_gas = invoke.max_gas;
                                 let mut deposits = IndexMap::new();
-                                for (asset, deposit) in invoke.deposits {
+                                for (asset, deposit) in invoke.deposits.0 {
                                     assets_changed.insert(asset.clone());
 
                                     if !should_scan_history {
@@ -470,7 +471,7 @@ impl NetworkHandler {
                                 }
 
                                 Some(DeployInvoke {
-                                    max_gas: invoke.max_gas,
+                                    max_gas,
                                     deposits,
                                 })
                             } else {
