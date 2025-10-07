@@ -232,7 +232,7 @@ impl Transaction {
                     .collect::<Result<_, DecompressionError>>()?;
             },
             TransactionType::InvokeContract(payload) => {
-                for (asset, deposit) in &payload.deposits {
+                for (asset, deposit) in payload.deposits.iter() {
                     match deposit {
                         ContractDeposit::Private { commitment, sender_handle, receiver_handle, .. } => {
                             let decompressed = DecompressedDepositCt {
@@ -327,7 +327,8 @@ impl Transaction {
         &self,
         deposits_decompressed: &mut HashMap<&'a Hash, DecompressedDepositCt>,
         deposits: &'a IndexMap<Hash, ContractDeposit>,
-        max_gas: u64
+        max_gas: u64,
+        private_deposits: bool,
     ) -> Result<(), VerificationError<E>> {
         if deposits.len() > MAX_DEPOSIT_PER_INVOKE_CALL {
             return Err(VerificationError::DepositCount);
@@ -345,6 +346,13 @@ impl Transaction {
                     }
                 },
                 ContractDeposit::Private { commitment, sender_handle, receiver_handle, .. } => {
+
+                    // if private deposits aren't allowed
+                    // returns an error
+                    if !private_deposits {
+                        return Err(VerificationError::InvalidFormat);
+                    }
+
                     let decompressed = DecompressedDepositCt {
                         commitment: commitment.decompress()
                             .map_err(ProofVerificationError::from)?,
@@ -375,6 +383,10 @@ impl Transaction {
         deposits: &IndexMap<Hash, ContractDeposit>,
     ) -> Result<(), VerificationError<E>> {
         trace!("verify contract deposits");
+
+        if deposits.len() > u8::MAX as usize {
+            return Err(VerificationError::InvalidFormat)
+        }
 
         for (asset, deposit) in deposits {
             transcript.deposit_proof_domain_separator();
@@ -531,7 +543,8 @@ impl Transaction {
                 self.verify_invoke_contract(
                     &mut deposits_decompressed,
                     &payload.deposits,
-                    payload.max_gas
+                    payload.max_gas,
+                    true,
                 )?;
 
                 // We need to load the contract module if not already in cache
@@ -557,7 +570,8 @@ impl Transaction {
                     self.verify_invoke_contract(
                         &mut deposits_decompressed,
                         &invoke.deposits,
-                        invoke.max_gas
+                        invoke.max_gas,
+                        false,
                     )?;
                 }
 
@@ -735,7 +749,8 @@ impl Transaction {
                 self.verify_invoke_contract(
                     &mut deposits_decompressed,
                     &payload.deposits,
-                    payload.max_gas
+                    payload.max_gas,
+                    true,
                 )?;
 
                 // We need to load the contract module if not already in cache
@@ -761,7 +776,8 @@ impl Transaction {
                     self.verify_invoke_contract(
                         &mut deposits_decompressed,
                         &invoke.deposits,
-                        invoke.max_gas
+                        invoke.max_gas,
+                        false,
                     )?;
                 }
 
@@ -936,8 +952,6 @@ impl Transaction {
                 }
             },
             TransactionType::DeployContract(payload) => {
-                transcript.deploy_contract_proof_domain_separator();
-
                 // Verify that if we have a constructor, we must have an invoke, and vice-versa
                 if payload.invoke.is_none() != payload.module.get_chunk_id_of_hook(0).is_none() {
                     return Err(VerificationError::InvalidFormat);
@@ -955,8 +969,12 @@ impl Transaction {
                         &invoke.deposits,
                     )?;
 
+                    transcript.deploy_contract_proof_domain_separator();
+
                     transcript.invoke_constructor_proof_domain_separator();
                     transcript.append_u64(b"max_gas", invoke.max_gas);
+                } else {
+                    transcript.deploy_contract_proof_domain_separator();
                 }
 
                 state.set_contract_module(tx_hash, &payload.module).await
@@ -1228,6 +1246,10 @@ impl Transaction {
                             .map_err(VerificationError::State)?;
                     }
                 }
+
+                // Track the burned contract
+                state.add_burned_fee(BURN_PER_CONTRACT).await
+                    .map_err(VerificationError::State)?;
             }
         }
 
@@ -1251,7 +1273,7 @@ impl Transaction {
                     .map_err(ProofVerificationError::from)?
             },
             TransactionType::InvokeContract(payload) => {
-                for (asset, deposit) in &payload.deposits {
+                for (asset, deposit) in payload.deposits.iter() {
                     match deposit {
                         ContractDeposit::Private { commitment, sender_handle, receiver_handle, .. } => {
                             let decompressed = DecompressedDepositCt {
@@ -1321,7 +1343,7 @@ impl Transaction {
                     .map_err(ProofVerificationError::from)?
             },
             TransactionType::InvokeContract(payload) => {
-                for (asset, deposit) in &payload.deposits {
+                for (asset, deposit) in payload.deposits.iter() {
                     match deposit {
                         ContractDeposit::Private { commitment, sender_handle, receiver_handle, .. } => {
                             let decompressed = DecompressedDepositCt {

@@ -17,7 +17,7 @@ use curve25519_dalek::Scalar;
 use serde::{Deserialize, Serialize};
 use xelis_vm::Module;
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashSet,
     iter,
 };
 use crate::{
@@ -61,6 +61,7 @@ use super::{
     },
     BurnPayload,
     ContractDeposit,
+    Deposits,
     DeployContractPayload,
     InvokeConstructorPayload,
     InvokeContractPayload,
@@ -446,7 +447,7 @@ impl TransactionBuilder {
         fee_limit: u64,
         asset: &Hash,
         transfers: &[TransferWithCommitment],
-        deposits: &HashMap<Hash, DepositWithCommitment>,
+        deposits: &IndexMap<Hash, DepositWithCommitment>,
     ) -> Ciphertext {
         if asset == &XELIS_ASSET {
             // Fees are applied to the native blockchain asset only.
@@ -541,6 +542,7 @@ impl TransactionBuilder {
                 }
             },
             TransactionTypeBuilder::DeployContract(payload) => {
+                // Count the burn cost for deploying a contract online
                 if *asset == XELIS_ASSET {
                     cost += BURN_PER_CONTRACT;
                 }
@@ -565,8 +567,8 @@ impl TransactionBuilder {
         deposits: &IndexMap<Hash, ContractDepositBuilder>,
         public_key: &PublicKey,
         contract_key: &Option<PublicKey>,
-    ) -> Result<HashMap<Hash, DepositWithCommitment>, GenerationError<E>> {
-        let mut deposits_commitments = HashMap::new();
+    ) -> Result<IndexMap<Hash, DepositWithCommitment>, GenerationError<E>> {
+        let mut deposits_commitments = IndexMap::new();
         for (asset, deposit) in deposits.iter() {
             if deposit.private {
                 let amount_opening = PedersenOpening::generate_new();
@@ -584,7 +586,6 @@ impl TransactionBuilder {
                     receiver_handle,
                     amount_opening,
                 });
-                todo!("support private deposits")
             } else {
                 if deposit.amount == 0 {
                     return Err(GenerationError::DepositZero);
@@ -602,11 +603,11 @@ impl TransactionBuilder {
         range_proof_values: &mut Vec<u64>,
         range_proof_openings: &mut Vec<Scalar>,
         payload_deposits: &mut IndexMap<Hash, ContractDepositBuilder>,
-        deposits_commitments: HashMap<Hash, DepositWithCommitment>,
+        deposits_commitments: IndexMap<Hash, DepositWithCommitment>,
         source_keypair: &KeyPair,
         tx_version: TxVersion,
         contract_key: &Option<PublicKey>,
-    ) -> IndexMap<Hash, ContractDeposit> {
+    ) -> Deposits {
         range_proof_openings.reserve(deposits_commitments.len());
         range_proof_values.reserve(deposits_commitments.len());
 
@@ -651,7 +652,7 @@ impl TransactionBuilder {
                 deposits.insert(asset, ContractDeposit::Public(deposit.amount));
             }
 
-            deposits
+            Deposits(deposits)
     }
 
     pub fn build<B: AccountState>(
@@ -684,7 +685,7 @@ impl TransactionBuilder {
 
         // Data is mutable only to extract extra data
         let mut transfers_commitments = Vec::new();
-        let mut deposits_commitments = HashMap::new();
+        let mut deposits_commitments = IndexMap::new();
         match &mut self.data {
             TransactionTypeBuilder::Transfers(transfers) => {
                 if transfers.len() == 0 {
@@ -864,7 +865,7 @@ impl TransactionBuilder {
 
         let source_pubkey = source_keypair.get_public_key();
         let mut transfers = Vec::new();
-        let mut deposits = IndexMap::new();
+        let mut deposits = Deposits::default();
         match &mut self.data {
             TransactionTypeBuilder::Transfers(_) => {
                 range_proof_values.reserve(transfers_commitments.len());

@@ -1,5 +1,6 @@
 mod deploy;
 mod invoke;
+mod deposits;
 
 use anyhow::Context;
 use indexmap::{IndexMap, IndexSet};
@@ -16,13 +17,14 @@ use xelis_vm::{
 use crate::{
     crypto::{
         elgamal::{CompressedCommitment, CompressedHandle},
-        proofs::CiphertextValidityProof
+        proofs::CiphertextValidityProof,
     },
     serializer::*
 };
 
 pub use deploy::*;
 pub use invoke::*;
+pub use deposits::*;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "snake_case")]
@@ -381,6 +383,25 @@ impl Serializer for Module {
         }
 
         Ok(Module::with(constants, chunks, hooks))
+    }
+
+    fn size(&self) -> usize {
+        // 2 for constants len
+        let mut size = 2 + self.constants()
+            .iter()
+            .map(Serializer::size)
+            .sum::<usize>();
+        // 2 for chunks len u16
+        // 4 for instructions len u32 per chunk
+        size += 2 + self.chunks()
+            .iter()
+            .map(|(chunk, access)| 4 + chunk.get_instructions().len() + match access {
+                Access::All | Access::Internal | Access::Entry => 1,
+                Access::Hook { id } => 1 + id.size(),
+            })
+            .sum::<usize>();
+
+        size
     }
 }
 

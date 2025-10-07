@@ -20,7 +20,7 @@ use crate::{
     },
     serializer::Serializer,
     transaction::{
-        builder::{ContractDepositBuilder, DeployContractBuilder, InvokeContractBuilder},
+        builder::{ContractDepositBuilder, DeployContractBuilder, DeployContractInvokeBuilder, InvokeContractBuilder},
         verify::{NoZKPCache, VerificationError, ZKPCache},
         MultiSigPayload,
         TransactionType,
@@ -434,6 +434,9 @@ async fn test_tx_deploy_contract() {
 
     alice.set_balance(XELIS_ASSET, 100 * COIN_VALUE);
 
+    let max_gas = 500;
+    let deposit = 10;
+
     let tx = {
         let mut state = AccountStateImpl {
             balances: alice.balances.clone(),
@@ -446,15 +449,27 @@ async fn test_tx_deploy_contract() {
 
         let mut module = Module::new();
         module.add_entry_chunk(Chunk::new());
+
+        // constructor
+        module.add_hook_chunk(0, Chunk::new());
+
+        assert!(module.size() == module.to_bytes().len());
+
         let data = TransactionTypeBuilder::DeployContract(DeployContractBuilder {
             module: module.to_hex(),
-            invoke: None
+            invoke: Some(DeployContractInvokeBuilder {
+                deposits: [(XELIS_ASSET, ContractDepositBuilder {
+                    amount: deposit,
+                    private: false
+                })].into(),
+                max_gas,
+            }),
         });
         let builder = TransactionBuilder::new(TxVersion::V2, alice.keypair.get_public_key().compress(), None, data, FeeBuilder::default());
         let estimated_size = builder.estimate_size();
         let tx = builder.build(&mut state, &alice.keypair).unwrap();
+        assert!(tx.to_bytes().len() == tx.size(), "expected {} bytes but estimated {} bytes", tx.to_bytes().len(), tx.size());
         assert!(estimated_size == tx.size(), "expected {} bytes got {} bytes", tx.size(), estimated_size);
-        assert!(tx.to_bytes().len() == estimated_size);
 
         Arc::new(tx)
     };
@@ -478,8 +493,8 @@ async fn test_tx_deploy_contract() {
 
     // Check Alice balance
     let balance = alice.keypair.decrypt_to_point(&state.accounts[&alice.keypair.get_public_key().compress()].balances[&XELIS_ASSET]);
-    // 1 XEL for contract deploy, tx fee
-    let total_spend = BURN_PER_CONTRACT + tx.fee;
+    // 1 XEL for contract deploy, tx fee, max gas + deposit
+    let total_spend = BURN_PER_CONTRACT + tx.fee + max_gas + deposit;
 
     assert_eq!(balance, Scalar::from((100 * COIN_VALUE) - total_spend) * (*G));
 }

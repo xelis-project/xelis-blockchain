@@ -286,10 +286,11 @@ impl Serializer for TransactionType {
     }
 
     fn size(&self) -> usize {
+        // 1 byte for variant
         1 + match self {
             TransactionType::Burn(payload) => payload.size(),
             TransactionType::Transfers(txs) => {
-                // 1 byte for variant, 1 byte for count of transfers
+                // 1 byte for count of transfers
                 let mut size = 1;
                 for tx in txs {
                     size += tx.size();
@@ -297,11 +298,11 @@ impl Serializer for TransactionType {
                 size
             },
             TransactionType::MultiSig(payload) => {
-                // 1 byte for variant, 1 byte for threshold, 1 byte for count of participants
+                // 1 byte for threshold, 1 byte for count of participants
                 1 + 1 + payload.participants.iter().map(|p| p.size()).sum::<usize>()
             },
             TransactionType::InvokeContract(payload) => payload.size(),
-            TransactionType::DeployContract(module) => module.size(),
+            TransactionType::DeployContract(payload) => payload.size(),
         }
     }
 }

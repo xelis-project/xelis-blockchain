@@ -1,15 +1,14 @@
-use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use xelis_vm::Module;
 
-use crate::{crypto::Hash, serializer::*};
-use super::ContractDeposit;
+use crate::serializer::*;
+use super::Deposits;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct InvokeConstructorPayload {
     pub max_gas: u64,
     // Assets deposited with this call
-    pub deposits: IndexMap<Hash, ContractDeposit>,
+    pub deposits: Deposits,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -45,7 +44,7 @@ impl Serializer for InvokeConstructorPayload {
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> { 
         Ok(Self {
             max_gas: u64::read(reader)?,
-            deposits: IndexMap::read(reader)?
+            deposits: Deposits::read(reader)?,
         })
     }
 
