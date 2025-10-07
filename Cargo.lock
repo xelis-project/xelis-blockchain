@@ -4810,7 +4810,7 @@ dependencies = [
 [[package]]
 name = "xelis-ast"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#9e973cc6de5045d98e2f5a695711afc737cba06a"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#52ef20bfddcc22e2b48cfd4dc72555fbe4f7add8"
 dependencies = [
  "indexmap 2.11.4",
  "xelis-types",
@@ -4819,7 +4819,7 @@ dependencies = [
 [[package]]
 name = "xelis-builder"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#9e973cc6de5045d98e2f5a695711afc737cba06a"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#52ef20bfddcc22e2b48cfd4dc72555fbe4f7add8"
 dependencies = [
  "anyhow",
  "hex",
@@ -4834,7 +4834,7 @@ dependencies = [
 [[package]]
 name = "xelis-bytecode"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#9e973cc6de5045d98e2f5a695711afc737cba06a"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#52ef20bfddcc22e2b48cfd4dc72555fbe4f7add8"
 dependencies = [
  "hex",
  "indexmap 2.11.4",
@@ -4846,7 +4846,7 @@ dependencies = [
 [[package]]
 name = "xelis-environment"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#9e973cc6de5045d98e2f5a695711afc737cba06a"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#52ef20bfddcc22e2b48cfd4dc72555fbe4f7add8"
 dependencies = [
  "anyhow",
  "better_any",
@@ -4874,7 +4874,7 @@ dependencies = [
 [[package]]
 name = "xelis-types"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#9e973cc6de5045d98e2f5a695711afc737cba06a"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#52ef20bfddcc22e2b48cfd4dc72555fbe4f7add8"
 dependencies = [
  "anyhow",
  "hex",
@@ -4889,7 +4889,7 @@ dependencies = [
 [[package]]
 name = "xelis-vm"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#9e973cc6de5045d98e2f5a695711afc737cba06a"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#52ef20bfddcc22e2b48cfd4dc72555fbe4f7add8"
 dependencies = [
  "anyhow",
  "futures",
