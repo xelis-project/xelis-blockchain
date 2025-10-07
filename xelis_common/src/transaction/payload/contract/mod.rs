@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use xelis_vm::{
     Access,
     Chunk,
+    ModuleChunk,
     Module,
     OpaqueWrapper,
     Primitive,
@@ -329,18 +330,18 @@ impl Serializer for Module {
 
         let chunks = self.chunks();
         writer.write_u16(chunks.len() as u16);
-        for (chunk, access) in chunks {
-            let instructions = chunk.get_instructions();
+        for entry in chunks {
+            let instructions = entry.chunk.get_instructions();
             let len = instructions.len() as u32;
             writer.write_u32(&len);
             writer.write_bytes(instructions);
-            match access {
+            match entry.access {
                 Access::All => writer.write_u8(0),
                 Access::Internal => writer.write_u8(1),
                 Access::Entry => writer.write_u8(2),
                 Access::Hook { id } => {
                     writer.write_u8(3);
-                    writer.write_u8(*id);
+                    writer.write_u8(id);
                 }
             }
         }
@@ -379,7 +380,7 @@ impl Serializer for Module {
                 _ => return Err(ReaderError::InvalidValue)
             };
 
-            chunks.push((chunk, access));
+            chunks.push(ModuleChunk { chunk, access });
         }
 
         Ok(Module::with(constants, chunks, hooks))
@@ -395,7 +396,7 @@ impl Serializer for Module {
         // 4 for instructions len u32 per chunk
         size += 2 + self.chunks()
             .iter()
-            .map(|(chunk, access)| 4 + chunk.get_instructions().len() + match access {
+            .map(|entry| 4 + entry.chunk.get_instructions().len() + match entry.access {
                 Access::All | Access::Internal | Access::Entry => 1,
                 Access::Hook { id } => 1 + id.size(),
             })
