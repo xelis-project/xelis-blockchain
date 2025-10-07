@@ -738,6 +738,18 @@ pub struct GetContractOutputsParams<'a> {
 }
 
 #[derive(Serialize, Deserialize)]
+pub struct GetContractsOutputsSummaryParams<'a> {
+    pub address: Cow<'a, Address>,
+    pub topoheight: TopoHeight,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct GetContractsOutputsSummaryEntry<'a> {
+    pub tx_hash: Cow<'a, Hash>,
+    pub outputs: Vec<RPCContractOutput<'a>>,
+}
+
+#[derive(Serialize, Deserialize)]
 pub struct GetContractModuleParams<'a> {
     pub contract: Cow<'a, Hash>
 }

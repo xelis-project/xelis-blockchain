@@ -260,6 +260,36 @@ pub enum RPCContractOutput<'a> {
 }
 
 impl<'a> RPCContractOutput<'a> {
+    pub fn from_output_owned(output: ContractOutput, mainnet: bool) -> Self {
+        match output {
+            ContractOutput::RefundGas { amount } => RPCContractOutput::RefundGas { amount: amount },
+            ContractOutput::Transfer { amount, asset, destination } => RPCContractOutput::Transfer {
+                amount,
+                asset: Cow::Owned(asset),
+                destination: Cow::Owned(destination.as_address(mainnet))
+            },
+            ContractOutput::TransferContract { amount, asset, destination } => RPCContractOutput::TransferContract {
+                amount,
+                asset: Cow::Owned(asset),
+                destination: Cow::Owned(destination)
+            },
+            ContractOutput::Mint { asset, amount } => RPCContractOutput::Mint {
+                asset: Cow::Owned(asset),
+                amount
+            },
+            ContractOutput::Burn { asset, amount } => RPCContractOutput::Burn {
+                asset: Cow::Owned(asset),
+                amount
+            },
+            ContractOutput::NewAsset { asset } => RPCContractOutput::NewAsset {
+                asset: Cow::Owned(asset)
+            },
+            ContractOutput::ExitCode(code) => RPCContractOutput::ExitCode(code.clone()),
+            ContractOutput::RefundDeposits => RPCContractOutput::RefundDeposits,
+            ContractOutput::GasInjection { contract, amount } => RPCContractOutput::GasInjection { contract: Cow::Owned(contract), amount },
+            ContractOutput::DelayedExecution { contract, topoheight } => RPCContractOutput::DelayedExecution { contract: Cow::Owned(contract), topoheight },
+        }
+    }
     pub fn from_output(output: &'a ContractOutput, mainnet: bool) -> Self {
         match output {
             ContractOutput::RefundGas { amount } => RPCContractOutput::RefundGas { amount: *amount },
@@ -291,7 +321,6 @@ impl<'a> RPCContractOutput<'a> {
         }
     }
 }
-
 impl<'a> From<RPCContractOutput<'a>> for ContractOutput {
     fn from(output: RPCContractOutput<'a>) -> Self {
         match output {
