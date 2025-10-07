@@ -48,6 +48,7 @@ use xelis_common::{
         XELIS_ASSET
     },
     context::Context,
+    contract::ContractOutput,
     crypto::{Address, AddressType, Hash, PublicKey},
     difficulty::{
         CumulativeDifficulty,
@@ -380,6 +381,7 @@ pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>
 
     // Contracts
     handler.register_method("get_contract_outputs", async_handler!(get_contract_outputs::<S>));
+    handler.register_method("get_contracts_outputs_summary", async_handler!(get_contracts_outputs_summary::<S>));
     handler.register_method("get_contract_module", async_handler!(get_contract_module::<S>));
     handler.register_method("get_contract_data", async_handler!(get_contract_data::<S>));
     handler.register_method("get_contract_data_at_topoheight", async_handler!(get_contract_data_at_topoheight::<S>));
@@ -1726,6 +1728,46 @@ async fn get_contract_outputs<S: Storage>(context: &Context, body: Value) -> Res
         .iter()
         .map(|output| RPCContractOutput::from_output(&output, is_mainnet))
         .collect::<Vec<_>>();
+
+    Ok(json!(rpc_outputs))
+}
+
+async fn get_contracts_outputs_summary<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
+    let params: GetContractsOutputsSummaryParams = parse_params(body)?;
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    let is_mainnet = blockchain.get_network().is_mainnet();
+    let storage = blockchain.get_storage().read().await;
+
+    let (block_hash, header) = storage.get_block_header_at_topoheight(params.topoheight).await
+        .context("Error while retrieving block header at topoheight")?;
+
+    let mut rpc_outputs = Vec::new();
+    for tx_hash in header.get_transactions() {
+        let is_executed = storage.is_tx_executed_in_block(tx_hash, &block_hash).await
+            .context("Error while checking if TX is executed in block")?;
+
+        if is_executed && storage.has_contract_outputs_for_tx(tx_hash).await
+            .context("Error while checking if contract outputs exists")?
+        {
+            let outputs =  storage.get_contract_outputs_for_tx(&tx_hash).await
+                .context("Error while retrieving contract outputs")?
+                .into_iter()
+                .filter_map(|output| {
+                    match &output {
+                        ContractOutput::Transfer { destination, .. }
+                            if destination == params.address.get_public_key() => Some(RPCContractOutput::from_output_owned(output, is_mainnet)), 
+                        _ => None,
+                    }
+                }).collect::<Vec<_>>();
+
+            if !outputs.is_empty() {
+                rpc_outputs.push(GetContractsOutputsSummaryEntry {
+                    tx_hash: Cow::Borrowed(tx_hash),
+                    outputs,
+                })
+            }
+        }
+    }
 
     Ok(json!(rpc_outputs))
 }
