@@ -16,10 +16,12 @@ use xelis_common::{
             BlockResponse,
             MultisigState,
             NewBlockEvent,
-            RPCBlockResponse
+            RPCBlockResponse,
+            GetContractsOutputsSummaryEntry,
         },
         wallet::BalanceChanged,
-        RPCTransactionType
+        RPCTransactionType,
+        RPCContractOutput,
     },
     config::XELIS_ASSET,
     crypto::{
@@ -27,6 +29,7 @@ use xelis_common::{
         Address,
         Hash
     },
+    time::TimestampMillis,
     tokio::{
         select,
         spawn_task,
@@ -627,7 +630,7 @@ impl NetworkHandler {
         // This channel is used to send all the blocks to the processing loop
         // No more than {concurrency} blocks and versions will be prefetch in advance
         // as the task will automatically await on the channel
-        let (data_sender, mut data_receiver) = channel::<(CiphertextCache, u64, Option<RPCBlockResponse<'static>>)>(self.concurrency);
+        let (data_sender, mut data_receiver) = channel::<(CiphertextCache, u64, Option<(RPCBlockResponse<'static>, Vec<GetContractsOutputsSummaryEntry<'static>>)>)>(self.concurrency);
         let handle = {
             let api = self.api.clone();
             let address = address.clone();
@@ -637,16 +640,19 @@ impl NetworkHandler {
                 let mut topoheight = topoheight;
                 while let Some(v) = version.take() {
                     let (balance, _, _, previous_topoheight) = v.consume();
-                    let block = if {
+                    let response = if {
                         let mut lock = topoheight_processed.lock().await;
                         lock.insert(topoheight)
                     } {
                         trace!("fetching block with txs at {}", topoheight);
-                        Some(api.get_block_with_txs_at_topoheight(topoheight).await?)
+                        let block = api.get_block_with_txs_at_topoheight(topoheight).await?;
+                        let outputs = api.get_contracts_outputs_summary(&address, topoheight).await?;
+
+                        Some((block, outputs))
                     } else {
                         None
                     };
-                    data_sender.send((balance, topoheight, block)).await?;
+                    data_sender.send((balance, topoheight, response)).await?;
 
                     if let Some(previous) = previous_topoheight {
                         // don't sync already synced blocks
@@ -665,9 +671,20 @@ impl NetworkHandler {
         while let Some((mut balance, topoheight, block)) = data_receiver.recv().await {
             // add this topoheight in cache to not re-process it (blocks are independant of asset to have faster sync)
             // if its not already processed, do it
-            if let Some(response) = block {
+            if let Some((block_response, outputs)) = block {
                 debug!("Processing topoheight {}", topoheight);
-                let changes = self.process_block(address, response, topoheight).await?;
+                let block_timestamp = block_response.timestamp;
+                let changes = self.process_block(address, block_response, topoheight).await?;
+
+                for entry in outputs {
+                    let transfers = entry.outputs.into_iter()
+                        .filter_map(|output| match output {
+                            RPCContractOutput::Transfer { amount, asset, .. } => Some((asset.into_owned(), amount)),
+                            _ => None,
+                        });
+
+                    self.create_or_update_transaction_contract(&entry.tx_hash, topoheight, block_timestamp, transfers).await?;
+                }
 
                 // Check if a change occured, we are the highest version and update balances is requested
                 if let Some((_, nonce)) = changes.filter(|_| balances && highest_version) {
@@ -1278,42 +1295,12 @@ impl NetworkHandler {
                 res = on_contract_transfers.next() => {
                     let event = res?;
                     debug!("on contract transfers event at topo {} {}", event.topoheight, event.block_hash);
+                    let assets = event.transfers.keys()
+                        .cloned()
+                        .collect();
+
                     let tx_hash = event.tx_hash.unwrap_or(event.block_hash).into_owned();
-                    let contract = event.contract.into_owned();
-
-                    let mut assets = HashSet::new();
-                    {
-                        let mut storage = self.wallet.get_storage().write().await;
-                        let mut tx = if storage.has_transaction(&tx_hash)? {
-                            storage.get_transaction(&tx_hash)?
-                        } else {
-                            TransactionEntry::new(
-                                tx_hash.clone(),
-                                event.topoheight,
-                                event.block_timestamp,
-                                EntryData::IncomingContract {
-                                    contract,
-                                    transfers: IndexMap::new()
-                                },
-                            )
-                        };
-
-                        match tx.get_mut_entry() {
-                            EntryData::IncomingContract { transfers, .. } | EntryData::InvokeContract { received: transfers, .. } => {
-                                for (asset, amount) in event.transfers.into_owned() {    
-                                    *transfers.entry(asset.clone())
-                                        .or_insert(0) += amount;    
-                                    assets.insert(asset);
-                                }
-
-                                storage.update_transaction(&tx_hash, &tx)?;
-                            },
-                            _ => {
-                                warn!("Transaction {} is not contract related, skipping it", tx_hash);
-                                continue;
-                            }
-                        };
-                    }
+                    self.create_or_update_transaction_contract(&tx_hash, event.topoheight, event.block_timestamp, event.transfers.into_owned().into_iter()).await?;
 
                     // We only sync the head state if we have assets
                     // No need to sync the block because we would receive it by the on_block_ordered event
@@ -1335,6 +1322,38 @@ impl NetworkHandler {
                 }
             }
         }
+    }
+
+    async fn create_or_update_transaction_contract(&self, tx_hash: &Hash, topoheight: u64, block_timestamp: TimestampMillis, new_transfers: impl Iterator<Item = (Hash, u64)>) -> Result<(), Error> {
+        let mut storage = self.wallet.get_storage().write().await;
+        let mut tx = if storage.has_transaction(tx_hash)? {
+            storage.get_transaction(tx_hash)?
+        } else {
+            TransactionEntry::new(
+                tx_hash.clone(),
+                topoheight,
+                block_timestamp,
+                EntryData::IncomingContract {
+                    transfers: IndexMap::new()
+                },
+            )
+        };
+
+        match tx.get_mut_entry() {
+            EntryData::IncomingContract { transfers, .. } | EntryData::InvokeContract { received: transfers, .. } => {
+                for (asset, amount) in new_transfers {    
+                    *transfers.entry(asset.clone())
+                        .or_insert(0) += amount;
+                }
+
+                storage.update_transaction(&tx_hash, &tx)?;
+            },
+            _ => {
+                warn!("Transaction {} is not contract related, skipping it", tx_hash);
+            }
+        };
+
+        Ok(())
     }
 
     // Sync all new blocks until the current topoheight

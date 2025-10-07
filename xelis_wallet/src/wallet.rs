@@ -1150,14 +1150,14 @@ impl Wallet {
 
                     writeln!(w, "{},{},{},{},-,-,{},{},{}", datetime_from_timestamp(tx.get_timestamp())?, tx.get_topoheight(), tx.get_hash(), "DeployContract", str_deposits.join("|"), format_xelis(*fee), nonce).context("Error while writing csv line")?;
                 },
-                EntryData::IncomingContract { contract, transfers } => {
+                EntryData::IncomingContract { transfers } => {
                     let mut assets = Vec::new();
                     for (asset, amount) in transfers {
                         let data = storage.get_asset(&asset).await?;
                         assets.push(format!("{}:{}", data.get_name(), format_coin(*amount, data.get_decimals())));
                     }
 
-                    writeln!(w, "{},{},{},{},{},{},-,-,-", datetime_from_timestamp(tx.get_timestamp())?, tx.get_topoheight(), tx.get_hash(), "IncomingContract", contract, assets.join("|")).context("Error while writing csv line")?;
+                    writeln!(w, "{},{},{},{},{},-,-,-,-", datetime_from_timestamp(tx.get_timestamp())?, tx.get_topoheight(), tx.get_hash(), "IncomingContract", assets.join("|")).context("Error while writing csv line")?;
                 }
             }
         }

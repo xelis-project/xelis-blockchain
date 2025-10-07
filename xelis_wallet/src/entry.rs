@@ -256,8 +256,6 @@ pub enum EntryData {
         invoke: Option<DeployInvoke>
     },
     IncomingContract {
-        // Contract address that was invoked by the TX
-        contract: Hash,
         // Transfers received from the contract
         transfers: IndexMap<Hash, u64>,
     }
@@ -339,7 +337,6 @@ impl Serializer for EntryData {
                 Self::DeployContract { fee, nonce, invoke }
             }
             7 => {
-                let contract = reader.read_hash()?;
                 let transfers_size = reader.read_u16()? as usize;
                 let mut transfers = IndexMap::new();
                 for _ in 0..transfers_size {
@@ -347,7 +344,7 @@ impl Serializer for EntryData {
                     let amount = reader.read_u64()?;
                     transfers.insert(asset, amount);
                 }
-                Self::IncomingContract { contract, transfers }
+                Self::IncomingContract { transfers }
             }
             _ => return Err(ReaderError::InvalidValue),
         })
@@ -421,9 +418,8 @@ impl Serializer for EntryData {
                 writer.write_u64(nonce);
                 invoke.write(writer);
             },
-            Self::IncomingContract { contract, transfers } => {
+            Self::IncomingContract { transfers } => {
                 writer.write_u8(7);
-                writer.write_hash(contract);
                 writer.write_u16(transfers.len() as u16);
                 for (asset, amount) in transfers {
                     asset.write(writer);
@@ -462,8 +458,8 @@ impl Serializer for EntryData {
             Self::DeployContract { fee, nonce, invoke } => {
                 fee.size() + nonce.size() + invoke.size()
             },
-            Self::IncomingContract { contract, transfers } => {
-                contract.size() + 2 + transfers.iter().map(|(a, b)| a.size() + b.size()).sum::<usize>()
+            Self::IncomingContract { transfers } => {
+                2 + transfers.iter().map(|(a, b)| a.size() + b.size()).sum::<usize>()
             }
         }
     }
@@ -568,9 +564,9 @@ impl TransactionEntry {
                     });
                     RPCEntryType::DeployContract { fee, nonce, invoke }
                 },
-                EntryData::IncomingContract { contract, transfers } => {
+                EntryData::IncomingContract { transfers } => {
                     let transfers = transfers.into_iter().map(|(asset, amount)| (asset, amount)).collect();
-                    RPCEntryType::IncomingContract { contract, transfers }
+                    RPCEntryType::IncomingContract { transfers }
                 }
             }
         }
@@ -633,8 +629,8 @@ impl TransactionEntry {
             EntryData::DeployContract { fee, nonce, invoke } => {
                 format!("Fee: {}, Nonce: {} Deploy contract (constructor called: {})", format_xelis(*fee), nonce, invoke.is_some())
             },
-            EntryData::IncomingContract { contract, transfers } => {
-                let mut str = format!("Incoming contract {}: ", contract);
+            EntryData::IncomingContract { transfers } => {
+                let mut str = format!("Incoming from contract:");
                 for (asset, amount) in transfers {
                     let data = storage.get_asset(&asset).await?;
                     str.push_str(&format!("Received {} {} ({}) ", format_coin(*amount, data.get_decimals()), data.get_name(), asset));
