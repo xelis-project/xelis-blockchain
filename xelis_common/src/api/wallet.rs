@@ -485,8 +485,6 @@ pub enum EntryType {
         invoke: Option<DeployInvoke>
     },
     IncomingContract {
-        // Contract address that was invoked by the TX
-        contract: Hash,
         // Transfers received from the contract
         transfers: IndexMap<Hash, u64>,
     }
