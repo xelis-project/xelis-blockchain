@@ -392,6 +392,12 @@ async fn setup_wallet_command_manager(wallet: Arc<Wallet>, command_manager: &Com
         CommandHandler::Async(async_handler!(balance))
     ))?;
     command_manager.add_command(Command::with_optional_arguments(
+        "balance_ct",
+        "Show the balance ciphertext of requested asset; Asset must be tracked",
+        vec![Arg::new("asset", ArgType::Hash)],
+        CommandHandler::Async(async_handler!(balance_ct))
+    ))?;
+    command_manager.add_command(Command::with_optional_arguments(
         "history",
         "Show all your transactions",
         vec![Arg::new("page", ArgType::Number)],
@@ -1315,7 +1321,7 @@ async fn display_address(manager: &CommandManager, _: ArgumentManager) -> Result
     Ok(())
 }
 
-// Show current balance for specified asset or list all non-zero balances
+// Show current balance for specified asset
 async fn balance(manager: &CommandManager, mut arguments: ArgumentManager) -> Result<(), CommandError> {
     let context = manager.get_context().lock()?;
     let prompt = manager.get_prompt();
@@ -1332,6 +1338,25 @@ async fn balance(manager: &CommandManager, mut arguments: ArgumentManager) -> Re
     let balance = storage.get_plaintext_balance_for(&asset).await?;
     let data = storage.get_asset(&asset).await?;
     manager.message(format!("Balance for asset {} ({}): {}", data.get_name(), asset, format_coin(balance, data.get_decimals())));
+    Ok(())
+}
+// Show current ciphertext balance for specified asset
+async fn balance_ct(manager: &CommandManager, mut arguments: ArgumentManager) -> Result<(), CommandError> {
+    let context = manager.get_context().lock()?;
+    let prompt = manager.get_prompt();
+    let wallet: &Arc<Wallet> = context.get()?;
+    let storage = wallet.get_storage().read().await;
+
+    let asset = if arguments.has_argument("asset") {
+        arguments.get_value("asset")?.to_hash()?
+    } else {
+        prompt.read_hash(
+            prompt.colorize_string(Color::Green, "Asset (default XELIS): ")
+        ).await.unwrap_or(XELIS_ASSET)
+    };
+    let (balance, unconfirmed) = storage.get_unconfirmed_balance_for(&asset).await?;
+    let data = storage.get_asset(&asset).await?;
+    manager.message(format!("Balance for asset {} ({}, unconfirmed = {}): {} ({})", data.get_name(), asset, unconfirmed, format_coin(balance.amount, data.get_decimals()), balance.ciphertext));
     Ok(())
 }
 
