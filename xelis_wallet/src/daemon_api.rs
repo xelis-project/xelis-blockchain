@@ -10,7 +10,7 @@ use serde::Serialize;
 use serde_json::Value;
 use xelis_common::{
     account::VersionedBalance,
-    api::{daemon::*, RPCContractOutput},
+    api::{daemon::*, RPCContractLog},
     asset::RPCAssetData,
     crypto::{
         Address,
@@ -336,17 +336,17 @@ impl DaemonAPI {
         Ok(multisig)
     }
 
-    pub async fn get_contract_outputs(&self, tx_hash: &Hash) -> Result<Vec<RPCContractOutput<'static>>> {
+    pub async fn get_contract_logs(&self, tx_hash: &Hash) -> Result<Vec<RPCContractLog<'static>>> {
         trace!("get contract outputs");
-        let outputs = self.client.call_with("get_contract_outputs", &GetContractOutputsParams {
+        let outputs = self.client.call_with("get_contract_logs", &GetContractLogsParams {
             transaction: Cow::Borrowed(tx_hash)
         }).await?;
         Ok(outputs)
     }
 
-    pub async fn get_contracts_outputs_summary(&self, address: &Address, topoheight: u64) -> Result<Vec<GetContractsOutputsSummaryEntry<'static>>> {
-        trace!("get contract outputs summary");
-        let outputs = self.client.call_with("get_contracts_outputs_summary", &GetContractsOutputsSummaryParams {
+    pub async fn get_contract_outputs(&self, address: &Address, topoheight: u64) -> Result<Vec<GetContractsOutputsEntry<'static>>> {
+        trace!("get contract logs");
+        let outputs = self.client.call_with("get_contract_outputs", &GetContractOutputsParams {
             address: Cow::Borrowed(address),
             topoheight,
         }).await?;

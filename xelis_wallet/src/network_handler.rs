@@ -17,11 +17,11 @@ use xelis_common::{
             MultisigState,
             NewBlockEvent,
             RPCBlockResponse,
-            GetContractsOutputsSummaryEntry,
+            GetContractsOutputsEntry,
         },
         wallet::BalanceChanged,
         RPCTransactionType,
-        RPCContractOutput,
+        RPCContractLog,
     },
     config::XELIS_ASSET,
     crypto::{
@@ -630,7 +630,7 @@ impl NetworkHandler {
         // This channel is used to send all the blocks to the processing loop
         // No more than {concurrency} blocks and versions will be prefetch in advance
         // as the task will automatically await on the channel
-        let (data_sender, mut data_receiver) = channel::<(CiphertextCache, u64, Option<(RPCBlockResponse<'static>, Vec<GetContractsOutputsSummaryEntry<'static>>)>)>(self.concurrency);
+        let (data_sender, mut data_receiver) = channel::<(CiphertextCache, u64, Option<(RPCBlockResponse<'static>, Vec<GetContractsOutputsEntry<'static>>)>)>(self.concurrency);
         let handle = {
             let api = self.api.clone();
             let address = address.clone();
@@ -646,7 +646,7 @@ impl NetworkHandler {
                     } {
                         trace!("fetching block with txs at {}", topoheight);
                         let block = api.get_block_with_txs_at_topoheight(topoheight).await?;
-                        let outputs = api.get_contracts_outputs_summary(&address, topoheight).await?;
+                        let outputs = api.get_contract_outputs(&address, topoheight).await?;
 
                         Some((block, outputs))
                     } else {
@@ -679,7 +679,7 @@ impl NetworkHandler {
                 for entry in outputs {
                     let transfers = entry.outputs.into_iter()
                         .filter_map(|output| match output {
-                            RPCContractOutput::Transfer { amount, asset, .. } => Some((asset.into_owned(), amount)),
+                            RPCContractLog::Transfer { amount, asset, .. } => Some((asset.into_owned(), amount)),
                             _ => None,
                         });
 
