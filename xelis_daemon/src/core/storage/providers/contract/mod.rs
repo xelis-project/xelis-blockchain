@@ -1,5 +1,5 @@
 mod data;
-mod output;
+mod contract_logs;
 mod balance;
 mod delayed_execution;
 
@@ -16,7 +16,7 @@ use xelis_vm::Module;
 use crate::core::error::BlockchainError;
 
 pub use data::*;
-pub use output::*;
+pub use contract_logs::*;
 pub use balance::*;
 pub use delayed_execution::*;
 
@@ -24,7 +24,7 @@ pub use delayed_execution::*;
 pub type VersionedContract<'a> = Versioned<Option<Cow<'a, Module>>>;
 
 #[async_trait]
-pub trait ContractProvider: ContractDataProvider + ContractOutputsProvider + ContractInfoProvider + ContractBalanceProvider + ContractDelayedExecutionProvider {
+pub trait ContractProvider: ContractDataProvider + ContractLogsProvider + ContractInfoProvider + ContractBalanceProvider + ContractDelayedExecutionProvider {
     // Deploy a contract
     async fn set_last_contract_to<'a>(&mut self, hash: &Hash, topoheight: TopoHeight, contract: &VersionedContract<'a>) -> Result<(), BlockchainError>;
 

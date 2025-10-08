@@ -28,7 +28,7 @@ use super::{InternalRpcError, ApiError};
 use xelis_common::{
     api::{
         daemon::*,
-        RPCContractOutput,
+        RPCContractLog,
         RPCTransaction,
         SplitAddressParams,
         SplitAddressResult,
@@ -48,7 +48,7 @@ use xelis_common::{
         XELIS_ASSET
     },
     context::Context,
-    contract::ContractOutput,
+    contract::ContractLog,
     crypto::{Address, AddressType, Hash, PublicKey},
     difficulty::{
         CumulativeDifficulty,
@@ -380,8 +380,8 @@ pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>
     handler.register_method("has_multisig_at_topoheight", async_handler!(has_multisig_at_topoheight::<S>));
 
     // Contracts
-    handler.register_method("get_contract_outputs", async_handler!(get_contract_outputs::<S>));
-    handler.register_method("get_contracts_outputs_summary", async_handler!(get_contracts_outputs_summary::<S>));
+    handler.register_method("get_contract_logs", async_handler!(get_contract_logs::<S>));
+    handler.register_method("get_contracts_outputs", async_handler!(get_contracts_outputs::<S>));
     handler.register_method("get_contract_module", async_handler!(get_contract_module::<S>));
     handler.register_method("get_contract_data", async_handler!(get_contract_data::<S>));
     handler.register_method("get_contract_data_at_topoheight", async_handler!(get_contract_data_at_topoheight::<S>));
@@ -1716,24 +1716,24 @@ async fn has_multisig_at_topoheight<S: Storage>(context: &Context, body: Value) 
     Ok(json!(multisig))
 }
 
-async fn get_contract_outputs<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    let params: GetContractOutputsParams = parse_params(body)?;
+async fn get_contract_logs<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
+    let params: GetContractLogsParams = parse_params(body)?;
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let is_mainnet = blockchain.get_network().is_mainnet();
     let storage = blockchain.get_storage().read().await;
-    let outputs =  storage.get_contract_outputs_for_tx(&params.transaction).await
+    let outputs =  storage.get_contract_logs_for_tx(&params.transaction).await
         .context("Error while retrieving contract outputs")?;
 
     let rpc_outputs = outputs
         .iter()
-        .map(|output| RPCContractOutput::from_output(&output, is_mainnet))
+        .map(|output| RPCContractLog::from_output(&output, is_mainnet))
         .collect::<Vec<_>>();
 
     Ok(json!(rpc_outputs))
 }
 
-async fn get_contracts_outputs_summary<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    let params: GetContractsOutputsSummaryParams = parse_params(body)?;
+async fn get_contracts_outputs<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
+    let params: GetContractsOutputsParams = parse_params(body)?;
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let is_mainnet = blockchain.get_network().is_mainnet();
     let storage = blockchain.get_storage().read().await;
@@ -1746,24 +1746,24 @@ async fn get_contracts_outputs_summary<S: Storage>(context: &Context, body: Valu
         let is_executed = storage.is_tx_executed_in_block(tx_hash, &block_hash).await
             .context("Error while checking if TX is executed in block")?;
 
-        if is_executed && storage.has_contract_outputs_for_tx(tx_hash).await
+        if is_executed && storage.has_contract_logs_for_tx(tx_hash).await
             .context("Error while checking if contract outputs exists")?
         {
-            let outputs =  storage.get_contract_outputs_for_tx(&tx_hash).await
+            let logs =  storage.get_contract_logs_for_tx(&tx_hash).await
                 .context("Error while retrieving contract outputs")?
                 .into_iter()
                 .filter_map(|output| {
                     match &output {
-                        ContractOutput::Transfer { destination, .. }
-                            if destination == params.address.get_public_key() => Some(RPCContractOutput::from_output_owned(output, is_mainnet)), 
+                        ContractLog::Transfer { destination, .. }
+                            if destination == params.address.get_public_key() => Some(RPCContractLog::from_output_owned(output, is_mainnet)), 
                         _ => None,
                     }
                 }).collect::<Vec<_>>();
 
-            if !outputs.is_empty() {
-                rpc_outputs.push(GetContractsOutputsSummaryEntry {
+            if !logs.is_empty() {
+                rpc_outputs.push(GetContractsOutputsEntry {
                     tx_hash: Cow::Borrowed(tx_hash),
-                    outputs,
+                    outputs: logs,
                 })
             }
         }

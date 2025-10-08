@@ -18,7 +18,7 @@ use xelis_common::{
         ChainState as ContractChainState,
         ContractCache,
         ContractEventTracker,
-        ContractOutput,
+        ContractLog,
         ModuleMetadata,
     },
     crypto::{elgamal::Ciphertext, Hash, PublicKey},
@@ -52,7 +52,7 @@ use crate::core::{
 use super::{ChainState, StorageReference, Echange};
 
 struct ContractManager<'a> {
-    outputs: HashMap<&'a Hash, Vec<ContractOutput>>,
+    logs: HashMap<&'a Hash, Vec<ContractLog>>,
     caches: HashMap<Hash, ContractCache>,
     // global assets cache
     assets: HashMap<Hash, Option<AssetChanges>>,
@@ -245,17 +245,17 @@ impl<'a, S: Storage> BlockchainApplyState<'a, S, BlockchainError> for Applicable
         self.inner.storage.is_mainnet()
     }
 
-    async fn set_contract_outputs(
+    async fn set_contract_logs(
         &mut self,
         tx_hash: &'a Hash,
-        outputs: Vec<ContractOutput>
+        logs: Vec<ContractLog>
     ) -> Result<(), BlockchainError> {
-        match self.contract_manager.outputs.entry(tx_hash) {
+        match self.contract_manager.logs.entry(tx_hash) {
             Entry::Occupied(mut o) => {
-                o.get_mut().extend(outputs);
+                o.get_mut().extend(logs);
             },
             Entry::Vacant(e) => {
-                e.insert(outputs);
+                e.insert(logs);
             }
         };
 
@@ -463,7 +463,7 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
             total_fees: 0,
             total_fees_burned: 0,
             contract_manager: ContractManager {
-                outputs: HashMap::new(),
+                logs: HashMap::new(),
                 caches: HashMap::new(),
                 assets: HashMap::new(),
                 modules: HashMap::new(),
@@ -530,8 +530,8 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
     } 
 
     // Get the contract outputs for TX
-    pub fn get_contract_outputs_for_tx(&self, tx_hash: &Hash) -> Option<&Vec<ContractOutput>> {
-        self.contract_manager.outputs.get(tx_hash)
+    pub fn get_contract_logs_for_tx(&self, tx_hash: &Hash) -> Option<&Vec<ContractLog>> {
+        self.contract_manager.logs.get(tx_hash)
     }
 
     async fn remove_contract_module_internal(
@@ -727,8 +727,8 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
 
         // Apply all the contract outputs
         debug!("storing contract outputs");
-        for (key, outputs) in self.contract_manager.outputs {
-            self.inner.storage.set_contract_outputs_for_tx(&key, &outputs).await?;
+        for (key, logs) in self.contract_manager.logs {
+            self.inner.storage.set_contract_logs_for_tx(&key, &logs).await?;
         }
 
         // Apply all balances changes at topoheight

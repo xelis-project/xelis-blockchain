@@ -39,7 +39,7 @@ use xelis_common::{
 use crate::core::{
     config::RocksDBConfig,
     error::{BlockchainError, DiskContext},
-    storage::{BlocksAtHeightProvider, ClientProtocolProvider, ContractOutputsProvider, Tips}
+    storage::{BlocksAtHeightProvider, ClientProtocolProvider, ContractLogsProvider, Tips}
 };
 
 pub use column::*;
@@ -496,7 +496,7 @@ impl Storage for RocksStorage {
             if self.is_tx_executed_in_block(tx_hash, &hash).await? {
                 trace!("Tx {} was executed in block {}, deleting", topoheight, tx_hash);
                 self.unmark_tx_from_executed(&tx_hash).await?;
-                self.delete_contract_outputs_for_tx(&tx_hash).await?;
+                self.delete_contract_logs_for_tx(&tx_hash).await?;
             }
 
             // We have to check first as we may have already deleted it because of client protocol

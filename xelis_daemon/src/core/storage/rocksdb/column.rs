@@ -17,8 +17,8 @@ pub enum Column {
     TransactionInBlocks,
     // Transaction contract outputs
     // Standardized events that occurs on a contract call
-    // {tx_hash} => {outputs}
-    TransactionsOutputs,
+    // {tx_hash} => {logs}
+    ContractLogs,
 
     // ordered blocks hashes based on execution
     // {position} => {block_hash}

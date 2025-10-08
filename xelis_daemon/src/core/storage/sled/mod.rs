@@ -137,7 +137,7 @@ pub struct SledStorage {
     pub(super) versioned_contracts_balances: Tree,
     // Contract outputs per TX
     // Key is the TX Hash that called the contract, value is a list of contract outputs
-    pub(super) contracts_outputs: Tree,
+    pub(super) contracts_logs: Tree,
     // Tree in {execution_topoheight}{contract} format for delayed executions
     pub(super) contracts_delayed_executions: Tree,
     // Tree in {topoheight}{contract}{execution_topoheight} => [empty]
@@ -245,7 +245,7 @@ impl SledStorage {
             versioned_contracts_data: sled.open_tree("versioned_contracts_data")?,
             contracts_balances: sled.open_tree("contracts_balances")?,
             versioned_contracts_balances: sled.open_tree("versioned_contracts_balances")?,
-            contracts_outputs: sled.open_tree("contracts_outputs")?,
+            contracts_logs: sled.open_tree("contracts_logs")?,
             contracts_delayed_executions: sled.open_tree("contracts_delayed_executions")?,
             contracts_delayed_executions_registrations: sled.open_tree("contracts_delayed_executions_registrations")?,
             assets_supply: sled.open_tree("assets_supply")?,
@@ -655,7 +655,7 @@ impl Storage for SledStorage {
             if self.is_tx_executed_in_block(tx_hash, &hash).await? {
                 trace!("Tx {} was executed, deleting", tx_hash);
                 self.unmark_tx_from_executed(&tx_hash).await?;
-                self.delete_contract_outputs_for_tx(&tx_hash).await?;
+                self.delete_contract_logs_for_tx(&tx_hash).await?;
             }
 
             // Because the TX is not linked to any other block, we can safely delete that block

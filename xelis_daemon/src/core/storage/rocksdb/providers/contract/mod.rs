@@ -1,5 +1,5 @@
 mod data;
-mod output;
+mod contract_logs;
 mod balance;
 mod r#impl;
 mod delayed_execution;

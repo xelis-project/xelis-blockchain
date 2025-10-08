@@ -1,5 +1,5 @@
 mod data;
-mod output;
+mod contract_logs;
 mod provider;
 mod balance;
 mod delayed_execution;
