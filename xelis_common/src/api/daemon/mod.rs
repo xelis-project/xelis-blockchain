@@ -738,7 +738,7 @@ pub struct GetContractLogsParams<'a> {
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct GetContractsOutputsParams<'a> {
+pub struct GetContractOutputsParams<'a> {
     pub address: Cow<'a, Address>,
     pub topoheight: TopoHeight,
 }
