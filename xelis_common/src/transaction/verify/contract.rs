@@ -14,7 +14,7 @@ use crate::{
     config::{TX_GAS_BURN_PERCENT, XELIS_ASSET},
     contract::{
         ChainState,
-        ContractOutput,
+        ContractLog,
         ContractProvider,
         ContractProviderWrapper,
         ModuleMetadata
@@ -209,14 +209,14 @@ impl Transaction {
 
                         // if we have consumed any, track it
                         if consumed > 0 {
-                            outputs.push(ContractOutput::GasInjection { contract, amount: consumed });
+                            outputs.push(ContractLog::GasInjection { contract, amount: consumed });
                         }
 
                         gas_refund_left -= refund;
                     } else {
                         // Nothing left to refund, so this contract's full injection was consumed
                         debug!("Contract {} fully consumed {} gas", contract, gas);
-                        outputs.push(ContractOutput::GasInjection { contract, amount: gas });
+                        outputs.push(ContractLog::GasInjection { contract, amount: gas });
                     }
                 }
             }
@@ -253,7 +253,7 @@ impl Transaction {
                         .checked_sub(consumed)
                         .ok_or(VerificationError::GasOverflow)?;
 
-                    outputs.push(ContractOutput::GasInjection { contract, amount: consumed });
+                    outputs.push(ContractLog::GasInjection { contract, amount: consumed });
 
                     // Decrease what’s left to cover
                     extra_gas -= consumed;
@@ -268,7 +268,7 @@ impl Transaction {
                 // It was not successful, we need to refund the deposits
                 self.refund_deposits(state, deposits, decompressed_deposits).await?;
 
-                outputs.push(ContractOutput::RefundDeposits);
+                outputs.push(ContractLog::RefundDeposits);
             }
         }
 
@@ -280,11 +280,11 @@ impl Transaction {
         debug!("used gas: {}, refund gas: {}", used_gas, refund_gas);
 
         if refund_gas > 0 {
-            outputs.push(ContractOutput::RefundGas { amount: refund_gas });
+            outputs.push(ContractLog::RefundGas { amount: refund_gas });
         }
 
         // Push the exit code to the outputs
-        outputs.push(ContractOutput::ExitCode(exit_code));
+        outputs.push(ContractLog::ExitCode(exit_code));
 
         // Track the outputs
         state.set_contract_outputs(tx_hash, outputs).await

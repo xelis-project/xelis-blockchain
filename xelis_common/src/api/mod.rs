@@ -16,7 +16,7 @@ use crate::{
         Hash,
         Signature
     },
-    contract::ContractOutput,
+    contract::ContractLog,
     transaction::{
         extra_data::UnknownExtraDataFormat,
         multisig::MultiSig,
@@ -223,34 +223,45 @@ pub struct SplitAddressResult {
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[serde(tag = "type", content = "value")]
-pub enum RPCContractOutput<'a> {
+pub enum RPCContractLog<'a> {
     RefundGas {
         amount: u64
     },
     Transfer {
+        contract: Cow<'a, Hash>,
         amount: u64,
         asset: Cow<'a, Hash>,
         destination: Cow<'a, Address>
     },
     TransferContract {
+        // Contract from which the asset is transferred
+        contract: Cow<'a, Hash>,
         amount: u64,
         asset: Cow<'a, Hash>,
+        // Destination contract
         destination: Cow<'a, Hash>
     },
     Mint {
+        // Contract minter
+        contract: Cow<'a, Hash>,
         asset: Cow<'a, Hash>,
         amount: u64
     },
     Burn {
+        // Contract burner
+        contract: Cow<'a, Hash>,
         asset: Cow<'a, Hash>,
         amount: u64
     },
     NewAsset {
+        // Contract creator
+        contract: Cow<'a, Hash>,
         asset: Cow<'a, Hash>
     },
     ExitCode(Option<u64>),
     RefundDeposits,
     GasInjection {
+        // Contract from which gas is injected
         contract: Cow<'a, Hash>,
         amount: u64,
     },
@@ -260,100 +271,115 @@ pub enum RPCContractOutput<'a> {
     }
 }
 
-impl<'a> RPCContractOutput<'a> {
-    pub fn from_output_owned(output: ContractOutput, mainnet: bool) -> Self {
+impl<'a> RPCContractLog<'a> {
+    pub fn from_output_owned(output: ContractLog, mainnet: bool) -> Self {
         match output {
-            ContractOutput::RefundGas { amount } => RPCContractOutput::RefundGas { amount: amount },
-            ContractOutput::Transfer { amount, asset, destination } => RPCContractOutput::Transfer {
+            ContractLog::RefundGas { amount } => RPCContractLog::RefundGas { amount: amount },
+            ContractLog::Transfer { contract, amount, asset, destination } => RPCContractLog::Transfer {
+                contract: Cow::Owned(contract),
                 amount,
                 asset: Cow::Owned(asset),
                 destination: Cow::Owned(destination.as_address(mainnet))
             },
-            ContractOutput::TransferContract { amount, asset, destination } => RPCContractOutput::TransferContract {
+            ContractLog::TransferContract { contract, amount, asset, destination } => RPCContractLog::TransferContract {
+                contract: Cow::Owned(contract),
                 amount,
                 asset: Cow::Owned(asset),
                 destination: Cow::Owned(destination)
             },
-            ContractOutput::Mint { asset, amount } => RPCContractOutput::Mint {
+            ContractLog::Mint { contract, asset, amount } => RPCContractLog::Mint {
+                contract: Cow::Owned(contract),
                 asset: Cow::Owned(asset),
                 amount
             },
-            ContractOutput::Burn { asset, amount } => RPCContractOutput::Burn {
+            ContractLog::Burn { contract, asset, amount } => RPCContractLog::Burn {
+                contract: Cow::Owned(contract),
                 asset: Cow::Owned(asset),
                 amount
             },
-            ContractOutput::NewAsset { asset } => RPCContractOutput::NewAsset {
+            ContractLog::NewAsset { contract, asset } => RPCContractLog::NewAsset {
+                contract: Cow::Owned(contract),
                 asset: Cow::Owned(asset)
             },
-            ContractOutput::ExitCode(code) => RPCContractOutput::ExitCode(code.clone()),
-            ContractOutput::RefundDeposits => RPCContractOutput::RefundDeposits,
-            ContractOutput::GasInjection { contract, amount } => RPCContractOutput::GasInjection { contract: Cow::Owned(contract), amount },
-            ContractOutput::DelayedExecution { contract, topoheight } => RPCContractOutput::DelayedExecution { contract: Cow::Owned(contract), topoheight },
+            ContractLog::ExitCode(code) => RPCContractLog::ExitCode(code.clone()),
+            ContractLog::RefundDeposits => RPCContractLog::RefundDeposits,
+            ContractLog::GasInjection { contract, amount } => RPCContractLog::GasInjection { contract: Cow::Owned(contract), amount },
+            ContractLog::DelayedExecution { contract, topoheight } => RPCContractLog::DelayedExecution { contract: Cow::Owned(contract), topoheight },
         }
     }
-    pub fn from_output(output: &'a ContractOutput, mainnet: bool) -> Self {
+    pub fn from_output(output: &'a ContractLog, mainnet: bool) -> Self {
         match output {
-            ContractOutput::RefundGas { amount } => RPCContractOutput::RefundGas { amount: *amount },
-            ContractOutput::Transfer { amount, asset, destination } => RPCContractOutput::Transfer {
+            ContractLog::RefundGas { amount } => RPCContractLog::RefundGas { amount: *amount },
+            ContractLog::Transfer { contract, amount, asset, destination } => RPCContractLog::Transfer {
+                contract: Cow::Borrowed(contract),
                 amount: *amount,
                 asset: Cow::Borrowed(asset),
                 destination: Cow::Owned(destination.as_address(mainnet))
             },
-            ContractOutput::TransferContract { amount, asset, destination } => RPCContractOutput::TransferContract {
+            ContractLog::TransferContract { contract, amount, asset, destination } => RPCContractLog::TransferContract {
+                contract: Cow::Borrowed(contract),
                 amount: *amount,
                 asset: Cow::Borrowed(asset),
                 destination: Cow::Borrowed(destination)
             },
-            ContractOutput::Mint { asset, amount } => RPCContractOutput::Mint {
+            ContractLog::Mint { contract, asset, amount } => RPCContractLog::Mint {
+                contract: Cow::Borrowed(contract),
                 asset: Cow::Borrowed(asset),
                 amount: *amount
             },
-            ContractOutput::Burn { asset, amount } => RPCContractOutput::Burn {
+            ContractLog::Burn { contract, asset, amount } => RPCContractLog::Burn {
+                contract: Cow::Borrowed(contract),
                 asset: Cow::Borrowed(asset),
                 amount: *amount
             },
-            ContractOutput::NewAsset { asset } => RPCContractOutput::NewAsset {
+            ContractLog::NewAsset { contract, asset } => RPCContractLog::NewAsset {
+                contract: Cow::Borrowed(contract),
                 asset: Cow::Borrowed(asset)
             },
-            ContractOutput::ExitCode(code) => RPCContractOutput::ExitCode(code.clone()),
-            ContractOutput::RefundDeposits => RPCContractOutput::RefundDeposits,
-            ContractOutput::GasInjection { contract, amount } => RPCContractOutput::GasInjection { contract: Cow::Borrowed(contract), amount: *amount },
-            ContractOutput::DelayedExecution { contract, topoheight } => RPCContractOutput::DelayedExecution { contract: Cow::Borrowed(contract), topoheight: *topoheight },
+            ContractLog::ExitCode(code) => RPCContractLog::ExitCode(code.clone()),
+            ContractLog::RefundDeposits => RPCContractLog::RefundDeposits,
+            ContractLog::GasInjection { contract, amount } => RPCContractLog::GasInjection { contract: Cow::Borrowed(contract), amount: *amount },
+            ContractLog::DelayedExecution { contract, topoheight } => RPCContractLog::DelayedExecution { contract: Cow::Borrowed(contract), topoheight: *topoheight },
         }
     }
 }
-impl<'a> From<RPCContractOutput<'a>> for ContractOutput {
-    fn from(output: RPCContractOutput<'a>) -> Self {
+impl<'a> From<RPCContractLog<'a>> for ContractLog {
+    fn from(output: RPCContractLog<'a>) -> Self {
         match output {
-            RPCContractOutput::RefundGas { amount } => ContractOutput::RefundGas { amount },
-            RPCContractOutput::Transfer { amount, asset, destination } => ContractOutput::Transfer {
+            RPCContractLog::RefundGas { amount } => ContractLog::RefundGas { amount },
+            RPCContractLog::Transfer { contract, amount, asset, destination } => ContractLog::Transfer {
+                contract: contract.into_owned(),
                 amount,
                 asset: asset.into_owned(),
                 destination: destination.into_owned().to_public_key()
             },
-            RPCContractOutput::TransferContract { amount, asset, destination } => ContractOutput::TransferContract {
+            RPCContractLog::TransferContract { contract, amount, asset, destination } => ContractLog::TransferContract {
+                contract: contract.into_owned(),
                 amount,
                 asset: asset.into_owned(),
                 destination: destination.into_owned()
             },
-            RPCContractOutput::Mint { asset, amount } => ContractOutput::Mint {
+            RPCContractLog::Mint { contract, asset, amount } => ContractLog::Mint {
+                contract: contract.into_owned(),
                 asset: asset.into_owned(),
                 amount
             },
-            RPCContractOutput::Burn { asset, amount } => ContractOutput::Burn {
+            RPCContractLog::Burn { contract, asset, amount } => ContractLog::Burn {
+                contract: contract.into_owned(),
                 asset: asset.into_owned(),
                 amount
             },
-            RPCContractOutput::NewAsset { asset } => ContractOutput::NewAsset {
+            RPCContractLog::NewAsset { contract, asset } => ContractLog::NewAsset {
+                contract: contract.into_owned(),
                 asset: asset.into_owned()
             },
-            RPCContractOutput::ExitCode(code) => ContractOutput::ExitCode(code),
-            RPCContractOutput::RefundDeposits => ContractOutput::RefundDeposits,
-            RPCContractOutput::GasInjection { contract, amount } => ContractOutput::GasInjection {
+            RPCContractLog::ExitCode(code) => ContractLog::ExitCode(code),
+            RPCContractLog::RefundDeposits => ContractLog::RefundDeposits,
+            RPCContractLog::GasInjection { contract, amount } => ContractLog::GasInjection {
                 contract: contract.into_owned(),
                 amount
             },
-            RPCContractOutput::DelayedExecution { contract, topoheight } => ContractOutput::DelayedExecution {
+            RPCContractLog::DelayedExecution { contract, topoheight } => ContractLog::DelayedExecution {
                 contract: contract.into_owned(),
                 topoheight
             }

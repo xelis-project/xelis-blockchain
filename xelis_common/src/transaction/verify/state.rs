@@ -11,7 +11,7 @@ use crate::{
         ChainState,
         ContractCache,
         ContractEventTracker,
-        ContractOutput,
+        ContractLog,
         ContractProvider,
         ModuleMetadata,
     },
@@ -162,7 +162,7 @@ pub trait BlockchainApplyState<'a, P: ContractProvider, E>: BlockchainVerificati
     async fn set_contract_outputs(
         &mut self,
         tx_hash: &'a Hash,
-        outputs: Vec<ContractOutput>
+        outputs: Vec<ContractLog>
     ) -> Result<(), E>;
 
     /// Get the contract environment

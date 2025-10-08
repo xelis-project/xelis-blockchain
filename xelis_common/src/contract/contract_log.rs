@@ -2,7 +2,7 @@ use crate::{crypto::{Hash, PublicKey}, serializer::*};
 
 /// Represents the kind of output that a contract can produce
 #[derive(Debug, Clone)]
-pub enum ContractOutput {
+pub enum ContractLog {
     // Not all the gas got used, refund the remaining gas
     RefundGas {
         /// The amount of gas that is refunded
@@ -10,6 +10,7 @@ pub enum ContractOutput {
     },
     // Transfer some assets to another account
     Transfer {
+        contract: Hash,
         /// The amount that is transferred
         amount: u64,
         /// The asset for this output
@@ -18,6 +19,8 @@ pub enum ContractOutput {
         destination: PublicKey
     },
     TransferContract {
+        // Contract from which its sent
+        contract: Hash,
         /// The amount that is transferred
         amount: u64,
         /// The asset for this output
@@ -27,16 +30,22 @@ pub enum ContractOutput {
     },
     // When a contract mint an asset
     Mint {
+        // Contract that minted it
+        contract: Hash,
         asset: Hash,
         amount: u64
     },
     // When a contract burn an asset
     Burn {
+        // Contract that burned it
+        contract: Hash,
         asset: Hash,
         amount: u64
     },
     // When a new asset is created
     NewAsset {
+        // Contract that created it
+        contract: Hash,
         asset: Hash
     },
     // Exit code returned by the Contract
@@ -60,52 +69,57 @@ pub enum ContractOutput {
     }
 }
 
-impl Serializer for ContractOutput {
+impl Serializer for ContractLog {
     fn write(&self, writer: &mut Writer) {
         match self {
-            ContractOutput::RefundGas { amount } => {
+            ContractLog::RefundGas { amount } => {
                 writer.write_u8(0);
                 amount.write(writer);
             },
-            ContractOutput::Transfer { amount, asset, destination } => {
+            ContractLog::Transfer { contract, amount, asset, destination } => {
                 writer.write_u8(1);
+                contract.write(writer);
                 amount.write(writer);
                 asset.write(writer);
                 destination.write(writer);
             },
-            ContractOutput::TransferContract { amount, asset, destination } => {
+            ContractLog::TransferContract { contract, amount, asset, destination } => {
                 writer.write_u8(2);
+                contract.write(writer);
                 amount.write(writer);
                 asset.write(writer);
                 destination.write(writer);
             },
-            ContractOutput::Mint { asset, amount } => {
+            ContractLog::Mint { contract, asset, amount } => {
                 writer.write_u8(3);
+                contract.write(writer);
                 asset.write(writer);
                 amount.write(writer);
             },
-            ContractOutput::Burn { asset, amount } => {
+            ContractLog::Burn { contract, asset, amount } => {
                 writer.write_u8(4);
+                contract.write(writer);
                 asset.write(writer);
                 amount.write(writer);
             },
-            ContractOutput::NewAsset { asset } => {
+            ContractLog::NewAsset { contract, asset } => {
                 writer.write_u8(5);
+                contract.write(writer);
                 asset.write(writer);
             },
-            ContractOutput::ExitCode(code) => {
+            ContractLog::ExitCode(code) => {
                 writer.write_u8(6);
                 code.write(writer);
             },
-            ContractOutput::RefundDeposits => {
+            ContractLog::RefundDeposits => {
                 writer.write_u8(7);
             },
-            ContractOutput::GasInjection { contract, amount } => {
+            ContractLog::GasInjection { contract, amount } => {
                 writer.write_u8(8);
                 contract.write(writer);
                 amount.write(writer);
             },
-            ContractOutput::DelayedExecution { contract, topoheight } => {
+            ContractLog::DelayedExecution { contract, topoheight } => {
                 writer.write_u8(9);
                 contract.write(writer);
                 topoheight.write(writer);
@@ -117,41 +131,46 @@ impl Serializer for ContractOutput {
         Ok(match reader.read_u8()? {
             0 => {
                 let amount = u64::read(reader)?;
-                ContractOutput::RefundGas { amount }
+                ContractLog::RefundGas { amount }
             },
             1 => {
+                let contract = Hash::read(reader)?;
                 let amount = u64::read(reader)?;
                 let asset = Hash::read(reader)?;
                 let destination = PublicKey::read(reader)?;
-                ContractOutput::Transfer { amount, asset, destination }
+                ContractLog::Transfer { contract, amount, asset, destination }
             },
             2 => {
+                let contract = Hash::read(reader)?;
                 let amount = u64::read(reader)?;
                 let asset = Hash::read(reader)?;
                 let destination = Hash::read(reader)?;
-                ContractOutput::TransferContract { amount, asset, destination }
+                ContractLog::TransferContract { contract, amount, asset, destination }
             },
             3 => {
+                let contract = Hash::read(reader)?;
                 let asset = Hash::read(reader)?;
                 let amount = u64::read(reader)?;
-                ContractOutput::Mint { asset, amount }
+                ContractLog::Mint { contract, asset, amount }
             },
             4 => {
+                let contract = Hash::read(reader)?;
                 let asset = Hash::read(reader)?;
                 let amount = u64::read(reader)?;
-                ContractOutput::Burn { asset, amount }
+                ContractLog::Burn { contract, asset, amount }
             },
             5 => {
+                let contract = Hash::read(reader)?;
                 let asset = Hash::read(reader)?;
-                ContractOutput::NewAsset { asset }
+                ContractLog::NewAsset { contract, asset }
             },
-            6 => ContractOutput::ExitCode(Option::read(reader)?),
-            7 => ContractOutput::RefundDeposits,
-            8 => ContractOutput::GasInjection {
+            6 => ContractLog::ExitCode(Option::read(reader)?),
+            7 => ContractLog::RefundDeposits,
+            8 => ContractLog::GasInjection {
                 contract: Hash::read(reader)?,
                 amount: u64::read(reader)?
             },
-            9 => ContractOutput::DelayedExecution {
+            9 => ContractLog::DelayedExecution {
                 contract: Hash::read(reader)?,
                 topoheight: u64::read(reader)?,
             },
@@ -161,16 +180,16 @@ impl Serializer for ContractOutput {
 
     fn size(&self) -> usize {
         1 + match self {
-            ContractOutput::RefundGas { amount } => amount.size(),
-            ContractOutput::Transfer { amount, asset, destination } => amount.size() + asset.size() + destination.size(),
-            ContractOutput::TransferContract { amount, asset, destination } => amount.size() + asset.size() + destination.size(),
-            ContractOutput::Mint { asset, amount } => asset.size() + amount.size(),
-            ContractOutput::Burn { asset, amount } => asset.size() + amount.size(),
-            ContractOutput::NewAsset { asset } => asset.size(),
-            ContractOutput::ExitCode(code) => code.size(),
-            ContractOutput::RefundDeposits => 0,
-            ContractOutput::GasInjection { contract, amount } => contract.size() + amount.size(),
-            ContractOutput::DelayedExecution { contract, topoheight } => contract.size() + topoheight.size(),
+            ContractLog::RefundGas { amount } => amount.size(),
+            ContractLog::Transfer { contract, amount, asset, destination } => contract.size() + amount.size() + asset.size() + destination.size(),
+            ContractLog::TransferContract { contract, amount, asset, destination } => contract.size() + amount.size() + asset.size() + destination.size(),
+            ContractLog::Mint { contract, asset, amount } => contract.size() + asset.size() + amount.size(),
+            ContractLog::Burn { contract, asset, amount } => contract.size() + asset.size() + amount.size(),
+            ContractLog::NewAsset { contract, asset } => contract.size() + asset.size(),
+            ContractLog::ExitCode(code) => code.size(),
+            ContractLog::RefundDeposits => 0,
+            ContractLog::GasInjection { contract, amount } => contract.size() + amount.size(),
+            ContractLog::DelayedExecution { contract, topoheight } => contract.size() + topoheight.size(),
         }
     }
 }

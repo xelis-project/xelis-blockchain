@@ -144,7 +144,7 @@ pub async fn delayed_execution_new<'a, 'ty, 'r, P: ContractProvider>(_: FnInstan
     }
 
     // Record the burned part
-    record_burned_asset(provider, state, XELIS_ASSET, burned_part).await?;
+    record_burned_asset(provider, state, metadata.contract.clone(), XELIS_ASSET, burned_part).await?;
 
     // pay the fee
     let (state, balance) = get_mut_balance_for_contract(provider, state, metadata.contract.clone(), XELIS_ASSET).await?;

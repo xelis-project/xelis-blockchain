@@ -19,7 +19,7 @@ use crate::{
         get_optional_asset_from_cache,
         record_burned_asset,
         AssetChanges,
-        ContractOutput,
+        ContractLog,
         ContractProvider,
         ModuleMetadata
     },
@@ -126,7 +126,7 @@ pub async fn asset_create<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, m
         *balance -= COST_PER_TOKEN;
         versioned_state.mark_updated();
     
-        record_burned_asset(provider, state, XELIS_ASSET, COST_PER_TOKEN).await?;
+        record_burned_asset(provider, state, metadata.contract.clone(), XELIS_ASSET, COST_PER_TOKEN).await?;
     }
 
     // If we have a max supply, we need to mint it to the contract
@@ -137,7 +137,7 @@ pub async fn asset_create<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, m
             .insert(asset_hash.clone(), Some((VersionedState::New, max_supply)));
     }
 
-    state.outputs.push(ContractOutput::NewAsset { asset: asset_hash.clone() });
+    state.outputs.push(ContractLog::NewAsset { contract: metadata.contract.clone(), asset: asset_hash.clone() });
 
     let asset = Asset {
         hash: asset_hash

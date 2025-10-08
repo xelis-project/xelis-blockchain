@@ -23,7 +23,7 @@ use crate::{
     time::{TimestampMillis, TimestampSeconds},
     transaction::extra_data::{SharedKey, UnknownExtraDataFormat},
 };
-use super::{default_true_value, DataElement, RPCContractOutput, RPCTransaction};
+use super::{default_true_value, DataElement, RPCContractLog, RPCTransaction};
 
 pub use direction::*;
 
@@ -746,7 +746,7 @@ pub struct GetContractsOutputsSummaryParams<'a> {
 #[derive(Serialize, Deserialize)]
 pub struct GetContractsOutputsSummaryEntry<'a> {
     pub tx_hash: Cow<'a, Hash>,
-    pub outputs: Vec<RPCContractOutput<'a>>,
+    pub outputs: Vec<RPCContractLog<'a>>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -1030,7 +1030,7 @@ pub struct InvokeContractEvent<'a> {
     pub block_hash: Cow<'a, Hash>,
     pub tx_hash: Cow<'a, Hash>,
     pub topoheight: TopoHeight,
-    pub contract_outputs: Vec<RPCContractOutput<'a>>
+    pub contract_outputs: Vec<RPCContractLog<'a>>
 }
 
 // Value of NotifyEvent::NewContract

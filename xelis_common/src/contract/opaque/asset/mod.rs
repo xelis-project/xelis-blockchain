@@ -18,7 +18,7 @@ use crate::{
         get_asset_changes_for_hash_mut,
         get_balance_from_cache,
         ChainState,
-        ContractOutput,
+        ContractLog,
         ContractProvider,
         ModuleMetadata
     },
@@ -224,7 +224,8 @@ pub async fn asset_mint<'a, 'ty, 'r, P: ContractProvider>(zelf: FnInstance<'a>, 
     };
 
     // Add to outputs
-    state.outputs.push(ContractOutput::Mint {
+    state.outputs.push(ContractLog::Mint {
+        contract: metadata.contract.clone(),
         asset: asset.hash.clone(),
         amount,
     });
