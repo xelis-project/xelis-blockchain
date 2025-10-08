@@ -733,18 +733,18 @@ pub struct HasMultisigAtTopoHeightParams<'a> {
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct GetContractOutputsParams<'a> {
+pub struct GetContractLogsParams<'a> {
     pub transaction: Cow<'a, Hash>
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct GetContractsOutputsSummaryParams<'a> {
+pub struct GetContractsOutputsParams<'a> {
     pub address: Cow<'a, Address>,
     pub topoheight: TopoHeight,
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct GetContractsOutputsSummaryEntry<'a> {
+pub struct GetContractsOutputsEntry<'a> {
     pub tx_hash: Cow<'a, Hash>,
     pub outputs: Vec<RPCContractLog<'a>>,
 }

@@ -287,7 +287,7 @@ impl Transaction {
         outputs.push(ContractLog::ExitCode(exit_code));
 
         // Track the outputs
-        state.set_contract_outputs(tx_hash, outputs).await
+        state.set_contract_logs(tx_hash, outputs).await
             .map_err(VerificationError::State)?;
 
         Ok(is_success)

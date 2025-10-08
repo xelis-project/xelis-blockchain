@@ -158,11 +158,11 @@ pub trait BlockchainApplyState<'a, P: ContractProvider, E>: BlockchainVerificati
     /// Is mainnet network
     fn is_mainnet(&self) -> bool;
 
-    /// Track the contract outputs
-    async fn set_contract_outputs(
+    /// Track the contract logs
+    async fn set_contract_logs(
         &mut self,
         tx_hash: &'a Hash,
-        outputs: Vec<ContractLog>
+        logs: Vec<ContractLog>
     ) -> Result<(), E>;
 
     /// Get the contract environment
