@@ -222,6 +222,7 @@ pub struct SplitAddressResult {
 
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[serde(tag = "type", content = "value")]
 pub enum RPCContractOutput<'a> {
     RefundGas {
         amount: u64
