@@ -2855,7 +2855,7 @@ impl<S: Storage> Blockchain<S> {
                         }
                     }
 
-                    for ((tx, contract), transfers) in contract_tracker.contracts_transfers.iter() {
+                    for ((caller, contract), transfers) in contract_tracker.contracts_transfers.iter() {
                         for (key, assets) in transfers.iter() {
                             let event = NotifyEvent::ContractTransfers {
                                 address: key.as_address(is_mainnet),
@@ -2867,7 +2867,7 @@ impl<S: Storage> Blockchain<S> {
 
                                 let value = json!(ContractTransfersEvent {
                                     contract: Cow::Borrowed(contract),
-                                    tx_hash: tx.as_ref().map(Cow::Borrowed),
+                                    caller: Cow::Borrowed(caller),
                                     transfers: Cow::Borrowed(assets),
                                     block_timestamp: block.get_timestamp(),
                                     block_hash: Cow::Borrowed(&hash),

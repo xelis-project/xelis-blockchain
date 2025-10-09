@@ -20,6 +20,7 @@ use xelis_common::{
         ContractEventTracker,
         ContractLog,
         ModuleMetadata,
+        vm::ContractCaller,
     },
     crypto::{elgamal::Ciphertext, Hash, PublicKey},
     serializer::Serializer,
@@ -242,10 +243,10 @@ impl<'a, S: Storage> BlockchainApplyState<'a, S, BlockchainError> for Applicable
 impl<'a, S: Storage> BlockchainContractState<'a, S, BlockchainError> for ApplicableChainState<'a, S> {
     async fn set_contract_logs(
         &mut self,
-        tx_hash: &'a Hash,
+        caller: ContractCaller<'a>,
         logs: Vec<ContractLog>
     ) -> Result<(), BlockchainError> {
-        match self.contract_manager.logs.entry(tx_hash) {
+        match self.contract_manager.logs.entry(caller.get_hash()) {
             Entry::Occupied(mut o) => {
                 o.get_mut().extend(logs);
             },
@@ -257,8 +258,8 @@ impl<'a, S: Storage> BlockchainContractState<'a, S, BlockchainError> for Applica
         Ok(())
     }
 
-    async fn get_contract_environment_for<'b>(&'b mut self, contract: &'b Hash, deposits: &'b IndexMap<Hash, ContractDeposit>, tx_hash: Option<&'b Hash>) -> Result<(ContractEnvironment<'b, S>, ContractChainState<'b>), BlockchainError> {
-        debug!("get contract environment for contract {} tx {}", contract, tx_hash.is_some());
+    async fn get_contract_environment_for<'b>(&'b mut self, contract: &'b Hash, deposits: &'b IndexMap<Hash, ContractDeposit>, caller: ContractCaller<'b>) -> Result<(ContractEnvironment<'b, S>, ContractChainState<'b>), BlockchainError> {
+        debug!("get contract environment for contract {} from caller {}", contract, caller.get_hash());
 
         // Find the contract module in our cache
         // We don't use the function `get_contract_module_with_environment` because we need to return the mutable storage
@@ -313,7 +314,7 @@ impl<'a, S: Storage> BlockchainContractState<'a, S, BlockchainError> for Applica
             topoheight: self.inner.topoheight,
             block_hash: self.block_hash,
             block: self.block,
-            tx_hash,
+            caller,
             // We only provide the current contract cache available
             // others can be lazily added to it
             caches: [(contract.clone(), cache)].into_iter().collect(),
@@ -356,14 +357,14 @@ impl<'a, S: Storage> BlockchainContractState<'a, S, BlockchainError> for Applica
                 .as_mut()
                 .ok_or_else(|| BlockchainError::NoContractBalance)?,
             Entry::Vacant(e) => {
-                 debug!("loading gas balance for contract {} at maximum topoheight {}", contract, self.inner.topoheight);
+                debug!("loading gas balance for contract {} at maximum topoheight {}", contract, self.inner.topoheight);
                 let (mut state, balance) = self.inner.storage.get_contract_balance_at_maximum_topoheight(contract, &XELIS_ASSET, self.inner.topoheight).await?
                     .map(|(topo, balance)| (VersionedState::FetchedAt(topo), balance.take()))
                     .unwrap_or((VersionedState::New, 0));
 
                 state.mark_updated();
-                e.insert(Some((state, balance)));
-                todo!()
+                e.insert(None)
+                    .insert((state, balance))
             }
         })
     }
