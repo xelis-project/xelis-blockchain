@@ -42,8 +42,14 @@ pub const BURN_PER_CONTRACT: u64 = COIN_VALUE;
 // This is to prevent spamming the network with tokens
 pub const COST_PER_ASSET: u64 = COIN_VALUE;
 // Cost in XEL to burn to schedule an execution
+// at a specific topoheight
 // This is set to 0.0005
 pub const COST_PER_SCHEDULED_EXECUTION: u64 = 50_000;
+// Cost in XEL to burn to schedule an execution
+// at the end of the same block
+// This is set to 0.00005
+pub const COST_PER_SCHEDULED_EXECUTION_AT_BLOCK_END: u64 = 5_000;
+
 // 30% of the transaction fee is burned
 // This is to reduce the supply over time
 // and also to prevent spamming the network with low fee transactions
