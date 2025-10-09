@@ -319,8 +319,6 @@ pub enum BlockchainError {
     NoBalanceChanges(Address, TopoHeight, Hash),
     #[error("No nonce found on disk for {}", _0)]
     NoNonce(Address),
-    #[error("Overflow detected")]
-    Overflow,
     #[error("Error, block {} include a dead tx {} from stable height {} executed in block {}", _0, _1, _2, _3)]
     DeadTxFromStableHeight(Hash, Hash, u64, Hash),
     #[error("Error, block {} include a dead tx from tips {}", _0, _1)]
@@ -421,7 +419,6 @@ impl From<VerificationError<BlockchainError>> for BlockchainError {
             VerificationError::MultiSigNotFound => BlockchainError::MultiSigNotFound,
             VerificationError::ModuleError(e) => BlockchainError::ModuleError(e),
             VerificationError::AnyError(e) => BlockchainError::Any(e),
-            VerificationError::GasOverflow => BlockchainError::Overflow,
             VerificationError::InvalidInvokeContract => BlockchainError::InvalidInvokeContract,
             VerificationError::DepositNotFound => BlockchainError::DepositNotFound,
             e => BlockchainError::Any(e.into())

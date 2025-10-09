@@ -24,7 +24,7 @@ use xelis_common::{
     crypto::{elgamal::Ciphertext, Hash, PublicKey},
     serializer::Serializer,
     transaction::{
-        verify::{BlockchainApplyState, BlockchainVerificationState, ContractEnvironment},
+        verify::{BlockchainApplyState, BlockchainContractState, BlockchainVerificationState, ContractEnvironment},
         ContractDeposit,
         MultiSigPayload,
         Reference,
@@ -233,18 +233,13 @@ impl<'a, S: Storage> BlockchainApplyState<'a, S, BlockchainError> for Applicable
         Ok(())
     }
 
-    fn get_block_hash(&self) -> &Hash {
-        &self.block_hash
-    }
-
-    fn get_block(&self) -> &Block {
-        self.block
-    }
-
     fn is_mainnet(&self) -> bool {
         self.inner.storage.is_mainnet()
     }
+}
 
+#[async_trait]
+impl<'a, S: Storage> BlockchainContractState<'a, S, BlockchainError> for ApplicableChainState<'a, S> {
     async fn set_contract_logs(
         &mut self,
         tx_hash: &'a Hash,
