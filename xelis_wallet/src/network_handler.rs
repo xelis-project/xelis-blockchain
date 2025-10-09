@@ -1299,7 +1299,7 @@ impl NetworkHandler {
                         .cloned()
                         .collect();
 
-                    let tx_hash = event.tx_hash.unwrap_or(event.block_hash).into_owned();
+                    let tx_hash = event.caller.into_owned();
                     self.create_or_update_transaction_contract(&tx_hash, event.topoheight, event.block_timestamp, event.transfers.into_owned().into_iter()).await?;
 
                     // We only sync the head state if we have assets
