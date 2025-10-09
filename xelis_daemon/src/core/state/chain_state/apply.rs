@@ -383,7 +383,9 @@ impl<'a, S: Storage> BlockchainContractState<'a, S, BlockchainError> for Applica
         tracker: ContractEventTracker,
         assets: HashMap<Hash, Option<AssetChanges>>
     ) -> Result<(), BlockchainError> {
-        for (contract, cache) in caches {
+        for (contract, mut cache) in caches {
+            cache.clean_up();
+
             match self.contract_manager.caches.entry(contract) {
                 Entry::Occupied(mut o) => {
                     let current = o.get_mut();
