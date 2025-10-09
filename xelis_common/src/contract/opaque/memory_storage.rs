@@ -17,17 +17,36 @@ use super::{Serializer, MAX_KEY_SIZE, MAX_VALUE_SIZE};
 
 // Shareable data across invoke call on the same Contract in the same Block
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct OpaqueMemoryStorage;
+pub struct OpaqueMemoryStorage {
+    // is the storage shared across the TXs from same contract?
+    shared: bool,
+}
 
 impl Serializable for OpaqueMemoryStorage {}
 
 impl JSONHelper for OpaqueMemoryStorage {}
 
-pub fn memory_storage(_: FnInstance, _: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
-    Ok(SysCallResult::Return(Primitive::Opaque(OpaqueWrapper::new(OpaqueMemoryStorage)).into()))
+pub fn memory_storage(_: FnInstance, params: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
+    let shared = params[0]
+        .as_ref()
+        .as_bool()?;
+
+    Ok(SysCallResult::Return(Primitive::Opaque(OpaqueWrapper::new(OpaqueMemoryStorage {
+        shared,
+    })).into()))
 }
 
-pub fn memory_storage_load<P: ContractProvider>(_: FnInstance, mut params: FnParams, metadata: &ModuleMetadata, context: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn is_shared(instance: FnInstance, _: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
+    let instance = instance?;
+    let storage: &OpaqueMemoryStorage = instance.as_opaque_type()?;
+
+    Ok(SysCallResult::Return(Primitive::Boolean(storage.shared).into()))
+}
+
+pub fn memory_storage_load<P: ContractProvider>(instance: FnInstance, mut params: FnParams, metadata: &ModuleMetadata, context: &mut Context) -> FnReturnType<ModuleMetadata> {
+    let instance = instance?;
+    let storage: &OpaqueMemoryStorage = instance.as_opaque_type()?;
+
     let state: &mut ChainState = context.get_mut()
         .context("No chain state for memory storage")?;
 
@@ -35,13 +54,20 @@ pub fn memory_storage_load<P: ContractProvider>(_: FnInstance, mut params: FnPar
         .into_owned();
 
     let value = get_optional_cache_for_contract(&state.caches, state.global_caches, &metadata.contract)
-        .and_then(|cache| cache.memory.get(&key).cloned())
-        .unwrap_or_default();
+        .and_then(|cache| if storage.shared {
+                &cache.memory_shared
+            } else {
+                &cache.memory
+            }.get(&key).cloned()
+        ).unwrap_or_default();
 
     Ok(SysCallResult::Return(value.into()))
 }
 
-pub fn memory_storage_has<P: ContractProvider>(_: FnInstance, mut params: FnParams, metadata: &ModuleMetadata, context: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn memory_storage_has<P: ContractProvider>(instance: FnInstance, mut params: FnParams, metadata: &ModuleMetadata, context: &mut Context) -> FnReturnType<ModuleMetadata> {
+    let instance = instance?;
+    let storage: &OpaqueMemoryStorage = instance.as_opaque_type()?;
+
     let state: &mut ChainState = context.get_mut()
         .context("No chain state for memory storage")?;
 
@@ -49,12 +75,20 @@ pub fn memory_storage_has<P: ContractProvider>(_: FnInstance, mut params: FnPara
         .into_owned();
 
     let contains = get_optional_cache_for_contract(&state.caches, state.global_caches, &metadata.contract)
-        .map_or(false, |cache| cache.memory.contains_key(&key));
+        .map_or(false, |cache| if storage.shared {
+                &cache.memory_shared
+            } else {
+                &cache.memory
+            }.contains_key(&key)
+        );
 
     Ok(SysCallResult::Return(Primitive::Boolean(contains).into()))
 }
 
-pub fn memory_storage_store<P: ContractProvider>(_: FnInstance, mut params: FnParams, metadata: &ModuleMetadata, context: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn memory_storage_store<P: ContractProvider>(instance: FnInstance, mut params: FnParams, metadata: &ModuleMetadata, context: &mut Context) -> FnReturnType<ModuleMetadata> {
+    let instance = instance?;
+    let storage: &OpaqueMemoryStorage = instance.as_opaque_type()?;
+
     let key = params.remove(0)
         .into_owned();
 
@@ -78,24 +112,37 @@ pub fn memory_storage_store<P: ContractProvider>(_: FnInstance, mut params: FnPa
     let state: &mut ChainState = context.get_mut()
         .context("No chain state for memory storage")?;
 
-    let value = get_cache_for_contract(&mut state.caches, state.global_caches, metadata.contract.clone())
-        .memory
-        .insert(key, value)
+    let cache = get_cache_for_contract(&mut state.caches, state.global_caches, metadata.contract.clone());
+    let memory = if storage.shared {
+        &mut cache.memory_shared
+    } else {
+        &mut cache.memory
+    };
+
+    let value = memory.insert(key, value)
         .unwrap_or_default();
 
     Ok(SysCallResult::Return(value.into()))
 }
 
-pub fn memory_storage_delete<P: ContractProvider>(_: FnInstance, mut params: FnParams, metadata: &ModuleMetadata, context: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn memory_storage_delete<P: ContractProvider>(instance: FnInstance, mut params: FnParams, metadata: &ModuleMetadata, context: &mut Context) -> FnReturnType<ModuleMetadata> {
+    let instance = instance?;
+    let storage: &OpaqueMemoryStorage = instance.as_opaque_type()?;
+
     let state: &mut ChainState = context.get_mut()
         .context("No chain state for memory storage")?;
 
     let key = params.remove(0)
         .into_owned();
 
-    let value = get_cache_for_contract(&mut state.caches, state.global_caches, metadata.contract.clone())
-        .memory
-        .remove(&key)
+    let cache = get_cache_for_contract(&mut state.caches, state.global_caches, metadata.contract.clone());
+    let memory = if storage.shared {
+        &mut cache.memory_shared
+    } else {
+        &mut cache.memory
+    };
+
+    let value = memory.remove(&key)
         .unwrap_or_default();
 
     Ok(SysCallResult::Return(value.into()))

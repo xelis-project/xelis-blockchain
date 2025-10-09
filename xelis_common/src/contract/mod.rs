@@ -423,7 +423,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
         env.register_static_function(
             "new",
             memory_storage_type.clone(),
-            vec![],
+            vec![("shared", Type::Bool)],
             FunctionHandler::Sync(memory_storage),
             5,
             Some(memory_storage_type.clone())
