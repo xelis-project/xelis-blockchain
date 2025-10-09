@@ -2,7 +2,7 @@ mod data;
 mod contract_logs;
 mod provider;
 mod balance;
-mod delayed_execution;
+mod scheduled_execution;
 
 use async_trait::async_trait;
 use xelis_common::{

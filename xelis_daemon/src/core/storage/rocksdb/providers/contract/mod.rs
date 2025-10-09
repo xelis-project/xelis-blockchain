@@ -2,7 +2,7 @@ mod data;
 mod contract_logs;
 mod balance;
 mod r#impl;
-mod delayed_execution;
+mod scheduled_execution;
 
 use std::sync::Arc;
 use anyhow::Context;
@@ -78,7 +78,7 @@ impl ContractProvider for RocksStorage {
     }
 
     // Verify if we have already a registered execution for such contract at a specific topoheight
-    async fn has_delayed_execution_at_topoheight(&self, contract: &Hash, topoheight: TopoHeight) -> Result<bool, anyhow::Error> {
+    async fn has_scheduled_execution_at_topoheight(&self, contract: &Hash, topoheight: TopoHeight) -> Result<bool, anyhow::Error> {
         trace!("has delayed execution for contract {} at topoheight {}", contract, topoheight);
         // TODO
         Ok(false)

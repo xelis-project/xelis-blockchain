@@ -47,7 +47,7 @@ pub trait VersionedProvider:
         self.delete_versioned_contracts_at_topoheight(topoheight).await?;
         self.delete_versioned_contract_data_at_topoheight(topoheight).await?;
         self.delete_versioned_contract_balances_at_topoheight(topoheight).await?;
-        self.delete_delayed_executions_at_topoheight(topoheight).await?;
+        self.delete_scheduled_executions_at_topoheight(topoheight).await?;
 
         self.delete_versioned_assets_supply_at_topoheight(topoheight).await?;
 
@@ -72,7 +72,7 @@ pub trait VersionedProvider:
         self.delete_versioned_contracts_below_topoheight(topoheight, keep_last).await?;
         self.delete_versioned_contract_data_below_topoheight(topoheight, keep_last).await?;
         self.delete_versioned_contract_balances_below_topoheight(topoheight, keep_last).await?;
-        self.delete_delayed_executions_below_topoheight(topoheight).await?;
+        self.delete_scheduled_executions_below_topoheight(topoheight).await?;
 
         self.delete_versioned_assets_supply_below_topoheight(topoheight, keep_last).await?;
         self.delete_versioned_assets_below_topoheight(topoheight, keep_last).await?;
@@ -91,7 +91,7 @@ pub trait VersionedProvider:
         self.delete_versioned_contracts_above_topoheight(topoheight).await?;
         self.delete_versioned_contract_data_above_topoheight(topoheight).await?;
         self.delete_versioned_contract_balances_above_topoheight(topoheight).await?;
-        self.delete_delayed_executions_above_topoheight(topoheight).await?;
+        self.delete_scheduled_executions_above_topoheight(topoheight).await?;
 
         self.delete_versioned_assets_supply_above_topoheight(topoheight).await?;
         self.delete_versioned_assets_above_topoheight(topoheight).await?;

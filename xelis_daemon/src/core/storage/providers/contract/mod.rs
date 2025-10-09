@@ -1,7 +1,7 @@
 mod data;
 mod contract_logs;
 mod balance;
-mod delayed_execution;
+mod scheduled_execution;
 
 use std::borrow::Cow;
 
@@ -18,13 +18,13 @@ use crate::core::error::BlockchainError;
 pub use data::*;
 pub use contract_logs::*;
 pub use balance::*;
-pub use delayed_execution::*;
+pub use scheduled_execution::*;
 
 // A versioned contract is a contract that can be updated or deleted
 pub type VersionedContract<'a> = Versioned<Option<Cow<'a, Module>>>;
 
 #[async_trait]
-pub trait ContractProvider: ContractDataProvider + ContractLogsProvider + ContractInfoProvider + ContractBalanceProvider + ContractDelayedExecutionProvider {
+pub trait ContractProvider: ContractDataProvider + ContractLogsProvider + ContractInfoProvider + ContractBalanceProvider + ContractScheduledExecutionProvider {
     // Deploy a contract
     async fn set_last_contract_to<'a>(&mut self, hash: &Hash, topoheight: TopoHeight, contract: &VersionedContract<'a>) -> Result<(), BlockchainError>;
 

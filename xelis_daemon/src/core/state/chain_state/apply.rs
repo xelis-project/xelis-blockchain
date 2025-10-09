@@ -326,7 +326,7 @@ impl<'a, S: Storage> BlockchainContractState<'a, S, BlockchainError> for Applica
             // Global caches (all contracts)
             global_caches: &self.contract_manager.caches,
             injected_gas: IndexMap::new(),
-            delayed_executions: HashMap::new(),
+            scheduled_executions: HashMap::new(),
             planned_executions: IndexSet::new(),
         };
 

@@ -72,7 +72,7 @@ impl ContractProvider for SledStorage {
     }
 
     // Verify if we have already a registered execution for such contract at a specific topoheight
-    async fn has_delayed_execution_at_topoheight(&self, contract: &Hash, topoheight: TopoHeight) -> Result<bool, anyhow::Error> {
+    async fn has_scheduled_execution_at_topoheight(&self, contract: &Hash, topoheight: TopoHeight) -> Result<bool, anyhow::Error> {
         trace!("has delayed execution for contract {} at topoheight {}", contract, topoheight);
         // TODO
         Ok(false)
