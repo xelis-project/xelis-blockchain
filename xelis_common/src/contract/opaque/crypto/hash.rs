@@ -11,7 +11,6 @@ use xelis_vm::{
     Primitive,
     SysCallResult,
     ValueCell,
-    ValueError,
     U256
 };
 use crate::{
@@ -137,25 +136,19 @@ pub fn hash_max_fn(_: FnInstance, _: FnParams, _: &ModuleMetadata, _: &mut Conte
     Ok(SysCallResult::Return(Primitive::Opaque(OpaqueWrapper::new(hash)).into()))
 }
 
-pub fn blake3_fn(_: FnInstance, mut params: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
-    let input = params.remove(0)
-        .into_owned()
-        .as_vec()?
-        .iter()
-        .map(|v| v.as_ref().as_u8())
-        .collect::<Result<Vec<u8>, ValueError>>()?;
+pub fn blake3_fn(_: FnInstance, params: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
+    let input = params[0]
+        .as_ref()
+        .as_bytes()?;
 
     let hash = hash(&input);
     Ok(SysCallResult::Return(Primitive::Opaque(OpaqueWrapper::new(hash)).into()))
 }
 
-pub fn sha256_fn(_: FnInstance, mut params: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
-    let input = params.remove(0)
-        .into_owned()
-        .as_vec()?
-        .into_iter()
-        .map(|v| v.as_ref().as_u8())
-        .collect::<Result<Vec<u8>, ValueError>>()?;
+pub fn sha256_fn(_: FnInstance, params: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
+    let input = params[0]
+        .as_ref()
+        .as_bytes()?;
 
     let hash = Hash::new(Sha3_256::digest(&input).into());
     Ok(SysCallResult::Return(Primitive::Opaque(OpaqueWrapper::new(hash)).into()))

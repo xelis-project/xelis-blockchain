@@ -567,7 +567,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
         env.register_static_function(
             "blake3",
             hash_type.clone(),
-            vec![("input", Type::Array(Box::new(Type::U8)))],
+            vec![("input", Type::Bytes)],
             FunctionHandler::Sync(blake3_fn),
             3000,
             Some(hash_type.clone())
@@ -575,7 +575,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
         env.register_static_function(
             "sha256",
             hash_type.clone(),
-            vec![("input", Type::Array(Box::new(Type::U8)))],
+            vec![("input", Type::Bytes)],
             FunctionHandler::Sync(sha256_fn),
             7500,
             Some(hash_type.clone())
