@@ -4,7 +4,7 @@ mod contract_log;
 mod provider;
 mod cache;
 mod metadata;
-mod delayed_execution;
+mod scheduled_execution;
 
 use std::{
     any::TypeId,
@@ -59,7 +59,7 @@ pub use opaque::*;
 pub use provider::*;
 pub use cache::*;
 pub use metadata::*;
-pub use delayed_execution::*;
+pub use scheduled_execution::*;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TransferOutput {
@@ -120,10 +120,10 @@ pub struct ChainState<'a> {
     // We can safely use a HashMap because the order of storing is not
     // important
     // Each contract can have one delayed execution at most
-    pub delayed_executions: HashMap<TopoHeight, IndexSet<DelayedExecution>>,
+    pub delayed_executions: HashMap<TopoHeight, IndexSet<ScheduledExecution>>,
     // Each executions planned at the end of this block per contract
     // Each contract can have one delayed execution at most
-    pub planned_executions: IndexSet<DelayedExecution>,
+    pub planned_executions: IndexSet<ScheduledExecution>,
 }
 
 // Aggregate all events from all executed contracts to track in one structure
@@ -187,7 +187,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
 
     // Misc
     let module_type = Type::Opaque(env.register_opaque::<OpaqueModule>("Module", false));
-    let delayed_execution_type = Type::Opaque(env.register_opaque::<OpaqueDelayedExecution>("DelayedExecution", false));
+    let scheduled_execution_type = Type::Opaque(env.register_opaque::<OpaqueScheduledExecution>("ScheduledExecution", false));
 
     // Transaction
     {
@@ -1313,11 +1313,12 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
         );
     }
 
-    // Delayed Execution
+    // Scheduled Execution
     {
+        // ScheduledExecution::new()
         env.register_static_function(
-            "program",
-            delayed_execution_type.clone(),
+            "new",
+            scheduled_execution_type.clone(),
             vec![
                 ("topoheight", Type::U64),
                 ("chunk_id", Type::U16),
@@ -1325,8 +1326,9 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
                 ("args", Type::Array(Box::new(Type::Any))),
             ],
             FunctionHandler::Async(async_handler!(delayed_execution_new::<P>)),
-            150,
-            Some(Type::Bool)
+            // Contains the hash computation cost
+            3500,
+            Some(Type::Optional(Box::new(scheduled_execution_type.clone())))
         );
     }
 

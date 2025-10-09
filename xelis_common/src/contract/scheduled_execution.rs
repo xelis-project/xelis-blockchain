@@ -15,13 +15,16 @@ use xelis_vm::{
 use crate::{
     config::{COST_PER_DELAYED_EXECUTION, FEE_PER_BYTE_STORED_CONTRACT, XELIS_ASSET},
     contract::{from_context, get_balance_from_cache, get_mut_balance_for_contract, record_burned_asset, ContractProvider, ModuleMetadata, MAX_VALUE_SIZE},
-    crypto::Hash,
+    crypto::{hash_multiple, Hash},
     serializer::*
 };
 
 // Delayed executions are unique per contract
 #[derive(Debug, Serialize, Deserialize)]
-pub struct DelayedExecution {
+pub struct ScheduledExecution {
+    // The current hash representing this scheduled execution
+    // It is based on blake3(contract || chunk_id || topoheight)
+    pub hash: Hash,
     // Contract hash of the module
     pub contract: Hash,
     // Chunk id
@@ -34,23 +37,24 @@ pub struct DelayedExecution {
     pub max_gas: u64,
 }
 
-impl hash::Hash for DelayedExecution {
+impl hash::Hash for ScheduledExecution {
     fn hash<H: hash::Hasher>(&self, state: &mut H) {
         self.contract.hash(state);
     }
 }
 
-impl PartialEq for DelayedExecution {
+impl PartialEq for ScheduledExecution {
     fn eq(&self, other: &Self) -> bool {
         self.contract == other.contract
     }
 }
 
-impl Eq for DelayedExecution {}
+impl Eq for ScheduledExecution {}
 
-impl Serializer for DelayedExecution {
+impl Serializer for ScheduledExecution {
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
         Ok(Self {
+            hash: Hash::read(reader)?,
             contract: Hash::read(reader)?,
             chunk_id: u16::read(reader)?,
             params: Vec::read(reader)?,
@@ -59,31 +63,40 @@ impl Serializer for DelayedExecution {
     }
 
     fn write(&self, writer: &mut Writer) {
+        self.hash.write(writer);
         self.contract.write(writer);
         self.chunk_id.write(writer);
         self.params.write(writer);
         self.max_gas.write(writer);
     }
+
+    fn size(&self) -> usize {
+        self.hash.size() +
+        self.contract.size() +
+        self.chunk_id.size() +
+        self.params.size() +
+        self.max_gas.size()
+    }
 }
 
 #[derive(Debug, Clone)]
-pub struct OpaqueDelayedExecution;
+pub struct OpaqueScheduledExecution;
 
-impl PartialEq for OpaqueDelayedExecution {
+impl PartialEq for OpaqueScheduledExecution {
     fn eq(&self, _: &Self) -> bool {
         false
     }
 }
 
-impl Eq for OpaqueDelayedExecution {}
+impl Eq for OpaqueScheduledExecution {}
 
-impl hash::Hash for OpaqueDelayedExecution {
+impl hash::Hash for OpaqueScheduledExecution {
     fn hash<H: hash::Hasher>(&self, _: &mut H) {}
 }
 
-impl Serializable for OpaqueDelayedExecution {}
+impl Serializable for OpaqueScheduledExecution {}
 
-impl JSONHelper for OpaqueDelayedExecution {}
+impl JSONHelper for OpaqueScheduledExecution {}
 
 pub async fn delayed_execution_new<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata, context: &mut Context<'ty, 'r>) -> FnReturnType<ModuleMetadata> {
     let (provider, state) = from_context::<P>(context)?;
@@ -109,12 +122,12 @@ pub async fn delayed_execution_new<'a, 'ty, 'r, P: ContractProvider>(_: FnInstan
         .collect();
 
     if params.len() > (u8::MAX - 1) as usize {
-        return Ok(SysCallResult::Return(Primitive::Boolean(false).into()))
+        return Ok(SysCallResult::Return(Primitive::Null.into()))
     }
 
     let params_size = params.size();
     if params_size > MAX_VALUE_SIZE {
-        return Ok(SysCallResult::Return(Primitive::Boolean(false).into()))
+        return Ok(SysCallResult::Return(Primitive::Null.into()))
     }
 
     let burned_part = COST_PER_DELAYED_EXECUTION + (params_size as u64 * FEE_PER_BYTE_STORED_CONTRACT);
@@ -122,14 +135,22 @@ pub async fn delayed_execution_new<'a, 'ty, 'r, P: ContractProvider>(_: FnInstan
 
     // Check if we have enough to pay the reserved gas & params fee
     if get_balance_from_cache(provider, state, metadata.contract.clone(), XELIS_ASSET).await?.is_none_or(|(_, balance)| balance < total_cost) {
-        return Ok(SysCallResult::Return(Primitive::Boolean(false).into()))
+        return Ok(SysCallResult::Return(Primitive::Null.into()))
     }
 
     if provider.has_delayed_execution_at_topoheight(&metadata.contract, topoheight).await? {
-        return Ok(SysCallResult::Return(Primitive::Boolean(false).into()))
+        return Ok(SysCallResult::Return(Primitive::Null.into()))
     }
 
-    let execution = DelayedExecution {
+    // Create the hash for this scheduled execution
+    let hash = hash_multiple(&[
+        metadata.contract.as_bytes(),
+        &chunk_id.to_le_bytes(),
+        &topoheight.to_le_bytes()
+    ]);
+
+    let execution = ScheduledExecution {
+        hash,
         contract: metadata.contract.clone(),
         chunk_id,
         max_gas,
@@ -152,5 +173,5 @@ pub async fn delayed_execution_new<'a, 'ty, 'r, P: ContractProvider>(_: FnInstan
     state.mark_updated();
     *balance -= total_cost;
 
-    Ok(SysCallResult::Return(Primitive::Boolean(true).into()))
+    Ok(SysCallResult::Return(OpaqueScheduledExecution.into()))
 }

@@ -61,6 +61,15 @@ pub fn hash(value: &[u8]) -> Hash {
     Hash(result)
 }
 
+pub fn hash_multiple(values: &[&[u8]]) -> Hash {
+    let mut hasher = blake3::Hasher::new();
+    for value in values {
+        hasher.update(value);
+    }
+    let result: [u8; HASH_SIZE] = hasher.finalize().into();
+    Hash(result)
+}
+
 // Perform a PoW hash using the given algorithm
 pub fn pow_hash(work: &[u8], algorithm: Algorithm) -> Result<Hash, XelisHashError> {
     match algorithm {
