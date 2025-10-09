@@ -15,17 +15,14 @@ pub struct DeterministicRandom {
 }
 
 impl DeterministicRandom {
-    pub fn new(contract: &Hash, block: &Hash, topoheight: TopoHeight, transaction: Option<&Hash>) -> Self {
+    pub fn new(contract: &Hash, block: &Hash, topoheight: TopoHeight, transaction: &Hash) -> Self {
         let mut hasher = blake3::Hasher::new();
 
         hasher
             .update(contract.as_bytes())
             .update(block.as_bytes())
-            .update(&topoheight.to_be_bytes());
-
-        if let Some(transaction) = transaction {
-            hasher.update(transaction.as_bytes());
-        }
+            .update(&topoheight.to_be_bytes())
+            .update(transaction.as_bytes());
 
         Self {
             reader: hasher.finalize_xof(),

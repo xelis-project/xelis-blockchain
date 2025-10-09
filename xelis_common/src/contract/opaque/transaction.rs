@@ -11,7 +11,7 @@ use xelis_vm::{
     SysCallResult
 };
 use crate::{
-    contract::{ChainState, ModuleMetadata},
+    contract::{vm::ContractCaller, ChainState, ModuleMetadata},
     crypto::Hash,
     transaction::Transaction
 };
@@ -41,16 +41,12 @@ impl JSONHelper for OpaqueTransaction {}
 impl Serializable for OpaqueTransaction {}
 
 pub fn transaction(_: FnInstance, _: FnParams, _: &ModuleMetadata, context: &mut Context) -> FnReturnType<ModuleMetadata> {
-    if let Some(tx) = context.get::<Arc<Transaction>>() {
-        let state: &ChainState = context.get()
-            .context("chain state not found")?;
-
-        let hash = state.tx_hash.cloned()
-            .context("tx hash not found")?;
-
+    let state: &ChainState = context.get()
+        .context("chain state not found")?;
+    if let ContractCaller::Transaction(hash, tx) = state.caller {
         return Ok(SysCallResult::Return(OpaqueTransaction {
             inner: tx.clone(),
-            hash,
+            hash: hash.clone(),
         }.into()).into())
     }
 

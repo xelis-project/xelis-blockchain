@@ -43,6 +43,7 @@ use crate::{
         MAX_GAS_USAGE_PER_TX,
         XELIS_ASSET
     },
+    contract::vm::ContractCaller,
     crypto::{
         proofs::{CiphertextValidityProof, CommitmentEqProof, G, H},
         Address,
@@ -95,7 +96,7 @@ pub struct ChainState<'a> {
     // Tx hash in which the contract is executed
     // If None, this means the contract was not
     // invoked by a TX.
-    pub tx_hash: Option<&'a Hash>,
+    pub caller: ContractCaller<'a>,
     // The contract cache
     // If the contract was called already, we may have a cache with data
     pub caches: HashMap<Hash, ContractCache>,
@@ -133,7 +134,7 @@ pub struct ChainState<'a> {
 #[derive(Debug, Clone, Default)]
 pub struct ContractEventTracker {
     // Each tx-contract pair has its own transfers
-    pub contracts_transfers: HashMap<(Option<Hash>, Hash), HashMap<PublicKey, HashMap<Hash, u64>>>,
+    pub contracts_transfers: HashMap<(Hash, Hash), HashMap<PublicKey, HashMap<Hash, u64>>>,
     // All the transfers made by all contracts aggregated per public key
     pub aggregated_transfers: HashMap<PublicKey, HashMap<Hash, u64>>,
     // All assets registered by all contracts
@@ -1866,7 +1867,7 @@ async fn transfer<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut param
         .and_modify(|v| *v += amount)
         .or_insert(amount);
 
-    state.tracker.contracts_transfers.entry((state.tx_hash.cloned(), metadata.contract.clone()))
+    state.tracker.contracts_transfers.entry((state.caller.get_hash().clone(), metadata.contract.clone()))
         .or_insert_with(HashMap::new)
         .entry(key.clone())
         .or_insert_with(HashMap::new)

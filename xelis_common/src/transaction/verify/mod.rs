@@ -24,15 +24,15 @@ use merlin::Transcript;
 use metrics::histogram;
 use xelis_vm::ModuleValidator;
 use crate::{
-    tokio::spawn_blocking_safe,
     account::Nonce,
     config::{BURN_PER_CONTRACT, MAX_GAS_USAGE_PER_TX, XELIS_ASSET},
     contract::{
-        ContractProvider,
         vm::{
+            ContractCaller,
             InvokeContract,
             HOOK_CONSTRUCTOR_ID
-        }
+        },
+        ContractProvider
     },
     crypto::{
         elgamal::{
@@ -56,6 +56,7 @@ use crate::{
         SIGNATURE_SIZE
     },
     serializer::Serializer,
+    tokio::spawn_blocking_safe,
     transaction::{
         TxVersion,
         EXTRA_DATA_LIMIT_SIZE,
@@ -1226,7 +1227,7 @@ impl Transaction {
             TransactionType::InvokeContract(payload) => {
                 if self.is_contract_available(state, &payload.contract).await? {
                     Self::invoke_contract(
-                        Some(self),
+                        ContractCaller::Transaction(tx_hash, self),
                         state,
                         decompressed_deposits,
                         &payload.contract,
@@ -1239,7 +1240,7 @@ impl Transaction {
                     warn!("Contract {} invoked from {} not available anymore", payload.contract, tx_hash);
 
                     // Nothing was spent, we must refund the gas and deposits
-                    Self::handle_gas(self.get_source(), state, 0, payload.max_gas).await?;
+                    Self::handle_gas(ContractCaller::Transaction(tx_hash, self), state, 0, payload.max_gas).await?;
                     Self::refund_deposits(self.get_source(), state, &payload.deposits, decompressed_deposits).await?;
                 }
             },
@@ -1249,7 +1250,7 @@ impl Transaction {
 
                 if let Some(invoke) = payload.invoke.as_ref() {
                     let is_success = Self::invoke_contract(
-                        Some(self),
+                        ContractCaller::Transaction(tx_hash, self),
                         state,
                         decompressed_deposits,
                         tx_hash,

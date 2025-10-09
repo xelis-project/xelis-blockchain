@@ -39,19 +39,20 @@ pub enum InvokeContract {
     Hook(u8),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum ContractCaller<'a> {
-    Transaction(Cow<'a, Hash>),
+    Transaction(&'a Hash, &'a Arc<Transaction>),
     // Scheduled is formed from hash(contract, topoheight)
-    // to simulate a TX hash
-    Scheduled(Cow<'a, Hash>)
+    // to simulate a TX hash for logs and tracking
+    // Second hash is the contract hash
+    Scheduled(&'a Hash, &'a Hash)
 }
 
 impl<'a> ContractCaller<'a> {
-    pub fn get_hash<'b>(&'b self) -> &'b Hash {
+    pub fn get_hash(&self) -> &'a Hash {
         match self {
-            Self::Transaction(hash) => hash,
-            Self::Scheduled(hash) => hash,
+            Self::Transaction(hash, _) => hash,
+            Self::Scheduled(hash, _) => hash,
         }
     }
 }
@@ -75,7 +76,6 @@ pub enum ContractError<E> {
 impl Transaction {
     // Create the VM and run the required contrac twith all needed functions
     async fn run_virtual_machine<'a, P: ContractProvider>(
-        transaction: Option<&Arc<Transaction>>,
         contract_environment: ContractEnvironment<'a, P>,
         chain_state: &mut ChainState<'a>,
         invoke: InvokeContract,
@@ -120,12 +120,6 @@ impl Transaction {
         // Set the gas limit for the VM
         context.set_gas_limit(max_gas);
 
-        // Configure the context
-        // Note that the VM already include the environment in Context
-        if let Some(transaction) = transaction {
-            context.insert_ref(transaction);
-        }
-
         // insert the chain state separetly to avoid to give the S type
         context.insert_mut(chain_state);
         // insert the storage through our wrapper
@@ -163,7 +157,7 @@ impl Transaction {
     // Note that the contract must be already loaded by calling
     // `is_contract_available`
     pub async fn invoke_contract<'a, P: ContractProvider, E, B: BlockchainApplyState<'a, P, E>>(
-        transaction: Option<&'a Arc<Transaction>>,
+        caller: ContractCaller<'a>,
         state: &mut B,
         decompressed_deposits: &HashMap<&Hash, DecompressedDepositCt>,
         contract: &'a Hash,
@@ -174,12 +168,11 @@ impl Transaction {
     ) -> Result<bool, ContractError<E>> {
         debug!("Invoking contract {}: {:?}", contract, invoke);
         // Deposits are actually added to each balance
-        let (contract_environment, mut chain_state) = state.get_contract_environment_for(contract, deposits, None).await
+        let (contract_environment, mut chain_state) = state.get_contract_environment_for(contract, deposits, caller).await
             .map_err(ContractError::State)?;
 
         // Total used gas by the VM
         let (used_gas, vm_max_gas, exit_code) = Self::run_virtual_machine(
-            transaction,
             contract_environment,
             &mut chain_state,
             invoke,
@@ -289,12 +282,13 @@ impl Transaction {
             }
 
             if !deposits.is_empty() {
-                match transaction {
-                    Some(tx) => {
+                match caller {
+                    ContractCaller::Transaction(hash, tx) => {
+                        debug!("refunding deposits for transaction {}", hash);
                         Self::refund_deposits(tx.get_source(), state, deposits, decompressed_deposits).await?;
                     },
-                    None => {
-                        warn!("We have some deposits to refund but no TX is linked to it! These deposits are now lost in the void");
+                    ContractCaller::Scheduled(_, _) => {
+                        warn!("we have some deposits to refund but no TX is linked to it! These deposits are now lost in the void");
                     }
                 }
 
@@ -307,7 +301,7 @@ impl Transaction {
         state.set_modules_cache(modules).await
             .map_err(ContractError::State)?;
 
-        let refund_gas = 0; // Self::handle_gas(state, used_gas, max_gas).await?;
+        let refund_gas = Self::handle_gas(caller, state, used_gas, max_gas).await?;
         debug!("used gas: {}, refund gas: {}", used_gas, refund_gas);
 
         if refund_gas > 0 {
@@ -318,14 +312,14 @@ impl Transaction {
         outputs.push(ContractLog::ExitCode(exit_code));
 
         // Track the outputs
-        // state.set_contract_logs(tx_hash, outputs).await
-        //     .map_err(ContractError::State)?;
+        state.set_contract_logs(caller, outputs).await
+            .map_err(ContractError::State)?;
 
         Ok(is_success)
     }
 
     pub async fn handle_gas<'a, P: ContractProvider, E, B: BlockchainApplyState<'a, P, E>>(
-        source: &'a CompressedPublicKey,
+        caller: ContractCaller<'a>,
         state: &mut B,
         used_gas: u64,
         tx_max_gas: u64,
@@ -354,10 +348,24 @@ impl Transaction {
         if refund_gas > 0 {
             // If we have some funds to refund, we add it to the sender balance
             // But to prevent any front running, we add to the sender balance by considering him as a receiver.
-            let balance = state.get_receiver_balance(Cow::Borrowed(source), Cow::Owned(XELIS_ASSET)).await
-                .map_err(ContractError::State)?;
+            match caller {
+                ContractCaller::Transaction(_, tx) => {
+                    let balance = state.get_receiver_balance(Cow::Borrowed(tx.get_source()), Cow::Owned(XELIS_ASSET)).await
+                        .map_err(ContractError::State)?;
+        
+                    *balance += Scalar::from(refund_gas);
+                },
+                ContractCaller::Scheduled(_, contract) => {
+                    let (versioned_state, balance) = state.get_contract_balance_for_gas(&contract).await
+                        .map_err(ContractError::State)?;
 
-            *balance += Scalar::from(refund_gas);
+                    versioned_state.mark_updated();
+
+                    *balance = balance
+                        .checked_sub(refund_gas)
+                        .ok_or(ContractError::GasOverflow)?;
+                }
+            }
         }
 
         Ok(refund_gas)

@@ -7,13 +7,14 @@ use crate::{
     account::Nonce,
     block::BlockVersion,
     contract::{
+        vm::ContractCaller,
         AssetChanges,
         ChainState,
         ContractCache,
         ContractEventTracker,
         ContractLog,
         ContractProvider,
-        ModuleMetadata,
+        ModuleMetadata
     },
     crypto::{
         elgamal::{
@@ -143,7 +144,7 @@ pub trait BlockchainContractState<'a, P: ContractProvider, E> {
     /// Track the contract logs
     async fn set_contract_logs(
         &mut self,
-        tx_hash: &'a Hash,
+        caller: ContractCaller<'a>,
         logs: Vec<ContractLog>
     ) -> Result<(), E>;
 
@@ -154,7 +155,7 @@ pub trait BlockchainContractState<'a, P: ContractProvider, E> {
         &'b mut self,
         contract: &'b Hash,
         deposits: &'b IndexMap<Hash, ContractDeposit>,
-        tx_hash: Option<&'b Hash>
+        tx_hash: ContractCaller<'b>
     ) -> Result<(ContractEnvironment<'b, P>, ChainState<'b>), E>;
 
     /// Set the updated contract caches
