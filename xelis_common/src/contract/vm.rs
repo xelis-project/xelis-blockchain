@@ -24,13 +24,11 @@ use crate::{
         Hash
     },
     transaction::{
-        verify::ContractEnvironment,
+        verify::{BlockchainApplyState, ContractEnvironment, DecompressedDepositCt},
         ContractDeposit,
         Transaction
     }
 };
-
-use super::{BlockchainApplyState, DecompressedDepositCt};
 
 // Actual constructor hook id
 pub const HOOK_CONSTRUCTOR_ID: u8 = 0;

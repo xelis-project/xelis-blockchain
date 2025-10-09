@@ -1,6 +1,5 @@
 mod state;
 mod error;
-mod contract;
 mod zkp_cache;
 
 use std::{
@@ -28,7 +27,13 @@ use crate::{
     tokio::spawn_blocking_safe,
     account::Nonce,
     config::{BURN_PER_CONTRACT, MAX_GAS_USAGE_PER_TX, XELIS_ASSET},
-    contract::ContractProvider,
+    contract::{
+        ContractProvider,
+        vm::{
+            InvokeContract,
+            HOOK_CONSTRUCTOR_ID
+        }
+    },
     crypto::{
         elgamal::{
             Ciphertext,
@@ -67,7 +72,6 @@ use super::{
     TransactionType,
     TransferPayload,
 };
-use contract::{InvokeContract, HOOK_CONSTRUCTOR_ID};
 
 pub use state::*;
 pub use error::*;

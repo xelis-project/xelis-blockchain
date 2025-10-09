@@ -98,7 +98,7 @@ impl Serializable for OpaqueScheduledExecution {}
 
 impl JSONHelper for OpaqueScheduledExecution {}
 
-pub async fn delayed_execution_new<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata, context: &mut Context<'ty, 'r>) -> FnReturnType<ModuleMetadata> {
+pub async fn scheduled_execution_new<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata, context: &mut Context<'ty, 'r>) -> FnReturnType<ModuleMetadata> {
     let (provider, state) = from_context::<P>(context)?;
 
     let topoheight = params[0]
@@ -138,7 +138,7 @@ pub async fn delayed_execution_new<'a, 'ty, 'r, P: ContractProvider>(_: FnInstan
         return Ok(SysCallResult::Return(Primitive::Null.into()))
     }
 
-    if provider.has_delayed_execution_at_topoheight(&metadata.contract, topoheight).await? {
+    if provider.has_scheduled_execution_at_topoheight(&metadata.contract, topoheight).await? {
         return Ok(SysCallResult::Return(Primitive::Null.into()))
     }
 
@@ -157,7 +157,7 @@ pub async fn delayed_execution_new<'a, 'ty, 'r, P: ContractProvider>(_: FnInstan
         params,
     };
 
-    if !state.delayed_executions.entry(topoheight)
+    if !state.scheduled_executions.entry(topoheight)
         .or_insert_with(IndexSet::new)
         .insert(execution) {
         // A delayed execution has been already registered for this

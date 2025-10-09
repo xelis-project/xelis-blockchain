@@ -21,7 +21,7 @@ pub trait ContractProvider: ContractStorage + Send + Sync + 'static {
     async fn get_account_balance_for_asset(&self, key: &PublicKey, asset: &Hash, topoheight: TopoHeight) -> Result<Option<(TopoHeight, CiphertextCache)>, anyhow::Error>;
 
     // Verify if we have already a registered execution for such contract at a specific topoheight
-    async fn has_delayed_execution_at_topoheight(&self, contract: &Hash, topoheight: TopoHeight) -> Result<bool, anyhow::Error>;
+    async fn has_scheduled_execution_at_topoheight(&self, contract: &Hash, topoheight: TopoHeight) -> Result<bool, anyhow::Error>;
 
     // Verify if an asset exists in the storage
     async fn asset_exists(&self, asset: &Hash, topoheight: TopoHeight) -> Result<bool, anyhow::Error>;

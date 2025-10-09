@@ -5,6 +5,7 @@ mod provider;
 mod cache;
 mod metadata;
 mod scheduled_execution;
+pub mod vm;
 
 use std::{
     any::TypeId,
@@ -120,7 +121,7 @@ pub struct ChainState<'a> {
     // We can safely use a HashMap because the order of storing is not
     // important
     // Each contract can have one delayed execution at most
-    pub delayed_executions: HashMap<TopoHeight, IndexSet<ScheduledExecution>>,
+    pub scheduled_executions: HashMap<TopoHeight, IndexSet<ScheduledExecution>>,
     // Each executions planned at the end of this block per contract
     // Each contract can have one delayed execution at most
     pub planned_executions: IndexSet<ScheduledExecution>,
@@ -1325,7 +1326,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
                 ("max_gas", Type::U64),
                 ("args", Type::Array(Box::new(Type::Any))),
             ],
-            FunctionHandler::Async(async_handler!(delayed_execution_new::<P>)),
+            FunctionHandler::Async(async_handler!(scheduled_execution_new::<P>)),
             // Contains the hash computation cost
             3500,
             Some(Type::Optional(Box::new(scheduled_execution_type.clone())))

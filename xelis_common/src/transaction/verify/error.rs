@@ -7,7 +7,7 @@ use crate::{
         proofs::ProofVerificationError,    
         Hash
     },
-    transaction::verify::contract::ContractError
+    contract::vm::ContractError
 };
 
 #[derive(Error, Debug)]
