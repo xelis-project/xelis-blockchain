@@ -5,7 +5,7 @@ use indexmap::IndexMap;
 use xelis_vm::{Environment, Module};
 use crate::{
     account::Nonce,
-    block::{Block, BlockVersion},
+    block::BlockVersion,
     contract::{
         AssetChanges,
         ChainState,
@@ -198,12 +198,6 @@ pub trait BlockchainApplyState<'a, P: ContractProvider, E>: BlockchainVerificati
 
     /// Add burned XELIS fee
     async fn add_burned_fee(&mut self, amount: u64) -> Result<(), E>;
-
-    /// Get the hash of the block
-    fn get_block_hash(&self) -> &Hash;
-
-    /// Get the block
-    fn get_block(&self) -> &Block;
 
     /// Is mainnet network
     fn is_mainnet(&self) -> bool;

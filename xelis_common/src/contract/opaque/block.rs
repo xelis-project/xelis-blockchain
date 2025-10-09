@@ -11,8 +11,7 @@ use xelis_vm::{
     ValueCell
 };
 
-use crate::{block::Block, contract::{ChainState, ModuleMetadata}};
-
+use crate::contract::{ChainState, ModuleMetadata};
 use super::OpaqueTransaction;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -27,20 +26,23 @@ pub fn block_current(_: FnInstance, _: FnParams, _: &ModuleMetadata, _: &mut Con
 }
 
 pub fn block_nonce(_: FnInstance, _: FnParams, _: &ModuleMetadata, context: &mut Context) -> FnReturnType<ModuleMetadata> {
-    let block: &Block = context.get().context("current block not found")?;
-    Ok(SysCallResult::Return(Primitive::U64(block.get_nonce()).into()))
+    let chain_state: &ChainState = context.get()
+        .context("context not found")?;
+
+    Ok(SysCallResult::Return(Primitive::U64(chain_state.block.get_nonce()).into()))
 }
 
 pub fn block_timestamp(_: FnInstance, _: FnParams, _: &ModuleMetadata, context: &mut Context) -> FnReturnType<ModuleMetadata> {
-    let block: &Block = context.get().context("current block not found")?;
-    Ok(SysCallResult::Return(Primitive::U64(block.get_timestamp()).into()))
+    let chain_state: &ChainState = context.get()
+        .context("context not found")?;
+
+    Ok(SysCallResult::Return(Primitive::U64(chain_state.block.get_timestamp()).into()))
 }
 
 pub fn block_miner(_: FnInstance, _: FnParams, _: &ModuleMetadata, context: &mut Context) -> FnReturnType<ModuleMetadata> {
-    let block: &Block = context.get().context("current block not found")?;
     let state: &ChainState = context.get().context("chain state not found")?;
 
-    let miner_address = block.get_miner().as_address(state.mainnet);
+    let miner_address = state.block.get_miner().as_address(state.mainnet);
     Ok(SysCallResult::Return(Primitive::Opaque(OpaqueWrapper::new(miner_address)).into()))
 }
 
@@ -51,15 +53,17 @@ pub fn block_hash(_: FnInstance, _: FnParams, _: &ModuleMetadata, context: &mut 
 }
 
 pub fn block_version(_: FnInstance, _: FnParams, _: &ModuleMetadata, context: &mut Context) -> FnReturnType<ModuleMetadata> {
-    let block: &Block = context.get().context("current block not found")?;
+    let chain_state: &ChainState = context.get()
+        .context("context not found")?;
 
-    Ok(SysCallResult::Return(Primitive::U8(block.get_version() as u8).into()))
+    Ok(SysCallResult::Return(Primitive::U8(chain_state.block.get_version() as u8).into()))
 }
 
 pub fn block_tips(_: FnInstance, _: FnParams, _: &ModuleMetadata, context: &mut Context) -> FnReturnType<ModuleMetadata> {
-    let block: &Block = context.get().context("current block not found")?;
+    let chain_state: &ChainState = context.get()
+        .context("context not found")?;
 
-    let tips = block.get_tips()
+    let tips = chain_state.block.get_tips()
         .iter()
         .map(|tip| Primitive::Opaque(OpaqueWrapper::new(tip.clone())).into())
         .collect();
@@ -68,9 +72,10 @@ pub fn block_tips(_: FnInstance, _: FnParams, _: &ModuleMetadata, context: &mut 
 }
 
 pub fn block_transactions_hashes(_: FnInstance, _: FnParams, _: &ModuleMetadata, context: &mut Context) -> FnReturnType<ModuleMetadata> {
-    let block: &Block = context.get().context("current block not found")?;
+    let chain_state: &ChainState = context.get()
+        .context("context not found")?;
 
-    let hashes = block.get_txs_hashes()
+    let hashes = chain_state.block.get_txs_hashes()
         .iter()
         .map(|hash| Primitive::Opaque(OpaqueWrapper::new(hash.clone())).into())
         .collect();
@@ -79,11 +84,12 @@ pub fn block_transactions_hashes(_: FnInstance, _: FnParams, _: &ModuleMetadata,
 }
 
 pub fn block_transactions(_: FnInstance, _: FnParams, _: &ModuleMetadata, context: &mut Context) -> FnReturnType<ModuleMetadata> {
-    let block: &Block = context.get().context("current block not found")?;
+    let chain_state: &ChainState = context.get()
+        .context("context not found")?;
 
-    let txs = block.get_txs_hashes()
+    let txs = chain_state.block.get_txs_hashes()
         .iter()
-        .zip(block.get_transactions())
+        .zip(chain_state.block.get_transactions())
         .map(|(hash, tx)| Primitive::Opaque(OpaqueWrapper::new(OpaqueTransaction {
             inner: tx.clone(),
             hash: hash.clone()
@@ -94,18 +100,24 @@ pub fn block_transactions(_: FnInstance, _: FnParams, _: &ModuleMetadata, contex
 }
 
 pub fn block_transactions_count(_: FnInstance, _: FnParams, _: &ModuleMetadata, context: &mut Context) -> FnReturnType<ModuleMetadata> {
-    let block: &Block = context.get().context("current block not found")?;
-    Ok(SysCallResult::Return(Primitive::U32(block.get_txs_count() as _).into()))
+    let chain_state: &ChainState = context.get()
+        .context("context not found")?;
+
+    Ok(SysCallResult::Return(Primitive::U32(chain_state.block.get_txs_count() as _).into()))
 }
 
 pub fn block_height(_: FnInstance, _: FnParams, _: &ModuleMetadata, context: &mut Context) -> FnReturnType<ModuleMetadata> {
-    let block: &Block = context.get().context("current block not found")?;
-    Ok(SysCallResult::Return(Primitive::U64(block.get_height()).into()))
+    let chain_state: &ChainState = context.get()
+        .context("context not found")?;
+
+    Ok(SysCallResult::Return(Primitive::U64(chain_state.block.get_height()).into()))
 }
 
 pub fn block_extra_nonce(_: FnInstance, _: FnParams, _: &ModuleMetadata, context: &mut Context) -> FnReturnType<ModuleMetadata> {
-    let block: &Block = context.get().context("current block not found")?;
-    let extra_nonce = block.get_extra_nonce()
+    let chain_state: &ChainState = context.get()
+        .context("context not found")?;
+
+    let extra_nonce = chain_state.block.get_extra_nonce()
         .iter()
         .map(|v| Primitive::U8(*v).into())
         .collect();
