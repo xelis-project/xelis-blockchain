@@ -4,11 +4,11 @@ use std::{
     sync::Arc
 };
 
-use anyhow::Context;
+use thiserror::Error;
 use curve25519_dalek::Scalar;
 use log::{debug, trace, warn};
 use indexmap::IndexMap;
-use xelis_vm::{Reference, ValueCell, VM};
+use xelis_vm::{Reference, VMError, ValueCell, VM};
 
 use crate::{
     config::{TX_GAS_BURN_PERCENT, XELIS_ASSET},
@@ -19,7 +19,10 @@ use crate::{
         ContractProviderWrapper,
         ModuleMetadata
     },
-    crypto::{elgamal::Ciphertext, Hash},
+    crypto::{
+        elgamal::{Ciphertext, CompressedPublicKey},
+        Hash
+    },
     transaction::{
         verify::ContractEnvironment,
         ContractDeposit,
@@ -27,7 +30,10 @@ use crate::{
     }
 };
 
-use super::{BlockchainApplyState, BlockchainVerificationState, DecompressedDepositCt, VerificationError};
+use super::{BlockchainApplyState, DecompressedDepositCt};
+
+// Actual constructor hook id
+pub const HOOK_CONSTRUCTOR_ID: u8 = 0;
 
 #[derive(Debug)]
 pub enum InvokeContract {
@@ -35,21 +41,43 @@ pub enum InvokeContract {
     Hook(u8),
 }
 
-impl Transaction {
-    // Load and check if a contract is available
-    // This is needed in case a contract has been removed or wasn't deployed due to the constructor error
-    pub(super) async fn is_contract_available<'a, E, B: BlockchainVerificationState<'a, E>>(
-        &'a self,
-        state: &mut B,
-        contract: &'a Hash,
-    ) -> Result<bool, VerificationError<E>> {
-        state.load_contract_module(&contract).await
-            .map_err(VerificationError::State)
-    }
+#[derive(Debug, Clone)]
+pub enum ContractCaller<'a> {
+    Transaction(Cow<'a, Hash>),
+    // Scheduled is formed from hash(contract, topoheight)
+    // to simulate a TX hash
+    Scheduled(Cow<'a, Hash>)
+}
 
+impl<'a> ContractCaller<'a> {
+    pub fn get_hash<'b>(&'b self) -> &'b Hash {
+        match self {
+            Self::Transaction(hash) => hash,
+            Self::Scheduled(hash) => hash,
+        }
+    }
+}
+
+#[derive(Error, Debug)]
+pub enum ContractError<E> {
+    #[error(transparent)]
+    State(E),
+    #[error(transparent)]
+    VM(#[from] VMError),
+    #[error("overflow during gas calculation")]
+    GasOverflow,
+    #[error("contract cache not found")]
+    ContractCache,
+    #[error("gas balance not found for contract")]
+    GasBalance,
+    #[error("Deposit decompressed not found")]
+    DepositNotFound,
+}
+
+impl Transaction {
     // Create the VM and run the required contrac twith all needed functions
     async fn run_virtual_machine<'a, P: ContractProvider>(
-        transaction: &Arc<Transaction>,
+        transaction: Option<&Arc<Transaction>>,
         contract_environment: ContractEnvironment<'a, P>,
         chain_state: &mut ChainState<'a>,
         invoke: InvokeContract,
@@ -57,7 +85,7 @@ impl Transaction {
         deposits: IndexMap<Hash, ContractDeposit>,
         parameters: impl DoubleEndedIterator<Item = ValueCell>,
         max_gas: u64,
-    ) -> Result<(u64, u64, Option<u64>), anyhow::Error> {
+    ) -> Result<(u64, u64, Option<u64>), VMError> {
         debug!("run virtual machine with max gas {}", max_gas);
         let mut vm = VM::new(&contract_environment.environment);
 
@@ -73,11 +101,10 @@ impl Transaction {
         // This is the first chunk to be called
         match invoke {
             InvokeContract::Entry(entry) => {
-                vm.invoke_entry_chunk(entry)
-                    .context("invoke entry chunk")?;
+                vm.invoke_entry_chunk(entry)?;
             },
             InvokeContract::Hook(hook) => {
-                if !vm.invoke_hook_id(hook).context("invoke hook")? {
+                if !vm.invoke_hook_id(hook)? {
                     warn!("Invoke contract {} hook {} not found", contract, hook);
                     return Ok((0, max_gas, None))
                 }
@@ -87,8 +114,7 @@ impl Transaction {
         // We need to push it in reverse order because the VM will pop them in reverse order
         for constant in parameters.rev() {
             trace!("Pushing constant: {}", constant);
-            vm.push_stack(constant)
-                .context("push param")?;
+            vm.push_stack(constant)?;
         }
 
         let context = vm.context_mut();
@@ -98,7 +124,10 @@ impl Transaction {
 
         // Configure the context
         // Note that the VM already include the environment in Context
-        context.insert_ref(transaction);
+        if let Some(transaction) = transaction {
+            context.insert_ref(transaction);
+        }
+
         // insert the chain state separetly to avoid to give the S type
         context.insert_mut(chain_state);
         // insert the storage through our wrapper
@@ -135,9 +164,8 @@ impl Transaction {
     // Invoke a contract from a transaction
     // Note that the contract must be already loaded by calling
     // `is_contract_available`
-    pub(super) async fn invoke_contract<'a, P: ContractProvider, E, B: BlockchainApplyState<'a, P, E>>(
-        self: &'a Arc<Self>,
-        tx_hash: &'a Hash,
+    pub async fn invoke_contract<'a, P: ContractProvider, E, B: BlockchainApplyState<'a, P, E>>(
+        transaction: Option<&'a Arc<Transaction>>,
         state: &mut B,
         decompressed_deposits: &HashMap<&Hash, DecompressedDepositCt>,
         contract: &'a Hash,
@@ -145,15 +173,15 @@ impl Transaction {
         parameters: impl DoubleEndedIterator<Item = ValueCell>,
         max_gas: u64,
         invoke: InvokeContract,
-    ) -> Result<bool, VerificationError<E>> {
-        debug!("Invoking contract {} from TX {}: {:?}", contract, tx_hash, invoke);
+    ) -> Result<bool, ContractError<E>> {
+        debug!("Invoking contract {}: {:?}", contract, invoke);
         // Deposits are actually added to each balance
-        let (contract_environment, mut chain_state) = state.get_contract_environment_for(contract, deposits, Some(tx_hash)).await
-            .map_err(VerificationError::State)?;
+        let (contract_environment, mut chain_state) = state.get_contract_environment_for(contract, deposits, None).await
+            .map_err(ContractError::State)?;
 
         // Total used gas by the VM
         let (used_gas, vm_max_gas, exit_code) = Self::run_virtual_machine(
-            self,
+            transaction,
             contract_environment,
             &mut chain_state,
             invoke,
@@ -180,19 +208,19 @@ impl Transaction {
                 } else {
                     // Refund the whole extra gas given by contracts
                     vm_max_gas.checked_sub(max_gas)
-                }.ok_or(VerificationError::GasOverflow)?;
+                }.ok_or(ContractError::GasOverflow)?;
 
                 // Reverse the iterator so the latest entry is the first to be refund
                 for (contract, gas) in gas_injections.into_iter().rev() {
                     // the gas provided by the contract
                     // is lower or equal to whats left to refund
                     let cache = caches.get_mut(&contract)
-                        .context("Contract cache not found for gas refund")?;
+                        .ok_or(ContractError::ContractCache)?;
 
                     let (state, balance) = cache.balances.get_mut(&XELIS_ASSET)
-                        .context("Gas balance cache not found for contract")?
+                        .ok_or(ContractError::GasBalance)?
                         .as_mut()
-                        .context("No gas balance found for contract")?;
+                        .ok_or(ContractError::GasBalance)?;
 
                     if gas_refund_left > 0 {
                         // Refund the smaller of what was injected or what's left
@@ -227,7 +255,7 @@ impl Transaction {
                 tracker,
                 assets
             ).await
-                .map_err(VerificationError::State)?;
+                .map_err(ContractError::State)?;
         } else {
             // Otherwise, something was wrong, we delete the outputs made by the contract
             outputs.clear();
@@ -240,7 +268,7 @@ impl Transaction {
                     // Retrieve the balance before execution
                     // we will apply the gas fee on it
                     let (versioned_state, balance) = state.get_contract_balance_for_gas(&contract).await
-                        .map_err(VerificationError::State)?;
+                        .map_err(ContractError::State)?;
 
                     versioned_state.mark_updated();
 
@@ -249,7 +277,7 @@ impl Transaction {
 
                     *balance = balance
                         .checked_sub(consumed)
-                        .ok_or(VerificationError::GasOverflow)?;
+                        .ok_or(ContractError::GasOverflow)?;
 
                     outputs.push(ContractLog::GasInjection { contract, amount: consumed });
 
@@ -263,18 +291,25 @@ impl Transaction {
             }
 
             if !deposits.is_empty() {
-                // It was not successful, we need to refund the deposits
-                self.refund_deposits(state, deposits, decompressed_deposits).await?;
+                match transaction {
+                    Some(tx) => {
+                        Self::refund_deposits(tx.get_source(), state, deposits, decompressed_deposits).await?;
+                    },
+                    None => {
+                        warn!("We have some deposits to refund but no TX is linked to it! These deposits are now lost in the void");
+                    }
+                }
 
+                // It was not successful, we need to refund the deposits
                 outputs.push(ContractLog::RefundDeposits);
             }
         }
 
         // Keep modules cache that have been loaded already
         state.set_modules_cache(modules).await
-            .map_err(VerificationError::State)?;
+            .map_err(ContractError::State)?;
 
-        let refund_gas = self.handle_gas(state, used_gas, max_gas).await?;
+        let refund_gas = 0; // Self::handle_gas(state, used_gas, max_gas).await?;
         debug!("used gas: {}, refund gas: {}", used_gas, refund_gas);
 
         if refund_gas > 0 {
@@ -285,23 +320,23 @@ impl Transaction {
         outputs.push(ContractLog::ExitCode(exit_code));
 
         // Track the outputs
-        state.set_contract_logs(tx_hash, outputs).await
-            .map_err(VerificationError::State)?;
+        // state.set_contract_logs(tx_hash, outputs).await
+        //     .map_err(ContractError::State)?;
 
         Ok(is_success)
     }
 
-    pub(super) async fn handle_gas<'a, P: ContractProvider, E, B: BlockchainApplyState<'a, P, E>>(
-        &'a self,
+    pub async fn handle_gas<'a, P: ContractProvider, E, B: BlockchainApplyState<'a, P, E>>(
+        source: &'a CompressedPublicKey,
         state: &mut B,
         used_gas: u64,
         tx_max_gas: u64,
-    ) -> Result<u64, VerificationError<E>> {
+    ) -> Result<u64, ContractError<E>> {
         // Part of the gas is burned
         let burned_gas = used_gas * TX_GAS_BURN_PERCENT / 100;
         // Part of the gas is given to the miners as fees
         let gas_fee = used_gas.checked_sub(burned_gas)
-            .ok_or(VerificationError::GasOverflow)?;
+            .ok_or(ContractError::GasOverflow)?;
         // The remaining gas is refunded to the sender
         // if used gas is above tx max gas, we don't
         // refund any gas to user
@@ -313,16 +348,16 @@ impl Transaction {
 
         debug!("Invoke contract used gas: {}, burned: {}, fee: {}, refund: {}", used_gas, burned_gas, gas_fee, refund_gas);
         state.add_burned_fee(burned_gas).await
-            .map_err(VerificationError::State)?;
+            .map_err(ContractError::State)?;
 
         state.add_gas_fee(gas_fee).await
-            .map_err(VerificationError::State)?;
+            .map_err(ContractError::State)?;
 
         if refund_gas > 0 {
             // If we have some funds to refund, we add it to the sender balance
             // But to prevent any front running, we add to the sender balance by considering him as a receiver.
-            let balance = state.get_receiver_balance(Cow::Borrowed(self.get_source()), Cow::Owned(XELIS_ASSET)).await
-                .map_err(VerificationError::State)?;
+            let balance = state.get_receiver_balance(Cow::Borrowed(source), Cow::Owned(XELIS_ASSET)).await
+                .map_err(ContractError::State)?;
 
             *balance += Scalar::from(refund_gas);
         }
@@ -331,17 +366,17 @@ impl Transaction {
     }
 
     // Refund the deposits made by the user to the contract
-    pub(super) async fn refund_deposits<'a, P: ContractProvider, E, B: BlockchainApplyState<'a, P, E>>(
-        &'a self,
+    pub async fn refund_deposits<'a, P: ContractProvider, E, B: BlockchainApplyState<'a, P, E>>(
+        source: &'a CompressedPublicKey,
         state: &mut B,
         deposits: &'a IndexMap<Hash, ContractDeposit>,
         decompressed_deposits: &HashMap<&Hash, DecompressedDepositCt>,
-    ) -> Result<(), VerificationError<E>> {
+    ) -> Result<(), ContractError<E>> {
         for (asset, deposit) in deposits.iter() {
-            trace!("Refunding deposit {:?} for asset: {} to {}", deposit, asset, self.source.as_address(state.is_mainnet()));
+            trace!("Refunding deposit {:?} for asset: {} to {}", deposit, asset, source.as_address(state.is_mainnet()));
 
-            let balance = state.get_receiver_balance(Cow::Borrowed(self.get_source()), Cow::Borrowed(asset)).await
-                .map_err(VerificationError::State)?;
+            let balance = state.get_receiver_balance(Cow::Borrowed(source), Cow::Borrowed(asset)).await
+                .map_err(ContractError::State)?;
 
             match deposit {
                 ContractDeposit::Public(amount) => {
@@ -349,7 +384,7 @@ impl Transaction {
                 },
                 ContractDeposit::Private { .. } => {
                     let ct = decompressed_deposits.get(asset)
-                        .ok_or(VerificationError::DepositNotFound)?;
+                        .ok_or(ContractError::DepositNotFound)?;
 
                     *balance += Ciphertext::new(ct.commitment.clone(), ct.sender_handle.clone());
                 }

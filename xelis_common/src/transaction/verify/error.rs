@@ -6,7 +6,8 @@ use crate::{
     crypto::{
         proofs::ProofVerificationError,    
         Hash
-    }
+    },
+    transaction::verify::contract::ContractError
 };
 
 #[derive(Error, Debug)]
@@ -47,12 +48,12 @@ pub enum VerificationError<T> {
     AnyError(#[from] AnyError),
     #[error("Invalid invoke contract")]
     InvalidInvokeContract,
-    #[error("overflow during gas calculation")]
-    GasOverflow,
+    #[error("Contract not found")]
+    ContractNotFound,
     #[error("Deposit decompressed not found")]
     DepositNotFound,
     #[error("Configured max gas is above the network limit")]
     MaxGasReached,
-    #[error("Contract not found")]
-    ContractNotFound,
+    #[error(transparent)]
+    Contract(#[from] ContractError<T>),
 }

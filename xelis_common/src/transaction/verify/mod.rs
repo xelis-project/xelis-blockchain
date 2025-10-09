@@ -20,7 +20,7 @@ use curve25519_dalek::{
     Scalar
 };
 use indexmap::IndexMap;
-use log::{debug, trace};
+use log::{warn, debug, trace};
 use merlin::Transcript;
 use metrics::histogram;
 use xelis_vm::ModuleValidator;
@@ -65,18 +65,18 @@ use super::{
     Role,
     Transaction,
     TransactionType,
-    TransferPayload
+    TransferPayload,
 };
-use contract::InvokeContract;
+use contract::{InvokeContract, HOOK_CONSTRUCTOR_ID};
 
 pub use state::*;
 pub use error::*;
 pub use zkp_cache::*;
 
-struct DecompressedTransferCt {
-    commitment: PedersenCommitment,
-    sender_handle: DecryptHandle,
-    receiver_handle: DecryptHandle,
+pub struct DecompressedTransferCt {
+    pub commitment: PedersenCommitment,
+    pub sender_handle: DecryptHandle,
+    pub receiver_handle: DecryptHandle,
 }
 
 impl DecompressedTransferCt {
@@ -101,10 +101,10 @@ impl DecompressedTransferCt {
 // Decompressed deposit ciphertext
 // Transaction deposits are stored in a compressed format
 // We need to decompress them only one time
-struct DecompressedDepositCt {
-    commitment: PedersenCommitment,
-    sender_handle: DecryptHandle,
-    receiver_handle: DecryptHandle,
+pub struct DecompressedDepositCt {
+    pub commitment: PedersenCommitment,
+    pub sender_handle: DecryptHandle,
+    pub receiver_handle: DecryptHandle,
 }
 
 impl Transaction {
@@ -631,6 +631,17 @@ impl Transaction {
         Ok(())
     }
 
+    // Load and check if a contract is available
+    // This is needed in case a contract has been removed or wasn't deployed due to the constructor error
+    pub(super) async fn is_contract_available<'a, E, B: BlockchainVerificationState<'a, E>>(
+        &'a self,
+        state: &mut B,
+        contract: &'a Hash,
+    ) -> Result<bool, VerificationError<E>> {
+        state.load_contract_module(&contract).await
+            .map_err(VerificationError::State)
+    }
+
     // internal, does not verify the range proof
     // returns (transcript, commitments for range proof)
     async fn pre_verify<'a, E, B: BlockchainVerificationState<'a, E>>(
@@ -778,6 +789,7 @@ impl Transaction {
             },
             TransactionType::DeployContract(payload) => {
                 if let Some(invoke) = payload.invoke.as_ref() {
+                    // Constructor check was already made before
                     self.verify_invoke_contract(
                         &mut deposits_decompressed,
                         &invoke.deposits,
@@ -958,7 +970,7 @@ impl Transaction {
             },
             TransactionType::DeployContract(payload) => {
                 // Verify that if we have a constructor, we must have an invoke, and vice-versa
-                if payload.invoke.is_none() != payload.module.get_chunk_id_of_hook(0).is_none() {
+                if payload.invoke.is_none() != payload.module.get_chunk_id_of_hook(HOOK_CONSTRUCTOR_ID).is_none() {
                     return Err(VerificationError::InvalidFormat);
                 }
 
@@ -1209,8 +1221,8 @@ impl Transaction {
             },
             TransactionType::InvokeContract(payload) => {
                 if self.is_contract_available(state, &payload.contract).await? {
-                    self.invoke_contract(
-                        tx_hash,
+                    Self::invoke_contract(
+                        Some(self),
                         state,
                         decompressed_deposits,
                         &payload.contract,
@@ -1220,11 +1232,11 @@ impl Transaction {
                         InvokeContract::Entry(payload.entry_id)
                     ).await?;
                 } else {
-                    debug!("Contract {} invoked from {} not available", payload.contract, tx_hash);
+                    warn!("Contract {} invoked from {} not available anymore", payload.contract, tx_hash);
 
                     // Nothing was spent, we must refund the gas and deposits
-                    self.handle_gas(state, 0, payload.max_gas).await?;
-                    self.refund_deposits(state, &payload.deposits, decompressed_deposits).await?;
+                    Self::handle_gas(self.get_source(), state, 0, payload.max_gas).await?;
+                    Self::refund_deposits(self.get_source(), state, &payload.deposits, decompressed_deposits).await?;
                 }
             },
             TransactionType::DeployContract(payload) => {
@@ -1232,15 +1244,15 @@ impl Transaction {
                     .map_err(VerificationError::State)?;
 
                 if let Some(invoke) = payload.invoke.as_ref() {
-                    let is_success = self.invoke_contract(
-                        tx_hash,
+                    let is_success = Self::invoke_contract(
+                        Some(self),
                         state,
                         decompressed_deposits,
                         tx_hash,
                         &invoke.deposits,
                         iter::empty(),
                         invoke.max_gas,
-                        InvokeContract::Hook(0)
+                        InvokeContract::Hook(HOOK_CONSTRUCTOR_ID)
                     ).await?;
 
                     // if it has failed, we don't want to deploy the contract
