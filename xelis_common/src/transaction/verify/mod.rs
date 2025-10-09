@@ -401,6 +401,11 @@ impl Transaction {
                     receiver_handle,
                     ct_validity_proof
                 } => {
+                    // TODO: currently, private deposits are disabled
+                    if true {
+                        return Err(VerificationError::InvalidFormat);
+                    }
+
                     transcript.append_commitment(b"deposit_commitment", commitment);
                     transcript.append_handle(b"deposit_sender_handle", sender_handle);
                     transcript.append_handle(b"deposit_receiver_handle", receiver_handle);
