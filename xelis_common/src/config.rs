@@ -38,12 +38,12 @@ pub const EXTRA_BASE_FEE_BURN_PERCENT: u64 = 30;
 // Note that if we depends on fees only, miners could do such attacks for free
 // by mining their own transactions and getting the fees back
 pub const BURN_PER_CONTRACT: u64 = COIN_VALUE;
-// 1 XEL per token created
+// 1 XEL per asset created
 // This is to prevent spamming the network with tokens
-pub const COST_PER_TOKEN: u64 = COIN_VALUE;
-// Cost in XEL to burn to program a delayed execution
+pub const COST_PER_ASSET: u64 = COIN_VALUE;
+// Cost in XEL to burn to schedule an execution
 // This is set to 0.0005
-pub const COST_PER_DELAYED_EXECUTION: u64 = 50_000;
+pub const COST_PER_SCHEDULED_EXECUTION: u64 = 50_000;
 // 30% of the transaction fee is burned
 // This is to reduce the supply over time
 // and also to prevent spamming the network with low fee transactions

@@ -13,7 +13,7 @@ use xelis_vm::{
     ValueCell
 };
 use crate::{
-    config::{COST_PER_DELAYED_EXECUTION, FEE_PER_BYTE_STORED_CONTRACT, XELIS_ASSET},
+    config::{COST_PER_SCHEDULED_EXECUTION, FEE_PER_BYTE_STORED_CONTRACT, XELIS_ASSET},
     contract::{from_context, get_balance_from_cache, get_mut_balance_for_contract, record_burned_asset, ContractProvider, ModuleMetadata, MAX_VALUE_SIZE},
     crypto::{hash_multiple, Hash},
     serializer::*
@@ -130,7 +130,7 @@ pub async fn scheduled_execution_new<'a, 'ty, 'r, P: ContractProvider>(_: FnInst
         return Ok(SysCallResult::Return(Primitive::Null.into()))
     }
 
-    let burned_part = COST_PER_DELAYED_EXECUTION + (params_size as u64 * FEE_PER_BYTE_STORED_CONTRACT);
+    let burned_part = COST_PER_SCHEDULED_EXECUTION + (params_size as u64 * FEE_PER_BYTE_STORED_CONTRACT);
     let total_cost =  max_gas + burned_part;
 
     // Check if we have enough to pay the reserved gas & params fee

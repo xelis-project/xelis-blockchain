@@ -36,6 +36,8 @@ use crate::{
     account::CiphertextCache,
     block::{Block, TopoHeight},
     config::{
+        COST_PER_ASSET,
+        COST_PER_SCHEDULED_EXECUTION,
         FEE_PER_ACCOUNT_CREATION,
         FEE_PER_BYTE_OF_EVENT_DATA,
         MAX_GAS_USAGE_PER_TX,
@@ -1519,6 +1521,28 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             20,
             Some(Type::Optional(Box::new(address_type.clone())))
         );
+
+        // Get the current cost per asset created
+        // returns in atomic units `COST_PER_ASSET`
+        env.register_native_function(
+            "get_cost_per_asset",
+            None,
+            vec![],
+            FunctionHandler::Sync(get_cost_per_asset),
+            1,
+            Some(Type::U64)
+        );
+
+        // Get the current cost per scheduled exection
+        // returns in atomic units `COST_PER_DELAYED_EXECUTION`
+        env.register_native_function(
+            "get_cost_per_scheduled_execution",
+            None,
+            vec![],
+            FunctionHandler::Sync(get_cost_per_scheduled_execution),
+            1,
+            Some(Type::U64)
+        );
     }
 
     env
@@ -2047,4 +2071,12 @@ fn get_caller(_: FnInstance, _: FnParams, _: &ModuleMetadata, context: &mut Cont
         .unwrap_or_default();
 
     Ok(SysCallResult::Return(caller.into()))
+}
+
+fn get_cost_per_asset(_: FnInstance, _: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
+    Ok(SysCallResult::Return(Primitive::U64(COST_PER_ASSET).into()))
+}
+
+fn get_cost_per_scheduled_execution(_: FnInstance, _: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
+    Ok(SysCallResult::Return(Primitive::U64(COST_PER_SCHEDULED_EXECUTION).into()))
 }

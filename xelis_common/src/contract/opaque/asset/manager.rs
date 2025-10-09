@@ -10,7 +10,7 @@ use xelis_vm::{
 };
 use crate::{
     asset::{AssetData, AssetOwner},
-    config::{COST_PER_TOKEN, XELIS_ASSET},
+    config::{COST_PER_ASSET, XELIS_ASSET},
     contract::{
         from_context,
         get_balance_from_cache,
@@ -94,7 +94,7 @@ pub async fn asset_create<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, m
 
     // Check that we have enough XEL in the balance
     let balance = get_balance_from_cache(provider, state, metadata.contract.clone(), XELIS_ASSET).await?;
-    if balance.is_none_or(|(_, balance)| balance < COST_PER_TOKEN) {
+    if balance.is_none_or(|(_, balance)| balance < COST_PER_ASSET) {
         return Err(EnvironmentError::Expect("Insufficient XEL funds in contract balance for token creation".to_owned()).into());
     }
 
@@ -123,10 +123,10 @@ pub async fn asset_create<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, m
     // and record the burn in the circulating supply
     {
         let (versioned_state, balance) = get_mut_balance_for_contract(provider, state, metadata.contract.clone(), XELIS_ASSET).await?;
-        *balance -= COST_PER_TOKEN;
+        *balance -= COST_PER_ASSET;
         versioned_state.mark_updated();
     
-        record_burned_asset(provider, state, metadata.contract.clone(), XELIS_ASSET, COST_PER_TOKEN).await?;
+        record_burned_asset(provider, state, metadata.contract.clone(), XELIS_ASSET, COST_PER_ASSET).await?;
     }
 
     // If we have a max supply, we need to mint it to the contract
