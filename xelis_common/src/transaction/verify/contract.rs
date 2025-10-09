@@ -54,12 +54,11 @@ impl Transaction {
         chain_state: &mut ChainState<'a>,
         invoke: InvokeContract,
         contract: &'a Hash,
-        tx_hash: &'a Hash,
         deposits: IndexMap<Hash, ContractDeposit>,
         parameters: impl DoubleEndedIterator<Item = ValueCell>,
         max_gas: u64,
     ) -> Result<(u64, u64, Option<u64>), anyhow::Error> {
-        debug!("run virtual machine for tx {} and max as {}", tx_hash, max_gas);
+        debug!("run virtual machine with max gas {}", max_gas);
         let mut vm = VM::new(&contract_environment.environment);
 
         // Insert the module to load
@@ -79,7 +78,7 @@ impl Transaction {
             },
             InvokeContract::Hook(hook) => {
                 if !vm.invoke_hook_id(hook).context("invoke hook")? {
-                    warn!("Invoke contract {} from TX {} hook {} not found", contract, tx_hash, hook);
+                    warn!("Invoke contract {} hook {} not found", contract, hook);
                     return Ok((0, max_gas, None))
                 }
             }
@@ -119,13 +118,13 @@ impl Transaction {
 
         let exit_code = match res {
             Ok(res) => {
-                debug!("Invoke contract {} from TX {} result: {:#}", contract, tx_hash, res);
+                debug!("Invoke contract {} result: {:#}", contract, res);
                 // If the result return 0 as exit code, it means that everything went well
                 let exit_code = res.as_u64().ok();
                 exit_code
             },
             Err(err) => {
-                debug!("Invoke contract {} from TX {} error: {:#}", contract, tx_hash, err);
+                debug!("Invoke contract {} error: {:#}", contract, err);
                 None
             }
         };
@@ -159,7 +158,6 @@ impl Transaction {
             &mut chain_state,
             invoke,
             contract,
-            tx_hash,
             deposits.clone(),
             parameters,
             max_gas
