@@ -25,6 +25,7 @@ use xelis_vm::{
     FnInstance,
     FnParams,
     FnReturnType,
+    FnType,
     FunctionHandler,
     OpaqueWrapper,
     Primitive,
@@ -1313,7 +1314,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             Some(module_type.clone()),
             vec![
                 ("chunk_id", Type::U16),
-                ("args", Type::Any),
+                ("args", Type::Array(Box::new(Type::Any))),
             ],
             FunctionHandler::Async(async_handler!(module_delegate)),
             1,
@@ -1329,7 +1330,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             scheduled_execution_type.clone(),
             vec![
                 ("topoheight", Type::U64),
-                ("chunk_id", Type::U16),
+                ("callback", Type::Function(FnType::new(None, false, vec![Type::Array(Box::new(Type::Any))], Some(Type::U64)))),
                 ("max_gas", Type::U64),
                 ("args", Type::Array(Box::new(Type::Any))),
             ],
@@ -1345,7 +1346,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             "new_at_block_end",
             scheduled_execution_type.clone(),
             vec![
-                ("chunk_id", Type::U16),
+                ("callback", Type::Function(FnType::new(None, false, vec![Type::Array(Box::new(Type::Any))], Some(Type::U64)))),
                 ("max_gas", Type::U64),
                 ("args", Type::Array(Box::new(Type::Any))),
             ],
