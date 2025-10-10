@@ -37,7 +37,8 @@ pub const HOOK_CONSTRUCTOR_ID: u8 = 0;
 pub enum InvokeContract {
     Entry(u16),
     Hook(u8),
-    Chunk(u16),
+    // chunk id, allow registering executions for block end
+    Chunk(u16, bool),
 }
 
 #[derive(Debug, Clone)]
@@ -107,9 +108,14 @@ async fn run_virtual_machine<'a, P: ContractProvider>(
                 return Ok((0, max_gas, None))
             }
         },
-        InvokeContract::Chunk(chunk) => {
-            // TODO
-            vm.invoke_entry_chunk(chunk)?;
+        InvokeContract::Chunk(chunk, allow_executions) => {
+            if !contract_environment.module.is_callable_chunk(chunk as usize) {
+                warn!("Invoke contract {} chunk {} not found", contract, chunk);
+                return Ok((0, max_gas, None))
+            }
+
+            vm.invoke_chunk_id(chunk as usize)?;
+            chain_state.allow_executions = allow_executions;
         }
     }
 
@@ -366,7 +372,7 @@ pub async fn handle_gas<'a, P: ContractProvider, E, B: BlockchainApplyState<'a, 
                 versioned_state.mark_updated();
 
                 *balance = balance
-                    .checked_sub(refund_gas)
+                    .checked_add(refund_gas)
                     .ok_or(ContractError::GasOverflow)?;
             }
         }

@@ -223,7 +223,7 @@ impl Serializer for ValueCell {
     // This help us to save a reverse operation when deserializing
     fn write(&self, writer: &mut Writer) {
         match self {
-            ValueCell::Default(value) => {
+            ValueCell::Primitive(value) => {
                 writer.write_u8(0);
                 value.write(writer);
             },
@@ -257,7 +257,7 @@ impl Serializer for ValueCell {
     fn read(reader: &mut Reader) -> Result<ValueCell, ReaderError> {
         // TODO: make it iterative and not recursive to prevent stack overflow attacks!!!!
         Ok(match reader.read_u8()? {
-            0 => ValueCell::Default(Primitive::read(reader)?),
+            0 => ValueCell::Primitive(Primitive::read(reader)?),
             1 => {
                 let len = reader.read_u32()? as usize;
                 ValueCell::Bytes(reader.read_bytes(len)?)
@@ -292,7 +292,7 @@ impl Serializer for ValueCell {
             // variant id
             total += 1;
             match cell {
-                ValueCell::Default(value) => total += value.size(),
+                ValueCell::Primitive(value) => total += value.size(),
                 ValueCell::Bytes(bytes) => {
                     // u32 len
                     total += 4;
@@ -430,17 +430,17 @@ mod tests {
 
     #[test]
     fn test_serde_primitive() {
-        test_serde_cell(ValueCell::Default(Primitive::Null));
-        test_serde_cell(ValueCell::Default(Primitive::Boolean(false)));
-        test_serde_cell(ValueCell::Default(Primitive::U8(42)));
-        test_serde_cell(ValueCell::Default(Primitive::U32(42)));
-        test_serde_cell(ValueCell::Default(Primitive::U64(42)));
-        test_serde_cell(ValueCell::Default(Primitive::U128(42)));
-        test_serde_cell(ValueCell::Default(Primitive::U256(42u64.into())));
-        test_serde_cell(ValueCell::Default(Primitive::Range(Box::new((Primitive::U128(42), Primitive::U128(420))))));
-        test_serde_cell(ValueCell::Default(Primitive::String("hello world!!!".to_owned())));
+        test_serde_cell(ValueCell::Primitive(Primitive::Null));
+        test_serde_cell(ValueCell::Primitive(Primitive::Boolean(false)));
+        test_serde_cell(ValueCell::Primitive(Primitive::U8(42)));
+        test_serde_cell(ValueCell::Primitive(Primitive::U32(42)));
+        test_serde_cell(ValueCell::Primitive(Primitive::U64(42)));
+        test_serde_cell(ValueCell::Primitive(Primitive::U128(42)));
+        test_serde_cell(ValueCell::Primitive(Primitive::U256(42u64.into())));
+        test_serde_cell(ValueCell::Primitive(Primitive::Range(Box::new((Primitive::U128(42), Primitive::U128(420))))));
+        test_serde_cell(ValueCell::Primitive(Primitive::String("hello world!!!".to_owned())));
 
-        test_serde_cell(ValueCell::Default(Primitive::Opaque(OpaqueWrapper::new(Hash::zero()))));
+        test_serde_cell(ValueCell::Primitive(Primitive::Opaque(OpaqueWrapper::new(Hash::zero()))));
     }
 
     #[test]

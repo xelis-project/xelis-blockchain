@@ -155,7 +155,7 @@ pub trait BlockchainContractState<'a, P: ContractProvider, E> {
         &'b mut self,
         contract: Cow<'b, Hash>,
         deposits: Option<&'b IndexMap<Hash, ContractDeposit>>,
-        tx_hash: ContractCaller<'b>
+        tx_hash: ContractCaller<'b>,
     ) -> Result<(ContractEnvironment<'b, P>, ChainState<'b>), E>;
 
     /// Set the updated contract caches

@@ -76,7 +76,7 @@ mod tests {
             contract: XELIS_ASSET,
             max_gas: 1000,
             entry_id: 0,
-            parameters: vec![ValueCell::Default(Primitive::U64(100))],
+            parameters: vec![ValueCell::Primitive(Primitive::U64(100))],
             deposits: indexmap! {
                 XELIS_ASSET => ContractDepositBuilder {
                     amount: 100,
@@ -91,7 +91,7 @@ mod tests {
 
     #[test]
     fn test_serde_value_cell_str() {
-        let str_cell = ValueCell::Default(Primitive::String("Hello, World!".to_string()));
+        let str_cell = ValueCell::Primitive(Primitive::String("Hello, World!".to_string()));
 
         // JSON
         let str_data = serde_json::to_string_pretty(&str_cell).unwrap();
