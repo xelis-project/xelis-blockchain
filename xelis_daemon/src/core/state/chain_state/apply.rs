@@ -6,6 +6,7 @@ use std::{
 };
 use anyhow::Context;
 use async_trait::async_trait;
+use futures::{StreamExt, TryStreamExt};
 use log::{debug, trace, warn};
 use indexmap::{IndexMap, IndexSet};
 use xelis_common::{
@@ -63,6 +64,7 @@ struct ContractManager<'a> {
     modules: HashMap<Hash, Option<Arc<Module>>>,
     // Planned executions for the current block
     executions_at_block_end: IndexSet<ScheduledExecution>,
+    executions_at_topoheight: HashMap<TopoHeight, IndexSet<ScheduledExecution>>,
 }
 
 // Chain State that can be applied to the mutable storage
@@ -398,7 +400,9 @@ impl<'a, S: Storage> BlockchainContractState<'a, S, BlockchainError> for Applica
         &mut self,
         caches: HashMap<Hash, ContractCache>,
         tracker: ContractEventTracker,
-        assets: HashMap<Hash, Option<AssetChanges>>
+        assets: HashMap<Hash, Option<AssetChanges>>,
+        executions_block_end: IndexSet<ScheduledExecution>,
+        executions_topoheight: HashMap<TopoHeight, IndexSet<ScheduledExecution>>,
     ) -> Result<(), BlockchainError> {
         for (contract, mut cache) in caches {
             cache.clean_up();
@@ -416,6 +420,8 @@ impl<'a, S: Storage> BlockchainContractState<'a, S, BlockchainError> for Applica
 
         self.contract_manager.tracker = tracker;
         self.contract_manager.assets = assets;
+        self.contract_manager.executions_at_block_end = executions_block_end;
+        self.contract_manager.executions_at_topoheight = executions_topoheight;
 
         Ok(())
     }
@@ -483,6 +489,7 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
                 modules: HashMap::new(),
                 tracker: ContractEventTracker::default(),
                 executions_at_block_end: IndexSet::new(),
+                executions_at_topoheight: HashMap::new(),
             },
             block_hash,
             block
@@ -562,11 +569,8 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
         Ok(())
     }
 
-    // Execute all the block end scheduled executions
-    pub async fn process_executions_at_block_end(&mut self) -> Result<(), BlockchainError> {
-        trace!("process executions at block end");
-
-        let executions = std::mem::take(&mut self.contract_manager.executions_at_block_end);
+    // Execute the given list of scheduled executions
+    async fn process_executions(&mut self, executions: impl Iterator<Item = ScheduledExecution>) -> Result<(), BlockchainError> {
         for execution in executions {
             debug!("processing scheduled execution of contract {} with caller {}", execution.contract, execution.hash);
 
@@ -582,6 +586,42 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
                 warn!("failed to process scheduled execution of contract {} with caller {}: {}", execution.contract, execution.hash, e);
             }
         }
+
+        Ok(())
+    }
+
+    // Execute all the block end scheduled executions
+    pub async fn process_executions_at_block_end(&mut self) -> Result<(), BlockchainError> {
+        trace!("process executions at block end");
+
+        let executions = std::mem::take(&mut self.contract_manager.executions_at_block_end);
+        self.process_executions(executions.into_iter()).await
+    }
+
+    // Execute all scheduled executions for current topoheight
+    pub async fn process_scheduled_executions(&mut self) -> Result<(), BlockchainError> {
+        trace!("process executions at block end");
+
+        let topoheight = self.inner.topoheight;
+
+        // Do it in batches of 64 to avoid loading too much in memory at once
+        let mut skip = 0;
+        loop {
+            let executions = self.storage.get_contract_scheduled_executions_at_topoheight(topoheight).await?
+                .skip(skip)
+                .take(64)
+                .try_collect::<Vec<_>>()
+                .await?;
+
+            if executions.is_empty() {
+                break;
+            }
+
+            skip += executions.len();
+            self.process_executions(executions.into_iter()).await?;
+        }
+
+        debug!("finished processing {} scheduled executions for topoheight {}", skip, topoheight);
 
         Ok(())
     }
@@ -770,8 +810,18 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
             self.inner.storage.set_contract_logs_for_tx(&key, &logs).await?;
         }
 
+        // Apply all scheduled executions at their topoheight
+        debug!("applying scheduled executions at topoheights");
+        for (execution_topoheight, executions) in self.contract_manager.executions_at_topoheight {
+            for execution in executions {
+                trace!("storing scheduled execution of contract {} with caller {} at topoheight {}", execution.contract, execution.hash, self.inner.topoheight);
+                self.inner.storage.set_contract_scheduled_execution_at_topoheight(&execution.contract, self.inner.topoheight, &execution, execution_topoheight).await?;
+            }
+        }
+
         // Apply all balances changes at topoheight
         // We injected the sender balances in the receiver balances previously
+        debug!("applying balances");
         for (account, balances) in self.inner.receiver_balances {
             // If the account has no nonce set, set it to 0
             if !self.inner.accounts.contains_key(account.as_ref()) && !self.inner.storage.has_nonce(&account).await? {
