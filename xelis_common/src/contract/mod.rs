@@ -9,6 +9,7 @@ pub mod vm;
 
 use std::{
     any::TypeId,
+    borrow::Cow,
     collections::{hash_map::Entry, HashMap, HashSet},
     sync::Arc
 };
@@ -86,7 +87,7 @@ pub struct ChainState<'a> {
     // Are we in mainnet
     pub mainnet: bool,
     // The contract hash that was invoked as entry point
-    pub entry_contract: &'a Hash,
+    pub entry_contract: Cow<'a, Hash>,
     // The topoheight of the block
     pub topoheight: TopoHeight,
     // Block hash in which the contract is executed
@@ -128,6 +129,9 @@ pub struct ChainState<'a> {
     // Each executions planned at the end of this block per contract
     // Each contract can have one delayed execution at most
     pub planned_executions: IndexSet<ScheduledExecution>,
+    // In case we are in a scheduled execution already, prevent from
+    // recursive scheduling
+    pub allow_executions: bool,
 }
 
 // Aggregate all events from all executed contracts to track in one structure
@@ -1754,7 +1758,7 @@ fn get_contract_hash(_: FnInstance, _: FnParams, metadata: &ModuleMetadata, _: &
 
 fn get_contract_entry(_: FnInstance, _: FnParams, _: &ModuleMetadata,context: &mut Context) -> FnReturnType<ModuleMetadata> {
     let chain_state: &ChainState = context.get().context("chain state not found")?;
-    Ok(SysCallResult::Return(Primitive::Opaque(OpaqueWrapper::new(chain_state.entry_contract.clone())).into()))
+    Ok(SysCallResult::Return(Primitive::Opaque(OpaqueWrapper::new(chain_state.entry_contract.as_ref().clone())).into()))
 }
 
 fn get_contract_caller(_: FnInstance, _: FnParams, metadata: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
@@ -1867,7 +1871,7 @@ async fn transfer<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut param
         .and_modify(|v| *v += amount)
         .or_insert(amount);
 
-    state.tracker.contracts_transfers.entry((state.caller.get_hash().clone(), metadata.contract.clone()))
+    state.tracker.contracts_transfers.entry((state.caller.get_hash().as_ref().clone(), metadata.contract.clone()))
         .or_insert_with(HashMap::new)
         .entry(key.clone())
         .or_insert_with(HashMap::new)

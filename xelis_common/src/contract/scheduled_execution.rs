@@ -186,8 +186,13 @@ pub async fn scheduled_execution_new_at_topoheight<'a, 'ty, 'r, P: ContractProvi
 pub async fn scheduled_execution_new_at_block_end<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, params: FnParams, metadata: &ModuleMetadata, context: &mut Context<'ty, 'r>) -> FnReturnType<ModuleMetadata> {
     let (provider, state) = from_context::<P>(context)?;
 
+    if !state.allow_executions {
+        return Ok(SysCallResult::Return(Primitive::Null.into()))
+    }
+
     let chunk_id = params[0]
         .as_u16()?;
+
     let max_gas = params[1]
         .as_u64()?;
 

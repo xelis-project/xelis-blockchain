@@ -43,10 +43,10 @@ impl Serializable for OpaqueTransaction {}
 pub fn transaction(_: FnInstance, _: FnParams, _: &ModuleMetadata, context: &mut Context) -> FnReturnType<ModuleMetadata> {
     let state: &ChainState = context.get()
         .context("chain state not found")?;
-    if let ContractCaller::Transaction(hash, tx) = state.caller {
+    if let ContractCaller::Transaction(hash, tx) = &state.caller {
         return Ok(SysCallResult::Return(OpaqueTransaction {
-            inner: tx.clone(),
-            hash: hash.clone(),
+            inner: (*tx).clone(),
+            hash: (*hash).clone(),
         }.into()).into())
     }
 

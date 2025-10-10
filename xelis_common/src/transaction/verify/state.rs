@@ -153,8 +153,8 @@ pub trait BlockchainContractState<'a, P: ContractProvider, E> {
     /// to the chain state
     async fn get_contract_environment_for<'b>(
         &'b mut self,
-        contract: &'b Hash,
-        deposits: &'b IndexMap<Hash, ContractDeposit>,
+        contract: Cow<'b, Hash>,
+        deposits: Option<&'b IndexMap<Hash, ContractDeposit>>,
         tx_hash: ContractCaller<'b>
     ) -> Result<(ContractEnvironment<'b, P>, ChainState<'b>), E>;
 

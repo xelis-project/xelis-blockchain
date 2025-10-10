@@ -28,6 +28,7 @@ use crate::{
     config::{BURN_PER_CONTRACT, MAX_GAS_USAGE_PER_TX, XELIS_ASSET},
     contract::{
         vm::{
+            self,
             ContractCaller,
             InvokeContract,
             HOOK_CONSTRUCTOR_ID
@@ -1226,12 +1227,11 @@ impl Transaction {
             },
             TransactionType::InvokeContract(payload) => {
                 if self.is_contract_available(state, &payload.contract).await? {
-                    Self::invoke_contract(
+                    vm::invoke_contract(
                         ContractCaller::Transaction(tx_hash, self),
                         state,
-                        decompressed_deposits,
-                        &payload.contract,
-                        &payload.deposits,
+                        Cow::Borrowed(&payload.contract),
+                        Some((&payload.deposits, &decompressed_deposits)),
                         payload.parameters.iter().cloned(),
                         payload.max_gas,
                         InvokeContract::Entry(payload.entry_id)
@@ -1240,8 +1240,8 @@ impl Transaction {
                     warn!("Contract {} invoked from {} not available anymore", payload.contract, tx_hash);
 
                     // Nothing was spent, we must refund the gas and deposits
-                    Self::handle_gas(ContractCaller::Transaction(tx_hash, self), state, 0, payload.max_gas).await?;
-                    Self::refund_deposits(self.get_source(), state, &payload.deposits, decompressed_deposits).await?;
+                    vm::handle_gas(&ContractCaller::Transaction(tx_hash, self), state, 0, payload.max_gas).await?;
+                    vm::refund_deposits(self.get_source(), state, &payload.deposits, decompressed_deposits).await?;
                 }
             },
             TransactionType::DeployContract(payload) => {
@@ -1249,12 +1249,11 @@ impl Transaction {
                     .map_err(VerificationError::State)?;
 
                 if let Some(invoke) = payload.invoke.as_ref() {
-                    let is_success = Self::invoke_contract(
+                    let is_success = vm::invoke_contract(
                         ContractCaller::Transaction(tx_hash, self),
                         state,
-                        decompressed_deposits,
-                        tx_hash,
-                        &invoke.deposits,
+                        Cow::Borrowed(tx_hash),
+                        Some((&invoke.deposits, &decompressed_deposits)),
                         iter::empty(),
                         invoke.max_gas,
                         InvokeContract::Hook(HOOK_CONSTRUCTOR_ID)
