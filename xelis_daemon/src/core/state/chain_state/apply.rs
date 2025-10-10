@@ -6,7 +6,7 @@ use std::{
 };
 use anyhow::Context;
 use async_trait::async_trait;
-use log::{debug, trace};
+use log::{debug, trace, warn};
 use indexmap::{IndexMap, IndexSet};
 use xelis_common::{
     account::{BalanceType, Nonce, VersionedNonce},
@@ -14,13 +14,14 @@ use xelis_common::{
     block::{Block, BlockVersion, TopoHeight},
     config::{EXTRA_BASE_FEE_BURN_PERCENT, FEE_PER_KB, XELIS_ASSET},
     contract::{
+        vm::{self, ContractCaller, InvokeContract},
         AssetChanges,
         ChainState as ContractChainState,
         ContractCache,
         ContractEventTracker,
         ContractLog,
         ModuleMetadata,
-        vm::ContractCaller,
+        ScheduledExecution
     },
     crypto::{elgamal::Ciphertext, Hash, PublicKey},
     serializer::Serializer,
@@ -53,12 +54,15 @@ use crate::core::{
 use super::{ChainState, StorageReference, Echange};
 
 struct ContractManager<'a> {
-    logs: HashMap<&'a Hash, Vec<ContractLog>>,
+    // logs per caller hash
+    logs: HashMap<Cow<'a, Hash>, Vec<ContractLog>>,
     caches: HashMap<Hash, ContractCache>,
     // global assets cache
     assets: HashMap<Hash, Option<AssetChanges>>,
     tracker: ContractEventTracker,
     modules: HashMap<Hash, Option<Arc<Module>>>,
+    // Planned executions for the current block
+    executions_at_block_end: IndexSet<ScheduledExecution>,
 }
 
 // Chain State that can be applied to the mutable storage
@@ -258,49 +262,56 @@ impl<'a, S: Storage> BlockchainContractState<'a, S, BlockchainError> for Applica
         Ok(())
     }
 
-    async fn get_contract_environment_for<'b>(&'b mut self, contract: &'b Hash, deposits: &'b IndexMap<Hash, ContractDeposit>, caller: ContractCaller<'b>) -> Result<(ContractEnvironment<'b, S>, ContractChainState<'b>), BlockchainError> {
+    async fn get_contract_environment_for<'b>(
+        &'b mut self,
+        contract: Cow<'b, Hash>,
+        deposits: Option<&'b IndexMap<Hash, ContractDeposit>>,
+        caller: ContractCaller<'b>
+    ) -> Result<(ContractEnvironment<'b, S>, ContractChainState<'b>), BlockchainError> {
         debug!("get contract environment for contract {} from caller {}", contract, caller.get_hash());
 
         // Find the contract module in our cache
         // We don't use the function `get_contract_module_with_environment` because we need to return the mutable storage
-        let module = self.inner.contracts.get(contract)
-            .ok_or_else(|| BlockchainError::ContractNotFound(contract.clone()))
+        let module = self.inner.contracts.get(&contract)
+            .ok_or_else(|| BlockchainError::ContractNotFound(contract.as_ref().clone()))
             .and_then(|(_, module)| module.as_ref()
                 .map(|m| m.as_ref())
-                .ok_or_else(|| BlockchainError::ContractNotFound(contract.clone()))
+                .ok_or_else(|| BlockchainError::ContractNotFound(contract.as_ref().clone()))
             )?;
 
         // Find the contract cache in our cache map
-        let mut cache = self.contract_manager.caches.get(contract)
+        let mut cache = self.contract_manager.caches.get(&contract)
             .cloned()
             .unwrap_or_default();
 
         // We need to add the deposits to the balances
-        for (asset, deposit) in deposits.iter() {
-            match deposit {
-                ContractDeposit::Public(amount) => match cache.balances.entry(asset.clone()) {
-                    Entry::Occupied(mut o) => match o.get_mut() {
-                        Some((mut state, balance)) => {
-                            state.mark_updated();
-                            *balance += amount;
+        if let Some(deposits) = deposits {
+            for (asset, deposit) in deposits.iter() {
+                match deposit {
+                    ContractDeposit::Public(amount) => match cache.balances.entry(asset.clone()) {
+                        Entry::Occupied(mut o) => match o.get_mut() {
+                            Some((mut state, balance)) => {
+                                state.mark_updated();
+                                *balance += amount;
+                            },
+                            None => {
+                                // Balance was already fetched and we didn't had any balance before
+                                o.insert(Some((VersionedState::New, *amount)));
+                            }
                         },
-                        None => {
-                            // Balance was already fetched and we didn't had any balance before
-                            o.insert(Some((VersionedState::New, *amount)));
+                        Entry::Vacant(e) => {
+                            debug!("loading balance {} for contract {} at maximum topoheight {}", asset, contract, self.topoheight);
+                            let (mut state, balance) = self.storage.get_contract_balance_at_maximum_topoheight(&contract, asset, self.topoheight).await?
+                                .map(|(topo, balance)| (VersionedState::FetchedAt(topo), balance.take()))
+                                .unwrap_or((VersionedState::New, 0));
+    
+                            state.mark_updated();
+                            e.insert(Some((state, balance + amount)));
                         }
                     },
-                    Entry::Vacant(e) => {
-                        debug!("loading balance {} for contract {} at maximum topoheight {}", asset, contract, self.topoheight);
-                        let (mut state, balance) = self.storage.get_contract_balance_at_maximum_topoheight(contract, asset, self.topoheight).await?
-                            .map(|(topo, balance)| (VersionedState::FetchedAt(topo), balance.take()))
-                            .unwrap_or((VersionedState::New, 0));
-
-                        state.mark_updated();
-                        e.insert(Some((state, balance + amount)));
+                    ContractDeposit::Private { .. } => {
+                        // TODO: we need to add the private deposit to the balance
                     }
-                },
-                ContractDeposit::Private { .. } => {
-                    // TODO: we need to add the private deposit to the balance
                 }
             }
         }
@@ -310,14 +321,14 @@ impl<'a, S: Storage> BlockchainContractState<'a, S, BlockchainError> for Applica
             // TODO: only available on mainnet & enabled by a config
             debug_mode: !mainnet,
             mainnet,
+            // We only provide the current contract cache available
+            // others can be lazily added to it
+            caches: [(contract.as_ref().clone(), cache)].into_iter().collect(),
             entry_contract: contract,
             topoheight: self.inner.topoheight,
             block_hash: self.block_hash,
             block: self.block,
             caller,
-            // We only provide the current contract cache available
-            // others can be lazily added to it
-            caches: [(contract.clone(), cache)].into_iter().collect(),
             outputs: Vec::new(),
             // Event trackers
             tracker: self.contract_manager.tracker.clone(),
@@ -326,9 +337,14 @@ impl<'a, S: Storage> BlockchainContractState<'a, S, BlockchainError> for Applica
             modules: self.contract_manager.modules.clone(),
             // Global caches (all contracts)
             global_caches: &self.contract_manager.caches,
+            // This is not shared across TXs, so we create
+            // a new empty map each time
+            // But the ordering is important, so IndexMap is used
             injected_gas: IndexMap::new(),
+            // Scheduled executions for any topoheight
             scheduled_executions: HashMap::new(),
-            planned_executions: IndexSet::new(),
+            planned_executions: self.contract_manager.executions_at_block_end.clone(),
+            allow_executions: true,
         };
 
         let contract_environment = ContractEnvironment {
@@ -466,6 +482,7 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
                 assets: HashMap::new(),
                 modules: HashMap::new(),
                 tracker: ContractEventTracker::default(),
+                executions_at_block_end: IndexSet::new(),
             },
             block_hash,
             block
@@ -541,6 +558,30 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
 
         state.mark_updated();
         *contract = None;
+
+        Ok(())
+    }
+
+    // Execute all the block end scheduled executions
+    pub async fn process_executions_at_block_end(&mut self) -> Result<(), BlockchainError> {
+        trace!("process executions at block end");
+
+        let executions = std::mem::take(&mut self.contract_manager.executions_at_block_end);
+        for execution in executions {
+            debug!("processing scheduled execution of contract {} with caller {}", execution.contract, execution.hash);
+
+            if let Err(e) = vm::invoke_contract(
+                ContractCaller::Scheduled(Cow::Owned(execution.hash.clone()), Cow::Owned(execution.contract.clone())),
+                self,
+                Cow::Owned(execution.contract.clone()),
+                None,
+                execution.params.into_iter(),
+                execution.max_gas,
+                InvokeContract::Chunk(execution.chunk_id, false),
+            ).await {
+                warn!("failed to process scheduled execution of contract {} with caller {}: {}", execution.contract, execution.hash, e);
+            }
+        }
 
         Ok(())
     }

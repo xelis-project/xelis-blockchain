@@ -119,7 +119,7 @@ pub struct ChainState<'a, S: Storage> {
     topoheight: TopoHeight,
     tx_base_fee: u64,
     // All contracts updated
-    contracts: HashMap<&'a Hash, (VersionedState, Option<Cow<'a, Module>>)>,
+    contracts: HashMap<Cow<'a, Hash>, (VersionedState, Option<Cow<'a, Module>>)>,
     // Block header version
     block_version: BlockVersion,
     // All gas fees tracked
@@ -285,7 +285,7 @@ impl<'a, S: Storage> ChainState<'a, S> {
     // if not found, fetch it from the storage
     // if not found in storage, create a new one
     async fn internal_get_versioned_contract(&mut self, hash: &'a Hash) -> Result<&mut (VersionedState, Option<Cow<'a, Module>>), BlockchainError> {
-        match self.contracts.entry(hash) {
+        match self.contracts.entry(Cow::Borrowed(hash)) {
             Entry::Occupied(o) => Ok(o.into_mut()),
             Entry::Vacant(e) => {
                 let contract = self.storage.get_contract_at_maximum_topoheight_for(hash, self.topoheight).await?
@@ -300,7 +300,7 @@ impl<'a, S: Storage> ChainState<'a, S> {
     // Load a contract from the storage if its not already loaded
     async fn load_versioned_contract(&mut self, hash: &'a Hash) -> Result<bool, BlockchainError> {
         trace!("Loading contract {} at topoheight {}", hash, self.topoheight);
-        match self.contracts.entry(hash) {
+        match self.contracts.entry(Cow::Borrowed(hash)) {
             Entry::Occupied(o) => Ok(o.get().1.is_some()),
             Entry::Vacant(e) => {
                 let contract = self.storage.get_contract_at_maximum_topoheight_for(hash, self.topoheight).await?

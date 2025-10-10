@@ -2817,6 +2817,9 @@ impl<S: Storage> Blockchain<S> {
                     }
                 }
 
+                // Execute all the scheduled executions for the block end
+                chain_state.process_executions_at_block_end().await?;
+
                 let dev_fee_percentage = get_block_dev_fee(block.get_height());
                 // Dev fee are only applied on block reward
                 // Transaction fees are not affected by dev fee
