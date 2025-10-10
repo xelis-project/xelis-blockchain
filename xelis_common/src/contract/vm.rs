@@ -250,11 +250,15 @@ pub async fn invoke_contract<'a, P: ContractProvider, E, B: BlockchainApplyState
 
         let tracker = chain_state.tracker;
         let assets = chain_state.assets;
+        let executions = chain_state.planned_executions;
+        let executions_topoheight = chain_state.scheduled_executions;
 
         state.merge_contract_changes(
             caches,
             tracker,
-            assets
+            assets,
+            executions,
+            executions_topoheight
         ).await
             .map_err(ContractError::State)?;
     } else {

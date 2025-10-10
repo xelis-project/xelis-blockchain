@@ -1,11 +1,11 @@
 use std::{borrow::Cow, collections::HashMap, sync::Arc};
 
 use async_trait::async_trait;
-use indexmap::IndexMap;
+use indexmap::{IndexMap, IndexSet};
 use xelis_vm::{Environment, Module};
 use crate::{
     account::Nonce,
-    block::BlockVersion,
+    block::{BlockVersion, TopoHeight},
     contract::{
         vm::ContractCaller,
         AssetChanges,
@@ -14,7 +14,8 @@ use crate::{
         ContractEventTracker,
         ContractLog,
         ContractProvider,
-        ModuleMetadata
+        ModuleMetadata,
+        ScheduledExecution
     },
     crypto::{
         elgamal::{
@@ -171,7 +172,9 @@ pub trait BlockchainContractState<'a, P: ContractProvider, E> {
         &mut self,
         caches: HashMap<Hash, ContractCache>,
         tracker: ContractEventTracker,
-        assets: HashMap<Hash, Option<AssetChanges>>
+        assets: HashMap<Hash, Option<AssetChanges>>,
+        executions_block_end: IndexSet<ScheduledExecution>,
+        executions_topoheight: HashMap<TopoHeight, IndexSet<ScheduledExecution>>,
     ) -> Result<(), E>;
 
     /// Retrieve the contract balance used to pay gas
