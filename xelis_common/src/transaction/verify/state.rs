@@ -120,7 +120,7 @@ pub trait BlockchainVerificationState<'a, E> {
     /// Returns true if the module is available
     async fn load_contract_module(
         &mut self,
-        hash: &'a Hash
+        hash: Cow<'a, Hash>
     ) -> Result<bool, E>;
 
     /// Get the contract module with the environment

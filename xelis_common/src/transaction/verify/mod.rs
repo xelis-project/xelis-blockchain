@@ -644,7 +644,7 @@ impl Transaction {
         state: &mut B,
         contract: &'a Hash,
     ) -> Result<bool, VerificationError<E>> {
-        state.load_contract_module(&contract).await
+        state.load_contract_module(Cow::Borrowed(contract)).await
             .map_err(VerificationError::State)
     }
 

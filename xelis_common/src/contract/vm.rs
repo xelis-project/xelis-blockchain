@@ -6,7 +6,7 @@ use std::{
 
 use thiserror::Error;
 use curve25519_dalek::Scalar;
-use log::{debug, trace, warn};
+use log::{debug, log, trace, warn, Level};
 use indexmap::IndexMap;
 use xelis_vm::{Reference, VMError, ValueCell, VM};
 
@@ -125,6 +125,7 @@ async fn run_virtual_machine<'a, P: ContractProvider>(
         vm.push_stack(constant)?;
     }
 
+    let debug_mode = chain_state.debug_mode;
     let context = vm.context_mut();
 
     // Set the gas limit for the VM
@@ -149,13 +150,23 @@ async fn run_virtual_machine<'a, P: ContractProvider>(
 
     let exit_code = match res {
         Ok(res) => {
-            debug!("Invoke contract {} result: {:#}", contract, res);
+            let level = if debug_mode {
+                Level::Info
+            } else {
+                Level::Debug
+            };
+            log!(level, "Invoke contract {} result: {:#}", contract, res);
             // If the result return 0 as exit code, it means that everything went well
             let exit_code = res.as_u64().ok();
             exit_code
         },
         Err(err) => {
-            debug!("Invoke contract {} error: {:#}", contract, err);
+            let level = if debug_mode {
+                Level::Error
+            } else {
+                Level::Debug
+            };
+            log!(level, "Invoke contract {} error: {:#}", contract, err);
             None
         }
     };
