@@ -9,6 +9,7 @@ use serde_json::Value;
 use bulletproofs::RangeProof;
 use crate::{
     account::Nonce,
+    contract::{ContractLog, ScheduledExecutionType},
     crypto::{
         elgamal::{CompressedCommitment, CompressedHandle},
         proofs::CiphertextValidityProof,
@@ -16,7 +17,6 @@ use crate::{
         Hash,
         Signature
     },
-    contract::ContractLog,
     transaction::{
         extra_data::UnknownExtraDataFormat,
         multisig::MultiSig,
@@ -265,9 +265,9 @@ pub enum RPCContractLog<'a> {
         contract: Cow<'a, Hash>,
         amount: u64,
     },
-    DelayedExecution {
+    ScheduledExecution {
         contract: Cow<'a, Hash>,
-        topoheight: u64,
+        at: ScheduledExecutionType,
     }
 }
 
@@ -304,7 +304,7 @@ impl<'a> RPCContractLog<'a> {
             ContractLog::ExitCode(code) => RPCContractLog::ExitCode(code.clone()),
             ContractLog::RefundDeposits => RPCContractLog::RefundDeposits,
             ContractLog::GasInjection { contract, amount } => RPCContractLog::GasInjection { contract: Cow::Owned(contract), amount },
-            ContractLog::DelayedExecution { contract, topoheight } => RPCContractLog::DelayedExecution { contract: Cow::Owned(contract), topoheight },
+            ContractLog::ScheduledExecution { contract, at } => RPCContractLog::ScheduledExecution { contract: Cow::Owned(contract), at },
         }
     }
     pub fn from_output(output: &'a ContractLog, mainnet: bool) -> Self {
@@ -339,7 +339,7 @@ impl<'a> RPCContractLog<'a> {
             ContractLog::ExitCode(code) => RPCContractLog::ExitCode(code.clone()),
             ContractLog::RefundDeposits => RPCContractLog::RefundDeposits,
             ContractLog::GasInjection { contract, amount } => RPCContractLog::GasInjection { contract: Cow::Borrowed(contract), amount: *amount },
-            ContractLog::DelayedExecution { contract, topoheight } => RPCContractLog::DelayedExecution { contract: Cow::Borrowed(contract), topoheight: *topoheight },
+            ContractLog::ScheduledExecution { contract, at } => RPCContractLog::ScheduledExecution { contract: Cow::Borrowed(contract), at: *at },
         }
     }
 }
@@ -379,9 +379,9 @@ impl<'a> From<RPCContractLog<'a>> for ContractLog {
                 contract: contract.into_owned(),
                 amount
             },
-            RPCContractLog::DelayedExecution { contract, topoheight } => ContractLog::DelayedExecution {
+            RPCContractLog::ScheduledExecution { contract, at } => ContractLog::ScheduledExecution {
                 contract: contract.into_owned(),
-                topoheight
+                at
             }
         }
     }

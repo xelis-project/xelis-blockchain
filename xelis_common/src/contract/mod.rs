@@ -121,15 +121,15 @@ pub struct ChainState<'a> {
     // it is kept in insertion order to rollback funds to contract
     // in case they were not fully used
     pub injected_gas: IndexMap<Hash, u64>,
-    // Delayed executions planned for another topoheight
+    // Scheduled executions planned for another topoheight
     // Those executions will be executed before ANY transaction
     // We can safely use a HashMap because the order of storing is not
     // important
-    // Each contract can have one delayed execution at most
-    pub scheduled_executions: HashMap<TopoHeight, IndexSet<ScheduledExecution>>,
+    // Each contract can have one scheduled execution at most
+    pub executions_topoheight: HashMap<TopoHeight, IndexSet<ScheduledExecution>>,
     // Each executions planned at the end of this block per contract
-    // Each contract can have one delayed execution at most
-    pub planned_executions: IndexSet<ScheduledExecution>,
+    // Each contract can have one scheduled execution at most
+    pub executions_block_end: IndexSet<ScheduledExecution>,
     // In case we are in a scheduled execution already, prevent from
     // recursive scheduling
     pub allow_executions: bool,

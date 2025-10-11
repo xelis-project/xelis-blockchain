@@ -1,4 +1,8 @@
-use crate::{crypto::{Hash, PublicKey}, serializer::*};
+use crate::{
+    contract::ScheduledExecutionType,
+    crypto::{Hash, PublicKey},
+    serializer::*
+};
 
 /// Represents the kind of output that a contract can produce
 #[derive(Debug, Clone)]
@@ -60,13 +64,13 @@ pub enum ContractLog {
         contract: Hash,
         amount: u64,
     },
-    // Contract registered a delayed execution
-    DelayedExecution {
+    // Contract registered a scheduled execution
+    ScheduledExecution {
         // Contract hash
         contract: Hash,
         // at which topoheight it will be called
-        topoheight: u64,
-    }
+        at: ScheduledExecutionType,
+    },
 }
 
 impl Serializer for ContractLog {
@@ -119,10 +123,10 @@ impl Serializer for ContractLog {
                 contract.write(writer);
                 amount.write(writer);
             },
-            ContractLog::DelayedExecution { contract, topoheight } => {
+            ContractLog::ScheduledExecution { contract, at } => {
                 writer.write_u8(9);
                 contract.write(writer);
-                topoheight.write(writer);
+                at.write(writer);
             }
         }
     }
@@ -170,9 +174,9 @@ impl Serializer for ContractLog {
                 contract: Hash::read(reader)?,
                 amount: u64::read(reader)?
             },
-            9 => ContractLog::DelayedExecution {
+            9 => ContractLog::ScheduledExecution {
                 contract: Hash::read(reader)?,
-                topoheight: u64::read(reader)?,
+                at: ScheduledExecutionType::read(reader)?,
             },
             _ => return Err(ReaderError::InvalidValue)
         })
@@ -189,7 +193,7 @@ impl Serializer for ContractLog {
             ContractLog::ExitCode(code) => code.size(),
             ContractLog::RefundDeposits => 0,
             ContractLog::GasInjection { contract, amount } => contract.size() + amount.size(),
-            ContractLog::DelayedExecution { contract, topoheight } => contract.size() + topoheight.size(),
+            ContractLog::ScheduledExecution { contract, at } => contract.size() + at.size(),
         }
     }
 }

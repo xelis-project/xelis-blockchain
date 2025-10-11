@@ -14,10 +14,47 @@ use xelis_vm::{
 };
 use crate::{
     config::{COST_PER_SCHEDULED_EXECUTION, COST_PER_SCHEDULED_EXECUTION_AT_BLOCK_END, FEE_PER_BYTE_IN_CONTRACT_MEMORY, FEE_PER_BYTE_STORED_CONTRACT, XELIS_ASSET},
-    contract::{from_context, get_balance_from_cache, get_mut_balance_for_contract, record_burned_asset, ContractProvider, ModuleMetadata, MAX_VALUE_SIZE},
+    contract::{from_context, get_balance_from_cache, get_mut_balance_for_contract, record_burned_asset, ContractLog, ContractProvider, ModuleMetadata, MAX_VALUE_SIZE},
     crypto::{hash_multiple, Hash},
     serializer::*
 };
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ScheduledExecutionType {
+    TopoHeight(u64),
+    BlockEnd
+}
+
+impl Serializer for ScheduledExecutionType {
+    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
+        let tag = reader.read_u8()?;
+        match tag {
+            0 => Ok(ScheduledExecutionType::TopoHeight(u64::read(reader)?)),
+            1 => Ok(ScheduledExecutionType::BlockEnd),
+            _ => Err(ReaderError::InvalidValue)
+        }
+    }
+
+    fn write(&self, writer: &mut Writer) {
+        match self {
+            ScheduledExecutionType::TopoHeight(topoheight) => {
+                writer.write_u8(0);
+                topoheight.write(writer);
+            },
+            ScheduledExecutionType::BlockEnd => {
+                writer.write_u8(1);
+            }
+        }
+    }
+
+    fn size(&self) -> usize {
+        1 + match self {
+            ScheduledExecutionType::TopoHeight(topoheight) => topoheight.size(),
+            ScheduledExecutionType::BlockEnd => 0
+        }
+    }
+}
 
 // Scheduled executions are unique per contract
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -164,12 +201,17 @@ pub async fn scheduled_execution_new_at_topoheight<'a, 'ty, 'r, P: ContractProvi
         params,
     };
 
-    if !state.scheduled_executions.entry(topoheight)
+    if !state.executions_topoheight.entry(topoheight)
         .or_insert_with(IndexSet::new)
         .insert(execution) {
-        // A delayed execution has been already registered for this
+        // A scheduled execution has been already registered for this
         return Ok(SysCallResult::Return(Primitive::Boolean(false).into()))
     }
+
+    state.outputs.push(ContractLog::ScheduledExecution {
+        contract: metadata.contract.clone(),
+        at: ScheduledExecutionType::TopoHeight(topoheight),
+    });
 
     // Record the burned part
     record_burned_asset(provider, state, metadata.contract.clone(), XELIS_ASSET, burned_part).await?;
@@ -238,13 +280,18 @@ pub async fn scheduled_execution_new_at_block_end<'a, 'ty, 'r, P: ContractProvid
         params,
     };
 
-    if !state.planned_executions.insert(execution) {
-        // A delayed execution has been already registered for this
+    if !state.executions_block_end.insert(execution) {
+        // A scheduled execution has been already registered for this
         return Ok(SysCallResult::Return(Primitive::Boolean(false).into()))
     }
 
     // Record the burned part
     record_burned_asset(provider, state, metadata.contract.clone(), XELIS_ASSET, burned_part).await?;
+
+    state.outputs.push(ContractLog::ScheduledExecution {
+        contract: metadata.contract.clone(),
+        at: ScheduledExecutionType::BlockEnd,
+    });
 
     // pay the fee
     let (state, balance) = get_mut_balance_for_contract(provider, state, metadata.contract.clone(), XELIS_ASSET).await?;
