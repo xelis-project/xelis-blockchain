@@ -738,6 +738,13 @@ pub struct GetContractLogsParams<'a> {
 }
 
 #[derive(Serialize, Deserialize)]
+pub struct GetContractScheduledExecutionsAtTopoHeightParams {
+    pub topoheight: TopoHeight,
+    pub max: Option<usize>,
+    pub skip: Option<usize>,
+}
+
+#[derive(Serialize, Deserialize)]
 pub struct GetContractOutputsParams<'a> {
     pub address: Cow<'a, Address>,
     pub topoheight: TopoHeight,
