@@ -18,7 +18,7 @@ impl ContractScheduledExecutionProvider for SledStorage {
         Self::insert_into_disk(self.snapshot.as_mut(), &self.contracts_scheduled_executions, &execution_key, execution.to_bytes())?;
 
         // The execution key is stored in the registrations tree so we can easily clean up and iterate over it
-        Self::insert_into_disk(self.snapshot.as_mut(), &self.contracts_scheduled_executions_registrations, &Self::get_contract_scheduled_execution_registration_key(topoheight, contract, execution_topoheight), execution_key.as_ref())?;
+        Self::insert_into_disk(self.snapshot.as_mut(), &self.contracts_scheduled_executions_registrations, &Self::get_contract_scheduled_execution_registration_key(topoheight, contract, execution_topoheight), &[])?;
 
         Ok(())
     }
@@ -48,7 +48,7 @@ impl ContractScheduledExecutionProvider for SledStorage {
 
                 // First topoheight is the same as the one passed in param
                 // so we skip it
-                let (_, contract, topoheight) = <(TopoHeight, Hash, TopoHeight)>::from_bytes(&key[8..])?;
+                let (contract, topoheight) = <(Hash, TopoHeight)>::from_bytes(&key[8..])?;
 
                 Ok((topoheight, contract))
             })
