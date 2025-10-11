@@ -1329,10 +1329,10 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             "new_at_topoheight",
             scheduled_execution_type.clone(),
             vec![
-                ("topoheight", Type::U64),
                 ("callback", Type::Function(FnType::new(None, false, vec![Type::Array(Box::new(Type::Any))], Some(Type::U64)))),
-                ("max_gas", Type::U64),
                 ("args", Type::Array(Box::new(Type::Any))),
+                ("max_gas", Type::U64),
+                ("topoheight", Type::U64),
             ],
             FunctionHandler::Async(async_handler!(scheduled_execution_new_at_topoheight::<P>)),
             // Contains the hash computation cost
@@ -1347,8 +1347,8 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             scheduled_execution_type.clone(),
             vec![
                 ("callback", Type::Function(FnType::new(None, false, vec![Type::Array(Box::new(Type::Any))], Some(Type::U64)))),
-                ("max_gas", Type::U64),
                 ("args", Type::Array(Box::new(Type::Any))),
+                ("max_gas", Type::U64),
             ],
             FunctionHandler::Async(async_handler!(scheduled_execution_new_at_block_end::<P>)),
             // Contains the hash computation cost

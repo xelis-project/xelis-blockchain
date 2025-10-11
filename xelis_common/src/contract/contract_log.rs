@@ -1,5 +1,5 @@
 use crate::{
-    contract::ScheduledExecutionType,
+    contract::ScheduledExecutionKind,
     crypto::{Hash, PublicKey},
     serializer::*
 };
@@ -69,7 +69,7 @@ pub enum ContractLog {
         // Contract hash
         contract: Hash,
         // at which topoheight it will be called
-        at: ScheduledExecutionType,
+        kind: ScheduledExecutionKind,
     },
 }
 
@@ -123,10 +123,10 @@ impl Serializer for ContractLog {
                 contract.write(writer);
                 amount.write(writer);
             },
-            ContractLog::ScheduledExecution { contract, at } => {
+            ContractLog::ScheduledExecution { contract, kind } => {
                 writer.write_u8(9);
                 contract.write(writer);
-                at.write(writer);
+                kind.write(writer);
             }
         }
     }
@@ -176,7 +176,7 @@ impl Serializer for ContractLog {
             },
             9 => ContractLog::ScheduledExecution {
                 contract: Hash::read(reader)?,
-                at: ScheduledExecutionType::read(reader)?,
+                kind: ScheduledExecutionKind::read(reader)?,
             },
             _ => return Err(ReaderError::InvalidValue)
         })
@@ -193,7 +193,7 @@ impl Serializer for ContractLog {
             ContractLog::ExitCode(code) => code.size(),
             ContractLog::RefundDeposits => 0,
             ContractLog::GasInjection { contract, amount } => contract.size() + amount.size(),
-            ContractLog::ScheduledExecution { contract, at } => contract.size() + at.size(),
+            ContractLog::ScheduledExecution { contract, kind: at } => contract.size() + at.size(),
         }
     }
 }

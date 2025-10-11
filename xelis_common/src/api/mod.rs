@@ -9,7 +9,7 @@ use serde_json::Value;
 use bulletproofs::RangeProof;
 use crate::{
     account::Nonce,
-    contract::{ContractLog, ScheduledExecutionType},
+    contract::{ContractLog, ScheduledExecutionKind},
     crypto::{
         elgamal::{CompressedCommitment, CompressedHandle},
         proofs::CiphertextValidityProof,
@@ -267,7 +267,7 @@ pub enum RPCContractLog<'a> {
     },
     ScheduledExecution {
         contract: Cow<'a, Hash>,
-        at: ScheduledExecutionType,
+        kind: ScheduledExecutionKind,
     }
 }
 
@@ -304,7 +304,7 @@ impl<'a> RPCContractLog<'a> {
             ContractLog::ExitCode(code) => RPCContractLog::ExitCode(code.clone()),
             ContractLog::RefundDeposits => RPCContractLog::RefundDeposits,
             ContractLog::GasInjection { contract, amount } => RPCContractLog::GasInjection { contract: Cow::Owned(contract), amount },
-            ContractLog::ScheduledExecution { contract, at } => RPCContractLog::ScheduledExecution { contract: Cow::Owned(contract), at },
+            ContractLog::ScheduledExecution { contract, kind } => RPCContractLog::ScheduledExecution { contract: Cow::Owned(contract), kind },
         }
     }
     pub fn from_output(output: &'a ContractLog, mainnet: bool) -> Self {
@@ -339,7 +339,7 @@ impl<'a> RPCContractLog<'a> {
             ContractLog::ExitCode(code) => RPCContractLog::ExitCode(code.clone()),
             ContractLog::RefundDeposits => RPCContractLog::RefundDeposits,
             ContractLog::GasInjection { contract, amount } => RPCContractLog::GasInjection { contract: Cow::Borrowed(contract), amount: *amount },
-            ContractLog::ScheduledExecution { contract, at } => RPCContractLog::ScheduledExecution { contract: Cow::Borrowed(contract), at: *at },
+            ContractLog::ScheduledExecution { contract, kind } => RPCContractLog::ScheduledExecution { contract: Cow::Borrowed(contract), kind: *kind },
         }
     }
 }
@@ -379,9 +379,9 @@ impl<'a> From<RPCContractLog<'a>> for ContractLog {
                 contract: contract.into_owned(),
                 amount
             },
-            RPCContractLog::ScheduledExecution { contract, at } => ContractLog::ScheduledExecution {
+            RPCContractLog::ScheduledExecution { contract, kind } => ContractLog::ScheduledExecution {
                 contract: contract.into_owned(),
-                at
+                kind
             }
         }
     }
