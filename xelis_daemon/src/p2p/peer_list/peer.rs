@@ -102,6 +102,8 @@ pub struct Peer {
     height: AtomicU64,
     // last time we got a chain request
     last_chain_sync: AtomicU64,
+    // last time we sent a chain request
+    last_chain_sync_out: AtomicU64,
     // last time we got a fail
     last_fail_count: AtomicU64,
     // fail count: if greater than 20, we should close this connection
@@ -199,6 +201,7 @@ impl Peer {
             last_fail_count: AtomicU64::new(0),
             fail_count: AtomicU8::new(0),
             last_chain_sync: AtomicU64::new(0),
+            last_chain_sync_out: AtomicU64::new(0),
             peer_list,
             objects_requested: Mutex::new(LruCache::new(NonZeroUsize::new(PEER_OBJECTS_CONCURRENCY).expect("PEER_OBJECTS_CONCURRENCY must be non-zero"))),
             peers: Mutex::new(LruCache::new(NonZeroUsize::new(PEER_PEERS_CACHE_SIZE).expect("PEER_PEERS_CACHE_SIZE must be non-zero"))),
@@ -236,7 +239,7 @@ impl Peer {
     pub fn has_sync_chain_failed(&self) -> bool {
         let tmp = self.sync_chain_failed.load(Ordering::SeqCst);
         if tmp {
-            let last_chain_sync = self.get_last_chain_sync();
+            let last_chain_sync = self.get_last_chain_sync_out();
             let current_time = get_current_time_in_seconds();
 
             // If its been more than 10 minutes since last chain sync, reset the flag
@@ -449,6 +452,18 @@ impl Peer {
     // Store the last time we got a chain sync request
     pub fn set_last_chain_sync(&self, time: TimestampSeconds) {
         self.last_chain_sync.store(time, Ordering::SeqCst);
+    }
+
+
+    // Get the last time we've sent a chain sync request
+    // This is used to prevent spamming the chain sync packet
+    pub fn get_last_chain_sync_out(&self) -> TimestampSeconds {
+        self.last_chain_sync_out.load(Ordering::SeqCst)
+    }
+
+    // Store the last time we've sent a chain sync request
+    pub fn set_last_chain_sync_out(&self, time: TimestampSeconds) {
+        self.last_chain_sync_out.store(time, Ordering::SeqCst);
     }
 
     // Get all objects requested from this peer

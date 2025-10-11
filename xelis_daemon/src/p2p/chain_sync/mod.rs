@@ -88,6 +88,7 @@ impl<S: Storage> P2pServer<S> {
         // This prevent us from requesting too fast the chain from peer
         *last_chain_sync = get_current_time_in_millis();
 
+        peer.set_last_chain_sync_out(*last_chain_sync);
         let response = peer.request_sync_chain(packet).await?;
         debug!("Received a chain response of {} blocks", response.blocks_size());
 
