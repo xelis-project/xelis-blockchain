@@ -19,7 +19,8 @@ use crate::core::storage::{
     ContractProvider as _,
     NetworkProvider,
     SledStorage,
-    AssetCirculatingSupplyProvider
+    AssetCirculatingSupplyProvider,
+    ContractScheduledExecutionProvider,
 };
 
 #[async_trait]
@@ -73,9 +74,9 @@ impl ContractProvider for SledStorage {
 
     // Verify if we have already a registered execution for such contract at a specific topoheight
     async fn has_scheduled_execution_at_topoheight(&self, contract: &Hash, topoheight: TopoHeight) -> Result<bool, anyhow::Error> {
-        trace!("has delayed execution for contract {} at topoheight {}", contract, topoheight);
-        // TODO
-        Ok(false)
+        trace!("has scheduled execution for contract {} at topoheight {}", contract, topoheight);
+        let contains = self.has_contract_scheduled_execution_at_topoheight(contract, topoheight).await?;
+        Ok(contains)
     }
 
     // Load the asset data from the storage

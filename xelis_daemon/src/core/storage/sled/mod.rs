@@ -138,7 +138,7 @@ pub struct SledStorage {
     // Contract outputs per TX
     // Key is the TX Hash that called the contract, value is a list of contract outputs
     pub(super) contracts_logs: Tree,
-    // Tree in {execution_topoheight}{contract} format for delayed executions
+    // Tree in {execution_topoheight}{contract} format for scheduled executions
     pub(super) contracts_scheduled_executions: Tree,
     // Tree in {topoheight}{contract}{execution_topoheight} => [empty]
     pub(super) contracts_scheduled_executions_registrations: Tree,

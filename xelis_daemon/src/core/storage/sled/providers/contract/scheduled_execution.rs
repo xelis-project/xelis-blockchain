@@ -8,11 +8,11 @@ use crate::core::{
 
 #[async_trait]
 impl ContractScheduledExecutionProvider for SledStorage {
-    // Set contract delayed execution at provided topoheight
+    // Set contract scheduled execution at provided topoheight
     // Caller must ensures that the topoheight configured is >= current topoheight & no other execution was there
     // otherwise, it will get overwritted
     async fn set_contract_scheduled_execution_at_topoheight(&mut self, contract: &Hash, topoheight: TopoHeight, execution: &ScheduledExecution, execution_topoheight: TopoHeight) -> Result<(), BlockchainError> {
-        trace!("set contract {} delayed execution at topoheight {}", contract, topoheight);
+        trace!("set contract {} scheduled execution at topoheight {}", contract, topoheight);
 
         let execution_key = Self::get_contract_scheduled_execution_key(contract, execution_topoheight);
         Self::insert_into_disk(self.snapshot.as_mut(), &self.contracts_scheduled_executions, &execution_key, execution.to_bytes())?;
@@ -23,22 +23,22 @@ impl ContractScheduledExecutionProvider for SledStorage {
         Ok(())
     }
 
-    // Has a contract delayed execution registered at the provided topoheight?
-    // only one delayed execution per contract and per topoheight can exist.
+    // Has a contract scheduled execution registered at the provided topoheight?
+    // only one scheduled execution per contract and per topoheight can exist.
     async fn has_contract_scheduled_execution_at_topoheight(&self, contract: &Hash, topoheight: TopoHeight) -> Result<bool, BlockchainError> {
-        trace!("has contract {} delayed execution at topoheight {}", contract, topoheight);
+        trace!("has contract {} scheduled execution at topoheight {}", contract, topoheight);
         let key = Self::get_contract_scheduled_execution_key(contract, topoheight);
         self.contains_data(&self.contracts_scheduled_executions, &key)
     }
 
     async fn get_contract_scheduled_execution_at_topoheight(&self, contract: &Hash, topoheight: TopoHeight) -> Result<ScheduledExecution, BlockchainError> {
-        trace!("get contract {} delayed execution at topoheight {}", contract, topoheight);
+        trace!("get contract {} scheduled execution at topoheight {}", contract, topoheight);
         let key = Self::get_contract_scheduled_execution_key(contract, topoheight);
-        self.load_from_disk(&self.contracts_scheduled_executions, &key, DiskContext::DelayedExecution(topoheight))
+        self.load_from_disk(&self.contracts_scheduled_executions, &key, DiskContext::ScheduledExecution(topoheight))
     }
 
     async fn get_registered_contract_scheduled_executions_at_topoheight<'a>(&'a self, topoheight: TopoHeight) -> Result<impl Iterator<Item = Result<(TopoHeight, Hash), BlockchainError>> + Send + 'a, BlockchainError> {
-        trace!("get registered contract delayed executions at topoheight {}", topoheight);
+        trace!("get registered contract scheduled executions at topoheight {}", topoheight);
 
         // Iterate over the registrations to get all the registrations done at provided topoheight
         let prefix = topoheight.to_be_bytes();
@@ -56,7 +56,7 @@ impl ContractScheduledExecutionProvider for SledStorage {
     }
 
     async fn get_contract_scheduled_executions_at_topoheight<'a>(&'a self, topoheight: TopoHeight) -> Result<impl Iterator<Item = Result<ScheduledExecution, BlockchainError>> + Send + 'a, BlockchainError> {
-        trace!("get contract delayed executions at topoheight {}", topoheight);
+        trace!("get contract scheduled executions at topoheight {}", topoheight);
 
         // Iterate over the planned executions topoheight
         let prefix = topoheight.to_be_bytes();

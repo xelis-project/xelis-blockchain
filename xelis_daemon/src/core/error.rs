@@ -81,8 +81,8 @@ pub enum DiskContext {
     LastNonce,
     #[error("get nonce at topoheight {0}")]
     NonceAtTopoHeight(TopoHeight),
-    #[error("get delayed execution at topoheight {0}")]
-    DelayedExecution(TopoHeight),
+    #[error("get scheduled execution at topoheight {0}")]
+    ScheduledExecution(TopoHeight),
     // Extra
     #[error("get network")]
     Network,

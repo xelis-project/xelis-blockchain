@@ -11,7 +11,7 @@ use crate::core::{
 #[async_trait]
 impl VersionedScheduledExecutionsProvider for SledStorage {
     async fn delete_scheduled_executions_at_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError> {
-        trace!("delete delayed executions at topoheight {}", topoheight);
+        trace!("delete scheduled executions at topoheight {}", topoheight);
         for el in Self::scan_prefix_keys(self.snapshot.as_ref(), &self.contracts_scheduled_executions_registrations, &topoheight.to_be_bytes()) {
             let prefixed_key = el?;
 
@@ -27,7 +27,7 @@ impl VersionedScheduledExecutionsProvider for SledStorage {
     }
 
     async fn delete_scheduled_executions_above_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError> {
-        trace!("delete delayed executions above topoheight {}", topoheight);
+        trace!("delete scheduled executions above topoheight {}", topoheight);
         for el in Self::iter_keys(self.snapshot.as_ref(), &self.contracts_scheduled_executions_registrations) {
             let key = el?;
             let topo = TopoHeight::from_bytes(&key)?;
@@ -47,7 +47,7 @@ impl VersionedScheduledExecutionsProvider for SledStorage {
     }
 
     async fn delete_scheduled_executions_below_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError> {
-        trace!("delete delayed executions below topoheight {}", topoheight);
+        trace!("delete scheduled executions below topoheight {}", topoheight);
         for el in Self::iter_keys(self.snapshot.as_ref(), &self.contracts_scheduled_executions_registrations) {
             let key = el?;
             let topo = TopoHeight::from_bytes(&key)?;

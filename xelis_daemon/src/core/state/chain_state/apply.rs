@@ -343,8 +343,8 @@ impl<'a, S: Storage> BlockchainContractState<'a, S, BlockchainError> for Applica
             // But the ordering is important, so IndexMap is used
             injected_gas: IndexMap::new(),
             // Scheduled executions for any topoheight
-            scheduled_executions: self.contract_manager.executions_at_topoheight.clone(),
-            planned_executions: self.contract_manager.executions_at_block_end.clone(),
+            executions_topoheight: self.contract_manager.executions_at_topoheight.clone(),
+            executions_block_end: self.contract_manager.executions_at_block_end.clone(),
             allow_executions: true,
         };
 
