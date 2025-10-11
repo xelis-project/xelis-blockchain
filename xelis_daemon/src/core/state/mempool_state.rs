@@ -56,7 +56,7 @@ pub struct MempoolState<'a, S: Storage> {
     // This is used to verify ZK Proofs and store/update nonces
     accounts: HashMap<&'a PublicKey, Account<'a>>,
     // Contract modules
-    contracts: HashMap<&'a Hash, Cow<'a, Module>>,
+    contracts: HashMap<Cow<'a, Hash>, Cow<'a, Module>>,
     // The current stable topoheight of the chain
     stable_topoheight: TopoHeight,
     // The current topoheight of the chain
@@ -313,7 +313,7 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for Mempoo
         hash: &'a Hash,
         module: &'a Module
     ) -> Result<(), BlockchainError> {
-        if self.contracts.insert(hash, Cow::Borrowed(module)).is_some() {
+        if self.contracts.insert(Cow::Borrowed(hash), Cow::Borrowed(module)).is_some() {
             return Err(BlockchainError::ContractAlreadyExists);
         }
 
@@ -322,15 +322,15 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for Mempoo
 
     async fn load_contract_module(
         &mut self,
-        hash: &'a Hash
+        hash: Cow<'a, Hash>
     ) -> Result<bool, BlockchainError> {
-        match self.contracts.entry(hash) {
+        match self.contracts.entry(hash.clone()) {
             Entry::Occupied(_) => Ok(true),
             Entry::Vacant(v) => {
-                let module = self.storage.get_contract_at_maximum_topoheight_for(hash, self.topoheight).await?
+                let module = self.storage.get_contract_at_maximum_topoheight_for(&hash, self.topoheight).await?
                     .map(|(_, v)| v.take().map(|v| v.into_owned()))
                     .flatten()
-                    .ok_or_else(|| BlockchainError::ContractNotFound(hash.clone()))?;
+                    .ok_or_else(|| BlockchainError::ContractNotFound(hash.as_ref().clone()))?;
 
                 v.insert(Cow::Owned(module));
 

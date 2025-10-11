@@ -28,7 +28,9 @@ impl ContractScheduledExecutionProvider for RocksStorage {
     async fn has_contract_scheduled_execution_at_topoheight(&self, contract: &Hash, topoheight: TopoHeight) -> Result<bool, BlockchainError> {
         trace!("has contract {} scheduled execution at topoheight {}", contract, topoheight);
 
-        let contract_id = self.get_contract_id(contract)?;
+        let Some(contract_id) = self.get_optional_contract_id(contract)? else {
+            return Ok(false);
+        };
         let key = Self::get_contract_scheduled_execution_key(contract_id, topoheight);
 
         self.contains_data(Column::DelayedExecution, &key)

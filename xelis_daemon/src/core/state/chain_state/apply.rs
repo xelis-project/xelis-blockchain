@@ -199,7 +199,7 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for Applic
 
     async fn load_contract_module(
         &mut self,
-        hash: &'a Hash
+        hash: Cow<'a, Hash>
     ) -> Result<bool, BlockchainError> {
         self.inner.load_contract_module(hash).await
     }
@@ -277,7 +277,7 @@ impl<'a, S: Storage> BlockchainContractState<'a, S, BlockchainError> for Applica
             .ok_or_else(|| BlockchainError::ContractNotFound(contract.as_ref().clone()))
             .and_then(|(_, module)| module.as_ref()
                 .map(|m| m.as_ref())
-                .ok_or_else(|| BlockchainError::ContractNotFound(contract.as_ref().clone()))
+                .ok_or_else(|| BlockchainError::ContractModuleNotFound(contract.as_ref().clone()))
             )?;
 
         // Find the contract cache in our cache map
@@ -559,6 +559,8 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
         &mut self,
         hash: &'a Hash
     ) -> Result<(), BlockchainError> {
+        debug!("Removing contract module for contract {}", hash);
+
         let (state, contract) = self.inner.contracts.get_mut(hash)
             .ok_or_else(|| BlockchainError::ContractNotFound(hash.clone()))?;
 
@@ -572,6 +574,11 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
     async fn process_executions(&mut self, executions: impl Iterator<Item = ScheduledExecution>) -> Result<(), BlockchainError> {
         for execution in executions {
             debug!("processing scheduled execution of contract {} with caller {}", execution.contract, execution.hash);
+
+            if !self.load_contract_module(Cow::Owned(execution.contract.clone())).await? {
+                warn!("failed to load contract module for scheduled execution of contract {} with caller {}", execution.contract, execution.hash);
+                continue;
+            }
 
             if let Err(e) = vm::invoke_contract(
                 ContractCaller::Scheduled(Cow::Owned(execution.hash.clone()), Cow::Owned(execution.contract.clone())),
