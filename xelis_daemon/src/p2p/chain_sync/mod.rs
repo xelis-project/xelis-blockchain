@@ -248,7 +248,15 @@ impl<S: Storage> P2pServer<S> {
             select! {
                 biased;
                 Some(res) = blocks_executor.next() => {
-                    res?;
+                    if let Err(e) = res {
+                        if !peer.is_priority() {
+                            debug!("Mark {} as sync chain failed: {}", peer, e);
+                            peer.set_sync_chain_failed(true);
+                        }
+
+                        return Err(e)
+                    }
+
                     // Increase by one the limit again
                     // allow to request one new block
                     scheduler.increment_n();
@@ -650,6 +658,9 @@ impl<S: Storage> P2pServer<S> {
                 self.ping_peers().await;
             }
         }
+
+        // If we reached this point, the sync was successful
+        peer.set_sync_chain_failed(false);
 
         // ask inventory of this peer if we sync from too far
         // if we are not further than one sync, request the inventory

@@ -158,6 +158,9 @@ pub struct Peer {
     // Due to needed order of TXs to be accepted
     // We must wait that the peer received our inventory
     propagate_txs: AtomicBool,
+    // Did the sync chain failed?
+    // It is maybe another (bad) chain
+    sync_chain_failed: AtomicBool,
 }
 
 impl Peer {
@@ -219,6 +222,7 @@ impl Peer {
             write_task: Mutex::new(TaskState::Inactive),
             objects_semaphore: Semaphore::new(PEER_OBJECTS_CONCURRENCY),
             propagate_txs: AtomicBool::new(propagate_txs),
+            sync_chain_failed: AtomicBool::new(false),
         }, rx)
     }
 
@@ -226,6 +230,27 @@ impl Peer {
     #[inline]
     pub fn flags(&self) -> Flags {
         self.flags
+    }
+
+    // Check if the peer had a failed chain sync
+    pub fn has_sync_chain_failed(&self) -> bool {
+        let tmp = self.sync_chain_failed.load(Ordering::SeqCst);
+        if tmp {
+            let last_chain_sync = self.get_last_chain_sync();
+            let current_time = get_current_time_in_seconds();
+
+            // If its been more than 10 minutes since last chain sync, reset the flag
+            if last_chain_sync + 600 < current_time {
+                self.set_sync_chain_failed(false);
+                return false;
+            }
+        }
+
+        tmp
+    }
+
+    pub fn set_sync_chain_failed(&self, value: bool) {
+        self.sync_chain_failed.store(value, Ordering::SeqCst);
     }
 
     // This is used to mark that peer is ready to get our propagated transactions

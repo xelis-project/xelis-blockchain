@@ -833,6 +833,12 @@ impl<S: Storage> P2pServer<S> {
 
         let mut peers = stream::iter(available_peers)
             .map(|p| async move {
+                // Don't select peers that are on a bad chain
+                if p.has_sync_chain_failed() {
+                    trace!("{} has failed chain sync before, skipping...", p);
+                    return None;
+                }
+
                 // Avoid selecting peers that have a weaker cumulative difficulty than us
                 {
                     let cumulative_difficulty = p.get_cumulative_difficulty().lock().await;
@@ -1249,6 +1255,7 @@ impl<S: Storage> P2pServer<S> {
 
         response
     }
+
     // Select a random socket address for our next outgoing peer to connect to
     async fn select_random_socket_address(&self, addresses: impl Iterator<Item = SocketAddr>) -> Option<SocketAddr> {
         let mut availables = Vec::new();
@@ -1476,6 +1483,8 @@ impl<S: Storage> P2pServer<S> {
                                 if let Err(e) = zelf.blockchain.add_new_block(block, PreVerifyBlock::Hash(Immutable::Arc(block_hash.clone())), BroadcastOption::All, false).await {
                                     warn!("Error while adding new block {} from {}: {}", block_hash, peer, e);
                                     peer.increment_fail_count();
+                                } else {
+                                    peer.set_sync_chain_failed(false);
                                 }
 
                                 block_hash
