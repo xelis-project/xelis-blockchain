@@ -77,6 +77,8 @@ use log::{info, debug, trace};
 const MAX_DAG_ORDER: u64 = 64;
 // limit the returned result per contract / account assets rpc methods
 const MAX_ASSETS: usize = 64;
+// limit the returned result per contract executions rpc method
+const MAX_SCHEDULED_EXECUTIONS: usize = 64;
 // limit the count of TXs summary returned per rpc method call
 const MAX_MEMPOOL_TXS_SUMMARY: usize = 1024;
 // Maximum TXs summary from disk returned
@@ -1739,9 +1741,18 @@ async fn get_contract_scheduled_executions_at_topoheight<S: Storage>(context: &C
     let params: GetContractScheduledExecutionsAtTopoHeightParams = parse_params(body)?;
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
 
+    if params.max.is_some_and(|max| max > MAX_SCHEDULED_EXECUTIONS) {
+        return Err(InternalRpcError::InvalidJSONRequest)
+            .context(format!("Maximum scheduled executions requested cannot be greater than {}", MAX_SCHEDULED_EXECUTIONS))?
+    }
+
+    let max = params.max.unwrap_or(MAX_SCHEDULED_EXECUTIONS);
+
     let storage = blockchain.get_storage().read().await;
     let executions = storage.get_contract_scheduled_executions_at_topoheight(params.topoheight).await
         .context("Error while retrieving contract scheduled executions")?
+        .skip(params.skip.unwrap_or(0))
+        .take(max)
         .collect::<Result<Vec<_>, _>>()?;
 
     Ok(json!(executions))
@@ -1751,9 +1762,18 @@ async fn get_contract_registered_executions_at_topoheight<'a, S: Storage + 'a>(c
     let params: GetContractScheduledExecutionsAtTopoHeightParams = parse_params(body)?;
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
 
+    if params.max.is_some_and(|max| max > MAX_SCHEDULED_EXECUTIONS) {
+        return Err(InternalRpcError::InvalidJSONRequest)
+            .context(format!("Maximum scheduled executions requested cannot be greater than {}", MAX_SCHEDULED_EXECUTIONS))?
+    }
+
+    let max = params.max.unwrap_or(MAX_SCHEDULED_EXECUTIONS);
+
     let storage = blockchain.get_storage().read().await;
     let executions = storage.get_registered_contract_scheduled_executions_at_topoheight(params.topoheight).await
         .context("Error while retrieving contract registered executions")?
+        .skip(params.skip.unwrap_or(0))
+        .take(max)
         .collect::<Result<Vec<_>, _>>()?;
 
     Ok(json!(executions))
