@@ -1,5 +1,4 @@
 use async_trait::async_trait;
-use futures::{stream, Stream};
 use log::trace;
 use xelis_common::{block::TopoHeight, contract::ScheduledExecution, crypto::Hash, serializer::Serializer};
 use crate::core::{
@@ -38,12 +37,12 @@ impl ContractScheduledExecutionProvider for SledStorage {
         self.load_from_disk(&self.contracts_scheduled_executions, &key, DiskContext::DelayedExecution(topoheight))
     }
 
-    async fn get_registered_contract_scheduled_executions_at_topoheight<'a>(&'a self, topoheight: TopoHeight) -> Result<impl Stream<Item = Result<(TopoHeight, Hash), BlockchainError>> + 'a, BlockchainError> {
+    async fn get_registered_contract_scheduled_executions_at_topoheight<'a>(&'a self, topoheight: TopoHeight) -> Result<impl Iterator<Item = Result<(TopoHeight, Hash), BlockchainError>> + Send + 'a, BlockchainError> {
         trace!("get registered contract delayed executions at topoheight {}", topoheight);
 
         // Iterate over the registrations to get all the registrations done at provided topoheight
         let prefix = topoheight.to_be_bytes();
-        Ok(stream::iter(Self::scan_prefix_keys(self.snapshot.as_ref(), &self.contracts_scheduled_executions_registrations, &prefix)    
+        Ok(Self::scan_prefix_keys(self.snapshot.as_ref(), &self.contracts_scheduled_executions_registrations, &prefix)    
             .map(|res| {
                 let key = res?;
 
@@ -53,22 +52,22 @@ impl ContractScheduledExecutionProvider for SledStorage {
 
                 Ok((topoheight, contract))
             })
-        ))
+        )
     }
 
-    async fn get_contract_scheduled_executions_at_topoheight<'a>(&'a self, topoheight: TopoHeight) -> Result<impl Stream<Item = Result<ScheduledExecution, BlockchainError>> + 'a, BlockchainError> {
+    async fn get_contract_scheduled_executions_at_topoheight<'a>(&'a self, topoheight: TopoHeight) -> Result<impl Iterator<Item = Result<ScheduledExecution, BlockchainError>> + Send + 'a, BlockchainError> {
         trace!("get contract delayed executions at topoheight {}", topoheight);
 
         // Iterate over the planned executions topoheight
         let prefix = topoheight.to_be_bytes();
-        Ok(stream::iter(Self::scan_prefix(self.snapshot.as_ref(), &self.contracts_scheduled_executions, &prefix)    
+        Ok(Self::scan_prefix(self.snapshot.as_ref(), &self.contracts_scheduled_executions, &prefix)    
             .map(|res| {
                 let (_, value) = res?;
 
                 let execution = ScheduledExecution::from_bytes(&value)?;
                 Ok(execution)
             })
-        ))
+        )
     }
 }
 
@@ -84,7 +83,7 @@ impl SledStorage {
     pub fn get_contract_scheduled_execution_registration_key(registration_topoheight: TopoHeight, contract: &Hash, execution_topoheight: TopoHeight) -> [u8; 48] {
         let mut buf = [0; 48];
         buf[0..8].copy_from_slice(&registration_topoheight.to_be_bytes());
-        buf[8..].copy_from_slice(contract.as_bytes());
+        buf[8..40].copy_from_slice(contract.as_bytes());
         buf[40..].copy_from_slice(&execution_topoheight.to_be_bytes());
 
         buf

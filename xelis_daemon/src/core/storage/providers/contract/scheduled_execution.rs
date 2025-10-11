@@ -1,5 +1,4 @@
 use async_trait::async_trait;
-use futures::Stream;
 use xelis_common::{block::TopoHeight, contract::ScheduledExecution, crypto::Hash};
 
 use crate::core::error::BlockchainError;
@@ -18,8 +17,8 @@ pub trait ContractScheduledExecutionProvider {
     async fn get_contract_scheduled_execution_at_topoheight(&self, contract: &Hash, topoheight: TopoHeight) -> Result<ScheduledExecution, BlockchainError>;
 
     // Get the registered delayed executions at the provided topoheight
-    async fn get_registered_contract_scheduled_executions_at_topoheight<'a>(&'a self, topoheight: TopoHeight) -> Result<impl Stream<Item = Result<(TopoHeight, Hash), BlockchainError>> + 'a, BlockchainError>;
+    async fn get_registered_contract_scheduled_executions_at_topoheight<'a>(&'a self, topoheight: TopoHeight) -> Result<impl Iterator<Item = Result<(TopoHeight, Hash), BlockchainError>> + Send + 'a, BlockchainError>;
 
     // Get the delayed executions planned for the provided topoheight
-    async fn get_contract_scheduled_executions_at_topoheight<'a>(&'a self, topoheight: TopoHeight) -> Result<impl Stream<Item = Result<ScheduledExecution, BlockchainError>> + 'a, BlockchainError>;
+    async fn get_contract_scheduled_executions_at_topoheight<'a>(&'a self, topoheight: TopoHeight) -> Result<impl Iterator<Item = Result<ScheduledExecution, BlockchainError>> + Send + 'a, BlockchainError>;
 }

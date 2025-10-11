@@ -6,7 +6,6 @@ use std::{
 };
 use anyhow::Context;
 use async_trait::async_trait;
-use futures::{StreamExt, TryStreamExt};
 use log::{debug, trace, warn};
 use indexmap::{IndexMap, IndexSet};
 use xelis_common::{
@@ -344,7 +343,7 @@ impl<'a, S: Storage> BlockchainContractState<'a, S, BlockchainError> for Applica
             // But the ordering is important, so IndexMap is used
             injected_gas: IndexMap::new(),
             // Scheduled executions for any topoheight
-            scheduled_executions: HashMap::new(),
+            scheduled_executions: self.contract_manager.executions_at_topoheight.clone(),
             planned_executions: self.contract_manager.executions_at_block_end.clone(),
             allow_executions: true,
         };
@@ -610,8 +609,7 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
             let executions = self.storage.get_contract_scheduled_executions_at_topoheight(topoheight).await?
                 .skip(skip)
                 .take(64)
-                .try_collect::<Vec<_>>()
-                .await?;
+                .collect::<Result<Vec<_>, _>>()?;
 
             if executions.is_empty() {
                 break;

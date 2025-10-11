@@ -2714,6 +2714,10 @@ impl<S: Storage> Blockchain<S> {
 
                 total_txs_executed += block.get_txs_count();
 
+                // Execute all the scheduled executions registered
+                // at the current topoheight
+                chain_state.process_scheduled_executions().await?;
+
                 // compute rewards & execute txs
                 for (tx, tx_hash) in block.get_transactions().iter().zip(block.get_txs_hashes()) { // execute all txs
                     // Link the transaction hash to this block

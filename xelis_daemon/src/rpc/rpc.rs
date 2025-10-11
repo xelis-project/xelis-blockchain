@@ -381,6 +381,9 @@ pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>
 
     // Contracts
     handler.register_method("get_contract_logs", async_handler!(get_contract_logs::<S>));
+    handler.register_method("get_contract_scheduled_executions_at_topoheight", async_handler!(get_contract_scheduled_executions_at_topoheight::<S>));
+    handler.register_method("get_contract_registered_executions_at_topoheight", async_handler!(get_contract_registered_executions_at_topoheight::<S>));
+
     handler.register_method("get_contract_outputs", async_handler!(get_contract_outputs::<S>));
     handler.register_method("get_contract_module", async_handler!(get_contract_module::<S>));
     handler.register_method("get_contract_data", async_handler!(get_contract_data::<S>));
@@ -1730,6 +1733,30 @@ async fn get_contract_logs<S: Storage>(context: &Context, body: Value) -> Result
         .collect::<Vec<_>>();
 
     Ok(json!(rpc_outputs))
+}
+
+async fn get_contract_scheduled_executions_at_topoheight<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
+    let params: GetContractScheduledExecutionsAtTopoHeightParams = parse_params(body)?;
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+
+    let storage = blockchain.get_storage().read().await;
+    let executions = storage.get_contract_scheduled_executions_at_topoheight(params.topoheight).await
+        .context("Error while retrieving contract scheduled executions")?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(json!(executions))
+}
+
+async fn get_contract_registered_executions_at_topoheight<'a, S: Storage + 'a>(context: &'a Context, body: Value) -> Result<Value, InternalRpcError> {
+    let params: GetContractScheduledExecutionsAtTopoHeightParams = parse_params(body)?;
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+
+    let storage = blockchain.get_storage().read().await;
+    let executions = storage.get_registered_contract_scheduled_executions_at_topoheight(params.topoheight).await
+        .context("Error while retrieving contract registered executions")?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(json!(executions))
 }
 
 async fn get_contract_outputs<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
