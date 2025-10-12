@@ -626,7 +626,7 @@ impl Storage for SledStorage {
         Self::delete_cacheable_data::<Hash, u64>(self.snapshot.as_mut(), &self.topo_by_hash, self.cache.topo_by_hash_cache.as_mut(), &hash).await?;
 
         trace!("deleting block header {}", hash);
-        let block = Self::delete_arc_cacheable_data(self.snapshot.as_mut(), &self.blocks, self.cache.blocks_cache.as_mut(), &hash).await?;
+        let block = self.delete_block_by_hash(&hash).await?;
         trace!("block header deleted successfully");
 
         trace!("Deleting topoheight metadata");
@@ -641,17 +641,6 @@ impl Storage for SledStorage {
 
         let mut txs = Vec::new();
         for tx_hash in block.get_transactions() {
-            // Should we delete the tx too or only unlink it
-            let mut should_delete = true;
-            if self.has_tx_blocks(tx_hash).await? {
-                let mut blocks: Tips = Self::delete_cacheable_data(self.snapshot.as_mut(), &self.tx_blocks, None, tx_hash).await?;
-                let blocks_len =  blocks.len();
-                blocks.remove(&hash);
-                should_delete = blocks.is_empty();
-                self.set_blocks_for_tx(tx_hash, &blocks).await?;
-                trace!("Tx was included in {}, blocks left: {}", blocks_len, blocks.into_iter().map(|b| b.to_string()).collect::<Vec<String>>().join(", "));
-            }
-
             if self.is_tx_executed_in_block(tx_hash, &hash).await? {
                 trace!("Tx {} was executed, deleting", tx_hash);
                 self.unmark_tx_from_executed(&tx_hash).await?;
@@ -659,16 +648,11 @@ impl Storage for SledStorage {
             }
 
             // Because the TX is not linked to any other block, we can safely delete that block
-            if should_delete {
+            if !self.is_tx_linked_to_blocks(&tx_hash).await? {
                 trace!("Deleting TX {} in block {}", tx_hash, hash);
                 let tx: Immutable<Transaction> = Self::delete_arc_cacheable_data(self.snapshot.as_mut(), &self.transactions, self.cache.transactions_cache.as_mut(), tx_hash).await?;
                 txs.push((tx_hash.clone(), tx));
             }
-        }
-
-        // remove the block hash from the set, and delete the set if empty
-        if self.has_blocks_at_height(block.get_height()).await? {
-            self.remove_block_hash_at_height(&hash, block.get_height()).await?;
         }
 
         Ok((hash, block, txs))

@@ -50,5 +50,5 @@ pub trait BlockProvider: TransactionProvider + DifficultyProvider + BlocksAtHeig
     ) -> Result<(), BlockchainError>;
 
     // Delete a block using its hash
-    async fn delete_block_with_hash(&mut self, hash: &Hash) -> Result<Block, BlockchainError>;
+    async fn delete_block_by_hash(&mut self, hash: &Hash) -> Result<Immutable<BlockHeader>, BlockchainError>;
 }

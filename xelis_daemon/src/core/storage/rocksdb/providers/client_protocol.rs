@@ -38,7 +38,7 @@ impl ClientProtocolProvider for RocksStorage {
     }
 
     // Is the transaction included in at least a block
-    async fn has_tx_blocks(&self, hash: &Hash) -> Result<bool, BlockchainError> {
+    async fn is_tx_linked_to_blocks(&self, hash: &Hash) -> Result<bool, BlockchainError> {
         trace!("has tx blocks {}", hash);
         self.contains_data(Column::TransactionInBlocks, hash)
     }
@@ -46,7 +46,7 @@ impl ClientProtocolProvider for RocksStorage {
     // Is the block linked to the transaction
     async fn has_block_linked_to_tx(&self, tx: &Hash, block: &Hash) -> Result<bool, BlockchainError> {
         trace!("has block linked to tx {} in block {}", tx, block);
-        Ok(self.has_tx_blocks(tx).await? && self.get_blocks_for_tx(tx).await?.contains(block))
+        Ok(self.is_tx_linked_to_blocks(tx).await? && self.get_blocks_for_tx(tx).await?.contains(block))
     }
 
     // Same as has_block_linked_to_tx + add_block_for_tx but read only one time
@@ -61,6 +61,20 @@ impl ClientProtocolProvider for RocksStorage {
         } else {
             Ok(false)
         }
+    }
+
+    async fn unlink_transaction_from_block(&mut self, tx: &Hash, block: &Hash) -> Result<bool, BlockchainError> {
+        trace!("unlink transaction {} from block {}", tx, block);
+        let mut hashes: HashSet<Cow<'_, Hash>> = self.load_optional_from_disk(Column::TransactionInBlocks, tx)?
+            .unwrap_or_else(HashSet::new);
+
+        let removed = hashes.remove(block);
+        if removed {
+            self.insert_into_disk(Column::TransactionInBlocks, tx, &hashes)?;
+
+        }
+
+        Ok(removed)
     }
 
     // Get all blocks in which the transaction is included

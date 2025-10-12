@@ -239,7 +239,7 @@ pub async fn get_block_response_for_hash<S: Storage>(blockchain: &Blockchain<S>,
 
 // Transaction response based on data in chain/mempool and from parameters
 pub async fn get_transaction_response<'a, S: Storage>(storage: &S, tx: &'a Transaction, hash: &'a Hash, in_mempool: bool, first_seen: Option<TimestampSeconds>) -> Result<TransactionResponse<'a>, InternalRpcError> {
-    let blocks = if storage.has_tx_blocks(hash).await.context("Error while checking if tx in included in blocks")? {
+    let blocks = if storage.is_tx_linked_to_blocks(hash).await.context("Error while checking if tx in included in blocks")? {
         Some(storage.get_blocks_for_tx(hash).await.context("Error while retrieving in which blocks its included")?)
     } else {
         None

@@ -22,7 +22,8 @@ use crate::core::{
         BlocksAtHeightProvider,
         DifficultyProvider,
         RocksStorage,
-        TransactionProvider
+        TransactionProvider,
+        ClientProtocolProvider,
     }
 };
 
@@ -117,10 +118,20 @@ impl BlockProvider for RocksStorage {
     }
 
     // Delete a block using its hash
-    async fn delete_block_with_hash(&mut self, hash: &Hash) -> Result<Block, BlockchainError> {
+    async fn delete_block_by_hash(&mut self, hash: &Hash) -> Result<Immutable<BlockHeader>, BlockchainError> {
         trace!("delete block with hash");
-        let block = self.get_block_by_hash(hash).await?;
+        let block = self.get_block_header_by_hash(hash).await?;
+
         self.remove_from_disk(Column::Blocks, hash)?;
+        self.remove_block_hash_at_height(hash, block.get_height()).await?;
+
+        for tx in block.get_transactions() {
+            self.unlink_transaction_from_block(tx, hash).await?;
+        }
+
+        trace!("deleting block metadata");
+        self.remove_from_disk(Column::BlockMetadata, &hash)?;
+        trace!("block deleted");
 
         Ok(block)
     }

@@ -16,6 +16,7 @@ use crate::core::{
         sled::BLOCKS_COUNT,
         BlockProvider,
         BlocksAtHeightProvider,
+        ClientProtocolProvider,
         DifficultyProvider,
         TransactionProvider,
         SledStorage,
@@ -142,7 +143,7 @@ impl BlockProvider for SledStorage {
         Ok(block)
     }
 
-    async fn delete_block_with_hash(&mut self, hash: &Hash) -> Result<Block, BlockchainError> {
+    async fn delete_block_by_hash(&mut self, hash: &Hash) -> Result<Immutable<BlockHeader>, BlockchainError> {
         debug!("Deleting block with hash: {}", hash);
 
         // Delete block header
@@ -159,14 +160,10 @@ impl BlockProvider for SledStorage {
 
         self.remove_block_hash_at_height(&hash, header.get_height()).await?;
 
-        let mut transactions = Vec::with_capacity(header.get_txs_count());
         for tx in header.get_transactions() {
-            let transaction = self.get_transaction(&tx).await?;
-            transactions.push(transaction.into_arc());
+            self.unlink_transaction_from_block(tx, hash).await?;
         }
 
-        let block = Block::new(header.into_arc(), transactions);
-
-        Ok(block)
+        Ok(header)
     }
 }

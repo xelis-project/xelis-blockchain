@@ -17,13 +17,16 @@ pub trait ClientProtocolProvider {
     async fn is_tx_executed_in_block(&self, tx: &Hash, block: &Hash) -> Result<bool, BlockchainError>;
 
     // Is the transaction included in at least a block
-    async fn has_tx_blocks(&self, hash: &Hash) -> Result<bool, BlockchainError>;
+    async fn is_tx_linked_to_blocks(&self, hash: &Hash) -> Result<bool, BlockchainError>;
 
     // Is the block linked to the transaction
     async fn has_block_linked_to_tx(&self, tx: &Hash, block: &Hash) -> Result<bool, BlockchainError>;
 
     // Same as has_block_linked_to_tx + add_block_for_tx but read only one time
     async fn add_block_linked_to_tx_if_not_present(&mut self, tx: &Hash, block: &Hash) -> Result<bool, BlockchainError>;
+
+    // Unlink the transaction from the block
+    async fn unlink_transaction_from_block(&mut self, tx: &Hash, block: &Hash) -> Result<bool, BlockchainError>;
 
     // Get all blocks in which the transaction is included
     async fn get_blocks_for_tx(&self, hash: &Hash) -> Result<Tips, BlockchainError>;

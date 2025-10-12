@@ -35,6 +35,24 @@ impl ClientProtocolProvider for SledStorage {
         Ok(())
     }
 
+    async fn unlink_transaction_from_block(&mut self, tx: &Hash, block: &Hash) -> Result<bool, BlockchainError> {
+        trace!("unlink tx {} from block {}", tx, block);
+        if !self.is_tx_linked_to_blocks(tx).await? {
+            return Ok(false)
+        }
+
+        let Some(mut hashes): Option<HashSet<Cow<'_, Hash>>> = self.load_optional_from_disk(&self.tx_blocks, tx.as_bytes())? else {
+            return Ok(false)
+        };
+
+        let removed = hashes.remove(block);
+        if removed {
+            Self::insert_into_disk(self.snapshot.as_mut(), &self.tx_blocks, tx.as_bytes(), hashes.to_bytes())?;
+        }
+
+        Ok(removed)
+    }
+
     async fn is_tx_executed_in_a_block(&self, tx: &Hash) -> Result<bool, BlockchainError> {
         trace!("is tx {} executed in a block", tx);
         self.contains_data(&self.txs_executed, tx.as_bytes())
@@ -48,19 +66,19 @@ impl ClientProtocolProvider for SledStorage {
         Ok(false)
     }
 
-    async fn has_tx_blocks(&self, hash: &Hash) -> Result<bool, BlockchainError> {
+    async fn is_tx_linked_to_blocks(&self, hash: &Hash) -> Result<bool, BlockchainError> {
         trace!("has tx blocks {}", hash);
         self.contains_data(&self.tx_blocks, hash.as_bytes())
     }
 
     async fn has_block_linked_to_tx(&self, tx: &Hash, block: &Hash) -> Result<bool, BlockchainError> {
         trace!("has block {} linked to tx {}", block, tx);
-        Ok(self.has_tx_blocks(tx).await? && self.get_blocks_for_tx(tx).await?.contains(block))
+        Ok(self.is_tx_linked_to_blocks(tx).await? && self.get_blocks_for_tx(tx).await?.contains(block))
     }
 
     async fn add_block_linked_to_tx_if_not_present(&mut self, tx: &Hash, block: &Hash) -> Result<bool, BlockchainError> {
         trace!("add block {} linked to tx {} if not present", block, tx);
-        let mut hashes: HashSet<Cow<'_, Hash>> = if self.has_tx_blocks(tx).await? {
+        let mut hashes: HashSet<Cow<'_, Hash>> = if self.is_tx_linked_to_blocks(tx).await? {
             self.load_from_disk(&self.tx_blocks, tx.as_bytes(), DiskContext::TxBlocks)?
         } else {
             HashSet::new()

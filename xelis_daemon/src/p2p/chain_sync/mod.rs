@@ -707,7 +707,8 @@ impl<S: Storage> P2pServer<S> {
             let mut storage = self.blockchain.get_storage().write().await;
             debug!("storage write acquired for block forced re-execution");
 
-            let block = storage.delete_block_with_hash(&hash).await?;
+            let block = storage.get_block_by_hash(&hash).await?;
+            storage.delete_block_by_hash(&hash).await?;
             let mut tips = storage.get_tips().await?;
             if tips.remove(&hash) {
                 debug!("Block {} was a tip, removing it from tips", hash);
