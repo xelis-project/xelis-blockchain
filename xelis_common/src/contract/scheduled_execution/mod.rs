@@ -194,7 +194,7 @@ async fn schedule_execution<'a, 'ty, 'r, P: ContractProvider>(
         contract: metadata.contract.clone(),
         chunk_id,
         max_gas,
-        params,
+        params: params.clone(),
     };
 
     // register it
@@ -220,7 +220,10 @@ async fn schedule_execution<'a, 'ty, 'r, P: ContractProvider>(
     state.outputs.push(ContractLog::ScheduledExecution {
         contract: metadata.contract.clone(),
         hash: hash.clone(),
-        kind,
+        kind: match kind {
+            ScheduledExecutionKind::TopoHeight(topoheight) => ScheduledExecutionKindLog::TopoHeight { topoheight },
+            ScheduledExecutionKind::BlockEnd => ScheduledExecutionKindLog::BlockEnd { chunk_id, max_gas, params }
+        },
     });
 
     let (state, balance) =

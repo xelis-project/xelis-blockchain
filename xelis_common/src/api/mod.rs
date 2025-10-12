@@ -9,7 +9,7 @@ use serde_json::Value;
 use bulletproofs::RangeProof;
 use crate::{
     account::Nonce,
-    contract::{ContractLog, ScheduledExecutionKind},
+    contract::{ContractLog, ScheduledExecutionKindLog},
     crypto::{
         elgamal::{CompressedCommitment, CompressedHandle},
         proofs::CiphertextValidityProof,
@@ -21,8 +21,8 @@ use crate::{
         extra_data::UnknownExtraDataFormat,
         multisig::MultiSig,
         BurnPayload,
-        InvokeContractPayload,
         DeployContractPayload,
+        InvokeContractPayload,
         MultiSigPayload,
         Reference,
         SourceCommitment,
@@ -268,7 +268,7 @@ pub enum RPCContractLog<'a> {
     ScheduledExecution {
         contract: Cow<'a, Hash>,
         hash: Cow<'a, Hash>,
-        kind: ScheduledExecutionKind,
+        kind: Cow<'a, ScheduledExecutionKindLog>,
     }
 }
 
@@ -308,7 +308,7 @@ impl<'a> RPCContractLog<'a> {
             ContractLog::ScheduledExecution { contract, hash, kind } => RPCContractLog::ScheduledExecution {
                 contract: Cow::Owned(contract),
                 hash: Cow::Owned(hash),
-                kind
+                kind: Cow::Owned(kind),
             },
         }
     }
@@ -347,7 +347,7 @@ impl<'a> RPCContractLog<'a> {
             ContractLog::ScheduledExecution { contract, hash, kind } => RPCContractLog::ScheduledExecution {
                 contract: Cow::Borrowed(contract),
                 hash: Cow::Borrowed(hash),
-                kind: *kind
+                kind: Cow::Borrowed(kind)
             },
         }
     }
@@ -391,7 +391,7 @@ impl<'a> From<RPCContractLog<'a>> for ContractLog {
             RPCContractLog::ScheduledExecution { contract, hash, kind } => ContractLog::ScheduledExecution {
                 contract: contract.into_owned(),
                 hash: hash.into_owned(),
-                kind
+                kind: kind.into_owned(),
             }
         }
     }

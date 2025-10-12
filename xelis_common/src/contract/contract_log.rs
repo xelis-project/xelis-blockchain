@@ -1,5 +1,5 @@
 use crate::{
-    contract::ScheduledExecutionKind,
+    contract::ScheduledExecutionKindLog,
     crypto::{Hash, PublicKey},
     serializer::*
 };
@@ -71,7 +71,7 @@ pub enum ContractLog {
         // The hash of the caller
         hash: Hash,
         // at which topoheight it will be called
-        kind: ScheduledExecutionKind,
+        kind: ScheduledExecutionKindLog,
     },
 }
 
@@ -180,7 +180,7 @@ impl Serializer for ContractLog {
             9 => ContractLog::ScheduledExecution {
                 contract: Hash::read(reader)?,
                 hash: Hash::read(reader)?,
-                kind: ScheduledExecutionKind::read(reader)?,
+                kind: ScheduledExecutionKindLog::read(reader)?,
             },
             _ => return Err(ReaderError::InvalidValue)
         })
