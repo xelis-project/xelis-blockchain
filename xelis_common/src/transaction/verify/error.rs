@@ -1,5 +1,6 @@
 use anyhow::Error as AnyError;
 use thiserror::Error;
+use xelis_vm::ValidatorError;
 
 use crate::{
     account::Nonce,
@@ -43,7 +44,7 @@ pub enum VerificationError<T> {
     #[error("Invalid format")]
     InvalidFormat,
     #[error("Module error: {0}")]
-    ModuleError(String),
+    ModuleError(#[from] ValidatorError),
     #[error(transparent)]
     AnyError(#[from] AnyError),
     #[error("Invalid invoke contract")]

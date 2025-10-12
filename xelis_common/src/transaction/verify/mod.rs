@@ -572,8 +572,7 @@ impl Transaction {
 
                 let validator = ModuleValidator::new(module, environment);
                 for constant in payload.parameters.iter() {
-                    validator.verify_constant(&constant)
-                        .map_err(|err| VerificationError::ModuleError(format!("{:#}", err)))?;
+                    validator.verify_constant(&constant)?;
                 }
             },
             TransactionType::DeployContract(payload) => {
@@ -590,8 +589,7 @@ impl Transaction {
                     .map_err(VerificationError::State)?;
 
                 let validator = ModuleValidator::new(&payload.module, environment);
-                validator.verify()
-                    .map_err(|err| VerificationError::ModuleError(format!("{:#}", err)))?;
+                validator.verify()?;
             }
         };
 
@@ -789,8 +787,7 @@ impl Transaction {
 
                 let validator = ModuleValidator::new(module, environment);
                 for constant in payload.parameters.iter() {
-                    validator.verify_constant(&constant)
-                        .map_err(|err| VerificationError::ModuleError(format!("{:#}", err)))?;
+                    validator.verify_constant(&constant)?;
                 }
             },
             TransactionType::DeployContract(payload) => {
@@ -808,8 +805,7 @@ impl Transaction {
                     .map_err(VerificationError::State)?;
 
                 let validator = ModuleValidator::new(&payload.module, environment);
-                validator.verify()
-                    .map_err(|err| VerificationError::ModuleError(format!("{:#}", err)))?;
+                validator.verify()?;
             }
         };
 

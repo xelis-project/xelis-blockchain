@@ -802,9 +802,9 @@ impl<'a> BlockchainVerificationState<'a, ()> for ChainState {
 
     async fn load_contract_module(
         &mut self,
-        hash: &'a Hash
+        hash: Cow<'a, Hash>
     ) -> Result<bool, ()> {
-        Ok(self.contracts.contains_key(hash))
+        Ok(self.contracts.contains_key(&hash))
     }
 
     async fn get_contract_module_with_environment(
