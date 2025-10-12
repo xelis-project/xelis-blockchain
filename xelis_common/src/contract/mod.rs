@@ -1355,6 +1355,26 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             3500,
             Some(Type::Optional(Box::new(scheduled_execution_type.clone())))
         );
+
+        // Get the hash generated when scheduling this execution
+        env.register_native_function(
+            "get_hash",
+            Some(scheduled_execution_type.clone()),
+            vec![],
+            FunctionHandler::Sync(scheduled_execution_get_hash),
+            5,
+            Some(hash_type.clone())
+        );
+
+        // Get the topoheight at which this execution is scheduled
+        env.register_native_function(
+            "get_topoheight",
+            Some(scheduled_execution_type.clone()),
+            vec![],
+            FunctionHandler::Sync(scheduled_execution_get_topoheight),
+            5,
+            Some(Type::Optional(Box::new(Type::U64)))
+        );
     }
 
     // Misc

@@ -68,6 +68,8 @@ pub enum ContractLog {
     ScheduledExecution {
         // Contract hash
         contract: Hash,
+        // The hash of the caller
+        hash: Hash,
         // at which topoheight it will be called
         kind: ScheduledExecutionKind,
     },
@@ -123,9 +125,10 @@ impl Serializer for ContractLog {
                 contract.write(writer);
                 amount.write(writer);
             },
-            ContractLog::ScheduledExecution { contract, kind } => {
+            ContractLog::ScheduledExecution { contract, hash, kind } => {
                 writer.write_u8(9);
                 contract.write(writer);
+                hash.write(writer);
                 kind.write(writer);
             }
         }
@@ -176,6 +179,7 @@ impl Serializer for ContractLog {
             },
             9 => ContractLog::ScheduledExecution {
                 contract: Hash::read(reader)?,
+                hash: Hash::read(reader)?,
                 kind: ScheduledExecutionKind::read(reader)?,
             },
             _ => return Err(ReaderError::InvalidValue)
@@ -193,7 +197,7 @@ impl Serializer for ContractLog {
             ContractLog::ExitCode(code) => code.size(),
             ContractLog::RefundDeposits => 0,
             ContractLog::GasInjection { contract, amount } => contract.size() + amount.size(),
-            ContractLog::ScheduledExecution { contract, kind: at } => contract.size() + at.size(),
+            ContractLog::ScheduledExecution { contract, hash, kind } => contract.size() + hash.size() + kind.size(),
         }
     }
 }

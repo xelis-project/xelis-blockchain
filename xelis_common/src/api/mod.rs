@@ -267,6 +267,7 @@ pub enum RPCContractLog<'a> {
     },
     ScheduledExecution {
         contract: Cow<'a, Hash>,
+        hash: Cow<'a, Hash>,
         kind: ScheduledExecutionKind,
     }
 }
@@ -304,7 +305,11 @@ impl<'a> RPCContractLog<'a> {
             ContractLog::ExitCode(code) => RPCContractLog::ExitCode(code.clone()),
             ContractLog::RefundDeposits => RPCContractLog::RefundDeposits,
             ContractLog::GasInjection { contract, amount } => RPCContractLog::GasInjection { contract: Cow::Owned(contract), amount },
-            ContractLog::ScheduledExecution { contract, kind } => RPCContractLog::ScheduledExecution { contract: Cow::Owned(contract), kind },
+            ContractLog::ScheduledExecution { contract, hash, kind } => RPCContractLog::ScheduledExecution {
+                contract: Cow::Owned(contract),
+                hash: Cow::Owned(hash),
+                kind
+            },
         }
     }
     pub fn from_output(output: &'a ContractLog, mainnet: bool) -> Self {
@@ -339,7 +344,11 @@ impl<'a> RPCContractLog<'a> {
             ContractLog::ExitCode(code) => RPCContractLog::ExitCode(code.clone()),
             ContractLog::RefundDeposits => RPCContractLog::RefundDeposits,
             ContractLog::GasInjection { contract, amount } => RPCContractLog::GasInjection { contract: Cow::Borrowed(contract), amount: *amount },
-            ContractLog::ScheduledExecution { contract, kind } => RPCContractLog::ScheduledExecution { contract: Cow::Borrowed(contract), kind: *kind },
+            ContractLog::ScheduledExecution { contract, hash, kind } => RPCContractLog::ScheduledExecution {
+                contract: Cow::Borrowed(contract),
+                hash: Cow::Borrowed(hash),
+                kind: *kind
+            },
         }
     }
 }
@@ -379,8 +388,9 @@ impl<'a> From<RPCContractLog<'a>> for ContractLog {
                 contract: contract.into_owned(),
                 amount
             },
-            RPCContractLog::ScheduledExecution { contract, kind } => ContractLog::ScheduledExecution {
+            RPCContractLog::ScheduledExecution { contract, hash, kind } => ContractLog::ScheduledExecution {
                 contract: contract.into_owned(),
+                hash: hash.into_owned(),
                 kind
             }
         }

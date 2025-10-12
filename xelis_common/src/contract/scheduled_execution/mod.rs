@@ -104,7 +104,10 @@ impl Serializer for ScheduledExecution {
 }
 
 #[derive(Debug, Clone)]
-pub struct OpaqueScheduledExecution;
+pub struct OpaqueScheduledExecution {
+    kind: ScheduledExecutionKind,
+    hash: Hash,
+}
 
 impl PartialEq for OpaqueScheduledExecution {
     fn eq(&self, _: &Self) -> bool {
@@ -187,7 +190,7 @@ async fn schedule_execution<'a, 'ty, 'r, P: ContractProvider>(
     ]);
 
     let execution = ScheduledExecution {
-        hash,
+        hash: hash.clone(),
         contract: metadata.contract.clone(),
         chunk_id,
         max_gas,
@@ -216,6 +219,7 @@ async fn schedule_execution<'a, 'ty, 'r, P: ContractProvider>(
 
     state.outputs.push(ContractLog::ScheduledExecution {
         contract: metadata.contract.clone(),
+        hash: hash.clone(),
         kind,
     });
 
@@ -225,7 +229,10 @@ async fn schedule_execution<'a, 'ty, 'r, P: ContractProvider>(
     state.mark_updated();
     *balance -= total_cost;
 
-    Ok(SysCallResult::Return(OpaqueScheduledExecution.into()))
+    Ok(SysCallResult::Return(OpaqueScheduledExecution {
+        kind,
+        hash
+    }.into()))
 }
 
 pub async fn scheduled_execution_new_at_topoheight<'a, 'ty, 'r, P: ContractProvider>(
@@ -245,4 +252,25 @@ pub async fn scheduled_execution_new_at_block_end<'a, 'ty, 'r, P: ContractProvid
     context: &mut Context<'ty, 'r>,
 ) -> FnReturnType<ModuleMetadata> {
     schedule_execution::<P>(ScheduledExecutionKind::BlockEnd, instance, params, metadata, context).await
+}
+
+pub fn scheduled_execution_get_hash(instance: FnInstance<'_>, _: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
+    let instance = instance?;
+    let scheduled_execution: &OpaqueScheduledExecution = instance
+        .as_ref()
+        .as_opaque_type()?;
+
+    Ok(SysCallResult::Return(scheduled_execution.hash.clone().into()))
+}
+
+pub fn scheduled_execution_get_topoheight(instance: FnInstance<'_>, _: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
+    let instance = instance?;
+    let scheduled_execution: &OpaqueScheduledExecution = instance
+        .as_ref()
+        .as_opaque_type()?;
+
+    match scheduled_execution.kind {
+        ScheduledExecutionKind::TopoHeight(topoheight) => Ok(SysCallResult::Return(Primitive::U64(topoheight).into())),
+        ScheduledExecutionKind::BlockEnd => Ok(SysCallResult::Return(Primitive::Null.into())),
+    }
 }
