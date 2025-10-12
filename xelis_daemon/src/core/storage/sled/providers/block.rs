@@ -155,6 +155,9 @@ impl BlockProvider for SledStorage {
         // Delete difficulty
         Self::remove_from_disk_without_reading(self.snapshot.as_mut(), &self.difficulty, hash.as_bytes())?;
 
+        // Delete cumulative difficulty
+        Self::delete_cacheable_data(self.snapshot.as_mut(), &self.cumulative_difficulty, self.cache.cumulative_difficulty_cache.as_mut(), &hash).await?;
+
         // Delete P
         Self::remove_from_disk_without_reading(self.snapshot.as_mut(), &self.difficulty_covariance, hash.as_bytes())?;
 

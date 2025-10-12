@@ -8,7 +8,6 @@ use crate::core::error::{BlockchainError, DiskContext};
 use xelis_common::{
     block::BlockHeader,
     crypto::Hash,
-    difficulty::{CumulativeDifficulty, Difficulty},
     immutable::Immutable,
     network::Network,
     serializer::Serializer,
@@ -631,13 +630,6 @@ impl Storage for SledStorage {
 
         trace!("Deleting topoheight metadata");
         let _: () = Self::delete_cacheable_data(self.snapshot.as_mut(), &self.topoheight_metadata, None, &topoheight).await?;
-
-        trace!("Deleting difficulty");
-        let _: Difficulty = Self::delete_cacheable_data(self.snapshot.as_mut(), &self.difficulty, None, &hash).await?;
-
-        trace!("Deleting cumulative difficulty");
-        let cumulative_difficulty: CumulativeDifficulty = Self::delete_cacheable_data(self.snapshot.as_mut(), &self.cumulative_difficulty, self.cache.cumulative_difficulty_cache.as_mut(), &hash).await?;
-        trace!("Cumulative difficulty deleted: {}", cumulative_difficulty);
 
         let mut txs = Vec::new();
         for tx_hash in block.get_transactions() {
