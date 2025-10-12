@@ -374,7 +374,7 @@ pub enum BlockchainError {
     DepositNotFound,
     #[error("MultiSig not found")]
     MultiSigNotFound,
-    #[error("Error in module: {}", _0)]
+    #[error(transparent)]
     ModuleError(#[from] ValidatorError),
     #[error("Invalid transaction in block while verifying in multi-thread mode")]
     InvalidTransactionMultiThread,
