@@ -24,6 +24,7 @@ use xelis_common::{
     utils::format_xelis
 };
 use human_bytes::human_bytes;
+use xelis_vm::ValidatorError;
 
 #[derive(Error, Debug, Clone, Copy)]
 pub enum DiskContext {
@@ -374,7 +375,7 @@ pub enum BlockchainError {
     #[error("MultiSig not found")]
     MultiSigNotFound,
     #[error("Error in module: {}", _0)]
-    ModuleError(String),
+    ModuleError(#[from] ValidatorError),
     #[error("Invalid transaction in block while verifying in multi-thread mode")]
     InvalidTransactionMultiThread,
     #[error("Unknown account")]
