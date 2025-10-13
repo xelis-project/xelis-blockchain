@@ -63,6 +63,7 @@ pub type VersionedAssetData = Versioned<AssetData>;
 
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy)]
+#[serde(rename_all = "snake_case")]
 pub enum MaxSupplyMode {
     // No max supply set
     None,
