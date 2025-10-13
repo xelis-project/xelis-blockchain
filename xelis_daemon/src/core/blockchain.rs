@@ -2615,7 +2615,7 @@ impl<S: Storage> Blockchain<S> {
                         if storage.is_tx_executed_in_block(tx_hash, &hash_at_topo).await? {
                             debug!("Removing execution of {}", tx_hash);
                             storage.unmark_tx_from_executed(tx_hash).await?;
-                            storage.delete_contract_logs_for_tx(tx_hash).await?;
+                            storage.delete_contract_logs_for_caller(tx_hash).await?;
 
                             if is_orphaned {
                                 debug!("Tx {} is now marked as orphaned", tx_hash);
@@ -2788,7 +2788,7 @@ impl<S: Storage> Blockchain<S> {
 
                                     if let Some(contract_outputs) = chain_state.get_contract_logs_for_tx(&tx_hash) {
                                         let contract_outputs = contract_outputs.into_iter()
-                                        .map(|output| RPCContractLog::from_output(output, is_mainnet))
+                                        .map(|output| RPCContractLog::from_log(output, is_mainnet))
                                         .collect::<Vec<_>>();
 
                                         let value = json!(InvokeContractEvent {

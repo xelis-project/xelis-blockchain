@@ -636,7 +636,7 @@ impl Storage for SledStorage {
             if self.is_tx_executed_in_block(tx_hash, &hash).await? {
                 trace!("Tx {} was executed, deleting", tx_hash);
                 self.unmark_tx_from_executed(&tx_hash).await?;
-                self.delete_contract_logs_for_tx(&tx_hash).await?;
+                self.delete_contract_logs_for_caller(&tx_hash).await?;
             }
 
             // Because the TX is not linked to any other block, we can safely delete that block

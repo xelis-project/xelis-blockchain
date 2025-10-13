@@ -812,7 +812,7 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
         // Apply all the contract outputs
         debug!("storing contract outputs");
         for (key, logs) in self.contract_manager.logs {
-            self.inner.storage.set_contract_logs_for_tx(&key, &logs).await?;
+            self.inner.storage.set_contract_logs_for_caller(&key, &logs).await?;
         }
 
         // Apply all scheduled executions at their topoheight

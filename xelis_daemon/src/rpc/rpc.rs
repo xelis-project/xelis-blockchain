@@ -48,7 +48,7 @@ use xelis_common::{
         XELIS_ASSET
     },
     context::Context,
-    contract::ContractLog,
+    contract::{ContractLog, ScheduledExecutionKindLog},
     crypto::{Address, AddressType, Hash, PublicKey},
     difficulty::{
         CumulativeDifficulty,
@@ -1726,15 +1726,15 @@ async fn get_contract_logs<S: Storage>(context: &Context, body: Value) -> Result
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let is_mainnet = blockchain.get_network().is_mainnet();
     let storage = blockchain.get_storage().read().await;
-    let outputs =  storage.get_contract_logs_for_tx(&params.transaction).await
-        .context("Error while retrieving contract outputs")?;
+    let logs =  storage.get_contract_logs_for_caller(&params.caller).await
+        .context("Error while retrieving contract logs")?;
 
-    let rpc_outputs = outputs
+    let rpc_logs = logs
         .iter()
-        .map(|output| RPCContractLog::from_output(&output, is_mainnet))
+        .map(|log| RPCContractLog::from_log(&log, is_mainnet))
         .collect::<Vec<_>>();
 
-    Ok(json!(rpc_outputs))
+    Ok(json!(rpc_logs))
 }
 
 async fn get_contract_scheduled_executions_at_topoheight<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
@@ -1789,30 +1789,55 @@ async fn get_contract_outputs<S: Storage>(context: &Context, body: Value) -> Res
         .context("Error while retrieving block header at topoheight")?;
 
     let mut rpc_outputs = Vec::new();
+    let mut scheduled_executions = Vec::new();
     for tx_hash in header.get_transactions() {
         let is_executed = storage.is_tx_executed_in_block(tx_hash, &block_hash).await
             .context("Error while checking if TX is executed in block")?;
 
-        if is_executed && storage.has_contract_logs_for_tx(tx_hash).await
-            .context("Error while checking if contract outputs exists")?
+        if is_executed && storage.has_contract_logs_for_caller(tx_hash).await
+            .context("Error while checking if contract logs exists")?
         {
-            let logs =  storage.get_contract_logs_for_tx(&tx_hash).await
-                .context("Error while retrieving contract outputs")?
+            let logs =  storage.get_contract_logs_for_caller(&tx_hash).await
+                .context("Error while retrieving contract logs")?
                 .into_iter()
                 .filter_map(|output| {
                     match &output {
                         ContractLog::Transfer { destination, .. }
-                            if destination == params.address.get_public_key() => Some(RPCContractLog::from_output_owned(output, is_mainnet)), 
+                            if destination == params.address.get_public_key() => Some(RPCContractLog::from_owned(output, is_mainnet)), 
+                        ContractLog::ScheduledExecution { hash, kind: ScheduledExecutionKindLog::BlockEnd { .. }, .. } => {
+                            scheduled_executions.push(hash.clone());
+                            None
+                        }
                         _ => None,
                     }
                 }).collect::<Vec<_>>();
 
             if !logs.is_empty() {
                 rpc_outputs.push(GetContractsOutputsEntry {
-                    tx_hash: Cow::Borrowed(tx_hash),
+                    caller: Cow::Borrowed(tx_hash),
                     outputs: logs,
                 })
             }
+        }
+    }
+
+    // Also handle the scheduled executions that were triggered at block end
+    for hash in scheduled_executions {
+        let logs =  storage.get_contract_logs_for_caller(&hash).await
+            .context("Error while retrieving contract outputs")?
+            .into_iter()
+            .filter_map(|output| {
+                match &output {
+                    ContractLog::Transfer { destination, .. }
+                        if destination == params.address.get_public_key() => Some(RPCContractLog::from_owned(output, is_mainnet)), 
+                    _ => None,
+                }
+            }).collect::<Vec<_>>();
+        if !logs.is_empty() {
+            rpc_outputs.push(GetContractsOutputsEntry {
+                caller: Cow::Owned(hash),
+                outputs: logs,
+            })
         }
     }
 
