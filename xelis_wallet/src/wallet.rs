@@ -749,7 +749,7 @@ impl Wallet {
             storage.get_asset(asset).await?
                 .get_max_supply()
         };
-        self.decrypt_ciphertext_with(ciphertext, max_supply).await
+        self.decrypt_ciphertext_with(ciphertext, max_supply.get_max()).await
     }
 
     pub async fn decrypt_ciphertext_with(&self, ciphertext: Ciphertext, max_supply: Option<u64>) -> Result<Option<u64>, WalletError> {
@@ -890,7 +890,7 @@ impl Wallet {
                                     let max_supply = storage.get_asset(asset).await?
                                         .get_max_supply();
 
-                                    let amount = match self.decrypt_ciphertext_with(decompressed.clone(), max_supply).await? {
+                                    let amount = match self.decrypt_ciphertext_with(decompressed.clone(), max_supply.get_max()).await? {
                                         Some(amount) => amount,
                                         None => {
                                             warn!("Couldn't decrypt the ciphertext for asset {}: no result found, skipping this stable balance", asset);
