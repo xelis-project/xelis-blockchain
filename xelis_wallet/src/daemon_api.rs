@@ -339,7 +339,7 @@ impl DaemonAPI {
     pub async fn get_contract_logs(&self, tx_hash: &Hash) -> Result<Vec<RPCContractLog<'static>>> {
         trace!("get contract outputs");
         let outputs = self.client.call_with("get_contract_logs", &GetContractLogsParams {
-            transaction: Cow::Borrowed(tx_hash)
+            caller: Cow::Borrowed(tx_hash)
         }).await?;
         Ok(outputs)
     }

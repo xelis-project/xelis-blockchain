@@ -683,7 +683,7 @@ impl NetworkHandler {
                             _ => None,
                         });
 
-                    self.create_or_update_transaction_contract(&entry.tx_hash, topoheight, block_timestamp, transfers).await?;
+                    self.create_or_update_transaction_contract(&entry.caller, topoheight, block_timestamp, transfers).await?;
                 }
 
                 // Check if a change occured, we are the highest version and update balances is requested
