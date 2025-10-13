@@ -1045,7 +1045,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
         // s * G
         env.register_native_function(
             "mul_base",
-            Some(ristretto_type.clone()),
+            Some(scalar_type.clone()),
             vec![],
             FunctionHandler::Sync(scalar_mul_base),
             300,
@@ -1102,7 +1102,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             vec![("bytes", Type::Bytes)],
             FunctionHandler::Sync(scalar_from_bytes),
             75,
-            Some(scalar_type.clone())
+            Some(Type::Optional(Box::new(scalar_type.clone())))
         );
         // To bytes
         env.register_native_function(

@@ -146,9 +146,10 @@ pub fn scalar_from_bytes(_: FnInstance, mut params: FnParams, _: &ModuleMetadata
 
     let scalar = Scalar::from_canonical_bytes(bytes)
         .into_option()
-        .context("Invalid scalar bytes")?;
+        .map(|scalar| OpaqueScalar(scalar).into())
+        .unwrap_or_default();
 
-    Ok(SysCallResult::Return(OpaqueScalar(scalar).into()))
+    Ok(SysCallResult::Return(scalar))
 }
 
 pub fn scalar_to_bytes(zelf: FnInstance, _: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
