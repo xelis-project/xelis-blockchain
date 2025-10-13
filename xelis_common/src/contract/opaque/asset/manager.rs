@@ -9,7 +9,7 @@ use xelis_vm::{
     SysCallResult
 };
 use crate::{
-    asset::{AssetData, AssetOwner},
+    asset::{AssetData, AssetOwner, MaxSupplyMode},
     config::{COST_PER_ASSET, XELIS_ASSET},
     contract::{
         from_context,
@@ -58,10 +58,26 @@ fn is_valid_char_for_asset(c: char, whitespace: bool, uppercase_only: bool) -> b
 pub async fn asset_create<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata, context: &mut Context<'ty, 'r>) -> FnReturnType<ModuleMetadata> {
     let (provider, state) = from_context::<P>(context)?;
 
-    let max_supply = match params.remove(4).into_owned().take_as_optional()? {
-        Some(v) => Some(v.to_u64()?),
-        _ => None,
+    let (id, values) = params.remove(4).into_owned().to_enum()?;
+    let max_supply = match id {
+        0 => MaxSupplyMode::None,
+        1 => {
+            if values.len() != 1 {
+                return Err(EnvironmentError::InvalidType)
+            }
+            let max = values[0].as_ref().as_u64()?;
+            MaxSupplyMode::Fixed(max)
+        },
+        2 => {
+            if values.len() != 1 {
+                return Err(EnvironmentError::InvalidType)
+            }
+            let max = values[0].as_ref().as_u64()?;
+            MaxSupplyMode::Mintable(max)
+        },
+        _ => return Err(EnvironmentError::InvalidType)
     };
+
     let decimals = params.remove(3)
         .into_owned()
         .to_u8()?;
@@ -116,7 +132,10 @@ pub async fn asset_create<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, m
     let data = AssetData::new(decimals, name, ticker, max_supply, Some(AssetOwner::new(metadata.contract.clone(), id)));
     *asset_cache = Some(AssetChanges {
         data: (VersionedState::New, data.clone()),
-        circulating_supply: (VersionedState::New, max_supply.unwrap_or(0)),
+        circulating_supply: (VersionedState::New, match max_supply {
+            MaxSupplyMode::Fixed(max) => max,
+            _ => 0
+        }),
     });
 
     // Pay the fee by reducing the contract balance
@@ -129,8 +148,8 @@ pub async fn asset_create<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, m
         record_burned_asset(provider, state, metadata.contract.clone(), XELIS_ASSET, COST_PER_ASSET).await?;
     }
 
-    // If we have a max supply, we need to mint it to the contract
-    if let Some(max_supply) = max_supply {
+    // If we have a fixed max supply, we need to mint it to the contract
+    if let MaxSupplyMode::Fixed(max_supply) = max_supply {
         // We don't bother to check if it already exists, because it shouldn't exist before we create it.
         get_cache_for_contract(&mut state.caches, state.global_caches, metadata.contract.clone())
             .balances

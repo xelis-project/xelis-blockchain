@@ -61,6 +61,63 @@ impl Serializer for AssetOwner {
 
 pub type VersionedAssetData = Versioned<AssetData>;
 
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
+pub enum MaxSupplyMode {
+    // No max supply set
+    None,
+    // Fixed, emitted one time
+    // and managed by the contract
+    Fixed(u64),
+    // As long as the circulating supply
+    // is below the max supply, mint is possible
+    Mintable(u64),
+}
+
+impl MaxSupplyMode {
+    pub fn get_max(&self) -> Option<u64> {
+        match self {
+            Self::None => None,
+            Self::Fixed(max) | Self::Mintable(max) => Some(*max)
+        }
+    }
+
+    pub fn allow_minting(&self, current_supply: u64, amount: u64) -> bool {
+        match self {
+            Self::None => true,
+            Self::Fixed(max) => current_supply.checked_add(amount) <= Some(*max),
+            Self::Mintable(max) => current_supply.checked_add(amount) <= Some(*max)
+        }
+    }
+}
+
+impl Serializer for MaxSupplyMode {
+    fn write(&self, writer: &mut Writer) {
+        match self {
+            Self::None => {
+                writer.write_u8(0);
+            },
+            Self::Fixed(max) => {
+                writer.write_u8(1);
+                max.write(writer);
+            },
+            Self::Mintable(max) => {
+                writer.write_u8(2);
+                max.write(writer);
+            }
+        }
+    }
+
+    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
+        match reader.read_u8()? {
+            0 => Ok(Self::None),
+            1 => Ok(Self::Fixed(reader.read_u64()?)),
+            2 => Ok(Self::Mintable(reader.read_u64()?)),
+            _ => Err(ReaderError::InvalidValue)
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct AssetData {
     // How many atomic units is needed for a full coin
@@ -71,13 +128,13 @@ pub struct AssetData {
     // Maximum 6 chars
     ticker: String,
     // The total supply of the asset
-    max_supply: Option<u64>,
+    max_supply: MaxSupplyMode,
     // Contract owning this asset
     owner: Option<AssetOwner>
 }
 
 impl AssetData {
-    pub fn new(decimals: u8, name: String, ticker: String, max_supply: Option<u64>, owner: Option<AssetOwner>) -> Self {
+    pub fn new(decimals: u8, name: String, ticker: String, max_supply: MaxSupplyMode, owner: Option<AssetOwner>) -> Self {
         Self {
             decimals,
             name,
@@ -107,7 +164,7 @@ impl AssetData {
         self.ticker = ticker;
     }
 
-    pub fn get_max_supply(&self) -> Option<u64> {
+    pub fn get_max_supply(&self) -> MaxSupplyMode {
         self.max_supply
     }
 

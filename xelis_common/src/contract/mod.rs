@@ -197,6 +197,14 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
     // Misc
     let module_type = Type::Opaque(env.register_opaque::<OpaqueModule>("Module", false));
     let scheduled_execution_type = Type::Opaque(env.register_opaque::<OpaqueScheduledExecution>("ScheduledExecution", false));
+    let max_supply_type = Type::Enum(env.register_enum::<3>("MaxSupplyMode", [
+        // Unlimited supply
+        ("None", vec![]),
+        // Minted at asset creation, cannot mint anymore
+        ("Fixed", vec![("max_supply", Type::U64)]),
+        // allow minting until max supply is reached in circulating supply
+        ("Mintable", vec![("max_supply", Type::U64)]),
+    ]));
 
     // Transaction
     {
@@ -694,7 +702,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
                 ("name", Type::String),
                 ("ticker", Type::String),
                 ("decimals", Type::U8),
-                ("max_supply", Type::Optional(Box::new(Type::U64))),
+                ("max_supply", max_supply_type.clone()),
             ],
             FunctionHandler::Async(async_handler!(asset_create::<P>)),
             2500,

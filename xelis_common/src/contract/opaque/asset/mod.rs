@@ -59,7 +59,9 @@ pub fn asset_get_max_supply<P: ContractProvider>(zelf: FnInstance, _: FnParams, 
     let state: &ChainState = context.get()
         .context("Chain state not found")?;
     let changes = get_asset_changes_for_hash(state, &asset.hash)?;
-    let value: ValueCell = changes.data.1.get_max_supply()
+    let value: ValueCell = changes.data.1
+        .get_max_supply()
+        .get_max()
         .map(|v| Primitive::U64(v).into())
         .unwrap_or_default();
 
@@ -192,9 +194,9 @@ pub async fn asset_mint<'a, 'ty, 'r, P: ContractProvider>(zelf: FnInstance<'a>, 
 
     let amount = params[0].as_u64()?;
 
-    // Check that we don't have any max supply set
+    // Check if we can mint that amount
     {
-        if asset_data.get_max_supply().is_some() {
+        if !asset_data.get_max_supply().allow_minting(changes.circulating_supply.1, amount) {
             return Ok(SysCallResult::Return(Primitive::Boolean(false).into()))
         }
 
