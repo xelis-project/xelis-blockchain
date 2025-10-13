@@ -273,7 +273,7 @@ pub enum RPCContractLog<'a> {
 }
 
 impl<'a> RPCContractLog<'a> {
-    pub fn from_output_owned(output: ContractLog, mainnet: bool) -> Self {
+    pub fn from_owned(output: ContractLog, mainnet: bool) -> Self {
         match output {
             ContractLog::RefundGas { amount } => RPCContractLog::RefundGas { amount: amount },
             ContractLog::Transfer { contract, amount, asset, destination } => RPCContractLog::Transfer {
@@ -312,7 +312,8 @@ impl<'a> RPCContractLog<'a> {
             },
         }
     }
-    pub fn from_output(output: &'a ContractLog, mainnet: bool) -> Self {
+
+    pub fn from_log(output: &'a ContractLog, mainnet: bool) -> Self {
         match output {
             ContractLog::RefundGas { amount } => RPCContractLog::RefundGas { amount: *amount },
             ContractLog::Transfer { contract, amount, asset, destination } => RPCContractLog::Transfer {

@@ -734,7 +734,7 @@ pub struct HasMultisigAtTopoHeightParams<'a> {
 
 #[derive(Serialize, Deserialize)]
 pub struct GetContractLogsParams<'a> {
-    pub transaction: Cow<'a, Hash>
+    pub caller: Cow<'a, Hash>
 }
 
 #[derive(Serialize, Deserialize)]
@@ -752,7 +752,8 @@ pub struct GetContractOutputsParams<'a> {
 
 #[derive(Serialize, Deserialize)]
 pub struct GetContractsOutputsEntry<'a> {
-    pub tx_hash: Cow<'a, Hash>,
+    // Either the tx_hash or the execution hash
+    pub caller: Cow<'a, Hash>,
     pub outputs: Vec<RPCContractLog<'a>>,
 }
 
