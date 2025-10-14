@@ -14,6 +14,7 @@ use crate::{
         ContractEventTracker,
         ContractLog,
         ContractProvider,
+        InterContractPermission,
         ModuleMetadata,
         ScheduledExecution
     },
@@ -157,6 +158,7 @@ pub trait BlockchainContractState<'a, P: ContractProvider, E> {
         contract: Cow<'b, Hash>,
         deposits: Option<&'b IndexMap<Hash, ContractDeposit>>,
         tx_hash: ContractCaller<'b>,
+        permission: Cow<'b, InterContractPermission>,
     ) -> Result<(ContractEnvironment<'b, P>, ChainState<'b>), E>;
 
     /// Set the updated contract caches

@@ -17,6 +17,7 @@ use crate::{
         ContractLog,
         ContractProvider,
         ContractProviderWrapper,
+        InterContractPermission,
         ModuleMetadata
     },
     crypto::{
@@ -186,10 +187,11 @@ pub async fn invoke_contract<'a, P: ContractProvider, E, B: BlockchainApplyState
     parameters: impl DoubleEndedIterator<Item = ValueCell>,
     max_gas: u64,
     invoke: InvokeContract,
+    permission: Cow<'a, InterContractPermission>,
 ) -> Result<bool, ContractError<E>> {
     debug!("Invoking contract {}: {:?}", contract, invoke);
     // Deposits are actually added to each balance
-    let (contract_environment, mut chain_state) = state.get_contract_environment_for(contract.clone(), deposits.map(|(d, _)| d), caller.clone()).await
+    let (contract_environment, mut chain_state) = state.get_contract_environment_for(contract.clone(), deposits.map(|(d, _)| d), caller.clone(), permission).await
         .map_err(ContractError::State)?;
 
     // Total used gas by the VM

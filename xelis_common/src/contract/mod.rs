@@ -137,7 +137,7 @@ pub struct ChainState<'a> {
     // recursive scheduling
     pub allow_executions: bool,
     // Permission for inter-contract calls
-    pub permission: InterContractPermission,
+    pub permission: Cow<'a, InterContractPermission>,
 }
 
 // Aggregate all events from all executed contracts to track in one structure
@@ -934,7 +934,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
                 ("value", scalar_type.clone())
             ],
             FunctionHandler::Sync(ristretto_add_scalar),
-            500,
+            1500,
             Some(ristretto_type.clone())
         );
         // P - (s * G)
@@ -945,7 +945,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
                 ("value", scalar_type.clone())
             ],
             FunctionHandler::Sync(ristretto_sub_scalar),
-            500,
+            1500,
             Some(ristretto_type.clone())
         );
         // P + P2
@@ -956,7 +956,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
                 ("value", ristretto_type.clone())
             ],
             FunctionHandler::Sync(ristretto_add),
-            500,
+            1500,
             Some(ristretto_type.clone())
         );
         // P - P2
@@ -967,7 +967,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
                 ("value", ristretto_type.clone())
             ],
             FunctionHandler::Sync(ristretto_sub),
-            500,
+            1500,
             Some(ristretto_type.clone())
         );
         // P * s
@@ -978,7 +978,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
                 ("value", scalar_type.clone())
             ],
             FunctionHandler::Sync(ristretto_mul_scalar),
-            300,
+            3000,
             Some(ristretto_type.clone())
         );
         // P / s (ensure s != 0)
@@ -998,7 +998,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             ristretto_type.clone(),
             vec![("bytes", Type::Bytes)],
             FunctionHandler::Sync(ristretto_from_bytes),
-            100,
+            500,
             Some(ristretto_type.clone())
         );
         // To bytes
@@ -1007,7 +1007,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             Some(ristretto_type.clone()),
             vec![],
             FunctionHandler::Sync(ristretto_to_bytes),
-            100,
+            500,
             Some(Type::Bytes)
         );
     }
@@ -1033,7 +1033,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             Some(scalar_type.clone()),
             vec![],
             FunctionHandler::Sync(scalar_invert),
-            500,
+            1500,
             Some(scalar_type.clone())
         );
 
@@ -1086,7 +1086,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
                 ("value", scalar_type.clone())
             ],
             FunctionHandler::Sync(scalar_mul),
-            250,
+            1500,
             Some(scalar_type.clone())
         );
         // s / s2 (ensure s2 != 0)

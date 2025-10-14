@@ -33,7 +33,8 @@ use crate::{
             InvokeContract,
             HOOK_CONSTRUCTOR_ID
         },
-        ContractProvider
+        ContractProvider,
+        InterContractPermission
     },
     crypto::{
         elgamal::{
@@ -1230,7 +1231,8 @@ impl Transaction {
                         Some((&payload.deposits, &decompressed_deposits)),
                         payload.parameters.iter().cloned(),
                         payload.max_gas,
-                        InvokeContract::Entry(payload.entry_id)
+                        InvokeContract::Entry(payload.entry_id),
+                        Cow::Borrowed(&payload.permission)
                     ).await?;
                 } else {
                     warn!("Contract {} invoked from {} not available anymore", payload.contract, tx_hash);
@@ -1252,7 +1254,8 @@ impl Transaction {
                         Some((&invoke.deposits, &decompressed_deposits)),
                         iter::empty(),
                         invoke.max_gas,
-                        InvokeContract::Hook(HOOK_CONSTRUCTOR_ID)
+                        InvokeContract::Hook(HOOK_CONSTRUCTOR_ID),
+                        Cow::Owned(InterContractPermission::All),
                     ).await?;
 
                     // if it has failed, we don't want to deploy the contract
