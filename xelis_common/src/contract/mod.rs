@@ -778,6 +778,14 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             Some(Type::Bool)
         );
         env.register_native_function(
+            "is_mintable",
+            Some(asset_type.clone()),
+            vec![],
+            FunctionHandler::Sync(asset_is_mintable),
+            5,
+            Some(Type::Bool)
+        );
+        env.register_native_function(
             "get_contract_hash",
             Some(asset_type.clone()),
             vec![],

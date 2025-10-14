@@ -150,6 +150,15 @@ pub fn asset_is_read_only(zelf: FnInstance, _: FnParams, metadata: &ModuleMetada
     Ok(SysCallResult::Return(Primitive::Boolean(read_only).into()))
 }
 
+pub fn asset_is_mintable(zelf: FnInstance, _: FnParams, _: &ModuleMetadata, context: &mut Context) -> FnReturnType<ModuleMetadata> {
+    let zelf = zelf?;
+    let asset: &Asset = zelf.as_opaque_type()?;
+    let state: &ChainState = context.get()
+        .context("Chain state not found")?;
+    let changes = get_asset_changes_for_hash(state, &asset.hash)?;
+    Ok(SysCallResult::Return(Primitive::Boolean(changes.data.1.get_max_supply().is_mintable()).into()))
+}
+
 pub async fn asset_transfer_ownership<'a, 'ty, 'r, P: ContractProvider>(zelf: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata, context: &mut Context<'ty, 'r>) -> FnReturnType<ModuleMetadata> {
     let param: Hash = params.remove(0)
         .into_owned()

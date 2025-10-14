@@ -86,9 +86,13 @@ impl MaxSupplyMode {
     pub fn allow_minting(&self, current_supply: u64, amount: u64) -> bool {
         match self {
             Self::None => true,
-            Self::Fixed(max) => current_supply.checked_add(amount) <= Some(*max),
+            Self::Fixed(_) => false,
             Self::Mintable(max) => current_supply.checked_add(amount) <= Some(*max)
         }
+    }
+
+    pub fn is_mintable(&self) -> bool {
+        matches!(self, Self::Mintable(_))
     }
 }
 
