@@ -78,6 +78,12 @@ pub async fn asset_create<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, m
         _ => return Err(EnvironmentError::InvalidType)
     };
 
+    if let Some(max) = max_supply.get_max() {
+        if max == 0 {
+            return Err(EnvironmentError::Expect("Max supply cannot be zero".to_owned()).into());
+        }
+    }
+
     let decimals = params.remove(3)
         .into_owned()
         .to_u8()?;
