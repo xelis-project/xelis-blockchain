@@ -1606,6 +1606,19 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             1,
             Some(Type::U64)
         );
+
+        // Is contract callable
+        env.register_native_function(
+            "is_contract_callable",
+            None,
+            vec![
+                ("contract", hash_type.clone()),
+                ("chunk_id", Type::U16)
+            ],
+            FunctionHandler::Sync(is_contract_callable::<P>),
+            75,
+            Some(Type::Bool)
+        );
     }
 
     env
@@ -2142,4 +2155,21 @@ fn get_cost_per_asset(_: FnInstance, _: FnParams, _: &ModuleMetadata, _: &mut Co
 
 fn get_cost_per_scheduled_execution(_: FnInstance, _: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
     Ok(SysCallResult::Return(Primitive::U64(COST_PER_SCHEDULED_EXECUTION).into()))
+}
+
+fn is_contract_callable<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, params: FnParams, _: &ModuleMetadata, context: &mut Context<'ty, 'r>) -> FnReturnType<ModuleMetadata> {
+    let state: &ChainState = context.get()
+        .context("chain state not found")?;
+
+    let contract: &Hash = params[0]
+        .as_ref()
+        .as_opaque_type()?;
+
+    let chunk_id = params[1]
+        .as_ref()
+        .to_u16()?;
+
+    let callable = state.permission.allows(contract, chunk_id);
+
+    Ok(SysCallResult::Return(Primitive::Boolean(callable).into()))
 }
