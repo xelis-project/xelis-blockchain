@@ -934,7 +934,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
                 ("value", scalar_type.clone())
             ],
             FunctionHandler::Sync(ristretto_add_scalar),
-            5000,
+            8000,
             Some(ristretto_type.clone())
         );
         // P - (s * G)
@@ -945,7 +945,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
                 ("value", scalar_type.clone())
             ],
             FunctionHandler::Sync(ristretto_sub_scalar),
-            5000,
+            8000,
             Some(ristretto_type.clone())
         );
         // P + P2
@@ -978,18 +978,18 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
                 ("value", scalar_type.clone())
             ],
             FunctionHandler::Sync(ristretto_mul_scalar),
-            8000,
+            12000,
             Some(ristretto_type.clone())
         );
         // P / s (ensure s != 0)
         env.register_native_function(
             "div_scalar",
-            Some(ciphertext_type.clone()),
+            Some(ristretto_type.clone()),
             vec![
                 ("value", Type::U64)
             ],
             FunctionHandler::Sync(ristretto_div_scalar),
-            10000,
+            15000,
             Some(ristretto_type.clone())
         );
         // From bytes
@@ -998,7 +998,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             ristretto_type.clone(),
             vec![("bytes", Type::Bytes)],
             FunctionHandler::Sync(ristretto_from_bytes),
-            500,
+            1500,
             Some(ristretto_type.clone())
         );
         // To bytes
@@ -1007,7 +1007,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             Some(ristretto_type.clone()),
             vec![],
             FunctionHandler::Sync(ristretto_to_bytes),
-            500,
+            1500,
             Some(Type::Bytes)
         );
     }
