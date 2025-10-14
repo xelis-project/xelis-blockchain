@@ -101,6 +101,10 @@ pub async fn module_invoke<'a, 'ty, 'r, P: ContractProvider>(zelf: FnInstance<'a
         .into_owned()
         .as_u16()?;
 
+    if !module.module.is_public_chunk(chunk_id as usize) {
+        return Err(EnvironmentError::Static("Chunk is not public"));
+    }
+
     // Check if we have permission to call this contract
     if !chain_state.permission.allows(&module.contract, chunk_id) {
         return Err(EnvironmentError::Static("Permission denied to call this contract"));
@@ -163,6 +167,10 @@ pub async fn module_delegate<'a, 'ty, 'r>(zelf: FnInstance<'a>, mut params: FnPa
     let chunk_id = params.remove(0)
         .into_owned()
         .as_u16()?;
+
+    if !module.module.is_public_chunk(chunk_id as usize) {
+        return Err(EnvironmentError::Static("Chunk is not public"));
+    }
 
     Ok(SysCallResult::ModuleCall {
         module: module.module.clone(),
