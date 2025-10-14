@@ -15,6 +15,7 @@ use xelis_common::{
     config::{EXTRA_BASE_FEE_BURN_PERCENT, FEE_PER_KB, XELIS_ASSET},
     contract::{
         vm::{self, ContractCaller, InvokeContract},
+        InterContractPermission,
         AssetChanges,
         ChainState as ContractChainState,
         ContractCache,
@@ -267,7 +268,8 @@ impl<'a, S: Storage> BlockchainContractState<'a, S, BlockchainError> for Applica
         &'b mut self,
         contract: Cow<'b, Hash>,
         deposits: Option<&'b IndexMap<Hash, ContractDeposit>>,
-        caller: ContractCaller<'b>
+        caller: ContractCaller<'b>,
+        permission: Cow<'b, InterContractPermission>,
     ) -> Result<(ContractEnvironment<'b, S>, ContractChainState<'b>), BlockchainError> {
         debug!("get contract environment for contract {} from caller {}", contract, caller.get_hash());
 
@@ -346,6 +348,7 @@ impl<'a, S: Storage> BlockchainContractState<'a, S, BlockchainError> for Applica
             executions_topoheight: self.contract_manager.executions_at_topoheight.clone(),
             executions_block_end: self.contract_manager.executions_at_block_end.clone(),
             allow_executions: true,
+            permission,
         };
 
         let contract_environment = ContractEnvironment {
@@ -588,6 +591,7 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
                 execution.params.into_iter(),
                 execution.max_gas,
                 InvokeContract::Chunk(execution.chunk_id, false),
+                Cow::Owned(InterContractPermission::All),
             ).await {
                 warn!("failed to process scheduled execution of contract {} with caller {}: {}", execution.contract, execution.hash, e);
             }
