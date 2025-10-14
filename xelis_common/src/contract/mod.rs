@@ -1128,7 +1128,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             transcript_type.clone(),
             vec![("label", Type::Bytes)],
             FunctionHandler::Sync(transcript_new),
-            1500,
+            500,
             Some(transcript_type.clone())
         );
 
@@ -1138,7 +1138,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             Some(transcript_type.clone()),
             vec![("label", Type::Bytes)],
             FunctionHandler::Sync(transcript_challenge_scalar),
-            2500,
+            750,
             Some(scalar_type.clone())
         );
 
@@ -1151,7 +1151,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
                 ("n", Type::U32),
             ],
             FunctionHandler::Sync(transcript_challenge_bytes),
-            2000,
+            700,
             Some(Type::Bytes)
         );
 
