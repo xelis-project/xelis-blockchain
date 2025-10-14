@@ -47,7 +47,11 @@ impl Serializer for InterContractPermission {
             InterContractPermission::All => writer.write_u8(1),
             InterContractPermission::Specific(allowed) => {
                 writer.write_u8(2);
-                allowed.write(writer);
+
+                writer.write_u8(allowed.len() as u8);
+                for hash in allowed {
+                    hash.write(writer);
+                }
             }
             InterContractPermission::Exclude(excluded) => {
                 writer.write_u8(3);
@@ -66,7 +70,15 @@ impl Serializer for InterContractPermission {
             0 => Ok(InterContractPermission::None),
             1 => Ok(InterContractPermission::All),
             2 => {
-                let allowed = IndexSet::read(reader)?;
+                let len = reader.read_u8()? as usize;
+                let mut allowed = IndexSet::with_capacity(len);
+                for _ in 0..len {
+                    let hash = Hash::read(reader)?;
+                    if !allowed.insert(hash) {
+                        return Err(ReaderError::InvalidValue);
+                    }
+                }
+
                 Ok(InterContractPermission::Specific(allowed))
             }
             3 => {
