@@ -934,7 +934,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
                 ("value", scalar_type.clone())
             ],
             FunctionHandler::Sync(ristretto_add_scalar),
-            2500,
+            5000,
             Some(ristretto_type.clone())
         );
         // P - (s * G)
@@ -945,7 +945,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
                 ("value", scalar_type.clone())
             ],
             FunctionHandler::Sync(ristretto_sub_scalar),
-            2500,
+            5000,
             Some(ristretto_type.clone())
         );
         // P + P2
@@ -967,7 +967,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
                 ("value", ristretto_type.clone())
             ],
             FunctionHandler::Sync(ristretto_sub),
-            5000,
+            6000,
             Some(ristretto_type.clone())
         );
         // P * s
@@ -978,7 +978,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
                 ("value", scalar_type.clone())
             ],
             FunctionHandler::Sync(ristretto_mul_scalar),
-            6000,
+            8000,
             Some(ristretto_type.clone())
         );
         // P / s (ensure s != 0)
@@ -989,7 +989,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
                 ("value", Type::U64)
             ],
             FunctionHandler::Sync(ristretto_div_scalar),
-            8000,
+            10000,
             Some(ristretto_type.clone())
         );
         // From bytes
@@ -1053,7 +1053,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             Some(scalar_type.clone()),
             vec![],
             FunctionHandler::Sync(scalar_mul_base),
-            1000,
+            2500,
             Some(ristretto_type.clone())
         );
         // s + s2
