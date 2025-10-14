@@ -934,7 +934,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
                 ("value", scalar_type.clone())
             ],
             FunctionHandler::Sync(ristretto_add_scalar),
-            1500,
+            2500,
             Some(ristretto_type.clone())
         );
         // P - (s * G)
@@ -945,7 +945,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
                 ("value", scalar_type.clone())
             ],
             FunctionHandler::Sync(ristretto_sub_scalar),
-            1500,
+            2500,
             Some(ristretto_type.clone())
         );
         // P + P2
@@ -956,7 +956,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
                 ("value", ristretto_type.clone())
             ],
             FunctionHandler::Sync(ristretto_add),
-            1500,
+            5000,
             Some(ristretto_type.clone())
         );
         // P - P2
@@ -967,7 +967,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
                 ("value", ristretto_type.clone())
             ],
             FunctionHandler::Sync(ristretto_sub),
-            1500,
+            5000,
             Some(ristretto_type.clone())
         );
         // P * s
@@ -978,7 +978,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
                 ("value", scalar_type.clone())
             ],
             FunctionHandler::Sync(ristretto_mul_scalar),
-            3000,
+            6000,
             Some(ristretto_type.clone())
         );
         // P / s (ensure s != 0)
@@ -989,7 +989,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
                 ("value", Type::U64)
             ],
             FunctionHandler::Sync(ristretto_div_scalar),
-            5000,
+            8000,
             Some(ristretto_type.clone())
         );
         // From bytes
@@ -1033,7 +1033,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             Some(scalar_type.clone()),
             vec![],
             FunctionHandler::Sync(scalar_invert),
-            1500,
+            2500,
             Some(scalar_type.clone())
         );
 
@@ -1053,7 +1053,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             Some(scalar_type.clone()),
             vec![],
             FunctionHandler::Sync(scalar_mul_base),
-            300,
+            1000,
             Some(ristretto_type.clone())
         );
         // s + s2
@@ -1064,7 +1064,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
                 ("value", scalar_type.clone())
             ],
             FunctionHandler::Sync(scalar_add),
-            250,
+            2000,
             Some(scalar_type.clone())
         );
         // s - s2
@@ -1075,7 +1075,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
                 ("value", scalar_type.clone())
             ],
             FunctionHandler::Sync(scalar_sub),
-            250,
+            2000,
             Some(scalar_type.clone())
         );
         // s * s2
@@ -1086,7 +1086,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
                 ("value", scalar_type.clone())
             ],
             FunctionHandler::Sync(scalar_mul),
-            1500,
+            4000,
             Some(scalar_type.clone())
         );
         // s / s2 (ensure s2 != 0)
@@ -1097,7 +1097,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
                 ("value", Type::U64)
             ],
             FunctionHandler::Sync(scalar_div),
-            5000,
+            6000,
             Some(scalar_type.clone())
         );
         // From bytes
@@ -1106,7 +1106,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             scalar_type.clone(),
             vec![("bytes", Type::Bytes)],
             FunctionHandler::Sync(scalar_from_bytes),
-            75,
+            150,
             Some(Type::Optional(Box::new(scalar_type.clone())))
         );
         // To bytes
@@ -1115,7 +1115,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             Some(scalar_type.clone()),
             vec![],
             FunctionHandler::Sync(scalar_to_bytes),
-            5,
+            50,
             Some(Type::Bytes)
         );
     }
@@ -1128,7 +1128,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             transcript_type.clone(),
             vec![("label", Type::Bytes)],
             FunctionHandler::Sync(transcript_new),
-            500,
+            1500,
             Some(transcript_type.clone())
         );
 
@@ -1138,7 +1138,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             Some(transcript_type.clone()),
             vec![("label", Type::Bytes)],
             FunctionHandler::Sync(transcript_challenge_scalar),
-            1000,
+            2500,
             Some(scalar_type.clone())
         );
 
@@ -1151,7 +1151,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
                 ("n", Type::U32),
             ],
             FunctionHandler::Sync(transcript_challenge_bytes),
-            1000,
+            2000,
             Some(Type::Bytes)
         );
 
@@ -1164,7 +1164,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
                 ("message", Type::Bytes),
             ],
             FunctionHandler::Sync(transcript_append_message),
-            750,
+            500,
             None
         );
 
@@ -1177,7 +1177,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
                 ("point", ristretto_type.clone()),
             ],
             FunctionHandler::Sync(transcript_append_point),
-            75,
+            250,
             None
         );
         // Validate and append point
@@ -1189,7 +1189,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
                 ("point", ristretto_type.clone()),
             ],
             FunctionHandler::Sync(transcript_validate_and_append_point),
-            75,
+            250,
             None
         );
 
@@ -1202,7 +1202,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
                 ("scalar", scalar_type.clone()),
             ],
             FunctionHandler::Sync(transcript_append_scalar),
-            75,
+            250,
             None
         );
     }
@@ -1287,7 +1287,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
                 ("contract", hash_type.clone()),
             ],
             FunctionHandler::Async(async_handler!(module_new::<P>)),
-            125,
+            1500,
             Some(Type::Optional(Box::new(module_type.clone())))
         );
 
@@ -1302,7 +1302,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
                 ("deposits", Type::Map(Box::new(hash_type.clone()), Box::new(Type::U64))),
             ],
             FunctionHandler::Async(async_handler!(module_invoke::<P>)),
-            50,
+            750,
             Some(Type::Any)
         );
 
@@ -1316,7 +1316,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
                 ("deposits", Type::Map(Box::new(hash_type.clone()), Box::new(Type::U64))),
             ],
             FunctionHandler::Async(async_handler!(module_invoke::<P>)),
-            50,
+            750,
             None
         );
 
@@ -1330,7 +1330,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
                 ("args", Type::Array(Box::new(Type::Any))),
             ],
             FunctionHandler::Async(async_handler!(module_delegate)),
-            1,
+            100,
             Some(Type::Any)
         );
     }
