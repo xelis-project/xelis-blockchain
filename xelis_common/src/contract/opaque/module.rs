@@ -15,7 +15,13 @@ use xelis_vm::{
     SysCallResult,
 };
 use crate::{
-    contract::{from_context, get_balance_from_cache, get_mut_balance_for_contract, ContractProvider, ModuleMetadata},
+    contract::{
+        from_context,
+        get_balance_from_cache,
+        get_mut_balance_for_contract,
+        ContractProvider,
+        ModuleMetadata
+    },
     crypto::Hash,
     transaction::ContractDeposit
 };
@@ -77,11 +83,29 @@ pub async fn module_invoke<'a, 'ty, 'r, P: ContractProvider>(zelf: FnInstance<'a
     let zelf = zelf?;
     let module: &OpaqueModule = zelf.as_opaque_type()?;
 
+    let (provider, chain_state) = from_context::<P>(context)?;
+
     let assets = params.remove(2)
         .into_owned()
         .to_map()?;
 
-    let (provider, chain_state) = from_context::<P>(context)?;
+    let p = params.remove(1)
+        .into_owned()
+        .to_vec()?;
+
+    if p.len() > (u8::MAX - 1) as usize {
+        return Err(EnvironmentError::Static("Too many parameters"));
+    }
+
+    let chunk_id = params.remove(0)
+        .into_owned()
+        .as_u16()?;
+
+    // Check if we have permission to call this contract
+    if !chain_state.permission.allows(&module.contract, chunk_id) {
+        return Err(EnvironmentError::Static("Permission denied to call this contract"));
+    }
+
     let mut deposits = IndexMap::new();
     for (mut k, v) in assets {
         let asset: Hash = k.into_opaque_type()?;
@@ -110,21 +134,9 @@ pub async fn module_invoke<'a, 'ty, 'r, P: ContractProvider>(zelf: FnInstance<'a
         deposits.insert(asset, ContractDeposit::Public(amount));
     }
 
-    let p = params.remove(1)
-        .into_owned()
-        .to_vec()?;
-
-    if p.len() > (u8::MAX - 1) as usize {
-        return Err(EnvironmentError::Static("Too many parameters"));
-    }
-
     let p = p.into_iter()
         .map(|v| v.to_owned().into())
         .collect::<VecDeque<_>>();
-
-    let chunk_id = params.remove(0)
-        .into_owned()
-        .as_u16()?;
 
     Ok(SysCallResult::ModuleCall {
         module: module.module.clone(),

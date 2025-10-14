@@ -136,6 +136,8 @@ pub struct ChainState<'a> {
     // In case we are in a scheduled execution already, prevent from
     // recursive scheduling
     pub allow_executions: bool,
+    // Permission for inter-contract calls
+    pub permission: InterContractPermission,
 }
 
 // Aggregate all events from all executed contracts to track in one structure
