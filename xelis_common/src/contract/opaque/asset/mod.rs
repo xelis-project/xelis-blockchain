@@ -4,6 +4,7 @@ use anyhow::Context as AnyhowContext;
 use xelis_vm::{
     traits::{JSONHelper, Serializable},
     Context,
+    EnvironmentError,
     FnInstance,
     FnParams,
     FnReturnType,
@@ -242,4 +243,20 @@ pub async fn asset_mint<'a, 'ty, 'r, P: ContractProvider>(zelf: FnInstance<'a>, 
     });
 
     Ok(SysCallResult::Return(Primitive::Boolean(true).into()))
+}
+
+pub fn max_supply_mode_get_max_supply(zelf: FnInstance, _: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
+    let zelf = zelf?;
+    let (id, fields) = zelf.as_enum()?;
+
+    let max_supply = match id {
+        0 => None,
+        1 | 2 if fields.len() == 1 => Some(fields[0].as_ref().as_u64()?),
+        _ => return Err(EnvironmentError::InvalidType)
+    };
+
+    Ok(SysCallResult::Return(match max_supply {
+        Some(v) => Primitive::U64(v).into(),
+        None => Primitive::Null.into()
+    }))
 }

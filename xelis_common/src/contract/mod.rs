@@ -811,6 +811,18 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
         );
     }
 
+    // Max Supply Mode
+    {
+        env.register_native_function(
+            "get_max_supply",
+            Some(max_supply_type.clone()),
+            vec![],
+            FunctionHandler::Sync(max_supply_mode_get_max_supply),
+            5,
+            Some(Type::Optional(Box::new(Type::U64)))
+        );
+    }
+
     // Signature
     {
         env.register_native_function(
