@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use xelis_vm::ValueCell;
 
-use crate::{crypto::Hash, serializer::*};
+use crate::{contract::InterContractPermission, crypto::Hash, serializer::*};
 use super::Deposits;
 
 // InvokeContractPayload is a public payload allowing to call a smart contract
@@ -22,7 +22,11 @@ pub struct InvokeContractPayload {
     // is still accepted by nodes but the contract execution is stopped
     pub max_gas: u64,
     // The parameters to call the contract
-    pub parameters: Vec<ValueCell>
+    pub parameters: Vec<ValueCell>,
+    // The permission of this contract call
+    // It is used to restrict access to certain inter-contracts.
+    #[serde(default)]
+    pub permission: InterContractPermission,
 }
 
 impl Serializer for InvokeContractPayload {
@@ -37,6 +41,8 @@ impl Serializer for InvokeContractPayload {
         for parameter in &self.parameters {
             parameter.write(writer);
         }
+
+        self.permission.write(writer);
     }
 
     fn read(reader: &mut Reader) -> Result<InvokeContractPayload, ReaderError> {
@@ -51,7 +57,9 @@ impl Serializer for InvokeContractPayload {
         for _ in 0..len {
             parameters.push(ValueCell::read(reader)?);
         }
-        Ok(InvokeContractPayload { contract, deposits, entry_id: chunk_id, max_gas, parameters })
+        let permission = InterContractPermission::read(reader)?;
+
+        Ok(InvokeContractPayload { contract, deposits, entry_id: chunk_id, max_gas, parameters, permission })
     }
 
     fn size(&self) -> usize {
@@ -64,6 +72,8 @@ impl Serializer for InvokeContractPayload {
         for parameter in &self.parameters {
             size += parameter.size();
         }
+        size += self.permission.size();
+
         size
     }
 }

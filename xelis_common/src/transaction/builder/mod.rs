@@ -1048,6 +1048,7 @@ impl TransactionBuilder {
                     entry_id: payload.entry_id,
                     parameters: payload.parameters,
                     deposits,
+                    permission: payload.permission,
                 })
             },
             TransactionTypeBuilder::DeployContract(payload) => {

@@ -389,7 +389,8 @@ async fn test_tx_invoke_contract() {
                     amount: 50 * COIN_VALUE,
                     private: false
                 })
-            ].into_iter().collect()
+            ].into_iter().collect(),
+            permission: Default::default(),
         });
         let builder = TransactionBuilder::new(TxVersion::V2, alice.keypair.get_public_key().compress(), None, data, FeeBuilder::default());
         let estimated_size = builder.estimate_size();

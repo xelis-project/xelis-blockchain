@@ -5,6 +5,8 @@ mod provider;
 mod cache;
 mod metadata;
 mod scheduled_execution;
+mod permission;
+
 pub mod vm;
 
 use std::{
@@ -66,6 +68,7 @@ pub use provider::*;
 pub use cache::*;
 pub use metadata::*;
 pub use scheduled_execution::*;
+pub use permission::*;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TransferOutput {

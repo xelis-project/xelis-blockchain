@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use xelis_vm::ValueCell;
 use crate::{
     api::DataElement,
+    contract::InterContractPermission,
     crypto::{Address, Hash}
 };
 
@@ -44,6 +45,7 @@ pub struct InvokeContractBuilder {
     pub parameters: Vec<ValueCell>,
     #[serde(default)]
     pub deposits: IndexMap<Hash, ContractDepositBuilder>,
+    pub permission: InterContractPermission,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -83,6 +85,7 @@ mod tests {
                     private: false,
                 }
             },
+            permission: InterContractPermission::All,
         };
 
         let data: InvokeContractBuilder = serde_json::from_value(json!(builder)).unwrap();
