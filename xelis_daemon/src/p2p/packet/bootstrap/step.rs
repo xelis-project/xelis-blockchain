@@ -40,8 +40,9 @@ use crate::{
 pub const MAX_ITEMS_PER_PAGE: usize = 1024; // 1k items per page
 
 // Contract Stores can be a big packet, we must ensure that we are below the max packet size
+// 8 overhead for the packet bootstrap id
 static_assert!(
-    MAX_ITEMS_PER_PAGE * (MAX_KEY_SIZE + MAX_VALUE_SIZE) + 32 <= PEER_MAX_PACKET_SIZE as usize,
+    8 + MAX_ITEMS_PER_PAGE * (MAX_KEY_SIZE + MAX_VALUE_SIZE) + 32 <= PEER_MAX_PACKET_SIZE as usize,
     "Contract Stores packet must be below max packet size"
 );
 

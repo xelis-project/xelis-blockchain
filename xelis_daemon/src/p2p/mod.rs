@@ -2289,11 +2289,11 @@ impl<S: Storage> P2pServer<S> {
                 }
             },
             Packet::BootstrapChainRequest(request) => {
-                self.handle_bootstrap_chain_request(peer, request.step()).await?;
+                self.handle_bootstrap_chain_request(peer, request).await?;
             },
             Packet::BootstrapChainResponse(response) => {
                 debug!("Received a bootstrap chain response ({:?}) from {}", response.kind(), peer);
-                if let Some(sender) = peer.get_next_bootstrap_request().await {
+                if let Some(sender) = peer.get_bootstrap_request_with_id(response.id()).await {
                     trace!("Sending bootstrap chain response ({:?})", response.kind());
                     let response = response.response();
                     if let Err(e) = sender.send(response) {

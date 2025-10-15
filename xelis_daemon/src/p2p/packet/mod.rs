@@ -131,7 +131,9 @@ impl Packet<'_> {
             | Packet::ChainResponse(_)
             | Packet::NotifyInventoryRequest(_)
             | Packet::PeerDisconnected(_)
-            | Packet::Ping(_) => false,
+            | Packet::Ping(_)
+            | Packet::BootstrapChainRequest(_)
+            | Packet::BootstrapChainResponse(_) => false,
             _ => true,
         }
     }

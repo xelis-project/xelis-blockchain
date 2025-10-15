@@ -37,7 +37,6 @@ use super::{
 use std::{
     num::NonZeroUsize,
     borrow::Cow,
-    collections::VecDeque,
     fmt::{Display, Error, Formatter},
     hash::{Hash as StdHash, Hasher},
     net::{IpAddr, SocketAddr},
@@ -139,7 +138,7 @@ pub struct Peer {
     // Because we are in a TCP stream, we know that all our
     // requests will be answered in the order we sent them
     // So we can use a queue to store the senders and pop them
-    bootstrap_requests: Mutex<VecDeque<oneshot::Sender<StepResponse>>>,
+    bootstrap_requests: Mutex<LruCache<u64, oneshot::Sender<StepResponse>>>,
     // used to wait on chain response when syncing chain
     sync_chain: Mutex<Option<oneshot::Sender<ChainResponse>>>,
     // IP address with local port
@@ -163,6 +162,7 @@ pub struct Peer {
     // Did the sync chain failed?
     // It is maybe another (bad) chain
     sync_chain_failed: AtomicBool,
+    request_id: AtomicU64
 }
 
 impl Peer {
@@ -215,7 +215,7 @@ impl Peer {
             requested_inventory: AtomicBool::new(false),
             pruned_topoheight: AtomicU64::new(pruned_topoheight.unwrap_or(0)),
             is_pruned: AtomicBool::new(pruned_topoheight.is_some()),
-            bootstrap_requests: Mutex::new(VecDeque::new()),
+            bootstrap_requests: Mutex::new(LruCache::new(NonZeroUsize::new(PEER_OBJECTS_CONCURRENCY).expect("PEER_OBJECTS_CONCURRENCY must be non-zero"))),
             sync_chain: Mutex::new(None),
             outgoing_address,
             flags,
@@ -226,6 +226,7 @@ impl Peer {
             objects_semaphore: Semaphore::new(PEER_OBJECTS_CONCURRENCY),
             propagate_txs: AtomicBool::new(propagate_txs),
             sync_chain_failed: AtomicBool::new(false),
+            request_id: AtomicU64::new(0),
         }, rx)
     }
 
@@ -547,14 +548,14 @@ impl Peer {
         counter!("xelis_p2p_bootstrap_requests", "peer" => self.get_id().to_string()).increment(1u64);
 
         let (sender, receiver) = tokio::sync::oneshot::channel();
+        let id = self.request_id.fetch_add(1, Ordering::SeqCst);
+
         {
             let mut senders = self.bootstrap_requests.lock().await;
-
-            // send the packet while holding the lock so we ensure the correct order
-            self.send_packet(Packet::BootstrapChainRequest(BootstrapChainRequest::new(step))).await?;
-
-            senders.push_back(sender);
+            senders.put(id, sender);
         }
+
+        self.send_packet(Packet::BootstrapChainRequest(BootstrapChainRequest::new(id, step))).await?;
 
         let mut exit_channel = self.get_exit_receiver();
         let response = select! {
@@ -565,7 +566,7 @@ impl Peer {
                     // Clear the bootstrap chain channel to preserve the order
                     {
                         let mut senders = self.bootstrap_requests.lock().await;
-                        senders.pop_front();
+                        senders.pop(&id);
                     }
 
                     debug!("Requested bootstrap chain step {:?} has timed out", step_kind);
@@ -615,9 +616,9 @@ impl Peer {
 
     // Get the bootstrap chain channel
     // Like the sync chain channel, but for bootstrap (fast sync) syncing
-    pub async fn get_next_bootstrap_request(&self) -> Option<oneshot::Sender<StepResponse>> {
+    pub async fn get_bootstrap_request_with_id(&self, id: u64) -> Option<oneshot::Sender<StepResponse>> {
         let mut requests = self.bootstrap_requests.lock().await;
-        requests.pop_front()
+        requests.pop(&id)
     }
 
     // Clear all pending requests in case something went wrong
