@@ -839,7 +839,7 @@ impl<S: Storage> P2pServer<S> {
             .map(|p| async move {
                 // Don't select peers that are on a bad chain
                 if p.has_sync_chain_failed() {
-                    trace!("{} has failed chain sync before, skipping...", p);
+                    debug!("{} has failed chain sync before, skipping...", p);
                     return None;
                 }
 
@@ -847,7 +847,7 @@ impl<S: Storage> P2pServer<S> {
                 {
                     let cumulative_difficulty = p.get_cumulative_difficulty().lock().await;
                     if *cumulative_difficulty <= our_cumulative_difficulty {
-                        trace!("{} has a lower cumulative difficulty than us, skipping...", p);
+                        debug!("{} has a lower cumulative difficulty than us, skipping...", p);
                         return None;
                     }
                 }
@@ -856,21 +856,21 @@ impl<S: Storage> P2pServer<S> {
                 if fast_sync {
                     // Ensure the peer support fast sync
                     if !p.fast_sync() {
-                        trace!("{} doesn't support fast sync, skipping...", p);
+                        debug!("{} doesn't support fast sync, skipping...", p);
                         return None;
                     }
 
                     // if we want to fast sync, but this peer is not compatible, we skip it
                     // for this we check that the peer topoheight is not less than the prune safety limit
                     if peer_topoheight < PRUNE_SAFETY_LIMIT || our_topoheight + PRUNE_SAFETY_LIMIT > peer_topoheight {
-                        trace!("{} has a topoheight less than the prune safety limit, skipping...", p);
+                        debug!("{} has a topoheight less than the prune safety limit, skipping...", p);
                         return None;
                     }
                     if let Some(pruned_topoheight) = p.get_pruned_topoheight() {
                         // This shouldn't be possible if following the protocol,
                         // But we may never know if a peer is not following the protocol strictly
                         if peer_topoheight - pruned_topoheight < PRUNE_SAFETY_LIMIT {
-                            trace!("{} has a pruned topoheight {} less than the prune safety limit, skipping...", p, pruned_topoheight);
+                            debug!("{} has a pruned topoheight {} less than the prune safety limit, skipping...", p, pruned_topoheight);
                             return None;
                         }
                     }
@@ -879,7 +879,7 @@ impl<S: Storage> P2pServer<S> {
                     // so we can sync chain from pruned chains
                     if let Some(pruned_topoheight) = p.get_pruned_topoheight() {
                         if pruned_topoheight > our_topoheight {
-                            trace!("{} has a pruned topoheight {} higher than our topoheight {}, skipping...", p, pruned_topoheight, our_topoheight);
+                            debug!("{} has a pruned topoheight {} higher than our topoheight {}, skipping...", p, pruned_topoheight, our_topoheight);
                             return None;
                         }
                     }
@@ -1003,13 +1003,25 @@ impl<S: Storage> P2pServer<S> {
                 false
             };
 
-            let peer_selected = match self.select_random_best_peer(fast_sync, previous_peer).await {
+            let mut peer_selected = match self.select_random_best_peer(fast_sync, previous_peer).await {
                 Ok(peer) => peer,
                 Err(e) => {
                     error!("Error while selecting random best peer for chain sync: {}", e);
                     None
                 }
             };
+
+            if fast_sync && peer_selected.is_none() {
+                // if we wanted to fast sync but no peer was found, try again without fast sync
+                trace!("No peer found for fast sync, trying again without fast sync");
+                peer_selected = match self.select_random_best_peer(false, previous_peer).await {
+                    Ok(peer) => peer,
+                    Err(e) => {
+                        error!("Error while trying to re-select random best peer for chain sync: {}", e);
+                        None
+                    }
+                };
+            }
 
             if let Some(peer) = peer_selected {
                 debug!("Selected for chain sync is {}", peer);
