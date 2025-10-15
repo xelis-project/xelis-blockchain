@@ -304,7 +304,7 @@ impl<S: Storage> P2pServer<S> {
 
                 if let P2pError::Disconnected = e {
                     // Peer disconnected while trying to reorg us, tempban it
-                    if let Err(e) = self.peer_list.temp_ban_address(&peer.get_connection().get_address().ip(), 5 * 60, false).await {
+                    if let Err(e) = self.peer_list.temp_ban_address(&peer.get_connection().get_address().ip(), 60, false).await {
                         debug!("Couldn't tempban {}: {}", peer, e);
                     }
                 }
