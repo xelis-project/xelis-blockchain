@@ -446,6 +446,7 @@ impl<S: Storage> Blockchain<S> {
                 config.disable_fetching_txs_propagated,
                 config.handle_peer_packets_in_dedicated_task,
                 config.enable_compression,
+                config.disable_fast_sync_support,
                 proxy,
             ) {
                 Ok(p2p) => {

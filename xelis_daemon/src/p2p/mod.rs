@@ -218,6 +218,7 @@ impl<S: Storage> P2pServer<S> {
         disable_fetching_txs_propagated: bool,
         handle_peer_packets_in_dedicated_task: bool,
         enable_compression: bool,
+        disable_fast_sync_support: bool,
         proxy: Option<(ProxyKind, SocketAddr, Option<(String, String)>)>,
     ) -> Result<Arc<Self>, P2pError> {
         if tag.as_ref().is_some_and(|tag| tag.len() == 0 || tag.len() > 16) {
@@ -270,6 +271,9 @@ impl<S: Storage> P2pServer<S> {
         }
         if enable_compression {
             flags.insert(Flags::COMPRESSION);
+        }
+        if disable_fast_sync_support {
+            flags.insert(Flags::DISABLE_FAST_SYNC);
         }
 
         let (peer_sender, peer_receiver) = mpsc::channel(1);
@@ -656,7 +660,7 @@ impl<S: Storage> P2pServer<S> {
 
         self.peer_list.add_peer(peer, self.get_max_peers()).await?;
 
-        if peer.sharable() {
+        if peer.shareable() {
             trace!("Locking RPC Server to notify PeerConnected event");
             if let Some(rpc) = self.blockchain.get_rpc().read().await.as_ref() {
                 if rpc.is_event_tracked(&NotifyEvent::PeerConnected).await {
@@ -850,6 +854,12 @@ impl<S: Storage> P2pServer<S> {
 
                 let peer_topoheight = p.get_topoheight();
                 if fast_sync {
+                    // Ensure the peer support fast sync
+                    if !p.fast_sync() {
+                        trace!("{} doesn't support fast sync, skipping...", p);
+                        return None;
+                    }
+
                     // if we want to fast sync, but this peer is not compatible, we skip it
                     // for this we check that the peer topoheight is not less than the prune safety limit
                     if peer_topoheight < PRUNE_SAFETY_LIMIT || our_topoheight + PRUNE_SAFETY_LIMIT > peer_topoheight {
@@ -1143,7 +1153,7 @@ impl<S: Storage> P2pServer<S> {
                             for p in all_peers.iter() {
                                 // don't send him itself
                                 // and don't share a peer that don't want to be shared
-                                if p.get_id() == peer.get_id() || !p.sharable() {
+                                if p.get_id() == peer.get_id() || !p.shareable() {
                                     continue;
                                 }
         
@@ -1343,7 +1353,7 @@ impl<S: Storage> P2pServer<S> {
                 },
                 peer = receiver.recv() => {
                     if let Some(peer) = peer {
-                        if peer.sharable() {
+                        if peer.shareable() {
                             if let Some(rpc) = self.blockchain.get_rpc().read().await.as_ref() {
                                 if rpc.is_event_tracked(&NotifyEvent::PeerDisconnected).await {
                                     debug!("Notifying clients with PeerDisconnected event");
@@ -2306,7 +2316,7 @@ impl<S: Storage> P2pServer<S> {
                     }
                 }
 
-                if peer.sharable() {
+                if peer.shareable() {
                     trace!("Locking RPC Server to notify PeerDisconnected event");
                     if let Some(rpc) = self.blockchain.get_rpc().read().await.as_ref() {
                         if rpc.is_event_tracked(&NotifyEvent::PeerPeerDisconnected).await {

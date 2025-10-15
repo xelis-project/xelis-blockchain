@@ -352,6 +352,11 @@ pub struct P2pConfig {
     #[clap(name = "enable-p2p-compression", long)]
     #[serde(default)]
     pub enable_compression: bool,
+    /// Disable the fast sync support.
+    /// If set to true, others nodes will not be able to use the fast sync mode with us.
+    #[clap(name = "disable-fast-sync-support", long)]
+    #[serde(default)]
+    pub disable_fast_sync_support: bool,
 }
 
 #[derive(Debug, Clone, Copy, clap::ValueEnum, Serialize, Deserialize)]

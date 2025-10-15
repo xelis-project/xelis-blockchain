@@ -152,7 +152,7 @@ impl PeerList {
         let res = peer.signal_exit().await;
  
         // If peer allows us to share it, we have to notify all peers that have this peer in common
-        if notify && peer.sharable() {
+        if notify && peer.shareable() {
             // now remove this peer from all peers that tracked it
             let addr = peer.get_outgoing_address();
             let packet = Bytes::from(Packet::PeerDisconnected(PacketPeerDisconnected::new(*addr)).to_bytes());

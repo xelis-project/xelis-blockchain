@@ -392,9 +392,15 @@ impl Peer {
         self.flags.contains(Flags::COMPRESSION)
     }
 
-    // Get the sharable flag of the peer
-    pub fn sharable(&self) -> bool {
+    // Get the shareable flag of the peer
+    pub fn shareable(&self) -> bool {
         self.flags.contains(Flags::SHARED)
+    }
+
+    // Get the fast sync flag of the peer
+    // If the peer has DISABLE_FAST_SYNC flag, it means it doesn't support fast sync
+    pub fn fast_sync(&self) -> bool {
+        !self.flags.contains(Flags::DISABLE_FAST_SYNC)
     }
 
     // Get the last time we got a fail from the peer

@@ -199,6 +199,8 @@ pub enum P2pError {
     EncryptionError(#[from] EncryptionError),
     #[error(transparent)]
     CompressionError(#[from] CompressionError),
+    #[error("Fast sync support is disabled")]
+    FastSyncDisabled,
     #[error(transparent)]
     Any(#[from] Error)
 }

@@ -38,6 +38,7 @@ use crate::{
             StepResponse,
             MAX_ITEMS_PER_PAGE
         },
+        Flags,
         P2pServer,
         Peer
     }
@@ -50,6 +51,12 @@ impl<S: Storage> P2pServer<S> {
     pub async fn handle_bootstrap_chain_request(self: &Arc<Self>, peer: &Arc<Peer>, request: StepRequest<'_>) -> Result<(), BlockchainError> {
         let request_kind = request.kind();
         debug!("Handle bootstrap chain request {:?} from {}", request_kind, peer);
+
+        // Check if we allow others nodes to use fast sync with us
+        if self.flags.contains(Flags::DISABLE_FAST_SYNC) {
+            debug!("Peer {} requested a bootstrap chain step {:?} but we don't support fast sync", peer, request_kind);
+            return Err(P2pError::FastSyncDisabled.into())
+        }
 
         let storage = self.blockchain.get_storage().read().await;
         let pruned_topoheight = storage.get_pruned_topoheight().await?.unwrap_or(0);

@@ -898,7 +898,7 @@ async fn get_peers<S: Storage>(context: &Context, body: Value) -> Result<Value, 
             let peers_availables = peer_list.get_cloned_peers().await;
 
             let mut peers = Vec::new();
-            for p in peers_availables.iter().filter(|p| p.sharable()) {
+            for p in peers_availables.iter().filter(|p| p.shareable()) {
                 peers.push(get_peer_entry(p).await);
             }
 
