@@ -696,6 +696,32 @@ impl Serializer for StepResponse {
             },
             11 => {
                 let len = reader.read_u16()?;
+                if len > MAX_ITEMS_PER_PAGE as u16 {
+                    debug!("Invalid contracts executions response length: {}", len);
+                    return Err(ReaderError::InvalidValue)
+                }
+
+                let mut executions = IndexSet::with_capacity(len as usize);
+                for _ in 0..len {
+                    let metadata = ScheduledExecutionMetadata::read(reader)?;
+                    if !executions.insert(metadata) {
+                        debug!("Duplicated scheduled execution metadata in Step Response");
+                        return Err(ReaderError::InvalidValue)
+                    }
+                }
+
+                let page = Option::read(reader)?;
+                if let Some(page_number) = &page {
+                    if *page_number == 0 {
+                        debug!("Invalid page number (0) in Step Response");
+                        return Err(ReaderError::InvalidValue)
+                    }
+                }
+
+                Self::ContractsExecutions(executions, page)
+            }
+            12 => {
+                let len = reader.read_u16()?;
                 if len > PRUNE_SAFETY_LIMIT as u16 + 1 {
                     debug!("Invalid blocks metadata response length: {}", len);
                     return Err(ReaderError::InvalidValue)
