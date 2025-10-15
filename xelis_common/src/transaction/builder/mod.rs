@@ -332,6 +332,7 @@ impl TransactionBuilder {
                 let (commitments, deposits_size) = self.estimate_deposits_size(&payload.deposits);
                 commitments_count += commitments;
                 size += deposits_size;
+                size += payload.permission.size();
             },
             TransactionTypeBuilder::DeployContract(payload) => {
                 // Module is in hex format, so we need to divide by 2 for its bytes size
