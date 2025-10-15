@@ -30,6 +30,7 @@ use crate::{
         error::P2pError,
         packet::{
             BlockMetadata,
+            ScheduledExecutionMetadata,
             BootstrapChainResponse,
             ObjectRequest,
             Packet,
@@ -333,6 +334,28 @@ impl<S: Storage> P2pServer<S> {
 
                 StepResponse::ContractStores(entries, page)
             },
+            StepRequest::ContractsExecutions(min, max, page) => {
+                let page = page.unwrap_or(0);
+
+                let stream = storage.get_registered_contract_scheduled_executions_at_maximum_topoheight(min, max).await?
+                    .skip(page as usize * MAX_ITEMS_PER_PAGE)
+                    .take(MAX_ITEMS_PER_PAGE);
+
+                let executions: IndexSet<_> = stream.boxed()
+                    .map(|res| res.map(|(execution_topoheight, registration_topoheight, execution)| ScheduledExecutionMetadata {
+                        execution,
+                        execution_topoheight,
+                        registration_topoheight
+                    }))
+                    .try_collect().await?;
+
+                let page = if executions.len() == MAX_ITEMS_PER_PAGE {
+                    Some(page + 1)
+                } else {
+                    None
+                };
+                StepResponse::ContractsExecutions(executions, page)
+            }
             StepRequest::BlocksMetadata(topoheight) => {
                 // go from the lowest available point until the requested stable topoheight
                 let lower = if topoheight - PRUNE_SAFETY_LIMIT <= pruned_topoheight {
@@ -567,6 +590,9 @@ impl<S: Storage> P2pServer<S> {
                     if page.is_some() {
                         Some(StepRequest::Contracts(our_topoheight, stable_topoheight, page))
                     } else {
+                        // Request all the scheduled executions
+                        self.update_contract_scheduled_executions(peer, our_topoheight, stable_topoheight).await?;
+
                         // Go to next step
                         Some(StepRequest::BlocksMetadata(stable_topoheight))
                     }
@@ -950,6 +976,32 @@ impl<S: Storage> P2pServer<S> {
                     self.handle_contract_balances(peer, contract, stable_topoheight)
                 ).map(|_| ())
             }).await?;
+
+        Ok(())
+    }
+
+    // Request every scheduled executions for contracts
+    // This is done after the contract itself is stored
+    async fn update_contract_scheduled_executions(&self, peer: &Arc<Peer>, our_topoheight: u64, stable_topoheight: u64) -> Result<(), P2pError> {
+        let mut next_page = None;
+        loop {
+            let StepResponse::ContractsExecutions(executions, page) = peer.request_boostrap_chain(StepRequest::ContractsExecutions(our_topoheight, stable_topoheight, next_page)).await? else {
+                // shouldn't happen
+                error!("Received an invalid StepResponse (how ?) while fetching scheduled executions");
+                return Err(P2pError::InvalidPacket.into())
+            };
+
+            debug!("Storing {} scheduled executions for contracts", executions.len());
+            let mut storage = self.blockchain.get_storage().write().await;
+            for execution in executions {
+                storage.set_contract_scheduled_execution_at_topoheight(&execution.execution.contract, execution.registration_topoheight, &execution.execution, execution.execution_topoheight).await?;
+            }
+
+            next_page = page;
+            if next_page.is_none() {
+                break;
+            }
+        }
 
         Ok(())
     }

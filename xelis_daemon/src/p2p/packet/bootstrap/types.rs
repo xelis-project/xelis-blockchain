@@ -1,10 +1,12 @@
 use std::hash::{Hasher, Hash as StdHash};
 use indexmap::IndexSet;
 use xelis_common::{
+    block::TopoHeight,
+    contract::ScheduledExecution,
     crypto::Hash,
     difficulty::{CumulativeDifficulty, Difficulty},
-    varuint::VarUint,
-    serializer::*
+    serializer::*,
+    varuint::VarUint
 };
 
 use crate::core::storage::types::TopoHeightMetadata;
@@ -90,5 +92,39 @@ impl Serializer for BlockMetadata {
         + self.cumulative_difficulty.size()
         + self.p.size()
         + self.executed_transactions.size()
+    }
+}
+
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ScheduledExecutionMetadata {
+    pub execution: ScheduledExecution,
+    pub execution_topoheight: TopoHeight,
+    pub registration_topoheight: TopoHeight
+}
+
+impl Serializer for ScheduledExecutionMetadata {
+    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
+        let execution = ScheduledExecution::read(reader)?;
+        let execution_topoheight = TopoHeight::read(reader)?;
+        let registration_topoheight = TopoHeight::read(reader)?;
+
+        Ok(Self {
+            execution,
+            execution_topoheight,
+            registration_topoheight
+        })
+    }
+
+    fn write(&self, writer: &mut Writer) {
+        self.execution.write(writer);
+        self.execution_topoheight.write(writer);
+        self.registration_topoheight.write(writer);
+    }
+
+    fn size(&self) -> usize {
+        self.execution.size()
+        + self.execution_topoheight.size()
+        + self.registration_topoheight.size()
     }
 }

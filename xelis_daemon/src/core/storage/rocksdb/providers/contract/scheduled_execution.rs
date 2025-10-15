@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use futures::{stream, Stream};
 use log::trace;
 use rocksdb::Direction;
 use xelis_common::{block::TopoHeight, contract::ScheduledExecution, crypto::Hash};
@@ -59,6 +60,30 @@ impl ContractScheduledExecutionProvider for RocksStorage {
         let prefix = topoheight.to_be_bytes();
         self.iter::<(), ScheduledExecution>(Column::DelayedExecution, IteratorMode::WithPrefix(&prefix, Direction::Forward))
             .map(|iter| iter.map(|res| res.map(|(_, v)| v)))
+    }
+
+    async fn get_registered_contract_scheduled_executions_at_maximum_topoheight<'a>(&'a self, minimum_topoheight: TopoHeight, maximum_topoheight: TopoHeight) -> Result<impl Stream<Item = Result<(TopoHeight, TopoHeight, ScheduledExecution), BlockchainError>> + Send + 'a, BlockchainError> {
+        let min = minimum_topoheight.to_be_bytes();
+        let max = (maximum_topoheight + 1).to_be_bytes();
+        let stream = self.iter_keys::<(TopoHeight, ContractId, TopoHeight)>(Column::DelayedExecutionRegistrations, IteratorMode::Range {
+            lower_bound: &min,
+            upper_bound: &max,
+            direction: Direction::Reverse
+        })?
+            .map(move |res| {
+                let (registration, contract_id, execution_topoheight) = res?;
+                if registration <= maximum_topoheight && registration >= minimum_topoheight {
+                    let key = Self::get_contract_scheduled_execution_key(contract_id, execution_topoheight);
+                    let execution = self.load_from_disk(Column::DelayedExecution, &key)?;
+
+                    Ok(Some((execution_topoheight, registration, execution)))
+                } else {
+                    Ok(None)
+                }
+            })
+            .filter_map(Result::transpose);
+
+        Ok(stream::iter(stream))
     }
 }
 

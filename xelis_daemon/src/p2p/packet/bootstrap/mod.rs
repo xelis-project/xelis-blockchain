@@ -1,10 +1,10 @@
 mod step;
-mod block_metadata;
+mod types;
 
 use xelis_common::serializer::*;
 
 pub use step::*;
-pub use block_metadata::BlockMetadata;
+pub use types::*;
 
 #[derive(Debug)]
 pub struct BootstrapChainRequest<'a> {

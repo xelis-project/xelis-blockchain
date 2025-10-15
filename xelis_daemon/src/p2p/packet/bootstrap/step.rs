@@ -24,7 +24,7 @@ use xelis_vm::{Module, ValueCell};
 use crate::{
     config::{CHAIN_SYNC_REQUEST_MAX_BLOCKS, PEER_MAX_PACKET_SIZE, PRUNE_SAFETY_LIMIT},
     p2p::packet::{
-        bootstrap::BlockMetadata,
+        bootstrap::{types::ScheduledExecutionMetadata, BlockMetadata},
         chain::{BlockId, CommonPoint}
     }
 };
@@ -104,6 +104,8 @@ pub enum StepRequest<'a> {
     // Request the contract stores
     // Hash of the contract, topoheight, page
     ContractStores(Cow<'a, Hash>, TopoHeight, Option<u64>),
+    // Min topoheight, Max topoheight, pagination
+    ContractsExecutions(TopoHeight, TopoHeight, Option<u64>),
     // Request blocks metadata starting topoheight
     BlocksMetadata(TopoHeight)
 }
@@ -122,6 +124,7 @@ impl<'a> StepRequest<'a> {
             Self::ContractModule(_, _, _) => StepKind::Contracts,
             Self::ContractBalances(_, _, _) => StepKind::Contracts,
             Self::ContractStores(_, _, _) => StepKind::Contracts,
+            Self::ContractsExecutions(_, _, _) => StepKind::Contracts,
             Self::BlocksMetadata(_) => StepKind::BlocksMetadata
         }
     }
@@ -137,6 +140,7 @@ impl<'a> StepRequest<'a> {
             Self::Contracts(_, topo, _) => topo,
             Self::ContractModule(_, topo, _) => topo,
             Self::ContractBalances(_, topo, _) => topo,
+            Self::ContractStores(_, topo, _) => topo,
             Self::BlocksMetadata(topo) => topo,
             _ => return None,
         })
@@ -294,6 +298,24 @@ impl Serializer for StepRequest<'_> {
                 Self::ContractStores(hash, topoheight, page)
             },
             11 => {
+                let min = reader.read_u64()?;
+                let max = reader.read_u64()?;
+
+                if min > max {
+                    debug!("Invalid min topoheight in Step Request");
+                    return Err(ReaderError::InvalidValue)
+                }
+
+                let page = Option::read(reader)?;
+                if let Some(page_number) = &page {
+                    if *page_number == 0 {
+                        debug!("Invalid page number (0) in Step Request");
+                        return Err(ReaderError::InvalidValue)
+                    }
+                }
+                Self::ContractsExecutions(min, max, page)
+            },
+            12 => {
                 Self::BlocksMetadata(reader.read_u64()?)
             },
             id => {
@@ -373,8 +395,14 @@ impl Serializer for StepRequest<'_> {
                 topoheight.write(writer);
                 page.write(writer);
             },
-            Self::BlocksMetadata(topoheight) => {
+            Self::ContractsExecutions(min, max, page) => {
                 writer.write_u8(11);
+                writer.write_u64(min);
+                writer.write_u64(max);
+                page.write(writer);
+            },
+            Self::BlocksMetadata(topoheight) => {
+                writer.write_u8(12);
                 writer.write_u64(topoheight);
             },
         };
@@ -382,7 +410,7 @@ impl Serializer for StepRequest<'_> {
 
     fn size(&self) -> usize {
         let size = match self {
-            Self::ChainInfo(blocks) => 1 + blocks.size(),
+            Self::ChainInfo(blocks) => 1 + blocks.iter().map(|b| b.size()).sum::<usize>(),
             Self::Assets(min, max, page) => min.size() + max.size() + page.size(),
             Self::AssetsSupply(topoheight, assets) => topoheight.size() + assets.size(),
             Self::Keys(min, max, page) => min.size() + max.size() + page.size(),
@@ -393,6 +421,7 @@ impl Serializer for StepRequest<'_> {
             Self::ContractModule(min, max, hash) => min.size() + max.size() + hash.size(),
             Self::ContractBalances(hash, topoheight, page) => hash.size() + topoheight.size() + page.size(),
             Self::ContractStores(hash, topoheight, page) => hash.size() + topoheight.size() + page.size(),
+            Self::ContractsExecutions(min, max, page) => min.size() + max.size() + page.size(),
             Self::BlocksMetadata(topoheight) => topoheight.size()
         };
         // 1 for the id
@@ -430,6 +459,8 @@ pub enum StepResponse {
     // Contract assets
     // all assets detected, pagination
     ContractStores(IndexMap<ValueCell, ValueCell>, Option<u64>),
+    // Contract executions
+    ContractsExecutions(IndexSet<ScheduledExecutionMetadata>, Option<u64>),
     // top blocks metadata
     BlocksMetadata(IndexSet<BlockMetadata>),
 }
@@ -448,6 +479,7 @@ impl StepResponse {
             Self::ContractModule(_) => StepKind::Contracts,
             Self::ContractBalances(_, _) => StepKind::Contracts,
             Self::ContractStores(_, _) => StepKind::Contracts,
+            Self::ContractsExecutions(_, _) => StepKind::Contracts,
             Self::BlocksMetadata(_) => StepKind::BlocksMetadata
         }
     }
@@ -742,8 +774,13 @@ impl Serializer for StepResponse {
                 entries.write(writer);
                 page.write(writer);
             },
-            Self::BlocksMetadata(blocks) => {
+            Self::ContractsExecutions(executions, page) => {
                 writer.write_u8(11);
+                executions.write(writer);
+                page.write(writer);
+            },
+            Self::BlocksMetadata(blocks) => {
+                writer.write_u8(12);
                 blocks.write(writer);
             }
         };
@@ -762,6 +799,7 @@ impl Serializer for StepResponse {
             Self::ContractModule(metadata) => metadata.size(),
             Self::ContractBalances(assets, page) => assets.size() + page.size(),
             Self::ContractStores(entries, page) => entries.size() + page.size(),
+            Self::ContractsExecutions(executions, page) => executions.size() + page.size(),
             Self::BlocksMetadata(blocks) => blocks.size()
         };
         // 1 for the id
