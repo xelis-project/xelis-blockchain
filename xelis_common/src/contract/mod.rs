@@ -821,6 +821,15 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             5,
             Some(Type::Optional(Box::new(Type::U64)))
         );
+
+        env.register_native_function(
+            "is_mintable",
+            Some(max_supply_type.clone()),
+            vec![],
+            FunctionHandler::Sync(max_supply_mode_is_mintable),
+            5,
+            Some(Type::Bool)
+        );
     }
 
     // Signature

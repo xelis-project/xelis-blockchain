@@ -260,3 +260,16 @@ pub fn max_supply_mode_get_max_supply(zelf: FnInstance, _: FnParams, _: &ModuleM
         None => Primitive::Null.into()
     }))
 }
+
+pub fn max_supply_mode_is_mintable(zelf: FnInstance, _: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
+    let zelf = zelf?;
+    let (id, _) = zelf.as_enum()?;
+
+    let mintable = match id {
+        0 => true, // None
+        1 => false, // Fixed
+        2 => true, // Mintable
+        _ => return Err(EnvironmentError::InvalidType)
+    };
+    Ok(SysCallResult::Return(Primitive::Boolean(mintable).into()))
+}
