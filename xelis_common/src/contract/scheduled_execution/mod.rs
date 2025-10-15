@@ -137,7 +137,7 @@ async fn schedule_execution<'a, 'ty, 'r, P: ContractProvider>(
     match kind {
         ScheduledExecutionKind::TopoHeight(topoheight) => {
             if topoheight <= state.topoheight {
-                return Ok(SysCallResult::Return(Primitive::Boolean(false).into()));
+                return Ok(SysCallResult::Return(Primitive::Null.into()));
             }
 
             if provider.has_scheduled_execution_at_topoheight(&metadata.contract, topoheight).await? {
