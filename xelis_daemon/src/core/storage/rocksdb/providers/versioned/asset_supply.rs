@@ -78,7 +78,7 @@ impl VersionedAssetsCirculatingSupplyProvider for RocksStorage {
             for res in Self::iter_owned_internal::<(), Asset>(&self.db, self.snapshot.as_ref(), IteratorMode::Start, Column::Assets)? {
                 let (_, asset) = res?;
 
-                if let Some(topo) = asset.data_pointer {
+                if let Some(topo) = asset.supply_pointer {
                     // We fetch the last version to take its previous topoheight
                     // And we loop on it to delete them all until the end of the chained data
                     let mut prev_version = Some(topo);

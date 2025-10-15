@@ -516,23 +516,26 @@ impl<S: Storage> P2pServer<S> {
                 },
                 // fetch all assets from peer
                 StepResponse::Assets(assets, next_page) => {
-                    let hashes = assets.keys().cloned().collect();
-                    let StepResponse::AssetsSupply(supply) = peer.request_boostrap_chain(StepRequest::AssetsSupply(stable_topoheight, Cow::Owned(hashes))).await? else {
-                        // shouldn't happen
-                        error!("Received an invalid StepResponse (how ?) while fetching assets supply");
-                        return Err(P2pError::InvalidPacket.into())
-                    };
+                    if !assets.is_empty() {
+                        let hashes = assets.keys().cloned().collect();
 
-                    {
-                        let mut storage = self.blockchain.get_storage().write().await;
-                        for ((asset, data), supply) in assets.into_iter().zip(supply) {
-                            info!("Saving asset {} at topoheight {}", asset, stable_topoheight);
-                            storage.add_asset(&asset, stable_topoheight, VersionedAssetData::new(data, None)).await?;
-
-                            if let Some(supply) = supply {
-                                storage.set_last_circulating_supply_for_asset(&asset, stable_topoheight, &VersionedSupply::new(supply, None)).await?;
-                            } else {
-                                warn!("No asset supply found for {}", asset);
+                        let StepResponse::AssetsSupply(supply) = peer.request_boostrap_chain(StepRequest::AssetsSupply(stable_topoheight, Cow::Owned(hashes))).await? else {
+                            // shouldn't happen
+                            error!("Received an invalid StepResponse (how ?) while fetching assets supply");
+                            return Err(P2pError::InvalidPacket.into())
+                        };
+    
+                        {
+                            let mut storage = self.blockchain.get_storage().write().await;
+                            for ((asset, data), supply) in assets.into_iter().zip(supply) {
+                                info!("Saving asset {} at topoheight {}", asset, stable_topoheight);
+                                storage.add_asset(&asset, stable_topoheight, VersionedAssetData::new(data, None)).await?;
+    
+                                if let Some(supply) = supply {
+                                    storage.set_last_circulating_supply_for_asset(&asset, stable_topoheight, &VersionedSupply::new(supply, None)).await?;
+                                } else {
+                                    warn!("No asset supply found for {}", asset);
+                                }
                             }
                         }
                     }

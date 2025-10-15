@@ -50,6 +50,7 @@ impl VersionedNonceProvider for RocksStorage {
 
     // delete versioned nonces above topoheight
     async fn delete_versioned_nonces_above_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError> {
+        trace!("delete versioned nonces above topoheight {}", topoheight);
         let start = (topoheight + 1).to_be_bytes();
         for res in Self::iter_owned_internal::<RawBytes, Option<TopoHeight>>(&self.db, self.snapshot.as_ref(), IteratorMode::From(&start, Direction::Forward), Column::VersionedNonces)? {
             let (key, prev_topo) = res?;
@@ -82,6 +83,7 @@ impl VersionedNonceProvider for RocksStorage {
 
     // delete versioned nonces below topoheight
     async fn delete_versioned_nonces_below_topoheight(&mut self, topoheight: TopoHeight, keep_last: bool) -> Result<(), BlockchainError> {
+        trace!("delete versioned nonces below topoheight {}", topoheight);
         if keep_last {
             for res in Self::iter_owned_internal::<(), Account>(&self.db, self.snapshot.as_ref(), IteratorMode::Start, Column::Account)? {
                 let (_, account) = res?;

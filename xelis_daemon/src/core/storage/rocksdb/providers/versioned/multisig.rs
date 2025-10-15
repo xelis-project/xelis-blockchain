@@ -24,6 +24,7 @@ use crate::core::{
 impl VersionedMultiSigProvider for RocksStorage {
     // delete versioned multisigs at topoheight
     async fn delete_versioned_multisigs_at_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError> {
+        trace!("delete versioned multisigs at topoheight {}", topoheight);
         let prefix = topoheight.to_be_bytes();
         for res in Self::iter_owned_internal::<RawBytes, Option<TopoHeight>>(&self.db, self.snapshot.as_ref(), IteratorMode::WithPrefix(&prefix, Direction::Forward), Column::VersionedMultisig)? {
             let (key, prev_topo) = res?;
@@ -45,6 +46,7 @@ impl VersionedMultiSigProvider for RocksStorage {
 
     // delete versioned multisigs above topoheight
     async fn delete_versioned_multisigs_above_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError> {
+        trace!("delete versioned multisigs above topoheight {}", topoheight);
         let start = (topoheight + 1).to_be_bytes();
         for res in Self::iter_owned_internal::<RawBytes, Option<TopoHeight>>(&self.db, self.snapshot.as_ref(), IteratorMode::From(&start, Direction::Forward), Column::VersionedMultisig)? {
             let (key, prev_topo) = res?;
@@ -77,6 +79,7 @@ impl VersionedMultiSigProvider for RocksStorage {
 
     // delete versioned multisigs below topoheight
     async fn delete_versioned_multisigs_below_topoheight(&mut self, topoheight: TopoHeight, keep_last: bool) -> Result<(), BlockchainError> {
+        trace!("delete versioned multisigs below topoheight {}", topoheight);
         if keep_last {
             for res in Self::iter_owned_internal::<(), Account>(&self.db, self.snapshot.as_ref(), IteratorMode::Start, Column::Account)? {
                 let (_, account) = res?;

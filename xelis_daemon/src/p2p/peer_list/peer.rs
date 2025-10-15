@@ -769,7 +769,11 @@ impl Display for Peer {
         self.update_fail_count_default();
         let peers = if let Ok(peers) = self.get_peers().try_lock() {
             if log_enabled!(Level::Trace) {
-                format!("{}", peers.iter().map(|(p, d)| format!("{} = {:?}", p, d)).collect::<Vec<_>>().join(", "))
+                let peers = peers.iter()
+                    .map(|(p, d)| format!("{} = {:?}", p, d))
+                    .collect::<Vec<_>>();
+
+                format!("[{}]", peers.join(", "))
             } else {
                 format!("{}", peers.len())
             }
