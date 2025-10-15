@@ -6,16 +6,17 @@ use crate::{crypto::Hash, serializer::*};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ContractCallChunk {
-    None,
+    // All chunks are allowed
     All,
+    // Only the specified chunks are allowed
     Specific(IndexSet<u16>),
+    // All chunks are allowed except the specified ones
     Exclude(IndexSet<u16>),
 }
 
 impl ContractCallChunk {
     pub fn allows(&self, chunk_id: u16) -> bool {
         match self {
-            ContractCallChunk::None => false,
             ContractCallChunk::All => true,
             ContractCallChunk::Specific(chunks) => chunks.contains(&chunk_id),
             ContractCallChunk::Exclude(chunks) => !chunks.contains(&chunk_id),
@@ -26,17 +27,16 @@ impl ContractCallChunk {
 impl Serializer for ContractCallChunk {
     fn write(&self, writer: &mut Writer) {
         match self {
-            ContractCallChunk::None => writer.write_u8(0),
-            ContractCallChunk::All => writer.write_u8(1),
+            ContractCallChunk::All => writer.write_u8(0),
             ContractCallChunk::Specific(chunks) => {
-                writer.write_u8(2);
+                writer.write_u8(1);
                 writer.write_u8(chunks.len() as u8);
                 for chunk in chunks {
                     writer.write_u16(*chunk);
                 }
             }
             ContractCallChunk::Exclude(chunks) => {
-                writer.write_u8(3);
+                writer.write_u8(2);
                 writer.write_u8(chunks.len() as u8);
                 for chunk in chunks {
                     writer.write_u16(*chunk);
@@ -48,9 +48,8 @@ impl Serializer for ContractCallChunk {
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
         let tag = reader.read_u8()?;
         match tag {
-            0 => Ok(ContractCallChunk::None),
-            1 => Ok(ContractCallChunk::All),
-            2 => {
+            0 => Ok(ContractCallChunk::All),
+            1 => {
                 let len = reader.read_u8()? as usize;
                 let mut chunks = IndexSet::with_capacity(len);
                 for _ in 0..len {
@@ -61,7 +60,7 @@ impl Serializer for ContractCallChunk {
                 }
                 Ok(ContractCallChunk::Specific(chunks))
             }
-            3 => {
+            2 => {
                 let len = reader.read_u8()? as usize;
                 let mut chunks = IndexSet::with_capacity(len);
                 for _ in 0..len {
@@ -78,7 +77,6 @@ impl Serializer for ContractCallChunk {
 
     fn size(&self) -> usize {
         match self {
-            ContractCallChunk::None => 1,
             ContractCallChunk::All => 1,
             ContractCallChunk::Specific(chunks) => 1 + 1 + chunks.len() * 2,
             ContractCallChunk::Exclude(chunks) => 1 + 1 + chunks.len() * 2,
