@@ -28,7 +28,7 @@ use xelis_common::{
 };
 
 use crate::{
-    config::{CHAIN_SYNC_TOP_BLOCKS, PEER_OBJECTS_CONCURRENCY, STABLE_LIMIT},
+    config::{CHAIN_SYNC_TOP_BLOCKS, MILLIS_PER_SECOND, PEER_OBJECTS_CONCURRENCY, STABLE_LIMIT},
     core::{
         blockchain::{BroadcastOption, PreVerifyBlock},
         error::BlockchainError,
@@ -88,7 +88,9 @@ impl<S: Storage> P2pServer<S> {
         // This prevent us from requesting too fast the chain from peer
         *last_chain_sync = get_current_time_in_millis();
 
-        peer.set_last_chain_sync_out(*last_chain_sync);
+        // Set the last chain sync time in seconds for the peer
+        peer.set_last_chain_sync_out(*last_chain_sync / MILLIS_PER_SECOND);
+
         let response = peer.request_sync_chain(packet).await?;
         debug!("Received a chain response of {} blocks", response.blocks_size());
 
