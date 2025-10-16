@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use rocksdb::Direction;
 use xelis_common::{
     block::TopoHeight,
-    serializer::{RawBytes, Serializer}, versioned_type::Versioned
+    serializer::{RawBytes, Serializer},
 };
 use crate::core::{
     error::BlockchainError,
@@ -82,40 +82,6 @@ impl VersionedContractProvider for RocksStorage {
     // delete versioned contracts below topoheight
     async fn delete_versioned_contracts_below_topoheight(&mut self, topoheight: TopoHeight, keep_last: bool) -> Result<(), BlockchainError> {
         trace!("delete versioned contracts below topoheight {}", topoheight);
-        if keep_last {
-            for res in Self::iter_owned_internal::<(), Contract>(&self.db, self.snapshot.as_ref(), IteratorMode::Start, Column::Contracts)? {
-                let (_, contract) = res?;
-
-                if let Some(topo) = contract.module_pointer {
-                    // We fetch the last version to take its previous topoheight
-                    // And we loop on it to delete them all until the end of the chained data
-                    let mut prev_version = Some(topo);
-                    // If we are already below the threshold, we can directly erase without patching
-                    let mut patched = topo < topoheight;
-                    while let Some(prev_topo) = prev_version {
-                        let key = Self::get_versioned_contract_key(contract.id, prev_topo);
-    
-                        // Delete this version from DB if its below the threshold
-                        prev_version = self.load_from_disk(Column::VersionedContracts, &key)?;
-                        if patched {
-                            Self::remove_from_disk_internal(&self.db, self.snapshot.as_mut(), Column::VersionedContracts, &key)?;
-                        } else {
-                            if prev_version.is_some_and(|v| v < topoheight) {
-                                trace!("Patching versioned data at topoheight {}", topoheight);
-                                patched = true;
-                                let mut data: Versioned<RawBytes> = self.load_from_disk(Column::VersionedContracts, &key)?;
-                                data.set_previous_topoheight(None);
-
-                                Self::insert_into_disk_internal(&self.db, self.snapshot.as_mut(), Column::VersionedContracts, &key, &data)?;
-                            }
-                        }
-                    }
-                }
-            }
-
-            Ok(())
-        } else {
-            self.delete_versioned_data_below_topoheight(Column::VersionedContracts, topoheight)
-        }
+        self.delete_versioned_below_topoheight::<Contract, ContractId>(Column::Contracts, Column::VersionedContracts, topoheight, keep_last, |_, v| Ok((v.id, v.module_pointer)))
     }
 }

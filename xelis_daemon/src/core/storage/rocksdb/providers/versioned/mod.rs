@@ -2,7 +2,7 @@ use rocksdb::Direction;
 use log::trace;
 use xelis_common::{
     block::TopoHeight,
-    serializer::RawBytes,
+    serializer::{RawBytes, Serializer},
     versioned_type::Versioned
 };
 use crate::core::{
@@ -71,31 +71,54 @@ impl RocksStorage {
         Ok(())
     }
 
-    pub fn delete_versioned_below_topoheight(&mut self, column_pointer: Column, column_versioned: Column, topoheight: TopoHeight, keep_last: bool) -> Result<(), BlockchainError> {
+    pub fn delete_versioned_below_topoheight_default(
+        &mut self,
+        column_pointer: Column,
+        column_versioned: Column,
+        topoheight: TopoHeight,
+        keep_last: bool,
+    ) -> Result<(), BlockchainError> {
+        self.delete_versioned_below_topoheight::<_, RawBytes>(column_pointer, column_versioned, topoheight, keep_last, |k, v| Ok((k, v)))
+    }
+
+    pub fn delete_versioned_below_topoheight<V: Serializer, K: Serializer>(
+        &mut self,
+        column_pointer: Column,
+        column_versioned: Column,
+        topoheight: TopoHeight,
+        keep_last: bool,
+        mut mapper: impl FnMut(RawBytes, V) -> Result<(K, Option<TopoHeight>), BlockchainError>,
+    ) -> Result<(), BlockchainError> {
         if keep_last {
-            for res in Self::iter_owned_internal::<RawBytes, TopoHeight>(&self.db, self.snapshot.as_ref(), IteratorMode::Start, column_pointer)? {
+            for res in Self::iter_owned_internal::<RawBytes, V>(&self.db, self.snapshot.as_ref(), IteratorMode::Start, column_pointer)? {
                 let (key, pointer) = res?;
 
                 // We fetch the last version to take its previous topoheight
                 // And we loop on it to delete them all until the end of the chained data
-                let mut prev_version = Some(pointer);
+                let (mapped_key, mut prev_version) = mapper(key, pointer)?;
                 // If we are already below the threshold, we can directly erase without patching
-                let mut patched = pointer < topoheight;
+                let mut patched = false;
 
                 // Craft by hand the key
-                let mut versioned_key = vec![0; key.len() + 8];
-                versioned_key[8..].copy_from_slice(&key);
-                
-                while let Some(prev_topo) = prev_version {
+                let bytes = mapped_key.to_bytes();
+                let mut versioned_key = vec![0; bytes.len() + 8];
+                versioned_key[8..].copy_from_slice(&bytes);
+
+                trace!("pointer detected is {:?}", prev_version);
+                while let Some(prev_topo) = prev_version.take() {
+                    trace!("loading versioned data at topoheight {}", prev_topo);
+
                     versioned_key[0..8].copy_from_slice(&prev_topo.to_be_bytes());
 
-                    // Delete this version from DB if its below the threshold
+                    // Fetch the previous version before potentially deleting it
                     prev_version = self.load_from_disk(column_versioned, &versioned_key)?;
                     if patched {
+                        trace!("deleting versioned data at topoheight {}", prev_topo);
                         Self::remove_from_disk_internal(&self.db, self.snapshot.as_mut(), column_versioned, &versioned_key)?;
-                    } else if prev_version.is_some_and(|v| v < topoheight) {
+                    } else if prev_topo < topoheight {
                         trace!("Patching versioned data at topoheight {}", topoheight);
                         patched = true;
+
                         let mut data: Versioned<RawBytes> = self.load_from_disk(column_versioned, &versioned_key)?;
                         data.set_previous_topoheight(None);
 

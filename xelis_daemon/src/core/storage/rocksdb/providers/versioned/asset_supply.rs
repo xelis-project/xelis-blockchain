@@ -3,7 +3,7 @@ use log::trace;
 use rocksdb::Direction;
 use xelis_common::{
     block::TopoHeight,
-    serializer::{RawBytes, Serializer}, versioned_type::Versioned
+    serializer::{RawBytes, Serializer},
 };
 use crate::core::{
     error::BlockchainError,
@@ -74,40 +74,6 @@ impl VersionedAssetsCirculatingSupplyProvider for RocksStorage {
 
     async fn delete_versioned_assets_supply_below_topoheight(&mut self, topoheight: TopoHeight, keep_last: bool) -> Result<(), BlockchainError> {
         trace!("delete versioned assets below topoheight {}", topoheight);
-        if keep_last {
-            for res in Self::iter_owned_internal::<(), Asset>(&self.db, self.snapshot.as_ref(), IteratorMode::Start, Column::Assets)? {
-                let (_, asset) = res?;
-
-                if let Some(topo) = asset.supply_pointer {
-                    // We fetch the last version to take its previous topoheight
-                    // And we loop on it to delete them all until the end of the chained data
-                    let mut prev_version = Some(topo);
-                    // If we are already below the threshold, we can directly erase without patching
-                    let mut patched = topo < topoheight;
-                    while let Some(prev_topo) = prev_version {
-                        let key = Self::get_asset_versioned_key(asset.id, prev_topo);
-    
-                        // Delete this version from DB if its below the threshold
-                        prev_version = self.load_from_disk(Column::VersionedAssetsSupply, &key)?;
-                        if patched {
-                            Self::remove_from_disk_internal(&self.db, self.snapshot.as_mut(), Column::VersionedAssetsSupply, &key)?;
-                        } else {
-                            if prev_version.is_some_and(|v| v < topoheight) {
-                                trace!("Patching versioned data at topoheight {}", topoheight);
-                                patched = true;
-                                let mut data: Versioned<RawBytes> = self.load_from_disk(Column::VersionedAssetsSupply, &key)?;
-                                data.set_previous_topoheight(None);
-
-                                Self::insert_into_disk_internal(&self.db, self.snapshot.as_mut(), Column::VersionedAssetsSupply, &key, &data)?;
-                            }
-                        }
-                    }
-                }
-            }
-
-            Ok(())
-        } else {
-            self.delete_versioned_data_below_topoheight(Column::VersionedAssetsSupply, topoheight)
-        }
+        self.delete_versioned_below_topoheight::<Asset, AssetId>(Column::Assets, Column::VersionedAssetsSupply, topoheight, keep_last, |_, v| Ok((v.id, v.supply_pointer)))
     }
 }

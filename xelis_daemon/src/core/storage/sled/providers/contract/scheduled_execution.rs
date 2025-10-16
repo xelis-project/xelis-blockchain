@@ -73,7 +73,7 @@ impl ContractScheduledExecutionProvider for SledStorage {
 
     // Get the registered scheduled executions at maximum topoheight (inclusive)
     // Returns a stream of (execution_topoheight, registration_topoheight, execution)
-    async fn get_registered_contract_scheduled_executions_at_maximum_topoheight<'a>(&'a self, minimum_topoheight: TopoHeight, maximum_topoheight: TopoHeight) -> Result<impl Stream<Item = Result<(TopoHeight, TopoHeight, ScheduledExecution), BlockchainError>> + Send + 'a, BlockchainError> {
+    async fn get_registered_contract_scheduled_executions_in_range<'a>(&'a self, minimum_topoheight: TopoHeight, maximum_topoheight: TopoHeight) -> Result<impl Stream<Item = Result<(TopoHeight, TopoHeight, ScheduledExecution), BlockchainError>> + Send + 'a, BlockchainError> {
         trace!("get registered contract scheduled executions at maximum topoheight {}", maximum_topoheight);
 
         let stream = stream::iter(Self::iter_keys(self.snapshot.as_ref(), &self.contracts_scheduled_executions_registrations))

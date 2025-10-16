@@ -24,6 +24,6 @@ impl VersionedContractBalanceProvider for RocksStorage {
 
     async fn delete_versioned_contract_balances_below_topoheight(&mut self, topoheight: TopoHeight, keep_last: bool) -> Result<(), BlockchainError> {
         trace!("delete versioned contract balances below topoheight {}", topoheight);
-        self.delete_versioned_below_topoheight(Column::ContractsBalances, Column::VersionedContractsBalances, topoheight, keep_last)
+        self.delete_versioned_below_topoheight_default(Column::ContractsBalances, Column::VersionedContractsBalances, topoheight, keep_last)
     }
 }

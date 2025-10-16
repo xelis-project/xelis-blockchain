@@ -4,7 +4,6 @@ use log::trace;
 use xelis_common::{
     block::TopoHeight,
     serializer::{RawBytes, Serializer},
-    versioned_type::Versioned
 };
 use crate::core::{
     error::BlockchainError,
@@ -80,40 +79,6 @@ impl VersionedMultiSigProvider for RocksStorage {
     // delete versioned multisigs below topoheight
     async fn delete_versioned_multisigs_below_topoheight(&mut self, topoheight: TopoHeight, keep_last: bool) -> Result<(), BlockchainError> {
         trace!("delete versioned multisigs below topoheight {}", topoheight);
-        if keep_last {
-            for res in Self::iter_owned_internal::<(), Account>(&self.db, self.snapshot.as_ref(), IteratorMode::Start, Column::Account)? {
-                let (_, account) = res?;
-
-                if let Some(topo) = account.multisig_pointer {
-                    // We fetch the last version to take its previous topoheight
-                    // And we loop on it to delete them all until the end of the chained data
-                    let mut prev_version = Some(topo);
-                    // If we are already below the threshold, we can directly erase without patching
-                    let mut patched = topo < topoheight;
-                    while let Some(prev_topo) = prev_version {
-                        let key = Self::get_versioned_account_key(account.id, prev_topo);
-    
-                        // Delete this version from DB if its below the threshold
-                        prev_version = self.load_from_disk(Column::VersionedMultisig, &key)?;
-                        if patched {
-                            Self::remove_from_disk_internal(&self.db, self.snapshot.as_mut(), Column::VersionedMultisig, &key)?;
-                        } else {
-                            if prev_version.is_some_and(|v| v < topoheight) {
-                                trace!("Patching versioned data at topoheight {}", topoheight);
-                                patched = true;
-                                let mut data: Versioned<RawBytes> = self.load_from_disk(Column::VersionedMultisig, &key)?;
-                                data.set_previous_topoheight(None);
-
-                                Self::insert_into_disk_internal(&self.db, self.snapshot.as_mut(), Column::VersionedMultisig, &key, &data)?;
-                            }
-                        }
-                    }
-                }
-            }
-
-            Ok(())
-        } else {
-            self.delete_versioned_data_below_topoheight(Column::VersionedMultisig, topoheight)
-        }
+        self.delete_versioned_below_topoheight::<Account, AccountId>(Column::Account, Column::VersionedMultisig, topoheight, keep_last, |_, v| Ok((v.id, v.multisig_pointer)))
     }
 }

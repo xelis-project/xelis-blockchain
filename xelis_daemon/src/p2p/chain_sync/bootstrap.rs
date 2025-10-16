@@ -347,7 +347,7 @@ impl<S: Storage> P2pServer<S> {
             StepRequest::ContractsExecutions(min, max, page) => {
                 let page = page.unwrap_or(0);
 
-                let stream = storage.get_registered_contract_scheduled_executions_at_maximum_topoheight(min, max).await?
+                let stream = storage.get_registered_contract_scheduled_executions_in_range(min, max).await?
                     .skip(page as usize * MAX_ITEMS_PER_PAGE)
                     .take(MAX_ITEMS_PER_PAGE);
 
@@ -682,7 +682,7 @@ impl<S: Storage> P2pServer<S> {
                     let mut storage = self.blockchain.get_storage().write().await;
 
                     if !is_fresh_sync {
-                        info!("Cleaning data");
+                        info!("Cleaning data below {}", lowest_topoheight);
                         // Delete all old data
                         // This also delete the DAG order, so we must delete below our metadata injection from above
                         storage.delete_versioned_data_below_topoheight(lowest_topoheight, true).await?;
@@ -743,9 +743,16 @@ impl<S: Storage> P2pServer<S> {
                     storage.delete_account_for(key).await?;
                 },
                 State::Some(nonce) => {
-                    trace!("Saving nonce for {}", key.as_address(self.blockchain.get_network().is_mainnet()));
-                    storage.set_last_nonce_to(key, stable_topoheight, &VersionedNonce::new(nonce, None)).await?;
+                    trace!("Saving nonce for {} at topoheight {}", key.as_address(self.blockchain.get_network().is_mainnet()), stable_topoheight);
+
+                    // Keep the link with the previous nonce
+                    let prev_nonce = storage.get_nonce_at_maximum_topoheight(&key, stable_topoheight).await?
+                        .and_then(|(_, v)| v.get_previous_topoheight())
+                        .filter(|v| *v < stable_topoheight);
+
+                    storage.set_last_nonce_to(key, stable_topoheight, &VersionedNonce::new(nonce, prev_nonce)).await?;
                     if update_registration {
+                        trace!("Updating account registration topoheight for {}", key.as_address(self.blockchain.get_network().is_mainnet()));
                         storage.set_account_registration_topoheight(key, stable_topoheight).await?;
                     }
                 },
@@ -761,7 +768,12 @@ impl<S: Storage> P2pServer<S> {
                 },
                 State::Some(multisig) => {
                     trace!("Saving multisig for {}", key.as_address(self.blockchain.get_network().is_mainnet()));
-                    let data = VersionedMultiSig::new(Some(Cow::Owned(multisig)), None);
+
+                    let prev_multisig = storage.get_multisig_at_maximum_topoheight_for(&key, stable_topoheight).await?
+                        .and_then(|(_, v)| v.get_previous_topoheight())
+                        .filter(|v| *v < stable_topoheight);
+
+                    let data = VersionedMultiSig::new(Some(Cow::Owned(multisig)), prev_multisig);
                     storage.set_last_multisig_to(key, stable_topoheight, data).await?;
                 },
             };

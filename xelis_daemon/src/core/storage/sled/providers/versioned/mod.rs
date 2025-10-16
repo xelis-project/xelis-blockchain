@@ -124,25 +124,30 @@ impl SledStorage {
                 let (key, value) = el?;
                 let topo = u64::from_bytes(&value)?;
 
-                // We fetch the last version to take its previous topoheight
-                // And we loop on it to delete them all until the end of the chained data
-                let mut prev_version = Self::load_from_disk_internal::<Option<u64>>(snapshot.as_ref(), tree_versioned, &Self::get_versioned_key(&key, topo), context)?;
+                // We fetch the current last version
+                // So if N-1 is below the threshold, we can patch it to None
+                let mut prev_version = Some(topo);
                 // If we are already below the threshold, we can directly erase without patching
-                let mut patched = topo < topoheight;
-                while let Some(prev_topo) = prev_version {
+                let mut patched = false;
+                while let Some(prev_topo) = prev_version.take() {
                     let key = Self::get_versioned_key(&key, prev_topo);
 
                     // Delete this version from DB if its below the threshold
                     if patched {
                         prev_version = Self::remove_from_disk(snapshot.as_mut(), &tree_versioned, &key)?;
                     } else {
+                        // Load it so we can continue to loop over all next versions
                         prev_version = Self::load_from_disk_internal(snapshot.as_ref(), tree_versioned, &key, context)?;
-                        if prev_version.filter(|v| *v < topoheight).is_some() {
+
+                        // if we are below it, patch it
+                        if prev_topo < topoheight {
                             trace!("Patching versioned data at topoheight {}", topoheight);
                             patched = true;
+
                             let mut data: Versioned<NoTransform> = Self::load_from_disk_internal(snapshot.as_ref(), tree_versioned, &key, context)?;
                             data.set_previous_topoheight(None);
-                            Self::insert_into_disk(snapshot.as_mut(), tree_versioned, key, data.to_bytes())?;
+
+                            Self::insert_into_disk(snapshot.as_mut(), tree_versioned, &key, data.to_bytes())?;
                         }
                     }
                 }

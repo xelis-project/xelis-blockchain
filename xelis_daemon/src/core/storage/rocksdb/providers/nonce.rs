@@ -61,7 +61,10 @@ impl NonceProvider for RocksStorage {
     // Get the nonce under or equal topoheight requested for an account
     async fn get_nonce_at_maximum_topoheight(&self, key: &PublicKey, maximum_topoheight: TopoHeight) -> Result<Option<(TopoHeight, VersionedNonce)>, BlockchainError> {
         trace!("get nonce at maximum topoheight for account {}", key.as_address(self.is_mainnet()));
-        let account = self.get_account_type(key)?;
+        let Some(account) = self.get_optional_account_type(key)? else {
+            trace!("no account found for key");
+            return Ok(None);
+        };
 
         // Check if the account has a nonce at the requested topoheight
         // otherwise, we will use the pointer to the last topoheight
