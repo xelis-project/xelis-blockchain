@@ -1009,14 +1009,17 @@ impl EncryptedStorage {
         Ok(())
     }
 
+    // Find the best transaction id for a given topoheight
+    // if lowest is set to true, the lowest transaction id with the requested topoheight is returned
+    // if lowest is set to false, the nearest higher transaction id with the requested topoheight 
     fn search_transaction_id_for_topoheight(
         &self,
         topoheight: u64,
         left_id: Option<u64>,
         right_id: Option<u64>,
-        nearest: bool,
+        lowest: bool,
     ) -> Result<Option<u64>> {
-        debug!("search transaction id for topoheight {}, nearest = {}", topoheight, nearest);
+        debug!("search transaction id for topoheight {}, lowest = {}", topoheight, lowest);
 
         let mut right = match right_id {
             Some(r) => r,
@@ -1030,7 +1033,7 @@ impl EncryptedStorage {
         };
 
         let mut left = left_id.unwrap_or(0);
-        let mut result = None;
+        let mut result: Option<u64> = None;
 
         while left <= right {
             let mid = left + (right - left) / 2;
@@ -1040,23 +1043,30 @@ impl EncryptedStorage {
                 return Ok(None);
             };
 
-            let entry: Skip<HASH_SIZE, TopoHeight> = self.load_from_disk_with_key(&self.transactions, &tx_hash)?;
+            let entry: Skip<HASH_SIZE, TopoHeight> =
+                self.load_from_disk_with_key(&self.transactions, &tx_hash)?;
             let mid_topo = entry.0;
 
+            trace!("mid: {}, mid_topo: {}, searching for topoheight: {}", mid, mid_topo, topoheight);
             match mid_topo.cmp(&topoheight) {
                 Ordering::Equal => {
                     result = Some(mid);
-                    if mid == 0 {
-                        break;
+                    if lowest {
+                        // keep searching left for the lowest matching topoheight
+                        if mid == 0 {
+                            break;
+                        }
+                        right = mid - 1;
+                    } else {
+                        // keep searching right for the highest matching topoheight
+                        left = mid + 1;
                     }
-                    // keep looking to the left for the lowest
-                    right = mid - 1;
                 }
                 Ordering::Less => {
                     left = mid + 1;
                 }
                 Ordering::Greater => {
-                    // potential "nearest higher" if exact not found
+                    // mid_topo > topoheight
                     result = Some(mid);
                     if mid == 0 {
                         break;
@@ -1089,10 +1099,10 @@ impl EncryptedStorage {
 
         // Search the correct range
         let iterator = match (min_topoheight, max_topoheight) {
-            (Some(min), Some(max)) => {
-                let min = self.search_transaction_id_for_topoheight(min, None, None, true)
+            (Some(min_topoheight), Some(max_topoheight)) => {
+                let min = self.search_transaction_id_for_topoheight(min_topoheight, None, None, true)
                     .context("Error while searching min id")?;
-                let max = self.search_transaction_id_for_topoheight(max + 1, min, None, true)
+                let max = self.search_transaction_id_for_topoheight(max_topoheight + 1, min, None, true)
                     .context("Error while searching max id")?;
 
                 if let Some(min) = min {
@@ -1135,6 +1145,12 @@ impl EncryptedStorage {
             let tx_key = el?;
             let mut entry: TransactionEntry = self.load_from_disk_with_key(&self.transactions, &tx_key)?;
             trace!("entry: {}", entry.get_hash());
+
+            if min_topoheight.is_some_and(|min| entry.get_topoheight() < min) ||
+               max_topoheight.is_some_and(|max| entry.get_topoheight() > max) {
+                warn!("entry topoheight {} out of bounds", entry.get_topoheight());
+                continue;
+            }
 
             let mut transfers: Option<Vec<Transfer>> = None;
             match entry.get_mut_entry() {
