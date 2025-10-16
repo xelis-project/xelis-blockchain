@@ -627,7 +627,24 @@ impl TransactionEntry {
                 str
             },
             EntryData::DeployContract { fee, nonce, invoke } => {
-                format!("Fee: {}, Nonce: {} Deploy contract (constructor called: {})", format_xelis(*fee), nonce, invoke.is_some())
+                let invoke = match invoke {
+                    Some(invoke) => {
+                        let mut deposits = String::new();
+                        for (asset, amount) in &invoke.deposits {
+                            let data = storage.get_asset(&asset).await?;
+                            deposits.push_str(&format!(" {} {} ({}),", format_coin(*amount, data.get_decimals()), data.get_name(), asset));
+                        }
+
+                        if !deposits.is_empty() {
+                            deposits.pop(); // Remove last comma
+                        }
+
+                        format!(" with invoke (max gas: {}, deposits: [{}])", format_xelis(invoke.max_gas), deposits)
+                    },
+                    None => String::new()
+                };
+
+                format!("Fee: {}, Nonce: {} Deploy contract{}", format_xelis(*fee), nonce, invoke)
             },
             EntryData::IncomingContract { transfers } => {
                 let mut str = format!("Incoming from contract:");
