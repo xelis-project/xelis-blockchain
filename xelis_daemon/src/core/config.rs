@@ -14,7 +14,7 @@ use crate::{
 use super::simulator::Simulator;
 
 #[cfg(feature = "sled")]
-use super::storage::core::storage::sled::StorageMode;
+use super::storage::sled::StorageMode;
 
 #[cfg(feature = "rocksdb")]
 use super::storage::rocksdb::{CacheMode, CompressionMode};
@@ -391,8 +391,8 @@ impl Default for StorageBackend {
 #[cfg(feature = "sled")]
 pub struct SledConfig {
     /// Set LRUCache size (0 = disabled).
-    #[clap(name = "sled-cache-size", long, default_value_t = default_cache_size())]
-    #[serde(default = "default_cache_size")]
+    #[clap(name = "sled-cache-size", long, default_value_t = default_sled_cache_size())]
+    #[serde(default = "default_sled_cache_size")]
     pub cache_size: usize,
     /// DB cache size in bytes
     #[clap(name = "sled-internal-cache-size", long, default_value_t = default_db_cache_size())]

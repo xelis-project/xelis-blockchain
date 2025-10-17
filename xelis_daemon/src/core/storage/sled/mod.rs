@@ -361,7 +361,7 @@ impl SledStorage {
         trace!("load optional from disk internal");
         if let Some(snapshot) = snapshot {
             trace!("load from snapshot key {:?} from db", key);
-            if let Some(value) = snapshot.get(tree, key) {
+            if let Some(value) = snapshot.get(tree.into(), key) {
                 return match value {
                     Some(bytes) => Ok(Some(T::from_bytes(&bytes)?)),
                     None => Ok(None)

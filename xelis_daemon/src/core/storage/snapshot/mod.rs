@@ -1,7 +1,11 @@
 mod changes;
 mod iterator_mode;
 
-use std::{collections::HashMap, hash::Hash};
+use std::{
+    collections::HashMap,
+    hash::Hash,
+    error::Error as StdError,
+};
 
 use anyhow::Context;
 use bytes::Bytes;
@@ -28,7 +32,7 @@ impl<C: Hash + Eq> Snapshot<C> {
             .remove(key);
     }
 
-    pub fn count_entries(&self, column: C, iterator: impl Iterator<Item = Result<(Box<[u8]>, Box<[u8]>), rocksdb::Error>>) -> usize {
+    pub fn count_entries<I: AsRef<[u8]>, E: StdError + Send + Sync + 'static>(&self, column: C, iterator: impl Iterator<Item = Result<(I, I), E>>) -> usize {
         let changes = self.trees.get(&column);
         iterator.map(|res| {
             let (k, _) = res?;
@@ -43,12 +47,12 @@ impl<C: Hash + Eq> Snapshot<C> {
                 Some(())
             };
 
-            Ok::<_, rocksdb::Error>(v)
+            Ok::<_, E>(v)
         }).filter_map(Result::transpose)
         .count()
     }
 
-    pub fn is_empty(&self, column: C, iterator: impl Iterator<Item = Result<(Box<[u8]>, Box<[u8]>), rocksdb::Error>>) -> bool {
+    pub fn is_empty<I: AsRef<[u8]>, E: StdError + Send + Sync + 'static>(&self, column: C, iterator: impl Iterator<Item = Result<(I, I), E>>) -> bool {
         let changes = self.trees.get(&column);
 
         if let Some(batch) = changes.as_ref() {
@@ -73,7 +77,7 @@ impl<C: Hash + Eq> Snapshot<C> {
                 Some(())
             };
 
-            Ok::<_, rocksdb::Error>(v)
+            Ok::<_, E>(v)
         }).filter_map(Result::transpose)
         .next();
 
@@ -113,7 +117,7 @@ impl<C: Hash + Eq> Snapshot<C> {
     // if the key is not present in the batch
     // Note that this iterator is lazy and is
     // not allocating or copying any data from it!
-    pub fn lazy_iter<'a, K, V, I: AsRef<[u8]>, E: std::error::Error + Send + Sync + 'static>(
+    pub fn lazy_iter<'a, K, V, I: AsRef<[u8]>, E: StdError + Send + Sync + 'static>(
         &'a self,
         column: C,
         mode: IteratorMode,
@@ -209,7 +213,7 @@ impl<C: Hash + Eq> Snapshot<C> {
     // Similar to `iter` but only for keys
     // Note that this iterator is lazy and is
     // not allocating or copying any data from it!
-    pub fn lazy_iter_keys<'a, K, I: AsRef<[u8]>, E: std::error::Error + Send + Sync + 'static>(
+    pub fn lazy_iter_keys<'a, K, I: AsRef<[u8]>, E: StdError + Send + Sync + 'static>(
         &'a self,
         column: C,
         mode: IteratorMode,
@@ -229,7 +233,7 @@ impl<C: Hash + Eq> Snapshot<C> {
     // NOTE: this iterator will copy and allocate
     // the data from the iterators to prevent borrowing
     // current snapshot.
-    pub fn iter_owned<'a, K, V, I: AsRef<[u8]>, E: std::error::Error + Send + Sync + 'static>(
+    pub fn iter_owned<'a, K, V, I: AsRef<[u8]>, E: StdError + Send + Sync + 'static>(
         &self,
         column: C,
         mode: IteratorMode,
