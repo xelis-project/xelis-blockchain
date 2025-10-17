@@ -1,6 +1,7 @@
 use std::collections::{btree_map::{Entry, IntoIter}, BTreeMap};
 use bytes::Bytes;
 
+#[derive(Clone, Debug)]
 pub struct Changes {
     pub writes: BTreeMap<Bytes, Option<Bytes>>,
 }

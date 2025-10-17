@@ -11,25 +11,28 @@ use anyhow::Context;
 use bytes::Bytes;
 use itertools::Either;
 use xelis_common::{serializer::Serializer};
-use crate::core::{error::BlockchainError, storage::snapshot::changes::Changes};
+use crate::core::{error::BlockchainError, storage::{cache::StorageCache, snapshot::changes::Changes}};
 
 pub use iterator_mode::*;
 
+#[derive(Clone, Debug)]
 pub struct Snapshot<C: Hash + Eq> {
     pub trees: HashMap<C, Changes>,
+    pub cache: StorageCache,
 }
 
 impl<C: Hash + Eq> Snapshot<C> {
-    pub fn new() -> Self {
+    pub fn new(cache: StorageCache) -> Self {
         Self {
             trees: HashMap::new(),
+            cache,
         }
     }
 
-    pub fn delete<K: Into<Bytes>>(&mut self, column: C, key: K) {
+    pub fn delete<K: Into<Bytes>>(&mut self, column: C, key: K) -> (Option<Bytes>, bool) {
         self.trees.entry(column)
             .or_insert_with(Changes::default)
-            .remove(key);
+            .remove(key)
     }
 
     pub fn count_entries<I: AsRef<[u8]>, E: StdError + Send + Sync + 'static>(&self, column: C, iterator: impl Iterator<Item = Result<(I, I), E>>) -> usize {
@@ -84,10 +87,10 @@ impl<C: Hash + Eq> Snapshot<C> {
         next.is_none()
     }
 
-    pub fn put<K: Into<Bytes>, V: Into<Bytes>>(&mut self, column: C, key: K, value: V) {
+    pub fn put<K: Into<Bytes>, V: Into<Bytes>>(&mut self, column: C, key: K, value: V) -> Option<Bytes> {
         self.trees.entry(column)
             .or_insert_with(Changes::default)
-            .insert(key, value);
+            .insert(key, value)
     }
 
     pub fn get<'a, K: AsRef<[u8]>>(&'a self, column: C, key: K) -> Option<Option<&'a Bytes>> {

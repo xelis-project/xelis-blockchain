@@ -12,7 +12,7 @@ use log::{debug, trace};
 use sled::Tree;
 use xelis_common::{
     block::TopoHeight,
-    serializer::{NoTransform, Serializer},
+    serializer::{RawBytes, Serializer},
     versioned_type::Versioned
 };
 use crate::core::{
@@ -34,7 +34,7 @@ impl SledStorage {
         topoheight: u64,
     ) -> Result<(), BlockchainError> {
         trace!("delete versioned data at topoheight {}", topoheight);
-        for el in Self::scan_prefix_keys(snapshot.as_ref(), tree_versioned, &topoheight.to_be_bytes()) {
+        for el in Self::scan_prefix_keys::<RawBytes>(snapshot.clone().as_ref(), tree_versioned, &topoheight.to_be_bytes()) {
             let prefixed_key = el?;
 
             // Delete this version from DB
@@ -67,9 +67,9 @@ impl SledStorage {
         context: DiskContext,
     ) -> Result<(), BlockchainError> {
         trace!("delete versioned data above topoheight {}", topoheight);
-        for el in Self::iter(snapshot.as_ref(), tree_pointer) {
-            let (key, value) = el?;
-            let topo = u64::from_bytes(&value)?;
+
+        for el in Self::iter::<RawBytes, TopoHeight>(snapshot.clone().as_ref(), tree_pointer) {
+            let (key, topo) = el?;
 
             if topo > topoheight {
                 debug!("found pointer at {} above the requested topoheight {} with context {}", topo, topoheight, context);
@@ -101,7 +101,7 @@ impl SledStorage {
                     },
                     None => {
                         trace!("no new topo pointer to set, deleting the pointer from tree");
-                        Self::remove_from_disk_internal(snapshot.as_mut(), tree_pointer, &key)?;
+                        Self::remove_from_disk_without_reading(snapshot.as_mut(), tree_pointer, &key)?;
                     }
                 };
             }
@@ -120,9 +120,8 @@ impl SledStorage {
     ) -> Result<(), BlockchainError> {
         trace!("delete versioned data below topoheight {}", topoheight);
         if keep_last {
-            for el in Self::iter(snapshot.as_ref(), tree_pointer) {
-                let (key, value) = el?;
-                let topo = u64::from_bytes(&value)?;
+            for el in Self::iter::<RawBytes, TopoHeight>(snapshot.clone().as_ref(), tree_pointer) {
+                let (key, topo) = el?;
 
                 // We fetch the current last version
                 // So if N-1 is below the threshold, we can patch it to None
@@ -144,7 +143,7 @@ impl SledStorage {
                             trace!("Patching versioned data at topoheight {}", topoheight);
                             patched = true;
 
-                            let mut data: Versioned<NoTransform> = Self::load_from_disk_internal(snapshot.as_ref(), tree_versioned, &key, context)?;
+                            let mut data: Versioned<RawBytes> = Self::load_from_disk_internal(snapshot.as_ref(), tree_versioned, &key, context)?;
                             data.set_previous_topoheight(None);
 
                             Self::insert_into_disk(snapshot.as_mut(), tree_versioned, &key, data.to_bytes())?;
@@ -153,11 +152,10 @@ impl SledStorage {
                 }
             }
         } else {
-            for el in Self::iter_keys(snapshot.as_ref(), tree_versioned) {
-                let key = el?;
-                let topo = u64::from_bytes(&key[0..8])?;
+            for el in Self::iter_keys::<TopoHeight>(snapshot.clone().as_ref(), tree_versioned) {
+                let topo = el?;
                 if topo < topoheight {
-                    Self::remove_from_disk_without_reading(snapshot.as_mut(), tree_versioned, &key)?;
+                    Self::remove_from_disk_without_reading(snapshot.as_mut(), tree_versioned, &topo.to_be_bytes())?;
                 }
             }
         }

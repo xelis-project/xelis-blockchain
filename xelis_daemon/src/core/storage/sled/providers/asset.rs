@@ -84,23 +84,16 @@ impl AssetProvider for SledStorage {
     // we are forced to read from disk directly because cache may don't have all assets in memory
     async fn get_assets<'a>(&'a self) -> Result<impl Iterator<Item = Result<Hash, BlockchainError>> + 'a, BlockchainError> {
         trace!("get assets");
-
-        Ok(Self::iter_keys(self.snapshot.as_ref(), &self.assets).map(|res| {
-            let key = res?;
-            Ok(Hash::from_bytes(&key)?)
-        }))
+        Ok(Self::iter_keys::<Hash>(self.snapshot.as_ref(), &self.assets))
     }
 
     async fn get_assets_with_data_in_range<'a>(&'a self, minimum_topoheight: Option<u64>, maximum_topoheight: Option<u64>) -> Result<impl Iterator<Item = Result<(Hash, TopoHeight, AssetData), BlockchainError>> + 'a, BlockchainError> {
-        Ok(Self::iter(self.snapshot.as_ref(), &self.assets)
+        Ok(Self::iter::<Hash, TopoHeight>(self.snapshot.as_ref(), &self.assets)
             .map(move |res| {
-                let (key, value) = res?;
-                let topoheight = TopoHeight::from_bytes(&value)?;
+                let (asset, topoheight) = res?;
                 if minimum_topoheight.is_some_and(|v| topoheight < v) || maximum_topoheight.is_some_and(|v| topoheight > v) {
                     return Ok(None)
                 }
-
-                let asset = Hash::from_bytes(&key)?;
 
                 let key = Self::get_asset_key(&asset, topoheight);
                 let data = self.load_from_disk(&self.versioned_assets, &key, DiskContext::AssetAtTopoHeight(topoheight))?;
@@ -124,26 +117,20 @@ impl AssetProvider for SledStorage {
     // count assets in storage
     async fn count_assets(&self) -> Result<u64, BlockchainError> {
         trace!("count assets");
-
-        let count = if let Some(snapshot) = self.snapshot.as_ref() {
-            snapshot.cache.assets_count
-        } else {
-            self.cache.assets_count
-        };
-        Ok(count)
+        Ok(self.cache().assets_count)
     }
 
     async fn add_asset(&mut self, asset: &Hash, topoheight: TopoHeight, data: VersionedAssetData) -> Result<(), BlockchainError> {
         trace!("add asset {} at topoheight {}", asset, topoheight);
-        let prev1 = Self::insert_into_disk(self.snapshot.as_mut(), &self.assets, asset.as_bytes(), &topoheight.to_be_bytes())?;
+
+        if !self.contains_data(&self.assets, asset.as_bytes())? {
+            self.store_assets_count(self.count_assets().await? + 1)?;
+        }
+
+        Self::insert_into_disk(self.snapshot.as_mut(), &self.assets, asset.as_bytes(), &topoheight.to_be_bytes())?;
 
         let key = Self::get_asset_key(asset, topoheight);
         Self::insert_into_disk(self.snapshot.as_mut(), &self.versioned_assets, &key, data.to_bytes())?;
-
-        // Update counter
-        if prev1.is_none() {
-            self.store_assets_count(self.count_assets().await? + 1)?;
-        }
 
         if let Some(cache) = &self.assets_cache {
             let mut cache = cache.lock().await;

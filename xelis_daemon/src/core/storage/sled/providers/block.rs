@@ -26,11 +26,7 @@ use crate::core::{
 impl SledStorage {
     // Update the blocks count and store it on disk
     fn store_blocks_count(&mut self, count: u64) -> Result<(), BlockchainError> {
-        if let Some(snapshot) = self.snapshot.as_mut() {
-            snapshot.cache.blocks_count = count;
-        } else {
-            self.cache.blocks_count = count;
-        }
+        self.cache_mut().blocks_count = count;
         Self::insert_into_disk(self.snapshot.as_mut(), &self.extra, BLOCKS_COUNT, &count.to_be_bytes())?;
         Ok(())
     }
@@ -45,21 +41,12 @@ impl BlockProvider for SledStorage {
 
     async fn count_blocks(&self) -> Result<u64, BlockchainError> {
         trace!("count blocks");
-        let count = if let Some(snapshot) = &self.snapshot {
-            snapshot.cache.blocks_count
-        } else {
-            self.cache.blocks_count
-        };
-        Ok(count)
+        Ok(self.cache().blocks_count)
     }
 
     async fn decrease_blocks_count(&mut self, amount: u64) -> Result<(), BlockchainError> {
         trace!("count blocks");
-        if let Some(snapshot) = self.snapshot.as_mut() {
-            snapshot.cache.blocks_count -= amount;
-        } else {
-            self.cache.blocks_count -= amount;
-        }
+        self.store_blocks_count(self.count_blocks().await? - amount)?;
 
         Ok(())
     }
@@ -102,11 +89,12 @@ impl BlockProvider for SledStorage {
             self.store_transactions_count(self.count_transactions().await? + txs_count)?;
         }
 
-        // Store block header and increase blocks count if it's a new block
-        let no_prev = Self::insert_into_disk(self.snapshot.as_mut(), &self.blocks, hash.as_bytes(), block.to_bytes())?.is_none();
-        if no_prev {
+        if !self.has_block_with_hash(&hash).await? {
             self.store_blocks_count(self.count_blocks().await? + 1)?;
         }
+
+        // Store block header and increase blocks count if it's a new block
+        Self::insert_into_disk(self.snapshot.as_mut(), &self.blocks, hash.as_bytes(), block.to_bytes())?;
 
         // Store difficulty
         Self::insert_into_disk(self.snapshot.as_mut(), &self.difficulty, hash.as_bytes(), difficulty.to_bytes())?;

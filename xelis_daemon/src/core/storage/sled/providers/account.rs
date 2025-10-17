@@ -2,7 +2,6 @@ use async_trait::async_trait;
 use log::{trace, debug, error};
 use xelis_common::{
     crypto::PublicKey,
-    serializer::Serializer,
     block::TopoHeight,
 };
 use crate::core::{
@@ -18,12 +17,8 @@ use crate::core::{
 };
 
 fn prefixed_db_key(topoheight: TopoHeight, key: &PublicKey) -> [u8; 40] {
-    prefixed_db_key_no_u64(&topoheight.to_bytes(), key)
-}
-
-fn prefixed_db_key_no_u64(topoheight: &[u8], key: &PublicKey) -> [u8; 40] {
-    let mut buf = [0u8; 40];
-    buf[0..8].copy_from_slice(&topoheight);
+        let mut buf = [0u8; 40];
+    buf[0..8].copy_from_slice(&topoheight.to_be_bytes());
     buf[8..40].copy_from_slice(key.as_bytes());
     buf
 }
@@ -32,12 +27,7 @@ fn prefixed_db_key_no_u64(topoheight: &[u8], key: &PublicKey) -> [u8; 40] {
 impl AccountProvider for SledStorage {
     async fn count_accounts(&self) -> Result<u64, BlockchainError> {
         trace!("count accounts");
-        let count = if let Some(snapshot) = self.snapshot.as_ref() {
-            snapshot.cache.accounts_count
-        } else {
-            self.cache.accounts_count
-        };
-        Ok(count)
+        Ok(self.cache().accounts_count)
     }
 
     async fn get_account_registration_topoheight(&self, key: &PublicKey) -> Result<TopoHeight, BlockchainError> {
@@ -47,8 +37,9 @@ impl AccountProvider for SledStorage {
 
     async fn set_account_registration_topoheight(&mut self, key: &PublicKey, topoheight: TopoHeight) -> Result<(), BlockchainError> {
         trace!("set account registration topoheight: {} {}", key.as_address(self.network.is_mainnet()), topoheight);
-        if let Some(old) = Self::insert_into_disk(self.snapshot.as_mut(), &self.registrations, key.as_bytes(), &topoheight.to_be_bytes())? {
-            Self::remove_from_disk_without_reading(self.snapshot.as_mut(), &self.registrations_prefixed, &prefixed_db_key_no_u64(&old, key))?;
+
+        if let Some(old) = Self::insert_into_disk_read(self.snapshot.as_mut(), &self.registrations, key.as_bytes(), &topoheight.to_be_bytes())? {
+            Self::remove_from_disk_without_reading(self.snapshot.as_mut(), &self.registrations_prefixed, &prefixed_db_key(old, key))?;
         }
 
         Self::insert_into_disk(self.snapshot.as_mut(), &self.registrations_prefixed, &prefixed_db_key(topoheight, key), &[])?;
@@ -96,21 +87,18 @@ impl AccountProvider for SledStorage {
         trace!("get partial keys  minimum_topoheight: {:?}, maximum_topoheight: {:?}", minimum_topoheight, maximum_topoheight);
 
         Ok(
-            Self::iter_keys(self.snapshot.as_ref(), &self.registrations_prefixed)
+            Self::iter_keys::<(TopoHeight, PublicKey)>(self.snapshot.as_ref(), &self.registrations_prefixed)
                 .map(move |el| {
-                    let key = el?;
+                    let (topo, key) = el?;
 
                     if minimum_topoheight.is_some() || maximum_topoheight.is_some() {
-                        let topo = TopoHeight::from_bytes(&key[0..8])?;
-
                         // Skip if not in range
                         if minimum_topoheight.is_some_and(|v| topo < v) || maximum_topoheight.is_some_and(|v| topo > v) {
-                            trace!("skipping {} at {}: {:?} {:?}", PublicKey::from_bytes(&key[8..40])?.as_address(self.is_mainnet()), topo, minimum_topoheight, maximum_topoheight);
+                            trace!("skipping {} at {}: {:?} {:?}", key.as_address(self.is_mainnet()), topo, minimum_topoheight, maximum_topoheight);
                             return Ok(None);
                         }
                     }
 
-                    let key = PublicKey::from_bytes(&key[8..40])?;
                     Ok(Some(key))
                 })
                 .filter_map(Result::transpose)

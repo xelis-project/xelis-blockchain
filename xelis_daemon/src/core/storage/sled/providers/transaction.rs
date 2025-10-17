@@ -24,11 +24,7 @@ use crate::core::{
 impl SledStorage {
     // Update the txs count and store it on disk
     pub(super) fn store_transactions_count(&mut self, count: u64) -> Result<(), BlockchainError> {
-        if let Some(snapshot) = self.snapshot.as_mut() {
-            snapshot.cache.transactions_count = count;
-        } else {
-            self.cache.transactions_count = count;
-        }
+        self.cache_mut().transactions_count = count;
         Self::insert_into_disk(self.snapshot.as_mut(), &self.extra, TXS_COUNT, &count.to_be_bytes())?;
         Ok(())
     }    
@@ -61,20 +57,14 @@ impl TransactionProvider for SledStorage {
 
     async fn count_transactions(&self) -> Result<u64, BlockchainError> {
         trace!("count transactions");
-        let count = if let Some(snapshot) = self.snapshot.as_ref() {
-            snapshot.cache.transactions_count
-        } else {
-            self.cache.transactions_count
-        };
-        Ok(count)
+        Ok(self.cache().transactions_count)
     }
 
     async fn get_unexecuted_transactions<'a>(&'a self) -> Result<impl Stream<Item = Result<Hash, BlockchainError>> + 'a, BlockchainError> {
         trace!("get unexecuted transactions");
-        Ok(stream::iter(Self::iter_keys(self.snapshot.as_ref(), &self.transactions))
+        Ok(stream::iter(Self::iter_keys::<Hash>(self.snapshot.as_ref(), &self.transactions))
             .map(move |res| async move {
-                let key = res?;
-                let tx_hash = Hash::from_bytes(&key)?;
+                let tx_hash = res?;
                 if !self.is_tx_executed_in_a_block(&tx_hash).await? {
                     return Ok(None);
                 }

@@ -32,22 +32,13 @@ impl CommitPointProvider for SledStorage {
             self.cache = snapshot.cache;
 
             for (tree, batch) in snapshot.trees {
-                trace!("Applying batch to tree {:?}", tree);
-                match batch {
-                    Some(batch) => {
-                        let tree = self.db.open_tree(tree)?;
-                        for (key, value) in batch.into_iter() {
-                            match value {
-                                Some(value) => tree.insert(key, value)?,
-                                None => tree.remove(key)?,
-                            };
-                        }
-                    },
-                    None => {
-                        trace!("Dropping tree {:?}", tree);
-                        self.db.drop_tree(tree)?;
-                    }
-                };
+                trace!("Applying batch to tree {:?}", tree.0.name());
+                for (key, value) in batch.into_iter() {
+                    match value {
+                        Some(value) => tree.insert(key, value.as_ref())?,
+                        None => tree.remove(key)?,
+                    };
+                }
             }
         } else {
             debug!("Clearing caches due to invalidation of the commit point");

@@ -1,7 +1,8 @@
 use async_trait::async_trait;
 use log::trace;
 use xelis_common::{
-    block::TopoHeight, crypto::Hash, serializer::Serializer
+    block::TopoHeight,
+    crypto::Hash,
 };
 use crate::core::{
     error::{BlockchainError, DiskContext},
@@ -67,11 +68,9 @@ impl DagOrderProvider for SledStorage {
     async fn get_orphaned_blocks<'a>(&'a self) -> Result<impl Iterator<Item = Result<Hash, BlockchainError>> + 'a, BlockchainError> {
         trace!("get orphaned blocks");
 
-        let iter = Self::iter_keys(self.snapshot.as_ref(), &self.blocks);
+        let iter = Self::iter_keys::<Hash>(self.snapshot.as_ref(), &self.blocks);
         Ok(iter.map(|res| {
-            let key = res?;
-            let hash = Hash::from_bytes(&key)?;
-
+            let hash = res?;
             if self.contains_data(&self.topo_by_hash, &hash)? {
                 return Ok(None);
             }
