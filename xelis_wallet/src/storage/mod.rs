@@ -1033,6 +1033,11 @@ impl EncryptedStorage {
         };
 
         let mut left = left_id.unwrap_or(0);
+        if right < left {
+            debug!("right id {} is lower than left id {}", right, left);
+            return Ok(None);
+        }
+
         let mut result: Option<u64> = None;
 
         while left <= right {
