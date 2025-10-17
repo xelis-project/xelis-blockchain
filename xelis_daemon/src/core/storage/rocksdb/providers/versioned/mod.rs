@@ -1,4 +1,3 @@
-use rocksdb::Direction;
 use log::trace;
 use xelis_common::{
     block::TopoHeight,
@@ -9,6 +8,7 @@ use crate::core::{
     error::BlockchainError,
     storage::{
         rocksdb::{Column, IteratorMode},
+        snapshot::Direction,
         RocksStorage,
         VersionedProvider
     }

@@ -4,7 +4,6 @@ mod scheduled_execution;
 
 use log::trace;
 use async_trait::async_trait;
-use rocksdb::Direction;
 use xelis_common::{
     block::TopoHeight,
     serializer::{RawBytes, Serializer},
@@ -13,6 +12,7 @@ use crate::core::{
     error::BlockchainError,
     storage::{
         rocksdb::{Column, Contract, ContractId, IteratorMode},
+        snapshot::Direction,
         RocksStorage,
         VersionedContractProvider
     }

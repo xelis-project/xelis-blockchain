@@ -1,9 +1,9 @@
-use strum::{Display, EnumIter, AsRefStr};
+use strum::{AsRefStr, Display, EnumIter, IntoStaticStr};
 
 const PREFIX_TOPOHEIGHT_LEN: usize = 8;
 const PREFIX_ID_LEN: usize = 8;
 
-#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Eq, Ord, Hash, EnumIter, Display, AsRefStr)]
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Eq, Ord, Hash, EnumIter, Display, AsRefStr, IntoStaticStr)]
 #[strum(serialize_all = "snake_case")]
 pub enum Column {
     // All transactions stored

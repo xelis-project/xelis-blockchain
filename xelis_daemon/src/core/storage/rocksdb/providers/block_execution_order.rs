@@ -6,8 +6,7 @@ use crate::core::{
     storage::{
         BlockExecutionOrderProvider,
         RocksStorage,
-        rocksdb::{Column, IteratorMode},
-        sled::BLOCKS_EXECUTION_ORDER_COUNT,
+        rocksdb::{Column, IteratorMode, BLOCKS_EXECUTION_ORDER_COUNT},
     }
 };
 

@@ -66,14 +66,14 @@ use core::{
         get_pow_algorithm_for_version,
         get_version_at_height
     },
-    storage::{
-        SledStorage,
-        Storage
-    }
+    storage::Storage
 };
 
 #[cfg(feature = "rocksdb")]
 use core::storage::rocksdb::RocksStorage;
+
+#[cfg(feature = "sled")]
+use core::storage::sled::SledStorage;
 
 use std::{
     fs::File,
@@ -262,6 +262,7 @@ async fn main() -> Result<()> {
         .unwrap_or_default();
 
     match blockchain_config.use_db_backend {
+        #[cfg(feature = "sled")]
         StorageBackend::Sled => {
             let use_cache = if blockchain_config.sled.cache_size > 0 {
                 Some(blockchain_config.sled.cache_size)

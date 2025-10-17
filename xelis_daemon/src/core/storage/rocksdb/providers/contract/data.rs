@@ -1,7 +1,6 @@
 use async_trait::async_trait;
 use futures::{stream, Stream, StreamExt};
 use log::trace;
-use rocksdb::Direction;
 use xelis_vm::ValueCell;
 use xelis_common::{
     block::TopoHeight,
@@ -12,6 +11,7 @@ use crate::core::{
     error::BlockchainError,
     storage::{
         rocksdb::{Column, ContractDataId, ContractId, IteratorMode},
+        snapshot::Direction,
         ContractDataProvider,
         RocksStorage,
         VersionedContractData

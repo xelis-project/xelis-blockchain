@@ -1,6 +1,5 @@
 use async_trait::async_trait;
 use log::trace;
-use rocksdb::Direction;
 use xelis_common::{
     block::TopoHeight,
     serializer::{RawBytes, Serializer},
@@ -9,6 +8,7 @@ use crate::core::{
     error::BlockchainError,
     storage::{
         rocksdb::{Asset, AssetId, Column, IteratorMode},
+        snapshot::Direction,
         RocksStorage,
         VersionedAssetsCirculatingSupplyProvider
     }

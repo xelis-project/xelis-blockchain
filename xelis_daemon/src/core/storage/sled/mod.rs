@@ -1,4 +1,3 @@
-mod snapshot;
 mod migrations;
 mod providers;
 
@@ -25,14 +24,46 @@ use lru::LruCache;
 use sled::{IVec, Tree};
 use log::{debug, trace, info, error};
 
-pub use snapshot::Snapshot;
-
 use super::{
     cache::StorageCache,
     providers::*,
     Storage,
+    snapshot::{Snapshot as InternalSnapshot, Direction, IteratorMode},
     Tips
 };
+
+pub struct TreeWrapper(pub Tree);
+
+impl From<&Tree> for TreeWrapper {
+    fn from(tree: &Tree) -> Self {
+        Self(tree.clone())
+    }
+}
+
+impl Deref for TreeWrapper {
+    type Target = Tree;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl std::hash::Hash for TreeWrapper {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.0.name().hash(state);
+    }
+}
+
+impl std::cmp::PartialEq for TreeWrapper {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.name() == other.0.name()
+    }
+}
+
+impl std::cmp::Eq for TreeWrapper {}
+
+
+pub type Snapshot = InternalSnapshot<TreeWrapper>;
 
 // Constant keys used for extra Tree
 pub(super) const TIPS: &[u8; 4] = b"TIPS";
@@ -329,10 +360,12 @@ impl SledStorage {
     pub fn load_optional_from_disk_internal<T: Serializer>(snapshot: Option<&Snapshot>, tree: &Tree, key: &[u8]) -> Result<Option<T>, BlockchainError> {
         trace!("load optional from disk internal");
         if let Some(snapshot) = snapshot {
-            trace!("load from snapshot");
-            if snapshot.contains_key(tree, key) {
-                trace!("load from snapshot key {:?} from db", key);
-                return snapshot.load_optional_from_disk(tree, key);
+            trace!("load from snapshot key {:?} from db", key);
+            if let Some(value) = snapshot.get(tree, key) {
+                return match value {
+                    Some(bytes) => Ok(Some(T::from_bytes(&bytes)?)),
+                    None => Ok(None)
+                }
             }
         }
 
@@ -362,10 +395,14 @@ impl SledStorage {
     }
 
     // Scan prefix over keys only
-    pub(super) fn scan_prefix_keys(snapshot: Option<&Snapshot>, tree: &Tree, prefix: &[u8]) -> impl Iterator<Item = sled::Result<IVec>> {
+    pub(super) fn scan_prefix_keys<K: Serializer>(snapshot: Option<&Snapshot>, tree: &Tree, prefix: &[u8]) -> impl Iterator<Item = Result<K, BlockchainError>> {
         match snapshot {
-            Some(snapshot) => Either::Left(snapshot.scan_prefix_keys(tree, prefix)),
-            None => Either::Right(tree.scan_prefix(prefix).into_iter().keys())
+            Some(snapshot) => Either::Left(snapshot.lazy_iter_keys(tree.into(), IteratorMode::WithPrefix(prefix, Direction::Forward), tree.iter())),
+            None => Either::Right(tree.scan_prefix(prefix).into_iter().keys().map(|res| {
+                let bytes = res?;
+                let k = K::from_bytes(&bytes)?;
+                Ok(k)
+            }))
         }
     }
 
@@ -378,10 +415,15 @@ impl SledStorage {
     }
 
     // Iter over a tree entries
-    pub(super) fn iter(snapshot: Option<&Snapshot>, tree: &Tree) -> impl Iterator<Item = sled::Result<(IVec, IVec)>> {
+    pub(super) fn iter<K: Serializer, V: Serializer>(snapshot: Option<&Snapshot>, tree: &Tree) -> impl Iterator<Item = Result<(K, V), BlockchainError>> {
         match snapshot {
-            Some(snapshot) => Either::Left(snapshot.iter(tree)),
-            None => Either::Right(tree.iter())
+            Some(snapshot) => Either::Left(snapshot.lazy_iter(tree.into(), IteratorMode::Start, tree.iter())),
+            None => Either::Right(tree.iter().map(|res| {
+                let (k, v) = res?;
+                let k = K::from_bytes(&k)?;
+                let v = V::from_bytes(&v)?;
+                Ok((k, v))
+            }))
         }
     }
 

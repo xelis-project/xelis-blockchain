@@ -8,11 +8,13 @@ use xelis_common::{
 };
 use crate::{
     config::*,
-    core::storage::sled::StorageMode,
     p2p::{KeyVerificationAction, WrappedSecret}
 };
 
 use super::simulator::Simulator;
+
+#[cfg(feature = "sled")]
+use super::storage::core::storage::sled::StorageMode;
 
 #[cfg(feature = "rocksdb")]
 use super::storage::rocksdb::{CacheMode, CompressionMode};
@@ -38,7 +40,8 @@ fn default_prometheus_route() -> String {
     "/metrics".to_owned()
 }
 
-const fn default_cache_size() -> usize {
+#[cfg(feature = "sled")]
+const fn default_sled_cache_size() -> usize {
     DEFAULT_CACHE_SIZE
 }
 
@@ -361,6 +364,7 @@ pub struct P2pConfig {
 
 #[derive(Debug, Clone, Copy, clap::ValueEnum, Serialize, Deserialize)]
 pub enum StorageBackend {
+    #[cfg(feature = "sled")]
     #[serde(rename = "sled")]
     Sled,
     #[cfg(feature = "rocksdb")]
@@ -371,11 +375,20 @@ pub enum StorageBackend {
 
 impl Default for StorageBackend {
     fn default() -> Self {
-        Self::Sled
+        #[cfg(feature = "sled")]
+        {
+            return Self::Sled;
+        }
+
+        #[cfg(all(feature = "rocksdb", not(feature = "sled")))]
+        {
+            return Self::RocksDB;
+        }
     }
 }
 
 #[derive(Debug, Clone, clap::Args, Serialize, Deserialize)]
+#[cfg(feature = "sled")]
 pub struct SledConfig {
     /// Set LRUCache size (0 = disabled).
     #[clap(name = "sled-cache-size", long, default_value_t = default_cache_size())]
@@ -458,6 +471,7 @@ pub struct Config {
     #[clap(flatten)]
     pub p2p: P2pConfig,
     /// Sled DB Backend if enabled
+    #[cfg(feature = "sled")]
     #[clap(flatten)]
     pub sled: SledConfig,
     /// RocksDB Backend if enabled

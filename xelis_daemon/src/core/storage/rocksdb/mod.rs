@@ -1,7 +1,6 @@
 mod column;
 mod types;
 mod providers;
-mod snapshot;
 
 use std::sync::Arc;
 
@@ -16,7 +15,6 @@ use rocksdb::{
     DBCompactionStyle,
     DBCompressionType,
     DBWithThreadMode,
-    Direction,
     Env,
     IteratorMode as InternalIteratorMode,
     MultiThreaded,
@@ -39,13 +37,17 @@ use xelis_common::{
 use crate::core::{
     config::RocksDBConfig,
     error::{BlockchainError, DiskContext},
-    storage::{BlockProvider, ClientProtocolProvider, ContractLogsProvider, TransactionProvider}
+    storage::{
+        snapshot::{Snapshot as InternalSnapshot, Direction, IteratorMode},
+        BlockProvider,
+        ClientProtocolProvider,
+        ContractLogsProvider,
+        TransactionProvider
+    }
 };
 
 pub use column::*;
 pub use types::*;
-
-pub use snapshot::Snapshot;
 
 use super::Storage;
 
@@ -56,7 +58,17 @@ macro_rules! cf_handle {
     };
 }
 
+pub(super) const TXS_COUNT: &[u8; 4] = b"CTXS";
+pub(super) const BLOCKS_COUNT: &[u8; 4] = b"CBLK";
+pub(super) const BLOCKS_EXECUTION_ORDER_COUNT: &[u8; 4] = b"EBLK";
+pub(super) const PRUNED_TOPOHEIGHT: &[u8; 4] = b"PRUN";
+pub(super) const TOP_TOPO_HEIGHT: &[u8; 4] = b"TOPO";
+pub(super) const TOP_HEIGHT: &[u8; 4] = b"TOPH";
+pub(super) const TIPS: &[u8; 4] = b"TIPS";
+
 type InnerDB = DBWithThreadMode<MultiThreaded>;
+
+pub type Snapshot = InternalSnapshot<Column>;
 
 #[derive(Debug, Copy, Clone, clap::ValueEnum, Serialize, Deserialize)]
 #[clap(rename_all = "snake_case")]
@@ -106,32 +118,16 @@ impl CompressionMode {
     }
 }
 
-#[derive(Copy, Clone)]
-pub enum IteratorMode<'a> {
-    Start,
-    End,
-    // Allow for range start operations
-    From(&'a [u8], Direction),
-    // Strict prefix to all keys
-    WithPrefix(&'a [u8], Direction),
-    Range {
-        lower_bound: &'a [u8],
-        // NOTE: upper bound is NEVER included
-        upper_bound: &'a [u8],
-        direction: Direction,
-    }
-}
-
 impl<'a> IteratorMode<'a> {
     pub fn convert(self) -> (InternalIteratorMode<'a>, ReadOptions) {
         let mut opts = ReadOptions::default();
         let mode = match self {
             Self::Start => InternalIteratorMode::Start,
             Self::End => InternalIteratorMode::End,
-            Self::From(prefix, direction) => InternalIteratorMode::From(prefix, direction),
+            Self::From(prefix, direction) => InternalIteratorMode::From(prefix, direction.into()),
             Self::WithPrefix(prefix, direction) => {
                 opts.set_prefix_same_as_start(true);
-                InternalIteratorMode::From(prefix, direction)
+                InternalIteratorMode::From(prefix, direction.into())
             },
             Self::Range { lower_bound, upper_bound, direction } => {
                 opts.set_iterate_upper_bound(upper_bound);

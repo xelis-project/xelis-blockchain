@@ -34,7 +34,7 @@ impl CommitPointProvider for RocksStorage {
 
         if apply {
             trace!("applying commit point");
-            for (column, batch) in snapshot.columns {
+            for (column, batch) in snapshot.trees {
                 for (key, value) in batch {
                     if let Some(value) = value {
                         self.insert_into_disk(column, &key.as_ref(), &value.as_ref())?;

@@ -4,8 +4,7 @@ use log::trace;
 use crate::core::{
     error::BlockchainError,
     storage::{
-        rocksdb::Column,
-        sled::TIPS,
+        rocksdb::{Column, TIPS},
         Tips,
         RocksStorage,
         TipsProvider,

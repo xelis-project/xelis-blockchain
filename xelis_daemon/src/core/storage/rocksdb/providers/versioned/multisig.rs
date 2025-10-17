@@ -1,5 +1,4 @@
 use async_trait::async_trait;
-use rocksdb::Direction;
 use log::trace;
 use xelis_common::{
     block::TopoHeight,
@@ -14,6 +13,7 @@ use crate::core::{
             Column,
             IteratorMode
         },
+        snapshot::Direction,
         RocksStorage,
         VersionedMultiSigProvider
     }
