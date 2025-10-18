@@ -34,7 +34,7 @@ impl SledStorage {
         topoheight: u64,
     ) -> Result<(), BlockchainError> {
         trace!("delete versioned data at topoheight {}", topoheight);
-        let cloned = snapshot.as_mut().map(|v| v.clone_mut());
+        let cloned = snapshot.clone();
         for el in Self::scan_prefix_keys::<RawBytes>(cloned.as_ref(), tree_versioned, &topoheight.to_be_bytes()) {
             let prefixed_key = el?;
 
@@ -69,7 +69,7 @@ impl SledStorage {
     ) -> Result<(), BlockchainError> {
         trace!("delete versioned data above topoheight {}", topoheight);
 
-        let cloned = snapshot.as_mut().map(|v| v.clone_mut());
+        let cloned = snapshot.clone();
         for el in Self::iter::<RawBytes, TopoHeight>(cloned.as_ref(), tree_pointer) {
             let (key, topo) = el?;
 
@@ -121,7 +121,7 @@ impl SledStorage {
         context: DiskContext,
     ) -> Result<(), BlockchainError> {
         trace!("delete versioned data below topoheight {}", topoheight);
-        let cloned = snapshot.as_mut().map(|v| v.clone_mut());
+        let cloned = snapshot.clone();
         if keep_last {
             for el in Self::iter::<RawBytes, TopoHeight>(cloned.as_ref(), tree_pointer) {
                 let (key, topo) = el?;

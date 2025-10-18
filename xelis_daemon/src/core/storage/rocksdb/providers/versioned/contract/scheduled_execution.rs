@@ -38,7 +38,7 @@ impl RocksStorage {
         mode: IteratorMode<'_>,
     ) -> Result<(), BlockchainError> {
         trace!("delete scheduled executions with mode {:?}", mode);
-        let snapshot = self.snapshot.as_mut().map(|s| s.clone_mut());
+        let snapshot = self.snapshot.clone();
         for res in Self::iter_internal::<RawBytes, ()>(&self.db, snapshot.as_ref(), mode, Column::DelayedExecutionRegistrations)? {
             let (key, _) = res?;
 

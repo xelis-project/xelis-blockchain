@@ -27,7 +27,7 @@ impl VersionedNonceProvider for RocksStorage {
         trace!("delete versioned nonces at {}", topoheight);
         let prefix = topoheight.to_be_bytes();
 
-        let snapshot = self.snapshot.as_mut().map(|s| s.clone_mut());
+        let snapshot = self.snapshot.clone();
         for res in Self::iter_internal::<RawBytes, Option<TopoHeight>>(&self.db, snapshot.as_ref(), IteratorMode::WithPrefix(&prefix, Direction::Forward), Column::VersionedNonces)? {
             let (key, prev_topo) = res?;
 
@@ -54,7 +54,7 @@ impl VersionedNonceProvider for RocksStorage {
         trace!("delete versioned nonces above topoheight {}", topoheight);
         let start = (topoheight + 1).to_be_bytes();
 
-        let snapshot = self.snapshot.as_mut().map(|s| s.clone_mut());
+        let snapshot = self.snapshot.clone();
         for res in Self::iter_internal::<RawBytes, Option<TopoHeight>>(&self.db, snapshot.as_ref(), IteratorMode::From(&start, Direction::Forward), Column::VersionedNonces)? {
             let (key, prev_topo) = res?;
             // Delete the version we've read

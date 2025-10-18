@@ -48,6 +48,17 @@ impl<C: Hash + Eq + Clone> Snapshot<C> {
     }
 }
 
+
+impl<C: Hash + Eq + Clone> Clone for Snapshot<C> {
+    fn clone(&self) -> Self {
+        Self {
+            trees: self.trees.clone(),
+            // Don't clone the cache, just create a new empty one
+            cache: StorageCache::default(),
+        }
+    }
+}
+
 impl<C: Hash + Eq> Snapshot<C> {
     pub fn new(cache: StorageCache) -> Self {
         Self {

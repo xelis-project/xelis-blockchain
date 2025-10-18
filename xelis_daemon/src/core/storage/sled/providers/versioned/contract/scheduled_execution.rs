@@ -12,7 +12,7 @@ use crate::core::{
 impl VersionedScheduledExecutionsProvider for SledStorage {
     async fn delete_scheduled_executions_at_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError> {
         trace!("delete scheduled executions at topoheight {}", topoheight);
-        let snapshot = self.snapshot.as_mut().map(|v| v.clone_mut());
+        let snapshot = self.snapshot.clone();
         for el in Self::scan_prefix_keys::<RawBytes>(snapshot.as_ref(), &self.contracts_scheduled_executions_registrations, &topoheight.to_be_bytes()) {
             let prefixed_key = el?;
 
@@ -29,7 +29,7 @@ impl VersionedScheduledExecutionsProvider for SledStorage {
 
     async fn delete_scheduled_executions_above_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError> {
         trace!("delete scheduled executions above topoheight {}", topoheight);
-        let snapshot = self.snapshot.as_mut().map(|v| v.clone_mut());
+        let snapshot = self.snapshot.clone();
         for el in Self::iter_keys::<RawBytes>(snapshot.as_ref(), &self.contracts_scheduled_executions_registrations) {
             let key = el?;
             let topo = TopoHeight::from_bytes(&key)?;
@@ -50,7 +50,7 @@ impl VersionedScheduledExecutionsProvider for SledStorage {
 
     async fn delete_scheduled_executions_below_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError> {
         trace!("delete scheduled executions below topoheight {}", topoheight);
-        let snapshot = self.snapshot.as_mut().map(|v| v.clone_mut());
+        let snapshot = self.snapshot.clone();
         for el in Self::iter_keys::<RawBytes>(snapshot.as_ref(), &self.contracts_scheduled_executions_registrations) {
             let key = el?;
             let topo = TopoHeight::from_bytes(&key)?;

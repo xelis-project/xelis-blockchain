@@ -21,7 +21,7 @@ impl VersionedDagOrderProvider for RocksStorage {
         trace!("delete dag order above topoheight {}", topoheight);
 
         let start = (topoheight + 1).to_be_bytes();
-        let snapshot = self.snapshot.as_mut().map(|s| s.clone_mut());
+        let snapshot = self.snapshot.clone();
         for el in Self::iter_internal::<TopoHeight, Hash>(&self.db, snapshot.as_ref(), IteratorMode::From(&start, Direction::Forward), Column::HashAtTopo)? {
             let (topo, hash) = el?;
             debug!("found hash {} at topoheight {} while threshold topoheight is at {}", hash, topo, topoheight);

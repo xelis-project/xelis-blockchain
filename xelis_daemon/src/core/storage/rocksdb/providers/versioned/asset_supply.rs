@@ -19,7 +19,7 @@ impl VersionedAssetsCirculatingSupplyProvider for RocksStorage {
     async fn delete_versioned_assets_supply_at_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError> {
         trace!("delete versioned assets supply at topoheight {}", topoheight);
         let prefix = topoheight.to_be_bytes();
-        let snapshot = self.snapshot.as_mut().map(|s| s.clone_mut());
+        let snapshot = self.snapshot.clone();
         for res in Self::iter_internal::<RawBytes, Option<TopoHeight>>(&self.db, snapshot.as_ref(), IteratorMode::WithPrefix(&prefix, Direction::Forward), Column::VersionedAssetsSupply)? {
             let (versioned_key, prev_topo) = res?;
 
@@ -44,7 +44,7 @@ impl VersionedAssetsCirculatingSupplyProvider for RocksStorage {
     async fn delete_versioned_assets_supply_above_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError> {
         trace!("delete versioned assets supply above topoheight {}", topoheight);
         let start = (topoheight + 1).to_be_bytes();
-        let snapshot = self.snapshot.as_mut().map(|s| s.clone_mut());
+        let snapshot = self.snapshot.clone();
         for res in Self::iter_internal::<RawBytes, Option<TopoHeight>>(&self.db, snapshot.as_ref(), IteratorMode::From(&start, Direction::Forward), Column::VersionedAssetsSupply)? {
             let (key, prev_topo) = res?;
             // Delete the version we've read

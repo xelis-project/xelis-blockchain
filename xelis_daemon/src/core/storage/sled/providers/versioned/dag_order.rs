@@ -14,7 +14,7 @@ impl VersionedDagOrderProvider for SledStorage {
     async fn delete_dag_order_above_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError> {
         trace!("delete dag order above topoheight {}", topoheight);
 
-        let snapshot = self.snapshot.as_mut().map(|v| v.clone_mut());
+        let snapshot = self.snapshot.clone();
         for el in Self::iter::<TopoHeight, Hash>(snapshot.as_ref(), &self.hash_at_topo) {
             let (topo, hash) = el?;
 
