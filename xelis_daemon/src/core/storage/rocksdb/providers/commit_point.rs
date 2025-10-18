@@ -45,7 +45,7 @@ impl CommitPointProvider for RocksStorage {
             }
         } else {
             debug!("Clearing caches due to invalidation of the commit point");
-            self.clear_caches().await?;
+            self.clear_objects_cache().await?;
         }
 
         Ok(())

@@ -1,6 +1,5 @@
 use async_trait::async_trait;
-use log::{trace, debug};
-
+use log::debug;
 use crate::core::{
     error::BlockchainError,
     storage::{CacheProvider, ChainCache, SledStorage}
@@ -8,7 +7,7 @@ use crate::core::{
 
 #[async_trait]
 impl CacheProvider for SledStorage {
-    async fn clear_caches(&mut self) -> Result<(), BlockchainError> {
+    async fn clear_objects_cache(&mut self) -> Result<(), BlockchainError> {
         debug!("clear caches");
         self.cache_mut().clear_caches();
 
@@ -25,11 +24,5 @@ impl CacheProvider for SledStorage {
 
     async fn chain_cache(&self) -> &ChainCache {
         &self.cache().chain
-    }
-
-    async fn load_caches(&mut self) -> Result<(), BlockchainError> {
-        trace!("load caches");
-
-        Ok(())
     }
 }

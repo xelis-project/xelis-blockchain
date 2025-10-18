@@ -1415,7 +1415,7 @@ async fn clear_caches<S: Storage>(manager: &CommandManager, _: ArgumentManager) 
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let mut storage = blockchain.get_storage().write().await;
 
-    storage.clear_caches().await.context("Error while clearing caches")?;
+    storage.clear_objects_cache().await.context("Error while clearing caches")?;
     manager.message("Caches cleared");
     Ok(())
 }

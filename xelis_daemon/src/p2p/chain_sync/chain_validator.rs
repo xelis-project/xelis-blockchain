@@ -215,7 +215,7 @@ impl<'a, S: Storage> ChainValidator<'a, S> {
 
 #[async_trait]
 impl<S: Storage> CacheProvider for ChainValidatorProvider<'_, S> {
-    async fn clear_caches(&mut self) -> Result<(), BlockchainError> {
+    async fn clear_objects_cache(&mut self) -> Result<(), BlockchainError> {
         Err(BlockchainError::UnsupportedOperation)
     }
 
@@ -225,10 +225,6 @@ impl<S: Storage> CacheProvider for ChainValidatorProvider<'_, S> {
 
     async fn chain_cache(&self) -> &ChainCache {
         &self.parent.chain_cache
-    }
-
-    async fn load_caches(&mut self) -> Result<(), BlockchainError> {
-        Err(BlockchainError::UnsupportedOperation)
     }
 }
 

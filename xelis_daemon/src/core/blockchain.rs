@@ -285,14 +285,6 @@ impl<S: Storage> Blockchain<S> {
         }
 
         let on_disk = storage.has_blocks().await?;
-        let (height, topoheight) = if on_disk {
-            info!("Reading last metadata available...");
-            let height = storage.get_top_height().await?;
-            let topoheight = storage.get_top_topoheight().await?;
-
-            (height, topoheight)
-        } else { (0, 0) };
-
         let environment = build_environment::<S>().build();
 
         info!("Initializing chain...");
@@ -321,23 +313,14 @@ impl<S: Storage> Blockchain<S> {
         } else if !config.recovery_mode {
             debug!("Retrieving tips for computing current difficulty");
             let mut storage = blockchain.get_storage().write().await;
-            let tips = storage.get_tips().await?;
-            let (difficulty, _) = blockchain.get_difficulty_at_tips(&*storage, tips.iter()).await?;
 
-            // now compute the stable height
-            debug!("Retrieving tips for computing current stable height");
-            let (stable_hash, stable_height) = blockchain.find_common_base::<S, _>(&storage, &tips).await?;
-
-            // Search the stable topoheight
-            let stable_topoheight = storage.get_topo_height_for_hash(&stable_hash).await?;
-
-            let chain_cache = storage.chain_cache_mut().await?;
-            *chain_cache.difficulty.get_mut() = difficulty;
-            chain_cache.stable_height = stable_height;
-            chain_cache.stable_topoheight = stable_topoheight;
+            blockchain.initialize_caches(&mut *storage).await?;
 
             // also do some clean up in case of DB corruption
             if config.check_db_integrity {
+                let chain_cache = storage.chain_cache().await;
+                let topoheight = chain_cache.topoheight;
+
                 info!("Cleaning data above topoheight {} in case of potential DB corruption", topoheight);
                 storage.delete_versioned_data_above_topoheight(topoheight).await?;
             }
@@ -546,33 +529,55 @@ impl<S: Storage> Blockchain<S> {
     }
 
     pub async fn reload_from_disk_with_storage(&self, storage: &mut S) -> Result<(), BlockchainError> {
-        let tips = storage.get_tips().await?;
-        // Research stable height to update caches
-        let (stable_hash, stable_height) = self.find_common_base(&*storage, &tips).await?;
-
-        // Research stable topoheight also
-        let stable_topoheight = storage.get_topo_height_for_hash(&stable_hash).await?;
-
-        // Recompute the difficulty with new tips
-        let (difficulty, _) = self.get_difficulty_at_tips(&*storage, tips.iter()).await?;
+        debug!("Reloading chain from disk with provided storage");
+        self.initialize_caches(storage).await?;
+        counter!("xelis_blockchain_reload_from_disk").increment(1);
 
         // TXs in mempool may be outdated, clear them as they will be asked later again
         {
             debug!("locking mempool for cleaning");
             let mut mempool = self.mempool.write().await;
             debug!("Clearing mempool");
-            mempool.clear();
+
+            let chain_cache = storage.chain_cache().await;
+            let block_version = get_version_at_height(&self.network, chain_cache.height);
+            let tx_base_fee = if block_version >= BlockVersion::V3 {
+                self.get_required_base_fee(storage, chain_cache.tips.iter()).await?.0
+            } else {
+                FEE_PER_KB
+            };
+
+            mempool.clean_up(&*storage, &self.environment, chain_cache.stable_topoheight, chain_cache.topoheight, block_version, tx_base_fee).await?;
         }
 
-        storage.clear_caches().await?;
+        Ok(())
+    }
+
+    async fn initialize_caches(&self, storage: &mut S) -> Result<(), BlockchainError> {
+        debug!("Initializing caches from storage");
+
+        let tips = storage.get_tips().await?;
+        let (difficulty, _) = self.get_difficulty_at_tips(&*storage, tips.iter()).await?;
+
+        // now compute the stable height
+        debug!("Retrieving tips for computing current stable height");
+        let (stable_hash, stable_height) = self.find_common_base::<S, _>(&storage, &tips).await?;
+
+        // Search the stable topoheight
+        let stable_topoheight = storage.get_topo_height_for_hash(&stable_hash).await?;
+
+        let topoheight = storage.get_top_topoheight().await?;
+        let height = storage.get_top_height().await?;
 
         let chain_cache = storage.chain_cache_mut().await?;
 
-        *chain_cache.difficulty.get_mut() = difficulty;
+        chain_cache.topoheight = topoheight;
+        chain_cache.height = height;
         chain_cache.stable_height = stable_height;
         chain_cache.stable_topoheight = stable_topoheight;
+        chain_cache.tips = tips;
+        *chain_cache.difficulty.get_mut() = difficulty;
 
-        counter!("xelis_blockchain_reload_from_disk").increment(1);
         Ok(())
     }
 
@@ -3396,11 +3401,11 @@ impl<S: Storage> Blockchain<S> {
 
         let chain_cache = storage.chain_cache_mut().await?;
 
-        chain_cache.height = new_height;
-        chain_cache.topoheight = new_topoheight;
-
         let previous_stable_height = chain_cache.stable_height;
         let previous_stable_topoheight = chain_cache.stable_topoheight;
+
+        chain_cache.height = new_height;
+        chain_cache.topoheight = new_topoheight;
 
         // update stable height if it's allowed
         if !stop_at_stable_height {
@@ -3443,13 +3448,14 @@ impl<S: Storage> Blockchain<S> {
                 }
             }
 
+            // We don't use initialize cache because we already updated half of it by hand above
+            let (difficulty, _) = self.get_difficulty_at_tips(&*storage, tips.iter()).await?;
             let chain_cache = storage.chain_cache_mut().await?;
 
             chain_cache.stable_height = stable_height;
             chain_cache.stable_topoheight = stable_topoheight;
+            *chain_cache.difficulty.get_mut() = difficulty;
         }
-
-        storage.clear_caches().await?;
 
         Ok((new_topoheight, orphaned_txs))
     }

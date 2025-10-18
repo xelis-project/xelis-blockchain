@@ -8,7 +8,7 @@ use crate::core::{
 #[async_trait]
 impl CacheProvider for RocksStorage {
     // Clear all the internal caches if any
-    async fn clear_caches(&mut self) -> Result<(), BlockchainError> {
+    async fn clear_objects_cache(&mut self) -> Result<(), BlockchainError> {
         trace!("clear caches");
         Ok(())
     }
@@ -19,10 +19,5 @@ impl CacheProvider for RocksStorage {
 
     async fn chain_cache(&self) -> &ChainCache {
         &self.cache().chain
-    }
-
-    async fn load_caches(&mut self) -> Result<(), BlockchainError> {
-        trace!("load caches");
-        Ok(())
     }
 }
