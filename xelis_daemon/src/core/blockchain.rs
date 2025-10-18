@@ -2967,8 +2967,8 @@ impl<S: Storage> Blockchain<S> {
 
         // save highest topo height
         debug!("Highest topo height found: {}", highest_topo);
-        let extended = highest_topo > current_topoheight;
-        if current_height == 0 || extended {
+        let chain_topoheight_extended = current_height == 0 || highest_topo > current_topoheight;
+        if chain_topoheight_extended {
             debug!("Blockchain height extended, current topoheight is now {} (previous was {})", highest_topo, current_topoheight);
             storage.set_top_topoheight(highest_topo).await?;
             current_topoheight = highest_topo;
@@ -2984,19 +2984,17 @@ impl<S: Storage> Blockchain<S> {
         }
 
         // auto prune mode
-        if extended {
-            if let Some(keep_only) = self.auto_prune_keep_n_blocks {
-                // check that the topoheight is greater than the safety limit
-                // and that we can prune the chain using the config while respecting the safety limit
-                if current_topoheight % keep_only == 0 && current_topoheight - keep_only > 0 {
-                    info!("Auto pruning chain until topoheight {} (keep only {} blocks)", current_topoheight - keep_only, keep_only);
-                    let start = Instant::now();
-                    if let Err(e) = self.prune_until_topoheight_for_storage(current_topoheight - keep_only, &mut *storage).await {
-                        warn!("Error while trying to auto prune chain: {}", e);
-                    }
-
-                    info!("Auto pruning done in {}ms", start.elapsed().as_millis());
+        if let Some(keep_only) = self.auto_prune_keep_n_blocks.filter(|_| chain_topoheight_extended) {
+            // check that the topoheight is greater than the safety limit
+            // and that we can prune the chain using the config while respecting the safety limit
+            if current_topoheight % keep_only == 0 && current_topoheight - keep_only > 0 {
+                info!("Auto pruning chain until topoheight {} (keep only {} blocks)", current_topoheight - keep_only, keep_only);
+                let start = Instant::now();
+                if let Err(e) = self.prune_until_topoheight_for_storage(current_topoheight - keep_only, &mut *storage).await {
+                    warn!("Error while trying to auto prune chain: {}", e);
                 }
+
+                info!("Auto pruning done in {}ms", start.elapsed().as_millis());
             }
         }
 
@@ -3004,7 +3002,8 @@ impl<S: Storage> Blockchain<S> {
         // Store the new tips available
         storage.store_tips(&tips).await?;
 
-        if current_height == 0 || block.get_height() > current_height {
+        let chain_height_extended = current_height == 0 || block.get_height() > current_height;
+        if chain_height_extended {
             debug!("storing new top height {}", block.get_height());
             storage.set_top_height(block.get_height()).await?;
             current_height = block.get_height();
@@ -3041,7 +3040,15 @@ impl<S: Storage> Blockchain<S> {
             let chain_cache = storage.chain_cache_mut().await?;
             chain_cache.stable_height = base_height;
             chain_cache.stable_topoheight = base_topo_height;
-            *chain_cache.difficulty.lock().await = difficulty;
+            *chain_cache.difficulty.get_mut() = difficulty;
+
+            if chain_height_extended {
+                chain_cache.height = current_height;
+            }
+
+            if chain_topoheight_extended {
+                chain_cache.topoheight = current_topoheight;
+            }
         }
 
         // Check if the event is tracked
@@ -3073,7 +3080,7 @@ impl<S: Storage> Blockchain<S> {
         }
 
         // Clean mempool from old txs if the DAG has been updated
-        let mempool_deleted_txs = if extended {
+        let mempool_deleted_txs = if chain_topoheight_extended {
             debug!("Locking mempool write mode");
             let mut mempool = self.mempool.write().await;
             debug!("mempool write mode ok");
