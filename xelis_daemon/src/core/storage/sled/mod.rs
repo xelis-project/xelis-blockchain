@@ -28,7 +28,12 @@ use super::{
     cache::StorageCache,
     providers::*,
     Storage,
-    snapshot::{Snapshot as InternalSnapshot, Direction, IteratorMode},
+    snapshot::{
+        Snapshot as InternalSnapshot,
+        EntryState,
+        Direction,
+        IteratorMode
+    },
     Tips
 };
 
@@ -374,13 +379,12 @@ impl SledStorage {
 
     pub fn load_optional_from_disk_internal<T: Serializer>(snapshot: Option<&Snapshot>, tree: &Tree, key: &[u8]) -> Result<Option<T>, BlockchainError> {
         trace!("load optional from disk internal");
-        if let Some(snapshot) = snapshot {
-            trace!("load from snapshot key {:?} from db", key);
-            if let Some(value) = snapshot.get(tree.into(), key) {
-                return match value {
-                    Some(bytes) => Ok(Some(T::from_bytes(&bytes)?)),
-                    None => Ok(None)
-                }
+        if let Some(v) = snapshot.map(|s| s.get(tree.into(), key)) {
+            trace!("loaded from snapshot key {:?} from db", key);
+            match v {
+                EntryState::Stored(v) => return Ok(Some(T::from_bytes(&v)?)),
+                EntryState::Deleted => return Ok(None),
+                EntryState::Absent => {}
             }
         }
 
@@ -462,17 +466,15 @@ impl SledStorage {
     pub(super) fn remove_from_disk_internal<T: Serializer>(snapshot: Option<&mut Snapshot>, tree: &Tree, key: &[u8]) -> Result<Option<T>, BlockchainError> {
         trace!("remove from disk internal");
         let prev = if let Some(snapshot) = snapshot {
-            let (old, load) = snapshot.delete(tree.into(), key.to_vec());
-            if load {
-                // Load from disk
-                let v = match tree.get(key)? {
-                    Some(bytes) => Some(T::from_bytes(&bytes)?),
-                    None => None
-                };
-                v
-            } else {
-                old.map(|bytes| T::from_bytes(&bytes))
-                    .transpose()?
+            match snapshot.delete(tree.into(), key.to_vec()) {
+                EntryState::Stored(prev) => Some(T::from_bytes(&prev)?),
+                EntryState::Deleted => None,
+                EntryState::Absent => {
+                    // Fallback to the disk for the previous value
+                    tree.get(key)?
+                        .map(|bytes| T::from_bytes(&bytes))
+                        .transpose()?
+                }
             }
         } else {
             tree.remove(key)?
@@ -487,7 +489,14 @@ impl SledStorage {
         trace!("remove from disk internal without reading");
 
         let v = if let Some(snapshot) = snapshot {
-            snapshot.delete(tree.into(), key.to_vec()).0.is_some()
+            match snapshot.delete(tree.into(), key.to_vec()) {
+                EntryState::Stored(_) => true,
+                EntryState::Deleted => false,
+                EntryState::Absent => {
+                    // Fallback to the disk for the previous value
+                    tree.contains_key(key)?
+                }
+            }
         } else {
             tree.remove(key)?.is_some()
         };
@@ -512,9 +521,16 @@ impl SledStorage {
         let prev = if let Some(snapshot) = snapshot {
             let value = value.into();
             let v: &[u8] = &value;
-            snapshot.put(tree.into(), key.as_ref().to_vec(), v.to_vec())
-                .map(|bytes| R::from_bytes(&bytes))
-                .transpose()?
+            match snapshot.put(tree.into(), key.as_ref().to_vec(), v.to_vec()) {
+                EntryState::Stored(prev) => Some(R::from_bytes(&prev)?),
+                EntryState::Deleted => None,
+                EntryState::Absent => {
+                    // Fallback to the disk for the previous value
+                    tree.get(key.as_ref())?
+                        .map(|bytes| R::from_bytes(&bytes))
+                        .transpose()?
+                },
+            }
         } else {
             tree.insert(key.as_ref(), value)?
                 .map(|bytes| R::from_bytes(&bytes))
@@ -528,10 +544,15 @@ impl SledStorage {
     pub(super) fn get_size_from_disk(&self, tree: &Tree, key: &[u8]) -> Result<usize, BlockchainError> {
         trace!("get size from disk");
 
-        if let Some(snapshot) = self.snapshot.as_ref() {
-            if let Some(v) = snapshot.get(tree.into(), key) {
-                return v.ok_or(BlockchainError::NotFoundOnDisk(DiskContext::DataLen))
-                    .map(|bytes| bytes.len());
+        if let Some(v) = self.snapshot.as_ref().map(|s| s.get(tree.into(), key)) {
+            match v {
+                EntryState::Stored(bytes) => {
+                    return Ok(bytes.len());
+                }
+                EntryState::Deleted => {
+                    return Err(BlockchainError::NotFoundOnDisk(DiskContext::DataLen));
+                }
+                EntryState::Absent => {}
             }
         }
 

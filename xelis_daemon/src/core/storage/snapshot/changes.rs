@@ -1,6 +1,8 @@
 use std::collections::{btree_map::{Entry, IntoIter}, BTreeMap};
 use bytes::Bytes;
 
+use super::EntryState;
+
 #[derive(Clone, Debug)]
 pub struct Changes {
     pub writes: BTreeMap<Bytes, Option<Bytes>>,
@@ -8,34 +10,44 @@ pub struct Changes {
 
 impl Changes {
     /// Set a key to a new value
-    pub fn insert<K, V>(&mut self, key: K, value: V) -> Option<Bytes>
+    /// Returns the previous value if any
+    pub fn insert<K, V>(&mut self, key: K, value: V) -> EntryState<Bytes>
     where
         K: Into<Bytes>,
         V: Into<Bytes>,
     {
-        self.writes.insert(key.into(), Some(value.into())).flatten()
+        match self.writes.insert(key.into(), Some(value.into())) {
+            Some(Some(prev)) => EntryState::Stored(prev),
+            Some(None) => EntryState::Deleted,
+            None => EntryState::Absent,
+        }
     }
 
     /// Remove a key
     /// If bool return true, we must read from disk
-    pub fn remove<K>(&mut self, key: K) -> (Option<Bytes>, bool)
+    /// Returns the previous value if any
+    pub fn remove<K>(&mut self, key: K) -> EntryState<Bytes>
     where
         K: Into<Bytes>,
     {
         match self.writes.entry(key.into()) {
             Entry::Occupied(mut entry) => {
                 let value = entry.get_mut().take();
-                (value, false)
+                match value {
+                    Some(v) => EntryState::Stored(v),
+                    None => EntryState::Deleted,
+                }
             },
             Entry::Vacant(v) => {
                 v.insert(None);
-                (None, true)
+                EntryState::Absent
             },
         }
     }
 
     /// Check if key is present in our batch
     /// Return None if key wasn't overwritten yet
+    /// Otherwise, return Some(true) if key is present, Some(false) if it was deleted
     pub fn contains<K>(&self, key: K) -> Option<bool>
     where
         K: AsRef<[u8]>

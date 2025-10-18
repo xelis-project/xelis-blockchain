@@ -38,7 +38,12 @@ use crate::core::{
     config::RocksDBConfig,
     error::{BlockchainError, DiskContext},
     storage::{
-        snapshot::{Snapshot as InternalSnapshot, Direction, IteratorMode},
+        snapshot::{
+            Snapshot as InternalSnapshot,
+            Direction,
+            IteratorMode,
+            EntryState
+        },
         BlockProvider,
         ClientProtocolProvider,
         ContractLogsProvider,
@@ -303,10 +308,11 @@ impl RocksStorage {
     pub fn get_size_from_disk<K: AsRef<[u8]>>(&self, column: Column, key: &K) -> Result<usize, BlockchainError> {
         trace!("load from disk internal {:?}", column);
 
-        if let Some(v) = self.snapshot.as_ref().and_then(|s| s.get_size(column, key.as_ref())) {
+        if let Some(v) = self.snapshot.as_ref().map(|s| s.get_size(column, key.as_ref())) {
             match v {
-                Some(v) => return Ok(v),
-                None => return Err(BlockchainError::NotFoundOnDisk(DiskContext::DataLen))
+                EntryState::Stored(v) => return Ok(v),
+                EntryState::Deleted => return Err(BlockchainError::NotFoundOnDisk(DiskContext::DataLen)),
+                EntryState::Absent => {}
             }
         }
 
@@ -323,10 +329,11 @@ impl RocksStorage {
     pub fn load_optional_from_disk_internal<K: AsRef<[u8]> + ?Sized, V: Serializer>(db: &InnerDB, snapshot: Option<&Snapshot>, column: Column, key: &K) -> Result<Option<V>, BlockchainError> {
         trace!("load optional {:?} from disk internal", column);
 
-        if let Some(v) = snapshot.and_then(|s| s.get(column, key.as_ref())) {
+        if let Some(v) = snapshot.map(|s| s.get(column, key.as_ref())) {
             match v {
-                Some(v) => return Ok(Some(V::from_bytes(&v)?)),
-                None => return Ok(None)
+                EntryState::Stored(v) => return Ok(Some(V::from_bytes(&v)?)),
+                EntryState::Deleted => return Ok(None),
+                EntryState::Absent => {},
             }
         }
 

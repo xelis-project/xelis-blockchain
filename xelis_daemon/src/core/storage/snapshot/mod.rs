@@ -18,6 +18,16 @@ use crate::core::{
 
 pub use iterator_mode::*;
 
+pub enum EntryState<T> {
+    // Has been added/modified in our snapshot
+    Stored(T),
+    // Has been deleted in our snapshot
+    Deleted,
+    // Not present in our snapshot
+    // Must fallback on disk
+    Absent
+}
+
 // Snapshot is made to be clonable and mutable
 // It holds a set of changes per column/tree.
 // To clone it, it require to be mutable to clone the cache too.
@@ -46,12 +56,14 @@ impl<C: Hash + Eq> Snapshot<C> {
         }
     }
 
-    pub fn delete<K: Into<Bytes>>(&mut self, column: C, key: K) -> (Option<Bytes>, bool) {
+    /// Remove a key from our snapshot
+    pub fn delete<K: Into<Bytes>>(&mut self, column: C, key: K) -> EntryState<Bytes> {
         self.trees.entry(column)
             .or_insert_with(Changes::default)
             .remove(key)
     }
 
+    /// Count entries based on our snapshot state and the provided iterator for remaining entries on disk
     pub fn count_entries<I: AsRef<[u8]>, E: StdError + Send + Sync + 'static>(&self, column: C, iterator: impl Iterator<Item = Result<(I, I), E>>) -> usize {
         let changes = self.trees.get(&column);
         iterator.map(|res| {
@@ -72,6 +84,7 @@ impl<C: Hash + Eq> Snapshot<C> {
         .count()
     }
 
+    /// Check if snapshot is empty based on our snapshot state and the provided iterator for remaining entries on disk
     pub fn is_empty<I: AsRef<[u8]>, E: StdError + Send + Sync + 'static>(&self, column: C, iterator: impl Iterator<Item = Result<(I, I), E>>) -> bool {
         let changes = self.trees.get(&column);
 
@@ -104,30 +117,44 @@ impl<C: Hash + Eq> Snapshot<C> {
         next.is_none()
     }
 
-    // Returns the previous value if any
-    pub fn put<K: Into<Bytes>, V: Into<Bytes>>(&mut self, column: C, key: K, value: V) -> Option<Bytes> {
+    /// Returns the previous value if any
+    pub fn put<K: Into<Bytes>, V: Into<Bytes>>(&mut self, column: C, key: K, value: V) -> EntryState<Bytes> {
         self.trees.entry(column)
             .or_insert_with(Changes::default)
             .insert(key, value)
     }
 
-    pub fn get<'a, K: AsRef<[u8]>>(&'a self, column: C, key: K) -> Option<Option<&'a Bytes>> {
-        let batch = self.trees.get(&column)?;
-        batch.writes.get(key.as_ref())
-            .map(|v| v.as_ref())
+    /// Get a value from our snapshot
+    pub fn get<'a, K: AsRef<[u8]>>(&'a self, column: C, key: K) -> EntryState<&'a Bytes> {
+        match self.trees.get(&column) {
+            Some(batch) => match batch.writes.get(key.as_ref()) {
+                Some(Some(v)) => EntryState::Stored(v),
+                Some(None) => EntryState::Deleted,
+                None => EntryState::Absent,
+            },
+            None => EntryState::Absent,
+        }
     }
 
-    pub fn get_size<'a, K: AsRef<[u8]>>(&'a self, column: C, key: K) -> Option<Option<usize>> {
-        let batch = self.trees.get(&column)?;
-        batch.writes.get(key.as_ref())
-            .map(|v| v.as_ref().map(|v| v.len()))
+    /// Get the size of a value from our snapshot
+    pub fn get_size<'a, K: AsRef<[u8]>>(&'a self, column: C, key: K) -> EntryState<usize> {
+        match self.trees.get(&column) {
+            Some(batch) => match batch.writes.get(key.as_ref()) {
+                Some(Some(v)) => EntryState::Stored(v.len()),
+                Some(None) => EntryState::Deleted,
+                None => EntryState::Absent,
+            },
+            None => EntryState::Absent,
+        }
     }
 
+    /// Check if a key is present in our snapshot
     pub fn contains<K: AsRef<[u8]>>(&self, column: C, key: K) -> Option<bool> {
         let batch = self.trees.get(&column)?;
         batch.contains(key)
     }
 
+    /// Check if a key is present in our snapshot, defaulting to false
     pub fn contains_key<K: AsRef<[u8]>>(&self, column: C, key: K) -> bool {
         self.contains(column, key).unwrap_or(false)
     }
