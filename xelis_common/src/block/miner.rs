@@ -290,9 +290,9 @@ impl<'a> MinerWork<'a> {
 
 impl<'a> Serializer for MinerWork<'a> {
     fn write(&self, writer: &mut Writer) {
-        writer.write_hash(&self.header_work_hash); // 32
-        writer.write_u64(&self.timestamp); // 32 + 8 = 40
-        writer.write_u64(&self.nonce); // 40 + 8 = 48
+        self.header_work_hash.write(writer); // 32
+        self.timestamp.write(writer); // 32 + 8 = 40
+        self.nonce.write(writer); // 40 + 8 = 48
         writer.write_bytes(&self.extra_nonce); // 48 + 32 = 80
 
         // 80 + 32 = 112

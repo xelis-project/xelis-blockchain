@@ -53,7 +53,7 @@ impl Serializer for ContractDeposit {
         match self {
             ContractDeposit::Public(amount) => {
                 writer.write_u8(0);
-                writer.write_u64(amount);
+                amount.write(writer);
             },
             ContractDeposit::Private {
                 commitment,
@@ -126,15 +126,15 @@ impl Serializer for Primitive {
             },
             Primitive::U32(value) => {
                 writer.write_u8(3);
-                writer.write_u32(value);
+                value.write(writer);
             },
             Primitive::U64(value) => {
                 writer.write_u8(4);
-                writer.write_u64(value);
+                value.write(writer);
             },
             Primitive::U128(value) => {
                 writer.write_u8(5);
-                writer.write_u128(value);
+                value.write(writer);
             },
             Primitive::U256(value) => {
                 writer.write_u8(6);
@@ -147,7 +147,7 @@ impl Serializer for Primitive {
             Primitive::String(value) => {
                 writer.write_u8(8);
                 let bytes = value.as_bytes();
-                writer.write_u16(bytes.len() as u16);
+                DynamicLen(bytes.len()).write(writer);
                 writer.write_bytes(bytes);
             }
             Primitive::Range(range) => {
@@ -173,7 +173,7 @@ impl Serializer for Primitive {
             6 => Primitive::U256(U256::read(reader)?),
             7 => Primitive::Boolean(reader.read_bool()?),
             8 => {
-                let len = reader.read_u16()? as usize;
+                let len = DynamicLen::read(reader)?.0;
                 Primitive::String(reader.read_string_with_size(len)?)
             },
             9 => {
@@ -210,7 +210,7 @@ impl Serializer for Primitive {
             Primitive::U128(_) => 16,
             Primitive::U256(value) => value.size(),
             Primitive::Boolean(_) => 1,
-            Primitive::String(value) => 2 + value.as_bytes().len(),
+            Primitive::String(value) => DynamicLen(value.as_bytes().len()).size() + value.as_bytes().len(),
             Primitive::Range(range) => range.0.size() + range.1.size(),
             Primitive::Opaque(opaque) => opaque.size()
         }
@@ -222,35 +222,35 @@ impl Serializer for ValueCell {
     // ValueCell with more than one value are serialized in reverse order
     // This help us to save a reverse operation when deserializing
     fn write(&self, writer: &mut Writer) {
-        match self {
-            ValueCell::Primitive(value) => {
-                writer.write_u8(0);
-                value.write(writer);
-            },
-            ValueCell::Bytes(bytes) => {
-                writer.write_u8(1);
-                let len = bytes.len() as u32;
-                writer.write_u32(&len);
-                writer.write_bytes(bytes);
-            }
-            ValueCell::Object(values) => {
-                writer.write_u8(2);
-                let len = values.len() as u32;
-                writer.write_u32(&len);
-                for value in values.iter() {
-                    value.as_ref().write(writer);
+        let mut stack = vec![self];
+        while let Some(cell) = stack.pop() {
+            match cell {
+                ValueCell::Primitive(value) => {
+                    writer.write_u8(0);
+                    value.write(writer);
+                },
+                ValueCell::Bytes(bytes) => {
+                    writer.write_u8(1);
+                    DynamicLen(bytes.len()).write(writer);
+                    writer.write_bytes(bytes);
                 }
-            },
-            ValueCell::Map(map) => {
-                writer.write_u8(3);
-                let len = map.len() as u32;
-                writer.write_u32(&len);
-                for (key, value) in map.iter() {
-                    key.write(writer);
-                    value.as_ref().write(writer);
+                ValueCell::Object(values) => {
+                    writer.write_u8(2);
+                    DynamicLen(values.len()).write(writer);
+                    for value in values.iter().rev() {
+                        stack.push(value.as_ref());
+                    }
+                },
+                ValueCell::Map(map) => {
+                    writer.write_u8(3);
+                    DynamicLen(map.len()).write(writer);
+                    for (key, value) in map.iter().rev() {
+                        stack.push(value.as_ref());
+                        stack.push(key);
+                    }
                 }
             }
-        };
+        }
     }
 
     // No deserialization can occurs here as we're missing context
@@ -259,11 +259,11 @@ impl Serializer for ValueCell {
         Ok(match reader.read_u8()? {
             0 => ValueCell::Primitive(Primitive::read(reader)?),
             1 => {
-                let len = reader.read_u32()? as usize;
+                let len = DynamicLen::read(reader)?.0;
                 ValueCell::Bytes(reader.read_bytes(len)?)
             },
             2 => {
-                let len = reader.read_u32()? as usize;
+                let len = DynamicLen::read(reader)?.0;
                 let mut values = Vec::new();
                 for _ in 0..len {
                     values.push(ValueCell::read(reader)?.into());
@@ -271,7 +271,7 @@ impl Serializer for ValueCell {
                 ValueCell::Object(values)
             },
             3 => {
-                let len = reader.read_u32()? as usize;
+                let len = DynamicLen::read(reader)?.0;
                 let mut map = IndexMap::new();
                 for _ in 0..len {
                     let key = ValueCell::read(reader)?;
@@ -295,19 +295,19 @@ impl Serializer for ValueCell {
                 ValueCell::Primitive(value) => total += value.size(),
                 ValueCell::Bytes(bytes) => {
                     // u32 len
-                    total += 4;
+                    total += DynamicLen(bytes.len()).size();
                     total += bytes.len();
                 },
                 ValueCell::Object(values) => {
                     // u32 len
-                    total += 4;
+                    total += DynamicLen(values.len()).size();
                     for value in values {
                         stack.push(value.as_ref());
                     }
                 },
                 ValueCell::Map(map) => {
                     // u32 len
-                    total += 4;
+                    total += DynamicLen(map.len()).size();
                     for (key, value) in map.iter() {
                         stack.push(value.as_ref());
                         stack.push(key);
@@ -323,7 +323,7 @@ impl Serializer for ValueCell {
 impl Serializer for Module {
     fn write(&self, writer: &mut Writer) {
         let constants = self.constants();
-        writer.write_u16(constants.len() as u16);
+        DynamicLen(constants.len()).write(writer);
         for constant in constants {
             constant.write(writer);
         }
@@ -332,8 +332,7 @@ impl Serializer for Module {
         writer.write_u16(chunks.len() as u16);
         for entry in chunks {
             let instructions = entry.chunk.get_instructions();
-            let len = instructions.len() as u32;
-            writer.write_u32(&len);
+            DynamicLen(instructions.len()).write(writer);
             writer.write_bytes(instructions);
             match entry.access {
                 Access::All => writer.write_u8(0),
@@ -348,8 +347,8 @@ impl Serializer for Module {
     }
 
     fn read(reader: &mut Reader) -> Result<Module, ReaderError> {
-        let constants_len = reader.read_u16()?;
-        let mut constants = IndexSet::with_capacity(constants_len as usize);
+        let constants_len = DynamicLen::read(reader)?.0;
+        let mut constants = IndexSet::with_capacity(constants_len);
 
         for _ in 0..constants_len {
             let c = ValueCell::read(reader)?;
@@ -363,7 +362,7 @@ impl Serializer for Module {
         let mut hooks = IndexMap::new();
 
         for i in 0..chunks_len {
-            let instructions_len = reader.read_u32()? as usize;
+            let instructions_len = DynamicLen::read(reader)?.0;
             let instructions = reader.read_bytes(instructions_len)?;
             let chunk = Chunk::from_instructions(instructions);
 
@@ -388,7 +387,7 @@ impl Serializer for Module {
 
     fn size(&self) -> usize {
         // 2 for constants len
-        let mut size = 2 + self.constants()
+        let mut size = DynamicLen(self.constants().len()).size() + self.constants()
             .iter()
             .map(Serializer::size)
             .sum::<usize>();
@@ -396,10 +395,13 @@ impl Serializer for Module {
         // 4 for instructions len u32 per chunk
         size += 2 + self.chunks()
             .iter()
-            .map(|entry| 4 + entry.chunk.get_instructions().len() + match entry.access {
-                Access::All | Access::Internal | Access::Entry => 1,
-                Access::Hook { id } => 1 + id.size(),
-            })
+            .map(|entry| {
+                let instructions = entry.chunk.get_instructions();
+                DynamicLen(instructions.len()).size() + instructions.len() + match entry.access {
+                    Access::All | Access::Internal | Access::Entry => 1,
+                    Access::Hook { id } => 1 + id.size(),
+                }
+        })
             .sum::<usize>();
 
         size
@@ -446,12 +448,13 @@ mod tests {
     #[test]
     fn test_serde_value_cell() {
         test_serde_cell(ValueCell::Bytes(vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]));
+        test_serde_cell(ValueCell::Bytes(vec![0; u16::MAX as usize + 10]));
         test_serde_cell(ValueCell::Object(vec![
             Primitive::U64(42).into(),
+            Primitive::U64(23).into(),
             Primitive::U64(42).into(),
-            Primitive::U64(42).into(),
-            Primitive::U64(42).into(),
-            Primitive::U64(42).into()
+            Primitive::U64(57).into(),
+            Primitive::U64(10).into()
         ]));
         test_serde_cell(ValueCell::Map(Box::new([
             (Primitive::U64(42).into(), Primitive::String("Hello World!".to_owned()).into())

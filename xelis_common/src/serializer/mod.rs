@@ -4,6 +4,7 @@ mod writer;
 mod hexable;
 mod raw;
 mod count;
+mod dynamic_len;
 
 use std::marker::Sized;
 
@@ -13,6 +14,7 @@ pub use defaults::DEFAULT_MAX_ITEMS;
 pub use hexable::*;
 pub use raw::*;
 pub use count::*;
+pub use dynamic_len::*;
 
 pub trait Serializer {
     fn write(&self, writer: &mut Writer);
