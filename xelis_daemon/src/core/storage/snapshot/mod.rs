@@ -18,6 +18,11 @@ use crate::core::{
 
 pub use iterator_mode::*;
 
+// Snapshot is made to be clonable and mutable
+// It holds a set of changes per column/tree.
+// To clone it, it require to be mutable to clone the cache too.
+// Changes are stored as Bytes to avoid serialization/deserialization
+// until we need to read them and to also have cheap copies.
 #[derive(Debug)]
 pub struct Snapshot<C: Hash + Eq> {
     pub trees: HashMap<C, Changes>,
@@ -99,6 +104,7 @@ impl<C: Hash + Eq> Snapshot<C> {
         next.is_none()
     }
 
+    // Returns the previous value if any
     pub fn put<K: Into<Bytes>, V: Into<Bytes>>(&mut self, column: C, key: K, value: V) -> Option<Bytes> {
         self.trees.entry(column)
             .or_insert_with(Changes::default)
@@ -239,101 +245,5 @@ impl<C: Hash + Eq> Snapshot<C> {
     {
         self.lazy_iter::<K, (), I, E>(column, mode, iterator)
             .map(|res| res.map(|(k, _)| k))
-    }
-
-    // Iterator over keys and values
-    // Both are parsed from bytes
-    // It will fallback on the disk iterator
-    // if the key is not present in the batch
-    // NOTE: this iterator will copy and allocate
-    // the data from the iterators to prevent borrowing
-    // current snapshot.
-    pub fn iter_owned<'a, K, V, I: AsRef<[u8]>, E: StdError + Send + Sync + 'static>(
-        &self,
-        column: C,
-        mode: IteratorMode,
-        iterator: impl Iterator<Item = Result<(I, I), E>> + 'a,
-    ) -> impl Iterator<Item = Result<(K, V), BlockchainError>> + 'a
-    where
-        K: Serializer + 'a,
-        V: Serializer + 'a,
-    {
-        match self.trees.get(&column) {
-            Some(tree) => {
-                let disk_iter = iterator
-                    .map(|res| {
-                        let (key, value) = res.context("Internal error in snapshot iterator")?;
-
-                        // Snapshot doesn't contain the key,
-                        // so we can use the one from disk
-                        if !tree.writes.contains_key(key.as_ref()) {
-                            Ok(Some((K::from_bytes(key.as_ref())?, V::from_bytes(value.as_ref())?)))
-                        } else {
-                            Ok(None)
-                        }
-                    })
-                    .filter_map(Result::transpose);
-
-                let mem_iter: Box<dyn Iterator<Item = (&Bytes, &Bytes)> + Send + Sync> = match mode {
-                    IteratorMode::Start => {
-                        Box::new(tree.writes.iter()
-                            .filter_map(|(k, v)| v.as_ref().map(|v| (k, v))))
-                    }
-                    IteratorMode::End => {
-                        Box::new(tree.writes.iter().rev()
-                            .filter_map(|(k, v)| v.as_ref().map(|v| (k, v))))
-                    }
-                    IteratorMode::WithPrefix(prefix, direction) => {
-                        let prefix = prefix.to_vec();
-                        let iter = match direction {
-                            Direction::Forward => Either::Left(tree.writes.iter()),
-                            Direction::Reverse => Either::Right(tree.writes.iter().rev()),
-                        };
-                        Box::new(iter.filter_map(move |(k, v)| {
-                            if let Some(v) = v {
-                                if k.starts_with(&prefix) {
-                                    return Some((k, v));
-                                }
-                            }
-                            None
-                        }))
-                    }
-                    IteratorMode::From(start, direction) => {
-                        let start = Bytes::from(start.to_vec());
-                        let iter = match direction {
-                            Direction::Forward => Either::Left(tree.writes.range(start..)),
-                            Direction::Reverse => Either::Right(tree.writes.range(..=start).rev()),
-                        };
-                        Box::new(iter.filter_map(|(k, v)| v.as_ref().map(|v| (k, v))))
-                    }
-                    IteratorMode::Range {
-                        lower_bound,
-                        upper_bound,
-                        direction,
-                    } => {
-                        let lower = Bytes::from(lower_bound.to_vec());
-                        let upper = Bytes::from(upper_bound.to_vec());
-                        let iter = match direction {
-                            Direction::Forward => Either::Left(tree.writes.range(lower..upper)),
-                            Direction::Reverse => Either::Right(tree.writes.range(lower..upper).rev()),
-                        };
-                        Box::new(iter.filter_map(|(k, v)| v.as_ref().map(|v| (k, v))))
-                    }
-                };
-
-                let mem_iter = mem_iter.into_iter()
-                    .map(|(k, v)| Ok((K::from_bytes(k)?, V::from_bytes(v)?)));
-
-                Either::Left(disk_iter.chain(mem_iter).collect::<Vec<_>>().into_iter())
-            }
-            None => {
-                let disk_iter = iterator.map(|res| {
-                    let (key, value) = res.context("Internal error in snapshot iterator")?;
-                    Ok((K::from_bytes(key.as_ref())?, V::from_bytes(value.as_ref())?))
-                });
-
-                Either::Right(disk_iter)
-            }
-        }
     }
 }

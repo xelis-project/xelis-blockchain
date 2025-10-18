@@ -580,8 +580,7 @@ impl SledStorage {
         let key_bytes = key.to_bytes();
         let value = if let Some(cache) = cache.as_ref()
             .filter(|_| self.snapshot.as_ref()
-                .map(|s| !s.contains_key(tree.into(), &key_bytes))
-                .unwrap_or(true)
+                .map_or(true, |s| !s.contains_key(tree.into(), &key_bytes))
             )
         {
             trace!("load optional from cache");

@@ -373,31 +373,6 @@ impl RocksStorage {
         Ok(())
     }
 
-    pub fn iter_owned_internal<'a, K, V>(db: &'a InnerDB, snapshot: Option<&Snapshot>, mode: IteratorMode, column: Column) -> Result<impl Iterator<Item = Result<(K, V), BlockchainError>> + 'a, BlockchainError>
-    where
-        K: Serializer + 'a,
-        V: Serializer + 'a,
-    {
-        trace!("iter owned {:?}", column);
-
-        let cf = cf_handle!(db, column);
-        let (m, opts) = mode.convert();
-        let iterator = db.iterator_cf_opt(&cf, opts, m);
-
-        match snapshot {
-            Some(snapshot) => Ok(Either::Left(snapshot.iter_owned(column, mode, iterator))),
-            None => {
-                Ok(Either::Right(iterator.map(|res| {
-                    let (key, value) = res.context("Internal read error in iter")?;
-                    let key = K::from_bytes(&key)?;
-                    let value = V::from_bytes(&value)?;
-        
-                    Ok((key, value))
-                })))
-            } 
-        }
-    }
-
     pub fn iter_internal<'a, K, V>(db: &'a InnerDB, snapshot: Option<&'a Snapshot>, mode: IteratorMode, column: Column) -> Result<impl Iterator<Item = Result<(K, V), BlockchainError>> + 'a, BlockchainError>
     where
         K: Serializer + 'a,

@@ -1,4 +1,4 @@
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub enum Direction {
     Forward,
     Reverse,
@@ -14,7 +14,7 @@ impl Into<rocksdb::Direction> for Direction {
     }
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub enum IteratorMode<'a> {
     Start,
     End,

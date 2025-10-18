@@ -29,7 +29,8 @@ impl VersionedProvider for RocksStorage {}
 impl RocksStorage {
     pub fn delete_versioned_at_topoheight(&mut self, column_pointer: Column, column_versioned: Column, topoheight: TopoHeight) -> Result<(), BlockchainError> {
         let prefix = topoheight.to_be_bytes();
-        for res in Self::iter_owned_internal::<RawBytes, Option<TopoHeight>>(&self.db, self.snapshot.as_ref(), IteratorMode::WithPrefix(&prefix, Direction::Forward), column_versioned)? {
+        let snapshot = self.snapshot.as_mut().map(|s| s.clone_mut());
+        for res in Self::iter_internal::<RawBytes, Option<TopoHeight>>(&self.db, snapshot.as_ref(), IteratorMode::WithPrefix(&prefix, Direction::Forward), column_versioned)? {
             let (key, prev_topo) = res?;
 
             Self::remove_from_disk_internal(&self.db, self.snapshot.as_mut(), column_versioned, &key)?;
@@ -51,7 +52,8 @@ impl RocksStorage {
 
     pub fn delete_versioned_above_topoheight(&mut self, column_pointer: Column, column_versioned: Column, topoheight: TopoHeight) -> Result<(), BlockchainError> {
         let start = (topoheight + 1).to_be_bytes();
-        for res in Self::iter_owned_internal::<RawBytes, Option<TopoHeight>>(&self.db, self.snapshot.as_ref(), IteratorMode::From(&start, Direction::Forward), column_versioned)? {
+        let snapshot = self.snapshot.as_mut().map(|s| s.clone_mut());
+        for res in Self::iter_internal::<RawBytes, Option<TopoHeight>>(&self.db, snapshot.as_ref(), IteratorMode::From(&start, Direction::Forward), column_versioned)? {
             let (key, prev_topo) = res?;
 
             Self::remove_from_disk_internal(&self.db, self.snapshot.as_mut(), column_versioned, &key)?;
@@ -90,7 +92,8 @@ impl RocksStorage {
         mut mapper: impl FnMut(RawBytes, V) -> Result<(K, Option<TopoHeight>), BlockchainError>,
     ) -> Result<(), BlockchainError> {
         if keep_last {
-            for res in Self::iter_owned_internal::<RawBytes, V>(&self.db, self.snapshot.as_ref(), IteratorMode::Start, column_pointer)? {
+            let snapshot = self.snapshot.as_mut().map(|s| s.clone_mut());
+            for res in Self::iter_internal::<RawBytes, V>(&self.db, snapshot.as_ref(), IteratorMode::Start, column_pointer)? {
                 let (key, pointer) = res?;
 
                 // We fetch the last version to take its previous topoheight
@@ -135,7 +138,8 @@ impl RocksStorage {
 
     fn delete_versioned_data_below_topoheight(&mut self, column: Column, topoheight: TopoHeight) -> Result<(), BlockchainError> {
         let start = topoheight.to_be_bytes();
-        for res in Self::iter_owned_internal::<RawBytes, ()>(&self.db, self.snapshot.as_ref(), IteratorMode::From(&start, Direction::Reverse), column)? {
+        let snapshot = self.snapshot.as_mut().map(|s| s.clone_mut());
+        for res in Self::iter_internal::<RawBytes, ()>(&self.db, snapshot.as_ref(), IteratorMode::From(&start, Direction::Reverse), column)? {
             let (key, _) = res?;
             Self::remove_from_disk_internal(&self.db, self.snapshot.as_mut(), column, &key)?;
         }

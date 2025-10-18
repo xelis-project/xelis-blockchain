@@ -25,7 +25,10 @@ impl VersionedAssetProvider for RocksStorage {
     async fn delete_versioned_assets_at_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError> {
         trace!("delete versioned assets at topoheight {}", topoheight);
         let prefix = topoheight.to_be_bytes();
-        for res in Self::iter_owned_internal::<RawBytes, Option<TopoHeight>>(&self.db, self.snapshot.as_ref(), IteratorMode::WithPrefix(&prefix, Direction::Forward), Column::VersionedAssets)? {
+
+        // Cloned snapshot to iterate without borrowing issues
+        let snapshot = self.snapshot.as_mut().map(|s| s.clone_mut());
+        for res in Self::iter_internal::<RawBytes, Option<TopoHeight>>(&self.db, snapshot.as_ref(), IteratorMode::WithPrefix(&prefix, Direction::Forward), Column::VersionedAssets)? {
             let (versioned_key, prev_topo) = res?;
 
             Self::remove_from_disk_internal(&self.db, self.snapshot.as_mut(), Column::VersionedAssets, &versioned_key)?;
@@ -51,7 +54,8 @@ impl VersionedAssetProvider for RocksStorage {
     async fn delete_versioned_assets_above_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError> {
         trace!("delete versioned assets above topoheight {}", topoheight);
         let start = (topoheight + 1).to_be_bytes();
-        for res in Self::iter_owned_internal::<RawBytes, Option<TopoHeight>>(&self.db, self.snapshot.as_ref(), IteratorMode::From(&start, Direction::Forward), Column::VersionedAssets)? {
+            let snapshot = self.snapshot.as_mut().map(|s| s.clone_mut());
+        for res in Self::iter_internal::<RawBytes, Option<TopoHeight>>(&self.db, snapshot.as_ref(), IteratorMode::From(&start, Direction::Forward), Column::VersionedAssets)? {
             let (key, prev_topo) = res?;
             // Delete the version we've read
             Self::remove_from_disk_internal(&self.db, self.snapshot.as_mut(), Column::VersionedAssets, &key)?;
