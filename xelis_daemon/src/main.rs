@@ -353,7 +353,7 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
 
     let closure = |_: &_, _: _| async {
         trace!("Retrieving P2P peers and median topoheight");
-        let topoheight = blockchain.get_topo_height();
+        let topoheight = blockchain.get_topo_height().await;
         let (peers, median, syncing_rate) = match &p2p {
             Some(p2p) => {
                 let peer_list = p2p.get_peer_list();
@@ -363,7 +363,7 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
                     p2p.get_syncing_rate_bps(),
                 )
             },
-            None => (0, blockchain.get_topo_height(), None)
+            None => (0, topoheight, None)
         };
 
         trace!("Retrieving RPC connections count");
@@ -384,7 +384,7 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
         let mempool = blockchain.get_mempool_size().await;
 
         trace!("Retrieving network hashrate");
-        let version = get_version_at_height(blockchain.get_network(), blockchain.get_height());
+        let version = get_version_at_height(blockchain.get_network(), blockchain.get_height().await);
         let block_time_target = get_block_time_target_for_version(version);
         let network_hashrate: f64 = (blockchain.get_difficulty().await / (block_time_target / MILLIS_PER_SECOND)).into();
 
@@ -506,7 +506,8 @@ async fn verify_chain<S: Storage>(manager: &CommandManager, mut args: ArgumentMa
     let topoheight = if args.has_argument("topoheight") {
         args.get_value("topoheight")?.to_number()?
     } else {
-        blockchain.get_topo_height()
+        let chain_cache = storage.chain_cache().await;
+        chain_cache.topoheight
     };
 
     info!("Verifying chain supply from {} until topoheight {}", pruned_topoheight, topoheight);
@@ -1078,7 +1079,7 @@ async fn pop_blocks<S: Storage>(manager: &CommandManager, mut arguments: Argumen
     let amount = arguments.get_value("amount")?.to_number()?;
     let context = manager.get_context().lock()?;
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
-    if amount == 0 || amount >= blockchain.get_topo_height() {
+    if amount == 0 || amount >= blockchain.get_topo_height().await {
         return Err(anyhow::anyhow!("Invalid amount of blocks to pop").into());
     }
 
@@ -1138,8 +1139,9 @@ async fn block_size_dataset<S: Storage>(manager: &CommandManager, mut arguments:
 
     manager.message("Creating block size dataset...");
     let storage = blockchain.get_storage().read().await;
+    let chain_cache = storage.chain_cache().await;
 
-    for topoheight in (0..=blockchain.get_topo_height()).rev() {
+    for topoheight in (0..=chain_cache.topoheight).rev() {
         let hash_at_topo = storage.get_hash_at_topo_height(topoheight).await
             .context("Fetching hash at topo")?;
         let tips = storage.get_past_blocks_for_block_hash(&hash_at_topo).await
@@ -1186,7 +1188,9 @@ async fn circulating_supply_dataset<S: Storage>(manager: &CommandManager, mut ar
 
     manager.message("Creating circulating supply dataset...");
     let storage = blockchain.get_storage().read().await;
-    let mut prev_topo = Some(blockchain.get_topo_height());
+    let chain_cache = storage.chain_cache().await;
+
+    let mut prev_topo = Some(chain_cache.topoheight);
 
     while let Some(topo) = prev_topo.take() {
         let version = storage.get_circulating_supply_for_asset_at_exact_topoheight(&asset, topo).await
@@ -1248,15 +1252,17 @@ async fn status<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Res
 
     debug!("Retrieving blockchain status");
 
-    let height = blockchain.get_height();
-    let topoheight = blockchain.get_topo_height();
-    let stableheight = blockchain.get_stable_height();
-    let stable_topoheight = blockchain.get_stable_topoheight();
     let difficulty = blockchain.get_difficulty().await;
 
     debug!("Retrieving blockchain info from storage");
     let storage = blockchain.get_storage().read().await;
     debug!("storage read lock acquired");
+    let chain_cache = storage.chain_cache().await;
+
+    let height = chain_cache.height;
+    let topoheight = chain_cache.topoheight;
+    let stableheight = chain_cache.stable_height;
+    let stable_topoheight = chain_cache.stable_topoheight;
 
     let tips = storage.get_tips().await.context("Error while retrieving tips")?;
     let top_block_hash = blockchain.get_top_block_hash_for_storage(&storage).await
@@ -1495,7 +1501,8 @@ async fn difficulty_dataset<S: Storage>(manager: &CommandManager, mut arguments:
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
 
     manager.message("Creating difficulty dataset...");
-    for topoheight in 0..=blockchain.get_topo_height() {
+    let topoheight = blockchain.get_topo_height().await;
+    for topoheight in 0..=topoheight {
         // Retrieve block hash and header
         let (solve_time, difficulty, version, timestamp) = {
             let storage = blockchain.get_storage().read().await;

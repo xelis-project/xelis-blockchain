@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use crate::core::error::BlockchainError;
+use crate::core::{error::BlockchainError, storage::cache::ChainCache};
 #[macro_export]
 macro_rules! clear_caches {
     ($($cache:expr),*) => {
@@ -14,5 +14,11 @@ macro_rules! clear_caches {
 #[async_trait]
 pub trait CacheProvider {
     // Clear all the internal caches if any
-    async fn clear_caches(&mut self) -> Result<(), BlockchainError>;   
+    async fn clear_caches(&mut self) -> Result<(), BlockchainError>;
+
+    async fn chain_cache_mut(&mut self) -> Result<&mut ChainCache, BlockchainError>;
+
+    async fn chain_cache(&self) -> &ChainCache;
+
+    async fn load_caches(&mut self) -> Result<(), BlockchainError>;
 }

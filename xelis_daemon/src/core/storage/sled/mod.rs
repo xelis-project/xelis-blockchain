@@ -308,18 +308,16 @@ impl SledStorage {
     }
 
     pub fn cache_mut(&mut self) -> &mut StorageCache {
-        if let Some(snapshot) = self.snapshot.as_mut() {
-            &mut snapshot.cache
-        } else {
-            &mut self.cache
+        match self.snapshot.as_mut() {
+            Some(snapshot) => &mut snapshot.cache,
+            None => &mut self.cache
         }
     }
 
     pub fn cache(&self) -> &StorageCache {
-        if let Some(snapshot) = self.snapshot.as_ref() {
-            &snapshot.cache
-        } else {
-            &self.cache
+        match self.snapshot.as_ref() {
+            Some(snapshot) => &snapshot.cache,
+            None => &self.cache
         }
     }
 
@@ -547,7 +545,7 @@ impl SledStorage {
     // Or load it from cache if available
     // Note that the Snapshot has no cache and is priority over the cache
     // This mean, cache is never used if a snapshot is available
-    pub(super) async fn get_cacheable_arc_data<K: Eq + StdHash + Serializer + Clone, V: Serializer>(&self, tree: &Tree, cache: &Option<Mutex<LruCache<K, Arc<V>>>>, key: &K, context: DiskContext) -> Result<Immutable<V>, BlockchainError> {
+    pub(super) async fn get_cacheable_arc_data<K: Eq + StdHash + Serializer + Clone, V: Serializer>(&self, tree: &Tree, cache: Option<&Mutex<LruCache<K, Arc<V>>>>, key: &K, context: DiskContext) -> Result<Immutable<V>, BlockchainError> {
         trace!("get cacheable arc data {:?}", context);
         let key_bytes = key.to_bytes();
         let value = if let Some(cache) = cache.as_ref()
@@ -577,7 +575,7 @@ impl SledStorage {
         Ok(value)
     }
 
-    pub(super) async fn get_optional_cacheable_data<K: Eq + StdHash + Serializer + Clone, V: Serializer + Clone>(&self, tree: &Tree, cache: &Option<Mutex<LruCache<K, V>>>, key: &K) -> Result<Option<V>, BlockchainError> {
+    pub(super) async fn get_optional_cacheable_data<K: Eq + StdHash + Serializer + Clone, V: Serializer + Clone>(&self, tree: &Tree, cache: Option<&Mutex<LruCache<K, V>>>, key: &K) -> Result<Option<V>, BlockchainError> {
         trace!("get optional cacheable data");
         let key_bytes = key.to_bytes();
         let value = if let Some(cache) = cache.as_ref()
@@ -611,7 +609,7 @@ impl SledStorage {
 
     // Load a value from the DB and cache it
     // This data is not cached behind an Arc, but is cloned at each access
-    pub(super) async fn get_cacheable_data<K: Eq + StdHash + Serializer + Clone, V: Serializer + Clone>(&self, tree: &Tree, cache: &Option<Mutex<LruCache<K, V>>>, key: &K, context: DiskContext) -> Result<V, BlockchainError> {
+    pub(super) async fn get_cacheable_data<K: Eq + StdHash + Serializer + Clone, V: Serializer + Clone>(&self, tree: &Tree, cache: Option<&Mutex<LruCache<K, V>>>, key: &K, context: DiskContext) -> Result<V, BlockchainError> {
         trace!("get cacheable data {:?}", context);
         self.get_optional_cacheable_data(tree, cache, key).await?
             .ok_or_else(|| BlockchainError::NotFoundOnDisk(DiskContext::LoadData))
@@ -658,7 +656,7 @@ impl SledStorage {
     }
 
     // Check if our DB contains a data in cache or on disk
-    pub(super) async fn contains_data_cached<K: Eq + StdHash + Serializer + Clone, V>(&self, tree: &Tree, cache: &Option<Mutex<LruCache<K, V>>>, key: &K) -> Result<bool, BlockchainError> {
+    pub(super) async fn contains_data_cached<K: Eq + StdHash + Serializer + Clone, V>(&self, tree: &Tree, cache: Option<&Mutex<LruCache<K, V>>>, key: &K) -> Result<bool, BlockchainError> {
         trace!("contains data cached");
 
         let key_bytes = key.to_bytes();
@@ -711,14 +709,14 @@ impl Storage for SledStorage {
         trace!("Delete block at topoheight {topoheight}");
 
         // delete topoheight<->hash pointers
-        let hash = Self::delete_cacheable_data(self.snapshot.as_mut(), &self.hash_at_topo, self.cache.hash_at_topo_cache.as_mut(), &topoheight).await?;
+        let hash = Self::delete_cacheable_data(self.snapshot.as_mut(), &self.hash_at_topo, self.cache.objects.as_mut().map(|o| &mut o.hash_at_topo_cache), &topoheight).await?;
 
         trace!("Deleting block execution order");
         Self::remove_from_disk_without_reading(self.snapshot.as_mut(), &self.blocks_execution_order, hash.as_bytes())?;
 
         trace!("Hash is {hash} at topo {topoheight}");
 
-        Self::delete_cacheable_data::<Hash, u64>(self.snapshot.as_mut(), &self.topo_by_hash, self.cache.topo_by_hash_cache.as_mut(), &hash).await?;
+        Self::delete_cacheable_data::<Hash, u64>(self.snapshot.as_mut(), &self.topo_by_hash, self.cache.objects.as_mut().map(|o| &mut o.topo_by_hash_cache), &hash).await?;
 
         trace!("deleting block header {}", hash);
         let block = self.delete_block_by_hash(&hash).await?;
@@ -738,7 +736,7 @@ impl Storage for SledStorage {
             // Because the TX is not linked to any other block, we can safely delete that block
             if !self.is_tx_linked_to_blocks(&tx_hash).await? {
                 trace!("Deleting TX {} in block {}", tx_hash, hash);
-                let tx: Immutable<Transaction> = Self::delete_arc_cacheable_data(self.snapshot.as_mut(), &self.transactions, self.cache.transactions_cache.as_mut(), tx_hash).await?;
+                let tx: Immutable<Transaction> = Self::delete_arc_cacheable_data(self.snapshot.as_mut(), &self.transactions, self.cache.objects.as_mut().map(|o| &mut o.transactions_cache), tx_hash).await?;
                 txs.push((tx_hash.clone(), tx));
             }
         }

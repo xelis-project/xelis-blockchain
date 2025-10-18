@@ -93,7 +93,7 @@ const MAX_ACCOUNT_HISTORY: usize = 20;
 const MAX_ACCOUNTS: usize = 100;
 
 // Get the block type using the block hash and the blockchain current state
-pub async fn get_block_type_for_block<S: Storage, P: DifficultyProvider + DagOrderProvider + BlocksAtHeightProvider + PrunedTopoheightProvider>(blockchain: &Blockchain<S>, provider: &P, hash: &Hash) -> Result<BlockType, InternalRpcError> {
+pub async fn get_block_type_for_block<S: Storage, P: DifficultyProvider + DagOrderProvider + BlocksAtHeightProvider + PrunedTopoheightProvider + CacheProvider>(blockchain: &Blockchain<S>, provider: &P, hash: &Hash) -> Result<BlockType, InternalRpcError> {
     Ok(if blockchain.is_block_orphaned_for_storage(provider, hash).await? {
         BlockType::Orphaned
     } else if blockchain.is_sync_block(provider, hash).await.context("Error while checking if block is sync")? {
@@ -112,6 +112,7 @@ where
     + BlocksAtHeightProvider
     + PrunedTopoheightProvider
     + BlockDagProvider
+    + CacheProvider
 {
     let opt = if provider.is_block_topological_ordered(hash).await? {
         let topoheight = provider.get_topo_height_for_hash(&hash).await.context("Error while retrieving topo height")?;
@@ -148,6 +149,7 @@ where
     + PrunedTopoheightProvider
     + BlockDagProvider
     + ClientProtocolProvider
+    + CacheProvider
 {
     let (metadata, block_type, cumulative_difficulty, difficulty) = get_block_data(blockchain, provider, block.get_height(), hash).await?;
 
@@ -409,13 +411,13 @@ async fn version<S: Storage>(_: &Context, body: Value) -> Result<Value, Internal
 async fn get_height<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
     require_no_params(body)?;
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
-    Ok(json!(blockchain.get_height()))
+    Ok(json!(blockchain.get_height().await))
 }
 
 async fn get_topoheight<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
     require_no_params(body)?;
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
-    Ok(json!(blockchain.get_topo_height()))
+    Ok(json!(blockchain.get_topo_height().await))
 }
 
 async fn get_pruned_topoheight<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
@@ -431,13 +433,13 @@ async fn get_pruned_topoheight<S: Storage>(context: &Context, body: Value) -> Re
 async fn get_stable_height<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
     require_no_params(body)?;
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
-    Ok(json!(blockchain.get_stable_height()))
+    Ok(json!(blockchain.get_stable_height().await))
 }
 
 async fn get_stable_topoheight<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
     require_no_params(body)?;
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
-    Ok(json!(blockchain.get_stable_topoheight()))
+    Ok(json!(blockchain.get_stable_topoheight().await))
 }
 
 async fn get_hard_forks<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
@@ -487,7 +489,9 @@ async fn get_block_template<S: Storage>(context: &Context, body: Value) -> Resul
     let (difficulty, _) = blockchain.get_difficulty_at_tips(&*storage, block.get_tips().iter()).await.context("Error while retrieving difficulty at tips")?;
     let height = block.height;
     let algorithm = get_pow_algorithm_for_version(block.version);
-    let topoheight = blockchain.get_topo_height();
+
+    let chain_cache = storage.chain_cache().await;
+    let topoheight = chain_cache.topoheight;
     Ok(json!(GetBlockTemplateResult { template: block.to_hex(), algorithm, height, topoheight, difficulty }))
 }
 
@@ -496,9 +500,13 @@ async fn get_miner_work<S: Storage>(context: &Context, body: Value) -> Result<Va
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
 
     let header = BlockHeader::from_hex(&params.template)?;
-    let (difficulty, _) = {
+    let ((difficulty, _), topoheight) = {
         let storage = blockchain.get_storage().read().await;
-        blockchain.get_difficulty_at_tips(&*storage, header.get_tips().iter()).await.context("Error while retrieving difficulty at tips")?
+        let chain_cache = storage.chain_cache().await;
+        let difficulty = blockchain.get_difficulty_at_tips(&*storage, header.get_tips().iter()).await
+            .context("Error while retrieving difficulty at tips")?;
+
+        (difficulty, chain_cache.topoheight)
     };
     let version = header.get_version();
     let height = header.get_height();
@@ -518,7 +526,6 @@ async fn get_miner_work<S: Storage>(context: &Context, body: Value) -> Result<Va
     }
 
     let algorithm = get_pow_algorithm_for_version(version);
-    let topoheight = blockchain.get_topo_height();
 
     Ok(json!(GetMinerWorkResult { miner_work: work.to_hex(), algorithm, difficulty, height, topoheight }))
 }
@@ -562,9 +569,10 @@ async fn get_stable_balance<S: Storage>(context: &Context, body: Value) -> Resul
         return Err(InternalRpcError::InvalidParamsAny(BlockchainError::InvalidNetwork.into()))
     }
 
-    let top_topoheight = blockchain.get_topo_height();
-    let stable_topoheight = blockchain.get_stable_topoheight();
     let storage = blockchain.get_storage().read().await;
+    let chain_cache = storage.chain_cache().await;
+    let top_topoheight = chain_cache.topoheight;
+    let stable_topoheight = chain_cache.stable_topoheight;
 
     let mut stable_version = None;
     if let Some((output_topoheight, version)) = storage.get_output_balance_at_maximum_topoheight(params.address.get_public_key(), &params.asset, top_topoheight).await? {
@@ -608,11 +616,16 @@ async fn has_balance<S: Storage>(context: &Context, body: Value) -> Result<Value
 async fn get_info<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
     require_no_params(body)?;
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
-    let height = blockchain.get_height();
-    let topoheight = blockchain.get_topo_height();
-    let stableheight = blockchain.get_stable_height();
-    let (top_block_hash, emitted_supply, circulating_supply, pruned_topoheight, average_block_time) = {
+
+    let (height, topoheight, stableheight, top_block_hash, emitted_supply, circulating_supply, pruned_topoheight, average_block_time) = {    
         let storage = blockchain.get_storage().read().await;
+
+        let chain_cache = storage.chain_cache().await;
+
+        let height = chain_cache.height;
+        let topoheight = chain_cache.topoheight;
+        let stableheight = chain_cache.stable_height;
+
         let top_block_hash = storage.get_hash_at_topo_height(topoheight).await
             .context("Error while retrieving hash at topo height")?;
         let emitted_supply = storage.get_supply_at_topo_height(topoheight).await
@@ -623,7 +636,7 @@ async fn get_info<S: Storage>(context: &Context, body: Value) -> Result<Value, I
             .unwrap_or(0);
         let pruned_topoheight = storage.get_pruned_topoheight().await.context("Error while retrieving pruned topoheight")?;
         let average_block_time = blockchain.get_average_block_time::<S>(&storage).await.context("Error while retrieving average block time")?;
-        (top_block_hash, emitted_supply, circulating_supply, pruned_topoheight, average_block_time)
+        (height, topoheight, stableheight, top_block_hash, emitted_supply, circulating_supply, pruned_topoheight, average_block_time)
     };
     let difficulty = blockchain.get_difficulty().await;
 
@@ -662,16 +675,19 @@ async fn get_info<S: Storage>(context: &Context, body: Value) -> Result<Value, I
 async fn get_balance_at_topoheight<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: GetBalanceAtTopoHeightParams = parse_params(body)?;
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
-    let topoheight = blockchain.get_topo_height();
-    if params.topoheight > topoheight {
-        return Err(InternalRpcError::UnexpectedParams).context("Topoheight cannot be greater than current chain topoheight")?
-    }
 
     if params.address.is_mainnet() != blockchain.get_network().is_mainnet() {
         return Err(InternalRpcError::InvalidParamsAny(BlockchainError::InvalidNetwork.into()))
     }
 
     let storage = blockchain.get_storage().read().await;
+    let chain_cache = storage.chain_cache().await;
+    let topoheight = chain_cache.topoheight;
+
+    if params.topoheight > topoheight {
+        return Err(InternalRpcError::UnexpectedParams).context("Topoheight cannot be greater than current chain topoheight")?
+    }
+
     let balance = storage.get_balance_at_exact_topoheight(params.address.get_public_key(), &params.asset, params.topoheight).await.context("Error while retrieving balance at exact topo height")?;
     Ok(json!(balance))
 }
@@ -710,16 +726,18 @@ async fn get_nonce<S: Storage>(context: &Context, body: Value) -> Result<Value, 
 async fn get_nonce_at_topoheight<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: GetNonceAtTopoHeightParams = parse_params(body)?;
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
-    let topoheight = blockchain.get_topo_height();
-    if params.topoheight > topoheight {
-        return Err(InternalRpcError::UnexpectedParams).context("Topoheight cannot be greater than current chain topoheight")?
-    }
-
     if params.address.is_mainnet() != blockchain.get_network().is_mainnet() {
         return Err(InternalRpcError::InvalidParamsAny(BlockchainError::InvalidNetwork.into()))
     }
 
     let storage = blockchain.get_storage().read().await;
+    let chain_cache = storage.chain_cache().await;
+    let topoheight = chain_cache.topoheight;
+
+    if params.topoheight > topoheight {
+        return Err(InternalRpcError::UnexpectedParams).context("Topoheight cannot be greater than current chain topoheight")?
+    }
+
     let nonce = storage.get_nonce_at_exact_topoheight(params.address.get_public_key(), params.topoheight).await.context("Error while retrieving nonce at exact topo height")?;
     Ok(json!(nonce))
 }
@@ -740,7 +758,10 @@ async fn get_asset_supply<S: Storage>(context: &Context, body: Value) -> Result<
     let params: GetAssetParams = parse_params(body)?;
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let storage = blockchain.get_storage().read().await;
-    let (topoheight, version) = storage.get_circulating_supply_for_asset_at_maximum_topoheight(&params.asset, blockchain.get_topo_height()).await
+    let chain_cache = storage.chain_cache().await;
+    let topoheight = chain_cache.topoheight;
+
+    let (topoheight, version) = storage.get_circulating_supply_for_asset_at_maximum_topoheight(&params.asset, topoheight).await
         .context("Asset was not found")?
         .context("No supply available")?;
 
@@ -869,9 +890,9 @@ async fn p2p_status<S: Storage>(context: &Context, body: Value) -> Result<Value,
             let tag = p2p.get_tag();
             let peer_id = p2p.get_peer_id();
             let best_topoheight = p2p.get_best_topoheight().await;
-            let median_topoheight = p2p.get_median_topoheight_of_peers().await;
+            let our_topoheight = blockchain.get_topo_height().await;
+            let median_topoheight = p2p.get_median_topoheight_of_peers(our_topoheight).await;
             let max_peers = p2p.get_max_peers();
-            let our_topoheight = blockchain.get_topo_height();
             let peer_count = p2p.get_peer_count().await;
 
             Ok(json!(P2pStatusResult {
@@ -1024,11 +1045,13 @@ async fn get_dag_order<S: Storage>(context: &Context, body: Value) -> Result<Val
     let params: GetTopoHeightRangeParams = parse_params(body)?;
 
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
-    let current = blockchain.get_topo_height();
+
+    let storage = blockchain.get_storage().read().await;
+    let chain_cache = storage.chain_cache().await;
+    let current = chain_cache.topoheight;
     let (start_topoheight, end_topoheight) = get_range(params.start_topoheight, params.end_topoheight, MAX_DAG_ORDER, current)?;
     let count = end_topoheight - start_topoheight;
 
-    let storage = blockchain.get_storage().read().await;
     let mut order = Vec::with_capacity(count as usize);
     for i in start_topoheight..=end_topoheight {
         let hash = storage.get_hash_at_topo_height(i).await.context("Error while retrieving hash at topo height")?;
@@ -1068,10 +1091,12 @@ async fn get_blocks_range_by_topoheight<S: Storage>(context: &Context, body: Val
     let params: GetTopoHeightRangeParams = parse_params(body)?;
 
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
-    let current_topoheight = blockchain.get_topo_height();
+    
+    let storage = blockchain.get_storage().read().await;
+    let chain_cache = storage.chain_cache().await;
+    let current_topoheight = chain_cache.topoheight;
     let (start_topoheight, end_topoheight) = get_range(params.start_topoheight, params.end_topoheight, MAX_BLOCKS, current_topoheight)?;
 
-    let storage = blockchain.get_storage().read().await;
     let mut blocks = Vec::with_capacity((end_topoheight - start_topoheight) as usize);
     for i in start_topoheight..=end_topoheight {
         let hash = storage.get_hash_at_topo_height(i).await.context("Error while retrieving hash at topo height")?;
@@ -1088,10 +1113,12 @@ async fn get_blocks_range_by_topoheight<S: Storage>(context: &Context, body: Val
 async fn get_blocks_range_by_height<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: GetHeightRangeParams = parse_params(body)?;
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
-    let current_height = blockchain.get_height();
-    let (start_height, end_height) = get_range(params.start_height, params.end_height, MAX_BLOCKS, current_height)?;
 
     let storage = blockchain.get_storage().read().await;
+    let chain_cache = storage.chain_cache().await;
+    let current_height = chain_cache.height;
+    let (start_height, end_height) = get_range(params.start_height, params.end_height, MAX_BLOCKS, current_height)?;
+
     let mut blocks = Vec::with_capacity((end_height - start_height) as usize);
     for i in start_height..=end_height {
         let blocks_at_height = storage.get_blocks_at_height(i).await.context("Error while retrieving blocks at height")?;
@@ -1420,7 +1447,10 @@ async fn get_account_assets<S: Storage>(context: &Context, body: Value) -> Resul
 async fn get_accounts<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: GetAccountsParams = parse_params(body)?;
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
-    let topoheight = blockchain.get_topo_height();
+
+    let storage = blockchain.get_storage().read().await;
+    let chain_cache = storage.chain_cache().await;
+    let topoheight = chain_cache.topoheight;
 
     let maximum = if let Some(maximum) = params.maximum {
         if maximum > MAX_ACCOUNTS {
@@ -1459,7 +1489,6 @@ async fn get_accounts<S: Storage>(context: &Context, body: Value) -> Result<Valu
         topoheight
     };
 
-    let storage = blockchain.get_storage().read().await;
     let mainnet = storage.is_mainnet();
     let accounts = storage.get_registered_keys(Some(minimum_topoheight), Some(maximum_topoheight)).await?
         .skip(skip)
@@ -1475,9 +1504,10 @@ async fn is_account_registered<S: Storage>(context: &Context, body: Value) -> Re
     let params: IsAccountRegisteredParams = parse_params(body)?;
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let storage = blockchain.get_storage().read().await;
+    let chain_cache = storage.chain_cache().await;
     let key = params.address.get_public_key();
     let registered = if params.in_stable_height {
-        storage.is_account_registered_for_topoheight(key, blockchain.get_stable_topoheight()).await
+        storage.is_account_registered_for_topoheight(key, chain_cache.stable_topoheight).await
             .context("Error while checking if account is registered in stable height")?
     } else {
         storage.is_account_registered(key).await
@@ -1549,8 +1579,12 @@ async fn get_difficulty<S: Storage>(context: &Context, body: Value) -> Result<Va
     require_no_params(body)?;
 
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
-    let difficulty = blockchain.get_difficulty().await;
-    let version = get_version_at_height(blockchain.get_network(), blockchain.get_height());
+    let storage = blockchain.get_storage().read().await;
+    let chain_cache = storage.chain_cache().await;
+    let height = chain_cache.height;
+    let difficulty  = *chain_cache.difficulty.lock().await;
+
+    let version = get_version_at_height(blockchain.get_network(), height);
     let block_time_target = get_block_time_target_for_version(version);
 
     let hashrate = difficulty / (block_time_target / MILLIS_PER_SECOND);

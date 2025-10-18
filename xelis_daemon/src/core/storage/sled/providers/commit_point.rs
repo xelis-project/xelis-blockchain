@@ -18,7 +18,7 @@ impl CommitPointProvider for SledStorage {
             return Err(BlockchainError::CommitPointAlreadyStarted);
         }
 
-        let snapshot = Snapshot::new(self.cache.clone());
+        let snapshot = Snapshot::new(self.cache.clone_mut());
         self.snapshot = Some(snapshot);
         Ok(())
     }

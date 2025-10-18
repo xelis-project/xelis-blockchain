@@ -23,7 +23,7 @@ impl CommitPointProvider for RocksStorage {
             return Err(BlockchainError::CommitPointAlreadyStarted);
         }
 
-        self.snapshot = Some(Snapshot::new());
+        self.snapshot = Some(Snapshot::new(self.cache.clone_mut()));
         Ok(())
     }
 

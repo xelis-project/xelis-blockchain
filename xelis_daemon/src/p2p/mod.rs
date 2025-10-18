@@ -552,7 +552,7 @@ impl<S: Storage> P2pServer<S> {
         }
 
         // check if the version of this peer is allowed
-        if !hard_fork::is_version_allowed_at_height(self.blockchain.get_network(), self.blockchain.get_height(), handshake.get_version()).map_err(|e| P2pError::InvalidP2pVersion(e.to_string()))? {
+        if !hard_fork::is_version_allowed_at_height(self.blockchain.get_network(), self.blockchain.get_height().await, handshake.get_version()).map_err(|e| P2pError::InvalidP2pVersion(e.to_string()))? {
             return Err(P2pError::InvalidP2pVersion(handshake.get_version().clone()));
         }
 
@@ -566,7 +566,9 @@ impl<S: Storage> P2pServer<S> {
         let storage = self.blockchain.get_storage().read().await;
         debug!("storage lock acquired for building handshake");
         let (block, top_hash) = storage.get_top_block_header().await?;
-        let topoheight = self.blockchain.get_topo_height();
+        let chain_cache = storage.chain_cache().await;
+
+        let topoheight = chain_cache.topoheight;
         let pruned_topoheight = storage.get_pruned_topoheight().await?;
         let cumulative_difficulty = storage.get_cumulative_difficulty_for_block_hash(&top_hash).await?;
         let genesis_block = match get_genesis_block_hash(self.blockchain.get_network()) {
@@ -781,14 +783,18 @@ impl<S: Storage> P2pServer<S> {
     async fn build_generic_ping_packet_with_storage(&self, storage: &S) -> Result<Ping<'_>, P2pError> {
         debug!("building generic ping packet");
         counter!("xelis_p2p_ping_total").increment(1u64);
-        let (cumulative_difficulty, block_top_hash, pruned_topoheight) = {
+        let (cumulative_difficulty, block_top_hash, pruned_topoheight, highest_topo_height, highest_height) = {
             let pruned_topoheight = storage.get_pruned_topoheight().await?;
             let top_block_hash = storage.get_top_block_hash().await?;
             let cumulative_difficulty = storage.get_cumulative_difficulty_for_block_hash(&top_block_hash).await?;
-            (cumulative_difficulty, top_block_hash, pruned_topoheight)
+
+            let chain_cache = storage.chain_cache().await;
+            let highest_topo_height = chain_cache.topoheight;
+            let highest_height = chain_cache.height;
+
+            (cumulative_difficulty, top_block_hash, pruned_topoheight, highest_topo_height, highest_height)
         };
-        let highest_topo_height = self.blockchain.get_topo_height();
-        let highest_height = self.blockchain.get_height();
+
         let new_peers = IndexSet::new();
         Ok(Ping::new(Cow::Owned(block_top_hash), highest_topo_height, highest_height, pruned_topoheight, cumulative_difficulty, new_peers))
     }
@@ -817,9 +823,10 @@ impl<S: Storage> P2pServer<S> {
             debug!("locking storage to search our cumulative difficulty");
             let storage = self.blockchain.get_storage().read().await;
 
+            let chain_cache = storage.chain_cache().await;
             // We read those after having the storage locked to prevent issue
-            let our_height = self.blockchain.get_height();
-            let our_topoheight = self.blockchain.get_topo_height();
+            let our_height = chain_cache.height;
+            let our_topoheight = chain_cache.topoheight;
 
             debug!("storage locked for cumulative difficulty");
             let hash = storage.get_hash_at_topo_height(our_topoheight).await?;
@@ -990,10 +997,10 @@ impl<S: Storage> P2pServer<S> {
             // and then we check if we have a potential peer above us to fast sync
             // otherwise we sync normally 
             let fast_sync = if self.allow_fast_sync() {
+                let our_topoheight = self.blockchain.get_topo_height().await;
                 trace!("locking peer list for fast sync check");
                 let peerlist = self.peer_list.get_peers().read().await;
                 trace!("peer list locked for fast sync check");
-                let our_topoheight = self.blockchain.get_topo_height();
                 peerlist.values().find(|p| {
                     let peer_topoheight = p.get_topoheight();
                     // Only try a fast sync if a peer is higher enough
@@ -1057,7 +1064,7 @@ impl<S: Storage> P2pServer<S> {
                 warned = false;
             } else {
                 if !self.allow_fast_sync() && self.get_peer_count().await > 0 && !warned {
-                    let our_topoheight = self.blockchain.get_topo_height();
+                    let our_topoheight = self.blockchain.get_topo_height().await;
                     let has_peer = self.peer_list.get_cloned_peers().await
                         .into_iter()
                         .filter(|p| {
@@ -1790,7 +1797,7 @@ impl<S: Storage> P2pServer<S> {
         }
 
         // verify that we are synced with him to receive all TXs correctly
-        let our_height = self.blockchain.get_height();
+        let our_height = self.blockchain.get_height().await;
         let peer_height = peer.get_height();
         if our_height == peer_height {
             if let Err(e) = self.request_inventory_of(&peer).await {
@@ -2457,7 +2464,7 @@ impl<S: Storage> P2pServer<S> {
 
     // determine if we are connected to a priority node and that this node is equal / greater to our chain
     async fn is_connected_to_a_synced_priority_node(&self) -> bool {
-        let topoheight = self.blockchain.get_topo_height();
+        let topoheight = self.blockchain.get_topo_height().await;
         trace!("locking peer list for checking if connected to a synced priority node");
 
         for peer in self.peer_list.get_peers().read().await.values() {
@@ -2502,8 +2509,7 @@ impl<S: Storage> P2pServer<S> {
     }
 
     // Returns the median topoheight based on all peers
-    pub async fn get_median_topoheight_of_peers(&self) -> TopoHeight {
-        let topoheight = self.blockchain.get_topo_height();
+    pub async fn get_median_topoheight_of_peers(&self, topoheight: TopoHeight) -> TopoHeight {
         self.peer_list.get_median_topoheight(Some(topoheight)).await
     }
 
@@ -2736,7 +2742,8 @@ impl<S: Storage> P2pServer<S> {
     // This is used to search the common point between two peers
     async fn build_list_of_blocks_id(&self, storage: &S) -> Result<IndexSet<BlockId>, BlockchainError> {
         let mut blocks = IndexSet::new();
-        let topoheight = self.blockchain.get_topo_height();
+        let chain_cache = storage.chain_cache().await;
+        let topoheight = chain_cache.topoheight;
         let pruned_topoheight = storage.get_pruned_topoheight().await?.unwrap_or(0);
         let mut i = 0;
 

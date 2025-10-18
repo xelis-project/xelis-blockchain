@@ -11,14 +11,26 @@ use anyhow::Context;
 use bytes::Bytes;
 use itertools::Either;
 use xelis_common::{serializer::Serializer};
-use crate::core::{error::BlockchainError, storage::{cache::StorageCache, snapshot::changes::Changes}};
+use crate::core::{
+    error::BlockchainError,
+    storage::{cache::StorageCache, snapshot::changes::Changes}
+};
 
 pub use iterator_mode::*;
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct Snapshot<C: Hash + Eq> {
     pub trees: HashMap<C, Changes>,
     pub cache: StorageCache,
+}
+
+impl<C: Hash + Eq + Clone> Snapshot<C> {
+    pub fn clone_mut(&mut self) -> Self {
+        Self {
+            trees: self.trees.clone(),
+            cache: self.cache.clone_mut(),
+        }
+    }
 }
 
 impl<C: Hash + Eq> Snapshot<C> {

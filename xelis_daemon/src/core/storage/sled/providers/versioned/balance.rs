@@ -33,7 +33,8 @@ impl VersionedBalanceProvider for SledStorage {
             // And we delete everything below it
 
             // We check one account at a time
-            for el in Self::iter::<RawBytes, TopoHeight>(self.snapshot.clone().as_ref(), &self.balances) {
+            let snapshot = self.snapshot.as_mut().map(|v| v.clone_mut());
+            for el in Self::iter::<RawBytes, TopoHeight>(snapshot.as_ref(), &self.balances) {
                 let (k, topo) = el?;
 
                 // We fetch the last version to take its previous topoheight

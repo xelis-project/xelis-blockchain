@@ -34,7 +34,8 @@ impl SledStorage {
         topoheight: u64,
     ) -> Result<(), BlockchainError> {
         trace!("delete versioned data at topoheight {}", topoheight);
-        for el in Self::scan_prefix_keys::<RawBytes>(snapshot.clone().as_ref(), tree_versioned, &topoheight.to_be_bytes()) {
+        let cloned = snapshot.as_mut().map(|v| v.clone_mut());
+        for el in Self::scan_prefix_keys::<RawBytes>(cloned.as_ref(), tree_versioned, &topoheight.to_be_bytes()) {
             let prefixed_key = el?;
 
             // Delete this version from DB
@@ -68,7 +69,8 @@ impl SledStorage {
     ) -> Result<(), BlockchainError> {
         trace!("delete versioned data above topoheight {}", topoheight);
 
-        for el in Self::iter::<RawBytes, TopoHeight>(snapshot.clone().as_ref(), tree_pointer) {
+        let cloned = snapshot.as_mut().map(|v| v.clone_mut());
+        for el in Self::iter::<RawBytes, TopoHeight>(cloned.as_ref(), tree_pointer) {
             let (key, topo) = el?;
 
             if topo > topoheight {
@@ -119,8 +121,9 @@ impl SledStorage {
         context: DiskContext,
     ) -> Result<(), BlockchainError> {
         trace!("delete versioned data below topoheight {}", topoheight);
+        let cloned = snapshot.as_mut().map(|v| v.clone_mut());
         if keep_last {
-            for el in Self::iter::<RawBytes, TopoHeight>(snapshot.clone().as_ref(), tree_pointer) {
+            for el in Self::iter::<RawBytes, TopoHeight>(cloned.as_ref(), tree_pointer) {
                 let (key, topo) = el?;
 
                 // We fetch the current last version
@@ -152,7 +155,7 @@ impl SledStorage {
                 }
             }
         } else {
-            for el in Self::iter_keys::<TopoHeight>(snapshot.clone().as_ref(), tree_versioned) {
+            for el in Self::iter_keys::<TopoHeight>(cloned.as_ref(), tree_versioned) {
                 let topo = el?;
                 if topo < topoheight {
                     Self::remove_from_disk_without_reading(snapshot.as_mut(), tree_versioned, &topo.to_be_bytes())?;

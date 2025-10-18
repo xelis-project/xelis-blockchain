@@ -53,7 +53,7 @@ impl BlockProvider for SledStorage {
 
     async fn has_block_with_hash(&self, hash: &Hash) -> Result<bool, BlockchainError> {
         trace!("has block {}", hash);
-        self.contains_data_cached(&self.blocks, &self.blocks_cache, hash).await
+        self.contains_data_cached(&self.blocks, self.cache.objects.as_ref().map(|o| &o.blocks_cache), hash).await
     }
 
     async fn get_block_size(&self, hash: &Hash) -> Result<usize, BlockchainError> {
@@ -110,7 +110,7 @@ impl BlockProvider for SledStorage {
 
         self.add_block_hash_at_height(&hash, block.get_height()).await?;
 
-        if let Some(cache) = self.blocks_cache.as_mut() {
+        if let Some(cache) = self.cache.objects.as_mut().map(|o| &mut o.blocks_cache) {
             // TODO: no clone
             cache.get_mut().put(hash.into_owned(), block);
         }
@@ -135,7 +135,7 @@ impl BlockProvider for SledStorage {
         debug!("Deleting block with hash: {}", hash);
 
         // Delete block header
-        let header = Self::delete_arc_cacheable_data(self.snapshot.as_mut(), &self.blocks, self.cache.blocks_cache.as_mut(), &hash).await?;
+        let header = Self::delete_arc_cacheable_data(self.snapshot.as_mut(), &self.blocks, self.cache.objects.as_mut().map(|o| &mut o.blocks_cache), &hash).await?;
 
         // Decrease blocks count
         self.store_blocks_count(self.count_blocks().await? - 1)?;
@@ -144,7 +144,7 @@ impl BlockProvider for SledStorage {
         Self::remove_from_disk_without_reading(self.snapshot.as_mut(), &self.difficulty, hash.as_bytes())?;
 
         // Delete cumulative difficulty
-        Self::delete_cacheable_data(self.snapshot.as_mut(), &self.cumulative_difficulty, self.cache.cumulative_difficulty_cache.as_mut(), &hash).await?;
+        Self::delete_cacheable_data(self.snapshot.as_mut(), &self.cumulative_difficulty, self.cache.objects.as_mut().map(|o| &mut o.cumulative_difficulty_cache), &hash).await?;
 
         // Delete P
         Self::remove_from_disk_without_reading(self.snapshot.as_mut(), &self.difficulty_covariance, hash.as_bytes())?;

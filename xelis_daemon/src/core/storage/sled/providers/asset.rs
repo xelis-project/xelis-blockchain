@@ -15,7 +15,7 @@ use crate::core::{
 impl AssetProvider for SledStorage {
     async fn has_asset(&self, asset: &Hash) -> Result<bool, BlockchainError> {
         trace!("asset exist {}", asset);
-        self.contains_data_cached(&self.assets, &self.assets_cache, asset).await
+        self.contains_data_cached(&self.assets, self.cache.objects.as_ref().map(|o| &o.assets_cache), asset).await
     }
 
     async fn has_asset_at_exact_topoheight(&self, asset: &Hash, topoheight: TopoHeight) -> Result<bool, BlockchainError> {
@@ -72,7 +72,7 @@ impl AssetProvider for SledStorage {
 
     async fn get_asset_topoheight(&self, hash: &Hash) -> Result<Option<TopoHeight>, BlockchainError> {
         trace!("get asset topoheight {}", hash);
-        self.get_optional_cacheable_data(&self.assets, &self.assets_cache, hash).await
+        self.get_optional_cacheable_data(&self.assets, self.cache.objects.as_ref().map(|o| &o.assets_cache), hash).await
     }
 
     async fn get_asset_at_topoheight(&self, asset: &Hash, topoheight: TopoHeight) -> Result<VersionedAssetData, BlockchainError> {
@@ -132,8 +132,7 @@ impl AssetProvider for SledStorage {
         let key = Self::get_asset_key(asset, topoheight);
         Self::insert_into_disk(self.snapshot.as_mut(), &self.versioned_assets, &key, data.to_bytes())?;
 
-        if let Some(cache) = &self.assets_cache {
-            let mut cache = cache.lock().await;
+        if let Some(cache) = self.cache.objects.as_mut().map(|o| o.assets_cache.get_mut()) {
             cache.put(asset.clone(), topoheight);
         }
         Ok(())

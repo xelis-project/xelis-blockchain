@@ -12,6 +12,7 @@ pub mod rocksdb;
 pub mod snapshot;
 
 pub use self::providers::*;
+pub use cache::*;
 
 #[cfg(feature = "rocksdb")]
 pub use rocksdb::RocksStorage;

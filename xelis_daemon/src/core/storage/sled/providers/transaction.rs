@@ -34,7 +34,7 @@ impl SledStorage {
 impl TransactionProvider for SledStorage {
     async fn get_transaction(&self, hash: &Hash) -> Result<Immutable<Transaction>, BlockchainError> {
         trace!("get transaction for hash {}", hash);
-        self.get_cacheable_arc_data(&self.transactions, &self.transactions_cache, hash, DiskContext::GetTransaction).await
+        self.get_cacheable_arc_data(&self.transactions, self.cache.objects.as_ref().map(|o| &o.transactions_cache), hash, DiskContext::GetTransaction).await
     }
 
     async fn get_transaction_size(&self, hash: &Hash) -> Result<usize, BlockchainError> {
@@ -44,7 +44,7 @@ impl TransactionProvider for SledStorage {
 
     async fn has_transaction(&self, hash: &Hash) -> Result<bool, BlockchainError> {
         trace!("has transaction {}", hash);
-        self.contains_data_cached(&self.transactions, &self.transactions_cache, hash).await
+        self.contains_data_cached(&self.transactions, self.cache.objects.as_ref().map(|o| &o.transactions_cache), hash).await
     }
 
     // Store a new transaction
@@ -77,6 +77,6 @@ impl TransactionProvider for SledStorage {
 
     async fn delete_transaction(&mut self, hash: &Hash) -> Result<Immutable<Transaction>, BlockchainError> {
         Self::delete_cacheable_data::<Hash, HashSet<Hash>>(self.snapshot.as_mut(), &self.tx_blocks, None, hash).await?;
-        Self::delete_arc_cacheable_data(self.snapshot.as_mut(), &self.transactions, self.cache.transactions_cache.as_mut(), hash).await
+        Self::delete_arc_cacheable_data(self.snapshot.as_mut(), &self.transactions, self.cache.objects.as_mut().map(|o| &mut o.transactions_cache), hash).await
     }
 }

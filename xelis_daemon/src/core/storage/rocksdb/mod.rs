@@ -42,7 +42,8 @@ use crate::core::{
         BlockProvider,
         ClientProtocolProvider,
         ContractLogsProvider,
-        TransactionProvider
+        TransactionProvider,
+        StorageCache,
     }
 };
 
@@ -147,7 +148,8 @@ impl<'a> IteratorMode<'a> {
 pub struct RocksStorage {
     db: Arc<InnerDB>,
     network: Network,
-    snapshot: Option<Snapshot> 
+    snapshot: Option<Snapshot>,
+    cache: StorageCache,
 }
 
 impl RocksStorage {
@@ -209,7 +211,24 @@ impl RocksStorage {
         Self {
             db: Arc::new(db),
             network,
-            snapshot: None
+            snapshot: None,
+            cache: StorageCache::new(None)
+        }
+    }
+
+    #[inline(always)]
+    pub fn cache(&self) -> &StorageCache {
+        match self.snapshot.as_ref() {
+            Some(snapshot) => &snapshot.cache,
+            None => &self.cache
+        }
+    }
+
+    #[inline(always)]
+    pub fn cache_mut(&mut self) -> &mut StorageCache {
+        match self.snapshot.as_mut() {
+            Some(snapshot) => &mut snapshot.cache,
+            None => &mut self.cache
         }
     }
 
@@ -323,11 +342,13 @@ impl RocksStorage {
         trace!("insert into disk {:?}", column);
 
         match snapshot {
-            Some(snapshot) => snapshot.put(column, key.as_ref().to_vec(), value.to_bytes()),
+            Some(snapshot) => {
+                snapshot.put(column, key.as_ref().to_vec(), value.to_bytes());
+            },
             None => {
                 let cf = cf_handle!(db, column);
                 db.put_cf(&cf, key.as_ref(), value.to_bytes())
-                    .with_context(|| format!("Error while inserting into disk column {:?}", column))?
+                    .with_context(|| format!("Error while inserting into disk column {:?}", column))?;
             }
         };
 
@@ -339,7 +360,9 @@ impl RocksStorage {
 
         let bytes = key.as_ref();
         match snapshot {
-            Some(snapshot) => snapshot.delete(column, bytes.to_vec()),
+            Some(snapshot) => {
+                snapshot.delete(column, bytes.to_vec());
+            },
             None => {
                 let cf = cf_handle!(db, column);
                 db.delete_cf(&cf, bytes)

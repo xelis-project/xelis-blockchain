@@ -68,7 +68,7 @@ impl BalanceProvider for SledStorage {
             return Ok(0)
         }
 
-        self.get_cacheable_data(&self.balances, &None, &key, DiskContext::LastTopoHeightForBalance).await
+        self.get_cacheable_data(&self.balances, None, &key, DiskContext::LastTopoHeightForBalance).await
     }
 
     // set in storage the new top topoheight (the most up-to-date versioned balance)
@@ -103,7 +103,7 @@ impl BalanceProvider for SledStorage {
         }
 
         let disk_key = self.get_versioned_balance_key(key, asset, topoheight);
-        self.get_cacheable_data(&self.versioned_balances, &None, &disk_key, DiskContext::BalanceAtTopoHeight(topoheight)).await
+        self.get_cacheable_data(&self.versioned_balances, None, &disk_key, DiskContext::BalanceAtTopoHeight(topoheight)).await
             .map_err(|_| BlockchainError::NoBalanceChanges(key.as_address(self.is_mainnet()), topoheight, asset.clone()))
     }
 
@@ -233,7 +233,7 @@ impl BalanceProvider for SledStorage {
             return Err(BlockchainError::NoBalance(key.as_address(self.is_mainnet())))
         }
 
-        let topoheight = self.get_cacheable_data(&self.balances, &None, &self.get_balance_key_for(key, asset), DiskContext::LastBalance).await?;
+        let topoheight = self.get_cacheable_data(&self.balances, None, &self.get_balance_key_for(key, asset), DiskContext::LastBalance).await?;
         let version = self.get_balance_at_exact_topoheight(key, asset, topoheight).await?;
         Ok((topoheight, version))
     }

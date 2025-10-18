@@ -229,7 +229,7 @@ impl<S: Storage> GetWorkServer<S> {
 
         // get the algorithm for the current version
         let algorithm = get_pow_algorithm_for_version(version);
-        let topoheight = self.blockchain.get_topo_height();
+        let topoheight = self.blockchain.get_topo_height().await;
 
         debug!("Sending job to new miner");
         session.send_json(Response::NewJob(GetMinerWorkResult { algorithm, miner_work: job.to_hex(), height, topoheight, difficulty })).await
@@ -267,7 +267,7 @@ impl<S: Storage> GetWorkServer<S> {
         self.last_notify.store(get_current_time_in_millis(), Ordering::SeqCst);
         self.is_job_dirty.store(false, Ordering::SeqCst);
         debug!("Notify all miners for a new job");
-        let (header, difficulty) = {
+        let (header, difficulty, topoheight) = {
             debug!("locking storage for new job");
             let storage = self.blockchain.get_storage().read().await;
             debug!("storage read acquired for new job");
@@ -276,7 +276,13 @@ impl<S: Storage> GetWorkServer<S> {
                 .context("Error while retrieving block template when notifying new job")?;
             let (difficulty, _) = self.blockchain.get_difficulty_at_tips(&*storage, header.get_tips().iter()).await
                 .context("Error while retrieving difficulty at tips when notifying new job")?;
-            (header, difficulty)
+
+            // Also send the node topoheight to miners
+            // This is for visual purposes only
+            let chain_cache = storage.chain_cache().await;
+            let topoheight = chain_cache.topoheight;
+
+            (header, difficulty, topoheight)
         };
 
         let job = MinerWork::new(header.get_work_hash(), header.timestamp);
@@ -285,9 +291,6 @@ impl<S: Storage> GetWorkServer<S> {
 
         // get the algorithm for the current version
         let algorithm = get_pow_algorithm_for_version(version);
-        // Also send the node topoheight to miners
-        // This is for visual purposes only
-        let topoheight = self.blockchain.get_topo_height();
 
         if is_event_tracked {
             debug!("Notifying RPC clients for new block template");
