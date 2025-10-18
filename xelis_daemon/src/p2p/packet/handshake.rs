@@ -188,11 +188,11 @@ impl Serializer for Handshake<'_> {
         writer.write_optional_string(&self.node_tag);
 
         writer.write_bytes(self.network_id.as_ref()); // network ID
-        writer.write_u64(&self.peer_id); // transform peer ID to bytes
+        self.peer_id.write(writer); // transform peer ID to bytes
         writer.write_u16(self.local_port); // local port
-        writer.write_u64(&self.utc_time); // UTC Time
-        writer.write_u64(&self.topoheight); // Topo height
-        writer.write_u64(&self.height); // Block Height
+        self.utc_time.write(writer); // UTC Time
+        self.topoheight.write(writer); // Topo height
+        self.height.write(writer); // Block Height
         self.pruned_topoheight.write(writer); // Pruned Topo Height
         writer.write_hash(&self.top_hash); // Block Top Hash (32 bytes)
         writer.write_hash(&self.genesis_hash); // Genesis Hash

@@ -163,9 +163,9 @@ impl<'a> Ping<'a> {
 
 impl Serializer for Ping<'_> {
     fn write(&self, writer: &mut Writer) {
-        writer.write_hash(&self.top_hash);
-        writer.write_u64(&self.topoheight);
-        writer.write_u64(&self.height);
+        self.top_hash.write(writer);
+        self.topoheight.write(writer);
+        self.height.write(writer);
         self.pruned_topoheight.write(writer);
         self.cumulative_difficulty.write(writer);
         writer.write_u8(self.peer_list.len() as u8);
