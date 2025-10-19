@@ -3,22 +3,25 @@ use log::{debug, trace};
 use crate::core::{
     error::BlockchainError,
     storage::{
-        rocksdb::Snapshot,
+        rocksdb::{Column, Snapshot},
         CacheProvider,
-        CommitPointProvider,
-        RocksStorage
+        RocksStorage,
+        SnapshotProvider,
     }
 };
 
 #[async_trait]
-impl CommitPointProvider for RocksStorage {
+impl SnapshotProvider for RocksStorage {
+    type Column = Column;
+
     // Check if we have a commit point already set
-    async fn has_commit_point(&self) -> Result<bool, BlockchainError> {
+    async fn has_snapshot(&self) -> Result<bool, BlockchainError> {
+        trace!("has snapshot");
         Ok(self.snapshot.is_some())
     }
 
-    async fn start_commit_point(&mut self) -> Result<(), BlockchainError> {
-        trace!("starting commit point");
+    async fn start_snapshot(&mut self) -> Result<(), BlockchainError> {
+        trace!("start snapshot");
         if self.snapshot.is_some() {
             return Err(BlockchainError::CommitPointAlreadyStarted);
         }
@@ -27,13 +30,13 @@ impl CommitPointProvider for RocksStorage {
         Ok(())
     }
 
-    async fn end_commit_point(&mut self, apply: bool) -> Result<(), BlockchainError> {
-        trace!("end commit point");
+    async fn end_snapshot(&mut self, apply: bool) -> Result<(), BlockchainError> {
+        trace!("end snapshot");
         let snapshot = self.snapshot.take()
             .ok_or(BlockchainError::CommitPointNotStarted)?;
 
         if apply {
-            trace!("applying commit point");
+            trace!("applying snapshot");
             for (column, batch) in snapshot.trees {
                 for (key, value) in batch {
                     if let Some(value) = value {
@@ -49,5 +52,10 @@ impl CommitPointProvider for RocksStorage {
         }
 
         Ok(())
+    }
+
+    async fn swap_snapshot(&mut self, other: Snapshot) -> Result<Option<Snapshot>, BlockchainError> {
+        trace!("swap snapshot");
+        Ok(self.snapshot.replace(other))
     }
 }

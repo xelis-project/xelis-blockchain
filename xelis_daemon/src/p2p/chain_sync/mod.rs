@@ -501,7 +501,7 @@ impl<S: Storage> P2pServer<S> {
                 {
                     info!("Starting commit point for chain validator");
                     let mut storage = self.blockchain.get_storage().write().await;
-                    storage.start_commit_point().await?;
+                    storage.start_snapshot().await?;
                     info!("Commit point started for chain validator");
                 }
                 let mut res = self.handle_chain_validator_with_rewind(peer, pop_count, chain_validator, blocks).await;
@@ -519,7 +519,7 @@ impl<S: Storage> P2pServer<S> {
                         let mut storage = self.blockchain.get_storage().write().await;
                         debug!("locked storage write mode for commit point");
 
-                        storage.end_commit_point(apply).await?;
+                        storage.end_snapshot(apply).await?;
                         info!("Commit point ended for chain validator, apply: {}", apply);
                     }
 

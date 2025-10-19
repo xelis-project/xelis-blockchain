@@ -1105,16 +1105,16 @@ async fn snapshot_mode<S: Storage>(manager: &CommandManager, _: ArgumentManager)
     let context = manager.get_context().lock()?;
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let mut storage = blockchain.get_storage().write().await;
-    if storage.has_commit_point().await.context("checking has commit point")? {
+    if storage.has_snapshot().await.context("checking has commit point")? {
         manager.message("Snapshot mode is already enabled, do you want to apply it?");
         let apply = manager.get_prompt()
             .ask_confirmation().await?;
 
-        storage.end_commit_point(apply).await
+        storage.end_snapshot(apply).await
             .context("End commit point")?;
     } else {
         manager.message("Starting snapshot mode...");
-        storage.start_commit_point().await
+        storage.start_snapshot().await
             .context("Error on commit point")?;
         manager.message("Snapshot mode enabled");
     }
@@ -1291,7 +1291,7 @@ async fn status<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Res
         .context("Error while counting contracts")?;
     let pruned_topoheight = storage.get_pruned_topoheight().await
         .context("Error while retrieving pruned topoheight")?;
-    let snapshot = storage.has_commit_point().await
+    let snapshot = storage.has_snapshot().await
         .context("Error while checking snapshot")?;
     let version = get_version_at_height(blockchain.get_network(), height);
     let block_time_target = get_block_time_target_for_version(version);
