@@ -348,7 +348,7 @@ impl Serializer for Module {
 
     fn read(reader: &mut Reader) -> Result<Module, ReaderError> {
         let constants_len = DynamicLen::read(reader)?.0;
-        let mut constants = IndexSet::with_capacity(constants_len);
+        let mut constants = IndexSet::new();
 
         for _ in 0..constants_len {
             let c = ValueCell::read(reader)?;
