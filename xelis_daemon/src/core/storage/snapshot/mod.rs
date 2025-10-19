@@ -1,10 +1,11 @@
 mod changes;
 mod iterator_mode;
+mod bytes_view;
 
 use std::{
     collections::HashMap,
-    hash::Hash,
     error::Error as StdError,
+    hash::Hash
 };
 
 use anyhow::Context;
@@ -17,6 +18,7 @@ use crate::core::{
 };
 
 pub use iterator_mode::*;
+pub use bytes_view::*;
 
 pub enum EntryState<T> {
     // Has been added/modified in our snapshot
@@ -47,7 +49,6 @@ impl<C: Hash + Eq + Clone> Snapshot<C> {
         }
     }
 }
-
 
 impl<C: Hash + Eq + Clone> Clone for Snapshot<C> {
     fn clone(&self) -> Self {
@@ -170,22 +171,14 @@ impl<C: Hash + Eq> Snapshot<C> {
         self.contains(column, key).unwrap_or(false)
     }
 
-    // Lazy interator over keys and values
-    // Both are parsed from bytes
-    // It will fallback on the disk iterator
-    // if the key is not present in the batch
-    // Note that this iterator is lazy and is
-    // not allocating or copying any data from it!
-    pub fn lazy_iter<'a, K, V, I: AsRef<[u8]>, E: StdError + Send + Sync + 'static>(
+    // Lazy interator over raw keys and values as BytesView
+    /// Note that this iterator is not allocating or copying any data from it!
+    pub fn lazy_iter_raw<'a, I: AsRef<[u8]> + Into<BytesView<'a>> + 'a, E: StdError + Send + Sync + 'static>(
         &'a self,
         column: C,
         mode: IteratorMode,
         iterator: impl Iterator<Item = Result<(I, I), E>> + 'a,
-    ) -> impl Iterator<Item = Result<(K, V), BlockchainError>> + 'a
-    where
-        K: Serializer + 'a,
-        V: Serializer + 'a,
-    {
+    ) -> impl Iterator<Item = Result<(BytesView<'a>, BytesView<'a>), BlockchainError>> + 'a {
         match self.trees.get(&column) {
             Some(tree) => {
                 let disk_iter = iterator
@@ -194,22 +187,26 @@ impl<C: Hash + Eq> Snapshot<C> {
 
                         // Snapshot doesn't contains the key,
                         // We can use the one from disk
-                        if !tree.writes.contains_key(key.as_ref()) {
-                            Ok(Some((K::from_bytes(key.as_ref())?, V::from_bytes(value.as_ref())?)))
+                        let k = key.as_ref();
+                        if !tree.writes.contains_key(k) {
+                            let k = key.into();
+                            let v = value.into();
+                            Ok(Some((k, v)))
                         } else {
                             Ok(None)
                         }
                     }).filter_map(Result::transpose);
 
-                let mem_iter: Box<dyn Iterator<Item = (&'a Bytes, &'a Bytes)> + Send + Sync> = match mode {
+                let mem_iter: Box<dyn Iterator<Item = (BytesView<'a>, BytesView<'a>)> + Send + Sync> = match mode {
                     IteratorMode::Start => {
                         Box::new(tree.writes.iter()
-                            .filter_map(|(k, v)| v.as_ref().map(|v| (k, v)))
+                            .filter_map(|(k, v)| v.as_ref().map(|v| (k.into(), v.into())))
                         )
                     },
                     IteratorMode::End => {
-                        Box::new(tree.writes.iter().rev()
-                            .filter_map(|(k, v)| v.as_ref().map(|v| (k, v)))
+                        Box::new(tree.writes.iter()
+                            .rev()
+                            .filter_map(|(k, v)| v.as_ref().map(|v| (k.into(), v.into())))
                         )
                     },
                     IteratorMode::WithPrefix(prefix, direction) => {
@@ -222,7 +219,7 @@ impl<C: Hash + Eq> Snapshot<C> {
                             .filter_map(move |(k, v)| {
                                 if let Some(v) = v {
                                     if k.starts_with(&prefix) {
-                                        return Some((k, v));
+                                        return Some((k.into(), v.into()));
                                     }
                                 }
                                 None
@@ -236,7 +233,7 @@ impl<C: Hash + Eq> Snapshot<C> {
                             Direction::Reverse => Either::Right(tree.writes.range(..=start).rev()),
                         };
                         Box::new(iter
-                            .filter_map(|(k, v)| v.as_ref().map(|v| (k, v)))
+                            .filter_map(|(k, v)| v.as_ref().map(|v| (k.into(), v.into())))
                         )
                     },
                     IteratorMode::Range { lower_bound, upper_bound, direction } => {
@@ -247,13 +244,13 @@ impl<C: Hash + Eq> Snapshot<C> {
                             Direction::Reverse => Either::Right(tree.writes.range(lower..upper).rev()),
                         };
                         Box::new(iter
-                            .filter_map(|(k, v)| v.as_ref().map(|v| (k, v)))
+                            .filter_map(|(k, v)| v.as_ref().map(|v| (k.into(), v.into())))
                         )
                     },
                 };
 
                 let mem_iter = mem_iter.into_iter()
-                    .map(|(k, v)| Ok((K::from_bytes(k)?, V::from_bytes(v)?)));
+                    .map(|(k, v)| Ok((k.into(), v.into())));
 
                 Either::Left(disk_iter.chain(mem_iter))
             },
@@ -261,7 +258,9 @@ impl<C: Hash + Eq> Snapshot<C> {
                 let disk_iter = iterator
                     .map(|res| {
                         let (key, value) = res.context("Internal error in snapshot iterator")?;
-                        Ok((K::from_bytes(key.as_ref())?, V::from_bytes(value.as_ref())?))
+                        let k = key.into();
+                        let v = value.into();
+                        Ok((k, v))
                     });
 
                 Either::Right(disk_iter)
@@ -269,10 +268,41 @@ impl<C: Hash + Eq> Snapshot<C> {
         }
     }
 
+    // Lazy interator over keys and values
+    // Both are parsed from bytes
+    // It will fallback on the disk iterator
+    // if the key is not present in the batch
+    // Note that this iterator is lazy and is
+    // not allocating or copying any data from it!
+    #[inline]
+    pub fn lazy_iter<'a, K, V, I: AsRef<[u8]> + Into<BytesView<'a>> + 'a, E: StdError + Send + Sync + 'static>(
+        &'a self,
+        column: C,
+        mode: IteratorMode,
+        iterator: impl Iterator<Item = Result<(I, I), E>> + 'a,
+    ) -> impl Iterator<Item = Result<(K, V), BlockchainError>> + 'a
+    where
+        K: Serializer + 'a,
+        V: Serializer + 'a,
+    {
+        self.lazy_iter_raw::<I, E>(column, mode, iterator)
+            .map(|res| {
+                let (k_bytes, v_bytes) = res?;
+
+                let k = K::from_bytes(k_bytes.as_ref())
+                    .context("Failed to deserialize key in snapshot iterator")?;
+                let v = V::from_bytes(v_bytes.as_ref())
+                    .context("Failed to deserialize value in snapshot iterator")?;
+
+                Ok((k, v))
+            })
+    }
+
     // Similar to `iter` but only for keys
     // Note that this iterator is lazy and is
     // not allocating or copying any data from it!
-    pub fn lazy_iter_keys<'a, K, I: AsRef<[u8]>, E: StdError + Send + Sync + 'static>(
+    #[inline]
+    pub fn lazy_iter_keys<'a, K, I: AsRef<[u8]> + Into<BytesView<'a>> + 'a, E: StdError + Send + Sync + 'static>(
         &'a self,
         column: C,
         mode: IteratorMode,
