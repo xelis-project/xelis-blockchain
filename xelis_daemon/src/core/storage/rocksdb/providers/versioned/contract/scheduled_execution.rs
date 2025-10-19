@@ -39,11 +39,11 @@ impl RocksStorage {
     ) -> Result<(), BlockchainError> {
         trace!("delete scheduled executions with mode {:?}", mode);
         let snapshot = self.snapshot.clone();
-        for res in Self::iter_internal::<RawBytes, ()>(&self.db, snapshot.as_ref(), mode, Column::DelayedExecutionRegistrations)? {
+        for res in Self::iter_raw_internal(&self.db, snapshot.as_ref(), mode, Column::DelayedExecutionRegistrations)? {
             let (key, _) = res?;
 
             // Remove registration entry
-            Self::remove_from_disk_internal(&self.db, self.snapshot.as_mut(), Column::DelayedExecutionRegistrations,&key)?;
+            Self::remove_from_disk_internal(&self.db, self.snapshot.as_mut(), Column::DelayedExecutionRegistrations, &key)?;
 
             // Decode (contract_id, topoheight) from the key and remove corresponding scheduled execution
             let (contract, execution_topoheight) = <(ContractId, TopoHeight)>::from_bytes(&key[8..])?;

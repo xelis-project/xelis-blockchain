@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use log::trace;
 use xelis_common::{
     block::TopoHeight,
-    serializer::{RawBytes, Serializer},
+    serializer::Serializer,
 };
 use crate::core::{
     error::BlockchainError,
@@ -20,8 +20,8 @@ impl VersionedAssetsCirculatingSupplyProvider for RocksStorage {
         trace!("delete versioned assets supply at topoheight {}", topoheight);
         let prefix = topoheight.to_be_bytes();
         let snapshot = self.snapshot.clone();
-        for res in Self::iter_internal::<RawBytes, Option<TopoHeight>>(&self.db, snapshot.as_ref(), IteratorMode::WithPrefix(&prefix, Direction::Forward), Column::VersionedAssetsSupply)? {
-            let (versioned_key, prev_topo) = res?;
+        for res in Self::iter_raw_internal(&self.db, snapshot.as_ref(), IteratorMode::WithPrefix(&prefix, Direction::Forward), Column::VersionedAssetsSupply)? {
+            let (versioned_key, value) = res?;
 
             Self::remove_from_disk_internal(&self.db, self.snapshot.as_mut(), Column::VersionedAssetsSupply, &versioned_key)?;
 
@@ -32,6 +32,7 @@ impl VersionedAssetsCirculatingSupplyProvider for RocksStorage {
             let mut asset = self.get_asset_type(&asset_hash)?;
 
             if asset.supply_pointer.is_some_and(|pointer| pointer >= topoheight) {
+                let prev_topo = Option::from_bytes(&value)?;
                 asset.supply_pointer = prev_topo;
 
                 Self::insert_into_disk_internal(&self.db, self.snapshot.as_mut(), Column::Assets, &asset_hash, &asset)?;
@@ -45,8 +46,8 @@ impl VersionedAssetsCirculatingSupplyProvider for RocksStorage {
         trace!("delete versioned assets supply above topoheight {}", topoheight);
         let start = (topoheight + 1).to_be_bytes();
         let snapshot = self.snapshot.clone();
-        for res in Self::iter_internal::<RawBytes, Option<TopoHeight>>(&self.db, snapshot.as_ref(), IteratorMode::From(&start, Direction::Forward), Column::VersionedAssetsSupply)? {
-            let (key, prev_topo) = res?;
+        for res in Self::iter_raw_internal(&self.db, snapshot.as_ref(), IteratorMode::From(&start, Direction::Forward), Column::VersionedAssetsSupply)? {
+            let (key, value) = res?;
             // Delete the version we've read
             Self::remove_from_disk_internal(&self.db, self.snapshot.as_mut(), Column::VersionedAssetsSupply, &key)?;
 
@@ -61,6 +62,7 @@ impl VersionedAssetsCirculatingSupplyProvider for RocksStorage {
             // Case 1: pointer is above topoheight => we update it
             // Case 2: pointer is None => we update it
             if asset.supply_pointer.is_none_or(|v| v > topoheight) {
+                let prev_topo = Option::from_bytes(&value)?;
                 // Case 1: prev topo is below or equal to requested topoheight => update it
                 // Case 2: prev topo is None but pointer is Some => we update it
                 let filtered = prev_topo.filter(|v| *v <= topoheight);

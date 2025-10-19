@@ -39,16 +39,17 @@ use crate::core::{
     error::{BlockchainError, DiskContext},
     storage::{
         snapshot::{
-            Snapshot as InternalSnapshot,
+            BytesView,
             Direction,
+            EntryState,
             IteratorMode,
-            EntryState
+            Snapshot as InternalSnapshot
         },
         BlockProvider,
         ClientProtocolProvider,
         ContractLogsProvider,
-        TransactionProvider,
         StorageCache,
+        TransactionProvider
     }
 };
 
@@ -400,6 +401,24 @@ impl RocksStorage {
                     let value = V::from_bytes(&value)?;
         
                     Ok((key, value))
+                })))
+            } 
+        }
+    }
+
+    pub fn iter_raw_internal<'a>(db: &'a InnerDB, snapshot: Option<&'a Snapshot>, mode: IteratorMode, column: Column) -> Result<impl Iterator<Item = Result<(BytesView<'a>, BytesView<'a>), BlockchainError>> + 'a, BlockchainError> {
+        trace!("iter raw {:?}", column);
+
+        let cf = cf_handle!(db, column);
+        let (m, opts) = mode.convert();
+        let iterator = db.iterator_cf_opt(&cf, opts, m);
+
+        match snapshot {
+            Some(snapshot) => Ok(Either::Left(snapshot.lazy_iter_raw(column, mode, iterator))),
+            None => {
+                Ok(Either::Right(iterator.map(|res| {
+                    let (key, value) = res.context("Internal read error in iter raw")?;
+                    Ok((key.into(), value.into()))
                 })))
             } 
         }
