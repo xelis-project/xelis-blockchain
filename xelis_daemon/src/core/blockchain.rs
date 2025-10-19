@@ -576,7 +576,7 @@ impl<S: Storage> Blockchain<S> {
         chain_cache.stable_height = stable_height;
         chain_cache.stable_topoheight = stable_topoheight;
         chain_cache.tips = tips;
-        *chain_cache.difficulty.get_mut() = difficulty;
+        chain_cache.difficulty = difficulty;
 
         Ok(())
     }
@@ -1501,8 +1501,7 @@ impl<S: Storage> Blockchain<S> {
         debug!("storage read acquired to get difficulty");
         let cache = storage.chain_cache().await;
 
-        let cache = cache.difficulty.lock().await;
-        (*cache).clone()
+        cache.difficulty
     }
 
     // pass in params the already computed block hash and its tips
@@ -3040,7 +3039,7 @@ impl<S: Storage> Blockchain<S> {
             let chain_cache = storage.chain_cache_mut().await?;
             chain_cache.stable_height = base_height;
             chain_cache.stable_topoheight = base_topo_height;
-            *chain_cache.difficulty.get_mut() = difficulty;
+            chain_cache.difficulty = difficulty;
 
             if chain_height_extended {
                 chain_cache.height = current_height;
@@ -3461,7 +3460,7 @@ impl<S: Storage> Blockchain<S> {
 
             chain_cache.stable_height = stable_height;
             chain_cache.stable_topoheight = stable_topoheight;
-            *chain_cache.difficulty.get_mut() = difficulty;
+            chain_cache.difficulty = difficulty;
         }
 
         Ok((new_topoheight, orphaned_txs))

@@ -60,7 +60,7 @@ pub struct ChainCache {
     pub full_order_cache: Mutex<LruCache<(Hash, Hash, u64), IndexSet<Hash>>>,
     // current difficulty at tips
     // its used as cache to display current network hashrate
-    pub difficulty: Mutex<Difficulty>,
+    pub difficulty: Difficulty,
     // current block height
     pub height: u64,
     // current topo height
@@ -92,7 +92,7 @@ impl ChainCache {
             topoheight: self.topoheight,
             stable_height: self.stable_height,
             stable_topoheight: self.stable_topoheight,
-            difficulty: Mutex::new(self.difficulty.get_mut().clone()),
+            difficulty: self.difficulty.clone(),
             tips: self.tips.clone(),
         }
     }
@@ -109,7 +109,7 @@ impl Default for ChainCache {
             topoheight: 0,
             stable_height: 0,
             stable_topoheight: 0,
-            difficulty: Mutex::new(GENESIS_BLOCK_DIFFICULTY),
+            difficulty: GENESIS_BLOCK_DIFFICULTY,
             tips: Tips::default(),
         }
     }

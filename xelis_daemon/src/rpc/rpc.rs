@@ -625,7 +625,7 @@ async fn get_info<S: Storage>(context: &Context, body: Value) -> Result<Value, I
         let height = chain_cache.height;
         let topoheight = chain_cache.topoheight;
         let stableheight = chain_cache.stable_height;
-        let difficulty = chain_cache.difficulty.lock().await.clone();
+        let difficulty = chain_cache.difficulty;
 
         let top_block_hash = storage.get_hash_at_topo_height(topoheight).await
             .context("Error while retrieving hash at topo height")?;
@@ -1582,7 +1582,7 @@ async fn get_difficulty<S: Storage>(context: &Context, body: Value) -> Result<Va
     let storage = blockchain.get_storage().read().await;
     let chain_cache = storage.chain_cache().await;
     let height = chain_cache.height;
-    let difficulty  = *chain_cache.difficulty.lock().await;
+    let difficulty  = chain_cache.difficulty;
 
     let version = get_version_at_height(blockchain.get_network(), height);
     let block_time_target = get_block_time_target_for_version(version);
