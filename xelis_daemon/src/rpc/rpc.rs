@@ -617,7 +617,7 @@ async fn get_info<S: Storage>(context: &Context, body: Value) -> Result<Value, I
     require_no_params(body)?;
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
 
-    let (height, topoheight, stableheight, top_block_hash, emitted_supply, circulating_supply, pruned_topoheight, average_block_time) = {    
+    let (height, topoheight, stableheight, top_block_hash, emitted_supply, circulating_supply, pruned_topoheight, average_block_time, difficulty) = {    
         let storage = blockchain.get_storage().read().await;
 
         let chain_cache = storage.chain_cache().await;
@@ -625,6 +625,7 @@ async fn get_info<S: Storage>(context: &Context, body: Value) -> Result<Value, I
         let height = chain_cache.height;
         let topoheight = chain_cache.topoheight;
         let stableheight = chain_cache.stable_height;
+        let difficulty = chain_cache.difficulty.lock().await.clone();
 
         let top_block_hash = storage.get_hash_at_topo_height(topoheight).await
             .context("Error while retrieving hash at topo height")?;
@@ -636,9 +637,8 @@ async fn get_info<S: Storage>(context: &Context, body: Value) -> Result<Value, I
             .unwrap_or(0);
         let pruned_topoheight = storage.get_pruned_topoheight().await.context("Error while retrieving pruned topoheight")?;
         let average_block_time = blockchain.get_average_block_time::<S>(&storage).await.context("Error while retrieving average block time")?;
-        (height, topoheight, stableheight, top_block_hash, emitted_supply, circulating_supply, pruned_topoheight, average_block_time)
+        (height, topoheight, stableheight, top_block_hash, emitted_supply, circulating_supply, pruned_topoheight, average_block_time, difficulty)
     };
-    let difficulty = blockchain.get_difficulty().await;
 
     let mempool_size = blockchain.get_mempool_size().await;
     let version = VERSION.into();
