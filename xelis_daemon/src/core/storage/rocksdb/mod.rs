@@ -387,23 +387,15 @@ impl RocksStorage {
         V: Serializer + 'a,
     {
         trace!("iter {:?}", column);
+        Self::iter_raw_internal(db, snapshot, mode, column).map(|iter| {
+            iter.map(|res| {
+                let (key_bytes, value_bytes) = res?;
+                let key = K::from_bytes(&key_bytes)?;
+                let value = V::from_bytes(&value_bytes)?;
 
-        let cf = cf_handle!(db, column);
-        let (m, opts) = mode.convert();
-        let iterator = db.iterator_cf_opt(&cf, opts, m);
-
-        match snapshot {
-            Some(snapshot) => Ok(Either::Left(snapshot.lazy_iter(column, mode, iterator))),
-            None => {
-                Ok(Either::Right(iterator.map(|res| {
-                    let (key, value) = res.context("Internal read error in iter")?;
-                    let key = K::from_bytes(&key)?;
-                    let value = V::from_bytes(&value)?;
-        
-                    Ok((key, value))
-                })))
-            } 
-        }
+                Ok((key, value))
+            })
+        })
     }
 
     pub fn iter_raw_internal<'a>(db: &'a InnerDB, snapshot: Option<&'a Snapshot>, mode: IteratorMode, column: Column) -> Result<impl Iterator<Item = Result<(BytesView<'a>, BytesView<'a>), BlockchainError>> + 'a, BlockchainError> {
@@ -429,22 +421,14 @@ impl RocksStorage {
         K: Serializer + 'a,
     {
         trace!("iter keys {:?}", column);
+        Self::iter_raw_internal(db, snapshot, mode, column).map(|iter| {
+            iter.map(|res| {
+                let (key_bytes, _value_bytes) = res?;
+                let key = K::from_bytes(&key_bytes)?;
 
-        let cf = cf_handle!(db, column);
-        let (m, opts) = mode.convert();
-        let iterator = db.iterator_cf_opt(&cf, opts, m);
-
-        match snapshot {
-            Some(snapshot) => Ok(Either::Left(snapshot.lazy_iter_keys(column, mode, iterator))),
-            None => {
-                Ok(Either::Right(iterator.map(|res| {
-                    let (key, _) = res.context("Internal read error in iter_keys")?;
-                    let key = K::from_bytes(&key)?;
-        
-                    Ok(key)
-                })))
-            } 
-        }
+                Ok(key)
+            })
+        })
     }
 
     #[inline(always)]

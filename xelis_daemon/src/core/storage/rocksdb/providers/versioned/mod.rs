@@ -80,7 +80,7 @@ impl RocksStorage {
         topoheight: TopoHeight,
         keep_last: bool,
     ) -> Result<(), BlockchainError> {
-        self.delete_versioned_below_topoheight::<_, RawBytes>(column_pointer, column_versioned, topoheight, keep_last, |k, v| Ok((RawBytes::from_bytes(&k)?, v)))
+        self.delete_versioned_below_topoheight(column_pointer, column_versioned, topoheight, keep_last, |k, v| Ok((RawBytes::from_bytes(&k)?, v)))
     }
 
     pub fn delete_versioned_below_topoheight<V: Serializer, K: Serializer>(
