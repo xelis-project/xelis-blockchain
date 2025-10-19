@@ -34,12 +34,13 @@ impl VersionedBalanceProvider for SledStorage {
 
             // We check one account at a time
             let snapshot = self.snapshot.clone();
-            for el in Self::iter::<RawBytes, TopoHeight>(snapshot.as_ref(), &self.balances) {
-                let (k, topo) = el?;
+            for el in Self::iter_raw(snapshot.as_ref(), &self.balances) {
+                let (k, value) = el?;
 
                 // We fetch the last version to take its previous topoheight
                 // And we loop on it to delete them all until the end of the chained data
                 // But before deleting, we need to find if we are below a output balance
+                let topo = TopoHeight::from_bytes(&value)?;
                 let mut prev_version = Some(topo);
                 let mut patched = false;
                 while let Some(prev_topo) = prev_version.take() {

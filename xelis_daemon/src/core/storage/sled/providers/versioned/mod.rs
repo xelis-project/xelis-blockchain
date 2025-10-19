@@ -35,8 +35,8 @@ impl SledStorage {
     ) -> Result<(), BlockchainError> {
         trace!("delete versioned data at topoheight {}", topoheight);
         let cloned = snapshot.clone();
-        for el in Self::scan_prefix_keys::<RawBytes>(cloned.as_ref(), tree_versioned, &topoheight.to_be_bytes()) {
-            let prefixed_key = el?;
+        for el in Self::scan_prefix_raw(cloned.as_ref(), tree_versioned, &topoheight.to_be_bytes()) {
+            let (prefixed_key, _) = el?;
 
             // Delete this version from DB
             // We read the previous topoheight to check if we need to delete the balance
@@ -70,8 +70,9 @@ impl SledStorage {
         trace!("delete versioned data above topoheight {}", topoheight);
 
         let cloned = snapshot.clone();
-        for el in Self::iter::<RawBytes, TopoHeight>(cloned.as_ref(), tree_pointer) {
-            let (key, topo) = el?;
+        for el in Self::iter_raw(cloned.as_ref(), tree_pointer) {
+            let (key, value) = el?;
+            let topo = TopoHeight::from_bytes(&value)?;
 
             if topo > topoheight {
                 debug!("found pointer at {} above the requested topoheight {} with context {}", topo, topoheight, context);
@@ -123,9 +124,10 @@ impl SledStorage {
         trace!("delete versioned data below topoheight {}", topoheight);
         let cloned = snapshot.clone();
         if keep_last {
-            for el in Self::iter::<RawBytes, TopoHeight>(cloned.as_ref(), tree_pointer) {
-                let (key, topo) = el?;
+            for el in Self::iter_raw(cloned.as_ref(), tree_pointer) {
+                let (key, value) = el?;
 
+                let topo = TopoHeight::from_bytes(&value)?;
                 // We fetch the current last version
                 // So if N-1 is below the threshold, we can patch it to None
                 let mut prev_version = Some(topo);

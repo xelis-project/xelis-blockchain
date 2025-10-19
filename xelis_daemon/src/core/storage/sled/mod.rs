@@ -3,13 +3,16 @@ mod providers;
 
 use async_trait::async_trait;
 use itertools::Either;
-use crate::core::error::{BlockchainError, DiskContext};
+use crate::core::{
+    error::{BlockchainError, DiskContext},
+    storage::snapshot::BytesView
+};
 use xelis_common::{
     block::BlockHeader,
     crypto::Hash,
     immutable::Immutable,
     network::Network,
-    serializer::{RawBytes, Serializer},
+    serializer::Serializer,
     transaction::Transaction,
     tokio::sync::Mutex
 };
@@ -425,42 +428,55 @@ impl SledStorage {
         }
     }
 
-    // Scan prefix
-    pub(super) fn scan_prefix<'a, K: Serializer + 'a, V: Serializer + 'a>(snapshot: Option<&'a Snapshot>, tree: &Tree, prefix: &[u8]) -> impl Iterator<Item = Result<(K, V), BlockchainError>> + 'a {
+    // Scan prefix raw
+    pub(super) fn scan_prefix_raw<'a>(snapshot: Option<&'a Snapshot>, tree: &Tree, prefix: &[u8]) -> impl Iterator<Item = Result<(BytesView<'a>, BytesView<'a>), BlockchainError>> + 'a {
         match snapshot {
-            Some(snapshot) => Either::Left(snapshot.lazy_iter(tree.into(), IteratorMode::WithPrefix(prefix, Direction::Forward), tree.iter())),
+            Some(snapshot) => Either::Left(snapshot.lazy_iter_raw(tree.into(), IteratorMode::WithPrefix(prefix, Direction::Forward), tree.iter())),
             None => Either::Right(tree.scan_prefix(prefix).into_iter().map(|res| {
                 let (k, v) = res?;
-                let k = K::from_bytes(&k)?;
-                let v = V::from_bytes(&v)?;
-                Ok((k, v))
+                Ok((k.into(), v.into()))
+            }))
+        }
+    }
+
+    // Scan prefix
+    pub(super) fn scan_prefix<'a, K: Serializer + 'a, V: Serializer + 'a>(snapshot: Option<&'a Snapshot>, tree: &Tree, prefix: &[u8]) -> impl Iterator<Item = Result<(K, V), BlockchainError>> + 'a {
+        Self::scan_prefix_raw(snapshot, tree, prefix).map(|res| {
+            let (k_bytes, v_bytes) = res?;
+            let k = K::from_bytes(&k_bytes)?;
+            let v = V::from_bytes(&v_bytes)?;
+            Ok((k, v))
+        })
+    }
+
+    // Iter raw over a tree entries
+    pub(super) fn iter_raw<'a>(snapshot: Option<&'a Snapshot>, tree: &Tree) -> impl Iterator<Item = Result<(BytesView<'a>, BytesView<'a>), BlockchainError>> + 'a {
+        match snapshot {
+            Some(snapshot) => Either::Left(snapshot.lazy_iter_raw(tree.into(), IteratorMode::Start, tree.iter())),
+            None => Either::Right(tree.iter().map(|res| {
+                let (k, v) = res?;
+                Ok((k.into(), v.into()))
             }))
         }
     }
 
     // Iter over a tree entries
     pub(super) fn iter<'a, K: Serializer + 'a, V: Serializer + 'a>(snapshot: Option<&'a Snapshot>, tree: &Tree) -> impl Iterator<Item = Result<(K, V), BlockchainError>> + 'a {
-        match snapshot {
-            Some(snapshot) => Either::Left(snapshot.lazy_iter(tree.into(), IteratorMode::Start, tree.iter())),
-            None => Either::Right(tree.iter().map(|res| {
-                let (k, v) = res?;
-                let k = K::from_bytes(&k)?;
-                let v = V::from_bytes(&v)?;
-                Ok((k, v))
-            }))
-        }
+        Self::iter_raw(snapshot, tree).map(|res| {
+            let (k_bytes, v_bytes) = res?;
+            let k = K::from_bytes(&k_bytes)?;
+            let v = V::from_bytes(&v_bytes)?;
+            Ok((k, v))
+        })
     }
 
     // Iter over a tree keys
     pub(super) fn iter_keys<'a, K: Serializer + 'a>(snapshot: Option<&'a Snapshot>, tree: &Tree) -> impl Iterator<Item = Result<K, BlockchainError>> + 'a {
-        match snapshot {
-            Some(snapshot) => Either::Left(snapshot.lazy_iter_keys(tree.into(), IteratorMode::Start, tree.iter())),
-            None => Either::Right(tree.iter().keys().map(|res| {
-                let bytes = res?;
-                let k = K::from_bytes(&bytes)?;
-                Ok(k)
-            }))
-        }
+        Self::iter_raw(snapshot, tree).map(|res| {
+            let (k_bytes, _) = res?;
+            let k = K::from_bytes(&k_bytes)?;
+            Ok(k)
+        })
     }
 
     pub(super) fn remove_from_disk_internal<T: Serializer>(snapshot: Option<&mut Snapshot>, tree: &Tree, key: &[u8]) -> Result<Option<T>, BlockchainError> {
@@ -784,7 +800,7 @@ impl Storage for SledStorage {
         for tree in self.db.tree_names() {
             let tree = self.db.open_tree(tree)?;
             debug!("Estimating size for tree {}", String::from_utf8_lossy(&tree.name()));
-            for el in Self::iter::<RawBytes, RawBytes>(self.snapshot.as_ref(), &tree) {
+            for el in Self::iter_raw(self.snapshot.as_ref(), &tree) {
                 let (key, value) = el?;
                 size += key.len() + value.len();
             }
