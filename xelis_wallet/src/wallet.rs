@@ -1039,7 +1039,7 @@ impl Wallet {
                     }
                 };
 
-                if let BaseFeeMode::Capped(cap) = base_fee {
+                if let BaseFeeMode::Cap(cap) = base_fee {
                     if cap < calculated {
                         debug!("Capping the dynamic base fee {} to {}", calculated, cap);
                         calculated = cap;
