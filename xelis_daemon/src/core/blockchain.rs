@@ -223,6 +223,8 @@ pub struct Blockchain<S: Storage> {
     txs_verification_threads_count: usize,
     // Disable the ZKP Cache
     disable_zkp_cache: bool,
+    // Max concurrency allowed for general tasks
+    concurrency: usize,
 }
 
 impl<S: Storage> Blockchain<S> {
@@ -305,6 +307,7 @@ impl<S: Storage> Blockchain<S> {
             txs_verification_threads_count: config.txs_verification_threads_count,
             flush_db_every_n_blocks: config.flush_db_every_n_blocks,
             disable_zkp_cache: config.disable_zkp_cache,
+            concurrency: config.concurrency
         };
 
         // include genesis block
@@ -459,6 +462,10 @@ impl<S: Storage> Blockchain<S> {
         }
 
         Ok(arc)
+    }
+
+    pub fn concurrency_limit(&self) -> usize {
+        self.concurrency
     }
 
     // Detect if the simulator task has been started

@@ -548,7 +548,12 @@ pub struct Config {
     // prevent to re-verify the same ZK Proofs more than once.
     #[clap(long)]
     #[serde(default)]
-    pub disable_zkp_cache: bool
+    pub disable_zkp_cache: bool,
+    // Max concurrency allowed for general tasks
+    // By default, it will use the available parallelism.
+    #[clap(long, default_value_t = detect_available_parallelism())]
+    #[serde(default = "detect_available_parallelism")]
+    pub concurrency: usize,
 }
 
 mod humantime_serde {

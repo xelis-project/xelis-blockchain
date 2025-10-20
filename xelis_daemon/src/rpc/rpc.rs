@@ -26,6 +26,7 @@ use crate::{
     p2p::Peer,
 };
 use super::{InternalRpcError, ApiError};
+use futures::{stream, StreamExt, TryStreamExt};
 use xelis_common::{
     api::{
         daemon::*,
@@ -319,6 +320,7 @@ pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>
     handler.register_method("get_top_block", async_handler!(get_top_block::<S>));
     handler.register_method("get_block_difficulty_by_hash", async_handler!(get_block_difficulty_by_hash::<S>));
     handler.register_method("get_block_base_fee_by_hash", async_handler!(get_block_base_fee_by_hash::<S>));
+    handler.register_method("get_block_summary_at_topoheight", async_handler!(get_block_summary_at_topoheight::<S>));
 
     // Balances
     handler.register_method("get_balance", async_handler!(get_balance::<S>));
@@ -1634,6 +1636,50 @@ async fn get_block_base_fee_by_hash<S: Storage>(context: &Context, body: Value) 
         fee_per_kb,
         block_size_ema
     }))
+}
+
+async fn get_block_summary_at_topoheight<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
+    let params: GetBlockAtTopoHeightParams = parse_params(body)?;
+
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    let storage = blockchain.get_storage().read().await;
+    let (hash, block_header) = storage.get_block_header_at_topoheight(params.topoheight).await
+        .context("Error while retrieving block header at topoheight")?;
+
+    let metadata = storage.get_metadata_at_topoheight(params.topoheight).await
+        .context("Error while retrieving block metadata at topoheight")?;
+
+    let storage = &storage;
+    let transactions = stream::iter(block_header.get_transactions().iter())
+        .map(move |tx_hash| async move {
+            let tx = storage.get_transaction(tx_hash).await
+                .context(format!("Error while retrieving transaction {tx_hash}"))?;
+
+            Ok::<_, BlockchainError>(TransactionSummary {
+                hash: Cow::Borrowed(tx_hash),
+                source: tx.get_source().as_address(blockchain.get_network().is_mainnet()),
+                fee: tx.get_fee(),
+                size: tx.size(),
+            })
+        })
+        .buffered(blockchain.concurrency_limit())
+        .try_collect::<Vec<_>>()
+        .await
+        .context("Error while retrieving transactions for block summary")?;
+
+    let summary = GetBlockSummaryResult {
+        block_hash: Cow::Owned(hash),
+        height: block_header.get_height(),
+        miner: Cow::Owned(block_header.get_miner().as_address(blockchain.get_network().is_mainnet())),
+        timestamp: block_header.get_timestamp(),
+        total_fees: metadata.total_fees,
+        total_fees_burned: metadata.total_fees_burned,
+        reward: metadata.block_reward,
+        transactions,
+        emitted_supply: metadata.emitted_supply,
+    };
+
+    Ok(json!(summary))
 }
 
 async fn validate_address<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
