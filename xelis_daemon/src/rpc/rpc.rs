@@ -9,6 +9,7 @@ use crate::{
         blockchain::{
             get_block_dev_fee,
             get_block_reward,
+            calculate_required_base_fee,
             Blockchain,
             BroadcastOption,
             PreVerifyBlock,
@@ -316,6 +317,8 @@ pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>
     handler.register_method("get_blocks_at_height", async_handler!(get_blocks_at_height::<S>));
     handler.register_method("get_block_by_hash", async_handler!(get_block_by_hash::<S>));
     handler.register_method("get_top_block", async_handler!(get_top_block::<S>));
+    handler.register_method("get_block_difficulty_by_hash", async_handler!(get_block_difficulty_by_hash::<S>));
+    handler.register_method("get_block_base_fee_by_hash", async_handler!(get_block_base_fee_by_hash::<S>));
 
     // Balances
     handler.register_method("get_balance", async_handler!(get_balance::<S>));
@@ -1593,6 +1596,43 @@ async fn get_difficulty<S: Storage>(context: &Context, body: Value) -> Result<Va
         hashrate,
         hashrate_formatted,
         difficulty,
+    }))
+}
+
+async fn get_block_difficulty_by_hash<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
+    let params: GetBlockDifficultyByHashParams = parse_params(body)?;
+
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    let storage = blockchain.get_storage().read().await;
+    let difficulty = storage.get_difficulty_for_block_hash(&params.block_hash).await
+        .context("Error while retrieving difficulty for block")?;
+    let height = storage.get_height_for_block_hash(&params.block_hash).await
+        .context("Error while retrieving block height")?;
+
+    let version = get_version_at_height(blockchain.get_network(), height);
+    let block_time_target = get_block_time_target_for_version(version);
+
+    let hashrate = difficulty / (block_time_target / MILLIS_PER_SECOND);
+    let hashrate_formatted = format_hashrate(hashrate.into());
+    Ok(json!(GetDifficultyResult {
+        hashrate,
+        hashrate_formatted,
+        difficulty,
+    }))
+}
+
+async fn get_block_base_fee_by_hash<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
+    let params: GetBlockBaseFeeByHashParams = parse_params(body)?;
+
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    let storage = blockchain.get_storage().read().await;
+    let block_size_ema = storage.get_block_size_ema(&params.block_hash).await
+        .context("Error while retrieving block size EMA")? as usize;
+    let fee_per_kb = calculate_required_base_fee(block_size_ema);
+
+    Ok(json!(GetBlockBaseFeeByHashResult {
+        fee_per_kb,
+        block_size_ema
     }))
 }
 
