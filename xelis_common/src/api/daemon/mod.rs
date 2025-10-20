@@ -651,11 +651,21 @@ pub struct GetBlockBaseFeeByHashResult {
     pub block_size_ema: usize,
 }
 
+#[derive(Serialize, Deserialize)]
 pub struct GetBlockSummaryResult<'a> {
     pub block_hash: Cow<'a, Hash>,
+    pub height: u64,
+    pub timestamp: TimestampMillis,
     pub miner: Cow<'a, Address>,
+    pub transactions: Vec<TransactionSummary<'a>>,
     // Total fees received by the miner in this block
     pub total_fees: u64,
+    // Total fees burned in this block
+    pub total_fees_burned: u64,
+    // Total reward emitted in this block
+    pub reward: u64,
+    // Emitted supply at this topoheight
+    pub emitted_supply: u64,
 }
 
 #[derive(Serialize, Deserialize)]
