@@ -415,7 +415,7 @@ mod tests {
 
     #[test]
     fn test_serde_module() {
-        let hex = "00020008000d48656c6c6f20576f726c642030000400000000000000320001000000100000000200000100001880000001001402";
+        let hex = "0200080d48656c6c6f2c20576f726c64210004000000000000000000010a00000018ef000001001402";
         let module = Module::from_hex(hex).unwrap();
         assert_eq!(module.constants().len(), 2);
 
