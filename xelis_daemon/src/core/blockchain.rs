@@ -1807,11 +1807,8 @@ impl<S: Storage> Blockchain<S> {
         let tips_set = chain_cache.tips.clone();
         let current_height = chain_cache.height;
 
-        let mut tips = Vec::with_capacity(tips_set.len());
-        for hash in tips_set {
-            trace!("Tip found from storage: {}", hash);
-            tips.push(hash);
-        }
+        let mut tips = tips_set.into_iter()
+            .collect::<Vec<_>>();
 
         if tips.len() > 1 {
             let best_tip = blockdag::find_best_tip_by_cumulative_difficulty(storage, tips.iter()).await?.clone();
@@ -1844,8 +1841,11 @@ impl<S: Storage> Blockchain<S> {
         if sorted_tips.len() > TIPS_LIMIT {
             // keep only first 3 heavier tips
             // We drain any tips above the limit
-            let dropped_tips = sorted_tips.drain(TIPS_LIMIT..);
-            warn!("Dropping tips {} because they are not in the first 3 heavier tips", dropped_tips.map(|h| h.to_string()).collect::<Vec<String>>().join(", "));
+            let len = sorted_tips.len() - TIPS_LIMIT;
+            let dropped_tips = sorted_tips.drain(TIPS_LIMIT..)
+            .map(|h| h.to_string()).collect::<Vec<String>>().join(", ");
+            warn!("too many tips for block generation, using the {} heavier tips: {} available tips", TIPS_LIMIT, len);
+            trace!("dropped tips: {}", dropped_tips);
         }
 
         // find the newest timestamp
@@ -2149,9 +2149,10 @@ impl<S: Storage> Blockchain<S> {
         }
 
         let chain_cache = storage.chain_cache().await;
+
         let mut current_height = chain_cache.height;
-        let stable_height = chain_cache.stable_height;
         let mut current_topoheight = chain_cache.topoheight;
+        let stable_height = chain_cache.stable_height;
         let stable_topoheight = chain_cache.stable_topoheight;
 
         if tips_count == 0 && current_height != 0 {
@@ -3043,6 +3044,7 @@ impl<S: Storage> Blockchain<S> {
             chain_cache.stable_height = base_height;
             chain_cache.stable_topoheight = base_topo_height;
             chain_cache.difficulty = difficulty;
+            chain_cache.tips = tips;
 
             if chain_height_extended {
                 chain_cache.height = current_height;
