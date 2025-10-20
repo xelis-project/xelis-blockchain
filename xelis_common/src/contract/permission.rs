@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::{crypto::Hash, serializer::*};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ContractCallChunk {
     // All chunks are allowed
     All,
