@@ -118,8 +118,8 @@ impl Serializer for TransferOut {
 
     fn write(&self, writer: &mut Writer) {
         self.destination.write(writer);
-        writer.write_hash(&self.asset);
-        writer.write_u64(&self.amount);
+        self.asset.write(writer);
+        self.amount.write(writer);
 
         self.extra_data.write(writer);
     }
@@ -144,9 +144,8 @@ impl Serializer for TransferIn {
     }
 
     fn write(&self, writer: &mut Writer) {
-        writer.write_hash(&self.asset);
-        writer.write_u64(&self.amount);
-
+        self.asset.write(writer);
+        self.amount.write(writer);
         self.extra_data.write(writer);
     }
 
@@ -354,14 +353,14 @@ impl Serializer for EntryData {
         match &self {
             Self::Coinbase { reward } => {
                 writer.write_u8(0);
-                writer.write_u64(reward);
+                reward.write(writer);
             },
             Self::Burn { asset, amount, fee, nonce } => {
                 writer.write_u8(1);
-                writer.write_hash(asset);
-                writer.write_u64(amount);
-                writer.write_u64(fee);
-                writer.write_u64(nonce);
+                asset.write(writer);
+                amount.write(writer);
+                fee.write(writer);
+                nonce.write(writer);
             },
             Self::Incoming { from, transfers } => {
                 writer.write_u8(2);
@@ -379,8 +378,8 @@ impl Serializer for EntryData {
                 for transfer in transfers {
                     transfer.write(writer);
                 }
-                writer.write_u64(fee);
-                writer.write_u64(nonce);
+                fee.write(writer);
+                nonce.write(writer);
             },
             Self::MultiSig { participants: keys, threshold, fee, nonce } => {
                 writer.write_u8(4);
@@ -389,13 +388,13 @@ impl Serializer for EntryData {
                     key.write(writer);
                 }
                 writer.write_u8(*threshold);
-                writer.write_u64(fee);
-                writer.write_u64(nonce);
+                fee.write(writer);
+                nonce.write(writer);
             },
             Self::InvokeContract { contract, deposits, received, entry_id: chunk_id, fee, max_gas, nonce } => {
                 writer.write_u8(5);
-                writer.write_hash(contract);
-                writer.write_u16(*chunk_id);
+                contract.write(writer);
+                chunk_id.write(writer);
                 writer.write_u8(deposits.len() as u8);
                 for (asset, amount) in deposits {
                     asset.write(writer);
@@ -408,14 +407,14 @@ impl Serializer for EntryData {
                     amount.write(writer);
                 }
 
-                writer.write_u64(fee);
-                writer.write_u64(max_gas);
-                writer.write_u64(nonce);
+                fee.write(writer);
+                max_gas.write(writer);
+                nonce.write(writer);
             },
             Self::DeployContract { fee, nonce, invoke } => {
                 writer.write_u8(6);
-                writer.write_u64(fee);
-                writer.write_u64(nonce);
+                fee.write(writer);
+                nonce.write(writer);
                 invoke.write(writer);
             },
             Self::IncomingContract { transfers } => {
@@ -676,14 +675,14 @@ impl Serializer for TransactionEntry {
     }
 
     fn write(&self, writer: &mut Writer) {
-        writer.write_hash(&self.hash);
-        writer.write_u64(&self.topoheight);
-        writer.write_u64(&self.timestamp);
+        self.hash.write(writer);
+        self.topoheight.write(writer);
+        self.timestamp.write(writer);
         self.entry.write(writer);
     }
 
     fn size(&self) -> usize {
-        self.hash.size() + self.topoheight.size() + self.entry.size()
+        self.hash.size() + self.topoheight.size() + self.timestamp.size() + self.entry.size()
     }
 }
 
