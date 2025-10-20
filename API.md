@@ -3733,23 +3733,75 @@ It can be broadcasted or not to the network.
 |       nonce       |     Integer     | Optional | Set the nonce to use by the transaction. By default its provided by wallet |
 |     broadcast     |     Boolean     | Optional |               Broadcast TX to daemon. By default set to true               |
 |     tx_as_hex     |     Boolean     | Optional |            Serialize TX to hexadecimal. By default set to false            |
-| transfers OR burn | TransactionType | Required |                         Transaction Type parameter                         |
+|<transaction_type> | TransactionType | Required |                     Transaction Type parameter, see below                  |
 |      signers      |	  Array       | Optional |              List of signers to use for the transaction multisig.          |
+|      fee_limit    |     Integer     | Optional |  Set a maximum fee limit to pay. If fee estimation is higher, TX fails.    |
+|      base_fee     |     Integer     | Optional |    Set a base fee to use for fee estimation instead of querying daemon.    |
 
-###### Fee Builder
-Fee builder has two variants:
-- One to provide a multiplier applied on estimated fees.
+##### Fee Builder
+`fee` field has few variants:
+- Selected by default, let the wallet estimate the fee to pay with multiplier 1 
 ```json
-{"multiplier":1.0}
+{
+    "extra": "none"
+}
+```
+- To provide a multiplier to apply on estimated fee
+```json
+{
+    "extra": {
+        "multiplier": 2.5
+    }
+}
 ```
 
-- One to provide a fixed amount of fee to pay
+- To let the wallet estimate the fee but pay an extra tip to miners to be prioritized
 ```json
-{"value":100}
+{
+    "extra": {
+        "tip": 5000
+    }
+}
+```
+
+- To provide a fixed amount of fee to pay
+```json
+{
+    "fixed": 100
+}
 ```
 When it's not provided, Fee Builder is set by default to multiplier 1 to pay what is estimated.
 
-###### MultiSig Signers
+##### Fee Limit
+`fee_limit` field allows to set a maximum fee amount to pay for the transaction.
+If the fee estimation is higher than the limit set, the transaction building will fail.
+
+If the fee limit set is higher than the current estimated fee, the transaction will be built normally.
+This is useful in case of high network congestion where fees may rise quickly:
+you don't want that your TX stay stuck because the current required fee is higher than what you are willing to pay.
+
+You can provide a higher fee limit that will be refunded based on the minimum required fee once executed.
+
+##### Base Fee
+`base_fee` field allows to set a base fee to use for fee per kB estimation.
+You have 3 options:
+- `none`: query the connected daemon for current base fee (default)
+- provide a specific base fee per kB in atomic units to use for estimation:
+```json
+{
+    "fixed": 1000
+}
+```
+- Provide a capped base fee per kB in atomic units to use for estimation. This means if the queried base fee from daemon is higher than the cap, the cap will be used instead:
+```json
+{
+    "cap": 2000
+}
+```
+
+##### MultiSig signing
+When the wallet address is a multisig, you can provide the signers to use to sign the transaction.
+
 Signers is a list of `SignerId` to use to sign a transaction multisig.
 Example of one `SignerId`:
 ```json
@@ -3760,20 +3812,237 @@ Example of one `SignerId`:
 ```
 where `id` is the index of the signer in the multisig setup.
 
+Example of `signers` list with two signers:
+```json
+{
+    "<transaction type>": {
+        ...
+    },
+    "signers": [
+        {
+            "private_key": "<private key in hexadecimal>",
+            "id": 0
+        },
+        {
+            "private_key": "<private key in hexadecimal>",
+            "id": 1
+        }
+    ]
+}
+```
+
+##### Transaction Type
+
+###### Transfers
+List of transfers to include in the transaction.
+You can send to one or more destinations in one transaction, with a limit of 255 transfers per transaction.
+
+Example of a TX with transfers payload:
+
+```json
+{
+    "transfers": [
+        {
+            "amount": 1000,
+            "asset": "0000000000000000000000000000000000000000000000000000000000000000",
+            "destination": "xet:t23w8pp90zsj04sp5r3r9sjpz3vq7rxcwhydf5ztlk6efhnusersqvf8sny",
+        }
+    ],
+}
+```
+
+Where `transfers` is a list of transfers to include in the transaction.
+
+Each transfer contains a destination address, asset ID and amount in atomic units.
+
+In case you want to include extra data in a transfer, you can add the `extra_data` field next to the other fields.
+You can set any JSON data that will be serialized and encrypted for the recipient only.
+
+If you don't want to encrypt the extra data, you can set the field `encrypt_extra_data` to `false`.
+
+Up to 1 KB of serialized data can be added in the extra data field.
+
+Response of the built transaction payload:
+```json
+{
+    "transfers": [
+        {
+            "asset": "0000000000000000000000000000000000000000000000000000000000000000",
+            "commitment": [...],
+            "ct_validity_proof": {
+                "Y_0": [...],
+                "Y_1": [...],
+                "z_r": [...],
+                "z_x": [...]
+            },
+            "destination": [...],
+            "extra_data": null,
+            "receiver_handle": [...],
+            "sender_handle": [...]
+        }
+    ]
+}
+```
+
+###### Burn
+Payload to burn coins from wallet.
+
+If you want to burn coins, you can use the following payload:
+```json
+{
+    "burn": {
+        "amount": 1000,
+        "asset": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+}
+```
+
+Please note that burning coins is irreversible.
+
+###### Multisig
+Payload to setup/update a multisig on the wallet address.
+
+If you want to setup/update a multisig, you can use the following payload:
+```json
+{
+    "multisig": {
+        "participants": [
+            "xet:6elhr5zvx5wl2ljjl82l6yxxxqkxjvcr38kcq9qef3nurm2r2arsq89z4ll",
+            "xet:6elhr5zvx5wl2ljjl82l6yxxxqkxjvcr38kcq9qef3nurm2r2arsq89z4ll"
+        ],
+        "threshold": 2
+    }
+}
+```
+Where `participants` is the list of addresses that will be part of the multisig setup.
+
+This example setup a 2-of-2 multisig (both participants are required to sign a transaction).
+You can setup up to 255 participants in a multisig, with a threshold up to the number of participants.
+
+In the case of updating an existing multisig, you can provide the new list of participants and threshold to update it.
+But the previous multisig setup must be respected until the transaction is executed by the network.
+
+###### Invoke Contract
+Payload to invoke a contract method.
+
+This payload allows to call a contract entry chunk with parameters.
+```json
+{
+    "invoke_contract": {
+        "contract": "b756566452b2c7bfea785f1b87b90d7bf075cb45a0dc33fb524e5e25f7e85fb4",
+        "entry_id": 0,
+        "parameters": [
+            {
+                "type": "primitive",
+                "value": {
+                    "type": "string",
+                    "value": "Hello, World!"
+                }
+            }
+        ],
+        "max_gas": 1000000,
+    }
+}
+```
+
+The configured `max_gas` is the maximum gas amount that can be consumed by the contract execution.
+If the execution requires more gas, the TX will still be accepted by the network but the contract execution will fail.
+If you've provided more gas than required, the remaining gas will be refunded to the contract caller.
+
+In case you want to send assets along the contract invocation, you can provide a list of deposits next to the parameters.
+```json
+{
+    "deposits": {
+        "0000000000000000000000000000000000000000000000000000000000000000": {
+            "amount": 1000000000
+        }
+    }
+}
+```
+where `deposits` is a list of assets to deposit to the contract during its execution.
+
+If you want to allow the contract to call other contracts during on your behalf, you can provide a `permission` field.
+It is set to `none` by default, meaning the contract won't be able to call other contracts on your behalf during its execution.
+
+You can be precise on which contracts and which chunks the contract can call on your behalf.
+
+Example with a specific permission setup:
+```json
+{
+    "permission": {
+        "specific": [
+            {
+                "contract": "0101010101010101010101010101010101010101010101010101010101010101",
+                "chunk": "all"
+            },
+            {
+                "contract": "0202020202020202020202020202020202020202020202020202020202020202",
+                "chunk": {
+                    "specific": [
+                        0,
+                        1,
+                        2
+                    ]
+                }
+            },
+            {
+                "contract": "0303030303030303030303030303030303030303030303030303030303030303",
+                "chunk": {
+                    "exclude": [
+                        5,
+                        6
+                    ]
+                }
+            }
+        ]
+    }
+}
+```
+Replace `specific` permission by `exclude` to deny the listed contracts/chunks instead of allowing them.
+
+Otherwise you can set the permission to `all` to allow the contract to call any other contract and any chunk on your behalf.
+
+###### Deploy Contract
+Payload to deploy a contract on the network.
+
+```json
+{
+    "deploy_contract": {
+        "module": "<contract bytecode in hexadecimal>",
+    }
+}
+```
+
+Where `module` is the compiled contract bytecode in hexadecimal format.
+
+In case your contract have a constructor hook, you can provide parameters to it during the deployment.
+```json
+{
+    "invoke": {
+        "max_gas": 1000000,
+        "deposits": {
+            "0000000000000000000000000000000000000000000000000000000000000000": {
+                "amount": 1000000000
+            }
+        }
+    }
+}
+```
+
+Where `invoke` is the invocation payload to call the constructor during deployment.
+
 ##### Request
+Replace `<transaction type>` by one of the transaction type explained above.
+
 ```json
 {
     "jsonrpc": "2.0",
     "method": "build_transaction",
     "id": 1,
     "params": {
-        "transfers": [
-            {
-                "amount": 1000,
-                "asset": "0000000000000000000000000000000000000000000000000000000000000000",
-                "destination": "xet:t23w8pp90zsj04sp5r3r9sjpz3vq7rxcwhydf5ztlk6efhnusersqvf8sny"
-            }
-        ],
+        "<transaction type>": {
+            ...
+        },
         "broadcast": true,
         "tx_as_hex": true,
     }
@@ -3787,22 +4056,9 @@ where `id` is the index of the signer in the multisig setup.
     "jsonrpc": "2.0",
     "result": {
         "data": {
-            "transfers": [
-                {
-                    "asset": "0000000000000000000000000000000000000000000000000000000000000000",
-                    "commitment": [...],
-                    "ct_validity_proof": {
-                        "Y_0": [...],
-                        "Y_1": [...],
-                        "z_r": [...],
-                        "z_x": [...]
-                    },
-                    "destination": [...],
-                    "extra_data": null,
-                    "receiver_handle": [...],
-                    "sender_handle": [...]
-                }
-            ]
+            "<transaction type>": {
+                ...
+            }
         },
         "fee": 25000,
         "hash": "f8bd7c15e3a94085f8130cc67e1fefd89192cdd208b68b10e1cc6e1a83afe5d6",
