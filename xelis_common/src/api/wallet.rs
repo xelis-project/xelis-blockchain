@@ -168,7 +168,7 @@ pub enum BaseFeeMode {
     // fixed base fee to use by the wallet
     Fixed(u64),
     // Detected base fee cannot be above it
-    Capped(u64),
+    Cap(u64),
 }
 
 #[derive(Serialize, Deserialize)]

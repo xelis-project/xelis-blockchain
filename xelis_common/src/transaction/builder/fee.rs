@@ -45,7 +45,7 @@ pub trait FeeHelper {
     }
 
     // Get the maximum fee to pay in case of higher base fee
-    // By default, returns None to use the same as TX fee
+    // By default, returns the same as TX fee
     fn get_max_fee(&self, fee: u64) -> u64 {
         fee
     }
