@@ -629,10 +629,33 @@ pub struct FeeRatesEstimated {
 }
 
 #[derive(Serialize, Deserialize)]
+pub struct GetBlockDifficultyByHashParams<'a> {
+    pub block_hash: Cow<'a, Hash>
+}
+
+#[derive(Serialize, Deserialize)]
 pub struct GetDifficultyResult {
     pub difficulty: Difficulty,
     pub hashrate: Difficulty,
     pub hashrate_formatted: String
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct GetBlockBaseFeeByHashParams<'a> {
+    pub block_hash: Cow<'a, Hash>
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct GetBlockBaseFeeByHashResult {
+    pub fee_per_kb: u64,
+    pub block_size_ema: usize,
+}
+
+pub struct GetBlockSummaryResult<'a> {
+    pub block_hash: Cow<'a, Hash>,
+    pub miner: Cow<'a, Address>,
+    // Total fees received by the miner in this block
+    pub total_fees: u64,
 }
 
 #[derive(Serialize, Deserialize)]
