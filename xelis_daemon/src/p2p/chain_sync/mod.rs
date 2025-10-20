@@ -33,7 +33,8 @@ use crate::{
         blockchain::{BroadcastOption, PreVerifyBlock},
         error::BlockchainError,
         hard_fork,
-        storage::Storage
+        storage::Storage,
+        blockdag,
     },
     p2p::{
         error::P2pError,
@@ -188,13 +189,23 @@ impl<S: Storage> P2pServer<S> {
                     for hash in storage.get_blocks_at_height(height).await? {
                         if !response_blocks.contains(&hash) {
                             trace!("Adding top block at height {}: {}", height, hash);
-                            top_blocks.insert(hash);
+                            if !top_blocks.insert(hash) {
+                                debug!("Top block was already present in response top blocks");
+                            }
                         } else {
                             trace!("Top block at height {}: {} was skipped because its already present in response blocks", height, hash);
                         }
                     }
                     height += 1;
                 }
+            }
+
+            // Too many top blocks, use the one with highest difficulty
+            if top_blocks.len() >= u8::MAX as usize {
+                debug!("Too many top blocks ({}), sorting and keeping only the best ones", top_blocks.len());
+                // sort and keep only the best ones
+                let iter = blockdag::sort_tips(&*storage, top_blocks.into_iter()).await?;
+                top_blocks = iter.take(u8::MAX as usize).collect();
             }
         }
 

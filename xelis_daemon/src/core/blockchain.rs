@@ -1839,9 +1839,12 @@ impl<S: Storage> Blockchain<S> {
             }
         }
 
-        let mut sorted_tips = blockdag::sort_tips(storage, tips.into_iter()).await?;
+        let mut sorted_tips: IndexSet<_> = blockdag::sort_tips(storage, tips.into_iter()).await?
+            .collect();
         if sorted_tips.len() > TIPS_LIMIT {
-            let dropped_tips = sorted_tips.drain(TIPS_LIMIT..); // keep only first 3 heavier tips
+            // keep only first 3 heavier tips
+            // We drain any tips above the limit
+            let dropped_tips = sorted_tips.drain(TIPS_LIMIT..);
             warn!("Dropping tips {} because they are not in the first 3 heavier tips", dropped_tips.map(|h| h.to_string()).collect::<Vec<String>>().join(", "));
         }
 
