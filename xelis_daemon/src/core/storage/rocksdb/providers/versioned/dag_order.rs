@@ -1,6 +1,5 @@
 use async_trait::async_trait;
 use log::{debug, trace};
-use rocksdb::Direction;
 use xelis_common::{block::TopoHeight, crypto::Hash};
 use crate::core::{
     error::BlockchainError,
@@ -9,6 +8,7 @@ use crate::core::{
             Column,
             IteratorMode
         },
+        snapshot::Direction,
         RocksStorage,
         VersionedDagOrderProvider
     }
@@ -21,7 +21,8 @@ impl VersionedDagOrderProvider for RocksStorage {
         trace!("delete dag order above topoheight {}", topoheight);
 
         let start = (topoheight + 1).to_be_bytes();
-        for el in Self::iter_owned_internal::<TopoHeight, Hash>(&self.db, self.snapshot.as_ref(), IteratorMode::From(&start, Direction::Forward), Column::HashAtTopo)? {
+        let snapshot = self.snapshot.clone();
+        for el in Self::iter_internal::<TopoHeight, Hash>(&self.db, snapshot.as_ref(), IteratorMode::From(&start, Direction::Forward), Column::HashAtTopo)? {
             let (topo, hash) = el?;
             debug!("found hash {} at topoheight {} while threshold topoheight is at {}", hash, topo, topoheight);
             Self::remove_from_disk_internal(&self.db, self.snapshot.as_mut(), Column::HashAtTopo, &topo.to_be_bytes())?;

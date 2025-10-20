@@ -19,7 +19,7 @@ pub trait BlockExecutionOrderProvider {
     async fn add_block_execution_to_order(&mut self, hash: &Hash) -> Result<(), BlockchainError>;
 
     // Get the number of blocks executed
-    async fn get_blocks_execution_count(&self) -> u64;
+    async fn get_blocks_execution_count(&self) -> Result<u64, BlockchainError>;
 
     // Swap the position of two blocks in the execution order
     async fn swap_blocks_executions_positions(&mut self, left: &Hash, right: &Hash) -> Result<(), BlockchainError>;

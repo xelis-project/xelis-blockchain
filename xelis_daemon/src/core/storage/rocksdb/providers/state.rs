@@ -9,8 +9,7 @@ use xelis_common::{
 use crate::core::{
     error::BlockchainError,
     storage::{
-        rocksdb::Column,
-        sled::{TOP_HEIGHT, TOP_TOPO_HEIGHT},
+        rocksdb::{Column, TOP_HEIGHT, TOP_TOPO_HEIGHT},
         BlockProvider,
         DagOrderProvider,
         DifficultyProvider,

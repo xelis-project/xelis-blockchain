@@ -93,7 +93,7 @@ impl Serializer for HashSet<Cow<'_, Hash>> {
 
 impl Serializer for u128 {
     fn write(&self, writer: &mut Writer) {
-        writer.write_u128(self);
+        writer.write_u128(*self);
     }
 
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
@@ -108,7 +108,7 @@ impl Serializer for u128 {
 
 impl Serializer for u64 {
     fn write(&self, writer: &mut Writer) {
-        writer.write_u64(self);
+        writer.write_u64(*self);
     }
 
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
@@ -123,7 +123,7 @@ impl Serializer for u64 {
 
 impl Serializer for u32 {
     fn write(&self, writer: &mut Writer) {
-        writer.write_u32(self);
+        writer.write_u32(*self);
     }
 
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {

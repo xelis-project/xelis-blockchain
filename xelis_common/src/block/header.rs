@@ -252,9 +252,9 @@ impl BlockHeader {
 impl Serializer for BlockHeader {
     fn write(&self, writer: &mut Writer) {
         self.version.write(writer); // 1
-        writer.write_u64(&self.height); // 1 + 8 = 9
-        writer.write_u64(&self.timestamp); // 9 + 8 = 17
-        writer.write_u64(&self.nonce); // 17 + 8 = 25
+        self.height.write(writer); // 1 + 8 = 9
+        self.timestamp.write(writer); // 9 + 8 = 17
+        self.nonce.write(writer); // 17 + 8 = 25
         writer.write_bytes(&self.extra_nonce); // 25 + 32 = 57
         writer.write_u8(self.tips.len() as u8); // 57 + 1 = 58
         for tip in self.tips.iter() {

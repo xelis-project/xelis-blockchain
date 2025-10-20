@@ -64,7 +64,8 @@ impl<S: Storage> P2pServer<S> {
         let storage = self.blockchain.get_storage().read().await;
         let pruned_topoheight = storage.get_pruned_topoheight().await?.unwrap_or(0);
         if let Some(topoheight) = request.get_requested_topoheight() {
-            let our_topoheight = self.blockchain.get_topo_height();
+            let chain_cache = storage.chain_cache().await;
+            let our_topoheight = chain_cache.topoheight;
             if
                 // Special case, spendable balances needs to go below the pruned point because we store versions
                 // at precise topoheight.
@@ -76,8 +77,8 @@ impl<S: Storage> P2pServer<S> {
             }
 
             // Check that the block is in stable topoheight
-            if topoheight > self.blockchain.get_stable_topoheight() {
-                warn!("Requested topoheight {} is not stable ({}), ignoring {:?}", topoheight, self.blockchain.get_stable_topoheight(), request_kind);
+            if topoheight > chain_cache.stable_topoheight {
+                warn!("Requested topoheight {} is not stable ({}), ignoring {:?}", topoheight, chain_cache.stable_topoheight, request_kind);
                 return Err(P2pError::InvalidRequestedTopoheight.into())
             }
         }
@@ -174,8 +175,9 @@ impl<S: Storage> P2pServer<S> {
                     return Err(P2pError::InvalidPacket.into())
                 }
 
-                if max > self.blockchain.get_stable_topoheight() {
-                    warn!("Requested spendable balances for topoheight {} but our stable topoheight is {}", max, self.blockchain.get_stable_topoheight());
+                let chain_cache = storage.chain_cache().await;
+                if max > chain_cache.stable_topoheight {
+                    warn!("Requested spendable balances for topoheight {} but our stable topoheight is {}", max, chain_cache.stable_topoheight);
                     return Err(P2pError::InvalidRequestedTopoheight.into())
                 }
 
@@ -418,14 +420,14 @@ impl<S: Storage> P2pServer<S> {
         let start = Instant::now();
         info!("Starting fast sync with {}", peer);
 
-        let mut our_topoheight = self.blockchain.get_topo_height();
-        let is_fresh_sync = our_topoheight == 0;
-
         let mut stable_topoheight = 0;
-        let mut step: Option<StepRequest> = {
+        let (mut step, mut our_topoheight) = {
             let storage = self.blockchain.get_storage().read().await;
-            Some(StepRequest::ChainInfo(self.build_list_of_blocks_id(&*storage).await?))
+            let chain_cache = storage.chain_cache().await;
+            (Some(StepRequest::ChainInfo(self.build_list_of_blocks_id(&*storage).await?)), chain_cache.topoheight)
         };
+
+        let is_fresh_sync = our_topoheight == 0;
 
         // keep them in memory, we add them when we're syncing
         // it's done to prevent any sync failure
@@ -715,7 +717,7 @@ impl<S: Storage> P2pServer<S> {
         info!("Fast sync done with {}, took {}", peer, humantime::format_duration(start.elapsed()));
 
         // Request its inventory
-        if self.blockchain.get_height() == peer.get_height() {
+        if self.blockchain.get_height().await == peer.get_height() {
             self.request_inventory_of(peer).await?;
         }
 

@@ -1,9 +1,8 @@
 use async_trait::async_trait;
-use rocksdb::Direction;
 use log::trace;
 use xelis_common::{
     block::TopoHeight,
-    serializer::{RawBytes, Serializer},
+    serializer::Serializer,
 };
 use crate::core::{
     error::BlockchainError,
@@ -14,6 +13,7 @@ use crate::core::{
             Column,
             IteratorMode
         },
+        snapshot::Direction,
         RocksStorage,
         VersionedMultiSigProvider
     }
@@ -25,8 +25,10 @@ impl VersionedMultiSigProvider for RocksStorage {
     async fn delete_versioned_multisigs_at_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError> {
         trace!("delete versioned multisigs at topoheight {}", topoheight);
         let prefix = topoheight.to_be_bytes();
-        for res in Self::iter_owned_internal::<RawBytes, Option<TopoHeight>>(&self.db, self.snapshot.as_ref(), IteratorMode::WithPrefix(&prefix, Direction::Forward), Column::VersionedMultisig)? {
-            let (key, prev_topo) = res?;
+
+        let snapshot = self.snapshot.clone();
+        for res in Self::iter_raw_internal(&self.db, snapshot.as_ref(), IteratorMode::WithPrefix(&prefix, Direction::Forward), Column::VersionedMultisig)? {
+            let (key, value) = res?;
             Self::remove_from_disk_internal(&self.db, self.snapshot.as_mut(), Column::VersionedMultisig, &key)?;
             
             let key_without_prefix = &key[8..];
@@ -34,6 +36,7 @@ impl VersionedMultiSigProvider for RocksStorage {
             let account_key = self.get_account_key_from_id(account_id)?;
             let mut account = self.get_account_type(&account_key)?;
             if account.multisig_pointer.is_some_and(|pointer| pointer >= topoheight) {
+                let prev_topo = Option::from_bytes(&value)?;
                 account.multisig_pointer = prev_topo;
 
                 Self::insert_into_disk_internal(&self.db, self.snapshot.as_mut(), Column::Account, account_key.as_bytes(), &account)?;
@@ -47,8 +50,9 @@ impl VersionedMultiSigProvider for RocksStorage {
     async fn delete_versioned_multisigs_above_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError> {
         trace!("delete versioned multisigs above topoheight {}", topoheight);
         let start = (topoheight + 1).to_be_bytes();
-        for res in Self::iter_owned_internal::<RawBytes, Option<TopoHeight>>(&self.db, self.snapshot.as_ref(), IteratorMode::From(&start, Direction::Forward), Column::VersionedMultisig)? {
-            let (key, prev_topo) = res?;
+        let snapshot = self.snapshot.clone();
+        for res in Self::iter_raw_internal(&self.db, snapshot.as_ref(), IteratorMode::From(&start, Direction::Forward), Column::VersionedMultisig)? {
+            let (key, value) = res?;
             // Delete the version we've read
             Self::remove_from_disk_internal(&self.db, self.snapshot.as_mut(), Column::VersionedMultisig, &key)?;
 
@@ -65,6 +69,7 @@ impl VersionedMultiSigProvider for RocksStorage {
             if account.multisig_pointer.is_none_or(|v| v > topoheight) {
                 // Case 1: prev topo is below or equal to requested topoheight => update it
                 // Case 2: prev topo is None but pointer is Some => we update it
+                let prev_topo = Option::from_bytes(&value)?;
                 let filtered = prev_topo.filter(|v| *v <= topoheight);
                 if filtered != account.multisig_pointer {
                     account.multisig_pointer = filtered;

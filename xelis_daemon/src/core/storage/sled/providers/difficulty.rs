@@ -45,7 +45,7 @@ impl DifficultyProvider for SledStorage {
 
     async fn get_cumulative_difficulty_for_block_hash(&self, hash: &Hash) -> Result<CumulativeDifficulty, BlockchainError> {
         trace!("get cumulative difficulty for hash {}", hash);
-        self.get_cacheable_data(&self.cumulative_difficulty, &self.cumulative_difficulty_cache, hash, DiskContext::CumulativeDifficultyForBlockHash).await
+        self.get_cacheable_data(&self.cumulative_difficulty, self.cache.objects.as_ref().map(|o| &o.cumulative_difficulty_cache), hash, DiskContext::CumulativeDifficultyForBlockHash).await
     }
 
     async fn get_past_blocks_for_block_hash(&self, hash: &Hash) -> Result<Immutable<IndexSet<Hash>>, BlockchainError> {
@@ -56,7 +56,7 @@ impl DifficultyProvider for SledStorage {
 
     async fn get_block_header_by_hash(&self, hash: &Hash) -> Result<Immutable<BlockHeader>, BlockchainError> {
         trace!("get block by hash: {}", hash);
-        self.get_cacheable_arc_data(&self.blocks, &self.blocks_cache, hash, DiskContext::GetBlockHeaderByHash).await
+        self.get_cacheable_arc_data(&self.blocks, self.cache.objects.as_ref().map(|o| &o.blocks_cache), hash, DiskContext::GetBlockHeaderByHash).await
     }
 
     async fn get_estimated_covariance_for_block_hash(&self, hash: &Hash) -> Result<VarUint, BlockchainError> {

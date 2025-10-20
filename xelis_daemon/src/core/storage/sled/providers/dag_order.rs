@@ -1,7 +1,8 @@
 use async_trait::async_trait;
 use log::trace;
 use xelis_common::{
-    block::TopoHeight, crypto::Hash, serializer::Serializer
+    block::TopoHeight,
+    crypto::Hash,
 };
 use crate::core::{
     error::{BlockchainError, DiskContext},
@@ -16,12 +17,12 @@ impl DagOrderProvider for SledStorage {
         Self::insert_into_disk(self.snapshot.as_mut(), &self.hash_at_topo, &topoheight.to_be_bytes(), hash.as_bytes())?;
 
         // save in cache
-        if let Some(cache) = &self.topo_by_hash_cache {
+        if let Some(cache) = self.cache.objects.as_ref().map(|o| &o.topo_by_hash_cache) {
             let mut topo = cache.lock().await;
             topo.put(hash.clone(), topoheight);
         }
 
-        if let Some(cache) = &self.hash_at_topo_cache {
+        if let Some(cache) = self.cache.objects.as_ref().map(|o| &o.hash_at_topo_cache) {
             let mut hash_at_topo = cache.lock().await;
             hash_at_topo.put(topoheight, hash.clone());
         }
@@ -51,27 +52,25 @@ impl DagOrderProvider for SledStorage {
 
     async fn get_topo_height_for_hash(&self, hash: &Hash) -> Result<TopoHeight, BlockchainError> {
         trace!("get topoheight for hash: {}", hash);
-        self.get_cacheable_data(&self.topo_by_hash, &self.topo_by_hash_cache, &hash, DiskContext::GetTopoHeightForHash).await
+        self.get_cacheable_data(&self.topo_by_hash, self.cache.objects.as_ref().map(|o| &o.topo_by_hash_cache), &hash, DiskContext::GetTopoHeightForHash).await
     }
 
     async fn get_hash_at_topo_height(&self, topoheight: TopoHeight) -> Result<Hash, BlockchainError> {
         trace!("get hash at topoheight: {}", topoheight);
-        self.get_cacheable_data(&self.hash_at_topo, &self.hash_at_topo_cache, &topoheight, DiskContext::GetBlockHashAtTopoHeight(topoheight)).await
+        self.get_cacheable_data(&self.hash_at_topo, self.cache.objects.as_ref().map(|o| &o.hash_at_topo_cache), &topoheight, DiskContext::GetBlockHashAtTopoHeight(topoheight)).await
     }
 
     async fn has_hash_at_topoheight(&self, topoheight: TopoHeight) -> Result<bool, BlockchainError> {
         trace!("has hash at topoheight {}", topoheight);
-        self.contains_data_cached(&self.hash_at_topo, &self.hash_at_topo_cache, &topoheight).await
+        self.contains_data_cached(&self.hash_at_topo, self.cache.objects.as_ref().map(|o| &o.hash_at_topo_cache), &topoheight).await
     }
 
     async fn get_orphaned_blocks<'a>(&'a self) -> Result<impl Iterator<Item = Result<Hash, BlockchainError>> + 'a, BlockchainError> {
         trace!("get orphaned blocks");
 
-        let iter = Self::iter_keys(self.snapshot.as_ref(), &self.blocks);
+        let iter = Self::iter_keys::<Hash>(self.snapshot.as_ref(), &self.blocks);
         Ok(iter.map(|res| {
-            let key = res?;
-            let hash = Hash::from_bytes(&key)?;
-
+            let hash = res?;
             if self.contains_data(&self.topo_by_hash, &hash)? {
                 return Ok(None);
             }

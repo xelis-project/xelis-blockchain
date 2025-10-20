@@ -122,15 +122,16 @@ impl<S: Storage> P2pServer<S> {
         if let Some(common_point) = &common_point {
             let mut topoheight = common_point.get_topoheight();
             // lets add all blocks ordered hash
-            let top_topoheight = self.blockchain.get_topo_height();
+            let chain_cache = storage.chain_cache().await;
+            let top_topoheight = chain_cache.topoheight;
             // used to detect if we find unstable height for alt tips
             let mut unstable_height = None;
-            let top_height = self.blockchain.get_height();
+            let top_height = chain_cache.height;
             // check to see if we should search for alt tips (and above unstable height)
             let should_search_alt_tips = top_topoheight - topoheight < accepted_response_size as u64;
             if should_search_alt_tips {
                 debug!("Peer is near to be synced, will send him alt tips blocks");
-                unstable_height = Some(self.blockchain.get_stable_height() + 1);
+                unstable_height = Some(chain_cache.stable_height + 1);
             }
 
             // Search the lowest height
@@ -181,7 +182,6 @@ impl<S: Storage> P2pServer<S> {
 
             // now, lets check if peer is near to be synced, and send him alt tips blocks
             if let Some(mut height) = unstable_height {
-                let top_height = self.blockchain.get_height();
                 trace!("unstable height: {}, top height: {}", height, top_height);
                 while height <= top_height && top_blocks.len() < CHAIN_SYNC_TOP_BLOCKS {
                     trace!("get blocks at height {} for top blocks", height);
@@ -334,7 +334,7 @@ impl<S: Storage> P2pServer<S> {
 
         let common_topoheight = common_point.get_topoheight();
         debug!("{} found a common point with block {} at topo {} for sync, received {} blocks", peer.get_outgoing_address(), common_point.get_hash(), common_topoheight, response_size);
-        let pop_count = {
+        let (pop_count, our_previous_topoheight, our_previous_height, our_stable_topoheight) = {
             let storage = self.blockchain.get_storage().read().await;
             let expected_common_topoheight = storage.get_topo_height_for_hash(common_point.get_hash()).await?;
             if expected_common_topoheight != common_topoheight {
@@ -343,10 +343,11 @@ impl<S: Storage> P2pServer<S> {
             }
 
             let block_height = storage.get_height_for_block_hash(common_point.get_hash()).await?;
-            trace!("block height: {}, stable height: {}, topoheight: {}, hash: {}", block_height, self.blockchain.get_stable_height(), expected_common_topoheight, common_point.get_hash());
+            let chain_cache = storage.chain_cache().await;
+            trace!("block height: {}, stable height: {}, topoheight: {}, hash: {}", block_height, chain_cache.stable_height, expected_common_topoheight, common_point.get_hash());
             // We are under the stable height, rewind is necessary
-            let mut count = if skip_stable_height_check || peer.is_priority() || lowest_height <= self.blockchain.get_stable_height() {
-                let our_topoheight = self.blockchain.get_topo_height();
+            let mut count = if skip_stable_height_check || peer.is_priority() || lowest_height <= chain_cache.stable_height {
+                let our_topoheight = chain_cache.topoheight;
                 if our_topoheight > expected_common_topoheight {
                     our_topoheight - expected_common_topoheight
                 } else {
@@ -357,14 +358,14 @@ impl<S: Storage> P2pServer<S> {
             };
 
             if let Some(pruned_topo) = storage.get_pruned_topoheight().await? {
-                let available_diff = self.blockchain.get_topo_height() - pruned_topo;
+                let available_diff = chain_cache.topoheight - pruned_topo;
                 if count > available_diff && !(available_diff == 0 && peer.is_priority()) {
                     warn!("Peer sent us a pop count of {} but we only have {} blocks available", count, available_diff);
                     count = available_diff;
                 }
             }
 
-            count
+            (count, chain_cache.topoheight, chain_cache.height, chain_cache.stable_topoheight)
         };
 
         // Packet verification ended, handle the chain response now
@@ -372,8 +373,6 @@ impl<S: Storage> P2pServer<S> {
         let (mut blocks, top_blocks) = response.consume();
         debug!("handling chain response from {}, {} blocks, {} top blocks, pop count {}", peer, blocks.len(), top_blocks.len(), pop_count);
 
-        let our_previous_topoheight = self.blockchain.get_topo_height();
-        let our_previous_height = self.blockchain.get_height();
         let top_len = top_blocks.len();
         let blocks_len = blocks.len();
 
@@ -386,7 +385,6 @@ impl<S: Storage> P2pServer<S> {
 
         // if node asks us to pop blocks, check that the peer's height/topoheight is in advance on us
         let peer_topoheight = peer.get_topoheight();
-        let our_stable_topoheight = self.blockchain.get_stable_topoheight();
 
         if pop_count > 0
             && peer_topoheight > our_previous_topoheight
@@ -503,7 +501,7 @@ impl<S: Storage> P2pServer<S> {
                 {
                     info!("Starting commit point for chain validator");
                     let mut storage = self.blockchain.get_storage().write().await;
-                    storage.start_commit_point().await?;
+                    storage.start_snapshot().await?;
                     info!("Commit point started for chain validator");
                 }
                 let mut res = self.handle_chain_validator_with_rewind(peer, pop_count, chain_validator, blocks).await;
@@ -512,7 +510,7 @@ impl<S: Storage> P2pServer<S> {
                     let apply = match res.as_ref() {
                         // In case we got a partially good chain only, and that its still better than ours
                         // we can partially switch to it if the topoheight AND the cumulative difficulty is bigger
-                        Ok((_, res)) => res.is_ok() || (our_previous_topoheight < self.blockchain.get_topo_height() && current_cumulative_difficulty < self.blockchain.get_cumulative_difficulty().await?),
+                        Ok((_, res)) => res.is_ok() || (our_previous_topoheight < self.blockchain.get_topo_height().await && current_cumulative_difficulty < self.blockchain.get_cumulative_difficulty().await?),
                         Err(_) => false,
                     };
 
@@ -521,7 +519,7 @@ impl<S: Storage> P2pServer<S> {
                         let mut storage = self.blockchain.get_storage().write().await;
                         debug!("locked storage write mode for commit point");
 
-                        storage.end_commit_point(apply).await?;
+                        storage.end_snapshot(apply).await?;
                         info!("Commit point ended for chain validator, apply: {}", apply);
                     }
 
@@ -682,7 +680,7 @@ impl<S: Storage> P2pServer<S> {
         // ask inventory of this peer if we sync from too far
         // if we are not further than one sync, request the inventory
         if blocks_len > 0 && blocks_len < requested_max_size {
-            let our_topoheight = self.blockchain.get_topo_height();
+            let our_topoheight = self.blockchain.get_topo_height().await;
 
             stream::iter(self.peer_list.get_cloned_peers().await)
                 .for_each_concurrent(None, |peer| async move {

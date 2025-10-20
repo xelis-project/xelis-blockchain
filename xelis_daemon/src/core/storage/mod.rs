@@ -2,19 +2,23 @@ mod providers;
 mod cache;
 
 pub mod types;
+
+#[cfg(feature = "sled")]
 pub mod sled;
 
 #[cfg(feature = "rocksdb")]
 pub mod rocksdb;
 
-pub use self::{
-    providers::*,
-    sled::SledStorage,
-    
-};
+pub mod snapshot;
+
+pub use self::providers::*;
+pub use cache::*;
 
 #[cfg(feature = "rocksdb")]
 pub use rocksdb::RocksStorage;
+
+#[cfg(feature = "sled")]
+pub use sled::SledStorage;
 
 use std::collections::HashSet;
 use async_trait::async_trait;
@@ -38,7 +42,7 @@ pub trait Storage:
     BlockExecutionOrderProvider + DagOrderProvider + PrunedTopoheightProvider
     + NonceProvider + AccountProvider + ClientProtocolProvider + BlockDagProvider
     + MerkleHashProvider + NetworkProvider + MultiSigProvider + TipsProvider
-    + CommitPointProvider + ContractProvider + VersionedProvider + AssetCirculatingSupplyProvider
+    + SnapshotProvider + ContractProvider + VersionedProvider + AssetCirculatingSupplyProvider
     + CacheProvider + StateProvider
     + Sync + Send + 'static {
     // delete block at topoheight, and all pointers (hash_at_topo, topo_by_hash, reward, supply, diff, cumulative diff...)
@@ -150,7 +154,7 @@ pub trait Storage:
 
         trace!("Cleaning caches");
         // Clear all caches to not have old data after rewind
-        self.clear_caches().await?;
+        self.clear_objects_cache().await?;
 
         trace!("Storing new pointers");
         // store the new tips and topo topoheight

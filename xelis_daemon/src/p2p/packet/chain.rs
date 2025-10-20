@@ -61,8 +61,8 @@ impl Eq for BlockId {}
 
 impl Serializer for BlockId {
     fn write(&self, writer: &mut Writer) {
-        writer.write_hash(self.get_hash());
-        writer.write_u64(&self.get_topoheight());
+        self.hash.write(writer);
+        self.topoheight.write(writer);
     }
 
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
@@ -168,13 +168,13 @@ impl CommonPoint {
 
 impl Serializer for CommonPoint {
     fn write(&self, writer: &mut Writer) {
-        writer.write_hash(&self.hash);
-        writer.write_u64(&self.topoheight);
+        self.hash.write(writer);
+        self.topoheight.write(writer);
     }
 
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let hash = reader.read_hash()?;
-        let topoheight = reader.read_u64()?;
+        let hash = Hash::read(reader)?;
+        let topoheight = u64::read(reader)?;
         Ok(Self { hash, topoheight })
     }
 
@@ -236,17 +236,17 @@ impl Serializer for ChainResponse {
 
         // Write the lowest height
         if let Some(lowest_height) = self.lowest_height {
-            writer.write_u64(&lowest_height);
+            lowest_height.write(writer);
         }
 
         writer.write_u16(self.blocks.len() as u16);
         for hash in &self.blocks {
-            writer.write_hash(hash);
+            hash.write(writer);
         }
 
         writer.write_u8(self.top_blocks.len() as u8);
         for hash in &self.top_blocks {
-            writer.write_hash(hash);
+            hash.write(writer);
         }
     }
 

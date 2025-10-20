@@ -4,15 +4,15 @@ mod scheduled_execution;
 
 use log::trace;
 use async_trait::async_trait;
-use rocksdb::Direction;
 use xelis_common::{
     block::TopoHeight,
-    serializer::{RawBytes, Serializer},
+    serializer::Serializer,
 };
 use crate::core::{
     error::BlockchainError,
     storage::{
         rocksdb::{Column, Contract, ContractId, IteratorMode},
+        snapshot::Direction,
         RocksStorage,
         VersionedContractProvider
     }
@@ -24,8 +24,9 @@ impl VersionedContractProvider for RocksStorage {
     async fn delete_versioned_contracts_at_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError> {
         trace!("delete versioned contracts at topoheight {}", topoheight);
         let prefix = topoheight.to_be_bytes();
-        for res in Self::iter_owned_internal::<RawBytes, Option<TopoHeight>>(&self.db, self.snapshot.as_ref(), IteratorMode::WithPrefix(&prefix, Direction::Forward), Column::VersionedContracts)? {
-            let (versioned_key, prev_topo) = res?;
+        let snapshot = self.snapshot.clone();
+        for res in Self::iter_raw_internal(&self.db, snapshot.as_ref(), IteratorMode::WithPrefix(&prefix, Direction::Forward), Column::VersionedContracts)? {
+            let (versioned_key, value) = res?;
 
             Self::remove_from_disk_internal(&self.db, self.snapshot.as_mut(), Column::VersionedContracts, &versioned_key)?;
 
@@ -36,6 +37,7 @@ impl VersionedContractProvider for RocksStorage {
             let mut contract = self.get_contract_type(&contract_hash)?;
 
             if contract.module_pointer.is_some_and(|pointer| pointer >= topoheight) {
+                let prev_topo = Option::from_bytes(&value)?;
                 if contract.module_pointer != prev_topo {
                     contract.module_pointer = prev_topo;
                     Self::insert_into_disk_internal(&self.db, self.snapshot.as_mut(), Column::Contracts, &contract_hash, &contract)?;
@@ -50,8 +52,9 @@ impl VersionedContractProvider for RocksStorage {
     async fn delete_versioned_contracts_above_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError> {
         trace!("delete versioned contracts above topoheight {}", topoheight);
         let start = (topoheight + 1).to_be_bytes();
-        for res in Self::iter_owned_internal::<RawBytes, Option<TopoHeight>>(&self.db, self.snapshot.as_ref(), IteratorMode::From(&start, Direction::Forward), Column::VersionedContracts)? {
-            let (key, prev_topo) = res?;
+        let snapshot = self.snapshot.clone();
+        for res in Self::iter_raw_internal(&self.db, snapshot.as_ref(), IteratorMode::From(&start, Direction::Forward), Column::VersionedContracts)? {
+            let (key, value) = res?;
             // Delete the version we've read
             Self::remove_from_disk_internal(&self.db, self.snapshot.as_mut(), Column::VersionedContracts, &key)?;
 
@@ -68,6 +71,7 @@ impl VersionedContractProvider for RocksStorage {
             if contract.module_pointer.is_none_or(|v| v > topoheight) {
                 // Case 1: prev topo is below or equal to requested topoheight => update it
                 // Case 2: prev topo is None but pointer is Some => we update it
+                let prev_topo = Option::from_bytes(&value)?;
                 let filtered = prev_topo.filter(|v| *v <= topoheight);
                 if filtered != contract.module_pointer {
                     contract.module_pointer = filtered;

@@ -9,8 +9,7 @@ use xelis_common::{
 use crate::core::{
     error::BlockchainError,
     storage::{
-        rocksdb::{Column, IteratorMode},
-        sled::TXS_COUNT,
+        rocksdb::{Column, IteratorMode, TXS_COUNT},
         ClientProtocolProvider,
         RocksStorage,
         TransactionProvider

@@ -1,7 +1,6 @@
 mod column;
 mod types;
 mod providers;
-mod snapshot;
 
 use std::sync::Arc;
 
@@ -16,7 +15,6 @@ use rocksdb::{
     DBCompactionStyle,
     DBCompressionType,
     DBWithThreadMode,
-    Direction,
     Env,
     IteratorMode as InternalIteratorMode,
     MultiThreaded,
@@ -39,13 +37,24 @@ use xelis_common::{
 use crate::core::{
     config::RocksDBConfig,
     error::{BlockchainError, DiskContext},
-    storage::{BlockProvider, ClientProtocolProvider, ContractLogsProvider, TransactionProvider}
+    storage::{
+        snapshot::{
+            BytesView,
+            Direction,
+            EntryState,
+            IteratorMode,
+            Snapshot as InternalSnapshot
+        },
+        BlockProvider,
+        ClientProtocolProvider,
+        ContractLogsProvider,
+        StorageCache,
+        TransactionProvider
+    }
 };
 
 pub use column::*;
 pub use types::*;
-
-pub use snapshot::Snapshot;
 
 use super::Storage;
 
@@ -56,7 +65,17 @@ macro_rules! cf_handle {
     };
 }
 
+pub(super) const TXS_COUNT: &[u8; 4] = b"CTXS";
+pub(super) const BLOCKS_COUNT: &[u8; 4] = b"CBLK";
+pub(super) const BLOCKS_EXECUTION_ORDER_COUNT: &[u8; 4] = b"EBLK";
+pub(super) const PRUNED_TOPOHEIGHT: &[u8; 4] = b"PRUN";
+pub(super) const TOP_TOPO_HEIGHT: &[u8; 4] = b"TOPO";
+pub(super) const TOP_HEIGHT: &[u8; 4] = b"TOPH";
+pub(super) const TIPS: &[u8; 4] = b"TIPS";
+
 type InnerDB = DBWithThreadMode<MultiThreaded>;
+
+pub type Snapshot = InternalSnapshot<Column>;
 
 #[derive(Debug, Copy, Clone, clap::ValueEnum, Serialize, Deserialize)]
 #[clap(rename_all = "snake_case")]
@@ -106,32 +125,16 @@ impl CompressionMode {
     }
 }
 
-#[derive(Copy, Clone)]
-pub enum IteratorMode<'a> {
-    Start,
-    End,
-    // Allow for range start operations
-    From(&'a [u8], Direction),
-    // Strict prefix to all keys
-    WithPrefix(&'a [u8], Direction),
-    Range {
-        lower_bound: &'a [u8],
-        // NOTE: upper bound is NEVER included
-        upper_bound: &'a [u8],
-        direction: Direction,
-    }
-}
-
 impl<'a> IteratorMode<'a> {
     pub fn convert(self) -> (InternalIteratorMode<'a>, ReadOptions) {
         let mut opts = ReadOptions::default();
         let mode = match self {
             Self::Start => InternalIteratorMode::Start,
             Self::End => InternalIteratorMode::End,
-            Self::From(prefix, direction) => InternalIteratorMode::From(prefix, direction),
+            Self::From(prefix, direction) => InternalIteratorMode::From(prefix, direction.into()),
             Self::WithPrefix(prefix, direction) => {
                 opts.set_prefix_same_as_start(true);
-                InternalIteratorMode::From(prefix, direction)
+                InternalIteratorMode::From(prefix, direction.into())
             },
             Self::Range { lower_bound, upper_bound, direction } => {
                 opts.set_iterate_upper_bound(upper_bound);
@@ -151,7 +154,8 @@ impl<'a> IteratorMode<'a> {
 pub struct RocksStorage {
     db: Arc<InnerDB>,
     network: Network,
-    snapshot: Option<Snapshot> 
+    snapshot: Option<Snapshot>,
+    cache: StorageCache,
 }
 
 impl RocksStorage {
@@ -213,7 +217,24 @@ impl RocksStorage {
         Self {
             db: Arc::new(db),
             network,
-            snapshot: None
+            snapshot: None,
+            cache: StorageCache::new(None)
+        }
+    }
+
+    #[inline(always)]
+    pub fn cache(&self) -> &StorageCache {
+        match self.snapshot.as_ref() {
+            Some(snapshot) => &snapshot.cache,
+            None => &self.cache
+        }
+    }
+
+    #[inline(always)]
+    pub fn cache_mut(&mut self) -> &mut StorageCache {
+        match self.snapshot.as_mut() {
+            Some(snapshot) => &mut snapshot.cache,
+            None => &mut self.cache
         }
     }
 
@@ -288,10 +309,11 @@ impl RocksStorage {
     pub fn get_size_from_disk<K: AsRef<[u8]>>(&self, column: Column, key: &K) -> Result<usize, BlockchainError> {
         trace!("load from disk internal {:?}", column);
 
-        if let Some(v) = self.snapshot.as_ref().and_then(|s| s.get_size(column, key.as_ref())) {
+        if let Some(v) = self.snapshot.as_ref().map(|s| s.get_size(column, key.as_ref())) {
             match v {
-                Some(v) => return Ok(v),
-                None => return Err(BlockchainError::NotFoundOnDisk(DiskContext::DataLen))
+                EntryState::Stored(v) => return Ok(v),
+                EntryState::Deleted => return Err(BlockchainError::NotFoundOnDisk(DiskContext::DataLen)),
+                EntryState::Absent => {}
             }
         }
 
@@ -308,10 +330,11 @@ impl RocksStorage {
     pub fn load_optional_from_disk_internal<K: AsRef<[u8]> + ?Sized, V: Serializer>(db: &InnerDB, snapshot: Option<&Snapshot>, column: Column, key: &K) -> Result<Option<V>, BlockchainError> {
         trace!("load optional {:?} from disk internal", column);
 
-        if let Some(v) = snapshot.and_then(|s| s.get(column, key.as_ref())) {
+        if let Some(v) = snapshot.map(|s| s.get(column, key.as_ref())) {
             match v {
-                Some(v) => return Ok(Some(V::from_bytes(&v)?)),
-                None => return Ok(None)
+                EntryState::Stored(v) => return Ok(Some(V::from_bytes(&v)?)),
+                EntryState::Deleted => return Ok(None),
+                EntryState::Absent => {},
             }
         }
 
@@ -327,11 +350,13 @@ impl RocksStorage {
         trace!("insert into disk {:?}", column);
 
         match snapshot {
-            Some(snapshot) => snapshot.put(column, key.as_ref().to_vec(), value.to_bytes()),
+            Some(snapshot) => {
+                snapshot.put(column, key.as_ref().to_vec(), value.to_bytes());
+            },
             None => {
                 let cf = cf_handle!(db, column);
                 db.put_cf(&cf, key.as_ref(), value.to_bytes())
-                    .with_context(|| format!("Error while inserting into disk column {:?}", column))?
+                    .with_context(|| format!("Error while inserting into disk column {:?}", column))?;
             }
         };
 
@@ -343,7 +368,9 @@ impl RocksStorage {
 
         let bytes = key.as_ref();
         match snapshot {
-            Some(snapshot) => snapshot.delete(column, bytes.to_vec()),
+            Some(snapshot) => {
+                snapshot.delete(column, bytes.to_vec());
+            },
             None => {
                 let cf = cf_handle!(db, column);
                 db.delete_cf(&cf, bytes)
@@ -354,51 +381,36 @@ impl RocksStorage {
         Ok(())
     }
 
-    pub fn iter_owned_internal<'a, K, V>(db: &'a InnerDB, snapshot: Option<&Snapshot>, mode: IteratorMode, column: Column) -> Result<impl Iterator<Item = Result<(K, V), BlockchainError>> + 'a, BlockchainError>
-    where
-        K: Serializer + 'a,
-        V: Serializer + 'a,
-    {
-        trace!("iter owned {:?}", column);
-
-        let cf = cf_handle!(db, column);
-        let (m, opts) = mode.convert();
-        let iterator = db.iterator_cf_opt(&cf, opts, m);
-
-        match snapshot {
-            Some(snapshot) => Ok(Either::Left(snapshot.iter_owned(column, mode, iterator))),
-            None => {
-                Ok(Either::Right(iterator.map(|res| {
-                    let (key, value) = res.context("Internal read error in iter")?;
-                    let key = K::from_bytes(&key)?;
-                    let value = V::from_bytes(&value)?;
-        
-                    Ok((key, value))
-                })))
-            } 
-        }
-    }
-
     pub fn iter_internal<'a, K, V>(db: &'a InnerDB, snapshot: Option<&'a Snapshot>, mode: IteratorMode, column: Column) -> Result<impl Iterator<Item = Result<(K, V), BlockchainError>> + 'a, BlockchainError>
     where
         K: Serializer + 'a,
         V: Serializer + 'a,
     {
         trace!("iter {:?}", column);
+        Self::iter_raw_internal(db, snapshot, mode, column).map(|iter| {
+            iter.map(|res| {
+                let (key_bytes, value_bytes) = res?;
+                let key = K::from_bytes(&key_bytes)?;
+                let value = V::from_bytes(&value_bytes)?;
+
+                Ok((key, value))
+            })
+        })
+    }
+
+    pub fn iter_raw_internal<'a>(db: &'a InnerDB, snapshot: Option<&'a Snapshot>, mode: IteratorMode, column: Column) -> Result<impl Iterator<Item = Result<(BytesView<'a>, BytesView<'a>), BlockchainError>> + 'a, BlockchainError> {
+        trace!("iter raw {:?}", column);
 
         let cf = cf_handle!(db, column);
         let (m, opts) = mode.convert();
         let iterator = db.iterator_cf_opt(&cf, opts, m);
 
         match snapshot {
-            Some(snapshot) => Ok(Either::Left(snapshot.lazy_iter(column, mode, iterator))),
+            Some(snapshot) => Ok(Either::Left(snapshot.lazy_iter_raw(column, mode, iterator))),
             None => {
                 Ok(Either::Right(iterator.map(|res| {
-                    let (key, value) = res.context("Internal read error in iter")?;
-                    let key = K::from_bytes(&key)?;
-                    let value = V::from_bytes(&value)?;
-        
-                    Ok((key, value))
+                    let (key, value) = res.context("Internal read error in iter raw")?;
+                    Ok((key.into(), value.into()))
                 })))
             } 
         }
@@ -409,22 +421,14 @@ impl RocksStorage {
         K: Serializer + 'a,
     {
         trace!("iter keys {:?}", column);
+        Self::iter_raw_internal(db, snapshot, mode, column).map(|iter| {
+            iter.map(|res| {
+                let (key_bytes, _value_bytes) = res?;
+                let key = K::from_bytes(&key_bytes)?;
 
-        let cf = cf_handle!(db, column);
-        let (m, opts) = mode.convert();
-        let iterator = db.iterator_cf_opt(&cf, opts, m);
-
-        match snapshot {
-            Some(snapshot) => Ok(Either::Left(snapshot.lazy_iter_keys(column, mode, iterator))),
-            None => {
-                Ok(Either::Right(iterator.map(|res| {
-                    let (key, _) = res.context("Internal read error in iter_keys")?;
-                    let key = K::from_bytes(&key)?;
-        
-                    Ok(key)
-                })))
-            } 
-        }
+                Ok(key)
+            })
+        })
     }
 
     #[inline(always)]

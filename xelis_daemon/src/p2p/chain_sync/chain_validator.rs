@@ -20,6 +20,8 @@ use crate::core::{
     hard_fork::{get_pow_algorithm_for_version, get_version_at_height},
     storage::{
         BlocksAtHeightProvider,
+        CacheProvider,
+        ChainCache,
         DagOrderProvider,
         DifficultyProvider,
         MerkleHashProvider,
@@ -48,7 +50,8 @@ pub struct ChainValidator<'a, S: Storage> {
     blocks_at_height: IndexMap<u64, IndexSet<Arc<Hash>>>,
     // Blockchain reference used to verify current chain state
     blockchain: &'a Blockchain<S>,
-    hash_at_topo: IndexMap<TopoHeight, Arc<Hash>>
+    hash_at_topo: IndexMap<TopoHeight, Arc<Hash>>,
+    chain_cache: ChainCache,
 }
 
 // This struct is passed as the Provider param.
@@ -73,7 +76,8 @@ impl<'a, S: Storage> ChainValidator<'a, S> {
             blocks: HashMap::new(),
             blocks_at_height: IndexMap::new(),
             blockchain,
-            hash_at_topo: IndexMap::new()
+            hash_at_topo: IndexMap::new(),
+            chain_cache: ChainCache::default(),
         }
     }
 
@@ -115,11 +119,6 @@ impl<'a, S: Storage> ChainValidator<'a, S> {
             return Err(BlockchainError::AlreadyInChain)
         }
 
-        let provider = ChainValidatorProvider {
-            parent: &self,
-            storage: &storage,
-        };
-
         // Verify the block version
         let version = get_version_at_height(self.blockchain.get_network(), header.get_height());
         if version != header.get_version() {
@@ -128,6 +127,11 @@ impl<'a, S: Storage> ChainValidator<'a, S> {
         }
 
         // Verify the block height by tips
+        let provider = ChainValidatorProvider {
+            parent: &self,
+            storage: &storage,
+        };
+
         let height_at_tips = blockdag::calculate_height_at_tips(&provider, header.get_tips().iter()).await?;
         if height_at_tips != header.get_height() {
             debug!("Block {} has height {} while expected height is {}", hash, header.get_height(), height_at_tips);
@@ -206,6 +210,21 @@ impl<'a, S: Storage> ChainValidator<'a, S> {
     pub fn get_block(&mut self, hash: &Hash) -> Option<Arc<BlockHeader>> {
         debug!("retrieving block header for {}", hash);
         self.blocks.get(hash).map(|v| v.header.clone())
+    }
+}
+
+#[async_trait]
+impl<S: Storage> CacheProvider for ChainValidatorProvider<'_, S> {
+    async fn clear_objects_cache(&mut self) -> Result<(), BlockchainError> {
+        Err(BlockchainError::UnsupportedOperation)
+    }
+
+    async fn chain_cache_mut(&mut self) -> Result<&mut ChainCache, BlockchainError> {
+        Err(BlockchainError::UnsupportedOperation)
+    }
+
+    async fn chain_cache(&self) -> &ChainCache {
+        &self.parent.chain_cache
     }
 }
 

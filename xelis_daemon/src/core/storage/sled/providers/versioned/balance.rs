@@ -3,7 +3,7 @@ use log::trace;
 use xelis_common::{
     account::BalanceType,
     block::TopoHeight,
-    serializer::{NoTransform, Serializer},
+    serializer::{RawBytes, Serializer},
     versioned_type::Versioned
 };
 use crate::core::{
@@ -33,13 +33,14 @@ impl VersionedBalanceProvider for SledStorage {
             // And we delete everything below it
 
             // We check one account at a time
-            for el in Self::iter(self.snapshot.as_ref(), &self.balances) {
+            let snapshot = self.snapshot.clone();
+            for el in Self::iter_raw(snapshot.as_ref(), &self.balances) {
                 let (k, value) = el?;
-                let topo = TopoHeight::from_bytes(&value)?;
 
                 // We fetch the last version to take its previous topoheight
                 // And we loop on it to delete them all until the end of the chained data
                 // But before deleting, we need to find if we are below a output balance
+                let topo = TopoHeight::from_bytes(&value)?;
                 let mut prev_version = Some(topo);
                 let mut patched = false;
                 while let Some(prev_topo) = prev_version.take() {
@@ -56,7 +57,7 @@ impl VersionedBalanceProvider for SledStorage {
                         // We can only patch if we are below the threshold and contains an output
                         if prev_topo < topoheight && ty.contains_output() {
                             trace!("Patching versioned balance at topoheight {}", topoheight);
-                            let mut data: Versioned<NoTransform> = Self::load_from_disk_internal(self.snapshot.as_ref(), &self.versioned_balances, &key, DiskContext::BalanceAtTopoHeight(prev_topo))?;
+                            let mut data: Versioned<RawBytes> = Self::load_from_disk_internal(self.snapshot.as_ref(), &self.versioned_balances, &key, DiskContext::BalanceAtTopoHeight(prev_topo))?;
                             data.set_previous_topoheight(None);
 
                             Self::insert_into_disk(self.snapshot.as_mut(), &self.versioned_balances, &key, data.to_bytes())?;

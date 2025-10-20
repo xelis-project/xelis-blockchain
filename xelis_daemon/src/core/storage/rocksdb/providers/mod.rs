@@ -10,7 +10,7 @@ mod cache;
 mod blockdag;
 mod blocks_at_height;
 mod block;
-mod commit_point;
+mod snapshot;
 mod block_execution_order;
 mod asset;
 mod asset_supply;

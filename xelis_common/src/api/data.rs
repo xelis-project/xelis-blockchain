@@ -456,13 +456,13 @@ impl DataValue {
                 writer.write_u16(*value);
             },
             Self::U32(value) => {
-                writer.write_u32(value);
+                value.write(writer);
             },
             Self::U64(value) => {
-                writer.write_u64(value);
+                value.write(writer);
             },
             Self::U128(value) => {
-                writer.write_u128(value);
+                value.write(writer);
             },
             Self::Hash(hash) => {
                 writer.write_hash(hash);

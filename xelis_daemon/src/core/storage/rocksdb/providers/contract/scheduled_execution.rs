@@ -1,11 +1,15 @@
 use async_trait::async_trait;
 use futures::{stream, Stream};
 use log::trace;
-use rocksdb::Direction;
 use xelis_common::{block::TopoHeight, contract::ScheduledExecution, crypto::Hash};
 use crate::core::{
     error::BlockchainError,
-    storage::{rocksdb::{Column, ContractId, IteratorMode}, ContractScheduledExecutionProvider, RocksStorage}
+    storage::{
+        rocksdb::{Column, ContractId, IteratorMode},
+        snapshot::Direction,
+        ContractScheduledExecutionProvider,
+        RocksStorage
+    }
 };
 
 #[async_trait]

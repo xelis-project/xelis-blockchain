@@ -49,8 +49,9 @@ indexmap = { workspace = true }
 futures = { workspace = true }
 
 [features]
-default = ["rocksdb"]
+default = ["sled", "rocksdb"]
 rocksdb = ["dep:rocksdb"]
+sled = []
 
 [dev-dependencies]
 tempdir = "*"

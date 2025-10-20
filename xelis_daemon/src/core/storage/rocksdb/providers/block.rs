@@ -16,8 +16,9 @@ use crate::core::{
         rocksdb::{
             BlockMetadata,
             Column,
+            BLOCKS_COUNT,
+            TXS_COUNT,
         },
-        sled::{BLOCKS_COUNT, TXS_COUNT},
         BlockProvider,
         BlocksAtHeightProvider,
         DifficultyProvider,

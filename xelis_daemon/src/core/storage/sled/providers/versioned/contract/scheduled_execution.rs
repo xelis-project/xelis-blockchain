@@ -1,7 +1,9 @@
 use async_trait::async_trait;
 use log::trace;
 use xelis_common::{
-    block::TopoHeight, crypto::Hash, serializer::Serializer
+    block::TopoHeight,
+    crypto::Hash,
+    serializer::Serializer
 };
 use crate::core::{
     error::BlockchainError,
@@ -12,8 +14,9 @@ use crate::core::{
 impl VersionedScheduledExecutionsProvider for SledStorage {
     async fn delete_scheduled_executions_at_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError> {
         trace!("delete scheduled executions at topoheight {}", topoheight);
-        for el in Self::scan_prefix_keys(self.snapshot.as_ref(), &self.contracts_scheduled_executions_registrations, &topoheight.to_be_bytes()) {
-            let prefixed_key = el?;
+        let snapshot = self.snapshot.clone();
+        for el in Self::scan_prefix_raw(snapshot.as_ref(), &self.contracts_scheduled_executions_registrations, &topoheight.to_be_bytes()) {
+            let (prefixed_key, _) = el?;
 
             Self::remove_from_disk_without_reading(self.snapshot.as_mut(), &self.contracts_scheduled_executions_registrations, &prefixed_key)?;
 
@@ -28,8 +31,9 @@ impl VersionedScheduledExecutionsProvider for SledStorage {
 
     async fn delete_scheduled_executions_above_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError> {
         trace!("delete scheduled executions above topoheight {}", topoheight);
-        for el in Self::iter_keys(self.snapshot.as_ref(), &self.contracts_scheduled_executions_registrations) {
-            let key = el?;
+        let snapshot = self.snapshot.clone();
+        for el in Self::iter_raw(snapshot.as_ref(), &self.contracts_scheduled_executions_registrations) {
+            let (key, _) = el?;
             let topo = TopoHeight::from_bytes(&key)?;
 
             if topo > topoheight {
@@ -48,8 +52,9 @@ impl VersionedScheduledExecutionsProvider for SledStorage {
 
     async fn delete_scheduled_executions_below_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError> {
         trace!("delete scheduled executions below topoheight {}", topoheight);
-        for el in Self::iter_keys(self.snapshot.as_ref(), &self.contracts_scheduled_executions_registrations) {
-            let key = el?;
+        let snapshot = self.snapshot.clone();
+        for el in Self::iter_raw(snapshot.as_ref(), &self.contracts_scheduled_executions_registrations) {
+            let (key, _) = el?;
             let topo = TopoHeight::from_bytes(&key)?;
 
             if topo < topoheight {

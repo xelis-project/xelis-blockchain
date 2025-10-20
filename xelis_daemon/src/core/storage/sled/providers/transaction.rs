@@ -24,11 +24,7 @@ use crate::core::{
 impl SledStorage {
     // Update the txs count and store it on disk
     pub(super) fn store_transactions_count(&mut self, count: u64) -> Result<(), BlockchainError> {
-        if let Some(snapshot) = self.snapshot.as_mut() {
-            snapshot.cache.transactions_count = count;
-        } else {
-            self.cache.transactions_count = count;
-        }
+        self.cache_mut().transactions_count = count;
         Self::insert_into_disk(self.snapshot.as_mut(), &self.extra, TXS_COUNT, &count.to_be_bytes())?;
         Ok(())
     }    
@@ -38,7 +34,7 @@ impl SledStorage {
 impl TransactionProvider for SledStorage {
     async fn get_transaction(&self, hash: &Hash) -> Result<Immutable<Transaction>, BlockchainError> {
         trace!("get transaction for hash {}", hash);
-        self.get_cacheable_arc_data(&self.transactions, &self.transactions_cache, hash, DiskContext::GetTransaction).await
+        self.get_cacheable_arc_data(&self.transactions, self.cache.objects.as_ref().map(|o| &o.transactions_cache), hash, DiskContext::GetTransaction).await
     }
 
     async fn get_transaction_size(&self, hash: &Hash) -> Result<usize, BlockchainError> {
@@ -48,7 +44,7 @@ impl TransactionProvider for SledStorage {
 
     async fn has_transaction(&self, hash: &Hash) -> Result<bool, BlockchainError> {
         trace!("has transaction {}", hash);
-        self.contains_data_cached(&self.transactions, &self.transactions_cache, hash).await
+        self.contains_data_cached(&self.transactions, self.cache.objects.as_ref().map(|o| &o.transactions_cache), hash).await
     }
 
     // Store a new transaction
@@ -61,20 +57,14 @@ impl TransactionProvider for SledStorage {
 
     async fn count_transactions(&self) -> Result<u64, BlockchainError> {
         trace!("count transactions");
-        let count = if let Some(snapshot) = self.snapshot.as_ref() {
-            snapshot.cache.transactions_count
-        } else {
-            self.cache.transactions_count
-        };
-        Ok(count)
+        Ok(self.cache().transactions_count)
     }
 
     async fn get_unexecuted_transactions<'a>(&'a self) -> Result<impl Stream<Item = Result<Hash, BlockchainError>> + 'a, BlockchainError> {
         trace!("get unexecuted transactions");
-        Ok(stream::iter(Self::iter_keys(self.snapshot.as_ref(), &self.transactions))
+        Ok(stream::iter(Self::iter_keys::<Hash>(self.snapshot.as_ref(), &self.transactions))
             .map(move |res| async move {
-                let key = res?;
-                let tx_hash = Hash::from_bytes(&key)?;
+                let tx_hash = res?;
                 if !self.is_tx_executed_in_a_block(&tx_hash).await? {
                     return Ok(None);
                 }
@@ -87,6 +77,6 @@ impl TransactionProvider for SledStorage {
 
     async fn delete_transaction(&mut self, hash: &Hash) -> Result<Immutable<Transaction>, BlockchainError> {
         Self::delete_cacheable_data::<Hash, HashSet<Hash>>(self.snapshot.as_mut(), &self.tx_blocks, None, hash).await?;
-        Self::delete_arc_cacheable_data(self.snapshot.as_mut(), &self.transactions, self.cache.transactions_cache.as_mut(), hash).await
+        Self::delete_arc_cacheable_data(self.snapshot.as_mut(), &self.transactions, self.cache.objects.as_mut().map(|o| &mut o.transactions_cache), hash).await
     }
 }

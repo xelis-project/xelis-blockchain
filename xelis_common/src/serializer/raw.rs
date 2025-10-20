@@ -23,6 +23,14 @@ impl Serializer for RawBytes {
         let bytes = reader.bytes();
         Ok(Self(bytes.to_vec()))
     }
+
+    fn to_bytes(&self) -> Vec<u8> {
+        self.0.clone()
+    }
+
+    fn size(&self) -> usize {
+        self.0.len()
+    }
 }
 
 impl Deref for RawBytes {

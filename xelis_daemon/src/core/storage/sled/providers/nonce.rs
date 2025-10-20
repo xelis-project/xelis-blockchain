@@ -20,11 +20,7 @@ use crate::core::{
 impl SledStorage {
     // Update the accounts count and store it on disk
     pub fn store_accounts_count(&mut self, count: u64) -> Result<(), BlockchainError> {
-        if let Some(snapshot) = self.snapshot.as_mut() {
-            snapshot.cache.accounts_count = count;
-        } else {
-            self.cache.accounts_count = count;
-        }
+        self.cache_mut().accounts_count = count;
         Self::insert_into_disk(self.snapshot.as_mut(), &self.extra, ACCOUNTS_COUNT, &count.to_be_bytes())?;
         Ok(())
     }
@@ -48,11 +44,14 @@ impl NonceProvider for SledStorage {
         let disk_key = self.get_versioned_nonce_key(key, topoheight);
         Self::insert_into_disk(self.snapshot.as_mut(), &self.versioned_nonces, &disk_key, version.to_bytes())?;
 
-        // Also update the pointer
-        let prev = Self::insert_into_disk(self.snapshot.as_mut(), &self.nonces, key.as_bytes(), &topoheight.to_be_bytes())?;
-        if prev.is_none() {
+        let contains = self.contains_data(&self.nonces, key.as_bytes())?;
+        if !contains {
+            // New nonce for this account, update accounts count
             self.store_accounts_count(self.count_accounts().await? + 1)?;
         }
+
+        // Also update the pointer
+        Self::insert_into_disk(self.snapshot.as_mut(), &self.nonces, key.as_bytes(), &topoheight.to_be_bytes())?;
 
         Ok(())
     }

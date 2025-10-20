@@ -337,8 +337,8 @@ impl Serializer for StepRequest<'_> {
             },
             Self::Assets(min, max, page) => {
                 writer.write_u8(1);
-                writer.write_u64(min);
-                writer.write_u64(max);
+                min.write(writer);
+                max.write(writer);
                 page.write(writer);
             },
             Self::AssetsSupply(topoheight, assets) => {
@@ -348,40 +348,40 @@ impl Serializer for StepRequest<'_> {
             },
             Self::Keys(min, max, page) => {
                 writer.write_u8(3);
-                writer.write_u64(min);
-                writer.write_u64(max);
+                min.write(writer);
+                max.write(writer);
                 page.write(writer);
             },
             Self::KeyBalances(key, min, max, page) => {
                 writer.write_u8(4);
                 key.write(writer);
-                writer.write_u64(min);
-                writer.write_u64(max);
+                min.write(writer);
+                max.write(writer);
                 page.write(writer);
             },
             Self::SpendableBalances(key, asset, min, max) => {
                 writer.write_u8(5);
                 key.write(writer);
                 asset.write(writer);
-                writer.write_u64(min);
-                writer.write_u64(max);
+                min.write(writer);
+                max.write(writer);
             },
             Self::Accounts(min, max, keys) => {
                 writer.write_u8(6);
-                writer.write_u64(min);
-                writer.write_u64(max);
+                min.write(writer);
+                max.write(writer);
                 keys.write(writer);
             },
             Self::Contracts(min, max, pagination) => {
                 writer.write_u8(7);
-                writer.write_u64(min);
-                writer.write_u64(max);
+                min.write(writer);
+                max.write(writer);
                 pagination.write(writer);
             },
             Self::ContractModule(min, max, hash) => {
                 writer.write_u8(8);
-                writer.write_u64(min);
-                writer.write_u64(max);
+                min.write(writer);
+                max.write(writer);
                 hash.write(writer);
             },
             Self::ContractBalances(hash, topoheight, page) => {
@@ -398,13 +398,13 @@ impl Serializer for StepRequest<'_> {
             },
             Self::ContractsExecutions(min, max, page) => {
                 writer.write_u8(11);
-                writer.write_u64(min);
-                writer.write_u64(max);
+                min.write(writer);
+                max.write(writer);
                 page.write(writer);
             },
             Self::BlocksMetadata(topoheight) => {
                 writer.write_u8(12);
-                writer.write_u64(topoheight);
+                topoheight.write(writer);
             },
         };
     }
@@ -750,8 +750,8 @@ impl Serializer for StepResponse {
             Self::ChainInfo(common_point, topoheight, stable_height, hash) => {
                 writer.write_u8(0);
                 common_point.write(writer);
-                writer.write_u64(topoheight);
-                writer.write_u64(stable_height);
+                topoheight.write(writer);
+                stable_height.write(writer);
                 writer.write_hash(hash);
             },
             Self::Assets(assets, page) => {

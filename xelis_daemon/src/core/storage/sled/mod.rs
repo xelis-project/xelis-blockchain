@@ -1,10 +1,12 @@
-mod snapshot;
 mod migrations;
 mod providers;
 
 use async_trait::async_trait;
 use itertools::Either;
-use crate::core::error::{BlockchainError, DiskContext};
+use crate::core::{
+    error::{BlockchainError, DiskContext},
+    storage::snapshot::BytesView
+};
 use xelis_common::{
     block::BlockHeader,
     crypto::Hash,
@@ -25,14 +27,52 @@ use lru::LruCache;
 use sled::{IVec, Tree};
 use log::{debug, trace, info, error};
 
-pub use snapshot::Snapshot;
-
 use super::{
     cache::StorageCache,
     providers::*,
     Storage,
+    snapshot::{
+        Snapshot as InternalSnapshot,
+        EntryState,
+        Direction,
+        IteratorMode
+    },
     Tips
 };
+
+#[derive(Clone)]
+pub struct TreeWrapper(pub Tree);
+
+impl From<&Tree> for TreeWrapper {
+    fn from(tree: &Tree) -> Self {
+        Self(tree.clone())
+    }
+}
+
+impl Deref for TreeWrapper {
+    type Target = Tree;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl std::hash::Hash for TreeWrapper {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.0.name().hash(state);
+    }
+}
+
+impl std::cmp::PartialEq for TreeWrapper {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.name() == other.0.name()
+    }
+}
+
+impl std::cmp::Eq for TreeWrapper {}
+
+
+pub type Snapshot = InternalSnapshot<TreeWrapper>;
 
 // Constant keys used for extra Tree
 pub(super) const TIPS: &[u8; 4] = b"TIPS";
@@ -275,6 +315,20 @@ impl SledStorage {
         Ok(storage)
     }
 
+    pub fn cache_mut(&mut self) -> &mut StorageCache {
+        match self.snapshot.as_mut() {
+            Some(snapshot) => &mut snapshot.cache,
+            None => &mut self.cache
+        }
+    }
+
+    pub fn cache(&self) -> &StorageCache {
+        match self.snapshot.as_ref() {
+            Some(snapshot) => &snapshot.cache,
+            None => &self.cache
+        }
+    }
+
     // Load all the needed cache and counters in memory from disk 
     pub fn load_cache_from_disk(&mut self) {
         // Load tips from disk if available
@@ -328,11 +382,12 @@ impl SledStorage {
 
     pub fn load_optional_from_disk_internal<T: Serializer>(snapshot: Option<&Snapshot>, tree: &Tree, key: &[u8]) -> Result<Option<T>, BlockchainError> {
         trace!("load optional from disk internal");
-        if let Some(snapshot) = snapshot {
-            trace!("load from snapshot");
-            if snapshot.contains_key(tree, key) {
-                trace!("load from snapshot key {:?} from db", key);
-                return snapshot.load_optional_from_disk(tree, key);
+        if let Some(v) = snapshot.map(|s| s.get(tree.into(), key)) {
+            trace!("loaded from snapshot key {:?} from db", key);
+            match v {
+                EntryState::Stored(v) => return Ok(Some(T::from_bytes(&v)?)),
+                EntryState::Deleted => return Ok(None),
+                EntryState::Absent => {}
             }
         }
 
@@ -362,84 +417,158 @@ impl SledStorage {
     }
 
     // Scan prefix over keys only
-    pub(super) fn scan_prefix_keys(snapshot: Option<&Snapshot>, tree: &Tree, prefix: &[u8]) -> impl Iterator<Item = sled::Result<IVec>> {
+    pub(super) fn scan_prefix_keys<'a, K: Serializer + 'a>(snapshot: Option<&'a Snapshot>, tree: &Tree, prefix: &[u8]) -> impl Iterator<Item = Result<K, BlockchainError>> + 'a {
         match snapshot {
-            Some(snapshot) => Either::Left(snapshot.scan_prefix_keys(tree, prefix)),
-            None => Either::Right(tree.scan_prefix(prefix).into_iter().keys())
+            Some(snapshot) => Either::Left(snapshot.lazy_iter_keys(tree.into(), IteratorMode::WithPrefix(prefix, Direction::Forward), tree.iter())),
+            None => Either::Right(tree.scan_prefix(prefix).into_iter().keys().map(|res| {
+                let bytes = res?;
+                let k = K::from_bytes(&bytes)?;
+                Ok(k)
+            }))
+        }
+    }
+
+    // Scan prefix raw
+    pub(super) fn scan_prefix_raw<'a>(snapshot: Option<&'a Snapshot>, tree: &Tree, prefix: &[u8]) -> impl Iterator<Item = Result<(BytesView<'a>, BytesView<'a>), BlockchainError>> + 'a {
+        match snapshot {
+            Some(snapshot) => Either::Left(snapshot.lazy_iter_raw(tree.into(), IteratorMode::WithPrefix(prefix, Direction::Forward), tree.iter())),
+            None => Either::Right(tree.scan_prefix(prefix).into_iter().map(|res| {
+                let (k, v) = res?;
+                Ok((k.into(), v.into()))
+            }))
         }
     }
 
     // Scan prefix
-    pub(super) fn scan_prefix(snapshot: Option<&Snapshot>, tree: &Tree, prefix: &[u8]) -> impl Iterator<Item = sled::Result<(IVec, IVec)>> {
+    pub(super) fn scan_prefix<'a, K: Serializer + 'a, V: Serializer + 'a>(snapshot: Option<&'a Snapshot>, tree: &Tree, prefix: &[u8]) -> impl Iterator<Item = Result<(K, V), BlockchainError>> + 'a {
+        Self::scan_prefix_raw(snapshot, tree, prefix).map(|res| {
+            let (k_bytes, v_bytes) = res?;
+            let k = K::from_bytes(&k_bytes)?;
+            let v = V::from_bytes(&v_bytes)?;
+            Ok((k, v))
+        })
+    }
+
+    // Iter raw over a tree entries
+    pub(super) fn iter_raw<'a>(snapshot: Option<&'a Snapshot>, tree: &Tree) -> impl Iterator<Item = Result<(BytesView<'a>, BytesView<'a>), BlockchainError>> + 'a {
         match snapshot {
-            Some(snapshot) => Either::Left(snapshot.scan_prefix(tree, prefix)),
-            None => Either::Right(tree.scan_prefix(prefix).into_iter())
+            Some(snapshot) => Either::Left(snapshot.lazy_iter_raw(tree.into(), IteratorMode::Start, tree.iter())),
+            None => Either::Right(tree.iter().map(|res| {
+                let (k, v) = res?;
+                Ok((k.into(), v.into()))
+            }))
         }
     }
 
     // Iter over a tree entries
-    pub(super) fn iter(snapshot: Option<&Snapshot>, tree: &Tree) -> impl Iterator<Item = sled::Result<(IVec, IVec)>> {
-        match snapshot {
-            Some(snapshot) => Either::Left(snapshot.iter(tree)),
-            None => Either::Right(tree.iter())
-        }
+    pub(super) fn iter<'a, K: Serializer + 'a, V: Serializer + 'a>(snapshot: Option<&'a Snapshot>, tree: &Tree) -> impl Iterator<Item = Result<(K, V), BlockchainError>> + 'a {
+        Self::iter_raw(snapshot, tree).map(|res| {
+            let (k_bytes, v_bytes) = res?;
+            let k = K::from_bytes(&k_bytes)?;
+            let v = V::from_bytes(&v_bytes)?;
+            Ok((k, v))
+        })
     }
 
     // Iter over a tree keys
-    pub(super) fn iter_keys(snapshot: Option<&Snapshot>, tree: &Tree) -> impl Iterator<Item = sled::Result<IVec>> {
-        match snapshot {
-            Some(snapshot) => Either::Left(snapshot.iter_keys(tree)),
-            None => Either::Right(tree.iter().keys())
-        }
+    pub(super) fn iter_keys<'a, K: Serializer + 'a>(snapshot: Option<&'a Snapshot>, tree: &Tree) -> impl Iterator<Item = Result<K, BlockchainError>> + 'a {
+        Self::iter_raw(snapshot, tree).map(|res| {
+            let (k_bytes, _) = res?;
+            let k = K::from_bytes(&k_bytes)?;
+            Ok(k)
+        })
     }
 
-    pub(super) fn remove_from_disk_internal(snapshot: Option<&mut Snapshot>, tree: &Tree, key: &[u8]) -> Result<Option<IVec>, BlockchainError> {
+    pub(super) fn remove_from_disk_internal<T: Serializer>(snapshot: Option<&mut Snapshot>, tree: &Tree, key: &[u8]) -> Result<Option<T>, BlockchainError> {
         trace!("remove from disk internal");
-        if let Some(snapshot) = snapshot {
-            let (value, load) = snapshot.remove(tree, key);
-            if load {
-                return Ok(tree.get(key)?);
-            } else {
-                return Ok(value);
+        let prev = if let Some(snapshot) = snapshot {
+            match snapshot.delete(tree.into(), key.to_vec()) {
+                EntryState::Stored(prev) => Some(T::from_bytes(&prev)?),
+                EntryState::Deleted => None,
+                EntryState::Absent => {
+                    // Fallback to the disk for the previous value
+                    tree.get(key)?
+                        .map(|bytes| T::from_bytes(&bytes))
+                        .transpose()?
+                }
             }
-        }
+        } else {
+            tree.remove(key)?
+                .map(|bytes| T::from_bytes(&bytes))
+                .transpose()?
+        };
 
-        Ok(tree.remove(key)?)
+        Ok(prev)
+    }
+
+    pub (super) fn remove_from_disk_without_reading(snapshot: Option<&mut Snapshot>, tree: &Tree, key: &[u8]) -> Result<bool, BlockchainError> {
+        trace!("remove from disk internal without reading");
+
+        let v = if let Some(snapshot) = snapshot {
+            match snapshot.delete(tree.into(), key.to_vec()) {
+                EntryState::Stored(_) => true,
+                EntryState::Deleted => false,
+                EntryState::Absent => {
+                    // Fallback to the disk for the previous value
+                    tree.contains_key(key)?
+                }
+            }
+        } else {
+            tree.remove(key)?.is_some()
+        };
+
+        Ok(v)
     }
 
     // Delete a key from the DB
     pub(super) fn remove_from_disk<T: Serializer>(snapshot: Option<&mut Snapshot>, tree: &Tree, key: &[u8]) -> Result<Option<T>, BlockchainError> {
         trace!("remove from disk");
-        let v = Self::remove_from_disk_internal(snapshot, tree, key)?;
-        Ok(v.map(|v| T::from_bytes(&v)).transpose()?)
-    }
-
-    // Delete a key from the DB without reading it
-    pub(super) fn remove_from_disk_without_reading(snapshot: Option<&mut Snapshot>, tree: &Tree, key: &[u8]) -> Result<bool, BlockchainError> {
-        trace!("remove from disk without reading");
         Self::remove_from_disk_internal(snapshot, tree, key)
-            .map(|v| v.is_some())
     }
 
     // Insert a key into the DB
-    pub(super) fn insert_into_disk<K: AsRef<[u8]>, V: Into<IVec>>(snapshot: Option<&mut Snapshot>, tree: &Tree, key: K, value: V) -> Result<Option<IVec>, BlockchainError> {
-        let previous = if let Some(snapshot) = snapshot {
-            let r = key.as_ref();
-            snapshot.insert(tree, r, value)
+    pub(super) fn insert_into_disk<K: AsRef<[u8]>, V: Into<IVec>>(snapshot: Option<&mut Snapshot>, tree: &Tree, key: K, value: V) -> Result<bool, BlockchainError> {
+        Self::insert_into_disk_read::<K, V, ()>(snapshot, tree, key, value)
+            .map(|prev| prev.is_some())
+    }
+
+    // Insert a key into the DB
+    pub(super) fn insert_into_disk_read<K: AsRef<[u8]>, V: Into<IVec>, R: Serializer>(snapshot: Option<&mut Snapshot>, tree: &Tree, key: K, value: V) -> Result<Option<R>, BlockchainError> {
+        let prev = if let Some(snapshot) = snapshot {
+            let value = value.into();
+            let v: &[u8] = &value;
+            match snapshot.put(tree.into(), key.as_ref().to_vec(), v.to_vec()) {
+                EntryState::Stored(prev) => Some(R::from_bytes(&prev)?),
+                EntryState::Deleted => None,
+                EntryState::Absent => {
+                    // Fallback to the disk for the previous value
+                    tree.get(key.as_ref())?
+                        .map(|bytes| R::from_bytes(&bytes))
+                        .transpose()?
+                },
+            }
         } else {
-            tree.insert(key, value)?
+            tree.insert(key.as_ref(), value)?
+                .map(|bytes| R::from_bytes(&bytes))
+                .transpose()?
         };
 
-        Ok(previous)
+        Ok(prev)
     }
 
     // Retrieve the exact size of a value from the DB
     pub(super) fn get_size_from_disk(&self, tree: &Tree, key: &[u8]) -> Result<usize, BlockchainError> {
         trace!("get size from disk");
 
-        if let Some(snapshot) = self.snapshot.as_ref() {
-            if snapshot.contains_key(tree, key) {
-                return snapshot.get_value_size(tree, key).ok_or(BlockchainError::NotFoundOnDisk(DiskContext::DataLen));
+        if let Some(v) = self.snapshot.as_ref().map(|s| s.get(tree.into(), key)) {
+            match v {
+                EntryState::Stored(bytes) => {
+                    return Ok(bytes.len());
+                }
+                EntryState::Deleted => {
+                    return Err(BlockchainError::NotFoundOnDisk(DiskContext::DataLen));
+                }
+                EntryState::Absent => {}
             }
         }
 
@@ -453,12 +582,12 @@ impl SledStorage {
     // Or load it from cache if available
     // Note that the Snapshot has no cache and is priority over the cache
     // This mean, cache is never used if a snapshot is available
-    pub(super) async fn get_cacheable_arc_data<K: Eq + StdHash + Serializer + Clone, V: Serializer>(&self, tree: &Tree, cache: &Option<Mutex<LruCache<K, Arc<V>>>>, key: &K, context: DiskContext) -> Result<Immutable<V>, BlockchainError> {
+    pub(super) async fn get_cacheable_arc_data<K: Eq + StdHash + Serializer + Clone, V: Serializer>(&self, tree: &Tree, cache: Option<&Mutex<LruCache<K, Arc<V>>>>, key: &K, context: DiskContext) -> Result<Immutable<V>, BlockchainError> {
         trace!("get cacheable arc data {:?}", context);
         let key_bytes = key.to_bytes();
         let value = if let Some(cache) = cache.as_ref()
             .filter(|_| self.snapshot.as_ref()
-                .map(|s| !s.contains_key(tree, &key_bytes))
+                .map(|s| !s.contains_key(tree.into(), &key_bytes))
                 .unwrap_or(true)
             )
         {
@@ -483,13 +612,12 @@ impl SledStorage {
         Ok(value)
     }
 
-    pub(super) async fn get_optional_cacheable_data<K: Eq + StdHash + Serializer + Clone, V: Serializer + Clone>(&self, tree: &Tree, cache: &Option<Mutex<LruCache<K, V>>>, key: &K) -> Result<Option<V>, BlockchainError> {
+    pub(super) async fn get_optional_cacheable_data<K: Eq + StdHash + Serializer + Clone, V: Serializer + Clone>(&self, tree: &Tree, cache: Option<&Mutex<LruCache<K, V>>>, key: &K) -> Result<Option<V>, BlockchainError> {
         trace!("get optional cacheable data");
         let key_bytes = key.to_bytes();
         let value = if let Some(cache) = cache.as_ref()
             .filter(|_| self.snapshot.as_ref()
-                .map(|s| !s.contains_key(tree, &key_bytes))
-                .unwrap_or(true)
+                .map_or(true, |s| !s.contains_key(tree.into(), &key_bytes))
             )
         {
             trace!("load optional from cache");
@@ -517,7 +645,7 @@ impl SledStorage {
 
     // Load a value from the DB and cache it
     // This data is not cached behind an Arc, but is cloned at each access
-    pub(super) async fn get_cacheable_data<K: Eq + StdHash + Serializer + Clone, V: Serializer + Clone>(&self, tree: &Tree, cache: &Option<Mutex<LruCache<K, V>>>, key: &K, context: DiskContext) -> Result<V, BlockchainError> {
+    pub(super) async fn get_cacheable_data<K: Eq + StdHash + Serializer + Clone, V: Serializer + Clone>(&self, tree: &Tree, cache: Option<&Mutex<LruCache<K, V>>>, key: &K, context: DiskContext) -> Result<V, BlockchainError> {
         trace!("get cacheable data {:?}", context);
         self.get_optional_cacheable_data(tree, cache, key).await?
             .ok_or_else(|| BlockchainError::NotFoundOnDisk(DiskContext::LoadData))
@@ -525,18 +653,24 @@ impl SledStorage {
 
     pub(super) async fn delete_cacheable_data<K: Eq + StdHash + Serializer + Clone, V: Serializer>(snapshot: Option<&mut Snapshot>, tree: &Tree, cache: Option<&mut Mutex<LruCache<K, V>>>, key: &K) -> Result<V, BlockchainError> {
         trace!("delete cacheable data");
-        let value = Self::remove_from_disk_internal(snapshot, tree, &key.to_bytes())?
-            .ok_or(BlockchainError::NotFoundOnDisk(DiskContext::DeleteData))?;
 
+        let k = key.to_bytes();
         if let Some(cache) = cache {
             if let Some(v) = cache.get_mut().pop(key) {
                 trace!("data has been deleted from cache");
+
+                Self::remove_from_disk_without_reading(snapshot, tree, &k)?;
                 return Ok(v)
             }
         }
 
+        let value = Self::load_optional_from_disk_internal::<V>(snapshot.as_deref(), tree, &k)?
+            .ok_or(BlockchainError::NotFoundOnDisk(DiskContext::DeleteData))?;
+
+        Self::remove_from_disk_without_reading(snapshot, tree, &k)?;
+
         // Lazy read
-        Ok(V::from_bytes(&value)?)
+        Ok(value)
     }
 
     // Delete a cacheable data from disk and cache behind a Arc
@@ -558,12 +692,12 @@ impl SledStorage {
     }
 
     // Check if our DB contains a data in cache or on disk
-    pub(super) async fn contains_data_cached<K: Eq + StdHash + Serializer + Clone, V>(&self, tree: &Tree, cache: &Option<Mutex<LruCache<K, V>>>, key: &K) -> Result<bool, BlockchainError> {
+    pub(super) async fn contains_data_cached<K: Eq + StdHash + Serializer + Clone, V>(&self, tree: &Tree, cache: Option<&Mutex<LruCache<K, V>>>, key: &K) -> Result<bool, BlockchainError> {
         trace!("contains data cached");
 
         let key_bytes = key.to_bytes();
         if let Some(snapshot) = self.snapshot.as_ref() {
-            if let Some(v) = snapshot.contains_key_with_value(tree, &key_bytes) {
+            if let Some(v) = snapshot.contains(tree.into(), &key_bytes) {
                 trace!("snapshot contains requested data");
                 return Ok(v);
             }
@@ -585,7 +719,7 @@ impl SledStorage {
         trace!("contains data");
         let key_bytes = key.to_bytes();
         if let Some(snapshot) = self.snapshot.as_ref() {
-            if let Some(v) = snapshot.contains_key_with_value(tree, &key_bytes) {
+            if let Some(v) = snapshot.contains(tree.into(), &key_bytes) {
                 trace!("snapshot contains data");
                 return Ok(v);
             }
@@ -597,12 +731,8 @@ impl SledStorage {
     // Update the assets count and store it on disk
     pub(super) fn store_assets_count(&mut self, count: u64) -> Result<(), BlockchainError> {
         trace!("store assets count {}", count);
-        if let Some(snapshot) = self.snapshot.as_mut() {
-            snapshot.cache.assets_count = count;
-        } else {
-            self.cache.assets_count = count;
-        }
 
+        self.cache_mut().assets_count = count;
         Self::insert_into_disk(self.snapshot.as_mut(), &self.extra, ASSETS_COUNT, &count.to_be_bytes())?;
         Ok(())
     }
@@ -615,14 +745,14 @@ impl Storage for SledStorage {
         trace!("Delete block at topoheight {topoheight}");
 
         // delete topoheight<->hash pointers
-        let hash = Self::delete_cacheable_data(self.snapshot.as_mut(), &self.hash_at_topo, self.cache.hash_at_topo_cache.as_mut(), &topoheight).await?;
+        let hash = Self::delete_cacheable_data(self.snapshot.as_mut(), &self.hash_at_topo, self.cache.objects.as_mut().map(|o| &mut o.hash_at_topo_cache), &topoheight).await?;
 
         trace!("Deleting block execution order");
         Self::remove_from_disk_without_reading(self.snapshot.as_mut(), &self.blocks_execution_order, hash.as_bytes())?;
 
         trace!("Hash is {hash} at topo {topoheight}");
 
-        Self::delete_cacheable_data::<Hash, u64>(self.snapshot.as_mut(), &self.topo_by_hash, self.cache.topo_by_hash_cache.as_mut(), &hash).await?;
+        Self::delete_cacheable_data::<Hash, u64>(self.snapshot.as_mut(), &self.topo_by_hash, self.cache.objects.as_mut().map(|o| &mut o.topo_by_hash_cache), &hash).await?;
 
         trace!("deleting block header {}", hash);
         let block = self.delete_block_by_hash(&hash).await?;
@@ -642,7 +772,7 @@ impl Storage for SledStorage {
             // Because the TX is not linked to any other block, we can safely delete that block
             if !self.is_tx_linked_to_blocks(&tx_hash).await? {
                 trace!("Deleting TX {} in block {}", tx_hash, hash);
-                let tx: Immutable<Transaction> = Self::delete_arc_cacheable_data(self.snapshot.as_mut(), &self.transactions, self.cache.transactions_cache.as_mut(), tx_hash).await?;
+                let tx: Immutable<Transaction> = Self::delete_arc_cacheable_data(self.snapshot.as_mut(), &self.transactions, self.cache.objects.as_mut().map(|o| &mut o.transactions_cache), tx_hash).await?;
                 txs.push((tx_hash.clone(), tx));
             }
         }
@@ -670,7 +800,7 @@ impl Storage for SledStorage {
         for tree in self.db.tree_names() {
             let tree = self.db.open_tree(tree)?;
             debug!("Estimating size for tree {}", String::from_utf8_lossy(&tree.name()));
-            for el in Self::iter(self.snapshot.as_ref(), &tree) {
+            for el in Self::iter_raw(self.snapshot.as_ref(), &tree) {
                 let (key, value) = el?;
                 size += key.len() + value.len();
             }
