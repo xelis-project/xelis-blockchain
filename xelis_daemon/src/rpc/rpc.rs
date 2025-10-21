@@ -1663,6 +1663,7 @@ async fn get_block_summary_at_topoheight<S: Storage>(context: &Context, body: Va
             })
         })
         .buffered(blockchain.concurrency_limit())
+        .boxed()
         .try_collect::<Vec<_>>()
         .await
         .context("Error while retrieving transactions for block summary")?;
