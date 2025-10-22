@@ -11,6 +11,7 @@ use std::{
     mem,
 };
 use linked_hash_map::LinkedHashMap;
+use schemars::JsonSchema;
 use serde::{Serialize, Deserialize};
 use indexmap::IndexSet;
 use log::{debug, info, trace, warn};
@@ -52,7 +53,7 @@ pub struct SortedTx {
 // and a "expected balance" for this key
 // Min/max bounds are used to compute the index of the tx in the sorted list based on its nonce
 // You can get the TX at nonce N by computing the index with (N - min) % (max + 1 - min)
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 pub struct AccountCache {
     // lowest nonce used
     min: Nonce,
