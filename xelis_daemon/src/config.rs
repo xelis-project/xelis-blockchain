@@ -319,7 +319,7 @@ pub const fn get_seed_nodes(network: &Network) -> &[&str] {
 }
 
 // Get hard forks based on the network
-pub const fn get_hard_forks(network: &Network) -> &[HardFork] {
+pub const fn get_hard_forks(network: &Network) -> &'static [HardFork] {
     match network {
         Network::Mainnet => &HARD_FORKS,
         _ => &OTHERS_NETWORK_HARD_FORKS,
