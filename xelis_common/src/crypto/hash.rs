@@ -6,6 +6,7 @@ use std::{
     hash::Hasher,
     str::FromStr
 };
+use schemars::JsonSchema;
 use serde::de::Error as SerdeError;
 use serde::{Deserialize, Serialize};
 use blake3::hash as blake3_hash;
@@ -15,7 +16,9 @@ use xelis_hash::{v1, v2};
 
 pub const HASH_SIZE: usize = 32; // 32 bytes / 256 bits
 
-#[derive(Eq, PartialEq, PartialOrd, Ord, Clone, Debug)]
+/// A cryptographic hash represented as a 32-byte array.
+#[derive(Eq, PartialEq, PartialOrd, Ord, Clone, Debug, JsonSchema)]
+#[schemars(with = "String")]
 pub struct Hash([u8; HASH_SIZE]);
 
 impl Hash {

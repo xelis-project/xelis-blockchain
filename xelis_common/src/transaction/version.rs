@@ -1,15 +1,16 @@
+use schemars::JsonSchema;
 use crate::serializer::{Reader, ReaderError, Serializer, Writer};
 use core::fmt;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, JsonSchema)]
 #[repr(u8)]
 pub enum TxVersion {
     // Burn, Transfer
-    V0,
+    V0 = 0,
     // Multisig
-    V1,
+    V1 = 1,
     // Smart Contracts
-    V2
+    V2 = 2,
 }
 
 impl Default for TxVersion {

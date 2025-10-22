@@ -1,5 +1,6 @@
 use std::hash;
 
+use schemars::JsonSchema;
 use serde::{Serialize, Deserialize};
 
 use crate::{
@@ -14,7 +15,7 @@ use crate::{
 // SourceCommitment is a structure that holds the commitment and the equality proof
 // of the commitment to the asset
 // In a transaction, every spendings are summed up in a single commitment per asset
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, JsonSchema)]
 pub struct SourceCommitment {
     commitment: CompressedCommitment,
     proof: CommitmentEqProof,

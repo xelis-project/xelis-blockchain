@@ -1,17 +1,18 @@
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use xelis_vm::Module;
 
 use crate::serializer::*;
 use super::Deposits;
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, JsonSchema)]
 pub struct InvokeConstructorPayload {
     pub max_gas: u64,
     // Assets deposited with this call
     pub deposits: Deposits,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, JsonSchema)]
 pub struct DeployContractPayload {
     pub module: Module,
     pub invoke: Option<InvokeConstructorPayload>,

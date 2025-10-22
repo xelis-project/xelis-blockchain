@@ -16,6 +16,7 @@ use super::{
 };
 use core::fmt;
 use log::debug;
+use schemars::JsonSchema;
 use serde::de::Error as SerdeError;
 use anyhow::Error;
 
@@ -27,7 +28,10 @@ pub enum AddressType {
     Data(DataElement)
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// A XELIS address represented as a Bech32 encoded string.
+/// It contains a public key and an address type (normal or data).
+#[derive(Clone, Debug, PartialEq, Eq, JsonSchema)]
+#[schemars(with = "String")]
 pub struct Address {
     mainnet: bool,
     addr_type: AddressType,

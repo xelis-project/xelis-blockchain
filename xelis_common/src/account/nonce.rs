@@ -1,4 +1,5 @@
 use std::fmt::{self, Display, Formatter};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use crate::{
     block::TopoHeight,
@@ -12,7 +13,7 @@ use crate::{
 
 pub type Nonce = u64;
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, JsonSchema)]
 pub struct VersionedNonce {
     nonce: Nonce,
     previous_topoheight: Option<TopoHeight>,

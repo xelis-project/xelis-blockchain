@@ -1,3 +1,4 @@
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use xelis_vm::ValueCell;
 
@@ -6,7 +7,7 @@ use super::Deposits;
 
 // InvokeContractPayload is a public payload allowing to call a smart contract
 // It contains all the assets deposited in the contract and the parameters to call the contract
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, JsonSchema)]
 pub struct InvokeContractPayload {
     // The contract address
     // Contract are the TXID of the transaction that deployed the contract

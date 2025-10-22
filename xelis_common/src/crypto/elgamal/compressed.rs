@@ -1,7 +1,12 @@
 use curve25519_dalek::{ristretto::CompressedRistretto, traits::Identity, Scalar};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use crate::{api::DataElement, crypto::{Address, AddressType}, serializer::{Reader, ReaderError, Serializer, Writer}};
+use schemars::*;
+use crate::{
+    api::DataElement,
+    crypto::{Address, AddressType},
+    serializer::*
+};
 use super::{Ciphertext, DecryptHandle, PedersenCommitment, PublicKey};
 
 // Compressed point size in bytes
@@ -13,23 +18,27 @@ pub const SCALAR_SIZE: usize = 32;
 #[error("point decompression failed")]
 pub struct DecompressionError;
 
-// A Pedersen commitment compressed to 32 bytes
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// A Pedersen commitment compressed to 32 bytes
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[schemars(with = "Vec<u8>")]
 pub struct CompressedCommitment(CompressedRistretto);
 
-// A decrypt handle compressed to 32 bytes
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// A decrypt handle compressed to 32 bytes
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[schemars(with = "Vec<u8>")]
 pub struct CompressedHandle(CompressedRistretto);
 
-// A compressed ciphertext that can be serialized and deserialized with only 64 bytes
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// A compressed ciphertext that can be serialized and deserialized with only 64 bytes
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[schemars(with = "Vec<u8>")]
 pub struct CompressedCiphertext {
     commitment: CompressedCommitment,
     handle: CompressedHandle
 }
 
-// A compressed public key using only 32 bytes
-#[derive(Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize)]
+/// A compressed public key using only 32 bytes
+#[derive(Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[schemars(with = "Vec<u8>")]
 pub struct CompressedPublicKey(CompressedRistretto);
 
 impl CompressedCommitment {

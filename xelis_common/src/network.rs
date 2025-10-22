@@ -1,9 +1,10 @@
 use std::{fmt::{Display, Formatter, self}, str::FromStr};
+use schemars::JsonSchema;
 use serde::{Serialize, Deserialize};
 
 use crate::serializer::{Serializer, Reader, ReaderError, Writer};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, JsonSchema)]
 pub enum Network {
     // Production network
     // This is the main network where real transactions happen

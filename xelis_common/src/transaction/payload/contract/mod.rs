@@ -4,6 +4,7 @@ mod deposits;
 
 use anyhow::Context;
 use indexmap::{IndexMap, IndexSet};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use xelis_vm::{
     Access,
@@ -27,7 +28,7 @@ pub use deploy::*;
 pub use invoke::*;
 pub use deposits::*;
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ContractDeposit {
     // Public deposit

@@ -1,13 +1,14 @@
 use std::ops::{Deref, DerefMut};
 
 use indexmap::IndexMap;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::{crypto::Hash, serializer::*};
 use super::ContractDeposit;
 
 
-#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+#[derive(Serialize, Deserialize, Clone, Debug, Default, JsonSchema)]
 pub struct Deposits(pub IndexMap<Hash, ContractDeposit>);
 
 impl Deref for Deposits {

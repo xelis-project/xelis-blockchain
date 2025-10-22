@@ -7,6 +7,7 @@ use std::{
 };
 pub use balance::{VersionedBalance, BalanceType, AccountSummary, Balance};
 pub use nonce::{VersionedNonce, Nonce};
+use schemars::JsonSchema;
 use serde::{Serialize, Deserialize};
 use crate::{
         crypto::elgamal::{
@@ -24,9 +25,10 @@ use crate::{
 };
 
 // Represents a Ciphertext that can be lazily decompressed and compressed
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, JsonSchema)]
 pub enum CiphertextCache {
     Compressed(CompressedCiphertext),
+    #[schemars(skip)]
     Decompressed(Option<CompressedCiphertext>, Ciphertext),
 }
 

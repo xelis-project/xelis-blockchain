@@ -6,6 +6,7 @@ use curve25519_dalek::{
 };
 use merlin::Transcript;
 use rand::rngs::OsRng;
+use schemars::JsonSchema;
 use zeroize::Zeroize;
 
 use crate::{
@@ -40,12 +41,17 @@ use super::{
 /// Cipher text validity proof.
 /// This proof is used to prove that a given ciphertext is valid and was created correctly for the right recipient.
 #[allow(non_snake_case)]
-#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, JsonSchema)]
 pub struct CiphertextValidityProof {
+    #[schemars(with = "Vec<u8>")]
     Y_0: CompressedRistretto,
+    #[schemars(with = "Vec<u8>")]
     Y_1: CompressedRistretto,
+    #[schemars(with = "Option<Vec<u8>>")]
     Y_2: Option<CompressedRistretto>,
+    #[schemars(with = "Vec<u8>")]
     z_r: Scalar,
+    #[schemars(with = "Vec<u8>")]
     z_x: Scalar,
 }
 

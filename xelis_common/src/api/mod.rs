@@ -4,6 +4,7 @@ pub mod daemon;
 pub mod query;
 
 use std::borrow::Cow;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use bulletproofs::RangeProof;
@@ -34,26 +35,26 @@ use crate::{
 };
 pub use data::*;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 pub struct SubscribeParams<'a, E: Clone> {
     pub notify: Cow<'a, E>
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 pub struct EventResult<'a, E: Clone> {
     pub event: Cow<'a, E>,
     #[serde(flatten)]
     pub value: Value
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 pub struct DataHash<'a, T: Clone> {
     pub hash: Cow<'a, Hash>,
     #[serde(flatten)]
     pub data: Cow<'a, T>
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct RPCTransferPayload<'a> {
     pub asset: Cow<'a, Hash>,
     pub destination: Address,
@@ -78,7 +79,7 @@ impl<'a> From<RPCTransferPayload<'a>> for TransferPayload {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum RPCTransactionType<'a> {
     Transfers(Vec<RPCTransferPayload<'a>>),
@@ -132,7 +133,7 @@ impl From<RPCTransactionType<'_>> for TransactionType {
 // We use this one for serde (de)serialization
 // So we have addresses displayed as strings and not Public Key as bytes
 // This is much more easier for developers relying on the API
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, JsonSchema)]
 pub struct RPCTransaction<'a> {
     pub hash: Cow<'a, Hash>,
     /// Version of the transaction
@@ -151,6 +152,7 @@ pub struct RPCTransaction<'a> {
     /// We have one source commitment and equality proof per asset used in the tx.
     pub source_commitments: Cow<'a, Vec<SourceCommitment>>,
     /// The range proof is aggregated across all transfers and across all assets.
+    #[schemars(with = "Vec<u8>", description = "A representation of the range proof in bytes")]
     pub range_proof: Cow<'a, RangeProof>,
     /// Reference at which block the transaction was built
     pub reference: Cow<'a, Reference>,
@@ -220,7 +222,7 @@ pub struct SplitAddressResult {
     pub size: usize
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 #[serde(tag = "type", content = "value")]
 pub enum RPCContractLog<'a> {

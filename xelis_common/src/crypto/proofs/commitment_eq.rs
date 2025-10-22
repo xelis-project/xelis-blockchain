@@ -6,6 +6,7 @@ use curve25519_dalek::{
 };
 use merlin::Transcript;
 use rand::rngs::OsRng;
+use schemars::JsonSchema;
 use zeroize::Zeroize;
 use crate::{
     crypto::{
@@ -34,13 +35,19 @@ use super::{
 
 /// Proof that a commitment and ciphertext are equal.
 #[allow(non_snake_case)]
-#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, JsonSchema)]
 pub struct CommitmentEqProof {
+    #[schemars(with = "Vec<u8>")]
     Y_0: CompressedRistretto,
+    #[schemars(with = "Vec<u8>")]
     Y_1: CompressedRistretto,
+    #[schemars(with = "Vec<u8>")]
     Y_2: CompressedRistretto,
+    #[schemars(with = "Vec<u8>")]
     z_s: Scalar,
+    #[schemars(with = "Vec<u8>")]
     z_x: Scalar,
+    #[schemars(with = "Vec<u8>")]
     z_r: Scalar,
 }
 

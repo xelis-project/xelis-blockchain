@@ -1,4 +1,5 @@
 use curve25519_dalek::{ristretto::CompressedRistretto, RistrettoPoint, Scalar};
+use schemars::JsonSchema;
 use serde::{de::Error, Serialize};
 use sha3::{Digest, Sha3_512};
 use crate::{
@@ -14,7 +15,9 @@ use super::{PublicKey, SCALAR_SIZE};
 
 pub const SIGNATURE_SIZE: usize = SCALAR_SIZE * 2;
 
-#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+/// An ElGamal signature consisting of two Scalars (s and e)
+#[derive(Clone, Debug, Eq, PartialEq, Hash, JsonSchema)]
+#[schemars(with = "String")]
 pub struct Signature {
     s: Scalar,
     e: Scalar,

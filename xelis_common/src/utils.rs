@@ -37,6 +37,12 @@ macro_rules! async_handler {
           Box::pin($func(a, b))
         }
     };
+    // Single param
+    ($func: expr, single) => {
+        move |a| {
+          Box::pin($func(a))
+        }
+    };
 }
 
 // Format any coin value using the requested decimals count

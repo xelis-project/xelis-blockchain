@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use schemars::JsonSchema;
 use serde::{Serialize, Deserialize};
 use thiserror::Error;
 
@@ -96,7 +97,7 @@ impl Serializer for ValueType {
 }
 
 // This enum allows complex structures with multi depth if necessary
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, JsonSchema)]
 #[serde(untagged)]
 pub enum DataElement {
     Value(DataValue),
@@ -262,7 +263,7 @@ impl Serializer for DataElement {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Eq, PartialEq, Hash, Clone)]
+#[derive(Debug, Serialize, Deserialize, Eq, PartialEq, Hash, Clone, JsonSchema)]
 #[serde(untagged)]
 pub enum DataValue {
     Bool(bool),

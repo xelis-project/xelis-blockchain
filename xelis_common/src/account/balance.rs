@@ -1,4 +1,5 @@
 use std::fmt::Display;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use crate::{
     block::TopoHeight,
@@ -17,7 +18,7 @@ use crate::{
 
 use super::CiphertextCache;
 
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum BalanceType {
     // Only incoming funds were added
@@ -58,7 +59,7 @@ impl Serializer for BalanceType {
     }
 }
 
-#[derive(Clone, Deserialize, Serialize, PartialEq, Eq, Debug)]
+#[derive(Clone, Deserialize, Serialize, PartialEq, Eq, Debug, JsonSchema)]
 pub struct VersionedBalance {
     // Topoheight of the previous versioned balance
     // If its none, that means it's the first version available

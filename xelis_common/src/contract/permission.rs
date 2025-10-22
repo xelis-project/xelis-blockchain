@@ -1,10 +1,11 @@
 use std::{borrow::Borrow, hash};
 use indexmap::{Equivalent, IndexSet};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::{crypto::Hash, serializer::*};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ContractCallChunk {
     // All chunks are allowed
@@ -85,7 +86,7 @@ impl Serializer for ContractCallChunk {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ContractCall {
     pub contract: Hash,
     pub chunk: ContractCallChunk,
@@ -139,7 +140,7 @@ impl Eq for ContractCall {}
 // This permission is checked when any contract tries to call another contract
 // within the same transaction context.
 // By default, the permission is None, meaning that the contract cannot call any other contract.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum InterContractPermission {
     // Cannot call any external contract

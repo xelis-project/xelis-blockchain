@@ -1,6 +1,7 @@
 use core::fmt;
 use std::{borrow::Cow, str::FromStr};
 use log::debug;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use crate::{
@@ -38,7 +39,8 @@ impl WorkVariant {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+/// PoW Algorithm used for mining blocks and validating block hashes
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, JsonSchema)]
 #[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
 #[repr(u8)]
 pub enum Algorithm {

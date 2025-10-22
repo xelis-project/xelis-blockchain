@@ -1,3 +1,4 @@
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use xelis_vm::{traits::{JSONHelper, Serializable}, ValueCell};
 use crate::{block::TopoHeight, serializer::*};
@@ -18,7 +19,7 @@ impl ScheduledExecutionKind {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ScheduledExecutionKindLog {
     TopoHeight {

@@ -1,10 +1,12 @@
+use schemars::JsonSchema;
+
 use crate::{
     serializer::{Reader, ReaderError, Serializer, Writer},
     transaction::TxVersion
 };
 use core::fmt;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, JsonSchema)]
 #[repr(u8)]
 pub enum BlockVersion {
     // Genesis version
