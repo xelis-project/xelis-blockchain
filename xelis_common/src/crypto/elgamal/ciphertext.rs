@@ -1,13 +1,15 @@
 use std::ops::{Add, AddAssign, Mul, Sub, SubAssign};
 
 use curve25519_dalek::{traits::Identity, RistrettoPoint, Scalar};
+use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize};
 use super::{pedersen::{DecryptHandle, PedersenCommitment}, CompressedCiphertext, CompressedCommitment, CompressedHandle};
 
 // Represents a twisted ElGamal Ciphertext
 // One part is a Pedersen commitment to be bulletproofs compatible
 // The other part is a handle to be used for decryption
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, JsonSchema)]
+#[schemars(with = "CompressedCiphertext")]
 pub struct Ciphertext {
     commitment: PedersenCommitment,
     handle: DecryptHandle,

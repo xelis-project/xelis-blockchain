@@ -213,10 +213,41 @@ where
         });
     }
 
+    // Register a method with parameters with a return schema given
+    pub fn register_method_with_params_and_return_schema<P, R>(
+        &mut self,
+        name: &str,
+        f: HandlerParams<P, Value>,
+    )
+    where
+        P: JsonSchema + DeserializeOwned + Send + 'static,
+        R: JsonSchema + Serialize + Send + 'static,
+    {
+        trace!("Registering RPC method with params: {}", name);
+        let f = Arc::new(f);
+
+        let handler: Handler = Box::new(move |ctx, body| {
+            let f = Arc::clone(&f);
+            Box::pin(async move {
+                let params: P = parse_params(body)?;
+                f(ctx, params).await
+            })
+        });
+
+        self.register_method(name, MethodHandler {
+            handler,
+            schema: RpcSchema {
+                params_schema: Some(schema_for!(P)),
+                returns_schema: schema_for!(R),
+            }
+        });
+    }
+
     // Register a method with no parameters
     pub fn register_method_no_params<R>(
         &mut self,
-        name: &str, f: HandlerNoParams<R>
+        name: &str,
+        f: HandlerNoParams<R>
     )
     where
         R: JsonSchema + Serialize + Send + 'static
@@ -230,6 +261,36 @@ where
                 require_no_params(body)?;
                 let res = f(ctx).await?;
                 Ok(json!(res))
+            })
+        });
+
+        self.register_method(name, MethodHandler {
+            handler,
+            schema: RpcSchema {
+                params_schema: None,
+                returns_schema: schema_for!(R),
+            }
+        });
+    }
+
+
+    // Register a method with no parameters
+    pub fn register_method_no_params_custom_return<R>(
+        &mut self,
+        name: &str,
+        f: HandlerNoParams<Value>
+    )
+    where
+        R: JsonSchema + Serialize + Send + 'static
+    {
+        trace!("Registering RPC method with no params: {}", name);
+        let f = Arc::new(f);
+
+        let handler: Handler = Box::new(move |ctx, body| {
+            let f = Arc::clone(&f);
+            Box::pin(async move {
+                require_no_params(body)?;
+                f(ctx).await
             })
         });
 

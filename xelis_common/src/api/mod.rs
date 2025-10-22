@@ -165,9 +165,9 @@ pub struct RPCTransaction<'a> {
 }
 
 impl<'a> RPCTransaction<'a> {
-    pub fn from_tx(tx: &'a Transaction, hash: &'a Hash, size: usize, mainnet: bool) -> Self {
+    pub fn from_tx(tx: &'a Transaction, hash: Cow<'a, Hash>, size: usize, mainnet: bool) -> Self {
         Self {
-            hash: Cow::Borrowed(hash),
+            hash,
             version: tx.get_version(),
             source: tx.get_source().as_address(mainnet),
             data: RPCTransactionType::from_type(tx.get_data(), mainnet),

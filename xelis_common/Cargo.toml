@@ -44,6 +44,7 @@ indexmap = { workspace = true }
 async-trait = { workspace = true }
 cfg-if = { workspace = true }
 metrics = { workspace = true }
+schemars = { workspace = true }
 
 chrono = { workspace = true, optional = true }
 clap = { workspace = true, optional = true }
@@ -59,8 +60,7 @@ serde_regex = "1.1.0"
 primitive-types = { version = "0.13.1", features = ["serde"] }
 chacha20 = "0.9.1"
 better_any = "0.2.0"
-log-panics = { version = "2", features = ["with-backtrace"]}
-schemars = { version = "1.0.4", features = ["indexmap2"] }
+log-panics = { version = "2", features = ["with-backtrace"] }
 
 [target.armv7-unknown-linux-gnueabihf.dependencies]
 # TODO: remove once fixed https://github.com/cross-rs/cross/issues/1689
