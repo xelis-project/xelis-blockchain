@@ -170,7 +170,7 @@ pub struct PredicatedBaseFeeResult {
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct GetMempoolResult<'a> {
     // The range of transactions requested
-    pub transactions: Vec<TransactionResponse<'a>>,
+    pub transactions: Vec<GetTransactionResult<'a>>,
     // How many TXs in total available in mempool
     pub total: usize,
 }
@@ -459,7 +459,7 @@ pub struct GetTransactionsParams {
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
-pub struct TransactionResponse<'a> {
+pub struct GetTransactionResult<'a> {
     // in which blocks it was included
     pub blocks: Option<HashSet<Hash>>,
     // in which blocks it was executed
@@ -984,7 +984,7 @@ pub struct StableTopoHeightChangedEvent {
 // Value of NotifyEvent::TransactionAddedInMempool
 pub type TransactionAddedInMempoolEvent = MempoolTransactionSummary<'static>;
 // Value of NotifyEvent::TransactionOrphaned
-pub type TransactionOrphanedEvent = TransactionResponse<'static>;
+pub type TransactionOrphanedEvent = GetTransactionResult<'static>;
 
 // Value of NotifyEvent::TransactionExecuted
 #[derive(Serialize, Deserialize, JsonSchema)]
