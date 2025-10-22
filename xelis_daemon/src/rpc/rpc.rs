@@ -64,10 +64,7 @@ use xelis_common::{
         CumulativeDifficulty,
         Difficulty
     },
-    rpc::{
-        parse_params,
-        RPCHandler
-    },
+    rpc::RPCHandler,
     serializer::Serializer,
     time::TimestampSeconds,
     transaction::{
@@ -828,8 +825,7 @@ async fn count_contracts<S: Storage>(context: &Context) -> Result<u64, InternalR
     Ok(count)
 }
 
-async fn submit_transaction<S: Storage>(context: &Context, body: Value) -> Result<bool, InternalRpcError> {
-    let params: SubmitTransactionParams = parse_params(body)?;
+async fn submit_transaction<S: Storage>(context: &Context, params: SubmitTransactionParams) -> Result<bool, InternalRpcError> {
     // x2 because of hex encoding
     if params.data.len() > MAX_TRANSACTION_SIZE * 2 {
         return Err(InternalRpcError::InvalidJSONRequest).context(format!("Transaction size cannot be greater than {}", human_bytes(MAX_TRANSACTION_SIZE as f64)))?
@@ -844,8 +840,7 @@ async fn submit_transaction<S: Storage>(context: &Context, body: Value) -> Resul
     Ok(true)
 }
 
-async fn get_transaction<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    let params: GetTransactionParams = parse_params(body)?;
+async fn get_transaction<S: Storage>(context: &Context, params: GetTransactionParams<'_>) -> Result<Value, InternalRpcError> {
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let storage = blockchain.get_storage().read().await;
     let mempool = blockchain.get_mempool().read().await;
@@ -854,8 +849,7 @@ async fn get_transaction<S: Storage>(context: &Context, body: Value) -> Result<V
     Ok(json!(tx))
 }
 
-async fn get_transaction_executor<S: Storage>(context: &Context, body: Value) -> Result<GetTransactionExecutorResult, InternalRpcError> {
-    let params: GetTransactionExecutorParams = parse_params(body)?;
+async fn get_transaction_executor<S: Storage>(context: &Context, params: GetTransactionExecutorParams<'_>) -> Result<GetTransactionExecutorResult<'static>, InternalRpcError> {
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let storage = blockchain.get_storage().read().await;
 
