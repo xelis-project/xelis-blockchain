@@ -3173,7 +3173,7 @@ impl<S: Storage> Blockchain<S> {
                 // We are not including the transactions in `NewBlock` event to prevent spamming
                 match get_block_response(self, &*storage, &block_hash, &Block::new(block, Vec::new()), block_size).await {
                     Ok(response) => {
-                        events.entry(NotifyEvent::NewBlock).or_insert_with(Vec::new).push(response);
+                        events.entry(NotifyEvent::NewBlock).or_insert_with(Vec::new).push(json!(response));
                     },
                     Err(e) => {
                         debug!("Error while getting block response for websocket: {}", e);

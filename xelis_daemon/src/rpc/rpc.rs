@@ -151,7 +151,7 @@ where
 }
 
 // Get a full block RPC response based on data in chain and from parameters
-pub async fn get_block_response<S: Storage, P>(blockchain: &Blockchain<S>, provider: &P, hash: &Hash, block: &Block, total_size_in_bytes: usize) -> Result<Value, InternalRpcError>
+pub async fn get_block_response<'a, S: Storage, P>(blockchain: &'a Blockchain<S>, provider: &'a P, hash: &'a Hash, block: &'a Block, total_size_in_bytes: usize) -> Result<RPCBlockResponse<'a>, InternalRpcError>
 where
     P: DifficultyProvider
     + DagOrderProvider
@@ -175,8 +175,8 @@ where
         hash: Cow::Borrowed(hash),
         metadata,
         block_type,
-        cumulative_difficulty: Cow::Borrowed(&cumulative_difficulty),
-        difficulty: Cow::Borrowed(&difficulty),
+        cumulative_difficulty: Cow::Owned(cumulative_difficulty),
+        difficulty: Cow::Owned(difficulty),
         total_size_in_bytes,
         extra_nonce: Cow::Borrowed(header.get_extra_nonce()),
         timestamp: header.get_timestamp(),
@@ -188,10 +188,10 @@ where
         txs_hashes: Cow::Borrowed(header.get_txs_hashes()),
     };
 
-    Ok(json!(RPCBlockResponse {
+    Ok(RPCBlockResponse {
         header,
         transactions,
-    }))
+    })
 }
 
 // Get block rewards based on height and reward
@@ -213,7 +213,7 @@ pub async fn get_block_response_for_hash<S: Storage>(blockchain: &Blockchain<S>,
         let block = storage.get_block_by_hash(&hash).await
             .context("Error while retrieving full block")?;
         let total_size_in_bytes = block.size();
-        get_block_response(blockchain, storage, hash, &block, total_size_in_bytes).await?
+        json!(get_block_response(blockchain, storage, hash, &block, total_size_in_bytes).await?)
     } else {
         let header = storage.get_block_header_by_hash(&hash).await
             .context("Error while retrieving full block")?;
