@@ -24,7 +24,7 @@ pub enum DataConversionError {
 }
 
 // All types availables
-#[derive(Debug, Serialize, Deserialize, Eq, PartialEq, Hash, Clone, Copy)]
+#[derive(Debug, Serialize, Deserialize, JsonSchema, Eq, PartialEq, Hash, Clone, Copy)]
 pub enum ValueType {
     Bool,
     String,
@@ -37,7 +37,7 @@ pub enum ValueType {
     Blob,
 }
 
-#[derive(Debug, Serialize, Deserialize, Eq, PartialEq, Hash, Clone)]
+#[derive(Debug, Serialize, Deserialize, JsonSchema, Eq, PartialEq, Hash, Clone)]
 pub enum ElementType {
     // Single value
     Value(ValueType),

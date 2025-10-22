@@ -1,8 +1,10 @@
 use std::{borrow::Cow, collections::HashMap};
 use indexmap::IndexMap;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use crate::{
     account::CiphertextCache,
+    asset::AssetData,
     block::TopoHeight,
     crypto::{elgamal::CompressedCiphertext, Address, Hash, PrivateKey},
     serializer::Hexable,
@@ -27,13 +29,13 @@ use super::{
 };
 
 // Signer ID to use for signing the transaction
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 pub struct SignerId {
     pub id: u8,
     pub private_key: PrivateKey
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 pub struct BuildTransactionParams {
     #[serde(flatten)]
     pub tx_type: TransactionTypeBuilder,
@@ -65,7 +67,7 @@ pub struct BuildTransactionParams {
     pub signers: Vec<SignerId>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 pub struct BuildTransactionOfflineParams {
     #[serde(flatten)]
     pub tx_type: TransactionTypeBuilder,
@@ -98,7 +100,7 @@ pub struct BuildTransactionOfflineParams {
     pub signers: Vec<SignerId>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 pub struct BuildUnsignedTransactionParams {
     #[serde(flatten)]
     pub tx_type: TransactionTypeBuilder,
@@ -123,7 +125,7 @@ pub struct BuildUnsignedTransactionParams {
     pub tx_as_hex: bool,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 pub struct FinalizeUnsignedTransactionParams {
     // Unsigned transaction to finalize
     pub unsigned: Hexable<UnsignedTransaction>,
@@ -139,7 +141,7 @@ pub struct FinalizeUnsignedTransactionParams {
     pub tx_as_hex: bool,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 pub struct SignUnsignedTransactionParams {
     // Unsigned transaction hash
     pub hash: Hash,
@@ -147,7 +149,7 @@ pub struct SignUnsignedTransactionParams {
     pub signer_id: u8
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 pub struct UnsignedTransactionResponse {
     #[serde(flatten)]
     pub inner: UnsignedTransaction,
@@ -159,7 +161,7 @@ pub struct UnsignedTransactionResponse {
     pub tx_as_hex: Option<String>
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, Copy, Default)]
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, Copy, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum BaseFeeMode {
     // let the wallet select the base fee
@@ -171,7 +173,7 @@ pub enum BaseFeeMode {
     Cap(u64),
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 pub struct EstimateFeesParams {
     #[serde(flatten)]
     pub tx_type: TransactionTypeBuilder,
@@ -181,7 +183,7 @@ pub struct EstimateFeesParams {
     pub base_fee: BaseFeeMode,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 pub struct ListTransactionsParams {
     // Filter by asset
     pub asset: Option<Hash>,
@@ -206,105 +208,111 @@ pub struct ListTransactionsParams {
     pub skip: Option<usize>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 pub struct TrackAssetParams<'a> {
     // Asset to track/untrack
     pub asset: Cow<'a, Hash>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 pub struct IsAssetTrackedParams<'a> {
     // Asset to check
     pub asset: Cow<'a, Hash>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 pub struct GetAssetsParams {
     pub skip: Option<usize>,
     pub maximum: Option<usize>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, JsonSchema)]
+pub struct GetAssetsEntry {
+    pub asset: Hash,
+    pub data: AssetData,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema)]
 pub struct TransactionResponse<'a> {
     #[serde(flatten)]
     pub inner: DataHash<'a, Transaction>,
     pub tx_as_hex: Option<String>
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 pub struct GetAssetPrecisionParams<'a> {
     pub asset: Cow<'a, Hash>
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 pub struct GetAddressParams {
     // Data to use for creating an integrated address
     // Returned address will contains all the data provided here
     pub integrated_data: Option<DataElement>
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 pub struct RescanParams {
     pub until_topoheight: Option<TopoHeight>,
     #[serde(default = "default_false_value")]
     pub auto_reconnect: bool
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 pub struct SetOnlineModeParams {
     pub daemon_address: String,
     #[serde(default = "default_false_value")]
     pub auto_reconnect: bool,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 pub struct NetworkInfoResult {
     #[serde(flatten)]
     pub inner: daemon::GetInfoResult,
     pub connected_to: String,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 pub struct GetBalanceParams {
     pub asset: Option<Hash>
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 pub struct GetTransactionParams {
     pub hash: Hash
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 pub struct SearchTransactionParams<'a> {
     pub hash: Cow<'a, Hash>
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 pub struct SearchTransactionResult {
     pub transaction: Option<TransactionEntry>,
     pub index: Option<u64>,
     pub is_raw_search: bool
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct BalanceChanged {
     pub asset: Hash,
     pub balance: u64
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 pub struct GetValueFromKeyParams {
     pub tree: String,
     pub key: DataValue
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 pub struct HasKeyParams {
     pub tree: String,
     pub key: DataValue
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 pub struct GetMatchingKeysParams {
     pub tree: String,
     pub query: Option<Query>,
@@ -312,32 +320,32 @@ pub struct GetMatchingKeysParams {
     pub skip: Option<usize>
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 pub struct CountMatchingEntriesParams {
     pub tree: String,
     pub key: Option<Query>,
     pub value: Option<Query>
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 pub struct StoreParams {
     pub tree: String,
     pub key: DataValue,
     pub value: DataElement
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 pub struct DeleteParams {
     pub tree: String,
     pub key: DataValue
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 pub struct DeleteTreeEntriesParams {
     pub tree: String
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 pub struct QueryDBParams {
     pub tree: String,
     pub key: Option<Query>,
@@ -346,7 +354,7 @@ pub struct QueryDBParams {
     pub skip: Option<usize>
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 pub struct DecryptExtraDataParams<'a> {
     // Encrypted data to decrypt
     pub extra_data: Cow<'a, UnknownExtraDataFormat>,
@@ -355,13 +363,14 @@ pub struct DecryptExtraDataParams<'a> {
     pub role: Role,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 pub struct DecryptCiphertextParams<'a> {
     // Ciphertext with the correct handle to use
-    pub ciphertext: Cow<'a, CompressedCiphertext>
+    pub ciphertext: Cow<'a, CompressedCiphertext>,
+    pub max_supply: Option<u64>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum NotifyEvent {
     // When a new topoheight is detected by wallet
@@ -393,7 +402,7 @@ pub enum NotifyEvent {
     UntrackAsset,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct TransferOut {
     // Destination address
     pub destination: Address,
@@ -405,7 +414,7 @@ pub struct TransferOut {
     pub extra_data: Option<PlaintextExtraData>
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct TransferIn {
     // Asset spent
     pub asset: Hash,
@@ -415,7 +424,7 @@ pub struct TransferIn {
     pub extra_data: Option<PlaintextExtraData>
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct DeployInvoke {
     // Additionnal fees to pay
     // This is the maximum of gas that can be used by the contract
@@ -426,7 +435,7 @@ pub struct DeployInvoke {
     pub deposits: IndexMap<Hash, u64>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum EntryType {
     // Coinbase is only XELIS_ASSET
@@ -492,7 +501,7 @@ pub enum EntryType {
 
 // This struct is used to represent a transaction entry like in wallet
 // But we replace every PublicKey to use Address instead
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct TransactionEntry {
     pub hash: Hash,
     pub topoheight: TopoHeight,
@@ -515,12 +524,12 @@ impl std::cmp::PartialEq for TransactionEntry {
 
 impl std::cmp::Eq for TransactionEntry {}
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 pub struct EstimateExtraDataSizeParams {
     pub destinations: Vec<Address>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 pub struct EstimateExtraDataSizeResult {
     // Integrated data size
     pub size: usize,

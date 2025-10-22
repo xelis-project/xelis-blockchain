@@ -1,4 +1,5 @@
 use bulletproofs::RangeProof;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use crate::{
     account::Nonce,
@@ -27,7 +28,7 @@ use crate::{
 // Used to build the final transaction
 // It can include the multi-signature logic
 // by signing it
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, JsonSchema)]
 pub struct UnsignedTransaction {
     version: TxVersion,
     source: PublicKey,
@@ -37,6 +38,7 @@ pub struct UnsignedTransaction {
     nonce: Nonce,
     source_commitments: Vec<SourceCommitment>,
     reference: Reference,
+    #[schemars(with = "Vec<u8>", description = "Binary representation of a range proof")]
     range_proof: RangeProof,
     multisig: Option<MultiSig>,
 }

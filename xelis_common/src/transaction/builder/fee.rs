@@ -1,8 +1,9 @@
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::crypto::elgamal::CompressedPublicKey;
 
-#[derive(Serialize, Deserialize, Clone, Debug, Copy, Default)]
+#[derive(Serialize, Deserialize, Clone, Debug, Copy, Default, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ExtraFeeMode {
     #[default]
@@ -14,7 +15,7 @@ pub enum ExtraFeeMode {
     Multiplier(f64),
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, Copy)]
+#[derive(Serialize, Deserialize, Clone, Debug, Copy, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum FeeBuilder {
     // Fixed fee amount to use for the TX

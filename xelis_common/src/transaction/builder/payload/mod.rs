@@ -1,4 +1,5 @@
 use indexmap::{IndexMap, IndexSet};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use xelis_vm::ValueCell;
 use crate::{
@@ -11,7 +12,7 @@ fn default_bool_true() -> bool {
     true
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, JsonSchema)]
 pub struct TransferBuilder {
     pub asset: Hash,
     pub amount: u64,
@@ -24,20 +25,20 @@ pub struct TransferBuilder {
     pub encrypt_extra_data: bool
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, JsonSchema)]
 pub struct MultiSigBuilder {
     pub participants: IndexSet<Address>,
     pub threshold: u8,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, JsonSchema)]
 pub struct ContractDepositBuilder {
     pub amount: u64,
     #[serde(default)]
     pub private: bool,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, JsonSchema)]
 pub struct InvokeContractBuilder {
     pub contract: Hash,
     pub max_gas: u64,
@@ -48,7 +49,7 @@ pub struct InvokeContractBuilder {
     pub permission: InterContractPermission,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, JsonSchema)]
 pub struct DeployContractBuilder {
     // Module to deploy
     pub module: String,
@@ -56,7 +57,7 @@ pub struct DeployContractBuilder {
     pub invoke: Option<DeployContractInvokeBuilder>
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, JsonSchema)]
 pub struct DeployContractInvokeBuilder {
     pub max_gas: u64,
     #[serde(default)]

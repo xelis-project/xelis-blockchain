@@ -1,3 +1,4 @@
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use crate::{
     account::Nonce,
@@ -45,7 +46,7 @@ pub const MAX_MULTISIG_PARTICIPANTS: usize = 255;
 /// Simple enum to determine which DecryptHandle to use to craft a Ciphertext
 /// This allows us to store one time the commitment and only a decrypt handle for each.
 /// The DecryptHandle is used to decrypt the ciphertext and is selected based on the role in the transaction.
-#[derive(Serialize, Deserialize, Clone, Copy, Debug)]
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug)]
 #[serde(rename_all = "snake_case")]
 pub enum Role {
     Sender,
@@ -53,7 +54,7 @@ pub enum Role {
 }
 
 // this enum represent all types of transaction available on XELIS Network
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 #[serde(rename_all = "snake_case")]
 pub enum TransactionType {
     Transfers(Vec<TransferPayload>),
@@ -64,7 +65,7 @@ pub enum TransactionType {
 }
 
 // Transaction to be sent over the network
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, JsonSchema)]
 pub struct Transaction {
     /// Version of the transaction
     version: TxVersion,
@@ -84,6 +85,7 @@ pub struct Transaction {
     /// We have one source commitment and equality proof per asset used in the tx.
     source_commitments: Vec<SourceCommitment>,
     /// The range proof is aggregated across all transfers and across all assets.
+    #[schemars(with = "Vec<u8>", description = "Binary representation of the range proof")]
     range_proof: RangeProof,
     /// At which block the TX is built
     reference: Reference,

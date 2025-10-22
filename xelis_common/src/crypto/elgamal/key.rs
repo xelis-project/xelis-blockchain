@@ -4,6 +4,7 @@ use curve25519_dalek::{
     Scalar
 };
 use rand::rngs::OsRng;
+use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize};
 use sha3::Sha3_512;
 use zeroize::Zeroize;
@@ -34,7 +35,8 @@ use super::{
 #[derive(Clone, PartialEq, Eq)]
 pub struct PublicKey(RistrettoPoint);
 
-#[derive(Clone, Zeroize)]
+#[derive(Clone, Zeroize, JsonSchema)]
+#[schemars(with = "String", description = "Hexadecimal representation of a private key")]
 pub struct PrivateKey(Scalar);
 
 #[derive(Clone)]

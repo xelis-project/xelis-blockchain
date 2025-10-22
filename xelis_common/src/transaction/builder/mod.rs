@@ -6,6 +6,7 @@ mod fee;
 mod unsigned;
 mod payload;
 
+use schemars::JsonSchema;
 pub use state::AccountState;
 pub use fee::{FeeHelper, FeeBuilder};
 pub use unsigned::UnsignedTransaction;
@@ -122,7 +123,7 @@ pub enum GenerationError<T> {
     FeeMax,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum TransactionTypeBuilder {
     Transfers(Vec<TransferBuilder>),

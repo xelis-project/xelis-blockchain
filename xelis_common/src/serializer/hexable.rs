@@ -1,5 +1,6 @@
 use std::ops::{Deref, DerefMut};
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -7,7 +8,7 @@ use super::Serializer;
 
 /// Hexable is a wrapper around a type that implements `Serializer` and `Serialize`/`DeserializeOwned`.
 /// It allows the type to be deserialized from an hexadecimal.
-#[derive(Serialize)]
+#[derive(Serialize, JsonSchema)]
 pub struct Hexable<T: Serializer>(pub T);
 
 impl<T: Serializer> Deref for Hexable<T> {
