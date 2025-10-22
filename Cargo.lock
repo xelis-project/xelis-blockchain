@@ -5025,6 +5025,7 @@ dependencies = [
  "metrics-exporter-prometheus",
  "rand 0.8.5",
  "rocksdb",
+ "schemars",
  "semver",
  "serde",
  "serde_json",
