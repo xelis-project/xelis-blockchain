@@ -3,6 +3,7 @@ mod kind;
 use std::hash;
 
 use indexmap::IndexSet;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use xelis_vm::{
     traits::{JSONHelper, Serializable},
@@ -42,7 +43,7 @@ use crate::{
 pub use kind::*;
 
 // Scheduled executions are unique per contract
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, JsonSchema)]
 pub struct ScheduledExecution {
     // The current hash representing this scheduled execution
     // It is based on blake3(contract || topoheight)

@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -8,7 +9,7 @@ use crate::{
     versioned_type::Versioned
 };
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, JsonSchema)]
 pub struct AssetOwner {
     // Contract hash
     contract: Hash,
@@ -62,7 +63,7 @@ impl Serializer for AssetOwner {
 pub type VersionedAssetData = Versioned<AssetData>;
 
 
-#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum MaxSupplyMode {
     // No max supply set
@@ -123,7 +124,7 @@ impl Serializer for MaxSupplyMode {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, JsonSchema)]
 pub struct AssetData {
     // How many atomic units is needed for a full coin
     decimals: u8,
@@ -206,7 +207,7 @@ impl Serializer for AssetData {
     }
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, JsonSchema)]
 pub struct RPCAssetData<'a> {
     // The asset hash
     pub asset: Cow<'a, Hash>,

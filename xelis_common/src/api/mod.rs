@@ -206,13 +206,13 @@ impl<'a> From<RPCTransaction<'a>> for Transaction {
 // and not have to specify the lifetime
 pub type TransactionResponse = RPCTransaction<'static>;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 pub struct SplitAddressParams {
     // address which must be in integrated form
     pub address: Address
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 pub struct SplitAddressResult {
     // Normal address
     pub address: Address,

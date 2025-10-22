@@ -824,7 +824,7 @@ pub struct GetContractBalanceAtTopoHeightParams<'a> {
 
 
 #[derive(Serialize, Deserialize, JsonSchema)]
-pub struct GetContractBalancesParams<'a> {
+pub struct GetContractAssetsParams<'a> {
     pub contract: Cow<'a, Hash>,
     pub skip: Option<usize>,
     pub maximum: Option<usize>
@@ -848,12 +848,20 @@ pub struct P2pBlockPropagationResult {
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
-pub struct GetP2pBlockPropagation<'a> {
+pub struct GetP2pBlockPropagationParams<'a> {
     pub hash: Cow<'a, Hash>,
     #[serde(default = "default_true_value")]
     pub outgoing: bool,
     #[serde(default = "default_true_value")]
     pub incoming: bool,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema)]
+pub struct RegisteredExecution<'a> {
+    /// Hash of the caller for the registered execution
+    pub execution_hash: Cow<'a, Hash>,
+    /// Topoheight at which the execution is scheduled
+    pub execution_topoheight: TopoHeight,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]

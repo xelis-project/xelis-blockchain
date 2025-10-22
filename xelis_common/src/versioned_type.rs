@@ -1,4 +1,5 @@
 use log::debug;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use crate::{
     block::TopoHeight,
@@ -104,12 +105,12 @@ impl VersionedState {
     }
 }
 
-// A versioned data by topoheight data
+/// A versioned data by topoheight data
 // In a blockDAG, a data can be updated by a new data at a certain topoheight
 // We must keep track of the previous data in case of reorgs that could occurs
 // For serializer, previous_topoheight is written before the data
 // So we can go through all the previous versions without reading the actual data
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct Versioned<T: Serializer> {
     previous_topoheight: Option<TopoHeight>,
     data: T,

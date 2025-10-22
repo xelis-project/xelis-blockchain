@@ -10,14 +10,14 @@ use core::fmt;
 #[repr(u8)]
 pub enum BlockVersion {
     // Genesis version
-    V0,
+    V0 = 0,
     // First hard fork including the new PoW algorithm
     // difficulty adjustment algorithm tweaks
-    V1,
+    V1 = 1,
     // MultiSig, P2P
-    V2,
+    V2 = 2,
     // Smart Contracts
-    V3,
+    V3 = 3,
 }
 
 impl BlockVersion {
