@@ -176,6 +176,7 @@ where
 
     // register a new RPC method handler
     pub fn register_method(&mut self, name: &str, handler: MethodHandler) {
+        trace!("Registering RPC method: {}", name);
         if self.methods.insert(name.into(), handler).is_some() {
             warn!("The method '{}' was already registered !", name);
         }
@@ -191,6 +192,7 @@ where
         P: JsonSchema + DeserializeOwned + Send + 'static,
         R: JsonSchema + Serialize + Send + 'static,
     {
+        trace!("Registering RPC method with params: {}", name);
         let f = Arc::new(f);
 
         let handler: Handler = Box::new(move |ctx, body| {
@@ -219,6 +221,7 @@ where
     where
         R: JsonSchema + Serialize + Send + 'static
     {
+        trace!("Registering RPC method with no params: {}", name);
         let f = Arc::new(f);
 
         let handler: Handler = Box::new(move |ctx, body| {
