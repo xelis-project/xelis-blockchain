@@ -762,7 +762,7 @@ async fn get_asset_supply<S: Storage>(context: &Context, params: GetAssetParams<
     })
 }
 
-async fn get_assets<'a, S: Storage>(context: &'a Context, params: GetAssetsParams) -> Result<Vec<RPCAssetData<'a>>, InternalRpcError> {
+async fn get_assets<S: Storage>(context: &Context, params: GetAssetsParams) -> Result<Vec<RPCAssetData<'static>>, InternalRpcError> {
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let maximum = if let Some(maximum) = params.maximum {
         if maximum > MAX_ASSETS {
@@ -1129,7 +1129,7 @@ async fn get_transactions<S: Storage>(context: &Context, params: GetTransactions
 
 // get up to N transactions summary at once
 // if a tx hash is not present, we keep the order and put json "null" value
-async fn get_transactions_summary<S: Storage>(context: &Context, params: GetTransactionsParams) -> Result<Vec<Option<TransactionSummary>>, InternalRpcError> {
+async fn get_transactions_summary<S: Storage>(context: &Context, params: GetTransactionsParams) -> Result<Vec<Option<TransactionSummary<'static>>>, InternalRpcError> {
     let hashes = params.tx_hashes;
     if  hashes.len() > MAX_TXS_SUMMARY {
         return Err(InternalRpcError::InvalidJSONRequest).context(format!("Too many requested txs: {}, maximum is {}", hashes.len(), MAX_TXS))?
@@ -1771,7 +1771,7 @@ async fn has_multisig_at_topoheight<S: Storage>(context: &Context, params: HasMu
     Ok(multisig)
 }
 
-async fn get_contract_logs<'a, S: Storage>(context: &'a Context, params: GetContractLogsParams<'a>) -> Result<Vec<RPCContractLog<'a>>, InternalRpcError> {
+async fn get_contract_logs<S: Storage>(context: &Context, params: GetContractLogsParams<'_>) -> Result<Vec<RPCContractLog<'static>>, InternalRpcError> {
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let is_mainnet = blockchain.get_network().is_mainnet();
     let storage = blockchain.get_storage().read().await;
@@ -1806,7 +1806,7 @@ async fn get_contract_scheduled_executions_at_topoheight<S: Storage>(context: &C
     Ok(executions)
 }
 
-async fn get_contract_registered_executions_at_topoheight<'a, S: Storage + 'a>(context: &'a Context, params: GetContractScheduledExecutionsAtTopoHeightParams) -> Result<Vec<RegisteredExecution>, InternalRpcError> {
+async fn get_contract_registered_executions_at_topoheight<S: Storage>(context: &Context, params: GetContractScheduledExecutionsAtTopoHeightParams) -> Result<Vec<RegisteredExecution<'static>>, InternalRpcError> {
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
 
     if params.max.is_some_and(|max| max > MAX_SCHEDULED_EXECUTIONS) {
@@ -1830,7 +1830,7 @@ async fn get_contract_registered_executions_at_topoheight<'a, S: Storage + 'a>(c
     Ok(executions)
 }
 
-async fn get_contract_outputs<'a, S: Storage>(context: &'a Context, params: GetContractOutputsParams<'a>) -> Result<Vec<GetContractsOutputsEntry<'a>>, InternalRpcError> {
+async fn get_contract_outputs<S: Storage>(context: &Context, params: GetContractOutputsParams<'_>) -> Result<Vec<GetContractsOutputsEntry<'static>>, InternalRpcError> {
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let is_mainnet = blockchain.get_network().is_mainnet();
     let storage = blockchain.get_storage().read().await;
