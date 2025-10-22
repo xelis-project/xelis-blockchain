@@ -27,13 +27,11 @@ use crate::{
 };
 use super::{InternalRpcError, ApiError};
 use futures::{stream, StreamExt, TryStreamExt};
+use itertools::Itertools;
 use xelis_common::{
     api::{
         daemon::*,
-        RPCContractLog,
-        RPCTransaction,
-        SplitAddressParams,
-        SplitAddressResult,
+        *
     },
     asset::RPCAssetData,
     async_handler,
@@ -50,15 +48,23 @@ use xelis_common::{
         XELIS_ASSET
     },
     context::Context,
-    contract::{ContractLog, ScheduledExecutionKindLog},
-    crypto::{Address, AddressType, Hash, PublicKey},
+    contract::{
+        ContractLog,
+        ScheduledExecution,
+        ScheduledExecutionKindLog
+    },
+    crypto::{
+        Address,
+        AddressType,
+        Hash,
+        PublicKey
+    },
     difficulty::{
         CumulativeDifficulty,
         Difficulty
     },
     rpc::{
         parse_params,
-        require_no_params,
         RPCHandler
     },
     serializer::Serializer,
@@ -67,11 +73,13 @@ use xelis_common::{
         Transaction,
         TransactionType
     },
-    utils::format_hashrate
+    utils::format_hashrate,
+    versioned_type::Versioned
 };
 use anyhow::Context as AnyContext;
 use human_bytes::human_bytes;
 use serde_json::{json, Value};
+use xelis_vm::ValueCell;
 use std::{borrow::Cow, collections::HashMap, sync::Arc};
 use log::{info, debug, trace};
 
@@ -242,7 +250,7 @@ pub async fn get_block_response_for_hash<S: Storage>(blockchain: &Blockchain<S>,
 }
 
 // Transaction response based on data in chain/mempool and from parameters
-pub async fn get_transaction_response<'a, S: Storage>(storage: &S, tx: &'a Transaction, hash: &'a Hash, in_mempool: bool, first_seen: Option<TimestampSeconds>) -> Result<TransactionResponse<'a>, InternalRpcError> {
+pub async fn get_transaction_response<'a, S: Storage>(storage: &S, tx: &'a Transaction, hash: &'a Hash, in_mempool: bool, first_seen: Option<TimestampSeconds>) -> Result<GetTransactionResult<'a>, InternalRpcError> {
     let blocks = if storage.is_tx_linked_to_blocks(hash).await.context("Error while checking if tx in included in blocks")? {
         Some(storage.get_blocks_for_tx(hash).await.context("Error while retrieving in which blocks its included")?)
     } else {
@@ -251,7 +259,7 @@ pub async fn get_transaction_response<'a, S: Storage>(storage: &S, tx: &'a Trans
 
     let data = RPCTransaction::from_tx(tx, hash, tx.size(), storage.is_mainnet());
     let executed_in_block = storage.get_block_executor_for_tx(hash).await.ok();
-    Ok(TransactionResponse { blocks, executed_in_block, data, in_mempool, first_seen })
+    Ok(GetTransactionResult { blocks, executed_in_block, data, in_mempool, first_seen })
 }
 
 // first check on disk, then check in mempool
@@ -297,189 +305,179 @@ pub async fn get_peer_entry<'a>(peer: &'a Peer) -> PeerEntry<'a> {
 // This function is used to register all the RPC methods
 pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>, allow_mining_methods: bool) {
     info!("Registering RPC methods...");
-    handler.register_method("get_version", async_handler!(version::<S>));
-    handler.register_method("get_height", async_handler!(get_height::<S>));
-    handler.register_method("get_topoheight", async_handler!(get_topoheight::<S>));
-    handler.register_method("get_pruned_topoheight", async_handler!(get_pruned_topoheight::<S>));
-    handler.register_method("get_info", async_handler!(get_info::<S>));
-    handler.register_method("get_difficulty", async_handler!(get_difficulty::<S>));
-    handler.register_method("get_tips", async_handler!(get_tips::<S>));
-    handler.register_method("get_dev_fee_thresholds", async_handler!(get_dev_fee_thresholds::<S>));
-    handler.register_method("get_size_on_disk", async_handler!(get_size_on_disk::<S>));
+
+    handler.register_method_no_params("get_version", async_handler!(version::<S>, single));
+    handler.register_method_no_params("get_height", async_handler!(get_height::<S>, single));
+    handler.register_method_no_params("get_topoheight", async_handler!(get_topoheight::<S>, single));
+    handler.register_method_no_params("get_pruned_topoheight", async_handler!(get_pruned_topoheight::<S>, single));
+    handler.register_method_no_params("get_info", async_handler!(get_info::<S>, single));
+    handler.register_method_no_params("get_difficulty", async_handler!(get_difficulty::<S>, single));
+    handler.register_method_no_params("get_tips", async_handler!(get_tips::<S>, single));
+    handler.register_method_no_params("get_dev_fee_thresholds", async_handler!(get_dev_fee_thresholds::<S>, single));
+    handler.register_method_no_params("get_size_on_disk", async_handler!(get_size_on_disk::<S>, single));
 
     // Retro compatibility, use stable_height
-    handler.register_method("get_stableheight", async_handler!(get_stable_height::<S>));
-    handler.register_method("get_stable_height", async_handler!(get_stable_height::<S>));
-    handler.register_method("get_stable_topoheight", async_handler!(get_stable_topoheight::<S>));
-    handler.register_method("get_hard_forks", async_handler!(get_hard_forks::<S>));
+    handler.register_method_no_params("get_stableheight", async_handler!(get_stable_height::<S>, single));
+    handler.register_method_no_params("get_stable_height", async_handler!(get_stable_height::<S>, single));
+    handler.register_method_no_params("get_stable_topoheight", async_handler!(get_stable_topoheight::<S>, single));
+    handler.register_method_no_params("get_hard_forks", async_handler!(get_hard_forks::<S>, single));
 
     // Blocks
-    handler.register_method("get_block_at_topoheight", async_handler!(get_block_at_topoheight::<S>));
-    handler.register_method("get_blocks_at_height", async_handler!(get_blocks_at_height::<S>));
-    handler.register_method("get_block_by_hash", async_handler!(get_block_by_hash::<S>));
-    handler.register_method("get_top_block", async_handler!(get_top_block::<S>));
-    handler.register_method("get_block_difficulty_by_hash", async_handler!(get_block_difficulty_by_hash::<S>));
-    handler.register_method("get_block_base_fee_by_hash", async_handler!(get_block_base_fee_by_hash::<S>));
-    handler.register_method("get_block_summary_at_topoheight", async_handler!(get_block_summary_at_topoheight::<S>));
+    handler.register_method_with_params("get_block_at_topoheight", async_handler!(get_block_at_topoheight::<S>));
+    handler.register_method_with_params("get_blocks_at_height", async_handler!(get_blocks_at_height::<S>));
+    handler.register_method_with_params("get_block_by_hash", async_handler!(get_block_by_hash::<S>));
+    handler.register_method_with_params("get_top_block", async_handler!(get_top_block::<S>));
+    handler.register_method_with_params("get_block_difficulty_by_hash", async_handler!(get_block_difficulty_by_hash::<S>));
+    handler.register_method_with_params("get_block_base_fee_by_hash", async_handler!(get_block_base_fee_by_hash::<S>));
+    handler.register_method_with_params("get_block_summary_at_topoheight", async_handler!(get_block_summary_at_topoheight::<S>));
 
     // Balances
-    handler.register_method("get_balance", async_handler!(get_balance::<S>));
-    handler.register_method("get_stable_balance", async_handler!(get_stable_balance::<S>));
-    handler.register_method("has_balance", async_handler!(has_balance::<S>));
-    handler.register_method("get_balance_at_topoheight", async_handler!(get_balance_at_topoheight::<S>));
+    handler.register_method_with_params("get_balance", async_handler!(get_balance::<S>));
+    handler.register_method_with_params("get_stable_balance", async_handler!(get_stable_balance::<S>));
+    handler.register_method_with_params("has_balance", async_handler!(has_balance::<S>));
+    handler.register_method_with_params("get_balance_at_topoheight", async_handler!(get_balance_at_topoheight::<S>));
 
-    handler.register_method("get_nonce", async_handler!(get_nonce::<S>));
-    handler.register_method("has_nonce", async_handler!(has_nonce::<S>));
-    handler.register_method("get_nonce_at_topoheight", async_handler!(get_nonce_at_topoheight::<S>));
+    handler.register_method_with_params("get_nonce", async_handler!(get_nonce::<S>));
+    handler.register_method_with_params("has_nonce", async_handler!(has_nonce::<S>));
+    handler.register_method_with_params("get_nonce_at_topoheight", async_handler!(get_nonce_at_topoheight::<S>));
 
     // Assets
-    handler.register_method("get_asset", async_handler!(get_asset::<S>));
-    handler.register_method("get_asset_supply", async_handler!(get_asset_supply::<S>));
-    handler.register_method("get_assets", async_handler!(get_assets::<S>));
+    handler.register_method_with_params("get_asset", async_handler!(get_asset::<S>));
+    handler.register_method_with_params("get_asset_supply", async_handler!(get_asset_supply::<S>));
+    handler.register_method_with_params("get_assets", async_handler!(get_assets::<S>));
 
-    handler.register_method("count_assets", async_handler!(count_assets::<S>));
-    handler.register_method("count_accounts", async_handler!(count_accounts::<S>));
-    handler.register_method("count_transactions", async_handler!(count_transactions::<S>));
-    handler.register_method("count_contracts", async_handler!(count_contracts::<S>));
+    handler.register_method_no_params("count_assets", async_handler!(count_assets::<S>, single));
+    handler.register_method_no_params("count_accounts", async_handler!(count_accounts::<S>, single));
+    handler.register_method_no_params("count_transactions", async_handler!(count_transactions::<S>, single));
+    handler.register_method_no_params("count_contracts", async_handler!(count_contracts::<S>, single));
 
     // Transactions
-    handler.register_method("submit_transaction", async_handler!(submit_transaction::<S>));
-    handler.register_method("get_transaction_executor", async_handler!(get_transaction_executor::<S>));
-    handler.register_method("get_transaction", async_handler!(get_transaction::<S>));
-    handler.register_method("get_transactions", async_handler!(get_transactions::<S>));
-    handler.register_method("get_transactions_summary", async_handler!(get_transactions_summary::<S>));
-    handler.register_method("is_tx_executed_in_block", async_handler!(is_tx_executed_in_block::<S>));
+    handler.register_method_with_params("submit_transaction", async_handler!(submit_transaction::<S>));
+    handler.register_method_with_params("get_transaction_executor", async_handler!(get_transaction_executor::<S>));
+    handler.register_method_with_params("get_transaction", async_handler!(get_transaction::<S>));
+    handler.register_method_with_params("get_transactions", async_handler!(get_transactions::<S>));
+    handler.register_method_with_params("get_transactions_summary", async_handler!(get_transactions_summary::<S>));
+    handler.register_method_with_params("is_tx_executed_in_block", async_handler!(is_tx_executed_in_block::<S>));
 
     // P2p
-    handler.register_method("p2p_status", async_handler!(p2p_status::<S>));
-    handler.register_method("get_peers", async_handler!(get_peers::<S>));
-    handler.register_method("get_p2p_block_propagation", async_handler!(get_p2p_block_propagation::<S>));
+    handler.register_method_no_params("p2p_status", async_handler!(p2p_status::<S>, single));
+    handler.register_method_no_params("get_peers", async_handler!(get_peers::<S>, single));
+    handler.register_method_with_params("get_p2p_block_propagation", async_handler!(get_p2p_block_propagation::<S>));
 
     // Mempool
-    handler.register_method("get_mempool", async_handler!(get_mempool::<S>));
-    handler.register_method("get_mempool_summary", async_handler!(get_mempool_summary::<S>));
-    handler.register_method("get_mempool_cache", async_handler!(get_mempool_cache::<S>));
-    handler.register_method("get_estimated_fee_rates", async_handler!(get_estimated_fee_rates::<S>));
-    handler.register_method("get_estimated_fee_per_kb", async_handler!(get_estimated_fee_per_kb::<S>));
+    handler.register_method_with_params("get_mempool", async_handler!(get_mempool::<S>));
+    handler.register_method_with_params("get_mempool_summary", async_handler!(get_mempool_summary::<S>));
+    handler.register_method_with_params("get_mempool_cache", async_handler!(get_mempool_cache::<S>));
+    handler.register_method_no_params("get_estimated_fee_rates", async_handler!(get_estimated_fee_rates::<S>, single));
+    handler.register_method_no_params("get_estimated_fee_per_kb", async_handler!(get_estimated_fee_per_kb::<S>, single));
 
     // DAG
-    handler.register_method("get_dag_order", async_handler!(get_dag_order::<S>));
-    handler.register_method("get_blocks_range_by_topoheight", async_handler!(get_blocks_range_by_topoheight::<S>));
-    handler.register_method("get_blocks_range_by_height", async_handler!(get_blocks_range_by_height::<S>));
+    handler.register_method_with_params("get_dag_order", async_handler!(get_dag_order::<S>));
+    handler.register_method_with_params("get_blocks_range_by_topoheight", async_handler!(get_blocks_range_by_topoheight::<S>));
+    handler.register_method_with_params("get_blocks_range_by_height", async_handler!(get_blocks_range_by_height::<S>));
 
     // Accounts
-    handler.register_method("get_account_history", async_handler!(get_account_history::<S>));
-    handler.register_method("get_account_assets", async_handler!(get_account_assets::<S>));
-    handler.register_method("get_accounts", async_handler!(get_accounts::<S>));
-    handler.register_method("is_account_registered", async_handler!(is_account_registered::<S>));
-    handler.register_method("get_account_registration_topoheight", async_handler!(get_account_registration_topoheight::<S>));
+    handler.register_method_with_params("get_account_history", async_handler!(get_account_history::<S>));
+    handler.register_method_with_params("get_account_assets", async_handler!(get_account_assets::<S>));
+    handler.register_method_with_params("get_accounts", async_handler!(get_accounts::<S>));
+    handler.register_method_with_params("is_account_registered", async_handler!(is_account_registered::<S>));
+    handler.register_method_with_params("get_account_registration_topoheight", async_handler!(get_account_registration_topoheight::<S>));
 
     // Useful methods
-    handler.register_method("validate_address", async_handler!(validate_address::<S>));
-    handler.register_method("split_address", async_handler!(split_address::<S>));
-    handler.register_method("extract_key_from_address", async_handler!(extract_key_from_address::<S>));
-    handler.register_method("key_to_address", async_handler!(key_to_address::<S>));
-    handler.register_method("make_integrated_address", async_handler!(make_integrated_address::<S>));
-    handler.register_method("decrypt_extra_data", async_handler!(decrypt_extra_data::<S>));
+    handler.register_method_with_params("validate_address", async_handler!(validate_address::<S>));
+    handler.register_method_with_params("split_address", async_handler!(split_address::<S>));
+    handler.register_method_with_params("extract_key_from_address", async_handler!(extract_key_from_address::<S>));
+    handler.register_method_with_params("key_to_address", async_handler!(key_to_address::<S>));
+    handler.register_method_with_params("make_integrated_address", async_handler!(make_integrated_address::<S>));
+    handler.register_method_with_params("decrypt_extra_data", async_handler!(decrypt_extra_data::<S>));
 
     // Multisig
-    handler.register_method("get_multisig_at_topoheight", async_handler!(get_multisig_at_topoheight::<S>));
-    handler.register_method("get_multisig", async_handler!(get_multisig::<S>));
-    handler.register_method("has_multisig", async_handler!(has_multisig::<S>));
-    handler.register_method("has_multisig_at_topoheight", async_handler!(has_multisig_at_topoheight::<S>));
+    handler.register_method_with_params("get_multisig_at_topoheight", async_handler!(get_multisig_at_topoheight::<S>));
+    handler.register_method_with_params("get_multisig", async_handler!(get_multisig::<S>));
+    handler.register_method_with_params("has_multisig", async_handler!(has_multisig::<S>));
+    handler.register_method_with_params("has_multisig_at_topoheight", async_handler!(has_multisig_at_topoheight::<S>));
 
     // Contracts
-    handler.register_method("get_contract_logs", async_handler!(get_contract_logs::<S>));
-    handler.register_method("get_contract_scheduled_executions_at_topoheight", async_handler!(get_contract_scheduled_executions_at_topoheight::<S>));
-    handler.register_method("get_contract_registered_executions_at_topoheight", async_handler!(get_contract_registered_executions_at_topoheight::<S>));
+    handler.register_method_with_params("get_contract_logs", async_handler!(get_contract_logs::<S>));
+    handler.register_method_with_params("get_contract_scheduled_executions_at_topoheight", async_handler!(get_contract_scheduled_executions_at_topoheight::<S>));
+    handler.register_method_with_params("get_contract_registered_executions_at_topoheight", async_handler!(get_contract_registered_executions_at_topoheight::<S>));
 
-    handler.register_method("get_contract_outputs", async_handler!(get_contract_outputs::<S>));
-    handler.register_method("get_contract_module", async_handler!(get_contract_module::<S>));
-    handler.register_method("get_contract_data", async_handler!(get_contract_data::<S>));
-    handler.register_method("get_contract_data_at_topoheight", async_handler!(get_contract_data_at_topoheight::<S>));
-    handler.register_method("get_contract_balance", async_handler!(get_contract_balance::<S>));
-    handler.register_method("get_contract_balance_at_topoheight", async_handler!(get_contract_balance_at_topoheight::<S>));
-    handler.register_method("get_contract_assets", async_handler!(get_contract_assets::<S>));
+    handler.register_method_with_params("get_contract_outputs", async_handler!(get_contract_outputs::<S>));
+    handler.register_method_with_params("get_contract_module", async_handler!(get_contract_module::<S>));
+    handler.register_method_with_params("get_contract_data", async_handler!(get_contract_data::<S>));
+    handler.register_method_with_params("get_contract_data_at_topoheight", async_handler!(get_contract_data_at_topoheight::<S>));
+    handler.register_method_with_params("get_contract_balance", async_handler!(get_contract_balance::<S>));
+    handler.register_method_with_params("get_contract_balance_at_topoheight", async_handler!(get_contract_balance_at_topoheight::<S>));
+    handler.register_method_with_params("get_contract_assets", async_handler!(get_contract_assets::<S>));
 
     if allow_mining_methods {
-        handler.register_method("get_block_template", async_handler!(get_block_template::<S>));
-        handler.register_method("get_miner_work", async_handler!(get_miner_work::<S>));
-        handler.register_method("submit_block", async_handler!(submit_block::<S>));
+        handler.register_method_with_params("get_block_template", async_handler!(get_block_template::<S>));
+        handler.register_method_with_params("get_miner_work", async_handler!(get_miner_work::<S>));
+        handler.register_method_with_params("submit_block", async_handler!(submit_block::<S>));
     }
 }
 
-async fn version<S: Storage>(_: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    require_no_params(body)?;
-    Ok(json!(VERSION))
+async fn version<S: Storage>(_: &Context) -> Result<&'static str, InternalRpcError> {
+    Ok(VERSION)
 }
 
-async fn get_height<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    require_no_params(body)?;
+async fn get_height<S: Storage>(context: &Context) -> Result<u64, InternalRpcError> {
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
-    Ok(json!(blockchain.get_height().await))
+    Ok(blockchain.get_height().await)
 }
 
-async fn get_topoheight<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    require_no_params(body)?;
+async fn get_topoheight<S: Storage>(context: &Context) -> Result<TopoHeight, InternalRpcError> {
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
-    Ok(json!(blockchain.get_topo_height().await))
+    Ok(blockchain.get_topo_height().await)
 }
 
-async fn get_pruned_topoheight<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    require_no_params(body)?;
-
+async fn get_pruned_topoheight<S: Storage>(context: &Context) -> Result<Option<TopoHeight>, InternalRpcError> {
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let storage = blockchain.get_storage().read().await;
-    let pruned_topoheight = storage.get_pruned_topoheight().await.context("Error while retrieving pruned topoheight")?;
+    let pruned_topoheight = storage.get_pruned_topoheight().await
+        .context("Error while retrieving pruned topoheight")?;
 
-    Ok(json!(pruned_topoheight))
+    Ok(pruned_topoheight)
 }
 
-async fn get_stable_height<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    require_no_params(body)?;
+async fn get_stable_height<S: Storage>(context: &Context) -> Result<u64, InternalRpcError> {
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
-    Ok(json!(blockchain.get_stable_height().await))
+    Ok(blockchain.get_stable_height().await)
 }
 
-async fn get_stable_topoheight<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    require_no_params(body)?;
+async fn get_stable_topoheight<S: Storage>(context: &Context) -> Result<TopoHeight, InternalRpcError> {
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
-    Ok(json!(blockchain.get_stable_topoheight().await))
+    Ok(blockchain.get_stable_topoheight().await)
 }
 
-async fn get_hard_forks<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    require_no_params(body)?;
+async fn get_hard_forks<S: Storage>(context: &Context) -> Result<&'static [HardFork], InternalRpcError> {
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let hard_forks = get_configured_hard_forks(blockchain.get_network());
 
-    Ok(json!(hard_forks))
+    Ok(hard_forks)
 }
 
-async fn get_block_at_topoheight<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    let params: GetBlockAtTopoHeightParams = parse_params(body)?;
+async fn get_block_at_topoheight<S: Storage>(context: &Context, params: GetBlockAtTopoHeightParams) -> Result<Value, InternalRpcError> {
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let storage = blockchain.get_storage().read().await;
     let hash = storage.get_hash_at_topo_height(params.topoheight).await.context("Error while retrieving hash at topo height")?;
     get_block_response_for_hash(&blockchain, &storage, &hash, params.include_txs).await
 }
 
-async fn get_block_by_hash<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    let params: GetBlockByHashParams = parse_params(body)?;
+async fn get_block_by_hash<S: Storage>(context: &Context, params: GetBlockByHashParams<'_>) -> Result<Value, InternalRpcError> {
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let storage = blockchain.get_storage().read().await;
     get_block_response_for_hash(&blockchain, &storage, &params.hash, params.include_txs).await
 }
 
-async fn get_top_block<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    let params: GetTopBlockParams = parse_params(body)?;
+async fn get_top_block<S: Storage>(context: &Context, params: GetTopBlockParams) -> Result<Value, InternalRpcError> {
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let storage = blockchain.get_storage().read().await;
     let hash = blockchain.get_top_block_hash_for_storage(&storage).await.context("Error while retrieving top block hash")?;
     get_block_response_for_hash(&blockchain, &storage, &hash, params.include_txs).await
 }
 
-async fn get_block_template<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    let params: GetBlockTemplateParams = parse_params(body)?;
+async fn get_block_template<S: Storage>(context: &Context, params: GetBlockTemplateParams<'_>) -> Result<GetBlockTemplateResult, InternalRpcError> {
     if !params.address.is_normal() {
         return Err(InternalRpcError::InvalidParamsAny(ApiError::ExpectedNormalAddress.into()))
     }
@@ -497,11 +495,10 @@ async fn get_block_template<S: Storage>(context: &Context, body: Value) -> Resul
 
     let chain_cache = storage.chain_cache().await;
     let topoheight = chain_cache.topoheight;
-    Ok(json!(GetBlockTemplateResult { template: block.to_hex(), algorithm, height, topoheight, difficulty }))
+    Ok(GetBlockTemplateResult { template: block.to_hex(), algorithm, height, topoheight, difficulty })
 }
 
-async fn get_miner_work<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    let params: GetMinerWorkParams = parse_params(body)?;
+async fn get_miner_work<S: Storage>(context: &Context, params: GetMinerWorkParams<'_>) -> Result<GetMinerWorkResult, InternalRpcError> {
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
 
     let header = BlockHeader::from_hex(&params.template)?;
@@ -532,11 +529,10 @@ async fn get_miner_work<S: Storage>(context: &Context, body: Value) -> Result<Va
 
     let algorithm = get_pow_algorithm_for_version(version);
 
-    Ok(json!(GetMinerWorkResult { miner_work: work.to_hex(), algorithm, difficulty, height, topoheight }))
+    Ok(GetMinerWorkResult { miner_work: work.to_hex(), algorithm, difficulty, height, topoheight })
 }
 
-async fn submit_block<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    let params: SubmitBlockParams = parse_params(body)?;
+async fn submit_block<S: Storage>(context: &Context, params: SubmitBlockParams) -> Result<bool, InternalRpcError> {
     let mut header = BlockHeader::from_hex(&params.block_template)?;
     if let Some(work) = params.miner_work {
         let work = MinerWork::from_hex(&work)?;
@@ -549,11 +545,10 @@ async fn submit_block<S: Storage>(context: &Context, body: Value) -> Result<Valu
 
     let block = blockchain.build_block_from_header(header).await?;
     blockchain.add_new_block(block, PreVerifyBlock::None, BroadcastOption::All, true).await?;
-    Ok(json!(true))
+    Ok(true)
 }
 
-async fn get_balance<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    let params: GetBalanceParams = parse_params(body)?;
+async fn get_balance<S: Storage>(context: &Context, params: GetBalanceParams<'_>) -> Result<GetBalanceResult, InternalRpcError> {
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     if params.address.is_mainnet() != blockchain.get_network().is_mainnet() {
         return Err(InternalRpcError::InvalidParamsAny(BlockchainError::InvalidNetwork.into()))
@@ -561,14 +556,13 @@ async fn get_balance<S: Storage>(context: &Context, body: Value) -> Result<Value
 
     let storage = blockchain.get_storage().read().await;
     let (topoheight, version) = storage.get_last_balance(params.address.get_public_key(), &params.asset).await.context("Error while retrieving last balance")?;
-    Ok(json!(GetBalanceResult {
+    Ok(GetBalanceResult {
         version,
         topoheight
-    }))
+    })
 }
 
-async fn get_stable_balance<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    let params: GetBalanceParams = parse_params(body)?;
+async fn get_stable_balance<S: Storage>(context: &Context, params: GetBalanceParams<'_>) -> Result<GetStableBalanceResult, InternalRpcError> {
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     if params.address.is_mainnet() != blockchain.get_network().is_mainnet() {
         return Err(InternalRpcError::InvalidParamsAny(BlockchainError::InvalidNetwork.into()))
@@ -593,15 +587,14 @@ async fn get_stable_balance<S: Storage>(context: &Context, body: Value) -> Resul
             .ok_or(InternalRpcError::InvalidRequestStr("no stable balance found for this account"))?
     };
 
-    Ok(json!(GetStableBalanceResult {
+    Ok(GetStableBalanceResult {
         version,
         stable_topoheight,
         stable_block_hash: storage.get_hash_at_topo_height(stable_topoheight).await.context("Error while retrieving hash at topo height")?
-    }))
+    })
 }
 
-async fn has_balance<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    let params: HasBalanceParams = parse_params(body)?;
+async fn has_balance<S: Storage>(context: &Context, params: HasBalanceParams<'_>) -> Result<HasBalanceResult, InternalRpcError> {
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     if params.address.is_mainnet() != blockchain.get_network().is_mainnet() {
         return Err(InternalRpcError::InvalidParamsAny(BlockchainError::InvalidNetwork.into()))
@@ -615,11 +608,10 @@ async fn has_balance<S: Storage>(context: &Context, body: Value) -> Result<Value
         storage.has_balance_for(key, &params.asset).await.context("Error while checking balance for account")?
     };
 
-    Ok(json!(HasBalanceResult { exist }))
+    Ok(HasBalanceResult { exist })
 }
 
-async fn get_info<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    require_no_params(body)?;
+async fn get_info<S: Storage>(context: &Context) -> Result<GetInfoResult, InternalRpcError> {
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
 
     let (height, topoheight, stableheight, top_block_hash, emitted_supply, circulating_supply, pruned_topoheight, average_block_time, difficulty) = {    
@@ -654,7 +646,7 @@ async fn get_info<S: Storage>(context: &Context, body: Value) -> Result<Value, I
     let block_reward = get_block_reward(emitted_supply, block_time_target);
     let (dev_reward, miner_reward) = get_block_rewards(height, block_reward);
 
-    Ok(json!(GetInfoResult {
+    Ok(GetInfoResult {
         height,
         topoheight,
         stableheight,
@@ -674,11 +666,10 @@ async fn get_info<S: Storage>(context: &Context, body: Value) -> Result<Value, I
         version,
         network,
         block_version: Some(block_version),
-    }))
+    })
 }
 
-async fn get_balance_at_topoheight<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    let params: GetBalanceAtTopoHeightParams = parse_params(body)?;
+async fn get_balance_at_topoheight<S: Storage>(context: &Context, params: GetBalanceAtTopoHeightParams<'_>) -> Result<Value, InternalRpcError> {
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
 
     if params.address.is_mainnet() != blockchain.get_network().is_mainnet() {
@@ -697,8 +688,7 @@ async fn get_balance_at_topoheight<S: Storage>(context: &Context, body: Value) -
     Ok(json!(balance))
 }
 
-async fn has_nonce<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    let params: HasNonceParams = parse_params(body)?;
+async fn has_nonce<S: Storage>(context: &Context, params: HasNonceParams<'_>) -> Result<HasNonceResult, InternalRpcError> {
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     if params.address.is_mainnet() != blockchain.get_network().is_mainnet() {
         return Err(InternalRpcError::InvalidParamsAny(BlockchainError::InvalidNetwork.into()))
@@ -711,11 +701,10 @@ async fn has_nonce<S: Storage>(context: &Context, body: Value) -> Result<Value, 
         storage.has_nonce(params.address.get_public_key()).await.context("Error while checking nonce for account")?
     };
 
-    Ok(json!(HasNonceResult { exist }))
+    Ok(HasNonceResult { exist })
 }
 
-async fn get_nonce<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    let params: GetNonceParams = parse_params(body)?;
+async fn get_nonce<S: Storage>(context: &Context, params: GetNonceParams<'_>) -> Result<GetNonceResult, InternalRpcError> {
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     if params.address.is_mainnet() != blockchain.get_network().is_mainnet() {
         return Err(InternalRpcError::InvalidParamsAny(BlockchainError::InvalidNetwork.into()))
@@ -725,11 +714,10 @@ async fn get_nonce<S: Storage>(context: &Context, body: Value) -> Result<Value, 
     let (topoheight, version) = storage.get_last_nonce(params.address.get_public_key()).await
         .context("Error while retrieving nonce for account")?;
 
-    Ok(json!(GetNonceResult { topoheight, version }))
+    Ok(GetNonceResult { topoheight, version })
 }
 
-async fn get_nonce_at_topoheight<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    let params: GetNonceAtTopoHeightParams = parse_params(body)?;
+async fn get_nonce_at_topoheight<S: Storage>(context: &Context, params: GetNonceAtTopoHeightParams<'_>) -> Result<Value, InternalRpcError> {
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     if params.address.is_mainnet() != blockchain.get_network().is_mainnet() {
         return Err(InternalRpcError::InvalidParamsAny(BlockchainError::InvalidNetwork.into()))
@@ -747,8 +735,7 @@ async fn get_nonce_at_topoheight<S: Storage>(context: &Context, body: Value) -> 
     Ok(json!(nonce))
 }
 
-async fn get_asset<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    let params: GetAssetParams = parse_params(body)?;
+async fn get_asset<S: Storage>(context: &Context, params: GetAssetParams<'_>) -> Result<Value, InternalRpcError> {
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let storage = blockchain.get_storage().read().await;
     let (topoheight, inner) = storage.get_asset(&params.asset).await.context("Asset was not found")?;
@@ -759,8 +746,7 @@ async fn get_asset<S: Storage>(context: &Context, body: Value) -> Result<Value, 
     }))
 }
 
-async fn get_asset_supply<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    let params: GetAssetParams = parse_params(body)?;
+async fn get_asset_supply<S: Storage>(context: &Context, params: GetAssetParams<'_>) -> Result<RPCVersioned<Versioned<u64>>, InternalRpcError> {
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let storage = blockchain.get_storage().read().await;
     let chain_cache = storage.chain_cache().await;
@@ -770,14 +756,13 @@ async fn get_asset_supply<S: Storage>(context: &Context, body: Value) -> Result<
         .context("Asset was not found")?
         .context("No supply available")?;
 
-    Ok(json!(RPCVersioned {
+    Ok(RPCVersioned {
         topoheight,
         version
-    }))
+    })
 }
 
-async fn get_assets<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    let params: GetAssetsParams = parse_params(body)?;
+async fn get_assets<'a, S: Storage>(context: &'a Context, params: GetAssetsParams) -> Result<Vec<RPCAssetData<'a>>, InternalRpcError> {
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let maximum = if let Some(maximum) = params.maximum {
         if maximum > MAX_ASSETS {
@@ -807,39 +792,35 @@ async fn get_assets<S: Storage>(context: &Context, body: Value) -> Result<Value,
         })
     }).collect::<Result<Vec<_>, BlockchainError>>()?;
 
-    Ok(json!(response))
+    Ok(response)
 }
 
-async fn count_assets<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    require_no_params(body)?;
+async fn count_assets<S: Storage>(context: &Context) -> Result<u64, InternalRpcError> {
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let storage = blockchain.get_storage().read().await;
     let count = storage.count_assets().await.context("Error while retrieving assets count")?;
-    Ok(json!(count))
+    Ok(count)
 }
 
-async fn count_accounts<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    require_no_params(body)?;
+async fn count_accounts<S: Storage>(context: &Context) -> Result<u64, InternalRpcError> {
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let storage = blockchain.get_storage().read().await;
     let count = storage.count_accounts().await.context("Error while retrieving accounts count")?;
-    Ok(json!(count))
+    Ok(count)
 }
 
-async fn count_transactions<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    require_no_params(body)?;
+async fn count_transactions<S: Storage>(context: &Context) -> Result<u64, InternalRpcError> {
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let storage = blockchain.get_storage().read().await;
     let count = storage.count_transactions().await.context("Error while retrieving transactions count")?;
-    Ok(json!(count))
+    Ok(count)
 }
 
-async fn count_contracts<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    require_no_params(body)?;
+async fn count_contracts<S: Storage>(context: &Context) -> Result<u64, InternalRpcError> {
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let storage = blockchain.get_storage().read().await;
     let count = storage.count_contracts().await.context("Error while retrieving contracts count")?;
-    Ok(json!(count))
+    Ok(count)
 }
 
 async fn submit_transaction<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
@@ -885,12 +866,10 @@ async fn get_transaction_executor<S: Storage>(context: &Context, body: Value) ->
     ))
 }
 
-async fn p2p_status<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    require_no_params(body)?;
-
+async fn p2p_status<S: Storage>(context: &Context) -> Result<Value, InternalRpcError> {
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let p2p = { blockchain.get_p2p().read().await.clone() };
-    match p2p.as_ref() {
+    match p2p {
         Some(p2p) => {
             let tag = p2p.get_tag();
             let peer_id = p2p.get_peer_id();
@@ -914,8 +893,7 @@ async fn p2p_status<S: Storage>(context: &Context, body: Value) -> Result<Value,
     }
 }
 
-async fn get_peers<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    require_no_params(body)?;
+async fn get_peers<S: Storage>(context: &Context) -> Result<Value, InternalRpcError> {
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let p2p = { blockchain.get_p2p().read().await.clone() };
     match p2p.as_ref() {
@@ -940,9 +918,7 @@ async fn get_peers<S: Storage>(context: &Context, body: Value) -> Result<Value, 
     }
 }
 
-async fn get_mempool<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    let params: GetMempoolParams = parse_params(body)?;
-
+async fn get_mempool<S: Storage>(context: &Context, params: GetMempoolParams) -> Result<Value, InternalRpcError> {
     let maximum = params.maximum.filter(|v| *v <= MAX_TXS)
         .unwrap_or(MAX_TXS);
     let skip = params.skip.unwrap_or(0);
@@ -965,9 +941,7 @@ async fn get_mempool<S: Storage>(context: &Context, body: Value) -> Result<Value
     }))
 }
 
-async fn get_mempool_summary<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    let params: GetMempoolParams = parse_params(body)?;
-
+async fn get_mempool_summary<S: Storage>(context: &Context, params: GetMempoolParams) -> Result<Value, InternalRpcError> {
     let maximum = params.maximum.filter(|v| *v <= MAX_MEMPOOL_TXS_SUMMARY)
         .unwrap_or(MAX_MEMPOOL_TXS_SUMMARY);
 
@@ -999,9 +973,7 @@ async fn get_mempool_summary<S: Storage>(context: &Context, body: Value) -> Resu
     }))
 }
 
-async fn get_estimated_fee_per_kb<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    require_no_params(body)?;
-
+async fn get_estimated_fee_per_kb<S: Storage>(context: &Context) -> Result<Value, InternalRpcError> {
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let (fee_per_kb, predicated_fee_per_kb) = blockchain.predicate_required_base_fee().await?;
 
@@ -1011,9 +983,7 @@ async fn get_estimated_fee_per_kb<S: Storage>(context: &Context, body: Value) ->
     }))
 }
 
-async fn get_estimated_fee_rates<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    require_no_params(body)?;
-
+async fn get_estimated_fee_rates<S: Storage>(context: &Context) -> Result<Value, InternalRpcError> {
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let storage = blockchain.get_storage().read().await;
     let tips = storage.get_tips().await?;
@@ -1024,8 +994,7 @@ async fn get_estimated_fee_rates<S: Storage>(context: &Context, body: Value) -> 
     Ok(json!(estimated))
 }
 
-async fn get_blocks_at_height<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    let params: GetBlocksAtHeightParams = parse_params(body)?;
+async fn get_blocks_at_height<S: Storage>(context: &Context, params: GetBlocksAtHeightParams) -> Result<Value, InternalRpcError> {
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let storage = blockchain.get_storage().read().await;
 
@@ -1036,19 +1005,16 @@ async fn get_blocks_at_height<S: Storage>(context: &Context, body: Value) -> Res
     Ok(json!(blocks))
 }
 
-async fn get_tips<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    require_no_params(body)?;
+async fn get_tips<S: Storage>(context: &Context) -> Result<Tips, InternalRpcError> {
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let storage = blockchain.get_storage().read().await;
     let tips = storage.get_tips().await.context("Error while retrieving tips")?;
-    Ok(json!(tips))
+    Ok(tips)
 }
 
 // get dag order based on params
 // if no params found, get order of last 64 blocks
-async fn get_dag_order<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    let params: GetTopoHeightRangeParams = parse_params(body)?;
-
+async fn get_dag_order<S: Storage>(context: &Context, params: GetTopoHeightRangeParams) -> Result<Vec<Hash>, InternalRpcError> {
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
 
     let storage = blockchain.get_storage().read().await;
@@ -1059,11 +1025,13 @@ async fn get_dag_order<S: Storage>(context: &Context, body: Value) -> Result<Val
 
     let mut order = Vec::with_capacity(count as usize);
     for i in start_topoheight..=end_topoheight {
-        let hash = storage.get_hash_at_topo_height(i).await.context("Error while retrieving hash at topo height")?;
+        let hash = storage.get_hash_at_topo_height(i).await
+            .context("Error while retrieving hash at topo height")?;
+
         order.push(hash);
     }
 
-    Ok(json!(order))
+    Ok(order)
 }
 
 fn get_range(start: Option<TopoHeight>, end: Option<TopoHeight>, maximum: u64, current: TopoHeight) -> Result<(TopoHeight, TopoHeight), InternalRpcError> {
@@ -1092,11 +1060,9 @@ fn get_range(start: Option<TopoHeight>, end: Option<TopoHeight>, maximum: u64, c
 
 // get blocks between range of topoheight
 // if no params found, get last 20 blocks header
-async fn get_blocks_range_by_topoheight<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    let params: GetTopoHeightRangeParams = parse_params(body)?;
-
+async fn get_blocks_range_by_topoheight<S: Storage>(context: &Context, params: GetTopoHeightRangeParams) -> Result<Value, InternalRpcError> {
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
-    
+
     let storage = blockchain.get_storage().read().await;
     let chain_cache = storage.chain_cache().await;
     let current_topoheight = chain_cache.topoheight;
@@ -1114,9 +1080,8 @@ async fn get_blocks_range_by_topoheight<S: Storage>(context: &Context, body: Val
 
 // get blocks between range of height
 // if no params found, get last 20 blocks header
-// you can only request 
-async fn get_blocks_range_by_height<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    let params: GetHeightRangeParams = parse_params(body)?;
+// you can only request up to MAX_BLOCKS blocks in one request
+async fn get_blocks_range_by_height<S: Storage>(context: &Context, params: GetHeightRangeParams) -> Result<Value, InternalRpcError> {
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
 
     let storage = blockchain.get_storage().read().await;
@@ -1138,9 +1103,7 @@ async fn get_blocks_range_by_height<S: Storage>(context: &Context, body: Value) 
 
 // get up to 20 transactions at once
 // if a tx hash is not present, we keep the order and put json "null" value
-async fn get_transactions<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    let params: GetTransactionsParams = parse_params(body)?;
-
+async fn get_transactions<S: Storage>(context: &Context, params: GetTransactionsParams) -> Result<Value, InternalRpcError> {
     let hashes = params.tx_hashes;
     if  hashes.len() > MAX_TXS {
         return Err(InternalRpcError::InvalidJSONRequest).context(format!("Too many requested txs: {}, maximum is {}", hashes.len(), MAX_TXS))?
@@ -1166,9 +1129,7 @@ async fn get_transactions<S: Storage>(context: &Context, body: Value) -> Result<
 
 // get up to N transactions summary at once
 // if a tx hash is not present, we keep the order and put json "null" value
-async fn get_transactions_summary<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    let params: GetTransactionsParams = parse_params(body)?;
-
+async fn get_transactions_summary<S: Storage>(context: &Context, params: GetTransactionsParams) -> Result<Vec<Option<TransactionSummary>>, InternalRpcError> {
     let hashes = params.tx_hashes;
     if  hashes.len() > MAX_TXS_SUMMARY {
         return Err(InternalRpcError::InvalidJSONRequest).context(format!("Too many requested txs: {}, maximum is {}", hashes.len(), MAX_TXS))?
@@ -1180,26 +1141,22 @@ async fn get_transactions_summary<S: Storage>(context: &Context, body: Value) ->
     for hash in hashes {
         let tx = blockchain.get_tx(&hash).await
             .ok()
-            .map(|tx|
-                Some(TransactionSummary {
-                    hash: Cow::Owned(hash),
-                    source: tx.get_source().as_address(mainnet),
-                    fee: tx.get_fee(),
-                    size: tx.size()
-                })
-            );
+            .map(|tx| TransactionSummary {
+                hash: Cow::Owned(hash),
+                source: tx.get_source().as_address(mainnet),
+                fee: tx.get_fee(),
+                size: tx.size()
+            });
 
         transactions.push(tx);
     }
 
-    Ok(json!(transactions))
+    Ok(transactions)
 }
 
 // retrieve all history changes for an account on an asset
-async fn get_account_history<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    let params: GetAccountHistoryParams = parse_params(body)?;
+async fn get_account_history<S: Storage>(context: &Context, params: GetAccountHistoryParams) -> Result<Vec<AccountHistoryEntry>, InternalRpcError> {
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
-
 
     let is_mainnet = blockchain.get_network().is_mainnet();
     if params.address.is_mainnet() != is_mainnet {
@@ -1418,11 +1375,10 @@ async fn get_account_history<S: Storage>(context: &Context, body: Value) -> Resu
         }
     }
 
-    Ok(json!(history))
+    Ok(history)
 }
 
-async fn get_account_assets<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    let params: GetAccountAssetsParams = parse_params(body)?;
+async fn get_account_assets<S: Storage>(context: &Context, params: GetAccountAssetsParams<'_>) -> Result<Vec<Hash>, InternalRpcError> {
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     if params.address.is_mainnet() != blockchain.get_network().is_mainnet() {
         return Err(InternalRpcError::InvalidParamsAny(BlockchainError::InvalidNetwork.into()))
@@ -1445,12 +1401,11 @@ async fn get_account_assets<S: Storage>(context: &Context, body: Value) -> Resul
         .take(maximum)
         .collect::<Result<_, BlockchainError>>()
         .context("Error while retrieving assets for account")?;
-    Ok(json!(assets))
+    Ok(assets)
 }
 
 // retrieve all available accounts (each account got at least one interaction on chain)
-async fn get_accounts<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    let params: GetAccountsParams = parse_params(body)?;
+async fn get_accounts<S: Storage>(context: &Context, params: GetAccountsParams) -> Result<Vec<Address>, InternalRpcError> {
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
 
     let storage = blockchain.get_storage().read().await;
@@ -1501,12 +1456,11 @@ async fn get_accounts<S: Storage>(context: &Context, body: Value) -> Result<Valu
         .map(|key| key.map(|key| key.to_address(mainnet)))
         .collect::<Result<Vec<_>, BlockchainError>>()?;
 
-    Ok(json!(accounts))
+    Ok(accounts)
 }
 
 // Check if the account is registered on chain or not
-async fn is_account_registered<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    let params: IsAccountRegisteredParams = parse_params(body)?;
+async fn is_account_registered<S: Storage>(context: &Context, params: IsAccountRegisteredParams<'_>) -> Result<bool, InternalRpcError> {
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let storage = blockchain.get_storage().read().await;
     let chain_cache = storage.chain_cache().await;
@@ -1519,55 +1473,51 @@ async fn is_account_registered<S: Storage>(context: &Context, body: Value) -> Re
             .context("Error while checking if account is registered")?
     };
 
-    Ok(json!(registered))
+    Ok(registered)
 }
 
 // Search the account registration topoheight
-async fn get_account_registration_topoheight<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    let params: GetAccountRegistrationParams = parse_params(body)?;
+async fn get_account_registration_topoheight<S: Storage>(context: &Context, params: GetAccountRegistrationParams<'_>) -> Result<TopoHeight, InternalRpcError> {
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let storage = blockchain.get_storage().read().await;
     let key = params.address.get_public_key();
     let topoheight = storage.get_account_registration_topoheight(key).await.context("Error while retrieving registration topoheight")?;
-    Ok(json!(topoheight))
+    Ok(topoheight)
 }
 
 // Check if the asked TX is executed in the block
-async fn is_tx_executed_in_block<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    let params: IsTxExecutedInBlockParams = parse_params(body)?;
+async fn is_tx_executed_in_block<S: Storage>(context: &Context, params: IsTxExecutedInBlockParams<'_>) -> Result<bool, InternalRpcError> {
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let storage = blockchain.get_storage().read().await;
-    Ok(json!(storage.is_tx_executed_in_block(&params.tx_hash, &params.block_hash).await.context("Error while checking if tx was executed in block")?))
+    Ok(storage.is_tx_executed_in_block(&params.tx_hash, &params.block_hash).await
+        .context("Error while checking if tx was executed in block")?
+    )
 }
 
 // Get the configured dev fees
-async fn get_dev_fee_thresholds<S: Storage>(_: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    require_no_params(body)?;
-
-    Ok(json!(DEV_FEES))
+async fn get_dev_fee_thresholds<S: Storage>(_: &Context) -> Result<&'static [DevFeeThreshold], InternalRpcError> {
+    Ok(&DEV_FEES)
 }
 
 // Get size on disk of the chain database
-async fn get_size_on_disk<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    require_no_params(body)?;
+async fn get_size_on_disk<S: Storage>(context: &Context) -> Result<SizeOnDiskResult, InternalRpcError> {
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let storage = blockchain.get_storage().read().await;
     let size_bytes = storage.get_size_on_disk().await.context("Error while retrieving size on disk")?;
     let size_formatted = human_bytes(size_bytes as f64);
 
-    Ok(json!(SizeOnDiskResult {
+    Ok(SizeOnDiskResult {
         size_bytes,
         size_formatted
-    }))
+    })
 }
 
 // Retrieve the mempool cache for an account
-async fn get_mempool_cache<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    let params: GetMempoolCacheParams = parse_params(body)?;
+async fn get_mempool_cache<S: Storage>(context: &Context, params: GetMempoolCacheParams<'_>) -> Result<Value, InternalRpcError> {
     if !params.address.is_normal() {
         return Err(InternalRpcError::InvalidParamsAny(ApiError::ExpectedNormalAddress.into()))    
     }
-    
+
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     if params.address.is_mainnet() != blockchain.get_network().is_mainnet() {
         return Err(InternalRpcError::InvalidParamsAny(BlockchainError::InvalidNetwork.into()))
@@ -1580,9 +1530,7 @@ async fn get_mempool_cache<S: Storage>(context: &Context, body: Value) -> Result
     Ok(json!(cache))
 }
 
-async fn get_difficulty<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    require_no_params(body)?;
-
+async fn get_difficulty<S: Storage>(context: &Context) -> Result<GetDifficultyResult, InternalRpcError> {
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let storage = blockchain.get_storage().read().await;
     let chain_cache = storage.chain_cache().await;
@@ -1594,16 +1542,14 @@ async fn get_difficulty<S: Storage>(context: &Context, body: Value) -> Result<Va
 
     let hashrate = difficulty / (block_time_target / MILLIS_PER_SECOND);
     let hashrate_formatted = format_hashrate(hashrate.into());
-    Ok(json!(GetDifficultyResult {
+    Ok(GetDifficultyResult {
         hashrate,
         hashrate_formatted,
         difficulty,
-    }))
+    })
 }
 
-async fn get_block_difficulty_by_hash<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    let params: GetBlockDifficultyByHashParams = parse_params(body)?;
-
+async fn get_block_difficulty_by_hash<S: Storage>(context: &Context, params: GetBlockDifficultyByHashParams<'_>) -> Result<GetDifficultyResult, InternalRpcError> {
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let storage = blockchain.get_storage().read().await;
     let difficulty = storage.get_difficulty_for_block_hash(&params.block_hash).await
@@ -1616,15 +1562,14 @@ async fn get_block_difficulty_by_hash<S: Storage>(context: &Context, body: Value
 
     let hashrate = difficulty / (block_time_target / MILLIS_PER_SECOND);
     let hashrate_formatted = format_hashrate(hashrate.into());
-    Ok(json!(GetDifficultyResult {
+    Ok(GetDifficultyResult {
         hashrate,
         hashrate_formatted,
         difficulty,
-    }))
+    })
 }
 
-async fn get_block_base_fee_by_hash<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    let params: GetBlockBaseFeeByHashParams = parse_params(body)?;
+async fn get_block_base_fee_by_hash<S: Storage>(context: &Context, params: GetBlockBaseFeeByHashParams<'_>) -> Result<GetBlockBaseFeeByHashResult, InternalRpcError> {
 
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let storage = blockchain.get_storage().read().await;
@@ -1632,15 +1577,13 @@ async fn get_block_base_fee_by_hash<S: Storage>(context: &Context, body: Value) 
         .context("Error while retrieving block size EMA")? as usize;
     let fee_per_kb = calculate_required_base_fee(block_size_ema);
 
-    Ok(json!(GetBlockBaseFeeByHashResult {
+    Ok(GetBlockBaseFeeByHashResult {
         fee_per_kb,
         block_size_ema
-    }))
+    })
 }
 
-async fn get_block_summary_at_topoheight<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    let params: GetBlockAtTopoHeightParams = parse_params(body)?;
-
+async fn get_block_summary_at_topoheight<S: Storage>(context: &Context, params: GetBlockAtTopoHeightParams) -> Result<Value, InternalRpcError> {
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let storage = blockchain.get_storage().read().await;
     let (hash, block_header) = storage.get_block_header_at_topoheight(params.topoheight).await
@@ -1683,54 +1626,47 @@ async fn get_block_summary_at_topoheight<S: Storage>(context: &Context, body: Va
     Ok(json!(summary))
 }
 
-async fn validate_address<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    let params: ValidateAddressParams = parse_params(body)?;
-
+async fn validate_address<S: Storage>(context: &Context, params: ValidateAddressParams<'_>) -> Result<ValidateAddressResult, InternalRpcError> {
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     if params.address.is_mainnet() != blockchain.get_network().is_mainnet() {
         return Err(InternalRpcError::InvalidParamsAny(BlockchainError::InvalidNetwork.into()))
     }
 
-    Ok(json!(ValidateAddressResult {
+    Ok(ValidateAddressResult {
         is_valid: (params.address.is_normal() || (!params.address.is_normal() && params.allow_integrated))
             && params.max_integrated_data_size.and_then(|size| params.address.get_extra_data().map(|data| data.size() <= size))
             .unwrap_or(true),
         is_integrated: !params.address.is_normal(),
-    }))
+    })
 }
 
-async fn extract_key_from_address<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    let params: ExtractKeyFromAddressParams = parse_params(body)?;
-
+async fn extract_key_from_address<S: Storage>(context: &Context, params: ExtractKeyFromAddressParams<'_>) -> Result<ExtractKeyFromAddressResult, InternalRpcError> {
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     if params.address.is_mainnet() != blockchain.get_network().is_mainnet() {
         return Err(InternalRpcError::InvalidParamsAny(BlockchainError::InvalidNetwork.into()))
     }
 
     if params.as_hex {
-        Ok(json!(ExtractKeyFromAddressResult::Hex(params.address.get_public_key().to_hex())))
+        Ok(ExtractKeyFromAddressResult::Hex(params.address.get_public_key().to_hex()))
     } else {
-        Ok(json!(ExtractKeyFromAddressResult::Bytes(params.address.get_public_key().to_bytes())))
+        Ok(ExtractKeyFromAddressResult::Bytes(params.address.get_public_key().to_bytes()))
     }
 }
 
-async fn key_to_address<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    let param: KeyToAddressParams = parse_params(body)?;
-
+async fn key_to_address<S: Storage>(context: &Context, params: KeyToAddressParams) -> Result<Address, InternalRpcError> {
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
 
-    let key = match param {
+    let key = match params {
         KeyToAddressParams::Bytes(bytes) => PublicKey::from_bytes(&bytes),
         KeyToAddressParams::Hex(hex) => PublicKey::from_hex(&hex),
     }.context("Error on provided key")?;
 
     let address = key.to_address(blockchain.get_network().is_mainnet());
-    Ok(json!(address))
+    Ok(address)
 }
 
 // Split an integrated address into its address and data
-async fn split_address<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    let params: SplitAddressParams = parse_params(body)?;
+async fn split_address<S: Storage>(context: &Context, params: SplitAddressParams) -> Result<SplitAddressResult, InternalRpcError> {
     let address = params.address;
 
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
@@ -1741,16 +1677,14 @@ async fn split_address<S: Storage>(context: &Context, body: Value) -> Result<Val
     let (data, address) = address.extract_data();
     let integrated_data = data.ok_or(InternalRpcError::InvalidParams("Address is not an integrated address"))?;
     let size = integrated_data.size();
-    Ok(json!(SplitAddressResult {
+    Ok(SplitAddressResult {
         address,
         integrated_data,
         size,
-    }))
+    })
 }
 
-async fn make_integrated_address<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    let params: MakeIntegratedAddressParams = parse_params(body)?;
-
+async fn make_integrated_address<S: Storage>(context: &Context, params: MakeIntegratedAddressParams<'_>) -> Result<Address, InternalRpcError> {
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     if params.address.is_mainnet() != blockchain.get_network().is_mainnet() {
         return Err(InternalRpcError::InvalidParamsAny(BlockchainError::InvalidNetwork.into()))
@@ -1762,20 +1696,18 @@ async fn make_integrated_address<S: Storage>(context: &Context, body: Value) -> 
 
     let address = Address::new(params.address.is_mainnet(), AddressType::Data(params.integrated_data.into_owned()), params.address.into_owned().to_public_key());
 
-    Ok(json!(address))
+    Ok(address)
 }
 
-async fn decrypt_extra_data<S: Storage>(_: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    let params: DecryptExtraDataParams = parse_params(body)?;
+async fn decrypt_extra_data<S: Storage>(_: &Context, params: DecryptExtraDataParams<'_>) -> Result<DataElement, InternalRpcError> {
     let data = params.extra_data
         .decrypt_with_shared_key(&params.shared_key)
         .context("Error while decrypting using provided shared key")?;
 
-    Ok(json!(data))
+    Ok(data)
 }
 
-async fn get_multisig_at_topoheight<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    let params: GetMultisigAtTopoHeightParams = parse_params(body)?;
+async fn get_multisig_at_topoheight<S: Storage>(context: &Context, params: GetMultisigAtTopoHeightParams<'_>) -> Result<GetMultisigAtTopoHeightResult, InternalRpcError> {
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let storage = blockchain.get_storage().read().await;
     let multisig = storage.get_multisig_at_topoheight_for(&params.address.get_public_key(), params.topoheight).await
@@ -1794,11 +1726,10 @@ async fn get_multisig_at_topoheight<S: Storage>(context: &Context, body: Value) 
         None => MultisigState::Deleted
     };
 
-    Ok(json!(GetMultisigAtTopoHeightResult { state }))
+    Ok(GetMultisigAtTopoHeightResult { state })
 }
 
-async fn get_multisig<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    let params: GetMultisigParams = parse_params(body)?;
+async fn get_multisig<S: Storage>(context: &Context, params: GetMultisigParams<'_>) -> Result<GetMultisigResult, InternalRpcError> {
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let storage = blockchain.get_storage().read().await;
     let (topoheight, multisig) = storage.get_last_multisig(&params.address.get_public_key()).await
@@ -1817,33 +1748,30 @@ async fn get_multisig<S: Storage>(context: &Context, body: Value) -> Result<Valu
         None => MultisigState::Deleted
     };
 
-    Ok(json!(GetMultisigResult { state, topoheight }))
+    Ok(GetMultisigResult { state, topoheight })
 }
 
-async fn has_multisig<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    let params: HasMultisigParams = parse_params(body)?;
+async fn has_multisig<S: Storage>(context: &Context, params: HasMultisigParams<'_>) -> Result<bool, InternalRpcError> {
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let storage = blockchain.get_storage().read().await;
 
     let multisig = storage.has_multisig(&params.address.get_public_key()).await
             .context("Error while checking if account has multisig")?;
 
-    Ok(json!(multisig))
+    Ok(multisig)
 }
 
-async fn has_multisig_at_topoheight<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    let params: HasMultisigAtTopoHeightParams = parse_params(body)?;
+async fn has_multisig_at_topoheight<S: Storage>(context: &Context, params: HasMultisigAtTopoHeightParams<'_>) -> Result<bool, InternalRpcError> {
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let storage = blockchain.get_storage().read().await;
 
     let multisig = storage.has_multisig_at_exact_topoheight(&params.address.get_public_key(), params.topoheight).await
         .context("Error while checking if account has multisig at topoheight")?;
 
-    Ok(json!(multisig))
+    Ok(multisig)
 }
 
-async fn get_contract_logs<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    let params: GetContractLogsParams = parse_params(body)?;
+async fn get_contract_logs<'a, S: Storage>(context: &'a Context, params: GetContractLogsParams<'a>) -> Result<Vec<RPCContractLog<'a>>, InternalRpcError> {
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let is_mainnet = blockchain.get_network().is_mainnet();
     let storage = blockchain.get_storage().read().await;
@@ -1851,15 +1779,14 @@ async fn get_contract_logs<S: Storage>(context: &Context, body: Value) -> Result
         .context("Error while retrieving contract logs")?;
 
     let rpc_logs = logs
-        .iter()
-        .map(|log| RPCContractLog::from_log(&log, is_mainnet))
+        .into_iter()
+        .map(|log| RPCContractLog::from_owned(log, is_mainnet))
         .collect::<Vec<_>>();
 
-    Ok(json!(rpc_logs))
+    Ok(rpc_logs)
 }
 
-async fn get_contract_scheduled_executions_at_topoheight<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    let params: GetContractScheduledExecutionsAtTopoHeightParams = parse_params(body)?;
+async fn get_contract_scheduled_executions_at_topoheight<S: Storage>(context: &Context, params: GetContractScheduledExecutionsAtTopoHeightParams) -> Result<Vec<ScheduledExecution>, InternalRpcError> {
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
 
     if params.max.is_some_and(|max| max > MAX_SCHEDULED_EXECUTIONS) {
@@ -1876,11 +1803,10 @@ async fn get_contract_scheduled_executions_at_topoheight<S: Storage>(context: &C
         .take(max)
         .collect::<Result<Vec<_>, _>>()?;
 
-    Ok(json!(executions))
+    Ok(executions)
 }
 
-async fn get_contract_registered_executions_at_topoheight<'a, S: Storage + 'a>(context: &'a Context, body: Value) -> Result<Value, InternalRpcError> {
-    let params: GetContractScheduledExecutionsAtTopoHeightParams = parse_params(body)?;
+async fn get_contract_registered_executions_at_topoheight<'a, S: Storage + 'a>(context: &'a Context, params: GetContractScheduledExecutionsAtTopoHeightParams) -> Result<Vec<RegisteredExecution>, InternalRpcError> {
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
 
     if params.max.is_some_and(|max| max > MAX_SCHEDULED_EXECUTIONS) {
@@ -1895,13 +1821,16 @@ async fn get_contract_registered_executions_at_topoheight<'a, S: Storage + 'a>(c
         .context("Error while retrieving contract registered executions")?
         .skip(params.skip.unwrap_or(0))
         .take(max)
+        .map_ok(|(topoheight, execution_hash)| RegisteredExecution {
+            execution_hash: Cow::Owned(execution_hash),
+            execution_topoheight: topoheight,
+        })
         .collect::<Result<Vec<_>, _>>()?;
 
-    Ok(json!(executions))
+    Ok(executions)
 }
 
-async fn get_contract_outputs<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    let params: GetContractOutputsParams = parse_params(body)?;
+async fn get_contract_outputs<'a, S: Storage>(context: &'a Context, params: GetContractOutputsParams<'a>) -> Result<Vec<GetContractsOutputsEntry<'a>>, InternalRpcError> {
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let is_mainnet = blockchain.get_network().is_mainnet();
     let storage = blockchain.get_storage().read().await;
@@ -1918,7 +1847,7 @@ async fn get_contract_outputs<S: Storage>(context: &Context, body: Value) -> Res
         if is_executed && storage.has_contract_logs_for_caller(tx_hash).await
             .context("Error while checking if contract logs exists")?
         {
-            let logs =  storage.get_contract_logs_for_caller(&tx_hash).await
+            let logs =  storage.get_contract_logs_for_caller(tx_hash).await
                 .context("Error while retrieving contract logs")?
                 .into_iter()
                 .filter_map(|output| {
@@ -1935,7 +1864,7 @@ async fn get_contract_outputs<S: Storage>(context: &Context, body: Value) -> Res
 
             if !logs.is_empty() {
                 rpc_outputs.push(GetContractsOutputsEntry {
-                    caller: Cow::Borrowed(tx_hash),
+                    caller: Cow::Owned(tx_hash.clone()),
                     outputs: logs,
                 })
             }
@@ -1962,11 +1891,10 @@ async fn get_contract_outputs<S: Storage>(context: &Context, body: Value) -> Res
         }
     }
 
-    Ok(json!(rpc_outputs))
+    Ok(rpc_outputs)
 }
 
-async fn get_contract_module<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    let params: GetContractModuleParams = parse_params(body)?;
+async fn get_contract_module<S: Storage>(context: &Context, params: GetContractModuleParams<'_>) -> Result<Value, InternalRpcError> {
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let storage = blockchain.get_storage().read().await;
     let Some(topoheight) = storage.get_last_topoheight_for_contract(&params.contract).await? else {
@@ -1978,8 +1906,7 @@ async fn get_contract_module<S: Storage>(context: &Context, body: Value) -> Resu
     Ok(json!(module))
 }
 
-async fn get_contract_data<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    let params: GetContractDataParams = parse_params(body)?;
+async fn get_contract_data<S: Storage>(context: &Context, params: GetContractDataParams<'_>) -> Result<RPCVersioned<Versioned<Option<ValueCell>>>, InternalRpcError> {
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let storage = blockchain.get_storage().read().await;
 
@@ -1988,39 +1915,36 @@ async fn get_contract_data<S: Storage>(context: &Context, body: Value) -> Result
 
     let version = storage.get_contract_data_at_exact_topoheight_for(&params.contract, &params.key, topoheight).await?;
 
-    Ok(json!(RPCVersioned {
+    Ok(RPCVersioned {
         topoheight,
         version,
-    }))
+    })
 }
 
 
-async fn get_contract_data_at_topoheight<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    let params: GetContractDataAtTopoHeightParams = parse_params(body)?;
+async fn get_contract_data_at_topoheight<S: Storage>(context: &Context, params: GetContractDataAtTopoHeightParams<'_>) -> Result<Versioned<Option<ValueCell>>, InternalRpcError> {
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let storage = blockchain.get_storage().read().await;
 
     let version = storage.get_contract_data_at_exact_topoheight_for(&params.contract, &params.key, params.topoheight).await?;
 
-    Ok(json!(version))
+    Ok(version)
 }
 
-async fn get_contract_balance<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    let params: GetContractBalanceParams = parse_params(body)?;
+async fn get_contract_balance<S: Storage>(context: &Context, params: GetContractBalanceParams<'_>) -> Result<RPCVersioned<Versioned<u64>>, InternalRpcError> {
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let storage = blockchain.get_storage().read().await;
 
     let (topoheight, version) = storage.get_last_contract_balance(&params.contract, &params.asset).await
         .context("Error while retrieving contract balance")?;
 
-    Ok(json!(RPCVersioned {
+    Ok(RPCVersioned {
         topoheight,
         version,
-    }))
+    })
 }
 
-async fn get_contract_assets<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    let params: GetContractBalancesParams = parse_params(body)?;
+async fn get_contract_assets<S: Storage>(context: &Context, params: GetContractAssetsParams<'_>) -> Result<Vec<Hash>, InternalRpcError> {
     let maximum = if let Some(maximum) = params.maximum {
         if maximum > MAX_ASSETS {
             return Err(InternalRpcError::InvalidJSONRequest).context(format!("Maximum assets requested cannot be greater than {}", MAX_ASSETS))?
@@ -2040,23 +1964,20 @@ async fn get_contract_assets<S: Storage>(context: &Context, body: Value) -> Resu
         .take(maximum)
         .collect::<Result<Vec<_>, _>>()?;
 
-    Ok(json!(assets))
+    Ok(assets)
 }
 
-async fn get_contract_balance_at_topoheight<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    let params: GetContractBalanceAtTopoHeightParams = parse_params(body)?;
+async fn get_contract_balance_at_topoheight<S: Storage>(context: &Context, params: GetContractBalanceAtTopoHeightParams<'_>) -> Result<Versioned<u64>, InternalRpcError> {
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let storage = blockchain.get_storage().read().await;
 
     let version = storage.get_contract_balance_at_exact_topoheight(&params.contract, &params.asset, params.topoheight).await
         .context("Error while retrieving contract balance")?;
 
-    Ok(json!(version))
+    Ok(version)
 }
 
-async fn get_p2p_block_propagation<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    let params: GetP2pBlockPropagation = parse_params(body)?;
-
+async fn get_p2p_block_propagation<S: Storage>(context: &Context, params: GetP2pBlockPropagationParams<'_>) -> Result<P2pBlockPropagationResult, InternalRpcError> {
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let p2p = { blockchain.get_p2p().read().await.clone() }
         .ok_or(InternalRpcError::InvalidParamsAny(ApiError::NoP2p.into()))?;
@@ -2088,9 +2009,9 @@ async fn get_p2p_block_propagation<S: Storage>(context: &Context, body: Value) -
     }
 
     let processing_at = p2p.get_block_propagation_timestamp(&hash).await;
-    Ok(json!(P2pBlockPropagationResult {
+    Ok(P2pBlockPropagationResult {
         peers,
         first_seen,
         processing_at
-    }))
+    })
 }

@@ -13,7 +13,7 @@ use xelis_common::{
             StableHeightChangedEvent,
             StableTopoHeightChangedEvent,
             TransactionExecutedEvent,
-            TransactionResponse,
+            GetTransactionResult,
             NewContractEvent,
             InvokeContractEvent,
             NewAssetEvent,
@@ -3077,7 +3077,7 @@ impl<S: Storage> Blockchain<S> {
                 for (tx_hash, tx) in orphaned {
                     // We couldn't add it back to mempool, let's notify this event
                     let data = RPCTransaction::from_tx(&tx, &tx_hash, tx.size(), storage.is_mainnet());
-                    let data = TransactionResponse {
+                    let data = GetTransactionResult {
                         blocks: None,
                         executed_in_block: None,
                         in_mempool: false,
@@ -3117,7 +3117,7 @@ impl<S: Storage> Blockchain<S> {
                 }
 
                 let data = RPCTransaction::from_tx(&sorted_tx.get_tx(), &tx_hash, sorted_tx.get_size(), storage.is_mainnet());
-                let data = TransactionResponse {
+                let data = GetTransactionResult {
                     blocks: None,
                     executed_in_block: None,
                     in_mempool: false,
