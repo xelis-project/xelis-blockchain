@@ -1320,6 +1320,9 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             Some(Type::Optional(Box::new(module_type.clone())))
         );
 
+        // Call a module chunk from this contract
+        // This will check for the permission given by the user if any
+        // Module#call is calling on behalf of the current transaction
         env.register_native_function(
             "call",
             Some(module_type.clone()),
@@ -1330,23 +1333,9 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
                 // Those funds are taken from the current contract
                 ("deposits", Type::Map(Box::new(hash_type.clone()), Box::new(Type::U64))),
             ],
-            FunctionHandler::Async(async_handler!(module_invoke::<P>)),
+            FunctionHandler::Async(async_handler!(module_call::<P>)),
             750,
-            Some(Type::Any)
-        );
-
-        // Exact same as `call` but return no value
-        env.register_native_function(
-            "execute",
-            Some(module_type.clone()),
-            vec![
-                ("chunk_id", Type::U16),
-                ("args", Type::Array(Box::new(Type::Any))),
-                ("deposits", Type::Map(Box::new(hash_type.clone()), Box::new(Type::U64))),
-            ],
-            FunctionHandler::Async(async_handler!(module_invoke::<P>)),
-            750,
-            None
+            Some(Type::Voidable(Box::new(Type::Any)))
         );
 
         // Similar to invoke, but allows to delegate the call to another contract
@@ -1360,7 +1349,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             ],
             FunctionHandler::Async(async_handler!(module_delegate)),
             100,
-            Some(Type::Any)
+            Some(Type::Voidable(Box::new(Type::Any)))
         );
     }
 
