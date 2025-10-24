@@ -762,6 +762,30 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             Some(hash_type.clone())
         );
         env.register_native_function(
+            "get_owner",
+            Some(asset_type.clone()),
+            vec![],
+            FunctionHandler::Sync(asset_get_owner),
+            5,
+            Some(Type::Optional(Box::new(hash_type.clone())))
+        );
+        env.register_native_function(
+            "get_creator_id",
+            Some(asset_type.clone()),
+            vec![],
+            FunctionHandler::Sync(asset_get_creator_id),
+            5,
+            Some(Type::Optional(Box::new(Type::U64)))
+        );
+        env.register_native_function(
+            "get_creator",
+            Some(asset_type.clone()),
+            vec![],
+            FunctionHandler::Sync(asset_get_creator),
+            5,
+            Some(Type::Optional(Box::new(hash_type.clone())))
+        );
+        env.register_native_function(
             "mint",
             Some(asset_type.clone()),
             vec![("amount", Type::U64)],

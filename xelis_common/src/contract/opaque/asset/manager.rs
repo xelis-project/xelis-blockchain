@@ -135,7 +135,11 @@ pub async fn asset_create<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, m
         return Ok(SysCallResult::Return(Primitive::Null.into()));
     }
 
-    let data = AssetData::new(decimals, name, ticker, max_supply, Some(AssetOwner::new(metadata.contract.clone(), id)));
+    let creator = AssetOwner::Creator {
+        contract: metadata.contract.clone(),
+        id
+    };
+    let data = AssetData::new(decimals, name, ticker, max_supply, creator);
     *asset_cache = Some(AssetChanges {
         data: (VersionedState::New, data.clone()),
         circulating_supply: (VersionedState::New, match max_supply {

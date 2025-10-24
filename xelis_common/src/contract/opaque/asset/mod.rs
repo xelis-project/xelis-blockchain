@@ -30,6 +30,8 @@ use crate::{
 pub use manager::*;
 
 // Represent an Asset Manager type in the opaque context
+// It only holds the asset hash because the AssetData
+// may be updated at any time in the chain state
 #[derive(Clone, Debug)]
 pub struct Asset {
     pub hash: Hash
@@ -77,8 +79,8 @@ pub fn asset_get_contract_hash<P: ContractProvider>(zelf: FnInstance, _: FnParam
         .context("Chain state not found")?;
     let changes = get_asset_changes_for_hash(state, &asset.hash)?;
     let hash = changes.data.1.get_owner()
-        .as_ref()
-        .map(|v| Primitive::Opaque(v.get_contract().clone().into()))
+        .get_contract()
+        .map(|v| Primitive::Opaque(v.clone().into()))
         .unwrap_or_default();
 
     Ok(SysCallResult::Return(hash.into()))
@@ -92,8 +94,8 @@ pub fn asset_get_contract_id<P: ContractProvider>(zelf: FnInstance, _: FnParams,
         .context("Chain state not found")?;
     let changes = get_asset_changes_for_hash(state, &asset.hash)?;
     let id = changes.data.1.get_owner()
-        .as_ref()
-        .map(|v| Primitive::U64(v.get_id()))
+        .get_id()
+        .map(|v| Primitive::U64(v))
         .unwrap_or_default();
 
     Ok(SysCallResult::Return(id.into()))
@@ -125,6 +127,51 @@ pub fn asset_get_hash(zelf: FnInstance, _: FnParams, _: &ModuleMetadata, _: &mut
     Ok(SysCallResult::Return(Primitive::Opaque(asset.hash.clone().into()).into()))
 }
 
+// Get the contract hash owner of this asset
+pub fn asset_get_owner(zelf: FnInstance, _: FnParams, _: &ModuleMetadata, context: &mut Context) -> FnReturnType<ModuleMetadata> {
+    let zelf = zelf?;
+    let asset: &Asset = zelf.as_opaque_type()?;
+    let state: &ChainState = context.get()
+        .context("Chain state not found")?;
+
+    let changes = get_asset_changes_for_hash(state, &asset.hash)?;
+    let owner_hash = match changes.data.1.get_owner().get_contract() {
+        Some(v) => Primitive::Opaque(v.clone().into()),
+        None => Primitive::Null
+    };
+    Ok(SysCallResult::Return(owner_hash.into()))
+}
+
+// Get the contract creator
+pub fn asset_get_creator(zelf: FnInstance, _: FnParams, _: &ModuleMetadata, context: &mut Context) -> FnReturnType<ModuleMetadata> {
+    let zelf = zelf?;
+    let asset: &Asset = zelf.as_opaque_type()?;
+    let state: &ChainState = context.get()
+        .context("Chain state not found")?;
+
+    let changes = get_asset_changes_for_hash(state, &asset.hash)?;
+    let creator_hash = match changes.data.1.get_owner().get_origin_contract() {
+        Some(v) => Primitive::Opaque(v.clone().into()),
+        None => Primitive::Null
+    };
+    Ok(SysCallResult::Return(creator_hash.into()))
+}
+
+// Get the contract id owner of this asset
+pub fn asset_get_creator_id(zelf: FnInstance, _: FnParams, _: &ModuleMetadata, context: &mut Context) -> FnReturnType<ModuleMetadata> {
+    let zelf = zelf?;
+    let asset: &Asset = zelf.as_opaque_type()?;
+    let state: &ChainState = context.get()
+        .context("Chain state not found")?;
+
+    let changes = get_asset_changes_for_hash(state, &asset.hash)?;
+    let owner_id = match changes.data.1.get_owner().get_id() {
+        Some(v) => Primitive::U64(v),
+        None => Primitive::Null
+    };
+    Ok(SysCallResult::Return(owner_id.into()))
+}
+
 // Get the hash representation of the asset
 pub fn asset_get_ticker(zelf: FnInstance, _: FnParams, _: &ModuleMetadata, context: &mut Context) -> FnReturnType<ModuleMetadata> {
     let zelf = zelf?;
@@ -143,12 +190,11 @@ pub fn asset_is_read_only(zelf: FnInstance, _: FnParams, metadata: &ModuleMetada
         .context("Chain state not found")?;
 
     let changes = get_asset_changes_for_hash(state, &asset.hash)?;
-    let read_only = changes.data.1
+    let is_owner = changes.data.1
         .get_owner()
-        .as_ref()
-        .map(|v| v.get_contract()) != Some(&metadata.contract);
+        .is_owner(&metadata.contract);
 
-    Ok(SysCallResult::Return(Primitive::Boolean(read_only).into()))
+    Ok(SysCallResult::Return(Primitive::Boolean(!is_owner).into()))
 }
 
 pub fn asset_is_mintable(zelf: FnInstance, _: FnParams, _: &ModuleMetadata, context: &mut Context) -> FnReturnType<ModuleMetadata> {
@@ -174,16 +220,14 @@ pub async fn asset_transfer_ownership<'a, 'ty, 'r, P: ContractProvider>(zelf: Fn
         return Ok(SysCallResult::Return(Primitive::Boolean(false).into()))
     }
 
-    let contract = metadata.contract.clone();
+    if param == metadata.contract {
+        // Cannot transfer to self
+        return Ok(SysCallResult::Return(Primitive::Boolean(false).into()))
+    }
+
     let changes = get_asset_changes_for_hash_mut(state, &asset.hash)?;
-    Ok(SysCallResult::Return(match changes.data.1.get_owner_mut() {
-        Some(data) if *data.get_contract() == contract => {
-            data.set_contract(param);
-            changes.data.0.mark_updated();
-            Primitive::Boolean(true)
-        },
-        _ => Primitive::Boolean(false)
-    }.into()))
+    let owner = changes.data.1.get_owner_mut();
+    Ok(SysCallResult::Return(Primitive::Boolean(owner.transfer(&metadata.contract, param)).into()))
 }
 
 pub async fn asset_mint<'a, 'ty, 'r, P: ContractProvider>(zelf: FnInstance<'a>, params: FnParams, metadata: &ModuleMetadata, context: &mut Context<'ty, 'r>) -> FnReturnType<ModuleMetadata> {
@@ -195,8 +239,7 @@ pub async fn asset_mint<'a, 'ty, 'r, P: ContractProvider>(zelf: FnInstance<'a>, 
     let asset_data = &mut changes.data.1;
     let read_only = asset_data
         .get_owner()
-        .as_ref()
-        .map(|v| v.get_contract()) != Some(&metadata.contract);
+        .is_owner(&metadata.contract);
 
     if read_only {
         return Ok(SysCallResult::Return(Primitive::Boolean(false).into()))
