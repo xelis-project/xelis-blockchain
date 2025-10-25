@@ -95,8 +95,8 @@ impl OwnershipProof {
         Ok(Self::from(amount, left_commitment, commitment_eq_proof, range_proof))
     }
 
-    /// Verify the ownership proof.
-    pub fn pre_verify(&self, public_key: &PublicKey, source_ciphertext: Ciphertext, transcript: &mut Transcript, batch_collector: &mut BatchCollector) -> Result<(), ProofVerificationError> {
+    /// Internal verify function to avoid code duplication.
+    fn verify_internal(&self, public_key: &PublicKey, source_ciphertext: Ciphertext, transcript: &mut Transcript) -> Result<(PedersenCommitment, Ciphertext), ProofVerificationError> {
         if self.amount == 0 {
             return Err(ProofVerificationError::Format);
         }
@@ -113,19 +113,25 @@ impl OwnershipProof {
         let ct = public_key.encrypt_with_opening(self.amount, &Self::OPENING);
         let balance_left = source_ciphertext - ct;
 
-        self.commitment_eq_proof.pre_verify(public_key, &balance_left, &commitment, TxVersion::V2, transcript, batch_collector)?;
-
-        self.range_proof.verify_single(&BP_GENS, &PC_GENS, transcript, &(commitment.as_point().clone(), self.commitment.as_point().clone()), BULLET_PROOF_SIZE)?;
-
-        Ok(())
+        Ok((commitment, balance_left))
     }
 
-    pub fn verify(&self, public_key: &PublicKey, source_ciphertext: Ciphertext) -> Result<(), ProofVerificationError> {
-        let mut transcript = Transcript::new(b"ownership_proof");
-        let mut batch_collector = BatchCollector::default();
-        self.pre_verify(public_key, source_ciphertext, &mut transcript, &mut batch_collector)?;
-        batch_collector.verify()?;
-        Ok(())
+    /// Verify the ownership proof using a batch collector.
+    pub fn pre_verify(&self, public_key: &PublicKey, source_ciphertext: Ciphertext, transcript: &mut Transcript, batch_collector: &mut BatchCollector) -> Result<(), ProofVerificationError> {
+        let (commitment, balance_left) = self.verify_internal(public_key, source_ciphertext, transcript)?;
+        self.commitment_eq_proof.pre_verify(public_key, &balance_left, &commitment, TxVersion::V2, transcript, batch_collector)?;
+
+        self.range_proof.verify_single(&BP_GENS, &PC_GENS, transcript, &(commitment.as_point().clone(), self.commitment.as_point().clone()), BULLET_PROOF_SIZE)
+            .map_err(ProofVerificationError::from)
+    }
+
+    /// Verify the ownership proof.
+    pub fn verify(&self, public_key: &PublicKey, source_ciphertext: Ciphertext, transcript: &mut Transcript) -> Result<(), ProofVerificationError> {
+        let (commitment, balance_left) = self.verify_internal(public_key, source_ciphertext, transcript)?;
+        self.commitment_eq_proof.verify(public_key, &balance_left, &commitment, transcript)?;
+
+        self.range_proof.verify_single(&BP_GENS, &PC_GENS, transcript, &(commitment.as_point().clone(), self.commitment.as_point().clone()), BULLET_PROOF_SIZE)
+            .map_err(ProofVerificationError::from)
     }
 }
 
@@ -170,7 +176,7 @@ mod tests {
         let proof = OwnershipProof::new(&keypair, balance, amount, ct.clone()).unwrap();
 
         // Verify the proof
-        assert!(proof.verify(keypair.get_public_key(), ct).is_ok());
+        assert!(proof.verify(keypair.get_public_key(), ct, &mut Transcript::new(b"ownership_proof")).is_ok());
     }
 
     #[test]
@@ -186,7 +192,7 @@ mod tests {
 
         // Verify the proof with a different balance ct
         let ct = keypair.get_public_key().encrypt(balance);
-        assert!(proof.verify(keypair.get_public_key(), ct).is_err());
+        assert!(proof.verify(keypair.get_public_key(), ct, &mut Transcript::new(b"ownership_proof")).is_err());
     }
 
     #[test]
@@ -219,7 +225,7 @@ mod tests {
 
         proof.commitment = decompressed.compress();
 
-        assert!(proof.verify(keypair.get_public_key(), ct).is_err());
+        assert!(proof.verify(keypair.get_public_key(), ct, &mut Transcript::new(b"ownership_proof")).is_err());
     }
 
     #[test]
@@ -271,6 +277,6 @@ mod tests {
             range_proof
         };
 
-        assert!(proof.verify(keypair.get_public_key(), balance_ct).is_err());
+        assert!(proof.verify(keypair.get_public_key(), balance_ct, &mut Transcript::new(b"ownership_proof")).is_err());
     }
 }
