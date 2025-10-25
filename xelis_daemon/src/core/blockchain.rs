@@ -24,7 +24,7 @@ use xelis_common::{
         RPCContractLog,
         RPCTransaction,
     },
-    asset::{AssetData, VersionedAssetData, MaxSupplyMode},
+    asset::{AssetData, VersionedAssetData, MaxSupplyMode, AssetOwner},
     block::{
         Block,
         BlockHeader,
@@ -605,7 +605,7 @@ impl<S: Storage> Blockchain<S> {
                 &XELIS_ASSET,
                 0,
                 VersionedAssetData::new(
-                    AssetData::new(COIN_DECIMALS, "XELIS".to_owned(), ticker, MaxSupplyMode::Fixed(MAXIMUM_SUPPLY), None),
+                    AssetData::new(COIN_DECIMALS, "XELIS".to_owned(), ticker, MaxSupplyMode::Fixed(MAXIMUM_SUPPLY), AssetOwner::None),
                     None
                 )
             ).await?;
