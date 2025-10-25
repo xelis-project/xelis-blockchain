@@ -237,7 +237,7 @@ pub async fn asset_mint<'a, 'ty, 'r, P: ContractProvider>(zelf: FnInstance<'a>, 
 
     let changes = get_asset_changes_for_hash_mut(state, &asset.hash)?;
     let asset_data = &mut changes.data.1;
-    let read_only = asset_data
+    let read_only = !asset_data
         .get_owner()
         .is_owner(&metadata.contract);
 
