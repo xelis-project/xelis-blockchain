@@ -844,8 +844,15 @@ impl NetworkHandler {
         let block_hash = if let Some(block_hash) = block_hash {
             block_hash
         } else {
-            let block = self.api.get_block_at_topoheight(maximum).await?;
-            block.header.hash.into_owned()
+            debug!("Fetching block hash at topoheight {}", maximum);
+            match self.api.get_block_at_topoheight(maximum).await {
+                Ok(block) => block.header.hash.into_owned(),
+                Err(e) => {
+                    error!("Error while fetching block at topoheight {}: {}, fallback to genesis", maximum, e);
+                    maximum = daemon_topoheight;
+                    daemon_block_hash.clone()
+                }
+            }
         };
 
         let mut storage = self.wallet.get_storage().write().await;
