@@ -771,7 +771,8 @@ impl Transaction {
                     &mut deposits_decompressed,
                     &payload.deposits,
                     payload.max_gas,
-                    true,
+                    // TODO: enable them later
+                    false,
                 )?;
 
                 // We need to load the contract module if not already in cache
