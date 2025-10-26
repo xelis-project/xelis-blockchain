@@ -96,6 +96,11 @@ impl ArbitraryRangeProof {
         Ok(Self::from(max_value, delta_commitment, commitment_eq_proof, range_proof))
     }
 
+    /// Get the maximum value of the proof.
+    pub fn max_value(&self) -> u64 {
+        self.max_value
+    }
+
     /// Internal verify function to avoid code duplication.
     fn verify_internal(&self, public_key: &PublicKey, source_ciphertext: Ciphertext, transcript: &mut Transcript) -> Result<(PedersenCommitment, Ciphertext), ProofVerificationError> {
         if self.max_value == 0 {
@@ -166,12 +171,9 @@ impl Serializer for ArbitraryRangeProof {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_arbitrary_range_proof() {
+    fn test_arbitrary_range_proof_helper(value: u64, max_value: u64) {
         let keypair = KeyPair::new();
-        // Generate the balance
-        let value = 10u64;
-        let max_value = 50u64;
+        // Generate the ciphertext
         let ct = keypair.get_public_key().encrypt(value);
 
         // Create proof
@@ -185,9 +187,19 @@ mod tests {
     }
 
     #[test]
+    fn test_arbitrary_range_proof() {
+        // Test various values
+        test_arbitrary_range_proof_helper(10, 100);
+        test_arbitrary_range_proof_helper(0, 100);
+        test_arbitrary_range_proof_helper(50, 100);
+        test_arbitrary_range_proof_helper(99, 100);
+        test_arbitrary_range_proof_helper(1, 1);
+    }
+
+    #[test]
     fn test_invalid_ct_arbitrary_range_proof() {
         let keypair = KeyPair::new();
-        // Generate the balance
+        // Generate the ciphertext
         let value = 10u64;
         let max_value = 50u64;
         let ct = keypair.get_public_key().encrypt(value);
