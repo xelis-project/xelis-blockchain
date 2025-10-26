@@ -118,7 +118,7 @@ impl ArbitraryRangeProof {
         Ok((commitment, ct_delta))
     }
 
-    /// Verify the ownership proof using a batch collector.
+    /// Verify the Arbitrary Range proof using a batch collector.
     pub fn pre_verify(&self, public_key: &PublicKey, source_ciphertext: Ciphertext, transcript: &mut Transcript, batch_collector: &mut BatchCollector) -> Result<(), ProofVerificationError> {
         let (commitment, balance_left) = self.verify_internal(public_key, source_ciphertext, transcript)?;
         self.commitment_eq_proof.pre_verify(public_key, &balance_left, &commitment, TxVersion::V2, transcript, batch_collector)?;
@@ -127,7 +127,7 @@ impl ArbitraryRangeProof {
             .map_err(ProofVerificationError::from)
     }
 
-    /// Verify the ownership proof.
+    /// Verify the Arbitrary Range proof.
     pub fn verify(&self, public_key: &PublicKey, source_ciphertext: Ciphertext, transcript: &mut Transcript) -> Result<(), ProofVerificationError> {
         let (commitment, balance_left) = self.verify_internal(public_key, source_ciphertext, transcript)?;
         self.commitment_eq_proof.verify(public_key, &balance_left, &commitment, transcript)?;
