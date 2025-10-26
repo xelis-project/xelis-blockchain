@@ -58,6 +58,7 @@ impl BalanceProof {
         transcript.balance_proof_domain_separator();
         transcript.append_u64(b"amount", amount);
         transcript.append_ciphertext(b"source_ct", &ciphertext.compress());
+        transcript.append_public_key(b"public_key", &keypair.get_public_key().compress());
 
         // Compute the zeroed balance
         let ct = keypair.get_public_key().encrypt_with_opening(amount, &Self::OPENING);
@@ -74,6 +75,7 @@ impl BalanceProof {
         transcript.balance_proof_domain_separator();
         transcript.append_u64(b"amount", self.amount);
         transcript.append_ciphertext(b"source_ct", &source_ciphertext.compress());
+        transcript.append_public_key(b"public_key", &public_key.compress());
 
         // Calculate the commitment that corresponds to the balance amount.
         let destination_commitment = PedersenCommitment::new_with_opening(Scalar::ZERO, &Self::OPENING);

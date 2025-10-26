@@ -80,6 +80,7 @@ impl OwnershipProof {
         transcript.append_u64(b"amount", amount);
         transcript.append_commitment(b"commitment", &left_commitment);
         transcript.append_ciphertext(b"source_ct", &ciphertext.compress());
+        transcript.append_public_key(b"public_key", &keypair.get_public_key().compress());
 
         // Compute the balance left
         let ct = keypair.get_public_key().encrypt_with_opening(amount, &Self::OPENING);
@@ -105,6 +106,7 @@ impl OwnershipProof {
         transcript.append_u64(b"amount", self.amount);
         transcript.validate_and_append_point(b"commitment", self.commitment.as_point())?;
         transcript.append_ciphertext(b"source_ct", &source_ciphertext.compress());
+        transcript.append_public_key(b"public_key", &public_key.compress());
 
         // Decompress the commitment
         let commitment = self.commitment.decompress()?;
