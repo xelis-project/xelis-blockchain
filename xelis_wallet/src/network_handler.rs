@@ -645,10 +645,17 @@ impl NetworkHandler {
                         lock.insert(topoheight)
                     } {
                         trace!("fetching block with txs at {}", topoheight);
-                        let block = api.get_block_with_txs_at_topoheight(topoheight).await?;
-                        let outputs = api.get_contract_outputs(&address, topoheight).await?;
-
-                        Some((block, outputs))
+                        match api.get_block_with_txs_at_topoheight(topoheight).await {
+                            Ok(block) => {
+                                let outputs = api.get_contract_outputs(&address, topoheight).await?;
+                                Some((block, outputs))
+                            },
+                            // We are maybe below the pruned topoheight, stop here
+                            Err(e) => {
+                                warn!("Error while fetching block at topoheight {}: {}", topoheight, e);
+                                break;
+                            }
+                        }
                     } else {
                         None
                     };
