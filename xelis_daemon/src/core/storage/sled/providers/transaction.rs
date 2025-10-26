@@ -65,7 +65,7 @@ impl TransactionProvider for SledStorage {
         Ok(stream::iter(Self::iter_keys::<Hash>(self.snapshot.as_ref(), &self.transactions))
             .map(move |res| async move {
                 let tx_hash = res?;
-                if !self.is_tx_executed_in_a_block(&tx_hash).await? {
+                if self.is_tx_executed_in_a_block(&tx_hash).await? {
                     return Ok(None);
                 }
 
