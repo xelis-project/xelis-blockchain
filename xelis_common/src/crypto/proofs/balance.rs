@@ -61,8 +61,7 @@ impl BalanceProof {
         transcript.append_public_key(b"public_key", &keypair.get_public_key().compress());
 
         // Compute the zeroed balance
-        let ct = keypair.get_public_key().encrypt_with_opening(amount, &Self::OPENING);
-        let zeroed_balance = ciphertext - ct;
+        let zeroed_balance = ciphertext - Scalar::from(amount);
 
         // Generate the proof that the final balance is 0 after applying the commitment.
         let commitment_eq_proof = CommitmentEqProof::new(keypair, &zeroed_balance, &Self::OPENING, 0u64, TxVersion::V2, transcript);
@@ -81,9 +80,7 @@ impl BalanceProof {
         let destination_commitment = PedersenCommitment::new_with_opening(Scalar::ZERO, &Self::OPENING);
 
         // Compute the zeroed balance
-        let ct = public_key.encrypt_with_opening(self.amount, &Self::OPENING);
-        let zeroed_balance = source_ciphertext - ct;
-
+        let zeroed_balance = source_ciphertext - Scalar::from(self.amount);
 
         Ok((destination_commitment, zeroed_balance))
     }

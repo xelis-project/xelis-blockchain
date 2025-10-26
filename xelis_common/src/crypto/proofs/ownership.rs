@@ -44,10 +44,6 @@ pub struct OwnershipProof {
 }
 
 impl OwnershipProof {
-    /// The opening used for the proof.
-    /// It is used to encrypt the amount of the asset that we want to prove.
-    const OPENING: PedersenOpening = PedersenOpening::from_scalar(Scalar::ONE);
-
     /// Create a new ownership proof.
     pub fn from(amount: u64, commitment: CompressedCommitment, commitment_eq_proof: CommitmentEqProof, range_proof: RangeProof) -> Self {
         Self { amount, commitment, commitment_eq_proof, range_proof }
@@ -83,8 +79,7 @@ impl OwnershipProof {
         transcript.append_public_key(b"public_key", &keypair.get_public_key().compress());
 
         // Compute the balance left
-        let ct = keypair.get_public_key().encrypt_with_opening(amount, &Self::OPENING);
-        let ct_left = ciphertext - ct;
+        let ct_left = ciphertext - Scalar::from(amount);
 
         // Generate the proof that the final balance is ? minus N after applying the commitment.
         let commitment_eq_proof = CommitmentEqProof::new(keypair, &ct_left, &opening, left, TxVersion::V2, transcript);
@@ -112,8 +107,7 @@ impl OwnershipProof {
         let commitment = self.commitment.decompress()?;
 
         // Compute the balance left
-        let ct = public_key.encrypt_with_opening(self.amount, &Self::OPENING);
-        let balance_left = source_ciphertext - ct;
+        let balance_left = source_ciphertext - Scalar::from(self.amount);
 
         Ok((commitment, balance_left))
     }
@@ -260,8 +254,7 @@ mod tests {
         transcript.append_ciphertext(b"source_ct", &balance_ct.compress());
 
         // Compute the balance left
-        let ct = keypair.get_public_key().encrypt_with_opening(amount + inflate, &OwnershipProof::OPENING);
-        let ct_left = balance_ct.clone() - ct;
+        let ct_left = balance_ct.clone() - Scalar::from(amount + inflate);
 
         // expected left balance + the inflated amount
         let left_scalar = Scalar::from(left) - Scalar::from(inflate);
