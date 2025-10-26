@@ -112,6 +112,12 @@ impl OwnershipProof {
         Ok((commitment, balance_left))
     }
 
+    /// Get the amount being proven.
+    #[inline]
+    pub fn amount(&self) -> u64 {
+        self.amount
+    }
+
     /// Verify the ownership proof using a batch collector.
     pub fn pre_verify(&self, public_key: &PublicKey, source_ciphertext: Ciphertext, transcript: &mut Transcript, batch_collector: &mut BatchCollector) -> Result<(), ProofVerificationError> {
         let (commitment, balance_left) = self.verify_internal(public_key, source_ciphertext, transcript)?;

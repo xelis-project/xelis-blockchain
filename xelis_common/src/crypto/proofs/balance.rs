@@ -69,6 +69,12 @@ impl BalanceProof {
         Self::from(amount, commitment_eq_proof)
     }
 
+    /// Get the amount being proven.
+    #[inline]
+    pub fn amount(&self) -> u64 {
+        self.amount
+    }
+
     /// Internal verify function to avoid code duplication.
     fn verify_internal(&self, public_key: &PublicKey, source_ciphertext: Ciphertext, transcript: &mut Transcript) -> Result<(PedersenCommitment, Ciphertext), ProofVerificationError> {
         transcript.balance_proof_domain_separator();
