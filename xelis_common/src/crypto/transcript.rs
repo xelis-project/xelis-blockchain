@@ -38,6 +38,7 @@ pub trait ProtocolTranscript {
     fn ciphertext_validity_proof_domain_separator(&mut self);
     fn balance_proof_domain_separator(&mut self);
     fn ownership_proof_domain_separator(&mut self);
+    fn arbitrary_range_proof_domain_separator(&mut self);
 }
 
 impl ProtocolTranscript for Transcript {
@@ -134,5 +135,9 @@ impl ProtocolTranscript for Transcript {
 
     fn ownership_proof_domain_separator(&mut self) {
         self.append_message(b"dom-sep", b"ownership-proof");
+    }
+
+    fn arbitrary_range_proof_domain_separator(&mut self) {
+        self.append_message(b"dom-sep", b"arbitrary-range-proof");
     }
 }

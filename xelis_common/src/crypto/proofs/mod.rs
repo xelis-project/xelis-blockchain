@@ -3,6 +3,7 @@ mod commitment_eq;
 mod range_proof;
 mod balance;
 mod ownership;
+mod arbitrary_range_proof;
 
 use std::iter;
 use curve25519_dalek::{
@@ -22,6 +23,7 @@ pub use ciphertext_validity::CiphertextValidityProof;
 pub use balance::BalanceProof;
 pub use ownership::OwnershipProof;
 pub use range_proof::RangeProof;
+pub use arbitrary_range_proof::ArbitraryRangeProof;
 
 // We are using 64 bits for the bulletproofs
 pub const BULLET_PROOF_SIZE: usize = 64;
