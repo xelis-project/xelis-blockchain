@@ -554,7 +554,7 @@ impl<S: Storage> Blockchain<S> {
                 FEE_PER_KB
             };
 
-            mempool.clean_up(&*storage, &self.environment, chain_cache.stable_topoheight, chain_cache.topoheight, block_version, tx_base_fee).await?;
+            mempool.clean_up(&*storage, &self.environment, chain_cache.stable_topoheight, chain_cache.topoheight, block_version, tx_base_fee, true).await?;
         }
 
         Ok(())
@@ -2580,9 +2580,10 @@ impl<S: Storage> Blockchain<S> {
         let mut highest_topo = 0;
         // Tells if the new block added is ordered in DAG or not
         let block_is_ordered = full_order.contains(block_hash.as_ref());
+        // Track if the DAG has been reorganized
+        let mut dag_is_overwritten = base_topo_height == 0;
         {
             let start = Instant::now();
-            let mut is_written = base_topo_height == 0;
             let mut skipped = 0;
             // detect which part of DAG reorg stay, for other part, undo all executed txs
             debug!("Detecting stable point of DAG and cleaning txs above it");
@@ -2591,7 +2592,7 @@ impl<S: Storage> Blockchain<S> {
                 while topoheight <= current_topoheight {
                     let hash_at_topo = storage.get_hash_at_topo_height(topoheight).await?;
                     trace!("Cleaning txs at topoheight {} ({})", topoheight, hash_at_topo);
-                    if !is_written {
+                    if !dag_is_overwritten {
                         if let Some(order) = full_order.first() {
                             // Verify that the block is still at the same topoheight
                             if storage.is_block_topological_ordered(order).await? && *order == hash_at_topo {
@@ -2604,7 +2605,7 @@ impl<S: Storage> Blockchain<S> {
                             }
                         }
                         // if we are here, it means that the block was re-ordered
-                        is_written = true;
+                        dag_is_overwritten = true;
                     }
 
                     debug!("Cleaning transactions executions at topo height {} (block {})", topoheight, hash_at_topo);
@@ -2643,7 +2644,7 @@ impl<S: Storage> Blockchain<S> {
                 }
 
                 // Only clear the versioned data caches if we delete any data
-                if is_written {
+                if dag_is_overwritten {
                     storage.clear_versioned_data_caches().await?;
                 }
             }
@@ -2662,11 +2663,11 @@ impl<S: Storage> Blockchain<S> {
 
                 // if block is not re-ordered and it's not genesis block
                 // because we don't need to recompute everything as it's still good in chain
-                if !is_written && tips_count != 0 && storage.is_block_topological_ordered(&hash).await? && storage.get_topo_height_for_hash(&hash).await? == highest_topo {
+                if !dag_is_overwritten && tips_count != 0 && storage.is_block_topological_ordered(&hash).await? && storage.get_topo_height_for_hash(&hash).await? == highest_topo {
                     trace!("Block ordered {} stay at topoheight {}. Skipping...", hash, highest_topo);
                     continue;
                 }
-                is_written = true;
+                dag_is_overwritten = true;
 
                 trace!("Ordering block {} at topoheight {}", hash, highest_topo);
 
@@ -3099,7 +3100,7 @@ impl<S: Storage> Blockchain<S> {
 
             let start = Instant::now();
             // NOTE: we don't remove any under-paid TX, they stay in mempool until fixed
-            let res = mempool.clean_up(&*storage, &self.environment, base_topo_height, highest_topo, version, FEE_PER_KB).await?;
+            let res = mempool.clean_up(&*storage, &self.environment, base_topo_height, highest_topo, version, FEE_PER_KB, dag_is_overwritten).await?;
             debug!("Took {:?} to clean mempool!", start.elapsed());
             histogram!("xelis_mempool_clean_up_ms").record(start.elapsed().as_millis() as f64);
 

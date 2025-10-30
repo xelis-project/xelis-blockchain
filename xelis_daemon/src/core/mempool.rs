@@ -408,6 +408,7 @@ impl Mempool {
         topoheight: TopoHeight,
         block_version: BlockVersion,
         tx_base_fee: u64,
+        full: bool,
     ) -> Result<Vec<(Arc<Hash>, SortedTx)>, BlockchainError> {
         trace!("Cleaning up mempool...");
 
@@ -458,59 +459,62 @@ impl Mempool {
                 }
 
                 delete_cache = true;
-            } else if nonce > cache.get_min() {
+            } else {
+                debug!("Verifying TXs for source {}", key.as_address(self.mainnet));
+                
                 // Account nonce is above our min, which means some TXs are processed
                 // We must check the next ones
-                debug!("Verifying TXs for owner {} with nonce < {}", key.as_address(self.mainnet), nonce);
+
                 // txs hashes to delete
                 let mut deleted_txs_hashes = IndexSet::with_capacity(cache.txs.len());
-
-                // filter all txs hashes which are not found
-                // or where its nonce is smaller than the new nonce
-                // TODO when drain_filter is stable, use it (allow to get all hashes deleted)
-                let mut max: Option<u64> = None;
-                let mut min: Option<u64> = None;
-
-                cache.txs.retain(|hash| {
-                    // Delete by default
-                    let mut delete = true;
-
-                    if let Some(tx) = self.txs.get(hash) {
-                        let tx_nonce = tx.get_tx().get_nonce();
-                        // If TX is still compatible with new nonce, update bounds
-                        if tx_nonce >= nonce {
-                            // Update cache highest bounds
-                            if max.is_none_or(|v| v < tx_nonce) {
-                                max = Some(tx_nonce);
+                if nonce > cache.get_min() {
+                    // filter all txs hashes which are not found
+                    // or where its nonce is smaller than the new nonce
+                    // TODO when drain_filter is stable, use it (allow to get all hashes deleted)
+                    let mut max: Option<u64> = None;
+                    let mut min: Option<u64> = None;
+    
+                    cache.txs.retain(|hash| {
+                        // Delete by default
+                        let mut delete = true;
+    
+                        if let Some(tx) = self.txs.get(hash) {
+                            let tx_nonce = tx.get_tx().get_nonce();
+                            // If TX is still compatible with new nonce, update bounds
+                            if tx_nonce >= nonce {
+                                // Update cache highest bounds
+                                if max.is_none_or(|v| v < tx_nonce) {
+                                    max = Some(tx_nonce);
+                                }
+    
+                                if min.is_none_or(|v| v > tx_nonce) {
+                                    min = Some(tx_nonce);
+                                }
+                                delete = false;
                             }
-
-                            if min.is_none_or(|v| v > tx_nonce) {
-                                min = Some(tx_nonce);
-                            }
-                            delete = false;
                         }
+    
+                        // Add hash in list if we delete it
+                        if delete {
+                            deleted_txs_hashes.insert(Arc::clone(hash));
+                        }
+                        !delete
+                    });
+    
+                    // Update cache bounds
+                    if let (Some(min), Some(max)) = (min, max) {
+                        debug!("Update cache bounds: [{}-{}]", min, max);
+                        cache.min = min;
+                        cache.max = max;
+                    } else {
+                        debug!("no min/max found, deleting cache");
+                        delete_cache = true;
                     }
-
-                    // Add hash in list if we delete it
-                    if delete {
-                        deleted_txs_hashes.insert(Arc::clone(hash));
-                    }
-                    !delete
-                });
-
-                // Update cache bounds
-                if let (Some(min), Some(max)) = (min, max) {
-                    debug!("Update cache bounds: [{}-{}]", min, max);
-                    cache.min = min;
-                    cache.max = max;
-                } else {
-                    debug!("no min/max found, deleting cache");
-                    delete_cache = true;
                 }
 
                 // Cache is not empty yet, but we deleted some TXs from it, balances may be out-dated, verify TXs left
                 // We must have deleted a TX from its list to trigger a new re-check
-                if !delete_cache && !deleted_txs_hashes.is_empty() {
+                if !delete_cache && (!deleted_txs_hashes.is_empty() || full) {
                     // Instead of checking ALL the TXs
                     // We can do the following optimization:
                     // As we know that each TXs added in mempool are validated
@@ -539,6 +543,8 @@ impl Mempool {
                         debug!("no next TX for {}, deleting cache", key.as_address(self.mainnet));
                         delete_cache = true;
                     }
+                } else {
+                    debug!("{} hasn't partially changed, delete cache: {}", key.as_address(self.mainnet), delete_cache);
                 }
 
                 if delete_cache {
@@ -560,8 +566,6 @@ impl Mempool {
 
                 // Delete the cache if its empty
                 delete_cache |= cache.txs.is_empty();
-            } else {
-                debug!("{} hasn't changed, skipping it", key.as_address(self.mainnet));
             }
 
             if !delete_cache {
