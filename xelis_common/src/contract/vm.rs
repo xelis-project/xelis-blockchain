@@ -308,7 +308,8 @@ pub async fn invoke_contract<'a, P: ContractProvider, E, B: BlockchainApplyState
             }
         }
 
-        if let Some((deposits, decompressed_deposits)) = deposits.filter(|(d, d2)| !d.is_empty() && !d2.is_empty()) {
+        // decompressed deposits may be empty because we only have plaintext deposits
+        if let Some((deposits, decompressed_deposits)) = deposits {
             match &caller {
                 ContractCaller::Transaction(hash, tx) => {
                     debug!("refunding deposits for transaction {}", hash);
