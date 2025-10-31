@@ -56,7 +56,7 @@ use crate::{
         Signature
     },
     serializer::Serializer,
-    transaction::{ContractDeposit, Transaction},
+    transaction::ContractDeposit,
     versioned_type::VersionedState
 };
 
@@ -2176,11 +2176,12 @@ fn get_caller(_: FnInstance, _: FnParams, _: &ModuleMetadata, context: &mut Cont
         .context("ChainState not present in Context")?;
 
     let mainnet = state.mainnet;
-    let caller = context.get::<Arc<Transaction>>()
-        .map(|tx| Primitive::Opaque(tx.get_source().as_address(mainnet).into()))
-        .unwrap_or_default();
+    if let ContractCaller::Transaction(_, tx) = &state.caller {
+        let address = tx.get_source().as_address(mainnet);
+        return Ok(SysCallResult::Return(Primitive::Opaque(address.into()).into()));
+    }
 
-    Ok(SysCallResult::Return(caller.into()))
+    Ok(SysCallResult::Return(Primitive::Null.into()))
 }
 
 fn get_cost_per_asset(_: FnInstance, _: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
