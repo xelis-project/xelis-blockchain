@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use blake3::hash as blake3_hash;
 
 pub use xelis_hash::Error as XelisHashError;
-use xelis_hash::{v1, v2};
+use xelis_hash::{v1, v2, v3};
 
 pub const HASH_SIZE: usize = 32; // 32 bytes / 256 bits
 
@@ -90,6 +90,10 @@ pub fn pow_hash(work: &[u8], algorithm: Algorithm) -> Result<Hash, XelisHashErro
             let mut scratchpad = v2::ScratchPad::default();
             v2::xelis_hash(work, &mut scratchpad)
         },
+        Algorithm::V3 => {
+            let mut scratchpad = v3::ScratchPad::default();
+            v3::xelis_hash(work, &mut scratchpad)
+        }
     }.map(Hash::new)
 }
 
