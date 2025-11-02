@@ -4884,7 +4884,7 @@ dependencies = [
 [[package]]
 name = "xelis-hash"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-hash?branch=master#17a9dcd21a78a6e91ebf94e4ce407db7e7bd7f44"
+source = "git+https://github.com/xelis-project/xelis-hash?branch=v3-tweak#009038d4ec1bb6b08d3396192f3cc0c784d97745"
 dependencies = [
  "aes 0.8.4",
  "blake3",
