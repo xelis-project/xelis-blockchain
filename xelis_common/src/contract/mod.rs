@@ -49,7 +49,7 @@ use crate::{
     },
     contract::vm::ContractCaller,
     crypto::{
-        proofs::{CiphertextValidityProof, CommitmentEqProof, G, H},
+        proofs::*,
         Address,
         Hash,
         PublicKey,
@@ -198,6 +198,9 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
     let ct_validity_proof_type = Type::Opaque(env.register_opaque::<CiphertextValidityProof>("CiphertextValidityProof", true));
     let commitment_equality_proof_type = Type::Opaque(env.register_opaque::<CommitmentEqProof>("CommitmentEqualityProof", true));
     let range_proof_type = Type::Opaque(env.register_opaque::<RangeProofWrapper>("RangeProof", true));
+    let arbitrary_range_proof_type = Type::Opaque(env.register_opaque::<ArbitraryRangeProof>("ArbitraryRangeProof", true));
+    let ownership_proof_type = Type::Opaque(env.register_opaque::<OwnershipProof>("OwnershipProof", true));
+    let balance_proof_type = Type::Opaque(env.register_opaque::<BalanceProof>("BalanceProof", true));
 
     // Misc
     let module_type = Type::Opaque(env.register_opaque::<OpaqueModule>("Module", false));
@@ -1327,6 +1330,200 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             ],
             FunctionHandler::Sync(range_proof_verify_multiple),
             1_515_000,
+            Some(Type::Bool)
+        );
+    }
+
+    // Arbitrary Range Proof
+    {
+        // ArbitraryRangeProof::new
+        env.register_static_function(
+            "new",
+            arbitrary_range_proof_type.clone(),
+            vec![
+                ("max_value", Type::U64),
+                ("delta_commitment", ristretto_type.clone()),
+                ("eq_commitment_proof", commitment_equality_proof_type.clone()),
+                ("range_proof", range_proof_type.clone()),
+            ],
+            FunctionHandler::Sync(arbitrary_range_proof_new),
+            500,
+            Some(arbitrary_range_proof_type.clone())
+        );
+
+        // max_value
+        env.register_native_function(
+            "max_value",
+            Some(arbitrary_range_proof_type.clone()),
+            vec![],
+            FunctionHandler::Sync(arbitrary_range_proof_max_value),
+            1,
+            Some(Type::U64)
+        );
+
+        // delta_commitment
+        env.register_native_function(
+            "delta_commitment",
+            Some(arbitrary_range_proof_type.clone()),
+            vec![],
+            FunctionHandler::Sync(arbitrary_range_proof_delta_commitment),
+            50,
+            Some(ristretto_type.clone())
+        );
+
+        // commitment_eq_proof
+        env.register_native_function(
+            "commitment_eq_proof",
+            Some(arbitrary_range_proof_type.clone()),
+            vec![],
+            FunctionHandler::Sync(arbitrary_range_proof_commitment_eq_proof),
+            250,
+            Some(commitment_equality_proof_type.clone())
+        );
+
+        // range_proof
+        env.register_native_function(
+            "range_proof",
+            Some(arbitrary_range_proof_type.clone()),
+            vec![],
+            FunctionHandler::Sync(arbitrary_range_proof_range_proof),
+            250,
+            Some(range_proof_type.clone())
+        );
+
+        // verify
+        env.register_native_function(
+            "verify",
+            Some(arbitrary_range_proof_type.clone()),
+            vec![
+                ("source_pubkey", ristretto_type.clone()),
+                ("source_ciphertext", ciphertext_type.clone()),
+                ("transcript", transcript_type.clone()),
+            ],
+            FunctionHandler::Sync(arbitrary_range_proof_verify),
+            1_600_000,
+            Some(Type::Bool)
+        );
+    }
+
+    // Ownership Proof
+    {
+        // OwnershipProof::new
+        env.register_static_function(
+            "new",
+            ownership_proof_type.clone(),
+            vec![
+                ("amount", Type::U64),
+                ("commitment", ristretto_type.clone()),
+                ("eq_commitment_proof", commitment_equality_proof_type.clone()),
+                ("range_proof", range_proof_type.clone()),
+            ],
+            FunctionHandler::Sync(arbitrary_range_proof_new),
+            500,
+            Some(ownership_proof_type.clone())
+        );
+
+        // amount
+        env.register_native_function(
+            "amount",
+            Some(ownership_proof_type.clone()),
+            vec![],
+            FunctionHandler::Sync(ownership_proof_amount),
+            1,
+            Some(Type::U64)
+        );
+
+        // commitment
+        env.register_native_function(
+            "commitment",
+            Some(ownership_proof_type.clone()),
+            vec![],
+            FunctionHandler::Sync(ownership_proof_commitment),
+            50,
+            Some(ristretto_type.clone())
+        );
+
+        // commitment_eq_proof
+        env.register_native_function(
+            "commitment_eq_proof",
+            Some(ownership_proof_type.clone()),
+            vec![],
+            FunctionHandler::Sync(ownership_proof_commitment_eq_proof),
+            250,
+            Some(commitment_equality_proof_type.clone())
+        );
+
+        // range_proof
+        env.register_native_function(
+            "range_proof",
+            Some(ownership_proof_type.clone()),
+            vec![],
+            FunctionHandler::Sync(ownership_proof_range_proof),
+            250,
+            Some(range_proof_type.clone())
+        );
+
+        // verify
+        env.register_native_function(
+            "verify",
+            Some(ownership_proof_type.clone()),
+            vec![
+                ("source_pubkey", ristretto_type.clone()),
+                ("source_ciphertext", ciphertext_type.clone()),
+                ("transcript", transcript_type.clone()),
+            ],
+            FunctionHandler::Sync(ownership_proof_verify),
+            1_600_000,
+            Some(Type::Bool)
+        );
+    }
+
+    // Balance Proof
+    {
+        // BalanceProof::new
+        env.register_static_function(
+            "new",
+            balance_proof_type.clone(),
+            vec![
+                ("amount", Type::U64),
+                ("commitment_eq_proof", commitment_equality_proof_type.clone()),
+            ],
+            FunctionHandler::Sync(balance_proof_new),
+            250,
+            Some(balance_proof_type.clone())
+        );
+
+        // amount
+        env.register_native_function(
+            "amount",
+            Some(balance_proof_type.clone()),
+            vec![],
+            FunctionHandler::Sync(balance_proof_amount),
+            1,
+            Some(Type::U64)
+        );
+
+        // eq_commitment_proof
+        env.register_native_function(
+            "commitment_eq_proof",
+            Some(balance_proof_type.clone()),
+            vec![],
+            FunctionHandler::Sync(balance_proof_commitment_eq_proof),
+            250,
+            Some(commitment_equality_proof_type.clone())
+        );
+
+        // verify
+        env.register_native_function(
+            "verify",
+            Some(balance_proof_type.clone()),
+            vec![
+                ("source_pubkey", ristretto_type.clone()),
+                ("source_ciphertext", ciphertext_type.clone()),
+                ("transcript", transcript_type.clone()),
+            ],
+            FunctionHandler::Sync(balance_proof_verify),
+            1_600_000,
             Some(Type::Bool)
         );
     }

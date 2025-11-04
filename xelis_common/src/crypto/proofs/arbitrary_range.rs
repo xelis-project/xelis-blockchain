@@ -1,6 +1,7 @@
 use bulletproofs::RangeProof;
 use curve25519_dalek::Scalar;
 use merlin::Transcript;
+use serde::{Deserialize, Serialize};
 use crate::{
     crypto::{
         elgamal::{
@@ -32,6 +33,7 @@ use super::{
 };
 
 /// Prove that a ciphertext is valid in 0..=M range.
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ArbitraryRangeProof {
     /// The maximum value we want to prove against.
     max_value: u64,
@@ -99,6 +101,18 @@ impl ArbitraryRangeProof {
     /// Get the maximum value of the proof.
     pub fn max_value(&self) -> u64 {
         self.max_value
+    }
+
+    pub fn delta_commitment(&self) -> &CompressedCommitment {
+        &self.delta_commitment
+    }
+
+    pub fn commitment_eq_proof(&self) -> &CommitmentEqProof {
+        &self.commitment_eq_proof
+    }
+
+    pub fn range_proof(&self) -> &RangeProof {
+        &self.range_proof
     }
 
     /// Internal verify function to avoid code duplication.

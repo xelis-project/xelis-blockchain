@@ -1,6 +1,7 @@
 use bulletproofs::RangeProof;
 use curve25519_dalek::Scalar;
 use merlin::Transcript;
+use serde::{Deserialize, Serialize};
 use crate::{
     crypto::{
         elgamal::{
@@ -32,6 +33,7 @@ use super::{
 };
 
 /// Prove that the prover owns a certain amount (N > 0) of a given asset.
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct OwnershipProof {
     /// The amount of the asset.
     amount: u64,
@@ -91,6 +93,24 @@ impl OwnershipProof {
         Ok(Self::from(amount, left_commitment, commitment_eq_proof, range_proof))
     }
 
+    /// Get the amount being proven.
+    #[inline]
+    pub fn amount(&self) -> u64 {
+        self.amount
+    }
+
+    pub fn commitment(&self) -> &CompressedCommitment {
+        &self.commitment
+    }
+
+    pub fn commitment_eq_proof(&self) -> &CommitmentEqProof {
+        &self.commitment_eq_proof
+    }
+
+    pub fn range_proof(&self) -> &RangeProof {
+        &self.range_proof
+    }
+
     /// Internal verify function to avoid code duplication.
     fn verify_internal(&self, public_key: &PublicKey, source_ciphertext: Ciphertext, transcript: &mut Transcript) -> Result<(PedersenCommitment, Ciphertext), ProofVerificationError> {
         if self.amount == 0 {
@@ -110,12 +130,6 @@ impl OwnershipProof {
         let balance_left = source_ciphertext - Scalar::from(self.amount);
 
         Ok((commitment, balance_left))
-    }
-
-    /// Get the amount being proven.
-    #[inline]
-    pub fn amount(&self) -> u64 {
-        self.amount
     }
 
     /// Verify the ownership proof using a batch collector.

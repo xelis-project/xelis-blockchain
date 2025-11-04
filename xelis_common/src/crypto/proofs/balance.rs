@@ -1,5 +1,6 @@
 use curve25519_dalek::Scalar;
 use merlin::Transcript;
+use serde::{Deserialize, Serialize};
 use crate::{
     crypto::{
         elgamal::{
@@ -30,6 +31,7 @@ use crate::{
 /// The balance proof is a zero-knowledge proof that proves that the difference between the balance ciphertext and the commitment of the balance amount is zero.
 /// In other words, the balance proof proves that the balance amount is equal to the amount that was encrypted in the ciphertext.
 /// The advantage of a Balance proof is to provide a one time proof that is outdated once the balance is again updated.
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct BalanceProof {
     /// The expected balance amount.
     amount: u64,
@@ -73,6 +75,12 @@ impl BalanceProof {
     #[inline]
     pub fn amount(&self) -> u64 {
         self.amount
+    }
+
+    /// Get the commitment equality proof.
+    #[inline]
+    pub fn commitment_eq_proof(&self) -> &CommitmentEqProof {
+        &self.commitment_eq_proof
     }
 
     /// Internal verify function to avoid code duplication.

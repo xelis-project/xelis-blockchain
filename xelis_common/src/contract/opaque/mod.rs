@@ -21,7 +21,7 @@ use crate::{
     block::Block,
     contract::OpaqueScheduledExecution,
     crypto::{
-        proofs::{CiphertextValidityProof, CommitmentEqProof},
+        proofs::*,
         Address,
         Hash,
         Signature
@@ -49,8 +49,11 @@ pub const CIPHERTEXT_OPAQUE_ID: u8 = 3;
 pub const CIPHERTEXT_VALIDITY_PROOF_OPAQUE_ID: u8 = 4;
 pub const COMMITMENT_EQUALITY_PROOF_OPAQUE_ID: u8 = 5;
 pub const RANGE_PROOF_OPAQUE_ID: u8 = 6;
-pub const RISTRETTO_OPAQUE_ID: u8 = 7;
-pub const SCALAR_OPAQUE_ID: u8 = 8;
+pub const ARBITRARY_RANGE_PROOF_OPAQUE_ID: u8 = 7;
+pub const OWNERSHIP_PROOF_OPAQUE_ID: u8 = 8;
+pub const BALANCE_PROOF_OPAQUE_ID: u8 = 9;
+pub const RISTRETTO_OPAQUE_ID: u8 = 10;
+pub const SCALAR_OPAQUE_ID: u8 = 11;
 
 impl_opaque!(
     "Hash",
@@ -136,6 +139,9 @@ impl Serializer for OpaqueWrapper {
             CIPHERTEXT_VALIDITY_PROOF_OPAQUE_ID => OpaqueWrapper::new(CiphertextValidityProof::read(reader)?),
             COMMITMENT_EQUALITY_PROOF_OPAQUE_ID => OpaqueWrapper::new(CommitmentEqProof::read(reader)?),
             RANGE_PROOF_OPAQUE_ID => OpaqueWrapper::new(RangeProofWrapper(RangeProof::read(reader)?)),
+            ARBITRARY_RANGE_PROOF_OPAQUE_ID => OpaqueWrapper::new(ArbitraryRangeProof::read(reader)?),
+            OWNERSHIP_PROOF_OPAQUE_ID => OpaqueWrapper::new(OwnershipProof::read(reader)?),
+            BALANCE_PROOF_OPAQUE_ID => OpaqueWrapper::new(BalanceProof::read(reader)?),
             RISTRETTO_OPAQUE_ID => OpaqueWrapper::new(OpaqueRistrettoPoint::Compressed(CompressedRistretto::read(reader)?)),
             SCALAR_OPAQUE_ID => OpaqueWrapper::new(OpaqueScalar(Scalar::read(reader)?)),
             _ => return Err(ReaderError::InvalidValue)
