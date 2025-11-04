@@ -14,8 +14,8 @@ use xelis_vm::{
 };
 use crate::{
     account::CiphertextCache,
-    contract::{ModuleMetadata, OpaqueRistrettoPoint, CIPHERTEXT_OPAQUE_ID},
-    crypto::{elgamal::RISTRETTO_COMPRESSED_SIZE, Address},
+    contract::{CIPHERTEXT_OPAQUE_ID, ModuleMetadata, OpaqueRistrettoPoint},
+    crypto::{Address, elgamal::{Ciphertext, CompressedCiphertext, RISTRETTO_COMPRESSED_SIZE}},
     serializer::{Serializer, Writer}
 };
 
@@ -125,6 +125,12 @@ pub fn ciphertext_new(_: FnInstance, mut params: FnParams, _: &ModuleMetadata, _
         .context("Invalid public key")?;
 
     let ciphertext = CiphertextCache::Decompressed(None, key.encrypt(amount));
+    Ok(SysCallResult::Return(Primitive::Opaque(ciphertext.into()).into()))
+}
+
+
+pub fn ciphertext_zero(_: FnInstance, _: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
+    let ciphertext = CiphertextCache::Decompressed(Some(CompressedCiphertext::zero()), Ciphertext::zero());
     Ok(SysCallResult::Return(Primitive::Opaque(ciphertext.into()).into()))
 }
 

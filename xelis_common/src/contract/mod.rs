@@ -955,6 +955,16 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, M
             5,
             Some(ristretto_type.clone())
         );
+
+        // Ciphertext::zero()
+        env.register_static_function(
+            "zero",
+            ciphertext_type.clone(),
+            vec![],
+            FunctionHandler::Sync(ciphertext_zero),
+            10,
+            Some(ciphertext_type.clone())
+        );
     }
 
     // RistrettoPoint
