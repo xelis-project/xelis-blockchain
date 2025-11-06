@@ -1,6 +1,5 @@
 use chacha20poly1305::{
     aead::{
-        rand_core::OsError,
         AeadInOut,
         Buffer
     },
@@ -75,8 +74,8 @@ pub enum EncryptionError {
     DecryptError,
     #[error("Not supported")]
     NotSupported,
-    #[error(transparent)]
-    RngError(#[from] OsError)
+    #[error("Random generator error")]
+    Rng,
 }
 
 impl Encryption {
@@ -115,7 +114,7 @@ impl Encryption {
     pub fn generate_key(&self) -> Result<EncryptionKey, EncryptionError> {
         ChaCha20Poly1305::generate_key()
             .map(Into::into)
-            .map_err(EncryptionError::from)
+            .map_err(|_| EncryptionError::Rng)
     }
 
     // Encrypt a packet using the shared symetric key
