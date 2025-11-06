@@ -30,7 +30,7 @@ indexmap = { version = "2.10.0", features = ["serde"] }
 serde = { version = "1", features = ["derive", "rc"] }
 strum = { version = "0.27.1", features = ["derive"] }
 cfg-if = "1"
-tokio-tungstenite-wasm = { version = "0.6.0", features = ["rustls-tls-webpki-roots"] }
+tokio-tungstenite-wasm = { version = "0.7.0", features = ["rustls-tls-webpki-roots"] }
 schemars = { version = "1.0.4", features = ["indexmap2"] }
 
 # cargo run --profile release-with-lto
