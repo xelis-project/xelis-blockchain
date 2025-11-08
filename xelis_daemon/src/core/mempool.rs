@@ -20,7 +20,7 @@ use xelis_common::{
     api::daemon::FeeRatesEstimated,
     block::{BlockVersion, TopoHeight},
     config::FEE_PER_KB,
-    contract::ModuleMetadata,
+    contract::ContractMetadata,
     crypto::{
         elgamal::Ciphertext,
         Hash,
@@ -146,7 +146,7 @@ impl Mempool {
     }
 
     // All checks are made in Blockchain before calling this function
-    pub async fn add_tx<S: Storage>(&mut self, storage: &S, environment: &Environment<ModuleMetadata>, stable_topoheight: TopoHeight, topoheight: TopoHeight, tx_base_fee: u64, hash: Arc<Hash>, tx: Arc<Transaction>, size: usize, block_version: BlockVersion) -> Result<(), BlockchainError> {
+    pub async fn add_tx<S: Storage>(&mut self, storage: &S, environment: &Environment<ContractMetadata>, stable_topoheight: TopoHeight, topoheight: TopoHeight, tx_base_fee: u64, hash: Arc<Hash>, tx: Arc<Transaction>, size: usize, block_version: BlockVersion) -> Result<(), BlockchainError> {
         let mut state = MempoolState::new(&self, storage, environment, stable_topoheight, topoheight, block_version, self.mainnet, tx_base_fee);
         let tx_cache = TxCache::new(storage, self, self.disable_zkp_cache);
         tx.verify(&hash, &mut state, &tx_cache).await?;
@@ -340,7 +340,7 @@ impl Mempool {
         &mut self,
         storage: &S,
         transactions: impl Iterator<Item = Hash>,
-        environment: &Environment<ModuleMetadata>,
+        environment: &Environment<ContractMetadata>,
         stable_topoheight: TopoHeight,
         topoheight: TopoHeight,
         block_version: BlockVersion,
@@ -403,7 +403,7 @@ impl Mempool {
     pub async fn clean_up<S: Storage>(
         &mut self,
         storage: &S,
-        environment: &Environment<ModuleMetadata>,
+        environment: &Environment<ContractMetadata>,
         stable_topoheight: TopoHeight,
         topoheight: TopoHeight,
         block_version: BlockVersion,

@@ -21,7 +21,7 @@ use xelis_common::{
         ContractCache,
         ContractEventTracker,
         ContractLog,
-        ModuleMetadata,
+        ContractMetadata,
         ScheduledExecution
     },
     crypto::{elgamal::Ciphertext, Hash, PublicKey},
@@ -186,7 +186,7 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for Applic
         self.inner.get_multisig_state(account).await
     }
 
-    async fn get_environment(&mut self) -> Result<&Environment<ModuleMetadata>, BlockchainError> {
+    async fn get_environment(&mut self) -> Result<&Environment<ContractMetadata>, BlockchainError> {
         self.inner.get_environment().await
     }
 
@@ -208,7 +208,7 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for Applic
     async fn get_contract_module_with_environment(
         &self,
         hash: &'a Hash
-    ) -> Result<(&xelis_vm::Module, &Environment<ModuleMetadata>), BlockchainError> {
+    ) -> Result<(&xelis_vm::Module, &Environment<ContractMetadata>), BlockchainError> {
         self.inner.get_contract_module_with_environment(hash).await
     }
 }
@@ -465,7 +465,7 @@ impl<'a, S: Storage> AsMut<ChainState<'a, S>> for ApplicableChainState<'a, S> {
 impl<'a, S: Storage> ApplicableChainState<'a, S> {
     pub fn new(
         storage: &'a mut S,
-        environment: &'a Environment<ModuleMetadata>,
+        environment: &'a Environment<ContractMetadata>,
         stable_topoheight: TopoHeight,
         topoheight: TopoHeight,
         block_version: BlockVersion,

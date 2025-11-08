@@ -28,7 +28,7 @@ use xelis_common::{
         Reference,
         Transaction
     },
-    contract::ModuleMetadata,
+    contract::ContractMetadata,
     utils::format_xelis,
     versioned_type::VersionedState,
 };
@@ -107,7 +107,7 @@ struct Account<'a> {
 pub struct ChainState<'a, S: Storage> {
     // Storage to read and write the balances and nonces
     storage: StorageReference<'a, S>,
-    environment: &'a Environment<ModuleMetadata>,
+    environment: &'a Environment<ContractMetadata>,
     // Balances of the receiver accounts
     receiver_balances: HashMap<Cow<'a, PublicKey>, HashMap<Cow<'a, Hash>, VersionedBalance>>,
     // Sender accounts
@@ -129,7 +129,7 @@ pub struct ChainState<'a, S: Storage> {
 impl<'a, S: Storage> ChainState<'a, S> {
     fn with(
         storage: StorageReference<'a, S>,
-        environment: &'a Environment<ModuleMetadata>,
+        environment: &'a Environment<ContractMetadata>,
         stable_topoheight: TopoHeight,
         topoheight: TopoHeight,
         block_version: BlockVersion,
@@ -149,7 +149,7 @@ impl<'a, S: Storage> ChainState<'a, S> {
         }
     }
 
-    pub fn new(storage: &'a S, environment: &'a Environment<ModuleMetadata>, stable_topoheight: TopoHeight, topoheight: TopoHeight, block_version: BlockVersion, tx_base_fee: u64) -> Self {
+    pub fn new(storage: &'a S, environment: &'a Environment<ContractMetadata>, stable_topoheight: TopoHeight, topoheight: TopoHeight, block_version: BlockVersion, tx_base_fee: u64) -> Self {
         Self::with(
             StorageReference::Immutable(storage),
             environment,
@@ -427,7 +427,7 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for ChainS
     }
 
     /// Get the contract environment
-    async fn get_environment(&mut self) -> Result<&Environment<ModuleMetadata>, BlockchainError> {
+    async fn get_environment(&mut self) -> Result<&Environment<ContractMetadata>, BlockchainError> {
         Ok(self.environment)
     }
 
@@ -459,7 +459,7 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for ChainS
     async fn get_contract_module_with_environment(
         &self,
         hash: &'a Hash
-    ) -> Result<(&Module, &Environment<ModuleMetadata>), BlockchainError> {
+    ) -> Result<(&Module, &Environment<ContractMetadata>), BlockchainError> {
         let module = self.internal_get_contract_module(hash).await?;
         Ok((module, self.environment))
     }
