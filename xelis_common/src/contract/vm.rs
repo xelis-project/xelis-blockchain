@@ -91,8 +91,8 @@ async fn run_virtual_machine<'a, P: ContractProvider>(
 
     // Insert the module to load
     let metadata = ContractMetadata {
-        contract: contract.as_ref().clone(),
-        caller: None,
+        contract_executor: contract.as_ref().clone(),
+        contract_caller: None,
         deposits,
     };
     vm.append_module(contract_environment.module, Reference::Shared(Arc::new(metadata)))?;

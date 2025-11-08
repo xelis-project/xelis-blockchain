@@ -116,7 +116,7 @@ pub async fn asset_create<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, m
     }
 
     // Check that we have enough XEL in the balance
-    let balance = get_balance_from_cache(provider, state, metadata.metadata.contract.clone(), XELIS_ASSET).await?;
+    let balance = get_balance_from_cache(provider, state, metadata.metadata.contract_executor.clone(), XELIS_ASSET).await?;
     if balance.is_none_or(|(_, balance)| balance < COST_PER_ASSET) {
         return Err(EnvironmentError::Expect("Insufficient XEL funds in contract balance for token creation".to_owned()).into());
     }
@@ -125,7 +125,7 @@ pub async fn asset_create<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, m
     let id = params.remove(0).as_u64()?;
 
     let mut buffer = [0u8; 40];
-    buffer[0..HASH_SIZE].copy_from_slice(metadata.metadata.contract.as_bytes());
+    buffer[0..HASH_SIZE].copy_from_slice(metadata.metadata.contract_executor.as_bytes());
     buffer[HASH_SIZE..].copy_from_slice(&id.to_be_bytes());
 
     let asset_hash = Hash::new(hash(&buffer).into());
@@ -137,7 +137,7 @@ pub async fn asset_create<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, m
     }
 
     let creator = AssetOwner::Creator {
-        contract: metadata.metadata.contract.clone(),
+        contract: metadata.metadata.contract_executor.clone(),
         id
     };
     let data = AssetData::new(decimals, name, ticker, max_supply, creator);
@@ -152,22 +152,22 @@ pub async fn asset_create<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, m
     // Pay the fee by reducing the contract balance
     // and record the burn in the circulating supply
     {
-        let (versioned_state, balance) = get_mut_balance_for_contract(provider, state, metadata.metadata.contract.clone(), XELIS_ASSET).await?;
+        let (versioned_state, balance) = get_mut_balance_for_contract(provider, state, metadata.metadata.contract_executor.clone(), XELIS_ASSET).await?;
         *balance -= COST_PER_ASSET;
         versioned_state.mark_updated();
     
-        record_burned_asset(provider, state, metadata.metadata.contract.clone(), XELIS_ASSET, COST_PER_ASSET).await?;
+        record_burned_asset(provider, state, metadata.metadata.contract_executor.clone(), XELIS_ASSET, COST_PER_ASSET).await?;
     }
 
     // If we have a fixed max supply, we need to mint it to the contract
     if let MaxSupplyMode::Fixed(max_supply) = max_supply {
         // We don't bother to check if it already exists, because it shouldn't exist before we create it.
-        get_cache_for_contract(&mut state.caches, state.global_caches, metadata.metadata.contract.clone())
+        get_cache_for_contract(&mut state.caches, state.global_caches, metadata.metadata.contract_executor.clone())
             .balances
             .insert(asset_hash.clone(), Some((VersionedState::New, max_supply)));
     }
 
-    state.outputs.push(ContractLog::NewAsset { contract: metadata.metadata.contract.clone(), asset: asset_hash.clone() });
+    state.outputs.push(ContractLog::NewAsset { contract: metadata.metadata.contract_executor.clone(), asset: asset_hash.clone() });
 
     let asset = Asset {
         hash: asset_hash
@@ -180,7 +180,7 @@ pub async fn asset_get_by_id<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>
     let (provider, chain_state) = from_context::<P>(context)?;
 
     let mut buffer = [0u8; 40];
-    buffer[0..HASH_SIZE].copy_from_slice(metadata.metadata.contract.as_bytes());
+    buffer[0..HASH_SIZE].copy_from_slice(metadata.metadata.contract_executor.as_bytes());
     buffer[HASH_SIZE..].copy_from_slice(&id.to_be_bytes());
 
     let asset_hash = Hash::new(hash(&buffer).into());

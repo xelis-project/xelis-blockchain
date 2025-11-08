@@ -60,7 +60,7 @@ pub fn memory_storage_load<P: ContractProvider>(instance: FnInstance, mut params
     let key = params.remove(0)
         .into_owned();
 
-    let value = get_optional_cache_for_contract(&state.caches, state.global_caches, &metadata.metadata.contract)
+    let value = get_optional_cache_for_contract(&state.caches, state.global_caches, &metadata.metadata.contract_executor)
         .and_then(|cache| if storage.shared {
                 &cache.memory_shared
             } else {
@@ -81,7 +81,7 @@ pub fn memory_storage_has<P: ContractProvider>(instance: FnInstance, mut params:
     let key = params.remove(0)
         .into_owned();
 
-    let contains = get_optional_cache_for_contract(&state.caches, state.global_caches, &metadata.metadata.contract)
+    let contains = get_optional_cache_for_contract(&state.caches, state.global_caches, &metadata.metadata.contract_executor)
         .map_or(false, |cache| if storage.shared {
                 &cache.memory_shared
             } else {
@@ -119,7 +119,7 @@ pub fn memory_storage_store<P: ContractProvider>(instance: FnInstance, mut param
     let state: &mut ChainState = context.get_mut()
         .context("No chain state for memory storage")?;
 
-    let cache = get_cache_for_contract(&mut state.caches, state.global_caches, metadata.metadata.contract.clone());
+    let cache = get_cache_for_contract(&mut state.caches, state.global_caches, metadata.metadata.contract_executor.clone());
     let memory = if storage.shared {
         &mut cache.memory_shared
     } else {
@@ -142,7 +142,7 @@ pub fn memory_storage_delete<P: ContractProvider>(instance: FnInstance, mut para
     let key = params.remove(0)
         .into_owned();
 
-    let cache = get_cache_for_contract(&mut state.caches, state.global_caches, metadata.metadata.contract.clone());
+    let cache = get_cache_for_contract(&mut state.caches, state.global_caches, metadata.metadata.contract_executor.clone());
     let memory = if storage.shared {
         &mut cache.memory_shared
     } else {

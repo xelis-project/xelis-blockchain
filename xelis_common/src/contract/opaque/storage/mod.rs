@@ -71,13 +71,13 @@ pub async fn storage_load<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, m
         return Err(EnvironmentError::Static("Key is not serializable"))
     }
 
-    let cache = get_cache_for_contract(&mut state.caches, state.global_caches, metadata.metadata.contract.clone());
+    let cache = get_cache_for_contract(&mut state.caches, state.global_caches, metadata.metadata.contract_executor.clone());
     let value = match cache.storage.entry(key.clone()) {
         Entry::Occupied(v) => v.get()
             .as_ref()
             .map(|(_, v)| v.clone())
             .flatten(),
-        Entry::Vacant(v) => match storage.load_data(&metadata.metadata.contract, &key, state.topoheight).await? {
+        Entry::Vacant(v) => match storage.load_data(&metadata.metadata.contract_executor, &key, state.topoheight).await? {
             Some((topoheight, constant)) => {
                 v.insert(Some((VersionedState::FetchedAt(topoheight), constant.clone())));
                 constant
@@ -102,12 +102,12 @@ pub async fn storage_has<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mu
         return Err(EnvironmentError::Static("Key is not serializable"))
     }
 
-    let cache = get_cache_for_contract(&mut state.caches, state.global_caches, metadata.metadata.contract.clone());
+    let cache = get_cache_for_contract(&mut state.caches, state.global_caches, metadata.metadata.contract_executor.clone());
     let contains = match cache.storage.entry(key.clone()) {
         Entry::Occupied(v) => v.get()
             .as_ref()
             .map_or(false, |(_, v)| v.is_some()),
-        Entry::Vacant(v) => match storage.load_data(&metadata.metadata.contract, &key, state.topoheight).await? {
+        Entry::Vacant(v) => match storage.load_data(&metadata.metadata.contract_executor, &key, state.topoheight).await? {
             Some((topoheight, constant)) => {
                 v.insert(Some((VersionedState::FetchedAt(topoheight), constant)));
                 true
@@ -149,7 +149,7 @@ pub async fn storage_store<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, 
 
     let (storage, state) = from_context::<P>(context)?;
 
-    let cache = get_cache_for_contract(&mut state.caches, state.global_caches, metadata.metadata.contract.clone());
+    let cache = get_cache_for_contract(&mut state.caches, state.global_caches, metadata.metadata.contract_executor.clone());
 
     // We do it in two times: first we retrieve the VersionedState to update it
     let data_state = match cache.storage.get(&key) {
@@ -160,7 +160,7 @@ pub async fn storage_store<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, 
         Some(None) => VersionedState::New,
         None => {
             // We need to retrieve the latest topoheight version
-            storage.load_data_latest_topoheight(&metadata.metadata.contract, &key, state.topoheight).await?
+            storage.load_data_latest_topoheight(&metadata.metadata.contract_executor, &key, state.topoheight).await?
                 .map(|topoheight| VersionedState::Updated(topoheight))
                 .unwrap_or(VersionedState::New)
         }
@@ -185,7 +185,7 @@ pub async fn storage_delete<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>,
         return Err(EnvironmentError::Static("Key is not serializable"))
     }
 
-    let cache = get_cache_for_contract(&mut state.caches, state.global_caches, metadata.metadata.contract.clone());
+    let cache = get_cache_for_contract(&mut state.caches, state.global_caches, metadata.metadata.contract_executor.clone());
     let data_state = match cache.storage.get(&key) {
         Some(Some((s, _))) => match s {
             VersionedState::New => {
@@ -201,7 +201,7 @@ pub async fn storage_delete<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>,
         Some(None) => return Ok(SysCallResult::Return(Default::default())),
         None => {
             // We need to retrieve the latest topoheight version
-            match storage.load_data_latest_topoheight(&metadata.metadata.contract, &key, state.topoheight).await? {
+            match storage.load_data_latest_topoheight(&metadata.metadata.contract_executor, &key, state.topoheight).await? {
                 Some(topoheight) => VersionedState::Updated(topoheight),
                 None => return Ok(SysCallResult::Return(Default::default())),
             }

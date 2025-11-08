@@ -193,7 +193,7 @@ pub fn asset_is_read_only(zelf: FnInstance, _: FnParams, metadata: &ModuleMetada
     let changes = get_asset_changes_for_hash(state, &asset.hash)?;
     let is_owner = changes.data.1
         .get_owner()
-        .is_owner(&metadata.metadata.contract);
+        .is_owner(&metadata.metadata.contract_executor);
 
     Ok(SysCallResult::Return(Primitive::Boolean(!is_owner).into()))
 }
@@ -221,14 +221,14 @@ pub async fn asset_transfer_ownership<'a, 'ty, 'r, P: ContractProvider>(zelf: Fn
         return Ok(SysCallResult::Return(Primitive::Boolean(false).into()))
     }
 
-    if param == metadata.metadata.contract {
+    if param == metadata.metadata.contract_executor {
         // Cannot transfer to self
         return Ok(SysCallResult::Return(Primitive::Boolean(false).into()))
     }
 
     let changes = get_asset_changes_for_hash_mut(state, &asset.hash)?;
     let owner = changes.data.1.get_owner_mut();
-    Ok(SysCallResult::Return(Primitive::Boolean(owner.transfer(&metadata.metadata.contract, param)).into()))
+    Ok(SysCallResult::Return(Primitive::Boolean(owner.transfer(&metadata.metadata.contract_executor, param)).into()))
 }
 
 pub async fn asset_mint<'a, 'ty, 'r, P: ContractProvider>(zelf: FnInstance<'a>, params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut Context<'ty, 'r>) -> FnReturnType<ContractMetadata> {
@@ -240,7 +240,7 @@ pub async fn asset_mint<'a, 'ty, 'r, P: ContractProvider>(zelf: FnInstance<'a>, 
     let asset_data = &mut changes.data.1;
     let read_only = !asset_data
         .get_owner()
-        .is_owner(&metadata.metadata.contract);
+        .is_owner(&metadata.metadata.contract_executor);
 
     if read_only {
         return Ok(SysCallResult::Return(Primitive::Boolean(false).into()))
@@ -266,7 +266,7 @@ pub async fn asset_mint<'a, 'ty, 'r, P: ContractProvider>(zelf: FnInstance<'a>, 
     }
 
     // Update the contract balance
-    match get_balance_from_cache(provider, state, metadata.metadata.contract.clone(), asset.hash.clone()).await? {
+    match get_balance_from_cache(provider, state, metadata.metadata.contract_executor.clone(), asset.hash.clone()).await? {
         Some((state, balance)) => {
             let new_balance = balance.checked_add(amount)
             .context("Overflow while minting balance")?;
@@ -281,7 +281,7 @@ pub async fn asset_mint<'a, 'ty, 'r, P: ContractProvider>(zelf: FnInstance<'a>, 
 
     // Add to outputs
     state.outputs.push(ContractLog::Mint {
-        contract: metadata.metadata.contract.clone(),
+        contract: metadata.metadata.contract_executor.clone(),
         asset: asset.hash.clone(),
         amount,
     });

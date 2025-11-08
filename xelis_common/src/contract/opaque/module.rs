@@ -118,7 +118,7 @@ pub async fn module_call<'a, 'ty, 'r, P: ContractProvider>(zelf: FnInstance<'a>,
         let amount = v.as_ref().as_u64()?;
 
         // Check if we have enough balance to transfer this value
-        let (state, balance) = get_balance_from_cache(provider, chain_state, metadata.metadata.contract.clone(), asset.clone()).await?
+        let (state, balance) = get_balance_from_cache(provider, chain_state, metadata.metadata.contract_executor.clone(), asset.clone()).await?
             .as_mut()
             .context("No balance for invoke deposit")?;
 
@@ -136,7 +136,7 @@ pub async fn module_call<'a, 'ty, 'r, P: ContractProvider>(zelf: FnInstance<'a>,
         *balance += amount;
         state.mark_updated();
 
-        debug!("Transfering {} of {} to {} from {}", amount, asset, module.contract, metadata.metadata.contract);
+        debug!("Transfering {} of {} to {} from {}", amount, asset, module.contract, metadata.metadata.contract_executor);
         deposits.insert(asset, ContractDeposit::Public(amount));
     }
 
@@ -147,8 +147,8 @@ pub async fn module_call<'a, 'ty, 'r, P: ContractProvider>(zelf: FnInstance<'a>,
     Ok(SysCallResult::ModuleCall {
         module: module.module.clone(),
         metadata: Arc::new(ContractMetadata {
-            contract: module.contract.clone(),
-            caller: Some(metadata.metadata.contract.clone()),
+            contract_executor: module.contract.clone(),
+            contract_caller: Some(metadata.metadata.contract_executor.clone()),
             deposits,
         }),
         chunk: chunk_id,
