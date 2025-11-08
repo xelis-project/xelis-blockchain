@@ -154,6 +154,10 @@ async fn schedule_execution<'a, 'ty, 'r, P: ContractProvider>(
     }
 
     let chunk_id = params[0].as_u16()?;
+    if !metadata.module.is_callable_chunk(chunk_id as _) {
+        return Ok(SysCallResult::Return(Primitive::Null.into()));
+    }
+
     let p = params[1].as_ref().as_vec()?;
     let max_gas = params[2].as_u64()?;
 
