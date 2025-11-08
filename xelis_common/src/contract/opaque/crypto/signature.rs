@@ -13,7 +13,7 @@ use xelis_vm::{
 };
 
 use crate::{
-    contract::{ModuleMetadata, OpaqueRistrettoPoint, SIGNATURE_OPAQUE_ID},
+    contract::{ModuleMetadata, ContractMetadata, OpaqueRistrettoPoint, SIGNATURE_OPAQUE_ID},
     crypto::{Signature, SIGNATURE_SIZE},
     serializer::{Serializer, Writer}
 };
@@ -45,7 +45,7 @@ impl Serializable for Signature {
     }
 }
 
-pub fn signature_from_bytes_fn(_: FnInstance, mut params: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn signature_from_bytes_fn(_: FnInstance, mut params: FnParams, _: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {
     let param = params.remove(0)
         .into_owned();
     let param = param.as_vec()?;
@@ -63,7 +63,7 @@ pub fn signature_from_bytes_fn(_: FnInstance, mut params: FnParams, _: &ModuleMe
     Ok(SysCallResult::Return(Primitive::Opaque(signature.into()).into()))
 }
 
-pub fn signature_verify_fn(zelf: FnInstance, mut params: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn signature_verify_fn(zelf: FnInstance, mut params: FnParams, _: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
     let signature: &Signature = zelf.as_opaque_type()?;
 

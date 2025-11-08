@@ -8,7 +8,7 @@ use crate::{
     api::{DataElement, DataValue},
     block::BlockVersion,
     config::{BURN_PER_CONTRACT, COIN_VALUE, XELIS_ASSET},
-    contract::ModuleMetadata,
+    contract::ContractMetadata,
     crypto::{
         elgamal::{Ciphertext, PedersenOpening},
         proofs::{ProofVerificationError, G},
@@ -60,7 +60,7 @@ struct ChainState {
     accounts: HashMap<PublicKey, AccountChainState>,
     multisig: HashMap<PublicKey, MultiSigPayload>,
     contracts: HashMap<Hash, Module>,
-    env: Environment<ModuleMetadata>,
+    env: Environment<ContractMetadata>,
 }
 
 impl ChainState {
@@ -788,7 +788,7 @@ impl<'a> BlockchainVerificationState<'a, ()> for ChainState {
         Ok(self.multisig.get(account))
     }
 
-    async fn get_environment(&mut self) -> Result<&Environment<ModuleMetadata>, ()> {
+    async fn get_environment(&mut self) -> Result<&Environment<ContractMetadata>, ()> {
         Ok(&self.env)
     }
 
@@ -811,7 +811,7 @@ impl<'a> BlockchainVerificationState<'a, ()> for ChainState {
     async fn get_contract_module_with_environment(
         &self,
         contract: &'a Hash
-    ) -> Result<(&Module, &Environment<ModuleMetadata>), ()> {
+    ) -> Result<(&Module, &Environment<ContractMetadata>), ()> {
         let module = self.contracts.get(contract).ok_or(())?;
         Ok((module, &self.env))
     }

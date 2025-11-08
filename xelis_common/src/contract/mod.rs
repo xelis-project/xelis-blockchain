@@ -160,7 +160,7 @@ macro_rules! async_handler {
 }
 
 // Build the environment for the contract
-pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, ModuleMetadata> {
+pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, ContractMetadata> {
     debug!("Building environment for contract");
 
     let mut env = EnvironmentBuilder::default();
@@ -2004,7 +2004,7 @@ pub async fn get_asset_from_provider<P: ContractProvider>(provider: &P, topoheig
     }
 }
 
-fn fire_event_fn(_: FnInstance, mut params: FnParams, metadata: &ModuleMetadata, context: &mut Context) -> FnReturnType<ModuleMetadata> {
+fn fire_event_fn(_: FnInstance, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut Context) -> FnReturnType<ContractMetadata> {
     let data = params.remove(1);
     let id = params.remove(0)
         .as_u64()?;
@@ -2021,7 +2021,7 @@ fn fire_event_fn(_: FnInstance, mut params: FnParams, metadata: &ModuleMetadata,
     }
 
     let state: &mut ChainState = context.get_mut().context("chain state not found")?;
-    let entry = get_cache_for_contract(&mut state.caches, state.global_caches, metadata.contract.clone())
+    let entry = get_cache_for_contract(&mut state.caches, state.global_caches, metadata.metadata.contract.clone())
         .events.entry(id)
         .or_insert_with(Vec::new);
 
@@ -2030,16 +2030,16 @@ fn fire_event_fn(_: FnInstance, mut params: FnParams, metadata: &ModuleMetadata,
     Ok(SysCallResult::None)
 }
 
-fn println_fn(_: FnInstance, params: FnParams, metadata: &ModuleMetadata, context: &mut Context) -> FnReturnType<ModuleMetadata> {
+fn println_fn(_: FnInstance, params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut Context) -> FnReturnType<ContractMetadata> {
     let state: &ChainState = context.get().context("chain state not found")?;
     if state.debug_mode {
-        info!("[{}#{}]: {}", state.entry_contract, metadata.contract, params[0].as_ref());
+        info!("[{}#{}]: {}", state.entry_contract, metadata.metadata.contract, params[0].as_ref());
     }
 
     Ok(SysCallResult::None)
 }
 
-fn debug_fn(_: FnInstance, params: FnParams, _: &ModuleMetadata, context: &mut Context) -> FnReturnType<ModuleMetadata> {
+fn debug_fn(_: FnInstance, params: FnParams, _: &ModuleMetadata<'_>, context: &mut Context) -> FnReturnType<ContractMetadata> {
     let state: &ChainState = context.get().context("chain state not found")?;
     if state.debug_mode {
         debug!("{:?}", params[0].as_ref());
@@ -2048,17 +2048,17 @@ fn debug_fn(_: FnInstance, params: FnParams, _: &ModuleMetadata, context: &mut C
     Ok(SysCallResult::None)
 }
 
-fn get_contract_hash(_: FnInstance, _: FnParams, metadata: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
-    Ok(SysCallResult::Return(Primitive::Opaque(OpaqueWrapper::new(metadata.contract.clone())).into()))
+fn get_contract_hash(_: FnInstance, _: FnParams, metadata: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {
+    Ok(SysCallResult::Return(Primitive::Opaque(OpaqueWrapper::new(metadata.metadata.contract.clone())).into()))
 }
 
-fn get_contract_entry(_: FnInstance, _: FnParams, _: &ModuleMetadata,context: &mut Context) -> FnReturnType<ModuleMetadata> {
+fn get_contract_entry(_: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, context: &mut Context) -> FnReturnType<ContractMetadata> {
     let chain_state: &ChainState = context.get().context("chain state not found")?;
     Ok(SysCallResult::Return(Primitive::Opaque(OpaqueWrapper::new(chain_state.entry_contract.as_ref().clone())).into()))
 }
 
-fn get_contract_caller(_: FnInstance, _: FnParams, metadata: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
-    let value = metadata.caller
+fn get_contract_caller(_: FnInstance, _: FnParams, metadata: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {
+    let value = metadata.metadata.caller
         .as_ref()
         .map(|v| Primitive::Opaque(OpaqueWrapper::new(v.clone())).into())
         .unwrap_or_default();
@@ -2066,13 +2066,13 @@ fn get_contract_caller(_: FnInstance, _: FnParams, metadata: &ModuleMetadata, _:
     Ok(SysCallResult::Return(value))
 }
 
-fn get_deposit_for_asset(_: FnInstance, params: FnParams, metadata: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
+fn get_deposit_for_asset(_: FnInstance, params: FnParams, metadata: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {
     let param = params[0].as_ref();
     let asset: &Hash = param
         .as_opaque_type()
         .context("invalid asset")?;
 
-    let value = match metadata.deposits.get(asset) {
+    let value = match metadata.metadata.deposits.get(asset) {
         Some(ContractDeposit::Public(amount)) => Primitive::U64(*amount).into(),
         _ => ValueCell::default()
     };
@@ -2080,21 +2080,21 @@ fn get_deposit_for_asset(_: FnInstance, params: FnParams, metadata: &ModuleMetad
     Ok(SysCallResult::Return(value.into()))
 }
 
-async fn get_balance_for_asset<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata, context: &mut Context<'ty, 'r>) -> FnReturnType<ModuleMetadata> {
+async fn get_balance_for_asset<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut Context<'ty, 'r>) -> FnReturnType<ContractMetadata> {
     let (provider, state) = from_context::<P>(context)?;
 
     let asset: Hash = params.remove(0)
         .into_owned()
         .into_opaque_type()?;
 
-    let balance: ValueCell = get_balance_from_cache(provider, state, metadata.contract.clone(), asset).await?
+    let balance: ValueCell = get_balance_from_cache(provider, state, metadata.metadata.contract.clone(), asset).await?
         .map(|(_, v)| Primitive::U64(v).into())
         .unwrap_or_default();
 
     Ok(SysCallResult::Return(balance.into()))
 }
 
-async fn get_contract_balance_for_asset<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: FnParams, _: &ModuleMetadata, context: &mut Context<'ty, 'r>) -> FnReturnType<ModuleMetadata> {
+async fn get_contract_balance_for_asset<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: FnParams, _: &ModuleMetadata<'_>, context: &mut Context<'ty, 'r>) -> FnReturnType<ContractMetadata> {
     let (provider, state) = from_context::<P>(context)?;
 
     let contract: Hash = params.remove(0)
@@ -2112,7 +2112,7 @@ async fn get_contract_balance_for_asset<'a, 'ty, 'r, P: ContractProvider>(_: FnI
     Ok(SysCallResult::Return(balance.into()))
 }
 
-async fn transfer<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata, context: &mut Context<'ty, 'r>) -> FnReturnType<ModuleMetadata> {
+async fn transfer<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut Context<'ty, 'r>) -> FnReturnType<ContractMetadata> {
     debug!("Transfer called {:?}", params);
 
     let asset: Hash = params.remove(2)
@@ -2144,7 +2144,7 @@ async fn transfer<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut param
         return Ok(SysCallResult::Return(Primitive::Boolean(false).into()));
     }
 
-    let Some((mut balance_state, mut balance)) = get_balance_from_cache(provider, state, metadata.contract.clone(), asset.clone()).await? else {
+    let Some((mut balance_state, mut balance)) = get_balance_from_cache(provider, state, metadata.metadata.contract.clone(), asset.clone()).await? else {
         return Ok(SysCallResult::Return(Primitive::Boolean(false).into()));
     };
 
@@ -2156,7 +2156,7 @@ async fn transfer<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut param
     balance -= amount;
     balance_state.mark_updated();
 
-    get_cache_for_contract(&mut state.caches, state.global_caches, metadata.contract.clone())
+    get_cache_for_contract(&mut state.caches, state.global_caches, metadata.metadata.contract.clone())
         .balances
         .insert(asset.clone(), Some((balance_state, balance)));
 
@@ -2167,7 +2167,7 @@ async fn transfer<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut param
         .and_modify(|v| *v += amount)
         .or_insert(amount);
 
-    state.tracker.contracts_transfers.entry((state.caller.get_hash().as_ref().clone(), metadata.contract.clone()))
+    state.tracker.contracts_transfers.entry((state.caller.get_hash().as_ref().clone(), metadata.metadata.contract.clone()))
         .or_insert_with(HashMap::new)
         .entry(key.clone())
         .or_insert_with(HashMap::new)
@@ -2176,12 +2176,12 @@ async fn transfer<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut param
         .or_insert(amount);
 
     // Add the output
-    state.outputs.push(ContractLog::Transfer { contract: metadata.contract.clone(), destination: key, amount, asset });
+    state.outputs.push(ContractLog::Transfer { contract: metadata.metadata.contract.clone(), destination: key, amount, asset });
 
     Ok(SysCallResult::Return(Primitive::Boolean(true).into()))
 }
 
-async fn transfer_contract<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata, context: &mut Context<'ty, 'r>) -> FnReturnType<ModuleMetadata> {
+async fn transfer_contract<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut Context<'ty, 'r>) -> FnReturnType<ContractMetadata> {
     debug!("Transfer contract called {:?}", params);
 
     let asset: Hash = params.remove(2)
@@ -2205,7 +2205,7 @@ async fn transfer_contract<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, 
 
     let (provider, state) = from_context::<P>(context)?;
 
-    let Some((mut balance_state, mut balance)) = get_balance_from_cache(provider, state, metadata.contract.clone(), asset.clone()).await? else {
+    let Some((mut balance_state, mut balance)) = get_balance_from_cache(provider, state, metadata.metadata.contract.clone(), asset.clone()).await? else {
         return Ok(SysCallResult::Return(Primitive::Boolean(false).into()));
     };
 
@@ -2217,7 +2217,7 @@ async fn transfer_contract<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, 
     balance -= amount;
     balance_state.mark_updated();
 
-    get_cache_for_contract(&mut state.caches, state.global_caches, metadata.contract.clone())
+    get_cache_for_contract(&mut state.caches, state.global_caches, metadata.metadata.contract.clone())
         .balances
         .insert(asset.clone(), Some((balance_state, balance)));
 
@@ -2226,12 +2226,12 @@ async fn transfer_contract<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, 
     destination_state.mark_updated();
 
     // Add the output
-    state.outputs.push(ContractLog::TransferContract { contract: metadata.contract.clone(), destination, amount, asset });
+    state.outputs.push(ContractLog::TransferContract { contract: metadata.metadata.contract.clone(), destination, amount, asset });
 
     Ok(SysCallResult::Return(Primitive::Boolean(true).into()))
 }
 
-async fn burn<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata, context: &mut Context<'ty, 'r>) -> FnReturnType<ModuleMetadata> {
+async fn burn<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut Context<'ty, 'r>) -> FnReturnType<ContractMetadata> {
     let (provider, state) = from_context::<P>(context)?;
 
     let asset: Hash = params.remove(1)
@@ -2241,7 +2241,7 @@ async fn burn<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: F
         .into_owned()
         .to_u64()?;
 
-    let Some((mut balance_state, mut balance)) = get_balance_from_cache(provider, state, metadata.contract.clone(), asset.clone()).await? else {
+    let Some((mut balance_state, mut balance)) = get_balance_from_cache(provider, state, metadata.metadata.contract.clone(), asset.clone()).await? else {
         return Ok(SysCallResult::Return(Primitive::Boolean(false).into()));
     };
 
@@ -2255,18 +2255,18 @@ async fn burn<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: F
     balance -= amount;
     balance_state.mark_updated();
 
-    get_cache_for_contract(&mut state.caches, state.global_caches, metadata.contract.clone())
+    get_cache_for_contract(&mut state.caches, state.global_caches, metadata.metadata.contract.clone())
         .balances
         .insert(asset.clone(), Some((balance_state, balance)));
 
     // Track the burn in the circulating supply
     // We expect that the asset changes exists
-    record_burned_asset(provider, state, metadata.contract.clone(), asset.clone(), amount).await?;
+    record_burned_asset(provider, state, metadata.metadata.contract.clone(), asset.clone(), amount).await?;
 
     Ok(SysCallResult::Return(Primitive::Boolean(true).into()))
 }
 
-async fn get_account_balance_for_asset<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: FnParams, _: &ModuleMetadata, context: &mut Context<'ty, 'r>) -> FnReturnType<ModuleMetadata> {
+async fn get_account_balance_for_asset<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: FnParams, _: &ModuleMetadata<'_>, context: &mut Context<'ty, 'r>) -> FnReturnType<ContractMetadata> {
     let (provider, state) = from_context::<P>(context)?;
 
     let asset: Hash = params.remove(1)
@@ -2287,18 +2287,18 @@ async fn get_account_balance_for_asset<'a, 'ty, 'r, P: ContractProvider>(_: FnIn
     Ok(SysCallResult::Return(balance.into()))
 }
 
-fn get_gas_usage(_: FnInstance, _: FnParams, _: &ModuleMetadata, context: &mut Context) -> FnReturnType<ModuleMetadata> {
+fn get_gas_usage(_: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, context: &mut Context) -> FnReturnType<ContractMetadata> {
     let gas = context.current_gas_usage();
     Ok(SysCallResult::Return(Primitive::U64(gas).into()))
 }
 
-fn get_gas_limit(_: FnInstance, _: FnParams, _: &ModuleMetadata, context: &mut Context) -> FnReturnType<ModuleMetadata> {
+fn get_gas_limit(_: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, context: &mut Context) -> FnReturnType<ContractMetadata> {
     let gas = context.get_gas_limit();
     Ok(SysCallResult::Return(Primitive::U64(gas).into()))
 }
 
 // Increase the gas limit using contract balance
-async fn increase_gas_limit<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, params: FnParams, metadata: &ModuleMetadata, context: &mut Context<'ty, 'r>) -> FnReturnType<ModuleMetadata> {
+async fn increase_gas_limit<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut Context<'ty, 'r>) -> FnReturnType<ContractMetadata> {
     let amount = params[0].as_u64()?;
 
     // Ensure we're still below the TX max usage
@@ -2324,15 +2324,15 @@ async fn increase_gas_limit<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>,
     {
         // Ensure that we check against the overall amount
         let mut total_amount = 0;
-        if let Some(amount) = state.injected_gas.get(&metadata.contract) {
+        if let Some(amount) = state.injected_gas.get(&metadata.metadata.contract) {
             total_amount += amount;
         }
 
-        let balance = match state.global_caches.get(&metadata.contract)
+        let balance = match state.global_caches.get(&metadata.metadata.contract)
             .and_then(|cache| cache.balances.get(&XELIS_ASSET).map(Option::as_ref).flatten()) {
                 Some((_, balance)) => *balance,
                 None => {
-                    let (_, balance) = provider.get_contract_balance_for_asset(&metadata.contract, &XELIS_ASSET, state.topoheight).await?
+                    let (_, balance) = provider.get_contract_balance_for_asset(&metadata.metadata.contract, &XELIS_ASSET, state.topoheight).await?
                         .context("No native balance found for contract")?;
     
                     balance
@@ -2346,7 +2346,7 @@ async fn increase_gas_limit<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>,
     }
 
     // And we check with current cache if any and then apply if correct
-    let res = get_balance_from_cache(provider, state, metadata.contract.clone(), XELIS_ASSET).await?
+    let res = get_balance_from_cache(provider, state, metadata.metadata.contract.clone(), XELIS_ASSET).await?
         .as_mut();
 
     let Some((balance_state, balance)) = res else {
@@ -2362,7 +2362,7 @@ async fn increase_gas_limit<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>,
     balance_state.mark_updated();
 
     // Track that each contract have injected N gas
-    *state.injected_gas.entry(metadata.contract.clone())
+    *state.injected_gas.entry(metadata.metadata.contract.clone())
         .or_insert(0) += amount;
 
     context.increase_gas_limit(amount)?;
@@ -2370,7 +2370,7 @@ async fn increase_gas_limit<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>,
     Ok(SysCallResult::Return(Primitive::Boolean(true).into()))
 }
 
-fn get_current_topoheight(_: FnInstance, _: FnParams, _: &ModuleMetadata, context: &mut Context) -> FnReturnType<ModuleMetadata> {
+fn get_current_topoheight(_: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, context: &mut Context) -> FnReturnType<ContractMetadata> {
     let state: &ChainState = context.get()
         .context("ChainState not present in Context")?;
 
@@ -2378,7 +2378,7 @@ fn get_current_topoheight(_: FnInstance, _: FnParams, _: &ModuleMetadata, contex
 }
 
 // Returns the address that called this contract if any
-fn get_caller(_: FnInstance, _: FnParams, _: &ModuleMetadata, context: &mut Context) -> FnReturnType<ModuleMetadata> {
+fn get_caller(_: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, context: &mut Context) -> FnReturnType<ContractMetadata> {
     let state: &ChainState = context.get()
         .context("ChainState not present in Context")?;
 
@@ -2391,15 +2391,15 @@ fn get_caller(_: FnInstance, _: FnParams, _: &ModuleMetadata, context: &mut Cont
     Ok(SysCallResult::Return(Primitive::Null.into()))
 }
 
-fn get_cost_per_asset(_: FnInstance, _: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
+fn get_cost_per_asset(_: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {
     Ok(SysCallResult::Return(Primitive::U64(COST_PER_ASSET).into()))
 }
 
-fn get_cost_per_scheduled_execution(_: FnInstance, _: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
+fn get_cost_per_scheduled_execution(_: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {
     Ok(SysCallResult::Return(Primitive::U64(COST_PER_SCHEDULED_EXECUTION).into()))
 }
 
-fn is_contract_callable<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, params: FnParams, _: &ModuleMetadata, context: &mut Context<'ty, 'r>) -> FnReturnType<ModuleMetadata> {
+fn is_contract_callable<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, params: FnParams, _: &ModuleMetadata<'_>, context: &mut Context<'ty, 'r>) -> FnReturnType<ContractMetadata> {
     let state: &ChainState = context.get()
         .context("chain state not found")?;
 

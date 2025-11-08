@@ -12,6 +12,7 @@ xelis-hash = { git = "https://github.com/xelis-project/xelis-hash", branch = "ma
 xelis-vm = { git = "https://github.com/xelis-project/xelis-vm", branch = "dev", features = ["logging"] }
 xelis-types = { git = "https://github.com/xelis-project/xelis-vm", branch = "dev" }
 xelis-builder = { git = "https://github.com/xelis-project/xelis-vm", branch = "dev" }
+xelis-bytecode = { git = "https://github.com/xelis-project/xelis-vm", branch = "dev" }
 bulletproofs = { git = "https://github.com/xelis-project/bulletproofs", tag = "v5.0.2" }
 curve25519-dalek = { features = ["digest", "group", "rand_core", "serde", "ecdlp"], git = "https://github.com/xelis-project/curve25519-dalek", tag = "v4.2.0" }
 merlin = { git = "https://github.com/xelis-project/merlin", tag = "v3.1.0" }

@@ -13,7 +13,14 @@ use xelis_vm::{
 };
 use crate::{
     account::CiphertextCache,
-    contract::{ModuleMetadata, OpaqueRistrettoPoint, OpaqueTranscript, RangeProofWrapper, opaque::ARBITRARY_RANGE_PROOF_OPAQUE_ID},
+    contract::{
+        ContractMetadata,
+        ModuleMetadata,
+        OpaqueRistrettoPoint,
+        OpaqueTranscript,
+        RangeProofWrapper,
+        opaque::ARBITRARY_RANGE_PROOF_OPAQUE_ID
+    },
     crypto::{
         elgamal::{CompressedCommitment, PublicKey},
         proofs::{ArbitraryRangeProof, CommitmentEqProof}
@@ -55,7 +62,7 @@ impl Serializable for ArbitraryRangeProof {
     }
 }
 
-pub fn arbitrary_range_proof_new(_: FnInstance, params: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn arbitrary_range_proof_new(_: FnInstance, params: FnParams, _: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {
     let max_value = params[0]
         .as_u64()
         .context("Failed to get max value parameter")?;
@@ -80,7 +87,7 @@ pub fn arbitrary_range_proof_new(_: FnInstance, params: FnParams, _: &ModuleMeta
     Ok(SysCallResult::Return(Primitive::Opaque(proof.into()).into()))
 }
 
-pub fn arbitrary_range_proof_max_value(zelf: FnInstance, _: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn arbitrary_range_proof_max_value(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
     let zelf: &ArbitraryRangeProof = zelf.as_opaque_type()?;
     let max_value = zelf.max_value();
@@ -88,7 +95,7 @@ pub fn arbitrary_range_proof_max_value(zelf: FnInstance, _: FnParams, _: &Module
     Ok(SysCallResult::Return(Primitive::U64(max_value).into()))
 }
 
-pub fn arbitrary_range_proof_delta_commitment(zelf: FnInstance, _: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn arbitrary_range_proof_delta_commitment(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
     let zelf: &ArbitraryRangeProof = zelf.as_opaque_type()?;
     let delta_commitment = zelf.delta_commitment();
@@ -96,7 +103,7 @@ pub fn arbitrary_range_proof_delta_commitment(zelf: FnInstance, _: FnParams, _: 
     Ok(SysCallResult::Return(Primitive::Opaque(OpaqueRistrettoPoint::Compressed(delta_commitment.as_point().clone()).into()).into()))
 }
 
-pub fn arbitrary_range_proof_commitment_eq_proof(zelf: FnInstance, _: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn arbitrary_range_proof_commitment_eq_proof(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
     let zelf: &ArbitraryRangeProof = zelf.as_opaque_type()?;
     let commitment_eq_proof = zelf.commitment_eq_proof();
@@ -104,7 +111,7 @@ pub fn arbitrary_range_proof_commitment_eq_proof(zelf: FnInstance, _: FnParams, 
     Ok(SysCallResult::Return(Primitive::Opaque(commitment_eq_proof.clone().into()).into()))
 }
 
-pub fn arbitrary_range_proof_range_proof(zelf: FnInstance, _: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn arbitrary_range_proof_range_proof(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
     let zelf: &ArbitraryRangeProof = zelf.as_opaque_type()?;
     let range_proof = zelf.range_proof();
@@ -112,7 +119,7 @@ pub fn arbitrary_range_proof_range_proof(zelf: FnInstance, _: FnParams, _: &Modu
     Ok(SysCallResult::Return(Primitive::Opaque(RangeProofWrapper(range_proof.clone()).into()).into()))
 }
 
-pub fn arbitrary_range_proof_verify(zelf: FnInstance, mut params: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn arbitrary_range_proof_verify(zelf: FnInstance, mut params: FnParams, _: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {
     let source_pubkey = PublicKey::from_point(
         params[0]
             .as_mut()

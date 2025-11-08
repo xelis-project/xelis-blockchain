@@ -17,6 +17,7 @@ use xelis_vm::{
 use crate::{
     contract::{
         ModuleMetadata,
+        ContractMetadata,
         OpaqueRistrettoPoint,
         SCALAR_OPAQUE_ID
     },
@@ -50,7 +51,7 @@ impl Serializable for OpaqueScalar {
     }
 }
 
-pub fn scalar_from_u64(_: FnInstance, params: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn scalar_from_u64(_: FnInstance, params: FnParams, _: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {
     let value = params[0]
         .as_u64()?;
 
@@ -58,7 +59,7 @@ pub fn scalar_from_u64(_: FnInstance, params: FnParams, _: &ModuleMetadata, _: &
     Ok(SysCallResult::Return(OpaqueScalar(scalar).into()))
 }
 
-pub fn scalar_invert(zelf: FnInstance, _: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn scalar_invert(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
     let zelf: &OpaqueScalar = zelf.as_opaque_type()?;
 
@@ -70,7 +71,7 @@ pub fn scalar_invert(zelf: FnInstance, _: FnParams, _: &ModuleMetadata, _: &mut 
     Ok(SysCallResult::Return(OpaqueScalar(inverted).into()))
 }
 
-pub fn scalar_is_zero(zelf: FnInstance, _: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn scalar_is_zero(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
     let zelf: &OpaqueScalar = zelf.as_opaque_type()?;
     let is_zero = zelf.0 == Scalar::ZERO;
@@ -78,7 +79,7 @@ pub fn scalar_is_zero(zelf: FnInstance, _: FnParams, _: &ModuleMetadata, _: &mut
     Ok(SysCallResult::Return(Primitive::Boolean(is_zero).into()))
 }
 
-pub fn scalar_mul_base(zelf: FnInstance, _: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn scalar_mul_base(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
     let zelf: &OpaqueScalar = zelf.as_opaque_type()?;
 
@@ -90,7 +91,7 @@ pub fn scalar_mul_base(zelf: FnInstance, _: FnParams, _: &ModuleMetadata, _: &mu
     ).into()))
 }
 
-pub fn scalar_add(zelf: FnInstance, params: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn scalar_add(zelf: FnInstance, params: FnParams, _: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
     let zelf: &OpaqueScalar = zelf.as_opaque_type()?;
     let other: &OpaqueScalar = params[0]
@@ -101,7 +102,7 @@ pub fn scalar_add(zelf: FnInstance, params: FnParams, _: &ModuleMetadata, _: &mu
     Ok(SysCallResult::Return(OpaqueScalar(result).into()))
 }
 
-pub fn scalar_sub(zelf: FnInstance, params: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn scalar_sub(zelf: FnInstance, params: FnParams, _: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
     let zelf: &OpaqueScalar = zelf.as_opaque_type()?;
     let other: &OpaqueScalar = params[0]
@@ -112,7 +113,7 @@ pub fn scalar_sub(zelf: FnInstance, params: FnParams, _: &ModuleMetadata, _: &mu
     Ok(SysCallResult::Return(OpaqueScalar(result).into()))
 }
 
-pub fn scalar_mul(zelf: FnInstance, params: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn scalar_mul(zelf: FnInstance, params: FnParams, _: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
     let zelf: &OpaqueScalar = zelf.as_opaque_type()?;
     let other: &OpaqueScalar = params[0]
@@ -123,7 +124,7 @@ pub fn scalar_mul(zelf: FnInstance, params: FnParams, _: &ModuleMetadata, _: &mu
     Ok(SysCallResult::Return(OpaqueScalar(result).into()))
 }
 
-pub fn scalar_div(zelf: FnInstance, params: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn scalar_div(zelf: FnInstance, params: FnParams, _: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
     let zelf: &OpaqueScalar = zelf.as_opaque_type()?;
     let other: &OpaqueScalar = params[0]
@@ -138,7 +139,7 @@ pub fn scalar_div(zelf: FnInstance, params: FnParams, _: &ModuleMetadata, _: &mu
     Ok(SysCallResult::Return(OpaqueScalar(result).into()))
 }
 
-pub fn scalar_from_bytes(_: FnInstance, mut params: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn scalar_from_bytes(_: FnInstance, mut params: FnParams, _: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {
     let bytes: [u8; SCALAR_SIZE] = ValueCell::to_bytes(&mut params.remove(0).into_owned())?
         .try_into()
         .ok()
@@ -152,7 +153,7 @@ pub fn scalar_from_bytes(_: FnInstance, mut params: FnParams, _: &ModuleMetadata
     Ok(SysCallResult::Return(scalar))
 }
 
-pub fn scalar_to_bytes(zelf: FnInstance, _: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn scalar_to_bytes(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
     let zelf: &OpaqueScalar = zelf.as_opaque_type()?;
     let bytes = zelf.0.to_bytes().to_vec();

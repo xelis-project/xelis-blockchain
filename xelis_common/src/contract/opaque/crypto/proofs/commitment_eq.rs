@@ -15,6 +15,7 @@ use crate::{
     account::CiphertextCache,
     contract::{
         opaque::COMMITMENT_EQUALITY_PROOF_OPAQUE_ID,
+        ContractMetadata,
         ModuleMetadata,
         OpaqueRistrettoPoint,
         OpaqueTranscript
@@ -60,7 +61,7 @@ impl Serializable for CommitmentEqProof {
     }
 }
 
-pub fn commitment_eq_proof_verify(zelf: FnInstance, mut params: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn commitment_eq_proof_verify(zelf: FnInstance, mut params: FnParams, _: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {
     let source_pubkey = PublicKey::from_point(
         params[0]
             .as_mut()

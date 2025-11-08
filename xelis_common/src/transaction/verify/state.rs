@@ -15,7 +15,7 @@ use crate::{
         ContractLog,
         ContractProvider,
         InterContractPermission,
-        ModuleMetadata,
+        ContractMetadata,
         ScheduledExecution
     },
     crypto::{
@@ -107,7 +107,7 @@ pub trait BlockchainVerificationState<'a, E> {
     ) -> Result<Option<&MultiSigPayload>, E>;
 
     /// Get the environment
-    async fn get_environment(&mut self) -> Result<&Environment<ModuleMetadata>, E>;
+    async fn get_environment(&mut self) -> Result<&Environment<ContractMetadata>, E>;
 
     /// Set the contract module
     async fn set_contract_module(
@@ -129,12 +129,12 @@ pub trait BlockchainVerificationState<'a, E> {
     async fn get_contract_module_with_environment(
         &self,
         hash: &'a Hash
-    ) -> Result<(&Module, &Environment<ModuleMetadata>), E>;
+    ) -> Result<(&Module, &Environment<ContractMetadata>), E>;
 }
 
 pub struct ContractEnvironment<'a, P: ContractProvider> {
     // Environment with the embed stdlib
-    pub environment: &'a Environment<ModuleMetadata>,
+    pub environment: &'a Environment<ContractMetadata>,
     // Module to execute
     pub module: &'a Module,
     // Provider for the contract

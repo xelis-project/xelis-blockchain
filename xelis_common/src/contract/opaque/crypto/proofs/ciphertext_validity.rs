@@ -11,7 +11,13 @@ use xelis_vm::{
     SysCallResult
 };
 use crate::{
-    contract::{opaque::CIPHERTEXT_VALIDITY_PROOF_OPAQUE_ID, ModuleMetadata, OpaqueRistrettoPoint, OpaqueTranscript},
+    contract::{
+        opaque::CIPHERTEXT_VALIDITY_PROOF_OPAQUE_ID,
+        ContractMetadata,
+        ModuleMetadata,
+        OpaqueRistrettoPoint,
+        OpaqueTranscript
+    },
     crypto::{elgamal::{DecryptHandle, PedersenCommitment, PublicKey}, proofs::CiphertextValidityProof},
     serializer::*
 };
@@ -50,7 +56,7 @@ impl Serializable for CiphertextValidityProof {
     }
 }
 
-pub fn ciphertext_validity_proof_verify(zelf: FnInstance, mut params: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn ciphertext_validity_proof_verify(zelf: FnInstance, mut params: FnParams, _: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {
     let commitment = PedersenCommitment::from_point(
         params[0]
             .as_mut()

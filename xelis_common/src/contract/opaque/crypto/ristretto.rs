@@ -18,7 +18,7 @@ use xelis_vm::{
 };
 
 use crate::{
-    contract::{ModuleMetadata, OpaqueScalar, RISTRETTO_OPAQUE_ID},
+    contract::{ModuleMetadata, ContractMetadata, OpaqueScalar, RISTRETTO_OPAQUE_ID},
     crypto::{elgamal::RISTRETTO_COMPRESSED_SIZE, proofs::G},
     serializer::{Serializer as _, Writer},
 };
@@ -166,18 +166,18 @@ impl Serializable for OpaqueRistrettoPoint {
     }
 }
 
-pub fn ristretto_is_identity(zelf: FnInstance, _: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn ristretto_is_identity(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
     let zelf: &OpaqueRistrettoPoint = zelf.as_opaque_type()?;
     Ok(SysCallResult::Return(Primitive::Boolean(zelf.is_identity()).into()))
 }
 
-pub fn ristretto_identity(_: FnInstance, _: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn ristretto_identity(_: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {
     let point = OpaqueRistrettoPoint::Compressed(CompressedRistretto::identity());
     Ok(SysCallResult::Return(point.into()))
 }
 
-pub fn ristretto_add_scalar(zelf: FnInstance, params: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn ristretto_add_scalar(zelf: FnInstance, params: FnParams, _: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {
     let mut zelf = zelf?;
     let opaque: &mut OpaqueRistrettoPoint = zelf.as_opaque_type_mut()?;
     let scalar: &OpaqueScalar = params[0]
@@ -192,7 +192,7 @@ pub fn ristretto_add_scalar(zelf: FnInstance, params: FnParams, _: &ModuleMetada
     Ok(SysCallResult::Return(zelf))
 }
 
-pub fn ristretto_sub_scalar(zelf: FnInstance, params: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn ristretto_sub_scalar(zelf: FnInstance, params: FnParams, _: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {
     let mut zelf = zelf?;
     let opaque: &mut OpaqueRistrettoPoint = zelf.as_opaque_type_mut()?;
     let scalar: &OpaqueScalar = params[0]
@@ -206,7 +206,7 @@ pub fn ristretto_sub_scalar(zelf: FnInstance, params: FnParams, _: &ModuleMetada
     Ok(SysCallResult::Return(zelf))
 }
 
-pub fn ristretto_add(zelf: FnInstance, mut params: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn ristretto_add(zelf: FnInstance, mut params: FnParams, _: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {
     let mut zelf = zelf?;
     let opaque: &mut OpaqueRistrettoPoint = zelf.as_opaque_type_mut()?;
     let point: OpaqueRistrettoPoint = params.remove(0)
@@ -220,7 +220,7 @@ pub fn ristretto_add(zelf: FnInstance, mut params: FnParams, _: &ModuleMetadata,
     Ok(SysCallResult::Return(zelf))
 }
 
-pub fn ristretto_sub(zelf: FnInstance, mut params: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn ristretto_sub(zelf: FnInstance, mut params: FnParams, _: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {
     let mut zelf = zelf?;
     let opaque: &mut OpaqueRistrettoPoint = zelf.as_opaque_type_mut()?;
     let point: OpaqueRistrettoPoint = params.remove(0)
@@ -234,7 +234,7 @@ pub fn ristretto_sub(zelf: FnInstance, mut params: FnParams, _: &ModuleMetadata,
     Ok(SysCallResult::Return(zelf))
 }
 
-pub fn ristretto_mul_scalar(zelf: FnInstance, params: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn ristretto_mul_scalar(zelf: FnInstance, params: FnParams, _: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {
     let mut zelf = zelf?;
     let opaque: &mut OpaqueRistrettoPoint = zelf.as_opaque_type_mut()?;
     let scalar: &OpaqueScalar = params[0]
@@ -248,7 +248,7 @@ pub fn ristretto_mul_scalar(zelf: FnInstance, params: FnParams, _: &ModuleMetada
     Ok(SysCallResult::Return(zelf))
 }
 
-pub fn ristretto_div_scalar(zelf: FnInstance, params: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn ristretto_div_scalar(zelf: FnInstance, params: FnParams, _: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {
     let mut zelf = zelf?;
     let opaque: &mut OpaqueRistrettoPoint = zelf.as_opaque_type_mut()?;
     let scalar: &OpaqueScalar = params[0]
@@ -266,7 +266,7 @@ pub fn ristretto_div_scalar(zelf: FnInstance, params: FnParams, _: &ModuleMetada
     Ok(SysCallResult::Return(zelf))
 }
 
-pub fn ristretto_from_bytes(_: FnInstance, params: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn ristretto_from_bytes(_: FnInstance, params: FnParams, _: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {
     let bytes: &[u8] = params[0]
         .as_ref()
         .as_bytes()?;
@@ -278,7 +278,7 @@ pub fn ristretto_from_bytes(_: FnInstance, params: FnParams, _: &ModuleMetadata,
     Ok(SysCallResult::Return(point.into()))
 }
 
-pub fn ristretto_to_bytes(zelf: FnInstance, _: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn ristretto_to_bytes(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
     let zelf: &OpaqueRistrettoPoint = zelf.as_opaque_type()?;
     let compressed = zelf.compressed();

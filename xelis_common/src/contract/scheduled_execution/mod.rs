@@ -30,6 +30,7 @@ use crate::{
         record_burned_asset,
         ContractLog,
         ContractProvider,
+        ContractMetadata,
         ModuleMetadata,
         MAX_VALUE_SIZE
     },
@@ -130,9 +131,9 @@ async fn schedule_execution<'a, 'ty, 'r, P: ContractProvider>(
     kind: ScheduledExecutionKind,
     _: FnInstance<'a>,
     params: FnParams,
-    metadata: &ModuleMetadata,
+    metadata: &ModuleMetadata<'_>,
     context: &mut Context<'ty, 'r>
-) -> FnReturnType<ModuleMetadata> {
+) -> FnReturnType<ContractMetadata> {
     let (provider, state) = from_context::<P>(context)?;
 
     match kind {
@@ -141,7 +142,7 @@ async fn schedule_execution<'a, 'ty, 'r, P: ContractProvider>(
                 return Ok(SysCallResult::Return(Primitive::Null.into()));
             }
 
-            if provider.has_scheduled_execution_at_topoheight(&metadata.contract, topoheight).await? {
+            if provider.has_scheduled_execution_at_topoheight(&metadata.metadata.contract, topoheight).await? {
                 return Ok(SysCallResult::Return(Primitive::Null.into()));
             }
         }
@@ -177,7 +178,7 @@ async fn schedule_execution<'a, 'ty, 'r, P: ContractProvider>(
     let total_cost = max_gas + burned_part;
 
     // check that we have enough to pay the reserved gas & params fee
-    if get_balance_from_cache(provider, state, metadata.contract.clone(), XELIS_ASSET)
+    if get_balance_from_cache(provider, state, metadata.metadata.contract.clone(), XELIS_ASSET)
         .await?
         .is_none_or(|(_, balance)| balance < total_cost)
     {
@@ -186,13 +187,13 @@ async fn schedule_execution<'a, 'ty, 'r, P: ContractProvider>(
 
     // build the caller hash
     let hash = hash_multiple(&[
-        metadata.contract.as_bytes(),
+        metadata.metadata.contract.as_bytes(),
         &kind.to_bytes(),
     ]);
 
     let execution = ScheduledExecution {
         hash: hash.clone(),
-        contract: metadata.contract.clone(),
+        contract: metadata.metadata.contract.clone(),
         chunk_id,
         max_gas,
         params: params.clone(),
@@ -216,10 +217,10 @@ async fn schedule_execution<'a, 'ty, 'r, P: ContractProvider>(
 
     // Once passed here, we are safe and can apply changes
     // record the burn part
-    record_burned_asset(provider, state, metadata.contract.clone(), XELIS_ASSET, burned_part).await?;
+    record_burned_asset(provider, state, metadata.metadata.contract.clone(), XELIS_ASSET, burned_part).await?;
 
     state.outputs.push(ContractLog::ScheduledExecution {
-        contract: metadata.contract.clone(),
+        contract: metadata.metadata.contract.clone(),
         hash: hash.clone(),
         kind: match kind {
             ScheduledExecutionKind::TopoHeight(topoheight) => ScheduledExecutionKindLog::TopoHeight { topoheight },
@@ -228,7 +229,7 @@ async fn schedule_execution<'a, 'ty, 'r, P: ContractProvider>(
     });
 
     let (state, balance) =
-        get_mut_balance_for_contract(provider, state, metadata.contract.clone(), XELIS_ASSET)
+        get_mut_balance_for_contract(provider, state, metadata.metadata.contract.clone(), XELIS_ASSET)
             .await?;
     state.mark_updated();
     *balance -= total_cost;
@@ -242,9 +243,9 @@ async fn schedule_execution<'a, 'ty, 'r, P: ContractProvider>(
 pub async fn scheduled_execution_new_at_topoheight<'a, 'ty, 'r, P: ContractProvider>(
     instance: FnInstance<'a>,
     params: FnParams,
-    metadata: &ModuleMetadata,
+    metadata: &ModuleMetadata<'_>,
     context: &mut Context<'ty, 'r>,
-) -> FnReturnType<ModuleMetadata> {
+) -> FnReturnType<ContractMetadata> {
     let topoheight = params[3].as_u64()?;
     schedule_execution::<P>(ScheduledExecutionKind::TopoHeight(topoheight), instance, params, metadata, context).await
 }
@@ -252,13 +253,13 @@ pub async fn scheduled_execution_new_at_topoheight<'a, 'ty, 'r, P: ContractProvi
 pub async fn scheduled_execution_new_at_block_end<'a, 'ty, 'r, P: ContractProvider>(
     instance: FnInstance<'a>,
     params: FnParams,
-    metadata: &ModuleMetadata,
+    metadata: &ModuleMetadata<'_>,
     context: &mut Context<'ty, 'r>,
-) -> FnReturnType<ModuleMetadata> {
+) -> FnReturnType<ContractMetadata> {
     schedule_execution::<P>(ScheduledExecutionKind::BlockEnd, instance, params, metadata, context).await
 }
 
-pub fn scheduled_execution_get_hash(instance: FnInstance<'_>, _: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn scheduled_execution_get_hash(instance: FnInstance<'_>, _: FnParams, _: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {
     let instance = instance?;
     let scheduled_execution: &OpaqueScheduledExecution = instance
         .as_ref()
@@ -267,7 +268,7 @@ pub fn scheduled_execution_get_hash(instance: FnInstance<'_>, _: FnParams, _: &M
     Ok(SysCallResult::Return(scheduled_execution.hash.clone().into()))
 }
 
-pub fn scheduled_execution_get_topoheight(instance: FnInstance<'_>, _: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn scheduled_execution_get_topoheight(instance: FnInstance<'_>, _: FnParams, _: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {
     let instance = instance?;
     let scheduled_execution: &OpaqueScheduledExecution = instance
         .as_ref()

@@ -18,7 +18,7 @@ use crate::{
         ContractProvider,
         ContractProviderWrapper,
         InterContractPermission,
-        ModuleMetadata
+        ContractMetadata
     },
     crypto::{
         elgamal::{Ciphertext, CompressedPublicKey},
@@ -90,7 +90,7 @@ async fn run_virtual_machine<'a, P: ContractProvider>(
     let mut vm = VM::new(&contract_environment.environment);
 
     // Insert the module to load
-    let metadata = ModuleMetadata {
+    let metadata = ContractMetadata {
         contract: contract.as_ref().clone(),
         caller: None,
         deposits,

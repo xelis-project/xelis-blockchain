@@ -4,7 +4,6 @@ use anyhow::Context as _;
 use indexmap::IndexMap;
 use log::debug;
 use xelis_vm::{
-    traits::{JSONHelper, Serializable},
     Context,
     EnvironmentError,
     FnInstance,
@@ -12,7 +11,9 @@ use xelis_vm::{
     FnReturnType,
     Module,
     Primitive,
+    Reference,
     SysCallResult,
+    traits::{JSONHelper, Serializable}
 };
 use crate::{
     contract::{
@@ -20,6 +21,7 @@ use crate::{
         get_balance_from_cache,
         get_mut_balance_for_contract,
         ContractProvider,
+        ContractMetadata,
         ModuleMetadata
     },
     crypto::Hash,
@@ -52,7 +54,7 @@ impl Serializable for OpaqueModule {}
 
 impl JSONHelper for OpaqueModule {}
 
-pub async fn module_new<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: FnParams, _: &ModuleMetadata, context: &mut Context<'ty, 'r>) -> FnReturnType<ModuleMetadata> {
+pub async fn module_new<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: FnParams, _: &ModuleMetadata<'_>, context: &mut Context<'ty, 'r>) -> FnReturnType<ContractMetadata> {
     let (provider, state) = from_context::<P>(context)?;
 
     let contract: Hash = params.remove(0)
@@ -79,7 +81,7 @@ pub async fn module_new<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut
     Ok(SysCallResult::Return(opaque.into()))
 }
 
-pub async fn module_call<'a, 'ty, 'r, P: ContractProvider>(zelf: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata, context: &mut Context<'ty, 'r>) -> FnReturnType<ModuleMetadata> {
+pub async fn module_call<'a, 'ty, 'r, P: ContractProvider>(zelf: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut Context<'ty, 'r>) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
     let module: &OpaqueModule = zelf.as_opaque_type()?;
 
@@ -116,7 +118,7 @@ pub async fn module_call<'a, 'ty, 'r, P: ContractProvider>(zelf: FnInstance<'a>,
         let amount = v.as_ref().as_u64()?;
 
         // Check if we have enough balance to transfer this value
-        let (state, balance) = get_balance_from_cache(provider, chain_state, metadata.contract.clone(), asset.clone()).await?
+        let (state, balance) = get_balance_from_cache(provider, chain_state, metadata.metadata.contract.clone(), asset.clone()).await?
             .as_mut()
             .context("No balance for invoke deposit")?;
 
@@ -134,7 +136,7 @@ pub async fn module_call<'a, 'ty, 'r, P: ContractProvider>(zelf: FnInstance<'a>,
         *balance += amount;
         state.mark_updated();
 
-        debug!("Transfering {} of {} to {} from {}", amount, asset, module.contract, metadata.contract);
+        debug!("Transfering {} of {} to {} from {}", amount, asset, module.contract, metadata.metadata.contract);
         deposits.insert(asset, ContractDeposit::Public(amount));
     }
 
@@ -144,9 +146,9 @@ pub async fn module_call<'a, 'ty, 'r, P: ContractProvider>(zelf: FnInstance<'a>,
 
     Ok(SysCallResult::ModuleCall {
         module: module.module.clone(),
-        metadata: Arc::new(ModuleMetadata {
+        metadata: Arc::new(ContractMetadata {
             contract: module.contract.clone(),
-            caller: Some(metadata.contract.clone()),
+            caller: Some(metadata.metadata.contract.clone()),
             deposits,
         }),
         chunk: chunk_id,
@@ -154,7 +156,7 @@ pub async fn module_call<'a, 'ty, 'r, P: ContractProvider>(zelf: FnInstance<'a>,
     })
 }
 
-pub async fn module_delegate<'a, 'ty, 'r>(zelf: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata, _: &mut Context<'ty, 'r>) -> FnReturnType<ModuleMetadata> {
+pub async fn module_delegate<'a, 'ty, 'r>(zelf: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata<'_>, _: &mut Context<'ty, 'r>) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
     let module: &OpaqueModule = zelf.as_opaque_type()?;
     let p = params.remove(1)
@@ -175,7 +177,10 @@ pub async fn module_delegate<'a, 'ty, 'r>(zelf: FnInstance<'a>, mut params: FnPa
     Ok(SysCallResult::ModuleCall {
         module: module.module.clone(),
         // Reuse the metadata from the module
-        metadata: Arc::new(metadata.clone()),
+        metadata: match &metadata.metadata {
+            Reference::Borrowed(v) => Arc::new((**v).clone()),
+            Reference::Shared(v) => v.clone(),
+        },
         chunk: chunk_id,
         params: p,
     })

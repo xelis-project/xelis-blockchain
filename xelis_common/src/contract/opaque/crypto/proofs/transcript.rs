@@ -14,7 +14,15 @@ use xelis_vm::{
     ValueCell
 };
 
-use crate::{contract::{ModuleMetadata, OpaqueRistrettoPoint, OpaqueScalar}, crypto::ProtocolTranscript};
+use crate::{
+    contract::{
+        ContractMetadata,
+        ModuleMetadata,
+        OpaqueRistrettoPoint,
+        OpaqueScalar
+    },
+    crypto::ProtocolTranscript
+};
 
 impl_opaque!("Transcript", OpaqueTranscript);
 
@@ -59,7 +67,7 @@ impl Serializable for OpaqueTranscript {
     }
 }
 
-pub fn transcript_new(_: FnInstance, params: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn transcript_new(_: FnInstance, params: FnParams, _: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {
     let label = params[0]
         .as_ref()
         .as_bytes()?;
@@ -68,7 +76,7 @@ pub fn transcript_new(_: FnInstance, params: FnParams, _: &ModuleMetadata, _: &m
     Ok(SysCallResult::Return(transcript.into()))
 }
 
-pub fn transcript_challenge_scalar(zelf: FnInstance, params: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn transcript_challenge_scalar(zelf: FnInstance, params: FnParams, _: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {
     let mut zelf = zelf?;
     let zelf: &mut OpaqueTranscript = zelf.as_opaque_type_mut()?;
 
@@ -80,7 +88,7 @@ pub fn transcript_challenge_scalar(zelf: FnInstance, params: FnParams, _: &Modul
     Ok(SysCallResult::Return(OpaqueScalar(scalar).into()))
 }
 
-pub fn transcript_challenge_bytes(zelf: FnInstance, params: FnParams, _: &ModuleMetadata, context: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn transcript_challenge_bytes(zelf: FnInstance, params: FnParams, _: &ModuleMetadata<'_>, context: &mut Context) -> FnReturnType<ContractMetadata> {
     let mut zelf = zelf?;
     let zelf: &mut OpaqueTranscript = zelf.as_opaque_type_mut()?;
 
@@ -108,7 +116,7 @@ pub fn transcript_challenge_bytes(zelf: FnInstance, params: FnParams, _: &Module
     Ok(SysCallResult::Return(ValueCell::Bytes(buffer).into()))
 }
 
-pub fn transcript_append_message(zelf: FnInstance, params: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn transcript_append_message(zelf: FnInstance, params: FnParams, _: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {
     let mut zelf = zelf?;
     let zelf: &mut OpaqueTranscript = zelf.as_opaque_type_mut()?;
 
@@ -125,7 +133,7 @@ pub fn transcript_append_message(zelf: FnInstance, params: FnParams, _: &ModuleM
     Ok(SysCallResult::None)
 }
 
-pub fn transcript_append_point(zelf: FnInstance, params: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn transcript_append_point(zelf: FnInstance, params: FnParams, _: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {
     let mut zelf = zelf?;
     let zelf: &mut OpaqueTranscript = zelf.as_opaque_type_mut()?;
 
@@ -142,7 +150,7 @@ pub fn transcript_append_point(zelf: FnInstance, params: FnParams, _: &ModuleMet
     Ok(SysCallResult::None)
 }
 
-pub fn transcript_validate_and_append_point(zelf: FnInstance, params: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn transcript_validate_and_append_point(zelf: FnInstance, params: FnParams, _: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {
     let mut zelf = zelf?;
     let zelf: &mut OpaqueTranscript = zelf.as_opaque_type_mut()?;
 
@@ -160,7 +168,7 @@ pub fn transcript_validate_and_append_point(zelf: FnInstance, params: FnParams, 
     Ok(SysCallResult::None)
 }
 
-pub fn transcript_append_scalar(zelf: FnInstance, params: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn transcript_append_scalar(zelf: FnInstance, params: FnParams, _: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {
     let mut zelf = zelf?;
     let zelf: &mut OpaqueTranscript = zelf.as_opaque_type_mut()?;
 

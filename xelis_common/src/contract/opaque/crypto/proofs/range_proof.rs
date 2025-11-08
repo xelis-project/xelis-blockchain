@@ -17,6 +17,7 @@ use xelis_vm::{
 use crate::{
     contract::{
         opaque::RANGE_PROOF_OPAQUE_ID,
+        ContractMetadata,
         ModuleMetadata,
         OpaqueRistrettoPoint,
         OpaqueTranscript
@@ -62,7 +63,7 @@ impl Serializable for RangeProofWrapper {
     }
 }
 
-pub fn range_proof_verify_single(zelf: FnInstance, mut params: FnParams, _: &ModuleMetadata, _: &mut Context) -> FnReturnType<ModuleMetadata> {    
+pub fn range_proof_verify_single(zelf: FnInstance, mut params: FnParams, _: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {    
     let proof_size = params[2].as_ref()
         .as_u8()?;
 
@@ -92,7 +93,7 @@ pub fn range_proof_verify_single(zelf: FnInstance, mut params: FnParams, _: &Mod
     Ok(SysCallResult::Return(Primitive::Boolean(valid).into()))
 }
 
-pub fn range_proof_verify_multiple(zelf: FnInstance, mut params: FnParams, _: &ModuleMetadata, context: &mut Context) -> FnReturnType<ModuleMetadata> {
+pub fn range_proof_verify_multiple(zelf: FnInstance, mut params: FnParams, _: &ModuleMetadata<'_>, context: &mut Context) -> FnReturnType<ContractMetadata> {
     let commitments = params[0]
         .as_mut()
         .as_mut_vec()?

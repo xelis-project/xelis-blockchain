@@ -21,7 +21,8 @@ use crate::{
         AssetChanges,
         ContractLog,
         ContractProvider,
-        ModuleMetadata
+        ContractMetadata,
+        ModuleMetadata,
     },
     crypto::{Hash, HASH_SIZE},
     versioned_type::VersionedState
@@ -55,7 +56,7 @@ fn is_valid_char_for_asset(c: char, whitespace: bool, uppercase_only: bool) -> b
 
 // Create a new asset
 // Return None if the asset already exists
-pub async fn asset_create<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata, context: &mut Context<'ty, 'r>) -> FnReturnType<ModuleMetadata> {
+pub async fn asset_create<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut Context<'ty, 'r>) -> FnReturnType<ContractMetadata> {
     let (provider, state) = from_context::<P>(context)?;
 
     let (id, values) = params.remove(4).into_owned().to_enum()?;
@@ -115,7 +116,7 @@ pub async fn asset_create<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, m
     }
 
     // Check that we have enough XEL in the balance
-    let balance = get_balance_from_cache(provider, state, metadata.contract.clone(), XELIS_ASSET).await?;
+    let balance = get_balance_from_cache(provider, state, metadata.metadata.contract.clone(), XELIS_ASSET).await?;
     if balance.is_none_or(|(_, balance)| balance < COST_PER_ASSET) {
         return Err(EnvironmentError::Expect("Insufficient XEL funds in contract balance for token creation".to_owned()).into());
     }
@@ -124,7 +125,7 @@ pub async fn asset_create<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, m
     let id = params.remove(0).as_u64()?;
 
     let mut buffer = [0u8; 40];
-    buffer[0..HASH_SIZE].copy_from_slice(metadata.contract.as_bytes());
+    buffer[0..HASH_SIZE].copy_from_slice(metadata.metadata.contract.as_bytes());
     buffer[HASH_SIZE..].copy_from_slice(&id.to_be_bytes());
 
     let asset_hash = Hash::new(hash(&buffer).into());
@@ -136,7 +137,7 @@ pub async fn asset_create<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, m
     }
 
     let creator = AssetOwner::Creator {
-        contract: metadata.contract.clone(),
+        contract: metadata.metadata.contract.clone(),
         id
     };
     let data = AssetData::new(decimals, name, ticker, max_supply, creator);
@@ -151,22 +152,22 @@ pub async fn asset_create<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, m
     // Pay the fee by reducing the contract balance
     // and record the burn in the circulating supply
     {
-        let (versioned_state, balance) = get_mut_balance_for_contract(provider, state, metadata.contract.clone(), XELIS_ASSET).await?;
+        let (versioned_state, balance) = get_mut_balance_for_contract(provider, state, metadata.metadata.contract.clone(), XELIS_ASSET).await?;
         *balance -= COST_PER_ASSET;
         versioned_state.mark_updated();
     
-        record_burned_asset(provider, state, metadata.contract.clone(), XELIS_ASSET, COST_PER_ASSET).await?;
+        record_burned_asset(provider, state, metadata.metadata.contract.clone(), XELIS_ASSET, COST_PER_ASSET).await?;
     }
 
     // If we have a fixed max supply, we need to mint it to the contract
     if let MaxSupplyMode::Fixed(max_supply) = max_supply {
         // We don't bother to check if it already exists, because it shouldn't exist before we create it.
-        get_cache_for_contract(&mut state.caches, state.global_caches, metadata.contract.clone())
+        get_cache_for_contract(&mut state.caches, state.global_caches, metadata.metadata.contract.clone())
             .balances
             .insert(asset_hash.clone(), Some((VersionedState::New, max_supply)));
     }
 
-    state.outputs.push(ContractLog::NewAsset { contract: metadata.contract.clone(), asset: asset_hash.clone() });
+    state.outputs.push(ContractLog::NewAsset { contract: metadata.metadata.contract.clone(), asset: asset_hash.clone() });
 
     let asset = Asset {
         hash: asset_hash
@@ -174,12 +175,12 @@ pub async fn asset_create<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, m
     Ok(SysCallResult::Return(Primitive::Opaque(asset.into()).into()))
 }
 
-pub async fn asset_get_by_id<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, params: FnParams, metadata: &ModuleMetadata, context: &mut Context<'ty, 'r>) -> FnReturnType<ModuleMetadata> {
+pub async fn asset_get_by_id<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut Context<'ty, 'r>) -> FnReturnType<ContractMetadata> {
     let id = params[0].as_u64()?;
     let (provider, chain_state) = from_context::<P>(context)?;
 
     let mut buffer = [0u8; 40];
-    buffer[0..HASH_SIZE].copy_from_slice(metadata.contract.as_bytes());
+    buffer[0..HASH_SIZE].copy_from_slice(metadata.metadata.contract.as_bytes());
     buffer[HASH_SIZE..].copy_from_slice(&id.to_be_bytes());
 
     let asset_hash = Hash::new(hash(&buffer).into());
@@ -193,7 +194,7 @@ pub async fn asset_get_by_id<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>
     Ok(SysCallResult::Return(Primitive::Opaque(asset.into()).into()))
 }
 
-pub async fn asset_get_by_hash<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: FnParams, _: &ModuleMetadata, context: &mut Context<'ty, 'r>) -> FnReturnType<ModuleMetadata> {
+pub async fn asset_get_by_hash<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: FnParams, _: &ModuleMetadata<'_>, context: &mut Context<'ty, 'r>) -> FnReturnType<ContractMetadata> {
     let hash: Hash = params.remove(0)
         .into_owned()
         .into_opaque_type()?;
