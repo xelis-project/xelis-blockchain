@@ -272,7 +272,7 @@ impl fmt::Display for Permission {
 #[derive(Serialize, Deserialize)]
 pub struct InternalPrefetchPermissions {
     // Description to be shown to the user
-    pub message: String,
+    pub reason: Option<String>,
     // Request these permissions in advance
     pub permissions: IndexSet<String>,
 }
