@@ -111,7 +111,8 @@ use {
         AppStateShared,
         PermissionResult,
         PermissionRequest,
-        XSWDHandler
+        XSWDHandler,
+        InternalPrefetchPermissions,
     },
     xelis_common::{
         rpc::{
@@ -1355,7 +1356,8 @@ pub enum XSWDEvent {
     RequestPermission(AppStateShared, RpcRequest, oneshot::Sender<Result<PermissionResult, Error>>),
     RequestApplication(AppStateShared, oneshot::Sender<Result<PermissionResult, Error>>),
     CancelRequest(AppStateShared, oneshot::Sender<Result<(), Error>>),
-    AppDisconnect(AppStateShared)
+    AppDisconnect(AppStateShared),
+    PrefetchPermissions(AppStateShared, InternalPrefetchPermissions),
 }
 
 #[cfg(feature = "xswd")]
@@ -1427,6 +1429,17 @@ impl XSWDHandler for Arc<Wallet> {
         if let Some(sender) = self.xswd_channel.read().await.as_ref() {
             // Send XSWD Message
             sender.send(XSWDEvent::AppDisconnect(app))?;
+
+            return Ok(())
+        }
+
+        Err(WalletError::NoHandlerAvailable.into())
+    }
+
+    // On CLI, this will show all permissions and accept them always at once if approved
+    async fn on_prefetch_permissions_request(&self, app: &AppStateShared, permissions: InternalPrefetchPermissions) -> Result<(), Error> {
+        if let Some(sender) = self.xswd_channel.read().await.as_ref() {
+            sender.send(XSWDEvent::PrefetchPermissions(app.clone(), permissions))?;
 
             return Ok(())
         }

@@ -2,12 +2,8 @@ mod error;
 mod types;
 mod relayer;
 
-use std::borrow::Cow;
-
 use anyhow::Error;
 use async_trait::async_trait;
-use indexmap::IndexSet;
-use serde::{Deserialize, Serialize};
 use serde_json::{
     Value,
     json
@@ -46,18 +42,6 @@ where
     semaphore: Semaphore
 }
 
-// Optional internal RPC method used by XSWD
-// To request in one time the permissions
-// example: balance, tracked assets etc is grouped into one
-// modal that propose to the user to set them in "always allow"
-#[derive(Serialize, Deserialize)]
-pub struct InternalPrefetchPermissions<'a> {
-    // Description to be shown to the user
-    pub message: Cow<'a, String>,
-    // Request these permissions in advance
-    pub permissions: IndexSet<Cow<'a, String>>,
-}
-
 #[async_trait]
 pub trait XSWDHandler {
     // Handler function to request permission to user
@@ -77,7 +61,7 @@ pub trait XSWDHandler {
 
     // On grouped permissions request
     // This is optional and can be ignored by default
-    async fn on_prefetch_permissions_request<'a>(&self, _: &AppStateShared, _: InternalPrefetchPermissions<'a>) -> Result<(), Error> {
+    async fn on_prefetch_permissions_request(&self, _: &AppStateShared, _: InternalPrefetchPermissions) -> Result<(), Error> {
         Ok(())
     }
 }
@@ -198,13 +182,16 @@ where
                 let wallet = self.handler.get_data();
                 let params = request.params
                     .ok_or_else(|| RpcResponseError::new(request.id.take(), InternalRpcError::ExpectedParams))?;
-                let params = serde_json::from_value(params)
+                let params: InternalPrefetchPermissions = serde_json::from_value(params)
                     .map_err(|e| RpcResponseError::new(request.id.take(), InternalRpcError::InvalidJSONParams(e)))?;
+
+                if params.permissions.is_empty() {
+                    return Err(RpcResponseError::new(request.id.take() , InternalRpcError::InvalidParams("Permissions list cannot be empty".into())))
+                }
 
                 app.set_requesting(true);
                 wallet.on_prefetch_permissions_request(app, params).await
                     .map_err(|e| RpcResponseError::new(request.id.take(), e))?;
-
                 app.set_requesting(false);
 
                 Ok(OnRequestResult::Return(None))

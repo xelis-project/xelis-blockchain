@@ -265,6 +265,18 @@ impl fmt::Display for Permission {
     }
 }
 
+// Optional internal RPC method used by XSWD
+// To request in one time the permissions
+// example: balance, tracked assets etc is grouped into one
+// modal that propose to the user to set them in "always allow"
+#[derive(Serialize, Deserialize)]
+pub struct InternalPrefetchPermissions {
+    // Description to be shown to the user
+    pub message: String,
+    // Request these permissions in advance
+    pub permissions: IndexSet<String>,
+}
+
 pub enum PermissionRequest<'a> {
     Application,
     Request(&'a RpcRequest)

@@ -73,6 +73,7 @@ use {
         api::{
             AuthConfig,
             PermissionResult,
+            Permission,
             AppStateShared
         },
         wallet::XSWDEvent,
@@ -233,7 +234,37 @@ async fn xswd_handler(mut receiver: UnboundedReceiver<XSWDEvent>, prompt: Sharea
                     error!("Error while sending permission response back to XSWD");
                 }
             },
-            XSWDEvent::AppDisconnect(_) => {}
+            XSWDEvent::AppDisconnect(app) => {
+                if app.is_requesting() {
+                    let res = prompt.cancel_read_input().await;
+                    if let Err(e) = res {
+                        error!("Error while cancelling request for disconnected app {}: {:#}", app.get_name(), e);
+                    }
+                }
+            },
+            XSWDEvent::PrefetchPermissions(app_state, permissions) => {
+                // Either check in existing permissions or ask user for each permission
+                let mut message = format!("XSWD: Application {} ({}) is requesting multiple permissions to your wallet", app_state.get_name(), app_state.get_id());
+                message += &format!("\r\nMessage from application: '{}'", permissions.message);
+                message += "\r\nYou can accept or reject all these permissions when the application will request them individually.";
+                message += &format!("\r\nPermissions ({}):", permissions.permissions.len());
+
+                for permission in permissions.permissions.iter() {
+                    message += &format!("\r\n- {}", permission);
+                }
+
+                message += "\r\nDo you accept these permissions enabled by default?";
+                message += "\r\nThis means you won't be asked again for these permissions when the application will request them.";
+                message += "\r\n(Y/N): ";
+
+                let accepted = prompt.read_valid_str_value(prompt.colorize_string(Color::Blue, &message), vec!["y", "n"]).await.is_ok_and(|v| v == "y");
+                if accepted {
+                    let mut app_permissions = app_state.get_permissions().lock().await;
+                    for permission in permissions.permissions {
+                        app_permissions.insert(permission, Permission::Allow);
+                    }
+                }
+            }
         };
     }
 }
