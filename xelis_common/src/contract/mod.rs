@@ -521,6 +521,17 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, C
             75,
             Some(address_type.clone())
         );
+        env.register_static_function(
+            "from_point",
+            address_type.clone(),
+            vec![
+                ("point", ristretto_type.clone()),
+                ("mainnet", Type::Bool)
+            ],
+            FunctionHandler::Sync(address_from_point),
+            75,
+            Some(address_type.clone())
+        );
     }
 
     // Hash
