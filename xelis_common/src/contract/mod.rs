@@ -308,7 +308,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, C
             vec![],
             FunctionHandler::Sync(block_extra_nonce),
             5,
-            Some(Type::Array(Box::new(Type::U8)))
+            Some(Type::Bytes)
         );
         env.register_native_function(
             "hash",
@@ -875,7 +875,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, C
             "verify",
             Some(signature_type.clone()),
             vec![
-                ("data", Type::Array(Box::new(Type::U8))),
+                ("data", Type::Bytes),
                 ("point", ristretto_type.clone()),
             ],
             FunctionHandler::Sync(signature_verify_fn),
@@ -885,7 +885,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, C
         env.register_static_function(
             "from_bytes",
             signature_type.clone(),
-            vec![("bytes", Type::Array(Box::new(Type::U8)))],
+            vec![("bytes", Type::Bytes)],
             FunctionHandler::Sync(signature_from_bytes_fn),
             75,
             Some(signature_type.clone())

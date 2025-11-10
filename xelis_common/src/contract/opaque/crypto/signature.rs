@@ -9,7 +9,6 @@ use xelis_vm::{
     FnReturnType,
     Primitive,
     SysCallResult,
-    ValueError
 };
 
 use crate::{
@@ -45,18 +44,14 @@ impl Serializable for Signature {
     }
 }
 
-pub fn signature_from_bytes_fn(_: FnInstance, mut params: FnParams, _: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {
-    let param = params.remove(0)
-        .into_owned();
-    let param = param.as_vec()?;
+pub fn signature_from_bytes_fn(_: FnInstance, params: FnParams, _: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {
+    let bytes = params[0]
+        .as_ref()
+        .as_bytes()?;
 
-    if param.len() != SIGNATURE_SIZE {
+    if bytes.len() != SIGNATURE_SIZE {
         return Err(EnvironmentError::InvalidParameter);
     }
-
-    let bytes = param.iter()
-        .map(|v| v.as_ref().as_u8())
-        .collect::<Result<Vec<_>, ValueError>>()?;
 
     let signature = Signature::from_bytes(&bytes)
         .context("signature from bytes")?;
@@ -67,16 +62,13 @@ pub fn signature_verify_fn(zelf: FnInstance, mut params: FnParams, _: &ModuleMet
     let zelf = zelf?;
     let signature: &Signature = zelf.as_opaque_type()?;
 
-    let mut point: OpaqueRistrettoPoint = params.remove(0)
+    let mut point: OpaqueRistrettoPoint = params.remove(1)
         .into_owned()
         .into_opaque_type()?;
 
-    let param = params.remove(0)
-        .into_owned();
-    let data = param.as_vec()?
-        .iter()
-        .map(|v| v.as_ref().as_u8())
-        .collect::<Result<Vec<_>, ValueError>>()?;
+    let data = params[0]
+        .as_ref()
+        .as_bytes()?;
 
     let (compressed, key) = point.both()?;
     Ok(SysCallResult::Return(Primitive::Boolean(signature.verify_internal(&data, &key, compressed)).into()))

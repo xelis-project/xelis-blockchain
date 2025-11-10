@@ -118,9 +118,7 @@ pub fn block_extra_nonce(_: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, con
         .context("context not found")?;
 
     let extra_nonce = chain_state.block.get_extra_nonce()
-        .iter()
-        .map(|v| Primitive::U8(*v).into())
-        .collect();
+        .to_vec();
 
-    Ok(SysCallResult::Return(ValueCell::Object(extra_nonce).into()))
+    Ok(SysCallResult::Return(ValueCell::Bytes(extra_nonce).into()))
 }
