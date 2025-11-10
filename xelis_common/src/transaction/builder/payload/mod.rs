@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use xelis_vm::ValueCell;
 use crate::{
     api::DataElement,
-    contract::InterContractPermission,
+    contract::{ContractVersion, InterContractPermission},
     crypto::{Address, Hash}
 };
 
@@ -51,6 +51,9 @@ pub struct InvokeContractBuilder {
 
 #[derive(Serialize, Deserialize, Clone, Debug, JsonSchema)]
 pub struct DeployContractBuilder {
+    // Contract environment version
+    #[serde(default)]
+    pub contract_version: ContractVersion,
     // Module to deploy
     pub module: String,
     // Inner invoke during the deploy

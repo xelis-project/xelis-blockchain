@@ -6,7 +6,7 @@ mod storage;
 mod asset;
 mod crypto;
 mod memory_storage;
-mod module;
+mod contract;
 
 use bulletproofs::RangeProof;
 use curve25519_dalek::{ristretto::CompressedRistretto, Scalar};
@@ -39,7 +39,7 @@ pub use address::*;
 pub use asset::*;
 pub use crypto::*;
 pub use memory_storage::*;
-pub use module::*;
+pub use contract::*;
 
 // Unique IDs for opaque types serialization
 pub const HASH_OPAQUE_ID: u8 = 0;
@@ -96,8 +96,8 @@ impl_opaque!(
     Asset
 );
 impl_opaque!(
-    "OpaqueModule",
-    OpaqueModule
+    "Contract",
+    OpaqueContract
 );
 impl_opaque!(
     "OpaqueScheduledExecution",

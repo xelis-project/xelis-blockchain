@@ -20,6 +20,7 @@ use xelis_vm::Module;
 use std::{
     collections::HashSet,
     iter,
+    sync::Arc,
 };
 use crate::{
     config::{BURN_PER_CONTRACT, MAX_GAS_USAGE_PER_TX, XELIS_ASSET},
@@ -48,6 +49,7 @@ use crate::{
         HASH_SIZE,
         SIGNATURE_SIZE
     },
+    contract::ContractModule,
     serializer::Serializer,
     transaction::builder::fee::ExtraFeeMode,
     utils::calculate_tx_fee
@@ -1064,7 +1066,10 @@ impl TransactionBuilder {
                 }
 
                 TransactionType::DeployContract(DeployContractPayload {
-                    module,
+                    contract: ContractModule {
+                        version: payload.contract_version,
+                        module: Arc::new(module),
+                    },
                     invoke: payload.invoke.map(|invoke| {
                         transcript.invoke_constructor_proof_domain_separator();
                         transcript.append_u64(b"max_gas", invoke.max_gas);

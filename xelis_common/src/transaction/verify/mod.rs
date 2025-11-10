@@ -586,10 +586,10 @@ impl Transaction {
                     )?;
                 }
 
-                let environment = state.get_environment().await
+                let environment = state.get_environment(payload.contract.version).await
                     .map_err(VerificationError::State)?;
 
-                let validator = ModuleValidator::new(&payload.module, environment);
+                let validator = ModuleValidator::new(&payload.contract.module, environment);
                 validator.verify()?;
             }
         };
@@ -803,10 +803,10 @@ impl Transaction {
                     )?;
                 }
 
-                let environment = state.get_environment().await
+                let environment = state.get_environment(payload.contract.version).await
                     .map_err(VerificationError::State)?;
 
-                let validator = ModuleValidator::new(&payload.module, environment);
+                let validator = ModuleValidator::new(&payload.contract.module, environment);
                 validator.verify()?;
             }
         };
@@ -974,7 +974,7 @@ impl Transaction {
             },
             TransactionType::DeployContract(payload) => {
                 // Verify that if we have a constructor, we must have an invoke, and vice-versa
-                if payload.invoke.is_none() != payload.module.get_chunk_id_of_hook(HOOK_CONSTRUCTOR_ID).is_none() {
+                if payload.invoke.is_none() != payload.contract.module.get_chunk_id_of_hook(HOOK_CONSTRUCTOR_ID).is_none() {
                     return Err(VerificationError::InvalidFormat);
                 }
 
@@ -998,7 +998,7 @@ impl Transaction {
                     transcript.deploy_contract_proof_domain_separator();
                 }
 
-                state.set_contract_module(tx_hash, &payload.module).await
+                state.set_contract_module(tx_hash, &payload.contract).await
                     .map_err(VerificationError::State)?;
             }
         }
@@ -1244,7 +1244,7 @@ impl Transaction {
                 }
             },
             TransactionType::DeployContract(payload) => {
-                state.set_contract_module(tx_hash, &payload.module).await
+                state.set_contract_module(tx_hash, &payload.contract).await
                     .map_err(VerificationError::State)?;
 
                 if let Some(invoke) = payload.invoke.as_ref() {

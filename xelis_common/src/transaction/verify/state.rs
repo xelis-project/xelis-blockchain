@@ -1,4 +1,4 @@
-use std::{borrow::Cow, collections::HashMap, sync::Arc};
+use std::{borrow::Cow, collections::HashMap};
 
 use async_trait::async_trait;
 use indexmap::{IndexMap, IndexSet};
@@ -16,7 +16,9 @@ use crate::{
         ContractProvider,
         InterContractPermission,
         ContractMetadata,
-        ScheduledExecution
+        ScheduledExecution,
+        ContractModule,
+        ContractVersion
     },
     crypto::{
         elgamal::{
@@ -107,13 +109,14 @@ pub trait BlockchainVerificationState<'a, E> {
     ) -> Result<Option<&MultiSigPayload>, E>;
 
     /// Get the environment
-    async fn get_environment(&mut self) -> Result<&Environment<ContractMetadata>, E>;
+    /// Returns an error if the environment is not found or not compatible
+    async fn get_environment(&mut self, version: ContractVersion) -> Result<&Environment<ContractMetadata>, E>;
 
     /// Set the contract module
     async fn set_contract_module(
         &mut self,
         hash: &'a Hash,
-        module: &'a Module
+        module: &'a ContractModule,
     ) -> Result<(), E>;
 
     /// Load in the cache the contract module
@@ -166,7 +169,7 @@ pub trait BlockchainContractState<'a, P: ContractProvider, E> {
     /// Even if the execution failed, the caches should be updated
     async fn set_modules_cache(
         &mut self,
-        modules: HashMap<Hash, Option<Arc<Module>>>,
+        modules: HashMap<Hash, Option<ContractModule>>,
     ) -> Result<(), E>;
 
     /// Merge the contract cache with the stored one

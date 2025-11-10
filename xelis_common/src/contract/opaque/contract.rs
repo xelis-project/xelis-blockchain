@@ -9,7 +9,6 @@ use xelis_vm::{
     FnInstance,
     FnParams,
     FnReturnType,
-    Module,
     Primitive,
     Reference,
     SysCallResult,
@@ -22,39 +21,40 @@ use crate::{
         get_mut_balance_for_contract,
         ContractProvider,
         ContractMetadata,
-        ModuleMetadata
+        ModuleMetadata,
+        ContractModule
     },
     crypto::Hash,
     transaction::ContractDeposit
 };
 
 #[derive(Clone, Debug)]
-pub struct OpaqueModule {
-    // Contract module hash
-    pub contract: Hash,
+pub struct OpaqueContract {
+    // Contract hash
+    pub hash: Hash,
     // Actual module
-    pub module: Arc<Module>
+    pub contract_module: ContractModule,
 }
 
-impl PartialEq for OpaqueModule {
+impl PartialEq for OpaqueContract {
     fn eq(&self, other: &Self) -> bool {
-        self.contract == other.contract
+        self.hash == other.hash
     }
 }
 
-impl Eq for OpaqueModule {}
+impl Eq for OpaqueContract {}
 
-impl hash::Hash for OpaqueModule {
+impl hash::Hash for OpaqueContract {
     fn hash<H: hash::Hasher>(&self, state: &mut H) {
-        self.contract.hash(state);
+        self.hash.hash(state);
     }
 }
 
-impl Serializable for OpaqueModule {}
+impl Serializable for OpaqueContract {}
 
-impl JSONHelper for OpaqueModule {}
+impl JSONHelper for OpaqueContract {}
 
-pub async fn module_new<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: FnParams, _: &ModuleMetadata<'_>, context: &mut Context<'ty, 'r>) -> FnReturnType<ContractMetadata> {
+pub async fn contract_new<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: FnParams, _: &ModuleMetadata<'_>, context: &mut Context<'ty, 'r>) -> FnReturnType<ContractMetadata> {
     let (provider, state) = from_context::<P>(context)?;
 
     let contract: Hash = params.remove(0)
@@ -74,16 +74,16 @@ pub async fn module_new<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut
         return Ok(SysCallResult::Return(Primitive::Null.into()));
     };
 
-    let opaque = OpaqueModule {
-        module,
-        contract,
+    let opaque = OpaqueContract {
+        contract_module: module,
+        hash: contract,
     };
     Ok(SysCallResult::Return(opaque.into()))
 }
 
-pub async fn module_call<'a, 'ty, 'r, P: ContractProvider>(zelf: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut Context<'ty, 'r>) -> FnReturnType<ContractMetadata> {
+pub async fn contract_call<'a, 'ty, 'r, P: ContractProvider>(zelf: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut Context<'ty, 'r>) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
-    let module: &OpaqueModule = zelf.as_opaque_type()?;
+    let opaque: &OpaqueContract = zelf.as_opaque_type()?;
 
     let (provider, chain_state) = from_context::<P>(context)?;
 
@@ -103,12 +103,12 @@ pub async fn module_call<'a, 'ty, 'r, P: ContractProvider>(zelf: FnInstance<'a>,
         .into_owned()
         .as_u16()?;
 
-    if !module.module.is_public_chunk(chunk_id as usize) {
+    if !opaque.contract_module.module.is_public_chunk(chunk_id as usize) {
         return Err(EnvironmentError::Static("Chunk is not public"));
     }
 
     // Check if we have permission to call this contract
-    if !chain_state.permission.allows(&module.contract, chunk_id) {
+    if !chain_state.permission.allows(&opaque.hash, chunk_id) {
         return Err(EnvironmentError::Static("Permission denied to call this contract"));
     }
 
@@ -132,11 +132,11 @@ pub async fn module_call<'a, 'ty, 'r, P: ContractProvider>(zelf: FnInstance<'a>,
         state.mark_updated();
 
         // Insert the deposit to the called contract
-        let (state, balance) = get_mut_balance_for_contract(provider, chain_state, module.contract.clone(), asset.clone()).await?;
+        let (state, balance) = get_mut_balance_for_contract(provider, chain_state, opaque.hash.clone(), asset.clone()).await?;
         *balance += amount;
         state.mark_updated();
 
-        debug!("Transfering {} of {} to {} from {}", amount, asset, module.contract, metadata.metadata.contract_executor);
+        debug!("Transfering {} of {} to {} from {}", amount, asset, opaque.hash, metadata.metadata.contract_executor);
         deposits.insert(asset, ContractDeposit::Public(amount));
     }
 
@@ -145,9 +145,9 @@ pub async fn module_call<'a, 'ty, 'r, P: ContractProvider>(zelf: FnInstance<'a>,
         .collect::<VecDeque<_>>();
 
     Ok(SysCallResult::ModuleCall {
-        module: module.module.clone(),
+        module: opaque.contract_module.module.clone(),
         metadata: Arc::new(ContractMetadata {
-            contract_executor: module.contract.clone(),
+            contract_executor: opaque.hash.clone(),
             contract_caller: Some(metadata.metadata.contract_executor.clone()),
             deposits,
         }),
@@ -156,9 +156,9 @@ pub async fn module_call<'a, 'ty, 'r, P: ContractProvider>(zelf: FnInstance<'a>,
     })
 }
 
-pub async fn module_delegate<'a, 'ty, 'r>(zelf: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata<'_>, _: &mut Context<'ty, 'r>) -> FnReturnType<ContractMetadata> {
+pub async fn contract_delegate<'a, 'ty, 'r>(zelf: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata<'_>, _: &mut Context<'ty, 'r>) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
-    let module: &OpaqueModule = zelf.as_opaque_type()?;
+    let opaque: &OpaqueContract = zelf.as_opaque_type()?;
     let p = params.remove(1)
         .into_owned()
         .to_vec()?
@@ -170,12 +170,12 @@ pub async fn module_delegate<'a, 'ty, 'r>(zelf: FnInstance<'a>, mut params: FnPa
         .into_owned()
         .as_u16()?;
 
-    if !module.module.is_public_chunk(chunk_id as usize) {
+    if !opaque.contract_module.module.is_public_chunk(chunk_id as usize) {
         return Err(EnvironmentError::Static("Chunk is not public"));
     }
 
     Ok(SysCallResult::ModuleCall {
-        module: module.module.clone(),
+        module: opaque.contract_module.module.clone(),
         // Reuse the metadata from the module
         metadata: match &metadata.metadata {
             Reference::Borrowed(v) => Arc::new((**v).clone()),
@@ -184,4 +184,11 @@ pub async fn module_delegate<'a, 'ty, 'r>(zelf: FnInstance<'a>, mut params: FnPa
         chunk: chunk_id,
         params: p,
     })
+}
+
+pub fn contract_get_hash<'a>(zelf: FnInstance<'a>, _: FnParams, _: &ModuleMetadata<'_>, _: &mut Context<'_, '_>) -> FnReturnType<ContractMetadata> {
+    let zelf = zelf?;
+    let opaque: &OpaqueContract = zelf.as_opaque_type()?;
+
+    Ok(SysCallResult::Return(opaque.hash.clone().into()))
 }

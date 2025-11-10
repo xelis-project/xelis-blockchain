@@ -6,6 +6,7 @@ mod cache;
 mod metadata;
 mod scheduled_execution;
 mod permission;
+mod module;
 
 pub mod vm;
 
@@ -13,7 +14,6 @@ use std::{
     any::TypeId,
     borrow::Cow,
     collections::{hash_map::Entry, HashMap, HashSet},
-    sync::Arc
 };
 use anyhow::Context as AnyhowContext;
 use better_any::Tid;
@@ -34,7 +34,6 @@ use xelis_vm::{
     SysCallResult,
     Type,
     ValueCell,
-    Module,
 };
 use crate::{
     account::CiphertextCache,
@@ -69,6 +68,7 @@ pub use cache::*;
 pub use metadata::*;
 pub use scheduled_execution::*;
 pub use permission::*;
+pub use module::*;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TransferOutput {
@@ -107,7 +107,7 @@ pub struct ChainState<'a> {
     pub caches: HashMap<Hash, ContractCache>,
     // All modules loaded
     // This is persisted across the calls
-    pub modules: HashMap<Hash, Option<Arc<Module>>>,
+    pub modules: HashMap<Hash, Option<ContractModule>>,
     // The contract outputs
     // This is similar to an event log
     pub outputs: Vec<ContractLog>,
@@ -203,7 +203,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, C
     let balance_proof_type = Type::Opaque(env.register_opaque::<BalanceProof>("BalanceProof", true));
 
     // Misc
-    let module_type = Type::Opaque(env.register_opaque::<OpaqueModule>("Module", false));
+    let contract_type = Type::Opaque(env.register_opaque::<OpaqueContract>("Contract", false));
     let scheduled_execution_type = Type::Opaque(env.register_opaque::<OpaqueScheduledExecution>("ScheduledExecution", false));
     let max_supply_type = Type::Enum(env.register_enum::<3>("MaxSupplyMode", [
         // Unlimited supply
@@ -1553,13 +1553,13 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, C
     {
         env.register_static_function(
             "new",
-            module_type.clone(),
+            contract_type.clone(),
             vec![
                 ("contract", hash_type.clone()),
             ],
-            FunctionHandler::Async(async_handler!(module_new::<P>)),
+            FunctionHandler::Async(async_handler!(contract_new::<P>)),
             1500,
-            Some(Type::Optional(Box::new(module_type.clone())))
+            Some(Type::Optional(Box::new(contract_type.clone())))
         );
 
         // Call a module chunk from this contract
@@ -1567,7 +1567,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, C
         // Module#call is calling on behalf of the current transaction
         env.register_native_function(
             "call",
-            Some(module_type.clone()),
+            Some(contract_type.clone()),
             vec![
                 ("chunk_id", Type::U16),
                 ("args", Type::Array(Box::new(Type::Any))),
@@ -1575,7 +1575,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, C
                 // Those funds are taken from the current contract
                 ("deposits", Type::Map(Box::new(hash_type.clone()), Box::new(Type::U64))),
             ],
-            FunctionHandler::Async(async_handler!(module_call::<P>)),
+            FunctionHandler::Async(async_handler!(contract_call::<P>)),
             750,
             Some(Type::Voidable(Box::new(Type::Any)))
         );
@@ -1584,14 +1584,24 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, C
         // So it will act as your own contract
         env.register_native_function(
             "delegate",
-            Some(module_type.clone()),
+            Some(contract_type.clone()),
             vec![
                 ("chunk_id", Type::U16),
                 ("args", Type::Array(Box::new(Type::Any))),
             ],
-            FunctionHandler::Async(async_handler!(module_delegate)),
+            FunctionHandler::Async(async_handler!(contract_delegate)),
             100,
             Some(Type::Voidable(Box::new(Type::Any)))
+        );
+
+        // Get the contract hash
+        env.register_native_function(
+            "get_hash",
+            Some(contract_type.clone()),
+            vec![],
+            FunctionHandler::Sync(contract_get_hash),
+            5,
+            Some(hash_type.clone())
         );
     }
 

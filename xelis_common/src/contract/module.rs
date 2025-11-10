@@ -1,19 +1,24 @@
+use std::sync::Arc;
+
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use xelis_vm::Module;
 
 use crate::serializer::*;
 
-#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Default, Debug, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 #[repr(u8)]
 pub enum ContractVersion {
+    #[default]
     V1,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ContractModule {
     pub version: ContractVersion,
-    pub module: Module,
+    // keep it behind Arc to reduce cloning overhead
+    pub module: Arc<Module>,
 }
 
 impl Serializer for ContractVersion {
@@ -45,7 +50,7 @@ impl Serializer for ContractModule {
 
         Ok(Self {
             version,
-            module,
+            module: Arc::new(module),
         })
     }
 

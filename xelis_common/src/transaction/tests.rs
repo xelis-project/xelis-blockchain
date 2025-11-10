@@ -8,7 +8,7 @@ use crate::{
     api::{DataElement, DataValue},
     block::BlockVersion,
     config::{BURN_PER_CONTRACT, COIN_VALUE, XELIS_ASSET},
-    contract::ContractMetadata,
+    contract::{ContractMetadata, ContractVersion, ContractModule},
     crypto::{
         elgamal::{Ciphertext, PedersenOpening},
         proofs::{ProofVerificationError, G},
@@ -59,7 +59,7 @@ struct AccountChainState {
 struct ChainState {
     accounts: HashMap<PublicKey, AccountChainState>,
     multisig: HashMap<PublicKey, MultiSigPayload>,
-    contracts: HashMap<Hash, Module>,
+    contracts: HashMap<Hash, ContractModule>,
     env: Environment<ContractMetadata>,
 }
 
@@ -404,7 +404,7 @@ async fn test_tx_invoke_contract() {
     let mut state = ChainState::new();
     let mut module = Module::new();
     module.add_entry_chunk(Chunk::new());
-    state.contracts.insert(Hash::zero(), module);
+    state.contracts.insert(Hash::zero(), ContractModule { version: Default::default(), module: Arc::new(module) });
 
     // Create the chain state
     {
@@ -457,6 +457,7 @@ async fn test_tx_deploy_contract() {
         assert!(module.size() == module.to_bytes().len());
 
         let data = TransactionTypeBuilder::DeployContract(DeployContractBuilder {
+            contract_version: Default::default(),
             module: module.to_hex(),
             invoke: Some(DeployContractInvokeBuilder {
                 deposits: [(XELIS_ASSET, ContractDepositBuilder {
@@ -788,14 +789,14 @@ impl<'a> BlockchainVerificationState<'a, ()> for ChainState {
         Ok(self.multisig.get(account))
     }
 
-    async fn get_environment(&mut self) -> Result<&Environment<ContractMetadata>, ()> {
+    async fn get_environment(&mut self, _: ContractVersion) -> Result<&Environment<ContractMetadata>, ()> {
         Ok(&self.env)
     }
 
     async fn set_contract_module(
         &mut self,
         hash: &'a Hash,
-        module: &'a Module
+        module: &'a ContractModule,
     ) -> Result<(), ()> {
         self.contracts.insert(hash.clone(), module.clone());
         Ok(())
@@ -813,7 +814,7 @@ impl<'a> BlockchainVerificationState<'a, ()> for ChainState {
         contract: &'a Hash
     ) -> Result<(&Module, &Environment<ContractMetadata>), ()> {
         let module = self.contracts.get(contract).ok_or(())?;
-        Ok((module, &self.env))
+        Ok((&module.module, &self.env))
     }
 }
 
