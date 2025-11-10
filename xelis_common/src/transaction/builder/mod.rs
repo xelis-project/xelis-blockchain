@@ -339,8 +339,9 @@ impl TransactionBuilder {
             },
             TransactionTypeBuilder::DeployContract(payload) => {
                 // Module is in hex format, so we need to divide by 2 for its bytes size
+                // + 1 for the contract version
                 // + 1 for the invoke option
-                size += payload.module.len() / 2 + 1;
+                size += 1 + payload.module.len() / 2 + 1;
                 if let Some(invoke) = payload.invoke.as_ref() {
                     let (commitments, deposits_size) = self.estimate_deposits_size(&invoke.deposits);
 
