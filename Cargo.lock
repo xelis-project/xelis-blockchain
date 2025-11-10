@@ -689,9 +689,9 @@ dependencies = [
 
 [[package]]
 name = "block-buffer"
-version = "0.11.0-rc.5"
+version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e9ef36a6fcdb072aa548f3da057640ec10859eb4e91ddf526ee648d50c76a949"
+checksum = "96eb4cdd6cf1b31d671e9efe75c5d1ec614776856cefbe109ca373554a6d514f"
 dependencies = [
  "hybrid-array",
 ]
@@ -808,9 +808,9 @@ checksum = "37b2a672a2cb129a2e41c10b1224bb368f9f37a2b16b612598138befd7b37eb5"
 
 [[package]]
 name = "cc"
-version = "1.2.44"
+version = "1.2.45"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "37521ac7aabe3d13122dc382493e20c9416f299d2ccd5b3a5340a2570cdeb0f3"
+checksum = "35900b6c8d709fb1d854671ae27aeaa9eec2f8b01b364e1619a40da3e6fe2afe"
 dependencies = [
  "find-msvc-tools",
  "jobserver",
@@ -846,9 +846,9 @@ dependencies = [
 
 [[package]]
 name = "chacha20"
-version = "0.10.0-rc.4"
+version = "0.10.0-rc.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5e0c1a2647603ce294594198b01c1fbf77bc80a075d5b1b9adbfa94f668fd299"
+checksum = "99cbf41c6ec3c4b9eaf7f8f5c11a72cd7d3aa0428125c20d5ef4d09907a0f019"
 dependencies = [
  "cfg-if",
  "cipher 0.5.0-rc.2",
@@ -862,7 +862,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c662d31454533832974f2b2b3fcbd552ed3cde94c95e614a5039d297dd97076f"
 dependencies = [
  "aead",
- "chacha20 0.10.0-rc.4",
+ "chacha20 0.10.0-rc.5",
  "cipher 0.5.0-rc.2",
  "poly1305",
 ]
@@ -923,7 +923,7 @@ version = "0.5.0-rc.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "155e4a260750fa4f7754649f049748aacc31db238a358d85fd721002f230f92f"
 dependencies = [
- "block-buffer 0.11.0-rc.5",
+ "block-buffer 0.11.0",
  "crypto-common 0.2.0-rc.5",
  "inout 0.2.1",
 ]
@@ -3688,9 +3688,9 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
 name = "syn"
-version = "2.0.109"
+version = "2.0.110"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2f17c7e013e88258aa9543dcbe81aca68a667a9ac37cd69c9fbc07858bfe0e2f"
+checksum = "a99801b5bd34ede4cf3fc688c5919368fea4e4814a4664359503e6015b280aea"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -4832,7 +4832,7 @@ dependencies = [
 [[package]]
 name = "xelis-ast"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#c77b53a0692213273365011142fffb3b04dad0a8"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#f3402522bfa60180f432df8a031324463852f1b2"
 dependencies = [
  "indexmap 2.12.0",
  "xelis-types",
@@ -4841,7 +4841,7 @@ dependencies = [
 [[package]]
 name = "xelis-builder"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#c77b53a0692213273365011142fffb3b04dad0a8"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#f3402522bfa60180f432df8a031324463852f1b2"
 dependencies = [
  "anyhow",
  "hex",
@@ -4849,7 +4849,6 @@ dependencies = [
  "paste",
  "thiserror 2.0.17",
  "xelis-ast",
- "xelis-bytecode",
  "xelis-environment",
  "xelis-types",
 ]
@@ -4857,7 +4856,7 @@ dependencies = [
 [[package]]
 name = "xelis-bytecode"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#c77b53a0692213273365011142fffb3b04dad0a8"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#f3402522bfa60180f432df8a031324463852f1b2"
 dependencies = [
  "hex",
  "indexmap 2.12.0",
@@ -4870,7 +4869,7 @@ dependencies = [
 [[package]]
 name = "xelis-environment"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#c77b53a0692213273365011142fffb3b04dad0a8"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#f3402522bfa60180f432df8a031324463852f1b2"
 dependencies = [
  "anyhow",
  "better_any",
@@ -4898,7 +4897,7 @@ dependencies = [
 [[package]]
 name = "xelis-types"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#c77b53a0692213273365011142fffb3b04dad0a8"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#f3402522bfa60180f432df8a031324463852f1b2"
 dependencies = [
  "anyhow",
  "hex",
@@ -4914,7 +4913,7 @@ dependencies = [
 [[package]]
 name = "xelis-vm"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#c77b53a0692213273365011142fffb3b04dad0a8"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#f3402522bfa60180f432df8a031324463852f1b2"
 dependencies = [
  "anyhow",
  "futures",
