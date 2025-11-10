@@ -151,6 +151,7 @@ pub async fn contract_call<'a, 'ty, 'r, P: ContractProvider>(zelf: FnInstance<'a
             contract_caller: Some(metadata.metadata.contract_executor.clone()),
             deposits,
         }),
+        environment: None,
         chunk: chunk_id,
         params: p,
     })
@@ -181,6 +182,8 @@ pub async fn contract_delegate<'a, 'ty, 'r>(zelf: FnInstance<'a>, mut params: Fn
             Reference::Borrowed(v) => Arc::new((**v).clone()),
             Reference::Shared(v) => v.clone(),
         },
+        // TODO: fetch the environment when we have a different one
+        environment: None,
         chunk: chunk_id,
         params: p,
     })

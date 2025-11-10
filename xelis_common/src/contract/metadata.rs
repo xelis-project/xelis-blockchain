@@ -1,6 +1,6 @@
 use std::hash;
 use indexmap::IndexMap;
-use xelis_bytecode::ModuleMetadata as ModuleMetadataInner;
+use xelis_vm::ModuleMetadata as ModuleMetadataInner;
 use crate::{crypto::Hash, transaction::ContractDeposit};
 
 pub type ModuleMetadata<'a> = ModuleMetadataInner<'a, ContractMetadata>;

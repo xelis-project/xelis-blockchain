@@ -8,7 +8,7 @@ use thiserror::Error;
 use curve25519_dalek::Scalar;
 use log::{debug, log, trace, warn, Level};
 use indexmap::IndexMap;
-use xelis_vm::{Reference, VMError, ValueCell, VM};
+use xelis_vm::{ModuleMetadata, Reference, VM, VMError, ValueCell};
 
 use crate::{
     config::{TX_GAS_BURN_PERCENT, XELIS_ASSET},
@@ -87,7 +87,7 @@ async fn run_virtual_machine<'a, P: ContractProvider>(
     max_gas: u64,
 ) -> Result<(u64, u64, Option<u64>), VMError> {
     debug!("run virtual machine with max gas {}", max_gas);
-    let mut vm = VM::new(&contract_environment.environment);
+    let mut vm = VM::default();
 
     // Insert the module to load
     let metadata = ContractMetadata {
@@ -95,7 +95,11 @@ async fn run_virtual_machine<'a, P: ContractProvider>(
         contract_caller: None,
         deposits,
     };
-    vm.append_module(contract_environment.module, Reference::Shared(Arc::new(metadata)))?;
+    vm.append_module(ModuleMetadata {
+        module: Reference::Borrowed(contract_environment.module),
+        metadata: Reference::Shared(Arc::new(metadata)),
+        environment: Reference::Borrowed(contract_environment.environment),
+    })?;
 
     // Invoke the needed chunk
     // This is the first chunk to be called
