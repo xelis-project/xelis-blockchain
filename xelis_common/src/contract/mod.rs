@@ -498,12 +498,12 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, C
             Some(Type::Bool)
         );
         env.register_native_function(
-            "is_normal",
+            "to_bytes",
             Some(address_type.clone()),
             vec![],
-            FunctionHandler::Sync(address_is_normal),
+            FunctionHandler::Sync(address_to_bytes),
             5,
-            Some(Type::Bool)
+            Some(Type::Bytes)
         );
         env.register_native_function(
             "to_point",
@@ -522,13 +522,12 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, C
             Some(address_type.clone())
         );
         env.register_static_function(
-            "from_point",
+            "from_bytes",
             address_type.clone(),
             vec![
-                ("point", ristretto_type.clone()),
-                ("mainnet", Type::Bool)
+                ("bytes", Type::Bytes),
             ],
-            FunctionHandler::Sync(address_from_point),
+            FunctionHandler::Sync(address_from_bytes),
             75,
             Some(address_type.clone())
         );

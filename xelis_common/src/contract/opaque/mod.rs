@@ -15,7 +15,7 @@ use xelis_types::{
     register_opaque_json,
     impl_opaque
 };
-use xelis_vm::{tid, traits::JSON_REGISTRY, OpaqueWrapper};
+use xelis_vm::{Opaque, OpaqueWrapper, ValueError, tid, traits::JSON_REGISTRY};
 use crate::{
     account::CiphertextCache,
     block::Block,
@@ -64,7 +64,11 @@ impl_opaque!(
 impl_opaque!(
     "Address",
     Address,
-    display,
+    ty
+);
+impl_opaque!(
+    "Address",
+    Address,
     json
 );
 impl_opaque!(
@@ -103,6 +107,25 @@ impl_opaque!(
     "OpaqueScheduledExecution",
     OpaqueScheduledExecution
 );
+
+impl Opaque for Address {
+    fn clone_box(&self) -> Box<dyn Opaque> {
+        Box::new(self.clone())
+    }
+
+    fn display(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Address({})", self)
+    }
+
+    fn validate(&self) -> Result<(), xelis_vm::ValueError> {
+        // Only allow normal addresses
+        if !self.is_normal() {
+            return Err(ValueError::InvalidOpaqueTypeMismatch);
+        }
+
+        Ok(())
+    }
+}
 
 // Injectable context data
 tid!(ChainState<'_>);
