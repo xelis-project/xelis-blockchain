@@ -2,7 +2,7 @@ use std::{borrow::Cow, collections::{hash_map::Entry, HashMap}};
 use async_trait::async_trait;
 use xelis_common::{
     account::Nonce,
-    contract::ContractMetadata,
+    contract::{ContractMetadata, ContractModule, ContractVersion},
     block::{BlockVersion, TopoHeight},
     crypto::{
         elgamal::Ciphertext,
@@ -56,7 +56,7 @@ pub struct MempoolState<'a, S: Storage> {
     // This is used to verify ZK Proofs and store/update nonces
     accounts: HashMap<&'a PublicKey, Account<'a>>,
     // Contract modules
-    contracts: HashMap<Cow<'a, Hash>, Cow<'a, Module>>,
+    contracts: HashMap<Cow<'a, Hash>, Cow<'a, ContractModule>>,
     // The current stable topoheight of the chain
     stable_topoheight: TopoHeight,
     // The current topoheight of the chain
@@ -303,7 +303,9 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for Mempoo
     }
 
     /// Get the contract environment
-    async fn get_environment(&mut self) -> Result<&Environment<ContractMetadata>, BlockchainError> {
+    async fn get_environment(&mut self, _: ContractVersion) -> Result<&Environment<ContractMetadata>, BlockchainError> {
+        // Currently we have only one environment
+        // TODO: if we have multiple versions, we may want to return different environments
         Ok(self.environment)
     }
 
@@ -311,7 +313,7 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for Mempoo
     async fn set_contract_module(
         &mut self,
         hash: &'a Hash,
-        module: &'a Module
+        module: &'a ContractModule,
     ) -> Result<(), BlockchainError> {
         if self.contracts.insert(Cow::Borrowed(hash), Cow::Borrowed(module)).is_some() {
             return Err(BlockchainError::ContractAlreadyExists);
@@ -346,6 +348,7 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for Mempoo
         let module = self.contracts.get(hash)
             .ok_or_else(|| BlockchainError::ContractNotFound(hash.clone()))?;
 
-        Ok((module, self.environment))
+        // TODO: get the environment based on the module
+        Ok((&module.module, self.environment))
     }
 }

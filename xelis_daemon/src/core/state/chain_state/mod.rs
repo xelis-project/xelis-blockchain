@@ -28,7 +28,7 @@ use xelis_common::{
         Reference,
         Transaction
     },
-    contract::ContractMetadata,
+    contract::{ContractMetadata, ContractModule, ContractVersion},
     utils::format_xelis,
     versioned_type::VersionedState,
 };
@@ -119,7 +119,7 @@ pub struct ChainState<'a, S: Storage> {
     topoheight: TopoHeight,
     tx_base_fee: u64,
     // All contracts updated
-    contracts: HashMap<Cow<'a, Hash>, (VersionedState, Option<Cow<'a, Module>>)>,
+    contracts: HashMap<Cow<'a, Hash>, (VersionedState, Option<Cow<'a, ContractModule>>)>,
     // Block header version
     block_version: BlockVersion,
     // All gas fees tracked
@@ -284,7 +284,7 @@ impl<'a, S: Storage> ChainState<'a, S> {
     // Search for a contract versioned state
     // if not found, fetch it from the storage
     // if not found in storage, create a new one
-    async fn internal_get_versioned_contract(&mut self, hash: &'a Hash) -> Result<&mut (VersionedState, Option<Cow<'a, Module>>), BlockchainError> {
+    async fn internal_get_versioned_contract(&mut self, hash: &'a Hash) -> Result<&mut (VersionedState, Option<Cow<'a, ContractModule>>), BlockchainError> {
         match self.contracts.entry(Cow::Borrowed(hash)) {
             Entry::Occupied(o) => Ok(o.into_mut()),
             Entry::Vacant(e) => {
@@ -313,7 +313,7 @@ impl<'a, S: Storage> ChainState<'a, S> {
     }
 
     // Get the contract module from our cache
-    async fn internal_get_contract_module(&self, hash: &Hash) -> Result<&Module, BlockchainError> {
+    async fn internal_get_contract_module(&self, hash: &Hash) -> Result<&ContractModule, BlockchainError> {
         trace!("Getting contract module {}", hash);
         self.contracts.get(hash)
             .ok_or_else(|| BlockchainError::ContractNotFound(hash.clone()))
@@ -427,7 +427,8 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for ChainS
     }
 
     /// Get the contract environment
-    async fn get_environment(&mut self) -> Result<&Environment<ContractMetadata>, BlockchainError> {
+    async fn get_environment(&mut self, _: ContractVersion) -> Result<&Environment<ContractMetadata>, BlockchainError> {
+        // TODO: we may want to have different environments based on the version
         Ok(self.environment)
     }
 
@@ -435,7 +436,7 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for ChainS
     async fn set_contract_module(
         &mut self,
         hash: &'a Hash,
-        module: &'a Module
+        module: &'a ContractModule
     ) -> Result<(), BlockchainError> {
         let (state, m) = self.internal_get_versioned_contract(&hash).await?;
         if !state.is_new() {
@@ -461,6 +462,8 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for ChainS
         hash: &'a Hash
     ) -> Result<(&Module, &Environment<ContractMetadata>), BlockchainError> {
         let module = self.internal_get_contract_module(hash).await?;
-        Ok((module, self.environment))
+
+        // TODO: get the environment based on the module
+        Ok((&module.module, self.environment))
     }
 }

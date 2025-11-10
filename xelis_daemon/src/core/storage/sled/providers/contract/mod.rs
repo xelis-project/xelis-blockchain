@@ -15,7 +15,7 @@ use crate::core::{
     storage::{
         ContractProvider,
         SledStorage,
-        VersionedContract,
+        VersionedContractModule,
         sled::CONTRACTS_COUNT
     }
 };
@@ -23,7 +23,7 @@ use log::trace;
 
 #[async_trait]
 impl ContractProvider for SledStorage {
-    async fn set_last_contract_to<'a>(&mut self, hash: &Hash, topoheight: TopoHeight, contract: &VersionedContract<'a>) -> Result<(), BlockchainError> {
+    async fn set_last_contract_to<'a>(&mut self, hash: &Hash, topoheight: TopoHeight, contract: &VersionedContractModule<'a>) -> Result<(), BlockchainError> {
         trace!("Setting contract {} at topoheight {}", hash, topoheight);
         let key = self.get_versioned_contract_key(hash, topoheight);
         Self::insert_into_disk(self.snapshot.as_mut(), &self.versioned_contracts, &key, contract.to_bytes())?;
@@ -40,13 +40,13 @@ impl ContractProvider for SledStorage {
         self.load_optional_from_disk(&self.contracts, hash.as_bytes())   
     }
 
-    async fn get_contract_at_topoheight_for<'a>(&self, hash: &Hash, topoheight: TopoHeight) -> Result<VersionedContract<'a>, BlockchainError> {
+    async fn get_contract_at_topoheight_for<'a>(&self, hash: &Hash, topoheight: TopoHeight) -> Result<VersionedContractModule<'a>, BlockchainError> {
         trace!("Getting contract {} at topoheight {}", hash, topoheight);
         let key = self.get_versioned_contract_key(hash, topoheight);
         self.load_from_disk(&self.versioned_contracts, &key, DiskContext::ContractTopoHeight)
     }
 
-    async fn get_contract_at_maximum_topoheight_for<'a>(&self, hash: &Hash, maximum_topoheight: TopoHeight) -> Result<Option<(TopoHeight, VersionedContract<'a>)>, BlockchainError> {
+    async fn get_contract_at_maximum_topoheight_for<'a>(&self, hash: &Hash, maximum_topoheight: TopoHeight) -> Result<Option<(TopoHeight, VersionedContractModule<'a>)>, BlockchainError> {
         trace!("Getting contract {} at maximum topoheight {}", hash, maximum_topoheight);
         let Some(pointer) = self.get_last_topoheight_for_contract(hash).await? else {
             return Ok(None)

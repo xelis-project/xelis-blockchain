@@ -19,7 +19,7 @@ use crate::{
         error::BlockchainError,
         storage::{
             Storage,
-            VersionedContract,
+            VersionedContractModule,
             VersionedContractBalance,
             VersionedContractData,
             VersionedMultiSig,
@@ -920,7 +920,7 @@ impl<S: Storage> P2pServer<S> {
             },
             State::Deleted => {
                 debug!("contract {} killed itself, mark it as a tombstone only", contract);
-                let versioned = VersionedContract::new(None, None);
+                let versioned = VersionedContractModule::new(None, None);
                 storage.set_last_contract_to(&contract, stable_topoheight, &versioned).await?;
             },
             State::Clean => {
@@ -928,7 +928,7 @@ impl<S: Storage> P2pServer<S> {
             },
             State::Some(module) => {
                 debug!("Saving contract metadata for {}", contract);
-                let versioned = VersionedContract::new(Some(Cow::Owned(module)), None);
+                let versioned = VersionedContractModule::new(Some(Cow::Owned(module)), None);
                 storage.set_last_contract_to(&contract, stable_topoheight, &versioned).await?;
             },
         };

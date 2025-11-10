@@ -1,8 +1,7 @@
 use std::{
     borrow::Cow,
     collections::{hash_map::Entry, HashMap},
-    ops::{Deref, DerefMut},
-    sync::Arc
+    ops::{Deref, DerefMut}
 };
 use anyhow::Context;
 use async_trait::async_trait;
@@ -22,7 +21,9 @@ use xelis_common::{
         ContractEventTracker,
         ContractLog,
         ContractMetadata,
-        ScheduledExecution
+        ScheduledExecution,
+        ContractVersion,
+        ContractModule
     },
     crypto::{elgamal::Ciphertext, Hash, PublicKey},
     serializer::Serializer,
@@ -36,7 +37,7 @@ use xelis_common::{
     utils::format_xelis,
     versioned_type::VersionedState
 };
-use xelis_vm::{Environment, Module};
+use xelis_vm::Environment;
 use crate::core::{
     blockchain::tx_kb_size_rounded,
     state::verify_fee,
@@ -44,7 +45,7 @@ use crate::core::{
     storage::{
         types::TopoHeightMetadata,
         Storage,
-        VersionedContract,
+        VersionedContractModule,
         VersionedContractBalance,
         VersionedContractData,
         VersionedMultiSig,
@@ -61,7 +62,7 @@ struct ContractManager<'a> {
     // global assets cache
     assets: HashMap<Hash, Option<AssetChanges>>,
     tracker: ContractEventTracker,
-    modules: HashMap<Hash, Option<Arc<Module>>>,
+    modules: HashMap<Hash, Option<ContractModule>>,
     // Planned executions for the current block
     executions_at_block_end: IndexSet<ScheduledExecution>,
     executions_at_topoheight: HashMap<TopoHeight, IndexSet<ScheduledExecution>>,
@@ -186,14 +187,14 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for Applic
         self.inner.get_multisig_state(account).await
     }
 
-    async fn get_environment(&mut self) -> Result<&Environment<ContractMetadata>, BlockchainError> {
-        self.inner.get_environment().await
+    async fn get_environment(&mut self, version: ContractVersion) -> Result<&Environment<ContractMetadata>, BlockchainError> {
+        self.inner.get_environment(version).await
     }
 
     async fn set_contract_module(
         &mut self,
         hash: &'a Hash,
-        module: &'a xelis_vm::Module
+        module: &'a ContractModule
     ) -> Result<(), BlockchainError> {
         self.inner.set_contract_module(hash, module).await
     }
@@ -353,7 +354,7 @@ impl<'a, S: Storage> BlockchainContractState<'a, S, BlockchainError> for Applica
 
         let contract_environment = ContractEnvironment {
             environment: self.inner.environment,
-            module,
+            module: &module.module,
             provider: self.inner.storage.as_mut(),
         };
 
@@ -391,7 +392,7 @@ impl<'a, S: Storage> BlockchainContractState<'a, S, BlockchainError> for Applica
 
     async fn set_modules_cache(
         &mut self,
-        modules: HashMap<Hash, Option<Arc<Module>>>,
+        modules: HashMap<Hash, Option<ContractModule>>,
     ) -> Result<(), BlockchainError> {
         self.contract_manager.modules = modules;
 
@@ -776,7 +777,7 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
                 // Prevent cloning the value
                 let module = module.as_ref()
                     .map(|v| Cow::Borrowed(v.as_ref()));
-                self.inner.storage.set_last_contract_to(&hash, self.inner.topoheight, &VersionedContract::new(module, state.get_topoheight())).await?;
+                self.inner.storage.set_last_contract_to(&hash, self.inner.topoheight, &VersionedContractModule::new(module, state.get_topoheight())).await?;
             }
         }
 

@@ -5,7 +5,11 @@ use xelis_common::{
     account::{AccountSummary, Balance, Nonce},
     asset::AssetData,
     block::TopoHeight,
-    contract::{MAX_KEY_SIZE, MAX_VALUE_SIZE},
+    contract::{
+        MAX_KEY_SIZE,
+        MAX_VALUE_SIZE,
+        ContractModule,
+    },
     crypto::{
         Hash,
         PublicKey
@@ -20,7 +24,7 @@ use xelis_common::{
     transaction::MultiSigPayload,
     versioned_type::State
 };
-use xelis_vm::{Module, ValueCell};
+use xelis_vm::ValueCell;
 use crate::{
     config::{CHAIN_SYNC_REQUEST_MAX_BLOCKS, PEER_MAX_PACKET_SIZE, PRUNE_SAFETY_LIMIT},
     p2p::packet::{
@@ -453,7 +457,7 @@ pub enum StepResponse {
     Contracts(IndexSet<Hash>, Option<u64>),
     // Contract module
     // This is one by one due to the potential max size
-    ContractModule(State<Module>),
+    ContractModule(State<ContractModule>),
     // Contract assets
     // all assets detected, pagination
     ContractBalances(IndexMap<Hash, u64>, Option<u64>),
