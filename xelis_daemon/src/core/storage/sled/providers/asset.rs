@@ -96,9 +96,9 @@ impl AssetProvider for SledStorage {
                 }
 
                 let key = Self::get_asset_key(&asset, topoheight);
-                let data = self.load_from_disk(&self.versioned_assets, &key, DiskContext::AssetAtTopoHeight(topoheight))?;
+                let data: VersionedAssetData = self.load_from_disk(&self.versioned_assets, &key, DiskContext::AssetAtTopoHeight(topoheight))?;
 
-                Ok(Some((asset, topoheight, data)))
+                Ok(Some((asset, topoheight, data.take())))
             })
             .filter_map(Result::transpose)
         )
