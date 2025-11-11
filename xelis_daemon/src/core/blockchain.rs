@@ -1505,7 +1505,7 @@ impl<S: Storage> Blockchain<S> {
     pub async fn get_difficulty(&self) -> Difficulty {
         trace!("get current difficulty");
         let storage = self.storage.read().await;
-        debug!("storage read acquired to get difficulty");
+        trace!("storage read acquired to get difficulty");
         let cache = storage.chain_cache().await;
 
         cache.difficulty
