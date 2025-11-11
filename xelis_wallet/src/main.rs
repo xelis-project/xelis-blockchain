@@ -242,7 +242,7 @@ async fn xswd_handler(mut receiver: UnboundedReceiver<XSWDEvent>, prompt: Sharea
                     }
                 }
             },
-            XSWDEvent::PrefetchPermissions(app_state, permissions) => {
+            XSWDEvent::PrefetchPermissions(app_state, permissions, callback) => {
                 // Either check in existing permissions or ask user for each permission
                 let mut message = format!("XSWD: Application {} ({}) is requesting multiple permissions to your wallet", app_state.get_name(), app_state.get_id());
                 if let Some(reason) = permissions.reason.as_ref() {
@@ -265,6 +265,10 @@ async fn xswd_handler(mut receiver: UnboundedReceiver<XSWDEvent>, prompt: Sharea
                     for permission in permissions.permissions {
                         app_permissions.insert(permission, Permission::Allow);
                     }
+                }
+
+                if callback.send(Ok(())).is_err() {
+                    error!("Error while sending prefetch permissions response back to XSWD");
                 }
             }
         };

@@ -1357,7 +1357,7 @@ pub enum XSWDEvent {
     RequestApplication(AppStateShared, oneshot::Sender<Result<PermissionResult, Error>>),
     CancelRequest(AppStateShared, oneshot::Sender<Result<(), Error>>),
     AppDisconnect(AppStateShared),
-    PrefetchPermissions(AppStateShared, InternalPrefetchPermissions),
+    PrefetchPermissions(AppStateShared, InternalPrefetchPermissions, oneshot::Sender<Result<(), Error>>),
 }
 
 #[cfg(feature = "xswd")]
@@ -1439,9 +1439,10 @@ impl XSWDHandler for Arc<Wallet> {
     // On CLI, this will show all permissions and accept them always at once if approved
     async fn on_prefetch_permissions_request(&self, app: &AppStateShared, permissions: InternalPrefetchPermissions) -> Result<(), Error> {
         if let Some(sender) = self.xswd_channel.read().await.as_ref() {
-            sender.send(XSWDEvent::PrefetchPermissions(app.clone(), permissions))?;
+            let (callback, receiver) = oneshot::channel();
+            sender.send(XSWDEvent::PrefetchPermissions(app.clone(), permissions, callback))?;
 
-            return Ok(())
+            return receiver.await?;
         }
 
         Err(WalletError::NoHandlerAvailable.into())
