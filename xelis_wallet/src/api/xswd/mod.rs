@@ -2,6 +2,8 @@ mod error;
 mod types;
 mod relayer;
 
+use std::borrow::Cow;
+
 use anyhow::Error;
 use async_trait::async_trait;
 use serde_json::{
@@ -16,6 +18,7 @@ use xelis_common::{
         InternalRpcError,
         RPCHandler,
         RpcRequest,
+        RpcResponse,
         RpcResponseError
     },
     tokio::sync::Semaphore
@@ -194,7 +197,11 @@ where
                     .map_err(|e| RpcResponseError::new(request.id.take(), e))?;
                 app.set_requesting(false);
 
-                Ok(OnRequestResult::Return(None))
+                Ok(OnRequestResult::Return(if request.id.is_some() {
+                    Some(json!(RpcResponse::new(Cow::Owned(request.id), Cow::Owned(Value::Bool(true)))))
+                } else {
+                    None
+                }))
             },
             _ => Err(RpcResponseError::new(request.id, InternalRpcError::MethodNotFound(request.method)))
         }
