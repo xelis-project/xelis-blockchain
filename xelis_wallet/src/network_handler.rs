@@ -1083,7 +1083,7 @@ impl NetworkHandler {
                 };
 
                 if must_update {
-                    debug!("must update balance for asset: {}, ct: {}", asset, ciphertext);
+                    debug!("must update balance for asset: {}, ct: {}, cache: {:?}", asset, ciphertext, balance_cache);
                     let value = if let Some(cache) = balance_cache {
                         cache
                     } else {
@@ -1328,7 +1328,9 @@ impl NetworkHandler {
 
                     // We only sync the head state if we have assets
                     // No need to sync the block because we would receive it by the on_block_ordered event
-                    self.sync_head_state(&address, Some(&assets), None, false, false).await?;
+                    if !assets.is_empty() {
+                        self.sync_head_state(&address, Some(&assets), None, false, false).await?;
+                    }
 
                     for (tx_hash, transfers) in calls.into_iter() {
                         self.create_or_update_transaction_contract(&tx_hash, event.topoheight, event.block_timestamp, transfers.into_iter()).await?;
