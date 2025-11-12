@@ -42,9 +42,6 @@ pub enum InternalRpcError {
     EventNotSubscribed,
     #[error("Event is already subscribed")]
     EventAlreadySubscribed,
-    // Custom errors must have a code between -3 and -31999
-    #[error("{:#}", _1)]
-    CustomAny(i16, AnyError),
     #[error("batch limit exceeded")]
     BatchLimitExceeded,
 }
@@ -73,8 +70,6 @@ impl InternalRpcError {
             // Events invalid requests
             Self::EventNotSubscribed => -1,
             Self::EventAlreadySubscribed => -2,
-            // Custom errors
-            Self::CustomAny(code, _) => *code,
         }
     }
 }
