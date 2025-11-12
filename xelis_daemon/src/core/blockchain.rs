@@ -18,6 +18,8 @@ use xelis_common::{
             InvokeContractEvent,
             NewAssetEvent,
             ContractTransfersEvent,
+            ContractTransfersEntry,
+            ContractTransfersEntryKey,
             ContractEvent,
             MempoolTransactionSummary,
         },
@@ -2316,6 +2318,7 @@ impl<S: Storage> Blockchain<S> {
                         }
                     }
 
+                    let mut aggregated_events = HashMap::new();
                     for ((caller, contract), transfers) in contract_tracker.contracts_transfers.iter() {
                         for (key, assets) in transfers.iter() {
                             let event = NotifyEvent::ContractTransfers {
@@ -2323,21 +2326,30 @@ impl<S: Storage> Blockchain<S> {
                             };
 
                             if should_track_events.contains(&event) {
-                                let entry = events.entry(event)
-                                    .or_insert_with(Vec::new);
+                                let aggregated_transfers = &mut aggregated_events.entry(event)
+                                    .or_insert_with(|| ContractTransfersEvent {
+                                        executions: HashMap::new(),
+                                        block_timestamp: block.get_timestamp(),
+                                        block_hash: Cow::Borrowed(&hash),
+                                        topoheight: highest_topo,
+                                    })
+                                    .executions
+                                    .entry(ContractTransfersEntryKey { contract: Cow::Borrowed(contract), caller: Cow::Borrowed(caller) })
+                                    .or_insert_with(ContractTransfersEntry::default)
+                                    .transfers;
 
-                                let value = json!(ContractTransfersEvent {
-                                    contract: Cow::Borrowed(contract),
-                                    caller: Cow::Borrowed(caller),
-                                    transfers: Cow::Borrowed(assets),
-                                    block_timestamp: block.get_timestamp(),
-                                    block_hash: Cow::Borrowed(&hash),
-                                    topoheight: highest_topo,
-                                });
-
-                                entry.push(value);
+                                for (asset, amount) in assets.iter() {
+                                    *aggregated_transfers.entry(Cow::Borrowed(asset))
+                                        .or_insert(0) += *amount;
+                                }
                             }
                         }
+                    }
+
+                    for (key, aggregated_event) in aggregated_events.into_iter() {
+                        let entry = events.entry(key)
+                            .or_insert_with(Vec::new);
+                        entry.push(json!(aggregated_event));
                     }
 
                     let caches = chain_state.get_contracts_cache();
