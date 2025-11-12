@@ -392,8 +392,7 @@ impl BlockchainError {
 
 impl From<BlockchainError> for InternalRpcError {
     fn from(value: BlockchainError) -> Self {
-        let id = value.id() as i16;
-        InternalRpcError::CustomAny(200 + id, value.into())
+        InternalRpcError::AnyError(value.into())
     }
 }
 

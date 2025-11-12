@@ -501,7 +501,8 @@ async fn get_block_template<S: Storage>(context: &Context, params: GetBlockTempl
 async fn get_miner_work<S: Storage>(context: &Context, params: GetMinerWorkParams<'_>) -> Result<GetMinerWorkResult, InternalRpcError> {
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
 
-    let header = BlockHeader::from_hex(&params.template)?;
+    let header = BlockHeader::from_hex(&params.template)
+        .context("Invalid block template")?;
     let ((difficulty, _), topoheight) = {
         let storage = blockchain.get_storage().read().await;
         let chain_cache = storage.chain_cache().await;
@@ -533,9 +534,12 @@ async fn get_miner_work<S: Storage>(context: &Context, params: GetMinerWorkParam
 }
 
 async fn submit_block<S: Storage>(context: &Context, params: SubmitBlockParams) -> Result<bool, InternalRpcError> {
-    let mut header = BlockHeader::from_hex(&params.block_template)?;
+    let mut header = BlockHeader::from_hex(&params.block_template)
+        .context("Invalid block template")?;
+
     if let Some(work) = params.miner_work {
-        let work = MinerWork::from_hex(&work)?;
+        let work = MinerWork::from_hex(&work)
+            .context("Invalid miner work")?;
         if !header.apply_miner_work(work) {
             return Err(InternalRpcError::InvalidJSONRequest);
         }
