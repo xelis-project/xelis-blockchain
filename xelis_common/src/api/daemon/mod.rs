@@ -378,6 +378,7 @@ pub struct GetInfoResult {
     pub height: u64,
     pub topoheight: TopoHeight,
     pub stableheight: u64,
+    pub stable_topoheight: TopoHeight,
     pub pruned_topoheight: Option<TopoHeight>,
     pub top_block_hash: Hash,
     // Current XELIS circulating supply
