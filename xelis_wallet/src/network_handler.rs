@@ -251,8 +251,8 @@ impl NetworkHandler {
                         // Mark it as last coinbase reward topoheight
                         // it is internally checked if its higher or not
                         debug!("Storing last coinbase reward topoheight {}", topoheight);
-                        storage.set_last_unstable_balance_topoheight(Some(topoheight))?;
-    
+                        storage.set_last_coinbase_topoheight(Some(topoheight))?;
+
                         if storage.has_transaction(entry.get_hash())? {
                             false
                         } else {
@@ -732,7 +732,7 @@ impl NetworkHandler {
 
                         debug!("Storing balance from topoheight {} for asset {} ({}) {}", topoheight, asset, balance, plaintext_balance);
                         // Store the new balance
-                        storage.set_balance_for(asset, Balance::new(plaintext_balance, balance)).await?;
+                        storage.set_balance_for(asset, Balance::new(plaintext_balance, balance, topoheight)).await?;
 
                         // Propagate the event
                         self.wallet.propagate_event(Event::BalanceChanged(BalanceChanged {
@@ -775,11 +775,11 @@ impl NetworkHandler {
         // Check the coinbase last topoheight
         {
             let mut storage = self.wallet.get_storage().write().await;
-            let last_coinbase_topoheight = storage.get_last_unstable_balance_topoheight();
+            let last_coinbase_topoheight = storage.get_last_coinbase_topoheight();
             if let Some(last_coinbase_topoheight) = last_coinbase_topoheight {
                 if last_coinbase_topoheight <= info.stable_topoheight {
                     debug!("Last coinbase reward topoheight {} is in daemon stable topoheight {}, removing it", last_coinbase_topoheight, info.stable_topoheight);
-                    storage.set_last_unstable_balance_topoheight(None)?;
+                    storage.set_last_coinbase_topoheight(None)?;
                 }
             }
         }
@@ -1120,7 +1120,7 @@ impl NetworkHandler {
                     // Update the balance
                     let mut storage = self.wallet.get_storage().write().await;
                     debug!("Storing balance at topoheight {} for asset {} ({}) {}", topoheight, asset, value, ciphertext);
-                    storage.set_balance_for(&asset, Balance::new(value, ciphertext)).await?;
+                    storage.set_balance_for(&asset, Balance::new(value, ciphertext, topoheight)).await?;
 
                     Ok(true)
                 } else {
@@ -1291,10 +1291,10 @@ impl NetworkHandler {
                                 }
                             }
 
-                            if let Some(coinbase_topo) = storage.get_last_unstable_balance_topoheight() {
+                            if let Some(coinbase_topo) = storage.get_last_coinbase_topoheight() {
                                 if coinbase_topo == topoheight {
                                     trace!("deleting last coinbase reward topoheight {} because of dag reorg", coinbase_topo);
-                                    storage.set_last_unstable_balance_topoheight(None)?;
+                                    storage.set_last_coinbase_topoheight(None)?;
                                 }
                             }
                         } else {
@@ -1349,12 +1349,6 @@ impl NetworkHandler {
                     // We only sync the head state if we have assets
                     // No need to sync the block because we would receive it by the on_block_ordered event
                     if !assets.is_empty() {
-                        {
-                            debug!("Storing last unstable balance topoheight {} because of contract transfers", event.topoheight);
-                            let mut storage = self.wallet.get_storage().write().await;
-                            storage.set_last_unstable_balance_topoheight(Some(event.topoheight))?;
-                        }
-
                         self.sync_head_state(&address, Some(&assets), None, false, false).await?;
                     }
 

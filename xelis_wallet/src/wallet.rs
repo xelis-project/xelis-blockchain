@@ -840,25 +840,35 @@ impl Wallet {
                     let mut daemon_stable_topoheight = None;
                     // Last mining reward is above stable topoheight, this may increase orphans rate
                     // To avoid this, we will use the last balance version in stable topoheight as reference
-                    let mut use_stable_balance = if let Some(topoheight) = storage.get_last_unstable_balance_topoheight().filter(|_| !force_stable_balance) {
-                        let stable_topoheight = network_handler.get_api().get_stable_topoheight().await?;
-                        daemon_stable_topoheight = Some(stable_topoheight);
-                        debug!("stable topoheight: {}, topoheight: {}", stable_topoheight, topoheight);
-                        topoheight > stable_topoheight
+                    let stable_topoheight = network_handler.get_api().get_stable_topoheight().await?;
+                    let mut use_stable_balance = if force_stable_balance || (
+                        // if we spend only xel and we had a coinbase reward in unstable height, use stable balance
+                        used_assets.len() == 1
+                        && used_assets.contains(&XELIS_ASSET)
+                        && storage.get_last_coinbase_topoheight().is_some_and(|v| v > stable_topoheight)
+                    ) {
+                        true
                     } else {
-                        force_stable_balance
-                    };
+                        // Fetch the stable topoheight
+                        // to compare it against each balance used
+                        daemon_stable_topoheight = Some(stable_topoheight);
+                        debug!("Checking if we can use stable balance at with stable topoheight {}", stable_topoheight);
 
-                    if use_stable_balance && !force_stable_balance {
-                        // Verify that we don't have a pending TX with unconfirmed balance
+                        let mut use_stable_balance = true;
+                        // Check if there is any unconfirmed balance or balance in unstable height
+                        // to decide if we can use stable balance
                         for asset in used_assets.iter() {
-                            if storage.has_unconfirmed_balance_for(asset).await? {
-                                warn!("Cannot use stable balance because we have unconfirmed balance for {}", asset);
+                            let (balance, unconfirmed) = storage.get_unconfirmed_balance_for(asset).await?;
+                            debug!("Current balance for asset {} is at topoheight {}", asset, balance.topoheight);
+                            if unconfirmed || balance.topoheight > stable_topoheight {
+                                debug!("Cannot use stable balance because balance for asset {} is at topoheight {} which is above stable topoheight {}", asset, balance.topoheight, stable_topoheight);
                                 use_stable_balance = false;
                                 break;
                             }
                         }
-                    }
+
+                        use_stable_balance
+                    };
 
                     // We also need to check if we have made an outgoing TX
                     // Because we need to keep the order of TX and use correct ciphertexts
@@ -904,7 +914,8 @@ impl Wallet {
                                     };
                                     let balance = Balance {
                                         amount,
-                                        ciphertext
+                                        ciphertext,
+                                        topoheight: stable_point.stable_topoheight,
                                     };
 
                                     debug!("Using stable balance for asset {} ({}) with amount {}", asset, balance.ciphertext, balance.amount);
@@ -1265,7 +1276,7 @@ impl Wallet {
                 storage.delete_assets().await?;
                 // unconfirmed balances are going to be outdated, we delete them
                 storage.delete_unconfirmed_balances().await;
-                storage.set_last_unstable_balance_topoheight(None)?;
+                storage.set_last_coinbase_topoheight(None)?;
 
                 if !network_handler.get_api().is_online() {
                     debug!("reconnect API");

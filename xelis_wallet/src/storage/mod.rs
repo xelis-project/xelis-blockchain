@@ -125,7 +125,7 @@ pub struct EncryptedStorage {
     // Topoheight of the last coinbase reward / or smart contracts transfer
     // This is used to determine if we should
     // use a stable balance or not
-    last_unstable_balance_topoheight: Option<u64>,
+    last_coinbase_topoheight: Option<u64>,
     // Transaction version to use
     tx_version: TxVersion,
     // Multisig state
@@ -150,7 +150,7 @@ impl EncryptedStorage {
             tx_cache: None,
             assets_cache: Mutex::new(LruCache::new(NonZeroUsize::new(DEFAULT_CACHE_SIZE).unwrap())),
             synced_topoheight: None,
-            last_unstable_balance_topoheight: None,
+            last_coinbase_topoheight: None,
             tx_version: TxVersion::V0,
             multisig_state: None
         };
@@ -166,7 +166,7 @@ impl EncryptedStorage {
 
         // Load one-time the last unstable topoheight
         if storage.contains_data(&storage.extra, LCRT)? {
-            storage.last_unstable_balance_topoheight = Some(storage.load_from_disk(&storage.extra, LCRT)?);
+            storage.last_coinbase_topoheight = Some(storage.load_from_disk(&storage.extra, LCRT)?);
         }
 
         // Load one-time the transaction version
@@ -1442,10 +1442,10 @@ impl EncryptedStorage {
 
     // Store the last unstable balance topoheight
     // This is used to determine if we should use a stable balance or not
-    pub fn set_last_unstable_balance_topoheight(&mut self, topoheight: Option<u64>) -> Result<()> {
+    pub fn set_last_coinbase_topoheight(&mut self, topoheight: Option<u64>) -> Result<()> {
         trace!("set last unstable balance topoheight to {:?}", topoheight);
         if let Some(topoheight) = topoheight {
-            if let Some(last_topo) = self.last_unstable_balance_topoheight.filter(|v| *v > topoheight) {
+            if let Some(last_topo) = self.last_coinbase_topoheight.filter(|v| *v > topoheight) {
                 debug!("last unstable balance topoheight ({}) already set to a higher value ({}), ignoring", topoheight, last_topo);
                 return Ok(());
             }
@@ -1455,14 +1455,14 @@ impl EncryptedStorage {
             self.delete_from_disk(&self.extra, LCRT)?;
         }
 
-        self.last_unstable_balance_topoheight = topoheight;
+        self.last_coinbase_topoheight = topoheight;
         Ok(())
     }
 
-    // Get the last unstable balance topoheight (coinbase reward or contract transfer)
-    pub fn get_last_unstable_balance_topoheight(&self) -> Option<u64> {
-        trace!("get last unstable balance topoheight");
-        self.last_unstable_balance_topoheight
+    // Get the last coinbase topoheight (coinbase reward)
+    pub fn get_last_coinbase_topoheight(&self) -> Option<u64> {
+        trace!("get last coinbase topoheight");
+        self.last_coinbase_topoheight
     }
 
     // Store the private key
@@ -1573,10 +1573,10 @@ impl EncryptedStorage {
         trace!("delete changes above topoheight {}", topoheight);
         let mut deleted = false;
 
-        if let Some(coinbase_topo) = self.get_last_unstable_balance_topoheight() {
+        if let Some(coinbase_topo) = self.get_last_coinbase_topoheight() {
             if coinbase_topo > topoheight {
                 trace!("deleting last coinbase reward topoheight {}", coinbase_topo);
-                self.set_last_unstable_balance_topoheight(None)?;
+                self.set_last_coinbase_topoheight(None)?;
             }
         }
 

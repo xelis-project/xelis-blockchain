@@ -462,7 +462,8 @@ async fn build_transaction_offline(context: &Context, params: BuildTransactionOf
 
         state.add_balance(hash, Balance {
             amount,
-            ciphertext
+            ciphertext,
+            topoheight: state.get_reference().topoheight,
         });
     }
 

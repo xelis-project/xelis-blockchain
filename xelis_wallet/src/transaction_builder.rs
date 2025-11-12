@@ -163,8 +163,8 @@ impl TransactionBuilderState {
 
         // Lets verify if the last unstable balance topoheight is still valid
         if let Some(stable_topoheight) = self.stable_topoheight {
-            if storage.get_last_unstable_balance_topoheight().is_some_and(|h| h <= stable_topoheight) {
-                storage.set_last_unstable_balance_topoheight(None)?;
+            if storage.get_last_coinbase_topoheight().is_some_and(|h| h <= stable_topoheight) {
+                storage.set_last_coinbase_topoheight(None)?;
             }
         }
 
@@ -206,11 +206,15 @@ impl AccountState for TransactionBuilderState {
     }
 
     fn update_account_balance(&mut self, asset: &Hash, new_balance: u64, ciphertext: Ciphertext) -> Result<(), Self::Error> {
-        self.balances.insert(asset.clone(), Balance {
-            amount: new_balance,
-            ciphertext: CiphertextCache::Decompressed(None, ciphertext)
-        });
-        Ok(())
+        self.balances.get_mut(asset)
+            .map(|balance| {
+                balance.amount = new_balance;
+                balance.ciphertext = CiphertextCache::Decompressed(None, ciphertext);
+                balance.topoheight = self.reference.topoheight.max(balance.topoheight);
+
+                ()
+            })
+            .ok_or_else(|| WalletError::BalanceNotFound(asset.clone()))
     }
 
     fn get_nonce(&self) -> Result<u64, Self::Error> {
