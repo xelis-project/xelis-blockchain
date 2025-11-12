@@ -328,7 +328,7 @@ async fn get_transaction(context: &Context, params: GetTransactionParams) -> Res
     let wallet: &Arc<Wallet> = context.get()?;
     let storage = wallet.get_storage().read().await;
     if !storage.has_transaction(&params.hash)? {
-        return Err(InternalRpcError::CustomStr(404, "Transaction is not found in wallet"))
+        return Err(InternalRpcError::InvalidParams("Transaction is not found in wallet"))
     }
 
     let transaction = storage.get_transaction(&params.hash)?;

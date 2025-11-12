@@ -1,7 +1,11 @@
 use std::{
     collections::HashSet,
     io::Write,
-    sync::{atomic::{AtomicBool, Ordering}, Arc}
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc
+    },
+    borrow::Cow
 };
 use rand::{rngs::OsRng, RngCore};
 use log::{
@@ -120,7 +124,7 @@ use {
             RpcRequest,
             InternalRpcError,
             RpcResponseError,
-            JSON_RPC_VERSION
+            RpcResponse,
         },
         tokio::sync::{
             mpsc::{
@@ -1411,13 +1415,10 @@ impl XSWDHandler for Arc<Wallet> {
             if let Some(network_handler) = network_handler.as_ref() {
                 if network_handler.is_running().await {
                     let api = network_handler.get_api();
-                    let response = api.call(&request.method, &request.params).await.map_err(|e| RpcResponseError::new(id.clone(), InternalRpcError::Custom(-31999, e.to_string())))?;
-    
-                    return Ok(json!({
-                        "jsonrpc": JSON_RPC_VERSION,
-                        "id": id,
-                        "result": response
-                    }))
+                    let response = api.call(&request.method, &request.params).await
+                        .map_err(|e| RpcResponseError::new(id.clone(), InternalRpcError::AnyError(e.into())))?;
+
+                    return Ok(json!(RpcResponse::new(Cow::Owned(id), Cow::Owned(response))))
                 }
             }
         }
