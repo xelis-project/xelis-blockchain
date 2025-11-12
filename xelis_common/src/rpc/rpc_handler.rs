@@ -84,7 +84,8 @@ where
             .map_err(|_| RpcResponseError::new(None, InternalRpcError::ParseBodyError))?;
 
         match request {
-            e @ Value::Object(_) => self.execute_method(&context, self.parse_request(e)?).await.map(|e| e.unwrap_or(Value::Null)),
+            e @ Value::Object(_) => self.execute_method(&context, self.parse_request(e)?).await
+                .map(|e| e.unwrap_or(Value::Null)),
             Value::Array(requests) => {
                 if self.batch_limit.is_some_and(|v| requests.len() > v) {
                     return Err(RpcResponseError::new(None, InternalRpcError::BatchLimitExceeded))
@@ -95,7 +96,7 @@ where
                     if value.is_object() {
                         let request = self.parse_request(value)?;
                         let response = match self.execute_method(&context, request).await {
-                            Ok(response) => json!(response),
+                            Ok(response) => response.unwrap_or_default(),
                             Err(e) => e.to_json()
                         };
                         responses.push(response);
@@ -103,7 +104,8 @@ where
                         responses.push(RpcResponseError::new(None, InternalRpcError::InvalidJSONRequest).to_json());
                     }
                 }
-                Ok(serde_json::to_value(responses).map_err(|err| RpcResponseError::new(None, InternalRpcError::SerializeResponse(err)))?)
+
+                Ok(Value::Array(responses))
             },
             _ => return Err(RpcResponseError::new(None, InternalRpcError::InvalidJSONRequest))
         }

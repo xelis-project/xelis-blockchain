@@ -6,10 +6,7 @@ use actix_web::{ResponseError, HttpResponse};
 use serde_json::{Value, Error as SerdeError, json};
 use thiserror::Error;
 use anyhow::Error as AnyError;
-use crate::{
-    serializer::ReaderError,
-    rpc::{Id, JSON_RPC_VERSION}
-};
+use crate::rpc::{Id, JSON_RPC_VERSION};
 
 #[derive(Error, Debug)]
 pub enum InternalRpcError {
@@ -38,8 +35,6 @@ pub enum InternalRpcError {
     #[error("Method '{}' in request was not found", _0)]
     MethodNotFound(String),
     #[error(transparent)]
-    DeserializerError(#[from] ReaderError),
-    #[error(transparent)]
     AnyError(#[from] AnyError),
     #[error("Websocket client was not found")]
     ClientNotFound,
@@ -47,15 +42,9 @@ pub enum InternalRpcError {
     EventNotSubscribed,
     #[error("Event is already subscribed")]
     EventAlreadySubscribed,
-    #[error(transparent)]
-    SerializeResponse(SerdeError),
     // Custom errors must have a code between -3 and -31999
     #[error("{:#}", _1)]
     CustomAny(i16, AnyError),
-    #[error("{}", _1)]
-    Custom(i16, String),
-    #[error("{}", _1)]
-    CustomStr(i16, &'static str),
     #[error("batch limit exceeded")]
     BatchLimitExceeded,
 }
@@ -78,18 +67,14 @@ impl InternalRpcError {
             // Internal errors
             Self::InternalError(_) => -32603,
             // 32000 to -32099	Server error (Reserved for implementation-defined server-errors)
-            Self::DeserializerError(_) => -32000,
             Self::InvalidContext => -32001,
             Self::ClientNotFound => -32002,
-            Self::SerializeResponse(_) => -32003,
             Self::AnyError(_) => -32004,
             // Events invalid requests
             Self::EventNotSubscribed => -1,
             Self::EventAlreadySubscribed => -2,
             // Custom errors
-            Self::Custom(code, _)
-            | Self::CustomStr(code, _)
-            | Self::CustomAny(code, _) => *code,
+            Self::CustomAny(code, _) => *code,
         }
     }
 }
