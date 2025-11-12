@@ -618,7 +618,7 @@ async fn has_balance<S: Storage>(context: &Context, params: HasBalanceParams<'_>
 async fn get_info<S: Storage>(context: &Context) -> Result<GetInfoResult, InternalRpcError> {
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
 
-    let (height, topoheight, stableheight, top_block_hash, emitted_supply, circulating_supply, pruned_topoheight, average_block_time, difficulty) = {    
+    let (height, topoheight, stableheight, stable_topoheight, top_block_hash, emitted_supply, circulating_supply, pruned_topoheight, average_block_time, difficulty) = {    
         let storage = blockchain.get_storage().read().await;
 
         let chain_cache = storage.chain_cache().await;
@@ -626,6 +626,7 @@ async fn get_info<S: Storage>(context: &Context) -> Result<GetInfoResult, Intern
         let height = chain_cache.height;
         let topoheight = chain_cache.topoheight;
         let stableheight = chain_cache.stable_height;
+        let stable_topoheight = chain_cache.stable_topoheight;
         let difficulty = chain_cache.difficulty;
 
         let top_block_hash = storage.get_hash_at_topo_height(topoheight).await
@@ -638,7 +639,7 @@ async fn get_info<S: Storage>(context: &Context) -> Result<GetInfoResult, Intern
             .unwrap_or(0);
         let pruned_topoheight = storage.get_pruned_topoheight().await.context("Error while retrieving pruned topoheight")?;
         let average_block_time = blockchain.get_average_block_time::<S>(&storage).await.context("Error while retrieving average block time")?;
-        (height, topoheight, stableheight, top_block_hash, emitted_supply, circulating_supply, pruned_topoheight, average_block_time, difficulty)
+        (height, topoheight, stableheight, stable_topoheight, top_block_hash, emitted_supply, circulating_supply, pruned_topoheight, average_block_time, difficulty)
     };
 
     let mempool_size = blockchain.get_mempool_size().await;
@@ -654,6 +655,7 @@ async fn get_info<S: Storage>(context: &Context) -> Result<GetInfoResult, Intern
         height,
         topoheight,
         stableheight,
+        stable_topoheight,
         pruned_topoheight,
         top_block_hash,
         circulating_supply,
