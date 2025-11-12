@@ -1265,7 +1265,7 @@ impl Wallet {
                 storage.delete_assets().await?;
                 // unconfirmed balances are going to be outdated, we delete them
                 storage.delete_unconfirmed_balances().await;
-                storage.clear_tx_cache();
+                storage.set_last_coinbase_reward_topoheight(None)?;
 
                 if !network_handler.get_api().is_online() {
                     debug!("reconnect API");

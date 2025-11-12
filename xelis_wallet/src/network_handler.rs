@@ -772,9 +772,22 @@ impl NetworkHandler {
             }
         }
 
+        // Check the coinbase last topoheight
+        {
+            let mut storage = self.wallet.get_storage().write().await;
+            let last_coinbase_topoheight = storage.get_last_coinbase_reward_topoheight();
+            if let Some(last_coinbase_topoheight) = last_coinbase_topoheight {
+                if last_coinbase_topoheight <= info.stable_topoheight {
+                    debug!("Last coinbase reward topoheight {} is in daemon stable topoheight {}, removing it", last_coinbase_topoheight, info.stable_topoheight);
+                    storage.set_last_coinbase_reward_topoheight(None)?;
+                }
+            }
+        }
+
         // Retrieve the highest point possible
         let synced_topoheight = {
             let storage = self.wallet.get_storage().read().await;
+
             if storage.has_top_block_hash()? {
                 // Check that the daemon topoheight is the same as our
                 // Verify also that the top block hash is same as our
@@ -1275,6 +1288,13 @@ impl NetworkHandler {
                                     // Otherwise in future with millions of TXs, this may take few seconds.
                                     debug!("Deleting transactions above {} due to DAG reorg", topoheight);
                                     storage.delete_transactions_at_or_above_topoheight(topoheight)?;
+                                }
+                            }
+
+                            if let Some(coinbase_topo) = storage.get_last_coinbase_reward_topoheight() {
+                                if coinbase_topo == topoheight {
+                                    trace!("deleting last coinbase reward topoheight {} because of dag reorg", coinbase_topo);
+                                    storage.set_last_coinbase_reward_topoheight(None)?;
                                 }
                             }
                         } else {

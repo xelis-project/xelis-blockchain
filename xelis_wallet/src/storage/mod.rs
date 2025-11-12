@@ -1572,6 +1572,14 @@ impl EncryptedStorage {
     pub fn delete_changes_above_topoheight(&mut self, topoheight: u64) -> Result<bool> {
         trace!("delete changes above topoheight {}", topoheight);
         let mut deleted = false;
+
+        if let Some(coinbase_topo) = self.get_last_coinbase_reward_topoheight() {
+            if coinbase_topo > topoheight {
+                trace!("deleting last coinbase reward topoheight {}", coinbase_topo);
+                self.set_last_coinbase_reward_topoheight(None)?;
+            }
+        }
+
         for res in self.changes_topoheight.iter().keys() {
             let key = res?;
             let raw = self.cipher.decrypt_value(&key).context("Error while decrypting key from disk")?;
