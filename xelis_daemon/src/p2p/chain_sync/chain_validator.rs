@@ -173,12 +173,12 @@ impl<'a, S: Storage> ChainValidator<'a, S> {
         let (difficulty, p) = self.blockchain.verify_proof_of_work(&provider, &pow_hash, tips.iter()).await?;
 
         // Find the common base between the block and the current blockchain
-        let (base, base_height) = self.blockchain.find_common_base(&provider, header.get_tips()).await?;
+        let (base, base_height) = blockdag::find_common_base(&provider, header.get_tips()).await?;
 
         trace!("Common base: {} at height {} and hash {}", base, base_height, hash);
 
         // Find the cumulative difficulty for this block
-        let (_, cumulative_difficulty) = self.blockchain.find_tip_work_score(
+        let (_, cumulative_difficulty) = blockdag::find_tip_work_score(
             &provider,
             &hash,
             header.get_tips().iter(),

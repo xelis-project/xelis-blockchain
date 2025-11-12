@@ -24,7 +24,8 @@ use crate::{
             VersionedContractData,
             VersionedMultiSig,
             VersionedSupply
-        }
+        },
+        blockdag,
     },
     p2p::{
         error::P2pError,
@@ -87,7 +88,7 @@ impl<S: Storage> P2pServer<S> {
             StepRequest::ChainInfo(blocks) => {
                 let common_point = self.find_common_point(&*storage, blocks).await?;
                 let tips = storage.get_tips().await?;
-                let (hash, height) = self.blockchain.find_common_base::<S, _>(&storage, &tips).await?;
+                let (hash, height) = blockdag::find_common_base::<S, _>(&storage, &tips).await?;
                 let stable_topo = storage.get_topo_height_for_hash(&hash).await?;
                 StepResponse::ChainInfo(common_point, stable_topo, height, hash)
             },
