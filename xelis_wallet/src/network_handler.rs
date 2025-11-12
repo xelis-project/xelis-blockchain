@@ -1,6 +1,6 @@
 use std::{
     borrow::Cow,
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     sync::Arc,
     time::{Duration, Instant}
 };
@@ -1309,16 +1309,30 @@ impl NetworkHandler {
                 res = on_contract_transfers.next() => {
                     let event = res?;
                     debug!("on contract transfers event at topo {} {}", event.topoheight, event.block_hash);
-                    let assets = event.transfers.keys()
-                        .cloned()
-                        .collect();
+                    let mut assets = HashSet::new();
 
-                    let tx_hash = event.caller.into_owned();
-                    self.create_or_update_transaction_contract(&tx_hash, event.topoheight, event.block_timestamp, event.transfers.into_owned().into_iter()).await?;
+
+                    // Aggregate all transfers per transaction caller
+                    let mut calls: HashMap<Hash, HashMap<Hash, u64>> = HashMap::new();
+
+                    for (key, entry) in event.executions.into_iter() {
+                        assets.extend(entry.transfers.keys().cloned().map(Cow::into_owned));
+
+                        let tx_hash = key.caller.into_owned();
+                        let transfers = calls.entry(tx_hash)
+                            .or_insert_with(HashMap::new);
+                        for (asset, amount) in entry.transfers.into_iter() {
+                            *transfers.entry(asset.into_owned()).or_insert(0) += amount;
+                        }
+                    }
 
                     // We only sync the head state if we have assets
                     // No need to sync the block because we would receive it by the on_block_ordered event
                     self.sync_head_state(&address, Some(&assets), None, false, false).await?;
+
+                    for (tx_hash, transfers) in calls.into_iter() {
+                        self.create_or_update_transaction_contract(&tx_hash, event.topoheight, event.block_timestamp, transfers.into_iter()).await?;
+                    }
                 },
                 // Detect network events
                 res = on_connection.recv() => {
