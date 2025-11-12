@@ -9,10 +9,11 @@ use indexmap::IndexSet;
 use schemars::JsonSchema;
 use serde::{
     Deserialize,
+    Deserializer,
     Serialize,
     Serializer,
-    Deserializer,
-    de::Error
+    de::Error,
+    ser::SerializeSeq
 };
 use xelis_vm::ValueCell;
 use crate::{
@@ -48,6 +49,38 @@ pub fn deserialize_extra_nonce<'de, 'a, D: Deserializer<'de>>(deserializer: D) -
     let decoded = hex::decode(hex).map_err(Error::custom)?;
     extra_nonce.copy_from_slice(&decoded);
     Ok(Cow::Owned(extra_nonce))
+}
+
+
+#[derive(Serialize, Deserialize)]
+struct KV<K, V> {
+    key: K,
+    value: V,
+}
+
+/// Generic serializer that turns a `HashMap<K, V>` into a list of `{ "key": K, "value": V }` objects.
+pub fn serialize_map_as_list<S, K, V>(map: &HashMap<K, V>, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+    K: Serialize,
+    V: Serialize,
+{
+    let mut seq = serializer.serialize_seq(Some(map.len()))?;
+    for (key, value) in map {
+        seq.serialize_element(&KV { key, value })?;
+    }
+    seq.end()
+}
+
+/// Generic deserializer that reads a list of `{ "key": K, "value": V }` back into a `HashMap<K, V>`.
+pub fn deserialize_map_as_list<'de, D, K, V>(deserializer: D) -> Result<HashMap<K, V>, D::Error>
+where
+    D: Deserializer<'de>,
+    K: Deserialize<'de> + Eq + std::hash::Hash,
+    V: Deserialize<'de>,
+{
+    let items: Vec<KV<K, V>> = Vec::deserialize(deserializer)?;
+    Ok(items.into_iter().map(|kv| (kv.key, kv.value)).collect())
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
@@ -1025,6 +1058,10 @@ pub struct ContractTransfersEvent<'a> {
     // Block timestamp
     pub block_timestamp: TimestampMillis,
     // All executions that transferred to the given address
+    #[serde(
+        serialize_with = "serialize_map_as_list",
+        deserialize_with = "deserialize_map_as_list"
+    )]
     pub executions: HashMap<ContractTransfersEntryKey<'a>, ContractTransfersEntry<'a>>,
     // Block topoheight in which this transfer happened
     pub topoheight: TopoHeight,
