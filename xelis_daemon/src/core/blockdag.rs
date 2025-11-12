@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::{cmp::Ordering, collections::{HashMap, HashSet, VecDeque}};
 
 use indexmap::IndexSet;
 use itertools::Either;
@@ -26,10 +26,9 @@ where
 {
     trace!("sort descending by cumulative difficulty");
     scores.sort_by(|(a_hash, a), (b_hash, b)| {
-        if a != b {
-            b.cmp(a)
-        } else {
-            b_hash.as_ref().cmp(a_hash.as_ref())
+        match b.cmp(a) {
+            Ordering::Equal => b_hash.as_ref().cmp(a_hash.as_ref()), // tie-break by hash desc
+            ord => ord,
         }
     });
 
@@ -45,10 +44,9 @@ where
 {
     trace!("sort ascending by cumulative difficulty");
     scores.sort_by(|(a_hash, a), (b_hash, b)| {
-        if a != b {
-            a.cmp(b)
-        } else {
-            a_hash.as_ref().cmp(b_hash.as_ref())
+        match a.cmp(b) {
+            Ordering::Equal => a_hash.as_ref().cmp(b_hash.as_ref()), // tie-break by hash asc
+            ord => ord,
         }
     });
 
@@ -196,10 +194,6 @@ where
 
     // if block is alone at its height, it is a sync block
     let tips_at_height = provider.get_blocks_at_height(block_height).await?;
-    // This may be an issue with orphaned blocks, we can't rely on this
-    // if tips_at_height.len() == 1 {
-    //     return Ok(true)
-    // }
 
     // if block is not alone at its height and they are ordered (not orphaned), it can't be a sync block
     for hash_at_height in tips_at_height {
@@ -215,7 +209,7 @@ where
     } else {
         STABLE_LIMIT - block_height
     };
-    let mut i = block_height - 1;
+    let mut i = block_height.saturating_sub(1);
     let mut pre_blocks = HashSet::new();
     while i >= stable_point && i != 0 {
         let blocks = provider.get_blocks_at_height(i).await?;
@@ -240,6 +234,41 @@ where
     trace!("block {} at height {} is a sync block", hash, block_height);
 
     Ok(true)
+}
+
+// a block is a side block if its ordered and its block height is less than or equal to height of past 8 topographical blocks
+pub async fn is_side_block_internal<P>(provider: &P, hash: &Hash, current_topoheight: TopoHeight) -> Result<bool, BlockchainError>
+where
+    P: DifficultyProvider + DagOrderProvider
+{
+    trace!("is block {} a side block", hash);
+    if !provider.is_block_topological_ordered(hash).await? {
+        return Ok(false)
+    }
+
+    let topoheight = provider.get_topo_height_for_hash(hash).await?;
+    // genesis block can't be a side block
+    if topoheight == 0 || topoheight > current_topoheight {
+        return Ok(false)
+    }
+
+    let height = provider.get_height_for_block_hash(hash).await?;
+
+    // verify if there is a block with height higher than this block in past 8 topo blocks
+    let mut counter = 0;
+    let mut i = topoheight - 1;
+    while counter < STABLE_LIMIT && i > 0 {
+        let hash = provider.get_hash_at_topo_height(i).await?;
+        let previous_height = provider.get_height_for_block_hash(&hash).await?;
+
+        if height <= previous_height {
+            return Ok(true)
+        }
+        counter += 1;
+        i -= 1;
+    }
+
+    Ok(false)
 }
 
 pub async fn find_tip_base<P>(provider: &P, hash: &Hash, height: u64, pruned_topoheight: TopoHeight) -> Result<(Hash, u64), BlockchainError>
@@ -531,19 +560,24 @@ where
     stack.push_back(hash.clone());
 
     while let Some(current_hash) = stack.pop_back() {
-        let tips = provider.get_past_blocks_for_block_hash(&current_hash).await?;
+        // if not already processed
+        if !map.contains_key(&current_hash) {
+            // add its difficulty
+            map.insert(current_hash.clone(), provider.get_difficulty_for_block_hash(&current_hash).await?.into());
 
-        for tip_hash in tips.iter() {
-            if !map.contains_key(tip_hash) {
-                let is_ordered = provider.is_block_topological_ordered(tip_hash).await?;
-                if !is_ordered || (is_ordered && provider.get_topo_height_for_hash(tip_hash).await? >= base_topoheight) {
-                    stack.push_back(tip_hash.clone());
+            // process its tips
+            let tips = provider.get_past_blocks_for_block_hash(&current_hash).await?;
+            for tip_hash in tips.iter() {
+                // if tip_hash not already processed
+                // we check if it is ordered and its topoheight is >= base_topoheight
+                // or not ordered at all
+                if !map.contains_key(tip_hash) {
+                    let is_ordered = provider.is_block_topological_ordered(tip_hash).await?;
+                    if !is_ordered || provider.get_topo_height_for_hash(tip_hash).await? >= base_topoheight {
+                        stack.push_back(tip_hash.clone());
+                    }
                 }
             }
-        }
-
-        if !map.contains_key(&current_hash) {
-            map.insert(current_hash.clone(), provider.get_difficulty_for_block_hash(&current_hash).await?.into());
         }
     }
 
@@ -581,11 +615,12 @@ where
 
     map.insert(block_hash.clone(), block_difficulty);
 
+    // Lookup for each unique block difficulty in the past blocks 
     let base_topoheight = provider.get_topo_height_for_hash(base_block).await?;
     for hash in block_tips {
         if !map.contains_key(hash) {
             let is_ordered = provider.is_block_topological_ordered(hash).await?;
-            if !is_ordered || (is_ordered && provider.get_topo_height_for_hash(hash).await? >= base_topoheight) {
+            if !is_ordered || provider.get_topo_height_for_hash(hash).await? >= base_topoheight {
                 find_tip_work_score_internal(provider, &mut map, hash, base_topoheight).await?;
             }
         }
@@ -684,7 +719,7 @@ where
         let mut scores = Vec::new();
         for tip_hash in block_tips.iter() {
             let is_ordered = provider.is_block_topological_ordered(tip_hash).await?;
-            if !is_ordered || (is_ordered && provider.get_topo_height_for_hash(tip_hash).await? >= base_topo_height) {
+            if !is_ordered || provider.get_topo_height_for_hash(tip_hash).await? >= base_topo_height {
                 let diff = provider.get_cumulative_difficulty_for_block_hash(tip_hash).await?;
                 scores.push((tip_hash.clone(), diff));
             } else {
