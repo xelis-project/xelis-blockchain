@@ -161,10 +161,10 @@ impl TransactionBuilderState {
             last_tx_hash_created: self.tx_hash_built.take(),
         });
 
-        // Lets verify if the last coinbase reward topoheight is still valid
+        // Lets verify if the last unstable balance topoheight is still valid
         if let Some(stable_topoheight) = self.stable_topoheight {
-            if storage.get_last_coinbase_reward_topoheight().is_some_and(|h| h < stable_topoheight) {
-                storage.set_last_coinbase_reward_topoheight(None)?;
+            if storage.get_last_unstable_balance_topoheight().is_some_and(|h| h <= stable_topoheight) {
+                storage.set_last_unstable_balance_topoheight(None)?;
             }
         }
 

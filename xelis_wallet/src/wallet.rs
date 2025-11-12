@@ -840,7 +840,7 @@ impl Wallet {
                     let mut daemon_stable_topoheight = None;
                     // Last mining reward is above stable topoheight, this may increase orphans rate
                     // To avoid this, we will use the last balance version in stable topoheight as reference
-                    let mut use_stable_balance = if let Some(topoheight) = storage.get_last_coinbase_reward_topoheight().filter(|_| !force_stable_balance) {
+                    let mut use_stable_balance = if let Some(topoheight) = storage.get_last_unstable_balance_topoheight().filter(|_| !force_stable_balance) {
                         let stable_topoheight = network_handler.get_api().get_stable_topoheight().await?;
                         daemon_stable_topoheight = Some(stable_topoheight);
                         debug!("stable topoheight: {}, topoheight: {}", stable_topoheight, topoheight);
@@ -1265,7 +1265,7 @@ impl Wallet {
                 storage.delete_assets().await?;
                 // unconfirmed balances are going to be outdated, we delete them
                 storage.delete_unconfirmed_balances().await;
-                storage.set_last_coinbase_reward_topoheight(None)?;
+                storage.set_last_unstable_balance_topoheight(None)?;
 
                 if !network_handler.get_api().is_online() {
                     debug!("reconnect API");
