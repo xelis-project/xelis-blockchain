@@ -1002,20 +1002,30 @@ pub struct NewAssetEvent<'a> {
     pub topoheight: TopoHeight,
 }
 
+#[derive(Default, Serialize, Deserialize, JsonSchema)]
+pub struct ContractTransfersEntry<'a> {
+    // Assets transferred to the key
+    pub transfers: HashMap<Cow<'a, Hash>, u64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+pub struct ContractTransfersEntryKey<'a> {
+    // Contract hash that has been executed
+    pub contract: Cow<'a, Hash>,
+    // Caller hash that triggered this transfer
+    // See `ContractCaller`
+    pub caller: Cow<'a, Hash>,
+}
+
 // Value of NotifyEvent::ContractTransfer
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct ContractTransfersEvent<'a> {
-    // Assets transferred to the key
-    pub transfers: Cow<'a, HashMap<Hash, u64>>,
     // Block hash in which this transfer happened
     pub block_hash: Cow<'a, Hash>,
     // Block timestamp
     pub block_timestamp: TimestampMillis,
-    // Caller hash that triggered this transfer
-    // See `ContractCaller`
-    pub caller: Cow<'a, Hash>,
-    // Contract address called,
-    pub contract: Cow<'a, Hash>,
+    // All executions that transferred to the given address
+    pub executions: HashMap<ContractTransfersEntryKey<'a>, ContractTransfersEntry<'a>>,
     // Block topoheight in which this transfer happened
     pub topoheight: TopoHeight,
 }
