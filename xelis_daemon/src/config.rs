@@ -62,6 +62,21 @@ pub const PRUNE_SAFETY_LIMIT: u64 = STABLE_LIMIT * 10;
 // in how many height we consider the block stable
 pub const STABLE_LIMIT: u64 = 8;
 
+// Maximum height difference allowed between a block and its tips
+// This prevents "parasite chain" attacks where an attacker references
+// the main chain to steal cumulative difficulty without being referenced back.
+// A block can only reference tips that are at most this many heights below it.
+// Set equal to STABLE_LIMIT to allow legitimate DAG width while preventing abuse.
+pub const MAX_TIP_HEIGHT_DIFFERENCE: u64 = STABLE_LIMIT;
+
+// GHOSTDAG k-cluster parameter
+// Maximum number of blocks that can be anticone (not mutually connected) to be considered "blue" (honest)
+// This is the maximum network propagation delay in blocks.
+// Blocks outside the k-cluster are considered "red" (potential attack blocks) and don't contribute to cumulative difficulty.
+// k=3 is chosen as it's aggressive enough to prevent attacks while allowing for network delays.
+// Reference: Kaspa PHANTOM protocol uses k based on expected network delay.
+pub const GHOSTDAG_K: usize = 3;
+
 // Emission rules
 // 15% (6 months), 10% (6 months), 5% per block going to dev address
 // NOTE: The explained emission above was the expected one

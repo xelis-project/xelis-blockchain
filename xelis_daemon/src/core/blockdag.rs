@@ -9,7 +9,7 @@ use xelis_common::{
     crypto::Hash,
     time::TimestampMillis
 };
-use crate::{config::STABLE_LIMIT, core::storage::*};
+use crate::{config::{STABLE_LIMIT, GHOSTDAG_K}, core::storage::*};
 
 use super::{    
     storage::{
@@ -398,7 +398,8 @@ where
         }
     }
 
-    let pruned_topoheight = provider.get_pruned_topoheight().await?.unwrap_or(0);
+    let pruned_topoheight = provider.get_pruned_topoheight().await?
+        .unwrap_or(0);
     let mut bases = Vec::new();
     for hash in tips.into_iter() {
         trace!("Searching tip base for {}", hash);
@@ -543,7 +544,7 @@ where
         return Ok(false);
     };
 
-    debug!("distance for block {}: {} at chain height {}", hash, lowest_ordered_height, chain_height);
+    debug!("distance for block {}: lowest is {} at chain height {}", hash, lowest_ordered_height, chain_height);
 
     // If the lowest ordered height is below or equal to current chain height
     // and that we have a difference bigger than our stable limit
@@ -552,6 +553,184 @@ where
     }
 
     Ok(true)
+}
+
+// GHOSTDAG: Calculate the "blue set" - blocks that are well-connected to the selected chain
+// This implements the PHANTOM/GHOSTDAG protocol's k-cluster algorithm to identify honest blocks.
+// 
+// A block is "blue" (honest) if its anticone size (blocks not mutually reachable) is <= k.
+// Blocks with anticone > k are "red" (potential attackers) and excluded from cumulative difficulty.
+//
+// This prevents parasite chain attacks where an attacker incrementally references the main chain
+// to steal its cumulative difficulty without being referenced back.
+//
+// Algorithm:
+// 1. Start with the selected chain (highest cumulative difficulty path)
+// 2. For each candidate block, calculate its anticone size relative to the blue set
+// 3. If anticone_size <= k, add to blue set (honest)
+// 4. If anticone_size > k, mark as red (potential attacker, excluded)
+//
+// Reference: "PHANTOM: A Scalable BlockDAG protocol" (Sompolinsky & Zohar)
+//
+// Note: block_tips parameter is for the NEW block being validated (not yet in DB)
+pub async fn calculate_blue_set<P>(
+    provider: &P,
+    block_hash: &Hash,
+    block_tips: &[Hash],
+    base_topoheight: TopoHeight
+) -> Result<HashSet<Hash>, BlockchainError>
+where
+    P: DifficultyProvider + DagOrderProvider
+{
+    trace!("Calculating GHOSTDAG blue set for block {} with k={}", block_hash, GHOSTDAG_K);
+    
+    let mut blue_set: HashSet<Hash> = HashSet::new();
+    let mut candidate_queue: VecDeque<Hash> = VecDeque::new();
+    
+    // Store tips of new block (not yet in DB) in a map
+    let mut tips_cache: HashMap<Hash, Vec<Hash>> = HashMap::new();
+    tips_cache.insert(block_hash.clone(), block_tips.to_vec());
+    
+    // Cache of past blocks for each block - OPTIMIZATION: compute once, reuse many times
+    let mut past_cache: HashMap<Hash, IndexSet<Hash>> = HashMap::new();
+    
+    // Add the current block to blue set (it's the starting point)
+    blue_set.insert(block_hash.clone());
+    let block_past = get_all_past_blocks_cached(provider, block_hash, base_topoheight, &tips_cache).await?;
+    past_cache.insert(block_hash.clone(), block_past);
+    
+    // Add all tips to candidate queue
+    for tip in block_tips {
+        candidate_queue.push_back(tip.clone());
+    }
+    
+    // Process candidates in topological order (newer to older)
+    while let Some(candidate) = candidate_queue.pop_front() {
+        // Skip if already processed
+        if blue_set.contains(&candidate) {
+            continue;
+        }
+        
+        // Check if this candidate is ordered and within our base topoheight
+        let is_ordered = provider.is_block_topological_ordered(&candidate).await?;
+        if is_ordered {
+            let candidate_topo = provider.get_topo_height_for_hash(&candidate).await?;
+            if candidate_topo < base_topoheight {
+                // Block is too old, skip it
+                continue;
+            }
+        }
+
+        // OPTIMIZATION: Compute candidate's past once
+        let candidate_past = if let Some(cached) = past_cache.get(&candidate) {
+            cached.clone()
+        } else {
+            let past = get_all_past_blocks_cached(provider, &candidate, base_topoheight, &tips_cache).await?;
+            past_cache.insert(candidate.clone(), past.clone());
+            past
+        };
+        
+        // Calculate anticone size: count blocks in blue set that don't reference this candidate
+        // and that this candidate doesn't reference (not mutually reachable)
+        let mut anticone_size = 0;
+
+        for blue_block in &blue_set {
+            // Skip the block itself
+            if blue_block == &candidate {
+                continue;
+            }
+            
+            // OPTIMIZATION: Use cached past instead of recomputing
+            let blue_past = past_cache.get(blue_block).unwrap(); // Must exist since we cache when adding to blue_set
+            
+            // Check if they're mutually reachable:
+            // - candidate is in blue block's past, OR
+            // - blue block is in candidate's past
+            let mutually_reachable = 
+                blue_past.contains(&candidate) || candidate_past.contains(blue_block);
+            
+            if !mutually_reachable {
+                anticone_size += 1;
+                // OPTIMIZATION: Early exit if we exceed k
+                if anticone_size > GHOSTDAG_K {
+                    break;
+                }
+            }
+        }
+        
+        trace!("Block {} has anticone size {} relative to blue set (k={})", candidate, anticone_size, GHOSTDAG_K);
+        
+        // If anticone size <= k, this block is blue (honest)
+        if anticone_size <= GHOSTDAG_K {
+            blue_set.insert(candidate.clone());
+            // Past is already cached above
+            
+            // Add this block's tips to the candidate queue (these are already in DB)
+            let candidate_tips = provider.get_past_blocks_for_block_hash(&candidate).await?;
+            for tip in candidate_tips.iter() {
+                if !blue_set.contains(tip) {
+                    candidate_queue.push_back(tip.clone());
+                }
+            }
+        } else {
+            // Block is red (potential attacker), don't add to blue set
+            debug!("Block {} marked as RED (anticone {} > k={}), excluding from cumulative difficulty", 
+                candidate, anticone_size, GHOSTDAG_K);
+            // Remove from cache since we won't need it
+            past_cache.remove(&candidate);
+        }
+    }
+    
+    debug!("Blue set size: {} blocks for {}", blue_set.len(), block_hash);
+    Ok(blue_set)
+}
+
+// Helper function to get all past blocks (ancestors) of a given block
+// tips_cache contains tips for blocks not yet in DB (like the new block being validated)
+async fn get_all_past_blocks_cached<P>(
+    provider: &P,
+    block_hash: &Hash,
+    base_topoheight: TopoHeight,
+    tips_cache: &HashMap<Hash, Vec<Hash>>
+) -> Result<IndexSet<Hash>, BlockchainError>
+where
+    P: DifficultyProvider + DagOrderProvider
+{
+    let mut past = IndexSet::new();
+    let mut stack = VecDeque::new();
+    stack.push_back(block_hash.clone());
+    
+    while let Some(current) = stack.pop_back() {
+        if past.contains(&current) {
+            continue;
+        }
+        
+        past.insert(current.clone());
+
+        // Get tips of current block - check cache first for new blocks not yet in DB
+        let tips = if let Some(cached_tips) = tips_cache.get(&current) {
+            Either::Left(cached_tips.clone().into_iter())
+        } else {
+            Either::Right(
+                provider.get_past_blocks_for_block_hash(&current).await?
+                    .as_ref()
+                    .clone()
+                    .into_iter()
+            )
+        };
+
+        for tip in tips {
+            // Check if tip is within our base topoheight constraint
+            let is_ordered = provider.is_block_topological_ordered(&tip).await?;
+            if !is_ordered || provider.get_topo_height_for_hash(&tip).await? >= base_topoheight {
+                if !past.contains(&tip) {
+                    stack.push_back(tip);
+                }
+            }
+        }
+    }
+    
+    Ok(past)
 }
 
 // Find tip work score internal for a block hash
@@ -590,7 +769,10 @@ where
     Ok(())
 }
 
-// find the sum of work done
+// find the sum of work done using GHOSTDAG k-cluster
+// Only blocks in the "blue set" (well-connected, honest blocks) contribute to cumulative difficulty.
+// This prevents parasite chain attacks where attackers incrementally reference the main chain
+// to steal cumulative difficulty without being referenced back.
 pub async fn find_tip_work_score<P>(
     provider: &P,
     block_hash: &Hash,
@@ -612,41 +794,54 @@ where
         return Ok(value.clone())
     }
 
-    let mut map: HashMap<Hash, CumulativeDifficulty> = HashMap::new();
     let block_difficulty = if let Some(diff) = block_difficulty {
         diff
     } else {
         provider.get_difficulty_for_block_hash(&block_hash).await?
     };
 
-    map.insert(block_hash.clone(), block_difficulty);
-
-    // Lookup for each unique block difficulty in the past blocks 
+    // Collect tips into a Vec
+    let tips_vec: Vec<Hash> = block_tips.cloned().collect();
     let base_topoheight = provider.get_topo_height_for_hash(base_block).await?;
-    for hash in block_tips {
-        if !map.contains_key(hash) {
-            let is_ordered = provider.is_block_topological_ordered(hash).await?;
-            if !is_ordered || provider.get_topo_height_for_hash(hash).await? >= base_topoheight {
-                find_tip_work_score_internal(provider, &mut map, hash, base_topoheight).await?;
-            }
+
+    // Calculate blue set using GHOSTDAG k-cluster algorithm
+    let blue_set = calculate_blue_set(provider, block_hash, &tips_vec, base_topoheight).await?;
+    
+    debug!("Blue set for block {} contains {} blocks", block_hash, blue_set.len());
+    
+    // Only count difficulty from blocks in the blue set
+    let mut score = CumulativeDifficulty::zero();
+    let mut difficulty_map: HashMap<Hash, CumulativeDifficulty> = HashMap::new();
+    
+    // Add current block's difficulty
+    score += CumulativeDifficulty::from(block_difficulty);
+    difficulty_map.insert(block_hash.clone(), block_difficulty.into());
+    
+    // Add difficulty only from blue blocks
+    for hash in &blue_set {
+        if hash != block_hash && !difficulty_map.contains_key(hash) {
+            let diff = provider.get_difficulty_for_block_hash(hash).await?;
+            score += CumulativeDifficulty::from(diff);
+            difficulty_map.insert(hash.clone(), diff.into());
+        }
+    }
+    
+    // Add base block if different
+    if base_block != block_hash && blue_set.contains(base_block) {
+        if !difficulty_map.contains_key(base_block) {
+            let cumulative_diff = provider.get_cumulative_difficulty_for_block_hash(base_block).await?;
+            score += cumulative_diff;
+            difficulty_map.insert(base_block.clone(), cumulative_diff);
         }
     }
 
-    if base_block != block_hash {
-        map.insert(base_block.clone(), provider.get_cumulative_difficulty_for_block_hash(base_block).await?);
-    }
-
-    let mut set = HashSet::with_capacity(map.len());
-    let mut score = CumulativeDifficulty::zero();
-    for (hash, value) in map {
-        set.insert(hash);
-        score += value;
-    }
+    debug!("Cumulative difficulty for block {}: {} (from {} blue blocks)", 
+        block_hash, score, blue_set.len());
 
     // save this result in cache
-    cache.put((block_hash.clone(), base_block.clone(), base_block_height), (set.clone(), score));
+    cache.put((block_hash.clone(), base_block.clone(), base_block_height), (blue_set.clone(), score));
 
-    Ok((set, score))
+    Ok((blue_set, score))
 }
 
 // find the best tip (highest cumulative difficulty)
@@ -668,12 +863,16 @@ pub async fn find_best_tip<'a, P: DifficultyProvider + DagOrderProvider + CacheP
     Ok(best_tip)
 }
 
-// this function generate a DAG paritial order into a full order using recursive calls.
-// hash represents the best tip (biggest cumulative difficulty)
+// this function generate a DAG partial order into a full order using recursive calls.
+// hash represents the best tip (biggest cumulative difficulty from GHOSTDAG blue set)
 // base represents the block hash of a block already ordered and in stable height
 // the full order is re generated each time a new block is added based on new TIPS
 // first hash in order is the base hash
 // base_height is only used for the cache key
+//
+// With GHOSTDAG k-cluster: Only blue blocks (honest, well-connected) contribute to cumulative difficulty.
+// This ensures parasite chains (attackers referencing main chain without being referenced back)
+// are automatically excluded from the ordering since their red blocks don't count.
 pub async fn generate_full_order<P>(provider: &P, hash: &Hash, base: &Hash, base_height: u64, base_topo_height: TopoHeight) -> Result<IndexSet<Hash>, BlockchainError>
 where
     P: DifficultyProvider + DagOrderProvider + CacheProvider

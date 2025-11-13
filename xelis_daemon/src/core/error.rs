@@ -292,6 +292,8 @@ pub enum BlockchainError {
     InvalidTipsNotFound(Hash, Hash),
     #[error("Block {0} has invalid tips difficulty: {1}")]
     InvalidTipsDifficulty(Hash, Hash),
+    #[error("Block tip is too far back in height, preventing parasite chain attacks")]
+    TipTooFarBack,
     #[error("Invalid block version")]
     InvalidBlockVersion,
     #[error("Invalid tx version")]
