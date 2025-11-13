@@ -181,7 +181,7 @@ impl<'a, S: Storage> ChainValidator<'a, S> {
         let (_, cumulative_difficulty) = blockdag::find_tip_work_score(
             &provider,
             &hash,
-            header.get_tips().iter(),
+            &header.get_tips(),
             Some(difficulty.clone()),
             &base,
             base_height

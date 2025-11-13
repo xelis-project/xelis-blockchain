@@ -1,12 +1,16 @@
-use std::{cmp::Ordering, collections::{HashMap, HashSet, VecDeque}};
+use std::{
+    cmp::Ordering,
+    collections::{HashMap, HashSet, VecDeque}
+};
 
 use indexmap::IndexSet;
 use itertools::Either;
-use log::{debug, error, trace};
+use log::{debug, error, trace, warn};
 use xelis_common::{
     block::{TopoHeight, get_combined_hash_for_tips},
-    difficulty::{CumulativeDifficulty, Difficulty},
     crypto::Hash,
+    difficulty::{CumulativeDifficulty, Difficulty},
+    immutable::Immutable,
     time::TimestampMillis
 };
 use crate::{config::{STABLE_LIMIT, GHOSTDAG_K}, core::storage::*};
@@ -478,21 +482,27 @@ pub async fn verify_non_reachability<P: DifficultyProvider>(provider: &P, tips: 
 
 // Search the lowest height available from the tips of a block hash
 // We go through all tips and their tips until we have no unordered block left
-pub async fn find_lowest_height_from_mainchain<P>(provider: &P, hash: Hash) -> Result<Option<u64>, BlockchainError>
+// Max deviation is used to stop searching too deep
+pub async fn find_lowest_height_from_mainchain<P>(provider: &P, hash: Hash, max_deviation: u64) -> Result<Option<u64>, BlockchainError>
 where
     P: DifficultyProvider + DagOrderProvider
 {
     // Lowest height found from mainchain
     let mut lowest_height = None;
     // Current stack of blocks to process
-    let mut stack: VecDeque<Hash> = VecDeque::new();
+    let mut stack: VecDeque<(Hash, u64)> = VecDeque::new();
     // Because several blocks can have the same tips,
     // prevent to process a block twice
     let mut processed = HashSet::new();
 
-    stack.push_back(hash);
+    stack.push_back((hash, 0));
 
-    while let Some(current_hash) = stack.pop_back() {
+    while let Some((current_hash, depth)) = stack.pop_back() {
+        if depth > max_deviation {
+            debug!("Max deviation {} reached when searching lowest height from mainchain for block {}", max_deviation, current_hash);
+            continue;
+        }
+
         if processed.contains(&current_hash) {
             continue;
         }
@@ -505,7 +515,7 @@ where
                     lowest_height = Some(height);
                 }
             } else {
-                stack.push_back(tip_hash.clone());
+                stack.push_back((tip_hash.clone(), depth + 1));
             }
         }
         processed.insert(current_hash);
@@ -515,10 +525,10 @@ where
 }
 
 // Search the lowest height available from this block hash
-// This function is used to calculate the distance from mainchain
+// This function is used to calculate the distance from main chain
 // It will recursively search all tips and their height
 // If a tip is not ordered, we will search its tips until we find an ordered block
-pub async fn calculate_distance_from_mainchain<P>(provider: &P, hash: &Hash) -> Result<Option<u64>, BlockchainError>
+pub async fn calculate_distance_from_main_chain<P>(provider: &P, hash: &Hash, max_deviation: u64) -> Result<Option<u64>, BlockchainError>
 where
     P: DifficultyProvider + DagOrderProvider
 {
@@ -527,8 +537,9 @@ where
         debug!("calculate_distance: Block {} is at height {}", hash, height);
         return Ok(Some(height))
     }
-    debug!("calculate_distance: Block {} is not ordered, calculate distance from mainchain", hash);
-    let lowest_height = find_lowest_height_from_mainchain(provider, hash.clone()).await?;
+
+    debug!("calculate_distance: Block {} is not ordered, calculate distance from main chain", hash);
+    let lowest_height = find_lowest_height_from_mainchain(provider, hash.clone(), max_deviation).await?;
 
     debug!("calculate_distance: lowest height found is {:?}", lowest_height);
     Ok(lowest_height)
@@ -536,19 +547,23 @@ where
 
 // Verify if the block is not too far from mainchain
 // We calculate the distance from mainchain and compare it to the height
-pub async fn is_near_enough_from_main_chain<P>(provider: &P, hash: &Hash, chain_height: u64) -> Result<bool, BlockchainError>
+pub async fn is_near_enough_from_main_chain<P>(provider: &P, hash: &Hash, block_height: u64, max_deviation: u64) -> Result<bool, BlockchainError>
 where
     P: DifficultyProvider + DagOrderProvider
 {
-    let Some(lowest_ordered_height) = calculate_distance_from_mainchain(provider, hash).await? else {
+    let Some(lowest_ordered_height) = calculate_distance_from_main_chain(provider, hash, max_deviation).await? else {
         return Ok(false);
     };
 
-    debug!("distance for block {}: lowest is {} at chain height {}", hash, lowest_ordered_height, chain_height);
+    debug!("distance for block {}: lowest is {} at chain height {}", hash, lowest_ordered_height, block_height);
 
     // If the lowest ordered height is below or equal to current chain height
-    // and that we have a difference bigger than our stable limit
-    if lowest_ordered_height <= chain_height && chain_height - lowest_ordered_height >= STABLE_LIMIT {
+    // and that we have a difference bigger than our maximum deviation
+    if block_height.checked_sub(lowest_ordered_height).is_none_or(|v| v >= max_deviation) {
+        warn!(
+            "Block {} with height {} deviates too far: lowest ordered height {}, max deviation: {}",
+            hash, block_height, lowest_ordered_height, max_deviation
+        );
         return Ok(false)
     }
 
@@ -571,39 +586,31 @@ where
 // 4. If anticone_size > k, mark as red (potential attacker, excluded)
 //
 // Reference: "PHANTOM: A Scalable BlockDAG protocol" (Sompolinsky & Zohar)
-//
-// Note: block_tips parameter is for the NEW block being validated (not yet in DB)
+// https://eprint.iacr.org/2018/104.pdf
 pub async fn calculate_blue_set<P>(
     provider: &P,
     block_hash: &Hash,
-    block_tips: &[Hash],
+    block_tips: &IndexSet<Hash>,
     base_topoheight: TopoHeight
 ) -> Result<HashSet<Hash>, BlockchainError>
 where
-    P: DifficultyProvider + DagOrderProvider
+    P: DifficultyProvider + DagOrderProvider + CacheProvider
 {
+    let chain_cache = provider.chain_cache().await;
+    let mut blue_set_cache = chain_cache.blue_set_cache.lock().await;
+    if let Some(cached_blue_set) = blue_set_cache.get(&(block_hash.clone(), base_topoheight)) {
+        trace!("Blue set for block {} found in cache", block_hash);
+        return Ok(cached_blue_set.clone());
+    }
+
     trace!("Calculating GHOSTDAG blue set for block {} with k={}", block_hash, GHOSTDAG_K);
-    
-    let mut blue_set: HashSet<Hash> = HashSet::new();
-    let mut candidate_queue: VecDeque<Hash> = VecDeque::new();
-    
-    // Store tips of new block (not yet in DB) in a map
-    let mut tips_cache: HashMap<Hash, Vec<Hash>> = HashMap::new();
-    tips_cache.insert(block_hash.clone(), block_tips.to_vec());
-    
-    // Cache of past blocks for each block - OPTIMIZATION: compute once, reuse many times
-    let mut past_cache: HashMap<Hash, IndexSet<Hash>> = HashMap::new();
-    
+
+    let mut blue_set = HashSet::new();
+    let mut candidate_queue = VecDeque::from_iter(block_tips.iter().cloned());
+
     // Add the current block to blue set (it's the starting point)
     blue_set.insert(block_hash.clone());
-    let block_past = get_all_past_blocks_cached(provider, block_hash, base_topoheight, &tips_cache).await?;
-    past_cache.insert(block_hash.clone(), block_past);
-    
-    // Add all tips to candidate queue
-    for tip in block_tips {
-        candidate_queue.push_back(tip.clone());
-    }
-    
+
     // Process candidates in topological order (newer to older)
     while let Some(candidate) = candidate_queue.pop_front() {
         // Skip if already processed
@@ -621,28 +628,20 @@ where
             }
         }
 
-        // OPTIMIZATION: Compute candidate's past once
-        let candidate_past = if let Some(cached) = past_cache.get(&candidate) {
-            cached.clone()
-        } else {
-            let past = get_all_past_blocks_cached(provider, &candidate, base_topoheight, &tips_cache).await?;
-            past_cache.insert(candidate.clone(), past.clone());
-            past
-        };
-        
+        let candidate_past = get_all_past_blocks(provider, &candidate, base_topoheight, block_tips).await?;
+
         // Calculate anticone size: count blocks in blue set that don't reference this candidate
         // and that this candidate doesn't reference (not mutually reachable)
         let mut anticone_size = 0;
 
-        for blue_block in &blue_set {
+        for blue_block in blue_set.iter() {
             // Skip the block itself
             if blue_block == &candidate {
                 continue;
             }
-            
-            // OPTIMIZATION: Use cached past instead of recomputing
-            let blue_past = past_cache.get(blue_block).unwrap(); // Must exist since we cache when adding to blue_set
-            
+
+            let blue_past = get_all_past_blocks(provider, blue_block, base_topoheight, block_tips).await?;
+
             // Check if they're mutually reachable:
             // - candidate is in blue block's past, OR
             // - blue block is in candidate's past
@@ -657,14 +656,13 @@ where
                 }
             }
         }
-        
+
         trace!("Block {} has anticone size {} relative to blue set (k={})", candidate, anticone_size, GHOSTDAG_K);
         
         // If anticone size <= k, this block is blue (honest)
         if anticone_size <= GHOSTDAG_K {
             blue_set.insert(candidate.clone());
-            // Past is already cached above
-            
+
             // Add this block's tips to the candidate queue (these are already in DB)
             let candidate_tips = provider.get_past_blocks_for_block_hash(&candidate).await?;
             for tip in candidate_tips.iter() {
@@ -674,62 +672,57 @@ where
             }
         } else {
             // Block is red (potential attacker), don't add to blue set
-            debug!("Block {} marked as RED (anticone {} > k={}), excluding from cumulative difficulty", 
-                candidate, anticone_size, GHOSTDAG_K);
-            // Remove from cache since we won't need it
-            past_cache.remove(&candidate);
+            debug!(
+                "Block {} marked as RED (anticone {} > k={}), excluding from cumulative difficulty", 
+                candidate, anticone_size, GHOSTDAG_K
+            );
         }
     }
-    
+
     debug!("Blue set size: {} blocks for {}", blue_set.len(), block_hash);
+    blue_set_cache.put((block_hash.clone(), base_topoheight), blue_set.clone());
+
     Ok(blue_set)
 }
 
 // Helper function to get all past blocks (ancestors) of a given block
 // tips_cache contains tips for blocks not yet in DB (like the new block being validated)
-async fn get_all_past_blocks_cached<P>(
+async fn get_all_past_blocks<P>(
     provider: &P,
     block_hash: &Hash,
     base_topoheight: TopoHeight,
-    tips_cache: &HashMap<Hash, Vec<Hash>>
+    block_tips: &IndexSet<Hash>
 ) -> Result<IndexSet<Hash>, BlockchainError>
 where
     P: DifficultyProvider + DagOrderProvider
 {
     let mut past = IndexSet::new();
-    let mut stack = VecDeque::new();
-    stack.push_back(block_hash.clone());
-    
+    let mut stack = VecDeque::from_iter([block_hash.clone()]);
+
     while let Some(current) = stack.pop_back() {
         if past.contains(&current) {
             continue;
         }
-        
+
         past.insert(current.clone());
 
-        // Get tips of current block - check cache first for new blocks not yet in DB
-        let tips = if let Some(cached_tips) = tips_cache.get(&current) {
-            Either::Left(cached_tips.clone().into_iter())
+        let tips = if *block_hash == current {
+            Immutable::Owned(block_tips.clone())
         } else {
-            Either::Right(
-                provider.get_past_blocks_for_block_hash(&current).await?
-                    .as_ref()
-                    .clone()
-                    .into_iter()
-            )
+            provider.get_past_blocks_for_block_hash(&current).await?
         };
 
-        for tip in tips {
+        for tip in tips.iter() {
             // Check if tip is within our base topoheight constraint
-            let is_ordered = provider.is_block_topological_ordered(&tip).await?;
-            if !is_ordered || provider.get_topo_height_for_hash(&tip).await? >= base_topoheight {
-                if !past.contains(&tip) {
-                    stack.push_back(tip);
+            let is_ordered = provider.is_block_topological_ordered(tip).await?;
+            if !is_ordered || provider.get_topo_height_for_hash(tip).await? >= base_topoheight {
+                if !past.contains(tip) {
+                    stack.push_back(tip.clone());
                 }
             }
         }
     }
-    
+
     Ok(past)
 }
 
@@ -776,7 +769,7 @@ where
 pub async fn find_tip_work_score<P>(
     provider: &P,
     block_hash: &Hash,
-    block_tips: impl Iterator<Item = &Hash>,
+    block_tips: &IndexSet<Hash>,
     block_difficulty: Option<Difficulty>,
     base_block: &Hash,
     base_block_height: u64
@@ -800,12 +793,10 @@ where
         provider.get_difficulty_for_block_hash(&block_hash).await?
     };
 
-    // Collect tips into a Vec
-    let tips_vec: Vec<Hash> = block_tips.cloned().collect();
     let base_topoheight = provider.get_topo_height_for_hash(base_block).await?;
 
     // Calculate blue set using GHOSTDAG k-cluster algorithm
-    let blue_set = calculate_blue_set(provider, block_hash, &tips_vec, base_topoheight).await?;
+    let blue_set = calculate_blue_set(provider, block_hash, block_tips, base_topoheight).await?;
     
     debug!("Blue set for block {} contains {} blocks", block_hash, blue_set.len());
     
@@ -854,7 +845,7 @@ pub async fn find_best_tip<'a, P: DifficultyProvider + DagOrderProvider + CacheP
     let mut scores = Vec::with_capacity(tips.len());
     for hash in tips {
         let block_tips = provider.get_past_blocks_for_block_hash(hash).await?;
-        let (_, cumulative_difficulty) = find_tip_work_score(provider, hash, block_tips.iter(), None, base, base_height).await?;
+        let (_, cumulative_difficulty) = find_tip_work_score(provider, hash, &block_tips, None, base, base_height).await?;
         scores.push((hash, cumulative_difficulty));
     }
 
@@ -870,9 +861,9 @@ pub async fn find_best_tip<'a, P: DifficultyProvider + DagOrderProvider + CacheP
 // first hash in order is the base hash
 // base_height is only used for the cache key
 //
-// With GHOSTDAG k-cluster: Only blue blocks (honest, well-connected) contribute to cumulative difficulty.
-// This ensures parasite chains (attackers referencing main chain without being referenced back)
-// are automatically excluded from the ordering since their red blocks don't count.
+// IMPORTANT: Uses GHOSTDAG k-cluster to filter blocks. Only BLUE blocks (honest, well-connected)
+// are included in the ordering. RED blocks (anticone > k, potential attackers) are excluded.
+// This ensures parasite chains are automatically excluded from the DAG ordering.
 pub async fn generate_full_order<P>(provider: &P, hash: &Hash, base: &Hash, base_height: u64, base_topo_height: TopoHeight) -> Result<IndexSet<Hash>, BlockchainError>
 where
     P: DifficultyProvider + DagOrderProvider + CacheProvider
@@ -883,7 +874,21 @@ where
     debug!("accessing full order cache for {} with base {}", hash, base);
     let mut cache = chain_cache.full_order_cache.lock().await;
 
-    // Full order that is generated
+    // Search in the cache first for the entire result
+    let cache_key = (hash.clone(), base.clone(), base_height);
+    if let Some(order_cache) = cache.get(&cache_key) {
+        trace!("Full order for {} found in cache with {} blocks", hash, order_cache.len());
+        return Ok(order_cache.clone());
+    }
+
+    // Calculate the blue set (GHOSTDAG k-cluster) for the best tip
+    // This determines which blocks are "honest" and should be included in the ordering
+    let tips = provider.get_past_blocks_for_block_hash(hash).await?;
+    let blue_set = calculate_blue_set(provider, hash, &tips, base_topo_height).await?;
+    
+    debug!("Generating full order with blue set of {} blocks (k={})", blue_set.len(), GHOSTDAG_K);
+    
+    // Full order that is generated (only blue blocks)
     let mut full_order = IndexSet::new();
     // Current stack of hashes that need to be processed
     let mut stack: VecDeque<Hash> = VecDeque::new();
@@ -901,10 +906,9 @@ where
             continue 'main;
         }
 
-        // Search in the cache to retrieve faster the full order
-        let cache_key = (current_hash.clone(), base.clone(), base_height);
-        if let Some(order_cache) = cache.get(&cache_key) {
-            full_order.extend(order_cache.clone());
+        // Check if this block is in the blue set (honest blocks only)
+        if !blue_set.contains(&current_hash) && current_hash != *base {
+            trace!("Block {} is RED (anticone > k={}), excluding from full order", current_hash, GHOSTDAG_K);
             continue 'main;
         }
 
@@ -913,22 +917,26 @@ where
 
         // if the block is genesis or its the base block, we can add it to the full order
         if block_tips.is_empty() || current_hash == *base {
-            let mut order = IndexSet::new();
-            order.insert(current_hash.clone());
-            cache.put(cache_key, order.clone());
-            full_order.extend(order);
+            full_order.insert(current_hash);
             continue 'main;
         }
 
         // Calculate the score for each tips above the base topoheight
+        // Only consider tips that are in the blue set (honest blocks)
         let mut scores = Vec::new();
         for tip_hash in block_tips.iter() {
+            // Skip red blocks (not in blue set)
+            if !blue_set.contains(tip_hash) && *tip_hash != *base {
+                trace!("Tip {} is RED, skipping in full order generation", tip_hash);
+                continue;
+            }
+
             let is_ordered = provider.is_block_topological_ordered(tip_hash).await?;
             if !is_ordered || provider.get_topo_height_for_hash(tip_hash).await? >= base_topo_height {
                 let diff = provider.get_cumulative_difficulty_for_block_hash(tip_hash).await?;
                 scores.push((tip_hash.clone(), diff));
             } else {
-                debug!("Block {} is skipped in generate_full_order, is ordered = {}, base topo height = {}", tip_hash, is_ordered, base_topo_height);
+                trace!("Block {} is skipped in generate_full_order, is ordered = {}, base topo height = {}", tip_hash, is_ordered, base_topo_height);
             }
         }
 
@@ -945,7 +953,10 @@ where
         }
     }
 
-    cache.put((hash.clone(), base.clone(), base_height), full_order.clone());
+    debug!("Generated full order with {} blue blocks (excluded {} red blocks)", 
+        full_order.len(), blue_set.len().saturating_sub(full_order.len()));
+
+    cache.put(cache_key, full_order.clone());
 
     Ok(full_order)
 }

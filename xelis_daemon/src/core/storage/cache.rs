@@ -58,6 +58,8 @@ pub struct ChainCache {
     pub tip_work_score_cache: Mutex<LruCache<(Hash, Hash, u64), (HashSet<Hash>, CumulativeDifficulty)>>,
     // using base hash, current tip hash and base height, this cache is used to store the DAG order
     pub full_order_cache: Mutex<LruCache<(Hash, Hash, u64), IndexSet<Hash>>>,
+    // blue set cache for GHOSTDAG
+    pub blue_set_cache: Mutex<LruCache<(Hash, TopoHeight), HashSet<Hash>>>,
     // current difficulty at tips
     // its used as cache to display current network hashrate
     pub difficulty: Difficulty,
@@ -88,6 +90,7 @@ impl ChainCache {
             common_base_cache: Mutex::new(self.common_base_cache.get_mut().clone()),
             tip_work_score_cache: Mutex::new(self.tip_work_score_cache.get_mut().clone()),
             full_order_cache: Mutex::new(self.full_order_cache.get_mut().clone()),
+            blue_set_cache: Mutex::new(self.blue_set_cache.get_mut().clone()),
             height: self.height,
             topoheight: self.topoheight,
             stable_height: self.stable_height,
@@ -105,6 +108,7 @@ impl Default for ChainCache {
             tip_work_score_cache: Mutex::new(LruCache::new(NonZeroUsize::new(DEFAULT_CACHE_SIZE).expect("Default cache size for tip work score must be above 0"))),
             common_base_cache: Mutex::new(LruCache::new(NonZeroUsize::new(DEFAULT_CACHE_SIZE).expect("Default cache size for common base must be above 0"))),
             full_order_cache: Mutex::new(LruCache::new(NonZeroUsize::new(DEFAULT_CACHE_SIZE).expect("Default cache size for full order must be above 0"))),
+            blue_set_cache: Mutex::new(LruCache::new(NonZeroUsize::new(DEFAULT_CACHE_SIZE).expect("Default cache size for blue set must be above 0"))),
             height: 0,
             topoheight: 0,
             stable_height: 0,

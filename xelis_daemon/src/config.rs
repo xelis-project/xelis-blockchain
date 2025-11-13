@@ -73,9 +73,10 @@ pub const MAX_TIP_HEIGHT_DIFFERENCE: u64 = STABLE_LIMIT;
 // Maximum number of blocks that can be anticone (not mutually connected) to be considered "blue" (honest)
 // This is the maximum network propagation delay in blocks.
 // Blocks outside the k-cluster are considered "red" (potential attack blocks) and don't contribute to cumulative difficulty.
-// k=3 is chosen as it's aggressive enough to prevent attacks while allowing for network delays.
 // Reference: Kaspa PHANTOM protocol uses k based on expected network delay.
-pub const GHOSTDAG_K: usize = 3;
+// k=0 is equivalent to a single chain (like Bitcoin).
+// A higher k allows more parallel blocks
+pub const GHOSTDAG_K: usize = 4;
 
 // Emission rules
 // 15% (6 months), 10% (6 months), 5% per block going to dev address

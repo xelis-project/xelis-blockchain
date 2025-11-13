@@ -89,7 +89,7 @@ use crate::{
         get_genesis_block_hash, get_hex_genesis_block,
         DEV_FEES, DEV_PUBLIC_KEY, EMISSION_SPEED_FACTOR, GENESIS_BLOCK_DIFFICULTY,
         MILLIS_PER_SECOND, SIDE_BLOCK_REWARD_MAX_BLOCKS, PRUNE_SAFETY_LIMIT,
-        SIDE_BLOCK_REWARD_PERCENT, SIDE_BLOCK_REWARD_MIN_PERCENT,
+        SIDE_BLOCK_REWARD_PERCENT, SIDE_BLOCK_REWARD_MIN_PERCENT, STABLE_LIMIT,
         TIMESTAMP_IN_FUTURE_LIMIT, CHAIN_AVERAGE_BLOCK_TIME_N, MAX_TIP_HEIGHT_DIFFERENCE,
     },
     core::{
@@ -1262,6 +1262,8 @@ impl<S: Storage> Blockchain<S> {
         if tips.len() > 1 {
             let best_tip = blockdag::find_best_tip_by_cumulative_difficulty(storage, tips.iter()).await?.clone();
             let best_height = storage.get_height_for_block_hash(&best_tip).await?;
+            let block_height_by_tips = blockdag::calculate_height_at_tips(storage, tips.iter()).await?;
+
             debug!("Best tip selected for this block template is {} with height {}", best_tip, best_height);
             let mut selected_tips = Vec::with_capacity(tips.len());
 
@@ -1272,14 +1274,14 @@ impl<S: Storage> Blockchain<S> {
                         continue;
                     }
 
-                    if !blockdag::is_near_enough_from_main_chain(storage, &hash, best_height).await? {
-                        warn!("Tip {} is not selected for mining: too far from mainchain at height: {}", hash, best_height);
+                    if !blockdag::is_near_enough_from_main_chain(storage, &hash, block_height_by_tips, STABLE_LIMIT).await? {
+                        warn!("Tip {} is not selected for mining: too far from mainchain at height: {}", hash, block_height_by_tips);
                         continue;
                     }
 
                     // Check that the tip is not too far in height from best height
                     let tip_height = storage.get_height_for_block_hash(&hash).await?;
-                    let height_diff = best_height.saturating_sub(tip_height);
+                    let height_diff = block_height_by_tips.saturating_sub(tip_height);
                     if height_diff > MAX_TIP_HEIGHT_DIFFERENCE {
                         warn!("Tip {} has a height difference too big ({} > {})", hash, height_diff, MAX_TIP_HEIGHT_DIFFERENCE);
                         continue;
@@ -1657,14 +1659,14 @@ impl<S: Storage> Blockchain<S> {
             return Err(BlockchainError::InvalidBlockHeight(block_height_by_tips, block.get_height()))
         }
 
-        if tips_count > 0 {
-            debug!("Height by tips: {}, stable height: {}", block_height_by_tips, stable_height);
+        // if tips_count > 0 {
+        //     debug!("Height by tips: {}, stable height: {}", block_height_by_tips, stable_height);
 
-            if block_height_by_tips < stable_height {
-                debug!("Invalid block height by tips {} for this block ({}), its height is in stable height {}", block_height_by_tips, block_hash, stable_height);
-                return Err(BlockchainError::InvalidBlockHeightStableHeight)
-            }
-        }
+        //     if block_height_by_tips < stable_height {
+        //         debug!("Invalid block height by tips {} for this block ({}), its height is in stable height {}", block_height_by_tips, block_hash, stable_height);
+        //         return Err(BlockchainError::InvalidBlockHeightStableHeight)
+        //     }
+        // }
 
         // Verify the reachability of the block
         if !blockdag::verify_non_reachability(&*storage, block.get_tips()).await? {
@@ -1694,8 +1696,11 @@ impl<S: Storage> Blockchain<S> {
             // Check if the tip itself is near enough to the main chain
             // We use the tip's own height, not the new block's height, because
             // the tip might be an orphaned block at a lower height
-            if !blockdag::is_near_enough_from_main_chain(&*storage, hash, tip_height).await? {
-                error!("{} with hash {} have deviated too much (tip height: {}, block height: {})", block, block_hash, tip_height, block_height_by_tips);
+            if !blockdag::is_near_enough_from_main_chain(&*storage, hash, block_height_by_tips, STABLE_LIMIT).await? {
+                warn!(
+                    "{} with hash {} references tip {} that has deviated too far (height: {})", 
+                    block, block_hash, hash, block_height_by_tips,
+                );
                 return Err(BlockchainError::BlockDeviation)
             }
         }
@@ -1949,7 +1954,7 @@ impl<S: Storage> Blockchain<S> {
             blockdag::find_tip_work_score(
                 &*storage,
                 &block_hash,
-                block.get_tips().iter(),
+                &block.get_tips(),
                 Some(difficulty),
                 &base,
                 base_height
@@ -2434,7 +2439,9 @@ impl<S: Storage> Blockchain<S> {
         let best_height = storage.get_height_for_block_hash(best_tip).await?;
         let mut new_tips = Vec::new();
         for hash in tips {
-            if blockdag::is_near_enough_from_main_chain(&*storage, &hash, best_height).await? {
+            // Check if tip is near enough from main chain
+            // Stable limit - 1 because we want to keep tips that are at stable limit distance
+            if blockdag::is_near_enough_from_main_chain(&*storage, &hash, best_height, STABLE_LIMIT - 1).await? {
                 trace!("Adding {} as new tips", hash);
                 new_tips.push(hash);
             } else {
