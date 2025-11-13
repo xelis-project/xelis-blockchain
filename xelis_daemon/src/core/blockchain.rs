@@ -1255,7 +1255,6 @@ impl<S: Storage> Blockchain<S> {
 
         let chain_cache = storage.chain_cache().await;
         let tips_set = chain_cache.tips.clone();
-        let current_height = chain_cache.height;
 
         let mut tips = tips_set.into_iter()
             .collect::<Vec<_>>();
@@ -1273,8 +1272,8 @@ impl<S: Storage> Blockchain<S> {
                         continue;
                     }
 
-                    if !blockdag::is_near_enough_from_main_chain(storage, &hash, current_height).await? {
-                        warn!("Tip {} is not selected for mining: too far from mainchain at height: {}", hash, current_height);
+                    if !blockdag::is_near_enough_from_main_chain(storage, &hash, best_height).await? {
+                        warn!("Tip {} is not selected for mining: too far from mainchain at height: {}", hash, best_height);
                         continue;
                     }
 
@@ -2435,7 +2434,7 @@ impl<S: Storage> Blockchain<S> {
         let best_height = storage.get_height_for_block_hash(best_tip).await?;
         let mut new_tips = Vec::new();
         for hash in tips {
-            if blockdag::is_near_enough_from_main_chain(&*storage, &hash, current_height).await? {
+            if blockdag::is_near_enough_from_main_chain(&*storage, &hash, best_height).await? {
                 trace!("Adding {} as new tips", hash);
                 new_tips.push(hash);
             } else {
