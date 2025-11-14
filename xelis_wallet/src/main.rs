@@ -2,11 +2,12 @@ use std::{
     fs::File,
     io::Write,
     path::Path,
+    str::FromStr,
     sync::Arc,
     time::Duration
 };
 use anyhow::{Result, Context};
-use indexmap::IndexSet;
+use indexmap::{IndexMap, IndexSet};
 use log::{error, info};
 use clap::Parser;
 use xelis_common::{
@@ -41,8 +42,21 @@ use xelis_common::{
     },
     serializer::Serializer,
     tokio,
+    contract::{
+        vm::HOOK_CONSTRUCTOR_ID,
+        Module,
+        ContractVersion,
+    },
     transaction::{
-        builder::{FeeBuilder, MultiSigBuilder, TransactionTypeBuilder, TransferBuilder},
+        builder::{
+            FeeBuilder,
+            MultiSigBuilder,
+            TransactionTypeBuilder,
+            TransferBuilder,
+            DeployContractBuilder,
+            DeployContractInvokeBuilder,
+            ContractDepositBuilder,
+        },
         multisig::{MultiSig, SignatureId},
         BurnPayload,
         MultiSigPayload,
@@ -63,7 +77,6 @@ use xelis_wallet::{
         Wallet
     }
 };
-
 #[cfg(feature = "network_handler")]
 use xelis_wallet::config::DEFAULT_DAEMON_ADDRESS;
 
@@ -259,7 +272,7 @@ async fn xswd_handler(mut receiver: UnboundedReceiver<XSWDEvent>, prompt: Sharea
                 message += "\r\nThis means you won't be asked again for these permissions when the application will request them.";
                 message += "\r\n(Y/N): ";
 
-                let accepted = prompt.read_valid_str_value(prompt.colorize_string(Color::Blue, &message), vec!["y", "n"]).await.is_ok_and(|v| v == "y");
+                let accepted = prompt.read_valid_str_value(prompt.colorize_string(Color::Blue, &message), &["y", "n"]).await.is_ok_and(|v| v == "y");
                 if accepted {
                     let mut app_permissions = app_state.get_permissions().lock().await;
                     for permission in permissions.permissions {
@@ -287,7 +300,7 @@ async fn xswd_handle_request_application(prompt: &ShareablePrompt, app_state: Ap
     }
 
     message += "\r\n(Y/N): ";
-    let accepted = prompt.read_valid_str_value(prompt.colorize_string(Color::Blue, &message), vec!["y", "n"]).await? == "y";
+    let accepted = prompt.read_valid_str_value(prompt.colorize_string(Color::Blue, &message), &["y", "n"]).await? == "y";
     if accepted {
         Ok(PermissionResult::Accept)
     } else {
@@ -310,7 +323,7 @@ async fn xswd_handle_request_permission(prompt: &ShareablePrompt, app_state: App
         params
     );
 
-    let answer = prompt.read_valid_str_value(prompt.colorize_string(Color::Blue, &message), vec!["a", "d", "aa", "ad"]).await?;
+    let answer = prompt.read_valid_str_value(prompt.colorize_string(Color::Blue, &message), &["a", "d", "aa", "ad"]).await?;
     Ok(match answer.as_str() {
         "a" => PermissionResult::Accept,
         "d" => PermissionResult::Reject,
@@ -416,6 +429,16 @@ async fn setup_wallet_command_manager(wallet: Arc<Wallet>, command_manager: &Com
             Arg::new("confirm", ArgType::Bool)
         ],    
         CommandHandler::Async(async_handler!(burn))
+    ))?;
+    command_manager.add_command(Command::with_optional_arguments(
+        "deploy_contract",
+        "Deploy a contract on the blockchain",
+        vec![
+            Arg::new("module", ArgType::String),
+            Arg::new("version", ArgType::String),
+            Arg::new("max_gas", ArgType::Number),
+        ],
+        CommandHandler::Async(async_handler!(deploy_contract))
     ))?;
     command_manager.add_command(Command::new(
         "display_address",
@@ -1118,6 +1141,27 @@ async fn create_transaction_with_multisig(manager: &CommandManager, prompt: &Pro
     Ok(tx)
 }
 
+// Read the asset name, either its a asset ID (hash in hex) or the name registered
+async fn read_asset_name(prompt: &Prompt, wallet: &Wallet) -> Result<Hash, CommandError> {
+    let asset_name = prompt.read_input(
+        prompt.colorize_string(Color::Green, "Asset (default XELIS): "),
+        false
+    ).await?;
+
+    let asset = if asset_name.is_empty() {
+        XELIS_ASSET
+    } else if asset_name.len() == HASH_SIZE * 2 {
+        Hash::from_hex(&asset_name)
+            .context("Error while reading hash from hex")?
+    } else {
+        let storage = wallet.get_storage().read().await;
+        storage.get_asset_by_name(&asset_name).await?
+            .context("No asset registered with given name")?
+    };
+
+    Ok(asset)
+}
+
 // Create a new transfer to a specified address
 async fn transfer(manager: &CommandManager, mut args: ArgumentManager) -> Result<(), CommandError> {
     let prompt = manager.get_prompt();
@@ -1138,19 +1182,7 @@ async fn transfer(manager: &CommandManager, mut args: ArgumentManager) -> Result
     let asset = if args.has_argument("asset") {
         args.get_value("asset")?.to_hash()?
     } else {
-        let asset_name = prompt.read_input(
-            prompt.colorize_string(Color::Green, "Asset (default XELIS): "),
-            false
-        ).await?;
-        if asset_name.is_empty() {
-            XELIS_ASSET
-        } else if asset_name.len() == HASH_SIZE * 2 {
-            Hash::from_hex(&asset_name).context("Error while reading hash from hex")?
-        } else {
-            let storage = wallet.get_storage().read().await;
-            storage.get_asset_by_name(&asset_name).await?
-                .context("No asset registered with given name")?
-        }
+        read_asset_name(&prompt, wallet).await?
     };
 
     let (max_balance, asset_data, multisig) = {
@@ -1226,14 +1258,14 @@ async fn transfer_all(manager: &CommandManager, mut args: ArgumentManager) -> Re
     };
     let address = Address::from_string(&str_address).context("Invalid address")?;
 
-    let mut asset = args.get_value("asset").and_then(|v| v.to_hash()).ok();
-    if asset.is_none() {
-        asset = prompt.read_hash(
-           prompt.colorize_string(Color::Green, "Asset (default XELIS): ")
-       ).await.ok();
-    }
+    let asset = args.get_value("asset")
+        .and_then(|v| v.to_hash())
+        .ok();
 
-    let asset = asset.unwrap_or(XELIS_ASSET);
+    let asset = match asset {
+        Some(a) => a,
+        None => read_asset_name(&prompt, wallet).await?
+    };
     let (mut amount, asset_data, multisig) = {
         let storage = wallet.get_storage().read().await;
         let amount = storage.get_plaintext_balance_for(&asset).await.unwrap_or(0);
@@ -1297,9 +1329,7 @@ async fn burn(manager: &CommandManager, mut args: ArgumentManager) -> Result<(),
     let asset = if args.has_argument("asset") {
         args.get_value("asset")?.to_hash()?
     } else {
-        prompt.read_hash(
-            prompt.colorize_string(Color::Green, "Asset (default XELIS): ")
-        ).await.unwrap_or(XELIS_ASSET)
+        read_asset_name(&prompt, wallet).await?
     };
 
     let (max_balance, asset_data, multisig) = {
@@ -1350,6 +1380,92 @@ async fn burn(manager: &CommandManager, mut args: ArgumentManager) -> Result<(),
     Ok(())
 }
 
+async fn deploy_contract(manager: &CommandManager, mut args: ArgumentManager) -> Result<(), CommandError> {
+    let prompt = manager.get_prompt();
+    let context = manager.get_context().lock()?;
+    let wallet: &Arc<Wallet> = context.get()?;
+
+    let module_hex = if args.has_argument("module") {
+        args.get_value("module")?.to_string_value()?
+    } else {
+        prompt.read_input(
+            prompt.colorize_string(Color::Green, "Module hex: "),
+            false
+        ).await.context("Error while reading contract code")?
+    };
+    let contract_version = if args.has_argument("version") {
+        let version_str = args.get_value("version")?.to_string_value()?;
+        ContractVersion::from_str(&version_str)?
+    } else {
+        ContractVersion::V0
+    };
+
+    let module = Module::from_hex(&module_hex).context("Invalid module hex")?; 
+    let invoke = if module.get_chunk_id_of_hook(HOOK_CONSTRUCTOR_ID).is_some() {
+        manager.message("Module contains a constructor hook, deployment aborted");
+
+        let max_gas = if args.has_argument("max_gas") {
+            args.get_value("max_gas")?.to_number()?
+        } else {
+            prompt.read(
+                prompt.colorize_string(Color::Green, "Max gas for constructor invocation: ")
+            ).await.context("Error while reading max gas")?
+        };
+
+        let mut deposits = IndexMap::new();
+        loop {
+            let add_deposit = prompt.read_valid_str_value(
+                "Do you want to add a deposit for the constructor? (Y/N): ".to_owned(),
+                &["Y", "N"],
+            ).await
+                .context("Error while asking confirmation")?
+                .to_uppercase() == "Y";
+            if !add_deposit {
+                break;
+            }
+
+            let asset = prompt.read_hash(
+                prompt.colorize_string(Color::Green, "Deposit asset ID: ")
+            ).await.context("Error while reading asset ID")?;
+
+            let amount = prompt.read_input(
+                prompt.colorize_string(Color::Green, "Deposit amount: "),
+                false,
+            ).await.context("Error while reading amount")?;
+
+            let amount = from_coin(amount, 0).context("Invalid amount")?;
+            deposits.insert(asset, ContractDepositBuilder {
+                amount,
+                private: false,
+            });
+        }
+
+        Some(DeployContractInvokeBuilder {
+            deposits,
+            max_gas
+        })
+    } else {
+        None
+    };
+
+    manager.message("Building transaction...");
+    let tx_type = TransactionTypeBuilder::DeployContract(DeployContractBuilder {
+        module: module_hex,
+        contract_version,
+        invoke,
+    });
+    let tx = match wallet.create_transaction(tx_type, Default::default(), Default::default(), None).await {
+        Ok(tx) => tx,
+        Err(e) => {
+            manager.error(&format!("Error while creating transaction: {}", e));
+            return Ok(())
+        }
+    };
+
+    broadcast_tx(wallet, manager, tx).await;
+    Ok(())
+}
+
 // Show current wallet address
 async fn display_address(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
     let context = manager.get_context().lock()?;
@@ -1368,9 +1484,7 @@ async fn balance(manager: &CommandManager, mut arguments: ArgumentManager) -> Re
     let asset = if arguments.has_argument("asset") {
         arguments.get_value("asset")?.to_hash()?
     } else {
-        prompt.read_hash(
-            prompt.colorize_string(Color::Green, "Asset (default XELIS): ")
-        ).await.unwrap_or(XELIS_ASSET)
+        read_asset_name(&prompt, wallet).await?
     };
     let balance = storage.get_plaintext_balance_for(&asset).await?;
     let data = storage.get_asset(&asset).await?;
@@ -1387,9 +1501,7 @@ async fn balance_ct(manager: &CommandManager, mut arguments: ArgumentManager) ->
     let asset = if arguments.has_argument("asset") {
         arguments.get_value("asset")?.to_hash()?
     } else {
-        prompt.read_hash(
-            prompt.colorize_string(Color::Green, "Asset (default XELIS): ")
-        ).await.unwrap_or(XELIS_ASSET)
+        read_asset_name(&prompt, wallet).await?
     };
     let (balance, unconfirmed) = storage.get_unconfirmed_balance_for(&asset).await?;
     let data = storage.get_asset(&asset).await?;
