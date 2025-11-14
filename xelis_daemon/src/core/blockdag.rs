@@ -758,42 +758,6 @@ where
     Ok(past)
 }
 
-// Find tip work score internal for a block hash
-// this will recursively find all tips and their difficulty
-pub async fn find_tip_work_score_internal<'a, P>(provider: &P, map: &mut HashMap<Hash, CumulativeDifficulty>, hash: &'a Hash, base_topoheight: TopoHeight) -> Result<(), BlockchainError>
-where
-    P: DifficultyProvider + DagOrderProvider
-{
-    trace!("Finding tip work score for {}", hash);
-
-    let mut stack: VecDeque<Hash> = VecDeque::new();
-    stack.push_back(hash.clone());
-
-    while let Some(current_hash) = stack.pop_back() {
-        // if not already processed
-        if !map.contains_key(&current_hash) {
-            // add its difficulty
-            map.insert(current_hash.clone(), provider.get_difficulty_for_block_hash(&current_hash).await?.into());
-
-            // process its tips
-            let tips = provider.get_past_blocks_for_block_hash(&current_hash).await?;
-            for tip_hash in tips.iter() {
-                // if tip_hash not already processed
-                // we check if it is ordered and its topoheight is >= base_topoheight
-                // or not ordered at all
-                if !map.contains_key(tip_hash) {
-                    let is_ordered = provider.is_block_topological_ordered(tip_hash).await?;
-                    if !is_ordered || provider.get_topo_height_for_hash(tip_hash).await? >= base_topoheight {
-                        stack.push_back(tip_hash.clone());
-                    }
-                }
-            }
-        }
-    }
-
-    Ok(())
-}
-
 // find the sum of work done using GHOSTDAG k-cluster
 // Only blocks in the "blue set" (well-connected, honest blocks) contribute to cumulative difficulty.
 // This prevents parasite chain attacks where attackers incrementally reference the main chain
@@ -834,21 +798,21 @@ where
     
     // Only count difficulty from blocks in the blue set
     let mut score = CumulativeDifficulty::zero();
-    let mut difficulty_map: HashMap<Hash, CumulativeDifficulty> = HashMap::new();
+    let mut difficulty_map = HashMap::new();
     
     // Add current block's difficulty
-    score += CumulativeDifficulty::from(block_difficulty);
-    difficulty_map.insert(block_hash.clone(), block_difficulty.into());
-    
+    score += block_difficulty;
+    difficulty_map.insert(block_hash.clone(), block_difficulty);
+
     // Add difficulty only from blue blocks
-    for hash in &blue_set {
+    for hash in blue_set.iter() {
         if hash != block_hash && !difficulty_map.contains_key(hash) {
             let diff = provider.get_difficulty_for_block_hash(hash).await?;
-            score += CumulativeDifficulty::from(diff);
-            difficulty_map.insert(hash.clone(), diff.into());
+            score += diff;
+            difficulty_map.insert(hash.clone(), diff);
         }
     }
-    
+
     // Add base block if different
     if base_block != block_hash && blue_set.contains(base_block) {
         if !difficulty_map.contains_key(base_block) {
