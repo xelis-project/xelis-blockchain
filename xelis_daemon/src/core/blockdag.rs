@@ -168,13 +168,19 @@ where
 // Verify if the block is a sync block
 // A sync block is a block that is ordered and has the highest cumulative difficulty at its height
 // It is used to determine if the block is a stable block or not
-pub async fn is_sync_block_at_height<P>(provider: &P, hash: &Hash, height: u64) -> Result<bool, BlockchainError>
+pub async fn is_sync_block_at_height<P>(
+    provider: &P,
+    hash: &Hash,
+    height: u64,
+) -> Result<bool, BlockchainError>
 where
-    P: DifficultyProvider + DagOrderProvider + BlocksAtHeightProvider + PrunedTopoheightProvider
+    P: DifficultyProvider + DagOrderProvider + BlocksAtHeightProvider + PrunedTopoheightProvider,
 {
     trace!("is sync block {} at height {}", hash, height);
+
     let block_height = provider.get_height_for_block_hash(hash).await?;
-    if block_height == 0 { // genesis block is a sync block
+    // genesis block is a sync block
+    if block_height == 0 {
         trace!("Block {} at height {} is a sync block because it can only be the genesis block", hash, block_height);
         return Ok(true)
     }
@@ -206,35 +212,34 @@ where
         }
     }
 
-    // now lets check all blocks until STABLE_LIMIT height before the block
+    // precompute once
+    let sync_cd = provider.get_cumulative_difficulty_for_block_hash(hash).await?;
+
+    // scan window below without allocating a set; early-exit on first violating block
     let stable_point = if block_height >= STABLE_LIMIT {
         block_height - STABLE_LIMIT
     } else {
         STABLE_LIMIT - block_height
     };
+
     let mut i = block_height.saturating_sub(1);
-    let mut pre_blocks = HashSet::new();
     while i >= stable_point && i != 0 {
         let blocks = provider.get_blocks_at_height(i).await?;
-        pre_blocks.extend(blocks);
-        i -= 1;
-    }
-
-    let sync_block_cumulative_difficulty = provider.get_cumulative_difficulty_for_block_hash(hash).await?;
-    // if potential sync block has lower cumulative difficulty than one of past blocks, it is not a sync block
-    for pre_hash in pre_blocks {
-        // We compare only against block ordered otherwise we can have desync between node which could lead to fork
-        // This is rare event but can happen
-        if provider.is_block_topological_ordered(&pre_hash).await? {
-            let cumulative_difficulty = provider.get_cumulative_difficulty_for_block_hash(&pre_hash).await?;
-            if cumulative_difficulty >= sync_block_cumulative_difficulty {
-                debug!("Block {} at height {} is not a sync block, it has lower cumulative difficulty than block {} at height {}", hash, block_height, pre_hash, i);
-                return Ok(false)
+        for pre in blocks {
+            // compare only with ordered blocks
+            if provider.is_block_topological_ordered(&pre).await? {
+                let cd = provider.get_cumulative_difficulty_for_block_hash(&pre).await?;
+                if cd >= sync_cd {
+                    debug!(
+                        "Block {} at height {} is not a sync block; {} at height {} has >= cumulative difficulty",
+                        hash, block_height, pre, i
+                    );
+                    return Ok(false);
+                }
             }
         }
+        i -= 1;
     }
-
-    trace!("block {} at height {} is a sync block", hash, block_height);
 
     Ok(true)
 }
