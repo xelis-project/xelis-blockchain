@@ -10,7 +10,6 @@ use xelis_common::{
     block::{TopoHeight, get_combined_hash_for_tips},
     crypto::Hash,
     difficulty::{CumulativeDifficulty, Difficulty},
-    immutable::Immutable,
     time::TimestampMillis
 };
 use crate::{config::{STABLE_LIMIT, GHOSTDAG_K}, core::storage::*};
@@ -598,127 +597,155 @@ where
 {
     let chain_cache = provider.chain_cache().await;
     let mut blue_set_cache = chain_cache.blue_set_cache.lock().await;
-    if let Some(cached_blue_set) = blue_set_cache.get(&(block_hash.clone(), base_topoheight)) {
-        trace!("Blue set for block {} found in cache", block_hash);
-        return Ok(cached_blue_set.clone());
+
+    // Check cache first
+    let cache_key = (block_hash.clone(), base_topoheight);
+    if let Some(cached) = blue_set_cache.get(&cache_key) {
+        trace!("Blue set for block {} found in cache ({} blocks)", block_hash, cached.len());
+        return Ok(cached.clone());
     }
 
     trace!("Calculating GHOSTDAG blue set for block {} with k={}", block_hash, GHOSTDAG_K);
 
+    // Blue set: blocks that are "honest" (well-connected to the main chain)
     let mut blue_set = HashSet::new();
-    let mut candidate_queue = VecDeque::from_iter(block_tips.iter().cloned());
-
-    // Add the current block to blue set (it's the starting point)
     blue_set.insert(block_hash.clone());
 
-    // Process candidates in topological order (newer to older)
-    while let Some(candidate) = candidate_queue.pop_front() {
-        // Skip if already processed
-        if blue_set.contains(&candidate) {
+    // Cache for past sets: past(B) = all ancestors of B (not including B itself)
+    // This is the key optimization - we build past sets incrementally
+    let mut past_cache = HashMap::new();
+    
+    // Build past set for the block being validated
+    // Past of new block = all ancestors reachable from its parents
+    let block_past = build_past_set(provider, block_tips, base_topoheight).await?;
+    past_cache.insert(block_hash.clone(), block_past);
+
+    // Queue for candidates to evaluate (BFS order)
+    let mut queue: VecDeque<Hash> = VecDeque::from_iter(block_tips.iter().cloned());
+    let mut processed = HashSet::new();
+
+    while let Some(candidate) = queue.pop_front() {
+        // Skip if already blue or already evaluated
+        if blue_set.contains(&candidate) || !processed.insert(candidate.clone()) {
             continue;
         }
-        
-        // Check if this candidate is ordered and within our base topoheight
-        let is_ordered = provider.is_block_topological_ordered(&candidate).await?;
-        if is_ordered {
-            let candidate_topo = provider.get_topo_height_for_hash(&candidate).await?;
-            if candidate_topo < base_topoheight {
-                // Block is too old, skip it
+
+        // Check topoheight boundary (don't process blocks below base)
+        if provider.is_block_topological_ordered(&candidate).await? {
+            let topo = provider.get_topo_height_for_hash(&candidate).await?;
+            if topo < base_topoheight {
+                trace!("Block {} below base topoheight {}, skipping", candidate, base_topoheight);
                 continue;
             }
         }
 
-        let candidate_past = get_all_past_blocks(provider, &candidate, base_topoheight, block_tips).await?;
+        // Get or build past set for candidate
+        if !past_cache.contains_key(&candidate) {
+            let tips = provider.get_past_blocks_for_block_hash(&candidate).await?;
+            let candidate_past = build_past_set(provider, &tips, base_topoheight).await?;
+            past_cache.insert(candidate.clone(), candidate_past);
+        }
 
-        // Calculate anticone size: count blocks in blue set that don't reference this candidate
-        // and that this candidate doesn't reference (not mutually reachable)
+        // Calculate anticone: blocks in blue_set that are NOT mutually reachable with candidate
+        // Two blocks are mutually reachable if one is in the past of the other
+        let candidate_past = past_cache.get(&candidate)
+            .ok_or(BlockchainError::CorruptedData)?;
         let mut anticone_size = 0;
 
         for blue_block in blue_set.iter() {
-            // Skip the block itself
             if blue_block == &candidate {
                 continue;
             }
 
-            let blue_past = get_all_past_blocks(provider, blue_block, base_topoheight, block_tips).await?;
+            // Get past of blue block
+            let blue_past = past_cache.get(blue_block)
+                .ok_or(BlockchainError::CorruptedData)?;
 
             // Check if they're mutually reachable:
             // - candidate is in blue block's past, OR
             // - blue block is in candidate's past
-            let mutually_reachable = 
-                blue_past.contains(&candidate) || candidate_past.contains(blue_block);
-            
+            let mutually_reachable = blue_past.contains(&candidate) || candidate_past.contains(blue_block);
             if !mutually_reachable {
                 anticone_size += 1;
-                // OPTIMIZATION: Early exit if we exceed k
+                // Early exit optimization
                 if anticone_size > GHOSTDAG_K {
                     break;
                 }
             }
         }
 
-        trace!("Block {} has anticone size {} relative to blue set (k={})", candidate, anticone_size, GHOSTDAG_K);
-        
+        trace!(
+            "Block {} anticone size: {} (k={}, blue_set: {}, past: {})",
+            candidate, anticone_size, GHOSTDAG_K, blue_set.len(), candidate_past.len()
+        );
+
         // If anticone size <= k, this block is blue (honest)
         if anticone_size <= GHOSTDAG_K {
             blue_set.insert(candidate.clone());
 
-            // Add this block's tips to the candidate queue (these are already in DB)
-            let candidate_tips = provider.get_past_blocks_for_block_hash(&candidate).await?;
-            for tip in candidate_tips.iter() {
-                if !blue_set.contains(tip) {
-                    candidate_queue.push_back(tip.clone());
+            // Add this block's tips to the candidate queue 
+            let tips = provider.get_past_blocks_for_block_hash(&candidate).await?;
+            for tip in tips.iter() {
+                if !blue_set.contains(tip) && !processed.contains(tip) {
+                    queue.push_back(tip.clone());
                 }
             }
         } else {
             // Block is red (potential attacker), don't add to blue set
             debug!(
-                "Block {} marked as RED (anticone {} > k={}), excluding from cumulative difficulty", 
+                "Block {} marked as RED (anticone {} > k={}), excluding from cumulative difficulty",
                 candidate, anticone_size, GHOSTDAG_K
             );
         }
     }
 
-    debug!("Blue set size: {} blocks for {}", blue_set.len(), block_hash);
-    blue_set_cache.put((block_hash.clone(), base_topoheight), blue_set.clone());
+    debug!(
+        "GHOSTDAG blue set complete for {}: {} blue blocks, {} cached past sets (k={})",
+        block_hash, blue_set.len(), past_cache.len(), GHOSTDAG_K
+    );
+
+    // Cache the result
+    blue_set_cache.put(cache_key, blue_set.clone());
 
     Ok(blue_set)
 }
 
-// Helper function to get all past blocks (ancestors) of a given block
-// tips_cache contains tips for blocks not yet in DB (like the new block being validated)
-async fn get_all_past_blocks<P>(
+// Build past set for a block given its immediate parents (tips)
+// Returns: all ancestors reachable from tips (not including tips themselves)
+// Uses BFS to traverse the DAG backwards, respecting base_topoheight boundary
+async fn build_past_set<P>(
     provider: &P,
-    block_hash: &Hash,
-    base_topoheight: TopoHeight,
-    block_tips: &IndexSet<Hash>
-) -> Result<IndexSet<Hash>, BlockchainError>
+    tips: &IndexSet<Hash>,
+    base_topoheight: TopoHeight
+) -> Result<HashSet<Hash>, BlockchainError>
 where
     P: DifficultyProvider + DagOrderProvider
 {
-    let mut past = IndexSet::new();
-    let mut stack = VecDeque::from_iter([block_hash.clone()]);
+    let mut past = HashSet::new();
+    let mut queue: VecDeque<Hash> = VecDeque::from_iter(tips.iter().cloned());
 
-    while let Some(current) = stack.pop_back() {
+    while let Some(current) = queue.pop_front() {
+        // Skip if already in past
         if past.contains(&current) {
             continue;
         }
 
+        // Check topoheight boundary
+        if provider.is_block_topological_ordered(&current).await? {
+            let topo = provider.get_topo_height_for_hash(&current).await?;
+            if topo < base_topoheight {
+                continue;
+            }
+        }
+
+        // Add to past
         past.insert(current.clone());
 
-        let tips = if *block_hash == current {
-            Immutable::Owned(block_tips.clone())
-        } else {
-            provider.get_past_blocks_for_block_hash(&current).await?
-        };
-
-        for tip in tips.iter() {
-            // Check if tip is within our base topoheight constraint
-            let is_ordered = provider.is_block_topological_ordered(tip).await?;
-            if !is_ordered || provider.get_topo_height_for_hash(tip).await? >= base_topoheight {
-                if !past.contains(tip) {
-                    stack.push_back(tip.clone());
-                }
+        // Queue its parents
+        let current_tips = provider.get_past_blocks_for_block_hash(&current).await?;
+        for tip in current_tips.iter() {
+            if !past.contains(tip) {
+                queue.push_back(tip.clone());
             }
         }
     }
