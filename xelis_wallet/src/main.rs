@@ -59,7 +59,6 @@ use xelis_common::{
         },
         multisig::{MultiSig, SignatureId},
         BurnPayload,
-        MultiSigPayload,
         Transaction,
         TxVersion
     },
@@ -1076,67 +1075,81 @@ async fn change_password(manager: &CommandManager, _: ArgumentManager) -> Result
     Ok(())
 }
 
-async fn create_transaction_with_multisig(manager: &CommandManager, prompt: &Prompt, wallet: &Wallet, tx_type: TransactionTypeBuilder, payload: MultiSigPayload) -> Result<Transaction, CommandError> {
-    manager.message(format!("Multisig detected, you need to sign the transaction with {} keys.", payload.threshold));
-
+// Create a transaction, handling multisig if necessary
+async fn create_transaction_with_multisig(manager: &CommandManager, prompt: &Prompt, wallet: &Wallet, tx_type: TransactionTypeBuilder) -> Result<Transaction, CommandError> {
     let mut storage = wallet.get_storage().write().await;
-    let mut state = wallet.create_transaction_state_with_storage(&storage, &tx_type, Default::default(), Default::default(), None, None).await
-        .context("Error while creating transaction state")?;
-
-    let mut unsigned = wallet.create_unsigned_transaction(&mut state, Some(payload.threshold), tx_type, Default::default(), storage.get_tx_version().await?)
-        .context("Error while building unsigned transaction")?;
-
-    let mut multisig = MultiSig::new();
-    manager.message(format!("Transaction hash to sign: {}", unsigned.get_hash_for_multisig()));
-
-    if payload.threshold == 1 {
-        let signature = prompt.read_input("Enter signature hexadecimal: ", false).await
-            .context("Error while reading signature")?;
-        let signature = Signature::from_hex(&signature).context("Invalid signature")?;
-
-        let id = if payload.participants.len() == 1 {
-            0
-        } else {
-            prompt.read("Enter signer ID: ").await
-            .context("Error while reading signer id")?
-        };
-
-        if !multisig.add_signature(SignatureId {
-            id,
-            signature
-        }) {
-            return Err(CommandError::InvalidArgument("Invalid signature".to_string()));
-        }        
-    } else {
-        manager.message("Participants available:");
-        for (i, participant) in payload.participants.iter().enumerate() {
-            manager.message(format!("Participant #{}: {}", i, participant.as_address(wallet.get_network().is_mainnet())));
-        }
-        
-        manager.message("Please enter the signatures and signer IDs");
-        for i in 0..payload.threshold {
-            let signature = prompt.read_input(format!("Enter signature #{} hexadecimal: ", i), false).await
+    let tx = if let Some(multisig) = storage.get_multisig_state().await.context("Error while reading multisig state")? {
+        let payload = &multisig.payload;
+        manager.message(format!("Multisig detected, you need to sign the transaction with {} keys.", payload.threshold));
+        let mut state = wallet.create_transaction_state_with_storage(&storage, &tx_type, Default::default(), Default::default(), None, None).await
+            .context("Error while creating transaction state")?;
+    
+        let mut unsigned = wallet.create_unsigned_transaction(&mut state, Some(payload.threshold), tx_type, Default::default(), storage.get_tx_version().await?)
+            .context("Error while building unsigned transaction")?;
+    
+        let mut multisig = MultiSig::new();
+        manager.message(format!("Transaction hash to sign: {}", unsigned.get_hash_for_multisig()));
+    
+        if payload.threshold == 1 {
+            let signature = prompt.read_input("Enter signature hexadecimal: ", false).await
                 .context("Error while reading signature")?;
             let signature = Signature::from_hex(&signature).context("Invalid signature")?;
     
-            let id = prompt.read("Enter signer ID for signature: ").await
-                .context("Error while reading signer id")?;
+            let id = if payload.participants.len() == 1 {
+                0
+            } else {
+                prompt.read("Enter signer ID: ").await
+                .context("Error while reading signer id")?
+            };
     
             if !multisig.add_signature(SignatureId {
                 id,
                 signature
             }) {
                 return Err(CommandError::InvalidArgument("Invalid signature".to_string()));
+            }        
+        } else {
+            manager.message("Participants available:");
+            for (i, participant) in payload.participants.iter().enumerate() {
+                manager.message(format!("Participant #{}: {}", i, participant.as_address(wallet.get_network().is_mainnet())));
+            }
+            
+            manager.message("Please enter the signatures and signer IDs");
+            for i in 0..payload.threshold {
+                let signature = prompt.read_input(format!("Enter signature #{} hexadecimal: ", i), false).await
+                    .context("Error while reading signature")?;
+                let signature = Signature::from_hex(&signature).context("Invalid signature")?;
+        
+                let id = prompt.read("Enter signer ID for signature: ").await
+                    .context("Error while reading signer id")?;
+        
+                if !multisig.add_signature(SignatureId {
+                    id,
+                    signature
+                }) {
+                    return Err(CommandError::InvalidArgument("Invalid signature".to_string()));
+                }
             }
         }
-    }
+    
+        unsigned.set_multisig(multisig);
+    
+        let tx = unsigned.finalize(wallet.get_keypair());
+        state.set_tx_hash_built(tx.hash());
+    
+        state.apply_changes(&mut storage).await
+            .context("Error while applying changes")?;
 
-    unsigned.set_multisig(multisig);
+        tx
+    } else {
+        let (tx, mut state) = wallet.create_transaction_with_storage(&storage, tx_type, Default::default(), Default::default(), None).await
+            .context("Error while building TX")?;
 
-    let tx = unsigned.finalize(wallet.get_keypair());
-    state.set_tx_hash_built(tx.hash());
+        state.apply_changes(&mut storage).await
+            .context("Error while applying changes")?;
 
-    state.apply_changes(&mut storage).await.context("Error while applying changes")?;
+        tx
+    };
 
     Ok(tx)
 }
@@ -1185,12 +1198,11 @@ async fn transfer(manager: &CommandManager, mut args: ArgumentManager) -> Result
         read_asset_name(&prompt, wallet).await?
     };
 
-    let (max_balance, asset_data, multisig) = {
+    let (max_balance, asset_data) = {
         let storage = wallet.get_storage().read().await;
         let balance = storage.get_plaintext_balance_for(&asset).await.unwrap_or(0);
         let asset = storage.get_asset(&asset).await?;
-        let multisig = storage.get_multisig_state().await.context("Error while reading multisig state")?;
-        (balance, asset, multisig.cloned())
+        (balance, asset)
     };
 
     // read amount
@@ -1225,17 +1237,7 @@ async fn transfer(manager: &CommandManager, mut args: ArgumentManager) -> Result
     }
 
     manager.message("Building transaction...");
-    let tx = if let Some(multisig) = multisig {
-        create_transaction_with_multisig(manager, prompt, wallet, tx_type, multisig.payload).await?
-    } else {
-        match wallet.create_transaction(tx_type, Default::default(), Default::default(), None).await {
-            Ok(tx) => tx,
-            Err(e) => {
-                manager.error(&format!("Error while creating transaction: {}", e));
-                return Ok(())
-            }
-        }
-    };
+    let tx = create_transaction_with_multisig(manager, prompt, wallet, tx_type).await?;
 
     broadcast_tx(wallet, manager, tx).await;
     Ok(())
@@ -1266,13 +1268,11 @@ async fn transfer_all(manager: &CommandManager, mut args: ArgumentManager) -> Re
         Some(a) => a,
         None => read_asset_name(&prompt, wallet).await?
     };
-    let (mut amount, asset_data, multisig) = {
+    let (mut amount, asset_data) = {
         let storage = wallet.get_storage().read().await;
         let amount = storage.get_plaintext_balance_for(&asset).await.unwrap_or(0);
         let data = storage.get_asset(&asset).await?;
-        let multisig = storage.get_multisig_state().await
-            .context("Error while reading multisig state")?;
-        (amount, data, multisig.cloned())
+        (amount, data)
     };
 
     let transfer = TransferBuilder {
@@ -1305,17 +1305,7 @@ async fn transfer_all(manager: &CommandManager, mut args: ArgumentManager) -> Re
         encrypt_extra_data: true
     };
     let tx_type = TransactionTypeBuilder::Transfers(vec![transfer]);
-    let tx = if let Some(multisig) = multisig {
-        create_transaction_with_multisig(manager, prompt, wallet, tx_type, multisig.payload).await?
-    } else {
-        match wallet.create_transaction(tx_type, Default::default(), Default::default(), None).await {
-            Ok(tx) => tx,
-            Err(e) => {
-                manager.error(&format!("Error while creating transaction: {}", e));
-                return Ok(())
-            }
-        }
-    };
+    let tx = create_transaction_with_multisig(manager, prompt, wallet, tx_type).await?;
 
     broadcast_tx(wallet, manager, tx).await;
     Ok(())
@@ -1332,13 +1322,11 @@ async fn burn(manager: &CommandManager, mut args: ArgumentManager) -> Result<(),
         read_asset_name(&prompt, wallet).await?
     };
 
-    let (max_balance, asset_data, multisig) = {
+    let (max_balance, asset_data) = {
         let storage = wallet.get_storage().read().await;
         let balance = storage.get_plaintext_balance_for(&asset).await.unwrap_or(0);
         let data = storage.get_asset(&asset).await?;
-        let multisig = storage.get_multisig_state().await
-            .context("Error while reading multisig state")?;
-        (balance, data, multisig.cloned())
+        (balance, data)
     };
 
     // read amount
@@ -1364,17 +1352,7 @@ async fn burn(manager: &CommandManager, mut args: ArgumentManager) -> Result<(),
     };
 
     let tx_type = TransactionTypeBuilder::Burn(payload);
-    let tx = if let Some(multisig) = multisig {
-        create_transaction_with_multisig(manager, prompt, wallet, tx_type, multisig.payload).await?
-    } else {
-        match wallet.create_transaction(tx_type, Default::default(), Default::default(), None).await {
-            Ok(tx) => tx,
-            Err(e) => {
-                manager.error(&format!("Error while creating transaction: {}", e));
-                return Ok(())
-            }
-        }
-    };
+    let tx = create_transaction_with_multisig(manager, prompt, wallet, tx_type).await?;
 
     broadcast_tx(wallet, manager, tx).await;
     Ok(())
@@ -1454,13 +1432,7 @@ async fn deploy_contract(manager: &CommandManager, mut args: ArgumentManager) ->
         contract_version,
         invoke,
     });
-    let tx = match wallet.create_transaction(tx_type, Default::default(), Default::default(), None).await {
-        Ok(tx) => tx,
-        Err(e) => {
-            manager.error(&format!("Error while creating transaction: {}", e));
-            return Ok(())
-        }
-    };
+    let tx = create_transaction_with_multisig(manager, &prompt, wallet, tx_type).await?;
 
     broadcast_tx(wallet, manager, tx).await;
     Ok(())
@@ -1913,9 +1885,9 @@ async fn multisig_setup(manager: &CommandManager, mut args: ArgumentManager) -> 
     };
 
     if participants == 0 {
-        let Some(multisig) = multisig else {
+        if multisig.is_none() {
             return Err(CommandError::InvalidArgument("Participants count must be greater than 0".to_string()));
-        };
+        }
 
         manager.warn("Participants count is 0, this will delete the multisig currently configured");
         manager.warn("Do you want to continue?");
@@ -1929,7 +1901,7 @@ async fn multisig_setup(manager: &CommandManager, mut args: ArgumentManager) -> 
             threshold: 0
         };
 
-        let tx = create_transaction_with_multisig(manager, prompt, wallet, TransactionTypeBuilder::MultiSig(payload), multisig.payload).await?;
+        let tx = create_transaction_with_multisig(manager, prompt, wallet, TransactionTypeBuilder::MultiSig(payload)).await?;
 
         broadcast_tx(wallet, manager, tx).await;
         return Ok(())
@@ -1985,27 +1957,12 @@ async fn multisig_setup(manager: &CommandManager, mut args: ArgumentManager) -> 
 
     manager.message("Building transaction...");
 
-    let multisig = {
-        let storage = wallet.get_storage().read().await;
-        storage.get_multisig_state().await.context("Error while reading multisig state")?
-            .cloned()
-    };
     let payload = MultiSigBuilder {
         participants: keys,
         threshold
     };
     let tx_type = TransactionTypeBuilder::MultiSig(payload);
-    let tx = if let Some(multisig) = multisig {
-        create_transaction_with_multisig(manager, prompt, wallet, tx_type, multisig.payload).await?
-    } else {
-        match wallet.create_transaction(tx_type, Default::default(), Default::default(), None).await {
-            Ok(tx) => tx,
-            Err(e) => {
-                manager.error(&format!("Error while creating transaction: {}", e));
-                return Ok(())
-            }
-        }
-    };
+    let tx = create_transaction_with_multisig(manager, prompt, wallet, tx_type).await?;
 
     broadcast_tx(wallet, manager, tx).await;
 
