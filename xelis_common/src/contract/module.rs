@@ -1,8 +1,8 @@
-use std::sync::Arc;
+use std::{str::FromStr, sync::Arc};
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use xelis_vm::Module;
+pub use xelis_vm::Module;
 
 use crate::serializer::*;
 
@@ -11,7 +11,18 @@ use crate::serializer::*;
 #[repr(u8)]
 pub enum ContractVersion {
     #[default]
-    V1,
+    V0,
+}
+
+impl FromStr for ContractVersion {
+    type Err = &'static str;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "v0" | "0" => Ok(ContractVersion::V0),
+            _ => Err("Invalid contract version"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -28,7 +39,7 @@ impl Serializer for ContractVersion {
 
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
         match reader.read_u8()? {
-            0 => Ok(ContractVersion::V1),
+            0 => Ok(ContractVersion::V0),
             _ => Err(ReaderError::InvalidValue),
         }
     }

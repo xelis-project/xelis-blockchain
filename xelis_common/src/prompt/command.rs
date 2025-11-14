@@ -9,6 +9,8 @@ use log::{info, warn, error};
 
 #[derive(Error, Debug)]
 pub enum CommandError {
+    #[error("{0}")]
+    Static(&'static str),
     #[error("Expected a command name")]
     ExpectedCommandName,
     #[error("Command was not found")]
@@ -31,6 +33,12 @@ pub enum CommandError {
     Any(#[from] Error),
     #[error("Poison Error: {}", _0)]
     PoisonError(String)
+}
+
+impl From<&'static str> for CommandError {
+    fn from(err: &'static str) -> Self {
+        Self::Static(err)
+    }
 }
 
 impl<T> From<PoisonError<T>> for CommandError {
