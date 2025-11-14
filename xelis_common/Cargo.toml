@@ -8,7 +8,7 @@ build = "build.rs"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-xelis-hash = { git = "https://github.com/xelis-project/xelis-hash", branch = "v3" }
+xelis-hash = { git = "https://github.com/xelis-project/xelis-hash", branch = "master" }
 xelis-vm = { git = "https://github.com/xelis-project/xelis-vm", branch = "dev", features = ["logging"] }
 xelis-types = { git = "https://github.com/xelis-project/xelis-vm", branch = "dev" }
 xelis-builder = { git = "https://github.com/xelis-project/xelis-vm", branch = "dev" }
