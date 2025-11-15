@@ -730,8 +730,11 @@ impl EncryptedStorage {
         trace!("get asset by name");
         let cache = self.assets_cache.lock().await;
         let mut res = None;
+
+        // Ticker is always uppercase
+        let upper_name = name.to_uppercase();
         for (asset, (data, tracked)) in cache.iter() {
-            if *tracked && (data.get_name() == name || data.get_ticker() == name) {
+            if *tracked && (data.get_name() == name || data.get_ticker() == upper_name) {
                 res = Some(asset.clone());
                 break;
             }
