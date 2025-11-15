@@ -12,6 +12,7 @@ use log::{error, info};
 use clap::Parser;
 use xelis_common::{
     async_handler,
+    asset::AssetData,
     config::{
         init,
         XELIS_ASSET
@@ -1175,6 +1176,28 @@ async fn read_asset_name(prompt: &Prompt, wallet: &Wallet) -> Result<Hash, Comma
     Ok(asset)
 }
 
+async fn read_asset_amount(prompt: &Prompt, wallet: &Wallet, asset: &Hash) -> Result<(u64, AssetData), CommandError> {
+    let (max_balance, asset) = {
+        let storage = wallet.get_storage().read().await;
+        let balance = storage.get_plaintext_balance_for(&asset).await
+            .unwrap_or(0);
+        let asset = storage.get_asset(&asset).await?;
+        (balance, asset)
+    };
+
+    let amount_str = prompt.read_input(
+            prompt.colorize_string(Color::Green, &format!("Amount (max: {}): ", format_coin(max_balance, asset.get_decimals()))),
+            false,
+        )
+        .await
+        .context("Error while reading amount")?;
+
+    let amount = from_coin(amount_str, asset.get_decimals())
+        .context("Invalid amount")?;
+
+    Ok((amount, asset))
+}
+
 // Create a new transfer to a specified address
 async fn transfer(manager: &CommandManager, mut args: ArgumentManager) -> Result<(), CommandError> {
     let prompt = manager.get_prompt();
@@ -1198,24 +1221,20 @@ async fn transfer(manager: &CommandManager, mut args: ArgumentManager) -> Result
         read_asset_name(&prompt, wallet).await?
     };
 
-    let (max_balance, asset_data) = {
-        let storage = wallet.get_storage().read().await;
-        let balance = storage.get_plaintext_balance_for(&asset).await.unwrap_or(0);
-        let asset = storage.get_asset(&asset).await?;
-        (balance, asset)
-    };
-
     // read amount
-    let amount = if args.has_argument("amount") {
-        args.get_value("amount")?.to_string_value()?
-    } else {
-        prompt.read(
-            prompt.colorize_string(Color::Green, &format!("Amount (max: {}): ", format_coin(max_balance, asset_data.get_decimals())))
-        ).await.context("Error while reading amount")?
-    };
+    let (amount, asset_data) = if args.has_argument("amount") {
+        let value = args.get_value("amount")?.to_string_value()?;
 
-    let amount = from_coin(amount, asset_data.get_decimals())
-        .context("Invalid amount")?;
+        let storage = wallet.get_storage().read().await;
+        let data = storage.get_asset(&asset).await?;
+
+        (
+            from_coin(value, data.get_decimals()).context("Invalid amount")?,
+            data
+        )
+    } else {
+        read_asset_amount(&prompt, wallet, &asset).await?
+    };
 
     manager.message(format!("Sending {} of {} ({}) to {}", format_coin(amount, asset_data.get_decimals()), asset_data.get_name(), asset, address.to_string()));
 
@@ -1322,23 +1341,20 @@ async fn burn(manager: &CommandManager, mut args: ArgumentManager) -> Result<(),
         read_asset_name(&prompt, wallet).await?
     };
 
-    let (max_balance, asset_data) = {
+    let (amount, asset_data) = if args.has_argument("amount") {
+        let value = args.get_value("amount")?.to_string_value()?;
+
         let storage = wallet.get_storage().read().await;
-        let balance = storage.get_plaintext_balance_for(&asset).await.unwrap_or(0);
         let data = storage.get_asset(&asset).await?;
-        (balance, data)
-    };
 
-    // read amount
-    let amount = if args.has_argument("amount") {
-        args.get_value("amount")?.to_string_value()?
+        (
+            from_coin(value, data.get_decimals()).context("Invalid amount")?,
+            data
+        )
     } else {
-        prompt.read(
-            prompt.colorize_string(Color::Green, &format!("Amount (max: {}): ", format_coin(max_balance, asset_data.get_decimals())))
-        ).await.context("Error while reading amount")?
+        read_asset_amount(&prompt, wallet, &asset).await?
     };
 
-    let amount = from_coin(amount, asset_data.get_decimals()).context("Invalid amount")?;
     manager.message(format!("Burning {} of {} ({})", format_coin(amount, asset_data.get_decimals()), asset_data.get_name(), asset));
     if !args.get_flag("confirm")? && !prompt.ask_confirmation().await.context("Error while confirming action")? {
         manager.message("Transaction has been aborted");
@@ -1403,16 +1419,11 @@ async fn deploy_contract(manager: &CommandManager, mut args: ArgumentManager) ->
                 break;
             }
 
-            let asset = prompt.read_hash(
-                prompt.colorize_string(Color::Green, "Deposit asset ID: ")
-            ).await.context("Error while reading asset ID")?;
+            let asset = read_asset_name(&prompt, wallet).await?;
+            let (amount, asset_data) = read_asset_amount(&prompt, wallet, &asset).await?;
 
-            let amount = prompt.read_input(
-                prompt.colorize_string(Color::Green, "Deposit amount: "),
-                false,
-            ).await.context("Error while reading amount")?;
+            manager.message(format!("Adding deposit of {} of {} ({})", format_coin(amount, asset_data.get_decimals()), asset_data.get_name(), asset));
 
-            let amount = from_coin(amount, 0).context("Invalid amount")?;
             deposits.insert(asset, ContractDepositBuilder {
                 amount,
                 private: false,
