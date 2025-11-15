@@ -1169,7 +1169,7 @@ async fn read_asset_name(prompt: &Prompt, wallet: &Wallet) -> Result<Hash, Comma
             .context("Error while reading hash from hex")?
     } else {
         let storage = wallet.get_storage().read().await;
-        storage.get_asset_by_name(&asset_name).await?
+        storage.search_tracked_asset_with(&asset_name).await?
             .context("No asset registered with given name")?
     };
 

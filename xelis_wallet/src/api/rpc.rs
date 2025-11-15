@@ -275,7 +275,7 @@ async fn is_asset_tracked(context: &Context, params: IsAssetTrackedParams<'_>) -
     let storage = wallet.get_storage().read().await;
 
     // Check if the asset is tracked
-    let is_tracked = storage.is_asset_tracked(&params.asset)?;
+    let is_tracked = storage.is_asset_tracked(&params.asset).await?;
     Ok(is_tracked)
 }
 

@@ -1025,7 +1025,7 @@ impl NetworkHandler {
             let storage = self.wallet.get_storage().read().await;
 
             for asset in assets {
-                if storage.is_asset_tracked(&asset)? {
+                if storage.is_asset_tracked(&asset).await? {
                     tracked_assets.insert(Cow::Borrowed(asset));
                 } else {
                     debug!("Asset {} was requested but its not tracked, skipping...", asset);

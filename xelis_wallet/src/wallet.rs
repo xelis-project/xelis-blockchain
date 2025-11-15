@@ -555,11 +555,11 @@ impl Wallet {
         debug!("track asset {}", asset);
         {
             let mut storage = self.storage.write().await;
-            if storage.is_asset_tracked(&asset)? {
+            if storage.is_asset_tracked(&asset).await? {
                 return Ok(false)
             }
 
-            storage.track_asset(&asset)?;
+            storage.track_asset(&asset).await?;
         }
 
         self.propagate_event(Event::TrackAsset { asset: asset.clone() }).await;
@@ -581,11 +581,11 @@ impl Wallet {
         debug!("untrack asset {}", asset);
         {
             let mut storage = self.storage.write().await;
-            if !storage.is_asset_tracked(&asset)? {
+            if !storage.is_asset_tracked(&asset).await? {
                 return Ok(false)
             }
 
-            storage.untrack_asset(&asset)?;
+            storage.untrack_asset(&asset).await?;
         }
 
         self.propagate_event(Event::UntrackAsset { asset }).await;
@@ -955,7 +955,7 @@ impl Wallet {
                 continue;
             }
 
-            if !storage.is_asset_tracked(asset)? {
+            if !storage.is_asset_tracked(asset).await? {
                 return Err(WalletError::AssetNotTracked(asset.clone()))
             }
 

@@ -119,7 +119,7 @@ pub struct EncryptedStorage {
     // Temporary TX Cache used to build ordered TXs
     tx_cache: Option<TxCache>,
     // Cache for the assets with their decimals
-    assets_cache: Mutex<LruCache<Hash, AssetData>>,
+    assets_cache: Mutex<LruCache<Hash, (AssetData, bool)>>,
     // Cache for the synced topoheight
     synced_topoheight: Option<u64>,
     // Topoheight of the last coinbase reward / or smart contracts transfer
@@ -180,8 +180,8 @@ impl EncryptedStorage {
         }
 
         // Force tracking of native xelis asset
-        if !storage.is_asset_tracked(&XELIS_ASSET)? {
-            storage.track_asset(&XELIS_ASSET)?;
+        if !storage.is_asset_tracked_internal(&XELIS_ASSET)? {
+            storage.track_asset_internal(&XELIS_ASSET)?;
         }
 
         Ok(storage)
@@ -234,13 +234,6 @@ impl EncryptedStorage {
         trace!("load from disk with key");
         self.internal_load(tree, key)?
             .context(format!("Error while loading data with key {} from disk", String::from_utf8_lossy(key)))
-    }
-
-    // Parse encrypted data
-    fn parse_encrypted_data<V: Serializer>(&self, data: &[u8]) -> Result<V> {
-        trace!("parse encrypted data");
-        let decrypted = self.cipher.decrypt_value(data)?;
-        Ok(V::from_bytes(&decrypted)?)
     }
 
     // Because we can't predict the nonce used for encryption, we make it determistic
@@ -509,17 +502,45 @@ impl EncryptedStorage {
     }
 
     // Check if the asset is tracked
-    pub fn is_asset_tracked(&self, hash: &Hash) -> Result<bool> {
+    fn is_asset_tracked_internal(&self, hash: &Hash) -> Result<bool> {
         self.contains_with_encrypted_key(&self.tracked_assets, hash.as_bytes())
     }
 
-    // Mark the requested asset as tracked
-    pub fn track_asset(&mut self, hash: &Hash) -> Result<()> {
+    pub async fn is_asset_tracked(&self, hash: &Hash) -> Result<bool> {
+        trace!("is asset tracked");
+        if let Some((_, tracked)) = self.assets_cache.lock().await.get(hash) {
+            return Ok(*tracked);
+        }
+
+        self.is_asset_tracked_internal(hash)
+    }
+
+    fn track_asset_internal(&mut self, hash: &Hash) -> Result<()> {
+        trace!("track asset internal");
         self.save_to_disk_with_encrypted_key(&self.tracked_assets, hash.as_bytes(), &[])
     }
 
+    // Mark the requested asset as tracked
+    pub async fn track_asset(&mut self, hash: &Hash) -> Result<()> {
+        {
+            let mut cache = self.assets_cache.lock().await;
+            if let Some((_, tracked)) = cache.get_mut(hash) {
+                *tracked = true;
+            }
+        }
+
+        self.track_asset_internal(hash)
+    }
+
     // Unmark the requested asset from being tracked
-    pub fn untrack_asset(&mut self, hash: &Hash) -> Result<()> {
+    pub async fn untrack_asset(&mut self, hash: &Hash) -> Result<()> {
+        {
+            let mut cache = self.assets_cache.lock().await;
+            if let Some((_, tracked)) = cache.get_mut(hash) {
+                *tracked = false;
+            }
+        }
+
         self.delete_from_disk_with_encrypted_key(&self.tracked_assets, hash.as_bytes())
     }
 
@@ -600,7 +621,9 @@ impl EncryptedStorage {
                 let raw_value = &self.cipher.decrypt_value(&value)?;
                 let mut reader = Reader::new(raw_value);
                 let a = AssetData::read(&mut reader)?;
-                cache.put(asset.clone(), a);
+
+                let is_tracked = self.is_asset_tracked_internal(&asset)?;
+                cache.put(asset.clone(), (a, is_tracked));
             }
 
             assets.insert(asset);
@@ -648,9 +671,10 @@ impl EncryptedStorage {
         trace!("add asset");
 
         self.save_to_disk_with_encrypted_key(&self.assets, asset.as_bytes(), &data.to_bytes())?;
+        let is_tracked = self.is_asset_tracked_internal(asset)?;
 
         let mut cache = self.assets_cache.lock().await;
-        cache.put(asset.clone(), data);
+        cache.put(asset.clone(), (data, is_tracked));
         Ok(())
     }
 
@@ -658,12 +682,14 @@ impl EncryptedStorage {
     pub async fn get_asset(&self, asset: &Hash) -> Result<AssetData> {
         trace!("get asset {}", asset);
         let mut cache = self.assets_cache.lock().await;
-        if let Some(asset) = cache.get(asset) {
+        if let Some((asset, _)) = cache.get(asset) {
             return Ok(asset.clone());
         }
 
         let data: AssetData = self.load_from_disk_with_encrypted_key(&self.assets, asset.as_bytes())?;
-        cache.put(asset.clone(), data.clone());
+
+        let is_tracked = self.is_asset_tracked_internal(asset)?;
+        cache.put(asset.clone(), (data.clone(), is_tracked));
 
         Ok(data)
     }
@@ -686,37 +712,37 @@ impl EncryptedStorage {
     pub async fn get_optional_asset(&self, asset: &Hash) -> Result<Option<AssetData>> {
         trace!("get asset");
         let mut cache = self.assets_cache.lock().await;
-        if let Some(asset) = cache.get(asset) {
+        if let Some((asset, _)) = cache.get(asset) {
             return Ok(Some(asset.clone()));
         }
 
         let data: Option<AssetData> = self.load_from_disk_optional_with_encrypted_key(&self.assets, asset.as_bytes())?;
         if let Some(data) = data.as_ref() {
-            cache.put(asset.clone(), data.clone());
+            let is_tracked = self.is_asset_tracked_internal(asset)?;
+            cache.put(asset.clone(), (data.clone(), is_tracked));
         }
 
         Ok(data)
     }
 
-    // Search an asset by name
-    pub async fn get_asset_by_name(&self, name: &str) -> Result<Option<Hash>> {
+    // Search a tracked asset by its name OR ticker
+    pub async fn search_tracked_asset_with(&self, name: &str) -> Result<Option<Hash>> {
         trace!("get asset by name");
         let cache = self.assets_cache.lock().await;
         let mut res = None;
-        for (asset, data) in cache.iter() {
-            if data.get_name() == name {
+        for (asset, (data, tracked)) in cache.iter() {
+            if *tracked && (data.get_name() == name || data.get_ticker() == name) {
                 res = Some(asset.clone());
                 break;
             }
         }
 
         if res.is_none() {
-            // Check in the DB
-            for el in self.assets.iter() {
-                let (key, value) = el?;
-                let data: AssetData = self.parse_encrypted_data(&value)?;
+            // Check in the DB            
+            for el in self.get_tracked_assets()? {
+                let asset = el?;
+                let data = self.get_asset(&asset).await?;
                 if data.get_name() == name {
-                    let asset: Hash = self.parse_encrypted_data(&key)?;
                     res = Some(asset);
                     break;
                 }
@@ -730,7 +756,7 @@ impl EncryptedStorage {
     pub async fn set_asset_name(&mut self, asset: &Hash, name: String) -> Result<()> {
         trace!("set asset name");
         let mut cache = self.assets_cache.lock().await;
-        if let Some(asset) = cache.get_mut(asset) {
+        if let Some((asset, _)) = cache.get_mut(asset) {
             asset.set_name(name.clone());
         }
 
