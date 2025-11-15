@@ -814,14 +814,14 @@ where
     
     // Add current block's difficulty
     score += block_difficulty;
-    difficulty_map.insert(block_hash.clone(), block_difficulty);
+    difficulty_map.insert(block_hash, block_difficulty);
 
     // Add difficulty only from blue blocks
     for hash in blue_set.iter() {
         if hash != block_hash && !difficulty_map.contains_key(hash) {
             let diff = provider.get_difficulty_for_block_hash(hash).await?;
             score += diff;
-            difficulty_map.insert(hash.clone(), diff);
+            difficulty_map.insert(hash, diff);
         }
     }
 
@@ -830,7 +830,7 @@ where
         if !difficulty_map.contains_key(base_block) {
             let cumulative_diff = provider.get_cumulative_difficulty_for_block_hash(base_block).await?;
             score += cumulative_diff;
-            difficulty_map.insert(base_block.clone(), cumulative_diff);
+            difficulty_map.insert(base_block, cumulative_diff);
         }
     }
 

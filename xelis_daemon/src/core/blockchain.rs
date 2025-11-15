@@ -1712,6 +1712,16 @@ impl<S: Storage> Blockchain<S> {
 
         if tips_count > 1 {
             let best_tip = blockdag::find_best_tip_by_cumulative_difficulty(&*storage, block.get_tips().iter()).await?;
+            let is_v3_enabled = version >= BlockVersion::V3;
+
+            if is_v3_enabled {
+                let first_tip = &block.get_tips()[0];
+                if best_tip != first_tip {
+                    debug!("For V3 blocks, the best tip must be the first tip listed in the block");
+                    return Err(BlockchainError::InvalidTipsOrder(block_hash.into_owned(), best_tip.clone(), first_tip.clone()))
+                }
+            }
+
             debug!("Best tip selected for this new block is {}", best_tip);
             for hash in block.get_tips() {
                 if best_tip != hash {
