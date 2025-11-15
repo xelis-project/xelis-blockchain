@@ -1393,11 +1393,12 @@ async fn deploy_contract(manager: &CommandManager, mut args: ArgumentManager) ->
         let mut deposits = IndexMap::new();
         loop {
             let add_deposit = prompt.read_valid_str_value(
-                "Do you want to add a deposit for the constructor? (Y/N): ".to_owned(),
-                &["Y", "N"],
-            ).await
-                .context("Error while asking confirmation")?
-                .to_uppercase() == "Y";
+                    "Do you want to add a deposit for the constructor? (Y/N): ".to_owned(),
+                    &["y", "n"],
+                )
+                .await
+                .context("Error while asking confirmation")? == "y";
+
             if !add_deposit {
                 break;
             }
