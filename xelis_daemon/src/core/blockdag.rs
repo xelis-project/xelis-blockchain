@@ -3,6 +3,7 @@ use std::{
     collections::{HashMap, HashSet, VecDeque}
 };
 
+use futures::{StreamExt, TryStreamExt, stream};
 use indexmap::IndexSet;
 use itertools::Either;
 use log::{debug, error, trace, warn};
@@ -600,17 +601,19 @@ pub async fn calculate_blue_set<P>(
 where
     P: DifficultyProvider + DagOrderProvider + CacheProvider
 {
-    let chain_cache = provider.chain_cache().await;
-    let mut blue_set_cache = chain_cache.blue_set_cache.lock().await;
-
-    // Check cache first
     let cache_key = (block_hash.clone(), base_topoheight);
-    if let Some(cached) = blue_set_cache.get(&cache_key) {
-        trace!("Blue set for block {} found in cache ({} blocks)", block_hash, cached.len());
-        return Ok(cached.clone());
+    {
+        let chain_cache = provider.chain_cache().await;
+        let mut blue_set_cache = chain_cache.blue_set_cache.lock().await;
+    
+        // Check cache first
+        if let Some(cached) = blue_set_cache.get(&cache_key) {
+            debug!("Blue set for block {} found in cache ({} blocks)", block_hash, cached.len());
+            return Ok(cached.clone());
+        }
     }
 
-    trace!("Calculating GHOSTDAG blue set for block {} with k={}", block_hash, GHOSTDAG_K);
+    trace!("Calculating GHOSTDAG blue set for block {} with base topoheight {} and k={}", block_hash, base_topoheight, GHOSTDAG_K);
 
     // Blue set: blocks that are "honest" (well-connected to the main chain)
     let mut blue_set = HashSet::new();
@@ -709,8 +712,13 @@ where
         block_hash, blue_set.len(), past_cache.len(), GHOSTDAG_K
     );
 
-    // Cache the result
-    blue_set_cache.put(cache_key, blue_set.clone());
+    {
+        let chain_cache = provider.chain_cache().await;
+        let mut blue_set_cache = chain_cache.blue_set_cache.lock().await;
+
+        // Cache the result
+        blue_set_cache.put(cache_key, blue_set.clone());
+    }
 
     Ok(blue_set)
 }
@@ -774,13 +782,17 @@ where
     P: DifficultyProvider + DagOrderProvider + CacheProvider
 {
     trace!("find tip work score for {} at base {}", block_hash, base_block);
-    let chain_cache = provider.chain_cache().await;
+    let cache_key = (block_hash.clone(), base_block.clone(), base_block_height);
 
-    debug!("accessing tip work score cache for {} at height {}", block_hash, base_block_height);
-    let mut cache = chain_cache.tip_work_score_cache.lock().await;
-    if let Some(value) = cache.get(&(block_hash.clone(), base_block.clone(), base_block_height)) {
-        trace!("Found tip work score in cache: set [{}], height: {}", value.0.iter().map(|h| h.to_string()).collect::<Vec<String>>().join(", "), value.1);
-        return Ok(value.clone())
+    {
+        let chain_cache = provider.chain_cache().await;
+
+        debug!("accessing tip work score cache for {} at height {}", block_hash, base_block_height);
+        let mut cache = chain_cache.tip_work_score_cache.lock().await;
+        if let Some(value) = cache.get(&cache_key) {
+            trace!("Found tip work score in cache: set [{}], height: {}", value.0.iter().map(|h| h.to_string()).collect::<Vec<String>>().join(", "), value.1);
+            return Ok(value.clone())
+        }
     }
 
     let block_difficulty = if let Some(diff) = block_difficulty {
@@ -826,24 +838,39 @@ where
         block_hash, score, blue_set.len());
 
     // save this result in cache
-    cache.put((block_hash.clone(), base_block.clone(), base_block_height), (blue_set.clone(), score));
+    {
+        let chain_cache = provider.chain_cache().await;
+        let mut cache = chain_cache.tip_work_score_cache.lock().await;
+        cache.put(cache_key, (blue_set.clone(), score));
+    }
 
     Ok((blue_set, score))
 }
 
 // find the best tip (highest cumulative difficulty)
 // We get their cumulative difficulty and sort them then take the first one
-pub async fn find_best_tip<'a, P: DifficultyProvider + DagOrderProvider + CacheProvider>(provider: &P, tips: &'a HashSet<Hash>, base: &Hash, base_height: u64) -> Result<&'a Hash, BlockchainError> {
+pub async fn find_best_tip<'a, P: DifficultyProvider + DagOrderProvider + CacheProvider + Send + Sync>(
+    provider: &P,
+    tips: &'a HashSet<Hash>,
+    base: &Hash,
+    base_height: u64,
+    concurrency: usize
+) -> Result<&'a Hash, BlockchainError> {
     if tips.len() == 0 {
         return Err(BlockchainError::ExpectedTips)
     }
 
-    let mut scores = Vec::with_capacity(tips.len());
-    for hash in tips {
-        let block_tips = provider.get_past_blocks_for_block_hash(hash).await?;
-        let (_, cumulative_difficulty) = find_tip_work_score(provider, hash, &block_tips, None, base, base_height).await?;
-        scores.push((hash, cumulative_difficulty));
-    }
+    let mut scores = stream::iter(tips.iter())
+        .map(|hash| async move {
+            let block_tips = provider.get_past_blocks_for_block_hash(hash).await?;
+            let (_, cumulative_difficulty) = find_tip_work_score(provider, hash, &block_tips, None, base, base_height).await?;
+
+            Ok::<_, BlockchainError>((hash, cumulative_difficulty))
+        })
+        .boxed()
+        .buffer_unordered(concurrency)
+        .try_collect()
+        .await?;
 
     sort_descending_by_cumulative_difficulty(&mut scores);
     let (best_tip, _) = scores[0];

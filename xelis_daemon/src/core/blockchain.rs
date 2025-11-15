@@ -465,26 +465,31 @@ impl<S: Storage> Blockchain<S> {
         Ok(arc)
     }
 
+    #[inline]
     pub fn concurrency_limit(&self) -> usize {
         self.concurrency
     }
 
     // Detect if the simulator task has been started
+    #[inline]
     pub fn is_simulator_enabled(&self) -> bool {
         self.simulator.is_some()
     }
 
     // Skip PoW verification flag
+    #[inline]
     pub fn skip_pow_verification(&self) -> bool {
         self.skip_pow_verification
     }
 
     // get the environment stdlib for contract execution
+    #[inline]
     pub fn get_contract_environment(&self) -> &Environment<ContractMetadata> {
         &self.environment
     }
 
     // Get the configured threads count for TXS
+    #[inline]
     pub fn get_txs_verification_threads_count(&self) -> usize {
         self.txs_verification_threads_count
     }
@@ -2028,7 +2033,7 @@ impl<S: Storage> Blockchain<S> {
 
         let (base_hash, base_height) = blockdag::find_common_base(&*storage, &tips).await?;
         debug!("New base hash: {}, height: {}", base_hash, base_height);
-        let best_tip = blockdag::find_best_tip(&*storage, &tips, &base_hash, base_height).await?;
+        let best_tip = blockdag::find_best_tip(&*storage, &tips, &base_hash, base_height, self.concurrency).await?;
         debug!("Best tip selected: {}", best_tip);
 
         let base_topo_height = storage.get_topo_height_for_hash(&base_hash).await?;
