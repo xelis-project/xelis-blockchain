@@ -1396,7 +1396,7 @@ async fn deploy_contract(manager: &CommandManager, mut args: ArgumentManager) ->
 
     let module = Module::from_hex(&module_hex).context("Invalid module hex")?; 
     let invoke = if module.get_chunk_id_of_hook(HOOK_CONSTRUCTOR_ID).is_some() {
-        manager.message("Module contains a constructor hook, deployment aborted");
+        manager.message("Module contains a constructor hook");
 
         let max_gas = if args.has_argument("max_gas") {
             args.get_value("max_gas")?.to_number()?
