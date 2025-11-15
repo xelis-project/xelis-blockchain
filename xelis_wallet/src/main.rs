@@ -1401,9 +1401,7 @@ async fn deploy_contract(manager: &CommandManager, mut args: ArgumentManager) ->
         let max_gas = if args.has_argument("max_gas") {
             args.get_value("max_gas")?.to_number()?
         } else {
-            prompt.read(
-                prompt.colorize_string(Color::Green, "Max gas for constructor invocation: ")
-            ).await.context("Error while reading max gas")?
+            read_asset_amount(prompt, wallet, &XELIS_ASSET).await?.0
         };
 
         let mut deposits = IndexMap::new();
