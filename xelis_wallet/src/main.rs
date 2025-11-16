@@ -15,7 +15,8 @@ use xelis_common::{
     asset::AssetData,
     config::{
         init,
-        XELIS_ASSET
+        XELIS_ASSET,
+        MAX_GAS_USAGE_PER_TX
     },
     crypto::{
         Address,
@@ -1186,7 +1187,7 @@ async fn read_asset_amount(prompt: &Prompt, wallet: &Wallet, asset: &Hash) -> Re
     };
 
     let amount_str = prompt.read_input(
-            prompt.colorize_string(Color::Green, &format!("Amount (max: {}): ", format_coin(max_balance, asset.get_decimals()))),
+            prompt.colorize_string(Color::Green, &format!("Amount (max: {} {}): ", format_coin(max_balance, asset.get_decimals()), asset.get_ticker())),
             false,
         )
         .await
@@ -1401,13 +1402,26 @@ async fn deploy_contract(manager: &CommandManager, mut args: ArgumentManager) ->
         let max_gas = if args.has_argument("max_gas") {
             args.get_value("max_gas")?.to_number()?
         } else {
+            manager.message("Invoking the constructor require some gas fee.");
+            manager.message("Maximum gas you are willing to pay for the constructor invocation.");
+            manager.message("If the constructor uses more gas than this value, the deployment will fail.");
+            manager.message("If you allocate too much gas, it will be refunded to your account.");
+            manager.message("Please enter the maximum gas you are willing to pay for the constructor invocation.");
+            manager.message(format!("Maximum gas per transaction is set to {} XELIS, you cannot exceed this value.", format_xelis(MAX_GAS_USAGE_PER_TX)));
             read_asset_amount(prompt, wallet, &XELIS_ASSET).await?.0
         };
 
         let mut deposits = IndexMap::new();
+        let mut first = true;
+
         loop {
+            let msg = if first {
+                "Do you want to add a deposit for the constructor? (Y/N): "
+            } else {
+                "Do you want to add another deposit for the constructor? (Y/N): "
+            };
             let add_deposit = prompt.read_valid_str_value(
-                    "Do you want to add a deposit for the constructor? (Y/N): ".to_owned(),
+                    msg.to_owned(),
                     &["y", "n"],
                 )
                 .await
@@ -1417,15 +1431,41 @@ async fn deploy_contract(manager: &CommandManager, mut args: ArgumentManager) ->
                 break;
             }
 
-            let asset = read_asset_name(&prompt, wallet).await?;
-            let (amount, asset_data) = read_asset_amount(&prompt, wallet, &asset).await?;
+            first = false;
 
+            let asset = read_asset_name(&prompt, wallet).await?;
+            if deposits.contains_key(&asset) {
+                // ask if he want to overwrite it
+                manager.message("Deposit for this asset already exists for the constructor.");
+                let overwrite = prompt.read_valid_str_value(
+                        "Do you want to overwrite it? (Y/N): ".to_owned(),
+                        &["y", "n"],
+                    )
+                    .await
+                    .context("Error while asking confirmation")? == "y";
+                if !overwrite {
+                    continue;
+                }
+            }
+
+            let (amount, asset_data) = read_asset_amount(&prompt, wallet, &asset).await?;
             manager.message(format!("Adding deposit of {} of {} ({})", format_coin(amount, asset_data.get_decimals()), asset_data.get_name(), asset));
 
             deposits.insert(asset, ContractDepositBuilder {
                 amount,
                 private: false,
             });
+        }
+
+        if deposits.is_empty() {
+            manager.message("No deposits added for the constructor.");
+        } else {
+            manager.message(format!("Total {} deposits added for the constructor.", deposits.len()));
+            let storage = wallet.get_storage().read().await;
+            for (asset, deposit) in deposits.iter() {
+                let asset_data = storage.get_asset(&asset).await?;
+                manager.message(format!("- {} of {} ({})", format_coin(deposit.amount, asset_data.get_decimals()), asset_data.get_name(), asset));
+            }
         }
 
         Some(DeployContractInvokeBuilder {
