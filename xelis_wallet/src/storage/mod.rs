@@ -728,15 +728,17 @@ impl EncryptedStorage {
     // Search a tracked asset by its name OR ticker
     pub async fn search_tracked_asset_with(&self, name: &str) -> Result<Option<Hash>> {
         trace!("get asset by name");
-        let cache = self.assets_cache.lock().await;
         let mut res = None;
-
-        // Ticker is always uppercase
-        let upper_name = name.to_uppercase();
-        for (asset, (data, tracked)) in cache.iter() {
-            if *tracked && (data.get_name() == name || data.get_ticker() == upper_name) {
-                res = Some(asset.clone());
-                break;
+        {
+            let cache = self.assets_cache.lock().await;
+    
+            // Ticker is always uppercase
+            let upper_name = name.to_uppercase();
+            for (asset, (data, tracked)) in cache.iter() {
+                if *tracked && (data.get_name() == name || data.get_ticker() == upper_name) {
+                    res = Some(asset.clone());
+                    break;
+                }
             }
         }
 
