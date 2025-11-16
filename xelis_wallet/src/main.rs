@@ -16,7 +16,8 @@ use xelis_common::{
     config::{
         init,
         XELIS_ASSET,
-        MAX_GAS_USAGE_PER_TX
+        MAX_GAS_USAGE_PER_TX,
+        BURN_PER_CONTRACT
     },
     crypto::{
         Address,
@@ -438,6 +439,7 @@ async fn setup_wallet_command_manager(wallet: Arc<Wallet>, command_manager: &Com
             Arg::new("module", ArgType::String),
             Arg::new("version", ArgType::String),
             Arg::new("max_gas", ArgType::Number),
+            Arg::new("confirm", ArgType::Bool)
         ],
         CommandHandler::Async(async_handler!(deploy_contract))
     ))?;
@@ -1476,12 +1478,20 @@ async fn deploy_contract(manager: &CommandManager, mut args: ArgumentManager) ->
         None
     };
 
+    manager.message(format!("Deploy a contract on the chain cost {} XELIS", format_xelis(BURN_PER_CONTRACT)));
+    manager.message("Do you want to continue?");
+    if !args.get_flag("confirm")? && !prompt.ask_confirmation().await.context("Error while confirming action")? {
+        manager.message("Transaction has been aborted");
+        return Ok(())
+    }
+
     manager.message("Building transaction...");
     let tx_type = TransactionTypeBuilder::DeployContract(DeployContractBuilder {
         module: module_hex,
         contract_version,
         invoke,
     });
+
     let tx = create_transaction_with_multisig(manager, &prompt, wallet, tx_type).await?;
 
     broadcast_tx(wallet, manager, tx).await;
