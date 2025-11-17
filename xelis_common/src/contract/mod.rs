@@ -513,6 +513,14 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, C
             10,
             Some(ristretto_type.clone())
         );
+        env.register_native_function(
+            "to_string",
+            Some(address_type.clone()),
+            vec![],
+            FunctionHandler::Sync(address_to_string),
+            20,
+            Some(Type::String)
+        );
         env.register_static_function(
             "from_string",
             address_type.clone(),

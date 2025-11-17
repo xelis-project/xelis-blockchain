@@ -56,6 +56,12 @@ pub fn address_to_point(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, _
     Ok(SysCallResult::Return(OpaqueRistrettoPoint::Compressed(point).into()))
 }
 
+pub fn address_to_string(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {
+    let zelf = zelf?;
+    let address: &Address = zelf.as_opaque_type()?;
+    Ok(SysCallResult::Return(Primitive::String(address.to_string()).into()))
+}
+
 pub fn address_from_string(_: FnInstance, mut params: FnParams, _: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {
     let param = params.remove(0)
         .into_owned();
