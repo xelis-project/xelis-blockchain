@@ -518,7 +518,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, C
             Some(address_type.clone()),
             vec![],
             FunctionHandler::Sync(address_to_string),
-            20,
+            100,
             Some(Type::String)
         );
         env.register_static_function(
@@ -526,7 +526,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, C
             address_type.clone(),
             vec![("address", Type::String)],
             FunctionHandler::Sync(address_from_string),
-            75,
+            350,
             Some(address_type.clone())
         );
         env.register_static_function(

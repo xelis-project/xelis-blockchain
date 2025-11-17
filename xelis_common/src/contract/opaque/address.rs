@@ -12,7 +12,7 @@ use xelis_vm::{
 };
 use crate::{
     contract::{ContractMetadata, ModuleMetadata, OpaqueRistrettoPoint},
-    crypto::Address
+    crypto::{Address, NORMAL_ADDRESS_LEN}
 };
 
 use super::{Serializer, Writer, ADDRESS_OPAQUE_ID};
@@ -66,6 +66,10 @@ pub fn address_from_string(_: FnInstance, mut params: FnParams, _: &ModuleMetada
     let param = params.remove(0)
         .into_owned();
     let string = param.as_string()?;
+
+    if string.len() > NORMAL_ADDRESS_LEN {
+        return Err(EnvironmentError::InvalidParameter);
+    }
 
     let address = Address::from_string(string)
         .map_err(|_| EnvironmentError::InvalidParameter)?;
