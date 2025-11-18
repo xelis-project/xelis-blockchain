@@ -11,10 +11,11 @@ use xelis_common::{
     immutable::Immutable,
     versioned_type::State,
     asset::VersionedAssetData,
+    serializer::Serializer,
 };
 
 use crate::{
-    config::{DEV_PUBLIC_KEY, PRUNE_SAFETY_LIMIT},
+    config::{DEV_PUBLIC_KEY, PRUNE_SAFETY_LIMIT, PEER_MAX_PACKET_SIZE},
     core::{
         error::BlockchainError,
         storage::{
@@ -325,27 +326,47 @@ impl<S: Storage> P2pServer<S> {
                 };
                 StepResponse::ContractBalances(balances, page)
             },
-            StepRequest::ContractStores(contract, topoheight, page) => {
-                let page_id = page.unwrap_or(0);
-                // Skip will skip only the N results
-                // So they are still computing! We must find a better way to scale better
-                // if we have millions of entries
-                // Example: a cursor?
-                // Also, what about the order being broken
-                // All DB preserve an order based on the key endian, not on insertion order
-                // Because our chain keeps growing what if a smart contract store a new key
-                // that is at the beginning and that we missed? We would break our order
-                // Fortunately, if this happen, we don't care about that missed key because we
-                // sync against a specific topoheight point, but it will slowdown the sync due to
-                // duplicated entries received as the order is being moved
+            StepRequest::ContractStores(contract, topoheight, skip) => {
+                // Calculate the maximum allowed packet size (minus overhead)
+                const MAX_RESPONSE_SIZE: usize = (PEER_MAX_PACKET_SIZE - 40) as usize;
+
                 let stream = storage.get_contract_data_entries_at_maximum_topoheight(&contract, topoheight).await?
-                    .skip(page_id as usize * MAX_ITEMS_PER_PAGE)
-                    .take(MAX_ITEMS_PER_PAGE);
+                    .skip(skip as usize);
 
-                let entries = stream.boxed()
-                    .try_collect().await?;
+                let mut stream = stream.boxed();
+                let mut entries = IndexMap::new();
+                let mut current_size = 0usize;
+                let mut processed_count = 0u64;
 
-                StepResponse::ContractStores(entries, page)
+                // Base size: 8 byte (response id) + 2 bytes (entries count) + 8 bytes (next_skip)
+                let base_overhead = 8 + 2 + 8;
+                current_size += base_overhead;
+
+                // Dynamically add entries until we approach the size limit
+                while let Some(result) = stream.next().await {
+                    let (key, value) = result?;
+
+                    // Calculate the size this entry would add
+                    let entry_size = key.size() + value.size();
+
+                    // Check if adding this entry would exceed our limit
+                    if current_size + entry_size > MAX_RESPONSE_SIZE {
+                        break;
+                    }
+                    
+                    current_size += entry_size;
+                    entries.insert(key, value);
+                    processed_count += 1;
+                }
+
+                // Calculate next skip value (0 means no more data)
+                let next_skip = if processed_count > 0 && stream.next().await.transpose()?.is_some() {
+                    skip + processed_count
+                } else {
+                    0
+                };
+
+                StepResponse::ContractStores(entries, next_skip)
             },
             StepRequest::ContractsExecutions(min, max, page) => {
                 let page = page.unwrap_or(0);
@@ -963,23 +984,27 @@ impl<S: Storage> P2pServer<S> {
 
     // Request every entries available from the contract storage
     async fn handle_contract_stores(&self, peer: &Arc<Peer>, contract: &Hash, stable_topoheight: u64) -> Result<(), P2pError> {
-        let mut next_page = None;
+        let mut skip = 0u64;
         loop {
-            let StepResponse::ContractStores(entries, page) = peer.request_boostrap_chain(StepRequest::ContractStores(Cow::Borrowed(&contract), stable_topoheight, next_page)).await? else {
+            let StepResponse::ContractStores(entries, next_skip) = peer.request_boostrap_chain(StepRequest::ContractStores(Cow::Borrowed(&contract), stable_topoheight, skip)).await? else {
                 // shouldn't happen
                 error!("Received an invalid StepResponse (how ?) while fetching contract stores");
                 return Err(P2pError::InvalidPacket.into())
             };
 
+            let entries_count = entries.len();
             let mut storage = self.blockchain.get_storage().write().await;
             for (key, value) in entries {
                 storage.set_last_contract_data_to(contract, &key, stable_topoheight, &VersionedContractData::new(Some(value), None)).await?;
             }
 
-            next_page = page;
-            if next_page.is_none() {
+            // If next_skip is 0, we're done (no more data)
+            if next_skip == 0 {
+                debug!("Finished fetching contract stores for {}, total entries: {}", contract, skip + entries_count as u64);
                 break;
             }
+
+            skip = next_skip;
         }
 
         Ok(())
