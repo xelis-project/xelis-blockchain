@@ -72,6 +72,9 @@ struct NodeHeader {
     right: Option<u64>,
 }
 
+mod record;
+use record::{read_node_header_from_reader, NodeRecord};
+
 pub(crate) struct TreeContext<'ctx, 'ty, P: ContractProvider> {
     storage: &'ctx P,
     state: &'ctx mut ChainState<'ty>,
@@ -154,22 +157,22 @@ impl Node {
     }
     fn to_value(&self) -> ValueCell { ValueCell::Bytes(self.to_bytes()) }
     fn to_bytes(&self) -> Vec<u8> {
-        debug_assert!(self.key.len() <= u32::MAX as usize);
-        let mut bytes = Vec::with_capacity(8 * 3 + 4 + self.key.len() + self.value.size());
-        let mut w = Writer::new(&mut bytes);
-        w.write_u64(self.parent.unwrap_or(0));
-        w.write_u64(self.left.unwrap_or(0));
-        w.write_u64(self.right.unwrap_or(0));
-        w.write_u32(self.key.len() as u32);
-        w.write_bytes(&self.key);
-        self.value.write(&mut w);
+        let record: NodeRecord = self.into();
+        let mut bytes = Vec::with_capacity(record.size());
+        {
+            let mut writer = Writer::new(&mut bytes);
+            record.write(&mut writer);
+        }
         bytes
     }
     fn from_value(id: u64, value: &ValueCell) -> Result<Self, EnvironmentError> {
-        let (h, v) = decode_header_and_maybe_value(id, value, true)?;
-        Ok(Self {
-            id: h.id, key: h.key, value: v.unwrap(), parent: h.parent, left: h.left, right: h.right,
-        })
+        let bytes = match value {
+            ValueCell::Bytes(bytes) => bytes,
+            _ => return Err(EnvironmentError::Static(ERR_NODE_ENC)),
+        };
+        let mut reader = Reader::new(bytes);
+        let record = NodeRecord::read(&mut reader).map_err(reader_error)?;
+        Ok(record.into_node(id))
     }
 }
 
@@ -180,13 +183,7 @@ fn decode_header_and_maybe_value(
 ) -> Result<(NodeHeader, Option<ValueCell>), EnvironmentError> {
     let bytes = match cell { ValueCell::Bytes(bytes) => bytes, _ => return Err(EnvironmentError::Static(ERR_NODE_ENC)) };
     let mut r = Reader::new(bytes);
-    let parent = decode_ptr(r.read_u64().map_err(reader_error)?) ;
-    let left   = decode_ptr(r.read_u64().map_err(reader_error)?) ;
-    let right  = decode_ptr(r.read_u64().map_err(reader_error)?) ;
-    let key_len = r.read_u32().map_err(reader_error)? as usize;
-    let key = r.read_bytes_ref(key_len).map_err(reader_error)?.to_vec();
-
-    let header = NodeHeader { id, key, parent, left, right };
+    let header = read_node_header_from_reader(&mut r, id).map_err(reader_error)?;
 
     if with_value {
         let node_value = ValueCell::read(&mut r).map_err(reader_error)?;
