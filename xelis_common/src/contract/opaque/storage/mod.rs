@@ -36,7 +36,8 @@ pub use read_only::*;
 pub struct OpaqueStorage;
 
 // Maximum size of a value in the storage
-pub const MAX_VALUE_SIZE: usize = 4096;
+// We allow up to 32 KiB values
+pub const MAX_VALUE_SIZE: usize = 32 * 1024;
 
 // Maximum size of a key in the storage
 pub const MAX_KEY_SIZE: usize = 256;
