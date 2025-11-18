@@ -340,6 +340,7 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
     command_manager.add_command(Command::with_optional_arguments("export_json_config", "Export the current config in JSON", vec![Arg::new("filename", ArgType::String)], CommandHandler::Async(async_handler!(export_json_config::<S>))))?;
     command_manager.add_command(Command::new("broadcast_txs", "Broadcast all TXs in mempool if not done", CommandHandler::Async(async_handler!(broadcast_txs::<S>))))?;
     command_manager.add_command(Command::new("snapshot_mode", "Force to be in snapshot mode (memory only)", CommandHandler::Async(async_handler!(snapshot_mode::<S>))))?;
+    command_manager.add_command(Command::with_optional_arguments("inspect_contract", "Inspect a smart contract by its hash", vec![Arg::new("hash", ArgType::Hash)], CommandHandler::Async(async_handler!(inspect_contract::<S>))))?;
 
     // Don't keep the lock for ever
     let p2p = {
@@ -1097,6 +1098,49 @@ async fn clear_mempool<S: Storage>(manager: &CommandManager, _: ArgumentManager)
     let mut mempool = blockchain.get_mempool().write().await;
     mempool.clear();
     info!("Mempool cleared");
+
+    Ok(())
+}
+
+async fn inspect_contract<S: Storage>(manager: &CommandManager, mut arguments: ArgumentManager) -> Result<(), CommandError> {
+    let context = manager.get_context().lock()?;
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    let storage = blockchain.get_storage().read().await;
+    let topoheight = storage.chain_cache().await.topoheight;
+
+    let contract = if arguments.has_argument("contract") {
+        arguments.get_value("contract")?.to_hash()?
+    } else {
+        manager.get_prompt()
+            .read_hash("Contract: ").await
+            .context("Error while reading contract address")?
+    };
+
+    let (topo, data) = storage.get_contract_at_maximum_topoheight_for(&contract, topoheight).await
+        .context("Error while retrieving contract")?
+        .context("No contract found")?;
+
+    let module = match data.take() {
+        Some(contract) => contract,
+        None => {
+            manager.message("Contract has been deleted");
+            return Ok(());
+        }
+    };
+
+    manager.message(format!("Contract {} deployed at topoheight {}", contract, topo));
+    manager.message(format!("- Version: {}", module.version));
+    manager.message(format!("- Bytecode size: {}", human_bytes(module.module.size() as f64)));
+    manager.message(format!("- Storage entries:"));
+
+    let stream = storage.get_contract_data_entries_at_maximum_topoheight(&contract, topoheight).await
+        .context("Error while retrieving contract data entries")?;
+
+    let mut stream = stream.boxed();
+    while let Some(res) = stream.next().await {
+        let (key, value) = res.context("Error on contract data entry")?;
+        manager.message(format!("  - {}: {}", key, value));
+    }
 
     Ok(())
 }

@@ -3,7 +3,7 @@ use futures::{stream, Stream, StreamExt};
 use log::trace;
 use xelis_common::{
     block::TopoHeight,
-    crypto::{hash, Hash},
+    crypto::Hash,
     serializer::Serializer,
 };
 use xelis_vm::ValueCell;
@@ -19,16 +19,16 @@ impl ContractDataProvider for SledStorage {
         let versioned_key = self.get_versioned_contract_data_key(contract, key, topoheight);
         Self::insert_into_disk(self.snapshot.as_mut(), &self.versioned_contracts_data, &versioned_key, data.to_bytes())?;
 
-        let hash = self.get_contract_data_key(key, contract);
-        Self::insert_into_disk(self.snapshot.as_mut(), &self.contracts_data, hash.as_bytes(), &topoheight.to_be_bytes())?;
+        let key = self.get_contract_data_key(contract, key);
+        Self::insert_into_disk(self.snapshot.as_mut(), &self.contracts_data, &key, &topoheight.to_be_bytes())?;
 
         Ok(())
     }
 
     async fn get_last_topoheight_for_contract_data(&self, contract: &Hash, key: &ValueCell) -> Result<Option<TopoHeight>, BlockchainError> {
         trace!("get last topoheight for contract data");
-        let hash = self.get_contract_data_key(key, contract);
-        self.load_optional_from_disk(&self.contracts_data, hash.as_bytes())
+        let key = self.get_contract_data_key(contract, key);
+        self.load_optional_from_disk(&self.contracts_data, &key)
     }
 
     async fn get_contract_data_at_exact_topoheight_for<'a>(&self, contract: &Hash, key: &ValueCell, topoheight: TopoHeight) -> Result<VersionedContractData, BlockchainError> {
@@ -101,21 +101,18 @@ impl ContractDataProvider for SledStorage {
 }
 
 impl SledStorage {
-    pub fn get_versioned_contract_data_key(&self, contract: &Hash, key: &ValueCell, topoheight: TopoHeight) -> [u8; 40] {
-        let mut buffer = [0u8; 40];
-        buffer[..8].copy_from_slice(&topoheight.to_be_bytes());
-        buffer[8..].copy_from_slice(self.get_contract_data_key(key, contract).as_bytes());
+    pub fn get_versioned_contract_data_key(&self, contract: &Hash, key: &ValueCell, topoheight: TopoHeight) -> Vec<u8> {
+        let mut buffer = Vec::new();
+        buffer.extend_from_slice(&topoheight.to_be_bytes());
+        buffer.extend_from_slice(&self.get_contract_data_key(contract, key));
         buffer
     }
 
-    pub fn get_versioned_contract_data_key_from_hash(&self, hash: &Hash, topoheight: TopoHeight) -> [u8; 40] {
-        let mut buffer = [0u8; 40];
-        buffer[..8].copy_from_slice(&topoheight.to_be_bytes());
-        buffer[8..].copy_from_slice(hash.as_bytes());
-        buffer
-    }
+    pub fn get_contract_data_key(&self, contract: &Hash, key: &ValueCell) -> Vec<u8> {
+        let mut buffer = Vec::new();
+        buffer.extend_from_slice(contract.as_bytes());
+        buffer.extend_from_slice(&key.to_bytes());
 
-    pub fn get_contract_data_key(&self, constant: &ValueCell, contract: &Hash) -> Hash {
-        hash(&[constant.to_bytes(), contract.to_bytes()].concat())
+        buffer
     }
 }
