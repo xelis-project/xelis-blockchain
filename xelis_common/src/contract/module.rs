@@ -1,4 +1,4 @@
-use std::{str::FromStr, sync::Arc};
+use std::{fmt, str::FromStr, sync::Arc};
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -30,6 +30,14 @@ pub struct ContractModule {
     pub version: ContractVersion,
     // keep it behind Arc to reduce cloning overhead
     pub module: Arc<Module>,
+}
+
+impl fmt::Display for ContractVersion {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ContractVersion::V0 => write!(f, "v0"),
+        }
+    }
 }
 
 impl Serializer for ContractVersion {
