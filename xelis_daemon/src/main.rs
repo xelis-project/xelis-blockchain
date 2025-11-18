@@ -341,6 +341,7 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
     command_manager.add_command(Command::new("broadcast_txs", "Broadcast all TXs in mempool if not done", CommandHandler::Async(async_handler!(broadcast_txs::<S>))))?;
     command_manager.add_command(Command::new("snapshot_mode", "Force to be in snapshot mode (memory only)", CommandHandler::Async(async_handler!(snapshot_mode::<S>))))?;
     command_manager.add_command(Command::with_optional_arguments("inspect_contract", "Inspect a smart contract by its hash", vec![Arg::new("hash", ArgType::Hash)], CommandHandler::Async(async_handler!(inspect_contract::<S>))))?;
+    command_manager.add_command(Command::new("show_mempool", "Show all transactions in mempool", CommandHandler::Async(async_handler!(show_mempool::<S>))))?;
 
     // Don't keep the lock for ever
     let p2p = {
@@ -715,6 +716,19 @@ async fn export_json_config<S: Storage>(manager: &CommandManager, mut args: Argu
         .context("Error while flushing config file")?;
 
     manager.message(format!("Config exported to {}", path));
+
+    Ok(())
+}
+
+async fn show_mempool<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
+    let context = manager.get_context().lock()?;
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    let mempool = blockchain.get_mempool().read().await;
+
+    manager.message(format!("Mempool: {} transactions", mempool.get_txs().iter().len()));
+    for (hash, tx) in mempool.get_txs() {
+        manager.message(format!("- {}: {} XEL fee for {}", hash, format_xelis(tx.get_fee()), human_bytes(tx.get_size() as f64)));
+    }
 
     Ok(())
 }
