@@ -247,6 +247,20 @@ async fn read_next_id(
     super::read_next_id(&mut ctx).await
 }
 
+#[test]
+fn btree_header_matches_full_node_layout() {
+    let node = Node::new(1, b"k".to_vec(), ValueCell::from(Primitive::U64(7)), Some(2));
+    let bytes = node.to_bytes();
+    let value = ValueCell::Bytes(bytes);
+    let hdr = super::node_header_from_value(1, &value).expect("header decode");
+    let full = Node::from_value(1, &value).expect("full decode");
+    assert_eq!(hdr.id, full.id);
+    assert_eq!(hdr.key, full.key);
+    assert_eq!(hdr.parent, full.parent);
+    assert_eq!(hdr.left, full.left);
+    assert_eq!(hdr.right, full.right);
+}
+
 #[tokio::test(flavor = "current_thread")]
 async fn btree_insert_get_delete_roundtrip() {
     let contract = Hash::zero();
@@ -377,17 +391,14 @@ async fn btree_cursor_scans_random_u64s_in_order() {
         contract: contract.clone(),
         namespace: store.namespace.clone(),
         current_node: Some(start_node.id),
-        cached_key: Some(start_node.key.clone()),
         cached_value: Some(start_node.value.clone()),
     };
 
     let mut observed = Vec::new();
     while let Some(current_id) = cursor.current_node {
         refresh_cursor_cache(&mut cursor, &provider, &mut state).await.unwrap();
-        let cached_key = cursor.cached_key.as_ref().expect("cached key");
-        let mut arr = [0u8; 8];
-        arr.copy_from_slice(cached_key);
-        let key = u64::from_be_bytes(arr);
+        let node = read_node(&provider, &mut state, &contract, &store.namespace, current_id).await.unwrap().unwrap();
+        let key = u64::from_be_bytes(node.key[..8].try_into().unwrap());
         let value = cursor.cached_value.as_ref().expect("cached value").as_u64().unwrap();
         observed.push((key, value));
         cursor.current_node = successor(&provider, &mut state, &contract, &store.namespace, current_id).await.unwrap();
@@ -465,7 +476,6 @@ async fn btree_cursor_scans_duplicate_bucket() {
         contract: contract.clone(),
         namespace: store.namespace.clone(),
         current_node: Some(first.id),
-        cached_key: Some(first.key.clone()),
         cached_value: Some(first.value.clone()),
     };
 
@@ -483,7 +493,6 @@ async fn btree_cursor_scans_duplicate_bucket() {
             break;
         }
         cursor.current_node = Some(next_id);
-        cursor.cached_key = Some(next_node.key.clone());
         cursor.cached_value = Some(next_node.value.clone());
     }
 
@@ -518,10 +527,12 @@ async fn btree_delete_root_with_two_children_promotes_successor() {
     assert_eq!(removed.unwrap().as_u64().unwrap(), 400);
     assert!(find_key(&provider, &mut state, &contract, &store, &40u64.to_be_bytes()).await.unwrap().is_none());
 
+    // Treap rotations may choose a different node as the root compared to the original unbalanced
+    // implementation, but the deleted key must be gone and the remaining keys must stay ordered.
     let root_id = read_root_id(&provider, &mut state, &contract, &store.namespace).await.unwrap();
+    assert_ne!(root_id, 0);
     let root = read_node(&provider, &mut state, &contract, &store.namespace, root_id).await.unwrap().unwrap();
-    assert_eq!(root.key, 50u64.to_be_bytes().to_vec());
-    assert_eq!(root.value.as_u64().unwrap(), 500);
+    assert_ne!(root.key, 40u64.to_be_bytes().to_vec());
 
     // Remaining nodes still searchable
     assert_eq!(
@@ -530,6 +541,10 @@ async fn btree_delete_root_with_two_children_promotes_successor() {
             .as_u64()
             .unwrap(),
         500
+    );
+    assert_eq!(
+        collect_values_in_order(&provider, &mut state, &contract, &store.namespace).await,
+        vec![200, 500, 600]
     );
 }
 
@@ -566,6 +581,81 @@ async fn btree_seek_handles_missing_key_biases() {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn btree_seek_equal_strict_bias_uses_ancestors() {
+    // Shape:     20
+    //           /  \
+    //         10    30
+    //              /
+    //             25
+    //
+    // For key==25:
+    //   - Greater  -> 30 (ancestor path)
+    //   - Less     -> 20 (ancestor path)
+    // For edges:
+    //   - key==30, Greater -> None
+    //   - key==10, Less    -> None
+    let contract = Hash::zero();
+    let provider = MockProvider::default();
+    let mut state = test_chain_state(contract.clone());
+    let store = OpaqueBTreeStore { namespace: b"seek_equal".to_vec() };
+
+    for (k, v) in [20u64, 10, 30, 25].into_iter().map(|k| (k, k * 10)) {
+        insert_key(
+            &provider,
+            &mut state,
+            &contract,
+            &store,
+            k.to_be_bytes().to_vec(),
+            ValueCell::from(Primitive::U64(v)),
+        ).await.unwrap();
+    }
+
+    // Strict Greater on exact hit with no right subtree must use ancestor
+    let gt = seek_node(
+        &provider,
+        &mut state,
+        &contract,
+        &store,
+        &25u64.to_be_bytes(),
+        BTreeSeekBias::Greater,
+    ).await.unwrap();
+    assert_eq!(gt.unwrap().value.as_u64().unwrap(), 300);
+
+    // Strict Less on exact hit with no left subtree must use ancestor
+    let lt = seek_node(
+        &provider,
+        &mut state,
+        &contract,
+        &store,
+        &25u64.to_be_bytes(),
+        BTreeSeekBias::Less,
+    ).await.unwrap();
+    assert_eq!(lt.unwrap().value.as_u64().unwrap(), 200);
+
+    // Edge: max element, Greater -> None
+    let gt_max = seek_node(
+        &provider,
+        &mut state,
+        &contract,
+        &store,
+        &30u64.to_be_bytes(),
+        BTreeSeekBias::Greater,
+    ).await.unwrap();
+    assert!(gt_max.is_none());
+
+    // Edge: min element, Less -> None
+    let lt_min = seek_node(
+        &provider,
+        &mut state,
+        &contract,
+        &store,
+        &10u64.to_be_bytes(),
+        BTreeSeekBias::Less,
+    ).await.unwrap();
+    assert!(lt_min.is_none());
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn btree_cursor_key_value_and_exhaustion() {
     let contract = Hash::zero();
     let provider = MockProvider::default();
@@ -596,15 +686,12 @@ async fn btree_cursor_key_value_and_exhaustion() {
         contract: contract.clone(),
         namespace: store.namespace.clone(),
         current_node: Some(cursor.id),
-        cached_key: Some(cursor.key.clone()),
         cached_value: Some(cursor.value.clone()),
     };
 
     // Key/value come from cached data
-    assert_eq!(cursor.cached_key.as_ref().unwrap(), &4u64.to_be_bytes().to_vec());
     assert_eq!(cursor.cached_value.as_ref().unwrap().as_u64().unwrap(), 20);
 
-    cursor.cached_key = None;
     cursor.cached_value = None;
     refresh_cursor_cache(&mut cursor, &provider, &mut state).await.unwrap();
     assert_eq!(cursor.cached_value.as_ref().unwrap().as_u64().unwrap(), 20);
@@ -613,11 +700,12 @@ async fn btree_cursor_key_value_and_exhaustion() {
     refresh_cursor_cache(&mut cursor, &provider, &mut state).await.unwrap();
     assert_eq!(cursor.cached_value.as_ref().unwrap().as_u64().unwrap(), 30);
 
-    assert!(cursor.cached_key.is_some());
+    assert!(cursor.cached_value.is_some());
 
     cursor.current_node = successor(&provider, &mut state, &contract, &store.namespace, cursor.current_node.unwrap()).await.unwrap();
     refresh_cursor_cache(&mut cursor, &provider, &mut state).await.unwrap();
-    assert!(cursor.cached_key.is_none());
+    assert!(cursor.cached_value.is_none());
+    assert!(cursor.current_node.is_none());
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -651,21 +739,21 @@ async fn btree_cursor_allows_deleting_during_scan() {
         contract: contract.clone(),
         namespace: store.namespace.clone(),
         current_node: Some(cursor_node.id),
-        cached_key: Some(cursor_node.key.clone()),
         cached_value: Some(cursor_node.value.clone()),
     };
 
     let mut outputs = Vec::new();
     loop {
-        if let Some(key) = cursor.cached_key.clone() {
-            outputs.push(u64::from_be_bytes(key[..8].try_into().unwrap()));
-            delete_key(&provider, &mut state, &contract, &store, &key).await.unwrap();
-        }
+        let Some(current_id) = cursor.current_node else { break; };
+        let node = read_node(&provider, &mut state, &contract, &store.namespace, current_id).await.unwrap().unwrap();
+        let key_bytes = node.key;
+        outputs.push(u64::from_be_bytes(key_bytes[..8].try_into().unwrap()));
+        delete_key(&provider, &mut state, &contract, &store, &key_bytes).await.unwrap();
 
         refresh_cursor_cache(&mut cursor, &provider, &mut state).await.unwrap();
-        let Some(current_id) = cursor.current_node else {
+        if cursor.current_node.is_none() {
             break;
-        };
+        }
 
         cursor.current_node = successor(&provider, &mut state, &contract, &store.namespace, current_id).await.unwrap();
         refresh_cursor_cache(&mut cursor, &provider, &mut state).await.unwrap();
@@ -711,7 +799,6 @@ async fn btree_cursor_deletes_all_keys_during_scan() {
         contract: contract.clone(),
         namespace: store.namespace.clone(),
         current_node: Some(cursor_node.id),
-        cached_key: Some(cursor_node.key.clone()),
         cached_value: Some(cursor_node.value.clone()),
     };
 
@@ -722,17 +809,15 @@ async fn btree_cursor_deletes_all_keys_during_scan() {
             break;
         };
 
-        let key_bytes = cursor.cached_key.as_ref().expect("cached key").clone();
-        let mut key_arr = [0u8; 8];
-        key_arr.copy_from_slice(&key_bytes);
-        let key = u64::from_be_bytes(key_arr);
+        let node = read_node(&provider, &mut state, &contract, &store.namespace, current_id).await.unwrap().unwrap();
+        let key_bytes = node.key;
+        let key = u64::from_be_bytes(key_bytes[..8].try_into().unwrap());
 
         let next_id = successor(&provider, &mut state, &contract, &store.namespace, current_id).await.unwrap();
         delete_key(&provider, &mut state, &contract, &store, &key_bytes).await.unwrap();
 
         deleted.push(key);
         cursor.current_node = next_id;
-        cursor.cached_key = None;
         cursor.cached_value = None;
     }
 
@@ -849,13 +934,13 @@ async fn btree_delete_variants_cover_storage_cleanup() {
     );
 
     // Two-children delete (20, successor 27)
-    let root_before = read_root_id(&provider, &mut state, &contract, &store.namespace).await.unwrap();
+    let node20 = seek_node(&provider, &mut state, &contract, &store, &20u64.to_be_bytes(), BTreeSeekBias::Exact)
+        .await.unwrap().unwrap();
     let succ27 = seek_node(&provider, &mut state, &contract, &store, &27u64.to_be_bytes(), BTreeSeekBias::Exact)
         .await.unwrap().unwrap();
     delete_key(&provider, &mut state, &contract, &store, &20u64.to_be_bytes()).await.unwrap();
-    let root_after = read_root_id(&provider, &mut state, &contract, &store.namespace).await.unwrap();
-    assert_eq!(root_after, root_before);
-    assert!(read_node(&provider, &mut state, &contract, &store.namespace, succ27.id).await.unwrap().is_none());
+    assert!(read_node(&provider, &mut state, &contract, &store.namespace, node20.id).await.unwrap().is_none());
+    assert!(read_node(&provider, &mut state, &contract, &store.namespace, succ27.id).await.unwrap().is_some());
     assert_eq!(
         collect_values_in_order(&provider, &mut state, &contract, &store.namespace).await,
         vec![5, 10, 27, 30, 35]
@@ -892,12 +977,13 @@ async fn btree_cursor_cache_refresh_tracks_state() {
         contract: contract.clone(),
         namespace: store.namespace.clone(),
         current_node: Some(n20.id),
-        cached_key: None,
         cached_value: None,
     };
 
     refresh_cursor_cache(&mut cursor, &provider, &mut state).await.unwrap();
-    assert_eq!(cursor.cached_key.as_deref(), Some(&20u64.to_be_bytes()[..]));
+    let current = cursor.current_node.unwrap();
+    let node = read_node(&provider, &mut state, &contract, &store.namespace, current).await.unwrap().unwrap();
+    assert_eq!(u64::from_be_bytes(node.key[..8].try_into().unwrap()), 20);
     assert_eq!(cursor.cached_value.as_ref().unwrap().as_u64().unwrap(), 20);
 
     let next = successor(&provider, &mut state, &contract, &store.namespace, n20.id).await.unwrap().unwrap();
@@ -908,11 +994,11 @@ async fn btree_cursor_cache_refresh_tracks_state() {
     delete_key(&provider, &mut state, &contract, &store, &30u64.to_be_bytes()).await.unwrap();
     refresh_cursor_cache(&mut cursor, &provider, &mut state).await.unwrap();
     assert!(cursor.current_node.is_none());
-    assert!(cursor.cached_key.is_none() && cursor.cached_value.is_none());
+    assert!(cursor.cached_value.is_none());
 
     cursor.current_node = None;
     refresh_cursor_cache(&mut cursor, &provider, &mut state).await.unwrap();
-    assert!(cursor.cached_key.is_none() && cursor.cached_value.is_none());
+    assert!(cursor.cached_value.is_none());
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -1047,3 +1133,235 @@ async fn btree_allocate_node_id_monotonic_per_namespace() {
     assert_eq!((first, second, third), (1, 2, 3));
 }
 
+// --- helpers specific to new tests ---
+
+async fn predecessor(
+    provider: &MockProvider,
+    state: &mut ChainState<'_>,
+    contract: &Hash,
+    namespace: &[u8],
+    node_id: u64,
+) -> Result<Option<u64>, EnvironmentError> {
+    let mut ctx = TreeContext::new(provider, state, contract, namespace);
+    super::predecessor(&mut ctx, node_id).await
+}
+
+async fn btree_assert_treap_invariants(
+    provider: &MockProvider,
+    state: &mut ChainState<'_>,
+    contract: &Hash,
+    namespace: &[u8],
+) {
+    use std::cmp::Ordering;
+
+    let root_id = read_root_id(provider, state, contract, namespace).await.unwrap();
+    if root_id == 0 { return; }
+
+    // Root must have no parent
+    let root = read_node(provider, state, contract, namespace, root_id).await.unwrap().unwrap();
+    assert!(root.parent.is_none());
+
+    // DFS over the tree verifying BST and heap properties and parent pointers
+    let mut stack = vec![root_id];
+    while let Some(id) = stack.pop() {
+        let n = read_node(provider, state, contract, namespace, id).await.unwrap().unwrap();
+        let p = super::priority_for_pair(&n.key, n.id);
+
+        if let Some(l) = n.left {
+            let ln = read_node(provider, state, contract, namespace, l).await.unwrap().unwrap();
+            assert!(matches!(super::cmp_pair(&ln.key, ln.id, &n.key, n.id), Ordering::Less));
+            assert_eq!(ln.parent, Some(n.id));
+            assert!(p >= super::priority_for_pair(&ln.key, ln.id));
+            stack.push(l);
+        }
+        if let Some(r) = n.right {
+            let rn = read_node(provider, state, contract, namespace, r).await.unwrap().unwrap();
+            assert!(matches!(super::cmp_pair(&rn.key, rn.id, &n.key, n.id), Ordering::Greater));
+            assert_eq!(rn.parent, Some(n.id));
+            assert!(p >= super::priority_for_pair(&rn.key, rn.id));
+            stack.push(r);
+        }
+    }
+}
+
+// --- tests ---
+
+#[tokio::test(flavor = "current_thread")]
+async fn btree_treap_invariants_after_random_inserts_and_deletes() {
+    use rand::{rngs::StdRng, Rng, SeedableRng};
+
+    let contract = Hash::zero();
+    let provider = MockProvider::default();
+    let mut state = test_chain_state(contract.clone());
+    let store = OpaqueBTreeStore { namespace: b"invariants".to_vec() };
+
+    // Insert unique random keys (value == key for easy cross-checks).
+    let mut rng = StdRng::seed_from_u64(0xC0FF_EE);
+    let mut keys = IndexSet::new();
+    while keys.len() < 128 {
+        keys.insert(rng.gen::<u64>());
+    }
+    for &k in &keys {
+        insert_key(
+            &provider, &mut state, &contract, &store,
+            k.to_be_bytes().to_vec(), ValueCell::from(Primitive::U64(k)),
+        ).await.unwrap();
+    }
+    btree_assert_treap_invariants(&provider, &mut state, &contract, &store.namespace).await;
+
+    // Delete every 3rd key; invariants must still hold each step.
+    for (i, &k) in keys.iter().enumerate() {
+        if i % 3 == 0 {
+            delete_key(&provider, &mut state, &contract, &store, &k.to_be_bytes()).await.unwrap();
+            btree_assert_treap_invariants(&provider, &mut state, &contract, &store.namespace).await;
+        }
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn btree_treap_rotate_left_at_root_updates_links() {
+    let contract = Hash::zero();
+    let provider = MockProvider::default();
+    let mut state = test_chain_state(contract.clone());
+    let store = OpaqueBTreeStore { namespace: b"rot_left_root".to_vec() };
+
+    // First insert creates root (id = 1)
+    let k1 = 1_000_000_000u64;
+    insert_key(
+        &provider, &mut state, &contract, &store,
+        k1.to_be_bytes().to_vec(), ValueCell::from(Primitive::U64(1)),
+    ).await.unwrap();
+    let p1 = super::priority_for_pair(&k1.to_be_bytes(), 1);
+
+    // Choose k2 > k1 with priority(k2, id=2) > p1 to force a left rotation at root.
+    let mut k2 = k1 + 1;
+    while super::priority_for_pair(&k2.to_be_bytes(), 2) <= p1 {
+        k2 += 1;
+    }
+    insert_key(
+        &provider, &mut state, &contract, &store,
+        k2.to_be_bytes().to_vec(), ValueCell::from(Primitive::U64(2)),
+    ).await.unwrap();
+
+    let root_id = read_root_id(&provider, &mut state, &contract, &store.namespace).await.unwrap();
+    let root = read_node(&provider, &mut state, &contract, &store.namespace, root_id).await.unwrap().unwrap();
+    assert_eq!(root.key, k2.to_be_bytes().to_vec());
+    assert!(root.parent.is_none());
+
+    // Left child should be the former root (k1) and its parent should be the new root (k2).
+    let left_id = root.left.expect("left child must exist after rotate_left");
+    let left = read_node(&provider, &mut state, &contract, &store.namespace, left_id).await.unwrap().unwrap();
+    assert_eq!(left.key, k1.to_be_bytes().to_vec());
+    assert_eq!(left.parent, Some(root_id));
+    assert!(left.right.is_none()); // No beta subtree in this 2-node scenario
+
+    btree_assert_treap_invariants(&provider, &mut state, &contract, &store.namespace).await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn btree_treap_rotate_right_under_parent_updates_links() {
+    // Force a right rotation on the left child of the root and ensure parent links are updated.
+    let contract = Hash::zero();
+    let provider = MockProvider::default();
+    let mut state = test_chain_state(contract.clone());
+    let store = OpaqueBTreeStore { namespace: b"rot_right_child".to_vec() };
+
+    let k1 = 1_000_000_000u64; // root
+    insert_key(&provider, &mut state, &contract, &store, k1.to_be_bytes().to_vec(), ValueCell::from(Primitive::U64(1))).await.unwrap();
+    let p1 = super::priority_for_pair(&k1.to_be_bytes(), 1);
+
+    // Choose k2 < k1 with p2 < p1 so it stays as left child (no rotation to root).
+    let mut k2 = k1 - 1;
+    while super::priority_for_pair(&k2.to_be_bytes(), 2) >= p1 {
+        k2 -= 1;
+    }
+    insert_key(&provider, &mut state, &contract, &store, k2.to_be_bytes().to_vec(), ValueCell::from(Primitive::U64(2))).await.unwrap();
+    let p2 = super::priority_for_pair(&k2.to_be_bytes(), 2);
+
+    // Choose k3 < k2 with p2 < p3 <= p1 to rotate above k2 but not above k1.
+    let mut k3 = k2 - 1;
+    loop {
+        let p3 = super::priority_for_pair(&k3.to_be_bytes(), 3);
+        if p3 > p2 && p3 <= p1 { break; }
+        k3 -= 1;
+    }
+    insert_key(&provider, &mut state, &contract, &store, k3.to_be_bytes().to_vec(), ValueCell::from(Primitive::U64(3))).await.unwrap();
+
+    let root_id = read_root_id(&provider, &mut state, &contract, &store.namespace).await.unwrap();
+    let root = read_node(&provider, &mut state, &contract, &store.namespace, root_id).await.unwrap().unwrap();
+    assert_eq!(root.key, k1.to_be_bytes().to_vec(), "root should remain k1");
+
+    let left_id = root.left.expect("root must have a left child after rotation");
+    let left = read_node(&provider, &mut state, &contract, &store.namespace, left_id).await.unwrap().unwrap();
+    assert_eq!(left.key, k3.to_be_bytes().to_vec(), "left child should be k3 after rotate_right at k2");
+    assert_eq!(left.parent, Some(root_id));
+
+    let k3_right = left.right.expect("k3.right should be k2");
+    let n2 = read_node(&provider, &mut state, &contract, &store.namespace, k3_right).await.unwrap().unwrap();
+    assert_eq!(n2.key, k2.to_be_bytes().to_vec());
+    assert_eq!(n2.parent, Some(left_id));
+
+    btree_assert_treap_invariants(&provider, &mut state, &contract, &store.namespace).await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn btree_treap_seek_with_duplicates_bias_matrix() {
+    let contract = Hash::zero();
+    let provider = MockProvider::default();
+    let mut state = test_chain_state(contract.clone());
+    let store = OpaqueBTreeStore { namespace: b"dup_bias".to_vec() };
+
+    // Keys: 6, 7 (x3), 8
+    insert_key(&provider, &mut state, &contract, &store, 6u64.to_be_bytes().to_vec(), ValueCell::from(Primitive::U64(6))).await.unwrap();
+    for v in [1u64, 2, 3] {
+        insert_key(&provider, &mut state, &contract, &store, 7u64.to_be_bytes().to_vec(), ValueCell::from(Primitive::U64(v))).await.unwrap();
+    }
+    insert_key(&provider, &mut state, &contract, &store, 8u64.to_be_bytes().to_vec(), ValueCell::from(Primitive::U64(8))).await.unwrap();
+
+    let exact = seek_node(&provider, &mut state, &contract, &store, &7u64.to_be_bytes(), BTreeSeekBias::Exact).await.unwrap().unwrap();
+    assert_eq!(exact.value.as_u64().unwrap(), 1, "Exact must return first duplicate");
+
+    let ge = seek_node(&provider, &mut state, &contract, &store, &7u64.to_be_bytes(), BTreeSeekBias::GreaterOrEqual).await.unwrap().unwrap();
+    assert_eq!(ge.value.as_u64().unwrap(), 1, "GE must return first duplicate");
+
+    let gt = seek_node(&provider, &mut state, &contract, &store, &7u64.to_be_bytes(), BTreeSeekBias::Greater).await.unwrap().unwrap();
+    assert_eq!(gt.value.as_u64().unwrap(), 8, "G must skip entire duplicate bucket");
+
+    let le = seek_node(&provider, &mut state, &contract, &store, &7u64.to_be_bytes(), BTreeSeekBias::LessOrEqual).await.unwrap().unwrap();
+    assert_eq!(le.value.as_u64().unwrap(), 3, "LE must return last duplicate");
+
+    let lt = seek_node(&provider, &mut state, &contract, &store, &7u64.to_be_bytes(), BTreeSeekBias::Less).await.unwrap().unwrap();
+    assert_eq!(lt.value.as_u64().unwrap(), 6, "L must return previous distinct key");
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn btree_treap_predecessor_through_duplicate_bucket() {
+    let contract = Hash::zero();
+    let provider = MockProvider::default();
+    let mut state = test_chain_state(contract.clone());
+    let store = OpaqueBTreeStore { namespace: b"dup_pred".to_vec() };
+
+    insert_key(&provider, &mut state, &contract, &store, 8u64.to_be_bytes().to_vec(), ValueCell::from(Primitive::U64(8))).await.unwrap();
+    for v in [10u64, 20, 30] {
+        insert_key(&provider, &mut state, &contract, &store, 9u64.to_be_bytes().to_vec(), ValueCell::from(Primitive::U64(v))).await.unwrap();
+    }
+
+    // Get the middle duplicate (value=20)
+    let first = seek_node(&provider, &mut state, &contract, &store, &9u64.to_be_bytes(), BTreeSeekBias::Exact).await.unwrap().unwrap();
+    let second_id = successor(&provider, &mut state, &contract, &store.namespace, first.id).await.unwrap().unwrap();
+
+    // predecessor of middle -> first duplicate
+    let pred_mid = predecessor(&provider, &mut state, &contract, &store.namespace, second_id).await.unwrap().unwrap();
+    let pred_mid_node = read_node(&provider, &mut state, &contract, &store.namespace, pred_mid).await.unwrap().unwrap();
+    assert_eq!(pred_mid_node.value.as_u64().unwrap(), 10);
+
+    // predecessor of first duplicate -> previous distinct key (8)
+    let pred_first = predecessor(&provider, &mut state, &contract, &store.namespace, first.id).await.unwrap().unwrap();
+    let pred_first_node = read_node(&provider, &mut state, &contract, &store.namespace, pred_first).await.unwrap().unwrap();
+    assert_eq!(pred_first_node.value.as_u64().unwrap(), 8);
+
+    // predecessor of the smallest key -> None
+    let root_id = read_root_id(&provider, &mut state, &contract, &store.namespace).await.unwrap();
+    let min = find_min_node(&provider, &mut state, &contract, &store.namespace, root_id).await.unwrap();
+    assert!(predecessor(&provider, &mut state, &contract, &store.namespace, min.id).await.unwrap().is_none());
+}
