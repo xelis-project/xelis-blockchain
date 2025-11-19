@@ -340,7 +340,7 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
     command_manager.add_command(Command::with_optional_arguments("export_json_config", "Export the current config in JSON", vec![Arg::new("filename", ArgType::String)], CommandHandler::Async(async_handler!(export_json_config::<S>))))?;
     command_manager.add_command(Command::new("broadcast_txs", "Broadcast all TXs in mempool if not done", CommandHandler::Async(async_handler!(broadcast_txs::<S>))))?;
     command_manager.add_command(Command::new("snapshot_mode", "Force to be in snapshot mode (memory only)", CommandHandler::Async(async_handler!(snapshot_mode::<S>))))?;
-    command_manager.add_command(Command::with_optional_arguments("inspect_contract", "Inspect a smart contract by its hash", vec![Arg::new("hash", ArgType::Hash)], CommandHandler::Async(async_handler!(inspect_contract::<S>))))?;
+    command_manager.add_command(Command::with_optional_arguments("inspect_contract", "Inspect a smart contract by its hash", vec![Arg::new("contract", ArgType::Hash)], CommandHandler::Async(async_handler!(inspect_contract::<S>))))?;
     command_manager.add_command(Command::new("show_mempool", "Show all transactions in mempool", CommandHandler::Async(async_handler!(show_mempool::<S>))))?;
 
     // Don't keep the lock for ever
