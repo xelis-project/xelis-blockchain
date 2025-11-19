@@ -2029,10 +2029,11 @@ async fn get_contract_data_entries<S: Storage>(context: &Context, params: GetCon
         current_topoheight
     };
 
+    let stream = storage.get_contract_data_entries_at_maximum_topoheight(&params.contract, maximum_topoheight).await
+        .context("Error while retrieving contract entries")?;
 
-    let entries = storage.get_contract_data_entries_at_maximum_topoheight(&params.contract, maximum_topoheight).await
-        .context("Error while retrieving contract entries")?
-        .skip(params.skip.unwrap_or(0))
+    let stream = stream.boxed();
+    let entries = stream.skip(params.skip.unwrap_or(0))
         .take(params.maximum.unwrap_or(MAX_CONTRACTS_ENTRIES))
         .map_ok(|(key, value)| ContractDataEntry {
             key,
