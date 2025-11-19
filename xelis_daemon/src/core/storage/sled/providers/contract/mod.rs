@@ -28,7 +28,7 @@ impl ContractProvider for SledStorage {
         let key = self.get_versioned_contract_key(hash, topoheight);
         Self::insert_into_disk(self.snapshot.as_mut(), &self.versioned_contracts, &key, contract.to_bytes())?;
 
-        if Self::insert_into_disk(self.snapshot.as_mut(), &self.contracts, hash.as_bytes(), &topoheight.to_be_bytes())? {
+        if !Self::insert_into_disk(self.snapshot.as_mut(), &self.contracts, hash.as_bytes(), &topoheight.to_be_bytes())? {
             self.store_contracts_count(self.count_contracts().await? + 1)?;
         }
 
