@@ -43,6 +43,8 @@ use crate::{
         COST_PER_SCHEDULED_EXECUTION,
         FEE_PER_ACCOUNT_CREATION,
         FEE_PER_BYTE_OF_EVENT_DATA,
+        FEE_PER_READ_CONTRACT,
+        FEE_PER_STORE_CONTRACT,
         MAX_GAS_USAGE_PER_TX,
         XELIS_ASSET
     },
@@ -384,7 +386,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, C
             Some(storage_type.clone()),
             vec![("key", Type::Any)],
             FunctionHandler::Async(async_handler!(storage_load::<P>)),
-            50,
+            FEE_PER_READ_CONTRACT,
             Some(Type::Optional(Box::new(Type::Any)))
         );
         env.register_native_function(
@@ -392,7 +394,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, C
             Some(storage_type.clone()),
             vec![("key", Type::Any)],
             FunctionHandler::Async(async_handler!(storage_has::<P>)),
-            25,
+            FEE_PER_READ_CONTRACT,
             Some(Type::Bool)
         );
         env.register_native_function(
@@ -400,7 +402,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, C
             Some(storage_type.clone()),
             vec![("key", Type::Any), ("value", Type::Any)],
             FunctionHandler::Async(async_handler!(storage_store::<P>)),
-            50,
+            FEE_PER_STORE_CONTRACT,
             Some(Type::Optional(Box::new(Type::Any)))
         );
         env.register_native_function(
@@ -408,7 +410,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, C
             Some(storage_type.clone()),
             vec![("key", Type::Any)],
             FunctionHandler::Async(async_handler!(storage_delete::<P>)),
-            50,
+            FEE_PER_STORE_CONTRACT,
             Some(Type::Optional(Box::new(Type::Any)))
         );
     }
@@ -443,6 +445,8 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, C
     }
 
     // Memory Storage
+    // It is temporary and not persisted in the state
+    // Useful for caching data across executions within the same block
     {
         // MemoryStorage::new()
         env.register_static_function(
@@ -458,7 +462,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, C
             Some(memory_storage_type.clone()),
             vec![("key", Type::Any)],
             FunctionHandler::Sync(memory_storage_load::<P>),
-            50,
+            5,
             Some(Type::Optional(Box::new(Type::Any)))
         );
         env.register_native_function(
@@ -466,7 +470,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, C
             Some(memory_storage_type.clone()),
             vec![("key", Type::Any)],
             FunctionHandler::Sync(memory_storage_has::<P>),
-            25,
+            5,
             Some(Type::Bool)
         );
         env.register_native_function(
@@ -474,7 +478,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, C
             Some(memory_storage_type.clone()),
             vec![("key", Type::Any), ("value", Type::Any)],
             FunctionHandler::Sync(memory_storage_store::<P>),
-            50,
+            5,
             Some(Type::Optional(Box::new(Type::Any)))
         );
         env.register_native_function(
@@ -482,7 +486,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, C
             Some(memory_storage_type.clone()),
             vec![("key", Type::Any)],
             FunctionHandler::Sync(memory_storage_delete::<P>),
-            50,
+            5,
             Some(Type::Optional(Box::new(Type::Any)))
         );
     }

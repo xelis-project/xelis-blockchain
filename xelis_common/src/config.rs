@@ -57,8 +57,11 @@ pub const COST_PER_SCHEDULED_EXECUTION_AT_BLOCK_END: u64 = 5_000;
 // This should be enabled once Smart Contracts are released
 pub const TX_GAS_BURN_PERCENT: u64 = 30;
 // Fee per store operation in a contract
-// Each store operation has a fixed cost of 0.000001 XEL
-pub const FEE_PER_STORE_CONTRACT: u64 = 100;
+// Each store operation has a fixed cost of 0.00000025 XEL
+pub const FEE_PER_STORE_CONTRACT: u64 = 25;
+// Fee per read operation in a contract
+// Each read operation has a fixed cost of 0.00000005 XEL
+pub const FEE_PER_READ_CONTRACT: u64 = 5;
 // Fee per byte of data stored in a contract
 // Each byte of data stored (key + value) in a contract has a fixed cost
 // 0.00000005 XEL per byte
