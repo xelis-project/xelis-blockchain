@@ -75,8 +75,9 @@ struct NodeHeader {
 mod record;
 use record::{read_node_header_from_reader, NodeRecord};
 
-const GAS_PER_BYTE_READ: f64 = 0.1;
-const GAS_PER_BYTE_WRITE: f64 = 1.0;
+const GAS_SCALING_FACTOR: u64 = 1000;
+const GAS_PER_BYTE_READ: u64 = 100;
+const GAS_PER_BYTE_WRITE: u64 = 1000;
 
 #[derive(Default, Clone, Copy, Debug, PartialEq, Eq)]
 struct StorageUsage {
@@ -86,7 +87,7 @@ struct StorageUsage {
 
 impl StorageUsage {
     fn charge<'ty, 'r>(self, context: &mut Context<'ty, 'r>) -> Result<(), EnvironmentError> {
-        let cost = (self.read_bytes as f64 * GAS_PER_BYTE_READ) as u64 + (self.written_bytes as f64 * GAS_PER_BYTE_WRITE) as u64;
+        let cost = (self.read_bytes * GAS_PER_BYTE_READ + self.written_bytes * GAS_PER_BYTE_WRITE) / GAS_SCALING_FACTOR;
         if cost > 0 {
             context.increase_gas_usage(cost)?;
         }
