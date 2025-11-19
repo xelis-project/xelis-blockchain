@@ -102,6 +102,9 @@ const MAX_ACCOUNT_HISTORY: usize = 20;
 const MAX_ACCOUNTS: usize = 100;
 // Maximum contracts to fetch per call
 const MAX_CONTRACTS: usize = 100;
+// Maximum contract data entries to fetch per call
+// This is low because entries can be big
+const MAX_CONTRACTS_ENTRIES: usize = 20;
 
 // Get the block type using the block hash and the blockchain current state
 pub async fn get_block_type_for_block<S: Storage, P: DifficultyProvider + DagOrderProvider + BlocksAtHeightProvider + PrunedTopoheightProvider + CacheProvider>(blockchain: &Blockchain<S>, provider: &P, hash: &Hash) -> Result<BlockType, InternalRpcError> {
@@ -412,6 +415,7 @@ pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>
     handler.register_method_with_params("get_contract_balance_at_topoheight", async_handler!(get_contract_balance_at_topoheight::<S>));
     handler.register_method_with_params("get_contract_assets", async_handler!(get_contract_assets::<S>));
     handler.register_method_with_params("get_contracts", async_handler!(get_contracts::<S>));
+    handler.register_method_with_params("get_contract_data_entries", async_handler!(get_contract_data_entries::<S>));
 
     if allow_mining_methods {
         handler.register_method_with_params("get_block_template", async_handler!(get_block_template::<S>));
@@ -2009,6 +2013,36 @@ async fn get_contracts<S: Storage>(context: &Context, params: GetContractsParams
         .context("Error while retrieving registered contracts")?;
 
     Ok(contracts)
+}
+
+async fn get_contract_data_entries<S: Storage>(context: &Context, params: GetContractDataEntriesParams<'_>) -> Result<Vec<ContractDataEntry>, InternalRpcError> {
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    let storage = blockchain.get_storage().read().await;
+    let current_topoheight = storage.chain_cache().await.topoheight;
+    let maximum_topoheight = if let Some(maximum) = params.maximum_topoheight {
+        if maximum > current_topoheight {
+            return Err(InternalRpcError::InvalidJSONRequest)
+                .context(format!("Maximum topoheight requested cannot be greater than {}", current_topoheight))?
+        }
+        maximum
+    } else {
+        current_topoheight
+    };
+
+
+    let entries = storage.get_contract_data_entries_at_maximum_topoheight(&params.contract, maximum_topoheight).await
+        .context("Error while retrieving contract entries")?
+        .skip(params.skip.unwrap_or(0))
+        .take(params.maximum.unwrap_or(MAX_CONTRACTS_ENTRIES))
+        .map_ok(|(key, value)| ContractDataEntry {
+            key,
+            value,
+        })
+        .try_collect::<Vec<_>>()
+        .await
+        .context("Error while collecting contract entries")?;
+
+    Ok(entries)
 }
 
 async fn get_contract_balance_at_topoheight<S: Storage>(context: &Context, params: GetContractBalanceAtTopoHeightParams<'_>) -> Result<Versioned<u64>, InternalRpcError> {
