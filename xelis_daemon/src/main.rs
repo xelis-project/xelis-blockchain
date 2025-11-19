@@ -1150,11 +1150,19 @@ async fn inspect_contract<S: Storage>(manager: &CommandManager, mut arguments: A
     let stream = storage.get_contract_data_entries_at_maximum_topoheight(&contract, topoheight).await
         .context("Error while retrieving contract data entries")?;
 
+    let mut total_size = 0;
     let mut stream = stream.boxed();
     while let Some(res) = stream.next().await {
         let (key, value) = res.context("Error on contract data entry")?;
-        manager.message(format!("  - {}: {}", key, value));
+        let key_size = key.size();
+        total_size += key_size;
+        let value_size = value.size();
+        total_size += value_size;
+
+        manager.message(format!("  - {} ({}): {} ({})", key, human_bytes(key_size as f64), value, human_bytes(value_size as f64)));
     }
+
+    manager.message(format!("Total storage size: {}", human_bytes(total_size as f64)));
 
     Ok(())
 }
