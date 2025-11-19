@@ -1201,6 +1201,7 @@ async fn btree_storage_usage_delete_reports_activity() {
     let usage = ctx.finish();
 
     assert_eq!(usage.written_bytes, 64, "delete should write bytes");
+    assert_eq!(usage.read_bytes, 0, "reads should be cached");
 }
 
 // --- helpers specific to new tests ---
