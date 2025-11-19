@@ -40,6 +40,8 @@ impl AccountProvider for SledStorage {
 
         if let Some(old) = Self::insert_into_disk_read(self.snapshot.as_mut(), &self.registrations, key.as_bytes(), &topoheight.to_be_bytes())? {
             Self::remove_from_disk_without_reading(self.snapshot.as_mut(), &self.registrations_prefixed, &prefixed_db_key(old, key))?;
+        } else {
+            self.store_accounts_count(self.count_accounts().await? + 1)?;
         }
 
         Self::insert_into_disk(self.snapshot.as_mut(), &self.registrations_prefixed, &prefixed_db_key(topoheight, key), &[])?;
