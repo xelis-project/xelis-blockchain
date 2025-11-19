@@ -1133,6 +1133,76 @@ async fn btree_allocate_node_id_monotonic_per_namespace() {
     assert_eq!((first, second, third), (1, 2, 3));
 }
 
+#[tokio::test(flavor = "current_thread")]
+async fn btree_storage_usage_records_reads() {
+    let contract = Hash::zero();
+    let provider = MockProvider::default();
+    let mut state = test_chain_state(contract.clone());
+    let namespace = b"usage_read".to_vec();
+
+    let mut ctx = TreeContext::new(&provider, &mut state, &contract, &namespace);
+    let result = super::read_node(&mut ctx, 1).await.unwrap();
+    assert!(result.is_none());
+
+    let usage = ctx.finish();
+    assert_eq!(usage.read_bytes, 26, "expected storage read bytes");
+    assert_eq!(usage.written_bytes, 0, "read path should not record written bytes");
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn btree_storage_usage_records_writes() {
+    let contract = Hash::zero();
+    let provider = MockProvider::default();
+    let mut state = test_chain_state(contract.clone());
+    let namespace = b"usage_write".to_vec();
+
+    let mut ctx = TreeContext::new(&provider, &mut state, &contract, &namespace);
+    super::write_root_id(&mut ctx, 42).await.unwrap();
+
+    let usage = ctx.finish();
+    assert_eq!(usage.read_bytes, 0, "writing the root should not read storage");
+    assert_eq!(usage.written_bytes, 35, "expected storage written bytes");
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn btree_storage_usage_single_insert_reports_activity() {
+    let contract = Hash::zero();
+    let provider = MockProvider::default();
+    let mut state = test_chain_state(contract.clone());
+    let store = OpaqueBTreeStore { namespace: b"insert_usage".to_vec() };
+
+    let mut ctx = TreeContext::new(&provider, &mut state, &contract, &store.namespace);
+    super::insert_key(&mut ctx, b"k".to_vec(), ValueCell::from(Primitive::U64(1))).await.unwrap();
+    let usage = ctx.finish();
+
+    assert_eq!(usage.read_bytes, 52, "insert should read bytes");
+    assert_eq!(usage.written_bytes, 141, "insert should write bytes");
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn btree_storage_usage_delete_reports_activity() {
+    let contract = Hash::zero();
+    let provider = MockProvider::default();
+    let mut state = test_chain_state(contract.clone());
+    let store = OpaqueBTreeStore { namespace: b"delete_usage".to_vec() };
+
+    insert_key(
+        &provider,
+        &mut state,
+        &contract,
+        &store,
+        b"k".to_vec(),
+        ValueCell::from(Primitive::U64(7)),
+    ).await.unwrap();
+
+    let mut ctx = TreeContext::new(&provider, &mut state, &contract, &store.namespace);
+    let removed = super::delete_key(&mut ctx, b"k").await.unwrap();
+    assert!(removed.is_some(), "expected the key to be removed");
+    let usage = ctx.finish();
+
+    assert_eq!(usage.written_bytes, 64, "delete should write bytes");
+}
+
 // --- helpers specific to new tests ---
 
 async fn predecessor(
