@@ -133,10 +133,9 @@ macro_rules! with_store_ctx {
         let $store: &OpaqueBTreeStore = instance.as_opaque_type()?;
         let $contract = $metadata.metadata.contract_executor.clone();
         let mut $tree_ctx = TreeContext::new(storage, state, &$contract, &$store.namespace);
-        let __res = { $body };
-        let __usage = $tree_ctx.finish();
-        __usage.charge($context)?;
-        __res
+        let res = { $body };
+        $tree_ctx.finish().charge($context)?;
+        res
     }};
 }
 
@@ -440,8 +439,7 @@ async fn cursor_step<'a, 'ty, 'r, P: ContractProvider>(
     } else {
         Ok(SysCallResult::Return(Primitive::Boolean(false).into()))
     };
-    let usage = ctx.finish();
-    usage.charge(context)?;
+    ctx.finish().charge(context)?;
     result
 }
 
