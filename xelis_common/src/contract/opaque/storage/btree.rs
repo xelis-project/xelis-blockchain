@@ -38,20 +38,26 @@ pub struct OpaqueBTreeCursor {
     cached_value: Option<ValueCell>,
     cached_key: Option<Vec<u8>>,
     ascending: bool,
+    // If true, the next call to `next` will return the current element
+    // without advancing. This is used after deletion to return the
+    // element that moved into the current slot.
+    skip_next_step: bool,
 }
+// Runtime-only, cannot be persisted
 impl Serializable for OpaqueBTreeCursor {
     fn serialize(&self, _: &mut Vec<u8>) -> usize { 0 }
     fn is_serializable(&self) -> bool { false }
     fn get_size(&self) -> usize { 0 }
 }
 impl JSONHelper for OpaqueBTreeCursor {}
- 
+
 impl PartialEq for OpaqueBTreeCursor {
     fn eq(&self, other: &Self) -> bool {
         self.contract == other.contract
             && self.namespace == other.namespace
             && self.current_node == other.current_node
             && self.ascending == other.ascending
+            && self.skip_next_step == other.skip_next_step
     }
 }
 impl Eq for OpaqueBTreeCursor {}
@@ -61,6 +67,7 @@ impl StdHash for OpaqueBTreeCursor {
         self.namespace.hash(state);
         self.current_node.hash(state);
         self.ascending.hash(state);
+        self.skip_next_step.hash(state);
     }
 }
 
@@ -456,17 +463,23 @@ pub async fn btree_store_seek<'a, 'ty, 'r, P: ContractProvider>(
         let result = seek_node(&mut ctx, &key, bias).await?.map_or(
             Primitive::Null.into(),
             |node| {
-                Primitive::Opaque(OpaqueWrapper::new(OpaqueBTreeCursor {
+                let mut map = IndexMap::new();
+                let cursor = OpaqueBTreeCursor {
                     contract: contract.clone(),
                     namespace: store.namespace.clone(),
                     current_node: Some(node.id),
-                    cached_value: Some(node.value),
-                    cached_key: Some(node.key),
+                    cached_value: Some(node.value.clone()),
+                    cached_key: Some(node.key.clone()),
                     ascending,
-                })).into()
+                    skip_next_step: false,
+                };
+                map.insert(ValueCell::Primitive(Primitive::String("cursor".into())), ValueCell::Primitive(Primitive::Opaque(OpaqueWrapper::new(cursor))).into());
+                map.insert(ValueCell::Primitive(Primitive::String("key".into())), ValueCell::Bytes(node.key).into());
+                map.insert(ValueCell::Primitive(Primitive::String("value".into())), node.value.into());
+                ValueCell::Map(Box::new(map))
             },
         );
-        Ok(SysCallResult::Return(result))
+        Ok(SysCallResult::Return(result.into()))
     })
 }
 
@@ -478,10 +491,29 @@ pub async fn btree_store_len<'a, 'ty, 'r, P: ContractProvider>(
     })
 }
 
-pub async fn btree_cursor_current<'a, 'ty, 'r, P: ContractProvider>(
+pub async fn btree_cursor_next<'a, 'ty, 'r, P: ContractProvider>(
     instance: FnInstance<'a>, _: FnParams, _: &ModuleMetadata<'_>, context: &mut Context<'ty, 'r>
 ) -> FnReturnType<ContractMetadata> {
     with_cursor_ctx_mut!(instance, context, |cursor, ctx| {
+        if cursor.skip_next_step {
+            cursor.skip_next_step = false;
+        } else {
+            let Some(current_id) = cursor.current_node else {
+                return Ok(SysCallResult::Return(Primitive::Null.into()));
+            };
+            if load_node_header(&mut ctx, current_id).await?.is_none() {
+                cursor.current_node = None;
+                cursor.cached_value = None;
+                cursor.cached_key = None;
+                return Ok(SysCallResult::Return(Primitive::Null.into()));
+            }
+            cursor.current_node = if cursor.ascending {
+                successor(&mut ctx, current_id).await?
+            } else {
+                predecessor(&mut ctx, current_id).await?
+            };
+        }
+
         refresh_cursor_cache(cursor, &mut ctx).await?;
         let out = match (cursor.current_node, &cursor.cached_key, &cursor.cached_value) {
             (Some(_), Some(k), Some(v)) => {
@@ -496,40 +528,11 @@ pub async fn btree_cursor_current<'a, 'ty, 'r, P: ContractProvider>(
     })
 }
 
-pub async fn btree_cursor_next<'a, 'ty, 'r, P: ContractProvider>(
-    instance: FnInstance<'a>, _: FnParams, _: &ModuleMetadata<'_>, context: &mut Context<'ty, 'r>
-) -> FnReturnType<ContractMetadata> {
-    cursor_step::<P>(instance, context).await
-}
-
 pub async fn btree_cursor_delete<'a, 'ty, 'r, P: ContractProvider>(
     instance: FnInstance<'a>, _: FnParams, _: &ModuleMetadata<'_>, context: &mut Context<'ty, 'r>
 ) -> FnReturnType<ContractMetadata> {
     with_cursor_ctx_mut!(instance, context, |cursor, ctx| {
         Ok(SysCallResult::Return(Primitive::Boolean(delete_at_cursor(cursor, &mut ctx).await?).into()))
-    })
-}
-
-async fn cursor_step<'a, 'ty, 'r, P: ContractProvider>(
-    instance: FnInstance<'a>, context: &mut Context<'ty, 'r>,
-) -> FnReturnType<ContractMetadata> {
-    with_cursor_ctx_mut!(instance, context, |cursor, ctx| {
-        let Some(current_id) = cursor.current_node else {
-            return Ok(SysCallResult::Return(Primitive::Boolean(false).into()));
-        };
-        if load_node_header(&mut ctx, current_id).await?.is_none() {
-            cursor.current_node = None;
-            cursor.cached_value = None;
-            cursor.cached_key = None;
-            return Ok(SysCallResult::Return(Primitive::Boolean(false).into()));
-        }
-        cursor.current_node = if cursor.ascending {
-            successor(&mut ctx, current_id).await?
-        } else {
-            predecessor(&mut ctx, current_id).await?
-        };
-        refresh_cursor_cache(cursor, &mut ctx).await?;
-        Ok(SysCallResult::Return(Primitive::Boolean(cursor.current_node.is_some()).into()))
     })
 }
 
@@ -568,6 +571,7 @@ async fn delete_at_cursor<'ty, P: ContractProvider>(
     treap_delete_node(ctx, current_id).await?;
     cursor.current_node = next_id;
     refresh_cursor_cache(cursor, ctx).await?;
+    cursor.skip_next_step = true;
     Ok(true)
 }
 

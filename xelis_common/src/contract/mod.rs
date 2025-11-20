@@ -562,20 +562,12 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, C
     // BTree Cursor
     {
         env.register_native_function(
-            "current",
-            Some(btree_cursor_type.clone()),
-            vec![],
-            FunctionHandler::Async(async_handler!(btree_cursor_current::<P>)),
-            15,
-            Some(Type::Optional(Box::new(Type::Any)))
-        );
-        env.register_native_function(
             "next",
             Some(btree_cursor_type.clone()),
             vec![],
             FunctionHandler::Async(async_handler!(btree_cursor_next::<P>)),
             15,
-            Some(Type::Bool)
+            Some(Type::Optional(Box::new(Type::Any)))
         );
         env.register_native_function(
             "delete",
@@ -583,7 +575,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, C
             vec![],
             FunctionHandler::Async(async_handler!(btree_cursor_delete::<P>)),
             20,
-            Some(Type::Optional(Box::new(Type::Any)))
+            Some(Type::Bool)
         );
     }
 

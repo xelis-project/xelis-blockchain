@@ -416,6 +416,7 @@ async fn btree_cursor_scans_random_u64s_in_order() {
         cached_value: Some(start_node.value.clone()),
         cached_key: Some(start_node.key.clone()),
         ascending: true,
+        skip_next_step: false,
     };
 
     let mut observed = Vec::new();
@@ -505,6 +506,7 @@ async fn btree_cursor_scans_duplicate_bucket() {
         cached_value: Some(first.value.clone()),
         cached_key: Some(first.key.clone()),
         ascending: true,
+        skip_next_step: false,
     };
 
     let mut observed = Vec::new();
@@ -717,6 +719,7 @@ async fn btree_cursor_key_value_and_exhaustion() {
         cached_value: Some(cursor.value.clone()),
         cached_key: Some(cursor.key.clone()),
         ascending: true,
+        skip_next_step: false,
     };
 
     // Key/value come from cached data
@@ -772,6 +775,7 @@ async fn btree_cursor_allows_deleting_during_scan() {
         cached_value: Some(cursor_node.value.clone()),
         cached_key: Some(cursor_node.key.clone()),
         ascending: true,
+        skip_next_step: false,
     };
 
     let mut outputs = Vec::new();
@@ -840,6 +844,7 @@ async fn btree_cursor_selective_delete_during_scan() {
         cached_value: Some(cursor_node.value.clone()),
         cached_key: Some(cursor_node.key.clone()),
         ascending: true,
+        skip_next_step: false,
     };
 
     let mut kept_values = Vec::new();
@@ -916,6 +921,7 @@ async fn btree_cursor_descends_and_deletes() {
         cached_value: Some(cursor_node.value.clone()),
         cached_key: Some(cursor_node.key.clone()),
         ascending: false,
+        skip_next_step: false,
     };
 
     let mut visited = Vec::new();
@@ -986,6 +992,7 @@ async fn btree_cursor_consecutive_deletes() {
         cached_value: Some(cursor_node.value.clone()),
         cached_key: Some(cursor_node.key.clone()),
         ascending: true,
+        skip_next_step: false,
     };
 
     for expected in 1u64..=3 {
@@ -1047,6 +1054,7 @@ async fn btree_cursor_exhausts_tree() {
         cached_value: Some(cursor_node.value.clone()),
         cached_key: Some(cursor_node.key.clone()),
         ascending: true,
+        skip_next_step: false,
     };
 
     let mut removed_values = Vec::new();
@@ -1226,6 +1234,7 @@ async fn btree_cursor_cache_refresh_tracks_state() {
         cached_value: None,
         cached_key: None,
         ascending: true,
+        skip_next_step: false,
     };
 
     refresh_cursor_cache(&mut cursor, &provider, &mut state).await.unwrap();
@@ -1284,6 +1293,7 @@ async fn btree_cursor_detects_stale_value_update() {
         cached_value: Some(node.value.clone()),
         cached_key: Some(node.key.clone()),
         ascending: true,
+        skip_next_step: false,
     };
 
     assert_eq!(cursor.cached_value.as_ref().unwrap().as_u64().unwrap(), 100);
@@ -1307,7 +1317,7 @@ async fn btree_cursor_detects_stale_value_update() {
     // Cursor still has old cached value
     assert_eq!(cursor.cached_value.as_ref().unwrap().as_u64().unwrap(), 100);
 
-    // 4. Call refresh (mimicking btree_cursor_current)
+    // 4. Call refresh to simulate reading via cursor.next()
     refresh_cursor_cache(&mut cursor, &provider, &mut state).await.unwrap();
 
     // 5. Verify new value
