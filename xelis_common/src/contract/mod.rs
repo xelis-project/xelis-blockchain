@@ -210,15 +210,9 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, C
     let contract_type = Type::Opaque(env.register_opaque::<OpaqueContract>("Contract", false));
     let scheduled_execution_type = Type::Opaque(env.register_opaque::<OpaqueScheduledExecution>("ScheduledExecution", false));
     // See xelis_common::contract::opaque::storage::BTreeSeekBias
-    let btree_seek_bias_type = Type::Enum(env.register_enum::<7>("BTreeSeekBias", [
-        ("Exact", Vec::<(&str, Type)>::new()),
-        ("GreaterOrEqual", Vec::<(&str, Type)>::new()),
-        ("Greater", Vec::<(&str, Type)>::new()),
-        ("LessOrEqual", Vec::<(&str, Type)>::new()),
-        ("Less", Vec::<(&str, Type)>::new()),
-        ("First", Vec::<(&str, Type)>::new()),
-        ("Last", Vec::<(&str, Type)>::new()),
-    ]));
+    let btree_seek_bias_type = Type::Enum(env.register_enum::<{ BTreeSeekBias::COUNT }>("BTreeSeekBias", 
+        BTreeSeekBias::names().map(|v| (v, Vec::<(&str, Type)>::new()))
+    ));
     let max_supply_type = Type::Enum(env.register_enum::<3>("MaxSupplyMode", [
         // Unlimited supply
         ("None", vec![]),

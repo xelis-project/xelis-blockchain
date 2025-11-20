@@ -205,38 +205,46 @@ fn set_child(n: &mut Node, side: Direction, v: Option<u64>) {
     match side { Direction::Left => n.left = v, Direction::Right => n.right = v }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-pub enum BTreeSeekBias {
-    Exact = 0,
-    GreaterOrEqual = 1,
-    Greater = 2,
-    LessOrEqual = 3,
-    Less = 4,
-    First = 5,
-    Last = 6,
+macro_rules! define_numeric_enum {
+    (
+        $(#[$meta:meta])*
+        pub enum $name:ident {
+            $($variant:ident = $value:literal),* $(,)?
+        }
+    ) => {
+        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        #[repr(u8)]
+        $(#[$meta])*
+        pub enum $name {
+            $($variant = $value),*
+        }
+
+        impl $name {
+            pub const COUNT: usize = [ $($value),* ].len();
+
+            pub fn names() -> [&'static str; Self::COUNT] {
+                [ $(stringify!($variant)),* ]
+            }
+        }
+
+        impl TryFrom<u8> for $name {
+            type Error = anyhow::Error;
+            fn try_from(value: u8) -> Result<Self, Self::Error> {
+                match value {
+                    $($value => Ok(Self::$variant),)*
+                    _ => Err(anyhow::anyhow!(concat!("invalid ", stringify!($name), " variant {}"), value)),
+                }
+            }
+        }
+
+        impl From<$name> for u8 {
+            fn from(v: $name) -> Self { v as u8 }
+        }
+    };
 }
 
-impl TryFrom<u8> for BTreeSeekBias {
-    type Error = anyhow::Error;
-    fn try_from(value: u8) -> Result<Self, Self::Error> {
-        Ok(match value {
-            0 => Self::Exact,
-            1 => Self::GreaterOrEqual,
-            2 => Self::Greater,
-            3 => Self::LessOrEqual,
-            4 => Self::Less,
-            5 => Self::First,
-            6 => Self::Last,
-            _ => return Err(anyhow::anyhow!("invalid BTreeSeekBias variant {}", value)),
-        })
-    }
-}
-
-impl From<BTreeSeekBias> for u8 {
-    fn from(bias: BTreeSeekBias) -> Self {
-        bias as u8
-    }
+define_numeric_enum! {
+    pub enum BTreeSeekBias { Exact = 0, GreaterOrEqual = 1, Greater = 2, LessOrEqual = 3, Less = 4, First = 5, Last = 6 }
 }
 
 #[inline]
