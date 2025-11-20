@@ -112,14 +112,6 @@ pub(crate) struct TreeContext<'ctx, 'ty, P: ContractProvider> {
     namespace: &'ctx [u8],
     usage: StorageUsage,
 }
-impl<'ctx, 'ty, P: ContractProvider> Drop for TreeContext<'ctx, 'ty, P> {
-    fn drop(&mut self) {
-        if !std::thread::panicking() {
-            panic!("TreeContext dropped without calling finish()! usage info lost");
-        }
-    }
-}
-
 impl<'ctx, 'ty, P: ContractProvider> TreeContext<'ctx, 'ty, P> {
     pub(crate) fn new(
         storage: &'ctx P,
@@ -139,8 +131,7 @@ impl<'ctx, 'ty, P: ContractProvider> TreeContext<'ctx, 'ty, P> {
     }
 
     fn finish(self) -> StorageUsage {
-        let this = std::mem::ManuallyDrop::new(self);
-        this.usage
+        self.usage
     }
 
     #[inline]
@@ -318,7 +309,7 @@ fn priority_for_pair(key: &[u8], id: u64) -> u64 {
 async fn node_priority<'ty, P: ContractProvider>(
     ctx: &mut TreeContext<'_, 'ty, P>, node_id: u64,
 ) -> Result<u64, EnvironmentError> {
-    let header = load_node_header(ctx, node_id).await?;
+    let header = load_node_header(ctx, node_id).await?.ok_or_else(missing)?;
     Ok(priority_for_pair(&header.key, header.id))
 }
 
@@ -491,14 +482,11 @@ async fn cursor_step<'a, 'ty, 'r, P: ContractProvider>(
         let Some(current_id) = cursor.current_node else {
             return Ok(SysCallResult::Return(Primitive::Boolean(false).into()));
         };
-        if let Err(e) = load_node_header(&mut ctx, current_id).await {
-            if matches!(e, EnvironmentError::Static(ERR_MISSING_NODE)) {
-                cursor.current_node = None;
-                cursor.cached_value = None;
-                cursor.cached_key = None;
-                return Ok(SysCallResult::Return(Primitive::Boolean(false).into()));
-            }
-            return Err(e);
+        if load_node_header(&mut ctx, current_id).await?.is_none() {
+            cursor.current_node = None;
+            cursor.cached_value = None;
+            cursor.cached_key = None;
+            return Ok(SysCallResult::Return(Primitive::Boolean(false).into()));
         }
         cursor.current_node = if cursor.ascending {
             successor(&mut ctx, current_id).await?
@@ -572,7 +560,7 @@ async fn insert_key<'ty, P: ContractProvider>(
     // Standard BST insert using (key,id) ordering (duplicates go to the right because id increases).
     let mut current_id = root;
     loop {
-        let header = load_node_header(ctx, current_id).await?;
+        let header = load_node_header(ctx, current_id).await?.ok_or_else(missing)?;
         match cmp_pair(&key, id, &header.key, header.id) {
             Ordering::Less => {
                 if let Some(l) = header.left { current_id = l; }
@@ -600,9 +588,9 @@ async fn insert_key<'ty, P: ContractProvider>(
 
     // Treap heap property: bubble the new node up by rotations until parent priority >= node priority.
     loop {
-        let node = load_node_header(ctx, id).await?;
+        let node = load_node_header(ctx, id).await?.ok_or_else(missing)?;
         let Some(pid) = node.parent else { break; };
-        let parent = load_node_header(ctx, pid).await?;
+        let parent = load_node_header(ctx, pid).await?.ok_or_else(missing)?;
         let parent_p = priority_for_pair(&parent.key, parent.id);
         if new_priority > parent_p {
             if parent.left == Some(id) { rotate_right(ctx, pid).await?; } else { rotate_left(ctx, pid).await?; }
@@ -623,7 +611,7 @@ async fn treap_delete_node<'ty, P: ContractProvider>(
 
     // Rotate the target down until it's a leaf, then remove.
     loop {
-        let header = load_node_header(ctx, node_id).await?;
+        let header = load_node_header(ctx, node_id).await?.ok_or_else(missing)?;
         match (header.left, header.right) {
             (None, None) => {
                 let node = load_node(ctx, node_id).await?;
@@ -657,7 +645,7 @@ async fn lower_bound_header<'ty, P: ContractProvider>(
     let mut current_id = read_root_id(ctx).await?;
     let mut candidate: Option<NodeHeader> = None;
     while current_id != 0 {
-        let header = load_node_header(ctx, current_id).await?;
+        let header = load_node_header(ctx, current_id).await?.ok_or_else(missing)?;
         match cmp_pair(&header.key, header.id, q_key, q_id) {
             Ordering::Less => current_id = header.right.unwrap_or(0),
             _ => {
@@ -759,7 +747,7 @@ async fn replace_node<'ty, P: ContractProvider>(
 async fn neighbor<'ty, P: ContractProvider>(
     ctx: &mut TreeContext<'_, 'ty, P>, node_id: u64, dir: Direction,
 ) -> Result<Option<u64>, EnvironmentError> {
-    let node = load_node_header(ctx, node_id).await?;
+    let node = load_node_header(ctx, node_id).await?.ok_or_else(missing)?;
     let child = match dir { Direction::Right => node.right, Direction::Left => node.left };
     if let Some(c) = child {
         let next_id = match dir {
@@ -808,7 +796,7 @@ async fn find_extreme_id<'ty, P: ContractProvider>(
     ctx: &mut TreeContext<'_, 'ty, P>, mut node_id: u64, direction: Direction,
 ) -> Result<u64, EnvironmentError> {
     loop {
-        let node = load_node_header(ctx, node_id).await?;
+        let node = load_node_header(ctx, node_id).await?.ok_or_else(missing)?;
         let next = match direction { Direction::Left => node.left, Direction::Right => node.right };
         if let Some(child) = next { node_id = child; } else { return Ok(node.id); }
     }
@@ -819,7 +807,7 @@ async fn ascend_until_parent_side<'ty, P: ContractProvider>(
 ) -> Result<Option<u64>, EnvironmentError> {
     let mut parent_id = current.parent;
     while let Some(pid) = parent_id {
-        let parent = load_node_header(ctx, pid).await?;
+        let parent = load_node_header(ctx, pid).await?.ok_or_else(missing)?;
         let matches = match expected_side {
             Direction::Left => parent.left == Some(current.id),
             Direction::Right => parent.right == Some(current.id),
@@ -884,11 +872,14 @@ async fn load_node<'ty, P: ContractProvider>(
 
 async fn load_node_header<'ty, P: ContractProvider>(
     ctx: &mut TreeContext<'_, 'ty, P>, id: u64,
-) -> Result<NodeHeader, EnvironmentError> {
+) -> Result<Option<NodeHeader>, EnvironmentError> {
     let key = node_storage_key(ctx.namespace, id);
     ensure_cache_entry(ctx, &key).await?;
-    let v = ctx.cached_value(&key).ok_or_else(missing)?;
-    node_header_from_value(id, v)
+    if let Some(v) = ctx.cached_value(&key) {
+        Ok(Some(node_header_from_value(id, v)?))
+    } else {
+        Ok(None)
+    }
 }
 
 async fn load_node_by_id<'ty, P: ContractProvider>(
