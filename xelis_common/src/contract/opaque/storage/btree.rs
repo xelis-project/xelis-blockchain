@@ -3,6 +3,7 @@ use std::{
     collections::hash_map::Entry,
     hash::{Hash as StdHash, Hasher},
 };
+use indexmap::IndexMap;
 use xelis_vm::{
     traits::{JSONHelper, Serializable},
     Context, EnvironmentError, FnInstance, FnParams, FnReturnType, OpaqueWrapper, Primitive,
@@ -483,7 +484,12 @@ pub async fn btree_cursor_current<'a, 'ty, 'r, P: ContractProvider>(
     with_cursor_ctx_mut!(instance, context, |cursor, ctx| {
         refresh_cursor_cache(cursor, &mut ctx).await?;
         let out = match (cursor.current_node, &cursor.cached_key, &cursor.cached_value) {
-            (Some(_), Some(k), Some(v)) => ValueCell::Object(vec![ValueCell::Bytes(k.clone()).into(), v.clone().into()]),
+            (Some(_), Some(k), Some(v)) => {
+                let mut map = IndexMap::new();
+                map.insert(ValueCell::Primitive(Primitive::String("key".into())), ValueCell::Bytes(k.clone()).into());
+                map.insert(ValueCell::Primitive(Primitive::String("value".into())), v.clone().into());
+                ValueCell::Map(Box::new(map))
+            },
             _ => null_value(),
         };
         Ok(SysCallResult::Return(out.into()))
