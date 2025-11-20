@@ -134,7 +134,7 @@ async fn insert_key(
     store: &OpaqueBTreeStore,
     key: Vec<u8>,
     value: ValueCell,
-) -> Result<Option<ValueCell>, EnvironmentError> {
+) -> Result<(), EnvironmentError> {
     let mut ctx = TreeContext::new(provider, state, contract, &store.namespace);
     let res = super::insert_key(&mut ctx, key, value).await;
     let _ = ctx.finish();
@@ -1106,19 +1106,19 @@ async fn btree_insert_duplicate_allocates_new_node() {
     let next0 = read_next_id(&provider, &mut state, &contract, &store.namespace).await.unwrap();
     assert_eq!(next0, 1);
 
-    assert!(insert_key(
+    insert_key(
         &provider,
         &mut state,
         &contract,
         &store,
         b"k".to_vec(),
         ValueCell::from(Primitive::U64(10)),
-    ).await.unwrap().is_none());
+    ).await.unwrap();
 
     let next1 = read_next_id(&provider, &mut state, &contract, &store.namespace).await.unwrap();
     assert_eq!(next1, 2);
 
-    let duplicated = insert_key(
+    insert_key(
         &provider,
         &mut state,
         &contract,
@@ -1126,7 +1126,6 @@ async fn btree_insert_duplicate_allocates_new_node() {
         b"k".to_vec(),
         ValueCell::from(Primitive::U64(20)),
     ).await.unwrap();
-    assert!(duplicated.is_none());
 
     // next id advanced because a new node was allocated for the duplicate
     let next2 = read_next_id(&provider, &mut state, &contract, &store.namespace).await.unwrap();

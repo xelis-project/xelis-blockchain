@@ -420,7 +420,8 @@ pub async fn btree_store_insert<'a, 'ty, 'r, P: ContractProvider>(
     let value = params.remove(0).into_owned();
     ensure_value_constraints(&value)?;
     with_store_ctx!(instance, metadata, context, |_store, ctx, _contract| {
-        Ok(SysCallResult::Return(opt_or_null(insert_key(&mut ctx, key, value).await?).into()))
+        insert_key(&mut ctx, key, value).await?;
+        Ok(SysCallResult::Return(Primitive::Null.into()))
     })
 }
 
@@ -566,10 +567,10 @@ async fn delete_at_cursor<'ty, P: ContractProvider>(
 
 /* --------------------------- Treap core ----------------------------- */
 
-/// Inserts a key/value pair. Always returns `Ok(None)` because duplicates are allowed and we don't replace.
+/// Inserts a key/value pair. Always returns `Ok(())` because duplicates are allowed and we don't replace.
 async fn insert_key<'ty, P: ContractProvider>(
     ctx: &mut TreeContext<'_, 'ty, P>, key: Vec<u8>, value: ValueCell,
-) -> Result<Option<ValueCell>, EnvironmentError> {
+) -> Result<(), EnvironmentError> {
     // Allocate id first so (key,id) defines total order and deterministic priority.
     let id = allocate_node_id(ctx).await?;
     let root = read_root_id(ctx).await?;
@@ -580,7 +581,7 @@ async fn insert_key<'ty, P: ContractProvider>(
     if root == 0 {
         write_node(ctx, &Node::new(id, key, value, None)).await?;
         write_root_id(ctx, id).await?;
-        return Ok(None);
+        return Ok(());
     }
 
     let new_priority = priority_for_pair(&key, id);
@@ -626,7 +627,7 @@ async fn insert_key<'ty, P: ContractProvider>(
             break;
         }
     }
-    Ok(None)
+    Ok(())
 }
 
 async fn treap_delete_node<'ty, P: ContractProvider>(
