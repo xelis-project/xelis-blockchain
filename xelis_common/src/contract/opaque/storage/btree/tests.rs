@@ -1379,6 +1379,37 @@ async fn btree_seek_empty_and_bounds() {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn btree_seek_first_last_works() {
+    let contract = Hash::zero();
+    let provider = MockProvider::default();
+    let mut state = test_chain_state(contract.clone());
+    let store = OpaqueBTreeStore { namespace: b"seek_first_last".to_vec() };
+
+    // Empty tree
+    assert!(seek_node(&provider, &mut state, &contract, &store, &[], BTreeSeekBias::First).await.unwrap().is_none());
+    assert!(seek_node(&provider, &mut state, &contract, &store, &[], BTreeSeekBias::Last).await.unwrap().is_none());
+
+    for key in [10u64, 20, 30] {
+        insert_key(
+            &provider,
+            &mut state,
+            &contract,
+            &store,
+            key.to_be_bytes().to_vec(),
+            ValueCell::from(Primitive::U64(key)),
+        ).await.unwrap();
+    }
+
+    // Seek First
+    let first = seek_node(&provider, &mut state, &contract, &store, &[], BTreeSeekBias::First).await.unwrap().unwrap();
+    assert_eq!(first.value.as_u64().unwrap(), 10);
+
+    // Seek Last
+    let last = seek_node(&provider, &mut state, &contract, &store, &[], BTreeSeekBias::Last).await.unwrap().unwrap();
+    assert_eq!(last.value.as_u64().unwrap(), 30);
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn btree_namespace_isolation() {
     let contract = Hash::zero();
     let provider = MockProvider::default();

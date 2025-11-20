@@ -207,7 +207,7 @@ fn set_child(n: &mut Node, side: Direction, v: Option<u64>) {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum BTreeSeekBias {
-    Exact = 0, GreaterOrEqual = 1, Greater = 2, LessOrEqual = 3, Less = 4,
+    Exact = 0, GreaterOrEqual = 1, Greater = 2, LessOrEqual = 3, Less = 4, First = 5, Last = 6,
 }
 impl TryFrom<u8> for BTreeSeekBias {
     type Error = anyhow::Error;
@@ -218,6 +218,8 @@ impl TryFrom<u8> for BTreeSeekBias {
             2 => Self::Greater,
             3 => Self::LessOrEqual,
             4 => Self::Less,
+            5 => Self::First,
+            6 => Self::Last,
             _ => return Err(anyhow::anyhow!("invalid BTreeSeekBias variant {}", value)),
         })
     }
@@ -421,7 +423,7 @@ pub async fn btree_store_delete<'a, 'ty, 'r, P: ContractProvider>(
 pub async fn btree_store_seek<'a, 'ty, 'r, P: ContractProvider>(
     instance: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut Context<'ty, 'r>
 ) -> FnReturnType<ContractMetadata> {
-    let key = read_key_bytes(params.remove(0).into_owned())?;
+    let key = read_key_bytes_allow_empty(params.remove(0).into_owned())?;
     let bias = read_bias(&params.remove(0).into_owned())?;
     let ascending = read_bool(&params.remove(0).into_owned())?;
     with_store_ctx!(instance, metadata, context, |store, ctx, contract| {
@@ -698,6 +700,8 @@ async fn seek_node<'ty, P: ContractProvider>(
     ctx: &mut TreeContext<'_, 'ty, P>, key: &[u8], bias: BTreeSeekBias,
 ) -> Result<Option<Node>, EnvironmentError> {
     let target_id = match bias {
+        BTreeSeekBias::First => tree_extreme_id(ctx, Direction::Left).await?,
+        BTreeSeekBias::Last => tree_extreme_id(ctx, Direction::Right).await?,
         BTreeSeekBias::Exact => {
             if let Some(candidate) = lower_bound_header(ctx, key, 0).await? {
                 if candidate.key == key { Some(candidate.id) } else { None }
@@ -967,6 +971,11 @@ fn read_bytes(value: ValueCell, field: &str) -> Result<Vec<u8>, EnvironmentError
 fn read_key_bytes(value: ValueCell) -> Result<Vec<u8>, EnvironmentError> {
     let bytes = read_bytes(value, "key")?;
     if bytes.is_empty() { return Err(EnvironmentError::Static("key cannot be empty")); }
+    if bytes.len() > MAX_KEY_SIZE { return Err(EnvironmentError::Static("key is too large")); }
+    Ok(bytes)
+}
+fn read_key_bytes_allow_empty(value: ValueCell) -> Result<Vec<u8>, EnvironmentError> {
+    let bytes = read_bytes(value, "key")?;
     if bytes.len() > MAX_KEY_SIZE { return Err(EnvironmentError::Static("key is too large")); }
     Ok(bytes)
 }
