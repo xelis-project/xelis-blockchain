@@ -206,9 +206,17 @@ fn set_child(n: &mut Node, side: Direction, v: Option<u64>) {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum BTreeSeekBias {
-    Exact = 0, GreaterOrEqual = 1, Greater = 2, LessOrEqual = 3, Less = 4, First = 5, Last = 6,
+#[repr(u8)]
+pub enum BTreeSeekBias {
+    Exact = 0,
+    GreaterOrEqual = 1,
+    Greater = 2,
+    LessOrEqual = 3,
+    Less = 4,
+    First = 5,
+    Last = 6,
 }
+
 impl TryFrom<u8> for BTreeSeekBias {
     type Error = anyhow::Error;
     fn try_from(value: u8) -> Result<Self, Self::Error> {
@@ -222,6 +230,12 @@ impl TryFrom<u8> for BTreeSeekBias {
             6 => Self::Last,
             _ => return Err(anyhow::anyhow!("invalid BTreeSeekBias variant {}", value)),
         })
+    }
+}
+
+impl From<BTreeSeekBias> for u8 {
+    fn from(bias: BTreeSeekBias) -> Self {
+        bias as u8
     }
 }
 
