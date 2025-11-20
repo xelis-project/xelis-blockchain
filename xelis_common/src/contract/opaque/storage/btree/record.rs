@@ -2,7 +2,7 @@ use xelis_vm::ValueCell;
 
 use crate::serializer::{Reader, ReaderError, Serializer, Writer};
 
-use super::{Node, NodeHeader, decode_ptr};
+use super::{Node, NodeHeader};
 
 #[derive(Debug, Clone)]
 pub struct NodeRecord {
@@ -77,5 +77,10 @@ pub fn read_node_header_parts(reader: &mut Reader) -> Result<(Option<u64>, Optio
 #[inline]
 fn encode_ptr(value: Option<u64>) -> u64 {
     value.unwrap_or(0)
+}
+
+#[inline]
+fn decode_ptr(value: u64) -> Option<u64> {
+    if value == 0 { None } else { Some(value) }
 }
 

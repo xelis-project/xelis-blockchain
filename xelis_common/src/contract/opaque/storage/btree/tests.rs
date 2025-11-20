@@ -136,7 +136,9 @@ async fn insert_key(
     value: ValueCell,
 ) -> Result<Option<ValueCell>, EnvironmentError> {
     let mut ctx = TreeContext::new(provider, state, contract, &store.namespace);
-    super::insert_key(&mut ctx, key, value).await
+    let res = super::insert_key(&mut ctx, key, value).await;
+    let _ = ctx.finish();
+    res
 }
 
 async fn find_key(
@@ -147,7 +149,9 @@ async fn find_key(
     key: &[u8],
 ) -> Result<Option<ValueCell>, EnvironmentError> {
     let mut ctx = TreeContext::new(provider, state, contract, &store.namespace);
-    super::find_key(&mut ctx, key).await
+    let res = super::find_key(&mut ctx, key).await;
+    let _ = ctx.finish();
+    res
 }
 
 async fn delete_key(
@@ -156,9 +160,11 @@ async fn delete_key(
     contract: &Hash,
     store: &OpaqueBTreeStore,
     key: &[u8],
-) -> Result<Option<ValueCell>, EnvironmentError> {
+) -> Result<bool, EnvironmentError> {
     let mut ctx = TreeContext::new(provider, state, contract, &store.namespace);
-    super::delete_key(&mut ctx, key).await
+    let res = super::delete_key(&mut ctx, key).await;
+    let _ = ctx.finish();
+    res
 }
 
 async fn seek_node(
@@ -170,7 +176,9 @@ async fn seek_node(
     bias: BTreeSeekBias,
 ) -> Result<Option<Node>, EnvironmentError> {
     let mut ctx = TreeContext::new(provider, state, contract, &store.namespace);
-    super::seek_node(&mut ctx, key, bias).await
+    let res = super::seek_node(&mut ctx, key, bias).await;
+    let _ = ctx.finish();
+    res
 }
 
 async fn read_node(
@@ -181,7 +189,9 @@ async fn read_node(
     node_id: u64,
 ) -> Result<Option<Node>, EnvironmentError> {
     let mut ctx = TreeContext::new(provider, state, contract, namespace);
-    super::read_node(&mut ctx, node_id).await
+    let res = super::read_node(&mut ctx, node_id).await;
+    let _ = ctx.finish();
+    res
 }
 
 async fn read_root_id(
@@ -191,7 +201,9 @@ async fn read_root_id(
     namespace: &[u8],
 ) -> Result<u64, EnvironmentError> {
     let mut ctx = TreeContext::new(provider, state, contract, namespace);
-    super::read_root_id(&mut ctx).await
+    let res = super::read_root_id(&mut ctx).await;
+    let _ = ctx.finish();
+    res
 }
 
 async fn successor(
@@ -202,7 +214,9 @@ async fn successor(
     node_id: u64,
 ) -> Result<Option<u64>, EnvironmentError> {
     let mut ctx = TreeContext::new(provider, state, contract, namespace);
-    super::successor(&mut ctx, node_id).await
+    let res = super::successor(&mut ctx, node_id).await;
+    let _ = ctx.finish();
+    res
 }
 
 async fn find_min_node(
@@ -213,7 +227,9 @@ async fn find_min_node(
     node_id: u64,
 ) -> Result<Node, EnvironmentError> {
     let mut ctx = TreeContext::new(provider, state, contract, namespace);
-    super::find_min_node(&mut ctx, node_id).await
+    let res = super::find_min_node(&mut ctx, node_id).await;
+    let _ = ctx.finish();
+    res
 }
 
 async fn refresh_cursor_cache(
@@ -224,7 +240,9 @@ async fn refresh_cursor_cache(
     let contract = cursor.contract.clone();
     let namespace = cursor.namespace.clone();
     let mut ctx = TreeContext::new(provider, state, &contract, &namespace);
-    super::refresh_cursor_cache(cursor, &mut ctx).await
+    let res = super::refresh_cursor_cache(cursor, &mut ctx).await;
+    let _ = ctx.finish();
+    res
 }
 
 async fn allocate_node_id(
@@ -234,7 +252,9 @@ async fn allocate_node_id(
     namespace: &[u8],
 ) -> Result<u64, EnvironmentError> {
     let mut ctx = TreeContext::new(provider, state, contract, namespace);
-    super::allocate_node_id(&mut ctx).await
+    let res = super::allocate_node_id(&mut ctx).await;
+    let _ = ctx.finish();
+    res
 }
 
 async fn read_next_id(
@@ -244,7 +264,9 @@ async fn read_next_id(
     namespace: &[u8],
 ) -> Result<u64, EnvironmentError> {
     let mut ctx = TreeContext::new(provider, state, contract, namespace);
-    super::read_next_id(&mut ctx).await
+    let res = super::read_next_id(&mut ctx).await;
+    let _ = ctx.finish();
+    res
 }
 
 #[test]
@@ -277,7 +299,7 @@ async fn btree_insert_get_delete_roundtrip() {
     assert_eq!(val.unwrap().as_u64().unwrap(), 10);
 
     let removed = delete_key(&provider, &mut state, &contract, &store, b"k1").await.unwrap();
-    assert_eq!(removed.unwrap().as_u64().unwrap(), 10);
+    assert!(removed);
     assert!(find_key(&provider, &mut state, &contract, &store, b"k1").await.unwrap().is_none());
 }
 
@@ -392,6 +414,7 @@ async fn btree_cursor_scans_random_u64s_in_order() {
         namespace: store.namespace.clone(),
         current_node: Some(start_node.id),
         cached_value: Some(start_node.value.clone()),
+        cached_key: Some(start_node.key.clone()),
         ascending: true,
     };
 
@@ -437,8 +460,10 @@ async fn btree_allows_duplicate_keys_and_ordered_traversal() {
     );
 
     for expected in [100u64, 200, 300] {
+        let current = find_key(&provider, &mut state, &contract, &store, &key_bytes).await.unwrap();
+        assert_eq!(current.unwrap().as_u64().unwrap(), expected);
         let removed = delete_key(&provider, &mut state, &contract, &store, &key_bytes).await.unwrap();
-        assert_eq!(removed.unwrap().as_u64().unwrap(), expected);
+        assert!(removed);
     }
 
     assert!(find_key(&provider, &mut state, &contract, &store, &key_bytes).await.unwrap().is_none());
@@ -478,6 +503,7 @@ async fn btree_cursor_scans_duplicate_bucket() {
         namespace: store.namespace.clone(),
         current_node: Some(first.id),
         cached_value: Some(first.value.clone()),
+        cached_key: Some(first.key.clone()),
         ascending: true,
     };
 
@@ -526,7 +552,7 @@ async fn btree_delete_root_with_two_children_promotes_successor() {
         &store,
         &40u64.to_be_bytes(),
     ).await.unwrap();
-    assert_eq!(removed.unwrap().as_u64().unwrap(), 400);
+    assert!(removed);
     assert!(find_key(&provider, &mut state, &contract, &store, &40u64.to_be_bytes()).await.unwrap().is_none());
 
     // Treap rotations may choose a different node as the root compared to the original unbalanced
@@ -689,6 +715,7 @@ async fn btree_cursor_key_value_and_exhaustion() {
         namespace: store.namespace.clone(),
         current_node: Some(cursor.id),
         cached_value: Some(cursor.value.clone()),
+        cached_key: Some(cursor.key.clone()),
         ascending: true,
     };
 
@@ -743,6 +770,7 @@ async fn btree_cursor_allows_deleting_during_scan() {
         namespace: store.namespace.clone(),
         current_node: Some(cursor_node.id),
         cached_value: Some(cursor_node.value.clone()),
+        cached_key: Some(cursor_node.key.clone()),
         ascending: true,
     };
 
@@ -810,6 +838,7 @@ async fn btree_cursor_selective_delete_during_scan() {
         namespace: store.namespace.clone(),
         current_node: Some(cursor_node.id),
         cached_value: Some(cursor_node.value.clone()),
+        cached_key: Some(cursor_node.key.clone()),
         ascending: true,
     };
 
@@ -832,9 +861,8 @@ async fn btree_cursor_selective_delete_during_scan() {
             // Use delete_at_cursor which safely deletes the current node by ID
             let mut ctx = TreeContext::new(&provider, &mut state, &contract, &store.namespace);
             let removed = super::delete_at_cursor(&mut cursor, &mut ctx).await.unwrap();
-            let removed_value = removed.expect("value exists").as_u64().unwrap();
-            
-            assert_eq!(removed_value, *exp_val, "Deleted value mismatch for key {}", key);
+            let _ = ctx.finish();
+            assert!(removed, "Deleted mismatch for key {}", key);
         } else {
             kept_values.push(*exp_val);
             // Manually advance the cursor
@@ -851,6 +879,77 @@ async fn btree_cursor_selective_delete_during_scan() {
     // Verify remaining items in storage match what we skipped
     let remaining_in_storage = collect_values_in_order(&provider, &mut state, &contract, &store.namespace).await;
     assert_eq!(remaining_in_storage, kept_values);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn btree_cursor_descends_and_deletes() {
+    let contract = Hash::zero();
+    let provider = MockProvider::default();
+    let mut state = test_chain_state(contract.clone());
+    let store = OpaqueBTreeStore { namespace: b"cursor_descend_delete".to_vec() };
+
+    for key in 1u64..=5 {
+        insert_key(
+            &provider,
+            &mut state,
+            &contract,
+            &store,
+            key.to_be_bytes().to_vec(),
+            ValueCell::from(Primitive::U64(key)),
+        ).await.unwrap();
+    }
+
+    let max_key = u64::MAX.to_be_bytes();
+    let cursor_node = seek_node(
+        &provider,
+        &mut state,
+        &contract,
+        &store,
+        &max_key,
+        BTreeSeekBias::LessOrEqual,
+    ).await.unwrap().expect("max node");
+
+    let mut cursor = OpaqueBTreeCursor {
+        contract: contract.clone(),
+        namespace: store.namespace.clone(),
+        current_node: Some(cursor_node.id),
+        cached_value: Some(cursor_node.value.clone()),
+        cached_key: Some(cursor_node.key.clone()),
+        ascending: false,
+    };
+
+    let mut visited = Vec::new();
+    let mut deleted = Vec::new();
+
+    loop {
+        refresh_cursor_cache(&mut cursor, &provider, &mut state).await.unwrap();
+        let Some(current_id) = cursor.current_node else { break; };
+        let node = read_node(&provider, &mut state, &contract, &store.namespace, current_id).await.unwrap().unwrap();
+        let key = u64::from_be_bytes(node.key[..8].try_into().unwrap());
+        visited.push(key);
+
+        if key % 2 == 0 {
+            let mut ctx = TreeContext::new(&provider, &mut state, &contract, &store.namespace);
+            let removed = super::delete_at_cursor(&mut cursor, &mut ctx).await.unwrap();
+            let _ = ctx.finish();
+            assert!(removed);
+            deleted.push(key);
+        } else {
+            cursor.current_node = predecessor(&provider, &mut state, &contract, &store.namespace, current_id).await.unwrap();
+            cursor.cached_value = None;
+            cursor.cached_key = None;
+        }
+    }
+
+    assert_eq!(visited, vec![5, 4, 3, 2, 1], "cursor should walk keys in descending order");
+    assert_eq!(deleted, vec![4, 2], "descending delete should follow predecessor path");
+
+    assert_eq!(
+        collect_values_in_order(&provider, &mut state, &contract, &store.namespace).await,
+        vec![1, 3, 5],
+        "remaining keys should keep ascending order after descending deletions",
+    );
+    assert!(cursor.current_node.is_none());
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -885,6 +984,7 @@ async fn btree_cursor_consecutive_deletes() {
         namespace: store.namespace.clone(),
         current_node: Some(cursor_node.id),
         cached_value: Some(cursor_node.value.clone()),
+        cached_key: Some(cursor_node.key.clone()),
         ascending: true,
     };
 
@@ -897,7 +997,8 @@ async fn btree_cursor_consecutive_deletes() {
 
         let mut ctx = TreeContext::new(&provider, &mut state, &contract, &store.namespace);
         let removed = super::delete_at_cursor(&mut cursor, &mut ctx).await.unwrap();
-        assert_eq!(removed.unwrap().as_u64().unwrap(), expected);
+        let _ = ctx.finish();
+        assert!(removed);
     }
 
     refresh_cursor_cache(&mut cursor, &provider, &mut state).await.unwrap();
@@ -944,6 +1045,7 @@ async fn btree_cursor_exhausts_tree() {
         namespace: store.namespace.clone(),
         current_node: Some(cursor_node.id),
         cached_value: Some(cursor_node.value.clone()),
+        cached_key: Some(cursor_node.key.clone()),
         ascending: true,
     };
 
@@ -954,8 +1056,11 @@ async fn btree_cursor_exhausts_tree() {
             break;
         };
         let mut ctx = TreeContext::new(&provider, &mut state, &contract, &store.namespace);
+        let val = cursor.cached_value.as_ref().unwrap().as_u64().unwrap();
         let removed = super::delete_at_cursor(&mut cursor, &mut ctx).await.unwrap();
-        removed_values.push(removed.unwrap().as_u64().unwrap());
+        let _ = ctx.finish();
+        assert!(removed);
+        removed_values.push(val);
     }
 
     assert_eq!(removed_values, vec![1, 2, 3, 4, 5]);
@@ -1057,7 +1162,7 @@ async fn btree_delete_variants_cover_storage_cleanup() {
     let node15 = seek_node(&provider, &mut state, &contract, &store, &15u64.to_be_bytes(), BTreeSeekBias::Exact)
         .await.unwrap().unwrap();
     let removed = delete_key(&provider, &mut state, &contract, &store, &15u64.to_be_bytes()).await.unwrap();
-    assert_eq!(removed.unwrap().as_u64().unwrap(), 15);
+    assert!(removed);
     assert!(read_node(&provider, &mut state, &contract, &store.namespace, node15.id).await.unwrap().is_none());
 
     assert_eq!(
@@ -1120,6 +1225,7 @@ async fn btree_cursor_cache_refresh_tracks_state() {
         namespace: store.namespace.clone(),
         current_node: Some(n20.id),
         cached_value: None,
+        cached_key: None,
         ascending: true,
     };
 
@@ -1318,8 +1424,8 @@ async fn btree_storage_usage_single_insert_reports_activity() {
     super::insert_key(&mut ctx, b"k".to_vec(), ValueCell::from(Primitive::U64(1))).await.unwrap();
     let usage = ctx.finish();
 
-    assert_eq!(usage.read_bytes, 52, "insert should read bytes");
-    assert_eq!(usage.written_bytes, 141, "insert should write bytes");
+    assert_eq!(usage.read_bytes, 78, "insert should read bytes");
+    assert_eq!(usage.written_bytes, 177, "insert should write bytes");
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -1340,14 +1446,66 @@ async fn btree_storage_usage_delete_reports_activity() {
 
     let mut ctx = TreeContext::new(&provider, &mut state, &contract, &store.namespace);
     let removed = super::delete_key(&mut ctx, b"k").await.unwrap();
-    assert!(removed.is_some(), "expected the key to be removed");
+    assert!(removed, "expected the key to be removed");
     let usage = ctx.finish();
 
-    assert_eq!(usage.written_bytes, 64, "delete should write bytes");
+    assert_eq!(usage.written_bytes, 100, "delete should write bytes");
     assert_eq!(usage.read_bytes, 0, "reads should be cached");
 }
 
 // --- helpers specific to new tests ---
+
+async fn read_size(
+    provider: &MockProvider,
+    state: &mut ChainState<'_>,
+    contract: &Hash,
+    namespace: &[u8],
+) -> Result<u64, EnvironmentError> {
+    let mut ctx = TreeContext::new(provider, state, contract, namespace);
+    let res = super::read_size(&mut ctx).await;
+    let _ = ctx.finish();
+    res
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn btree_len_tracks_insert_and_delete() {
+    let contract = Hash::zero();
+    let provider = MockProvider::default();
+    let mut state = test_chain_state(contract.clone());
+    let store = OpaqueBTreeStore { namespace: b"len_tracking".to_vec() };
+
+    // Initially empty
+    assert_eq!(read_size(&provider, &mut state, &contract, &store.namespace).await.unwrap(), 0);
+
+    // Insert 3 elements
+    for i in 0..3u64 {
+        insert_key(
+            &provider,
+            &mut state,
+            &contract,
+            &store,
+            i.to_be_bytes().to_vec(),
+            ValueCell::from(Primitive::U64(i)),
+        ).await.unwrap();
+        assert_eq!(read_size(&provider, &mut state, &contract, &store.namespace).await.unwrap(), i + 1);
+    }
+
+    // Delete one
+    delete_key(&provider, &mut state, &contract, &store, &1u64.to_be_bytes()).await.unwrap();
+    assert_eq!(read_size(&provider, &mut state, &contract, &store.namespace).await.unwrap(), 2);
+
+    // Delete non-existent (should not change size)
+    let removed = delete_key(&provider, &mut state, &contract, &store, &999u64.to_be_bytes()).await.unwrap();
+    assert!(!removed);
+    assert_eq!(read_size(&provider, &mut state, &contract, &store.namespace).await.unwrap(), 2);
+
+    // Delete remaining
+    delete_key(&provider, &mut state, &contract, &store, &0u64.to_be_bytes()).await.unwrap();
+    assert_eq!(read_size(&provider, &mut state, &contract, &store.namespace).await.unwrap(), 1);
+    
+    delete_key(&provider, &mut state, &contract, &store, &2u64.to_be_bytes()).await.unwrap();
+    assert_eq!(read_size(&provider, &mut state, &contract, &store.namespace).await.unwrap(), 0);
+}
 
 async fn predecessor(
     provider: &MockProvider,
@@ -1357,7 +1515,9 @@ async fn predecessor(
     node_id: u64,
 ) -> Result<Option<u64>, EnvironmentError> {
     let mut ctx = TreeContext::new(provider, state, contract, namespace);
-    super::predecessor(&mut ctx, node_id).await
+    let res = super::predecessor(&mut ctx, node_id).await;
+    let _ = ctx.finish();
+    res
 }
 
 async fn btree_assert_treap_invariants(

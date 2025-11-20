@@ -551,6 +551,14 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, C
             100,
             Some(Type::Optional(Box::new(btree_cursor_type.clone())))
         );
+        env.register_native_function(
+            "len",
+            Some(btree_store_type.clone()),
+            vec![],
+            FunctionHandler::Async(async_handler!(btree_store_len::<P>)),
+            25,
+            Some(Type::U64),
+        );
     }
 
     // BTree Cursor
