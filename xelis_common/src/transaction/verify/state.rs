@@ -141,7 +141,7 @@ pub struct ContractEnvironment<'a, P: ContractProvider> {
     // Module to execute
     pub module: &'a Module,
     // Provider for the contract
-    pub provider: &'a mut P,
+    pub provider: &'a P,
 }
 
 #[async_trait]

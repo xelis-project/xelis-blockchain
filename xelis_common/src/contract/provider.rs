@@ -40,6 +40,6 @@ pub trait ContractProvider: ContractStorage + Send + Sync + 'static {
 }
 
 // This is a wrapper around the storage to allow for the storage to be passed in the Context
-pub struct ContractProviderWrapper<'a, S: ContractProvider>(pub &'a mut S);
+pub struct ContractProviderWrapper<'a, S: ContractProvider>(pub &'a S);
 
 tid! { impl<'a, S: 'static> TidAble<'a> for ContractProviderWrapper<'a, S> where S: ContractProvider }
