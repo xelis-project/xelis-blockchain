@@ -581,12 +581,11 @@ async fn insert_key<'ty, P: ContractProvider>(
     let id = allocate_node_id(ctx).await?;
     let root = read_root_id(ctx).await?;
     
-    let size = read_size(ctx).await?;
-    write_size(ctx, size + 1).await?;
-
     if root == 0 {
         write_node(ctx, &Node::new(id, key, value, None)).await?;
         write_root_id(ctx, id).await?;
+        let size = read_size(ctx).await?;
+        write_size(ctx, size + 1).await?;
         return Ok(());
     }
 
@@ -633,6 +632,8 @@ async fn insert_key<'ty, P: ContractProvider>(
             break;
         }
     }
+    let size = read_size(ctx).await?;
+    write_size(ctx, size + 1).await?;
     Ok(())
 }
 
@@ -643,11 +644,6 @@ async fn treap_delete_node<'ty, P: ContractProvider>(
         return Err(missing());
     }
 
-    let size = read_size(ctx).await?;
-    if size > 0 {
-        write_size(ctx, size - 1).await?;
-    }
-
     // Rotate the target down until it's a leaf, then remove.
     loop {
         let header = load_node_header(ctx, node_id).await?.ok_or_else(missing)?;
@@ -655,6 +651,10 @@ async fn treap_delete_node<'ty, P: ContractProvider>(
             (None, None) => {
                 let node = load_node(ctx, node_id).await?;
                 replace_node(ctx, &node, None).await?;
+                let size = read_size(ctx).await?;
+                if size > 0 {
+                    write_size(ctx, size - 1).await?;
+                }
                 return Ok(());
             }
             (Some(l), Some(r)) => {
