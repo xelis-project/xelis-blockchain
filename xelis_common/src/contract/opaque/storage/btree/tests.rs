@@ -1251,6 +1251,71 @@ async fn btree_cursor_cache_refresh_tracks_state() {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn btree_cursor_detects_stale_value_update() {
+    let contract = Hash::zero();
+    let provider = MockProvider::default();
+    let mut state = test_chain_state(contract.clone());
+    let store = OpaqueBTreeStore { namespace: b"stale_read".to_vec() };
+
+    // 1. Insert a key
+    let key = b"key";
+    insert_key(
+        &provider,
+        &mut state,
+        &contract,
+        &store,
+        key.to_vec(),
+        ValueCell::from(Primitive::U64(100)),
+    ).await.unwrap();
+
+    // 2. Create cursor pointing to it
+    let node = seek_node(
+        &provider,
+        &mut state,
+        &contract,
+        &store,
+        key,
+        BTreeSeekBias::Exact
+    ).await.unwrap().expect("node found");
+
+    let mut cursor = OpaqueBTreeCursor {
+        contract: contract.clone(),
+        namespace: store.namespace.clone(),
+        current_node: Some(node.id),
+        cached_value: Some(node.value.clone()),
+        cached_key: Some(node.key.clone()),
+        ascending: true,
+    };
+
+    assert_eq!(cursor.cached_value.as_ref().unwrap().as_u64().unwrap(), 100);
+
+    // 3. Simulate external mutation (update value)
+    // Note: btree_store_insert allocates a new node for duplicates, but if we wanted to simulate "update"
+    // in a real scenario we might delete and insert.
+    // However, to simulate "stale read of same node ID" we need to hack the storage or simulate
+    // a case where the node content changes.
+    // But `insert_key` allows duplicates, it doesn't update in place.
+    // `replace_node` is used internally.
+    // Let's simulate manual node update in storage.
+    
+    let mut updated_node = node.clone();
+    updated_node.value = ValueCell::from(Primitive::U64(200));
+    
+    let mut ctx = TreeContext::new(&provider, &mut state, &contract, &store.namespace);
+    super::write_node(&mut ctx, &updated_node).await.unwrap();
+    let _ = ctx.finish();
+
+    // Cursor still has old cached value
+    assert_eq!(cursor.cached_value.as_ref().unwrap().as_u64().unwrap(), 100);
+
+    // 4. Call refresh (mimicking btree_cursor_current)
+    refresh_cursor_cache(&mut cursor, &provider, &mut state).await.unwrap();
+
+    // 5. Verify new value
+    assert_eq!(cursor.cached_value.as_ref().unwrap().as_u64().unwrap(), 200);
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn btree_cache_prefetch_reads_values() {
     let contract = Hash::zero();
     let mut provider = MockProvider::default();

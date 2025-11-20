@@ -450,15 +450,17 @@ pub async fn btree_store_len<'a, 'ty, 'r, P: ContractProvider>(
     })
 }
 
-pub fn btree_cursor_current(instance: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, _context: &mut Context)
--> FnReturnType<ContractMetadata> {
-    let instance = instance?;
-    let cursor: &OpaqueBTreeCursor = instance.as_opaque_type()?;
-    let out = match (cursor.current_node, &cursor.cached_key, &cursor.cached_value) {
-        (Some(_), Some(k), Some(v)) => ValueCell::Object(vec![ValueCell::Bytes(k.clone()).into(), v.clone().into()]),
-        _ => null_value(),
-    };
-    Ok(SysCallResult::Return(out.into()))
+pub async fn btree_cursor_current<'a, 'ty, 'r, P: ContractProvider>(
+    instance: FnInstance<'a>, _: FnParams, _: &ModuleMetadata<'_>, context: &mut Context<'ty, 'r>
+) -> FnReturnType<ContractMetadata> {
+    with_cursor_ctx_mut!(instance, context, |cursor, ctx| {
+        refresh_cursor_cache(cursor, &mut ctx).await?;
+        let out = match (cursor.current_node, &cursor.cached_key, &cursor.cached_value) {
+            (Some(_), Some(k), Some(v)) => ValueCell::Object(vec![ValueCell::Bytes(k.clone()).into(), v.clone().into()]),
+            _ => null_value(),
+        };
+        Ok(SysCallResult::Return(out.into()))
+    })
 }
 
 pub async fn btree_cursor_next<'a, 'ty, 'r, P: ContractProvider>(

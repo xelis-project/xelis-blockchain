@@ -567,8 +567,8 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, C
             "current",
             Some(btree_cursor_type.clone()),
             vec![],
-            FunctionHandler::Sync(btree_cursor_current),
-            5,
+            FunctionHandler::Async(async_handler!(btree_cursor_current::<P>)),
+            15,
             Some(Type::Optional(Box::new(Type::Any)))
         );
         env.register_native_function(
