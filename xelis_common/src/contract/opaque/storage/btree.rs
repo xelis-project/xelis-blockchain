@@ -143,8 +143,10 @@ impl<'ctx, 'ty, P: ContractProvider> TreeContext<'ctx, 'ty, P> {
             .and_then(|e| e.as_ref().and_then(|(_, v)| v.as_ref()))
     }
 
+    /// Returns true if the cache contains an entry for the key,
+    /// regardless of whether it is a valid value or a tombstone (deleted).
     #[inline]
-    fn cache_contains(&mut self, key: &ValueCell) -> bool {
+    fn cache_has_entry(&mut self, key: &ValueCell) -> bool {
         let cache = get_cache_for_contract(&mut self.state.caches, self.state.global_caches, self.contract.clone());
         cache.storage.contains_key(key)
     }
@@ -956,7 +958,7 @@ async fn write_storage_value<'ty, P: ContractProvider>(
 async fn ensure_cache_entry<'ty, P: ContractProvider>(
     ctx: &mut TreeContext<'_, 'ty, P>, key: &ValueCell,
 ) -> Result<(), EnvironmentError> {
-    if ctx.cache_contains(key) { return Ok(()); }
+    if ctx.cache_has_entry(key) { return Ok(()); }
     let fetched = ctx.storage.load_data(ctx.contract, key, ctx.state.topoheight).await?;
     let mut size = key.size();
     if let Some((_, Some(v))) = &fetched {
