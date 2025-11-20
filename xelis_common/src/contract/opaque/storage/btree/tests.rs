@@ -392,6 +392,7 @@ async fn btree_cursor_scans_random_u64s_in_order() {
         namespace: store.namespace.clone(),
         current_node: Some(start_node.id),
         cached_value: Some(start_node.value.clone()),
+        ascending: true,
     };
 
     let mut observed = Vec::new();
@@ -477,6 +478,7 @@ async fn btree_cursor_scans_duplicate_bucket() {
         namespace: store.namespace.clone(),
         current_node: Some(first.id),
         cached_value: Some(first.value.clone()),
+        ascending: true,
     };
 
     let mut observed = Vec::new();
@@ -687,6 +689,7 @@ async fn btree_cursor_key_value_and_exhaustion() {
         namespace: store.namespace.clone(),
         current_node: Some(cursor.id),
         cached_value: Some(cursor.value.clone()),
+        ascending: true,
     };
 
     // Key/value come from cached data
@@ -740,6 +743,7 @@ async fn btree_cursor_allows_deleting_during_scan() {
         namespace: store.namespace.clone(),
         current_node: Some(cursor_node.id),
         cached_value: Some(cursor_node.value.clone()),
+        ascending: true,
     };
 
     let mut outputs = Vec::new();
@@ -764,18 +768,99 @@ async fn btree_cursor_allows_deleting_during_scan() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn btree_cursor_deletes_all_keys_during_scan() {
+async fn btree_cursor_selective_delete_during_scan() {
     let contract = Hash::zero();
     let provider = MockProvider::default();
     let mut state = test_chain_state(contract.clone());
-    let store = OpaqueBTreeStore { namespace: b"scan_delete_all".to_vec() };
+    let store = OpaqueBTreeStore { namespace: b"scan_delete_subset".to_vec() };
 
     let mut rng = StdRng::seed_from_u64(0xD3_1E7E);
-    let mut keys = IndexSet::new();
-    while keys.len() < 100 {
-        keys.insert(rng.gen::<u64>());
+    let mut expected = Vec::new();
+
+    // Insert 100 keys with range 1..=20 (lots of duplicates)
+    // Values are unique (0..100) to verify identity
+    for i in 0..100 {
+        let key = rng.gen_range(1..=20u64);
+        let value = i as u64;
+        insert_key(
+            &provider,
+            &mut state,
+            &contract,
+            &store,
+            key.to_be_bytes().to_vec(),
+            ValueCell::from(Primitive::U64(value)),
+        ).await.unwrap();
+        expected.push((key, value));
     }
-    for key in keys.iter().copied() {
+
+    // Expected order: Key ascending, then insertion order (ID ascending) for duplicates.
+    expected.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
+
+    let cursor_node = seek_node(
+        &provider,
+        &mut state,
+        &contract,
+        &store,
+        &0u64.to_be_bytes(),
+        BTreeSeekBias::GreaterOrEqual,
+    ).await.unwrap().expect("at least one node");
+
+    let mut cursor = OpaqueBTreeCursor {
+        contract: contract.clone(),
+        namespace: store.namespace.clone(),
+        current_node: Some(cursor_node.id),
+        cached_value: Some(cursor_node.value.clone()),
+        ascending: true,
+    };
+
+    let mut kept_values = Vec::new();
+
+    for (index, (exp_key, exp_val)) in expected.iter().enumerate() {
+        refresh_cursor_cache(&mut cursor, &provider, &mut state).await.unwrap();
+        let current_id = cursor.current_node.expect("Cursor should not end early");
+
+        let node = read_node(&provider, &mut state, &contract, &store.namespace, current_id).await.unwrap().unwrap();
+        let key_bytes = node.key;
+        let key = u64::from_be_bytes(key_bytes[..8].try_into().unwrap());
+        let value = cursor.cached_value.as_ref().unwrap().as_u64().unwrap();
+
+        // Verify we are looking at the expected item
+        assert_eq!((key, value), (*exp_key, *exp_val), "Cursor position mismatch at index {}", index);
+
+        // Delete every 3rd key (index 0, 3, 6...)
+        if index % 3 == 0 {
+            // Use delete_at_cursor which safely deletes the current node by ID
+            let mut ctx = TreeContext::new(&provider, &mut state, &contract, &store.namespace);
+            let removed = super::delete_at_cursor(&mut cursor, &mut ctx).await.unwrap();
+            let removed_value = removed.expect("value exists").as_u64().unwrap();
+            
+            assert_eq!(removed_value, *exp_val, "Deleted value mismatch for key {}", key);
+        } else {
+            kept_values.push(*exp_val);
+            // Manually advance the cursor
+            let next_id = successor(&provider, &mut state, &contract, &store.namespace, current_id).await.unwrap();
+            cursor.current_node = next_id;
+            cursor.cached_value = None; // Force refresh on next iteration
+        }
+    }
+    
+    // Verify cursor is exhausted
+    refresh_cursor_cache(&mut cursor, &provider, &mut state).await.unwrap();
+    assert!(cursor.current_node.is_none());
+
+    // Verify remaining items in storage match what we skipped
+    let remaining_in_storage = collect_values_in_order(&provider, &mut state, &contract, &store.namespace).await;
+    assert_eq!(remaining_in_storage, kept_values);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn btree_cursor_consecutive_deletes() {
+    let contract = Hash::zero();
+    let provider = MockProvider::default();
+    let mut state = test_chain_state(contract.clone());
+    let store = OpaqueBTreeStore { namespace: b"cursor_consecutive_delete".to_vec() };
+
+    for key in 1u64..=10 {
         insert_key(
             &provider,
             &mut state,
@@ -800,30 +885,87 @@ async fn btree_cursor_deletes_all_keys_during_scan() {
         namespace: store.namespace.clone(),
         current_node: Some(cursor_node.id),
         cached_value: Some(cursor_node.value.clone()),
+        ascending: true,
     };
 
-    let mut deleted = Vec::new();
-    loop {
+    for expected in 1u64..=3 {
         refresh_cursor_cache(&mut cursor, &provider, &mut state).await.unwrap();
-        let Some(current_id) = cursor.current_node else {
-            break;
-        };
-
+        let current_id = cursor.current_node.expect("cursor should still point to a node");
         let node = read_node(&provider, &mut state, &contract, &store.namespace, current_id).await.unwrap().unwrap();
-        let key_bytes = node.key;
-        let key = u64::from_be_bytes(key_bytes[..8].try_into().unwrap());
+        let key = u64::from_be_bytes(node.key[..8].try_into().unwrap());
+        assert_eq!(key, expected);
 
-        let next_id = successor(&provider, &mut state, &contract, &store.namespace, current_id).await.unwrap();
-        delete_key(&provider, &mut state, &contract, &store, &key_bytes).await.unwrap();
-
-        deleted.push(key);
-        cursor.current_node = next_id;
-        cursor.cached_value = None;
+        let mut ctx = TreeContext::new(&provider, &mut state, &contract, &store.namespace);
+        let removed = super::delete_at_cursor(&mut cursor, &mut ctx).await.unwrap();
+        assert_eq!(removed.unwrap().as_u64().unwrap(), expected);
     }
 
-    assert_eq!(deleted.len(), keys.len());
-    assert_eq!(deleted.iter().copied().collect::<IndexSet<_>>().len(), keys.len());
-    assert_eq!(read_root_id(&provider, &mut state, &contract, &store.namespace).await.unwrap(), 0);
+    refresh_cursor_cache(&mut cursor, &provider, &mut state).await.unwrap();
+    assert_eq!(
+        cursor.cached_value.as_ref().unwrap().as_u64().unwrap(),
+        4,
+        "cursor should advance to the first non-deleted node",
+    );
+
+    let remaining = collect_values_in_order(&provider, &mut state, &contract, &store.namespace).await;
+    let expected_remaining: Vec<u64> = (4u64..=10).collect();
+    assert_eq!(remaining, expected_remaining);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn btree_cursor_exhausts_tree() {
+    let contract = Hash::zero();
+    let provider = MockProvider::default();
+    let mut state = test_chain_state(contract.clone());
+    let store = OpaqueBTreeStore { namespace: b"cursor_exhaust_tree".to_vec() };
+
+    for key in 1u64..=5 {
+        insert_key(
+            &provider,
+            &mut state,
+            &contract,
+            &store,
+            key.to_be_bytes().to_vec(),
+            ValueCell::from(Primitive::U64(key)),
+        ).await.unwrap();
+    }
+
+    let cursor_node = seek_node(
+        &provider,
+        &mut state,
+        &contract,
+        &store,
+        &0u64.to_be_bytes(),
+        BTreeSeekBias::GreaterOrEqual,
+    ).await.unwrap().expect("at least one node");
+
+    let mut cursor = OpaqueBTreeCursor {
+        contract: contract.clone(),
+        namespace: store.namespace.clone(),
+        current_node: Some(cursor_node.id),
+        cached_value: Some(cursor_node.value.clone()),
+        ascending: true,
+    };
+
+    let mut removed_values = Vec::new();
+    loop {
+        refresh_cursor_cache(&mut cursor, &provider, &mut state).await.unwrap();
+        let Some(_) = cursor.current_node else {
+            break;
+        };
+        let mut ctx = TreeContext::new(&provider, &mut state, &contract, &store.namespace);
+        let removed = super::delete_at_cursor(&mut cursor, &mut ctx).await.unwrap();
+        removed_values.push(removed.unwrap().as_u64().unwrap());
+    }
+
+    assert_eq!(removed_values, vec![1, 2, 3, 4, 5]);
+    assert!(cursor.current_node.is_none());
+    assert!(cursor.cached_value.is_none());
+    assert_eq!(
+        read_root_id(&provider, &mut state, &contract, &store.namespace).await.unwrap(),
+        0,
+        "root pointer must be cleared once the tree is empty",
+    );
     assert!(collect_values_in_order(&provider, &mut state, &contract, &store.namespace).await.is_empty());
 }
 
@@ -978,6 +1120,7 @@ async fn btree_cursor_cache_refresh_tracks_state() {
         namespace: store.namespace.clone(),
         current_node: Some(n20.id),
         cached_value: None,
+        ascending: true,
     };
 
     refresh_cursor_cache(&mut cursor, &provider, &mut state).await.unwrap();

@@ -518,6 +518,9 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, C
             100,
             Some(Type::Optional(Box::new(Type::Any)))
         );
+
+        // NOTE: "get" will only work deterministically if there are only unique keys.
+        // For duplicate keys, you must use a cursor.
         env.register_native_function(
             "get",
             Some(btree_store_type.clone()),
@@ -526,6 +529,9 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, C
             75,
             Some(Type::Optional(Box::new(Type::Any)))
         );
+
+        // NOTE: "delete" will only work deterministically if there are only unique keys.
+        // For duplicate keys, you must use a cursor.
         env.register_native_function(
             "delete",
             Some(btree_store_type.clone()),
@@ -566,12 +572,12 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, C
             Some(Type::Bool)
         );
         env.register_native_function(
-            "prev",
+            "delete",
             Some(btree_cursor_type.clone()),
             vec![],
-            FunctionHandler::Async(async_handler!(btree_cursor_prev::<P>)),
-            15,
-            Some(Type::Bool)
+            FunctionHandler::Async(async_handler!(btree_cursor_delete::<P>)),
+            20,
+            Some(Type::Optional(Box::new(Type::Any)))
         );
     }
 
