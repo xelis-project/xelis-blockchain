@@ -584,6 +584,30 @@ pub struct GetAccountsParams {
     pub maximum_topoheight: Option<TopoHeight>
 }
 
+
+#[derive(Serialize, Deserialize, JsonSchema)]
+pub struct GetContractsParams {
+    pub skip: Option<usize>,
+    pub maximum: Option<usize>,
+    pub minimum_topoheight: Option<TopoHeight>,
+    pub maximum_topoheight: Option<TopoHeight>
+}
+
+#[derive(Serialize, Deserialize, JsonSchema)]
+pub struct GetContractDataEntriesParams<'a> {
+    pub contract: Cow<'a, Hash>,
+    pub minimum_topoheight: Option<TopoHeight>,
+    pub maximum_topoheight: Option<TopoHeight>,
+    pub skip: Option<usize>,
+    pub maximum: Option<usize>
+}
+
+#[derive(Serialize, Deserialize, JsonSchema)]
+pub struct ContractDataEntry {
+    pub key: ValueCell,
+    pub value: ValueCell,
+}
+
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct IsAccountRegisteredParams<'a> {
     pub address: Cow<'a, Address>,

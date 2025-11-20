@@ -18,7 +18,7 @@ use xelis_vm::{
 };
 use crate::{
     block::TopoHeight,
-    config::{FEE_PER_BYTE_STORED_CONTRACT, FEE_PER_STORE_CONTRACT},
+    config::FEE_PER_BYTE_STORED_CONTRACT,
     contract::{
         from_context,
         get_cache_for_contract,
@@ -38,9 +38,11 @@ pub use read_only::*;
 pub struct OpaqueStorage;
 
 // Maximum size of a value in the storage
-pub const MAX_VALUE_SIZE: usize = 4096;
+// We allow up to 32 KiB values
+pub const MAX_VALUE_SIZE: usize = 32 * 1024;
 
 // Maximum size of a key in the storage
+// We allow up to 256 bytes keys
 pub const MAX_KEY_SIZE: usize = 256;
 
 #[async_trait]
@@ -58,6 +60,34 @@ pub trait ContractStorage {
 impl JSONHelper for OpaqueStorage {}
 
 impl Serializable for OpaqueStorage {}
+
+pub fn check_storage_entry_size(key: &ValueCell, value: &ValueCell) -> Result<usize, EnvironmentError> {
+    // special case: for raw bytes, we take the length of the bytes directly
+    let value_size = match value {
+        ValueCell::Bytes(v) => v.len(),
+        _ => value.size(),
+    };
+
+    if value_size > MAX_VALUE_SIZE {
+        return Err(EnvironmentError::Static("Value is too large"));
+    }
+
+    // Same here for raw bytes length
+    let key_size = match key {
+        ValueCell::Bytes(v) => v.len(),
+        _ => key.size(),
+    };
+
+    if key_size > MAX_KEY_SIZE {
+        return Err(EnvironmentError::Static("Key is too large"));
+    }
+
+    if !key.is_serializable() || !value.is_serializable() {
+        return Err(EnvironmentError::Static("Key / value is not serializable"))
+    }
+
+    Ok(key_size + value_size)
+}
 
 pub fn storage(_: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {
     Ok(SysCallResult::Return(Primitive::Opaque(OpaqueWrapper::new(OpaqueStorage)).into()))
@@ -125,28 +155,14 @@ pub async fn storage_has<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mu
 }
 
 pub async fn storage_store<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut Context<'ty, 'r>) -> FnReturnType<ContractMetadata> {
+    let value = params.remove(1)
+        .into_owned();
     let key = params.remove(0)
         .into_owned();
-
-    let key_size = key.size();
-    if key_size > MAX_KEY_SIZE {
-        return Err(anyhow::anyhow!("Key is too large").into());
-    }
-
-    let value = params.remove(0)
-        .into_owned();
-
-    let value_size = value.size();
-    if value_size > MAX_VALUE_SIZE {
-        return Err(anyhow::anyhow!("Value is too large").into());
-    }
-
-    if !key.is_serializable() || !value.is_serializable() {
-        return Err(EnvironmentError::Static("Key / value is not serializable"))
-    }
-
-    let total_size = (key_size + value_size) as u64;
-    let cost = FEE_PER_STORE_CONTRACT + total_size * FEE_PER_BYTE_STORED_CONTRACT;
+    
+    // Dynamic gas cost depending on the size of the key and value
+    let total_size = check_storage_entry_size(&key, &value)?;
+    let cost = total_size as u64 * FEE_PER_BYTE_STORED_CONTRACT;
     context.increase_gas_usage(cost)?;
 
     let (storage, state) = from_context::<P>(context)?;

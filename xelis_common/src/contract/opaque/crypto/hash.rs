@@ -136,19 +136,27 @@ pub fn hash_max_fn(_: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, _: &mut C
     Ok(SysCallResult::Return(Primitive::Opaque(OpaqueWrapper::new(hash)).into()))
 }
 
-pub fn blake3_fn(_: FnInstance, params: FnParams, _: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {
+pub fn blake3_fn(_: FnInstance, params: FnParams, _: &ModuleMetadata<'_>, context: &mut Context) -> FnReturnType<ContractMetadata> {
     let input = params[0]
         .as_ref()
         .as_bytes()?;
+
+    // Blake3 is relatively cheap
+    // Gas cost is proportional to input size
+    context.increase_gas_usage(input.len() as u64)?;
 
     let hash = hash(&input);
     Ok(SysCallResult::Return(Primitive::Opaque(OpaqueWrapper::new(hash)).into()))
 }
 
-pub fn sha256_fn(_: FnInstance, params: FnParams, _: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {
+pub fn sha256_fn(_: FnInstance, params: FnParams, _: &ModuleMetadata<'_>, context: &mut Context) -> FnReturnType<ContractMetadata> {
     let input = params[0]
         .as_ref()
         .as_bytes()?;
+
+    // SHA256 is more expensive
+    // Gas cost is proportional to input size
+    context.increase_gas_usage((input.len() as u64) * 4)?;
 
     let hash = Hash::new(Sha3_256::digest(&input).into());
     Ok(SysCallResult::Return(Primitive::Opaque(OpaqueWrapper::new(hash)).into()))

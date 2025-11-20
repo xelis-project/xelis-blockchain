@@ -74,9 +74,14 @@ pub fn range_proof_verify_single(zelf: FnInstance, mut params: FnParams, _: &Mod
     let [left, right] = params.get_disjoint_mut([0, 1])
         .context("disjoint mut")?;
 
-    let commitment: &mut OpaqueRistrettoPoint = left
-        .as_mut()
-        .as_opaque_type_mut()?;
+    let commitment = {
+            let commitment: &mut OpaqueRistrettoPoint = left
+                .as_mut()
+                .as_opaque_type_mut()?;
+
+            let (compressed, decompressed) = commitment.both()?;
+            (decompressed.clone(), compressed.clone())
+    };
 
     let transcript: &mut OpaqueTranscript = right
         .as_mut()
@@ -84,17 +89,17 @@ pub fn range_proof_verify_single(zelf: FnInstance, mut params: FnParams, _: &Mod
 
     let zelf = zelf?;
     let zelf: &RangeProofWrapper = zelf.as_opaque_type()?;
-    let (compressed, decompressed) = commitment.both()?;
-    let value = (decompressed.clone(), compressed.clone());
 
-    let valid = zelf.0.verify_single(&BP_GENS, &PC_GENS, &mut transcript.0, &value, proof_size as _)
+    let valid = zelf.0.verify_single(&BP_GENS, &PC_GENS, &mut transcript.0, &commitment, proof_size as _)
         .is_ok();
 
     Ok(SysCallResult::Return(Primitive::Boolean(valid).into()))
 }
 
 pub fn range_proof_verify_multiple(zelf: FnInstance, mut params: FnParams, _: &ModuleMetadata<'_>, context: &mut Context) -> FnReturnType<ContractMetadata> {
-    let commitments = params[0]
+    // SAFETY: no other reference is made to it
+    let commitments = unsafe {
+        params[0]
         .as_mut()
         .as_mut_vec()?
         .iter_mut()
@@ -104,7 +109,8 @@ pub fn range_proof_verify_multiple(zelf: FnInstance, mut params: FnParams, _: &M
             let (compressed, point) = opaque.both()?;
             Ok((point.clone(), compressed.clone()))
         })
-        .collect::<Result<Vec<_>, EnvironmentError>>()?;
+        .collect::<Result<Vec<_>, EnvironmentError>>()?
+    };
 
     context.increase_gas_usage((commitments.len() * 5000) as u64)?;
 

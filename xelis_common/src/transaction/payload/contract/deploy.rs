@@ -13,6 +13,7 @@ pub struct InvokeConstructorPayload {
 
 #[derive(Serialize, Deserialize, Clone, Debug, JsonSchema)]
 pub struct DeployContractPayload {
+    #[serde(flatten)]
     pub contract: ContractModule,
     pub invoke: Option<InvokeConstructorPayload>,
 }

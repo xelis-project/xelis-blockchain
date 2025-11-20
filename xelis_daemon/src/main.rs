@@ -15,6 +15,7 @@ use xelis_common::{
     async_handler,
     config::{init, VERSION, XELIS_ASSET, FEE_PER_KB},
     context::Context,
+    contract::vm::HOOK_CONSTRUCTOR_ID,
     crypto::{
         Address,
         Hashable
@@ -50,6 +51,7 @@ use xelis_common::{
         format_xelis
     }
 };
+use xelis_vm::Access;
 use crate::config::MILLIS_PER_SECOND;
 use core::{
     state::ChainState,
@@ -340,7 +342,8 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
     command_manager.add_command(Command::with_optional_arguments("export_json_config", "Export the current config in JSON", vec![Arg::new("filename", ArgType::String)], CommandHandler::Async(async_handler!(export_json_config::<S>))))?;
     command_manager.add_command(Command::new("broadcast_txs", "Broadcast all TXs in mempool if not done", CommandHandler::Async(async_handler!(broadcast_txs::<S>))))?;
     command_manager.add_command(Command::new("snapshot_mode", "Force to be in snapshot mode (memory only)", CommandHandler::Async(async_handler!(snapshot_mode::<S>))))?;
-    command_manager.add_command(Command::with_optional_arguments("inspect_contract", "Inspect a smart contract by its hash", vec![Arg::new("hash", ArgType::Hash)], CommandHandler::Async(async_handler!(inspect_contract::<S>))))?;
+    command_manager.add_command(Command::with_optional_arguments("inspect_contract", "Inspect a smart contract by its hash", vec![Arg::new("contract", ArgType::Hash)], CommandHandler::Async(async_handler!(inspect_contract::<S>))))?;
+    command_manager.add_command(Command::new("show_mempool", "Show all transactions in mempool", CommandHandler::Async(async_handler!(show_mempool::<S>))))?;
 
     // Don't keep the lock for ever
     let p2p = {
@@ -715,6 +718,19 @@ async fn export_json_config<S: Storage>(manager: &CommandManager, mut args: Argu
         .context("Error while flushing config file")?;
 
     manager.message(format!("Config exported to {}", path));
+
+    Ok(())
+}
+
+async fn show_mempool<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
+    let context = manager.get_context().lock()?;
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    let mempool = blockchain.get_mempool().read().await;
+
+    manager.message(format!("Mempool: {} transactions", mempool.get_txs().iter().len()));
+    for (hash, tx) in mempool.get_txs() {
+        manager.message(format!("- {}: {} XEL fee for {}", hash, format_xelis(tx.get_fee()), human_bytes(tx.get_size() as f64)));
+    }
 
     Ok(())
 }
@@ -1129,18 +1145,37 @@ async fn inspect_contract<S: Storage>(manager: &CommandManager, mut arguments: A
     };
 
     manager.message(format!("Contract {} deployed at topoheight {}", contract, topo));
-    manager.message(format!("- Version: {}", module.version));
+    manager.message(format!("- Module: {}", module.module.to_hex()));
     manager.message(format!("- Bytecode size: {}", human_bytes(module.module.size() as f64)));
-    manager.message(format!("- Storage entries:"));
+    manager.message(format!("- Version: {}", module.version));
+    manager.message(format!("- Constructor: {}", module.module.hook_chunk_ids().contains_key(&HOOK_CONSTRUCTOR_ID)));
+
+    let entries = module.module.chunks()
+        .iter()
+        .enumerate()
+        .filter(|(_, chunk)| matches!(chunk.access, Access::Entry))
+        .map(|(index, _)| index)
+        .collect::<Vec<_>>();
+
+    manager.message(format!("- Callable functions (entry): {:?}", entries));
+    manager.message(format!("- Contract storage:"));
 
     let stream = storage.get_contract_data_entries_at_maximum_topoheight(&contract, topoheight).await
         .context("Error while retrieving contract data entries")?;
 
+    let mut total_size = 0;
     let mut stream = stream.boxed();
     while let Some(res) = stream.next().await {
         let (key, value) = res.context("Error on contract data entry")?;
-        manager.message(format!("  - {}: {}", key, value));
+        let key_size = key.size();
+        total_size += key_size;
+        let value_size = value.size();
+        total_size += value_size;
+
+        manager.message(format!("  - {} ({}): {} ({})", key, human_bytes(key_size as f64), value, human_bytes(value_size as f64)));
     }
+
+    manager.message(format!("Total storage size: {}", human_bytes(total_size as f64)));
 
     Ok(())
 }
