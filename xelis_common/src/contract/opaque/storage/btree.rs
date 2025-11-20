@@ -630,6 +630,10 @@ async fn insert_key<'ty, P: ContractProvider>(
 async fn treap_delete_node<'ty, P: ContractProvider>(
     ctx: &mut TreeContext<'_, 'ty, P>, node_id: u64,
 ) -> Result<(), EnvironmentError> {
+    if load_node_header(ctx, node_id).await?.is_none() {
+        return Err(missing());
+    }
+
     let size = read_size(ctx).await?;
     if size > 0 {
         write_size(ctx, size - 1).await?;
