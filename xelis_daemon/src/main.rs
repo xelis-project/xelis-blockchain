@@ -342,7 +342,7 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
     command_manager.add_command(Command::with_optional_arguments("export_json_config", "Export the current config in JSON", vec![Arg::new("filename", ArgType::String)], CommandHandler::Async(async_handler!(export_json_config::<S>))))?;
     command_manager.add_command(Command::new("broadcast_txs", "Broadcast all TXs in mempool if not done", CommandHandler::Async(async_handler!(broadcast_txs::<S>))))?;
     command_manager.add_command(Command::new("snapshot_mode", "Force to be in snapshot mode (memory only)", CommandHandler::Async(async_handler!(snapshot_mode::<S>))))?;
-    command_manager.add_command(Command::with_optional_arguments("inspect_contract", "Inspect a smart contract by its hash", vec![Arg::new("contract", ArgType::Hash)], CommandHandler::Async(async_handler!(inspect_contract::<S>))))?;
+    command_manager.add_command(Command::with_optional_arguments("inspect_contract", "Inspect a smart contract by its hash", vec![Arg::new("contract", ArgType::Hash), Arg::new("show-storage", ArgType::Bool)], CommandHandler::Async(async_handler!(inspect_contract::<S>))))?;
     command_manager.add_command(Command::new("show_mempool", "Show all transactions in mempool", CommandHandler::Async(async_handler!(show_mempool::<S>))))?;
 
     // Don't keep the lock for ever
@@ -1158,7 +1158,17 @@ async fn inspect_contract<S: Storage>(manager: &CommandManager, mut arguments: A
         .collect::<Vec<_>>();
 
     manager.message(format!("- Callable functions (entry): {:?}", entries));
-    manager.message(format!("- Contract storage:"));
+    let show_storage = if arguments.has_argument("show-storage") {
+        true
+    } else {
+        manager.get_prompt()
+            .read_valid_str_value("Show contract storage? (Y/N): ".to_owned(), &["y", "n"]).await?
+            == "y"
+    };
+
+    if show_storage {
+        manager.message(format!("- Contract storage:"));
+    }
 
     let stream = storage.get_contract_data_entries_at_maximum_topoheight(&contract, topoheight).await
         .context("Error while retrieving contract data entries")?;
@@ -1172,7 +1182,9 @@ async fn inspect_contract<S: Storage>(manager: &CommandManager, mut arguments: A
         let value_size = value.size();
         total_size += value_size;
 
-        manager.message(format!("  - {} ({}): {} ({})", key, human_bytes(key_size as f64), value, human_bytes(value_size as f64)));
+        if show_storage {
+            manager.message(format!("  - {} ({}): {} ({})", key, human_bytes(key_size as f64), value, human_bytes(value_size as f64)));
+        }
     }
 
     manager.message(format!("Total storage size: {}", human_bytes(total_size as f64)));
