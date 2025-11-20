@@ -386,8 +386,7 @@ pub async fn btree_store_insert<'a, 'ty, 'r, P: ContractProvider>(
     let value = params.remove(0).into_owned();
     ensure_value_constraints(&value)?;
     with_store_ctx!(instance, metadata, context, |_store, ctx, _contract| {
-        let replaced = insert_key(&mut ctx, key, value).await?;
-        Ok(SysCallResult::Return(replaced.unwrap_or_else(|| ValueCell::Primitive(Primitive::Null)).into()))
+        Ok(SysCallResult::Return(opt_or_null(insert_key(&mut ctx, key, value).await?).into()))
     })
 }
 
@@ -397,8 +396,7 @@ pub async fn btree_store_get<'a, 'ty, 'r, P: ContractProvider>(
 ) -> FnReturnType<ContractMetadata> {
     let key = read_key_bytes(params.remove(0).into_owned())?;
     with_store_ctx!(instance, metadata, context, |_store, ctx, _contract| {
-        let value = find_key(&mut ctx, &key).await?;
-        Ok(SysCallResult::Return(value.unwrap_or_else(|| ValueCell::Primitive(Primitive::Null)).into()))
+        Ok(SysCallResult::Return(opt_or_null(find_key(&mut ctx, &key).await?).into()))
     })
 }
 
@@ -408,8 +406,7 @@ pub async fn btree_store_delete<'a, 'ty, 'r, P: ContractProvider>(
 ) -> FnReturnType<ContractMetadata> {
     let key = read_key_bytes(params.remove(0).into_owned())?;
     with_store_ctx!(instance, metadata, context, |_store, ctx, _contract| {
-        let removed = delete_key(&mut ctx, &key).await?;
-        Ok(SysCallResult::Return(removed.unwrap_or_else(|| ValueCell::Primitive(Primitive::Null)).into()))
+        Ok(SysCallResult::Return(opt_or_null(delete_key(&mut ctx, &key).await?).into()))
     })
 }
 
@@ -420,17 +417,18 @@ pub async fn btree_store_seek<'a, 'ty, 'r, P: ContractProvider>(
     let bias = read_bias(&params.remove(0).into_owned())?;
     let ascending = read_bool(&params.remove(0).into_owned())?;
     with_store_ctx!(instance, metadata, context, |store, ctx, contract| {
-        let result = if let Some(node) = seek_node(&mut ctx, &key, bias).await? {
-            Primitive::Opaque(OpaqueWrapper::new(OpaqueBTreeCursor {
-                contract: contract.clone(),
-                namespace: store.namespace.clone(),
-                current_node: Some(node.id),
-                cached_value: Some(node.value),
-                ascending,
-            })).into()
-        } else {
-            Primitive::Null.into()
-        };
+        let result = seek_node(&mut ctx, &key, bias).await?.map_or(
+            Primitive::Null.into(),
+            |node| {
+                Primitive::Opaque(OpaqueWrapper::new(OpaqueBTreeCursor {
+                    contract: contract.clone(),
+                    namespace: store.namespace.clone(),
+                    current_node: Some(node.id),
+                    cached_value: Some(node.value),
+                    ascending,
+                })).into()
+            },
+        );
         Ok(SysCallResult::Return(result))
     })
 }
@@ -441,7 +439,7 @@ pub fn btree_cursor_current(instance: FnInstance, _: FnParams, _: &ModuleMetadat
     let cursor: &OpaqueBTreeCursor = instance.as_opaque_type()?;
     let out = match (cursor.current_node, &cursor.cached_value) {
         (Some(_), Some(v)) => v.clone(),
-        _ => ValueCell::Primitive(Primitive::Null),
+        _ => null_value(),
     };
     Ok(SysCallResult::Return(out.into()))
 }
@@ -456,11 +454,7 @@ pub async fn btree_cursor_delete<'a, 'ty, 'r, P: ContractProvider>(
     instance: FnInstance<'a>, _: FnParams, _: &ModuleMetadata<'_>, context: &mut Context<'ty, 'r>
 ) -> FnReturnType<ContractMetadata> {
     with_cursor_ctx_mut!(instance, context, |cursor, ctx| {
-        let result = match delete_at_cursor(cursor, &mut ctx).await? {
-            Some(val) => Ok(SysCallResult::Return(val.into())),
-            None => Ok(SysCallResult::Return(Primitive::Null.into())),
-        };
-        result
+        Ok(SysCallResult::Return(opt_or_null(delete_at_cursor(cursor, &mut ctx).await?).into()))
     })
 }
 
@@ -468,23 +462,21 @@ async fn cursor_step<'a, 'ty, 'r, P: ContractProvider>(
     instance: FnInstance<'a>, context: &mut Context<'ty, 'r>,
 ) -> FnReturnType<ContractMetadata> {
     with_cursor_ctx_mut!(instance, context, |cursor, ctx| {
-        match cursor.current_node {
-            None => Ok(SysCallResult::Return(Primitive::Boolean(false).into())),
-            Some(current_id) => {
-                if load_node_header(&mut ctx, current_id).await.is_err() {
-                    cursor.current_node = None;
-                    cursor.cached_value = None;
-                    Ok(SysCallResult::Return(Primitive::Boolean(false).into()))
-                } else {
-                    cursor.current_node = match cursor.ascending {
-                        true => successor(&mut ctx, current_id).await?,
-                        false => predecessor(&mut ctx, current_id).await?,
-                    };
-                    refresh_cursor_cache(cursor, &mut ctx).await?;
-                    Ok(SysCallResult::Return(Primitive::Boolean(cursor.current_node.is_some()).into()))
-                }
-            }
+        let Some(current_id) = cursor.current_node else {
+            return Ok(SysCallResult::Return(Primitive::Boolean(false).into()));
+        };
+        if load_node_header(&mut ctx, current_id).await.is_err() {
+            cursor.current_node = None;
+            cursor.cached_value = None;
+            return Ok(SysCallResult::Return(Primitive::Boolean(false).into()));
         }
+        cursor.current_node = if cursor.ascending {
+            successor(&mut ctx, current_id).await?
+        } else {
+            predecessor(&mut ctx, current_id).await?
+        };
+        refresh_cursor_cache(cursor, &mut ctx).await?;
+        Ok(SysCallResult::Return(Primitive::Boolean(cursor.current_node.is_some()).into()))
     })
 }
 
@@ -505,32 +497,23 @@ async fn refresh_cursor_cache<'ty, P: ContractProvider>(
 async fn delete_at_cursor<'ty, P: ContractProvider>(
     cursor: &mut OpaqueBTreeCursor, ctx: &mut TreeContext<'_, 'ty, P>,
 ) -> Result<Option<ValueCell>, EnvironmentError> {
-    if let Some(current_id) = cursor.current_node {
-         // Load value to return
-        if let Some(node) = read_node(ctx, current_id).await? {
-            let value = node.value.clone();
-
-            // Find neighbor to move cursor to
-            let next_id = match cursor.ascending {
-                true => successor(ctx, current_id).await?,
-                false => predecessor(ctx, current_id).await?,
-            };
-
-            // Delete node
-            treap_delete_node(ctx, current_id).await?;
-
-            // Update cursor
-            cursor.current_node = next_id;
-            refresh_cursor_cache(cursor, ctx).await?;
-            
-            return Ok(Some(value));
-        } else {
-             // Node not found in storage (stale cursor?)
-             cursor.current_node = None;
-             cursor.cached_value = None;
-        }
-    }
-    Ok(None)
+    let Some(current_id) = cursor.current_node else { return Ok(None); };
+    let Some(node) = read_node(ctx, current_id).await? else {
+        // Node not found in storage (stale cursor?)
+        cursor.current_node = None;
+        cursor.cached_value = None;
+        return Ok(None);
+    };
+    let value = node.value.clone();
+    let next_id = if cursor.ascending {
+        successor(ctx, current_id).await?
+    } else {
+        predecessor(ctx, current_id).await?
+    };
+    treap_delete_node(ctx, current_id).await?;
+    cursor.current_node = next_id;
+    refresh_cursor_cache(cursor, ctx).await?;
+    Ok(Some(value))
 }
 
 /* --------------------------- Treap core ----------------------------- */
@@ -862,13 +845,12 @@ async fn load_node_header<'ty, P: ContractProvider>(
 }
 
 async fn load_node_by_id<'ty, P: ContractProvider>(
-    ctx: &mut TreeContext<'_, 'ty, P>,
-    id: Option<u64>,
+    ctx: &mut TreeContext<'_, 'ty, P>, id: Option<u64>,
 ) -> Result<Option<Node>, EnvironmentError> {
-    match id {
-        Some(id) => Ok(Some(load_node(ctx, id).await?)),
-        None => Ok(None),
-    }
+    Ok(match id {
+        Some(id) => Some(load_node(ctx, id).await?),
+        None => None,
+    })
 }
 
 async fn write_node<'ty, P: ContractProvider>(
@@ -883,8 +865,7 @@ async fn write_storage_value<'ty, P: ContractProvider>(
     let size = key.size() + value.as_ref().map(|v| v.size()).unwrap_or(0);
     ctx.charge_write(size);
     let cache = get_cache_for_contract(&mut ctx.state.caches, ctx.state.global_caches, ctx.contract.clone());
-    let entry = cache.storage.entry(key);
-    let previous = match entry {
+    Ok(match cache.storage.entry(key) {
         Entry::Occupied(mut occ) => {
             let slot = occ.get_mut();
             if let Some((version, stored)) = slot {
@@ -895,25 +876,27 @@ async fn write_storage_value<'ty, P: ContractProvider>(
                 None
             }
         }
-        Entry::Vacant(v) => { v.insert(Some((VersionedState::New, value))); None }
-    };
-    Ok(previous)
+        Entry::Vacant(v) => {
+            v.insert(Some((VersionedState::New, value)));
+            None
+        }
+    })
 }
 
 async fn ensure_cache_entry<'ty, P: ContractProvider>(
     ctx: &mut TreeContext<'_, 'ty, P>, key: &ValueCell,
 ) -> Result<(), EnvironmentError> {
     if ctx.cache_contains(key) { return Ok(()); }
-
     let fetched = ctx.storage.load_data(ctx.contract, key, ctx.state.topoheight).await?;
     let mut size = key.size();
     if let Some((_, Some(v))) = &fetched {
         size += v.size();
     }
     ctx.charge_read(size);
-
-    let entry_value = fetched.map(|(topo, value)| (VersionedState::FetchedAt(topo), value));
-    ctx.cache_insert_entry(key.clone(), entry_value);
+    ctx.cache_insert_entry(
+        key.clone(),
+        fetched.map(|(topo, value)| (VersionedState::FetchedAt(topo), value)),
+    );
     Ok(())
 }
 
@@ -962,6 +945,17 @@ fn read_bool(cell: &ValueCell) -> Result<bool, EnvironmentError> {
         _ => Err(EnvironmentError::Static("expected boolean")),
     }
 }
+
+#[inline]
+fn null_value() -> ValueCell {
+    ValueCell::Primitive(Primitive::Null)
+}
+
+#[inline]
+fn opt_or_null(v: Option<ValueCell>) -> ValueCell {
+    v.unwrap_or_else(null_value)
+}
+
 #[inline]
 fn valuecell_as_u64(value: &ValueCell) -> Option<u64> {
     if let ValueCell::Primitive(Primitive::U64(v)) = value { Some(*v) } else { None }
