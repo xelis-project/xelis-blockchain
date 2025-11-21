@@ -366,24 +366,25 @@ impl<'s, 'b, S: Storage> BlockchainVerificationState<'b, BlockchainError> for Ap
         if self.block_version >= BlockVersion::V3 {
             // The extra base fee is (TX FEE PER KB - MIN. FEE PER KB)
             let extra_base_fee = self.tx_base_fee - FEE_PER_KB;
-            let tx_base_fee = extra_base_fee * tx_kb_size_rounded(tx.size()) as u64;
+            let tx_extra_base_fee = extra_base_fee * tx_kb_size_rounded(tx.size()) as u64;
             // The burned part is computed above the extra base fee
-            let burned_part = tx_base_fee * EXTRA_BASE_FEE_BURN_PERCENT / 100;
+            let burned_part = tx_extra_base_fee * EXTRA_BASE_FEE_BURN_PERCENT / 100;
+
+            // Remove the burned part from fee
+            fees_paid -= burned_part;
 
             debug!(
-                "TX {} fees paid: {} XEL, computed TX base fee: {} XEL, extra base fee: {} XEL, burned part: {} XEL",
+                "TX {} fees: {}, fees paid: {} XEL, computed TX base fee: {} XEL, extra base fee: {} XEL, burned part: {} XEL",
                 tx_hash,
+                format_xelis(tx.get_fee()),
                 format_xelis(fees_paid),
-                format_xelis(tx_base_fee),
+                format_xelis(tx_extra_base_fee),
                 format_xelis(extra_base_fee),
                 format_xelis(burned_part),
             );
 
             // Burn a part of the fee
             self.total_fees_burned += burned_part;
-
-            // Remove the burned part from fee
-            fees_paid -= burned_part;
         }
 
         self.total_fees += fees_paid;
@@ -943,7 +944,7 @@ impl<'s, 'b, S: Storage> ApplicableChainState<'s, 'b, S> {
 
         Ok(FinalizedChainState {
             contract_manager: self.contract_manager,
-            total_fees: self.total_fees,
+            total_fees: self.total_fees + self.inner.gas_fee,
             total_fees_burned: self.total_fees_burned,
             transactions_links: self.transactions_links,
             receiver_balances: self.inner.receiver_balances,
