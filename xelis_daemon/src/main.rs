@@ -518,7 +518,7 @@ async fn verify_chain<S: Storage>(manager: &CommandManager, mut args: ArgumentMa
     for topo in pruned_topoheight..=topoheight {
         let hash_at_topo = storage.get_hash_at_topo_height(topo).await.context("Error while retrieving hash at topo")?;
         let block_reward = if pruned_topoheight == 0 || topo - pruned_topoheight > STABLE_LIMIT {
-            let block_reward = blockchain.get_block_reward(&*storage, &hash_at_topo, expected_supply, topo).await.context("Error while calculating block reward")?;
+            let block_reward = blockchain.get_block_reward(&*storage, &hash_at_topo, expected_supply, Some(topo), topo).await.context("Error while calculating block reward")?;
             let expected_block_reward = storage.get_block_reward_at_topo_height(topo).await.context("Error while retrieving block reward")?;
             // Verify the saved block reward
             if block_reward != expected_block_reward {
@@ -1386,6 +1386,8 @@ async fn status<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Res
         .context("Error while checking snapshot")?;
     let version = get_version_at_height(blockchain.get_network(), height);
     let block_time_target = get_block_time_target_for_version(version);
+    let size_on_disk = storage.get_size_on_disk().await
+        .context("Error while retrieving size on disk")?;
 
     let burned_supply = emitted_supply - circulating_supply;
 
@@ -1409,6 +1411,7 @@ async fn status<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Res
     manager.message(format!("Block Version: {}", version));
     manager.message(format!("POW Algorithm: {}", get_pow_algorithm_for_version(version)));
     manager.message(format!("Snapshot: {}", snapshot));
+    manager.message(format!("Size on Disk: {}", human_bytes(size_on_disk as f64)));
 
     manager.message(format!("Tips ({}):", tips.len()));
     for hash in tips {

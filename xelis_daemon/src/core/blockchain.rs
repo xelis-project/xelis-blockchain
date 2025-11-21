@@ -2114,7 +2114,6 @@ impl<S: Storage> Blockchain<S> {
 
                 trace!("Ordering block {} at topoheight {}", hash, highest_topo);
 
-                storage.set_topo_height_for_block(&hash, highest_topo).await?;
                 let past_emitted_supply = if highest_topo == 0 {
                     0
                 } else {
@@ -2126,7 +2125,7 @@ impl<S: Storage> Blockchain<S> {
 
                 // Reward the miner of this block
                 // We have a decreasing block reward if there is too much side block
-                let is_side_block = blockdag::is_side_block_internal(&*storage, &hash, highest_topo).await?;
+                let is_side_block = blockdag::is_side_block_internal(&*storage, &hash, Some(highest_topo), highest_topo).await?;
                 let height = block.get_height();
                 let side_blocks_count = match side_blocks.entry(height) {
                     Entry::Occupied(entry) => entry.into_mut(),
@@ -2134,7 +2133,7 @@ impl<S: Storage> Blockchain<S> {
                         let mut count = 0;
                         let blocks_at_height = storage.get_blocks_at_height(height).await?;
                         for block in blocks_at_height {
-                            if block != hash && blockdag::is_side_block_internal(&*storage, &block, highest_topo).await? {
+                            if block != hash && blockdag::is_side_block_internal(&*storage, &block, None, highest_topo).await? {
                                 count += 1;
                                 debug!("Found side block {} at height {}", block, height);
                             }
@@ -2674,7 +2673,7 @@ impl<S: Storage> Blockchain<S> {
 
     // Get the block reward for a block
     // This will search all blocks at same height and verify which one are side blocks
-    pub async fn get_block_reward<P: DifficultyProvider + DagOrderProvider + BlocksAtHeightProvider + CacheProvider>(&self, provider: &P, hash: &Hash, past_supply: u64, current_topoheight: TopoHeight) -> Result<u64, BlockchainError> {
+    pub async fn get_block_reward<P: DifficultyProvider + DagOrderProvider + BlocksAtHeightProvider + CacheProvider>(&self, provider: &P, hash: &Hash, past_supply: u64, block_topoheight: Option<u64>, current_topoheight: TopoHeight) -> Result<u64, BlockchainError> {
         let is_side_block = self.is_side_block(provider, hash).await?;
         let mut side_blocks_count = 0;
         if is_side_block {
@@ -2682,7 +2681,7 @@ impl<S: Storage> Blockchain<S> {
             let height = provider.get_height_for_block_hash(hash).await?;
             let blocks_at_height = provider.get_blocks_at_height(height).await?;
             for block in blocks_at_height {
-                if *hash != block && blockdag::is_side_block_internal(provider, &block, current_topoheight).await? {
+                if *hash != block && blockdag::is_side_block_internal(provider, &block, block_topoheight, current_topoheight).await? {
                     side_blocks_count += 1;
                 }
             }
@@ -2753,7 +2752,7 @@ impl<S: Storage> Blockchain<S> {
     pub async fn is_side_block<P: DifficultyProvider + DagOrderProvider + CacheProvider>(&self, provider: &P, hash: &Hash) -> Result<bool, BlockchainError> {
         let chain_cache = provider.chain_cache().await;
         let topoheight = chain_cache.topoheight;
-        blockdag::is_side_block_internal(provider, hash, topoheight).await
+        blockdag::is_side_block_internal(provider, hash, None, topoheight).await
     }
 
     // to have stable order: it must be ordered, and be under the stable height limit

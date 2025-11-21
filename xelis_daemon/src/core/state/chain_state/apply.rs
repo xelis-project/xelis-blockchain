@@ -85,11 +85,15 @@ pub struct ApplicableChainState<'s, 'b, S: Storage> {
     transactions_links: HashMap<&'b Hash, (IndexSet<&'b Hash>, Option<&'b Hash>)>,
 }
 
-// 'b is the block data lifetime - no storage reference needed here
 pub struct FinalizedChainState<'b> {
+    // total fees paid in this block
+    // this include the gas fee paid by the TXs
     total_fees: u64,
+    // total fees burned in this block
     total_fees_burned: u64,
     contract_manager: ContractManager<'b>,
+    // current block hash
+    block_hash: &'b Hash,
     transactions_links: HashMap<&'b Hash, (IndexSet<&'b Hash>, Option<&'b Hash>)>,
     // Balances of the receiver accounts
     receiver_balances: HashMap<Cow<'b, PublicKey>, HashMap<Cow<'b, Hash>, VersionedBalance>>,
@@ -112,6 +116,10 @@ impl<'a> FinalizedChainState<'a> {
         block_reward: u64,
     ) -> Result<(), BlockchainError> {
         trace!("apply finalized changes");
+
+        // Set the topoheight for the block
+        storage.set_topo_height_for_block(&self.block_hash, self.topoheight).await?;
+
         // Apply transaction links
         for (tx_hash, (linked_blocks, executed_in)) in self.transactions_links {
             trace!("linking tx {} to blocks", tx_hash);
@@ -943,6 +951,7 @@ impl<'s, 'b, S: Storage> ApplicableChainState<'s, 'b, S> {
         }
 
         Ok(FinalizedChainState {
+            block_hash: self.block_hash,
             contract_manager: self.contract_manager,
             total_fees: self.total_fees + self.inner.gas_fee,
             total_fees_burned: self.total_fees_burned,
