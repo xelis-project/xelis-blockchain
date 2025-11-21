@@ -2153,7 +2153,7 @@ impl<S: Storage> Blockchain<S> {
                 // Chain State used for the verification
                 trace!("building chain state to execute TXs in block {}", block_hash);
                 let mut chain_state = ApplicableChainState::new(
-                    &mut *storage,
+                    &*storage,
                     &self.environment,
                     base_topo_height,
                     highest_topo,
@@ -2177,8 +2177,9 @@ impl<S: Storage> Blockchain<S> {
                 // compute rewards & execute txs
                 for (tx, tx_hash) in block.get_transactions().iter().zip(block.get_txs_hashes()) { // execute all txs
                     // Link the transaction hash to this block
-                    if !chain_state.get_mut_storage().add_block_linked_to_tx_if_not_present(&tx_hash, &hash).await? {
-                        trace!("Block {} is now linked to tx {}", hash, tx_hash);
+                    if chain_state.link_tx_to_block(&tx_hash, &hash) {
+                        debug!("Tx {} is already executed according to cache, skipping...", tx_hash);
+                        continue;
                     }
 
                     // check that the tx was not yet executed in another tip branch
@@ -2215,7 +2216,7 @@ impl<S: Storage> Blockchain<S> {
                         }
 
                         // mark tx as executed
-                        chain_state.get_mut_storage().mark_tx_as_executed_in_block(tx_hash, &hash).await?;
+                        chain_state.mark_tx_as_executed_in_block(tx_hash, &hash)?;
 
                         // Delete the transaction from  the list if it was marked as orphaned
                         if orphaned_transactions.shift_remove(tx_hash) {
@@ -2379,7 +2380,8 @@ impl<S: Storage> Blockchain<S> {
                 }
 
                 // apply changes from Chain State
-                chain_state.apply_changes(past_emitted_supply, block_reward).await?;
+                let finalizer = chain_state.finalize().await?;
+                finalizer.apply_changes(&mut *storage, past_emitted_supply, block_reward).await?;
 
                 if should_track_events.contains(&NotifyEvent::BlockOrdered) {
                     let value = json!(BlockOrderedEvent {

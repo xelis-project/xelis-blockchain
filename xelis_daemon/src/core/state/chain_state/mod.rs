@@ -1,5 +1,4 @@
 mod apply;
-mod storage;
 
 use std::{
     borrow::Cow,
@@ -40,7 +39,6 @@ use crate::core::{
 };
 
 pub use apply::*;
-pub use storage::*;
 
 // Sender changes
 // This contains its expected next balance for next outgoing transactions
@@ -88,14 +86,14 @@ impl Echange {
     }
 }
 
-struct Account<'a> {
+struct Account<'b> {
     // Account nonce used to verify valid transaction
     nonce: VersionedNonce,
     // Assets ready as source for any transfer/transaction
     // TODO: they must store also the ciphertext change
     // It will be added by next change at each TX
     // This is necessary to easily build the final user balance
-    assets: HashMap<&'a Hash, Echange>,
+    assets: HashMap<&'b Hash, Echange>,
     // Multisig configured
     // This is used to verify the validity of the multisig setup
     multisig: Option<(VersionedState, Option<MultiSigPayload>)>
@@ -104,32 +102,33 @@ struct Account<'a> {
 // This struct is used to verify the transactions executed at a snapshot of the blockchain
 // It is read-only but write in memory the changes to the balances and nonces
 // Once the verification is done, the changes are written to the storage
-pub struct ChainState<'a, S: Storage> {
+// 's is the storage lifetime, 'b is the block data lifetime
+pub struct ChainState<'s, 'b, S: Storage> {
     // Storage to read and write the balances and nonces
-    storage: StorageReference<'a, S>,
-    environment: &'a Environment<ContractMetadata>,
+    storage: &'s S,
+    environment: &'s Environment<ContractMetadata>,
     // Balances of the receiver accounts
-    receiver_balances: HashMap<Cow<'a, PublicKey>, HashMap<Cow<'a, Hash>, VersionedBalance>>,
+    receiver_balances: HashMap<Cow<'b, PublicKey>, HashMap<Cow<'b, Hash>, VersionedBalance>>,
     // Sender accounts
     // This is used to verify ZK Proofs and store/update nonces
-    accounts: HashMap<&'a PublicKey, Account<'a>>,
+    accounts: HashMap<&'b PublicKey, Account<'b>>,
     // Current stable topoheight of the snapshot
     stable_topoheight: TopoHeight,
     // Current topoheight of the snapshot
     topoheight: TopoHeight,
     tx_base_fee: u64,
     // All contracts updated
-    contracts: HashMap<Cow<'a, Hash>, (VersionedState, Option<Cow<'a, ContractModule>>)>,
+    contracts: HashMap<Cow<'b, Hash>, (VersionedState, Option<Cow<'b, ContractModule>>)>,
     // Block header version
     block_version: BlockVersion,
     // All gas fees tracked
     gas_fee: u64
 }
 
-impl<'a, S: Storage> ChainState<'a, S> {
+impl<'s, 'b, S: Storage> ChainState<'s, 'b, S> {
     fn with(
-        storage: StorageReference<'a, S>,
-        environment: &'a Environment<ContractMetadata>,
+        storage: &'s S,
+        environment: &'s Environment<ContractMetadata>,
         stable_topoheight: TopoHeight,
         topoheight: TopoHeight,
         block_version: BlockVersion,
@@ -149,14 +148,14 @@ impl<'a, S: Storage> ChainState<'a, S> {
         }
     }
 
-    pub fn new(storage: &'a S, environment: &'a Environment<ContractMetadata>, stable_topoheight: TopoHeight, topoheight: TopoHeight, block_version: BlockVersion, tx_base_fee: u64) -> Self {
+    pub fn new(storage: &'s S, environment: &'s Environment<ContractMetadata>, stable_topoheight: TopoHeight, topoheight: TopoHeight, block_version: BlockVersion, tx_base_fee: u64) -> Self {
         Self::with(
-            StorageReference::Immutable(storage),
+            storage,
             environment,
             stable_topoheight,
             topoheight,
             block_version,
-            tx_base_fee
+            tx_base_fee,
         )
     }
 
@@ -167,23 +166,23 @@ impl<'a, S: Storage> ChainState<'a, S> {
 
     // Get the storage used by the chain state
     pub fn get_storage(&self) -> &S {
-        self.storage.as_ref()
+        self.storage
     }
 
-    pub fn get_sender_balances<'b>(&'b self, key: &'b PublicKey) -> Option<HashMap<&'b Hash, &'b VersionedBalance>> {
+    pub fn get_sender_balances<'c>(&'c self, key: &'c PublicKey) -> Option<HashMap<&'c Hash, &'c VersionedBalance>> {
         let account = self.accounts.get(key)?;
         Some(account.assets.iter().map(|(k, v)| (*k, &v.version)).collect())
     }
 
     // Create a sender echange
-    async fn create_sender_echange(storage: &S, key: &'a PublicKey, asset: &'a Hash, current_topoheight: TopoHeight, reference: &Reference) -> Result<Echange, BlockchainError> {
+    async fn create_sender_echange(storage: &S, key: &'b PublicKey, asset: &'b Hash, current_topoheight: TopoHeight, reference: &Reference) -> Result<Echange, BlockchainError> {
         let (use_output_balance, new_version, version) = super::search_versioned_balance_for_reference(storage, key, asset, current_topoheight, reference, true).await?;
         Ok(Echange::new(use_output_balance, new_version,  version))
     }
 
     // Create a sender account by fetching its nonce and create a empty HashMap for balances,
     // those will be fetched lazily
-    async fn create_sender_account(key: &PublicKey, storage: &S, topoheight: TopoHeight) -> Result<Account<'a>, BlockchainError> {
+    async fn create_sender_account(key: &PublicKey, storage: &S, topoheight: TopoHeight) -> Result<Account<'b>, BlockchainError> {
         let (topo, mut version) = storage
             .get_nonce_at_maximum_topoheight(key, topoheight).await?
             .ok_or_else(|| BlockchainError::AccountNotFound(key.as_address(storage.is_mainnet())))?;
@@ -202,7 +201,7 @@ impl<'a, S: Storage> ChainState<'a, S> {
 
     // Retrieve the receiver balance of an account
     // This is mostly the final balance where everything is added (outputs and inputs)
-    async fn internal_get_receiver_balance<'b>(&'b mut self, key: Cow<'a, PublicKey>, asset: Cow<'a, Hash>) -> Result<&'b mut Ciphertext, BlockchainError> {
+    async fn internal_get_receiver_balance<'c>(&'c mut self, key: Cow<'b, PublicKey>, asset: Cow<'b, Hash>) -> Result<&'c mut Ciphertext, BlockchainError> {
         match self.receiver_balances.entry(key.clone()).or_insert_with(HashMap::new).entry(asset.clone()) {
             Entry::Occupied(o) => Ok(o.into_mut().get_mut_balance().computable()?),
             Entry::Vacant(e) => {
@@ -215,7 +214,7 @@ impl<'a, S: Storage> ChainState<'a, S> {
     // Retrieve the sender balance of an account
     // This is used for TX outputs verification
     // This depends on the transaction and can be final balance or output balance
-    async fn internal_get_sender_verification_balance<'b>(&'b mut self, key: &'a PublicKey, asset: &'a Hash, reference: &Reference) -> Result<&'b mut CiphertextCache, BlockchainError> {
+    async fn internal_get_sender_verification_balance<'c>(&'c mut self, key: &'b PublicKey, asset: &'b Hash, reference: &Reference) -> Result<&'c mut CiphertextCache, BlockchainError> {
         trace!("getting sender verification balance for {} at topoheight {}, reference: {}", key.as_address(self.storage.is_mainnet()), self.topoheight, reference.topoheight);
         match self.accounts.entry(key) {
             Entry::Occupied(o) => {
@@ -242,7 +241,7 @@ impl<'a, S: Storage> ChainState<'a, S> {
 
     // Update the output echanges of an account
     // Account must have been fetched before calling this function
-    async fn internal_update_sender_echange(&mut self, key: &'a PublicKey, asset: &'a Hash, new_ct: Ciphertext) -> Result<(), BlockchainError> {
+    async fn internal_update_sender_echange(&mut self, key: &'b PublicKey, asset: &'b Hash, new_ct: Ciphertext) -> Result<(), BlockchainError> {
         trace!("update sender echange: {:?}", new_ct.compress());
         let change = self.accounts.get_mut(key)
             .and_then(|a| a.assets.get_mut(asset))
@@ -255,7 +254,7 @@ impl<'a, S: Storage> ChainState<'a, S> {
     }
 
     // Get or create account for sender
-    async fn get_internal_account(&mut self, key: &'a PublicKey) -> Result<&mut Account<'a>, BlockchainError> {
+    async fn get_internal_account(&mut self, key: &'b PublicKey) -> Result<&mut Account<'b>, BlockchainError> {
         match self.accounts.entry(key) {
             Entry::Occupied(o) => Ok(o.into_mut()),
             Entry::Vacant(e) => {
@@ -267,14 +266,14 @@ impl<'a, S: Storage> ChainState<'a, S> {
 
     // Retrieve the account nonce
     // Only sender accounts should be used here
-    async fn internal_get_account_nonce(&mut self, key: &'a PublicKey) -> Result<Nonce, BlockchainError> {
+    async fn internal_get_account_nonce(&mut self, key: &'b PublicKey) -> Result<Nonce, BlockchainError> {
         self.get_internal_account(key).await.map(|a| a.nonce.get_nonce())
     }
 
     // Update the account nonce
     // Only sender accounts should be used here
     // For each TX, we must update the nonce by one
-    async fn internal_update_account_nonce(&mut self, account: &'a PublicKey, new_nonce: Nonce) -> Result<(), BlockchainError> {
+    async fn internal_update_account_nonce(&mut self, account: &'b PublicKey, new_nonce: Nonce) -> Result<(), BlockchainError> {
         trace!("Updating nonce for {} to {} at topoheight {}", account.as_address(self.storage.is_mainnet()), new_nonce, self.topoheight);
         let account = self.get_internal_account(account).await?;
         account.nonce.set_nonce(new_nonce);
@@ -284,7 +283,7 @@ impl<'a, S: Storage> ChainState<'a, S> {
     // Search for a contract versioned state
     // if not found, fetch it from the storage
     // if not found in storage, create a new one
-    async fn internal_get_versioned_contract(&mut self, hash: &'a Hash) -> Result<&mut (VersionedState, Option<Cow<'a, ContractModule>>), BlockchainError> {
+    async fn internal_get_versioned_contract(&mut self, hash: &'b Hash) -> Result<&mut (VersionedState, Option<Cow<'b, ContractModule>>), BlockchainError> {
         match self.contracts.entry(Cow::Borrowed(hash)) {
             Entry::Occupied(o) => Ok(o.into_mut()),
             Entry::Vacant(e) => {
@@ -298,7 +297,7 @@ impl<'a, S: Storage> ChainState<'a, S> {
     }
 
     // Load a contract from the storage if its not already loaded
-    async fn load_versioned_contract(&mut self, hash: Cow<'a, Hash>) -> Result<bool, BlockchainError> {
+    async fn load_versioned_contract(&mut self, hash: Cow<'b, Hash>) -> Result<bool, BlockchainError> {
         trace!("Loading contract {} at topoheight {}", hash, self.topoheight);
         match self.contracts.entry(hash.clone()) {
             Entry::Occupied(o) => Ok(o.get().1.is_some()),
@@ -321,7 +320,7 @@ impl<'a, S: Storage> ChainState<'a, S> {
     }
 
     // Reward a miner for the block mined
-    pub async fn reward_miner(&mut self, miner: &'a PublicKey, reward: u64) -> Result<(), BlockchainError> {
+    pub async fn reward_miner(&mut self, miner: &'b PublicKey, reward: u64) -> Result<(), BlockchainError> {
         debug!("Rewarding miner {} with {} XEL at topoheight {}", miner.as_address(self.storage.is_mainnet()), format_xelis(reward), self.topoheight);
         let miner_balance = self.internal_get_receiver_balance(Cow::Borrowed(miner), Cow::Borrowed(&XELIS_ASSET)).await?;
         *miner_balance += reward;
@@ -331,46 +330,46 @@ impl<'a, S: Storage> ChainState<'a, S> {
 }
 
 #[async_trait]
-impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for ChainState<'a, S> {
+impl<'s, 'b, S: Storage> BlockchainVerificationState<'b, BlockchainError> for ChainState<'s, 'b, S> {
     /// Left over fee to pay back
-    async fn handle_tx_fee<'b>(&'b mut self, tx: &Transaction, _: &Hash) -> Result<u64, BlockchainError> {
-        let (_, refund) = super::verify_fee(self.storage.as_ref(), tx, tx.size(), self.topoheight, self.tx_base_fee, self.block_version).await?;
+    async fn handle_tx_fee<'c>(&'c mut self, tx: &Transaction, _: &Hash) -> Result<u64, BlockchainError> {
+        let (_, refund) = super::verify_fee(self.storage, tx, tx.size(), self.topoheight, self.tx_base_fee, self.block_version).await?;
         Ok(refund)
     }
 
     /// Verify the TX version and reference
-    async fn pre_verify_tx<'b>(
-        &'b mut self,
+    async fn pre_verify_tx<'c>(
+        &'c mut self,
         tx: &Transaction,
     ) -> Result<(), BlockchainError> {
         super::pre_verify_tx(tx, self.stable_topoheight, self.topoheight, self.block_version).await
     }
 
     /// Get the balance ciphertext for a receiver account
-    async fn get_receiver_balance<'b>(
-        &'b mut self,
-        account: Cow<'a, PublicKey>,
-        asset: Cow<'a, Hash>,
-    ) -> Result<&'b mut Ciphertext, BlockchainError> {
+    async fn get_receiver_balance<'c>(
+        &'c mut self,
+        account: Cow<'b, PublicKey>,
+        asset: Cow<'b, Hash>,
+    ) -> Result<&'c mut Ciphertext, BlockchainError> {
         let ct = self.internal_get_receiver_balance(account, asset).await?;
         Ok(ct)
     }
 
     /// Get the balance ciphertext for a sender account
-    async fn get_sender_balance<'b>(
-        &'b mut self,
-        account: &'a PublicKey,
-        asset: &'a Hash,
+    async fn get_sender_balance<'c>(
+        &'c mut self,
+        account: &'b PublicKey,
+        asset: &'b Hash,
         reference: &Reference,
-    ) -> Result<&'b mut Ciphertext, BlockchainError> {
+    ) -> Result<&'c mut Ciphertext, BlockchainError> {
         Ok(self.internal_get_sender_verification_balance(account, asset, reference).await?.computable()?)
     }
 
     /// Apply new output to a sender account
     async fn add_sender_output(
         &mut self,
-        account: &'a PublicKey,
-        asset: &'a Hash,
+        account: &'b PublicKey,
+        asset: &'b Hash,
         output: Ciphertext,
     ) -> Result<(), BlockchainError> {
         self.internal_update_sender_echange(account, asset, output).await
@@ -379,7 +378,7 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for ChainS
     /// Get the nonce of an account
     async fn get_account_nonce(
         &mut self,
-        account: &'a PublicKey
+        account: &'b PublicKey
     ) -> Result<Nonce, BlockchainError> {
         self.internal_get_account_nonce(account).await
     }
@@ -387,7 +386,7 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for ChainS
     /// Apply a new nonce to an account
     async fn update_account_nonce(
         &mut self,
-        account: &'a PublicKey,
+        account: &'b PublicKey,
         new_nonce: Nonce
     ) -> Result<(), BlockchainError> {
         self.internal_update_account_nonce(account, new_nonce).await
@@ -401,7 +400,7 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for ChainS
     /// Set the multisig state for an account
     async fn set_multisig_state(
         &mut self,
-        account: &'a PublicKey,
+        account: &'b PublicKey,
         payload: &MultiSigPayload
     ) -> Result<(), BlockchainError> {
         let account = self.get_internal_account(account).await?;
@@ -420,7 +419,7 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for ChainS
     /// If the account is not a multisig account, return None
     async fn get_multisig_state(
         &mut self,
-        account: &'a PublicKey
+        account: &'b PublicKey
     ) -> Result<Option<&MultiSigPayload>, BlockchainError> {
         let account = self.get_internal_account(account).await?;
         Ok(account.multisig.as_ref().and_then(|(_, multisig)| multisig.as_ref()))
@@ -435,8 +434,8 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for ChainS
     /// Set the contract module
     async fn set_contract_module(
         &mut self,
-        hash: &'a Hash,
-        module: &'a ContractModule
+        hash: &'b Hash,
+        module: &'b ContractModule
     ) -> Result<(), BlockchainError> {
         let (state, m) = self.internal_get_versioned_contract(&hash).await?;
         if !state.is_new() {
@@ -451,7 +450,7 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for ChainS
 
     async fn load_contract_module(
         &mut self,
-        hash: Cow<'a, Hash>
+        hash: Cow<'b, Hash>
     ) -> Result<bool, BlockchainError> {
         self.load_versioned_contract(hash).await
     }
@@ -459,7 +458,7 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for ChainS
     /// Get the contract module with the environment
     async fn get_contract_module_with_environment(
         &self,
-        hash: &'a Hash
+        hash: &'b Hash
     ) -> Result<(&Module, &Environment<ContractMetadata>), BlockchainError> {
         let module = self.internal_get_contract_module(hash).await?;
 
