@@ -17,7 +17,7 @@ use xelis_common::{
             MultisigState,
             NewBlockEvent,
             RPCBlockResponse,
-            GetContractsOutputsEntry,
+            GetContractsOutputsResult,
             ContractTransfersEntry,
             ContractTransfersEntryKey
         },
@@ -585,7 +585,7 @@ impl NetworkHandler {
 
         if handle_contracts_outputs {
             debug!("Handling contract outputs for block {} at topoheight {}", block_hash, topoheight);
-            let outputs = self.api.get_contract_outputs(address, topoheight).await?;
+            let outputs = self.api.get_contracts_outputs(address, topoheight).await?;
             let outputs_assets = self.handle_contracts_outputs(outputs.executions, topoheight, block.timestamp).await?;
             assets_changed.extend(outputs_assets);
         }
@@ -665,7 +665,7 @@ impl NetworkHandler {
         // This channel is used to send all the blocks to the processing loop
         // No more than {concurrency} blocks and versions will be prefetch in advance
         // as the task will automatically await on the channel
-        let (data_sender, mut data_receiver) = channel::<(CiphertextCache, u64, Option<(RPCBlockResponse<'static>, GetContractsOutputsEntry<'static>)>)>(self.concurrency);
+        let (data_sender, mut data_receiver) = channel::<(CiphertextCache, u64, Option<(RPCBlockResponse<'static>, GetContractsOutputsResult<'static>)>)>(self.concurrency);
         let handle = {
             let api = self.api.clone();
             let address = address.clone();
@@ -682,7 +682,7 @@ impl NetworkHandler {
                         trace!("fetching block with txs at {}", topoheight);
                         match api.get_block_with_txs_at_topoheight(topoheight).await {
                             Ok(block) => {
-                                let outputs = api.get_contract_outputs(&address, topoheight).await?;
+                                let outputs = api.get_contracts_outputs(&address, topoheight).await?;
                                 Some((block, outputs))
                             },
                             // We are maybe below the pruned topoheight, stop here
