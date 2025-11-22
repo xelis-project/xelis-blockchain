@@ -52,7 +52,6 @@ use xelis_common::{
     contract::{
         ContractLog,
         ScheduledExecution,
-        ScheduledExecutionKindLog
     },
     crypto::{
         Address,
@@ -407,7 +406,7 @@ pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>
     handler.register_method_with_params("get_contract_scheduled_executions_at_topoheight", async_handler!(get_contract_scheduled_executions_at_topoheight::<S>));
     handler.register_method_with_params("get_contract_registered_executions_at_topoheight", async_handler!(get_contract_registered_executions_at_topoheight::<S>));
 
-    handler.register_method_with_params("get_contract_outputs", async_handler!(get_contract_outputs::<S>));
+    handler.register_method_with_params("get_contracts_outputs", async_handler!(get_contracts_outputs::<S>));
     handler.register_method_with_params_and_return_schema::<_, RPCVersioned<Versioned<Option<Cow<xelis_vm::Module>>>>>("get_contract_module", async_handler!(get_contract_module::<S>));
     handler.register_method_with_params("get_contract_data", async_handler!(get_contract_data::<S>));
     handler.register_method_with_params("get_contract_data_at_topoheight", async_handler!(get_contract_data_at_topoheight::<S>));
@@ -1841,15 +1840,14 @@ async fn get_contract_registered_executions_at_topoheight<S: Storage>(context: &
     Ok(executions)
 }
 
-async fn get_contract_outputs<S: Storage>(context: &Context, params: GetContractOutputsParams<'_>) -> Result<Vec<GetContractsOutputsEntry<'static>>, InternalRpcError> {
+async fn get_contracts_outputs<S: Storage>(context: &Context, params: GetContractOutputsParams<'_>) -> Result<GetContractsOutputsResult<'static>, InternalRpcError> {
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
-    let is_mainnet = blockchain.get_network().is_mainnet();
     let storage = blockchain.get_storage().read().await;
 
     let (block_hash, header) = storage.get_block_header_at_topoheight(params.topoheight).await
         .context("Error while retrieving block header at topoheight")?;
 
-    let mut rpc_outputs = Vec::new();
+    let mut executions = HashMap::new();
     let mut scheduled_executions = Vec::new();
     for tx_hash in header.get_transactions() {
         let is_executed = storage.is_tx_executed_in_block(tx_hash, &block_hash).await
@@ -1859,25 +1857,28 @@ async fn get_contract_outputs<S: Storage>(context: &Context, params: GetContract
             .context("Error while checking if contract logs exists")?
         {
             let logs =  storage.get_contract_logs_for_caller(tx_hash).await
-                .context("Error while retrieving contract logs")?
-                .into_iter()
-                .filter_map(|output| {
-                    match &output {
-                        ContractLog::Transfer { destination, .. }
-                            if destination == params.address.get_public_key() => Some(RPCContractLog::from_owned(output, is_mainnet)), 
-                        ContractLog::ScheduledExecution { hash, kind: ScheduledExecutionKindLog::BlockEnd { .. }, .. } => {
-                            scheduled_executions.push(hash.clone());
-                            None
-                        }
-                        _ => None,
-                    }
-                }).collect::<Vec<_>>();
+                .context("Error while retrieving contract logs")?;
 
-            if !logs.is_empty() {
-                rpc_outputs.push(GetContractsOutputsEntry {
-                    caller: Cow::Owned(tx_hash.clone()),
-                    outputs: logs,
-                })
+            for log in logs {
+                match &log {
+                    ContractLog::Transfer { destination, contract, amount, asset }
+                        if destination == params.address.get_public_key() => {
+                            *executions.entry(ContractTransfersEntryKey {
+                                caller: Cow::Owned(tx_hash.clone()),
+                                contract: Cow::Owned(contract.clone()),
+                            })
+                                .or_insert_with(|| ContractTransfersEntry {
+                                    transfers: HashMap::new(),
+                                })
+                                .transfers
+                                .entry(Cow::Owned(asset.clone()))
+                                .or_insert(0) += *amount;
+                        },
+                    ContractLog::ScheduledExecution { .. } => {
+                        scheduled_executions.push(tx_hash.clone());
+                    },
+                    _ => {}
+                }
             }
         }
     }
@@ -1885,24 +1886,25 @@ async fn get_contract_outputs<S: Storage>(context: &Context, params: GetContract
     // Also handle the scheduled executions that were triggered at block end
     for hash in scheduled_executions {
         let logs =  storage.get_contract_logs_for_caller(&hash).await
-            .context("Error while retrieving contract outputs")?
-            .into_iter()
-            .filter_map(|output| {
-                match &output {
-                    ContractLog::Transfer { destination, .. }
-                        if destination == params.address.get_public_key() => Some(RPCContractLog::from_owned(output, is_mainnet)), 
-                    _ => None,
-                }
-            }).collect::<Vec<_>>();
-        if !logs.is_empty() {
-            rpc_outputs.push(GetContractsOutputsEntry {
-                caller: Cow::Owned(hash),
-                outputs: logs,
-            })
+            .context("Error while retrieving contract outputs")?;
+
+        for log in logs {
+            match &log {
+                ContractLog::Transfer { destination, contract, .. }
+                    if destination == params.address.get_public_key() => {
+                        executions.entry(ContractTransfersEntryKey {
+                            caller: Cow::Owned(hash.clone()),
+                            contract: Cow::Owned(contract.clone()),
+                        });
+                    },
+                _ => {}
+            }
         }
     }
 
-    Ok(rpc_outputs)
+    Ok(GetContractsOutputsResult {
+        executions
+    })
 }
 
 async fn get_contract_module<S: Storage>(context: &Context, params: GetContractModuleParams<'_>) -> Result<Value, InternalRpcError> {
