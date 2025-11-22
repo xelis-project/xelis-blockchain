@@ -344,7 +344,7 @@ impl DaemonAPI {
         Ok(outputs)
     }
 
-    pub async fn get_contract_outputs(&self, address: &Address, topoheight: u64) -> Result<Vec<GetContractsOutputsEntry<'static>>> {
+    pub async fn get_contract_outputs(&self, address: &Address, topoheight: u64) -> Result<GetContractsOutputsEntry<'static>> {
         trace!("get contract logs");
         let outputs = self.client.call_with("get_contract_outputs", &GetContractOutputsParams {
             address: Cow::Borrowed(address),

@@ -18,10 +18,11 @@ use xelis_common::{
             NewBlockEvent,
             RPCBlockResponse,
             GetContractsOutputsEntry,
+            ContractTransfersEntry,
+            ContractTransfersEntryKey
         },
         wallet::BalanceChanged,
         RPCTransactionType,
-        RPCContractLog,
     },
     config::XELIS_ASSET,
     crypto::{
@@ -216,7 +217,7 @@ impl NetworkHandler {
     // Process a block by checking if it contains any transaction for us
     // Or that we mined it
     // Returns assets that changed and returns the highest nonce if we send a transaction
-    async fn process_block(&self, address: &Address, block: BlockResponse, topoheight: u64) -> Result<Option<(HashSet<Hash>, Option<u64>)>, Error> {
+    async fn process_block(&self, address: &Address, block: BlockResponse, topoheight: u64, handle_contracts_outputs: bool) -> Result<Option<(HashSet<Hash>, Option<u64>)>, Error> {
         let transactions = block.transactions;
         let block = block.header;
         let block_hash = block.hash.into_owned();
@@ -426,8 +427,8 @@ impl NetworkHandler {
                                         let amount = match self.wallet.decrypt_ciphertext_of_asset(ciphertext, &asset).await? {
                                             Some(v) => v,
                                             None => {
-                                                warn!("Couldn't decrypt deposit ciphertext for asset {}. Skipping it", asset);
-                                                continue;
+                                                warn!("Couldn't decrypt deposit ciphertext for asset {}. Fallback to zero", asset);
+                                                0
                                             }
                                         };
                                         deposits.insert(asset, amount);
@@ -582,6 +583,13 @@ impl NetworkHandler {
             }
         }
 
+        if handle_contracts_outputs {
+            debug!("Handling contract outputs for block {} at topoheight {}", block_hash, topoheight);
+            let outputs = self.api.get_contract_outputs(address, topoheight).await?;
+            let outputs_assets = self.handle_contracts_outputs(outputs.executions, topoheight, block.timestamp).await?;
+            assets_changed.extend(outputs_assets);
+        }
+
         // Also, verify the block version, so we handle smoothly a change in TX Version
         {
             let tx_version = block.version.get_tx_version();
@@ -608,6 +616,33 @@ impl NetworkHandler {
         storage.has_transaction(hash)
     }
 
+    async fn handle_contracts_outputs(&self, outputs: HashMap<ContractTransfersEntryKey<'_>, ContractTransfersEntry<'_>>, topoheight: u64, timestamp: TimestampMillis) -> Result<HashSet<Hash>, Error> {
+        debug!("Handling contracts outputs at topoheight {}", topoheight);
+        // Aggregate all transfers per transaction caller
+        let mut assets = HashSet::new();
+        let mut calls: HashMap<Hash, HashMap<Hash, u64>> = HashMap::new();
+        for (key, entry) in outputs.into_iter() {
+            debug!("Processing contract execution from caller {}", key.caller);
+
+            assets.extend(entry.transfers.keys().cloned().map(Cow::into_owned));
+
+            let tx_hash = key.caller.into_owned();
+            let transfers = calls.entry(tx_hash)
+                .or_insert_with(HashMap::new);
+            for (asset, amount) in entry.transfers.into_iter() {
+                debug!("Contract transfer detected: asset {}, amount {}", asset, amount);
+                *transfers.entry(asset.into_owned()).or_insert(0) += amount;
+            }
+        }
+
+        for (tx_hash, transfers) in calls.into_iter() {
+            debug!("Updating transaction contract transfers for tx {}", tx_hash);
+            self.create_or_update_transaction_contract(&tx_hash, topoheight, timestamp, transfers.into_iter()).await?;
+        }
+
+        Ok(assets)
+    }
+
     // Scan the chain using a specific balance asset, this helps us to get a list of version to only requests blocks where changes happened
     // When the block is requested, we don't limit the syncing to asset in parameter
     async fn get_balance_and_transactions(&self, topoheight_processed: Arc<Mutex<HashSet<u64>>>, address: &Address, asset: &Hash, min_topoheight: u64, balances: bool, highest_nonce: &mut Option<u64>) -> Result<(), Error> {
@@ -630,7 +665,7 @@ impl NetworkHandler {
         // This channel is used to send all the blocks to the processing loop
         // No more than {concurrency} blocks and versions will be prefetch in advance
         // as the task will automatically await on the channel
-        let (data_sender, mut data_receiver) = channel::<(CiphertextCache, u64, Option<(RPCBlockResponse<'static>, Vec<GetContractsOutputsEntry<'static>>)>)>(self.concurrency);
+        let (data_sender, mut data_receiver) = channel::<(CiphertextCache, u64, Option<(RPCBlockResponse<'static>, GetContractsOutputsEntry<'static>)>)>(self.concurrency);
         let handle = {
             let api = self.api.clone();
             let address = address.clone();
@@ -680,18 +715,11 @@ impl NetworkHandler {
             // if its not already processed, do it
             if let Some((block_response, outputs)) = block {
                 debug!("Processing topoheight {}", topoheight);
-                let block_timestamp = block_response.timestamp;
-                let changes = self.process_block(address, block_response, topoheight).await?;
+                let timestamp = block_response.timestamp;
+                let changes = self.process_block(address, block_response, topoheight, false).await?;
 
-                for entry in outputs {
-                    let transfers = entry.outputs.into_iter()
-                        .filter_map(|output| match output {
-                            RPCContractLog::Transfer { amount, asset, .. } => Some((asset.into_owned(), amount)),
-                            _ => None,
-                        });
-
-                    self.create_or_update_transaction_contract(&entry.caller, topoheight, block_timestamp, transfers).await?;
-                }
+                // It was requested at the same time of the block processing, so we can handle it now
+                self.handle_contracts_outputs(outputs.executions, topoheight, timestamp).await?;
 
                 // Check if a change occured, we are the highest version and update balances is requested
                 if let Some((_, nonce)) = changes.filter(|_| balances && highest_version) {
@@ -1168,7 +1196,7 @@ impl NetworkHandler {
             // We can safely handle it by hand because `locate_sync_topoheight_and_clean` secure us from being on a wrong chain
             if let Some(topoheight) = block.header.metadata.as_ref().map(|m| m.topoheight) {
                 let block_hash = block.header.hash.as_ref().clone();
-                if let Some((detected_assets, mut nonce)) = self.process_block(address, block, topoheight).await? {
+                if let Some((detected_assets, mut nonce)) = self.process_block(address, block, topoheight, true).await? {
                     debug!("We must sync head state, assets: {}, nonce: {:?}", detected_assets.iter().map(|a| a.to_string()).collect::<Vec<String>>().join(", "), nonce);
                     {
                         let storage = self.wallet.get_storage().read().await;
@@ -1329,34 +1357,13 @@ impl NetworkHandler {
                 res = on_contract_transfers.next() => {
                     let event = res?;
                     debug!("on contract transfers event at topo {} {}", event.topoheight, event.block_hash);
-                    let mut assets = HashSet::new();
-
-
-                    // Aggregate all transfers per transaction caller
-                    let mut calls: HashMap<Hash, HashMap<Hash, u64>> = HashMap::new();
-
-                    for (key, entry) in event.executions.into_iter() {
-                        assets.extend(entry.transfers.keys().cloned().map(Cow::into_owned));
-
-                        let tx_hash = key.caller.into_owned();
-                        let transfers = calls.entry(tx_hash)
-                            .or_insert_with(HashMap::new);
-                        for (asset, amount) in entry.transfers.into_iter() {
-                            debug!("Contract transfer detected: asset {}, amount {}", asset, amount);
-                            *transfers.entry(asset.into_owned()).or_insert(0) += amount;
-                        }
-                    }
+                    let assets = self.handle_contracts_outputs(event.executions, event.topoheight, event.block_timestamp).await?;
 
                     // We only sync the head state if we have assets
                     // No need to sync the block because we would receive it by the on_block_ordered event
                     if !assets.is_empty() {
                         debug!("Syncing head state for {} detected assets", assets.len());
                         self.sync_head_state(&address, Some(&assets), None, false, false).await?;
-                    }
-
-                    for (tx_hash, transfers) in calls.into_iter() {
-                        debug!("Updating transaction contract transfers for tx {}", tx_hash);
-                        self.create_or_update_transaction_contract(&tx_hash, event.topoheight, event.block_timestamp, transfers.into_iter()).await?;
                     }
                 },
                 // Detect network events
@@ -1394,15 +1401,19 @@ impl NetworkHandler {
 
         match tx.get_mut_entry() {
             EntryData::IncomingContract { transfers, .. } | EntryData::InvokeContract { received: transfers, .. } => {
-                for (asset, amount) in new_transfers {    
-                    *transfers.entry(asset.clone())
-                        .or_insert(0) += amount;
-                }
-
-                if update {
-                    storage.update_transaction(&tx_hash, &tx)?;
+                if !transfers.is_empty() {
+                    debug!("transfers isn't empty, skipping existing transfers update");
                 } else {
-                    storage.save_transaction(&tx_hash, &tx)?;
+                    for (asset, amount) in new_transfers {    
+                        *transfers.entry(asset.clone())
+                            .or_insert(0) += amount;
+                    }
+    
+                    if update {
+                        storage.update_transaction(&tx_hash, &tx)?;
+                    } else {
+                        storage.save_transaction(&tx_hash, &tx)?;
+                    }
                 }
             },
             _ => {
