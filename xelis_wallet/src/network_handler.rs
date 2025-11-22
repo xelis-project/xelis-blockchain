@@ -1342,6 +1342,7 @@ impl NetworkHandler {
                         let transfers = calls.entry(tx_hash)
                             .or_insert_with(HashMap::new);
                         for (asset, amount) in entry.transfers.into_iter() {
+                            debug!("Contract transfer detected: asset {}, amount {}", asset, amount);
                             *transfers.entry(asset.into_owned()).or_insert(0) += amount;
                         }
                     }
@@ -1349,10 +1350,12 @@ impl NetworkHandler {
                     // We only sync the head state if we have assets
                     // No need to sync the block because we would receive it by the on_block_ordered event
                     if !assets.is_empty() {
+                        debug!("Syncing head state for {} detected assets", assets.len());
                         self.sync_head_state(&address, Some(&assets), None, false, false).await?;
                     }
 
                     for (tx_hash, transfers) in calls.into_iter() {
+                        debug!("Updating transaction contract transfers for tx {}", tx_hash);
                         self.create_or_update_transaction_contract(&tx_hash, event.topoheight, event.block_timestamp, transfers.into_iter()).await?;
                     }
                 },
@@ -1376,17 +1379,17 @@ impl NetworkHandler {
 
     async fn create_or_update_transaction_contract(&self, tx_hash: &Hash, topoheight: u64, block_timestamp: TimestampMillis, new_transfers: impl Iterator<Item = (Hash, u64)>) -> Result<(), Error> {
         let mut storage = self.wallet.get_storage().write().await;
-        let mut tx = if storage.has_transaction(tx_hash)? {
-            storage.get_transaction(tx_hash)?
+        let (mut tx, update) = if storage.has_transaction(tx_hash)? {
+            (storage.get_transaction(tx_hash)?, true)
         } else {
-            TransactionEntry::new(
+            (TransactionEntry::new(
                 tx_hash.clone(),
                 topoheight,
                 block_timestamp,
                 EntryData::IncomingContract {
                     transfers: IndexMap::new()
                 },
-            )
+            ), false)
         };
 
         match tx.get_mut_entry() {
@@ -1396,7 +1399,11 @@ impl NetworkHandler {
                         .or_insert(0) += amount;
                 }
 
-                storage.update_transaction(&tx_hash, &tx)?;
+                if update {
+                    storage.update_transaction(&tx_hash, &tx)?;
+                } else {
+                    storage.save_transaction(&tx_hash, &tx)?;
+                }
             },
             _ => {
                 warn!("Transaction {} is not contract related, skipping it", tx_hash);

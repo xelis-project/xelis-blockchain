@@ -841,15 +841,10 @@ impl Wallet {
                     // To avoid this, we will use the last balance version in stable topoheight as reference
                     let stable_topoheight = network_handler.get_api().get_stable_topoheight().await?;
                     let mut use_stable_balance = if force_stable_balance || (
-                        // if we spend only xel and we had a coinbase reward in unstable height, use stable balance
-                        used_assets.len() == 1
-                        && used_assets.contains(&XELIS_ASSET)
-                        && (
-                            // if we either have a coinbase reward above stable topoheight
-                            // and no pending tx cache
-                            storage.get_last_coinbase_topoheight().is_some_and(|v| v > stable_topoheight)
-                            && storage.get_tx_cache().is_none()
-                        )
+                        // if we either have a coinbase reward above stable topoheight
+                        // and no pending tx cache
+                        storage.get_last_coinbase_topoheight().is_none_or(|v| v > stable_topoheight)
+                        && storage.get_tx_cache().is_none()
                     ) {
                         debug!("Forcing stable balance usage");
                         true
