@@ -28,7 +28,10 @@ use log::{debug, error, trace};
 use serde::Serialize;
 use serde_json::json;
 use crate::{
-    config::MAX_BLOCK_SIZE, immutable::Immutable, tokio::{
+    config::MAX_BLOCK_SIZE,
+    immutable::Immutable,
+    tokio::{
+        Executor,
         select,
         sync::{
             mpsc::{
@@ -350,6 +353,10 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static + Send + Sync {
     async fn handle_ws_internal(self: Arc<Self>, session: WebSocketSessionShared<H>, mut stream: AggregatedMessageStream, mut rx: UnboundedReceiver<InnerMessage>) {
         let mut interval = actix_rt::time::interval(KEEP_ALIVE_INTERVAL);
         let mut last_pong_received = Instant::now();
+        // executor for handling messages
+        // we use FuturesUnordered to limit the number of concurrent tasks
+        let mut executor = Executor::new();
+
         let reason = loop {
             select! {
                 // heartbeat
@@ -372,6 +379,9 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static + Send + Sync {
                             break None;
                         }
                     }
+                },
+                _ = executor.next() => {
+                    trace!("Executed a task for session #{}", session.id);
                 },
                 Some(msg) = rx.recv() => {
                     match msg {
@@ -409,9 +419,13 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static + Send + Sync {
                     match msg {
                         AggregatedMessage::Text(text) => {
                             trace!("Received text message for session #{}: {}", session.id, text);
-                            if let Err(e) = self.handler.on_message(&session, text.as_bytes()).await {
-                                debug!("Error while calling on_message: {}", e);
-                            }
+                            let zelf = &self;
+                            let session = &session;
+                            executor.push_back(async move {
+                                if let Err(e) = zelf.handler.on_message(session, text.as_bytes()).await {
+                                    debug!("Error while calling on_message: {}", e);
+                                }
+                            });
                         },
                         AggregatedMessage::Close(reason) => {
                             trace!("Received close message for session #{}: {:?}", session.id, reason);
