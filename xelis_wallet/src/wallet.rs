@@ -810,6 +810,7 @@ impl Wallet {
 
         let mut generated = false;
         let reference = if let Some(cache) = storage.get_tx_cache() {
+            debug!("Using cached reference for transaction creation at topoheight {} with hash {}", cache.reference.topoheight, cache.reference.hash);
             cache.reference.clone()
         } else {
             generated = true;
@@ -840,27 +841,22 @@ impl Wallet {
                     // Last mining reward is above stable topoheight, this may increase orphans rate
                     // To avoid this, we will use the last balance version in stable topoheight as reference
                     let stable_topoheight = network_handler.get_api().get_stable_topoheight().await?;
-                    let mut use_stable_balance = if force_stable_balance || (
+                    let mut should_use_stable_balance = force_stable_balance || (
                         // if we either have a coinbase reward above stable topoheight
                         // and no pending tx cache
-                        storage.get_last_coinbase_topoheight().is_none_or(|v| v > stable_topoheight)
+                        storage.get_last_coinbase_topoheight().is_some_and(|v| v > stable_topoheight)
                         && storage.get_tx_cache().is_none()
-                    ) {
-                        debug!("Forcing stable balance usage");
-                        true
-                    } else {
-                        storage.get_tx_cache().is_none()
-                    };
+                    );
 
-                    if use_stable_balance {
+                    if should_use_stable_balance {
                         // Check if there is any unconfirmed balance or balance in unstable height
                         // to decide if we can use stable balance
                         for asset in used_assets.iter() {
                             let (balance, unconfirmed) = storage.get_unconfirmed_balance_for(asset).await?;
-                            debug!("Current balance for asset {} is at topoheight {}", asset, balance.topoheight);
-                            if unconfirmed && balance.topoheight > stable_topoheight {
+                            debug!("Current balance for asset {} is at topoheight {}, unconfirmed: {}", asset, balance.topoheight, unconfirmed);
+                            if unconfirmed || balance.topoheight > stable_topoheight {
                                 debug!("Cannot use stable balance because balance for asset {} is at topoheight {} which is above stable topoheight {} and is unconfirmed", asset, balance.topoheight, stable_topoheight);
-                                use_stable_balance = false;
+                                should_use_stable_balance = false;
                                 break;
                             }
                         }
@@ -868,16 +864,16 @@ impl Wallet {
 
                     // We also need to check if we have made an outgoing TX
                     // Because we need to keep the order of TX and use correct ciphertexts
-                    if use_stable_balance {
+                    if should_use_stable_balance {
                         if let Some(entry) = storage.get_last_outgoing_transaction()? {
                             if entry.get_topoheight() > stable_topoheight {
                                 warn!("Cannot use stable balance because we have an outgoing TX not confirmed in stable height yet");
-                                use_stable_balance = false;
+                                should_use_stable_balance = false;
                             }
                         }
                     }
 
-                    if use_stable_balance {
+                    if should_use_stable_balance {
                         warn!("Using stable balance for TX creation");
                         let address = self.get_address();
                         for asset in used_assets.iter() {
