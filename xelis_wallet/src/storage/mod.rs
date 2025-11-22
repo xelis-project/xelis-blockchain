@@ -909,7 +909,7 @@ impl EncryptedStorage {
                     }
 
                     if balances.is_empty() && self.tx_cache.is_some() {
-                        debug!("no matching unconfirmed balance found for asset {} but last TX still not processed, inject back", asset);
+                        debug!("no matching unconfirmed balance found for asset {} but last TX still not processed, inject back uncofirmed balance {} at topoheight {}", asset, b.amount, b.topoheight);
                         balances.push_front(b);
                         break;
                     }

@@ -845,8 +845,14 @@ impl Wallet {
                         // if we spend only xel and we had a coinbase reward in unstable height, use stable balance
                         used_assets.len() == 1
                         && used_assets.contains(&XELIS_ASSET)
-                        && storage.get_last_coinbase_topoheight().is_some_and(|v| v > stable_topoheight)
+                        && (
+                            // if we either have a coinbase reward above stable topoheight
+                            // or a tx cache (pending tx)
+                            storage.get_last_coinbase_topoheight().is_some_and(|v| v > stable_topoheight)
+                            || storage.get_tx_cache().is_some()
+                        )
                     ) {
+                        debug!("Forcing stable balance usage");
                         true
                     } else {
                         // Fetch the stable topoheight
@@ -861,7 +867,7 @@ impl Wallet {
                             let (balance, unconfirmed) = storage.get_unconfirmed_balance_for(asset).await?;
                             debug!("Current balance for asset {} is at topoheight {}", asset, balance.topoheight);
                             if unconfirmed || balance.topoheight > stable_topoheight {
-                                debug!("Cannot use stable balance because balance for asset {} is at topoheight {} which is above stable topoheight {}", asset, balance.topoheight, stable_topoheight);
+                                debug!("Cannot use stable balance because balance for asset {} is at topoheight {} which is above stable topoheight {} or is unconfirmed", asset, balance.topoheight, stable_topoheight);
                                 use_stable_balance = false;
                                 break;
                             }
