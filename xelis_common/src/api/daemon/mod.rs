@@ -844,6 +844,10 @@ pub struct GetContractOutputsParams<'a> {
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct GetContractsOutputsResult<'a> {
+    #[serde(
+        serialize_with = "serialize_map_as_list",
+        deserialize_with = "deserialize_map_as_list"
+    )]
     pub executions: HashMap<ContractTransfersEntryKey<'a>, ContractTransfersEntry<'a>>,
 }
 
