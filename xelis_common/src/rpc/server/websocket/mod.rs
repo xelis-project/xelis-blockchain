@@ -354,7 +354,8 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static + Send + Sync {
         let mut interval = actix_rt::time::interval(KEEP_ALIVE_INTERVAL);
         let mut last_pong_received = Instant::now();
         // executor for handling messages
-        // we use FuturesUnordered to limit the number of concurrent tasks
+        // we use Executor to limit the number of concurrent tasks to 1 per session
+        // but allow queuing multiple tasks
         let mut executor = Executor::new();
 
         let reason = loop {
@@ -380,7 +381,7 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static + Send + Sync {
                         }
                     }
                 },
-                _ = executor.next() => {
+                Some(_) = executor.next() => {
                     trace!("Executed a task for session #{}", session.id);
                 },
                 Some(msg) = rx.recv() => {
