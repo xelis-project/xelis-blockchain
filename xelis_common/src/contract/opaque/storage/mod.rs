@@ -139,8 +139,10 @@ pub async fn storage_has<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mu
             .map_or(false, |(_, v)| v.is_some()),
         Entry::Vacant(v) => match storage.load_data(&metadata.metadata.contract_executor, &key, state.topoheight).await? {
             Some((topoheight, constant)) => {
+                let has = constant.is_some();
                 v.insert(Some((VersionedState::FetchedAt(topoheight), constant)));
-                true
+
+                has
             },
             None => {
                 v.insert(None);
