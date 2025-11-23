@@ -532,7 +532,7 @@ impl NetworkHandler {
 
             // Find the highest nonce
             if let Some(tx_nonce) = tx_nonce {
-                if our_highest_nonce.map(|n| tx_nonce > n).unwrap_or(true) {
+                if our_highest_nonce.is_none_or(|n| tx_nonce > n) {
                     if let Some(entry) = entry.as_ref() {
                         debug!("Found new highest nonce {} in TX {}", tx_nonce, entry.get_hash());
                     }
@@ -732,7 +732,7 @@ impl NetworkHandler {
                             debug!("Highest nonce is not set, fetching it from storage");
                             *highest_nonce = Some(storage.get_nonce()?);
                         }
-    
+
                         // Store only the highest nonce
                         // Because if we are building queued transactions, it may break our queue
                         // Our we couldn't submit new txs before they get removed from mempool
@@ -1213,6 +1213,19 @@ impl NetworkHandler {
                     // A change happened in this block, lets update balance and nonce
                     self.sync_head_state(&address, Some(&detected_assets), nonce, false, false).await?;
 
+                    if nonce.is_some() {
+                        // Check if we have a tx cache and clean it
+                        let mut storage = self.wallet.get_storage().write().await;
+                        if let Some(tx_cache) = storage.get_tx_cache() {
+                            if let Some(tx) = tx_cache.last_tx_hash_created.as_ref() {
+                                if storage.has_transaction(tx)? {
+                                    info!("Clearing TX cache for last created tx {}", tx);
+                                    storage.clear_tx_cache();
+                                }
+                            }
+                        }
+                    }
+
                     // We don't have to sync new blocks because we just processed this one
                     // And the balances were already updated with above head state sync
                     sync_new_blocks = false;
@@ -1385,6 +1398,7 @@ impl NetworkHandler {
     }
 
     async fn create_or_update_transaction_contract(&self, tx_hash: &Hash, topoheight: u64, block_timestamp: TimestampMillis, new_transfers: impl Iterator<Item = (Hash, u64)>) -> Result<(), Error> {
+        debug!("create_or_update_transaction_contract for tx {} at topoheight {}", tx_hash, topoheight);
         let mut storage = self.wallet.get_storage().write().await;
         let (mut tx, update) = if storage.has_transaction(tx_hash)? {
             (storage.get_transaction(tx_hash)?, true)

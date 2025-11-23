@@ -1368,11 +1368,6 @@ impl EncryptedStorage {
     pub fn save_transaction(&mut self, hash: &Hash, transaction: &TransactionEntry) -> Result<()> {
         trace!("save transaction {}", hash);
 
-        if self.tx_cache.as_ref().is_some_and(|c| c.last_tx_hash_created.as_ref() == Some(hash)) {
-            debug!("Transaction {} has been executed, deleting cache", hash);
-            self.tx_cache = None;
-        }
-
         let id = self.get_next_transaction_id()?;
         let key = self.cipher.hash_key(hash.as_bytes());
         // We write in plaintext the id and the hashed key
