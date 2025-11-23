@@ -185,8 +185,6 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, C
     let storage_type = Type::Opaque(env.register_opaque::<OpaqueStorage>("Storage", false));
     let read_only_storage_type = Type::Opaque(env.register_opaque::<OpaqueReadOnlyStorage>("ReadOnlyStorage", false));
     let memory_storage_type = Type::Opaque(env.register_opaque::<OpaqueMemoryStorage>("MemoryStorage", false));
-    let btree_store_type = Type::Opaque(env.register_opaque::<OpaqueBTreeStore>("BTreeStore", false));
-    let btree_cursor_type = Type::Opaque(env.register_opaque::<OpaqueBTreeCursor>("BTreeCursor", false));
     let asset_type = Type::Opaque(env.register_opaque::<Asset>("Asset", false));
 
     // All others opaque types accepted as input
@@ -209,10 +207,9 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, C
     // Misc
     let contract_type = Type::Opaque(env.register_opaque::<OpaqueContract>("Contract", false));
     let scheduled_execution_type = Type::Opaque(env.register_opaque::<OpaqueScheduledExecution>("ScheduledExecution", false));
-    // See xelis_common::contract::opaque::storage::BTreeSeekBias
-    let btree_seek_bias_type = Type::Enum(env.register_enum::<{ BTreeSeekBias::COUNT }>("BTreeSeekBias", 
-        BTreeSeekBias::names().map(|v| (v, Vec::<(&str, Type)>::new()))
-    ));
+    let btree_store_type = Type::Opaque(env.register_opaque::<OpaqueBTreeStore>("BTreeStore", false));
+    let btree_cursor_type = Type::Opaque(env.register_opaque::<OpaqueBTreeCursor>("BTreeCursor", false));
+
     let max_supply_type = Type::Enum(env.register_enum::<3>("MaxSupplyMode", [
         // Unlimited supply
         ("None", vec![]),
@@ -221,6 +218,11 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, C
         // allow minting until max supply is reached in circulating supply
         ("Mintable", vec![("max_supply", Type::U64)]),
     ]));
+
+    // See xelis_common::contract::opaque::storage::BTreeSeekBias
+    let btree_seek_bias_type = Type::Enum(env.register_enum::<{ BTreeSeekBias::COUNT }>("BTreeSeekBias", 
+        BTreeSeekBias::names().map(|v| (v, Vec::<(&str, Type)>::new()))
+    ));
 
     // Transaction
     {
@@ -497,87 +499,6 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, C
         );
     }
 
-    // BTree Storage
-    {
-        env.register_static_function(
-            "new",
-            btree_store_type.clone(),
-            vec![("namespace", Type::Bytes)],
-            FunctionHandler::Sync(btree_store_new),
-            5,
-            Some(btree_store_type.clone())
-        );
-        env.register_native_function(
-            "insert",
-            Some(btree_store_type.clone()),
-            vec![("key", Type::Bytes), ("value", Type::Any)],
-            FunctionHandler::Async(async_handler!(btree_store_insert::<P>)),
-            100,
-            Some(Type::Optional(Box::new(Type::Any)))
-        );
-
-        // NOTE: "get" will only work deterministically if there are only unique keys.
-        // For duplicate keys, you must use a cursor.
-        env.register_native_function(
-            "get",
-            Some(btree_store_type.clone()),
-            vec![("key", Type::Bytes)],
-            FunctionHandler::Async(async_handler!(btree_store_get::<P>)),
-            75,
-            Some(Type::Optional(Box::new(Type::Any)))
-        );
-
-        // NOTE: "delete" will only work deterministically if there are only unique keys.
-        // For duplicate keys, you must use a cursor.
-        env.register_native_function(
-            "delete",
-            Some(btree_store_type.clone()),
-            vec![("key", Type::Bytes)],
-            FunctionHandler::Async(async_handler!(btree_store_delete::<P>)),
-            75,
-            Some(Type::Optional(Box::new(Type::Any)))
-        );
-        env.register_native_function(
-            "seek",
-            Some(btree_store_type.clone()),
-            vec![
-                ("key", Type::Bytes),
-                ("bias", btree_seek_bias_type.clone()),
-                ("ascending", Type::Bool),
-            ],
-            FunctionHandler::Async(async_handler!(btree_store_seek::<P>)),
-            100,
-            Some(Type::Optional(Box::new(btree_cursor_type.clone())))
-        );
-        env.register_native_function(
-            "len",
-            Some(btree_store_type.clone()),
-            vec![],
-            FunctionHandler::Async(async_handler!(btree_store_len::<P>)),
-            25,
-            Some(Type::U64),
-        );
-    }
-
-    // BTree Cursor
-    {
-        env.register_native_function(
-            "next",
-            Some(btree_cursor_type.clone()),
-            vec![],
-            FunctionHandler::Async(async_handler!(btree_cursor_next::<P>)),
-            15,
-            Some(Type::Optional(Box::new(Type::Any)))
-        );
-        env.register_native_function(
-            "delete",
-            Some(btree_cursor_type.clone()),
-            vec![],
-            FunctionHandler::Async(async_handler!(btree_cursor_delete::<P>)),
-            20,
-            Some(Type::Bool)
-        );
-    }
 
     // Address
     {
@@ -1978,6 +1899,88 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, C
             ],
             FunctionHandler::Sync(is_contract_callable::<P>),
             75,
+            Some(Type::Bool)
+        );
+    }
+
+    // BTree Storage
+    {
+        env.register_static_function(
+            "new",
+            btree_store_type.clone(),
+            vec![("namespace", Type::Bytes)],
+            FunctionHandler::Sync(btree_store_new),
+            5,
+            Some(btree_store_type.clone())
+        );
+        env.register_native_function(
+            "insert",
+            Some(btree_store_type.clone()),
+            vec![("key", Type::Bytes), ("value", Type::Any)],
+            FunctionHandler::Async(async_handler!(btree_store_insert::<P>)),
+            100,
+            Some(Type::Optional(Box::new(Type::Any)))
+        );
+
+        // NOTE: "get" will only work deterministically if there are only unique keys.
+        // For duplicate keys, you must use a cursor.
+        env.register_native_function(
+            "get",
+            Some(btree_store_type.clone()),
+            vec![("key", Type::Bytes)],
+            FunctionHandler::Async(async_handler!(btree_store_get::<P>)),
+            75,
+            Some(Type::Optional(Box::new(Type::Any)))
+        );
+
+        // NOTE: "delete" will only work deterministically if there are only unique keys.
+        // For duplicate keys, you must use a cursor.
+        env.register_native_function(
+            "delete",
+            Some(btree_store_type.clone()),
+            vec![("key", Type::Bytes)],
+            FunctionHandler::Async(async_handler!(btree_store_delete::<P>)),
+            75,
+            Some(Type::Optional(Box::new(Type::Any)))
+        );
+        env.register_native_function(
+            "seek",
+            Some(btree_store_type.clone()),
+            vec![
+                ("key", Type::Bytes),
+                ("bias", btree_seek_bias_type.clone()),
+                ("ascending", Type::Bool),
+            ],
+            FunctionHandler::Async(async_handler!(btree_store_seek::<P>)),
+            100,
+            Some(Type::Optional(Box::new(btree_cursor_type.clone())))
+        );
+        env.register_native_function(
+            "len",
+            Some(btree_store_type.clone()),
+            vec![],
+            FunctionHandler::Async(async_handler!(btree_store_len::<P>)),
+            25,
+            Some(Type::U64),
+        );
+    }
+
+    // BTree Cursor
+    {
+        env.register_native_function(
+            "next",
+            Some(btree_cursor_type.clone()),
+            vec![],
+            FunctionHandler::Async(async_handler!(btree_cursor_next::<P>)),
+            15,
+            Some(Type::Optional(Box::new(Type::Any)))
+        );
+        env.register_native_function(
+            "delete",
+            Some(btree_cursor_type.clone()),
+            vec![],
+            FunctionHandler::Async(async_handler!(btree_cursor_delete::<P>)),
+            20,
             Some(Type::Bool)
         );
     }
