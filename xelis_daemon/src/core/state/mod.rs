@@ -5,7 +5,6 @@ pub use mempool_state::MempoolState;
 pub use chain_state::{
     ChainState,
     ApplicableChainState,
-    StorageReference
 };
 
 use log::{trace, debug};

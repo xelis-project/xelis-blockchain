@@ -237,16 +237,22 @@ where
 }
 
 // a block is a side block if its ordered and its block height is less than or equal to height of past 8 topographical blocks
-pub async fn is_side_block_internal<P>(provider: &P, hash: &Hash, current_topoheight: TopoHeight) -> Result<bool, BlockchainError>
+pub async fn is_side_block_internal<P>(provider: &P, hash: &Hash, block_topoheight: Option<u64>, current_topoheight: TopoHeight) -> Result<bool, BlockchainError>
 where
     P: DifficultyProvider + DagOrderProvider
 {
     trace!("is block {} a side block", hash);
-    if !provider.is_block_topological_ordered(hash).await? {
-        return Ok(false)
-    }
+    let topoheight = match block_topoheight {
+        Some(v) => v,
+        None => {
+            if !provider.is_block_topological_ordered(hash).await? {
+                return Ok(false)
+            }
 
-    let topoheight = provider.get_topo_height_for_hash(hash).await?;
+            provider.get_topo_height_for_hash(hash).await?
+        }
+    };
+
     // genesis block can't be a side block
     if topoheight == 0 || topoheight > current_topoheight {
         return Ok(false)

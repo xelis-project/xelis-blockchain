@@ -810,6 +810,7 @@ impl Wallet {
 
         let mut generated = false;
         let reference = if let Some(cache) = storage.get_tx_cache() {
+            debug!("Using cached reference for transaction creation at topoheight {} with hash {}", cache.reference.topoheight, cache.reference.hash);
             cache.reference.clone()
         } else {
             generated = true;
@@ -837,57 +838,42 @@ impl Wallet {
             // Otherwise that mean we're still waiting on a TX to be confirmed
             if generated && (used_assets.contains(&XELIS_ASSET) || force_stable_balance) {
                 if let Some(network_handler) = self.network_handler.lock().await.as_ref() {
-                    let mut daemon_stable_topoheight = None;
                     // Last mining reward is above stable topoheight, this may increase orphans rate
                     // To avoid this, we will use the last balance version in stable topoheight as reference
                     let stable_topoheight = network_handler.get_api().get_stable_topoheight().await?;
-                    let mut use_stable_balance = if force_stable_balance || (
-                        // if we spend only xel and we had a coinbase reward in unstable height, use stable balance
-                        used_assets.len() == 1
-                        && used_assets.contains(&XELIS_ASSET)
-                        && storage.get_last_coinbase_topoheight().is_some_and(|v| v > stable_topoheight)
-                    ) {
-                        true
-                    } else {
-                        // Fetch the stable topoheight
-                        // to compare it against each balance used
-                        daemon_stable_topoheight = Some(stable_topoheight);
-                        debug!("Checking if we can use stable balance at with stable topoheight {}", stable_topoheight);
+                    let mut should_use_stable_balance = force_stable_balance || (
+                        // if we either have a coinbase reward above stable topoheight
+                        // and no pending tx cache
+                        storage.get_last_coinbase_topoheight().is_some_and(|v| v > stable_topoheight)
+                        && storage.get_tx_cache().is_none()
+                    );
 
-                        let mut use_stable_balance = true;
+                    if should_use_stable_balance {
                         // Check if there is any unconfirmed balance or balance in unstable height
                         // to decide if we can use stable balance
                         for asset in used_assets.iter() {
                             let (balance, unconfirmed) = storage.get_unconfirmed_balance_for(asset).await?;
-                            debug!("Current balance for asset {} is at topoheight {}", asset, balance.topoheight);
+                            debug!("Current balance for asset {} is at topoheight {}, unconfirmed: {}", asset, balance.topoheight, unconfirmed);
                             if unconfirmed || balance.topoheight > stable_topoheight {
-                                debug!("Cannot use stable balance because balance for asset {} is at topoheight {} which is above stable topoheight {}", asset, balance.topoheight, stable_topoheight);
-                                use_stable_balance = false;
+                                debug!("Cannot use stable balance because balance for asset {} is at topoheight {} which is above stable topoheight {} and is unconfirmed", asset, balance.topoheight, stable_topoheight);
+                                should_use_stable_balance = false;
                                 break;
-                            }
-                        }
-
-                        use_stable_balance
-                    };
-
-                    // We also need to check if we have made an outgoing TX
-                    // Because we need to keep the order of TX and use correct ciphertexts
-                    if use_stable_balance {
-                        if let Some(entry) = storage.get_last_outgoing_transaction()? {
-                            let stable_topo = if let Some(topo) = daemon_stable_topoheight {
-                                topo
-                            } else {
-                                network_handler.get_api().get_stable_topoheight().await?
-                            };
-
-                            if stable_topo < entry.get_topoheight() {
-                                warn!("Cannot use stable balance because we have an outgoing TX not confirmed in stable height yet");
-                                use_stable_balance = false;
                             }
                         }
                     }
 
-                    if use_stable_balance {
+                    // We also need to check if we have made an outgoing TX
+                    // Because we need to keep the order of TX and use correct ciphertexts
+                    if should_use_stable_balance {
+                        if let Some(entry) = storage.get_last_outgoing_transaction()? {
+                            if entry.get_topoheight() > stable_topoheight {
+                                warn!("Cannot use stable balance because we have an outgoing TX not confirmed in stable height yet");
+                                should_use_stable_balance = false;
+                            }
+                        }
+                    }
+
+                    if should_use_stable_balance {
                         warn!("Using stable balance for TX creation");
                         let address = self.get_address();
                         for asset in used_assets.iter() {
@@ -939,10 +925,8 @@ impl Wallet {
                         }
                     }
 
-                    if let Some(topoheight) = daemon_stable_topoheight {
-                        debug!("Setting stable topoheight to {} for state", topoheight);
-                        state.set_stable_topoheight(topoheight);
-                    }
+                    debug!("Setting stable topoheight to {} for state", stable_topoheight);
+                    state.set_stable_topoheight(stable_topoheight);
                 }
             }
         }

@@ -843,10 +843,12 @@ pub struct GetContractOutputsParams<'a> {
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
-pub struct GetContractsOutputsEntry<'a> {
-    // Either the tx_hash or the execution hash
-    pub caller: Cow<'a, Hash>,
-    pub outputs: Vec<RPCContractLog<'a>>,
+pub struct GetContractsOutputsResult<'a> {
+    #[serde(
+        serialize_with = "serialize_map_as_list",
+        deserialize_with = "deserialize_map_as_list"
+    )]
+    pub executions: HashMap<ContractTransfersEntryKey<'a>, ContractTransfersEntry<'a>>,
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]

@@ -1985,14 +1985,14 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, C
     env
 }
 
-pub fn provider_from_context<'a, 'ty, 'r, P: ContractProvider>(context: &'a mut Context<'ty, 'r>) -> Result<&'a mut P, anyhow::Error> {
+pub fn provider_from_context<'a, 'ty, 'r, P: ContractProvider>(context: &'a mut Context<'ty, 'r>) -> Result<&'a P, anyhow::Error> {
     let data: &mut ContractProviderWrapper<P> = context.get_mut()
         .context("Provider not initialized")?;
 
     Ok(data.0)
 }
 
-pub fn from_context<'a, 'ty, 'r, P: ContractProvider>(context: &'a mut Context<'ty, 'r>) -> Result<(&'a mut P, &'a mut ChainState<'ty>), anyhow::Error> {
+pub fn from_context<'a, 'ty, 'r, P: ContractProvider>(context: &'a mut Context<'ty, 'r>) -> Result<(&'a P, &'a mut ChainState<'ty>), anyhow::Error> {
     let mut datas = context.get_many_mut([&ContractProviderWrapper::<P>::id(), &TypeId::of::<ChainState>()]);
 
     let wrapper: &mut ContractProviderWrapper<P> = datas[0]
@@ -2001,7 +2001,7 @@ pub fn from_context<'a, 'ty, 'r, P: ContractProvider>(context: &'a mut Context<'
         .downcast_mut()
         .context("Contract Environment is not initialized correctly")?;
 
-    let provider: &mut P = wrapper.0;
+    let provider: &P = wrapper.0;
 
     let state: &mut ChainState = datas[1]
         .take()
