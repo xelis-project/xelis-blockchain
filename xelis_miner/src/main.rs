@@ -341,10 +341,12 @@ async fn main() -> Result<()> {
     let (sender, _) = broadcast::channel::<ThreadNotification>(threads as usize);
     // mpsc channel to send from threads to the "communication" task.
     let (block_sender, block_receiver) = mpsc::channel::<MinerWork>(threads as usize);
+    let mut handles = Vec::with_capacity(threads as usize);
     for id in 0..threads {
         debug!("Starting thread #{}", id);
-        if let Err(e) = start_thread(id, sender.subscribe(), block_sender.clone()) {
-            error!("Error while creating Mining Thread #{}: {}", id, e);
+        match start_thread(id, sender.subscribe(), block_sender.clone()) {
+            Ok(handle) => handles.push(handle),
+            Err(e) => error!("Error while creating Mining Thread #{}: {}", id, e),
         }
     }
 
@@ -380,6 +382,19 @@ async fn main() -> Result<()> {
     // stop the stats broadcast task
     if let Some(stats_handle) = stats_task {
         stats_handle.abort()
+    }
+
+    for (index, handle) in handles.into_iter().enumerate() {
+        match handle.join() {
+            Ok(result) => {
+                if let Err(e) = result {
+                    error!("Error on mining thread #{}: {}", index, e);
+                }
+            },
+            Err(e) => {
+                error!("Error while joining mining thread #{}: {:?}", index, e);
+            }
+        }
     }
 
     Ok(())
@@ -575,9 +590,9 @@ async fn handle_websocket_message(message: Result<Message, TungsteniteError>, jo
     Ok(false)
 }
 
-fn start_thread(id: u16, mut job_receiver: broadcast::Receiver<ThreadNotification<'static>>, block_sender: mpsc::Sender<MinerWork<'static>>) -> Result<(), Error> {
+fn start_thread(id: u16, mut job_receiver: broadcast::Receiver<ThreadNotification<'static>>, block_sender: mpsc::Sender<MinerWork<'static>>) -> Result<std::thread::JoinHandle<Result<(), Error>>, Error> {
     let builder = thread::Builder::new().name(format!("Mining Thread #{}", id));
-    builder.spawn(move || {
+    let handle = builder.spawn(move || {
         let mut worker = Worker::new();
         let mut hash: Hash;
 
@@ -642,7 +657,7 @@ fn start_thread(id: u16, mut job_receiver: broadcast::Receiver<ThreadNotificatio
                             HASHRATE_COUNTER.fetch_add(UPDATE_EVERY_NONCE as usize, Ordering::SeqCst);
                         }
 
-                        hash = worker.get_pow_hash().unwrap();
+                        hash = worker.get_pow_hash()?;
                         tries += 1;
                     }
 
@@ -660,8 +675,10 @@ fn start_thread(id: u16, mut job_receiver: broadcast::Receiver<ThreadNotificatio
             };
         }
         info!("Mining Thread #{}: stopped", id);
+        Ok::<_, Error>(())
     })?;
-    Ok(())
+
+    Ok(handle)
 }
 
 async fn run_prompt(prompt: ShareablePrompt) -> Result<()> {
