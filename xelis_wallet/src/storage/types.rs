@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use serde::{Deserialize, Serialize};
 use xelis_common::{
     account::CiphertextCache,
@@ -59,6 +61,8 @@ pub struct TxCache {
     // Last transaction hash created
     // This is used to determine if we should erase the last unconfirmed balance or not
     pub last_tx_hash_created: Option<Hash>,
+    // Set of assets used in the last transaction
+    pub assets: HashSet<Hash>,
 }
 
 // A multisig state in the wallet DB

@@ -1623,7 +1623,7 @@ async fn clear_tx_cache(manager: &CommandManager, _: ArgumentManager) -> Result<
     let context = manager.get_context().lock()?;
     let wallet: &Arc<Wallet> = context.get()?;
     let mut storage = wallet.get_storage().write().await;
-    storage.clear_tx_cache();
+    storage.clear_tx_cache().await;
     manager.message("Transaction cache has been cleared");
     Ok(())
 }
@@ -1727,7 +1727,7 @@ async fn set_nonce(manager: &CommandManager, _: ArgumentManager) -> Result<(), C
     let wallet: &Arc<Wallet> = context.get()?;
     let mut storage = wallet.get_storage().write().await;
     storage.set_nonce(value)?;
-    storage.clear_tx_cache();
+    storage.clear_tx_cache().await;
 
     manager.message(format!("New nonce is: {}", value));
     Ok(())
@@ -2078,7 +2078,7 @@ async fn broadcast_tx(wallet: &Wallet, manager: &CommandManager, tx: Transaction
 
             // Maybe cache is corrupted, clear it
             let mut storage = wallet.get_storage().write().await;
-            storage.clear_tx_cache();
+            storage.clear_tx_cache().await;
             storage.delete_unconfirmed_balances().await;
         } else {
             manager.message("Transaction submitted successfully!");

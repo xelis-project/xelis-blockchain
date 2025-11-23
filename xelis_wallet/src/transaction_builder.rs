@@ -150,16 +150,17 @@ impl TransactionBuilderState {
     pub async fn apply_changes(&mut self, storage: &mut EncryptedStorage) -> Result<(), WalletError> {
         trace!("Applying changes to storage");
 
-        for (asset, balance) in self.balances.drain() {
-            debug!("Setting balance for asset {} to {} ({})", asset, balance.amount, balance.ciphertext);
-            storage.set_unconfirmed_balance_for(asset, balance).await?;
-        }
-
         storage.set_tx_cache(TxCache {
             reference: self.reference.clone(),
             nonce: self.nonce,
             last_tx_hash_created: self.tx_hash_built.take(),
+            assets: self.balances.keys().cloned().collect(),
         });
+
+        for (asset, balance) in self.balances.drain() {
+            debug!("Setting balance for asset {} to {} ({})", asset, balance.amount, balance.ciphertext);
+            storage.set_unconfirmed_balance_for(asset, balance).await?;
+        }
 
         // Lets verify if the last unstable balance topoheight is still valid
         if let Some(stable_topoheight) = self.stable_topoheight {

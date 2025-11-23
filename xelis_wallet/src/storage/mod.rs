@@ -1329,13 +1329,28 @@ impl EncryptedStorage {
     pub async fn delete_unconfirmed_balances(&mut self) {
         trace!("delete unconfirmed balances");
         self.unconfirmed_balances_cache.lock().await.clear();
-        self.clear_tx_cache();
+        self.clear_tx_cache().await;
     }
 
     // Delete tx cache
-    pub fn clear_tx_cache(&mut self) {
+    pub async fn clear_tx_cache(&mut self) {
         trace!("clear tx cache");
-        self.tx_cache = None;
+        if let Some(cache) = self.tx_cache.take() {
+            debug!("cleared tx cache {:?}", cache);
+
+            let mut unconfirmed_balances_cache = self.unconfirmed_balances_cache.lock().await;
+            for asset in cache.assets {
+                // delete the first unconfirmed balance for this asset
+                // if no other unconfirmed balance exists, remove the entry
+                if let Some(balances) = unconfirmed_balances_cache.get_mut(&asset) {
+                    balances.pop_front();
+                    if balances.is_empty() {
+                        debug!("no more unconfirmed balance cache for {}", asset);
+                        unconfirmed_balances_cache.remove(&asset);
+                    }
+                }
+            }
+        }
     }
 
     // Delete all assets from this wallet

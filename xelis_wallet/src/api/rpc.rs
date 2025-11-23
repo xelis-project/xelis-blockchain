@@ -423,7 +423,7 @@ async fn build_transaction(context: &Context, params: BuildTransactionParams) ->
         if let Err(e) = wallet.submit_transaction(&tx).await {
             warn!("Clearing Tx cache & unconfirmed balances because of broadcasting error: {}", e);
             debug!("TX HEX: {}", tx.to_hex());
-            storage.clear_tx_cache();
+            storage.clear_tx_cache().await;
             storage.delete_unconfirmed_balances().await;
             return Err(e.into());
         }
@@ -577,7 +577,7 @@ async fn finalize_unsigned_transaction(context: &Context, params: FinalizeUnsign
         if let Err(e) = wallet.submit_transaction(&tx).await {
             warn!("Clearing Tx cache & unconfirmed balances because of broadcasting error: {}", e);
             debug!("TX HEX: {}", tx.to_hex());
-            storage.clear_tx_cache();
+            storage.clear_tx_cache().await;
             storage.delete_unconfirmed_balances().await;
             return Err(e.into());
         }
@@ -614,7 +614,7 @@ async fn sign_unsigned_transaction(context: &Context, params: SignUnsignedTransa
 async fn clear_tx_cache(context: &Context) -> Result<bool, InternalRpcError> {
     let wallet: &Arc<Wallet> = context.get()?;
     let mut storage = wallet.get_storage().write().await;
-    storage.clear_tx_cache();
+    storage.clear_tx_cache().await;
 
     Ok(true)
 }

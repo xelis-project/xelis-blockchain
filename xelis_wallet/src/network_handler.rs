@@ -1220,7 +1220,7 @@ impl NetworkHandler {
                             if let Some(tx) = tx_cache.last_tx_hash_created.as_ref() {
                                 if storage.has_transaction(tx)? {
                                     info!("Clearing TX cache for last created tx {}", tx);
-                                    storage.clear_tx_cache();
+                                    storage.clear_tx_cache().await;
                                 }
                             }
                         }
@@ -1364,7 +1364,7 @@ impl NetworkHandler {
 
                     if storage.get_tx_cache().is_some_and(|cache| cache.last_tx_hash_created.as_ref() == Some(&tx.hash)) {
                         warn!("Transaction {} was orphaned, deleting it from cache", tx.hash);
-                        storage.clear_tx_cache();
+                        storage.clear_tx_cache().await;
                     }
                 },
                 res = on_contract_transfers.next() => {
