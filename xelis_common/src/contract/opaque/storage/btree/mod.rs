@@ -27,6 +27,7 @@ const ERR_MISSING_NODE: &str = "missing node";
 pub struct OpaqueBTreeStore {
     namespace: Vec<u8>,
 }
+
 impl Serializable for OpaqueBTreeStore {}
 impl JSONHelper for OpaqueBTreeStore {}
 
@@ -43,12 +44,9 @@ pub struct OpaqueBTreeCursor {
     // element that moved into the current slot.
     skip_next_step: bool,
 }
+
 // Runtime-only, cannot be persisted
-impl Serializable for OpaqueBTreeCursor {
-    fn serialize(&self, _: &mut Vec<u8>) -> usize { 0 }
-    fn is_serializable(&self) -> bool { false }
-    fn get_size(&self) -> usize { 0 }
-}
+impl Serializable for OpaqueBTreeCursor {}
 impl JSONHelper for OpaqueBTreeCursor {}
 
 impl PartialEq for OpaqueBTreeCursor {
