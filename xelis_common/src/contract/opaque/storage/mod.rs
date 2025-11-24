@@ -61,22 +61,24 @@ impl JSONHelper for OpaqueStorage {}
 
 impl Serializable for OpaqueStorage {}
 
-pub fn check_storage_entry_size(key: &ValueCell, value: &ValueCell) -> Result<usize, EnvironmentError> {
-    // special case: for raw bytes, we take the length of the bytes directly
-    let value_size = match value {
+#[inline]
+pub fn data_size_in_bytes(value: &ValueCell) -> usize {
+    match value {
         ValueCell::Bytes(v) => v.len(),
         _ => value.size(),
-    };
+    }
+}
+
+pub fn check_storage_entry_size(key: &ValueCell, value: &ValueCell) -> Result<usize, EnvironmentError> {
+    // special case: for raw bytes, we take the length of the bytes directly
+    let value_size = data_size_in_bytes(value);
 
     if value_size > MAX_VALUE_SIZE {
         return Err(EnvironmentError::Static("Value is too large"));
     }
 
     // Same here for raw bytes length
-    let key_size = match key {
-        ValueCell::Bytes(v) => v.len(),
-        _ => key.size(),
-    };
+    let key_size = data_size_in_bytes(key);
 
     if key_size > MAX_KEY_SIZE {
         return Err(EnvironmentError::Static("Key is too large"));

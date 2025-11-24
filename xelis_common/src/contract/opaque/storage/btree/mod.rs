@@ -18,16 +18,23 @@ use xelis_vm::{
 };
 
 use crate::{
-    contract::{from_context, get_cache_for_contract, ChainState, ContractMetadata, ContractProvider, ModuleMetadata},
+    contract::{
+        ChainState,
+        ContractMetadata,
+        ContractProvider,
+        ModuleMetadata,
+        data_size_in_bytes,
+        from_context,
+        get_cache_for_contract
+    },
     crypto::Hash,
-    serializer::{Reader, Writer, Serializer},
+    serializer::*,
     versioned_type::VersionedState,
 };
 
 use super::{MAX_KEY_SIZE, MAX_VALUE_SIZE};
 
 const PREFIX: &[u8] = b"\x00btree:";
-const ERR_NODE_ENC: &str = "invalid BTree node encoding";
 const ERR_MISSING_NODE: &str = "missing node";
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -103,6 +110,7 @@ use record::{read_node_header_from_reader, NodeRecord};
 const GAS_SCALING_FACTOR: u64 = 1000;
 const GAS_PER_BYTE_READ: u64 = 100;
 const GAS_PER_BYTE_WRITE: u64 = 1000;
+const MAX_NAMESPACE_SIZE: usize = 32;
 
 #[derive(Default, Clone, Copy, Debug, PartialEq, Eq)]
 struct StorageUsage {
@@ -271,10 +279,16 @@ define_numeric_enum! {
 fn missing() -> EnvironmentError { EnvironmentError::Static(ERR_MISSING_NODE) }
 
 impl Node {
+    #[inline]
     fn new(id: u64, key: Vec<u8>, value: ValueCell, parent: Option<u64>) -> Self {
         Self { id, key, value, parent, left: None, right: None }
     }
-    fn to_value(&self) -> ValueCell { ValueCell::Bytes(self.to_bytes()) }
+
+    #[inline]
+    fn to_value(&self) -> ValueCell {
+        ValueCell::Bytes(self.to_bytes())
+    }
+
     fn to_bytes(&self) -> Vec<u8> {
         let record: NodeRecord = self.into();
         let mut bytes = Vec::with_capacity(record.size());
@@ -284,11 +298,10 @@ impl Node {
         }
         bytes
     }
+
     fn from_value(id: u64, value: &ValueCell) -> Result<Self, EnvironmentError> {
-        let bytes = match value {
-            ValueCell::Bytes(bytes) => bytes,
-            _ => return Err(EnvironmentError::Static(ERR_NODE_ENC)),
-        };
+        let bytes = value.as_bytes()?;
+
         let mut reader = Reader::new(bytes);
         let record = NodeRecord::read(&mut reader)
             .context("Node record read")?;
@@ -317,8 +330,9 @@ fn decode_header_and_maybe_value(
     }
 }
 
+#[inline]
 fn node_header_from_value(id: u64, value: &ValueCell) -> Result<NodeHeader, EnvironmentError> {
-    Ok(decode_header_and_maybe_value(id, value, false)?.0)
+    decode_header_and_maybe_value(id, value, false).map(|(h, _)| h)
 }
 
 /* -------------------------- Treap helpers --------------------------- */
@@ -356,7 +370,8 @@ fn priority_for_pair(key: &[u8], id: u64) -> u64 {
 }
 
 async fn node_priority<'ty, P: ContractProvider>(
-    ctx: &mut TreeContext<'_, 'ty, P>, node_id: u64,
+    ctx: &mut TreeContext<'_, 'ty, P>,
+    node_id: u64,
 ) -> Result<u64, EnvironmentError> {
     let header = load_node_header(ctx, node_id).await?.ok_or_else(missing)?;
     Ok(priority_for_pair(&header.key, header.id))
@@ -433,7 +448,7 @@ async fn rotate_right<'ty, P: ContractProvider>(
 pub fn btree_store_new(_: FnInstance, mut params: FnParams, _: &ModuleMetadata<'_>, _: &mut Context)
 -> FnReturnType<ContractMetadata> {
     let namespace = read_bytes(params.remove(0).into_owned(), "namespace")?;
-    if namespace.len() > MAX_KEY_SIZE {
+    if namespace.len() > MAX_NAMESPACE_SIZE {
         return Err(EnvironmentError::Static("namespace is too large"));
     }
 
@@ -1108,7 +1123,7 @@ async fn write_node<'ty, P: ContractProvider>(
 async fn write_storage_value<'ty, P: ContractProvider>(
     ctx: &mut TreeContext<'_, 'ty, P>, key: ValueCell, value: Option<ValueCell>,
 ) -> Result<Option<ValueCell>, EnvironmentError> {
-    let size = key.size() + value.as_ref().map_or(0, |v| v.size());
+    let size = data_size_in_bytes(&key) + value.as_ref().map_or(0, |v| data_size_in_bytes(v));
     ctx.charge_write(size);
 
     let cache = get_cache_for_contract(&mut ctx.state.caches, ctx.state.global_caches, ctx.contract.clone());
@@ -1136,9 +1151,9 @@ async fn ensure_cache_entry<'ty, P: ContractProvider>(ctx: &mut TreeContext<'_, 
     }
 
     let fetched = ctx.storage.load_data(ctx.contract, key, ctx.state.topoheight).await?;
-    let mut size = key.size();
+    let mut size = data_size_in_bytes(&key);
     if let Some((_, Some(v))) = &fetched {
-        size += v.size();
+        size += data_size_in_bytes(v);
     }
 
     ctx.charge_read(size);
@@ -1205,7 +1220,7 @@ fn read_key_bytes(value: ValueCell) -> Result<Vec<u8>, EnvironmentError> {
 }
 
 fn ensure_value_constraints(value: &ValueCell) -> Result<(), EnvironmentError> {
-    let size = value.size();
+    let size = data_size_in_bytes(value);
     if size > MAX_VALUE_SIZE {
         return Err(EnvironmentError::Static("value is too large"));
     }
