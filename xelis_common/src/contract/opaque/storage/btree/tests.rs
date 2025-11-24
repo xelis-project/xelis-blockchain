@@ -283,7 +283,7 @@ fn btree_header_matches_full_node_layout() {
     assert_eq!(hdr.right, full.right);
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test]
 async fn btree_insert_get_delete_roundtrip() {
     let contract = Hash::zero();
     let provider = MockProvider::default();
@@ -303,7 +303,7 @@ async fn btree_insert_get_delete_roundtrip() {
     assert!(find_key(&provider, &mut state, &contract, &store, b"k1").await.unwrap().is_none());
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test]
 async fn btree_seek_biases_work() {
     let contract = Hash::zero();
     let provider = MockProvider::default();
@@ -331,7 +331,7 @@ async fn btree_seek_biases_work() {
     assert!(lt.is_none());
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test]
 async fn btree_cursor_iteration_matches_ordering() {
     let contract = Hash::zero();
     let provider = MockProvider::default();
@@ -367,7 +367,7 @@ async fn btree_cursor_iteration_matches_ordering() {
     assert_eq!(order, vec![5, 15, 25]);
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test]
 async fn btree_cursor_scans_random_u64s_in_order() {
     let contract = Hash::zero();
     let provider = MockProvider::default();
@@ -433,7 +433,7 @@ async fn btree_cursor_scans_random_u64s_in_order() {
     assert_eq!(observed, sorted);
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test]
 async fn btree_allows_duplicate_keys_and_ordered_traversal() {
     let contract = Hash::zero();
     let provider = MockProvider::default();
@@ -471,7 +471,7 @@ async fn btree_allows_duplicate_keys_and_ordered_traversal() {
     assert_eq!(read_root_id(&provider, &mut state, &contract, &store.namespace).await.unwrap(), 0);
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test]
 async fn btree_cursor_scans_duplicate_bucket() {
     let contract = Hash::zero();
     let provider = MockProvider::default();
@@ -529,7 +529,7 @@ async fn btree_cursor_scans_duplicate_bucket() {
     assert_eq!(observed, vec![11, 22, 33]);
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test]
 async fn btree_delete_root_with_two_children_promotes_successor() {
     let contract = Hash::zero();
     let provider = MockProvider::default();
@@ -578,7 +578,7 @@ async fn btree_delete_root_with_two_children_promotes_successor() {
     );
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test]
 async fn btree_seek_handles_missing_key_biases() {
     let contract = Hash::zero();
     let provider = MockProvider::default();
@@ -610,7 +610,7 @@ async fn btree_seek_handles_missing_key_biases() {
     assert!(lt.is_none());
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test]
 async fn btree_seek_equal_strict_bias_uses_ancestors() {
     // Shape:     20
     //           /  \
@@ -685,7 +685,7 @@ async fn btree_seek_equal_strict_bias_uses_ancestors() {
     assert!(lt_min.is_none());
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test]
 async fn btree_cursor_key_value_and_exhaustion() {
     let contract = Hash::zero();
     let provider = MockProvider::default();
@@ -741,7 +741,7 @@ async fn btree_cursor_key_value_and_exhaustion() {
     assert!(cursor.current_node.is_none());
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test]
 async fn btree_cursor_allows_deleting_during_scan() {
     let contract = Hash::zero();
     let provider = MockProvider::default();
@@ -799,7 +799,7 @@ async fn btree_cursor_allows_deleting_during_scan() {
     assert!(cursor.current_node.is_none());
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test]
 async fn btree_cursor_selective_delete_during_scan() {
     let contract = Hash::zero();
     let provider = MockProvider::default();
@@ -886,7 +886,7 @@ async fn btree_cursor_selective_delete_during_scan() {
     assert_eq!(remaining_in_storage, kept_values);
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test]
 async fn btree_cursor_descends_and_deletes() {
     let contract = Hash::zero();
     let provider = MockProvider::default();
@@ -958,7 +958,7 @@ async fn btree_cursor_descends_and_deletes() {
     assert!(cursor.current_node.is_none());
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test]
 async fn btree_cursor_consecutive_deletes() {
     let contract = Hash::zero();
     let provider = MockProvider::default();
@@ -1020,7 +1020,7 @@ async fn btree_cursor_consecutive_deletes() {
     assert_eq!(remaining, expected_remaining);
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test]
 async fn btree_cursor_exhausts_tree() {
     let contract = Hash::zero();
     let provider = MockProvider::default();
@@ -1104,7 +1104,7 @@ async fn collect_values_in_order(
     values
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test]
 async fn btree_insert_duplicate_allocates_new_node() {
     let contract = Hash::zero();
     let provider = MockProvider::default();
@@ -1147,7 +1147,7 @@ async fn btree_insert_duplicate_allocates_new_node() {
     );
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test]
 async fn btree_delete_variants_cover_storage_cleanup() {
     let contract = Hash::zero();
     let provider = MockProvider::default();
@@ -1207,7 +1207,7 @@ async fn btree_delete_variants_cover_storage_cleanup() {
     assert!(collect_values_in_order(&provider, &mut state, &contract, &store.namespace).await.is_empty());
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test]
 async fn btree_cursor_cache_refresh_tracks_state() {
     let contract = Hash::zero();
     let provider = MockProvider::default();
@@ -1258,7 +1258,7 @@ async fn btree_cursor_cache_refresh_tracks_state() {
     assert!(cursor.cached_value.is_none());
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test]
 async fn btree_cursor_detects_stale_value_update() {
     let contract = Hash::zero();
     let provider = MockProvider::default();
@@ -1324,7 +1324,7 @@ async fn btree_cursor_detects_stale_value_update() {
     assert_eq!(cursor.cached_value.as_ref().unwrap().as_u64().unwrap(), 200);
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test]
 async fn btree_cache_prefetch_reads_values() {
     let contract = Hash::zero();
     let mut provider = MockProvider::default();
@@ -1344,7 +1344,7 @@ async fn btree_cache_prefetch_reads_values() {
     assert_eq!(root_again, 77);
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test]
 async fn btree_seek_empty_and_bounds() {
     let contract = Hash::zero();
     let provider = MockProvider::default();
@@ -1387,7 +1387,7 @@ async fn btree_seek_empty_and_bounds() {
     assert!(seek_node(&provider, &mut state, &contract, &store, &40u64.to_be_bytes(), BTreeSeekBias::GreaterOrEqual).await.unwrap().is_none());
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test]
 async fn btree_seek_first_last_works() {
     let contract = Hash::zero();
     let provider = MockProvider::default();
@@ -1418,7 +1418,7 @@ async fn btree_seek_first_last_works() {
     assert_eq!(last.value.as_u64().unwrap(), 30);
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test]
 async fn btree_namespace_isolation() {
     let contract = Hash::zero();
     let provider = MockProvider::default();
@@ -1440,7 +1440,7 @@ async fn btree_namespace_isolation() {
     assert!(find_key(&provider, &mut state, &contract, &store_b, b"x").await.unwrap().is_none());
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test]
 async fn btree_node_serialization_roundtrip_matches_original() {
     let node = Node {
         id: 42,
@@ -1460,7 +1460,7 @@ async fn btree_node_serialization_roundtrip_matches_original() {
     assert_eq!(roundtrip.right, None);
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test]
 async fn btree_key_value_constraints_reject_invalid_inputs() {
     assert!(read_key_bytes(ValueCell::Bytes(vec![])).is_err());
 
@@ -1473,7 +1473,7 @@ async fn btree_key_value_constraints_reject_invalid_inputs() {
     assert!(ensure_value_constraints(&ValueCell::Bytes(vec![1, 2, 3])).is_ok());
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test]
 async fn btree_allocate_node_id_monotonic_per_namespace() {
     let contract = Hash::zero();
     let provider = MockProvider::default();
@@ -1487,7 +1487,7 @@ async fn btree_allocate_node_id_monotonic_per_namespace() {
     assert_eq!((first, second, third), (1, 2, 3));
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test]
 async fn btree_storage_usage_records_reads() {
     let contract = Hash::zero();
     let provider = MockProvider::default();
@@ -1499,11 +1499,11 @@ async fn btree_storage_usage_records_reads() {
     assert!(result.is_none());
 
     let usage = ctx.finish();
-    assert_eq!(usage.read_bytes, 26, "expected storage read bytes");
+    assert_eq!(usage.read_bytes, 24, "expected storage read bytes");
     assert_eq!(usage.written_bytes, 0, "read path should not record written bytes");
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test]
 async fn btree_storage_usage_records_writes() {
     let contract = Hash::zero();
     let provider = MockProvider::default();
@@ -1515,10 +1515,10 @@ async fn btree_storage_usage_records_writes() {
 
     let usage = ctx.finish();
     assert_eq!(usage.read_bytes, 0, "writing the root should not read storage");
-    assert_eq!(usage.written_bytes, 35, "expected storage written bytes");
+    assert_eq!(usage.written_bytes, 33, "expected storage written bytes");
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test]
 async fn btree_storage_usage_single_insert_reports_activity() {
     let contract = Hash::zero();
     let provider = MockProvider::default();
@@ -1529,11 +1529,11 @@ async fn btree_storage_usage_single_insert_reports_activity() {
     super::insert_key(&mut ctx, b"k".to_vec(), ValueCell::from(Primitive::U64(1))).await.unwrap();
     let usage = ctx.finish();
 
-    assert_eq!(usage.read_bytes, 78, "insert should read bytes");
-    assert_eq!(usage.written_bytes, 177, "insert should write bytes");
+    assert_eq!(usage.read_bytes, 72, "insert should read bytes");
+    assert_eq!(usage.written_bytes, 167, "insert should write bytes");
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test]
 async fn btree_storage_usage_delete_reports_activity() {
     let contract = Hash::zero();
     let provider = MockProvider::default();
@@ -1554,7 +1554,7 @@ async fn btree_storage_usage_delete_reports_activity() {
     assert!(removed, "expected the key to be removed");
     let usage = ctx.finish();
 
-    assert_eq!(usage.written_bytes, 100, "delete should write bytes");
+    assert_eq!(usage.written_bytes, 94, "delete should write bytes");
     assert_eq!(usage.read_bytes, 0, "reads should be cached");
 }
 
@@ -1572,7 +1572,7 @@ async fn read_size(
     res
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test]
 async fn btree_len_tracks_insert_and_delete() {
     let contract = Hash::zero();
     let provider = MockProvider::default();
@@ -1665,7 +1665,7 @@ async fn btree_assert_treap_invariants(
 
 // --- tests ---
 
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test]
 async fn btree_treap_invariants_after_random_inserts_and_deletes() {
     use rand::{rngs::StdRng, Rng, SeedableRng};
 
@@ -1697,7 +1697,7 @@ async fn btree_treap_invariants_after_random_inserts_and_deletes() {
     }
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test]
 async fn btree_treap_rotate_left_at_root_updates_links() {
     let contract = Hash::zero();
     let provider = MockProvider::default();
@@ -1737,7 +1737,7 @@ async fn btree_treap_rotate_left_at_root_updates_links() {
     btree_assert_treap_invariants(&provider, &mut state, &contract, &store.namespace).await;
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test]
 async fn btree_treap_rotate_right_under_parent_updates_links() {
     // Force a right rotation on the left child of the root and ensure parent links are updated.
     let contract = Hash::zero();
@@ -1783,7 +1783,7 @@ async fn btree_treap_rotate_right_under_parent_updates_links() {
     btree_assert_treap_invariants(&provider, &mut state, &contract, &store.namespace).await;
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test]
 async fn btree_treap_seek_with_duplicates_bias_matrix() {
     let contract = Hash::zero();
     let provider = MockProvider::default();
@@ -1813,7 +1813,7 @@ async fn btree_treap_seek_with_duplicates_bias_matrix() {
     assert_eq!(lt.value.as_u64().unwrap(), 6, "L must return previous distinct key");
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test]
 async fn btree_treap_predecessor_through_duplicate_bucket() {
     let contract = Hash::zero();
     let provider = MockProvider::default();

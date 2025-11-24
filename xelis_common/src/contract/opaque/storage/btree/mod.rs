@@ -1121,7 +1121,9 @@ async fn write_node<'ty, P: ContractProvider>(
 }
 
 async fn write_storage_value<'ty, P: ContractProvider>(
-    ctx: &mut TreeContext<'_, 'ty, P>, key: ValueCell, value: Option<ValueCell>,
+    ctx: &mut TreeContext<'_, 'ty, P>,
+    key: ValueCell,
+    value: Option<ValueCell>,
 ) -> Result<Option<ValueCell>, EnvironmentError> {
     let size = data_size_in_bytes(&key) + value.as_ref().map_or(0, |v| data_size_in_bytes(v));
     ctx.charge_write(size);
