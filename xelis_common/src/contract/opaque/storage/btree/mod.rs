@@ -4,7 +4,6 @@ use std::{
     hash::{Hash as StdHash, Hasher},
 };
 use anyhow::Context as _;
-use indexmap::IndexMap;
 use xelis_vm::{
     traits::{JSONHelper, Serializable},
     Context,
@@ -185,7 +184,7 @@ macro_rules! with_store_ctx {
         let $store: &OpaqueBTreeStore = instance.as_opaque_type()?;
         let $contract = $metadata.metadata.contract_executor.clone();
         let mut $tree_ctx = TreeContext::new(storage, state, &$contract, &$store.namespace);
-        let res: FnReturnType<ContractMetadata> = (async { $body }).await;
+        let res: FnReturnType<ContractMetadata> = $body;
         $tree_ctx.finish().charge($context)?;
         res
     }};
@@ -199,7 +198,7 @@ macro_rules! with_cursor_ctx_mut {
         let $cursor: &mut OpaqueBTreeCursor = instance.as_opaque_type_mut()?;
         let (contract, namespace) = ($cursor.contract.clone(), $cursor.namespace.clone());
         let mut $tree_ctx = TreeContext::new(storage, state, &contract, &namespace);
-        let res: FnReturnType<ContractMetadata> = (async { $body }).await;
+        let res: FnReturnType<ContractMetadata> = $body;
         $tree_ctx.finish().charge($context)?;
         res
     }};
@@ -504,9 +503,8 @@ pub async fn btree_store_seek<'a, 'ty, 'r, P: ContractProvider>(
 
     with_store_ctx!(instance, metadata, context, |store, ctx, contract| {
         let result = seek_node(&mut ctx, &key, bias).await?.map_or(
-            Primitive::Null.into(),
+            Primitive::Null,
             |node| {
-                let mut map = IndexMap::new();
                 let cursor = OpaqueBTreeCursor {
                     contract: contract.clone(),
                     namespace: store.namespace.clone(),
@@ -517,10 +515,7 @@ pub async fn btree_store_seek<'a, 'ty, 'r, P: ContractProvider>(
                     skip_next_step: false,
                 };
 
-                map.insert(ValueCell::Primitive(Primitive::String("cursor".into())), ValueCell::Primitive(Primitive::Opaque(OpaqueWrapper::new(cursor))).into());
-                map.insert(ValueCell::Primitive(Primitive::String("key".into())), ValueCell::Bytes(node.key).into());
-                map.insert(ValueCell::Primitive(Primitive::String("value".into())), node.value.into());
-                ValueCell::Map(Box::new(map))
+                Primitive::Opaque(cursor.into())
             },
         );
         Ok(SysCallResult::Return(result.into()))
@@ -569,10 +564,11 @@ pub async fn btree_cursor_next<'a, 'ty, 'r, P: ContractProvider>(
         refresh_cursor_cache(cursor, &mut ctx).await?;
         let out = match (cursor.current_node, &cursor.cached_key, &cursor.cached_value) {
             (Some(_), Some(k), Some(v)) => {
-                let mut map = IndexMap::new();
-                map.insert(ValueCell::Primitive(Primitive::String("key".into())), ValueCell::Bytes(k.clone()).into());
-                map.insert(ValueCell::Primitive(Primitive::String("value".into())), v.clone().into());
-                ValueCell::Map(Box::new(map))
+                // Deep clone the value to prevent any shared references
+                ValueCell::Object(vec![
+                    ValueCell::Bytes(k.clone()).into(),
+                    v.deep_clone().into()
+                ])
             },
             _ => Default::default(),
         };
