@@ -3,17 +3,25 @@ use std::{
     collections::hash_map::Entry,
     hash::{Hash as StdHash, Hasher},
 };
+use anyhow::Context as _;
 use indexmap::IndexMap;
 use xelis_vm::{
     traits::{JSONHelper, Serializable},
-    Context, EnvironmentError, FnInstance, FnParams, FnReturnType, OpaqueWrapper, Primitive,
-    SysCallResult, ValueCell,
+    Context,
+    EnvironmentError,
+    FnInstance,
+    FnParams,
+    FnReturnType,
+    OpaqueWrapper,
+    Primitive,
+    SysCallResult,
+    ValueCell,
 };
 
 use crate::{
     contract::{from_context, get_cache_for_contract, ChainState, ContractMetadata, ContractProvider, ModuleMetadata},
     crypto::Hash,
-    serializer::{Reader, ReaderError, Writer, Serializer},
+    serializer::{Reader, Writer, Serializer},
     versioned_type::VersionedState,
 };
 
@@ -283,7 +291,8 @@ impl Node {
             _ => return Err(EnvironmentError::Static(ERR_NODE_ENC)),
         };
         let mut reader = Reader::new(bytes);
-        let record = NodeRecord::read(&mut reader).map_err(reader_error)?;
+        let record = NodeRecord::read(&mut reader)
+            .context("Node record read")?;
         Ok(record.into_node(id))
     }
 }
@@ -293,12 +302,16 @@ fn decode_header_and_maybe_value(
     cell: &ValueCell,
     with_value: bool,
 ) -> Result<(NodeHeader, Option<ValueCell>), EnvironmentError> {
-    let bytes = match cell { ValueCell::Bytes(bytes) => bytes, _ => return Err(EnvironmentError::Static(ERR_NODE_ENC)) };
+    let bytes = cell.as_bytes()?;
+
     let mut r = Reader::new(bytes);
-    let header = read_node_header_from_reader(&mut r, id).map_err(reader_error)?;
+    let header = read_node_header_from_reader(&mut r, id)
+        .context("Node header read")?;
 
     if with_value {
-        let node_value = ValueCell::read(&mut r).map_err(reader_error)?;
+        let node_value = ValueCell::read(&mut r)
+            .context("Node value read")?;
+
         Ok((header, Some(node_value)))
     } else {
         Ok((header, None))
@@ -376,6 +389,7 @@ async fn rotate<'ty, P: ContractProvider>(
         } else {
             return Err(EnvironmentError::Static("inconsistent parent link"));
         }
+
         write_node(ctx, &parent).await?;
         y.parent = Some(pid);
     } else {
@@ -397,6 +411,7 @@ async fn rotate<'ty, P: ContractProvider>(
 
     write_node(ctx, &x).await?;
     write_node(ctx, &y).await?;
+
     Ok(())
 }
 
@@ -501,6 +516,7 @@ pub async fn btree_store_seek<'a, 'ty, 'r, P: ContractProvider>(
                     ascending,
                     skip_next_step: false,
                 };
+
                 map.insert(ValueCell::Primitive(Primitive::String("cursor".into())), ValueCell::Primitive(Primitive::Opaque(OpaqueWrapper::new(cursor))).into());
                 map.insert(ValueCell::Primitive(Primitive::String("key".into())), ValueCell::Bytes(node.key).into());
                 map.insert(ValueCell::Primitive(Primitive::String("value".into())), node.value.into());
@@ -535,12 +551,14 @@ pub async fn btree_cursor_next<'a, 'ty, 'r, P: ContractProvider>(
             let Some(current_id) = cursor.current_node else {
                 return Ok(SysCallResult::Return(Primitive::Null.into()));
             };
+
             if load_node_header(&mut ctx, current_id).await?.is_none() {
                 cursor.current_node = None;
                 cursor.cached_value = None;
                 cursor.cached_key = None;
                 return Ok(SysCallResult::Return(Primitive::Null.into()));
             }
+
             cursor.current_node = if cursor.ascending {
                 successor(&mut ctx, current_id).await?
             } else {
@@ -579,6 +597,7 @@ async fn refresh_cursor_cache<'ty, P: ContractProvider>(
 ) -> Result<(), EnvironmentError> {
     cursor.cached_value = None;
     cursor.cached_key = None;
+
     if let Some(id) = cursor.current_node {
         if let Some(node) = read_node(ctx, id).await? {
             cursor.cached_value = Some(node.value);
@@ -587,6 +606,7 @@ async fn refresh_cursor_cache<'ty, P: ContractProvider>(
             cursor.current_node = None;
         }
     }
+
     Ok(())
 }
 
@@ -594,7 +614,10 @@ async fn delete_at_cursor<'ty, P: ContractProvider>(
     cursor: &mut OpaqueBTreeCursor,
     ctx: &mut TreeContext<'_, 'ty, P>,
 ) -> Result<bool, EnvironmentError> {
-    let Some(current_id) = cursor.current_node else { return Ok(false); };
+    let Some(current_id) = cursor.current_node else {
+        return Ok(false);
+    };
+
     if read_node(ctx, current_id).await?.is_none() {
         // Node not found in storage (stale cursor?)
         cursor.current_node = None;
@@ -602,15 +625,19 @@ async fn delete_at_cursor<'ty, P: ContractProvider>(
         cursor.cached_key = None;
         return Ok(false);
     };
+
     let next_id = if cursor.ascending {
         successor(ctx, current_id).await?
     } else {
         predecessor(ctx, current_id).await?
     };
+
     treap_delete_node(ctx, current_id).await?;
     cursor.current_node = next_id;
+
     refresh_cursor_cache(cursor, ctx).await?;
     cursor.skip_next_step = true;
+
     Ok(true)
 }
 
@@ -625,7 +652,7 @@ async fn insert_key<'ty, P: ContractProvider>(
     // Allocate id first so (key,id) defines total order and deterministic priority.
     let id = allocate_node_id(ctx).await?;
     let root = read_root_id(ctx).await?;
-    
+
     if root == 0 {
         write_node(ctx, &Node::new(id, key, value, None)).await?;
         write_root_id(ctx, id).await?;
@@ -642,8 +669,9 @@ async fn insert_key<'ty, P: ContractProvider>(
         let header = load_node_header(ctx, current_id).await?.ok_or_else(missing)?;
         match cmp_pair(&key, id, &header.key, header.id) {
             Ordering::Less => {
-                if let Some(l) = header.left { current_id = l; }
-                else {
+                if let Some(l) = header.left {
+                    current_id = l;
+                } else {
                     let mut parent = load_node(ctx, header.id).await?;
                     parent.left = Some(id);
                     write_node(ctx, &parent).await?;
@@ -652,8 +680,9 @@ async fn insert_key<'ty, P: ContractProvider>(
                 }
             }
             Ordering::Greater => {
-                if let Some(r) = header.right { current_id = r; }
-                else {
+                if let Some(r) = header.right {
+                    current_id = r;
+                } else {
                     let mut parent = load_node(ctx, header.id).await?;
                     parent.right = Some(id);
                     write_node(ctx, &parent).await?;
@@ -687,13 +716,16 @@ async fn insert_key<'ty, P: ContractProvider>(
             break;
         }
     }
+
     let size = read_size(ctx).await?;
     write_size(ctx, size + 1).await?;
+
     Ok(())
 }
 
 async fn treap_delete_node<'ty, P: ContractProvider>(
-    ctx: &mut TreeContext<'_, 'ty, P>, node_id: u64,
+    ctx: &mut TreeContext<'_, 'ty, P>,
+    node_id: u64,
 ) -> Result<(), EnvironmentError> {
     if load_node_header(ctx, node_id).await?.is_none() {
         return Err(missing());
@@ -733,7 +765,8 @@ async fn treap_delete_node<'ty, P: ContractProvider>(
 /* ------------------------- end Treap core --------------------------- */
 
 async fn find_key<'ty, P: ContractProvider>(
-    ctx: &mut TreeContext<'_, 'ty, P>, key: &[u8],
+    ctx: &mut TreeContext<'_, 'ty, P>,
+    key: &[u8],
 ) -> Result<Option<ValueCell>, EnvironmentError> {
     Ok(find_node_by_key(ctx, key).await?.map(|n| n.value))
 }
@@ -772,7 +805,8 @@ async fn find_node_by_key<'ty, P: ContractProvider>(
 }
 
 async fn tree_extreme_id<'ty, P: ContractProvider>(
-    ctx: &mut TreeContext<'_, 'ty, P>, direction: Direction,
+    ctx: &mut TreeContext<'_, 'ty, P>,
+    direction: Direction,
 ) -> Result<Option<u64>, EnvironmentError> {
     let root = read_root_id(ctx).await?;
     if root == 0 {
@@ -786,7 +820,8 @@ async fn tree_extreme_id<'ty, P: ContractProvider>(
 }
 
 async fn delete_key<'ty, P: ContractProvider>(
-    ctx: &mut TreeContext<'_, 'ty, P>, key: &[u8],
+    ctx: &mut TreeContext<'_, 'ty, P>,
+    key: &[u8],
 ) -> Result<bool, EnvironmentError> {
     if let Some(node) = find_node_by_key(ctx, key).await? {
         treap_delete_node(ctx, node.id).await?;
@@ -796,7 +831,9 @@ async fn delete_key<'ty, P: ContractProvider>(
 }
 
 async fn seek_node<'ty, P: ContractProvider>(
-    ctx: &mut TreeContext<'_, 'ty, P>, key: &[u8], bias: BTreeSeekBias,
+    ctx: &mut TreeContext<'_, 'ty, P>,
+    key: &[u8],
+    bias: BTreeSeekBias,
 ) -> Result<Option<Node>, EnvironmentError> {
     let target_id = match bias {
         BTreeSeekBias::First => tree_extreme_id(ctx, Direction::Left).await?,
@@ -829,7 +866,9 @@ async fn seek_node<'ty, P: ContractProvider>(
 }
 
 async fn replace_node<'ty, P: ContractProvider>(
-    ctx: &mut TreeContext<'_, 'ty, P>, node: &Node, child: Option<u64>,
+    ctx: &mut TreeContext<'_, 'ty, P>,
+    node: &Node,
+    child: Option<u64>,
 ) -> Result<(), EnvironmentError> {
     if let Some(child_id) = child {
         let mut child_node = load_node(ctx, child_id).await?;
@@ -856,7 +895,9 @@ async fn replace_node<'ty, P: ContractProvider>(
 }
 
 async fn neighbor<'ty, P: ContractProvider>(
-    ctx: &mut TreeContext<'_, 'ty, P>, node_id: u64, dir: Direction,
+    ctx: &mut TreeContext<'_, 'ty, P>,
+    node_id: u64,
+    dir: Direction,
 ) -> Result<Option<u64>, EnvironmentError> {
     let node = load_node_header(ctx, node_id).await?
         .ok_or_else(missing)?;
@@ -879,39 +920,46 @@ async fn neighbor<'ty, P: ContractProvider>(
 }
 
 async fn successor<'ty, P: ContractProvider>(
-    ctx: &mut TreeContext<'_, 'ty, P>, node_id: u64,
+    ctx: &mut TreeContext<'_, 'ty, P>,
+    node_id: u64,
 ) -> Result<Option<u64>, EnvironmentError> {
     neighbor(ctx, node_id, Direction::Right).await
 }
 
 async fn predecessor<'ty, P: ContractProvider>(
-    ctx: &mut TreeContext<'_, 'ty, P>, node_id: u64,
+    ctx: &mut TreeContext<'_, 'ty, P>,
+    node_id: u64,
 ) -> Result<Option<u64>, EnvironmentError> {
     neighbor(ctx, node_id, Direction::Left).await
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
 async fn find_min_node<'ty, P: ContractProvider>(
-    ctx: &mut TreeContext<'_, 'ty, P>, node_id: u64,
+    ctx: &mut TreeContext<'_, 'ty, P>,
+    node_id: u64,
 ) -> Result<Node, EnvironmentError> {
     let id = find_min_id(ctx, node_id).await?;
     load_node(ctx, id).await
 }
 
 async fn find_min_id<'ty, P: ContractProvider>(
-    ctx: &mut TreeContext<'_, 'ty, P>, node_id: u64,
+    ctx: &mut TreeContext<'_, 'ty, P>,
+    node_id: u64,
 ) -> Result<u64, EnvironmentError> {
     find_extreme_id(ctx, node_id, Direction::Left).await
 }
 
 async fn find_max_id<'ty, P: ContractProvider>(
-    ctx: &mut TreeContext<'_, 'ty, P>, node_id: u64,
+    ctx: &mut TreeContext<'_, 'ty, P>,
+    node_id: u64,
 ) -> Result<u64, EnvironmentError> {
     find_extreme_id(ctx, node_id, Direction::Right).await
 }
 
 async fn find_extreme_id<'ty, P: ContractProvider>(
-    ctx: &mut TreeContext<'_, 'ty, P>, mut node_id: u64, direction: Direction,
+    ctx: &mut TreeContext<'_, 'ty, P>,
+    mut node_id: u64,
+    direction: Direction,
 ) -> Result<u64, EnvironmentError> {
     loop {
         let node = load_node_header(ctx, node_id).await?
@@ -953,30 +1001,42 @@ async fn ascend_until_parent_side<'ty, P: ContractProvider>(
 async fn read_root_id<'ty, P: ContractProvider>(ctx: &mut TreeContext<'_, 'ty, P>) -> Result<u64, EnvironmentError> {
     read_u64_slot(ctx, root_storage_key(ctx.namespace), 0).await
 }
+
 async fn write_root_id<'ty, P: ContractProvider>(ctx: &mut TreeContext<'_, 'ty, P>, value: u64) -> Result<(), EnvironmentError> {
     write_u64_slot(ctx, root_storage_key(ctx.namespace), value).await
 }
+
 async fn read_size<'ty, P: ContractProvider>(ctx: &mut TreeContext<'_, 'ty, P>) -> Result<u64, EnvironmentError> {
     read_u64_slot(ctx, size_storage_key(ctx.namespace), 0).await
 }
+
 async fn write_size<'ty, P: ContractProvider>(ctx: &mut TreeContext<'_, 'ty, P>, value: u64) -> Result<(), EnvironmentError> {
     write_u64_slot(ctx, size_storage_key(ctx.namespace), value).await
 }
+
 async fn read_next_id<'ty, P: ContractProvider>(ctx: &mut TreeContext<'_, 'ty, P>) -> Result<u64, EnvironmentError> {
     // `next` defaults to 1 so the very first allocated node gets id=1.
     read_u64_slot(ctx, next_storage_key(ctx.namespace), 1).await
 }
+
 async fn write_next_id<'ty, P: ContractProvider>(ctx: &mut TreeContext<'_, 'ty, P>, value: u64) -> Result<(), EnvironmentError> {
     write_u64_slot(ctx, next_storage_key(ctx.namespace), value).await
 }
+
 async fn read_u64_slot<'ty, P: ContractProvider>(
     ctx: &mut TreeContext<'_, 'ty, P>,
     key: ValueCell,
     default: u64,
 ) -> Result<u64, EnvironmentError> {
     ensure_cache_entry(ctx, &key).await?;
-    Ok(ctx.cached_value(&key).and_then(valuecell_as_u64).unwrap_or(default))
+
+    let value = ctx.cached_value(&key)
+        .map(|v| v.as_u64())
+        .transpose()?;
+
+    Ok(value.unwrap_or(default))
 }
+
 async fn write_u64_slot<'ty, P: ContractProvider>(
     ctx: &mut TreeContext<'_, 'ty, P>,
     key: ValueCell,
@@ -1126,6 +1186,7 @@ fn read_bytes(value: ValueCell, field: &str) -> Result<Vec<u8>, EnvironmentError
         })),
     }
 }
+
 fn read_key_bytes(value: ValueCell) -> Result<Vec<u8>, EnvironmentError> {
     let bytes = read_bytes(value, "key")?;
     if bytes.is_empty() {
@@ -1151,17 +1212,12 @@ fn ensure_value_constraints(value: &ValueCell) -> Result<(), EnvironmentError> {
 
     Ok(())
 }
+
+#[inline]
 fn read_bias(cell: &ValueCell) -> Result<BTreeSeekBias, EnvironmentError> {
     let (variant, _) = cell.as_enum()?;
     Ok(BTreeSeekBias::try_from(variant)?)
 }
-
-#[inline]
-fn valuecell_as_u64(value: &ValueCell) -> Option<u64> {
-    if let ValueCell::Primitive(Primitive::U64(v)) = value { Some(*v) } else { None }
-}
-#[inline]
-fn reader_error(err: ReaderError) -> EnvironmentError { EnvironmentError::Any(err.into()) }
 
 #[cfg(test)]
 mod tests;

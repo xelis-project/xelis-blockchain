@@ -47,9 +47,9 @@ impl Serializer for NodeRecord {
 
     fn write(&self, writer: &mut Writer) {
         debug_assert!(self.key.len() <= u32::MAX as usize);
-        writer.write_u64(encode_ptr(self.parent));
-        writer.write_u64(encode_ptr(self.left));
-        writer.write_u64(encode_ptr(self.right));
+        writer.write_optional_non_zero_u64(self.parent);
+        writer.write_optional_non_zero_u64(self.left);
+        writer.write_optional_non_zero_u64(self.right);
         writer.write_u32(self.key.len() as u32);
         writer.write_bytes(&self.key);
         self.value.write(writer);
@@ -66,21 +66,12 @@ pub fn read_node_header_from_reader(reader: &mut Reader, id: u64) -> Result<Node
 }
 
 pub fn read_node_header_parts(reader: &mut Reader) -> Result<(Option<u64>, Option<u64>, Option<u64>, Vec<u8>), ReaderError> {
-    let parent = decode_ptr(reader.read_u64()?);
-    let left = decode_ptr(reader.read_u64()?);
-    let right = decode_ptr(reader.read_u64()?);
+    let parent = reader.read_optional_non_zero_u64()?;
+    let left = reader.read_optional_non_zero_u64()?;
+    let right = reader.read_optional_non_zero_u64()?;
+
     let key_len = reader.read_u32()? as usize;
     let key = reader.read_bytes_ref(key_len)?.to_vec();
+
     Ok((parent, left, right, key))
 }
-
-#[inline]
-fn encode_ptr(value: Option<u64>) -> u64 {
-    value.unwrap_or(0)
-}
-
-#[inline]
-fn decode_ptr(value: u64) -> Option<u64> {
-    if value == 0 { None } else { Some(value) }
-}
-
