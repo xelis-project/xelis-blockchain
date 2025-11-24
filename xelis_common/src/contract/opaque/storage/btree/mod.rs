@@ -32,7 +32,7 @@ use crate::{
     versioned_type::VersionedState,
 };
 
-use super::{MAX_KEY_SIZE, MAX_VALUE_SIZE};
+use super::{MAX_KEY_SIZE, MAX_VALUE_SIZE, FEE_PER_BYTE_STORED_CONTRACT};
 
 const PREFIX: &[u8] = b"\x00btree:";
 const ERR_MISSING_NODE: &str = "missing node";
@@ -108,8 +108,8 @@ mod record;
 use record::{read_node_header_from_reader, NodeRecord};
 
 const GAS_SCALING_FACTOR: u64 = 1000;
-const GAS_PER_BYTE_READ: u64 = 100;
-const GAS_PER_BYTE_WRITE: u64 = 1000;
+const GAS_PER_BYTE_WRITE: u64 = FEE_PER_BYTE_STORED_CONTRACT * GAS_SCALING_FACTOR;
+const GAS_PER_BYTE_READ: u64 = GAS_PER_BYTE_WRITE / 10;
 const MAX_NAMESPACE_SIZE: usize = 32;
 
 #[derive(Default, Clone, Copy, Debug, PartialEq, Eq)]

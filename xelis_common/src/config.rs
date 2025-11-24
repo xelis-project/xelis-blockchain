@@ -60,8 +60,8 @@ pub const TX_GAS_BURN_PERCENT: u64 = 30;
 // Each store operation has a fixed cost of 0.00000100 XEL
 pub const FEE_PER_STORE_CONTRACT: u64 = 100;
 // Fee per read operation in a contract
-// Each read operation has a fixed cost of 0.00000025 XEL
-pub const FEE_PER_READ_CONTRACT: u64 = 25;
+// Each read operation has a fixed cost of 0.00000010 XEL
+pub const FEE_PER_READ_CONTRACT: u64 = FEE_PER_STORE_CONTRACT / 10;
 // Fee per byte of data stored in a contract
 // Each byte of data stored (key + value) in a contract has a fixed cost
 // 0.00000005 XEL per byte
