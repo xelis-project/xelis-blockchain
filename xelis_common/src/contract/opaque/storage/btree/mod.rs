@@ -503,7 +503,7 @@ pub async fn btree_store_seek<'a, 'ty, 'r, P: ContractProvider>(
 
     with_store_ctx!(instance, metadata, context, |store, ctx, contract| {
         let result = seek_node(&mut ctx, &key, bias).await?.map_or(
-            Primitive::Null,
+            Primitive::Null.into(),
             |node| {
                 let cursor = OpaqueBTreeCursor {
                     contract: contract.clone(),
@@ -515,7 +515,15 @@ pub async fn btree_store_seek<'a, 'ty, 'r, P: ContractProvider>(
                     skip_next_step: false,
                 };
 
-                Primitive::Opaque(cursor.into())
+                let entry = ValueCell::Object(vec![
+                    ValueCell::Bytes(node.key).into(),
+                    node.value.deep_clone().into(),
+                ]);
+
+                ValueCell::Object(vec![
+                    Primitive::Opaque(cursor.into()).into(),
+                    entry.into(),
+                ])
             },
         );
         Ok(SysCallResult::Return(result.into()))

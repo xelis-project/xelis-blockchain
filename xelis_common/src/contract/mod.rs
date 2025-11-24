@@ -209,6 +209,10 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, C
     let scheduled_execution_type = Type::Opaque(env.register_opaque::<OpaqueScheduledExecution>("ScheduledExecution", false));
     let btree_store_type = Type::Opaque(env.register_opaque::<OpaqueBTreeStore>("BTreeStore", false));
     let btree_cursor_type = Type::Opaque(env.register_opaque::<OpaqueBTreeCursor>("BTreeCursor", false));
+    let entry_type = Type::Struct(env.register_structure("Entry", [
+        ("key", Type::Bytes),
+        ("value", Type::Any),
+    ]));
 
     let max_supply_type = Type::Enum(env.register_enum::<3>("MaxSupplyMode", [
         // Unlimited supply
@@ -1953,7 +1957,10 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, C
             ],
             FunctionHandler::Async(async_handler!(btree_store_seek::<P>)),
             100,
-            Some(Type::Optional(Box::new(btree_cursor_type.clone())))
+            Some(Type::Optional(Box::new(Type::Tuples(vec![
+                btree_cursor_type.clone(),
+                entry_type.clone(),
+            ]))))
         );
         env.register_native_function(
             "len",
@@ -1973,7 +1980,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, C
             vec![],
             FunctionHandler::Async(async_handler!(btree_cursor_next::<P>)),
             15,
-            Some(Type::Optional(Box::new(Type::Any)))
+            Some(Type::Optional(Box::new(entry_type.clone())))
         );
         env.register_native_function(
             "delete",
