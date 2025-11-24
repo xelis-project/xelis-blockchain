@@ -1,3 +1,4 @@
+mod btree;
 mod read_only;
 
 use std::collections::hash_map::Entry;
@@ -30,6 +31,7 @@ use crate::{
 };
 use super::Serializer;
 
+pub use btree::*;
 pub use read_only::*;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

@@ -96,6 +96,14 @@ impl_opaque!(
     OpaqueMemoryStorage
 );
 impl_opaque!(
+    "OpaqueBTreeStore",
+    OpaqueBTreeStore
+);
+impl_opaque!(
+    "OpaqueBTreeCursor",
+    OpaqueBTreeCursor
+);
+impl_opaque!(
     "Asset",
     Asset
 );
