@@ -2,6 +2,8 @@ use std::{
     cmp::Ordering,
     collections::hash_map::Entry,
     hash::{Hash as StdHash, Hasher},
+    pin::Pin,
+    future::Future,
 };
 use anyhow::Context as _;
 use xelis_vm::{
@@ -193,32 +195,43 @@ impl<'ctx, 'ty, P: ContractProvider> TreeContext<'ctx, 'ty, P> {
     }
 }
 
-// Helper macro that unwraps the opaque store, contracts, and builds a `TreeContext`
-macro_rules! with_store_ctx {
-    ($instance:expr, $metadata:expr, $context:expr, |$store:ident, $tree_ctx:ident, $contract:ident| $body:block) => {{
-        let (storage, state) = from_context::<P>($context)?;
-        let instance = $instance?;
-        let $store: &OpaqueBTreeStore = instance.as_opaque_type()?;
-        let $contract = $metadata.metadata.contract_executor.clone();
-        let mut $tree_ctx = TreeContext::new(storage, state, &$contract, &$store.namespace);
-        let res: FnReturnType<ContractMetadata> = $body;
-        $tree_ctx.finish().charge($context)?;
-        res
-    }};
+// Helper function that unwraps the opaque store, contracts, and builds a `TreeContext`
+async fn with_store_ctx<'a, 'ty, 'r, P: ContractProvider, F>(
+    instance: FnInstance<'a>,
+    metadata: &ModuleMetadata<'_>,
+    context: &mut Context<'ty, 'r>,
+    f: F,
+) -> FnReturnType<ContractMetadata>
+where
+    F: for<'s> FnOnce(&'s OpaqueBTreeStore, &'s mut TreeContext<'_, 'ty, P>, &'s Hash) -> Pin<Box<dyn Future<Output = FnReturnType<ContractMetadata>> + Send + 's>>,
+{
+    let (storage, state) = from_context::<P>(context)?;
+    let instance = instance?;
+    let store: &OpaqueBTreeStore = instance.as_opaque_type()?;
+    let contract = &metadata.metadata.contract_executor;
+    let mut tree_ctx = TreeContext::new(storage, state, contract, &store.namespace);
+    let res = f(store, &mut tree_ctx, contract).await;
+    tree_ctx.finish().charge(context)?;
+    res
 }
 
-// Helper macro for mutable cursor operations
-macro_rules! with_cursor_ctx_mut {
-    ($instance:expr, $context:expr, |$cursor:ident, $tree_ctx:ident| $body:block) => {{
-        let (storage, state) = from_context::<P>($context)?;
-        let mut instance = $instance?;
-        let $cursor: &mut OpaqueBTreeCursor = instance.as_opaque_type_mut()?;
-        let (contract, namespace) = ($cursor.contract.clone(), $cursor.namespace.clone());
-        let mut $tree_ctx = TreeContext::new(storage, state, &contract, &namespace);
-        let res: FnReturnType<ContractMetadata> = $body;
-        $tree_ctx.finish().charge($context)?;
-        res
-    }};
+// Helper function for mutable cursor operations
+async fn with_cursor_ctx_mut<'a, 'ty, 'r, P: ContractProvider, F>(
+    instance: FnInstance<'a>,
+    context: &mut Context<'ty, 'r>,
+    f: F,
+) -> FnReturnType<ContractMetadata>
+where
+    F: for<'s> FnOnce(&'s mut OpaqueBTreeCursor, &'s mut TreeContext<'_, 'ty, P>) -> Pin<Box<dyn Future<Output = FnReturnType<ContractMetadata>> + Send + 's>>,
+{
+    let (storage, state) = from_context::<P>(context)?;
+    let mut instance = instance?;
+    let cursor: &mut OpaqueBTreeCursor = instance.as_opaque_type_mut()?;
+    let (contract, namespace) = (cursor.contract.clone(), cursor.namespace.clone());
+    let mut tree_ctx = TreeContext::new(storage, state, &contract, &namespace);
+    let res = f(cursor, &mut tree_ctx).await;
+    tree_ctx.finish().charge(context)?;
+    res
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -478,10 +491,10 @@ pub async fn btree_store_insert<'a, 'ty, 'r, P: ContractProvider>(
 
     let key = read_key_bytes(params.remove(0).into_owned())?;
 
-    with_store_ctx!(instance, metadata, context, |_store, ctx, _contract| {
-        insert_key(&mut ctx, key, value).await?;
+    with_store_ctx(instance, metadata, context, |_store, ctx: &mut TreeContext<'_, 'ty, P>, _contract| Box::pin(async move {
+        insert_key(ctx, key, value).await?;
         Ok(SysCallResult::Return(Primitive::Null.into()))
-    })
+    })).await
 }
 
 /// Finds the first node whose key matches `key`. Returns the earliest value for that key (insertion order).
@@ -492,9 +505,9 @@ pub async fn btree_store_get<'a, 'ty, 'r, P: ContractProvider>(
     context: &mut Context<'ty, 'r>
 ) -> FnReturnType<ContractMetadata> {
     let key = read_key_bytes(params.remove(0).into_owned())?;
-    with_store_ctx!(instance, metadata, context, |_store, ctx, _contract| {
-        Ok(find_key(&mut ctx, &key).await?.unwrap_or_default().into())
-    })
+    with_store_ctx(instance, metadata, context, |_store, ctx: &mut TreeContext<'_, 'ty, P>, _contract| Box::pin(async move {
+        Ok(find_key(ctx, &key).await?.unwrap_or_default().into())
+    })).await
 }
 
 /// Removes one matching key. Repeated delete calls walk them in insertion order.
@@ -505,9 +518,9 @@ pub async fn btree_store_delete<'a, 'ty, 'r, P: ContractProvider>(
     context: &mut Context<'ty, 'r>
 ) -> FnReturnType<ContractMetadata> {
     let key = read_key_bytes(params.remove(0).into_owned())?;
-    with_store_ctx!(instance, metadata, context, |_store, ctx, _contract| {
-        Ok(SysCallResult::Return(Primitive::Boolean(delete_key(&mut ctx, &key).await?).into()))
-    })
+    with_store_ctx(instance, metadata, context, |_store, ctx: &mut TreeContext<'_, 'ty, P>, _contract| Box::pin(async move {
+        Ok(SysCallResult::Return(Primitive::Boolean(delete_key(ctx, &key).await?).into()))
+    })).await
 }
 
 pub async fn btree_store_seek<'a, 'ty, 'r, P: ContractProvider>(
@@ -519,14 +532,14 @@ pub async fn btree_store_seek<'a, 'ty, 'r, P: ContractProvider>(
     let ascending = params[2]
         .as_bool()?;
     let bias = read_bias(&params[1])?;
-    let key = params[0].as_bytes()?;
+    let key = params[0].as_bytes()?.to_vec();
 
     if key.len() > MAX_KEY_SIZE {
         return Err(EnvironmentError::Static("key is too large"));
     }
 
-    with_store_ctx!(instance, metadata, context, |store, ctx, contract| {
-        let node = seek_node(&mut ctx, &key, bias).await?;
+    with_store_ctx(instance, metadata, context, |store, ctx: &mut TreeContext<'_, 'ty, P>, contract| Box::pin(async move {
+        let node = seek_node(ctx, &key, bias).await?;
 
         let cursor = OpaqueBTreeCursor {
             contract: contract.clone(),
@@ -548,7 +561,7 @@ pub async fn btree_store_seek<'a, 'ty, 'r, P: ContractProvider>(
             entry.into(),
         ]);
         Ok(SysCallResult::Return(result.into()))
-    })
+    })).await
 }
 
 pub async fn btree_store_len<'a, 'ty, 'r, P: ContractProvider>(
@@ -557,9 +570,9 @@ pub async fn btree_store_len<'a, 'ty, 'r, P: ContractProvider>(
     metadata: &ModuleMetadata<'_>,
     context: &mut Context<'ty, 'r>
 ) -> FnReturnType<ContractMetadata> {
-    with_store_ctx!(instance, metadata, context, |_store, ctx, _contract| {
-        Ok(SysCallResult::Return(Primitive::U64(read_size(&mut ctx).await?).into()))
-    })
+    with_store_ctx(instance, metadata, context, |_store, ctx: &mut TreeContext<'_, 'ty, P>, _contract| Box::pin(async move {
+        Ok(SysCallResult::Return(Primitive::U64(read_size(ctx).await?).into()))
+    })).await
 }
 
 pub async fn btree_cursor_next<'a, 'ty, 'r, P: ContractProvider>(
@@ -568,7 +581,7 @@ pub async fn btree_cursor_next<'a, 'ty, 'r, P: ContractProvider>(
     _: &ModuleMetadata<'_>,
     context: &mut Context<'ty, 'r>
 ) -> FnReturnType<ContractMetadata> {
-    with_cursor_ctx_mut!(instance, context, |cursor, ctx| {
+    with_cursor_ctx_mut(instance, context, |cursor, ctx: &mut TreeContext<'_, 'ty, P>| Box::pin(async move {
         if cursor.skip_next_step {
             cursor.skip_next_step = false;
         } else {
@@ -576,7 +589,7 @@ pub async fn btree_cursor_next<'a, 'ty, 'r, P: ContractProvider>(
                 return Ok(SysCallResult::Return(Primitive::Null.into()));
             };
 
-            if load_node_header(&mut ctx, current_id).await?.is_none() {
+            if load_node_header(ctx, current_id).await?.is_none() {
                 cursor.current_node = None;
                 cursor.cached_value = None;
                 cursor.cached_key = None;
@@ -584,13 +597,13 @@ pub async fn btree_cursor_next<'a, 'ty, 'r, P: ContractProvider>(
             }
 
             cursor.current_node = if cursor.ascending {
-                successor(&mut ctx, current_id).await?
+                successor(ctx, current_id).await?
             } else {
-                predecessor(&mut ctx, current_id).await?
+                predecessor(ctx, current_id).await?
             };
         }
 
-        refresh_cursor_cache(cursor, &mut ctx).await?;
+        refresh_cursor_cache(cursor, ctx).await?;
         let out = match (cursor.current_node, &cursor.cached_key, &cursor.cached_value) {
             (Some(_), Some(k), Some(v)) => {
                 // Deep clone the value to prevent any shared references
@@ -602,7 +615,7 @@ pub async fn btree_cursor_next<'a, 'ty, 'r, P: ContractProvider>(
             _ => Default::default(),
         };
         Ok(SysCallResult::Return(out.into()))
-    })
+    })).await
 }
 
 pub async fn btree_cursor_delete<'a, 'ty, 'r, P: ContractProvider>(
@@ -611,9 +624,9 @@ pub async fn btree_cursor_delete<'a, 'ty, 'r, P: ContractProvider>(
     _: &ModuleMetadata<'_>,
     context: &mut Context<'ty, 'r>
 ) -> FnReturnType<ContractMetadata> {
-    with_cursor_ctx_mut!(instance, context, |cursor, ctx| {
-        Ok(SysCallResult::Return(Primitive::Boolean(delete_at_cursor(cursor, &mut ctx).await?).into()))
-    })
+    with_cursor_ctx_mut(instance, context, |cursor, ctx: &mut TreeContext<'_, 'ty, P>| Box::pin(async move {
+        Ok(SysCallResult::Return(Primitive::Boolean(delete_at_cursor(cursor, ctx).await?).into()))
+    })).await
 }
 
 async fn refresh_cursor_cache<'ty, P: ContractProvider>(
