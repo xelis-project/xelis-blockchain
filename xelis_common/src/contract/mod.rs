@@ -1957,10 +1957,10 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, C
             ],
             FunctionHandler::Async(async_handler!(btree_store_seek::<P>)),
             100,
-            Some(Type::Optional(Box::new(Type::Tuples(vec![
+            Some(Type::Tuples(vec![
                 btree_cursor_type.clone(),
-                entry_type.clone(),
-            ]))))
+                Type::Optional(Box::new(entry_type.clone())),
+            ]))
         );
         env.register_native_function(
             "len",

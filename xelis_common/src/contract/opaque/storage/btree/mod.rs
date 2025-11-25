@@ -526,30 +526,27 @@ pub async fn btree_store_seek<'a, 'ty, 'r, P: ContractProvider>(
     }
 
     with_store_ctx!(instance, metadata, context, |store, ctx, contract| {
-        let result = seek_node(&mut ctx, &key, bias).await?.map_or(
-            Primitive::Null.into(),
-            |node| {
-                let cursor = OpaqueBTreeCursor {
-                    contract: contract.clone(),
-                    namespace: store.namespace.clone(),
-                    current_node: Some(node.id),
-                    cached_value: Some(node.value.clone()),
-                    cached_key: Some(node.key.clone()),
-                    ascending,
-                    skip_next_step: false,
-                };
+        let node = seek_node(&mut ctx, &key, bias).await?;
 
-                let entry = ValueCell::Object(vec![
-                    ValueCell::Bytes(node.key).into(),
-                    node.value.deep_clone().into(),
-                ]);
+        let cursor = OpaqueBTreeCursor {
+            contract: contract.clone(),
+            namespace: store.namespace.clone(),
+            current_node: node.as_ref().map(|n| n.id),
+            cached_value: node.as_ref().map(|n| n.value.clone()),
+            cached_key: node.as_ref().map(|n| n.key.clone()),
+            ascending,
+            skip_next_step: false,
+        };
 
-                ValueCell::Object(vec![
-                    Primitive::Opaque(cursor.into()).into(),
-                    entry.into(),
-                ])
-            },
-        );
+        let entry = node.map_or(Primitive::Null.into(), |n| ValueCell::Object(vec![
+            ValueCell::Bytes(n.key).into(),
+            n.value.deep_clone().into(),
+        ]));
+
+        let result = ValueCell::Object(vec![
+            Primitive::Opaque(cursor.into()).into(),
+            entry.into(),
+        ]);
         Ok(SysCallResult::Return(result.into()))
     })
 }
