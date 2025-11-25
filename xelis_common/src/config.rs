@@ -56,25 +56,26 @@ pub const COST_PER_SCHEDULED_EXECUTION_AT_BLOCK_END: u64 = 5_000;
 // or free tx from miners
 // This should be enabled once Smart Contracts are released
 pub const TX_GAS_BURN_PERCENT: u64 = 30;
-// Fee per store operation in a contract
-// Each store operation has a fixed cost of 0.00000100 XEL
-pub const FEE_PER_STORE_CONTRACT: u64 = 100;
-// Fee per read operation in a contract
-// Each read operation has a fixed cost of 0.00000010 XEL
-pub const FEE_PER_READ_CONTRACT: u64 = FEE_PER_STORE_CONTRACT / 10;
 // Fee per byte of data stored in a contract
 // Each byte of data stored (key + value) in a contract has a fixed cost
-// 0.00000005 XEL per byte
-pub const FEE_PER_BYTE_STORED_CONTRACT: u64 = 5;
+// 0.00000064 XEL per byte
+pub const FEE_PER_BYTE_STORED_CONTRACT: u64 = 64;
+// Fee per store operation in a contract
+// Each store operation has a fixed overhead cost
+pub const FEE_PER_STORE_CONTRACT: u64 = FEE_PER_BYTE_STORED_CONTRACT * 256;
+// Fee per read operation in a contract
+// Each read operation has a fixed cost of 0.00000200 XEL
+pub const FEE_PER_READ_CONTRACT: u64 = 200;
+
 // Fee per byte of data stored in a contract memory
 // Each byte of data stored in the contract memory has a fixed cost
 pub const FEE_PER_BYTE_IN_CONTRACT_MEMORY: u64 = 1;
 // Fee per byte of data used to emit an event
 // Data is not stored, but only exposed to websocket listeners
 pub const FEE_PER_BYTE_OF_EVENT_DATA: u64 = 2;
-// Max gas usage available per block
-// Currently, set to 0.5 XEL per transaction
-pub const MAX_GAS_USAGE_PER_TX: u64 = COIN_VALUE / 2;
+// Max gas usage available per transaction
+// Currently, set to 5 XEL
+pub const MAX_GAS_USAGE_PER_TX: u64 = COIN_VALUE * 5;
 
 // 8 decimals numbers
 pub const COIN_DECIMALS: u8 = 8;

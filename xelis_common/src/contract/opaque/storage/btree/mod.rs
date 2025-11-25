@@ -18,6 +18,7 @@ use xelis_vm::{
 };
 
 use crate::{
+    config::FEE_PER_STORE_CONTRACT,
     contract::{
         ChainState,
         ContractMetadata,
@@ -109,20 +110,23 @@ use record::{read_node_header_from_reader, NodeRecord};
 
 const GAS_SCALING_FACTOR: u64 = 1000;
 const GAS_PER_BYTE_WRITE: u64 = FEE_PER_BYTE_STORED_CONTRACT * GAS_SCALING_FACTOR;
-const GAS_PER_BYTE_READ: u64 = GAS_PER_BYTE_WRITE / 10;
+const GAS_PER_BYTE_READ: u64 = GAS_PER_BYTE_WRITE / 100;
 const MAX_NAMESPACE_SIZE: usize = 32;
 
 #[derive(Default, Clone, Copy, Debug, PartialEq, Eq)]
 struct StorageUsage {
     read_bytes: u64,
     written_bytes: u64,
+    extra_gas: u64,
 }
 
 impl StorageUsage {
     fn charge<'ty, 'r>(self, context: &mut Context<'ty, 'r>) -> Result<(), EnvironmentError> {
         let cost = (self.read_bytes * GAS_PER_BYTE_READ + self.written_bytes * GAS_PER_BYTE_WRITE) / GAS_SCALING_FACTOR;
-        if cost > 0 {
-            context.increase_gas_usage(cost)?;
+        let total_cost = cost + self.extra_gas;
+
+        if total_cost > 0 {
+            context.increase_gas_usage(total_cost)?;
         }
         Ok(())
     }
@@ -154,6 +158,11 @@ impl<'ctx, 'ty, P: ContractProvider> TreeContext<'ctx, 'ty, P> {
     #[inline]
     fn charge_write(&mut self, bytes: usize) {
         self.usage.written_bytes += bytes as u64;
+    }
+
+    #[inline]
+    fn charge_extra_gas(&mut self, gas: u64) {
+        self.usage.extra_gas += gas;
     }
 
     fn finish(self) -> StorageUsage {
@@ -1129,19 +1138,33 @@ async fn write_storage_value<'ty, P: ContractProvider>(
     ctx.charge_write(size);
 
     let cache = get_cache_for_contract(&mut ctx.state.caches, ctx.state.global_caches, ctx.contract.clone());
-    Ok(match cache.storage.entry(key) {
+    Ok(match cache.storage.entry(key.clone()) {
         Entry::Occupied(mut occ) => {
             let slot = occ.get_mut();
             if let Some((version, stored)) = slot {
                 version.mark_updated();
                 std::mem::replace(stored, value)
             } else {
+                // this was previously loadded as non-existent, now storing a value
                 *slot = Some((VersionedState::New, value));
+                // Charge for the new entry
+                ctx.charge_extra_gas(FEE_PER_STORE_CONTRACT);
+
                 None
             }
         }
         Entry::Vacant(v) => {
-            v.insert(Some((VersionedState::New, value)));
+            let state = ctx.storage.load_data_latest_topoheight(ctx.contract, &key, ctx.state.topoheight).await?
+                .map(|topoheight| VersionedState::Updated(topoheight))
+                .unwrap_or(VersionedState::New);
+
+            v.insert(Some((state, value)));
+
+            if state.is_new() {
+                // Charge for the new entry
+                ctx.charge_extra_gas(FEE_PER_STORE_CONTRACT);
+            }
+
             None
         }
     })
