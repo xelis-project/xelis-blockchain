@@ -124,13 +124,15 @@ struct StorageUsage {
 
 impl StorageUsage {
     fn charge<'ty, 'r>(self, context: &mut Context<'ty, 'r>) -> Result<(), EnvironmentError> {
-        let cost = (self.read_bytes * GAS_PER_BYTE_READ + self.written_bytes * GAS_PER_BYTE_WRITE) / GAS_SCALING_FACTOR;
-        let total_cost = cost + self.extra_gas;
+        let read_cost = self.read_bytes.checked_mul(GAS_PER_BYTE_READ)
+            .ok_or(EnvironmentError::GasOverflow)?;
+        let write_cost = self.written_bytes.checked_mul(GAS_PER_BYTE_WRITE)
+            .ok_or(EnvironmentError::GasOverflow)?;
+        let cost = (read_cost + write_cost) / GAS_SCALING_FACTOR;
+        let total_cost = cost.checked_add(self.extra_gas)
+            .ok_or(EnvironmentError::GasOverflow)?;
 
-        if total_cost > 0 {
-            context.increase_gas_usage(total_cost)?;
-        }
-        Ok(())
+        context.increase_gas_usage(total_cost)
     }
 }
 
@@ -153,18 +155,24 @@ impl<'ctx, 'ty, P: ContractProvider> TreeContext<'ctx, 'ty, P> {
     }
 
     #[inline]
-    fn charge_read(&mut self, bytes: usize) {
-        self.usage.read_bytes += bytes as u64;
+    fn charge_read(&mut self, bytes: usize) -> Result<(), EnvironmentError> {
+        self.usage.read_bytes = self.usage.read_bytes.checked_add(bytes as u64)
+            .ok_or(EnvironmentError::GasOverflow)?;
+        Ok(())
     }
 
     #[inline]
-    fn charge_write(&mut self, bytes: usize) {
-        self.usage.written_bytes += bytes as u64;
+    fn charge_write(&mut self, bytes: usize) -> Result<(), EnvironmentError> {
+        self.usage.written_bytes = self.usage.written_bytes.checked_add(bytes as u64)
+            .ok_or(EnvironmentError::GasOverflow)?;
+        Ok(())
     }
 
     #[inline]
-    fn charge_extra_gas(&mut self, gas: u64) {
-        self.usage.extra_gas += gas;
+    fn charge_extra_gas(&mut self, gas: u64) -> Result<(), EnvironmentError> {
+        self.usage.extra_gas += self.usage.extra_gas.checked_add(gas)
+            .ok_or(EnvironmentError::GasOverflow)?;
+        Ok(())
     }
 
     fn finish(self) -> StorageUsage {
@@ -1145,7 +1153,7 @@ async fn write_storage_value<'ty, P: ContractProvider>(
     value: Option<ValueCell>,
 ) -> Result<Option<ValueCell>, EnvironmentError> {
     let size = data_size_in_bytes(&key) + value.as_ref().map_or(0, |v| data_size_in_bytes(v));
-    ctx.charge_write(size);
+    ctx.charge_write(size)?;
 
     let cache = get_cache_for_contract(&mut ctx.state.caches, ctx.state.global_caches, ctx.contract.clone());
     Ok(match cache.storage.entry(key.clone()) {
@@ -1158,7 +1166,7 @@ async fn write_storage_value<'ty, P: ContractProvider>(
                 // this was previously loadded as non-existent, now storing a value
                 *slot = Some((VersionedState::New, value));
                 // Charge for the new entry
-                ctx.charge_extra_gas(FEE_PER_STORE_CONTRACT);
+                ctx.charge_extra_gas(FEE_PER_STORE_CONTRACT)?;
 
                 None
             }
@@ -1172,7 +1180,7 @@ async fn write_storage_value<'ty, P: ContractProvider>(
 
             if state.is_new() {
                 // Charge for the new entry
-                ctx.charge_extra_gas(FEE_PER_STORE_CONTRACT);
+                ctx.charge_extra_gas(FEE_PER_STORE_CONTRACT)?;
             }
 
             None
@@ -1191,7 +1199,7 @@ async fn ensure_cache_entry<'ty, P: ContractProvider>(ctx: &mut TreeContext<'_, 
         size += data_size_in_bytes(v);
     }
 
-    ctx.charge_read(size);
+    ctx.charge_read(size)?;
     ctx.cache_insert_entry(
         key.clone(),
         fetched.map(|(topo, value)| (VersionedState::FetchedAt(topo), value)),
