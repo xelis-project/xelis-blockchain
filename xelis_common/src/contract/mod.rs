@@ -1004,8 +1004,8 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, C
 
     // RistrettoPoint
     {
-        env.register_constant(ristretto_type.clone(), "G", OpaqueRistrettoPoint::Decompressed(None, *G).into());
-        env.register_constant(scalar_type.clone(), "H", OpaqueRistrettoPoint::Decompressed(None, *H).into());
+        env.register_constant(ristretto_type.clone(), "G", OpaqueRistrettoPoint::Decompressed(None, *G).into(), ristretto_type.clone());
+        env.register_constant(ristretto_type.clone(), "H", OpaqueRistrettoPoint::Decompressed(None, *H).into(), ristretto_type.clone());
 
         // Is Identity
         env.register_native_function(
@@ -1115,8 +1115,8 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, C
 
     // Scalar
     {
-        env.register_constant(scalar_type.clone(), "ZERO", OpaqueScalar(Scalar::ZERO).into());
-        env.register_constant(scalar_type.clone(), "ONE", OpaqueScalar(Scalar::ONE).into());
+        env.register_constant(scalar_type.clone(), "ZERO", OpaqueScalar(Scalar::ZERO).into(), scalar_type.clone());
+        env.register_constant(scalar_type.clone(), "ONE", OpaqueScalar(Scalar::ONE).into(), scalar_type.clone());
 
         // From u64
         env.register_static_function(
