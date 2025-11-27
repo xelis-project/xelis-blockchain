@@ -663,7 +663,7 @@ pub async fn generate_full_order<P>(provider: &P, hash: &Hash, base: &Hash, base
 where
     P: DifficultyProvider + DagOrderProvider + CacheProvider
 {
-    trace!("generate full order for {} with base {}", hash, base);
+    trace!("generate full order for {} with base {} version {}", hash, base, block_version);
 
     match block_version {
         BlockVersion::V0 | BlockVersion::V1 | BlockVersion::V2 => v1::generate_full_order(provider, hash, base, base_height, base_topo_height).await,
