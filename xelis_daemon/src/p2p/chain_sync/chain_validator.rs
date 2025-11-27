@@ -183,6 +183,7 @@ impl<'a, S: Storage> ChainValidator<'a, S> {
             &hash,
             &header.get_tips(),
             Some(difficulty.clone()),
+            version,
             &base,
             base_height
         ).await?;

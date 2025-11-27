@@ -1664,14 +1664,15 @@ impl<S: Storage> Blockchain<S> {
             return Err(BlockchainError::InvalidBlockHeight(block_height_by_tips, block.get_height()))
         }
 
-        // if tips_count > 0 {
-        //     debug!("Height by tips: {}, stable height: {}", block_height_by_tips, stable_height);
+        let is_v3_enabled = version >= BlockVersion::V3;
+        if tips_count > 0 && !is_v3_enabled {
+            debug!("Height by tips: {}, stable height: {}", block_height_by_tips, stable_height);
 
-        //     if block_height_by_tips < stable_height {
-        //         debug!("Invalid block height by tips {} for this block ({}), its height is in stable height {}", block_height_by_tips, block_hash, stable_height);
-        //         return Err(BlockchainError::InvalidBlockHeightStableHeight)
-        //     }
-        // }
+            if block_height_by_tips < stable_height {
+                debug!("Invalid block height by tips {} for this block ({}), its height is in stable height {}", block_height_by_tips, block_hash, stable_height);
+                return Err(BlockchainError::InvalidBlockHeightStableHeight)
+            }
+        }
 
         // Verify the reachability of the block
         if !blockdag::verify_non_reachability(&*storage, block.get_tips()).await? {
@@ -1698,13 +1699,12 @@ impl<S: Storage> Blockchain<S> {
 
             trace!("calculate distance from mainchain for tips: {}", hash);
 
-            // Check if the tip itself is near enough to the main chain
-            // We use the tip's own height, not the new block's height, because
-            // the tip might be an orphaned block at a lower height
-            if !blockdag::is_near_enough_from_main_chain(&*storage, hash, block_height_by_tips, STABLE_LIMIT).await? {
+            // We're processing the block tips, so we can't use the block height as it may not be in the chain yet
+            let height = block_height_by_tips.saturating_sub(1);
+            if !blockdag::is_near_enough_from_main_chain(&*storage, hash, height, STABLE_LIMIT).await? {
                 warn!(
                     "{} with hash {} references tip {} that has deviated too far (height: {})", 
-                    block, block_hash, hash, block_height_by_tips,
+                    block, block_hash, hash, tip_height,
                 );
                 return Err(BlockchainError::BlockDeviation)
             }
@@ -1712,8 +1712,6 @@ impl<S: Storage> Blockchain<S> {
 
         if tips_count > 1 {
             let best_tip = blockdag::find_best_tip_by_cumulative_difficulty(&*storage, block.get_tips().iter()).await?;
-            let is_v3_enabled = version >= BlockVersion::V3;
-
             if is_v3_enabled {
                 let first_tip = &block.get_tips()[0];
                 if best_tip != first_tip {
@@ -1764,7 +1762,6 @@ impl<S: Storage> Blockchain<S> {
         // This is required in case of complex DAG reorgs where we have orphaned blocks with TXs referencing to
         // each other
         // Because these TXs were already verified, their cost should be amortized by the batching verification
-        let is_v3_enabled = version >= BlockVersion::V3;
 
         // Required base fee per KB to prevent low-fee spam attacks
         let (base_fee, block_size_ema) = if is_v3_enabled {
@@ -1971,8 +1968,9 @@ impl<S: Storage> Blockchain<S> {
                 &block_hash,
                 &block.get_tips(),
                 Some(difficulty),
+                version,
                 &base,
-                base_height
+                base_height,
             ).await?.1
         };
         debug!("Cumulative difficulty for block {}: {}", block_hash, cumulative_difficulty);
@@ -2043,12 +2041,12 @@ impl<S: Storage> Blockchain<S> {
 
         let (base_hash, base_height) = blockdag::find_common_base(&*storage, &tips).await?;
         debug!("New base hash: {}, height: {}", base_hash, base_height);
-        let best_tip = blockdag::find_best_tip(&*storage, &tips, &base_hash, base_height, self.concurrency).await?;
+        let best_tip = blockdag::find_best_tip(&*storage, &tips, &base_hash, base_height, self.concurrency, version).await?;
         debug!("Best tip selected: {}", best_tip);
 
         let base_topo_height = storage.get_topo_height_for_hash(&base_hash).await?;
         // generate a full order until base_topo_height
-        let mut full_order = blockdag::generate_full_order(&*storage, &best_tip, &base_hash, base_height, base_topo_height).await?;
+        let mut full_order = blockdag::generate_full_order(&*storage, &best_tip, &base_hash, base_height, base_topo_height, version).await?;
         debug!("Generated full order size: {}, with base ({}) topo height: {}", full_order.len(), base_hash, base_topo_height);
         trace!("Full order: {}", full_order.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(", "));
 
