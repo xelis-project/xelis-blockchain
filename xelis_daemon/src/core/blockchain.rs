@@ -1548,28 +1548,37 @@ impl<S: Storage> Blockchain<S> {
 
         // Double check the tips count
         if block.get_tips().len() > TIPS_LIMIT {
+            let block_hash = block_hash.map(Immutable::into_owned)
+                .unwrap_or_else(|| block.hash());
+
             return Err(BlockchainError::InvalidTipsCount(
-                block_hash.clone().unwrap_or_else(|| Immutable::Owned(block.hash())).into_owned(),
+                block_hash,
                 block.get_tips().len()
             ))
         }
 
         let algorithm = get_pow_algorithm_for_version(expected_version);
 
-        // Clone the Arc'ed header so we can move it to the thread
-        let header = block.get_header().clone();
-        // Compute the block hash and the PoW hash in a blocking thread
-        spawn_blocking(move || {
-            let start = Instant::now();
+        if self.skip_pow_verification() {
+            let block_hash = block_hash.unwrap_or_else(|| Immutable::Owned(block.hash()));
+            Ok(PreVerifyBlock::Hash(block_hash))
+        } else {
+            // Clone the Arc'ed header so we can move it to the thread
+            let header = block.get_header().clone();
+            // Compute the block hash and the PoW hash in a blocking thread
+            spawn_blocking(move || {
+                let start = Instant::now();
 
-            let block_hash = block_hash.unwrap_or_else(|| Immutable::Owned(header.hash()));
-            let pow_challenge = header.get_pow_challenge();
-            let pow_hash = compute_pow_hash(&pow_challenge, algorithm)?;
-
-            histogram!("xelis_block_pow_ms").record(start.elapsed().as_millis() as f64);
-
-            Ok::<_, BlockchainError>(PreVerifyBlock::Partial { block_hash, pow_hash })
-        }).await?
+                // Compute the block hash in the same thread
+                let block_hash = block_hash.unwrap_or_else(|| Immutable::Owned(header.hash()));
+                let pow_challenge = header.get_pow_challenge();
+                let pow_hash = compute_pow_hash(&pow_challenge, algorithm)?;
+    
+                histogram!("xelis_block_pow_ms").record(start.elapsed().as_millis() as f64);
+    
+                Ok::<_, BlockchainError>(PreVerifyBlock::Partial { block_hash, pow_hash })
+            }).await?
+        }
     }
 
     // Add a new block in chain
