@@ -159,6 +159,11 @@ pub struct RPCConfig {
     #[clap(name = "rpc-json-rpc-batch-limit", long, default_value_t = default_rpc_batch_limit())]
     #[serde(default = "default_rpc_batch_limit")]
     pub batch_limit: usize,
+    /// Configure CORS allowed origins for RPC server.
+    /// This will allow any whitelisted origin to access the RPC server.
+    #[clap(name = "rpc-cors-allowed-origins", long)]
+    #[serde(default)]
+    pub cors_allowed_origins: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, clap::ValueEnum, Serialize, Deserialize, strum::Display)]
