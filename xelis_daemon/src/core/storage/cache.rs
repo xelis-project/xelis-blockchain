@@ -1,5 +1,5 @@
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     num::NonZeroUsize,
     ops::{Deref, DerefMut},
     sync::Arc
@@ -18,6 +18,15 @@ use xelis_common::{
 use crate::config::{DEFAULT_CACHE_SIZE, GENESIS_BLOCK_DIFFICULTY};
 
 use super::Tips;
+
+// GHOSTDAG data for incremental computation
+#[derive(Debug, Clone)]
+pub struct GhostDagData {
+    pub blue_score: u64,
+    pub selected_parent: Option<Hash>,
+    pub merge_set_blues: HashSet<Hash>,
+    pub merge_set_reds: HashSet<Hash>,
+}
 
 #[macro_export]
 macro_rules! init_cache {
@@ -60,6 +69,8 @@ pub struct ChainCache {
     pub full_order_cache: Mutex<LruCache<(Hash, Hash, u64), IndexSet<Hash>>>,
     // blue set cache for GHOSTDAG
     pub blue_set_cache: Mutex<LruCache<(Hash, TopoHeight), HashSet<Hash>>>,
+    // GHOSTDAG data cache (incremental computation)
+    pub ghost_dag_cache: Mutex<HashMap<Hash, Arc<GhostDagData>>>,
     // current difficulty at tips
     // its used as cache to display current network hashrate
     pub difficulty: Difficulty,
@@ -91,6 +102,7 @@ impl ChainCache {
             tip_work_score_cache: Mutex::new(self.tip_work_score_cache.get_mut().clone()),
             full_order_cache: Mutex::new(self.full_order_cache.get_mut().clone()),
             blue_set_cache: Mutex::new(self.blue_set_cache.get_mut().clone()),
+            ghost_dag_cache: Mutex::new(self.ghost_dag_cache.get_mut().clone()),
             height: self.height,
             topoheight: self.topoheight,
             stable_height: self.stable_height,
@@ -109,6 +121,7 @@ impl Default for ChainCache {
             common_base_cache: Mutex::new(LruCache::new(NonZeroUsize::new(DEFAULT_CACHE_SIZE).expect("Default cache size for common base must be above 0"))),
             full_order_cache: Mutex::new(LruCache::new(NonZeroUsize::new(DEFAULT_CACHE_SIZE).expect("Default cache size for full order must be above 0"))),
             blue_set_cache: Mutex::new(LruCache::new(NonZeroUsize::new(DEFAULT_CACHE_SIZE).expect("Default cache size for blue set must be above 0"))),
+            ghost_dag_cache: Mutex::new(HashMap::new()),
             height: 0,
             topoheight: 0,
             stable_height: 0,

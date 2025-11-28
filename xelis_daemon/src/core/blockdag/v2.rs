@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::{collections::{HashMap, HashSet, VecDeque}, sync::Arc};
 
 use indexmap::IndexSet;
 use log::{debug, trace};
@@ -17,66 +17,8 @@ use crate::{
 
 use super::sort_ascending_by_cumulative_difficulty;
 
-// Build past set for a block given its immediate parents (tips)
-// Returns: all ancestors reachable from tips (not including tips themselves)
-// Uses BFS to traverse the DAG backwards, respecting base_topoheight boundary
-async fn build_past_set<P>(
-    provider: &P,
-    tips: &IndexSet<Hash>,
-    base_topoheight: TopoHeight
-) -> Result<HashSet<Hash>, BlockchainError>
-where
-    P: DifficultyProvider + DagOrderProvider
-{
-    let mut past = HashSet::new();
-    let mut queue: VecDeque<Hash> = VecDeque::from_iter(tips.iter().cloned());
-
-    while let Some(current) = queue.pop_front() {
-        // Skip if already in past
-        if past.contains(&current) {
-            continue;
-        }
-
-        // Check topoheight boundary
-        if provider.is_block_topological_ordered(&current).await? {
-            let topo = provider.get_topo_height_for_hash(&current).await?;
-            if topo < base_topoheight {
-                continue;
-            }
-        }
-
-        // Add to past
-        past.insert(current.clone());
-
-        // Queue its parents
-        let current_tips = provider.get_past_blocks_for_block_hash(&current).await?;
-        for tip in current_tips.iter() {
-            if !past.contains(tip) {
-                queue.push_back(tip.clone());
-            }
-        }
-    }
-
-    Ok(past)
-}
-
-// GHOSTDAG: Calculate the "blue set" - blocks that are well-connected to the selected chain
-// This implements the PHANTOM/GHOSTDAG protocol's k-cluster algorithm to identify honest blocks.
-// 
-// A block is "blue" (honest) if its anticone size (blocks not mutually reachable) is <= k.
-// Blocks with anticone > k are "red" (potential attackers) and excluded from cumulative difficulty.
-//
-// This prevents parasite chain attacks where an attacker incrementally references the main chain
-// to steal its cumulative difficulty without being referenced back.
-//
-// Algorithm:
-// 1. Start with the selected chain (highest cumulative difficulty path)
-// 2. For each candidate block, calculate its anticone size relative to the blue set
-// 3. If anticone_size <= k, add to blue set (honest)
-// 4. If anticone_size > k, mark as red (potential attacker, excluded)
-//
-// Reference: "PHANTOM: A Scalable BlockDAG protocol" (Sompolinsky & Zohar)
-// https://eprint.iacr.org/2018/104.pdf
+// Calculate blue set by walking the pre-computed GHOSTDAG data
+// This is fast because we just follow the selected parent chain
 pub async fn calculate_blue_set<P>(
     provider: &P,
     block_hash: &Hash,
@@ -86,126 +28,368 @@ pub async fn calculate_blue_set<P>(
 where
     P: DifficultyProvider + DagOrderProvider + CacheProvider
 {
-    let cache_key = (block_hash.clone(), base_topoheight);
-    {
-        let chain_cache = provider.chain_cache().await;
-        let mut blue_set_cache = chain_cache.blue_set_cache.lock().await;
+    trace!("Calculating blue set for block {} from base topoheight {}", block_hash, base_topoheight);
+
+    // Ensure this block has its GHOSTDAG data computed
+    let _data = get_or_compute_ghost_dag_data(provider, block_hash, block_tips).await?;
+
+    let mut blue_set = HashSet::new();
     
-        // Check cache first
-        if let Some(cached) = blue_set_cache.get(&cache_key) {
-            debug!("Blue set for block {} found in cache ({} blocks)", block_hash, cached.len());
-            return Ok(cached.clone());
+    // Walk the selected parent chain and collect blues
+    let mut current = Some(block_hash.clone());
+    let chain_cache = provider.chain_cache().await;
+    
+    while let Some(hash) = current {
+        // Check if above base
+        if is_above_base(provider, &hash, base_topoheight).await? {
+            blue_set.insert(hash.clone());
+        } else {
+            break; // Reached base, stop
+        }
+        
+        // Get GHOSTDAG data for current block
+        let data = {
+            let cache = chain_cache.ghost_dag_cache.lock().await;
+            cache.get(&hash).cloned()
+        };
+        
+        if let Some(d) = data {
+            // Add merge set blues
+            for blue in &d.merge_set_blues {
+                if is_above_base(provider, blue, base_topoheight).await? {
+                    blue_set.insert(blue.clone());
+                }
+            }
+            
+            // Move to selected parent
+            current = d.selected_parent.clone();
+        } else {
+            // No GHOSTDAG data - block might be orphaned or not yet computed
+            // Try to compute it
+            if let Ok(data) = get_or_compute_ghost_dag_data(provider, &hash, &IndexSet::new()).await {
+                for blue in &data.merge_set_blues {
+                    if is_above_base(provider, blue, base_topoheight).await? {
+                        blue_set.insert(blue.clone());
+                    }
+                }
+                current = data.selected_parent.clone();
+            } else {
+                break;
+            }
         }
     }
 
-    trace!("Calculating GHOSTDAG blue set for block {} with base topoheight {} and k={}", block_hash, base_topoheight, GHOSTDAG_K);
+    debug!("Blue set for {} contains {} blocks", block_hash, blue_set.len());
+    Ok(blue_set)
+}
 
-    // Blue set: blocks that are "honest" (well-connected to the main chain)
-    let mut blue_set = HashSet::new();
-    blue_set.insert(block_hash.clone());
+#[inline]
+async fn is_above_base<P>(provider: &P, hash: &Hash, base: TopoHeight) -> Result<bool, BlockchainError>
+where P: DagOrderProvider
+{
+    if provider.is_block_topological_ordered(hash).await? {
+        Ok(provider.get_topo_height_for_hash(hash).await? >= base)
+    } else {
+        Ok(true) // Not yet ordered, consider it above base
+    }
+}
 
-    // Cache for past sets: past(B) = all ancestors of B (not including B itself)
-    // This is the key optimization - we build past sets incrementally
-    let mut past_cache = HashMap::new();
+// Get or compute GHOSTDAG data for a block (FULLY ITERATIVE)
+// This is computed ONCE when the block is added and cached forever
+pub async fn get_or_compute_ghost_dag_data<P>(
+    provider: &P,
+    hash: &Hash,
+    tips: &IndexSet<Hash>
+) -> Result<Arc<GhostDagData>, BlockchainError>
+where
+    P: DifficultyProvider + DagOrderProvider + CacheProvider
+{
+    let chain_cache = provider.chain_cache().await;
+    let mut ghost_dag_cache = chain_cache.ghost_dag_cache.lock().await;
     
-    // Build past set for the block being validated
-    // Past of new block = all ancestors reachable from its parents
-    let block_past = build_past_set(provider, block_tips, base_topoheight).await?;
-    past_cache.insert(block_hash.clone(), block_past);
+    // Check cache first
+    if let Some(data) = ghost_dag_cache.get(hash) {
+        return Ok(data.clone());
+    }
 
-    // Queue for candidates to evaluate (BFS order)
-    let mut queue: VecDeque<Hash> = VecDeque::from_iter(block_tips.iter().cloned());
-    let mut processed = HashSet::new();
-
-    while let Some(candidate) = queue.pop_front() {
-        // Skip if already blue or already evaluated
-        if blue_set.contains(&candidate) || !processed.insert(candidate.clone()) {
+    // BFS to collect blocks that need computation
+    let mut needs_computation = Vec::new();
+    let mut queue = VecDeque::new();
+    let mut visited = HashSet::new();
+    
+    queue.push_back((hash.clone(), tips.clone()));
+    visited.insert(hash.clone());
+    
+    while let Some((block_hash, block_tips)) = queue.pop_front() {
+        // Check if cached
+        if ghost_dag_cache.contains_key(&block_hash) {
             continue;
         }
-
-        // Check topoheight boundary (don't process blocks below base)
-        if provider.is_block_topological_ordered(&candidate).await? {
-            let topo = provider.get_topo_height_for_hash(&candidate).await?;
-            if topo < base_topoheight {
-                trace!("Block {} below base topoheight {}, skipping", candidate, base_topoheight);
-                continue;
-            }
-        }
-
-        // Get or build past set for candidate
-        if !past_cache.contains_key(&candidate) {
-            let tips = provider.get_past_blocks_for_block_hash(&candidate).await?;
-            let candidate_past = build_past_set(provider, &tips, base_topoheight).await?;
-            past_cache.insert(candidate.clone(), candidate_past);
-        }
-
-        // Calculate anticone: blocks in blue_set that are NOT mutually reachable with candidate
-        // Two blocks are mutually reachable if one is in the past of the other
-        let candidate_past = past_cache.get(&candidate)
-            .ok_or(BlockchainError::CorruptedData)?;
-        let mut anticone_size = 0;
-
-        for blue_block in blue_set.iter() {
-            if blue_block == &candidate {
-                continue;
-            }
-
-            // Get past of blue block
-            let blue_past = past_cache.get(blue_block)
-                .ok_or(BlockchainError::CorruptedData)?;
-
-            // Check if they're mutually reachable:
-            // - candidate is in blue block's past, OR
-            // - blue block is in candidate's past
-            let mutually_reachable = blue_past.contains(&candidate) || candidate_past.contains(blue_block);
-            if !mutually_reachable {
-                anticone_size += 1;
-                // Early exit optimization
-                if anticone_size > GHOSTDAG_K {
-                    break;
-                }
-            }
-        }
-
-        trace!(
-            "Block {} anticone size: {} (k={}, blue_set: {}, past: {})",
-            candidate, anticone_size, GHOSTDAG_K, blue_set.len(), candidate_past.len()
-        );
-
-        // If anticone size <= k, this block is blue (honest)
-        if anticone_size <= GHOSTDAG_K {
-            blue_set.insert(candidate.clone());
-
-            // Add this block's tips to the candidate queue 
-            let tips = provider.get_past_blocks_for_block_hash(&candidate).await?;
-            for tip in tips.iter() {
-                if !blue_set.contains(tip) && !processed.contains(tip) {
-                    queue.push_back(tip.clone());
-                }
-            }
+        
+        // Get tips if needed
+        let tips = if block_tips.is_empty() {
+            provider.get_past_blocks_for_block_hash(&block_hash).await?.iter().cloned().collect()
         } else {
-            // Block is red (potential attacker), don't add to blue set
-            debug!(
-                "Block {} marked as RED (anticone {} > k={}), excluding from cumulative difficulty",
-                candidate, anticone_size, GHOSTDAG_K
-            );
+            block_tips
+        };
+        
+        needs_computation.push((block_hash, tips.clone()));
+        
+        // Add parents to queue
+        for tip in &tips {
+            if visited.insert(tip.clone()) {
+                queue.push_back((tip.clone(), IndexSet::new()));
+            }
         }
     }
+    
+    // Process blocks in multiple rounds until all are computed
+    // In each round, we can compute blocks whose selected parent is already cached
+    let mut computed_set = HashSet::new();
+    let mut remaining = needs_computation;
+    
+    while !remaining.is_empty() {
+        let mut next_round = Vec::new();
+        
+        for (block_hash, block_tips) in remaining {
+            // Check if already computed by another thread
+            if ghost_dag_cache.contains_key(&block_hash) {
+                computed_set.insert(block_hash);
+                continue;
+            }
+            
+            // Find which parent would be selected
+            let selected_parent_opt = if !block_tips.is_empty() {
+                let selected_parent = find_selected_parent_from_cache(&ghost_dag_cache, &block_tips)?;
+                Some(selected_parent)
+            } else {
+                None
+            };
+            
+            // Check if selected parent is ready (or no parents)
+            let can_compute = if let Some(sp) = &selected_parent_opt {
+                computed_set.contains(sp) || ghost_dag_cache.contains_key(sp)
+            } else {
+                true // Genesis block
+            };
+            
+            if can_compute {
+                // Compute for this block
+                let data = compute_ghost_dag_data_single(&ghost_dag_cache, provider, &block_hash, &block_tips).await?;
+                
+                // Cache it
+                ghost_dag_cache.insert(block_hash.clone(), data);
+                computed_set.insert(block_hash);
+            } else {
+                // Defer to next round
+                next_round.push((block_hash, block_tips));
+            }
+        }
+        
+        remaining = next_round;
+    }
+    
+    // Return from cache
+    ghost_dag_cache.get(hash).cloned()
+        .ok_or(BlockchainError::Unknown)
+}
 
-    debug!(
-        "GHOSTDAG blue set complete for {}: {} blue blocks, {} cached past sets (k={})",
-        block_hash, blue_set.len(), past_cache.len(), GHOSTDAG_K
-    );
-
-    {
-        let chain_cache = provider.chain_cache().await;
-        let mut blue_set_cache = chain_cache.blue_set_cache.lock().await;
-
-        // Cache the result
-        blue_set_cache.put(cache_key, blue_set.clone());
+// Compute GHOSTDAG data for a single block (assumes parents are cached)
+async fn compute_ghost_dag_data_single<P>(
+    ghost_dag_cache: &HashMap<Hash, Arc<GhostDagData>>,
+    provider: &P,
+    _hash: &Hash,
+    tips: &IndexSet<Hash>
+) -> Result<Arc<GhostDagData>, BlockchainError>
+where
+    P: DifficultyProvider + DagOrderProvider + CacheProvider
+{
+    // Genesis block
+    if tips.is_empty() {
+        return Ok(Arc::new(GhostDagData {
+            blue_score: 1,
+            selected_parent: None,
+            merge_set_blues: HashSet::new(),
+            merge_set_reds: HashSet::new(),
+        }));
     }
 
-    Ok(blue_set)
+    // Find selected parent
+    let selected_parent = find_selected_parent_from_cache(ghost_dag_cache, tips)?;
+    
+    // Get selected parent's data from cache
+    let sp_data = ghost_dag_cache.get(&selected_parent).cloned()
+        .ok_or(BlockchainError::Unknown)?;
+    
+    // Compute merge set and classify as blue/red
+    let (merge_set_blues, merge_set_reds) = compute_merge_set_classification(
+        ghost_dag_cache,
+        provider,
+        tips,
+        &selected_parent,
+        &sp_data
+    ).await?;
+
+    let blue_score = sp_data.blue_score + 1 + merge_set_blues.len() as u64;
+
+    Ok(Arc::new(GhostDagData {
+        blue_score,
+        selected_parent: Some(selected_parent),
+        merge_set_blues,
+        merge_set_reds,
+    }))
+}
+
+// Find selected parent from cache: highest blue_score, then cumulative difficulty, then hash
+// Uses blue_score=0 for uncached parents
+fn find_selected_parent_from_cache(
+    ghost_dag_cache: &HashMap<Hash, Arc<GhostDagData>>,
+    tips: &IndexSet<Hash>
+) -> Result<Hash, BlockchainError> {
+    // Collect all blue scores with their tips
+    let tips_with_scores: Vec<(Hash, u64)> = tips.iter()
+        .map(|tip| (tip.clone(), ghost_dag_cache.get(tip).map(|d| d.blue_score).unwrap_or(0)))
+        .collect();
+    
+    // Find highest blue score
+    let max_score = tips_with_scores.iter().map(|(_, s)| *s).max().unwrap_or(0);
+    
+    // Among tips with max score, select by hash (deterministic)
+    tips_with_scores.iter()
+        .filter(|(_, score)| *score == max_score)
+        .min_by_key(|(hash, _)| hash)
+        .map(|(h, _)| h.clone())
+        .ok_or(BlockchainError::Unknown)
+}
+
+// Compute and classify merge set
+async fn compute_merge_set_classification<P>(
+    ghost_dag_cache: &HashMap<Hash, Arc<GhostDagData>>,
+    provider: &P,
+    tips: &IndexSet<Hash>,
+    selected_parent: &Hash,
+    sp_data: &GhostDagData
+) -> Result<(HashSet<Hash>, HashSet<Hash>), BlockchainError>
+where
+    P: DifficultyProvider + CacheProvider
+{
+    let mut blues = HashSet::new();
+    let mut reds = HashSet::new();
+    
+    // Process non-selected-parent tips
+    for tip in tips {
+        if tip == selected_parent {
+            continue;
+        }
+        
+        // Check if this tip should be blue or red
+        if is_blue_candidate(ghost_dag_cache, provider, tip, selected_parent, sp_data).await? {
+            blues.insert(tip.clone());
+        } else {
+            reds.insert(tip.clone());
+        }
+    }
+    
+    Ok((blues, reds))
+}
+
+// Check if a candidate should be classified as blue
+// by checking its anticone size relative to the SP chain
+async fn is_blue_candidate<P>(
+    ghost_dag_cache: &HashMap<Hash, Arc<GhostDagData>>,
+    provider: &P,
+    candidate: &Hash,
+    selected_parent: &Hash,
+    sp_data: &GhostDagData
+) -> Result<bool, BlockchainError>
+where
+    P: DifficultyProvider + CacheProvider
+{
+    // Build candidate's reachability set (bounded)
+    let candidate_reachable = build_reachability_set(provider, candidate, 2 * GHOSTDAG_K + 5).await?;
+    
+    let mut anticone_size = 0;
+    
+    // Check SP and its merge set blues
+    if !candidate_reachable.contains(selected_parent) {
+        anticone_size += 1;
+        if anticone_size > GHOSTDAG_K {
+            return Ok(false);
+        }
+    }
+    
+    for blue in &sp_data.merge_set_blues {
+        if !candidate_reachable.contains(blue) {
+            anticone_size += 1;
+            if anticone_size > GHOSTDAG_K {
+                return Ok(false);
+            }
+        }
+    }
+    
+    // Walk SP chain
+    let mut current = sp_data.selected_parent.clone();
+    
+    while let Some(hash) = current {
+        if candidate_reachable.contains(&hash) {
+            break; // Found common ancestor
+        }
+        
+        anticone_size += 1;
+        if anticone_size > GHOSTDAG_K {
+            return Ok(false);
+        }
+        
+        let data = ghost_dag_cache.get(&hash).cloned();
+        
+        if let Some(d) = data {
+            for blue in &d.merge_set_blues {
+                if !candidate_reachable.contains(blue) {
+                    anticone_size += 1;
+                    if anticone_size > GHOSTDAG_K {
+                        return Ok(false);
+                    }
+                }
+            }
+            current = d.selected_parent.clone();
+        } else {
+            break;
+        }
+    }
+    
+    Ok(anticone_size <= GHOSTDAG_K)
+}
+
+// Build reachability set for a block (bounded BFS)
+async fn build_reachability_set<P>(
+    provider: &P,
+    hash: &Hash,
+    max_depth: usize
+) -> Result<HashSet<Hash>, BlockchainError>
+where
+    P: DifficultyProvider
+{
+    let mut reachable = HashSet::new();
+    let mut queue = VecDeque::new();
+    queue.push_back(hash.clone());
+    reachable.insert(hash.clone());
+    
+    let mut depth = 0;
+    while let Some(current) = queue.pop_front() {
+        if depth >= max_depth {
+            break;
+        }
+        
+        let tips = provider.get_past_blocks_for_block_hash(&current).await?;
+        for tip in tips.iter() {
+            if reachable.insert(tip.clone()) {
+                queue.push_back(tip.clone());
+            }
+        }
+        depth += 1;
+    }
+    
+    Ok(reachable)
 }
 
 // find the sum of work done using GHOSTDAG k-cluster
