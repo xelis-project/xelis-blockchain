@@ -19,7 +19,7 @@ impl MultiSigProvider for SledStorage {
 
     async fn get_multisig_at_topoheight_for<'a>(&'a self, account: &PublicKey, topoheight: TopoHeight) -> Result<VersionedMultiSig<'a>, BlockchainError> {
         trace!("get multisig at topoheight {}", topoheight);
-        self.load_from_disk(&self.versioned_multisigs, &self.get_versioned_multisig_key(account, topoheight), DiskContext::Multisig)
+        self.load_from_disk(&self.versioned_multisigs, &self.get_versioned_multisig_key(account, topoheight), DiskContext::MultisigAtTopoHeight(topoheight))
     }
 
     async fn delete_last_topoheight_for_multisig(&mut self, account: &PublicKey) -> Result<(), BlockchainError> {

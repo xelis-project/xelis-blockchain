@@ -309,6 +309,7 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
     command_manager.add_command(Command::with_optional_arguments("list_assets", "List all assets registered on chain", vec![Arg::new("page", ArgType::Number)], CommandHandler::Async(async_handler!(list_assets::<S>))))?;
     command_manager.add_command(Command::with_optional_arguments("show_peerlist", "Show the stored peerlist", vec![Arg::new("page", ArgType::Number)], CommandHandler::Async(async_handler!(show_stored_peerlist::<S>))))?;
     command_manager.add_command(Command::with_arguments("show_balance", "Show balance of an address", vec![], vec![Arg::new("history", ArgType::Number)], CommandHandler::Async(async_handler!(show_balance::<S>))))?;
+    command_manager.add_command(Command::with_arguments("show_multisig", "Show multisig history of an address", vec![], vec![], CommandHandler::Async(async_handler!(show_multisig::<S>))))?;
     command_manager.add_command(Command::with_required_arguments("print_block", "Print block in json format", vec![Arg::new("hash", ArgType::Hash)], CommandHandler::Async(async_handler!(print_block::<S>))))?;
     command_manager.add_command(Command::with_required_arguments("dump_tx", "Dump TX in hexadecimal format", vec![Arg::new("hash", ArgType::Hash)], CommandHandler::Async(async_handler!(dump_tx::<S>))))?;
     command_manager.add_command(Command::with_required_arguments("dump_block", "Dump block in hexadecimal format", vec![Arg::new("hash", ArgType::Hash)], CommandHandler::Async(async_handler!(dump_block::<S>))))?;
@@ -1036,6 +1037,43 @@ async fn show_balance<S: Storage>(manager: &CommandManager, mut arguments: Argum
             topo = previous;
         } else {
             break;
+        }
+    }
+
+    Ok(())
+}
+
+async fn show_multisig<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
+    let prompt = manager.get_prompt();
+    // read address
+    let str_address = prompt.read_input(
+        prompt.colorize_string(Color::Green, "Address: "),
+        false
+    ).await.context("Error while reading address")?;
+    let address = Address::from_string(&str_address)
+        .context("Invalid address")?;
+
+    let context = manager.get_context().lock()?;
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    let storage = blockchain.get_storage().read().await;
+    let (topoheight, multisig) = storage.get_last_multisig(address.get_public_key()).await
+        .context("Error while retrieving multisig")?;
+
+    let mut version = Some(multisig);
+    while let Some(multisig) = version.take() {
+        manager.message(format!("Multisig at topoheight {}:", topoheight));
+        if let Some(multisig) = multisig.get() {
+            manager.message(format!("- Participants: {}", multisig.participants.len()));
+            for owner in multisig.participants.iter() {
+                manager.message(format!("  - {}", owner.as_address(blockchain.get_network().is_mainnet())));
+            }
+    
+            manager.message(format!("- Threshold: {}", multisig.threshold));
+        }
+
+        if let Some(previous) = multisig.get_previous_topoheight() {
+            version = Some(storage.get_multisig_at_topoheight_for(address.get_public_key(), previous).await
+                .context("Error while retrieving history multisig")?);
         }
     }
 
