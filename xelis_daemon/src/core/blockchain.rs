@@ -1665,7 +1665,7 @@ impl<S: Storage> Blockchain<S> {
         }
 
         let is_v3_enabled = version >= BlockVersion::V3;
-        if tips_count > 0 && !is_v3_enabled {
+        if tips_count > 0 {
             debug!("Height by tips: {}, stable height: {}", block_height_by_tips, stable_height);
 
             if block_height_by_tips < stable_height {
