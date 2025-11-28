@@ -608,10 +608,9 @@ where
         }
     }
 
-
     let (blue_set, score) = match block_version {
         BlockVersion::V0 | BlockVersion::V1 | BlockVersion::V2 => v1::find_tip_work_score(provider, block_hash, block_tips.iter(), block_difficulty, base_block).await,
-        BlockVersion::V3 => v2::find_tip_work_score(provider, block_hash, block_tips, block_difficulty, base_block, base_block_height).await,
+        BlockVersion::V3 => v2::find_tip_work_score(provider, block_hash, block_tips, block_difficulty, base_block).await,
     }?;
 
     // save this result in cache

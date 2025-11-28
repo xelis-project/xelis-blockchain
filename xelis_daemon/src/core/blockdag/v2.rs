@@ -1,7 +1,8 @@
-use std::{collections::{HashMap, HashSet, VecDeque}, sync::Arc};
+use std::{collections::{HashSet, VecDeque}, sync::Arc};
 
 use indexmap::IndexSet;
 use log::{debug, trace};
+use lru::LruCache;
 use xelis_common::{
     block::TopoHeight,
     crypto::Hash,
@@ -49,13 +50,13 @@ where
         
         // Get GHOSTDAG data for current block
         let data = {
-            let cache = chain_cache.ghost_dag_cache.lock().await;
+            let mut cache = chain_cache.ghost_dag_cache.lock().await;
             cache.get(&hash).cloned()
         };
         
         if let Some(d) = data {
             // Add merge set blues
-            for blue in &d.merge_set_blues {
+            for blue in d.merge_set_blues.iter() {
                 if is_above_base(provider, blue, base_topoheight).await? {
                     blue_set.insert(blue.clone());
                 }
@@ -67,7 +68,7 @@ where
             // No GHOSTDAG data - block might be orphaned or not yet computed
             // Try to compute it
             if let Ok(data) = get_or_compute_ghost_dag_data(provider, &hash, &IndexSet::new()).await {
-                for blue in &data.merge_set_blues {
+                for blue in data.merge_set_blues.iter() {
                     if is_above_base(provider, blue, base_topoheight).await? {
                         blue_set.insert(blue.clone());
                     }
@@ -122,7 +123,7 @@ where
     
     while let Some((block_hash, block_tips)) = queue.pop_front() {
         // Check if cached
-        if ghost_dag_cache.contains_key(&block_hash) {
+        if ghost_dag_cache.contains(&block_hash) {
             continue;
         }
         
@@ -136,7 +137,7 @@ where
         needs_computation.push((block_hash, tips.clone()));
         
         // Add parents to queue
-        for tip in &tips {
+        for tip in tips.iter() {
             if visited.insert(tip.clone()) {
                 queue.push_back((tip.clone(), IndexSet::new()));
             }
@@ -153,14 +154,14 @@ where
         
         for (block_hash, block_tips) in remaining {
             // Check if already computed by another thread
-            if ghost_dag_cache.contains_key(&block_hash) {
+            if ghost_dag_cache.contains(&block_hash) {
                 computed_set.insert(block_hash);
                 continue;
             }
             
             // Find which parent would be selected
             let selected_parent_opt = if !block_tips.is_empty() {
-                let selected_parent = find_selected_parent_from_cache(&ghost_dag_cache, &block_tips)?;
+                let selected_parent = find_selected_parent_from_cache(&mut ghost_dag_cache, provider, &block_tips).await?;
                 Some(selected_parent)
             } else {
                 None
@@ -168,17 +169,17 @@ where
             
             // Check if selected parent is ready (or no parents)
             let can_compute = if let Some(sp) = &selected_parent_opt {
-                computed_set.contains(sp) || ghost_dag_cache.contains_key(sp)
+                computed_set.contains(sp) || ghost_dag_cache.contains(sp)
             } else {
                 true // Genesis block
             };
             
             if can_compute {
                 // Compute for this block
-                let data = compute_ghost_dag_data_single(&ghost_dag_cache, provider, &block_hash, &block_tips).await?;
+                let data = compute_ghost_dag_data_single(&mut ghost_dag_cache, provider, &block_hash, &block_tips).await?;
                 
                 // Cache it
-                ghost_dag_cache.insert(block_hash.clone(), data);
+                ghost_dag_cache.put(block_hash.clone(), data);
                 computed_set.insert(block_hash);
             } else {
                 // Defer to next round
@@ -196,7 +197,7 @@ where
 
 // Compute GHOSTDAG data for a single block (assumes parents are cached)
 async fn compute_ghost_dag_data_single<P>(
-    ghost_dag_cache: &HashMap<Hash, Arc<GhostDagData>>,
+    ghost_dag_cache: &mut LruCache<Hash, Arc<GhostDagData>>,
     provider: &P,
     _hash: &Hash,
     tips: &IndexSet<Hash>
@@ -206,23 +207,23 @@ where
 {
     // Genesis block
     if tips.is_empty() {
+        // Genesis has zero cumulative difficulty (no parent difficulty to accumulate)
         return Ok(Arc::new(GhostDagData {
-            blue_score: 1,
+            cumulative_difficulty: CumulativeDifficulty::zero(),
             selected_parent: None,
             merge_set_blues: HashSet::new(),
-            merge_set_reds: HashSet::new(),
         }));
     }
 
     // Find selected parent
-    let selected_parent = find_selected_parent_from_cache(ghost_dag_cache, tips)?;
+    let selected_parent = find_selected_parent_from_cache(ghost_dag_cache, provider, tips).await?;
     
     // Get selected parent's data from cache
     let sp_data = ghost_dag_cache.get(&selected_parent).cloned()
         .ok_or(BlockchainError::Unknown)?;
     
     // Compute merge set and classify as blue/red
-    let (merge_set_blues, merge_set_reds) = compute_merge_set_classification(
+    let merge_set_blues = compute_merge_set_classification(
         ghost_dag_cache,
         provider,
         tips,
@@ -230,51 +231,71 @@ where
         &sp_data
     ).await?;
 
-    let blue_score = sp_data.blue_score + 1 + merge_set_blues.len() as u64;
+    // cumulative_difficulty = sp_cumulative_difficulty + sp_difficulty + sum(blue_difficulties)
+    let mut cumulative_difficulty = sp_data.cumulative_difficulty;
+    
+    // Add selected parent's own difficulty (not cumulative, just the block's difficulty)
+    let sp_difficulty = provider.get_difficulty_for_block_hash(&selected_parent).await?;
+    cumulative_difficulty += sp_difficulty;
+
+    // Add merge set blues' difficulties (not cumulative, just each block's difficulty)
+    for blue_hash in merge_set_blues.iter() {
+        let blue_diff = provider.get_difficulty_for_block_hash(blue_hash).await?;
+        cumulative_difficulty += blue_diff;
+    }
 
     Ok(Arc::new(GhostDagData {
-        blue_score,
+        cumulative_difficulty,
         selected_parent: Some(selected_parent),
         merge_set_blues,
-        merge_set_reds,
     }))
 }
 
-// Find selected parent from cache: highest blue_score, then cumulative difficulty, then hash
-// Uses blue_score=0 for uncached parents
-fn find_selected_parent_from_cache(
-    ghost_dag_cache: &HashMap<Hash, Arc<GhostDagData>>,
+// Find selected parent from cache: highest cumulative difficulty
+// Retrieves cumulative difficulty from cache if available, otherwise fetches cumulative difficulty from provider
+async fn find_selected_parent_from_cache<P>(
+    ghost_dag_cache: &mut LruCache<Hash, Arc<GhostDagData>>,
+    provider: &P,
     tips: &IndexSet<Hash>
-) -> Result<Hash, BlockchainError> {
-    // Collect all blue scores with their tips
-    let tips_with_scores: Vec<(Hash, u64)> = tips.iter()
-        .map(|tip| (tip.clone(), ghost_dag_cache.get(tip).map(|d| d.blue_score).unwrap_or(0)))
-        .collect();
+) -> Result<Hash, BlockchainError>
+where
+    P: DifficultyProvider
+{
+    // Collect all blue work scores with their tips
+    let mut tips_with_work = Vec::with_capacity(tips.len());
+
+    for tip in tips.iter() {
+        let cumulative_difficulty = if let Some(data) = ghost_dag_cache.get(tip) {
+            // Use cached
+            data.cumulative_difficulty
+        } else {
+            // Fetch cumulative difficulty from provider
+            provider.get_cumulative_difficulty_for_block_hash(tip).await?
+        };
+        tips_with_work.push((tip, cumulative_difficulty));
+    }
+
+    // Sort ascending by cumulative difficulty (highest work first), ties broken by hash
+    sort_ascending_by_cumulative_difficulty(&mut tips_with_work);
     
-    // Find highest blue score
-    let max_score = tips_with_scores.iter().map(|(_, s)| *s).max().unwrap_or(0);
-    
-    // Among tips with max score, select by hash (deterministic)
-    tips_with_scores.iter()
-        .filter(|(_, score)| *score == max_score)
-        .min_by_key(|(hash, _)| hash)
+    // Return the first (highest cumulative difficulty)
+    tips_with_work.pop()
         .map(|(h, _)| h.clone())
         .ok_or(BlockchainError::Unknown)
 }
 
 // Compute and classify merge set
 async fn compute_merge_set_classification<P>(
-    ghost_dag_cache: &HashMap<Hash, Arc<GhostDagData>>,
+    ghost_dag_cache: &mut LruCache<Hash, Arc<GhostDagData>>,
     provider: &P,
     tips: &IndexSet<Hash>,
     selected_parent: &Hash,
     sp_data: &GhostDagData
-) -> Result<(HashSet<Hash>, HashSet<Hash>), BlockchainError>
+) -> Result<HashSet<Hash>, BlockchainError>
 where
     P: DifficultyProvider + CacheProvider
 {
     let mut blues = HashSet::new();
-    let mut reds = HashSet::new();
     
     // Process non-selected-parent tips
     for tip in tips {
@@ -285,18 +306,16 @@ where
         // Check if this tip should be blue or red
         if is_blue_candidate(ghost_dag_cache, provider, tip, selected_parent, sp_data).await? {
             blues.insert(tip.clone());
-        } else {
-            reds.insert(tip.clone());
         }
     }
     
-    Ok((blues, reds))
+    Ok(blues)
 }
 
 // Check if a candidate should be classified as blue
 // by checking its anticone size relative to the SP chain
 async fn is_blue_candidate<P>(
-    ghost_dag_cache: &HashMap<Hash, Arc<GhostDagData>>,
+    ghost_dag_cache: &mut LruCache<Hash, Arc<GhostDagData>>,
     provider: &P,
     candidate: &Hash,
     selected_parent: &Hash,
@@ -320,7 +339,7 @@ where
         }
     }
     
-    for blue in &sp_data.merge_set_blues {
+    for blue in sp_data.merge_set_blues.iter() {
         if !candidate_reachable.contains(blue) && visited.insert(blue.clone()) {
             anticone_size += 1;
             if anticone_size > GHOSTDAG_K {
@@ -347,7 +366,7 @@ where
         let data = ghost_dag_cache.get(&hash).cloned();
         
         if let Some(d) = data {
-            for blue in &d.merge_set_blues {
+            for blue in d.merge_set_blues.iter() {
                 if !candidate_reachable.contains(blue) && visited.insert(blue.clone()) {
                     anticone_size += 1;
                     if anticone_size > GHOSTDAG_K {
@@ -404,25 +423,11 @@ pub async fn find_tip_work_score<P>(
     block_tips: &IndexSet<Hash>,
     block_difficulty: Option<Difficulty>,
     base_block: &Hash,
-    base_block_height: u64
 ) -> Result<(HashSet<Hash>, CumulativeDifficulty), BlockchainError>
 where
     P: DifficultyProvider + DagOrderProvider + CacheProvider
 {
     trace!("find tip work score for {} at base {}", block_hash, base_block);
-    let cache_key = (block_hash.clone(), base_block.clone(), base_block_height);
-
-    {
-        let chain_cache = provider.chain_cache().await;
-
-        debug!("accessing tip work score cache for {} at height {}", block_hash, base_block_height);
-        let mut cache = chain_cache.tip_work_score_cache.lock().await;
-        if let Some(value) = cache.get(&cache_key) {
-            trace!("Found tip work score in cache: set [{}], height: {}", value.0.iter().map(|h| h.to_string()).collect::<Vec<String>>().join(", "), value.1);
-            return Ok(value.clone())
-        }
-    }
-
     let block_difficulty = if let Some(diff) = block_difficulty {
         diff
     } else {
@@ -451,13 +456,6 @@ where
     }
 
     debug!("Cumulative difficulty for block {}: {} (from {} blue blocks)", block_hash, score, blue_set.len());
-
-    // save this result in cache
-    {
-        let chain_cache = provider.chain_cache().await;
-        let mut cache = chain_cache.tip_work_score_cache.lock().await;
-        cache.put(cache_key, (blue_set.clone(), score));
-    }
 
     Ok((blue_set, score))
 }
