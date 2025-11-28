@@ -31,52 +31,38 @@ where
 {
     trace!("Calculating blue set for block {} from base topoheight {}", block_hash, base_topoheight);
 
-    // Ensure this block has its GHOSTDAG data computed
-    let _data = get_or_compute_ghost_dag_data(provider, block_hash, block_tips).await?;
-
     let mut blue_set = HashSet::new();
-    
-    // Walk the selected parent chain and collect blues
-    let mut current = Some(block_hash.clone());
+
     let chain_cache = provider.chain_cache().await;
-    
-    while let Some(hash) = current {
+    let mut ghost_dag_cache = chain_cache.ghost_dag_cache.lock().await;
+
+    // Walk the selected parent chain and collect blues
+    let mut current = Some((block_hash.clone(), block_tips.clone()));    
+    while let Some((hash, tips)) = current.take() {
         // Check if above base
         if is_above_base(provider, &hash, base_topoheight).await? {
             blue_set.insert(hash.clone());
         } else {
             break; // Reached base, stop
         }
-        
+
         // Get GHOSTDAG data for current block
-        let data = {
-            let mut cache = chain_cache.ghost_dag_cache.lock().await;
-            cache.get(&hash).cloned()
-        };
+        let data = get_or_compute_ghost_dag_data(&mut ghost_dag_cache, provider, &hash, &tips).await?;
+
+        // Add merge set blues
+        for blue in data.merge_set_blues.iter() {
+            if is_above_base(provider, blue, base_topoheight).await? {
+                blue_set.insert(blue.clone());
+            }
+        }
         
-        if let Some(d) = data {
-            // Add merge set blues
-            for blue in d.merge_set_blues.iter() {
-                if is_above_base(provider, blue, base_topoheight).await? {
-                    blue_set.insert(blue.clone());
-                }
+        // Move to selected parent
+        current = match data.selected_parent.as_ref() {
+            Some(sp) => {
+                let tips = provider.get_past_blocks_for_block_hash(sp).await?;
+                Some((sp.clone(), tips.into_owned()))
             }
-            
-            // Move to selected parent
-            current = d.selected_parent.clone();
-        } else {
-            // No GHOSTDAG data - block might be orphaned or not yet computed
-            // Try to compute it
-            if let Ok(data) = get_or_compute_ghost_dag_data(provider, &hash, &IndexSet::new()).await {
-                for blue in data.merge_set_blues.iter() {
-                    if is_above_base(provider, blue, base_topoheight).await? {
-                        blue_set.insert(blue.clone());
-                    }
-                }
-                current = data.selected_parent.clone();
-            } else {
-                break;
-            }
+            None => None,
         }
     }
 
@@ -98,6 +84,7 @@ where P: DagOrderProvider
 // Get or compute GHOSTDAG data for a block (FULLY ITERATIVE)
 // This is computed ONCE when the block is added and cached forever
 pub async fn get_or_compute_ghost_dag_data<P>(
+    ghost_dag_cache: &mut LruCache<Hash, Arc<GhostDagData>>,
     provider: &P,
     hash: &Hash,
     tips: &IndexSet<Hash>
@@ -105,9 +92,6 @@ pub async fn get_or_compute_ghost_dag_data<P>(
 where
     P: DifficultyProvider + DagOrderProvider + CacheProvider
 {
-    let chain_cache = provider.chain_cache().await;
-    let mut ghost_dag_cache = chain_cache.ghost_dag_cache.lock().await;
-    
     // Check cache first
     if let Some(data) = ghost_dag_cache.get(hash) {
         return Ok(data.clone());
@@ -148,7 +132,7 @@ where
     // In each round, we can compute blocks whose selected parent is already cached
     let mut computed_set = HashSet::new();
     let mut remaining = needs_computation;
-    
+
     while !remaining.is_empty() {
         let mut next_round = Vec::new();
         
@@ -161,7 +145,7 @@ where
             
             // Find which parent would be selected
             let selected_parent_opt = if !block_tips.is_empty() {
-                let selected_parent = find_selected_parent_from_cache(&mut ghost_dag_cache, provider, &block_tips).await?;
+                let selected_parent = find_selected_parent_from_cache(ghost_dag_cache, provider, &block_tips).await?;
                 Some(selected_parent)
             } else {
                 None
@@ -176,7 +160,7 @@ where
             
             if can_compute {
                 // Compute for this block
-                let data = compute_ghost_dag_data_single(&mut ghost_dag_cache, provider, &block_hash, &block_tips).await?;
+                let data = compute_ghost_dag_data_single(ghost_dag_cache, provider, &block_hash, &block_tips).await?;
                 
                 // Cache it
                 ghost_dag_cache.put(block_hash.clone(), data);
@@ -189,7 +173,7 @@ where
         
         remaining = next_round;
     }
-    
+
     // Return from cache
     ghost_dag_cache.get(hash).cloned()
         .ok_or(BlockchainError::Unknown)
@@ -232,7 +216,7 @@ where
     ).await?;
 
     // cumulative_difficulty = sp_cumulative_difficulty + sp_difficulty + sum(blue_difficulties)
-    let mut cumulative_difficulty = sp_data.cumulative_difficulty;
+    let mut cumulative_difficulty = provider.get_cumulative_difficulty_for_block_hash(&selected_parent).await?;
     
     // Add selected parent's own difficulty (not cumulative, just the block's difficulty)
     let sp_difficulty = provider.get_difficulty_for_block_hash(&selected_parent).await?;
@@ -293,7 +277,7 @@ async fn compute_merge_set_classification<P>(
     sp_data: &GhostDagData
 ) -> Result<HashSet<Hash>, BlockchainError>
 where
-    P: DifficultyProvider + CacheProvider
+    P: DifficultyProvider + DagOrderProvider + CacheProvider
 {
     let mut blues = HashSet::new();
     
@@ -322,11 +306,11 @@ async fn is_blue_candidate<P>(
     sp_data: &GhostDagData
 ) -> Result<bool, BlockchainError>
 where
-    P: DifficultyProvider + CacheProvider
+    P: DifficultyProvider + DagOrderProvider + CacheProvider
 {
-    // Build candidate's reachability set (bounded)
-    let candidate_reachable = build_reachability_set(provider, candidate, 2 * GHOSTDAG_K + 5).await?;
-    
+    // Build candidate's reachability set (cache first, then provider)
+    let candidate_reachable = build_reachability_set(ghost_dag_cache, provider, candidate).await?;
+
     let mut anticone_size = 0;
     let mut visited = HashSet::new();
     
@@ -362,50 +346,62 @@ where
                 return Ok(false);
             }
         }
+
+        // We can pass an empty IndexSet, it will be lazily fetched if needed
+        // TODO: no recursive!
+        let data = Box::pin(get_or_compute_ghost_dag_data(ghost_dag_cache, provider, &hash, &IndexSet::new())).await?;
         
-        let data = ghost_dag_cache.get(&hash).cloned();
-        
-        if let Some(d) = data {
-            for blue in d.merge_set_blues.iter() {
-                if !candidate_reachable.contains(blue) && visited.insert(blue.clone()) {
-                    anticone_size += 1;
-                    if anticone_size > GHOSTDAG_K {
-                        return Ok(false);
-                    }
+        for blue in data.merge_set_blues.iter() {
+            if !candidate_reachable.contains(blue) && visited.insert(blue.clone()) {
+                anticone_size += 1;
+                if anticone_size > GHOSTDAG_K {
+                    return Ok(false);
                 }
             }
-            current = d.selected_parent.clone();
-        } else {
-            break;
         }
+        current = data.selected_parent.clone();
     }
     
     Ok(anticone_size <= GHOSTDAG_K)
 }
 
-// Build reachability set for a block (bounded BFS)
+// Build reachability set using GHOSTDAG cache first, then provider for parents
+// Cache provides GHOSTDAG structure (selected parent + blues), provider gives raw parent list
 async fn build_reachability_set<P>(
+    ghost_dag_cache: &mut LruCache<Hash, Arc<GhostDagData>>,
     provider: &P,
-    hash: &Hash,
-    max_depth: usize
+    hash: &Hash
 ) -> Result<HashSet<Hash>, BlockchainError>
 where
     P: DifficultyProvider
 {
     let mut reachable = HashSet::new();
     let mut queue = VecDeque::new();
-    queue.push_back((hash.clone(), 0)); // (hash, level)
+    queue.push_back(hash.clone());
     reachable.insert(hash.clone());
     
-    while let Some((current, level)) = queue.pop_front() {
-        if level >= max_depth {
-            continue; // Skip but don't break - process same-level items
-        }
-        
-        let tips = provider.get_past_blocks_for_block_hash(&current).await?;
-        for tip in tips.iter() {
-            if reachable.insert(tip.clone()) {
-                queue.push_back((tip.clone(), level + 1));
+    while let Some(current) = queue.pop_front() {
+        // Try cache first for GHOSTDAG structure
+        if let Some(data) = ghost_dag_cache.get(&current).cloned() {
+            // Use GHOSTDAG data: selected parent + merge set blues
+            if let Some(sp) = &data.selected_parent {
+                if reachable.insert(sp.clone()) {
+                    queue.push_back(sp.clone());
+                }
+            }
+            
+            for blue in &data.merge_set_blues {
+                if reachable.insert(blue.clone()) {
+                    queue.push_back(blue.clone());
+                }
+            }
+        } else {
+            // Not in cache, get raw parent list from provider
+            let parents = provider.get_past_blocks_for_block_hash(&current).await?;
+            for parent in parents.iter() {
+                if reachable.insert(parent.clone()) {
+                    queue.push_back(parent.clone());
+                }
             }
         }
     }
