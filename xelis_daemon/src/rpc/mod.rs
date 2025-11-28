@@ -19,9 +19,11 @@ use actix_web::{
         Data,
         Payload
     },
+    http::header,
     dev::ServerHandle,
     error::Error
 };
+use actix_cors::Cors;
 use anyhow::Context;
 use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
 use serde_json::{Value, json};
@@ -123,8 +125,29 @@ impl<S: Storage> DaemonRpcServer<S> {
 
         {
             let clone = Arc::clone(&server);
+            let cors_origins = config.cors_allowed_origins;
             let builder = HttpServer::new(move || {
                 let server = Arc::clone(&clone);
+
+                // Configure CORS only if origins are specified
+                let mut cors = Cors::default();
+                if !cors_origins.is_empty() {
+                    if cors_origins[0] == "*" {
+                        cors = cors.allow_any_origin();
+                        if cors_origins.len() > 1 {
+                            warn!("CORS allowed origins contains '*' and other origins. '*' will allow all origins.");
+                        }
+                    } else {
+                        for origin in &cors_origins {
+                            cors = cors.allowed_origin(origin);
+                        }
+                    }
+
+                    cors = cors.allowed_methods(vec!["GET", "POST", "OPTIONS"])
+                        .allowed_headers(vec![header::AUTHORIZATION, header::CONTENT_TYPE, header::ACCEPT])
+                        .max_age(3600);
+                }
+
                 let mut app = App::new()
                     .app_data(web::Data::from(server))
                     .app_data(web::Data::new(prometheus.as_ref().map(|(_, handle)| handle.clone())))
@@ -133,7 +156,8 @@ impl<S: Storage> DaemonRpcServer<S> {
                     // WebSocket support
                     .route("/json_rpc", web::get().to(websocket::<EventWebSocketHandler<Arc<Blockchain<S>>, NotifyEvent>, DaemonRpcServer<S>>))
                     .route("/getwork/{address}/{worker}", web::get().to(getwork_endpoint::<S>))
-                    .service(index);
+                    .service(index)
+                    .wrap(cors);
 
                 if let Some((route, _)) = &prometheus {
                     app = app.route(route, web::get().to(prometheus_metrics));
