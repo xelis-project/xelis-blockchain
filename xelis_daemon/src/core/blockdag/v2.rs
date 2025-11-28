@@ -128,7 +128,7 @@ where
         
         // Get tips if needed
         let tips = if block_tips.is_empty() {
-            provider.get_past_blocks_for_block_hash(&block_hash).await?.iter().cloned().collect()
+            provider.get_past_blocks_for_block_hash(&block_hash).await?.to_owned()
         } else {
             block_tips
         };
@@ -309,9 +309,11 @@ where
     let candidate_reachable = build_reachability_set(provider, candidate, 2 * GHOSTDAG_K + 5).await?;
     
     let mut anticone_size = 0;
+    let mut visited = HashSet::new();
     
     // Check SP and its merge set blues
     if !candidate_reachable.contains(selected_parent) {
+        visited.insert(selected_parent.clone());
         anticone_size += 1;
         if anticone_size > GHOSTDAG_K {
             return Ok(false);
@@ -319,7 +321,7 @@ where
     }
     
     for blue in &sp_data.merge_set_blues {
-        if !candidate_reachable.contains(blue) {
+        if !candidate_reachable.contains(blue) && visited.insert(blue.clone()) {
             anticone_size += 1;
             if anticone_size > GHOSTDAG_K {
                 return Ok(false);
@@ -335,16 +337,18 @@ where
             break; // Found common ancestor
         }
         
-        anticone_size += 1;
-        if anticone_size > GHOSTDAG_K {
-            return Ok(false);
+        if visited.insert(hash.clone()) {
+            anticone_size += 1;
+            if anticone_size > GHOSTDAG_K {
+                return Ok(false);
+            }
         }
         
         let data = ghost_dag_cache.get(&hash).cloned();
         
         if let Some(d) = data {
             for blue in &d.merge_set_blues {
-                if !candidate_reachable.contains(blue) {
+                if !candidate_reachable.contains(blue) && visited.insert(blue.clone()) {
                     anticone_size += 1;
                     if anticone_size > GHOSTDAG_K {
                         return Ok(false);
@@ -371,22 +375,20 @@ where
 {
     let mut reachable = HashSet::new();
     let mut queue = VecDeque::new();
-    queue.push_back(hash.clone());
+    queue.push_back((hash.clone(), 0)); // (hash, level)
     reachable.insert(hash.clone());
     
-    let mut depth = 0;
-    while let Some(current) = queue.pop_front() {
-        if depth >= max_depth {
-            break;
+    while let Some((current, level)) = queue.pop_front() {
+        if level >= max_depth {
+            continue; // Skip but don't break - process same-level items
         }
         
         let tips = provider.get_past_blocks_for_block_hash(&current).await?;
         for tip in tips.iter() {
             if reachable.insert(tip.clone()) {
-                queue.push_back(tip.clone());
+                queue.push_back((tip.clone(), level + 1));
             }
         }
-        depth += 1;
     }
     
     Ok(reachable)
