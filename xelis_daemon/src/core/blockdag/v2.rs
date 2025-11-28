@@ -175,8 +175,8 @@ where
     }
 
     // Return from cache
-    ghost_dag_cache.get(hash).cloned()
-        .ok_or(BlockchainError::Unknown)
+    // TODO: fix this
+    Box::pin(get_or_compute_ghost_dag_data(ghost_dag_cache, provider, hash, tips)).await
 }
 
 // Compute GHOSTDAG data for a single block (assumes parents are cached)
@@ -203,8 +203,8 @@ where
     let selected_parent = find_selected_parent_from_cache(ghost_dag_cache, provider, tips).await?;
     
     // Get selected parent's data from cache
-    let sp_data = ghost_dag_cache.get(&selected_parent).cloned()
-        .ok_or(BlockchainError::Unknown)?;
+    // TODO: fix this
+    let sp_data = Box::pin(get_or_compute_ghost_dag_data(ghost_dag_cache, provider, &selected_parent, &IndexSet::new())).await?;
     
     // Compute merge set and classify as blue/red
     let merge_set_blues = compute_merge_set_classification(
