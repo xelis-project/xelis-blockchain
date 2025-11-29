@@ -1726,6 +1726,15 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, C
             5,
             Some(Type::Optional(Box::new(Type::U64)))
         );
+        // Retrieve the deposit for the given asset
+        env.register_native_function(
+            "get_deposits",
+            None,
+            vec![],
+            FunctionHandler::Sync(get_deposits),
+            15,
+            Some(Type::Map(Box::new(hash_type.clone()), Box::new(Type::U64)))
+        );
 
         // Retrieve the balance for the given asset
         env.register_native_function(
@@ -2208,6 +2217,20 @@ fn get_deposit_for_asset(_: FnInstance, params: FnParams, metadata: &ModuleMetad
     };
 
     Ok(SysCallResult::Return(value.into()))
+}
+
+fn get_deposits(_: FnInstance, _: FnParams, metadata: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {
+    let mut map = IndexMap::new();
+
+    for (asset, deposit) in metadata.metadata.deposits.iter() {
+        if let ContractDeposit::Public(amount) = deposit {
+            let key = Primitive::Opaque(asset.clone().into()).into();
+            let value = Primitive::U64(*amount).into();
+            map.insert(key, value);
+        }
+    }
+
+    Ok(SysCallResult::Return(ValueCell::Map(Box::new(map)).into()))
 }
 
 async fn get_balance_for_asset<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut Context<'ty, 'r>) -> FnReturnType<ContractMetadata> {
