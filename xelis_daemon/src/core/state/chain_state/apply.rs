@@ -23,6 +23,7 @@ use xelis_common::{
         ContractVersion,
         InterContractPermission,
         ScheduledExecution,
+        ScheduledExecutionKind,
         vm::{self, ContractCaller, InvokeContract}
     },
     crypto::{Hash, PublicKey, elgamal::Ciphertext},
@@ -69,8 +70,7 @@ struct ContractManager<'b> {
     tracker: ContractEventTracker,
     modules: HashMap<Hash, Option<ContractModule>>,
     // Planned executions for the current block
-    executions_at_block_end: IndexSet<ScheduledExecution>,
-    executions_at_topoheight: HashMap<TopoHeight, IndexSet<ScheduledExecution>>,
+    scheduled_executions: IndexMap<Hash, ScheduledExecution>,
 }
 
 // Chain State that can be applied to the mutable storage
@@ -319,8 +319,8 @@ impl<'a> FinalizedChainState<'a> {
 
         // Apply all scheduled executions at their topoheight
         debug!("applying scheduled executions at topoheights");
-        for (execution_topoheight, executions) in self.contract_manager.executions_at_topoheight {
-            for execution in executions {
+        for (_, execution) in self.contract_manager.scheduled_executions {
+            if let ScheduledExecutionKind::TopoHeight(execution_topoheight) = execution.kind {
                 trace!("storing scheduled execution of contract {} with caller {} at topoheight {}", execution.contract, execution.hash, self.topoheight);
                 storage.set_contract_scheduled_execution_at_topoheight(&execution.contract, self.topoheight, &execution, execution_topoheight).await?;
             }
@@ -632,8 +632,7 @@ impl<'s, 'b, S: Storage> BlockchainContractState<'b, S, BlockchainError> for App
             // But the ordering is important, so IndexMap is used
             injected_gas: IndexMap::new(),
             // Scheduled executions for any topoheight
-            executions_topoheight: self.contract_manager.executions_at_topoheight.clone(),
-            executions_block_end: self.contract_manager.executions_at_block_end.clone(),
+            scheduled_executions: self.contract_manager.scheduled_executions.clone(),
             allow_executions: true,
             permission,
         };
@@ -690,8 +689,7 @@ impl<'s, 'b, S: Storage> BlockchainContractState<'b, S, BlockchainError> for App
         caches: HashMap<Hash, ContractCache>,
         tracker: ContractEventTracker,
         assets: HashMap<Hash, Option<AssetChanges>>,
-        executions_block_end: IndexSet<ScheduledExecution>,
-        executions_topoheight: HashMap<TopoHeight, IndexSet<ScheduledExecution>>,
+        scheduled_executions: IndexMap<Hash, ScheduledExecution>,
     ) -> Result<(), BlockchainError> {
         for (contract, mut cache) in caches {
             cache.clean_up();
@@ -709,8 +707,7 @@ impl<'s, 'b, S: Storage> BlockchainContractState<'b, S, BlockchainError> for App
 
         self.contract_manager.tracker = tracker;
         self.contract_manager.assets = assets;
-        self.contract_manager.executions_at_block_end = executions_block_end;
-        self.contract_manager.executions_at_topoheight = executions_topoheight;
+        self.contract_manager.scheduled_executions = scheduled_executions;
 
         Ok(())
     }
@@ -777,8 +774,7 @@ impl<'s, 'b, S: Storage> ApplicableChainState<'s, 'b, S> {
                 assets: HashMap::new(),
                 modules: HashMap::new(),
                 tracker: ContractEventTracker::default(),
-                executions_at_block_end: IndexSet::new(),
-                executions_at_topoheight: HashMap::new(),
+                scheduled_executions: IndexMap::new(),
             },
             block_hash,
             block,
@@ -906,7 +902,23 @@ impl<'s, 'b, S: Storage> ApplicableChainState<'s, 'b, S> {
     pub async fn process_executions_at_block_end(&mut self) -> Result<(), BlockchainError> {
         trace!("process executions at block end");
 
-        let executions = std::mem::take(&mut self.contract_manager.executions_at_block_end);
+        let mut scheduled_executions = IndexMap::new();
+        let mut executions = Vec::new();
+
+        // Collect all scheduled executions for block end
+        for (hash, execution) in self.contract_manager.scheduled_executions.drain(..) {
+            match execution.kind {
+                ScheduledExecutionKind::BlockEnd => {
+                    executions.push(execution);
+                },
+                _ => {
+                    scheduled_executions.insert(hash, execution);
+                }
+            }
+        }
+
+        self.contract_manager.scheduled_executions = scheduled_executions;
+
         self.process_executions(executions.into_iter()).await
     }
 
