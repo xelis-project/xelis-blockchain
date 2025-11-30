@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use xelis_vm::{traits::{JSONHelper, Serializable}, ValueCell};
 use crate::{block::TopoHeight, serializer::*};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ScheduledExecutionKind {
     TopoHeight(TopoHeight),

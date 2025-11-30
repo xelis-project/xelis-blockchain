@@ -18,7 +18,7 @@ use std::{
 use anyhow::Context as AnyhowContext;
 use better_any::Tid;
 use curve25519_dalek::Scalar;
-use indexmap::{IndexMap, IndexSet};
+use indexmap::IndexMap;
 use log::{debug, info};
 use xelis_builder::EnvironmentBuilder;
 use xelis_vm::{
@@ -126,15 +126,9 @@ pub struct ChainState<'a> {
     // it is kept in insertion order to rollback funds to contract
     // in case they were not fully used
     pub injected_gas: IndexMap<Hash, u64>,
-    // Scheduled executions planned for another topoheight
-    // Those executions will be executed before ANY transaction
-    // We can safely use a HashMap because the order of storing is not
-    // important
-    // Each contract can have one scheduled execution at most
-    pub executions_topoheight: HashMap<TopoHeight, IndexSet<ScheduledExecution>>,
-    // Each executions planned at the end of this block per contract
-    // Each contract can have one scheduled execution at most
-    pub executions_block_end: IndexSet<ScheduledExecution>,
+    // Scheduled executions planned during the execution
+    // it can be TopoHeight or BlockEnd
+    pub scheduled_executions: IndexMap<Hash, ScheduledExecution>,
     // In case we are in a scheduled execution already, prevent from
     // recursive scheduling
     pub allow_executions: bool,
@@ -1681,6 +1675,38 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, C
             FunctionHandler::Sync(scheduled_execution_get_topoheight),
             5,
             Some(Type::Optional(Box::new(Type::U64)))
+        );
+
+        // Get the max gas allowed for this scheduled execution
+        env.register_native_function(
+            "get_max_gas",
+            Some(scheduled_execution_type.clone()),
+            vec![],
+            FunctionHandler::Sync(scheduled_execution_get_max_gas),
+            5,
+            Some(Type::U64)
+        );
+
+        // Get a currently pending scheduled execution registered in current block
+        // If none found, returns None
+        env.register_static_function(
+            "get_pending",
+            scheduled_execution_type.clone(),
+            vec![("topoheight", Type::Optional(Box::new(Type::U64)))],
+            FunctionHandler::Sync(scheduled_execution_get_pending),
+            1500,
+            Some(Type::Optional(Box::new(scheduled_execution_type.clone())))
+        );
+
+        // Increase max gas allowed for this scheduled execution
+        // It can only work if a scheduled execution created/pending in current block
+        env.register_native_function(
+            "increase_max_gas",
+            Some(scheduled_execution_type.clone()),
+            vec![("amount", Type::U64)],
+            FunctionHandler::Async(async_handler!(scheduled_execution_increase_max_gas::<P>)),
+            250,
+            Some(Type::Bool)
         );
     }
 

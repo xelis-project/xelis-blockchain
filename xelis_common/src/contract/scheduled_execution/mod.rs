@@ -2,18 +2,19 @@ mod kind;
 
 use std::hash;
 
-use indexmap::IndexSet;
+use anyhow::Context as _;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use xelis_vm::{
-    traits::{JSONHelper, Serializable},
     Context,
+    EnvironmentError,
     FnInstance,
     FnParams,
     FnReturnType,
     Primitive,
     SysCallResult,
-    ValueCell
+    ValueCell,
+    traits::{JSONHelper, Serializable}
 };
 use crate::{
     config::{
@@ -32,6 +33,7 @@ use crate::{
         ContractProvider,
         ContractMetadata,
         ModuleMetadata,
+        ChainState,
         MAX_VALUE_SIZE
     },
     crypto::{
@@ -61,6 +63,8 @@ pub struct ScheduledExecution {
     // the remaining gas will be paid back to
     // the contract balance
     pub max_gas: u64,
+    // Kind of scheduled execution
+    pub kind: ScheduledExecutionKind,
 }
 
 impl hash::Hash for ScheduledExecution {
@@ -85,6 +89,7 @@ impl Serializer for ScheduledExecution {
             chunk_id: u16::read(reader)?,
             params: Vec::read(reader)?,
             max_gas: u64::read(reader)?,
+            kind: ScheduledExecutionKind::read(reader)?,
         })
     }
 
@@ -94,6 +99,7 @@ impl Serializer for ScheduledExecution {
         self.chunk_id.write(writer);
         self.params.write(writer);
         self.max_gas.write(writer);
+        self.kind.write(writer);
     }
 
     fn size(&self) -> usize {
@@ -101,7 +107,8 @@ impl Serializer for ScheduledExecution {
         self.contract.size() +
         self.chunk_id.size() +
         self.params.size() +
-        self.max_gas.size()
+        self.max_gas.size() +
+        self.kind.size()
     }
 }
 
@@ -201,23 +208,16 @@ async fn schedule_execution<'a, 'ty, 'r, P: ContractProvider>(
         chunk_id,
         max_gas,
         params: params.clone(),
+        kind,
     };
 
     // register it
-    let inserted = match kind {
-        ScheduledExecutionKind::TopoHeight(topoheight) => {
-            state
-                .executions_topoheight
-                .entry(topoheight)
-                .or_insert_with(IndexSet::new)
-                .insert(execution)
-        }
-        ScheduledExecutionKind::BlockEnd => state.executions_block_end.insert(execution),
-    };
 
-    if !inserted {
+    if !state.scheduled_executions.contains_key(&hash) {
         return Ok(SysCallResult::Return(Primitive::Boolean(false).into()));
     }
+
+    state.scheduled_executions.insert(hash.clone(), execution);
 
     // Once passed here, we are safe and can apply changes
     // record the burn part
@@ -282,4 +282,107 @@ pub fn scheduled_execution_get_topoheight(instance: FnInstance<'_>, _: FnParams,
         ScheduledExecutionKind::TopoHeight(topoheight) => Ok(SysCallResult::Return(Primitive::U64(topoheight).into())),
         ScheduledExecutionKind::BlockEnd => Ok(SysCallResult::Return(Primitive::Null.into())),
     }
+}
+
+pub fn scheduled_execution_get_max_gas<'a, 'ty, 'r>(
+    instance: FnInstance<'a>,
+    _: FnParams,
+    _: &ModuleMetadata<'_>,
+    context: &mut Context<'ty, 'r>,
+) -> FnReturnType<ContractMetadata> {
+    let state: &ChainState = context.get().context("chain state not found")?;
+
+    let instance = instance?;
+    let scheduled_execution: &OpaqueScheduledExecution = instance
+        .as_ref()
+        .as_opaque_type()?;
+
+    let execution = state.scheduled_executions.get(&scheduled_execution.hash)
+        .ok_or(EnvironmentError::Static("scheduled execution not found in cache"))?;
+
+    Ok(SysCallResult::Return(Primitive::U64(execution.max_gas).into()))
+}
+
+pub fn scheduled_execution_get_pending<'a, 'ty, 'r>(
+    _: FnInstance<'a>,
+    params: FnParams,
+    metadata: &ModuleMetadata<'_>,
+    context: &mut Context<'ty, 'r>,
+) -> FnReturnType<ContractMetadata> {
+    let state: &ChainState = context.get().context("chain state not found")?;
+
+    let param = &params[0];
+    let kind = if !param.is_null() {
+        ScheduledExecutionKind::TopoHeight(param.as_u64()?)
+    } else {
+        ScheduledExecutionKind::BlockEnd
+    };
+
+    let hash = hash_multiple(&[
+        metadata.metadata.contract_executor.as_bytes(),
+        &kind.to_bytes(),
+    ]);
+
+    if state.scheduled_executions.contains_key(&hash) {
+        Ok(SysCallResult::Return(OpaqueScheduledExecution {
+            hash: hash,
+            kind,
+        }.into()))
+    } else {
+        Ok(SysCallResult::Return(Primitive::Null.into()))
+    }
+}
+
+pub async fn scheduled_execution_increase_max_gas<'a, 'ty, 'r, P: ContractProvider>(
+    instance: FnInstance<'a>,
+    params: FnParams,
+    metadata: &ModuleMetadata<'_>,
+    context: &mut Context<'ty, 'r>,
+) -> FnReturnType<ContractMetadata> {
+    let amount = params[0].as_u64()?;
+
+    let (provider, state) = from_context::<P>(context)?;
+
+    if !state.allow_executions {
+        return Ok(SysCallResult::Return(Primitive::Boolean(false).into()));
+    }
+
+    let instance = instance?;
+    let scheduled_execution: &OpaqueScheduledExecution = instance
+        .as_ref()
+        .as_opaque_type()?;
+
+    let total_cost = amount;
+
+    // check that we have enough to pay the reserved gas
+    if get_balance_from_cache(provider, state, metadata.metadata.contract_executor.clone(), XELIS_ASSET)
+        .await?
+        .is_none_or(|(_, balance)| balance < total_cost)
+    {
+        return Ok(SysCallResult::Return(Primitive::Boolean(false).into()));
+    }
+
+    // Check that the scheduled execution exists and belongs to this contract
+    let execution = state.scheduled_executions.get(&scheduled_execution.hash)
+        .ok_or(EnvironmentError::Static("scheduled execution not found in cache"))?;
+
+    if execution.contract != metadata.metadata.contract_executor {
+        return Ok(SysCallResult::Return(Primitive::Boolean(false).into()));
+    }
+
+    // Once passed here, we are safe and can apply changes
+    let (versioned_state, balance) =
+        get_mut_balance_for_contract(provider, state, metadata.metadata.contract_executor.clone(), XELIS_ASSET)
+            .await?;
+
+    versioned_state.mark_updated();
+    *balance -= total_cost;
+
+    let execution = state.scheduled_executions.get_mut(&scheduled_execution.hash)
+        .ok_or(EnvironmentError::Static("scheduled execution not found in cache"))?;
+
+    execution.max_gas += execution.max_gas.checked_add(amount)
+        .ok_or(EnvironmentError::Static("scheduled execution max gas overflow"))?;
+
+    Ok(SysCallResult::Return(Primitive::Boolean(true).into()))
 }

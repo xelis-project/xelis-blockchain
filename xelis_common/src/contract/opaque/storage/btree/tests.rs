@@ -14,17 +14,14 @@ use rand::{
 use std::{
     borrow::Cow,
     collections::HashMap,
-    sync::Arc,
 };
 
 use crate::{
     block::{Block, BlockHeader, BlockVersion, TopoHeight, EXTRA_NONCE_SIZE},
     contract::{
-        cache::{AssetChanges, ContractCache},
-        contract_log::ContractLog,
+        cache::AssetChanges,
         module::ContractModule,
         permission::InterContractPermission,
-        scheduled_execution::ScheduledExecution,
         vm::ContractCaller,
         ContractEventTracker,
         ContractStorage,
@@ -32,8 +29,7 @@ use crate::{
     crypto::{
         Hash,
         elgamal::CompressedPublicKey,
-    },
-    transaction::Transaction,
+    }
 };
 
 #[derive(Default)]
@@ -102,8 +98,8 @@ fn test_chain_state(contract: Hash) -> ChainState<'static> {
         CompressedPublicKey::new(CompressedRistretto::identity()),
         IndexSet::new(),
     );
-    let block = Box::leak(Box::new(Block::new(header, Vec::<Arc<Transaction>>::new())));
-    let global_caches = Box::leak(Box::new(HashMap::<Hash, ContractCache>::new()));
+    let block = Box::leak(Box::new(Block::new(header, Vec::new())));
+    let global_caches = Box::leak(Box::new(HashMap::new()));
 
     ChainState {
         debug_mode: false,
@@ -113,15 +109,14 @@ fn test_chain_state(contract: Hash) -> ChainState<'static> {
         block_hash,
         block,
         caller: ContractCaller::Scheduled(Cow::Owned(Hash::zero()), Cow::Owned(contract.clone())),
-        caches: HashMap::<Hash, ContractCache>::new(),
-        modules: HashMap::<Hash, Option<ContractModule>>::new(),
-        outputs: Vec::<ContractLog>::new(),
+        caches: HashMap::new(),
+        modules: HashMap::new(),
+        outputs: Vec::new(),
         tracker: ContractEventTracker::default(),
         global_caches,
         assets: HashMap::<Hash, Option<AssetChanges>>::new(),
         injected_gas: IndexMap::new(),
-        executions_topoheight: HashMap::<TopoHeight, IndexSet<ScheduledExecution>>::new(),
-        executions_block_end: IndexSet::<ScheduledExecution>::new(),
+        scheduled_executions: IndexMap::new(),
         allow_executions: true,
         permission: Cow::Owned(InterContractPermission::default()),
     }
