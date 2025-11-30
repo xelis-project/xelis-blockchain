@@ -196,7 +196,7 @@ pub const PEER_PACKET_CHANNEL_SIZE: usize = 1024;
 pub const PEER_SEND_BYTES_TIMEOUT: u64 = 3_000;
 
 // Hard Forks configured
-const HARD_FORKS: [HardFork; 3] = [
+const HARD_FORKS: [HardFork; 4] = [
     HardFork {
         height: 0,
         version: BlockVersion::V0,
@@ -216,6 +216,13 @@ const HARD_FORKS: [HardFork; 3] = [
         version: BlockVersion::V2,
         changelog: "MultiSig, P2P",
         version_requirement: Some(">=1.16.0")
+    },
+    HardFork {
+        // Expected date: 13/12/2025 5pm UTC
+        height: 3_282_150,
+        version: BlockVersion::V3,
+        changelog: "Smart Contracts",
+        version_requirement: Some(">=1.19.0")
     }
 ];
 
@@ -243,7 +250,7 @@ const OTHERS_NETWORK_HARD_FORKS: [HardFork; 4] = [
         height: 15,
         version: BlockVersion::V3,
         changelog: "Smart Contracts",
-        version_requirement: Some(">=1.16.0")
+        version_requirement: Some(">=1.19.0")
     }
 ];
 
