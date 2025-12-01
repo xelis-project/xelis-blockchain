@@ -1,5 +1,5 @@
-mod v1;
-mod v2;
+pub mod v1;
+pub mod v2;
 
 use std::{
     cmp::Ordering,
@@ -65,10 +65,11 @@ where
 // Sort the TIPS by cumulative difficulty
 // If the cumulative difficulty is the same, the hash value is used to sort
 // Hashes are sorted in descending order
-pub async fn sort_tips<S, I>(storage: &S, tips: I) -> Result<impl Iterator<Item = Hash> + ExactSizeIterator, BlockchainError>
+pub async fn sort_tips<'a, S, I, H>(storage: &S, tips: I) -> Result<impl Iterator<Item = H> + ExactSizeIterator, BlockchainError>
 where
     S: Storage,
-    I: Iterator<Item = Hash> + ExactSizeIterator,
+    I: Iterator<Item = H> + ExactSizeIterator,
+    H: AsRef<Hash>,
 {
     trace!("sort tips");
     let tips_len = tips.len();
@@ -76,9 +77,9 @@ where
         0 => Err(BlockchainError::ExpectedTips),
         1 => Ok(Either::Left(tips)),
         _ => {
-            let mut scores: Vec<(Hash, CumulativeDifficulty)> = Vec::with_capacity(tips_len);
+            let mut scores: Vec<(H, CumulativeDifficulty)> = Vec::with_capacity(tips_len);
             for hash in tips {
-                let cumulative_difficulty = storage.get_cumulative_difficulty_for_block_hash(&hash).await?;
+                let cumulative_difficulty = storage.get_cumulative_difficulty_for_block_hash(hash.as_ref()).await?;
                 scores.push((hash, cumulative_difficulty));
             }
 
@@ -89,16 +90,17 @@ where
 }
 
 // determine he lowest height possible based on tips and do N+1
-pub async fn calculate_height_at_tips<'a, D, I>(provider: &D, tips: I) -> Result<u64, BlockchainError>
+pub async fn calculate_height_at_tips<D, I, H>(provider: &D, tips: I) -> Result<u64, BlockchainError>
 where
     D: DifficultyProvider,
-    I: Iterator<Item = &'a Hash> + ExactSizeIterator
+    I: Iterator<Item = H> + ExactSizeIterator,
+    H: AsRef<Hash>,
 {
     trace!("calculate height at tips");
     let mut height = 0;
     let tips_len = tips.len();
     for hash in tips {
-        let past_height = provider.get_height_for_block_hash(hash).await?;
+        let past_height = provider.get_height_for_block_hash(hash.as_ref()).await?;
         if height <= past_height {
             height = past_height;
         }
@@ -120,7 +122,7 @@ where
     let tips_len = tips.len();
     match tips_len {
         0 => Err(BlockchainError::ExpectedTips),
-        1 => Ok(tips.into_iter().next().unwrap()),
+        1 => Ok(tips.into_iter().next().expect("Tip exists")),
         _ => {
             let mut highest_cumulative_difficulty = CumulativeDifficulty::zero();
             let mut selected_tip = None;

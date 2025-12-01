@@ -1966,8 +1966,8 @@ impl<S: Storage> Blockchain<S> {
 
         // Compute cumulative difficulty for block
         // We retrieve it to pass it as a param below for p2p broadcast
-        let cumulative_difficulty: CumulativeDifficulty = if tips_count == 0 {
-            GENESIS_BLOCK_DIFFICULTY.into()
+        let cumulative_difficulty = if tips_count == 0 {
+            GENESIS_BLOCK_DIFFICULTY
         } else {
             debug!("Computing cumulative difficulty for block {}", block_hash);
             let (base, base_height) = blockdag::find_common_base(&*storage, block.get_tips()).await?;
