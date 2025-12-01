@@ -9,6 +9,9 @@ mod permission;
 mod module;
 mod source;
 
+#[cfg(test)]
+pub mod tests;
+
 pub mod vm;
 
 use std::{
