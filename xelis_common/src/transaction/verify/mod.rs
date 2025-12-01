@@ -1231,6 +1231,7 @@ impl Transaction {
                         Cow::Borrowed(&payload.contract),
                         Some((&payload.deposits, &decompressed_deposits)),
                         payload.parameters.iter().cloned(),
+                        Default::default(),
                         payload.max_gas,
                         InvokeContract::Entry(payload.entry_id),
                         Cow::Borrowed(&payload.permission)
@@ -1254,6 +1255,7 @@ impl Transaction {
                         Cow::Borrowed(tx_hash),
                         Some((&invoke.deposits, &decompressed_deposits)),
                         iter::empty(),
+                        Default::default(),
                         invoke.max_gas,
                         InvokeContract::Hook(HOOK_CONSTRUCTOR_ID),
                         Cow::Owned(InterContractPermission::All),

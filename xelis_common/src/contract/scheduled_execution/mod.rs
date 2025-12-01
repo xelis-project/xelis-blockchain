@@ -3,6 +3,7 @@ mod kind;
 use std::hash;
 
 use anyhow::Context as _;
+use indexmap::IndexMap;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use xelis_vm::{
@@ -34,6 +35,8 @@ use crate::{
         ContractMetadata,
         ModuleMetadata,
         ChainState,
+        Source,
+        ContractCaller,
         MAX_VALUE_SIZE
     },
     crypto::{
@@ -65,6 +68,8 @@ pub struct ScheduledExecution {
     pub max_gas: u64,
     // Kind of scheduled execution
     pub kind: ScheduledExecutionKind,
+    // Gas sources done for this scheduled execution
+    pub gas_sources: IndexMap<Source, u64>,
 }
 
 impl hash::Hash for ScheduledExecution {
@@ -90,6 +95,7 @@ impl Serializer for ScheduledExecution {
             params: Vec::read(reader)?,
             max_gas: u64::read(reader)?,
             kind: ScheduledExecutionKind::read(reader)?,
+            gas_sources: IndexMap::read(reader)?,
         })
     }
 
@@ -100,6 +106,7 @@ impl Serializer for ScheduledExecution {
         self.params.write(writer);
         self.max_gas.write(writer);
         self.kind.write(writer);
+        self.gas_sources.write(writer);
     }
 
     fn size(&self) -> usize {
@@ -108,7 +115,8 @@ impl Serializer for ScheduledExecution {
         self.chunk_id.size() +
         self.params.size() +
         self.max_gas.size() +
-        self.kind.size()
+        self.kind.size() +
+        self.gas_sources.size()
     }
 }
 
@@ -209,6 +217,7 @@ async fn schedule_execution<'a, 'ty, 'r, P: ContractProvider>(
         max_gas,
         params: params.clone(),
         kind,
+        gas_sources: [(Source::Contract(metadata.metadata.contract_executor.clone()), max_gas)].into(),
     };
 
     // register it
@@ -340,6 +349,16 @@ pub async fn scheduled_execution_increase_max_gas<'a, 'ty, 'r, P: ContractProvid
     context: &mut Context<'ty, 'r>,
 ) -> FnReturnType<ContractMetadata> {
     let amount = params[0].as_u64()?;
+    let use_contract_balance = params[1].as_bool()?;
+
+    let instance = instance?;
+    let scheduled_execution: &OpaqueScheduledExecution = instance
+        .as_ref()
+        .as_opaque_type()?;
+
+    if amount == 0 {
+        return Ok(SysCallResult::Return(Primitive::Boolean(false).into()));
+    }
 
     let (provider, state) = from_context::<P>(context)?;
 
@@ -347,42 +366,68 @@ pub async fn scheduled_execution_increase_max_gas<'a, 'ty, 'r, P: ContractProvid
         return Ok(SysCallResult::Return(Primitive::Boolean(false).into()));
     }
 
-    let instance = instance?;
-    let scheduled_execution: &OpaqueScheduledExecution = instance
-        .as_ref()
-        .as_opaque_type()?;
+    // Pay from the contract balance
+    let source = if use_contract_balance {
+        // check that we have enough to pay the reserved gas
+        if get_balance_from_cache(provider, state, metadata.metadata.contract_executor.clone(), XELIS_ASSET)
+            .await?
+            .is_none_or(|(_, balance)| balance < amount)
+        {
+            return Ok(SysCallResult::Return(Primitive::Boolean(false).into()));
+        }
+    
+        // Check that the scheduled execution exists and belongs to this contract
+        let execution = state.scheduled_executions.get(&scheduled_execution.hash)
+            .ok_or(EnvironmentError::Static("scheduled execution not found in cache"))?;
 
-    let total_cost = amount;
+        if execution.contract != metadata.metadata.contract_executor {
+            return Ok(SysCallResult::Return(Primitive::Boolean(false).into()));
+        }
 
-    // check that we have enough to pay the reserved gas
-    if get_balance_from_cache(provider, state, metadata.metadata.contract_executor.clone(), XELIS_ASSET)
-        .await?
-        .is_none_or(|(_, balance)| balance < total_cost)
-    {
-        return Ok(SysCallResult::Return(Primitive::Boolean(false).into()));
-    }
+        // Once passed here, we are safe and can apply changes
+        let (versioned_state, balance) =
+            get_mut_balance_for_contract(provider, state, metadata.metadata.contract_executor.clone(), XELIS_ASSET)
+                .await?;
+    
+        versioned_state.mark_updated();
+        *balance -= amount;
 
-    // Check that the scheduled execution exists and belongs to this contract
-    let execution = state.scheduled_executions.get(&scheduled_execution.hash)
-        .ok_or(EnvironmentError::Static("scheduled execution not found in cache"))?;
+        Source::Contract(metadata.metadata.contract_executor.clone())
+    } else {
+        let source = match state.caller {
+            ContractCaller::Transaction(_, tx) => {
+                Source::Account(tx.get_source().clone())
+            },
+            ContractCaller::Scheduled(_, _) => {
+                return Err(EnvironmentError::Static("cannot pay from caller scheduled execution")).into();
+            }
+        };
 
-    if execution.contract != metadata.metadata.contract_executor {
-        return Ok(SysCallResult::Return(Primitive::Boolean(false).into()));
-    }
+        // Pay from the gas allowance
+        context.increase_gas_usage(amount)?;
 
-    // Once passed here, we are safe and can apply changes
-    let (versioned_state, balance) =
-        get_mut_balance_for_contract(provider, state, metadata.metadata.contract_executor.clone(), XELIS_ASSET)
-            .await?;
+        source
+    };
 
-    versioned_state.mark_updated();
-    *balance -= total_cost;
+    let (_, state) = from_context::<P>(context)?;
 
     let execution = state.scheduled_executions.get_mut(&scheduled_execution.hash)
         .ok_or(EnvironmentError::Static("scheduled execution not found in cache"))?;
 
+    // Total max gas allocated to this execution
     execution.max_gas += execution.max_gas.checked_add(amount)
-        .ok_or(EnvironmentError::Static("scheduled execution max gas overflow"))?;
+        .ok_or(EnvironmentError::GasOverflow)?;
+
+    if execution.gas_sources.len() >= u16::MAX as usize && !execution.gas_sources.contains_key(&source) {
+        return Err(EnvironmentError::Static("too many gas injection sources")).into();
+    }
+
+    // Individual gas injected from this source
+    // This is used for a better tracking of gas usage per source
+    // for refunds and accounting
+    let injected_gas = execution.gas_sources.entry(source).or_insert(0);
+    *injected_gas = injected_gas.checked_add(amount)
+        .ok_or(EnvironmentError::GasOverflow)?;
 
     Ok(SysCallResult::Return(Primitive::Boolean(true).into()))
 }

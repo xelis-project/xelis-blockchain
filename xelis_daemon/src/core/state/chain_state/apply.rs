@@ -887,6 +887,7 @@ impl<'s, 'b, S: Storage> ApplicableChainState<'s, 'b, S> {
                 Cow::Owned(execution.contract.clone()),
                 None,
                 execution.params.into_iter(),
+                execution.gas_sources,
                 execution.max_gas,
                 InvokeContract::Chunk(execution.chunk_id, false),
                 Cow::Owned(InterContractPermission::All),

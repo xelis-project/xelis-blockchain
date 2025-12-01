@@ -13,12 +13,14 @@ use xelis_vm::{ModuleMetadata, Reference, VM, VMError, ValueCell};
 use crate::{
     config::{TX_GAS_BURN_PERCENT, XELIS_ASSET},
     contract::{
+        Source,
         ChainState,
         ContractLog,
         ContractProvider,
         ContractProviderWrapper,
         InterContractPermission,
-        ContractMetadata
+        ContractMetadata,
+        ContractCache
     },
     crypto::{
         elgamal::{Ciphertext, CompressedPublicKey},
@@ -189,6 +191,7 @@ pub async fn invoke_contract<'a, P: ContractProvider, E, B: BlockchainApplyState
     // TODO: rework it
     deposits: Option<(&'a IndexMap<Hash, ContractDeposit>, &HashMap<&Hash, DecompressedDepositCt>)>,
     parameters: impl DoubleEndedIterator<Item = ValueCell>,
+    gas_sources: IndexMap<Source, u64>,
     max_gas: u64,
     invoke: InvokeContract,
     permission: Cow<'a, InterContractPermission>,
@@ -212,62 +215,22 @@ pub async fn invoke_contract<'a, P: ContractProvider, E, B: BlockchainApplyState
     let is_success = exit_code == Some(0);
     // If the contract execution was successful, we need to merge the cache
     let mut outputs = chain_state.outputs;
+
     let gas_injections = chain_state.injected_gas;
     let modules = chain_state.modules;
 
     if is_success {
         let mut caches = chain_state.caches;
 
-        // Some contract have injected gas to users
-        if vm_max_gas > max_gas && !gas_injections.is_empty() {
-            let mut gas_refund_left = if used_gas > max_gas {
-                // Refund based on whats left unused
-                vm_max_gas.checked_sub(used_gas)
-            } else {
-                // Refund the whole extra gas given by contracts
-                vm_max_gas.checked_sub(max_gas)
-            }.ok_or(ContractError::GasOverflow)?;
-
-            // Reverse the iterator so the latest entry is the first to be refund
-            for (contract, gas) in gas_injections.into_iter().rev() {
-                // the gas provided by the contract
-                // is lower or equal to whats left to refund
-                let cache = caches.get_mut(&contract)
-                    .ok_or(ContractError::ContractCache)?;
-
-                let (state, balance) = cache.balances.get_mut(&XELIS_ASSET)
-                    .ok_or(ContractError::GasBalance)?
-                    .as_mut()
-                    .ok_or(ContractError::GasBalance)?;
-
-                if gas_refund_left > 0 {
-                    // Refund the smaller of what was injected or what's left
-                    let refund = gas.min(gas_refund_left);
-                    debug!("Refund {} XEL to contract {} for gas fee", refund, contract);
-                    *balance += refund;
-                    state.mark_updated();
-
-                    let consumed = gas - refund;
-
-                    debug!("Contract {} injected {}, refunded {}, consumed {}", contract, gas, refund, consumed);
-
-                    // if we have consumed any, track it
-                    if consumed > 0 {
-                        outputs.push(ContractLog::GasInjection { contract, amount: consumed });
-                    }
-
-                    gas_refund_left -= refund;
-                } else {
-                    // Nothing left to refund, so this contract's full injection was consumed
-                    debug!("Contract {} fully consumed {} gas", contract, gas);
-                    outputs.push(ContractLog::GasInjection { contract, amount: gas });
-                }
-            }
-        }
-
         let tracker = chain_state.tracker;
         let assets = chain_state.assets;
         let executions = chain_state.scheduled_executions;
+
+        // Some contract have injected gas to users
+        if vm_max_gas > max_gas && !gas_injections.is_empty() {
+            // Refund only based on the extra max gas
+            refund_extra_gas_injections(state, gas_injections, max_gas, vm_max_gas, &mut outputs, &mut caches).await?;
+        }
 
         state.merge_contract_changes(
             caches,
@@ -276,38 +239,24 @@ pub async fn invoke_contract<'a, P: ContractProvider, E, B: BlockchainApplyState
             executions,
         ).await
             .map_err(ContractError::State)?;
+
+        if !gas_sources.is_empty() {
+            // Refund the whole extra gas injections
+            refund_gas_sources(state, gas_sources, used_gas, max_gas).await?;
+        }
     } else {
         // Otherwise, something was wrong, we delete the outputs made by the contract
         outputs.clear();
 
+        if !gas_sources.is_empty() {
+            refund_gas_sources(state, gas_sources, used_gas, max_gas).await?;
+        }
+
         // But, if we got any gas injection, fully consume it despite the error returned
         // otherwise it allows free invoke attacks
         if used_gas > max_gas && !gas_injections.is_empty() {
-            let mut extra_gas = max_gas - used_gas;
-            for (contract, gas) in gas_injections.into_iter() {
-                // Retrieve the balance before execution
-                // we will apply the gas fee on it
-                let (versioned_state, balance) = state.get_contract_balance_for_gas(&contract).await
-                    .map_err(ContractError::State)?;
-
-                versioned_state.mark_updated();
-
-                // Consume as much as possible from this contract’s injection
-                let consumed = gas.min(extra_gas);
-
-                *balance = balance
-                    .checked_sub(consumed)
-                    .ok_or(ContractError::GasOverflow)?;
-
-                outputs.push(ContractLog::GasInjection { contract, amount: consumed });
-
-                // Decrease what’s left to cover
-                extra_gas -= consumed;
-
-                if extra_gas == 0 {
-                    break;
-                }
-            }
+            // We consume only what was used above the original max gas
+            process_gas_injections(state, gas_injections, used_gas, vm_max_gas, &mut outputs).await?;
         }
 
         // decompressed deposits may be empty because we only have plaintext deposits
@@ -348,6 +297,185 @@ pub async fn invoke_contract<'a, P: ContractProvider, E, B: BlockchainApplyState
     Ok(is_success)
 }
 
+// We need to refund the extra (unused) gas
+// this is the tx max gas - used gas
+// We want to refund proportionally to the injections made
+pub async fn refund_gas_sources<'a, P: ContractProvider, E, B: BlockchainApplyState<'a, P, E>>(
+    state: &mut B,
+    gas_sources: IndexMap<Source, u64>,
+    used_gas: u64,
+    tx_max_gas: u64,
+) -> Result<(), ContractError<E>> {
+    let mut gas_refund_left = tx_max_gas.checked_sub(used_gas)
+        .ok_or(ContractError::GasOverflow)?;
+
+    // Refund proportionally to the injections made
+    // examples:
+    // available: 1000
+    // injected 1: 200
+    // injected 2: 200
+    // used: 1200
+    // refund 1: 100
+    // refund 2: 100
+    let total_injected: u64 = gas_sources.values().sum();
+    for (source, gas) in gas_sources.into_iter() {
+        if gas_refund_left == 0 {
+            break;
+        }
+
+        // Calculate the proportion of the injection without float
+        let proportion = (gas as u128 * gas_refund_left as u128) / total_injected as u128;
+        let refund = proportion as u64;
+
+        let refund_amount = refund.min(gas_refund_left);
+
+        match source {
+            Source::Contract(contract) => {
+                let (versioned_state, balance) = state.get_contract_balance_for_gas(&contract).await
+                    .map_err(ContractError::State)?;
+
+                versioned_state.mark_updated();
+
+                *balance += refund_amount;
+                debug!("Refund {} XEL to contract {} for gas fee", refund_amount, contract);
+            },
+            Source::Account(account) => {
+                debug!("Refund {} XEL to account {} for gas fee", refund_amount, account.as_address(state.is_mainnet()));
+                let balance = state.get_receiver_balance(Cow::Owned(account), Cow::Owned(XELIS_ASSET)).await
+                    .map_err(ContractError::State)?;
+
+                *balance += refund_amount;
+            }
+        }
+
+        gas_refund_left = gas_refund_left.saturating_sub(refund_amount);
+    }
+
+    Ok(())
+}
+
+// Refund extra gas injections when the max gas was increased
+// in the contract caches
+pub async fn refund_extra_gas_injections<'a, P: ContractProvider, E, B: BlockchainApplyState<'a, P, E>>(
+    state: &mut B,
+    gas_injections: IndexMap<Source, u64>,
+    max_gas: u64,
+    vm_max_gas: u64,
+    outputs: &mut Vec<ContractLog>,
+    caches: &mut HashMap<Hash, ContractCache>,
+) -> Result<(), ContractError<E>> {
+    let mut gas_refund_left = vm_max_gas.checked_sub(max_gas)
+        .ok_or(ContractError::GasOverflow)?;
+
+    // Reverse the iterator so the latest entry is the first to be refunded
+    for (source, gas) in gas_injections.into_iter().rev() {
+        // the gas provided by the contract
+        // is lower or equal to whats left to refund
+        match source {
+            Source::Contract(contract) => {
+                if gas_refund_left > 0 {
+                    let cache = caches.get_mut(&contract)
+                        .ok_or(ContractError::ContractCache)?;
+
+                    let (state, balance) = cache.balances.get_mut(&XELIS_ASSET)
+                        .ok_or(ContractError::GasBalance)?
+                        .as_mut()
+                        .ok_or(ContractError::GasBalance)?;
+
+                    // Refund the smaller of what was injected or what's left
+                    let refund = gas.min(gas_refund_left);
+                    debug!("Refund {} XEL to contract {} for gas fee", refund, contract);
+                    *balance += refund;
+                    state.mark_updated();
+
+                    let consumed = gas - refund;
+
+                    debug!("Contract {} injected {}, refunded {}, consumed {}", contract, gas, refund, consumed);
+
+                    // if we have consumed any, track it
+                    if consumed > 0 {
+                        outputs.push(ContractLog::GasInjection { contract, amount: consumed });
+                    }
+
+                    gas_refund_left -= refund;
+                } else {
+                    // Nothing left to refund, so this contract's full injection was consumed
+                    debug!("Contract {} fully consumed {} gas", contract, gas);
+                    outputs.push(ContractLog::GasInjection { contract, amount: gas });
+                }
+            },
+            Source::Account(account) => {
+                if gas_refund_left > 0 {
+                    // Refund to the user account
+                    let refund = gas.min(gas_refund_left);
+                    debug!("Refund {} XEL to account {} for gas fee", refund, account.as_address(state.is_mainnet()));
+
+                    let balance = state.get_receiver_balance(Cow::Owned(account), Cow::Owned(XELIS_ASSET)).await
+                        .map_err(ContractError::State)?;
+
+                    *balance += refund;
+                    gas_refund_left -= refund;
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+// Directly apply to the state the gas injections consumed
+pub async fn process_gas_injections<'a, P: ContractProvider, E, B: BlockchainApplyState<'a, P, E>>(
+    state: &mut B,
+    gas_injections: IndexMap<Source, u64>,
+    used_gas: u64,
+    max_gas: u64,
+    outputs: &mut Vec<ContractLog>,
+) -> Result<(), ContractError<E>> {
+    // Everything that was spend over the initial max gas
+    // we need to consume from the injections
+    let mut extra_gas = max_gas.checked_sub(used_gas)
+        .ok_or(ContractError::GasOverflow)?;
+
+    // Consume the injections in order
+    // so the first to inject is the first to be consumed
+    for (source, gas) in gas_injections.into_iter() {
+        if extra_gas == 0 {
+            break;
+        }
+
+        // Consume as much as possible from this contract’s injection
+        let consumed = gas.min(extra_gas);
+
+        // Decrease what’s left to cover
+        extra_gas -= consumed;
+
+        // Consume the used gas from the source balance
+        match source {
+            Source::Contract(contract) => {
+                debug!("Consume gas injection of {} from contract {} despite error", gas, contract);
+                    // Retrieve the balance before execution
+                    // we will apply the gas fee on it
+                    let (versioned_state, balance) = state.get_contract_balance_for_gas(&contract).await
+                        .map_err(ContractError::State)?;
+
+                    versioned_state.mark_updated();
+
+                    *balance = balance
+                        .checked_sub(consumed)
+                        .ok_or(ContractError::GasOverflow)?;
+
+                outputs.push(ContractLog::GasInjection { contract, amount: consumed });
+            },
+            Source::Account(account) => {
+                // Nothing to do, because it was taken from the gas usage directly
+                debug!("Consume gas injection of {} from account {} despite error", gas, account.as_address(state.is_mainnet()));
+            }
+        }
+    }
+
+    Ok(())
+}
+
 pub async fn handle_gas<'a, P: ContractProvider, E, B: BlockchainApplyState<'a, P, E>>(
     caller: &ContractCaller<'a>,
     state: &mut B,
@@ -378,23 +506,11 @@ pub async fn handle_gas<'a, P: ContractProvider, E, B: BlockchainApplyState<'a, 
     if refund_gas > 0 {
         // If we have some funds to refund, we add it to the sender balance
         // But to prevent any front running, we add to the sender balance by considering him as a receiver.
-        match caller {
-            ContractCaller::Transaction(_, tx) => {
-                let balance = state.get_receiver_balance(Cow::Borrowed(tx.get_source()), Cow::Owned(XELIS_ASSET)).await
-                    .map_err(ContractError::State)?;
-    
-                *balance += Scalar::from(refund_gas);
-            },
-            ContractCaller::Scheduled(_, contract) => {
-                let (versioned_state, balance) = state.get_contract_balance_for_gas(&contract).await
-                    .map_err(ContractError::State)?;
+        if let ContractCaller::Transaction(_, tx) = caller {
+            let balance = state.get_receiver_balance(Cow::Borrowed(tx.get_source()), Cow::Owned(XELIS_ASSET)).await
+                .map_err(ContractError::State)?;
 
-                versioned_state.mark_updated();
-
-                *balance = balance
-                    .checked_add(refund_gas)
-                    .ok_or(ContractError::GasOverflow)?;
-            }
+            *balance += Scalar::from(refund_gas);
         }
     }
 

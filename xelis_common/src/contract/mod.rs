@@ -7,6 +7,7 @@ mod metadata;
 mod scheduled_execution;
 mod permission;
 mod module;
+mod source;
 
 pub mod vm;
 
@@ -71,6 +72,7 @@ pub use metadata::*;
 pub use scheduled_execution::*;
 pub use permission::*;
 pub use module::*;
+pub use source::*;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TransferOutput {
@@ -81,6 +83,7 @@ pub struct TransferOutput {
     // The asset to transfer
     pub asset: Hash,
 }
+
 
 // ChainState shared across each executions
 // The ChainState must be cloned before being used.
@@ -125,7 +128,7 @@ pub struct ChainState<'a> {
     // gas being injected to the invoke gas limit by contracts
     // it is kept in insertion order to rollback funds to contract
     // in case they were not fully used
-    pub injected_gas: IndexMap<Hash, u64>,
+    pub injected_gas: IndexMap<Source, u64>,
     // Scheduled executions planned during the execution
     // it can be TopoHeight or BlockEnd
     pub scheduled_executions: IndexMap<Hash, ScheduledExecution>,
@@ -1700,12 +1703,17 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, C
 
         // Increase max gas allowed for this scheduled execution
         // It can only work if a scheduled execution created/pending in current block
+        // If use_contract_balance is set to true, it will use the contract balance to pay for the gas increase
+        // Otherwise, it will use the transaction gas allowance
         env.register_native_function(
             "increase_max_gas",
             Some(scheduled_execution_type.clone()),
-            vec![("amount", Type::U64)],
+            vec![
+                ("amount", Type::U64),
+                ("use_contract_balance", Type::Bool)
+            ],
             FunctionHandler::Async(async_handler!(scheduled_execution_increase_max_gas::<P>)),
-            250,
+            500,
             Some(Type::Bool)
         );
     }
@@ -2503,10 +2511,13 @@ async fn increase_gas_limit<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>,
     {
         // Ensure that we check against the overall amount
         let mut total_amount = 0;
-        if let Some(amount) = state.injected_gas.get(&metadata.metadata.contract_executor) {
+        if let Some(amount) = state.injected_gas.get(&Source::Contract(metadata.metadata.contract_executor.clone())) {
             total_amount += amount;
         }
 
+        // We look in the global caches as it is the fixed & valid state before this invoke
+        // This doesn't contains any of our spending, or any of our deposits
+        // so we check it against the full amount
         let balance = match state.global_caches.get(&metadata.metadata.contract_executor)
             .and_then(|cache| cache.balances.get(&XELIS_ASSET).map(Option::as_ref).flatten()) {
                 Some((_, balance)) => *balance,
@@ -2541,7 +2552,7 @@ async fn increase_gas_limit<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>,
     balance_state.mark_updated();
 
     // Track that each contract have injected N gas
-    *state.injected_gas.entry(metadata.metadata.contract_executor.clone())
+    *state.injected_gas.entry(Source::Contract(metadata.metadata.contract_executor.clone()))
         .or_insert(0) += amount;
 
     context.increase_gas_limit(amount)?;
