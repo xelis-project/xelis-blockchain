@@ -410,10 +410,7 @@ pub struct GetInfoResult {
     // Network state (mainnet, testnet, devnet)
     pub network: Network,
     // Current block version enabled
-    // Always returned by the daemon
-    // But for compatibility with previous nodes
-    // it is set to None
-    pub block_version: Option<BlockVersion>,
+    pub block_version: BlockVersion,
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
