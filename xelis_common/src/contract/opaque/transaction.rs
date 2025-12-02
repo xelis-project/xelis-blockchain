@@ -15,7 +15,8 @@ use crate::{
         vm::ContractCaller,
         ChainState,
         ContractMetadata,
-        ModuleMetadata
+        ModuleMetadata,
+        state_from_context,
     },
     crypto::Hash,
     transaction::Transaction
@@ -73,7 +74,7 @@ pub fn transaction_hash(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, _
 pub fn transaction_source(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, context: &mut Context) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
     let tx: &OpaqueTransaction = zelf.as_opaque_type()?;
-    let state: &ChainState = context.get().context("chain state not found")?;
+    let state = state_from_context(context)?;
 
     let address = tx.inner.get_source()
         .as_address(state.mainnet);

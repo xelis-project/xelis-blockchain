@@ -2,7 +2,6 @@ mod kind;
 
 use std::hash;
 
-use anyhow::Context as _;
 use indexmap::IndexMap;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -32,11 +31,11 @@ use crate::{
         record_balance_charge,
         record_burned_asset,
         record_gas_allowance,
+        state_from_context,
         ContractLog,
         ContractProvider,
         ContractMetadata,
         ModuleMetadata,
-        ChainState,
         Source,
         ContractCaller,
         MAX_VALUE_SIZE
@@ -312,7 +311,7 @@ pub fn scheduled_execution_get_max_gas<'a, 'ty, 'r>(
     _: &ModuleMetadata<'_>,
     context: &mut Context<'ty, 'r>,
 ) -> FnReturnType<ContractMetadata> {
-    let state: &ChainState = context.get().context("chain state not found")?;
+    let state = state_from_context(context)?;
 
     let instance = instance?;
     let scheduled_execution: &OpaqueScheduledExecution = instance
@@ -331,7 +330,7 @@ pub fn scheduled_execution_get_pending<'a, 'ty, 'r>(
     metadata: &ModuleMetadata<'_>,
     context: &mut Context<'ty, 'r>,
 ) -> FnReturnType<ContractMetadata> {
-    let state: &ChainState = context.get().context("chain state not found")?;
+    let state = state_from_context(context)?;
 
     let param = &params[0];
     let kind = if !param.is_null() {

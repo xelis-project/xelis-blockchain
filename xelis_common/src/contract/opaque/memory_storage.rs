@@ -1,4 +1,3 @@
-use anyhow::Context as AnyhowContext;
 use xelis_vm::{
     traits::{JSONHelper, Serializable},
     Context,
@@ -12,10 +11,10 @@ use xelis_vm::{
 use crate::{
     config::FEE_PER_BYTE_IN_CONTRACT_MEMORY,
     contract::{
-        ChainState,
         ContractMetadata,
         ContractProvider,
         ModuleMetadata,
+        state_from_context,
         check_storage_entry_size,
         get_cache_for_contract,
         get_optional_cache_for_contract
@@ -54,8 +53,7 @@ pub fn memory_storage_load<P: ContractProvider>(instance: FnInstance, mut params
     let instance = instance?;
     let storage: &OpaqueMemoryStorage = instance.as_opaque_type()?;
 
-    let state: &mut ChainState = context.get_mut()
-        .context("No chain state for memory storage")?;
+    let state = state_from_context(context)?;
 
     let key = params.remove(0)
         .into_owned();
@@ -75,8 +73,7 @@ pub fn memory_storage_has<P: ContractProvider>(instance: FnInstance, mut params:
     let instance = instance?;
     let storage: &OpaqueMemoryStorage = instance.as_opaque_type()?;
 
-    let state: &mut ChainState = context.get_mut()
-        .context("No chain state for memory storage")?;
+    let state = state_from_context(context)?;
 
     let key = params.remove(0)
         .into_owned();
@@ -106,8 +103,7 @@ pub fn memory_storage_store<P: ContractProvider>(instance: FnInstance, mut param
     let cost = total_size as u64 * FEE_PER_BYTE_IN_CONTRACT_MEMORY;
     context.increase_gas_usage(cost)?;
 
-    let state: &mut ChainState = context.get_mut()
-        .context("No chain state for memory storage")?;
+    let state = state_from_context(context)?;
 
     let cache = get_cache_for_contract(&mut state.caches, state.global_caches, metadata.metadata.contract_executor.clone());
     let memory = if storage.shared {
@@ -126,8 +122,7 @@ pub fn memory_storage_delete<P: ContractProvider>(instance: FnInstance, mut para
     let instance = instance?;
     let storage: &OpaqueMemoryStorage = instance.as_opaque_type()?;
 
-    let state: &mut ChainState = context.get_mut()
-        .context("No chain state for memory storage")?;
+    let state = state_from_context(context)?;
 
     let key = params.remove(0)
         .into_owned();

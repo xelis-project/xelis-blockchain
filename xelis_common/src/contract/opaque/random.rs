@@ -14,7 +14,7 @@ use xelis_vm::{
 
 use crate::contract::{
     get_cache_for_contract,
-    ChainState,
+    state_from_context,
     DeterministicRandom,
     ContractMetadata,
     ModuleMetadata,
@@ -36,8 +36,7 @@ fn random_fill_buffer(random: Option<&mut DeterministicRandom>, buffer: &mut [u8
 
 pub fn random_fn(_: FnInstance, _: FnParams, metadata: &ModuleMetadata<'_>, context: &mut Context) -> FnReturnType<ContractMetadata> {
     // Create a deterministic random for the contract
-    let state: &mut ChainState = context.get_mut()
-        .context("chain state not found")?;
+   let state = state_from_context(context)?;
 
     let cache = get_cache_for_contract(&mut state.caches, state.global_caches, metadata.metadata.contract_executor.clone());
 
@@ -51,8 +50,7 @@ pub fn random_fn(_: FnInstance, _: FnParams, metadata: &ModuleMetadata<'_>, cont
 }
 
 pub fn random_u8(_: FnInstance, _: FnParams, metadata: &ModuleMetadata<'_>, context: &mut Context) -> FnReturnType<ContractMetadata> {
-    let state: &mut ChainState = context.get_mut()
-        .context("chain state not found")?;
+    let state = state_from_context(context)?;
 
     let cache = get_cache_for_contract(&mut state.caches, state.global_caches, metadata.metadata.contract_executor.clone());
 
@@ -64,8 +62,7 @@ pub fn random_u8(_: FnInstance, _: FnParams, metadata: &ModuleMetadata<'_>, cont
 }
 
 pub fn random_u16(_: FnInstance, _: FnParams, metadata: &ModuleMetadata<'_>, context: &mut Context) -> FnReturnType<ContractMetadata> {
-    let state: &mut ChainState = context.get_mut()
-        .context("chain state not found")?;
+    let state = state_from_context(context)?;
 
     let cache = get_cache_for_contract(&mut state.caches, state.global_caches, metadata.metadata.contract_executor.clone());
     let mut buffer = [0; 2];
@@ -76,8 +73,7 @@ pub fn random_u16(_: FnInstance, _: FnParams, metadata: &ModuleMetadata<'_>, con
 }
 
 pub fn random_u32(_: FnInstance, _: FnParams, metadata: &ModuleMetadata<'_>, context: &mut Context) -> FnReturnType<ContractMetadata> {
-    let state: &mut ChainState = context.get_mut()
-        .context("chain state not found")?;
+    let state = state_from_context(context)?;
 
     let cache = get_cache_for_contract(&mut state.caches, state.global_caches, metadata.metadata.contract_executor.clone());
     let mut buffer = [0; 4];
@@ -88,8 +84,7 @@ pub fn random_u32(_: FnInstance, _: FnParams, metadata: &ModuleMetadata<'_>, con
 }
 
 pub fn random_u64(_: FnInstance, _: FnParams, metadata: &ModuleMetadata<'_>, context: &mut Context) -> FnReturnType<ContractMetadata> {
-    let state: &mut ChainState = context.get_mut()
-        .context("chain state not found")?;
+    let state = state_from_context(context)?;
 
     let cache = get_cache_for_contract(&mut state.caches, state.global_caches, metadata.metadata.contract_executor.clone());
     let mut buffer = [0; 8];
@@ -100,8 +95,7 @@ pub fn random_u64(_: FnInstance, _: FnParams, metadata: &ModuleMetadata<'_>, con
 }
 
 pub fn random_u128(_: FnInstance, _: FnParams, metadata: &ModuleMetadata<'_>, context: &mut Context) -> FnReturnType<ContractMetadata> {
-    let state: &mut ChainState = context.get_mut()
-        .context("chain state not found")?;
+    let state = state_from_context(context)?;
 
     let cache = get_cache_for_contract(&mut state.caches, state.global_caches, metadata.metadata.contract_executor.clone());
     let mut buffer = [0; 16];
@@ -112,8 +106,7 @@ pub fn random_u128(_: FnInstance, _: FnParams, metadata: &ModuleMetadata<'_>, co
 }
 
 pub fn random_u256(_: FnInstance, _: FnParams, metadata: &ModuleMetadata<'_>, context: &mut Context) -> FnReturnType<ContractMetadata> {
-    let state: &mut ChainState = context.get_mut()
-        .context("chain state not found")?;
+    let state = state_from_context(context)?;
 
     let cache = get_cache_for_contract(&mut state.caches, state.global_caches, metadata.metadata.contract_executor.clone());
     let mut buffer = [0; 32];
@@ -123,8 +116,7 @@ pub fn random_u256(_: FnInstance, _: FnParams, metadata: &ModuleMetadata<'_>, co
 }
 
 pub fn random_bool(_: FnInstance, _: FnParams, metadata: &ModuleMetadata<'_>, context: &mut Context) -> FnReturnType<ContractMetadata> {
-    let state: &mut ChainState = context.get_mut()
-        .context("chain state not found")?;
+    let state = state_from_context(context)?;
 
     let cache = get_cache_for_contract(&mut state.caches, state.global_caches, metadata.metadata.contract_executor.clone());
     let mut buffer = [0; 1];

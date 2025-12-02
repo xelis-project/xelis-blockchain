@@ -2049,6 +2049,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, C
     env
 }
 
+#[inline]
 pub fn provider_from_context<'a, 'ty, 'r, P: ContractProvider>(context: &'a mut Context<'ty, 'r>) -> Result<&'a P, anyhow::Error> {
     let data: &mut ContractProviderWrapper<P> = context.get_mut()
         .context("Provider not initialized")?;
@@ -2056,11 +2057,10 @@ pub fn provider_from_context<'a, 'ty, 'r, P: ContractProvider>(context: &'a mut 
     Ok(data.0)
 }
 
+#[inline]
 pub fn state_from_context<'a, 'ty, 'r>(context: &'a mut Context<'ty, 'r>) -> Result<&'a mut ChainState<'ty>, anyhow::Error> {
-    let data: &mut ChainState = context.get_mut()
-        .context("Chain state not initialized")?;
-
-    Ok(data)
+    context.get_mut::<ChainState>()
+        .context("Chain state not initialized")
 }
 
 pub fn from_context<'a, 'ty, 'r, P: ContractProvider>(context: &'a mut Context<'ty, 'r>) -> Result<(&'a P, &'a mut ChainState<'ty>), anyhow::Error> {
@@ -2256,7 +2256,7 @@ fn fire_event_fn(_: FnInstance, mut params: FnParams, metadata: &ModuleMetadata<
         return Err(EnvironmentError::Static("Event not serializable"))
     }
 
-    let state: &mut ChainState = context.get_mut().context("chain state not found")?;
+    let state = state_from_context(context)?;
     let entry = get_cache_for_contract(&mut state.caches, state.global_caches, metadata.metadata.contract_executor.clone())
         .events.entry(id)
         .or_insert_with(Vec::new);
@@ -2267,7 +2267,7 @@ fn fire_event_fn(_: FnInstance, mut params: FnParams, metadata: &ModuleMetadata<
 }
 
 fn println_fn(_: FnInstance, params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut Context) -> FnReturnType<ContractMetadata> {
-    let state: &ChainState = context.get().context("chain state not found")?;
+    let state = state_from_context(context)?;
     if state.debug_mode {
         info!("[{}#{}]: {}", state.entry_contract, metadata.metadata.contract_executor, params[0].as_ref());
     }
@@ -2276,7 +2276,7 @@ fn println_fn(_: FnInstance, params: FnParams, metadata: &ModuleMetadata<'_>, co
 }
 
 fn debug_fn(_: FnInstance, params: FnParams, _: &ModuleMetadata<'_>, context: &mut Context) -> FnReturnType<ContractMetadata> {
-    let state: &ChainState = context.get().context("chain state not found")?;
+    let state = state_from_context(context)?;
     if state.debug_mode {
         debug!("{:?}", params[0].as_ref());
     }
@@ -2289,8 +2289,8 @@ fn get_contract_hash(_: FnInstance, _: FnParams, metadata: &ModuleMetadata<'_>, 
 }
 
 fn get_contract_entry(_: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, context: &mut Context) -> FnReturnType<ContractMetadata> {
-    let chain_state: &ChainState = context.get().context("chain state not found")?;
-    Ok(SysCallResult::Return(Primitive::Opaque(OpaqueWrapper::new(chain_state.entry_contract.as_ref().clone())).into()))
+    let state = state_from_context(context)?;
+    Ok(SysCallResult::Return(Primitive::Opaque(OpaqueWrapper::new(state.entry_contract.as_ref().clone())).into()))
 }
 
 fn get_contract_caller(_: FnInstance, _: FnParams, metadata: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {
