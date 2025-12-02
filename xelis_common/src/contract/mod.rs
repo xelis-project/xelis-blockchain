@@ -1958,6 +1958,19 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, C
             75,
             Some(Type::Bool)
         );
+
+        // XOR 2 hashes together
+        env.register_native_function(
+            "xor_hashes",
+            None,
+            vec![
+                ("hash1", hash_type.clone()),
+                ("hash2", hash_type.clone())
+            ],
+            FunctionHandler::Sync(xor_hashes::<P>),
+            50,
+            Some(hash_type.clone())
+        );
     }
 
     // BTree Storage
@@ -2659,4 +2672,22 @@ fn is_contract_callable<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, par
     let callable = state.permission.allows(contract, chunk_id);
 
     Ok(SysCallResult::Return(Primitive::Boolean(callable).into()))
+}
+
+fn xor_hashes<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, params: FnParams, _: &ModuleMetadata<'_>, _: &mut Context<'ty, 'r>) -> FnReturnType<ContractMetadata> {
+    let hash1: &Hash = params[0]
+        .as_ref()
+        .as_opaque_type()?;
+
+    let hash2: &Hash = params[1]
+        .as_ref()
+        .as_opaque_type()?;
+
+
+    let mut bytes = [0u8; 32];
+    for (out, (a, b)) in bytes.iter_mut().zip(hash1.as_bytes().iter().zip(hash2.as_bytes().iter())) {
+        *out = a ^ b;
+    }
+
+    Ok(SysCallResult::Return(Primitive::Opaque(Hash::new(bytes).into()).into()))
 }
