@@ -322,13 +322,14 @@ pub async fn refund_gas_sources<'a, P: ContractProvider, E, B: BlockchainApplySt
         return Ok(());
     }
 
+    let initial_gas_refund = gas_refund_left;
     for (source, gas) in gas_sources.into_iter() {
         if gas_refund_left == 0 {
             break;
         }
 
         // Calculate the proportion of the injection without float
-        let proportion = (gas as u128 * gas_refund_left as u128) / total_injected as u128;
+        let proportion = (gas as u128 * initial_gas_refund as u128) / total_injected as u128;
         let refund = proportion as u64;
 
         let refund_amount = refund.min(gas_refund_left);

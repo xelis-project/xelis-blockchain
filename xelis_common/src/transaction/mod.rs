@@ -30,7 +30,7 @@ pub use version::TxVersion;
 pub use source_commitment::SourceCommitment;
 
 #[cfg(test)]
-mod tests;
+pub mod tests;
 
 // Maximum size of extra data per transfer
 pub const EXTRA_DATA_LIMIT_SIZE: usize = 1024;
