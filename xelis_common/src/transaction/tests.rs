@@ -118,6 +118,46 @@ impl MockChainState {
             global_caches: HashMap::new(),
         }
     }
+
+    pub fn set_contract_balance(&mut self, contract: &Hash, asset: &Hash, new_balance: u64) {
+        let balances = self.contract_balances.entry(contract.clone())
+            .or_insert_with(HashMap::new);
+
+        match balances.entry(asset.clone()) {
+            Entry::Occupied(mut o) => {
+                let (state, balance) = o.get_mut();
+                *balance = new_balance;
+                state.mark_updated();
+            }
+            Entry::Vacant(v) => {
+                v.insert((VersionedState::New, new_balance));
+            }
+        }
+    }
+
+    pub fn get_contract_balance(&self, contract: &Hash, asset: &Hash) -> u64 {
+        self.contract_balances.get(contract)
+            .and_then(|balances| balances.get(asset))
+            .map(|(_, balance)| *balance)
+            .unwrap_or_default()
+    }
+
+    pub fn set_account_balance(&mut self, account: &PublicKey, asset: &Hash, balance: Ciphertext) {
+        let acct_state = self.accounts.entry(account.clone())
+            .or_insert_with(|| AccountChainState {
+                balances: HashMap::new(),
+                nonce: 0,
+            });
+
+        acct_state.balances.insert(asset.clone(), balance);
+    }
+
+    pub fn get_account_balance(&self, account: &PublicKey, asset: &Hash) -> Ciphertext {
+        self.accounts.get(account)
+            .and_then(|state| state.balances.get(asset))
+            .cloned()
+            .unwrap_or_else(|| Ciphertext::zero())
+    }
 }
 
 #[derive(Clone)]

@@ -17,12 +17,12 @@ pub mod vm;
 use std::{
     any::TypeId,
     borrow::Cow,
-    collections::{hash_map::Entry, HashMap, HashSet},
+    collections::{hash_map::Entry, HashMap},
 };
 use anyhow::Context as AnyhowContext;
 use better_any::Tid;
 use curve25519_dalek::Scalar;
-use indexmap::IndexMap;
+use indexmap::{IndexMap, IndexSet};
 use log::{debug, info};
 use xelis_builder::EnvironmentBuilder;
 use xelis_vm::{
@@ -86,7 +86,6 @@ pub struct TransferOutput {
     // The asset to transfer
     pub asset: Hash,
 }
-
 
 // ChainState shared across each executions
 // The ChainState must be cloned before being used.
@@ -156,7 +155,7 @@ pub struct ContractEventTracker {
     // All the transfers made by all contracts aggregated per public key
     pub aggregated_transfers: HashMap<PublicKey, HashMap<Hash, u64>>,
     // All assets registered by all contracts
-    pub assets_created: HashSet<Hash>
+    pub assets_created: IndexSet<Hash>
 }
 
 macro_rules! async_handler {
@@ -230,7 +229,8 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, C
     ]));
 
     // See xelis_common::contract::opaque::storage::BTreeSeekBias
-    let btree_seek_bias_type = Type::Enum(env.register_enum::<{ BTreeSeekBias::COUNT }>("BTreeSeekBias", 
+    let btree_seek_bias_type = Type::Enum(env.register_enum::<{ BTreeSeekBias::COUNT }>(
+        "BTreeSeekBias", 
         BTreeSeekBias::names().map(|v| (v, Vec::<(&str, Type)>::new()))
     ));
 
@@ -508,7 +508,6 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, C
             Some(Type::Optional(Box::new(Type::Any)))
         );
     }
-
 
     // Address
     {
@@ -2214,6 +2213,44 @@ pub async fn record_balance_credit<'a, 'b, P: ContractProvider>(provider: &P, st
     Ok(())
 }
 
+// Record an account balance credit for the given address and asset
+pub async fn record_account_balance_credit<'a, 'b>(
+    state: &'a mut ChainState<'b>,
+    from_contract: Hash,
+    address: Address,
+    asset: Hash,
+    amount: u64
+) -> Result<(), anyhow::Error> {
+    let key = address.to_public_key();
+
+    // Aggregated transfers for this address
+    // this is easier to apply at the end of the execution
+    state.tracker.aggregated_transfers.entry(key.clone())
+        .or_insert_with(HashMap::new)
+        .entry(asset.clone())
+        .and_modify(|v| *v += amount)
+        .or_insert(amount);
+
+    // The caller hash (either scheduled execution or TX contract call)
+    let caller = state.caller.get_hash()
+        .as_ref()
+        .clone();
+
+    // Detailed transfers from contract to address for better outputs tracking
+    state.tracker.contracts_transfers.entry((caller, from_contract.clone()))
+        .or_insert_with(HashMap::new)
+        .entry(key.clone())
+        .or_insert_with(HashMap::new)
+        .entry(asset.clone())
+        .and_modify(|v| *v += amount)
+        .or_insert(amount);
+
+    // Add the output
+    state.outputs.push(ContractLog::Transfer { contract: from_contract, destination: key, amount, asset });
+
+    Ok(())
+}
+
 // Take from the available gas fee and increase the state gas fee allowance
 // this will be reduced from the final used gas to prevent double charging
 pub fn record_gas_allowance<'ty, 'r>(context: &mut Context<'ty, 'r>, amount: u64) -> Result<(), anyhow::Error> {
@@ -2406,24 +2443,7 @@ async fn transfer<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut param
     }
 
     record_balance_charge(provider, state, metadata.metadata.contract_executor.clone(), asset.clone(), amount).await?;
-
-    let key = destination.to_public_key();
-    state.tracker.aggregated_transfers.entry(key.clone())
-        .or_insert_with(HashMap::new)
-        .entry(asset.clone())
-        .and_modify(|v| *v += amount)
-        .or_insert(amount);
-
-    state.tracker.contracts_transfers.entry((state.caller.get_hash().as_ref().clone(), metadata.metadata.contract_executor.clone()))
-        .or_insert_with(HashMap::new)
-        .entry(key.clone())
-        .or_insert_with(HashMap::new)
-        .entry(asset.clone())
-        .and_modify(|v| *v += amount)
-        .or_insert(amount);
-
-    // Add the output
-    state.outputs.push(ContractLog::Transfer { contract: metadata.metadata.contract_executor.clone(), destination: key, amount, asset });
+    record_account_balance_credit(state, metadata.metadata.contract_executor.clone(), destination.clone(), asset.clone(), amount).await?;
 
     Ok(SysCallResult::Return(Primitive::Boolean(true).into()))
 }
