@@ -637,6 +637,7 @@ impl<'s, 'b, S: Storage> BlockchainContractState<'b, S, BlockchainError> for App
             allow_executions: true,
             permission,
             gas_fee: 0,
+            gas_fee_allowance: 0,
         };
 
         let contract_environment = ContractEnvironment {
