@@ -318,6 +318,10 @@ pub async fn refund_gas_sources<'a, P: ContractProvider, E, B: BlockchainApplySt
     // refund 1: 100
     // refund 2: 100
     let total_injected: u64 = gas_sources.values().sum();
+    if total_injected == 0 {
+        return Ok(());
+    }
+
     for (source, gas) in gas_sources.into_iter() {
         if gas_refund_left == 0 {
             break;

@@ -176,6 +176,10 @@ async fn schedule_execution<'a, 'ty, 'r, P: ContractProvider>(
     let p = params[1].as_ref().as_vec()?;
     let max_gas = params[2].as_u64()?;
 
+    if max_gas == 0 {
+        return Ok(SysCallResult::Return(Primitive::Null.into()));
+    }
+
     if p.len() > (u8::MAX - 1) as usize {
         return Ok(SysCallResult::Return(Primitive::Null.into()));
     }
