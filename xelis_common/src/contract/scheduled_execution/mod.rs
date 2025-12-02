@@ -415,7 +415,7 @@ pub async fn scheduled_execution_increase_max_gas<'a, 'ty, 'r, P: ContractProvid
         .ok_or(EnvironmentError::Static("scheduled execution not found in cache"))?;
 
     // Total max gas allocated to this execution
-    execution.max_gas += execution.max_gas.checked_add(amount)
+    execution.max_gas = execution.max_gas.checked_add(amount)
         .ok_or(EnvironmentError::GasOverflow)?;
 
     if execution.gas_sources.len() >= u16::MAX as usize && !execution.gas_sources.contains_key(&source) {
