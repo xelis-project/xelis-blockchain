@@ -268,6 +268,8 @@ pub enum BlockchainError {
     InvalidGenesisBlock,
     #[error("Not enough blocks")]
     NotEnoughBlocks,
+    #[error("Gas overflow during calculation")]
+    GasOverflow,
     #[error("Unknown data store error")]
     Unknown,
     #[error("No signature found for this TX")]

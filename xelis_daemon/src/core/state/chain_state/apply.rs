@@ -517,7 +517,8 @@ impl<'s, 'b, S: Storage> BlockchainApplyState<'b, S, BlockchainError> for Applic
 
     /// Track miner fees
     async fn add_gas_fee(&mut self, amount: u64) -> Result<(), BlockchainError> {
-        self.gas_fee += amount;
+        self.gas_fee = self.gas_fee.checked_add(amount)
+            .ok_or(BlockchainError::GasOverflow)?;
         Ok(())
     }
 
@@ -635,6 +636,7 @@ impl<'s, 'b, S: Storage> BlockchainContractState<'b, S, BlockchainError> for App
             scheduled_executions: self.contract_manager.scheduled_executions.clone(),
             allow_executions: true,
             permission,
+            gas_fee: 0,
         };
 
         let contract_environment = ContractEnvironment {
@@ -690,6 +692,7 @@ impl<'s, 'b, S: Storage> BlockchainContractState<'b, S, BlockchainError> for App
         tracker: ContractEventTracker,
         assets: HashMap<Hash, Option<AssetChanges>>,
         scheduled_executions: IndexMap<Hash, ScheduledExecution>,
+        extra_gas_fee: u64,
     ) -> Result<(), BlockchainError> {
         for (contract, mut cache) in caches {
             cache.clean_up();
@@ -708,6 +711,8 @@ impl<'s, 'b, S: Storage> BlockchainContractState<'b, S, BlockchainError> for App
         self.contract_manager.tracker = tracker;
         self.contract_manager.assets = assets;
         self.contract_manager.scheduled_executions = scheduled_executions;
+
+        self.add_gas_fee(extra_gas_fee).await?;
 
         Ok(())
     }
