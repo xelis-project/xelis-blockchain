@@ -31,6 +31,7 @@ use crate::{
         has_enough_balance_for_contract,
         record_balance_charge,
         record_burned_asset,
+        record_gas_allowance,
         ContractLog,
         ContractProvider,
         ContractMetadata,
@@ -203,7 +204,7 @@ async fn schedule_execution<'a, 'ty, 'r, P: ContractProvider>(
             return Ok(SysCallResult::Return(Primitive::Null.into()));
         }
     } else {
-        context.increase_gas_usage(total_cost)?;
+        record_gas_allowance(context, total_cost)?;
     }
 
     // build the caller hash
@@ -414,7 +415,7 @@ pub async fn scheduled_execution_increase_max_gas<'a, 'ty, 'r, P: ContractProvid
         };
 
         // Pay from the gas allowance
-        context.increase_gas_usage(amount)?;
+        record_gas_allowance(context, amount)?;
 
         source
     };

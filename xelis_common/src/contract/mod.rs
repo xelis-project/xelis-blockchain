@@ -142,6 +142,10 @@ pub struct ChainState<'a> {
     pub permission: Cow<'a, InterContractPermission>,
     // Gas fee accumulated during the execution
     pub gas_fee: u64,
+    // Gas fee allowance for the execution
+    // This is reduced from the used gas fee at the end of the execution
+    // to prevent double refunding/paying
+    pub gas_fee_allowance: u64,
 }
 
 // Aggregate all events from all executed contracts to track in one structure
@@ -2052,6 +2056,13 @@ pub fn provider_from_context<'a, 'ty, 'r, P: ContractProvider>(context: &'a mut 
     Ok(data.0)
 }
 
+pub fn state_from_context<'a, 'ty, 'r>(context: &'a mut Context<'ty, 'r>) -> Result<&'a mut ChainState<'ty>, anyhow::Error> {
+    let data: &mut ChainState = context.get_mut()
+        .context("Chain state not initialized")?;
+
+    Ok(data)
+}
+
 pub fn from_context<'a, 'ty, 'r, P: ContractProvider>(context: &'a mut Context<'ty, 'r>) -> Result<(&'a P, &'a mut ChainState<'ty>), anyhow::Error> {
     let mut datas = context.get_many_mut([&ContractProviderWrapper::<P>::id(), &TypeId::of::<ChainState>()]);
 
@@ -2199,6 +2210,18 @@ pub async fn record_balance_credit<'a, 'b, P: ContractProvider>(provider: &P, st
     state.mark_updated();
     *balance = balance.checked_add(amount)
         .context("Overflow while crediting balance")?;
+
+    Ok(())
+}
+
+// Take from the available gas fee and increase the state gas fee allowance
+// this will be reduced from the final used gas to prevent double charging
+pub fn record_gas_allowance<'ty, 'r>(context: &mut Context<'ty, 'r>, amount: u64) -> Result<(), anyhow::Error> {
+    context.increase_gas_usage(amount)?;
+
+    let state = state_from_context(context)?;
+    state.gas_fee_allowance = state.gas_fee_allowance.checked_add(amount)
+        .context("Overflow while increasing gas allowance")?;
 
     Ok(())
 }

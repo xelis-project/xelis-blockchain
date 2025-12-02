@@ -223,7 +223,7 @@ pub async fn invoke_contract<'a, P: ContractProvider, E, B: BlockchainApplyState
         .map_err(ContractError::State)?;
 
     // Total used gas by the VM
-    let (used_gas, vm_max_gas, exit_code) = run_virtual_machine(
+    let (mut used_gas, vm_max_gas, exit_code) = run_virtual_machine(
         contract_environment,
         &mut chain_state,
         invoke,
@@ -239,6 +239,29 @@ pub async fn invoke_contract<'a, P: ContractProvider, E, B: BlockchainApplyState
 
     let gas_injections = chain_state.injected_gas;
     let modules = chain_state.modules;
+
+    // On success: it is well allocated to either burned coins or scheduled execution
+    // On failure: it is included in the gas refund
+    let gas_fee_allowance = chain_state.gas_fee_allowance;
+    // If we allocated some gas fee (like for a Scheduled Execution)
+    // we have to reduce the used gas so we don't pay/burn it twice
+    // about the refund gas, we don't modify it because it's the max gas - used gas
+    if gas_fee_allowance > 0 {
+        debug!("real used gas before allowance: {}, allowance: {}", used_gas, gas_fee_allowance);
+        used_gas = used_gas.checked_sub(gas_fee_allowance)
+            .ok_or(ContractError::GasOverflow)?;
+
+        debug!("real used gas after allowance: {}", used_gas);
+    }
+
+    // The remaining gas is refunded to the sender
+    // if used gas is above tx max gas, we don't
+    // refund any gas to user
+    let mut refund_gas = if used_gas > max_gas {
+        0
+    } else {
+        max_gas - used_gas
+    };
 
     if is_success {
         let mut caches = chain_state.caches;
@@ -266,6 +289,9 @@ pub async fn invoke_contract<'a, P: ContractProvider, E, B: BlockchainApplyState
         if !gas_sources.is_empty() {
             // Refund the whole extra gas injections
             refund_gas_sources(state, gas_sources, used_gas, max_gas).await?;
+
+            debug!("After refunding gas sources, used gas: {}, refund gas: {}, set refund to 0", used_gas, refund_gas);
+            refund_gas = 0;
         }
     } else {
         // Otherwise, something was wrong, we delete the outputs made by the contract
@@ -273,6 +299,9 @@ pub async fn invoke_contract<'a, P: ContractProvider, E, B: BlockchainApplyState
 
         if !gas_sources.is_empty() {
             refund_gas_sources(state, gas_sources, used_gas, max_gas).await?;
+
+            debug!("After refunding gas sources, used gas: {}, refund gas: {}, set refund to 0", used_gas, refund_gas);
+            refund_gas = 0;
         }
 
         // But, if we got any gas injection, fully consume it despite the error returned
@@ -303,7 +332,7 @@ pub async fn invoke_contract<'a, P: ContractProvider, E, B: BlockchainApplyState
     state.set_modules_cache(modules).await
         .map_err(ContractError::State)?;
 
-    let (refund_gas, burned_gas, fee_gas) = handle_gas(&caller, state, used_gas, max_gas).await?;
+    let (refund_gas, burned_gas, fee_gas) = handle_gas(&caller, state, used_gas, refund_gas).await?;
     debug!("used gas: {}, refund gas: {}, burned gas: {}, gas fee: {}", used_gas, refund_gas, burned_gas, fee_gas);
 
     if refund_gas > 0 {
@@ -514,21 +543,13 @@ pub async fn handle_gas<'a, P: ContractProvider, E, B: BlockchainApplyState<'a, 
     caller: &ContractCaller<'a>,
     state: &mut B,
     used_gas: u64,
-    tx_max_gas: u64,
+    refund_gas: u64,
 ) -> Result<(u64, u64, u64), ContractError<E>> {
     // Part of the gas is burned
     let burned_gas = used_gas * TX_GAS_BURN_PERCENT / 100;
     // Part of the gas is given to the miners as fees
     let gas_fee = used_gas.checked_sub(burned_gas)
         .ok_or(ContractError::GasOverflow)?;
-    // The remaining gas is refunded to the sender
-    // if used gas is above tx max gas, we don't
-    // refund any gas to user
-    let refund_gas = if used_gas > tx_max_gas {
-        0
-    } else {
-        tx_max_gas - used_gas
-    };
 
     debug!("Invoke contract used gas: {}, burned: {}, fee: {}, refund: {}", used_gas, burned_gas, gas_fee, refund_gas);
     state.add_burned_fee(burned_gas).await

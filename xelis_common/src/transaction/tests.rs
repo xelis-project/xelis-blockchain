@@ -948,6 +948,7 @@ impl<'a> BlockchainContractState<'a, MockProvider, ()> for MockChainState {
             allow_executions: true,
             permission,
             gas_fee: 0,
+            gas_fee_allowance: 0,
         };
 
         Ok((environment, chain_state))
