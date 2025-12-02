@@ -947,6 +947,7 @@ impl<'a> BlockchainContractState<'a, MockProvider, ()> for MockChainState {
             scheduled_executions: indexmap::IndexMap::new(),
             allow_executions: true,
             permission,
+            gas_fee: 0,
         };
 
         Ok((environment, chain_state))
@@ -965,10 +966,12 @@ impl<'a> BlockchainContractState<'a, MockProvider, ()> for MockChainState {
         _caches: HashMap<Hash, ContractCache>,
         _tracker: ContractEventTracker,
         _assets: HashMap<Hash, Option<AssetChanges>>,
-        _executions_block_end: indexmap::IndexMap<Hash, ScheduledExecution>,
+        _executions: indexmap::IndexMap<Hash, ScheduledExecution>,
+        extra_gas_fee: u64,
     ) -> Result<(), ()> {
-        // In tests, we don't need to merge contract changes
-        Ok(())
+        // TODO: persist changes in the chain state
+
+        self.add_gas_fee(extra_gas_fee).await
     }
 
     async fn get_contract_balance_for_gas<'b>(

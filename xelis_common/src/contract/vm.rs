@@ -246,6 +246,7 @@ pub async fn invoke_contract<'a, P: ContractProvider, E, B: BlockchainApplyState
         let tracker = chain_state.tracker;
         let assets = chain_state.assets;
         let executions = chain_state.scheduled_executions;
+        let gas_fee = chain_state.gas_fee;
 
         // Some contract have injected gas to users
         if vm_max_gas > max_gas && !gas_injections.is_empty() {
@@ -258,6 +259,7 @@ pub async fn invoke_contract<'a, P: ContractProvider, E, B: BlockchainApplyState
             tracker,
             assets,
             executions,
+            gas_fee,
         ).await
             .map_err(ContractError::State)?;
 

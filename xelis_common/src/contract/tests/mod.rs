@@ -123,6 +123,7 @@ pub fn test_chain_state(contract: Hash) -> ContractChainState<'static> {
         scheduled_executions: IndexMap::new(),
         allow_executions: true,
         permission: Cow::Owned(InterContractPermission::default()),
+        gas_fee: 0,
     }
 }
 

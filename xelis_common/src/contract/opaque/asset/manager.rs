@@ -13,9 +13,9 @@ use crate::{
     config::{COST_PER_ASSET, XELIS_ASSET},
     contract::{
         from_context,
-        get_balance_from_cache,
+        has_enough_balance_for_contract,
         get_cache_for_contract,
-        get_mut_balance_for_contract,
+        record_balance_charge,
         get_optional_asset_from_cache,
         record_burned_asset,
         AssetChanges,
@@ -116,8 +116,7 @@ pub async fn asset_create<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, m
     }
 
     // Check that we have enough XEL in the balance
-    let balance = get_balance_from_cache(provider, state, metadata.metadata.contract_executor.clone(), XELIS_ASSET).await?;
-    if balance.is_none_or(|(_, balance)| balance < COST_PER_ASSET) {
+    if !has_enough_balance_for_contract(provider, state, metadata.metadata.contract_executor.clone(), XELIS_ASSET, COST_PER_ASSET).await? {
         return Err(EnvironmentError::Expect("Insufficient XEL funds in contract balance for token creation".to_owned()).into());
     }
 
@@ -152,10 +151,7 @@ pub async fn asset_create<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, m
     // Pay the fee by reducing the contract balance
     // and record the burn in the circulating supply
     {
-        let (versioned_state, balance) = get_mut_balance_for_contract(provider, state, metadata.metadata.contract_executor.clone(), XELIS_ASSET).await?;
-        *balance -= COST_PER_ASSET;
-        versioned_state.mark_updated();
-    
+        record_balance_charge(provider, state, metadata.metadata.contract_executor.clone(), XELIS_ASSET, COST_PER_ASSET).await?;
         record_burned_asset(provider, state, metadata.metadata.contract_executor.clone(), XELIS_ASSET, COST_PER_ASSET).await?;
     }
 

@@ -17,15 +17,14 @@ use crate::{
         from_context,
         get_asset_changes_for_hash,
         get_asset_changes_for_hash_mut,
-        get_balance_from_cache,
+        record_balance_credit,
         ChainState,
         ContractLog,
         ContractProvider,
         ContractMetadata,
         ModuleMetadata,
     },
-    crypto::Hash,
-    versioned_type::VersionedState
+    crypto::Hash
 };
 
 pub use manager::*;
@@ -266,18 +265,7 @@ pub async fn asset_mint<'a, 'ty, 'r, P: ContractProvider>(zelf: FnInstance<'a>, 
     }
 
     // Update the contract balance
-    match get_balance_from_cache(provider, state, metadata.metadata.contract_executor.clone(), asset.hash.clone()).await? {
-        Some((state, balance)) => {
-            let new_balance = balance.checked_add(amount)
-            .context("Overflow while minting balance")?;
-            state.mark_updated();
-
-            *balance = new_balance;
-        },
-        v => {
-            *v = Some((VersionedState::New, amount))
-        },
-    };
+    record_balance_credit(provider, state, metadata.metadata.contract_executor.clone(), asset.hash.clone(), amount).await?;
 
     // Add to outputs
     state.outputs.push(ContractLog::Mint {

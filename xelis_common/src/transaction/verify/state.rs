@@ -179,6 +179,7 @@ pub trait BlockchainContractState<'a, P: ContractProvider, E> {
         tracker: ContractEventTracker,
         assets: HashMap<Hash, Option<AssetChanges>>,
         executions_block_end: IndexMap<Hash, ScheduledExecution>,
+        extra_gas_fee: u64,
     ) -> Result<(), E>;
 
     /// Retrieve the contract balance used to pay gas

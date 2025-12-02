@@ -23,12 +23,13 @@ use crate::{
         COST_PER_SCHEDULED_EXECUTION_AT_BLOCK_END,
         FEE_PER_BYTE_IN_CONTRACT_MEMORY,
         FEE_PER_BYTE_STORED_CONTRACT,
+        TX_GAS_BURN_PERCENT,
         XELIS_ASSET
     },
     contract::{
         from_context,
-        get_balance_from_cache,
-        get_mut_balance_for_contract,
+        has_enough_balance_for_contract,
+        record_balance_charge,
         record_burned_asset,
         ContractLog,
         ContractProvider,
@@ -175,10 +176,7 @@ async fn schedule_execution<'a, 'ty, 'r, P: ContractProvider>(
 
     let p = params[1].as_ref().as_vec()?;
     let max_gas = params[2].as_u64()?;
-
-    if max_gas == 0 {
-        return Ok(SysCallResult::Return(Primitive::Null.into()));
-    }
+    let use_contract_balance = params[3].as_bool()?;
 
     if p.len() > (u8::MAX - 1) as usize {
         return Ok(SysCallResult::Return(Primitive::Null.into()));
@@ -192,20 +190,20 @@ async fn schedule_execution<'a, 'ty, 'r, P: ContractProvider>(
         return Ok(SysCallResult::Return(Primitive::Null.into()));
     }
 
-    let burned_part = match kind {
+    let extra_cost = match kind {
         ScheduledExecutionKind::TopoHeight(_) => COST_PER_SCHEDULED_EXECUTION + (params_size as u64 * FEE_PER_BYTE_STORED_CONTRACT),
         ScheduledExecutionKind::BlockEnd => COST_PER_SCHEDULED_EXECUTION_AT_BLOCK_END
             + (params_size as u64 * FEE_PER_BYTE_IN_CONTRACT_MEMORY),
     };
 
-    let total_cost = max_gas + burned_part;
-
-    // check that we have enough to pay the reserved gas & params fee
-    if get_balance_from_cache(provider, state, metadata.metadata.contract_executor.clone(), XELIS_ASSET)
-        .await?
-        .is_none_or(|(_, balance)| balance < total_cost)
-    {
-        return Ok(SysCallResult::Return(Primitive::Null.into()));
+    let total_cost = max_gas + extra_cost;
+    if use_contract_balance {
+        // check that we have enough to pay the reserved gas & params fee
+        if !has_enough_balance_for_contract(provider, state, metadata.metadata.contract_executor.clone(), XELIS_ASSET, total_cost).await?{
+            return Ok(SysCallResult::Return(Primitive::Null.into()));
+        }
+    } else {
+        context.increase_gas_usage(total_cost)?;
     }
 
     // build the caller hash
@@ -225,16 +223,13 @@ async fn schedule_execution<'a, 'ty, 'r, P: ContractProvider>(
     };
 
     // register it
+    let (provider, state) = from_context::<P>(context)?;
 
     if !state.scheduled_executions.contains_key(&hash) {
         return Ok(SysCallResult::Return(Primitive::Boolean(false).into()));
     }
 
     state.scheduled_executions.insert(hash.clone(), execution);
-
-    // Once passed here, we are safe and can apply changes
-    // record the burn part
-    record_burned_asset(provider, state, metadata.metadata.contract_executor.clone(), XELIS_ASSET, burned_part).await?;
 
     state.outputs.push(ContractLog::ScheduledExecution {
         contract: metadata.metadata.contract_executor.clone(),
@@ -245,11 +240,24 @@ async fn schedule_execution<'a, 'ty, 'r, P: ContractProvider>(
         },
     });
 
-    let (state, balance) =
-        get_mut_balance_for_contract(provider, state, metadata.metadata.contract_executor.clone(), XELIS_ASSET)
-            .await?;
-    state.mark_updated();
-    *balance -= total_cost;
+    if use_contract_balance {
+        // Once passed here, we are safe and can apply changes
+        // record the burn part
+        let burned_part = extra_cost * TX_GAS_BURN_PERCENT / 100;
+        record_burned_asset(provider, state, metadata.metadata.contract_executor.clone(), XELIS_ASSET, burned_part).await?;
+
+        // add the part for the miners
+        let fee_part = total_cost - burned_part;
+        state.gas_fee += fee_part;
+
+        record_balance_charge(
+            provider,
+            state,
+            metadata.metadata.contract_executor.clone(),
+            XELIS_ASSET,
+            total_cost
+        ).await?;
+    }
 
     Ok(SysCallResult::Return(OpaqueScheduledExecution {
         kind,
@@ -263,7 +271,7 @@ pub async fn scheduled_execution_new_at_topoheight<'a, 'ty, 'r, P: ContractProvi
     metadata: &ModuleMetadata<'_>,
     context: &mut Context<'ty, 'r>,
 ) -> FnReturnType<ContractMetadata> {
-    let topoheight = params[3].as_u64()?;
+    let topoheight = params[4].as_u64()?;
     schedule_execution::<P>(ScheduledExecutionKind::TopoHeight(topoheight), instance, params, metadata, context).await
 }
 
@@ -373,10 +381,7 @@ pub async fn scheduled_execution_increase_max_gas<'a, 'ty, 'r, P: ContractProvid
     // Pay from the contract balance
     let source = if use_contract_balance {
         // check that we have enough to pay the reserved gas
-        if get_balance_from_cache(provider, state, metadata.metadata.contract_executor.clone(), XELIS_ASSET)
-            .await?
-            .is_none_or(|(_, balance)| balance < amount)
-        {
+        if !has_enough_balance_for_contract(provider, state, metadata.metadata.contract_executor.clone(), XELIS_ASSET, amount).await? {
             return Ok(SysCallResult::Return(Primitive::Boolean(false).into()));
         }
     
@@ -389,12 +394,13 @@ pub async fn scheduled_execution_increase_max_gas<'a, 'ty, 'r, P: ContractProvid
         }
 
         // Once passed here, we are safe and can apply changes
-        let (versioned_state, balance) =
-            get_mut_balance_for_contract(provider, state, metadata.metadata.contract_executor.clone(), XELIS_ASSET)
-                .await?;
-    
-        versioned_state.mark_updated();
-        *balance -= amount;
+        record_balance_charge(
+            provider,
+            state,
+            metadata.metadata.contract_executor.clone(),
+            XELIS_ASSET,
+            amount
+        ).await?;
 
         Source::Contract(metadata.metadata.contract_executor.clone())
     } else {

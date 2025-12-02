@@ -1,6 +1,5 @@
 use std::{collections::{hash_map::Entry, VecDeque}, hash, sync::Arc};
 
-use anyhow::Context as _;
 use indexmap::IndexMap;
 use log::debug;
 use xelis_vm::{
@@ -17,8 +16,9 @@ use xelis_vm::{
 use crate::{
     contract::{
         from_context,
-        get_balance_from_cache,
-        get_mut_balance_for_contract,
+        has_enough_balance_for_contract,
+        record_balance_charge,
+        record_balance_credit,
         ContractProvider,
         ContractMetadata,
         ModuleMetadata,
@@ -117,24 +117,17 @@ pub async fn contract_call<'a, 'ty, 'r, P: ContractProvider>(zelf: FnInstance<'a
         let asset: Hash = k.into_opaque_type()?;
         let amount = v.as_ref().as_u64()?;
 
-        // Check if we have enough balance to transfer this value
-        let (state, balance) = get_balance_from_cache(provider, chain_state, metadata.metadata.contract_executor.clone(), asset.clone()).await?
-            .as_mut()
-            .context("No balance for invoke deposit")?;
-
-        if *balance < amount || amount == 0 {
-            return Err(EnvironmentError::Static("Not enough balance to transfer or amount is zero"));
+        if amount == 0 {
+            return Err(EnvironmentError::Static("amount is zero"));
         }
 
-        // Update the balance from current contract
-        *balance -= amount;
-        // Mark the state as updated
-        state.mark_updated();
+        if !has_enough_balance_for_contract(provider, chain_state, metadata.metadata.contract_executor.clone(), asset.clone(), amount).await? {
+            return Err(EnvironmentError::Static("Insufficient funds for deposit"));
+        }
 
         // Insert the deposit to the called contract
-        let (state, balance) = get_mut_balance_for_contract(provider, chain_state, opaque.hash.clone(), asset.clone()).await?;
-        *balance += amount;
-        state.mark_updated();
+        record_balance_charge(provider, chain_state, metadata.metadata.contract_executor.clone(), asset.clone(), amount).await?;
+        record_balance_credit(provider, chain_state, opaque.hash.clone(), asset.clone(), amount).await?;
 
         debug!("Transfering {} of {} to {} from {}", amount, asset, opaque.hash, metadata.metadata.contract_executor);
         deposits.insert(asset, ContractDeposit::Public(amount));

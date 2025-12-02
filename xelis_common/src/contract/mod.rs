@@ -140,6 +140,8 @@ pub struct ChainState<'a> {
     pub allow_executions: bool,
     // Permission for inter-contract calls
     pub permission: Cow<'a, InterContractPermission>,
+    // Gas fee accumulated during the execution
+    pub gas_fee: u64,
 }
 
 // Aggregate all events from all executed contracts to track in one structure
@@ -1639,6 +1641,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, C
                 ("callback", Type::Function(FnType::new(None, false, vec![Type::Array(Box::new(Type::Any))], Some(Type::U64)))),
                 ("args", Type::Array(Box::new(Type::Any))),
                 ("max_gas", Type::U64),
+                ("use_contract_balance", Type::Bool),
                 ("topoheight", Type::U64),
             ],
             FunctionHandler::Async(async_handler!(scheduled_execution_new_at_topoheight::<P>)),
@@ -1656,6 +1659,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, C
                 ("callback", Type::Function(FnType::new(None, false, vec![Type::Array(Box::new(Type::Any))], Some(Type::U64)))),
                 ("args", Type::Array(Box::new(Type::Any))),
                 ("max_gas", Type::U64),
+                ("use_contract_balance", Type::Bool),
             ],
             FunctionHandler::Async(async_handler!(scheduled_execution_new_at_block_end::<P>)),
             // Contains the hash computation cost
@@ -2080,6 +2084,7 @@ pub async fn get_balance_from_cache<'a, 'b: 'a, P: ContractProvider>(provider: &
     })
 }
 
+// Function helper to get the mutable balance for the given asset
 pub async fn get_mut_balance_for_contract<'a, 'b: 'a, P: ContractProvider>(provider: &P, state: &'a mut ChainState<'b>, contract: Hash, asset: Hash) -> Result<&'a mut (VersionedState, u64), anyhow::Error> {
     Ok(match get_cache_for_contract(&mut state.caches, state.global_caches, contract.clone()).balances.entry(asset.clone()) {
         Entry::Occupied(entry) => entry.into_mut()
@@ -2162,6 +2167,38 @@ pub async fn record_burned_asset<'a, 'b, P: ContractProvider>(provider: &P, stat
 
     // Add the output
     state.outputs.push(ContractLog::Burn { contract, asset, amount });
+
+    Ok(())
+}
+
+// Check if the contract has enough balance for the given asset and amount
+pub async fn has_enough_balance_for_contract<P: ContractProvider>(provider: &P, state: &mut ChainState<'_>, contract: Hash, asset: Hash, amount: u64) -> Result<bool, anyhow::Error> {
+    let balance_opt = get_balance_from_cache(provider, state, contract, asset).await?;
+
+    Ok(match balance_opt {
+        Some((_, balance)) => *balance >= amount,
+        None => false
+    })
+}
+
+// Record a balance charge for the given contract and asset
+pub async fn record_balance_charge<'a, 'b, P: ContractProvider>(provider: &P, state: &'a mut ChainState<'b>, contract: Hash, asset: Hash, amount: u64) -> Result<(), anyhow::Error> {
+    let (state, balance) = get_mut_balance_for_contract(provider, state, contract, asset).await?;
+
+    state.mark_updated();
+    *balance = balance.checked_sub(amount)
+        .context("Underflow while charging balance")?;
+
+    Ok(())
+}
+
+// Record a balance credit for the given contract and asset
+pub async fn record_balance_credit<'a, 'b, P: ContractProvider>(provider: &P, state: &'a mut ChainState<'b>, contract: Hash, asset: Hash, amount: u64) -> Result<(), anyhow::Error> {
+    let (state, balance) = get_mut_balance_for_contract(provider, state, contract, asset).await?;
+
+    state.mark_updated();
+    *balance = balance.checked_add(amount)
+        .context("Overflow while crediting balance")?;
 
     Ok(())
 }
@@ -2270,6 +2307,7 @@ fn get_deposits(_: FnInstance, _: FnParams, metadata: &ModuleMetadata<'_>, _: &m
     Ok(SysCallResult::Return(ValueCell::Map(Box::new(map)).into()))
 }
 
+// Get the current contract balance for the given asset
 async fn get_balance_for_asset<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut Context<'ty, 'r>) -> FnReturnType<ContractMetadata> {
     let (provider, state) = from_context::<P>(context)?;
 
@@ -2284,6 +2322,7 @@ async fn get_balance_for_asset<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'
     Ok(SysCallResult::Return(balance.into()))
 }
 
+// Get the balance for the given contract and asset
 async fn get_contract_balance_for_asset<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: FnParams, _: &ModuleMetadata<'_>, context: &mut Context<'ty, 'r>) -> FnReturnType<ContractMetadata> {
     let (provider, state) = from_context::<P>(context)?;
 
@@ -2334,21 +2373,16 @@ async fn transfer<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut param
         return Ok(SysCallResult::Return(Primitive::Boolean(false).into()));
     }
 
-    let Some((mut balance_state, mut balance)) = get_balance_from_cache(provider, state, metadata.metadata.contract_executor.clone(), asset.clone()).await? else {
-        return Ok(SysCallResult::Return(Primitive::Boolean(false).into()));
-    };
-
-    // We have to check if the contract has enough balance to transfer
-    if balance < amount || amount == 0 {
+    if amount == 0 {
         return Ok(SysCallResult::Return(Primitive::Boolean(false).into()));
     }
 
-    balance -= amount;
-    balance_state.mark_updated();
+    // We have to check if the contract has enough balance to transfer
+    if !has_enough_balance_for_contract(provider, state, metadata.metadata.contract_executor.clone(), asset.clone(), amount).await? {
+        return Ok(SysCallResult::Return(Primitive::Boolean(false).into()));
+    }
 
-    get_cache_for_contract(&mut state.caches, state.global_caches, metadata.metadata.contract_executor.clone())
-        .balances
-        .insert(asset.clone(), Some((balance_state, balance)));
+    record_balance_charge(provider, state, metadata.metadata.contract_executor.clone(), asset.clone(), amount).await?;
 
     let key = destination.to_public_key();
     state.tracker.aggregated_transfers.entry(key.clone())
@@ -2395,25 +2429,16 @@ async fn transfer_contract<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, 
 
     let (provider, state) = from_context::<P>(context)?;
 
-    let Some((mut balance_state, mut balance)) = get_balance_from_cache(provider, state, metadata.metadata.contract_executor.clone(), asset.clone()).await? else {
-        return Ok(SysCallResult::Return(Primitive::Boolean(false).into()));
-    };
-
-    // We have to check if the contract has enough balance to transfer
-    if balance < amount || amount == 0 {
+    if amount == 0 {
         return Ok(SysCallResult::Return(Primitive::Boolean(false).into()));
     }
 
-    balance -= amount;
-    balance_state.mark_updated();
+    if !has_enough_balance_for_contract(provider, state, metadata.metadata.contract_executor.clone(), asset.clone(), amount).await? {
+        return Ok(SysCallResult::Return(Primitive::Boolean(false).into()));
+    }
 
-    get_cache_for_contract(&mut state.caches, state.global_caches, metadata.metadata.contract_executor.clone())
-        .balances
-        .insert(asset.clone(), Some((balance_state, balance)));
-
-    let (destination_state, destination_balance) = get_mut_balance_for_contract(provider, state, destination.clone(), asset.clone()).await?;
-    *destination_balance += amount;
-    destination_state.mark_updated();
+    record_balance_charge(provider, state, metadata.metadata.contract_executor.clone(), asset.clone(), amount).await?;
+    record_balance_credit(provider, state, destination.clone(), asset.clone(), amount).await?;
 
     // Add the output
     state.outputs.push(ContractLog::TransferContract { contract: metadata.metadata.contract_executor.clone(), destination, amount, asset });
@@ -2431,23 +2456,16 @@ async fn burn<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: F
         .into_owned()
         .to_u64()?;
 
-    let Some((mut balance_state, mut balance)) = get_balance_from_cache(provider, state, metadata.metadata.contract_executor.clone(), asset.clone()).await? else {
-        return Ok(SysCallResult::Return(Primitive::Boolean(false).into()));
-    };
-
     // We have to check if the contract has enough balance to transfer
-    if balance < amount || amount == 0 {
+    if amount == 0 {
         return Ok(SysCallResult::Return(Primitive::Boolean(false).into()));
     }
 
-    // Update the balance
-    // By only decreasing the balance, it will be burned
-    balance -= amount;
-    balance_state.mark_updated();
+    if !has_enough_balance_for_contract(provider, state, metadata.metadata.contract_executor.clone(), asset.clone(), amount).await? {
+        return Ok(SysCallResult::Return(Primitive::Boolean(false).into()));
+    }
 
-    get_cache_for_contract(&mut state.caches, state.global_caches, metadata.metadata.contract_executor.clone())
-        .balances
-        .insert(asset.clone(), Some((balance_state, balance)));
+    record_balance_charge(provider, state, metadata.metadata.contract_executor.clone(), asset.clone(), amount).await?;
 
     // Track the burn in the circulating supply
     // We expect that the asset changes exists
@@ -2539,20 +2557,11 @@ async fn increase_gas_limit<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>,
     }
 
     // And we check with current cache if any and then apply if correct
-    let res = get_balance_from_cache(provider, state, metadata.metadata.contract_executor.clone(), XELIS_ASSET).await?
-        .as_mut();
-
-    let Some((balance_state, balance)) = res else {
-        return Ok(SysCallResult::Return(Primitive::Boolean(false).into()));
-    };
-
-    // Check we have at least amount in balance
-    if *balance < amount {
+    if !has_enough_balance_for_contract(provider, state, metadata.metadata.contract_executor.clone(), XELIS_ASSET, amount).await? {
         return Ok(SysCallResult::Return(Primitive::Boolean(false).into()));
     }
 
-    *balance -= amount;
-    balance_state.mark_updated();
+    record_balance_charge(provider, state, metadata.metadata.contract_executor.clone(), XELIS_ASSET, amount).await?;
 
     // Track that each contract have injected N gas
     *state.injected_gas.entry(Source::Contract(metadata.metadata.contract_executor.clone()))
