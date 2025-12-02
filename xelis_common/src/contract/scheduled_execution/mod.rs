@@ -203,7 +203,11 @@ async fn schedule_execution<'a, 'ty, 'r, P: ContractProvider>(
             return Ok(SysCallResult::Return(Primitive::Null.into()));
         }
     } else {
-        record_gas_allowance(context, total_cost)?;
+        // only allocate the max gas
+        // the extra cost must be paid
+        record_gas_allowance(context, max_gas)?;
+
+        context.increase_gas_usage(extra_cost)?;
     }
 
     // build the caller hash
