@@ -1249,7 +1249,7 @@ impl Transaction {
                     .map_err(VerificationError::State)?;
 
                 if let Some(invoke) = payload.invoke.as_ref() {
-                    let is_success = vm::invoke_contract(
+                    let result = vm::invoke_contract(
                         ContractCaller::Transaction(tx_hash, self),
                         state,
                         Cow::Borrowed(tx_hash),
@@ -1263,7 +1263,7 @@ impl Transaction {
 
                     // if it has failed, we don't want to deploy the contract
                     // TODO: we must handle this carefully
-                    if !is_success {
+                    if !result.is_success() {
                         debug!("Contract deploy for {} failed", tx_hash);
                         state.remove_contract_module(tx_hash).await
                             .map_err(VerificationError::State)?;

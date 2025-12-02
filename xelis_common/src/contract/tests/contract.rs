@@ -8,13 +8,16 @@ use xelis_parser::Parser;
 use xelis_vm::{Module, Primitive};
 
 use crate::{
+    config::TX_GAS_BURN_PERCENT,
     contract::{
         ContractMetadata,
         ContractModule,
+        Source,
         tests::TestChainState,
         vm::{self, ContractCaller, InvokeContract}
     },
-    crypto::Hash
+    crypto::Hash,
+    transaction::verify::BlockchainContractState
 };
 
 pub fn compile_contract(environment: &EnvironmentBuilder<ContractMetadata>, code: &str) -> anyhow::Result<Module> {
@@ -70,7 +73,7 @@ async fn test_execute_simple_contract() {
     ).await;
 
     assert!(result.is_ok(), "contract execution failed: {:?}", result);
-    assert!(result.unwrap(), "contract should return success (exit code 0)");
+    assert!(result.unwrap().is_success(), "contract should return success (exit code 0)");
 }
 
 #[tokio::test]
@@ -103,7 +106,7 @@ async fn test_contract_with_computation() {
     ).await;
 
     assert!(result.is_ok(), "contract execution failed: {:?}", result);
-    assert!(result.unwrap(), "contract should return success");
+    assert!(result.unwrap().is_success(), "contract should return success");
 }
 
 #[tokio::test]
@@ -139,5 +142,70 @@ async fn test_contract_with_parameters() {
     ).await;
 
     assert!(result.is_ok(), "contract execution failed: {:?}", result);
-    assert!(result.unwrap(), "contract should return success (exit code 0)");
+    assert!(result.unwrap().is_success(), "contract should return success (exit code 0)");
+}
+
+#[tokio::test]
+async fn test_refund_with_gas_sources() {
+    // Contract that performs some computation
+    let code = r#"
+        entry main() {
+            let a: u64 = 10;
+            let b: u64 = 20;
+            let sum: u64 = a + b;
+            require(sum == 30, "Sum must be 30");
+            return 0
+        }
+    "#;
+
+    let mut chain_state = TestChainState::new();
+    let contract_hash = create_contract(&mut chain_state, code).expect("compile contract");
+
+    let contract1 = Hash::new([2u8; 32]);
+    let contract2 = Hash::new([3u8; 32]);
+
+    let mut gas_sources = IndexMap::new();
+    gas_sources.insert(Source::Contract(contract1.clone()), 5000u64);
+    gas_sources.insert(Source::Contract(contract2.clone()), 5000u64);
+
+    // Invoke the contract
+    let result = vm::invoke_contract(
+        ContractCaller::Scheduled(Cow::Owned(Hash::zero()), Cow::Owned(contract_hash.clone())),
+        &mut chain_state,
+        Cow::Owned(contract_hash.clone()),
+        None,
+        std::iter::empty(),
+        gas_sources,
+        10000,
+        InvokeContract::Entry(0),
+        Cow::Owned(Default::default()),
+    ).await;
+
+    let execution = result.expect("contract execution failed");
+    assert!(execution.is_success(), "contract should return success");
+
+    // Calculate expected fee gas and burned gas
+    let burned_gas = execution.used_gas * TX_GAS_BURN_PERCENT / 100;
+    let gas_fee = execution.used_gas - burned_gas;
+
+    assert_eq!(execution.burned_gas, burned_gas, "burned gas should match expected value");
+    assert_eq!(execution.fee_gas, gas_fee, "fee gas should match expected value");
+    assert_eq!(execution.used_gas, burned_gas + gas_fee, "used gas should equal burned gas plus fee gas");
+
+    let expected_refund = 10000 - execution.used_gas;
+    let expected_refund_per_source = expected_refund / 2;
+
+    // Check that the actual contract didn't receive any refund
+    let (_, actual_contract_balance) = chain_state.get_contract_balance_for_gas(&contract_hash).await.unwrap();
+    assert_eq!(*actual_contract_balance, 0, "actual contract gas balance should be 0 after execution");
+
+    // Check the contract balances
+    let (_, contract_balance_1) = chain_state.get_contract_balance_for_gas(&contract1).await.unwrap();
+    assert_eq!(*contract_balance_1, expected_refund_per_source, "contract gas balance should be 0 after refund");
+
+    let (_, contract_balance_2) = chain_state.get_contract_balance_for_gas(&contract2).await.unwrap();
+
+    assert_eq!(*contract_balance_2, expected_refund_per_source, "contract gas balance should receive a refund");
+
+    assert_eq!(chain_state.contract_balances.len(), 3);
 }

@@ -78,6 +78,27 @@ pub enum ContractError<E> {
     DepositNotFound,
 }
 
+#[derive(Debug, Clone)]
+pub struct ExecutionResult {
+    // total gas used by the contract execution
+    pub used_gas: u64,
+    // part burned by the network
+    pub burned_gas: u64,
+    // part paid to the miners
+    pub fee_gas: u64,
+    // max gas used by the VM (can be higher than used_gas if gas injections were made)
+    pub vm_max_gas: u64,
+    // exit code returned by the contract (if any)
+    pub exit_code: Option<u64>,
+}
+
+impl ExecutionResult {
+    #[inline]
+    pub fn is_success(&self) -> bool {
+        self.exit_code == Some(0)
+    }
+}
+
 // Create the VM and run the required contrac twith all needed functions
 pub(crate) async fn run_virtual_machine<'a, P: ContractProvider>(
     contract_environment: ContractEnvironment<'a, P>,
@@ -195,7 +216,7 @@ pub async fn invoke_contract<'a, P: ContractProvider, E, B: BlockchainApplyState
     max_gas: u64,
     invoke: InvokeContract,
     permission: Cow<'a, InterContractPermission>,
-) -> Result<bool, ContractError<E>> {
+) -> Result<ExecutionResult, ContractError<E>> {
     debug!("Invoking contract {}: {:?}", contract, invoke);
     // Deposits are actually added to each balance
     let (contract_environment, mut chain_state) = state.get_contract_environment_for(contract.clone(), deposits.map(|(d, _)| d), caller.clone(), permission).await
@@ -280,8 +301,8 @@ pub async fn invoke_contract<'a, P: ContractProvider, E, B: BlockchainApplyState
     state.set_modules_cache(modules).await
         .map_err(ContractError::State)?;
 
-    let refund_gas = handle_gas(&caller, state, used_gas, max_gas).await?;
-    debug!("used gas: {}, refund gas: {}", used_gas, refund_gas);
+    let (refund_gas, burned_gas, fee_gas) = handle_gas(&caller, state, used_gas, max_gas).await?;
+    debug!("used gas: {}, refund gas: {}, burned gas: {}, gas fee: {}", used_gas, refund_gas, burned_gas, fee_gas);
 
     if refund_gas > 0 {
         outputs.push(ContractLog::RefundGas { amount: refund_gas });
@@ -294,7 +315,13 @@ pub async fn invoke_contract<'a, P: ContractProvider, E, B: BlockchainApplyState
     state.set_contract_logs(caller, outputs).await
         .map_err(ContractError::State)?;
 
-    Ok(is_success)
+    Ok(ExecutionResult {
+        used_gas,
+        vm_max_gas,
+        burned_gas,
+        fee_gas,
+        exit_code,
+    })
 }
 
 // We need to refund the extra (unused) gas
@@ -486,7 +513,7 @@ pub async fn handle_gas<'a, P: ContractProvider, E, B: BlockchainApplyState<'a, 
     state: &mut B,
     used_gas: u64,
     tx_max_gas: u64,
-) -> Result<u64, ContractError<E>> {
+) -> Result<(u64, u64, u64), ContractError<E>> {
     // Part of the gas is burned
     let burned_gas = used_gas * TX_GAS_BURN_PERCENT / 100;
     // Part of the gas is given to the miners as fees
@@ -519,7 +546,7 @@ pub async fn handle_gas<'a, P: ContractProvider, E, B: BlockchainApplyState<'a, 
         }
     }
 
-    Ok(refund_gas)
+    Ok((refund_gas, burned_gas, gas_fee))
 }
 
 // Refund the deposits made by the user to the contract
