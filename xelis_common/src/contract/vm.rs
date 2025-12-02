@@ -79,7 +79,7 @@ pub enum ContractError<E> {
 }
 
 // Create the VM and run the required contrac twith all needed functions
-async fn run_virtual_machine<'a, P: ContractProvider>(
+pub(crate) async fn run_virtual_machine<'a, P: ContractProvider>(
     contract_environment: ContractEnvironment<'a, P>,
     chain_state: &mut ChainState<'a>,
     invoke: InvokeContract,

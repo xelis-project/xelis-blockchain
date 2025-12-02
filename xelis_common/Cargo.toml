@@ -85,6 +85,9 @@ tokio = { workspace = true, features = ["macros", "signal", "time", "sync", "rt"
 [dev-dependencies]
 tokio = { workspace = true, features = ["full"] }
 criterion = "0.6.0"
+xelis_compiler = { git = "https://github.com/xelis-project/xelis-vm.git", branch = "dev", package = "xelis-compiler" }
+xelis_parser = { git = "https://github.com/xelis-project/xelis-vm.git", branch = "dev", package = "xelis-parser" }
+xelis_lexer = { git = "https://github.com/xelis-project/xelis-vm.git", branch = "dev", package = "xelis-lexer" }
 
 [features]
 tokio = ["dep:tokio", "dep:tokio_with_wasm", "dep:futures", "dep:pin-project-lite"]

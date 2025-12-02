@@ -1,3 +1,5 @@
+mod contract;
+
 use std::{borrow::Cow, collections::HashMap};
 
 use async_trait::async_trait;
@@ -28,6 +30,8 @@ use crate::{
     },
     versioned_type::VersionedState
 };
+
+pub use contract::*;
 
 #[derive(Debug, Default, Clone)]
 pub struct MockProvider {

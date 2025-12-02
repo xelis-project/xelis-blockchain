@@ -2,6 +2,7 @@ use std::{borrow::Cow, collections::HashMap, collections::hash_map::Entry, sync:
 use async_trait::async_trait;
 use curve25519_dalek::{ristretto::CompressedRistretto, traits::Identity, Scalar};
 use indexmap::{IndexMap, IndexSet};
+use xelis_builder::EnvironmentBuilder;
 use xelis_vm::{Chunk, Environment, Module};
 use crate::{
     account::{CiphertextCache, Nonce},
@@ -18,12 +19,13 @@ use crate::{
         ContractVersion,
         InterContractPermission,
         ScheduledExecution,
+        build_environment,
         tests::MockProvider,
         vm::ContractCaller
     },
     crypto::{
         elgamal::{Ciphertext, CompressedPublicKey, PedersenOpening},
-        proofs::{ProofVerificationError, G},
+        proofs::{G, ProofVerificationError},
         Address,
         Hash,
         Hashable,
@@ -79,7 +81,7 @@ pub struct MockChainState {
     pub burned_coins: HashMap<Hash, u64>,
     pub gas_fee: u64,
     pub burned_fee: u64,
-    pub env: Environment<ContractMetadata>,
+    pub env: Arc<EnvironmentBuilder<'static, ContractMetadata>>,
     pub provider: MockProvider,
     pub mainnet: bool,
     pub block_hash: Hash,
@@ -108,7 +110,7 @@ impl MockChainState {
             burned_coins: HashMap::new(),
             gas_fee: 0,
             burned_fee: 0,
-            env: Environment::new(),
+            env: Arc::new(build_environment::<MockProvider>()),
             provider: MockProvider::default(),
             mainnet: false,
             block_hash: Hash::zero(),
@@ -834,7 +836,7 @@ impl<'a> BlockchainVerificationState<'a, ()> for MockChainState {
     }
 
     async fn get_environment(&mut self, _: ContractVersion) -> Result<&Environment<ContractMetadata>, ()> {
-        Ok(&self.env)
+        Ok(self.env.environment())
     }
 
     async fn set_contract_module(
@@ -858,7 +860,7 @@ impl<'a> BlockchainVerificationState<'a, ()> for MockChainState {
         contract: &'a Hash
     ) -> Result<(&Module, &Environment<ContractMetadata>), ()> {
         let module = self.contracts.get(contract).ok_or(())?;
-        Ok((&module.module, &self.env))
+        Ok((&module.module, self.env.environment()))
     }
 }
 
@@ -918,7 +920,7 @@ impl<'a> BlockchainContractState<'a, MockProvider, ()> for MockChainState {
         
         // Create the contract environment
         let environment = ContractEnvironment {
-            environment: &self.env,
+            environment: &self.env.environment(),
             module: &contract_module.module,
             provider: &self.provider,
         };
