@@ -57,7 +57,7 @@ impl Network {
 
 impl Serialize for Network {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error> where S: serde::Serializer {
-        serializer.serialize_str(self.to_string().as_str())
+        serializer.serialize_str(self.to_string().to_lowercase().as_str())
     }
 }
 
@@ -74,7 +74,7 @@ impl Display for Network {
             Self::Mainnet => "Mainnet",
             Self::Testnet => "Testnet",
             Self::Stagenet => "Stagenet",
-            Self::Devnet => "Dev"
+            Self::Devnet => "Devnet"
         };
         write!(f, "{}", str)
     }
@@ -88,7 +88,7 @@ impl FromStr for Network {
             "mainnet" | "0" => Self::Mainnet,
             "testnet" | "1" => Self::Testnet,
             "stagenet" | "2" => Self::Stagenet,
-            "dev" | "3" => Self::Devnet,
+            "devnet" | "3" => Self::Devnet,
             _ => return Err("Invalid network".into())
         })
     }
