@@ -249,7 +249,7 @@ const OTHERS_NETWORK_HARD_FORKS: [HardFork; 4] = [
     HardFork {
         height: 15,
         version: BlockVersion::V3,
-        changelog: "Smart Contracts",
+        changelog: "Smart Contracts, xelis-hash v3, 5s block time",
         version_requirement: Some(">=1.19.0")
     }
 ];
