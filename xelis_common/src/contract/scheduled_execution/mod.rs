@@ -197,18 +197,31 @@ async fn schedule_execution<'a, 'ty, 'r, P: ContractProvider>(
     };
 
     let total_cost = max_gas + extra_cost;
-    if use_contract_balance {
+    let source = if use_contract_balance {
         // check that we have enough to pay the reserved gas & params fee
         if !has_enough_balance_for_contract(provider, state, metadata.metadata.contract_executor.clone(), XELIS_ASSET, total_cost).await?{
             return Ok(SysCallResult::Return(Primitive::Null.into()));
         }
+
+        Source::Contract(metadata.metadata.contract_executor.clone())
     } else {
+        let source = match state.caller {
+            ContractCaller::Transaction(_, tx) => {
+                Source::Account(tx.get_source().clone())
+            },
+            ContractCaller::Scheduled(_, _) => {
+                return Err(EnvironmentError::Static("cannot pay from caller scheduled execution")).into();
+            }
+        };
+
         // only allocate the max gas
         // the extra cost must be paid
         record_gas_allowance(context, max_gas)?;
 
         context.increase_gas_usage(extra_cost)?;
-    }
+
+        source
+    };
 
     // build the caller hash
     let hash = hash_multiple(&[
@@ -223,13 +236,14 @@ async fn schedule_execution<'a, 'ty, 'r, P: ContractProvider>(
         max_gas,
         params: params.clone(),
         kind,
-        gas_sources: [(Source::Contract(metadata.metadata.contract_executor.clone()), max_gas)].into(),
+        gas_sources: [(source, max_gas)].into(),
     };
 
     // register it
     let (provider, state) = from_context::<P>(context)?;
 
-    if !state.scheduled_executions.contains_key(&hash) {
+    // check that it does not already exist
+    if state.scheduled_executions.contains_key(&hash) {
         return Ok(SysCallResult::Return(Primitive::Boolean(false).into()));
     }
 
