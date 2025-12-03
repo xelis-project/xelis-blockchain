@@ -202,15 +202,19 @@ impl EncryptedStorage {
         }
     }
 
+    // Decrypt data and then deserialize it
+    fn decrypt_and_read<V: Serializer>(&self, data: &[u8]) -> Result<V> {
+        trace!("decrypt and read");
+        let decrypted = self.cipher.decrypt_value(data).context("Error while decrypting value from disk")?;
+        V::from_bytes(&decrypted).context("Error while de-serializing value from disk")
+    }
+
     // Key must be hashed or encrypted before calling this function
     fn internal_load<V: Serializer>(&self, tree: &Tree, key: &[u8]) -> Result<Option<V>> {
         trace!("internal load");
         let data = tree.get(key)?;
         Ok(match data {
-            Some(data) => {
-                let bytes = self.cipher.decrypt_value(&data).context("Error while decrypting value from disk")?;
-                Some(V::from_bytes(&bytes).context("Error while de-serializing value from disk")?)
-            },
+            Some(data) => self.decrypt_and_read::<V>(&data).map(Some)?,
             None => None
         })
     }
@@ -1385,6 +1389,31 @@ impl EncryptedStorage {
             .map(|id| id + 1)
             .unwrap_or(0);
         Ok(id)
+    }
+
+    // Rebuild the transactions indexes from scratch
+    pub fn rebuild_transactions_indexes(&mut self) -> Result<()> {
+        trace!("rebuild transactions indexes");
+
+        self.transactions_indexes.clear()?;
+
+        let mut txs_with_ids = Vec::new();
+        for el in self.transactions.iter() {
+            let (_, value) = el?;
+            let (hash, topoheight): (Hash, TopoHeight) = self.decrypt_and_read(&value)?;
+            txs_with_ids.push((topoheight, hash));
+        }
+
+        // Sort by id
+        txs_with_ids.sort_by_key(|(id, _)| *id);
+
+        // Reinsert in order
+        for (id, (_, entry_hash)) in txs_with_ids.into_iter().enumerate() {
+            let hashed_key = self.cipher.hash_key(entry_hash.as_bytes());
+            self.transactions_indexes.insert(&id.to_be_bytes(), &hashed_key)?;
+        }
+
+        Ok(())
     }
 
     // Save the transaction with its TX hash as key

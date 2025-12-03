@@ -638,6 +638,11 @@ async fn setup_wallet_command_manager(wallet: Arc<Wallet>, command_manager: &Com
         "See the status of the wallet",
         CommandHandler::Async(async_handler!(status))
     ))?;
+    command_manager.add_command(Command::new(
+        "rebuild_transactions_indexes",
+        "Rebuild the transactions indexes from the stored transactions",
+        CommandHandler::Async(async_handler!(rebuild_transactions_indexes))
+    ))?;
 
     let mut context = command_manager.get_context().lock()?;
     context.store(wallet);
@@ -2091,4 +2096,17 @@ async fn broadcast_tx(wallet: &Wallet, manager: &CommandManager, tx: Transaction
         manager.warn("You are currently offline, transaction cannot be send automatically. Please send it manually to the network.");
         manager.message(format!("Transaction in hex format: {}", tx.to_hex()));
     }
+}
+
+async fn rebuild_transactions_indexes(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
+    let context = manager.get_context().lock()?;
+    let wallet: &Arc<Wallet> = context.get()?;
+    let mut storage = wallet.get_storage().write().await;
+
+    manager.message("Rebuilding transactions indexes from stored transactions...");
+    storage.rebuild_transactions_indexes()
+        .context("Error while rebuilding transactions indexes")?;
+    manager.message("Transactions indexes have been rebuilt successfully.");
+
+    Ok(())
 }
