@@ -736,7 +736,7 @@ async fn insert_key<'ty, P: ContractProvider>(
                     break;
                 }
             }
-            Ordering::Equal => unreachable!("(key,id) is unique"),
+            Ordering::Equal => return Err(EnvironmentError::Static("unexpected equal key/id pair during insert")),
         }
     }
 
