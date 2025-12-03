@@ -306,7 +306,7 @@ define_numeric_enum! {
 }
 
 #[inline]
-fn missing() -> EnvironmentError { EnvironmentError::Static(ERR_MISSING_NODE) }
+const fn missing() -> EnvironmentError { EnvironmentError::Static(ERR_MISSING_NODE) }
 
 impl Node {
     #[inline]
