@@ -858,7 +858,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, C
             vec![],
             FunctionHandler::Sync(asset_get_contract_hash::<P>),
             5,
-            Some(hash_type.clone())
+            Some(Type::Optional(Box::new(hash_type.clone())))
         );
         env.register_native_function(
             "get_id",
@@ -1200,7 +1200,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, C
             "div",
             Some(scalar_type.clone()),
             vec![
-                ("value", Type::U64)
+                ("value", scalar_type.clone())
             ],
             FunctionHandler::Sync(scalar_div),
             6000,
@@ -1787,7 +1787,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, C
             vec![("asset", hash_type.clone())],
             FunctionHandler::Async(async_handler!(get_balance_for_asset::<P>)),
             25,
-            Some(Type::U64)
+            Some(Type::Optional(Box::new(Type::U64)))
         );
 
         // Retrieve the balance for the given asset of a contract
@@ -1900,7 +1900,7 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, C
             vec![("amount", Type::U64)],
             FunctionHandler::Async(async_handler!(increase_gas_limit::<P>)),
             250,
-            Some(Type::U64)
+            Some(Type::Bool)
         );
 
         // Current block topoheight in which we are executing this contract
