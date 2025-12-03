@@ -1115,6 +1115,16 @@ impl EncryptedStorage {
         Ok(result)
     }
 
+    // Count the number of transactions and indexes stored
+    pub fn count_transactions(&self) -> Result<(usize, usize)> {
+        trace!("count transactions");
+
+        let txs = self.transactions.len();
+        let indexes = self.transactions_indexes.len();
+
+        Ok((txs, indexes))
+    }
+
     // Filter when the data is deserialized to not load all transactions in memory
     // Topoheight bounds are inclusive
     pub fn get_filtered_transactions(

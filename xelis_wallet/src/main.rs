@@ -1814,6 +1814,9 @@ async fn status(manager: &CommandManager, _: ArgumentManager) -> Result<(), Comm
     manager.message(format!("Network: {}", network));
     manager.message(format!("Wallet address: {}", wallet.get_address()));
 
+    let (txs, indexes) = storage.count_transactions()?;
+    manager.message(format!("Transactions: {} with {} indexes", txs, indexes));
+
     Ok(())
 }
 
