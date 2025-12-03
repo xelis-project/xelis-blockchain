@@ -380,14 +380,15 @@ pub enum StorageBackend {
 
 impl Default for StorageBackend {
     fn default() -> Self {
-        #[cfg(feature = "sled")]
-        {
-            return Self::Sled;
-        }
-
-        #[cfg(all(feature = "rocksdb", not(feature = "sled")))]
+        // RocksDB is preferred if both are enabled
+        #[cfg(feature = "rocksdb")]
         {
             return Self::RocksDB;
+        }
+
+        #[cfg(all(not(feature = "rocksdb"), feature = "sled"))]
+        {
+            return Self::Sled;
         }
     }
 }
