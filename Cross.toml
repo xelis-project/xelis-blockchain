@@ -18,20 +18,3 @@ pre-build = [
     "update-alternatives --install /usr/bin/clang clang /usr/bin/clang-18 100",
     "update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-18 100",
 ]
-
-[target.x86_64-unknown-linux-gnu.env]
-passthrough = [
-    "CC=clang",
-    "CXX=clang++",
-    "AWS_LC_SYS_CC=clang",
-]
-
-[target.x86_64-pc-windows-gnu]
-image = "ghcr.io/cross-rs/x86_64-pc-windows-gnu:main"
-pre-build = [
-    "apt-get update",
-    "apt-get install -y clang nasm mingw-w64 mingw-w64-x86-64-dev zlib1g-dev liblz4-dev libzstd-dev libsnappy-dev"
-]
-
-[target.x86_64-pc-windows-gnu.env]
-passthrough = ["BINDGEN_EXTRA_CLANG_ARGS", "BINDGEN_EXTRA_CLANG_ARGS='--target=x86_64-w64-mingw32 -I/usr/x86_64-w64-mingw32/include'"]
