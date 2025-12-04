@@ -18,3 +18,10 @@ pre-build = [
     "update-alternatives --install /usr/bin/clang clang /usr/bin/clang-18 100",
     "update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-18 100",
 ]
+
+[target.x86_64-unknown-linux-gnu.env]
+passthrough = [
+    "CC=clang",
+    "CXX=clang++",
+    "AWS_LC_SYS_CC=clang",
+]
