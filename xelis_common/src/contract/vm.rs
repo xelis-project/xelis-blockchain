@@ -316,6 +316,7 @@ pub async fn invoke_contract<'a, P: ContractProvider, E, B: BlockchainApplyState
 
             // We consume only what was used above the original max gas
             charge_gas_injections(state, gas_injections, extra_used_gas, &mut outputs).await?;
+            refund_gas = 0;
         }
 
         // decompressed deposits may be empty because we only have plaintext deposits
@@ -339,7 +340,7 @@ pub async fn invoke_contract<'a, P: ContractProvider, E, B: BlockchainApplyState
     state.set_modules_cache(modules).await
         .map_err(ContractError::State)?;
 
-    let (refund_gas, burned_gas, fee_gas) = handle_gas(&caller, state, used_gas, refund_gas).await?;
+    let (burned_gas, fee_gas) = handle_gas(&caller, state, used_gas, refund_gas).await?;
     debug!("used gas: {}, refund gas: {}, burned gas: {}, gas fee: {}", used_gas, refund_gas, burned_gas, fee_gas);
 
     if refund_gas > 0 {
@@ -553,7 +554,7 @@ pub async fn handle_gas<'a, P: ContractProvider, E, B: BlockchainApplyState<'a, 
     state: &mut B,
     used_gas: u64,
     refund_gas: u64,
-) -> Result<(u64, u64, u64), ContractError<E>> {
+) -> Result<(u64, u64), ContractError<E>> {
     // Part of the gas is burned
     let burned_gas = used_gas * TX_GAS_BURN_PERCENT / 100;
     // Part of the gas is given to the miners as fees
@@ -578,7 +579,7 @@ pub async fn handle_gas<'a, P: ContractProvider, E, B: BlockchainApplyState<'a, 
         }
     }
 
-    Ok((refund_gas, burned_gas, gas_fee))
+    Ok((burned_gas, gas_fee))
 }
 
 // Refund the deposits made by the user to the contract
