@@ -334,6 +334,7 @@ pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>
     handler.register_method_with_params("get_block_difficulty_by_hash", async_handler!(get_block_difficulty_by_hash::<S>));
     handler.register_method_with_params("get_block_base_fee_by_hash", async_handler!(get_block_base_fee_by_hash::<S>));
     handler.register_method_with_params_and_return_schema::<_, GetBlockSummaryResult>("get_block_summary_at_topoheight", async_handler!(get_block_summary_at_topoheight::<S>));
+    handler.register_method_with_params_and_return_schema::<_, GetBlockSummaryResult>("get_block_summary_by_hash", async_handler!(get_block_summary_by_hash::<S>));
 
     // Balances
     handler.register_method_with_params("get_balance", async_handler!(get_balance::<S>));
@@ -1599,8 +1600,7 @@ async fn get_block_summary_at_topoheight<S: Storage>(context: &Context, params: 
     let (hash, block_header) = storage.get_block_header_at_topoheight(params.topoheight).await
         .context("Error while retrieving block header at topoheight")?;
 
-    let metadata = storage.get_metadata_at_topoheight(params.topoheight).await
-        .context("Error while retrieving block metadata at topoheight")?;
+    let (metadata, block_type, cumulative_difficulty, difficulty) = get_block_data(blockchain, &*storage, block_header.get_height(), &hash).await?;
 
     let storage = &storage;
     let transactions = stream::iter(block_header.get_transactions().iter())
@@ -1626,11 +1626,53 @@ async fn get_block_summary_at_topoheight<S: Storage>(context: &Context, params: 
         height: block_header.get_height(),
         miner: Cow::Owned(block_header.get_miner().as_address(blockchain.get_network().is_mainnet())),
         timestamp: block_header.get_timestamp(),
-        total_fees: metadata.total_fees,
-        total_fees_burned: metadata.total_fees_burned,
-        reward: metadata.block_reward,
+        block_type,
+        cumulative_difficulty: Cow::Owned(cumulative_difficulty),
+        difficulty: Cow::Owned(difficulty),
+        metadata,
         transactions,
-        emitted_supply: metadata.emitted_supply,
+    };
+
+    Ok(json!(summary))
+}
+
+async fn get_block_summary_by_hash<S: Storage>(context: &Context, params: GetBlockSummaryByHashParams<'_>) -> Result<Value, InternalRpcError> {
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    let storage = blockchain.get_storage().read().await;
+    let block_header = storage.get_block_header_by_hash(&params.block_hash).await
+        .context("Error while retrieving block header by hash")?;
+
+    let (metadata, block_type, cumulative_difficulty, difficulty) = get_block_data(blockchain, &*storage, block_header.get_height(), &params.block_hash).await?;
+
+    let storage = &storage;
+    let transactions = stream::iter(block_header.get_transactions().iter())
+        .map(move |tx_hash| async move {
+            let tx = storage.get_transaction(tx_hash).await
+                .context(format!("Error while retrieving transaction {tx_hash}"))?;
+
+            Ok::<_, BlockchainError>(TransactionSummary {
+                hash: Cow::Borrowed(tx_hash),
+                source: tx.get_source().as_address(blockchain.get_network().is_mainnet()),
+                fee: tx.get_fee(),
+                size: tx.size(),
+            })
+        })
+        .buffered(blockchain.concurrency_limit())
+        .boxed()
+        .try_collect::<Vec<_>>()
+        .await
+        .context("Error while retrieving transactions for block summary")?;
+
+    let summary = GetBlockSummaryResult {
+        block_hash: params.block_hash,
+        height: block_header.get_height(),
+        miner: Cow::Owned(block_header.get_miner().as_address(blockchain.get_network().is_mainnet())),
+        timestamp: block_header.get_timestamp(),
+        block_type,
+        cumulative_difficulty: Cow::Owned(cumulative_difficulty),
+        difficulty: Cow::Owned(difficulty),
+        metadata,
+        transactions,
     };
 
     Ok(json!(summary))
