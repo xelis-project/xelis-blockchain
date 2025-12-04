@@ -1767,6 +1767,7 @@ async fn status(manager: &CommandManager, _: ArgumentManager) -> Result<(), Comm
     let context = manager.get_context().lock()?;
     let wallet: &Arc<Wallet> = context.get()?;
 
+    #[cfg(feature = "network_handler")]
     if let Some(network_handler) = wallet.get_network_handler().lock().await.as_ref() {
         let api = network_handler.get_api();
         let is_online = api.get_client().is_online();
