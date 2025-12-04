@@ -36,12 +36,11 @@ for target in "${targets[@]}"; do
     if [[ "$target" == *"windows"* ]]; then
         for binary in "${binaries[@]}"; do
             if [[ "$binary" == *"daemon"* ]]; then
-                cross build --target $target --profile release-with-lto
+                # Remove the rocksdb feature for daemon
+                cross build --target $target --bin $binary --profile release-with-lto --no-default-features --features "sled"
             else
-                cross build --target $target --profile release-with-lto --no-default-features
+                cross build --target $target --bin $binary --profile release-with-lto
             fi
-
-
         done
     else
         cross build --target $target --profile release-with-lto
