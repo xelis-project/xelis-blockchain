@@ -390,6 +390,11 @@ impl Default for StorageBackend {
         {
             return Self::Sled;
         }
+
+        #[cfg(all(not(feature = "rocksdb"), not(feature = "sled")))]
+        {
+            compile_error!("At least one storage backend must be enabled: sled or rocksdb")
+        }
     }
 }
 
