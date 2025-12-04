@@ -232,6 +232,11 @@ pub struct GetBlockAtTopoHeightParams {
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
+pub struct GetBlockSummaryByHashParams<'a> {
+    pub block_hash: Cow<'a, Hash>
+}
+
+#[derive(Serialize, Deserialize, JsonSchema)]
 pub struct GetBlocksAtHeightParams {
     pub height: u64,
     #[serde(default)]
@@ -709,19 +714,24 @@ pub struct GetBlockBaseFeeByHashResult {
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct GetBlockSummaryResult<'a> {
+    // Hash of the block header
     pub block_hash: Cow<'a, Hash>,
+    // Height of the block
     pub height: u64,
+    // Timestamp of the block in milliseconds
     pub timestamp: TimestampMillis,
+    // Miner address
     pub miner: Cow<'a, Address>,
+    // Transactions included in the block
     pub transactions: Vec<TransactionSummary<'a>>,
-    // Total fees received by the miner in this block
-    pub total_fees: u64,
-    // Total fees burned in this block
-    pub total_fees_burned: u64,
-    // Total reward emitted in this block
-    pub reward: u64,
-    // Emitted supply at this topoheight
-    pub emitted_supply: u64,
+    // Type of the block (sync, side, orphaned, normal)
+    pub block_type: BlockType,
+    // Difficulty of the block
+    pub difficulty: Cow<'a, Difficulty>,
+    // Cumulative difficulty up to this block
+    pub cumulative_difficulty: Cow<'a, CumulativeDifficulty>,
+    #[serde(flatten)]
+    pub metadata: Option<RPCTopoHeightMetadata>,
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
