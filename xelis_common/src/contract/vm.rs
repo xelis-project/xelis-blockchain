@@ -263,6 +263,7 @@ pub async fn invoke_contract<'a, P: ContractProvider, E, B: BlockchainApplyState
         max_gas - used_gas
     };
 
+    // In case of success, used_gas <= vm_max_gas
     if is_success {
         let mut caches = chain_state.caches;
 
@@ -307,8 +308,14 @@ pub async fn invoke_contract<'a, P: ContractProvider, E, B: BlockchainApplyState
         // But, if we got any gas injection, fully consume it despite the error returned
         // otherwise it allows free invoke attacks
         if used_gas > max_gas && !gas_injections.is_empty() {
+            // Force contracts to pay the extra used gas
+            // despite the contract returned an error
+            // used_gas is always capped by vm_max_gas
+            let extra_used_gas = used_gas.checked_sub(max_gas)
+                .ok_or(ContractError::GasOverflow)?;
+
             // We consume only what was used above the original max gas
-            process_gas_injections(state, gas_injections, used_gas, vm_max_gas, &mut outputs).await?;
+            charge_gas_injections(state, gas_injections, extra_used_gas, &mut outputs).await?;
         }
 
         // decompressed deposits may be empty because we only have plaintext deposits
@@ -487,35 +494,31 @@ pub async fn refund_extra_gas_injections<'a, P: ContractProvider, E, B: Blockcha
 }
 
 // Directly apply to the state the gas injections consumed
-pub async fn process_gas_injections<'a, P: ContractProvider, E, B: BlockchainApplyState<'a, P, E>>(
+// This is called when the contract failed and has still used the injected gas
+pub async fn charge_gas_injections<'a, P: ContractProvider, E, B: BlockchainApplyState<'a, P, E>>(
     state: &mut B,
     gas_injections: IndexMap<Source, u64>,
-    used_gas: u64,
-    max_gas: u64,
+    mut extra_used_gas: u64,
     outputs: &mut Vec<ContractLog>,
 ) -> Result<(), ContractError<E>> {
-    // Everything that was spend over the initial max gas
-    // we need to consume from the injections
-    let mut extra_gas = max_gas.checked_sub(used_gas)
-        .ok_or(ContractError::GasOverflow)?;
-
     // Consume the injections in order
     // so the first to inject is the first to be consumed
     for (source, gas) in gas_injections.into_iter() {
-        if extra_gas == 0 {
+        if extra_used_gas == 0 {
+            debug!("No more extra used gas to consume from injections");
             break;
         }
 
         // Consume as much as possible from this contract’s injection
-        let consumed = gas.min(extra_gas);
+        let consumed = gas.min(extra_used_gas);
 
-        // Decrease what’s left to cover
-        extra_gas -= consumed;
+        // Decrease what’s left to pay
+        extra_used_gas -= consumed;
 
         // Consume the used gas from the source balance
         match source {
             Source::Contract(contract) => {
-                debug!("Consume gas injection of {} from contract {} despite error", gas, contract);
+                debug!("Consume {} gas from total injection of {} gas from contract {} despite error", consumed, gas, contract);
                     // Retrieve the balance before execution
                     // we will apply the gas fee on it
                     let (versioned_state, balance) = state.get_contract_balance_for_gas(&contract).await
@@ -531,9 +534,15 @@ pub async fn process_gas_injections<'a, P: ContractProvider, E, B: BlockchainApp
             },
             Source::Account(account) => {
                 // Nothing to do, because it was taken from the gas usage directly
-                debug!("Consume gas injection of {} from account {} despite error", gas, account.as_address(state.is_mainnet()));
+                warn!("Consume gas injection of {} from account {}, this is not possible in current protocol", gas, account.as_address(state.is_mainnet()));
+                return Err(ContractError::GasOverflow)
             }
         }
+    }
+
+    if extra_used_gas > 0 {
+        warn!("Not enough gas injections to cover extra used gas: {}", extra_used_gas);
+        return Err(ContractError::GasOverflow);
     }
 
     Ok(())
