@@ -56,8 +56,6 @@ for target in "${targets[@]}"; do
 
         for binary in "${binaries[@]}"; do
             echo "Building $binary for $target with cargo-xwin in Docker..."
-            if [[ "$binary" == *"daemon"* ]]; then
-                # match your no-default-features + sled setup for daemon
                 docker run --rm -it \
                     -v "$PWD:/work" \
                     -w /work \
@@ -65,19 +63,7 @@ for target in "${targets[@]}"; do
                     cargo xwin build \
                         --target "$target" \
                         --bin "$binary" \
-                        --profile release-with-lto \
-                        --no-default-features \
-                        --features "sled"
-            else
-                docker run --rm -it \
-                    -v "$PWD:/work" \
-                    -w /work \
-                    "$IMAGE_NAME" \
-                    cargo xwin build \
-                        --target "$target" \
-                        --bin "$binary" \
-                        --profile release-with-lto
-            fi
+                        --profile release-with-lto 
         done
     else
         # ---- Non-Windows builds via cross ----
