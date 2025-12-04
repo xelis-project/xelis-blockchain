@@ -1,67 +1,87 @@
 #! /bin/bash
 set -euo pipefail
 
-# support: ARM64, ARMv7, x86_64 linux, Windows x86_64
+IMAGE_NAME="messense/cargo-xwin"
+
+# support: ARM64, ARMv7, x86_64 linux, Windows x86_64 (MSVC)
 targets=("aarch64-unknown-linux-gnu" "armv7-unknown-linux-gnueabihf" "x86_64-unknown-linux-musl" "x86_64-unknown-linux-gnu" "x86_64-pc-windows-msvc")
 binaries=("xelis_daemon" "xelis_miner" "xelis_wallet")
 extra_files=("README.md" "API.md" "CHANGELOG.md" "LICENSE")
 
-# If not running inside the container, run this script inside messense/cargo-xwin
-if [[ "${IN_XWIN_DOCKER:-0}" != "1" ]]; then
-    # Ensure docker is available
-    if ! command -v docker &> /dev/null; then
-        echo "Docker is required but not found"
-        exit 1
-    fi
-
-    # Pull only if missing, and show normal docker progress output
-    if ! docker image inspect "$IMAGE_NAME" >/dev/null 2>&1; then
-        echo "Docker image $IMAGE_NAME not found locally, pulling..."
-        docker pull "$IMAGE_NAME"
-    else
-        echo "Docker image $IMAGE_NAME already present, skipping pull."
-    fi
-
-    echo "Re-running inside $IMAGE_NAME..."
-    exec docker run --rm -it \
-        -e IN_XWIN_DOCKER=1 \
-        -v "$PWD:/work" \
-        -w /work \
-        "$IMAGE_NAME" \
-        bash "$0" "$@"
+# verify that we have cross installed
+if ! command -v cross &> /dev/null; then
+    echo "cross could not be found, please install it for cross compilation"
+    exit 1
 fi
 
-# --------- From here on, we are inside messense/cargo-xwin ---------
+# Cross (and our Windows build) need docker to be running
+echo "Starting docker daemon"
+if ! sudo systemctl start docker 2>/dev/null; then
+    echo "Warning: could not start docker via systemd; make sure Docker is running if needed."
+fi
 
-echo "Using messense/cargo-xwin inside Docker"
+echo "Updating using rustup"
+rustup update stable
+
+echo "Only build in stable"
+rustup default stable
 
 echo "Deleting build folder"
 rm -rf build
 
+# compile all binaries for all targets
 echo "Compiling binaries for all targets"
 for target in "${targets[@]}"; do
     echo "Clean build cache for $target"
-    cargo clean
+    cross clean
 
-    # Idempotent; cheap even if already added
+    # support the target (for tooling, even if Windows build happens in Docker)
     rustup target add "$target"
 
     if [[ "$target" == *"windows"* ]]; then
+        # ---- Windows (MSVC) build via cargo-xwin in Docker ----
+        # Ensure docker CLI is available
+        if ! command -v docker &> /dev/null; then
+            echo "docker could not be found, required for Windows build"
+            exit 1
+        fi
+
+        # Pull the image once if missing
+        if ! docker image inspect "$IMAGE_NAME" >/dev/null 2>&1; then
+            echo "Docker image $IMAGE_NAME not found locally, pulling..."
+            docker pull "$IMAGE_NAME"
+        else
+            echo "Docker image $IMAGE_NAME already present, skipping pull."
+        fi
+
         for binary in "${binaries[@]}"; do
-            echo "Building $binary for $target with cargo-xwin..."
-            cargo xwin build \
-                --target "$target" \
-                --bin "$binary" \
-                --profile release-with-lto
+            echo "Building $binary for $target with cargo-xwin in Docker..."
+            if [[ "$binary" == *"daemon"* ]]; then
+                # match your no-default-features + sled setup for daemon
+                docker run --rm -it \
+                    -v "$PWD:/work" \
+                    -w /work \
+                    "$IMAGE_NAME" \
+                    cargo xwin build \
+                        --target "$target" \
+                        --bin "$binary" \
+                        --profile release-with-lto \
+                        --no-default-features \
+                        --features "sled"
+            else
+                docker run --rm -it \
+                    -v "$PWD:/work" \
+                    -w /work \
+                    "$IMAGE_NAME" \
+                    cargo xwin build \
+                        --target "$target" \
+                        --bin "$binary" \
+                        --profile release-with-lto
+            fi
         done
     else
-        for binary in "${binaries[@]}"; do
-            echo "Building $binary for $target with cargo..."
-            cargo build \
-                --target "$target" \
-                --profile release-with-lto \
-                --bin "$binary"
-        done
+        # ---- Non-Windows builds via cross ----
+        cross build --target "$target" --profile release-with-lto
     fi
 
     mkdir -p "build/$target"
@@ -69,6 +89,7 @@ for target in "${targets[@]}"; do
     # copy generated binaries to build directory
     for binary in "${binaries[@]}"; do
         out_bin="$binary"
+        # add .exe extension to windows binaries
         if [[ "$target" == *"windows"* ]]; then
             out_bin="$binary.exe"
         fi
@@ -77,19 +98,19 @@ for target in "${targets[@]}"; do
 
     # copy extra files
     for file in "${extra_files[@]}"; do
-        if [[ -f "$file" ]]; then
-            cp "$file" "build/$target/$file"
-        fi
+        cp "$file" "build/$target/$file"
     done
 done
 
 echo "Creating archives for all targets"
 for target in "${targets[@]}"; do
+    # generate checksums
     echo "Generating checksums for $target"
     cd "build/$target"
     > checksums.txt
     for binary in "${binaries[@]}"; do
         out_bin="$binary"
+        # add .exe extension to windows binaries
         if [[ "$target" == *"windows"* ]]; then
             out_bin="$binary.exe"
         fi
@@ -97,7 +118,8 @@ for target in "${targets[@]}"; do
     done
     cd ../..
 
-    cd build
+    # create archive
+    cd build/
     if [[ "$target" == *"windows"* ]]; then
         zip -r "$target.zip" "$target"
     else
@@ -106,8 +128,9 @@ for target in "${targets[@]}"; do
     cd ..
 done
 
+# Generate final checksums.txt in build/
 echo "Generating final checksums.txt in build/"
-cd build
+cd build/
 > checksums.txt
 for target in "${targets[@]}"; do
     if [[ "$target" == *"windows"* ]]; then
@@ -118,4 +141,4 @@ for target in "${targets[@]}"; do
 done
 cd ..
 
-echo "Done 🎉"
+echo "Done"
