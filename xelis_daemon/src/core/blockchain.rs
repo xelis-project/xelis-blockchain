@@ -1,4 +1,4 @@
-use anyhow::Error;
+use anyhow::{Context, Error};
 use futures::{stream, TryStreamExt};
 use indexmap::IndexSet;
 use metrics::{counter, gauge, histogram};
@@ -1894,14 +1894,14 @@ impl<S: Storage> Blockchain<S> {
                         .try_for_each_concurrent(self.txs_verification_threads_count, async |txs| {
                             let mut chain_state = ChainState::new(storage, environment, stable_topoheight, current_topoheight, version, base_fee);
                             Transaction::verify_batch(txs.iter(), &mut chain_state, cache).await
-                        }).await?;
+                        }).await
                 } else {
                     // Verify all valid transactions in one batch
                     let mut chain_state = ChainState::new(&*storage, &self.environment, stable_topoheight, current_topoheight, version, base_fee);
                     let iter = txs_grouped.values()
                         .flatten();
-                    Transaction::verify_batch(iter, &mut chain_state, &tx_cache).await?;
-                }
+                    Transaction::verify_batch(iter, &mut chain_state, &tx_cache).await
+                }.context(format!("Failed to verify transactions in block {}", block_hash))?;
 
                 debug!("Verified {} transactions in {}ms", total_txs, start.elapsed().as_millis());
 
