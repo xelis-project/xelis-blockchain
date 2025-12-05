@@ -1639,10 +1639,10 @@ async fn get_block_summary_at_topoheight<S: Storage>(context: &Context, params: 
 async fn get_block_summary_by_hash<S: Storage>(context: &Context, params: GetBlockSummaryByHashParams<'_>) -> Result<Value, InternalRpcError> {
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let storage = blockchain.get_storage().read().await;
-    let block_header = storage.get_block_header_by_hash(&params.block_hash).await
+    let block_header = storage.get_block_header_by_hash(&params.hash).await
         .context("Error while retrieving block header by hash")?;
 
-    let (metadata, block_type, cumulative_difficulty, difficulty) = get_block_data(blockchain, &*storage, block_header.get_height(), &params.block_hash).await?;
+    let (metadata, block_type, cumulative_difficulty, difficulty) = get_block_data(blockchain, &*storage, block_header.get_height(), &params.hash).await?;
 
     let storage = &storage;
     let transactions = stream::iter(block_header.get_transactions().iter())
@@ -1664,7 +1664,7 @@ async fn get_block_summary_by_hash<S: Storage>(context: &Context, params: GetBlo
         .context("Error while retrieving transactions for block summary")?;
 
     let summary = GetBlockSummaryResult {
-        block_hash: params.block_hash,
+        block_hash: params.hash,
         height: block_header.get_height(),
         miner: Cow::Owned(block_header.get_miner().as_address(blockchain.get_network().is_mainnet())),
         timestamp: block_header.get_timestamp(),
