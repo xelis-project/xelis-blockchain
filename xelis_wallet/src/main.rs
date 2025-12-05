@@ -88,8 +88,8 @@ use {
         api::{
             AuthConfig,
             PermissionResult,
+            AppStateShared,
             Permission,
-            AppStateShared
         },
         wallet::XSWDEvent,
     },
@@ -275,14 +275,15 @@ async fn xswd_handler(mut receiver: UnboundedReceiver<XSWDEvent>, prompt: Sharea
                 message += "\r\n(Y/N): ";
 
                 let accepted = prompt.read_valid_str_value(prompt.colorize_string(Color::Blue, &message), &["y", "n"]).await.is_ok_and(|v| v == "y");
+
+                let mut results = IndexMap::new();
                 if accepted {
-                    let mut app_permissions = app_state.get_permissions().lock().await;
                     for permission in permissions.permissions {
-                        app_permissions.insert(permission, Permission::Allow);
+                        results.insert(permission, Permission::Allow);
                     }
                 }
 
-                if callback.send(Ok(())).is_err() {
+                if callback.send(Ok(results)).is_err() {
                     error!("Error while sending prefetch permissions response back to XSWD");
                 }
             }
