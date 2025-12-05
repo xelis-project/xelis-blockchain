@@ -233,7 +233,7 @@ pub struct GetBlockAtTopoHeightParams {
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct GetBlockSummaryByHashParams<'a> {
-    pub block_hash: Cow<'a, Hash>
+    pub hash: Cow<'a, Hash>
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
