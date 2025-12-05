@@ -54,17 +54,7 @@ for target in "${targets[@]}"; do
             echo "Docker image $IMAGE_NAME already present, skipping pull."
         fi
 
-        for binary in "${binaries[@]}"; do
-            echo "Building $binary for $target with cargo-xwin in Docker..."
-                docker run --rm -it \
-                    -v "$PWD:/work" \
-                    -w /work \
-                    "$IMAGE_NAME" \
-                    cargo xwin build \
-                        --target "$target" \
-                        --bin "$binary" \
-                        --profile release-with-lto 
-        done
+        docker run --rm -it -v "$PWD:/work" -w /work "$IMAGE_NAME" cargo xwin build --target "$target" --profile release-with-lto 
     else
         # ---- Non-Windows builds via cross ----
         cross build --target "$target" --profile release-with-lto
