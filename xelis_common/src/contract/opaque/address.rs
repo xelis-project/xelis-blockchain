@@ -1,5 +1,4 @@
 use xelis_vm::{
-    traits::Serializable,
     Context,
     EnvironmentError,
     FnInstance,
@@ -7,9 +6,14 @@ use xelis_vm::{
     FnReturnType,
     OpaqueWrapper,
     Primitive,
-    ValueCell
+    SysCallResult,
+    ValueCell,
+    traits::Serializable
 };
-use crate::crypto::Address;
+use crate::{
+    contract::{ContractMetadata, ModuleMetadata, OpaqueRistrettoPoint},
+    crypto::{Address, NORMAL_ADDRESS_LEN}
+};
 
 use super::{Serializer, Writer, ADDRESS_OPAQUE_ID};
 
@@ -30,31 +34,56 @@ impl Serializable for Address {
     }
 }
 
-pub fn address_is_mainnet(zelf: FnInstance, _: FnParams, _: &mut Context) -> FnReturnType {
-    let address: &Address = zelf?.as_opaque_type()?;
-    Ok(Some(Primitive::Boolean(address.is_mainnet()).into()))
+pub fn address_is_mainnet(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {
+    let zelf = zelf?;
+    let address: &Address = zelf.as_opaque_type()?;
+    Ok(SysCallResult::Return(Primitive::Boolean(address.is_mainnet()).into()))
 }
 
-pub fn address_is_normal(zelf: FnInstance, _: FnParams, _: &mut Context) -> FnReturnType {
-    let address: &Address = zelf?.as_opaque_type()?;
-    Ok(Some(Primitive::Boolean(address.is_normal()).into()))
+pub fn address_to_bytes(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {
+    let zelf = zelf?;
+    let address: &Address = zelf.as_opaque_type()?;
+    Ok(SysCallResult::Return(ValueCell::Bytes(address.to_bytes()).into()))
 }
 
-pub fn address_public_key_bytes(zelf: FnInstance, _: FnParams, _: &mut Context) -> FnReturnType {
-    let address: &Address = zelf?.as_opaque_type()?;
-    let bytes = address.get_public_key()
-        .as_bytes();
+pub fn address_to_point(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {
+    let zelf = zelf?;
+    let address: &Address = zelf.as_opaque_type()?;
+    let point = address.get_public_key()
+        .as_point()
+        .clone();
 
-    Ok(Some(ValueCell::Bytes(bytes.into())))
+    Ok(SysCallResult::Return(OpaqueRistrettoPoint::Compressed(point).into()))
 }
 
-pub fn address_from_string(_: FnInstance, mut params: FnParams, _: &mut Context) -> FnReturnType {
+pub fn address_to_string(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {
+    let zelf = zelf?;
+    let address: &Address = zelf.as_opaque_type()?;
+    Ok(SysCallResult::Return(Primitive::String(address.to_string()).into()))
+}
+
+pub fn address_from_string(_: FnInstance, mut params: FnParams, _: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {
     let param = params.remove(0)
-        .into_owned()?;
+        .into_owned();
     let string = param.as_string()?;
+
+    if string.len() > NORMAL_ADDRESS_LEN {
+        return Err(EnvironmentError::InvalidParameter);
+    }
 
     let address = Address::from_string(string)
         .map_err(|_| EnvironmentError::InvalidParameter)?;
 
-    Ok(Some(Primitive::Opaque(OpaqueWrapper::new(address)).into()))
+    Ok(SysCallResult::Return(Primitive::Opaque(OpaqueWrapper::new(address)).into()))
+}
+
+pub fn address_from_bytes(_: FnInstance, params: FnParams, _: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {
+    let bytes = params[0]
+        .as_ref()
+        .as_bytes()?;
+
+    let address = Address::from_bytes(&bytes)
+        .map_err(|_| EnvironmentError::InvalidParameter)?;
+
+    Ok(SysCallResult::Return(Primitive::Opaque(OpaqueWrapper::new(address)).into()))
 }

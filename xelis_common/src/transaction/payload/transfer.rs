@@ -1,3 +1,4 @@
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use crate::{
     crypto::{
@@ -13,7 +14,7 @@ use crate::{
 // It contains the asset hash, the destination account, the ciphertext commitment, the sender and receiver decrypt handles
 // A validity proof is also provided to ensure the receiver ciphertext is valid
 // to prevent any attack
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct TransferPayload {
     asset: Hash,
     destination: CompressedPublicKey,

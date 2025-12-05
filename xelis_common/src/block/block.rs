@@ -9,7 +9,6 @@ use crate::{
         Hashable,
         Hash,
     },
-    immutable::Immutable,
     transaction::Transaction,
     serializer::{Serializer, Writer, Reader, ReaderError},
 };
@@ -18,35 +17,41 @@ use super::BlockHeader;
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct Block {
     #[serde(flatten)]
-    header: Immutable<BlockHeader>,
+    header: Arc<BlockHeader>,
     transactions: Vec<Arc<Transaction>>
 }
 
 impl Block {
-    pub fn new(header: Immutable<BlockHeader>, transactions: Vec<Arc<Transaction>>) -> Self {
-        Block {
-            header,
+    #[inline]
+    pub fn new(header: impl Into<Arc<BlockHeader>>, transactions: Vec<Arc<Transaction>>) -> Self {
+        Self {
+            header: header.into(),
             transactions
         }
     }
 
+    #[inline]
     pub fn to_header(self) -> Arc<BlockHeader> {
-        self.header.into_arc()
+        self.header
     }
 
-    pub fn get_header(&self) -> &BlockHeader {
+    #[inline]
+    pub fn get_header(&self) -> &Arc<BlockHeader> {
         &self.header
     }
 
+    #[inline]
     pub fn get_txs_count(&self) -> usize {
         self.transactions.len()
     }
 
+    #[inline]
     pub fn get_transactions(&self) -> &Vec<Arc<Transaction>> {
         &self.transactions
     }
 
-    pub fn split(self) -> (Immutable<BlockHeader>, Vec<Arc<Transaction>>) {
+    #[inline]
+    pub fn split(self) -> (Arc<BlockHeader>, Vec<Arc<Transaction>>) {
         (self.header, self.transactions)
     }
 }
@@ -60,14 +65,14 @@ impl Serializer for Block {
     }
 
     fn read(reader: &mut Reader) -> Result<Block, ReaderError> {
-        let block = BlockHeader::read(reader)?;
-        let mut txs = Vec::new();
-        for _ in 0..block.get_txs_count() {
+        let header = BlockHeader::read(reader)?;
+        let mut txs = Vec::with_capacity(header.get_txs_count());
+        for _ in 0..header.get_txs_count() {
             let tx = Transaction::read(reader)?;
             txs.push(Arc::new(tx));     
         }
 
-        Ok(Block::new(Immutable::Owned(block), txs))
+        Ok(Block::new(header, txs))
     }
 
     fn size(&self) -> usize {

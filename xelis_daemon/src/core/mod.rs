@@ -1,4 +1,5 @@
 mod tx_cache;
+mod block_size_ema;
 
 pub mod config;
 pub mod blockchain;
@@ -16,3 +17,4 @@ pub mod merkle;
 pub mod hard_fork;
 
 pub use tx_cache::*;
+pub use block_size_ema::*;

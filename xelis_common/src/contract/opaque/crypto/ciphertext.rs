@@ -2,11 +2,25 @@ use std::hash::Hasher;
 
 use anyhow::Context as AnyhowContext;
 use curve25519_dalek::Scalar;
-use xelis_vm::{impl_opaque, traits::{DynHash, Serializable}, Context, FnInstance, FnParams, FnReturnType, Primitive};
+use xelis_vm::{
+    impl_opaque,
+    traits::{DynHash, Serializable},
+    Context,
+    FnInstance,
+    FnParams,
+    FnReturnType,
+    Primitive,
+    SysCallResult
+};
 use crate::{
     account::CiphertextCache,
-    contract::CIPHERTEXT_OPAQUE_ID,
-    crypto::{elgamal::RISTRETTO_COMPRESSED_SIZE, Address},
+    contract::{
+        CIPHERTEXT_OPAQUE_ID,
+        ContractMetadata,
+        ModuleMetadata,
+        OpaqueRistrettoPoint,
+    },
+    crypto::{Address, elgamal::{Ciphertext, CompressedCiphertext, RISTRETTO_COMPRESSED_SIZE}},
     serializer::{Serializer, Writer}
 };
 
@@ -43,8 +57,9 @@ impl_opaque!(
     json
 );
 
-pub fn ciphertext_mul_plaintext(zelf: FnInstance, mut params: FnParams, _: &mut Context) -> FnReturnType {
-    let zelf: &mut CiphertextCache = zelf?.as_opaque_type_mut()?;
+pub fn ciphertext_mul_plaintext(zelf: FnInstance, mut params: FnParams, _: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {
+    let mut zelf = zelf?;
+    let zelf: &mut CiphertextCache = zelf.as_opaque_type_mut()?;
     let value = params.remove(0)
         .as_u64()?;
 
@@ -53,11 +68,12 @@ pub fn ciphertext_mul_plaintext(zelf: FnInstance, mut params: FnParams, _: &mut 
 
     *computable = &*computable * Scalar::from(value);
 
-    Ok(None)
+    Ok(SysCallResult::None)
 }
 
-pub fn ciphertext_div_plaintext(zelf: FnInstance, mut params: FnParams, _: &mut Context) -> FnReturnType {
-    let zelf: &mut CiphertextCache = zelf?.as_opaque_type_mut()?;
+pub fn ciphertext_div_plaintext(zelf: FnInstance, mut params: FnParams, _: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {
+    let mut zelf = zelf?;
+    let zelf: &mut CiphertextCache = zelf.as_opaque_type_mut()?;
     let value = params.remove(0)
         .as_u64()?;
 
@@ -70,11 +86,12 @@ pub fn ciphertext_div_plaintext(zelf: FnInstance, mut params: FnParams, _: &mut 
 
     *computable = &*computable * Scalar::from(value).invert();
 
-    Ok(None)
+    Ok(SysCallResult::None)
 }
 
-pub fn ciphertext_add_plaintext(zelf: FnInstance, mut params: FnParams, _: &mut Context) -> FnReturnType {
-    let zelf: &mut CiphertextCache = zelf?.as_opaque_type_mut()?;
+pub fn ciphertext_add_plaintext(zelf: FnInstance, mut params: FnParams, _: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {
+    let mut zelf = zelf?;
+    let zelf: &mut CiphertextCache = zelf.as_opaque_type_mut()?;
     let value = params.remove(0)
         .as_u64()?;
 
@@ -83,11 +100,12 @@ pub fn ciphertext_add_plaintext(zelf: FnInstance, mut params: FnParams, _: &mut 
 
     computable += Scalar::from(value);
 
-    Ok(None)
+    Ok(SysCallResult::None)
 }
 
-pub fn ciphertext_sub_plaintext(zelf: FnInstance, mut params: FnParams, _: &mut Context) -> FnReturnType {
-    let zelf: &mut CiphertextCache = zelf?.as_opaque_type_mut()?;
+pub fn ciphertext_sub_plaintext(zelf: FnInstance, mut params: FnParams, _: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {
+    let mut zelf = zelf?;
+    let zelf: &mut CiphertextCache = zelf.as_opaque_type_mut()?;
     let value = params.remove(0)
         .as_u64()?;
 
@@ -96,21 +114,51 @@ pub fn ciphertext_sub_plaintext(zelf: FnInstance, mut params: FnParams, _: &mut 
 
     computable -= Scalar::from(value);
 
-    Ok(None)
+    Ok(SysCallResult::None)
 }
 
-pub fn ciphertext_new(_: FnInstance, mut params: FnParams, _: &mut Context) -> FnReturnType {
+pub fn ciphertext_new(_: FnInstance, mut params: FnParams, _: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {
     let amount = params.remove(1)
-        .into_owned()?
+        .into_owned()
         .as_u64()?;
     let address: Address = params.remove(0)
-        .into_owned()?
+        .into_owned()
         .into_opaque_type()?;
 
     let key = address.get_public_key()
         .decompress()
         .context("Invalid public key")?;
 
-    let ciphertext = CiphertextCache::Decompressed(key.encrypt(amount));
-    Ok(Some(Primitive::Opaque(ciphertext.into()).into()))
+    let ciphertext = CiphertextCache::Decompressed(None, key.encrypt(amount));
+    Ok(SysCallResult::Return(Primitive::Opaque(ciphertext.into()).into()))
+}
+
+
+pub fn ciphertext_zero(_: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {
+    let ciphertext = CiphertextCache::Decompressed(Some(CompressedCiphertext::zero()), Ciphertext::zero());
+    Ok(SysCallResult::Return(Primitive::Opaque(ciphertext.into()).into()))
+}
+
+pub fn ciphertext_commitment(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {
+    let mut zelf = zelf?;
+    let zelf: &mut CiphertextCache = zelf.as_opaque_type_mut()?;
+    let commitment = zelf.decompressed()
+        .context("Ciphertext not decompressed")?
+        .commitment()
+        .as_point()
+        .clone();
+
+    Ok(SysCallResult::Return(OpaqueRistrettoPoint::Decompressed(None, commitment).into()))
+}
+
+pub fn ciphertext_handle(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {
+    let mut zelf = zelf?;
+    let zelf: &mut CiphertextCache = zelf.as_opaque_type_mut()?;
+    let handle = zelf.decompressed()
+        .context("Ciphertext not decompressed")?
+        .handle()
+        .as_point()
+        .clone();
+
+    Ok(SysCallResult::Return(OpaqueRistrettoPoint::Decompressed(None, handle).into()))
 }

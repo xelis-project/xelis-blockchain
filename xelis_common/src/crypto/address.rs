@@ -16,8 +16,11 @@ use super::{
 };
 use core::fmt;
 use log::debug;
+use schemars::JsonSchema;
 use serde::de::Error as SerdeError;
 use anyhow::Error;
+
+pub const NORMAL_ADDRESS_LEN: usize = 63;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AddressType {
@@ -27,7 +30,10 @@ pub enum AddressType {
     Data(DataElement)
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// A XELIS address represented as a Bech32 encoded string.
+/// It contains a public key and an address type (normal or data).
+#[derive(Clone, Debug, PartialEq, Eq, JsonSchema)]
+#[schemars(with = "String")]
 pub struct Address {
     mainnet: bool,
     addr_type: AddressType,
@@ -280,7 +286,7 @@ impl Display for Address {
 
 #[cfg(test)]
 mod tests {
-    use crate::crypto::KeyPair;
+    use crate::crypto::{KeyPair, NORMAL_ADDRESS_LEN};
 
     use super::{Address, AddressType};
 
@@ -291,5 +297,14 @@ mod tests {
         let v = addr.to_string();
         let addr2: Address = Address::from_string(&v).unwrap();
         assert_eq!(addr, addr2);
+    }
+
+    #[test]
+    fn test_max_size() {
+        let (pub_key, _) = KeyPair::new().split();
+        let addr = Address::new(false, AddressType::Normal, pub_key.compress());
+
+        let str = addr.to_string();
+        assert_eq!(str.len(), NORMAL_ADDRESS_LEN);
     }
 }

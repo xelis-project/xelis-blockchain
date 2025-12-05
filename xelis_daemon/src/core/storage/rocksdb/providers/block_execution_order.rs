@@ -6,8 +6,7 @@ use crate::core::{
     storage::{
         BlockExecutionOrderProvider,
         RocksStorage,
-        rocksdb::{Column, IteratorMode},
-        sled::BLOCKS_EXECUTION_ORDER_COUNT,
+        rocksdb::{Column, IteratorMode, BLOCKS_EXECUTION_ORDER_COUNT},
     }
 };
 
@@ -41,11 +40,10 @@ impl BlockExecutionOrderProvider for RocksStorage {
     }
 
     // Get the number of blocks executed
-    async fn get_blocks_execution_count(&self) -> u64 {
+    async fn get_blocks_execution_count(&self) -> Result<u64, BlockchainError> {
         trace!("get blocks execution count");
-        self.load_optional_from_disk(Column::Common, BLOCKS_EXECUTION_ORDER_COUNT).ok()
-            .flatten()
-            .unwrap_or(0)
+        self.load_optional_from_disk(Column::Common, BLOCKS_EXECUTION_ORDER_COUNT)
+            .map(|opt| opt.unwrap_or(0))
     }
 
     // Swap the position of two blocks in the execution order

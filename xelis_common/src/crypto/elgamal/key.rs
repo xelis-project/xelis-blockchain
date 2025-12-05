@@ -4,6 +4,7 @@ use curve25519_dalek::{
     Scalar
 };
 use rand::rngs::OsRng;
+use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize};
 use sha3::Sha3_512;
 use zeroize::Zeroize;
@@ -34,7 +35,8 @@ use super::{
 #[derive(Clone, PartialEq, Eq)]
 pub struct PublicKey(RistrettoPoint);
 
-#[derive(Clone, Zeroize)]
+#[derive(Clone, Zeroize, JsonSchema)]
+#[schemars(with = "String", description = "Hexadecimal representation of a private key")]
 pub struct PrivateKey(Scalar);
 
 #[derive(Clone)]
@@ -194,7 +196,7 @@ impl KeyPair {
     pub fn sign(&self, message: &[u8]) -> Signature {
         let k = Scalar::random(&mut OsRng);
         let r = k * (*H);
-        let e = hash_and_point_to_scalar(&self.public_key.compress(), message, &r);
+        let e = hash_and_point_to_scalar(&self.public_key.as_point().compress(), message, &r);
         let s = self.private_key.as_scalar().invert() * e + k;
         Signature::new(s, e)
     }

@@ -1,0 +1,83 @@
+use async_trait::async_trait;
+use log::trace;
+use xelis_common::{
+    block::TopoHeight,
+    serializer::Serializer,
+};
+use crate::core::{
+    error::BlockchainError,
+    storage::{
+        rocksdb::{Asset, AssetId, Column, IteratorMode},
+        snapshot::Direction,
+        RocksStorage,
+        VersionedAssetsCirculatingSupplyProvider
+    }
+};
+
+#[async_trait]
+impl VersionedAssetsCirculatingSupplyProvider for RocksStorage {
+    async fn delete_versioned_assets_supply_at_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError> {
+        trace!("delete versioned assets supply at topoheight {}", topoheight);
+        let prefix = topoheight.to_be_bytes();
+        let snapshot = self.snapshot.clone();
+        for res in Self::iter_raw_internal(&self.db, snapshot.as_ref(), IteratorMode::WithPrefix(&prefix, Direction::Forward), Column::VersionedAssetsSupply)? {
+            let (versioned_key, value) = res?;
+
+            Self::remove_from_disk_internal(&self.db, self.snapshot.as_mut(), Column::VersionedAssetsSupply, &versioned_key)?;
+
+            let key_without_prefix = &versioned_key[8..];
+
+            let asset_id = AssetId::from_bytes(&key_without_prefix[0..8])?;
+            let asset_hash = self.get_asset_hash_from_id(asset_id)?;
+            let mut asset = self.get_asset_type(&asset_hash)?;
+
+            if asset.supply_pointer.is_some_and(|pointer| pointer >= topoheight) {
+                let prev_topo = Option::from_bytes(&value)?;
+                asset.supply_pointer = prev_topo;
+
+                Self::insert_into_disk_internal(&self.db, self.snapshot.as_mut(), Column::Assets, &asset_hash, &asset)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn delete_versioned_assets_supply_above_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError> {
+        trace!("delete versioned assets supply above topoheight {}", topoheight);
+        let start = (topoheight + 1).to_be_bytes();
+        let snapshot = self.snapshot.clone();
+        for res in Self::iter_raw_internal(&self.db, snapshot.as_ref(), IteratorMode::From(&start, Direction::Forward), Column::VersionedAssetsSupply)? {
+            let (key, value) = res?;
+            // Delete the version we've read
+            Self::remove_from_disk_internal(&self.db, self.snapshot.as_mut(), Column::VersionedAssetsSupply, &key)?;
+
+            let asset_id = AssetId::from_bytes(&key[8..16])?;
+            let hash = self.get_asset_hash_from_id(asset_id)?;
+            let mut asset = self.get_asset_type(&hash)?;
+
+            // This algorithm should be finding the latest valid pointer
+            // while limiting updates, it will write the highest
+            // pointer if any, or set to None
+
+            // Case 1: pointer is above topoheight => we update it
+            // Case 2: pointer is None => we update it
+            if asset.supply_pointer.is_none_or(|v| v > topoheight) {
+                let prev_topo = Option::from_bytes(&value)?;
+                // Case 1: prev topo is below or equal to requested topoheight => update it
+                // Case 2: prev topo is None but pointer is Some => we update it
+                let filtered = prev_topo.filter(|v| *v <= topoheight);
+                if filtered != asset.supply_pointer {
+                    asset.supply_pointer = filtered;
+                    Self::insert_into_disk_internal(&self.db, self.snapshot.as_mut(), Column::Assets, &hash, &asset)?;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn delete_versioned_assets_supply_below_topoheight(&mut self, topoheight: TopoHeight, keep_last: bool) -> Result<(), BlockchainError> {
+        trace!("delete versioned assets below topoheight {}", topoheight);
+        self.delete_versioned_below_topoheight::<Asset, AssetId>(Column::Assets, Column::VersionedAssetsSupply, topoheight, keep_last, |_, v| Ok((v.id, v.supply_pointer)))
+    }
+}

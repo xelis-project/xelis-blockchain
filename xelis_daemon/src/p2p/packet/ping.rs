@@ -80,7 +80,7 @@ impl<'a> Ping<'a> {
         peer.set_pruned_topoheight(self.pruned_topoheight);
         peer.set_cumulative_difficulty(self.cumulative_difficulty).await;
 
-        if peer.sharable() {
+        if peer.shareable() {
             trace!("Locking RPC Server to notify PeerStateUpdated event");
             if let Some(rpc) = blockchain.get_rpc().read().await.as_ref() {
                 if rpc.is_event_tracked(&NotifyEvent::PeerStateUpdated).await {
@@ -122,7 +122,7 @@ impl<'a> Ping<'a> {
                 }
             }
 
-            if peer.sharable() {
+            if peer.shareable() {
                 trace!("Locking RPC Server to notify PeerPeerListUpdated event");
                 if let Some(rpc) = blockchain.get_rpc().read().await.as_ref() {
                     if rpc.is_event_tracked(&NotifyEvent::PeerPeerListUpdated).await {
@@ -163,9 +163,9 @@ impl<'a> Ping<'a> {
 
 impl Serializer for Ping<'_> {
     fn write(&self, writer: &mut Writer) {
-        writer.write_hash(&self.top_hash);
-        writer.write_u64(&self.topoheight);
-        writer.write_u64(&self.height);
+        self.top_hash.write(writer);
+        self.topoheight.write(writer);
+        self.height.write(writer);
         self.pruned_topoheight.write(writer);
         self.cumulative_difficulty.write(writer);
         writer.write_u8(self.peer_list.len() as u8);

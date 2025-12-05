@@ -37,12 +37,12 @@ impl Cipher {
         T::new_from_slice(key).map_err(|_| CipherError::InvalidKey)
     }
 
-    pub fn new(mode: EncryptionMode) -> Result<Self, CipherError> {
+    pub fn new(mode: Option<EncryptionMode>) -> Result<Self, CipherError> {
         Ok(Self {
             mode: match mode {
-                EncryptionMode::None => CipherState::None,
-                EncryptionMode::AES { key } => CipherState::AES { cipher: Self::new_internal(&key)? },
-                EncryptionMode::Chacha20Poly1305 { key } => CipherState::Chacha20Poly1305 { cipher: Self::new_internal(&key)? },
+                None => CipherState::None,
+                Some(EncryptionMode::AES { key }) => CipherState::AES { cipher: Self::new_internal(&key)? },
+                Some(EncryptionMode::Chacha20Poly1305 { key }) => CipherState::Chacha20Poly1305 { cipher: Self::new_internal(&key)? },
             },
         })
     }

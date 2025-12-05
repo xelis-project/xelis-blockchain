@@ -1,15 +1,27 @@
+use std::collections::hash_map::Entry;
+
 use xelis_vm::{
     traits::{JSONHelper, Serializable},
     Context,
+    EnvironmentError,
     FnInstance,
     FnParams,
     FnReturnType,
     OpaqueWrapper,
-    Primitive
+    Primitive,
+    SysCallResult
 };
 use crate::{
-    contract::{from_context, ContractProvider},
-    crypto::Hash
+    contract::{
+        from_context,
+        get_cache_for_contract,
+        get_optional_cache_for_contract,
+        ContractProvider,
+        ContractMetadata,
+        ModuleMetadata,
+    },
+    crypto::Hash,
+    versioned_type::VersionedState
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -19,53 +31,85 @@ impl JSONHelper for OpaqueReadOnlyStorage {}
 
 impl Serializable for OpaqueReadOnlyStorage {}
 
-pub fn read_only_storage<P: ContractProvider>(_: FnInstance, mut parameters: FnParams, context: &mut Context) -> FnReturnType {
+pub async fn read_only_storage<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut parameters: FnParams, _: &ModuleMetadata<'_>, context: &mut Context<'ty, 'r>) -> FnReturnType<ContractMetadata> {
     let (storage, state) = from_context::<P>(context)?;
     let hash: Hash = parameters.remove(0)
-        .into_owned()?
+        .into_owned()
         .into_opaque_type()?;
 
-    if !state.global_caches.contains_key(&hash) && !storage.has_contract(&hash, state.topoheight)? {
-        return Ok(Some(Primitive::Null.into()))
+    // If we don't have a global cache or an actual local cache for this contract
+    // OR the contract does not exist in the storage, we return null
+    if get_optional_cache_for_contract(&state.caches, state.global_caches, &hash).is_none() && !storage.has_contract(&hash, state.topoheight).await? {
+        return Ok(SysCallResult::Return(Primitive::Null.into()))
     }
 
-    Ok(Some(Primitive::Opaque(OpaqueWrapper::new(OpaqueReadOnlyStorage(hash))).into()))
+    Ok(SysCallResult::Return(Primitive::Opaque(OpaqueWrapper::new(OpaqueReadOnlyStorage(hash))).into()))
 }
 
-pub fn read_only_storage_load<P: ContractProvider>(zelf: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType {
+pub async fn read_only_storage_load<'a, 'ty, 'r, P: ContractProvider>(zelf: FnInstance<'a>, mut params: FnParams, _: &ModuleMetadata<'_>, context: &mut Context<'ty, 'r>) -> FnReturnType<ContractMetadata> {
     let (storage, state) = from_context::<P>(context)?;
-    let zelf: &OpaqueReadOnlyStorage = zelf?
+    let zelf = zelf?;
+    let zelf: &OpaqueReadOnlyStorage = zelf
         .as_opaque_type()?;
 
     let key = params.remove(0)
-        .into_owned()?;
+        .into_owned();
+
+    if !key.is_serializable() {
+        return Err(EnvironmentError::Static("Key is not serializable"))
+    }
 
     // Read from global cache first, then fallback to provider
-    let value = match state.global_caches.get(&zelf.0)
-        .and_then(|cache| cache.storage.get(&key).map(|(_, v)| v)) {
-            Some(v) => v.clone(),
-            None => storage.load_data(&zelf.0, &key, state.topoheight)?
-                .map(|(_, v)| v)
-                .flatten()
+    let value = match get_cache_for_contract(&mut state.caches, state.global_caches, zelf.0.clone())
+        .storage
+        .entry(key.clone()) {
+            Entry::Occupied(v) => v.get()
+                .as_ref()
+                .and_then(|(_, v)| v.clone()),
+            Entry::Vacant(v) => {
+                let data = storage.load_data(&zelf.0, &key, state.topoheight).await?
+                    .map(|(topo, v)| (VersionedState::FetchedAt(topo), v));
+
+                v.insert(data)
+                    .as_ref()
+                    .and_then(|(_, v)| v.clone())
+            }
     };
 
-    Ok(Some(value.unwrap_or_default()))
+    // We are forced to do a deep clone in case a contract try to attack
+    // another contract memory due to how XVM handle references
+    Ok(SysCallResult::Return(value.map(|v| v.deep_clone()).unwrap_or_default().into()))
 }
 
-pub fn read_only_storage_has<P: ContractProvider>(zelf: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType {
+pub async fn read_only_storage_has<'a, 'ty, 'r, P: ContractProvider>(zelf: FnInstance<'a>, mut params: FnParams, _: &ModuleMetadata<'_>, context: &mut Context<'ty, 'r>) -> FnReturnType<ContractMetadata> {
     let (storage, state) = from_context::<P>(context)?;
-    let zelf: &OpaqueReadOnlyStorage = zelf?
+    let zelf = zelf?;
+    let zelf: &OpaqueReadOnlyStorage = zelf
         .as_opaque_type()?;
 
     let key = params.remove(0)
-        .into_owned()?;
+        .into_owned();
+
+    if !key.is_serializable() {
+        return Err(EnvironmentError::Static("Key is not serializable"))
+    }
 
     // Read from global cache first, then fallback to provider
-    let contains = match state.global_caches.get(&zelf.0)
-        .and_then(|cache| cache.storage.get(&key).map(|(_, v)| v)) {
-            Some(v) => v.is_some(),
-            None => storage.has_data(&zelf.0, &key, state.topoheight)?
+    let contains = match get_cache_for_contract(&mut state.caches, state.global_caches, zelf.0.clone())
+        .storage
+        .entry(key.clone()) {
+            Entry::Occupied(v) => v.get()
+                .as_ref()
+                .map_or(false, |(_, v)| v.is_some()),
+            Entry::Vacant(v) => {
+                let data = storage.load_data(&zelf.0, &key, state.topoheight).await?
+                    .map(|(topo, v)| (VersionedState::FetchedAt(topo), v));
+
+                v.insert(data)
+                    .as_ref()
+                    .map_or(false, |(_, v)| v.is_some())
+            }
     };
 
-    Ok(Some(Primitive::Boolean(contains).into()))
+    Ok(SysCallResult::Return(Primitive::Boolean(contains).into()))
 }

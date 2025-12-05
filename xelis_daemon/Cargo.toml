@@ -1,6 +1,6 @@
 [package]
 name = "xelis_daemon"
-version = "1.18.0"
+version = "1.19.0"
 edition = "2021"
 authors = ["Slixe <slixeprivate@gmail.com>"]
 
@@ -13,12 +13,11 @@ xelis-vm = { git = "https://github.com/xelis-project/xelis-vm", branch = "dev" }
 
 # Database backends
 sled = "0.34.7"
-rocksdb = "0.23.0"
+rocksdb = { version = "0.23.0", optional = true }
 
 # Used for Diffie-Hellman key exchange in p2p
 x25519-dalek = { version = "2.0.1", features = ["serde", "zeroize", "static_secrets"] }
 
-xxhash-rust = { version = "0.8.15", features = ["xxh3"] }
 metrics-exporter-prometheus = "0.17.0"
 semver = "1.0.23"
 itertools = "0.14.0"
@@ -27,9 +26,12 @@ bytes = "1"
 humantime = "2.1.0"
 human_bytes = "0.4.2"
 tokio-socks = "0.5.2"
+snap = "1.1.1"
 
 # Common dependencies
+schemars = { workspace = true }
 actix-web = { workspace = true }
+actix-cors = { workspace = true }
 strum = { workspace = true }
 clap = { workspace = true }
 lru = { workspace = true }
@@ -47,6 +49,11 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 indexmap = { workspace = true }
 futures = { workspace = true }
+
+[features]
+default = ["sled", "rocksdb"]
+rocksdb = ["dep:rocksdb"]
+sled = []
 
 [dev-dependencies]
 tempdir = "*"

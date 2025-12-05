@@ -20,6 +20,8 @@ use crate::core::{
     hard_fork::{get_pow_algorithm_for_version, get_version_at_height},
     storage::{
         BlocksAtHeightProvider,
+        CacheProvider,
+        ChainCache,
         DagOrderProvider,
         DifficultyProvider,
         MerkleHashProvider,
@@ -48,7 +50,8 @@ pub struct ChainValidator<'a, S: Storage> {
     blocks_at_height: IndexMap<u64, IndexSet<Arc<Hash>>>,
     // Blockchain reference used to verify current chain state
     blockchain: &'a Blockchain<S>,
-    hash_at_topo: IndexMap<TopoHeight, Arc<Hash>>
+    hash_at_topo: IndexMap<TopoHeight, Arc<Hash>>,
+    chain_cache: ChainCache,
 }
 
 // This struct is passed as the Provider param.
@@ -73,26 +76,18 @@ impl<'a, S: Storage> ChainValidator<'a, S> {
             blocks: HashMap::new(),
             blocks_at_height: IndexMap::new(),
             blockchain,
-            hash_at_topo: IndexMap::new()
+            hash_at_topo: IndexMap::new(),
+            chain_cache: ChainCache::default(),
         }
     }
 
     // Check if the chain validator has a higher cumulative difficulty than our blockchain
     // This is used to determine if we should switch to the new chain by popping blocks or not
-    pub async fn has_higher_cumulative_difficulty(&self) -> Result<bool, BlockchainError> {
+    pub async fn has_higher_cumulative_difficulty(&self, current_cumulative_difficulty: &CumulativeDifficulty) -> Result<bool, BlockchainError> {
         let new_cumulative_difficulty = self.get_expected_chain_cumulative_difficulty()
             .ok_or(BlockchainError::NotEnoughBlocks)?;
 
-        // Retrieve the current cumulative difficulty
-        let current_cumulative_difficulty = {
-            debug!("locking storage for cumulative difficulty");
-            let storage = self.blockchain.get_storage().read().await;
-            debug!("storage lock acquired for cumulative difficulty");
-            let top_block_hash = self.blockchain.get_top_block_hash_for_storage(&storage).await?;
-            storage.get_cumulative_difficulty_for_block_hash(&top_block_hash).await?
-        };
-
-        Ok(*new_cumulative_difficulty > current_cumulative_difficulty)
+        Ok(*new_cumulative_difficulty > *current_cumulative_difficulty)
     }
 
     // Retrieve the cumulative difficulty of the chain validator
@@ -124,11 +119,6 @@ impl<'a, S: Storage> ChainValidator<'a, S> {
             return Err(BlockchainError::AlreadyInChain)
         }
 
-        let provider = ChainValidatorProvider {
-            parent: &self,
-            storage: &storage,
-        };
-
         // Verify the block version
         let version = get_version_at_height(self.blockchain.get_network(), header.get_height());
         if version != header.get_version() {
@@ -137,6 +127,11 @@ impl<'a, S: Storage> ChainValidator<'a, S> {
         }
 
         // Verify the block height by tips
+        let provider = ChainValidatorProvider {
+            parent: &self,
+            storage: &storage,
+        };
+
         let height_at_tips = blockdag::calculate_height_at_tips(&provider, header.get_tips().iter()).await?;
         if height_at_tips != header.get_height() {
             debug!("Block {} has height {} while expected height is {}", hash, header.get_height(), height_at_tips);
@@ -178,12 +173,12 @@ impl<'a, S: Storage> ChainValidator<'a, S> {
         let (difficulty, p) = self.blockchain.verify_proof_of_work(&provider, &pow_hash, tips.iter()).await?;
 
         // Find the common base between the block and the current blockchain
-        let (base, base_height) = self.blockchain.find_common_base(&provider, header.get_tips()).await?;
+        let (base, base_height) = blockdag::find_common_base(&provider, header.get_tips()).await?;
 
         trace!("Common base: {} at height {} and hash {}", base, base_height, hash);
 
         // Find the cumulative difficulty for this block
-        let (_, cumulative_difficulty) = self.blockchain.find_tip_work_score(
+        let (_, cumulative_difficulty) = blockdag::find_tip_work_score(
             &provider,
             &hash,
             header.get_tips().iter(),
@@ -215,6 +210,21 @@ impl<'a, S: Storage> ChainValidator<'a, S> {
     pub fn get_block(&mut self, hash: &Hash) -> Option<Arc<BlockHeader>> {
         debug!("retrieving block header for {}", hash);
         self.blocks.get(hash).map(|v| v.header.clone())
+    }
+}
+
+#[async_trait]
+impl<S: Storage> CacheProvider for ChainValidatorProvider<'_, S> {
+    async fn clear_objects_cache(&mut self) -> Result<(), BlockchainError> {
+        Err(BlockchainError::UnsupportedOperation)
+    }
+
+    async fn chain_cache_mut(&mut self) -> Result<&mut ChainCache, BlockchainError> {
+        Err(BlockchainError::UnsupportedOperation)
+    }
+
+    async fn chain_cache(&self) -> &ChainCache {
+        &self.parent.chain_cache
     }
 }
 

@@ -1,9 +1,10 @@
 use indexmap::IndexMap;
 use regex::Regex;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use super::{DataElement, DataValue, ElementType, ValueType};
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum QueryNumber {
     // >
@@ -55,7 +56,7 @@ impl QueryNumber {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum QueryValue {
     // ==
@@ -68,6 +69,7 @@ pub enum QueryValue {
     IsOfType(ValueType),
     // Regex pattern on DataValue only
     #[serde(with = "serde_regex")]
+    #[schemars(with = "String", description = "Regular expression pattern to match the value against")]
     Matches(Regex),
     #[serde(untagged)]
     NumberOp(QueryNumber)
@@ -87,7 +89,7 @@ impl QueryValue {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Query {
     // !
@@ -171,7 +173,7 @@ impl Query {
 }
 
 // This is used to do query in daemon (in future for Smart Contracts) and wallet
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")] 
 pub enum QueryElement {
     // Check if DataElement::Fields has key and optional check on value
@@ -231,7 +233,7 @@ impl QueryElement {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 pub struct QueryResult {
     pub entries: IndexMap<DataValue, DataElement>,
     pub next: Option<usize>

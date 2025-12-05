@@ -112,7 +112,6 @@ impl WalletError {
 #[cfg(feature = "xswd")]
 impl From<WalletError> for InternalRpcError {
     fn from(e: WalletError) -> Self {
-        let id = e.id();
-        InternalRpcError::Custom(100 + id as i16, e.to_string())
+        InternalRpcError::AnyError(e.into())
     }
 }

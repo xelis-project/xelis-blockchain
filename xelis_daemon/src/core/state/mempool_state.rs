@@ -2,12 +2,14 @@ use std::{borrow::Cow, collections::{hash_map::Entry, HashMap}};
 use async_trait::async_trait;
 use xelis_common::{
     account::Nonce,
+    contract::{ContractMetadata, ContractModule, ContractVersion},
     block::{BlockVersion, TopoHeight},
     crypto::{
         elgamal::Ciphertext,
         Hash,
         PublicKey
     },
+    serializer::Serializer,
     transaction::{
         verify::BlockchainVerificationState,
         MultiSigPayload,
@@ -36,6 +38,9 @@ struct Account<'a> {
     multisig: Option<MultiSigPayload>
 }
 
+// It is the same as ChainState, but it differs in few points:
+// - we lookup first for balances in our cache per source, those are maintained
+// - we also cache the nonce and multisig if updated
 pub struct MempoolState<'a, S: Storage> {
     // If the provider is mainnet or not
     mainnet: bool,
@@ -44,24 +49,25 @@ pub struct MempoolState<'a, S: Storage> {
     // Storage in case sender balances aren't in mempool cache
     storage: &'a S,
     // Contract environment
-    environment: &'a Environment,
+    environment: &'a Environment<ContractMetadata>,
     // Receiver balances
     receiver_balances: HashMap<Cow<'a, PublicKey>, HashMap<Cow<'a, Hash>, Ciphertext>>,
     // Sender accounts
     // This is used to verify ZK Proofs and store/update nonces
     accounts: HashMap<&'a PublicKey, Account<'a>>,
     // Contract modules
-    contracts: HashMap<&'a Hash, Cow<'a, Module>>,
+    contracts: HashMap<Cow<'a, Hash>, Cow<'a, ContractModule>>,
     // The current stable topoheight of the chain
     stable_topoheight: TopoHeight,
     // The current topoheight of the chain
     topoheight: TopoHeight,
+    tx_base_fee: u64,
     // Block header version
     block_version: BlockVersion,
 }
 
 impl<'a, S: Storage> MempoolState<'a, S> {
-    pub fn new(mempool: &'a Mempool, storage: &'a S, environment: &'a Environment, stable_topoheight: TopoHeight, topoheight: TopoHeight, block_version: BlockVersion, mainnet: bool) -> Self {
+    pub fn new(mempool: &'a Mempool, storage: &'a S, environment: &'a Environment<ContractMetadata>, stable_topoheight: TopoHeight, topoheight: TopoHeight, block_version: BlockVersion, mainnet: bool, tx_base_fee: u64) -> Self {
         Self {
             mainnet,
             mempool,
@@ -72,6 +78,7 @@ impl<'a, S: Storage> MempoolState<'a, S> {
             contracts: HashMap::new(),
             stable_topoheight,
             topoheight,
+            tx_base_fee,
             block_version,
         }
     }
@@ -202,12 +209,18 @@ impl<'a, S: Storage> MempoolState<'a, S> {
 
 #[async_trait]
 impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for MempoolState<'a, S> {
+    /// Left over fee to pay back
+    async fn handle_tx_fee<'b>(&'b mut self, tx: &Transaction, _: &Hash) -> Result<u64, BlockchainError> {
+        let (_, refund) = super::verify_fee(self.storage, tx, tx.size(), self.topoheight, self.tx_base_fee, self.block_version).await?;
+        Ok(refund)
+    }
+
     /// Verify the TX version and reference
     async fn pre_verify_tx<'b>(
         &'b mut self,
         tx: &Transaction,
     ) -> Result<(), BlockchainError> {
-        super::pre_verify_tx(self.storage, tx, self.stable_topoheight, self.topoheight, self.get_block_version()).await
+        super::pre_verify_tx(tx, self.stable_topoheight, self.topoheight, self.get_block_version()).await
     }
 
     /// Get the balance ciphertext for a receiver account
@@ -290,7 +303,9 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for Mempoo
     }
 
     /// Get the contract environment
-    async fn get_environment(&mut self) -> Result<&Environment, BlockchainError> {
+    async fn get_environment(&mut self, _: ContractVersion) -> Result<&Environment<ContractMetadata>, BlockchainError> {
+        // Currently we have only one environment
+        // TODO: if we have multiple versions, we may want to return different environments
         Ok(self.environment)
     }
 
@@ -298,9 +313,9 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for Mempoo
     async fn set_contract_module(
         &mut self,
         hash: &'a Hash,
-        module: &'a Module
+        module: &'a ContractModule,
     ) -> Result<(), BlockchainError> {
-        if self.contracts.insert(hash, Cow::Borrowed(module)).is_some() {
+        if self.contracts.insert(Cow::Borrowed(hash), Cow::Borrowed(module)).is_some() {
             return Err(BlockchainError::ContractAlreadyExists);
         }
 
@@ -309,15 +324,15 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for Mempoo
 
     async fn load_contract_module(
         &mut self,
-        hash: &'a Hash
+        hash: Cow<'a, Hash>
     ) -> Result<bool, BlockchainError> {
-        match self.contracts.entry(hash) {
+        match self.contracts.entry(hash.clone()) {
             Entry::Occupied(_) => Ok(true),
             Entry::Vacant(v) => {
-                let module = self.storage.get_contract_at_maximum_topoheight_for(hash, self.topoheight).await?
+                let module = self.storage.get_contract_at_maximum_topoheight_for(&hash, self.topoheight).await?
                     .map(|(_, v)| v.take().map(|v| v.into_owned()))
                     .flatten()
-                    .ok_or_else(|| BlockchainError::ContractNotFound(hash.clone()))?;
+                    .ok_or_else(|| BlockchainError::ContractNotFound(hash.as_ref().clone()))?;
 
                 v.insert(Cow::Owned(module));
 
@@ -329,10 +344,11 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for Mempoo
     async fn get_contract_module_with_environment(
         &self,
         hash: &'a Hash
-    ) -> Result<(&Module, &Environment), BlockchainError> {
+    ) -> Result<(&Module, &Environment<ContractMetadata>), BlockchainError> {
         let module = self.contracts.get(hash)
             .ok_or_else(|| BlockchainError::ContractNotFound(hash.clone()))?;
 
-        Ok((module, self.environment))
+        // TODO: get the environment based on the module
+        Ok((&module.module, self.environment))
     }
 }

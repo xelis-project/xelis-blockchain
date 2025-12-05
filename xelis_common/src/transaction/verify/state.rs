@@ -5,14 +5,20 @@ use indexmap::IndexMap;
 use xelis_vm::{Environment, Module};
 use crate::{
     account::Nonce,
-    block::{Block, BlockVersion},
+    block::BlockVersion,
     contract::{
+        vm::ContractCaller,
         AssetChanges,
         ChainState,
         ContractCache,
         ContractEventTracker,
-        ContractOutput,
-        ContractProvider
+        ContractLog,
+        ContractProvider,
+        InterContractPermission,
+        ContractMetadata,
+        ScheduledExecution,
+        ContractModule,
+        ContractVersion
     },
     crypto::{
         elgamal::{
@@ -26,7 +32,8 @@ use crate::{
         MultiSigPayload,
         Reference,
         Transaction
-    }
+    },
+    versioned_type::VersionedState
 };
 
 /// This trait is used by the batch verification function.
@@ -38,6 +45,10 @@ pub trait BlockchainVerificationState<'a, E> {
     // We replace it by a generic type in the trait definition
     // See: https://play.rust-lang.org/?version=stable&mode=debug&edition=2021&gist=aaa6065daaab514e638b2333703765c7
     // type Error;
+
+    /// Verify the TX fee and returns, if required, how much we should refund from
+    /// `fee_limit` (left over of fees)
+    async fn handle_tx_fee<'b>(&'b mut self, tx: &Transaction, tx_hash: &Hash) -> Result<u64, E>;
 
     /// Pre-verify the TX
     async fn pre_verify_tx<'b>(
@@ -98,13 +109,14 @@ pub trait BlockchainVerificationState<'a, E> {
     ) -> Result<Option<&MultiSigPayload>, E>;
 
     /// Get the environment
-    async fn get_environment(&mut self) -> Result<&Environment, E>;
+    /// Returns an error if the environment is not found or not compatible
+    async fn get_environment(&mut self, version: ContractVersion) -> Result<&Environment<ContractMetadata>, E>;
 
     /// Set the contract module
     async fn set_contract_module(
         &mut self,
         hash: &'a Hash,
-        module: &'a Module
+        module: &'a ContractModule,
     ) -> Result<(), E>;
 
     /// Load in the cache the contract module
@@ -112,7 +124,7 @@ pub trait BlockchainVerificationState<'a, E> {
     /// Returns true if the module is available
     async fn load_contract_module(
         &mut self,
-        hash: &'a Hash
+        hash: Cow<'a, Hash>
     ) -> Result<bool, E>;
 
     /// Get the contract module with the environment
@@ -120,40 +132,25 @@ pub trait BlockchainVerificationState<'a, E> {
     async fn get_contract_module_with_environment(
         &self,
         hash: &'a Hash
-    ) -> Result<(&Module, &Environment), E>;
+    ) -> Result<(&Module, &Environment<ContractMetadata>), E>;
 }
 
 pub struct ContractEnvironment<'a, P: ContractProvider> {
     // Environment with the embed stdlib
-    pub environment: &'a Environment,
+    pub environment: &'a Environment<ContractMetadata>,
     // Module to execute
     pub module: &'a Module,
     // Provider for the contract
-    pub provider: &'a mut P,
+    pub provider: &'a P,
 }
 
 #[async_trait]
-pub trait BlockchainApplyState<'a, P: ContractProvider, E>: BlockchainVerificationState<'a, E> {
-    /// Add burned XELIS
-    async fn add_burned_coins(&mut self, amount: u64) -> Result<(), E>;
-
-    /// Add fee XELIS
-    async fn add_gas_fee(&mut self, amount: u64) -> Result<(), E>;
-
-    /// Get the hash of the block
-    fn get_block_hash(&self) -> &Hash;
-
-    /// Get the block
-    fn get_block(&self) -> &Block;
-
-    /// Is mainnet network
-    fn is_mainnet(&self) -> bool;
-
-    /// Track the contract outputs
-    async fn set_contract_outputs(
+pub trait BlockchainContractState<'a, P: ContractProvider, E> {
+    /// Track the contract logs
+    async fn set_contract_logs(
         &mut self,
-        tx_hash: &'a Hash,
-        outputs: Vec<ContractOutput>
+        caller: ContractCaller<'a>,
+        logs: Vec<ContractLog>
     ) -> Result<(), E>;
 
     /// Get the contract environment
@@ -161,19 +158,35 @@ pub trait BlockchainApplyState<'a, P: ContractProvider, E>: BlockchainVerificati
     /// to the chain state
     async fn get_contract_environment_for<'b>(
         &'b mut self,
-        contract: &'b Hash,
-        deposits: &'b IndexMap<Hash, ContractDeposit>,
-        tx_hash: &'b Hash
+        contract: Cow<'b, Hash>,
+        deposits: Option<&'b IndexMap<Hash, ContractDeposit>>,
+        tx_hash: ContractCaller<'b>,
+        permission: Cow<'b, InterContractPermission>,
     ) -> Result<(ContractEnvironment<'b, P>, ChainState<'b>), E>;
+
+    /// Set the updated contract caches
+    /// This is used to update the caches after the contract execution
+    /// Even if the execution failed, the caches should be updated
+    async fn set_modules_cache(
+        &mut self,
+        modules: HashMap<Hash, Option<ContractModule>>,
+    ) -> Result<(), E>;
 
     /// Merge the contract cache with the stored one
     async fn merge_contract_changes(
         &mut self,
-        hash: &'a Hash,
-        cache: ContractCache,
+        caches: HashMap<Hash, ContractCache>,
         tracker: ContractEventTracker,
-        assets: HashMap<Hash, Option<AssetChanges>>
+        assets: HashMap<Hash, Option<AssetChanges>>,
+        executions_block_end: IndexMap<Hash, ScheduledExecution>,
+        extra_gas_fee: u64,
     ) -> Result<(), E>;
+
+    /// Retrieve the contract balance used to pay gas
+    async fn get_contract_balance_for_gas<'b>(
+        &'b mut self,
+        contract: &'b Hash,
+    ) -> Result<&'b mut (VersionedState, u64), E>;
 
     /// Remove the contract module
     /// This will mark the contract
@@ -182,4 +195,19 @@ pub trait BlockchainApplyState<'a, P: ContractProvider, E>: BlockchainVerificati
         &mut self,
         hash: &'a Hash
     ) -> Result<(), E>;
+}
+
+#[async_trait]
+pub trait BlockchainApplyState<'a, P: ContractProvider, E>: BlockchainVerificationState<'a, E> + BlockchainContractState<'a, P, E> {
+    /// Add burned XELIS
+    async fn add_burned_coins(&mut self, asset: &Hash, amount: u64) -> Result<(), E>;
+
+    /// Add fee XELIS
+    async fn add_gas_fee(&mut self, amount: u64) -> Result<(), E>;
+
+    /// Add burned XELIS fee
+    async fn add_burned_fee(&mut self, amount: u64) -> Result<(), E>;
+
+    /// Is mainnet network
+    fn is_mainnet(&self) -> bool;
 }

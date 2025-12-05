@@ -1,6 +1,7 @@
 use std::borrow::Cow;
 use anyhow::Error;
 use log::debug;
+use schemars::JsonSchema;
 
 use crate::{
     api::DataElement,
@@ -26,7 +27,7 @@ use super::{
 // A wrapper around a Vec<u8>.
 // This is used for outside the wallet as we don't know what is used
 // Cipher format isn't validated
-#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, JsonSchema, Clone, Debug)]
 pub struct UnknownExtraDataFormat(pub Vec<u8>);
 
 impl UnknownExtraDataFormat {

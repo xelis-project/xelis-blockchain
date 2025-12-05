@@ -8,12 +8,12 @@ use xelis_vm::{
     FnParams,
     FnReturnType,
     Primitive,
-    ValueError
+    SysCallResult,
 };
 
 use crate::{
-    contract::SIGNATURE_OPAQUE_ID,
-    crypto::{Address, Signature, SIGNATURE_SIZE},
+    contract::{ModuleMetadata, ContractMetadata, OpaqueRistrettoPoint, SIGNATURE_OPAQUE_ID},
+    crypto::{Signature, SIGNATURE_SIZE},
     serializer::{Serializer, Writer}
 };
 
@@ -44,42 +44,34 @@ impl Serializable for Signature {
     }
 }
 
-pub fn signature_from_bytes_fn(_: FnInstance, mut params: FnParams, _: &mut Context) -> FnReturnType {
-    let param = params.remove(0)
-        .into_owned()?;
-    let param = param.as_vec()?;
+pub fn signature_from_bytes_fn(_: FnInstance, params: FnParams, _: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {
+    let bytes = params[0]
+        .as_ref()
+        .as_bytes()?;
 
-    if param.len() != SIGNATURE_SIZE {
+    if bytes.len() != SIGNATURE_SIZE {
         return Err(EnvironmentError::InvalidParameter);
     }
 
-    let bytes = param.iter()
-        .map(|v| v.as_u8())
-        .collect::<Result<Vec<_>, ValueError>>()?;
-
     let signature = Signature::from_bytes(&bytes)
         .context("signature from bytes")?;
-    Ok(Some(Primitive::Opaque(signature.into()).into()))
+    Ok(SysCallResult::Return(Primitive::Opaque(signature.into()).into()))
 }
 
-pub fn signature_verify_fn(zelf: FnInstance, mut params: FnParams, _: &mut Context) -> FnReturnType {
-    let signature: &Signature = zelf?.as_opaque_type()?;
+pub fn signature_verify_fn(zelf: FnInstance, mut params: FnParams, _: &ModuleMetadata<'_>, _: &mut Context) -> FnReturnType<ContractMetadata> {
+    let zelf = zelf?;
+    let signature: &Signature = zelf.as_opaque_type()?;
 
-    let address: Address = params.remove(0)
-        .into_owned()?
+    let mut point: OpaqueRistrettoPoint = params.remove(1)
+        .into_owned()
         .into_opaque_type()?;
 
-    let param = params.remove(0)
-        .into_owned()?;
-    let data = param.as_vec()?
-        .iter()
-        .map(|v| v.as_u8())
-        .collect::<Result<Vec<_>, ValueError>>()?;
+    let data = params[0]
+        .as_ref()
+        .as_bytes()?;
 
-    let key = address.to_public_key()
-        .decompress()
-        .context("decompress key for signature")?;
-    Ok(Some(Primitive::Boolean(signature.verify(&data, &key)).into()))
+    let (compressed, key) = point.both()?;
+    Ok(SysCallResult::Return(Primitive::Boolean(signature.verify_internal(&data, &key, compressed)).into()))
 }
 
 #[cfg(test)]

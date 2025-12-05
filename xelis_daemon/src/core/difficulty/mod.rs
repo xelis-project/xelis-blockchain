@@ -9,6 +9,7 @@ use xelis_common::{
 
 use crate::config::{
     KILO_HASH,
+    MEGA_HASH,
     GIGA_HASH,
     DEFAULT_MINIMUM_HASHRATE,
     MAINNET_MINIMUM_HASHRATE,
@@ -100,7 +101,7 @@ pub const fn get_difficulty_at_hard_fork(network: &Network, version: BlockVersio
         Network::Mainnet => match version {
             BlockVersion::V0 | BlockVersion::V1 => 20 * KILO_HASH,
             BlockVersion::V2 => 2 * GIGA_HASH,
-            BlockVersion::V3 => return None,
+            BlockVersion::V3 => 200 * MEGA_HASH,
         },
         _ => return None,
     };

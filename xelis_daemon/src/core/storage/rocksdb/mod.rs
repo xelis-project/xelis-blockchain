@@ -1,7 +1,6 @@
 mod column;
 mod types;
 mod providers;
-mod snapshot;
 
 use std::sync::Arc;
 
@@ -16,7 +15,6 @@ use rocksdb::{
     DBCompactionStyle,
     DBCompressionType,
     DBWithThreadMode,
-    Direction,
     Env,
     IteratorMode as InternalIteratorMode,
     MultiThreaded,
@@ -39,13 +37,24 @@ use xelis_common::{
 use crate::core::{
     config::RocksDBConfig,
     error::{BlockchainError, DiskContext},
-    storage::{BlocksAtHeightProvider, ClientProtocolProvider, ContractOutputsProvider, Tips}
+    storage::{
+        snapshot::{
+            BytesView,
+            Direction,
+            EntryState,
+            IteratorMode,
+            Snapshot as InternalSnapshot
+        },
+        BlockProvider,
+        ClientProtocolProvider,
+        ContractLogsProvider,
+        StorageCache,
+        TransactionProvider
+    }
 };
 
 pub use column::*;
 pub use types::*;
-
-pub use snapshot::Snapshot;
 
 use super::Storage;
 
@@ -56,7 +65,17 @@ macro_rules! cf_handle {
     };
 }
 
+pub(super) const TXS_COUNT: &[u8; 4] = b"CTXS";
+pub(super) const BLOCKS_COUNT: &[u8; 4] = b"CBLK";
+pub(super) const BLOCKS_EXECUTION_ORDER_COUNT: &[u8; 4] = b"EBLK";
+pub(super) const PRUNED_TOPOHEIGHT: &[u8; 4] = b"PRUN";
+pub(super) const TOP_TOPO_HEIGHT: &[u8; 4] = b"TOPO";
+pub(super) const TOP_HEIGHT: &[u8; 4] = b"TOPH";
+pub(super) const TIPS: &[u8; 4] = b"TIPS";
+
 type InnerDB = DBWithThreadMode<MultiThreaded>;
+
+pub type Snapshot = InternalSnapshot<Column>;
 
 #[derive(Debug, Copy, Clone, clap::ValueEnum, Serialize, Deserialize)]
 #[clap(rename_all = "snake_case")]
@@ -106,26 +125,25 @@ impl CompressionMode {
     }
 }
 
-#[derive(Copy, Clone)]
-pub enum IteratorMode<'a> {
-    Start,
-    End,
-    // Allow for range start operations
-    From(&'a [u8], Direction),
-    // Strict prefix to all keys
-    WithPrefix(&'a [u8], Direction),
-}
-
 impl<'a> IteratorMode<'a> {
     pub fn convert(self) -> (InternalIteratorMode<'a>, ReadOptions) {
         let mut opts = ReadOptions::default();
         let mode = match self {
             Self::Start => InternalIteratorMode::Start,
             Self::End => InternalIteratorMode::End,
-            Self::From(prefix, direction) => InternalIteratorMode::From(prefix, direction),
+            Self::From(prefix, direction) => InternalIteratorMode::From(prefix, direction.into()),
             Self::WithPrefix(prefix, direction) => {
                 opts.set_prefix_same_as_start(true);
-                InternalIteratorMode::From(prefix, direction)
+                InternalIteratorMode::From(prefix, direction.into())
+            },
+            Self::Range { lower_bound, upper_bound, direction } => {
+                opts.set_iterate_upper_bound(upper_bound);
+                opts.set_iterate_lower_bound(lower_bound);
+
+                match direction {
+                    Direction::Forward => InternalIteratorMode::Start,
+                    Direction::Reverse => InternalIteratorMode::End,
+                }
             }
         };
 
@@ -136,7 +154,8 @@ impl<'a> IteratorMode<'a> {
 pub struct RocksStorage {
     db: Arc<InnerDB>,
     network: Network,
-    snapshot: Option<Snapshot> 
+    snapshot: Option<Snapshot>,
+    cache: StorageCache,
 }
 
 impl RocksStorage {
@@ -198,7 +217,24 @@ impl RocksStorage {
         Self {
             db: Arc::new(db),
             network,
-            snapshot: None
+            snapshot: None,
+            cache: StorageCache::new(None)
+        }
+    }
+
+    #[inline(always)]
+    pub fn cache(&self) -> &StorageCache {
+        match self.snapshot.as_ref() {
+            Some(snapshot) => &snapshot.cache,
+            None => &self.cache
+        }
+    }
+
+    #[inline(always)]
+    pub fn cache_mut(&mut self) -> &mut StorageCache {
+        match self.snapshot.as_mut() {
+            Some(snapshot) => &mut snapshot.cache,
+            None => &mut self.cache
         }
     }
 
@@ -245,7 +281,6 @@ impl RocksStorage {
         Ok(iterator.next().is_none())
     }
 
-
     // Count how many entries we have stored in a column
     pub fn count_entries(&self, column: Column) -> Result<usize, BlockchainError> {
         trace!("count entries {:?}", column);
@@ -274,10 +309,11 @@ impl RocksStorage {
     pub fn get_size_from_disk<K: AsRef<[u8]>>(&self, column: Column, key: &K) -> Result<usize, BlockchainError> {
         trace!("load from disk internal {:?}", column);
 
-        if let Some(v) = self.snapshot.as_ref().and_then(|s| s.get_size(column, key.as_ref())) {
+        if let Some(v) = self.snapshot.as_ref().map(|s| s.get_size(column, key.as_ref())) {
             match v {
-                Some(v) => return Ok(v),
-                None => return Err(BlockchainError::NotFoundOnDisk(DiskContext::DataLen))
+                EntryState::Stored(v) => return Ok(v),
+                EntryState::Deleted => return Err(BlockchainError::NotFoundOnDisk(DiskContext::DataLen)),
+                EntryState::Absent => {}
             }
         }
 
@@ -294,10 +330,11 @@ impl RocksStorage {
     pub fn load_optional_from_disk_internal<K: AsRef<[u8]> + ?Sized, V: Serializer>(db: &InnerDB, snapshot: Option<&Snapshot>, column: Column, key: &K) -> Result<Option<V>, BlockchainError> {
         trace!("load optional {:?} from disk internal", column);
 
-        if let Some(v) = snapshot.and_then(|s| s.get(column, key.as_ref())) {
+        if let Some(v) = snapshot.map(|s| s.get(column, key.as_ref())) {
             match v {
-                Some(v) => return Ok(Some(V::from_bytes(&v)?)),
-                None => return Ok(None)
+                EntryState::Stored(v) => return Ok(Some(V::from_bytes(&v)?)),
+                EntryState::Deleted => return Ok(None),
+                EntryState::Absent => {},
             }
         }
 
@@ -313,11 +350,13 @@ impl RocksStorage {
         trace!("insert into disk {:?}", column);
 
         match snapshot {
-            Some(snapshot) => snapshot.put(column, key.as_ref().to_vec(), value.to_bytes()),
+            Some(snapshot) => {
+                snapshot.put(column, key.as_ref().to_vec(), value.to_bytes());
+            },
             None => {
                 let cf = cf_handle!(db, column);
                 db.put_cf(&cf, key.as_ref(), value.to_bytes())
-                    .with_context(|| format!("Error while inserting into disk column {:?}", column))?
+                    .with_context(|| format!("Error while inserting into disk column {:?}", column))?;
             }
         };
 
@@ -329,7 +368,9 @@ impl RocksStorage {
 
         let bytes = key.as_ref();
         match snapshot {
-            Some(snapshot) => snapshot.delete(column, bytes.to_vec()),
+            Some(snapshot) => {
+                snapshot.delete(column, bytes.to_vec());
+            },
             None => {
                 let cf = cf_handle!(db, column);
                 db.delete_cf(&cf, bytes)
@@ -340,51 +381,36 @@ impl RocksStorage {
         Ok(())
     }
 
-    pub fn iter_owned_internal<'a, K, V>(db: &'a InnerDB, snapshot: Option<&Snapshot>, mode: IteratorMode, column: Column) -> Result<impl Iterator<Item = Result<(K, V), BlockchainError>> + 'a, BlockchainError>
-    where
-        K: Serializer + 'a,
-        V: Serializer + 'a,
-    {
-        trace!("iter owned {:?}", column);
-
-        let cf = cf_handle!(db, column);
-        let (m, opts) = mode.convert();
-        let iterator = db.iterator_cf_opt(&cf, opts, m);
-
-        match snapshot {
-            Some(snapshot) => Ok(Either::Left(snapshot.iter_owned(column, mode, iterator))),
-            None => {
-                Ok(Either::Right(iterator.map(|res| {
-                    let (key, value) = res.context("Internal read error in iter")?;
-                    let key = K::from_bytes(&key)?;
-                    let value = V::from_bytes(&value)?;
-        
-                    Ok((key, value))
-                })))
-            } 
-        }
-    }
-
     pub fn iter_internal<'a, K, V>(db: &'a InnerDB, snapshot: Option<&'a Snapshot>, mode: IteratorMode, column: Column) -> Result<impl Iterator<Item = Result<(K, V), BlockchainError>> + 'a, BlockchainError>
     where
         K: Serializer + 'a,
         V: Serializer + 'a,
     {
         trace!("iter {:?}", column);
+        Self::iter_raw_internal(db, snapshot, mode, column).map(|iter| {
+            iter.map(|res| {
+                let (key_bytes, value_bytes) = res?;
+                let key = K::from_bytes(&key_bytes)?;
+                let value = V::from_bytes(&value_bytes)?;
+
+                Ok((key, value))
+            })
+        })
+    }
+
+    pub fn iter_raw_internal<'a>(db: &'a InnerDB, snapshot: Option<&'a Snapshot>, mode: IteratorMode, column: Column) -> Result<impl Iterator<Item = Result<(BytesView<'a>, BytesView<'a>), BlockchainError>> + 'a, BlockchainError> {
+        trace!("iter raw {:?}", column);
 
         let cf = cf_handle!(db, column);
         let (m, opts) = mode.convert();
         let iterator = db.iterator_cf_opt(&cf, opts, m);
 
         match snapshot {
-            Some(snapshot) => Ok(Either::Left(snapshot.lazy_iter(column, mode, iterator))),
+            Some(snapshot) => Ok(Either::Left(snapshot.lazy_iter_raw(column, mode, iterator))),
             None => {
                 Ok(Either::Right(iterator.map(|res| {
-                    let (key, value) = res.context("Internal read error in iter")?;
-                    let key = K::from_bytes(&key)?;
-                    let value = V::from_bytes(&value)?;
-        
-                    Ok((key, value))
+                    let (key, value) = res.context("Internal read error in iter raw")?;
+                    Ok((key.into(), value.into()))
                 })))
             } 
         }
@@ -395,22 +421,14 @@ impl RocksStorage {
         K: Serializer + 'a,
     {
         trace!("iter keys {:?}", column);
+        Self::iter_raw_internal(db, snapshot, mode, column).map(|iter| {
+            iter.map(|res| {
+                let (key_bytes, _value_bytes) = res?;
+                let key = K::from_bytes(&key_bytes)?;
 
-        let cf = cf_handle!(db, column);
-        let (m, opts) = mode.convert();
-        let iterator = db.iterator_cf_opt(&cf, opts, m);
-
-        match snapshot {
-            Some(snapshot) => Ok(Either::Left(snapshot.lazy_iter_keys(column, mode, iterator))),
-            None => {
-                Ok(Either::Right(iterator.map(|res| {
-                    let (key, _) = res.context("Internal read error in iter_keys")?;
-                    let key = K::from_bytes(&key)?;
-        
-                    Ok(key)
-                })))
-            } 
-        }
+                Ok(key)
+            })
+        })
     }
 
     #[inline(always)]
@@ -448,57 +466,29 @@ impl Storage for RocksStorage {
         self.remove_from_disk(Column::TopoByHash, &hash)?;
 
         trace!("deleting block header {}", hash);
-        let block: Immutable<BlockHeader> = self.load_from_disk(Column::Blocks, &hash)?;
-        self.remove_from_disk(Column::Blocks, &hash)?;
+        let block: Immutable<BlockHeader> = self.delete_block_by_hash(&hash).await?;
         trace!("block header deleted successfully");
 
         trace!("deleting topoheight metadata");
         self.remove_from_disk(Column::TopoHeightMetadata, &topoheight.to_be_bytes())?;
         trace!("topoheight metadata deleted");
 
-        trace!("deleting block difficulty");
-        self.remove_from_disk(Column::BlockDifficulty, &hash)?;
-        trace!("block deleted");
-
         let mut txs = Vec::with_capacity(block.get_txs_count());
         for tx_hash in block.get_transactions() {
-            // Should we delete the tx too or only unlink it
-            let mut should_delete = true;
-            if self.has_tx_blocks(tx_hash)? {
-                let mut blocks: Tips = self.load_from_disk(Column::TransactionInBlocks, tx_hash)?;
-                self.remove_from_disk(Column::TransactionInBlocks, tx_hash)?;
-
-                let blocks_len =  blocks.len();
-                blocks.remove(&hash);
-                should_delete = blocks.is_empty();
-
-                if !should_delete {
-                    self.set_blocks_for_tx(tx_hash, &blocks)?;
-                }
-
-                trace!("Tx was included in {} blocks, now: {}", blocks_len, blocks.len());
-            }
-
-            if self.is_tx_executed_in_block(tx_hash, &hash)? {
+            if self.is_tx_executed_in_block(tx_hash, &hash).await? {
                 trace!("Tx {} was executed in block {}, deleting", topoheight, tx_hash);
-                self.unmark_tx_from_executed(&tx_hash)?;
-                self.delete_contract_outputs_for_tx(&tx_hash).await?;
+                self.unmark_tx_from_executed(&tx_hash).await?;
+                self.delete_contract_logs_for_caller(&tx_hash).await?;
             }
 
             // We have to check first as we may have already deleted it because of client protocol
             // which allow multiple time the same txs in differents blocks
-            if should_delete && self.contains_data(Column::TransactionsExecuted, tx_hash)? {
+            if !self.is_tx_linked_to_blocks(tx_hash).await? {
                 trace!("Deleting TX {} in block {}", tx_hash, hash);
-                let tx: Immutable<Transaction> = self.load_from_disk(Column::Transactions, tx_hash)?;
-                self.remove_from_disk(Column::Transactions, tx_hash)?;
+                let tx = self.delete_transaction(tx_hash).await?;
 
                 txs.push((tx_hash.clone(), tx));
             }
-        }
-
-        // remove the block hash from the set, and delete the set if empty
-        if self.has_blocks_at_height(block.get_height()).await? {
-            self.remove_block_hash_at_height(&hash, block.get_height()).await?;
         }
 
         Ok((hash, block, txs))
@@ -572,7 +562,7 @@ impl Storage for RocksStorage {
 #[cfg(test)]
 mod tests {
     use itertools::Itertools;
-    use rocksdb::{Direction, IteratorMode, Options, SliceTransform, DB};
+    use rocksdb::{Direction, IteratorMode, Options, ReadOptions, SliceTransform, DB};
     use tempdir::TempDir;
 
     #[test]
@@ -586,20 +576,21 @@ mod tests {
         opts.set_prefix_extractor(SliceTransform::create_fixed_prefix(8));
 
         let db = DB::open(&opts, tmp_dir.path()).unwrap();
-    
+
         // Helper to encode a u64 prefix + suffix
         fn make_key(prefix: u64, suffix: &[u8]) -> Vec<u8> {
             let mut key = prefix.to_be_bytes().to_vec();
             key.extend_from_slice(suffix);
             key
         }
-    
+
         // Insert three test entries
         db.put(make_key(0, b"zero"), b"value0").unwrap();
         db.put(make_key(1, b"aaaa"), b"value1").unwrap();
         db.put(make_key(2, b"bbbb"), b"value2").unwrap();
 
         // First test: iterator on range
+        // It must skip the zeroed prefix
         {
             let prefix = 1u64.to_be_bytes();
             let iter = db.iterator(IteratorMode::From(&prefix, Direction::Forward));
@@ -625,6 +616,8 @@ mod tests {
         }
 
         // Second test: reverse iterator on range
+        // Should starts from the end until the first
+        // value2 is skipped because upper bound is < not <=
         {
             let prefix = 2u64.to_be_bytes();
             let iter = db.iterator(IteratorMode::From(&prefix, Direction::Reverse));
@@ -650,7 +643,7 @@ mod tests {
         }
 
         // Third test: iterator on prefix only
-        // First test: iterator on range
+        // Only keys with the prefix 1 must be returned
         {
             let prefix = 1u64.to_be_bytes();
             let iter = db.prefix_iterator(prefix);
@@ -673,5 +666,63 @@ mod tests {
             assert_eq!(prefixes, vec![1]);
             assert_eq!(results[0].1, b"value1");
         }
+    }
+
+
+    #[test]
+    fn test_rocks_db_iterator_range() {
+        // Create a temporary RocksDB instance
+        let tmp_dir = TempDir::new("rocksdb-iterator").unwrap();
+
+        let mut opts = Options::default();
+        opts.create_if_missing(true);
+        opts.create_missing_column_families(true);
+        opts.set_prefix_extractor(SliceTransform::create_fixed_prefix(4));
+
+        let db = DB::open(&opts, tmp_dir.path()).unwrap();
+
+        // Helper to encode a u64 prefix + suffix
+        fn make_key(prefix: &[u8], suffix: u64) -> Vec<u8> {
+            let mut key = prefix.to_vec();
+            key.extend_from_slice(&suffix.to_be_bytes());
+            key
+        }
+
+        db.put(make_key(&[10, 10, 10, 50], 50), &[]).unwrap();
+        db.put(make_key(&[10, 10, 10, 50], 30), &[]).unwrap();
+        db.put(make_key(&[10, 10, 10, 50], 70), &[]).unwrap();
+        db.put(make_key(&[10, 10, 10, 50], 15), &[]).unwrap();
+        db.put(make_key(&[10, 10, 10, 50], 69), &[]).unwrap();
+        db.put(make_key(&[10, 10, 10, 50], 0), &[]).unwrap();
+        db.put(make_key(&[10, 10, 10, 50], 150), &[]).unwrap();
+
+        db.put(make_key(&[10, 10, 10, 49], 50), &[]).unwrap();
+        db.put(make_key(&[10, 10, 10, 51], 50), &[]).unwrap();
+        db.put(make_key(&[10, 99, 10, 50], 50), &[]).unwrap();
+        db.put(make_key(&[6, 40, 10, 50], 30), &[]).unwrap();
+        db.put(make_key(&[0, 0, 0, 0], 70), &[]).unwrap();
+        db.put(make_key(&[0, 0, 0, 0], 50), &[]).unwrap();
+        db.put(make_key(&[255, 0, 0, 0], 30), &[]).unwrap();
+
+        let mut opts = ReadOptions::default();
+        opts.set_iterate_upper_bound(make_key(&[10, 10, 10, 50], 70));
+        opts.set_iterate_lower_bound(make_key(&[10, 10, 10, 50], 0));
+
+        let iter = db.iterator_opt(IteratorMode::End, opts);
+        let results = iter.filter_map_ok(|(k, _)|Some(k.to_vec()))
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+
+        let mut suffix = vec![];
+        for r in results {
+            assert!(r[0..4] == [10, 10, 10, 50]);
+
+            let mut buf = [0u8; 8];
+            buf.copy_from_slice(&r[4..12]);
+            suffix.push(u64::from_be_bytes(buf));
+        }
+
+        // Bounds are inclusive, and 150 isn't included
+        assert!(suffix == vec![69, 50, 30, 15, 0]);
     }
 }

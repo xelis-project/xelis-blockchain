@@ -1,7 +1,9 @@
+use async_trait::async_trait;
 use xelis_vm::tid;
 
 use crate::{
     account::CiphertextCache,
+    contract::ContractModule,
     asset::AssetData,
     block::TopoHeight,
     crypto::{Hash, PublicKey}
@@ -9,27 +11,35 @@ use crate::{
 
 use super::ContractStorage;
 
-pub trait ContractProvider: ContractStorage + 'static {
+#[async_trait]
+pub trait ContractProvider: ContractStorage + Send + Sync + 'static {
     // Returns the balance of the contract
-    fn get_contract_balance_for_asset(&self, contract: &Hash, asset: &Hash, topoheight: TopoHeight) -> Result<Option<(TopoHeight, u64)>, anyhow::Error>;
+    async fn get_contract_balance_for_asset(&self, contract: &Hash, asset: &Hash, topoheight: TopoHeight) -> Result<Option<(TopoHeight, u64)>, anyhow::Error>;
 
     // Get the account balance for asset
-    fn get_account_balance_for_asset(&self, key: &PublicKey, asset: &Hash, topoheight: TopoHeight) -> Result<Option<(TopoHeight, CiphertextCache)>, anyhow::Error>;
+    async fn get_account_balance_for_asset(&self, key: &PublicKey, asset: &Hash, topoheight: TopoHeight) -> Result<Option<(TopoHeight, CiphertextCache)>, anyhow::Error>;
+
+    // Verify if we have already a registered execution for such contract at a specific topoheight
+    async fn has_scheduled_execution_at_topoheight(&self, contract: &Hash, topoheight: TopoHeight) -> Result<bool, anyhow::Error>;
 
     // Verify if an asset exists in the storage
-    fn asset_exists(&self, asset: &Hash, topoheight: TopoHeight) -> Result<bool, anyhow::Error>;
+    async fn asset_exists(&self, asset: &Hash, topoheight: TopoHeight) -> Result<bool, anyhow::Error>;
 
     // Load the asset data from the storage
-    fn load_asset_data(&self, asset: &Hash, topoheight: TopoHeight) -> Result<Option<(TopoHeight, AssetData)>, anyhow::Error>;
+    async fn load_asset_data(&self, asset: &Hash, topoheight: TopoHeight) -> Result<Option<(TopoHeight, AssetData)>, anyhow::Error>;
 
     // Load the asset supply
-    fn load_asset_supply(&self, asset: &Hash, topoheight: TopoHeight) -> Result<Option<(TopoHeight, u64)>, anyhow::Error>;
+    // Supply is the current circulating supply
+    async fn load_asset_circulating_supply(&self, asset: &Hash, topoheight: TopoHeight) -> Result<(TopoHeight, u64), anyhow::Error>;
 
     // Verify if the address is well registered
-    fn account_exists(&self, key: &PublicKey, topoheight: TopoHeight) -> Result<bool, anyhow::Error>;
+    async fn account_exists(&self, key: &PublicKey, topoheight: TopoHeight) -> Result<bool, anyhow::Error>;
+
+    // Load a contract module
+    async fn load_contract_module(&self, contract: &Hash, topoheight: TopoHeight) -> Result<Option<ContractModule>, anyhow::Error>;
 }
 
 // This is a wrapper around the storage to allow for the storage to be passed in the Context
-pub struct ContractProviderWrapper<'a, S: ContractProvider>(pub &'a mut S);
+pub struct ContractProviderWrapper<'a, S: ContractProvider>(pub &'a S);
 
 tid! { impl<'a, S: 'static> TidAble<'a> for ContractProviderWrapper<'a, S> where S: ContractProvider }

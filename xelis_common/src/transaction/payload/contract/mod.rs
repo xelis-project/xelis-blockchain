@@ -1,11 +1,15 @@
 mod deploy;
 mod invoke;
+mod deposits;
 
 use anyhow::Context;
 use indexmap::{IndexMap, IndexSet};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use xelis_vm::{
+    Access,
     Chunk,
+    ModuleChunk,
     Module,
     OpaqueWrapper,
     Primitive,
@@ -15,15 +19,16 @@ use xelis_vm::{
 use crate::{
     crypto::{
         elgamal::{CompressedCommitment, CompressedHandle},
-        proofs::CiphertextValidityProof
+        proofs::CiphertextValidityProof,
     },
     serializer::*
 };
 
 pub use deploy::*;
 pub use invoke::*;
+pub use deposits::*;
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ContractDeposit {
     // Public deposit
@@ -49,7 +54,7 @@ impl Serializer for ContractDeposit {
         match self {
             ContractDeposit::Public(amount) => {
                 writer.write_u8(0);
-                writer.write_u64(amount);
+                amount.write(writer);
             },
             ContractDeposit::Private {
                 commitment,
@@ -122,15 +127,15 @@ impl Serializer for Primitive {
             },
             Primitive::U32(value) => {
                 writer.write_u8(3);
-                writer.write_u32(value);
+                value.write(writer);
             },
             Primitive::U64(value) => {
                 writer.write_u8(4);
-                writer.write_u64(value);
+                value.write(writer);
             },
             Primitive::U128(value) => {
                 writer.write_u8(5);
-                writer.write_u128(value);
+                value.write(writer);
             },
             Primitive::U256(value) => {
                 writer.write_u8(6);
@@ -143,7 +148,7 @@ impl Serializer for Primitive {
             Primitive::String(value) => {
                 writer.write_u8(8);
                 let bytes = value.as_bytes();
-                writer.write_u16(bytes.len() as u16);
+                DynamicLen(bytes.len()).write(writer);
                 writer.write_bytes(bytes);
             }
             Primitive::Range(range) => {
@@ -169,7 +174,7 @@ impl Serializer for Primitive {
             6 => Primitive::U256(U256::read(reader)?),
             7 => Primitive::Boolean(reader.read_bool()?),
             8 => {
-                let len = reader.read_u16()? as usize;
+                let len = DynamicLen::read(reader)?.0;
                 Primitive::String(reader.read_string_with_size(len)?)
             },
             9 => {
@@ -206,7 +211,7 @@ impl Serializer for Primitive {
             Primitive::U128(_) => 16,
             Primitive::U256(value) => value.size(),
             Primitive::Boolean(_) => 1,
-            Primitive::String(value) => 2 + value.as_bytes().len(),
+            Primitive::String(value) => DynamicLen(value.as_bytes().len()).size() + value.as_bytes().len(),
             Primitive::Range(range) => range.0.size() + range.1.size(),
             Primitive::Opaque(opaque) => opaque.size()
         }
@@ -218,61 +223,61 @@ impl Serializer for ValueCell {
     // ValueCell with more than one value are serialized in reverse order
     // This help us to save a reverse operation when deserializing
     fn write(&self, writer: &mut Writer) {
-        match self {
-            ValueCell::Default(value) => {
-                writer.write_u8(0);
-                value.write(writer);
-            },
-            ValueCell::Bytes(bytes) => {
-                writer.write_u8(1);
-                let len = bytes.len() as u32;
-                writer.write_u32(&len);
-                writer.write_bytes(bytes);
-            }
-            ValueCell::Object(values) => {
-                writer.write_u8(2);
-                let len = values.len() as u32;
-                writer.write_u32(&len);
-                for value in values.iter() {
+        let mut stack = vec![self];
+        while let Some(cell) = stack.pop() {
+            match cell {
+                ValueCell::Primitive(value) => {
+                    writer.write_u8(0);
                     value.write(writer);
+                },
+                ValueCell::Bytes(bytes) => {
+                    writer.write_u8(1);
+                    DynamicLen(bytes.len()).write(writer);
+                    writer.write_bytes(bytes);
                 }
-            },
-            ValueCell::Map(map) => {
-                writer.write_u8(3);
-                let len = map.len() as u32;
-                writer.write_u32(&len);
-                for (key, value) in map.iter() {
-                    key.write(writer);
-                    value.write(writer);
+                ValueCell::Object(values) => {
+                    writer.write_u8(2);
+                    DynamicLen(values.len()).write(writer);
+                    for value in values.iter().rev() {
+                        stack.push(value.as_ref());
+                    }
+                },
+                ValueCell::Map(map) => {
+                    writer.write_u8(3);
+                    DynamicLen(map.len()).write(writer);
+                    for (key, value) in map.iter().rev() {
+                        stack.push(value.as_ref());
+                        stack.push(key);
+                    }
                 }
             }
-        };
+        }
     }
 
     // No deserialization can occurs here as we're missing context
     fn read(reader: &mut Reader) -> Result<ValueCell, ReaderError> {
         // TODO: make it iterative and not recursive to prevent stack overflow attacks!!!!
         Ok(match reader.read_u8()? {
-            0 => ValueCell::Default(Primitive::read(reader)?),
+            0 => ValueCell::Primitive(Primitive::read(reader)?),
             1 => {
-                let len = reader.read_u32()? as usize;
+                let len = DynamicLen::read(reader)?.0;
                 ValueCell::Bytes(reader.read_bytes(len)?)
             },
             2 => {
-                let len = reader.read_u32()? as usize;
+                let len = DynamicLen::read(reader)?.0;
                 let mut values = Vec::new();
                 for _ in 0..len {
-                    values.push(ValueCell::read(reader)?);
+                    values.push(ValueCell::read(reader)?.into());
                 }
                 ValueCell::Object(values)
             },
             3 => {
-                let len = reader.read_u32()? as usize;
+                let len = DynamicLen::read(reader)?.0;
                 let mut map = IndexMap::new();
                 for _ in 0..len {
                     let key = ValueCell::read(reader)?;
                     let value = ValueCell::read(reader)?;
-                    map.insert(key, value);
+                    map.insert(key, value.into());
                 }
                 ValueCell::Map(Box::new(map))
             },
@@ -288,24 +293,24 @@ impl Serializer for ValueCell {
             // variant id
             total += 1;
             match cell {
-                ValueCell::Default(value) => total += value.size(),
+                ValueCell::Primitive(value) => total += value.size(),
                 ValueCell::Bytes(bytes) => {
                     // u32 len
-                    total += 4;
+                    total += DynamicLen(bytes.len()).size();
                     total += bytes.len();
                 },
                 ValueCell::Object(values) => {
                     // u32 len
-                    total += 4;
+                    total += DynamicLen(values.len()).size();
                     for value in values {
-                        stack.push(value);
+                        stack.push(value.as_ref());
                     }
                 },
                 ValueCell::Map(map) => {
                     // u32 len
-                    total += 4;
+                    total += DynamicLen(map.len()).size();
                     for (key, value) in map.iter() {
-                        stack.push(value);
+                        stack.push(value.as_ref());
                         stack.push(key);
                     }
                 }
@@ -319,43 +324,32 @@ impl Serializer for ValueCell {
 impl Serializer for Module {
     fn write(&self, writer: &mut Writer) {
         let constants = self.constants();
-        writer.write_u16(constants.len() as u16);
+        DynamicLen(constants.len()).write(writer);
         for constant in constants {
             constant.write(writer);
         }
 
         let chunks = self.chunks();
         writer.write_u16(chunks.len() as u16);
-        for chunk in chunks {
-            let instructions = chunk.get_instructions();
-            let len = instructions.len() as u32;
-            writer.write_u32(&len);
+        for entry in chunks {
+            let instructions = entry.chunk.get_instructions();
+            DynamicLen(instructions.len()).write(writer);
             writer.write_bytes(instructions);
-        }
-
-        // Write entry ids
-        let entry_ids = self.chunks_entry_ids();
-        // We can have only up to u16::MAX chunks, so same for entry ids
-        let len = entry_ids.len() as u16;
-        writer.write_u16(len);
-
-        for entry_id in entry_ids {
-            writer.write_u16(*entry_id as u16);
-        }
-
-        let hooks = self.hook_chunk_ids();
-        // We have only up to 255 hooks
-        writer.write_u8(hooks.len() as u8);
-
-        for (hook, chunk) in hooks {
-            writer.write_u8(*hook);
-            writer.write_u16(*chunk as u16);
+            match entry.access {
+                Access::All => writer.write_u8(0),
+                Access::Internal => writer.write_u8(1),
+                Access::Entry => writer.write_u8(2),
+                Access::Hook { id } => {
+                    writer.write_u8(3);
+                    writer.write_u8(id);
+                }
+            }
         }
     }
 
     fn read(reader: &mut Reader) -> Result<Module, ReaderError> {
-        let constants_len = reader.read_u16()?;
-        let mut constants = IndexSet::with_capacity(constants_len as usize);
+        let constants_len = DynamicLen::read(reader)?.0;
+        let mut constants = IndexSet::new();
 
         for _ in 0..constants_len {
             let c = ValueCell::read(reader)?;
@@ -366,43 +360,52 @@ impl Serializer for Module {
 
         let chunks_len = reader.read_u16()?;
         let mut chunks = Vec::with_capacity(chunks_len as usize);
+        let mut hooks = IndexMap::new();
 
-        for _ in 0..chunks_len {
-            let instructions_len = reader.read_u32()? as usize;
-            let instructions: Vec<u8> = reader.read_bytes(instructions_len)?;
-            chunks.push(Chunk::from_instructions(instructions));
+        for i in 0..chunks_len {
+            let instructions_len = DynamicLen::read(reader)?.0;
+            let instructions = reader.read_bytes(instructions_len)?;
+            let chunk = Chunk::from_instructions(instructions);
+
+            let access = match reader.read_u8()? {
+                0 => Access::All,
+                1 => Access::Internal,
+                2 => Access::Entry,
+                3 => {
+                    let id = reader.read_u8()?;
+
+                    hooks.insert(id, i as _);
+                    Access::Hook { id }
+                }
+                _ => return Err(ReaderError::InvalidValue)
+            };
+
+            chunks.push(ModuleChunk { chunk, access });
         }
 
-        let entry_ids_len = reader.read_u16()?;
-        if entry_ids_len > chunks_len {
-            return Err(ReaderError::InvalidValue);
-        }
+        Ok(Module::with(constants, chunks, hooks))
+    }
 
-        let mut entry_ids = IndexSet::with_capacity(entry_ids_len as usize);
-        for _ in 0..entry_ids_len {
-            let id = reader.read_u16()?;
-            if id > chunks_len {
-                return Err(ReaderError::InvalidValue);
-            }
+    fn size(&self) -> usize {
+        // 2 for constants len
+        let mut size = DynamicLen(self.constants().len()).size() + self.constants()
+            .iter()
+            .map(Serializer::size)
+            .sum::<usize>();
+        // 2 for chunks len u16
+        // 4 for instructions len u32 per chunk
+        size += 2 + self.chunks()
+            .iter()
+            .map(|entry| {
+                let instructions = entry.chunk.get_instructions();
+                DynamicLen(instructions.len()).size() + instructions.len() + match entry.access {
+                    Access::All | Access::Internal | Access::Entry => 1,
+                    Access::Hook { id } => 1 + id.size(),
+                }
+        })
+            .sum::<usize>();
 
-            if !entry_ids.insert(id as usize) {
-                return Err(ReaderError::InvalidValue);
-            }
-        }
-
-        let hooks_len = reader.read_u8()?;
-        let mut hooks = IndexMap::with_capacity(hooks_len as usize);
-        for _ in 0..hooks_len {
-            let hook_id = reader.read_u8()?;
-            let chunk_id = reader.read_u16()?;
-
-            // Hook can be registered one time only
-            if hooks.insert(hook_id, chunk_id as usize).is_some() {
-                return Err(ReaderError::InvalidValue);
-            }
-        }
-
-        Ok(Module::with(constants, chunks, entry_ids, hooks))
+        size
     }
 }
 
@@ -413,10 +416,9 @@ mod tests {
 
     #[test]
     fn test_serde_module() {
-        let hex = "000302000000020008000b48656c6c6f20576f726c64020000000102000000060004000000000000000000040000000000000001000400000000000000020004000000000000000300040000000000000004000400000000000000050008000568656c6c6f000400000000000000000001000000211874000000020000000000020100010000000100010100187700010207000200140001000000";
+        let hex = "0200080d48656c6c6f2c20576f726c64210004000000000000000000010a00000018ef000001001402";
         let module = Module::from_hex(hex).unwrap();
-        assert_eq!(module.chunks_entry_ids().len(), 1);
-        assert_eq!(module.constants().len(), 3);
+        assert_eq!(module.constants().len(), 2);
 
         assert_eq!(hex.len() / 2, module.size());
     }
@@ -431,31 +433,32 @@ mod tests {
 
     #[test]
     fn test_serde_primitive() {
-        test_serde_cell(ValueCell::Default(Primitive::Null));
-        test_serde_cell(ValueCell::Default(Primitive::Boolean(false)));
-        test_serde_cell(ValueCell::Default(Primitive::U8(42)));
-        test_serde_cell(ValueCell::Default(Primitive::U32(42)));
-        test_serde_cell(ValueCell::Default(Primitive::U64(42)));
-        test_serde_cell(ValueCell::Default(Primitive::U128(42)));
-        test_serde_cell(ValueCell::Default(Primitive::U256(42u64.into())));
-        test_serde_cell(ValueCell::Default(Primitive::Range(Box::new((Primitive::U128(42), Primitive::U128(420))))));
-        test_serde_cell(ValueCell::Default(Primitive::String("hello world!!!".to_owned())));
+        test_serde_cell(ValueCell::Primitive(Primitive::Null));
+        test_serde_cell(ValueCell::Primitive(Primitive::Boolean(false)));
+        test_serde_cell(ValueCell::Primitive(Primitive::U8(42)));
+        test_serde_cell(ValueCell::Primitive(Primitive::U32(42)));
+        test_serde_cell(ValueCell::Primitive(Primitive::U64(42)));
+        test_serde_cell(ValueCell::Primitive(Primitive::U128(42)));
+        test_serde_cell(ValueCell::Primitive(Primitive::U256(42u64.into())));
+        test_serde_cell(ValueCell::Primitive(Primitive::Range(Box::new((Primitive::U128(42), Primitive::U128(420))))));
+        test_serde_cell(ValueCell::Primitive(Primitive::String("hello world!!!".to_owned())));
 
-        test_serde_cell(ValueCell::Default(Primitive::Opaque(OpaqueWrapper::new(Hash::zero()))));
+        test_serde_cell(ValueCell::Primitive(Primitive::Opaque(OpaqueWrapper::new(Hash::zero()))));
     }
 
     #[test]
     fn test_serde_value_cell() {
         test_serde_cell(ValueCell::Bytes(vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]));
+        test_serde_cell(ValueCell::Bytes(vec![0; u16::MAX as usize + 10]));
         test_serde_cell(ValueCell::Object(vec![
-            ValueCell::Default(Primitive::U64(42)),
-            ValueCell::Default(Primitive::U64(42)),
-            ValueCell::Default(Primitive::U64(42)),
-            ValueCell::Default(Primitive::U64(42)),
-            ValueCell::Default(Primitive::U64(42))
+            Primitive::U64(42).into(),
+            Primitive::U64(23).into(),
+            Primitive::U64(42).into(),
+            Primitive::U64(57).into(),
+            Primitive::U64(10).into()
         ]));
         test_serde_cell(ValueCell::Map(Box::new([
-            (ValueCell::Default(Primitive::U64(42)), ValueCell::Default(Primitive::String("Hello World!".to_owned())),)
+            (Primitive::U64(42).into(), Primitive::String("Hello World!".to_owned()).into())
         ].into_iter().collect())));
     }
 }

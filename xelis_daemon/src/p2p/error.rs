@@ -29,6 +29,7 @@ use crate::{
 use super::{
     peer_list::DiskError,
     encryption::EncryptionError,
+    compression::CompressionError,
     packet::{
         StepKind,
         ObjectRequest,
@@ -196,6 +197,10 @@ pub enum P2pError {
     SemaphoreAcquireError(#[from] AcquireError),
     #[error(transparent)]
     EncryptionError(#[from] EncryptionError),
+    #[error(transparent)]
+    CompressionError(#[from] CompressionError),
+    #[error("Fast sync support is disabled")]
+    FastSyncDisabled,
     #[error(transparent)]
     Any(#[from] Error)
 }

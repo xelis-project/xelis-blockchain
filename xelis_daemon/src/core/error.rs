@@ -1,7 +1,8 @@
-use crate::p2p::error::P2pError;
+use crate::p2p::P2pError;
 use std::sync::PoisonError;
 use strum::{EnumDiscriminants, IntoDiscriminant};
 use thiserror::Error;
+use tokio::task::JoinError;
 use xelis_common::{
     crypto::{
         bech32::Bech32Error,
@@ -23,13 +24,12 @@ use xelis_common::{
     utils::format_xelis
 };
 use human_bytes::human_bytes;
+use xelis_vm::ValidatorError;
 
 #[derive(Error, Debug, Clone, Copy)]
 pub enum DiskContext {
     #[error("data len")]
     DataLen,
-    #[error("multisig")]
-    Multisig,
     #[error("get multisig at topoheight {0}")]
     MultisigAtTopoHeight(TopoHeight),
     #[error("get top block")]
@@ -54,16 +54,14 @@ pub enum DiskContext {
     BalanceAtTopoHeight(TopoHeight),
     #[error("get last topoheight for balance")]
     LastTopoHeightForBalance,
-    #[error("get block reward at topoheight {0}")]
-    BlockRewardAtTopoHeight(TopoHeight),
-    #[error("get supply at topoheight {0}")]
-    SupplyAtTopoHeight(TopoHeight),
-    #[error("get burned supply at topoheight {0}")]
-    BurnedSupplyAtTopoHeight(TopoHeight),
+    #[error("get metadata at topoheight {0}")]
+    MetadataAtTopoHeight(TopoHeight),
     #[error("get blocks at height {0}")]
     BlocksAtHeight(u64),
     #[error("get block executor for tx")]
     BlockExecutorForTx,
+    #[error("get block size ema")]
+    BlockSizeEma,
     #[error("get blocks for tx")]
     TxBlocks,
     #[error("get difficulty for block hash")]
@@ -82,6 +80,8 @@ pub enum DiskContext {
     LastNonce,
     #[error("get nonce at topoheight {0}")]
     NonceAtTopoHeight(TopoHeight),
+    #[error("get scheduled execution at topoheight {0}")]
+    ScheduledExecution(TopoHeight),
     // Extra
     #[error("get network")]
     Network,
@@ -150,6 +150,10 @@ pub enum DiskContext {
 
 #[derive(Error, Debug, EnumDiscriminants)]
 pub enum BlockchainError {
+    #[error("no circulating supply for asset {0}")]
+    NoCirculatingSupply(Hash),
+    #[error(transparent)]
+    JoinError(#[from] JoinError),
     #[error("Invalid configuration provided")]
     InvalidConfig,
     #[error("Invalid data on disk: corrupted")]
@@ -160,6 +164,8 @@ pub enum BlockchainError {
     ContractAlreadyExists,
     #[error("Contract not found: {}", _0)]
     ContractNotFound(Hash),
+    #[error("Contract module not found: {}", _0)]
+    ContractModuleNotFound(Hash),
     #[error("Invalid tip order for block {}, expected {}, got {}", _0, _1, _2)]
     InvalidTipsOrder(Hash, Hash, Hash),
     #[error("commit point already started")]
@@ -204,12 +210,8 @@ pub enum BlockchainError {
     InvalidTxInBlock(Hash),
     #[error("Tx {} not found in mempool", _0)]
     TxNotFound(Hash),
-    #[error("Tx {} was present in mempool but not in sorted list!", _0)]
-    TxNotFoundInSortedList(Hash),
     #[error("Tx {} already in mempool", _0)]
     TxAlreadyInMempool(Hash),
-    #[error("Normal Tx {} is empty", _0)]
-    TxEmpty(Hash),
     #[error("Transaction has an invalid reference: block hash not found")]
     InvalidReferenceHash,
     #[error("Transaction has an invalid reference: topoheight {0} is higher than our topoheight {1}")]
@@ -266,6 +268,8 @@ pub enum BlockchainError {
     InvalidGenesisBlock,
     #[error("Not enough blocks")]
     NotEnoughBlocks,
+    #[error("Gas overflow during calculation")]
+    GasOverflow,
     #[error("Unknown data store error")]
     Unknown,
     #[error("No signature found for this TX")]
@@ -304,6 +308,8 @@ pub enum BlockchainError {
     InvalidGenesisHash,
     #[error("Invalid tx {} nonce (got {} expected {}) for {}", _0, _1, _2, _3)]
     InvalidTxNonce(Hash, Nonce, Nonce, Address),
+    #[error("Mempool cache not found")]
+    MempoolCacheNotFound,
     #[error("Invalid tx nonce {} for mempool cache, range: [{}-{}]", _0, _1, _2)]
     InvalidTxNonceMempoolCache(Nonce, Nonce, Nonce),
     #[error("Invalid asset ID: {}", _0)]
@@ -316,8 +322,6 @@ pub enum BlockchainError {
     NoBalanceChanges(Address, TopoHeight, Hash),
     #[error("No nonce found on disk for {}", _0)]
     NoNonce(Address),
-    #[error("Overflow detected")]
-    Overflow,
     #[error("Error, block {} include a dead tx {} from stable height {} executed in block {}", _0, _1, _2, _3)]
     DeadTxFromStableHeight(Hash, Hash, u64, Hash),
     #[error("Error, block {} include a dead tx from tips {}", _0, _1)]
@@ -370,8 +374,8 @@ pub enum BlockchainError {
     DepositNotFound,
     #[error("MultiSig not found")]
     MultiSigNotFound,
-    #[error("Error in module: {}", _0)]
-    ModuleError(String),
+    #[error(transparent)]
+    ModuleError(#[from] ValidatorError),
     #[error("Invalid transaction in block while verifying in multi-thread mode")]
     InvalidTransactionMultiThread,
     #[error("Unknown account")]
@@ -388,8 +392,7 @@ impl BlockchainError {
 
 impl From<BlockchainError> for InternalRpcError {
     fn from(value: BlockchainError) -> Self {
-        let id = value.id() as i16;
-        InternalRpcError::CustomAny(200 + id, value.into())
+        InternalRpcError::AnyError(value.into())
     }
 }
 
@@ -418,7 +421,6 @@ impl From<VerificationError<BlockchainError>> for BlockchainError {
             VerificationError::MultiSigNotFound => BlockchainError::MultiSigNotFound,
             VerificationError::ModuleError(e) => BlockchainError::ModuleError(e),
             VerificationError::AnyError(e) => BlockchainError::Any(e),
-            VerificationError::GasOverflow => BlockchainError::Overflow,
             VerificationError::InvalidInvokeContract => BlockchainError::InvalidInvokeContract,
             VerificationError::DepositNotFound => BlockchainError::DepositNotFound,
             e => BlockchainError::Any(e.into())

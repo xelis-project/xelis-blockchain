@@ -6,6 +6,7 @@ use curve25519_dalek::{
 };
 use merlin::Transcript;
 use rand::rngs::OsRng;
+use schemars::JsonSchema;
 use zeroize::Zeroize;
 
 use crate::{
@@ -40,12 +41,17 @@ use super::{
 /// Cipher text validity proof.
 /// This proof is used to prove that a given ciphertext is valid and was created correctly for the right recipient.
 #[allow(non_snake_case)]
-#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, JsonSchema)]
 pub struct CiphertextValidityProof {
+    #[schemars(with = "Vec<u8>")]
     Y_0: CompressedRistretto,
+    #[schemars(with = "Vec<u8>")]
     Y_1: CompressedRistretto,
+    #[schemars(with = "Option<Vec<u8>>")]
     Y_2: Option<CompressedRistretto>,
+    #[schemars(with = "Vec<u8>")]
     z_r: Scalar,
+    #[schemars(with = "Vec<u8>")]
     z_x: Scalar,
 }
 
@@ -53,9 +59,10 @@ pub struct CiphertextValidityProof {
 impl CiphertextValidityProof {
     pub fn new(
         destination_pubkey: &PublicKey,
-        source_pubkey: Option<&PublicKey>,
+        source_pubkey: &PublicKey,
         amount: u64,
         opening: &PedersenOpening,
+        tx_version: TxVersion,
         transcript: &mut Transcript,
     ) -> Self {
         transcript.ciphertext_validity_proof_domain_separator();
@@ -71,7 +78,11 @@ impl CiphertextValidityProof {
         let Y_0 = PC_GENS.commit(y_x, y_r).compress();
         let Y_1 = (&y_r * P_dest).compress();
 
-        let Y_2 = source_pubkey.map(|P_source| (&y_r * P_source.as_point()).compress());
+        let Y_2 = if tx_version >= TxVersion::V1 {
+            Some((&y_r * source_pubkey.as_point()).compress())
+        } else {
+            None
+        };
 
         transcript.append_point(b"Y_0", &Y_0);
         transcript.append_point(b"Y_1", &Y_1);
@@ -85,8 +96,11 @@ impl CiphertextValidityProof {
         let z_r = &(&c * r) + &y_r;
         let z_x = &(&c * &x) + &y_x;
 
-        // transcript.append_scalar(b"z_r", &z_r);
-        // transcript.append_scalar(b"z_x", &z_x);
+        if tx_version >= TxVersion::V2 {
+            transcript.append_scalar(b"z_r", &z_r);
+            transcript.append_scalar(b"z_x", &z_x);
+        }
+
         transcript.challenge_scalar(b"w");
 
         y_r.zeroize();
@@ -105,7 +119,7 @@ impl CiphertextValidityProof {
         sender_pubkey: &PublicKey,
         dest_handle: &DecryptHandle,
         sender_handle: &DecryptHandle,
-        check_y_2: bool,
+        tx_version: TxVersion,
         transcript: &mut Transcript,
         batch_collector: &mut BatchCollector,
     ) -> Result<(), ProofVerificationError> {
@@ -113,19 +127,23 @@ impl CiphertextValidityProof {
 
         transcript.validate_and_append_point(b"Y_0", &self.Y_0)?;
         transcript.validate_and_append_point(b"Y_1", &self.Y_1)?;
-        if let Some(Y_2) = self.Y_2.as_ref().filter(|_| check_y_2) {
+
+        // Y_2 is mandatory starting v1
+        if self.Y_2.is_some() != (tx_version >= TxVersion::V1) {
+            return Err(ProofVerificationError::CiphertextValidityProof);
+        }
+
+        if let Some(Y_2) = self.Y_2.as_ref() {
             transcript.validate_and_append_point(b"Y_2", Y_2)?;
         }
 
         let c = transcript.challenge_scalar(b"c");
+        if tx_version >= TxVersion::V2 {
+            transcript.append_scalar(b"z_r", &self.z_r);
+            transcript.append_scalar(b"z_x", &self.z_x);
+        }
 
-        let mut cloned = transcript.clone();
-        cloned.append_scalar(b"z_r", &self.z_r);
-        cloned.append_scalar(b"z_x", &self.z_x);
-
-        let w = cloned.challenge_scalar(b"w");
-
-        transcript.challenge_scalar(b"w");
+        let w = transcript.challenge_scalar(b"w");
 
         let w_negated = -&w;
 
@@ -146,10 +164,6 @@ impl CiphertextValidityProof {
         } else {
             None
         };
-
-        if Y_2.is_some() != check_y_2 {
-            return Err(ProofVerificationError::CiphertextValidityProof);
-        }
 
         let P_dest = dest_pubkey.as_point();
         let P_source = sender_pubkey.as_point();
@@ -212,7 +226,6 @@ impl CiphertextValidityProof {
         source_pubkey: &PublicKey,
         dest_handle: &DecryptHandle,
         source_handle: &DecryptHandle,
-        check_y_2: bool,
         transcript: &mut Transcript,
     ) -> Result<(), ProofVerificationError> {
         transcript.ciphertext_validity_proof_domain_separator();
@@ -220,9 +233,8 @@ impl CiphertextValidityProof {
         transcript.validate_and_append_point(b"Y_0", &self.Y_0)?;
         transcript.validate_and_append_point(b"Y_1", &self.Y_1)?;
 
-        if let Some(Y_2) = self.Y_2.as_ref().filter(|_| check_y_2) {
-            transcript.validate_and_append_point(b"Y_2", Y_2)?;
-        }
+        let Y_2 = self.Y_2.as_ref().ok_or(ProofVerificationError::Format)?;
+        transcript.validate_and_append_point(b"Y_2", Y_2)?;
 
         let c = transcript.challenge_scalar(b"c");
 
@@ -245,19 +257,8 @@ impl CiphertextValidityProof {
             .Y_1
             .decompress()
             .ok_or(DecompressionError)?;
-        let Y_2 = if let Some(Y_2) = self.Y_2.as_ref() {
-            Some(
-                Y_2
-                    .decompress()
-                    .ok_or(DecompressionError)?,
-            )
-        } else {
-            None
-        };
-
-        if Y_2.is_some() != check_y_2 {
-            return Err(ProofVerificationError::CiphertextValidityProof);
-        }
+        let Y_2 = Y_2.decompress()
+            .ok_or(DecompressionError)?;
 
         let P_dest = dest_pubkey.as_point();
         let P_source = source_pubkey.as_point();
@@ -266,55 +267,32 @@ impl CiphertextValidityProof {
         let D_dest = dest_handle.as_point();
         let D_source = source_handle.as_point();
 
-        let check = if let Some(Y_2) = Y_2 {
-            RistrettoPoint::vartime_multiscalar_mul(
-                vec![
-                    &self.z_r,           // z_r
-                    &self.z_x,           // z_x
-                    &(-&c),              // -c
-                    &-(&Scalar::ONE),    // -identity
-                    &(&w * &self.z_r),   // w * z_r
-                    &(&w_negated * &c),  // -w * c
-                    &w_negated,          // -w
-                    &(&ww * &self.z_r),  // ww * z_r
-                    &(&ww_negated * &c), // -ww * c
-                    &ww_negated,         // -ww
-                ],
-                vec![
-                    &(*H), // H
-                    &(*G), // G
-                    C,        // C
-                    &Y_0,     // Y_0
-                    P_dest,  // P_first
-                    D_dest,  // D_first
-                    &Y_1,     // Y_1
-                    P_source, // P_second
-                    D_source, // D_second
-                    &Y_2, // Y_2
-                ],
-            )
-        } else {
-            RistrettoPoint::vartime_multiscalar_mul(
-                vec![
-                    &self.z_r,           // z_r
-                    &self.z_x,           // z_x
-                    &(-&c),              // -c
-                    &-(&Scalar::ONE),    // -identity
-                    &(&w * &self.z_r),   // w * z_r
-                    &(&w_negated * &c),  // -w * c
-                    &w_negated,          // -w
-                ],
-                vec![
-                    &(*H), // H
-                    &(*G), // G
-                    C,        // C
-                    &Y_0,     // Y_0
-                    P_dest,  // P_first
-                    D_dest,  // D_first
-                    &Y_1,     // Y_1
-                ],
-            )
-        };
+        let check = RistrettoPoint::vartime_multiscalar_mul(
+            vec![
+                &self.z_r,           // z_r
+                &self.z_x,           // z_x
+                &(-&c),              // -c
+                &-(&Scalar::ONE),    // -identity
+                &(&w * &self.z_r),   // w * z_r
+                &(&w_negated * &c),  // -w * c
+                &w_negated,          // -w
+                &(&ww * &self.z_r),  // ww * z_r
+                &(&ww_negated * &c), // -ww * c
+                &ww_negated,         // -ww
+            ],
+            vec![
+                &(*H), // H
+                &(*G), // G
+                C,        // C
+                &Y_0,     // Y_0
+                P_dest,  // P_first
+                D_dest,  // D_first
+                &Y_1,     // Y_1
+                P_source, // P_second
+                D_source, // D_second
+                &Y_2, // Y_2
+            ],
+        );
 
         if check.is_identity() {
             Ok(())
@@ -337,11 +315,13 @@ impl Serializer for CiphertextValidityProof {
     }
 
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let version: TxVersion = reader.context()
-            .get_copy()?;
+        let bit = reader.context()
+            .get_optional::<TxVersion>()
+            .map_or(true, |version| *version >= TxVersion::V1);
+
         let Y_0 = CompressedRistretto::read(reader)?;
         let Y_1 = CompressedRistretto::read(reader)?;
-        let Y_2 = if version >= TxVersion::V1 {
+        let Y_2 = if bit {
             Some(CompressedRistretto::read(reader)?)
         } else {
             None
@@ -380,7 +360,8 @@ mod tests {
         let sender_handle = sender.get_public_key().decrypt_handle(&opening);
 
         // Generate the proof
-        let proof = CiphertextValidityProof::new(keypair.get_public_key(), Some(sender.get_public_key()), amount, &opening, &mut transcript);
+        let proof = CiphertextValidityProof::new(keypair.get_public_key(), sender.get_public_key(), amount, &opening, TxVersion::V2, &mut transcript);
+        assert!(proof.Y_2.is_some());
 
         // Generate a new transcript
         let mut transcript = Transcript::new(b"test");
@@ -393,7 +374,7 @@ mod tests {
             sender.get_public_key(),
             &receiver_handle,
             &sender_handle,
-            true,
+             TxVersion::V2,
             &mut transcript,
             &mut batch_collector,
         );

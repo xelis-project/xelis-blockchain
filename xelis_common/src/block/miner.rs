@@ -1,6 +1,7 @@
 use core::fmt;
 use std::{borrow::Cow, str::FromStr};
 use log::debug;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use crate::{
@@ -18,6 +19,7 @@ use xelis_hash::{
     Error as XelisHashError,
     v1,
     v2,
+    v3,
 };
 
 use super::{BlockHeader, BLOCK_WORK_SIZE, EXTRA_NONCE_SIZE};
@@ -26,6 +28,7 @@ pub enum WorkVariant {
     Uninitialized,
     V1(v1::ScratchPad),
     V2(v2::ScratchPad),
+    V3(v3::ScratchPad)
 }
 
 impl WorkVariant {
@@ -33,17 +36,20 @@ impl WorkVariant {
         Some(match self {
             WorkVariant::Uninitialized => return None,
             WorkVariant::V1(_) => Algorithm::V1,
-            WorkVariant::V2(_) => Algorithm::V2
+            WorkVariant::V2(_) => Algorithm::V2,
+            WorkVariant::V3(_) => Algorithm::V3,
         })
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+/// PoW Algorithm used for mining blocks and validating block hashes
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, JsonSchema)]
 #[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
 #[repr(u8)]
 pub enum Algorithm {
     V1 = 0,
-    V2 = 1
+    V2 = 1,
+    V3 = 2
 }
 
 impl FromStr for Algorithm {
@@ -53,6 +59,7 @@ impl FromStr for Algorithm {
         match s {
             "xel/v1" => Ok(Algorithm::V1),
             "xel/v2" => Ok(Algorithm::V2),
+            "xel/v3" => Ok(Algorithm::V3),
             _ => Err("invalid algorithm")
         }
     }
@@ -75,7 +82,8 @@ impl fmt::Display for Algorithm {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}", match self {
             Algorithm::V1 => "xel/v1",
-            Algorithm::V2 => "xel/v2"
+            Algorithm::V2 => "xel/v2",
+            Algorithm::V3 => "xel/v3",
         })
     }
 }
@@ -136,6 +144,10 @@ impl<'a> Worker<'a> {
                 Algorithm::V2 => {
                     let scratch_pad = v2::ScratchPad::default();
                     self.variant = WorkVariant::V2(scratch_pad);
+                },
+                Algorithm::V3 => {
+                    let scratch_pad = v3::ScratchPad::default();
+                    self.variant = WorkVariant::V3(scratch_pad);
                 }
             }
         }
@@ -188,12 +200,11 @@ impl<'a> Worker<'a> {
                 let mut input = v1::AlignedInput::default();
                 let slice = input.as_mut_slice()?;
                 slice[0..BLOCK_WORK_SIZE].copy_from_slice(work.as_ref());
-                v1::xelis_hash(slice, scratch_pad).map(|bytes| Hash::new(bytes))?
+                v1::xelis_hash(slice, scratch_pad)
             },
-            WorkVariant::V2(scratch_pad) => {
-                v2::xelis_hash(work, scratch_pad).map(|bytes| Hash::new(bytes))?
-            }
-        };
+            WorkVariant::V2(scratch_pad) => v2::xelis_hash(work, scratch_pad),
+            WorkVariant::V3(scratch_pad) => v3::xelis_hash(work, scratch_pad),
+        }.map(|bytes| Hash::new(bytes))?;
 
         Ok(hash)
     }
@@ -290,9 +301,9 @@ impl<'a> MinerWork<'a> {
 
 impl<'a> Serializer for MinerWork<'a> {
     fn write(&self, writer: &mut Writer) {
-        writer.write_hash(&self.header_work_hash); // 32
-        writer.write_u64(&self.timestamp); // 32 + 8 = 40
-        writer.write_u64(&self.nonce); // 40 + 8 = 48
+        self.header_work_hash.write(writer); // 32
+        self.timestamp.write(writer); // 32 + 8 = 40
+        self.nonce.write(writer); // 40 + 8 = 48
         writer.write_bytes(&self.extra_nonce); // 48 + 32 = 80
 
         // 80 + 32 = 112

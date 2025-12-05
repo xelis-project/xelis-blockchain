@@ -1,8 +1,8 @@
 mod data;
-mod output;
+mod contract_logs;
 mod provider;
 mod balance;
-mod supply;
+mod scheduled_execution;
 
 use async_trait::async_trait;
 use xelis_common::{
@@ -15,7 +15,7 @@ use crate::core::{
     storage::{
         ContractProvider,
         SledStorage,
-        VersionedContract,
+        VersionedContractModule,
         sled::CONTRACTS_COUNT
     }
 };
@@ -23,13 +23,12 @@ use log::trace;
 
 #[async_trait]
 impl ContractProvider for SledStorage {
-    async fn set_last_contract_to<'a>(&mut self, hash: &Hash, topoheight: TopoHeight, contract: &VersionedContract<'a>) -> Result<(), BlockchainError> {
+    async fn set_last_contract_to<'a>(&mut self, hash: &Hash, topoheight: TopoHeight, contract: &VersionedContractModule<'a>) -> Result<(), BlockchainError> {
         trace!("Setting contract {} at topoheight {}", hash, topoheight);
         let key = self.get_versioned_contract_key(hash, topoheight);
         Self::insert_into_disk(self.snapshot.as_mut(), &self.versioned_contracts, &key, contract.to_bytes())?;
 
-        let prev = Self::insert_into_disk(self.snapshot.as_mut(), &self.contracts, hash.as_bytes(), &topoheight.to_be_bytes())?;
-        if prev.is_none() {
+        if !Self::insert_into_disk(self.snapshot.as_mut(), &self.contracts, hash.as_bytes(), &topoheight.to_be_bytes())? {
             self.store_contracts_count(self.count_contracts().await? + 1)?;
         }
 
@@ -41,13 +40,13 @@ impl ContractProvider for SledStorage {
         self.load_optional_from_disk(&self.contracts, hash.as_bytes())   
     }
 
-    async fn get_contract_at_topoheight_for<'a>(&self, hash: &Hash, topoheight: TopoHeight) -> Result<VersionedContract<'a>, BlockchainError> {
+    async fn get_contract_at_topoheight_for<'a>(&self, hash: &Hash, topoheight: TopoHeight) -> Result<VersionedContractModule<'a>, BlockchainError> {
         trace!("Getting contract {} at topoheight {}", hash, topoheight);
         let key = self.get_versioned_contract_key(hash, topoheight);
         self.load_from_disk(&self.versioned_contracts, &key, DiskContext::ContractTopoHeight)
     }
 
-    async fn get_contract_at_maximum_topoheight_for<'a>(&self, hash: &Hash, maximum_topoheight: TopoHeight) -> Result<Option<(TopoHeight, VersionedContract<'a>)>, BlockchainError> {
+    async fn get_contract_at_maximum_topoheight_for<'a>(&self, hash: &Hash, maximum_topoheight: TopoHeight) -> Result<Option<(TopoHeight, VersionedContractModule<'a>)>, BlockchainError> {
         trace!("Getting contract {} at maximum topoheight {}", hash, maximum_topoheight);
         let Some(pointer) = self.get_last_topoheight_for_contract(hash).await? else {
             return Ok(None)
@@ -108,15 +107,13 @@ impl ContractProvider for SledStorage {
     async fn get_contracts<'a>(&'a self, minimum_topoheight: TopoHeight, maximum_topoheight: TopoHeight) -> Result<impl Iterator<Item = Result<Hash, BlockchainError>> + 'a, BlockchainError> {
         trace!("Getting contracts, minimum_topoheight: {}, maximum_topoheight: {}", minimum_topoheight, maximum_topoheight);
 
-        Ok(Self::iter(self.snapshot.as_ref(), &self.contracts)
+        Ok(Self::iter::<Hash, TopoHeight>(self.snapshot.as_ref(), &self.contracts)
             .map(move |el| {
-                let (key, value) = el?;
-                let topoheight = TopoHeight::from_bytes(&value)?;
+                let (hash, topoheight) = el?;
 
                 // We must check that we don't have a version
                 // in our range
 
-                let hash = Hash::from_bytes(&key)?;
                 let mut prev_topo = Some(topoheight);
                 while let Some(topo) = prev_topo {
                     if topoheight < minimum_topoheight {
@@ -139,10 +136,10 @@ impl ContractProvider for SledStorage {
 
     async fn delete_last_topoheight_for_contract(&mut self, hash: &Hash) -> Result<(), BlockchainError> {
         trace!("Deleting last topoheight for contract {}", hash);
-        let prev = Self::remove_from_disk_without_reading(self.snapshot.as_mut(), &self.contracts, hash.as_bytes())?;
-        if prev {
+        if Self::remove_from_disk_without_reading(self.snapshot.as_mut(), &self.contracts, hash.as_bytes())? {
             self.store_contracts_count(self.count_contracts().await? - 1)?;
         }
+
         Ok(())
     }
 
@@ -174,13 +171,8 @@ impl ContractProvider for SledStorage {
 
     async fn count_contracts(&self) -> Result<u64, BlockchainError> {
         trace!("Counting contracts");
-        let count = if let Some(snapshot) = self.snapshot.as_ref() {
-            snapshot.cache.contracts_count
-        } else {
-            self.cache.contracts_count
-        };
 
-        Ok(count)
+        Ok(self.cache().contracts_count)
     }
 }
 
@@ -188,11 +180,7 @@ impl SledStorage {
     // Update the contracts count and store it on disk
     pub fn store_contracts_count(&mut self, count: u64) -> Result<(), BlockchainError> {
         trace!("Storing contracts count: {}", count);
-        if let Some(snapshot) = self.snapshot.as_mut() {
-            snapshot.cache.contracts_count = count;
-        } else {
-            self.cache.contracts_count = count;
-        }
+        self.cache_mut().contracts_count = count;
         Self::insert_into_disk(self.snapshot.as_mut(), &self.extra, CONTRACTS_COUNT, &count.to_be_bytes())?;
         Ok(())
     }

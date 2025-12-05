@@ -4,6 +4,27 @@ This file contains all the changelogs to ensure that changes can be tracked and 
 
 To see the full history and exact changes, please refer to the commits history directly.
 
+## v1.19.0
+
+Bug fixes, performance improvements & new features.
+
+**Common**:
+- Smart Contracs Environment improvements & optimizations
+
+**Daemon**:
+- P2P improvements
+- Database engine rework
+- Better chain sync
+- Snapshot mode rework to prevent cache corruption
+- RocksDB is now the default storage backend if the feature is enabled at build time
+- Hard fork configured with 5s block time, xelis-hash v3, Smart Contracts enabled
+
+**Wallet**:
+- list_transactions wallet bug fixes
+- XSWD Relayer
+
+For a full changelog, please see all the commits
+
 ## v1.18.0
 
 Bug fixes, performance improvements & new features.

@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::{collections::{HashMap, HashSet}, ops::{Deref, DerefMut}};
 use log::{debug, trace};
 use xelis_common::{
     account::CiphertextCache,
@@ -12,13 +12,15 @@ use crate::{error::WalletError, storage::{Balance, EncryptedStorage, TxCache}};
 // We need to give this information during the estimation of fees
 pub struct EstimateFeesState {
     // this is containing the registered keys that we are aware of
-    registered_keys: HashSet<PublicKey>
+    registered_keys: HashSet<PublicKey>,
+    base_fee: Option<u64>,
 }
 
 impl EstimateFeesState {
     pub fn new() -> Self {
         Self {
-            registered_keys: HashSet::new()
+            registered_keys: HashSet::new(),
+            base_fee: None
         }
     }
 
@@ -29,6 +31,10 @@ impl EstimateFeesState {
     pub fn add_registered_key(&mut self, key: PublicKey) {
         self.registered_keys.insert(key);
     }
+
+    pub fn set_base_fee(&mut self, base_fee: impl Into<Option<u64>>) {
+        self.base_fee = base_fee.into();
+    }
 }
 
 impl FeeHelper for EstimateFeesState {
@@ -36,6 +42,10 @@ impl FeeHelper for EstimateFeesState {
 
     fn account_exists(&self, key: &PublicKey) -> Result<bool, Self::Error> {
         Ok(self.registered_keys.contains(key))
+    }
+
+    fn get_base_fee(&self) -> Option<u64> {
+        self.base_fee
     }
 }
 
@@ -57,18 +67,19 @@ pub struct TransactionBuilderState {
     // The stable topoheight detected during the TX building
     // This is used to update the last coinbase reward topoheight
     stable_topoheight: Option<u64>,
+    // Fee max to pay
+    fee_limit: Option<u64>,
 }
 
 impl TransactionBuilderState {
-    pub fn new(mainnet: bool, reference: Reference, nonce: u64) -> Self {
+    pub fn new(mainnet: bool, reference: Reference, nonce: u64, fee_limit: Option<u64>) -> Self {
         Self {
-            inner: EstimateFeesState {
-                registered_keys: HashSet::new(),
-            },
+            inner: EstimateFeesState::new(),
             mainnet,
             balances: HashMap::new(),
             reference,
             nonce,
+            fee_limit,
             tx_hash_built: None,
             stable_topoheight: None,
         }
@@ -91,7 +102,7 @@ impl TransactionBuilderState {
     }
 
     pub async fn from_tx(storage: &EncryptedStorage, transaction: &Transaction, mainnet: bool) -> Result<Self, WalletError> {
-        let mut state = Self::new(mainnet, transaction.get_reference().clone(), transaction.get_nonce());
+        let mut state = Self::new(mainnet, transaction.get_reference().clone(), transaction.get_nonce(), Some(transaction.get_fee_limit()));
         let ciphertexts = transaction.get_expected_sender_outputs()
             .map_err(|e| WalletError::Any(e.into()))?;
 
@@ -139,21 +150,22 @@ impl TransactionBuilderState {
     pub async fn apply_changes(&mut self, storage: &mut EncryptedStorage) -> Result<(), WalletError> {
         trace!("Applying changes to storage");
 
+        storage.set_tx_cache(TxCache {
+            reference: self.reference.clone(),
+            nonce: self.nonce,
+            last_tx_hash_created: self.tx_hash_built.take(),
+            assets: self.balances.keys().cloned().collect(),
+        });
+
         for (asset, balance) in self.balances.drain() {
             debug!("Setting balance for asset {} to {} ({})", asset, balance.amount, balance.ciphertext);
             storage.set_unconfirmed_balance_for(asset, balance).await?;
         }
 
-        storage.set_tx_cache(TxCache {
-            reference: self.reference.clone(),
-            nonce: self.nonce,
-            last_tx_hash_created: self.tx_hash_built.take(),
-        });
-
-        // Lets verify if the last coinbase reward topoheight is still valid
+        // Lets verify if the last unstable balance topoheight is still valid
         if let Some(stable_topoheight) = self.stable_topoheight {
-            if storage.get_last_coinbase_reward_topoheight().is_some_and(|h| h < stable_topoheight) {
-                storage.set_last_coinbase_reward_topoheight(None)?;
+            if storage.get_last_coinbase_topoheight().is_some_and(|h| h <= stable_topoheight) {
+                storage.set_last_coinbase_topoheight(None)?;
             }
         }
 
@@ -164,8 +176,16 @@ impl TransactionBuilderState {
 impl FeeHelper for TransactionBuilderState {
     type Error = WalletError;
 
+    fn get_max_fee(&self, fee: u64) -> u64 {
+        self.fee_limit.unwrap_or(fee)
+    }
+
     fn account_exists(&self, key: &PublicKey) -> Result<bool, Self::Error> {
         self.inner.account_exists(key)
+    }
+
+    fn get_base_fee(&self) -> Option<u64> {
+        self.inner.base_fee
     }
 }
 
@@ -187,11 +207,15 @@ impl AccountState for TransactionBuilderState {
     }
 
     fn update_account_balance(&mut self, asset: &Hash, new_balance: u64, ciphertext: Ciphertext) -> Result<(), Self::Error> {
-        self.balances.insert(asset.clone(), Balance {
-            amount: new_balance,
-            ciphertext: CiphertextCache::Decompressed(ciphertext)
-        });
-        Ok(())
+        self.balances.get_mut(asset)
+            .map(|balance| {
+                balance.amount = new_balance;
+                balance.ciphertext = CiphertextCache::Decompressed(None, ciphertext);
+                balance.topoheight = self.reference.topoheight.max(balance.topoheight);
+
+                ()
+            })
+            .ok_or_else(|| WalletError::BalanceNotFound(asset.clone()))
     }
 
     fn get_nonce(&self) -> Result<u64, Self::Error> {
@@ -206,6 +230,20 @@ impl AccountState for TransactionBuilderState {
 
 impl AsMut<EstimateFeesState> for TransactionBuilderState {
     fn as_mut(&mut self) -> &mut EstimateFeesState {
+        &mut self.inner
+    }
+}
+
+impl Deref for TransactionBuilderState {
+    type Target = EstimateFeesState;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+impl DerefMut for TransactionBuilderState {
+    fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.inner
     }
 }

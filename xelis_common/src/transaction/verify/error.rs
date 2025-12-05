@@ -1,12 +1,14 @@
 use anyhow::Error as AnyError;
 use thiserror::Error;
+use xelis_vm::ValidatorError;
 
 use crate::{
     account::Nonce,
     crypto::{
         proofs::ProofVerificationError,    
         Hash
-    }
+    },
+    contract::vm::ContractError
 };
 
 #[derive(Error, Debug)]
@@ -42,17 +44,17 @@ pub enum VerificationError<T> {
     #[error("Invalid format")]
     InvalidFormat,
     #[error("Module error: {0}")]
-    ModuleError(String),
+    ModuleError(#[from] ValidatorError),
     #[error(transparent)]
     AnyError(#[from] AnyError),
     #[error("Invalid invoke contract")]
     InvalidInvokeContract,
-    #[error("overflow during gas calculation")]
-    GasOverflow,
+    #[error("Contract not found")]
+    ContractNotFound,
     #[error("Deposit decompressed not found")]
     DepositNotFound,
     #[error("Configured max gas is above the network limit")]
     MaxGasReached,
-    #[error("Contract not found")]
-    ContractNotFound,
+    #[error(transparent)]
+    Contract(#[from] ContractError<T>),
 }

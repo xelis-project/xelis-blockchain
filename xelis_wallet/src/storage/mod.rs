@@ -119,13 +119,13 @@ pub struct EncryptedStorage {
     // Temporary TX Cache used to build ordered TXs
     tx_cache: Option<TxCache>,
     // Cache for the assets with their decimals
-    assets_cache: Mutex<LruCache<Hash, AssetData>>,
+    assets_cache: Mutex<LruCache<Hash, (AssetData, bool)>>,
     // Cache for the synced topoheight
     synced_topoheight: Option<u64>,
-    // Topoheight of the last coinbase reward
+    // Topoheight of the last coinbase reward / or smart contracts transfer
     // This is used to determine if we should
     // use a stable balance or not
-    last_coinbase_reward_topoheight: Option<u64>,
+    last_coinbase_topoheight: Option<u64>,
     // Transaction version to use
     tx_version: TxVersion,
     // Multisig state
@@ -150,7 +150,7 @@ impl EncryptedStorage {
             tx_cache: None,
             assets_cache: Mutex::new(LruCache::new(NonZeroUsize::new(DEFAULT_CACHE_SIZE).unwrap())),
             synced_topoheight: None,
-            last_coinbase_reward_topoheight: None,
+            last_coinbase_topoheight: None,
             tx_version: TxVersion::V0,
             multisig_state: None
         };
@@ -164,9 +164,9 @@ impl EncryptedStorage {
             storage.set_network(&network)?;
         }
 
-        // Load one-time the last coinbase reward topoheight
+        // Load one-time the last unstable topoheight
         if storage.contains_data(&storage.extra, LCRT)? {
-            storage.last_coinbase_reward_topoheight = Some(storage.load_from_disk(&storage.extra, LCRT)?);
+            storage.last_coinbase_topoheight = Some(storage.load_from_disk(&storage.extra, LCRT)?);
         }
 
         // Load one-time the transaction version
@@ -180,8 +180,8 @@ impl EncryptedStorage {
         }
 
         // Force tracking of native xelis asset
-        if !storage.is_asset_tracked(&XELIS_ASSET)? {
-            storage.track_asset(&XELIS_ASSET)?;
+        if !storage.is_asset_tracked_internal(&XELIS_ASSET)? {
+            storage.track_asset_internal(&XELIS_ASSET)?;
         }
 
         Ok(storage)
@@ -202,15 +202,19 @@ impl EncryptedStorage {
         }
     }
 
+    // Decrypt data and then deserialize it
+    fn decrypt_and_read<V: Serializer>(&self, data: &[u8]) -> Result<V> {
+        trace!("decrypt and read");
+        let decrypted = self.cipher.decrypt_value(data).context("Error while decrypting value from disk")?;
+        V::from_bytes(&decrypted).context("Error while de-serializing value from disk")
+    }
+
     // Key must be hashed or encrypted before calling this function
     fn internal_load<V: Serializer>(&self, tree: &Tree, key: &[u8]) -> Result<Option<V>> {
         trace!("internal load");
         let data = tree.get(key)?;
         Ok(match data {
-            Some(data) => {
-                let bytes = self.cipher.decrypt_value(&data).context("Error while decrypting value from disk")?;
-                Some(V::from_bytes(&bytes).context("Error while de-serializing value from disk")?)
-            },
+            Some(data) => self.decrypt_and_read::<V>(&data).map(Some)?,
             None => None
         })
     }
@@ -234,13 +238,6 @@ impl EncryptedStorage {
         trace!("load from disk with key");
         self.internal_load(tree, key)?
             .context(format!("Error while loading data with key {} from disk", String::from_utf8_lossy(key)))
-    }
-
-    // Parse encrypted data
-    fn parse_encrypted_data<V: Serializer>(&self, data: &[u8]) -> Result<V> {
-        trace!("parse encrypted data");
-        let decrypted = self.cipher.decrypt_value(data)?;
-        Ok(V::from_bytes(&decrypted)?)
     }
 
     // Because we can't predict the nonce used for encryption, we make it determistic
@@ -509,17 +506,45 @@ impl EncryptedStorage {
     }
 
     // Check if the asset is tracked
-    pub fn is_asset_tracked(&self, hash: &Hash) -> Result<bool> {
+    fn is_asset_tracked_internal(&self, hash: &Hash) -> Result<bool> {
         self.contains_with_encrypted_key(&self.tracked_assets, hash.as_bytes())
     }
 
-    // Mark the requested asset as tracked
-    pub fn track_asset(&mut self, hash: &Hash) -> Result<()> {
+    pub async fn is_asset_tracked(&self, hash: &Hash) -> Result<bool> {
+        trace!("is asset tracked");
+        if let Some((_, tracked)) = self.assets_cache.lock().await.get(hash) {
+            return Ok(*tracked);
+        }
+
+        self.is_asset_tracked_internal(hash)
+    }
+
+    fn track_asset_internal(&mut self, hash: &Hash) -> Result<()> {
+        trace!("track asset internal");
         self.save_to_disk_with_encrypted_key(&self.tracked_assets, hash.as_bytes(), &[])
     }
 
+    // Mark the requested asset as tracked
+    pub async fn track_asset(&mut self, hash: &Hash) -> Result<()> {
+        {
+            let mut cache = self.assets_cache.lock().await;
+            if let Some((_, tracked)) = cache.get_mut(hash) {
+                *tracked = true;
+            }
+        }
+
+        self.track_asset_internal(hash)
+    }
+
     // Unmark the requested asset from being tracked
-    pub fn untrack_asset(&mut self, hash: &Hash) -> Result<()> {
+    pub async fn untrack_asset(&mut self, hash: &Hash) -> Result<()> {
+        {
+            let mut cache = self.assets_cache.lock().await;
+            if let Some((_, tracked)) = cache.get_mut(hash) {
+                *tracked = false;
+            }
+        }
+
         self.delete_from_disk_with_encrypted_key(&self.tracked_assets, hash.as_bytes())
     }
 
@@ -600,7 +625,9 @@ impl EncryptedStorage {
                 let raw_value = &self.cipher.decrypt_value(&value)?;
                 let mut reader = Reader::new(raw_value);
                 let a = AssetData::read(&mut reader)?;
-                cache.put(asset.clone(), a);
+
+                let is_tracked = self.is_asset_tracked_internal(&asset)?;
+                cache.put(asset.clone(), (a, is_tracked));
             }
 
             assets.insert(asset);
@@ -648,9 +675,10 @@ impl EncryptedStorage {
         trace!("add asset");
 
         self.save_to_disk_with_encrypted_key(&self.assets, asset.as_bytes(), &data.to_bytes())?;
+        let is_tracked = self.is_asset_tracked_internal(asset)?;
 
         let mut cache = self.assets_cache.lock().await;
-        cache.put(asset.clone(), data);
+        cache.put(asset.clone(), (data, is_tracked));
         Ok(())
     }
 
@@ -658,12 +686,14 @@ impl EncryptedStorage {
     pub async fn get_asset(&self, asset: &Hash) -> Result<AssetData> {
         trace!("get asset {}", asset);
         let mut cache = self.assets_cache.lock().await;
-        if let Some(asset) = cache.get(asset) {
+        if let Some((asset, _)) = cache.get(asset) {
             return Ok(asset.clone());
         }
 
         let data: AssetData = self.load_from_disk_with_encrypted_key(&self.assets, asset.as_bytes())?;
-        cache.put(asset.clone(), data.clone());
+
+        let is_tracked = self.is_asset_tracked_internal(asset)?;
+        cache.put(asset.clone(), (data.clone(), is_tracked));
 
         Ok(data)
     }
@@ -686,37 +716,42 @@ impl EncryptedStorage {
     pub async fn get_optional_asset(&self, asset: &Hash) -> Result<Option<AssetData>> {
         trace!("get asset");
         let mut cache = self.assets_cache.lock().await;
-        if let Some(asset) = cache.get(asset) {
+        if let Some((asset, _)) = cache.get(asset) {
             return Ok(Some(asset.clone()));
         }
 
         let data: Option<AssetData> = self.load_from_disk_optional_with_encrypted_key(&self.assets, asset.as_bytes())?;
         if let Some(data) = data.as_ref() {
-            cache.put(asset.clone(), data.clone());
+            let is_tracked = self.is_asset_tracked_internal(asset)?;
+            cache.put(asset.clone(), (data.clone(), is_tracked));
         }
 
         Ok(data)
     }
 
-    // Search an asset by name
-    pub async fn get_asset_by_name(&self, name: &str) -> Result<Option<Hash>> {
+    // Search a tracked asset by its name OR ticker
+    pub async fn search_tracked_asset_with(&self, name: &str) -> Result<Option<Hash>> {
         trace!("get asset by name");
-        let cache = self.assets_cache.lock().await;
         let mut res = None;
-        for (asset, data) in cache.iter() {
-            if data.get_name() == name {
-                res = Some(asset.clone());
-                break;
+        {
+            let cache = self.assets_cache.lock().await;
+    
+            // Ticker is always uppercase
+            let upper_name = name.to_uppercase();
+            for (asset, (data, tracked)) in cache.iter() {
+                if *tracked && (data.get_name() == name || data.get_ticker() == upper_name) {
+                    res = Some(asset.clone());
+                    break;
+                }
             }
         }
 
         if res.is_none() {
-            // Check in the DB
-            for el in self.assets.iter() {
-                let (key, value) = el?;
-                let data: AssetData = self.parse_encrypted_data(&value)?;
+            // Check in the DB            
+            for el in self.get_tracked_assets()? {
+                let asset = el?;
+                let data = self.get_asset(&asset).await?;
                 if data.get_name() == name {
-                    let asset: Hash = self.parse_encrypted_data(&key)?;
                     res = Some(asset);
                     break;
                 }
@@ -730,7 +765,7 @@ impl EncryptedStorage {
     pub async fn set_asset_name(&mut self, asset: &Hash, name: String) -> Result<()> {
         trace!("set asset name");
         let mut cache = self.assets_cache.lock().await;
-        if let Some(asset) = cache.get_mut(asset) {
+        if let Some((asset, _)) = cache.get_mut(asset) {
             asset.set_name(name.clone());
         }
 
@@ -878,7 +913,7 @@ impl EncryptedStorage {
                     }
 
                     if balances.is_empty() && self.tx_cache.is_some() {
-                        debug!("no matching unconfirmed balance found for asset {} but last TX still not processed, inject back", asset);
+                        debug!("no matching unconfirmed balance found for asset {} but last TX still not processed, inject back uncofirmed balance {} at topoheight {}", asset, b.amount, b.topoheight);
                         balances.push_front(b);
                         break;
                     }
@@ -963,6 +998,7 @@ impl EncryptedStorage {
             let tx_hash = el?;
             let entry: TransactionEntry = self.load_from_disk_with_key(&self.transactions, &tx_hash)?;
             if entry.is_outgoing() {
+                debug!("Found last outgoing transaction: {:?}", entry);
                 last_tx = Some(entry);
                 break;
             }
@@ -1008,14 +1044,17 @@ impl EncryptedStorage {
         Ok(())
     }
 
+    // Find the best transaction id for a given topoheight
+    // if lowest is set to true, the lowest transaction id with the requested topoheight is returned
+    // if lowest is set to false, the nearest higher transaction id with the requested topoheight 
     fn search_transaction_id_for_topoheight(
         &self,
         topoheight: u64,
         left_id: Option<u64>,
         right_id: Option<u64>,
-        nearest: bool,
+        lowest: bool,
     ) -> Result<Option<u64>> {
-        debug!("search transaction id for topoheight {}, nearest = {}", topoheight, nearest);
+        debug!("search transaction id for topoheight {}, lowest = {}", topoheight, lowest);
 
         let mut right = match right_id {
             Some(r) => r,
@@ -1029,7 +1068,12 @@ impl EncryptedStorage {
         };
 
         let mut left = left_id.unwrap_or(0);
-        let mut result = None;
+        if right < left {
+            debug!("right id {} is lower than left id {}", right, left);
+            return Ok(None);
+        }
+
+        let mut result: Option<u64> = None;
 
         while left <= right {
             let mid = left + (right - left) / 2;
@@ -1039,24 +1083,31 @@ impl EncryptedStorage {
                 return Ok(None);
             };
 
-            let entry: Skip<HASH_SIZE, TopoHeight> = self.load_from_disk_with_key(&self.transactions, &tx_hash)?;
+            let entry: Skip<HASH_SIZE, TopoHeight> =
+                self.load_from_disk_with_key(&self.transactions, &tx_hash)?;
             let mid_topo = entry.0;
 
+            trace!("mid: {}, mid_topo: {}, searching for topoheight: {}", mid, mid_topo, topoheight);
             match mid_topo.cmp(&topoheight) {
                 Ordering::Equal => {
                     result = Some(mid);
-                    if mid == 0 {
-                        break;
+                    if lowest {
+                        // keep searching left for the lowest matching topoheight
+                        if mid == 0 {
+                            break;
+                        }
+                        right = mid - 1;
+                    } else {
+                        // keep searching right for the highest matching topoheight
+                        left = mid + 1;
                     }
-                    // keep looking to the left for the lowest
-                    right = mid - 1;
                 }
                 Ordering::Less => {
                     left = mid + 1;
                 }
                 Ordering::Greater => {
-                    // potential "nearest higher" if exact not found
-                    result = result.or(Some(mid));
+                    // mid_topo > topoheight
+                    result = Some(mid);
                     if mid == 0 {
                         break;
                     }
@@ -1065,19 +1116,17 @@ impl EncryptedStorage {
             }
         }
 
-        // If we didn’t find an exact match but nearest is true, return nearest higher topoheight
-        if result.is_none() && nearest {
-            // left should points to the insertion point where its the first topoheight above requested
-            let tx_hash_opt = self.transactions_indexes.get(&left.to_be_bytes())?;
-            if let Some(tx_hash) = tx_hash_opt {
-                let entry: Skip<HASH_SIZE, TopoHeight> = self.load_from_disk_with_key(&self.transactions, &tx_hash)?;
-                if entry.0 > topoheight {
-                    return Ok(Some(left));
-                }
-            }
-        }
-    
         Ok(result)
+    }
+
+    // Count the number of transactions and indexes stored
+    pub fn count_transactions(&self) -> Result<(usize, usize)> {
+        trace!("count transactions");
+
+        let txs = self.transactions.len();
+        let indexes = self.transactions_indexes.len();
+
+        Ok((txs, indexes))
     }
 
     // Filter when the data is deserialized to not load all transactions in memory
@@ -1100,10 +1149,10 @@ impl EncryptedStorage {
 
         // Search the correct range
         let iterator = match (min_topoheight, max_topoheight) {
-            (Some(min), Some(max)) => {
-                let min = self.search_transaction_id_for_topoheight(min, None, None, true)
+            (Some(min_topoheight), Some(max_topoheight)) => {
+                let min = self.search_transaction_id_for_topoheight(min_topoheight, None, None, true)
                     .context("Error while searching min id")?;
-                let max = self.search_transaction_id_for_topoheight(max + 1, min, None, true)
+                let max = self.search_transaction_id_for_topoheight(max_topoheight + 1, min, None, true)
                     .context("Error while searching max id")?;
 
                 if let Some(min) = min {
@@ -1146,6 +1195,12 @@ impl EncryptedStorage {
             let tx_key = el?;
             let mut entry: TransactionEntry = self.load_from_disk_with_key(&self.transactions, &tx_key)?;
             trace!("entry: {}", entry.get_hash());
+
+            if min_topoheight.is_some_and(|min| entry.get_topoheight() < min) ||
+               max_topoheight.is_some_and(|max| entry.get_topoheight() > max) {
+                warn!("entry topoheight {} out of bounds", entry.get_topoheight());
+                continue;
+            }
 
             let mut transfers: Option<Vec<Transfer>> = None;
             match entry.get_mut_entry() {
@@ -1288,13 +1343,28 @@ impl EncryptedStorage {
     pub async fn delete_unconfirmed_balances(&mut self) {
         trace!("delete unconfirmed balances");
         self.unconfirmed_balances_cache.lock().await.clear();
-        self.clear_tx_cache();
+        self.clear_tx_cache().await;
     }
 
     // Delete tx cache
-    pub fn clear_tx_cache(&mut self) {
+    pub async fn clear_tx_cache(&mut self) {
         trace!("clear tx cache");
-        self.tx_cache = None;
+        if let Some(cache) = self.tx_cache.take() {
+            debug!("cleared tx cache {:?}", cache);
+
+            let mut unconfirmed_balances_cache = self.unconfirmed_balances_cache.lock().await;
+            for asset in cache.assets {
+                // delete the first unconfirmed balance for this asset
+                // if no other unconfirmed balance exists, remove the entry
+                if let Some(balances) = unconfirmed_balances_cache.get_mut(&asset) {
+                    balances.pop_front();
+                    if balances.is_empty() {
+                        debug!("no more unconfirmed balance cache for {}", asset);
+                        unconfirmed_balances_cache.remove(&asset);
+                    }
+                }
+            }
+        }
     }
 
     // Delete all assets from this wallet
@@ -1321,16 +1391,36 @@ impl EncryptedStorage {
         Ok(id)
     }
 
+    // Rebuild the transactions indexes from scratch
+    pub fn rebuild_transactions_indexes(&mut self) -> Result<()> {
+        trace!("rebuild transactions indexes");
+
+        self.transactions_indexes.clear()?;
+
+        let mut txs_with_ids = Vec::new();
+        for el in self.transactions.iter() {
+            let (_, value) = el?;
+            let (hash, topoheight): (Hash, TopoHeight) = self.decrypt_and_read(&value)?;
+            txs_with_ids.push((topoheight, hash));
+        }
+
+        // Sort by id
+        txs_with_ids.sort_by_key(|(id, _)| *id);
+
+        // Reinsert in order
+        for (id, (_, entry_hash)) in txs_with_ids.into_iter().enumerate() {
+            let hashed_key = self.cipher.hash_key(entry_hash.as_bytes());
+            self.transactions_indexes.insert(&id.to_be_bytes(), &hashed_key)?;
+        }
+
+        Ok(())
+    }
+
     // Save the transaction with its TX hash as key
     // We hash the hash of the TX to use it as a key to not let anyone being able to see txs saved on disk
     // with no access to the decrypted master key
     pub fn save_transaction(&mut self, hash: &Hash, transaction: &TransactionEntry) -> Result<()> {
         trace!("save transaction {}", hash);
-
-        if self.tx_cache.as_ref().is_some_and(|c| c.last_tx_hash_created.as_ref() == Some(hash)) {
-            debug!("Transaction {} has been executed, deleting cache", hash);
-            self.tx_cache = None;
-        }
 
         let id = self.get_next_transaction_id()?;
         let key = self.cipher.hash_key(hash.as_bytes());
@@ -1340,40 +1430,50 @@ impl EncryptedStorage {
         self.save_to_disk_with_key(&self.transactions, &key, &transaction.to_bytes())
     }
 
+    // Update the transaction with its TX hash as key
+    // This only updates the transaction data, not the index
+    pub fn update_transaction(&mut self, hash: &Hash, transaction: &TransactionEntry) -> Result<()> {
+        trace!("update transaction {}", hash);
+        let key = self.cipher.hash_key(hash.as_bytes());
+        self.save_to_disk_with_key(&self.transactions, &key, &transaction.to_bytes())
+    }
+
     // Reorg all the TXs written after a certain ID
     // To reorg them, we only need to reverse the order written
-    pub fn reverse_transactions_indexes(&mut self, id: Option<u64>) -> Result<()> {
+    // This currently keeping in memory all the transactions after the specified ID,
+    // sorts them by topoheight, and rewrites the indexes in reverse order.
+    pub fn reorder_transactions_indexes(&mut self, id: Option<u64>) -> Result<()> {
         trace!("reverse transactions indexes after {:?}", id);
         let Some(end_id) = self.get_last_transaction_id()? else {
             debug!("no transactions indexes to reverse");
             return Ok(());
         };
 
-        // Start from the first ID to reverse
-        let mut low_id = id.map(|v| v + 1)
-            .unwrap_or(0);
-        // End at the last ID
-        let mut high_id = end_id;
-
-        while low_id < high_id {
-            // Load TX hashes for swapping
-            let Some(low_tx_hash) = self.transactions_indexes.get(&low_id.to_be_bytes())? else {
-                warn!("No transaction index found for low {}", low_id);
-                return Ok(());
-            };
-            let Some(high_tx_hash) = self.transactions_indexes.get(&high_id.to_be_bytes())? else {
-                warn!("No transaction index found for high {}", high_id);
-                return Ok(()); 
+        let start_id = id.map(|v| v + 1).unwrap_or(0);
+        // Collect transactions after start_id
+        let mut txs_with_topoheight = Vec::new();
+        for tx_id in start_id..=end_id {
+            let Some(tx_hash) = self.transactions_indexes.get(&tx_id.to_be_bytes())? else {
+                warn!("Missing tx hash at index {tx_id}");
+                continue;
             };
 
-            // Swap the transaction indexes on disk
-            self.transactions_indexes.insert(low_id.to_be_bytes(), high_tx_hash)?;
-            self.transactions_indexes.insert(high_id.to_be_bytes(), low_tx_hash)?;
-
-            // Move pointers inward
-            low_id += 1;
-            high_id -= 1;
+            let topoheight: Skip<HASH_SIZE, TopoHeight> = self.load_from_disk_with_key(&self.transactions, &tx_hash)?;
+            txs_with_topoheight.push((topoheight.0, tx_hash));
         }
+
+        // Sort transactions by topoheight
+        txs_with_topoheight.sort_by_key(|(topoheight, _)| *topoheight);
+
+        // Rewrite the transactions_indexes tree from start_id onward
+        // We write it in the reverse order to keep the latest topoheight at the end
+        let len = txs_with_topoheight.len();
+        for (i, (_, tx_hash)) in txs_with_topoheight.into_iter().enumerate().rev() {
+            let new_index = start_id + i as u64;
+            self.transactions_indexes.insert(new_index.to_be_bytes(), tx_hash)?;
+        }
+
+        debug!("Reordered {} transactions indexes from ID {}", len, start_id);
 
         Ok(())
     }
@@ -1420,13 +1520,13 @@ impl EncryptedStorage {
         self.save_to_disk(&self.extra, NONCE_KEY, &nonce.to_be_bytes())
     }
 
-    // Store the last coinbase reward topoheight
+    // Store the last unstable balance topoheight
     // This is used to determine if we should use a stable balance or not
-    pub fn set_last_coinbase_reward_topoheight(&mut self, topoheight: Option<u64>) -> Result<()> {
-        trace!("set last coinbase reward topoheight to {:?}", topoheight);
+    pub fn set_last_coinbase_topoheight(&mut self, topoheight: Option<u64>) -> Result<()> {
+        trace!("set last unstable balance topoheight to {:?}", topoheight);
         if let Some(topoheight) = topoheight {
-            if let Some(last_topo) = self.last_coinbase_reward_topoheight.filter(|v| *v > topoheight) {
-                debug!("last coinbase reward topoheight ({}) already set to a higher value ({}), ignoring", topoheight, last_topo);
+            if let Some(last_topo) = self.last_coinbase_topoheight.filter(|v| *v > topoheight) {
+                debug!("last unstable balance topoheight ({}) already set to a higher value ({}), ignoring", topoheight, last_topo);
                 return Ok(());
             }
 
@@ -1435,14 +1535,14 @@ impl EncryptedStorage {
             self.delete_from_disk(&self.extra, LCRT)?;
         }
 
-        self.last_coinbase_reward_topoheight = topoheight;
+        self.last_coinbase_topoheight = topoheight;
         Ok(())
     }
 
-    // Get the last coinbase reward topoheight
-    pub fn get_last_coinbase_reward_topoheight(&self) -> Option<u64> {
-        trace!("get last coinbase reward topoheight");
-        self.last_coinbase_reward_topoheight
+    // Get the last coinbase topoheight (coinbase reward)
+    pub fn get_last_coinbase_topoheight(&self) -> Option<u64> {
+        trace!("get last coinbase topoheight");
+        self.last_coinbase_topoheight
     }
 
     // Store the private key
@@ -1552,6 +1652,14 @@ impl EncryptedStorage {
     pub fn delete_changes_above_topoheight(&mut self, topoheight: u64) -> Result<bool> {
         trace!("delete changes above topoheight {}", topoheight);
         let mut deleted = false;
+
+        if let Some(coinbase_topo) = self.get_last_coinbase_topoheight() {
+            if coinbase_topo > topoheight {
+                trace!("deleting last coinbase reward topoheight {}", coinbase_topo);
+                self.set_last_coinbase_topoheight(None)?;
+            }
+        }
+
         for res in self.changes_topoheight.iter().keys() {
             let key = res?;
             let raw = self.cipher.decrypt_value(&key).context("Error while decrypting key from disk")?;

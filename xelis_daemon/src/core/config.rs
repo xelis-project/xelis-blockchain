@@ -8,11 +8,16 @@ use xelis_common::{
 };
 use crate::{
     config::*,
-    core::storage::sled::StorageMode,
-    p2p::diffie_hellman::{KeyVerificationAction, WrappedSecret}
+    p2p::{KeyVerificationAction, WrappedSecret}
 };
 
-use super::{simulator::Simulator, storage::rocksdb::{CacheMode, CompressionMode}};
+use super::simulator::Simulator;
+
+#[cfg(feature = "sled")]
+use super::storage::sled::StorageMode;
+
+#[cfg(feature = "rocksdb")]
+use super::storage::rocksdb::{CacheMode, CompressionMode};
 
 // Functions helpers for serde default values
 fn default_p2p_bind_address() -> String {
@@ -35,7 +40,8 @@ fn default_prometheus_route() -> String {
     "/metrics".to_owned()
 }
 
-const fn default_cache_size() -> usize {
+#[cfg(feature = "sled")]
+const fn default_sled_cache_size() -> usize {
     DEFAULT_CACHE_SIZE
 }
 
@@ -75,6 +81,10 @@ const fn default_keep_max_log_files() -> usize {
     4
 }
 
+const fn default_rpc_batch_limit() -> usize {
+    20
+}
+
 #[derive(Debug, Clone, clap::Args, Serialize, Deserialize)]
 pub struct GetWorkConfig {
     /// Disable GetWork Server (WebSocket for miners).
@@ -100,7 +110,7 @@ pub struct GetWorkConfig {
 pub struct PrometheusConfig {
     /// Enable Prometheus metrics server
     /// This only works if the RPC server is enabled.
-    #[clap(long = "prometheus-enable")]
+    #[clap(long = "enable-prometheus")]
     #[serde(default)]
     pub enable: bool,
     /// Route for the Prometheus metrics export
@@ -142,6 +152,18 @@ pub struct RPCConfig {
     #[clap(name = "rpc-notify-events-concurrency", long, default_value_t = detect_available_parallelism())]
     #[serde(default = "detect_available_parallelism")]
     pub notify_events_concurrency: usize,
+    /// Configure the maximum batch size for JSON-RPC requests.
+    /// This is used to prevent DoS attacks by limiting the number of requests
+    /// that can be sent in a single batch.
+    /// Default is 20 requests per batch.
+    #[clap(name = "rpc-json-rpc-batch-limit", long, default_value_t = default_rpc_batch_limit())]
+    #[serde(default = "default_rpc_batch_limit")]
+    pub batch_limit: usize,
+    /// Configure CORS allowed origins for RPC server.
+    /// This will allow any whitelisted origin to access the RPC server.
+    #[clap(name = "rpc-cors-allowed-origins", long)]
+    #[serde(default)]
+    pub cors_allowed_origins: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, clap::ValueEnum, Serialize, Deserialize, strum::Display)]
@@ -202,6 +224,7 @@ pub struct P2pConfig {
     pub priority_nodes: Vec<String>,
     /// An exclusive node is connected and its connection is maintained in case of disconnect
     /// it also replaces seed nodes.
+    /// NOTE: no others nodes will be accepted if an exclusive node is set.
     #[clap(long)]
     #[serde(default)]
     pub exclusive_nodes: Vec<String>,
@@ -300,7 +323,7 @@ pub struct P2pConfig {
     /// Disable the P2P to re-execute an orphaned block during chain sync.
     /// If set to true, the P2P server will stop removing the block from storage
     /// and prevent to re-execute it by re-adding it to the chain.
-    #[clap(name = "p2p-disable-reexecute-blocks-on-sync", long)]
+    #[clap(name = "disable-p2p-reexecute-blocks-on-sync", long)]
     #[serde(default)]
     pub disable_reexecute_blocks_on_sync: bool,
     /// P2P log level for the block propagation
@@ -309,19 +332,47 @@ pub struct P2pConfig {
     #[clap(name = "p2p-block-propagation-log-level", long, value_enum, default_value_t = LogLevel::Debug)]
     #[serde(default = "debug_log_level")]
     pub block_propagation_log_level: LogLevel,
-    /// Disable requesting P2P transactions propagated
-    #[clap(name = "p2p-disable-fetching-txs-propagated", long)]
+    /// Disable requesting P2P transactions propagated.
+    /// No transaction being broadcasted across the p2p network will be requested.
+    /// This may leads to mempool being not synchronized at all.
+    /// It is discouraged to enable this config in a small p2p network.
+    #[clap(name = "disable-p2p-fetching-txs-propagated", long)]
     #[serde(default)]
     pub disable_fetching_txs_propagated: bool,
+    /// Handle peer packets in parallel by creating a new dedicated task.
+    /// Each packet has its own dedicated task expect those which are
+    /// order dependent. They are set in an sequential executor to ensure
+    /// that the order stay the same despite this config enabled.
+    /// Creating a dedicated task per packet handling is useful for
+    /// reducing latency during heavy network usage but may increase
+    /// heavily the network usage under high load.
+    /// By default, all p2p packets are handled sequentially
+    /// in a single task per peer.
     #[clap(name = "p2p-handle-peer-packets-in-dedicated-task", long)]
     #[serde(default)]
     pub handle_peer_packets_in_dedicated_task: bool,
+    /// Experimental: Enable the compression for packets being sent to peers.
+    /// Compression is done using the Snappy algorithm.
+    /// It is only used for packets greater than 1 KiB.
+    /// This is useful to reduce the bandwidth usage when having several peers.
+    /// Note that it may increase the CPU usage due to the compression/decompression.
+    /// By default, it is disabled.
+    #[clap(name = "enable-p2p-compression", long)]
+    #[serde(default)]
+    pub enable_compression: bool,
+    /// Disable the fast sync support.
+    /// If set to true, others nodes will not be able to use the fast sync mode with us.
+    #[clap(name = "disable-fast-sync-support", long)]
+    #[serde(default)]
+    pub disable_fast_sync_support: bool,
 }
 
 #[derive(Debug, Clone, Copy, clap::ValueEnum, Serialize, Deserialize)]
 pub enum StorageBackend {
+    #[cfg(feature = "sled")]
     #[serde(rename = "sled")]
     Sled,
+    #[cfg(feature = "rocksdb")]
     #[serde(rename = "rocksdb")]
     #[clap(name = "rocksdb")]
     RocksDB
@@ -329,15 +380,30 @@ pub enum StorageBackend {
 
 impl Default for StorageBackend {
     fn default() -> Self {
-        Self::Sled
+        // RocksDB is preferred if both are enabled
+        #[cfg(feature = "rocksdb")]
+        {
+            return Self::RocksDB;
+        }
+
+        #[cfg(all(not(feature = "rocksdb"), feature = "sled"))]
+        {
+            return Self::Sled;
+        }
+
+        #[cfg(all(not(feature = "rocksdb"), not(feature = "sled")))]
+        {
+            compile_error!("At least one storage backend must be enabled: sled or rocksdb")
+        }
     }
 }
 
 #[derive(Debug, Clone, clap::Args, Serialize, Deserialize)]
+#[cfg(feature = "sled")]
 pub struct SledConfig {
     /// Set LRUCache size (0 = disabled).
-    #[clap(name = "sled-cache-size", long, default_value_t = default_cache_size())]
-    #[serde(default = "default_cache_size")]
+    #[clap(name = "sled-cache-size", long, default_value_t = default_sled_cache_size())]
+    #[serde(default = "default_sled_cache_size")]
     pub cache_size: usize,
     /// DB cache size in bytes
     #[clap(name = "sled-internal-cache-size", long, default_value_t = default_db_cache_size())]
@@ -383,10 +449,12 @@ pub struct RocksDBConfig {
     #[serde(default = "default_keep_max_log_files")]
     pub keep_max_log_files: usize,
     /// Compression mode to use for RocksDB.
+    #[cfg(feature = "rocksdb")]
     #[clap(name = "rocksdb-compression-mode", value_enum, long, default_value_t)]
     #[serde(default)]
     pub compression_mode: CompressionMode,
     /// RocksDB block based cache mode to use.
+    #[cfg(feature = "rocksdb")]
     #[clap(name = "rocksdb-cache-mode", value_enum, long, default_value_t)]
     #[serde(default)]
     pub cache_mode: CacheMode,
@@ -414,6 +482,7 @@ pub struct Config {
     #[clap(flatten)]
     pub p2p: P2pConfig,
     /// Sled DB Backend if enabled
+    #[cfg(feature = "sled")]
     #[clap(flatten)]
     pub sled: SledConfig,
     /// RocksDB Backend if enabled
@@ -455,6 +524,11 @@ pub struct Config {
     #[clap(long, default_value_t = detect_available_parallelism())]
     #[serde(default = "detect_available_parallelism")]
     pub txs_verification_threads_count: usize,
+    /// Se the threads count to use during block pre verification.
+    /// By default, will detect the best value.
+    #[clap(long, default_value_t = detect_available_parallelism())]
+    #[serde(default = "detect_available_parallelism")]
+    pub pre_verify_block_threads_count: usize,
     /// Enable the DB integrity check that happen on chain initialization.
     /// This may take some times on huge DB as it's iterating through all versioned data
     /// to verify that no pointer or version is above our current topoheight.
@@ -485,7 +559,12 @@ pub struct Config {
     // prevent to re-verify the same ZK Proofs more than once.
     #[clap(long)]
     #[serde(default)]
-    pub disable_zkp_cache: bool
+    pub disable_zkp_cache: bool,
+    // Max concurrency allowed for general tasks
+    // By default, it will use the available parallelism.
+    #[clap(long, default_value_t = detect_available_parallelism())]
+    #[serde(default = "detect_available_parallelism")]
+    pub concurrency: usize,
 }
 
 mod humantime_serde {

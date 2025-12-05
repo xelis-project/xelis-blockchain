@@ -40,7 +40,6 @@ pub enum XSWDError {
 impl From<XSWDError> for InternalRpcError {
     fn from(e: XSWDError) -> Self {
         let err = e.into();
-        let id = e as i16;
-        InternalRpcError::CustomAny(10 + id, err)
+        InternalRpcError::AnyError(err)
     }
 }

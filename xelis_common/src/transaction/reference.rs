@@ -1,4 +1,5 @@
 use std::fmt;
+use schemars::JsonSchema;
 use serde::{Serialize, Deserialize};
 use crate::{
     crypto::Hash,
@@ -11,7 +12,7 @@ use crate::{
     }
 };
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, JsonSchema)]
 pub struct Reference {
     pub hash: Hash,
     pub topoheight: TopoHeight,

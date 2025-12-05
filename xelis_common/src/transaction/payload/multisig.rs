@@ -1,4 +1,5 @@
 use indexmap::IndexSet;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -8,7 +9,7 @@ use crate::{
 };
 
 // MultiSigPayload is a public payload allowing to setup a multi signature account
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, JsonSchema)]
 pub struct MultiSigPayload {
     // The threshold is the minimum number of signatures required to validate a transaction
     pub threshold: u8,

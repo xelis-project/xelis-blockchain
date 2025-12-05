@@ -32,15 +32,15 @@ impl<'a> Writer<'a> {
         self.bytes.extend(value.to_be_bytes());
     }
 
-    pub fn write_u32(&mut self, value: &u32) {
+    pub fn write_u32(&mut self, value: u32) {
         self.bytes.extend(value.to_be_bytes());
     }
 
-    pub fn write_u64(&mut self, value: &u64) {
+    pub fn write_u64(&mut self, value: u64) {
         self.bytes.extend(value.to_be_bytes());
     }
 
-    pub fn write_u128(&mut self, value: &u128) {
+    pub fn write_u128(&mut self, value: u128) {
         self.bytes.extend(value.to_be_bytes());
     }
 
@@ -71,7 +71,7 @@ impl<'a> Writer<'a> {
     }
 
     pub fn write_optional_non_zero_u64(&mut self, opt: Option<u64>) {
-        self.write_u64(&opt.unwrap_or(0));
+        self.write_u64(opt.unwrap_or(0));
     }
 
     pub fn total_write(&self) -> usize {

@@ -1,8 +1,10 @@
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use crate::serializer::*;
 
-/// Shared key used to encrypt/decrypt the extra data
-#[derive(Debug, Clone)]
+/// 32-bytes shared key used to encrypt/decrypt the extra data
+#[derive(Debug, Clone, JsonSchema)]
+#[schemars(with = "String")]
 pub struct SharedKey(pub [u8; 32]);
 
 impl Serializer for SharedKey {

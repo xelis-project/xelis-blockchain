@@ -1,9 +1,10 @@
 use std::{
     fmt::{self, Display, Formatter},
-    ops::{Add, AddAssign, Div, Mul, Rem, Shl, ShlAssign, Shr, ShrAssign, Sub}
+    ops::*
 };
 use log::debug;
 use primitive_types::U256;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use crate::serializer::{Reader, ReaderError, Serializer, Writer};
 
@@ -12,7 +13,8 @@ use crate::serializer::{Reader, ReaderError, Serializer, Writer};
 // In memory, it keeps using U256 (32 bytes)
 // On disk it can be as small as 1 byte and as big as 33 bytes
 // First byte written is the VarUint length (1 to 32)
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default, JsonSchema)]
+#[schemars(with = "String", description = "A variable length unsigned integer represented as a decimal string supporting up to 32 bytes.")]
 pub struct VarUint(U256);
 
 // Support up to 32 bytes for U256
@@ -66,7 +68,6 @@ impl Serializer for VarUint {
     }
 
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let mut buffer = [0u8; 32];
         let len = reader.read_u8()? as usize;
 
         if len > MAX_VARUINT_SIZE {
@@ -79,6 +80,8 @@ impl Serializer for VarUint {
         }
 
         let bytes = reader.read_bytes_ref(len)?;
+
+        let mut buffer = [0u8; 32];
         buffer[0..len].copy_from_slice(bytes);
 
         Ok(Self(U256::from_big_endian(&buffer)))
@@ -114,6 +117,12 @@ impl From<u128> for VarUint {
 impl From<u64> for VarUint {
     fn from(u: u64) -> Self {
         Self::from_u64(u)
+    }
+}
+
+impl From<u32> for VarUint {
+    fn from(u: u32) -> Self {
+        Self::from_u64(u as u64)
     }
 }
 

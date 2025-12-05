@@ -1,6 +1,7 @@
 use std::hash::Hash;
 
 use indexmap::IndexSet;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -9,7 +10,7 @@ use crate::{
 };
 
 // SignatureId is a structure that holds the signature and the id of the signer
-#[derive(Serialize, Deserialize, Debug, Clone, Eq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Eq, JsonSchema)]
 pub struct SignatureId {
     // Signer id
     // This is the index of the signer in the transaction
@@ -20,7 +21,7 @@ pub struct SignatureId {
 
 // MultiSig is a structure that holds a set of signatures
 // that are required to validate a transaction
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, JsonSchema)]
 pub struct MultiSig {
     signatures: IndexSet<SignatureId>,
 }

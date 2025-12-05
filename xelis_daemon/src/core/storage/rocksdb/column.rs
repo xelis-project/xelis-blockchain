@@ -1,9 +1,9 @@
-use strum::{Display, EnumIter, AsRefStr};
+use strum::{AsRefStr, Display, EnumIter, IntoStaticStr};
 
 const PREFIX_TOPOHEIGHT_LEN: usize = 8;
 const PREFIX_ID_LEN: usize = 8;
 
-#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Eq, Ord, Hash, EnumIter, Display, AsRefStr)]
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Eq, Ord, Hash, EnumIter, Display, AsRefStr, IntoStaticStr)]
 #[strum(serialize_all = "snake_case")]
 pub enum Column {
     // All transactions stored
@@ -17,8 +17,8 @@ pub enum Column {
     TransactionInBlocks,
     // Transaction contract outputs
     // Standardized events that occurs on a contract call
-    // {tx_hash} => {outputs}
-    TransactionsOutputs,
+    // {tx_hash} => {logs}
+    ContractLogs,
 
     // ordered blocks hashes based on execution
     // {position} => {block_hash}
@@ -35,9 +35,9 @@ pub enum Column {
     // Hash at a topoheight
     // {topoheight} => {block_hash}
     HashAtTopo,
-    // Block difficulty / cumulative difficulty / covariance
-    // {block_hash} => {difficulty}
-    BlockDifficulty,
+    // Block difficulty / cumulative difficulty / covariance / ema size
+    // {block_hash} => {metadata}
+    BlockMetadata,
     // Misc data with no specific rules
     Common,
     // Topoheight Metadata
@@ -80,17 +80,30 @@ pub enum Column {
     // {contract_id} => {contract_hash}
     ContractById,
 
+    // This index is generalized, and not contract-dependent
+    // So we may have unused values in it
+    // Contains the storage key used in a contract
+    // We map it to a u64
+    // We don't store a reverse index because we can't delete
+    // this one, we may never know if its still used or not
+    // {key} => {contract_data_id}
+    ContractDataTable,
+    // {contract_data_id} => {key}
+    ContractDataTableById,
+
     // {topoheight}{contract_id} => {version}
     VersionedContracts,
-    // {topoheight}{contract_id}{data_key} => {version}
-    VersionedContractsData,
-    // Represent the link between a contract and a data
-    // {contract_id}{data_key} => {topoheight}
+    // Represent the link between a contract and a data stored
+    // in its storage part
+    // {contract_id}{contract_data_id} => {topoheight}
     ContractsData,
+    // {topoheight}{contract_id}{contract_data_id} => {version}
+    VersionedContractsData,
 
-    // A contract data accessible by its ID
-    // {data_id} => {data}
-    ContractDataById,
+    // {topoheight}{contract_id} => {execution}
+    DelayedExecution,
+    // {topoheight}{contract_id}{execution_topoheight} => []
+    DelayedExecutionRegistrations,
 
     // {contract}{asset} => {topoheight}
     ContractsBalances,
@@ -114,10 +127,13 @@ impl Column {
             | VersionedContracts
             | VersionedContractsBalances
             | VersionedContractsData
-            | PrefixedRegistrations => Some(PREFIX_TOPOHEIGHT_LEN),
+            | PrefixedRegistrations
+            // Special case: prefixed with topoheight too
+            | DelayedExecution => Some(PREFIX_TOPOHEIGHT_LEN),
 
-            ContractsBalances => Some(PREFIX_ID_LEN),
-            Balances => Some(PREFIX_ID_LEN),
+            ContractsBalances
+            | ContractsData
+            | Balances => Some(PREFIX_ID_LEN),
 
             _ => None,
         }

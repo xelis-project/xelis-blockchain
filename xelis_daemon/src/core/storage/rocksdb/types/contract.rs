@@ -1,6 +1,7 @@
 use xelis_common::{block::TopoHeight, serializer::*};
 
 pub type ContractId = u64;
+pub type ContractDataId = u64;
 
 pub struct Contract {
     pub id: ContractId,

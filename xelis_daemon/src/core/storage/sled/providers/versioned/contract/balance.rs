@@ -11,7 +11,7 @@ use crate::core::{
 
 #[async_trait]
 impl VersionedContractBalanceProvider for SledStorage {
-    async fn delete_versioned_contract_balances_data_at_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError> {
+    async fn delete_versioned_contract_balances_at_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError> {
         trace!("delete versioned contracts balances at topoheight {}", topoheight);
         Self::delete_versioned_tree_at_topoheight(&mut self.snapshot, &self.contracts_balances, &self.versioned_contracts_balances, topoheight)
     }

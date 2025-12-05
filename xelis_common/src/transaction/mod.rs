@@ -1,3 +1,4 @@
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use crate::{
     account::Nonce,
@@ -29,7 +30,7 @@ pub use version::TxVersion;
 pub use source_commitment::SourceCommitment;
 
 #[cfg(test)]
-mod tests;
+pub mod tests;
 
 // Maximum size of extra data per transfer
 pub const EXTRA_DATA_LIMIT_SIZE: usize = 1024;
@@ -45,7 +46,7 @@ pub const MAX_MULTISIG_PARTICIPANTS: usize = 255;
 /// Simple enum to determine which DecryptHandle to use to craft a Ciphertext
 /// This allows us to store one time the commitment and only a decrypt handle for each.
 /// The DecryptHandle is used to decrypt the ciphertext and is selected based on the role in the transaction.
-#[derive(Serialize, Deserialize, Clone, Copy, Debug)]
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug)]
 #[serde(rename_all = "snake_case")]
 pub enum Role {
     Sender,
@@ -53,7 +54,7 @@ pub enum Role {
 }
 
 // this enum represent all types of transaction available on XELIS Network
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 #[serde(rename_all = "snake_case")]
 pub enum TransactionType {
     Transfers(Vec<TransferPayload>),
@@ -64,7 +65,7 @@ pub enum TransactionType {
 }
 
 // Transaction to be sent over the network
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, JsonSchema)]
 pub struct Transaction {
     /// Version of the transaction
     version: TxVersion,
@@ -72,14 +73,19 @@ pub struct Transaction {
     source: CompressedPublicKey,
     /// Type of the transaction
     data: TransactionType,
-    /// Fees in XELIS
+    /// Fees (containing base fee, extra fee and potential tip)
+    /// in XELIS
     fee: u64,
+    /// Maximum allowed fee to be spent by source
+    /// In XELIS
+    fee_limit: u64,
     /// nonce must be equal to the one on chain account
     /// used to prevent replay attacks and have ordered transactions
     nonce: Nonce,
     /// We have one source commitment and equality proof per asset used in the tx.
     source_commitments: Vec<SourceCommitment>,
     /// The range proof is aggregated across all transfers and across all assets.
+    #[schemars(with = "Vec<u8>", description = "Binary representation of the range proof")]
     range_proof: RangeProof,
     /// At which block the TX is built
     reference: Reference,
@@ -98,6 +104,7 @@ impl Transaction {
         source: CompressedPublicKey,
         data: TransactionType,
         fee: u64,
+        fee_limit: u64,
         nonce: Nonce,
         source_commitments: Vec<SourceCommitment>,
         range_proof: RangeProof,
@@ -110,6 +117,7 @@ impl Transaction {
             source,
             data,
             fee,
+            fee_limit,
             nonce,
             source_commitments,
             range_proof,
@@ -120,88 +128,102 @@ impl Transaction {
     }
 
     // Get the transaction version
+    #[inline(always)]
     pub fn get_version(&self) -> TxVersion {
         self.version
     }
 
     // Get the source key
+    #[inline(always)]
     pub fn get_source(&self) -> &CompressedPublicKey {
         &self.source
     }
 
     // Get the transaction type
+    #[inline(always)]
     pub fn get_data(&self) -> &TransactionType {
         &self.data
     }
 
     // Get fees paid to miners
+    #[inline(always)]
     pub fn get_fee(&self) -> u64 {
         self.fee
     }
 
+    // Get the fee max
+    #[inline(always)]
+    pub fn get_fee_limit(&self) -> u64 {
+        self.fee_limit
+    }
+
     // Get the nonce used
+    #[inline(always)]
     pub fn get_nonce(&self) -> Nonce {
         self.nonce
     }
 
     // Get the source commitments
+    #[inline(always)]
     pub fn get_source_commitments(&self) -> &Vec<SourceCommitment> {
         &self.source_commitments
     }
 
     // Get the used assets
+    #[inline(always)]
     pub fn get_assets(&self) -> impl Iterator<Item = &Hash> {
         self.source_commitments.iter().map(SourceCommitment::get_asset)
     }
 
     // Get the range proof
+    #[inline(always)]
     pub fn get_range_proof(&self) -> &RangeProof {
         &self.range_proof
     }
 
     // Get the multisig
+    #[inline(always)]
     pub fn get_multisig(&self) -> &Option<MultiSig> {
         &self.multisig
     }
 
     // Get the count of signatures in a multisig transaction
+    #[inline(always)]
     pub fn get_multisig_count(&self) -> usize {
         self.multisig.as_ref().map(|m| m.len()).unwrap_or(0)
     }
 
     // Get the signature of source key
+    #[inline(always)]
     pub fn get_signature(&self) -> &Signature {
         &self.signature
     }
 
     // Get the block reference to determine which block the transaction is built
+    #[inline(always)]
     pub fn get_reference(&self) -> &Reference {
         &self.reference
-    }
-
-    // Get the burned amount
-    // This will returns the burned amount by a Burn payload
-    // Or the % of execution fees to burn due to a Smart Contracts call
-    // only if the asset is XELIS
-    pub fn get_burned_amount(&self, asset: &Hash) -> Option<u64> {
-        match &self.data {
-            TransactionType::Burn(payload) if payload.asset == *asset => Some(payload.amount),
-            _ => None
-        }
     }
 
     // Get the total outputs count per TX
     // default is 1
     // Transfers / Deposits are their own len
+    // This max it against source commitments
+    // this allows us to determine how many HE operations
+    // will occurs just for the source side
+    #[inline]
     pub fn get_outputs_count(&self) -> usize {
         match &self.data {
             TransactionType::Transfers(transfers) => transfers.len(),
             TransactionType::InvokeContract(payload) => payload.deposits.len().max(1),
+            TransactionType::DeployContract(payload) => payload.invoke.as_ref()
+                .map_or(1, |v| v.deposits.len().max(1)),
             _ => 1
-        }
+        }.max(self.source_commitments.len())
     }
 
     // Consume the transaction by returning the source public key and the transaction type
+    #[inline(always)]
     pub fn consume(self) -> (CompressedPublicKey, TransactionType) {
         (self.source, self.data)
     }
@@ -266,10 +288,11 @@ impl Serializer for TransactionType {
     }
 
     fn size(&self) -> usize {
+        // 1 byte for variant
         1 + match self {
             TransactionType::Burn(payload) => payload.size(),
             TransactionType::Transfers(txs) => {
-                // 1 byte for variant, 1 byte for count of transfers
+                // 1 byte for count of transfers
                 let mut size = 1;
                 for tx in txs {
                     size += tx.size();
@@ -277,11 +300,11 @@ impl Serializer for TransactionType {
                 size
             },
             TransactionType::MultiSig(payload) => {
-                // 1 byte for variant, 1 byte for threshold, 1 byte for count of participants
+                // 1 byte for threshold, 1 byte for count of participants
                 1 + 1 + payload.participants.iter().map(|p| p.size()).sum::<usize>()
             },
             TransactionType::InvokeContract(payload) => payload.size(),
-            TransactionType::DeployContract(module) => module.size(),
+            TransactionType::DeployContract(payload) => payload.size(),
         }
     }
 }
@@ -292,6 +315,10 @@ impl Serializer for Transaction {
         self.source.write(writer);
         self.data.write(writer);
         self.fee.write(writer);
+        if self.version >= TxVersion::V2 {
+            self.fee_limit.write(writer);
+        }
+
         self.nonce.write(writer);
 
         writer.write_u8(self.source_commitments.len() as u8);
@@ -318,6 +345,12 @@ impl Serializer for Transaction {
         let source = CompressedPublicKey::read(reader)?;
         let data = TransactionType::read(reader)?;
         let fee = reader.read_u64()?;
+        let fee_limit = if version >= TxVersion::V2 {
+            reader.read_u64()?
+        } else {
+            fee
+        };
+
         let nonce = Nonce::read(reader)?;
 
         let commitments_len = reader.read_u8()?;
@@ -345,6 +378,7 @@ impl Serializer for Transaction {
             source,
             data,
             fee,
+            fee_limit,
             nonce,
             source_commitments,
             range_proof,
@@ -370,6 +404,10 @@ impl Serializer for Transaction {
 
         if self.version != TxVersion::V0 {
             size += self.multisig.size();
+        }
+
+        if self.version >= TxVersion::V2 {
+            size += self.fee_limit.size();
         }
 
         size

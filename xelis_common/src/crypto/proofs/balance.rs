@@ -1,5 +1,6 @@
 use curve25519_dalek::Scalar;
 use merlin::Transcript;
+use serde::{Deserialize, Serialize};
 use crate::{
     crypto::{
         elgamal::{
@@ -21,7 +22,8 @@ use crate::{
         ReaderError,
         Serializer,
         Writer
-    }
+    },
+    transaction::TxVersion
 };
 
 /// A balance proof is a cryptographic proof to reveal the balance of an account securely.
@@ -29,6 +31,7 @@ use crate::{
 /// The balance proof is a zero-knowledge proof that proves that the difference between the balance ciphertext and the commitment of the balance amount is zero.
 /// In other words, the balance proof proves that the balance amount is equal to the amount that was encrypted in the ciphertext.
 /// The advantage of a Balance proof is to provide a one time proof that is outdated once the balance is again updated.
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct BalanceProof {
     /// The expected balance amount.
     amount: u64,
@@ -57,44 +60,55 @@ impl BalanceProof {
         transcript.balance_proof_domain_separator();
         transcript.append_u64(b"amount", amount);
         transcript.append_ciphertext(b"source_ct", &ciphertext.compress());
+        transcript.append_public_key(b"public_key", &keypair.get_public_key().compress());
 
         // Compute the zeroed balance
-        let ct = keypair.get_public_key().encrypt_with_opening(amount, &Self::OPENING);
-        let zeroed_balance = ciphertext - ct;
+        let zeroed_balance = ciphertext - Scalar::from(amount);
 
         // Generate the proof that the final balance is 0 after applying the commitment.
-        let commitment_eq_proof = CommitmentEqProof::new(keypair, &zeroed_balance, &Self::OPENING, 0, transcript);
+        let commitment_eq_proof = CommitmentEqProof::new(keypair, &zeroed_balance, &Self::OPENING, 0u64, TxVersion::V2, transcript);
 
         Self::from(amount, commitment_eq_proof)
     }
 
-    /// Verify the balance proof.
-    pub fn pre_verify(&self, public_key: &PublicKey, source_ciphertext: Ciphertext, transcript: &mut Transcript, batch_collector: &mut BatchCollector) -> Result<(), ProofVerificationError> {
+    /// Get the amount being proven.
+    #[inline]
+    pub fn amount(&self) -> u64 {
+        self.amount
+    }
+
+    /// Get the commitment equality proof.
+    #[inline]
+    pub fn commitment_eq_proof(&self) -> &CommitmentEqProof {
+        &self.commitment_eq_proof
+    }
+
+    /// Internal verify function to avoid code duplication.
+    fn verify_internal(&self, public_key: &PublicKey, source_ciphertext: Ciphertext, transcript: &mut Transcript) -> Result<(PedersenCommitment, Ciphertext), ProofVerificationError> {
         transcript.balance_proof_domain_separator();
         transcript.append_u64(b"amount", self.amount);
         transcript.append_ciphertext(b"source_ct", &source_ciphertext.compress());
+        transcript.append_public_key(b"public_key", &public_key.compress());
 
         // Calculate the commitment that corresponds to the balance amount.
         let destination_commitment = PedersenCommitment::new_with_opening(Scalar::ZERO, &Self::OPENING);
 
         // Compute the zeroed balance
-        let ct = public_key.encrypt_with_opening(self.amount, &Self::OPENING);
-        let zeroed_balance = source_ciphertext - ct;
+        let zeroed_balance = source_ciphertext - Scalar::from(self.amount);
 
-        self.commitment_eq_proof.pre_verify(public_key, &zeroed_balance, &destination_commitment, transcript, batch_collector)?;
-
-        Ok(())
+        Ok((destination_commitment, zeroed_balance))
     }
 
     /// Verify the balance proof.
-    pub fn verify(&self, public_key: &PublicKey, source_ciphertext: Ciphertext) -> Result<(), ProofVerificationError> {
-        let mut transcript = Transcript::new(b"balance_proof");
-        let mut batch_collector = BatchCollector::default();
+    pub fn pre_verify(&self, public_key: &PublicKey, source_ciphertext: Ciphertext, transcript: &mut Transcript, batch_collector: &mut BatchCollector) -> Result<(), ProofVerificationError> {
+        let (destination_commitment, zeroed_balance) = self.verify_internal(public_key, source_ciphertext, transcript)?;
+        self.commitment_eq_proof.pre_verify(public_key, &zeroed_balance, &destination_commitment, TxVersion::V2, transcript, batch_collector)
+    }
 
-        self.pre_verify(public_key, source_ciphertext, &mut transcript, &mut batch_collector)?;
-
-        batch_collector.verify()?;
-        Ok(())
+    /// Verify the balance proof.
+    pub fn verify(&self, public_key: &PublicKey, source_ciphertext: Ciphertext, transcript: &mut Transcript) -> Result<(), ProofVerificationError> {
+        let (destination_commitment, zeroed_balance) = self.verify_internal(public_key, source_ciphertext, transcript)?;
+        self.commitment_eq_proof.verify(public_key, &zeroed_balance, &destination_commitment, transcript)
     }
 }
 
@@ -131,7 +145,7 @@ mod tests {
         let proof = BalanceProof::new(&keypair, amount, ct.clone());
 
         // Verify the proof
-        assert!(proof.verify(keypair.get_public_key(), ct).is_ok());
+        assert!(proof.verify(keypair.get_public_key(), ct, &mut Transcript::new(b"balance_proof")).is_ok());
     }
 
     #[test]
@@ -145,7 +159,7 @@ mod tests {
         let proof = BalanceProof::new(&keypair, 95, ct.clone());
 
         // Verify the proof
-        assert!(proof.verify(keypair.get_public_key(), ct).is_err());
+        assert!(proof.verify(keypair.get_public_key(), ct, &mut Transcript::new(b"balance_proof")).is_err());
     }
 
     #[test]
@@ -162,6 +176,6 @@ mod tests {
         // Generate another ciphertext with same amount
         let ct = keypair.get_public_key().encrypt(amount);
 
-        assert!(proof.verify(keypair.get_public_key(), ct).is_err());
+        assert!(proof.verify(keypair.get_public_key(), ct, &mut Transcript::new(b"balance_proof")).is_err());
     }
 }

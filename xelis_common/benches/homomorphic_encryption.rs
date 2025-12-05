@@ -40,6 +40,17 @@ fn bench_he_operations(c: &mut Criterion) {
         })
     });
 
+    group.bench_function("mul scalar", |b| {
+        b.iter(|| {
+            let _result = black_box(ct1.clone() * scalar);
+        })
+    });
+
+    group.bench_function("div scalar", |b| {
+        b.iter(|| {
+            let _result = black_box(ct1.clone() * scalar.invert());
+        })
+    });
 
     group.bench_function("compress", |b| {
         b.iter(|| {

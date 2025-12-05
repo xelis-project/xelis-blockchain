@@ -1,6 +1,7 @@
 use bulletproofs::RangeProof;
 use curve25519_dalek::Scalar;
 use merlin::Transcript;
+use serde::{Deserialize, Serialize};
 use crate::{
     crypto::{
         elgamal::{
@@ -18,7 +19,8 @@ use crate::{
         ReaderError,
         Serializer,
         Writer
-    }
+    },
+    transaction::TxVersion
 };
 use super::{
     BatchCollector,
@@ -31,6 +33,7 @@ use super::{
 };
 
 /// Prove that the prover owns a certain amount (N > 0) of a given asset.
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct OwnershipProof {
     /// The amount of the asset.
     amount: u64,
@@ -43,10 +46,6 @@ pub struct OwnershipProof {
 }
 
 impl OwnershipProof {
-    /// The opening used for the proof.
-    /// It is used to encrypt the amount of the asset that we want to prove.
-    const OPENING: PedersenOpening = PedersenOpening::from_scalar(Scalar::ONE);
-
     /// Create a new ownership proof.
     pub fn from(amount: u64, commitment: CompressedCommitment, commitment_eq_proof: CommitmentEqProof, range_proof: RangeProof) -> Self {
         Self { amount, commitment, commitment_eq_proof, range_proof }
@@ -79,13 +78,13 @@ impl OwnershipProof {
         transcript.append_u64(b"amount", amount);
         transcript.append_commitment(b"commitment", &left_commitment);
         transcript.append_ciphertext(b"source_ct", &ciphertext.compress());
+        transcript.append_public_key(b"public_key", &keypair.get_public_key().compress());
 
         // Compute the balance left
-        let ct = keypair.get_public_key().encrypt_with_opening(amount, &Self::OPENING);
-        let ct_left = ciphertext - ct;
+        let ct_left = ciphertext - Scalar::from(amount);
 
         // Generate the proof that the final balance is ? minus N after applying the commitment.
-        let commitment_eq_proof = CommitmentEqProof::new(keypair, &ct_left, &opening, left, transcript);
+        let commitment_eq_proof = CommitmentEqProof::new(keypair, &ct_left, &opening, left, TxVersion::V2, transcript);
 
         // Create a range proof to prove that whats left is >= 0
         let (range_proof, range_commitment) = RangeProof::prove_single(&BP_GENS, &PC_GENS, transcript, left, &opening.as_scalar(), BULLET_PROOF_SIZE)?;
@@ -94,8 +93,26 @@ impl OwnershipProof {
         Ok(Self::from(amount, left_commitment, commitment_eq_proof, range_proof))
     }
 
-    /// Verify the ownership proof.
-    pub fn pre_verify(&self, public_key: &PublicKey, source_ciphertext: Ciphertext, transcript: &mut Transcript, batch_collector: &mut BatchCollector) -> Result<(), ProofVerificationError> {
+    /// Get the amount being proven.
+    #[inline]
+    pub fn amount(&self) -> u64 {
+        self.amount
+    }
+
+    pub fn commitment(&self) -> &CompressedCommitment {
+        &self.commitment
+    }
+
+    pub fn commitment_eq_proof(&self) -> &CommitmentEqProof {
+        &self.commitment_eq_proof
+    }
+
+    pub fn range_proof(&self) -> &RangeProof {
+        &self.range_proof
+    }
+
+    /// Internal verify function to avoid code duplication.
+    fn verify_internal(&self, public_key: &PublicKey, source_ciphertext: Ciphertext, transcript: &mut Transcript) -> Result<(PedersenCommitment, Ciphertext), ProofVerificationError> {
         if self.amount == 0 {
             return Err(ProofVerificationError::Format);
         }
@@ -104,27 +121,33 @@ impl OwnershipProof {
         transcript.append_u64(b"amount", self.amount);
         transcript.validate_and_append_point(b"commitment", self.commitment.as_point())?;
         transcript.append_ciphertext(b"source_ct", &source_ciphertext.compress());
+        transcript.append_public_key(b"public_key", &public_key.compress());
 
         // Decompress the commitment
         let commitment = self.commitment.decompress()?;
 
         // Compute the balance left
-        let ct = public_key.encrypt_with_opening(self.amount, &Self::OPENING);
-        let balance_left = source_ciphertext - ct;
+        let balance_left = source_ciphertext - Scalar::from(self.amount);
 
-        self.commitment_eq_proof.pre_verify(public_key, &balance_left, &commitment, transcript, batch_collector)?;
-
-        self.range_proof.verify_single(&BP_GENS, &PC_GENS, transcript, &(commitment.as_point().clone(), self.commitment.as_point().clone()), BULLET_PROOF_SIZE)?;
-
-        Ok(())
+        Ok((commitment, balance_left))
     }
 
-    pub fn verify(&self, public_key: &PublicKey, source_ciphertext: Ciphertext) -> Result<(), ProofVerificationError> {
-        let mut transcript = Transcript::new(b"ownership_proof");
-        let mut batch_collector = BatchCollector::default();
-        self.pre_verify(public_key, source_ciphertext, &mut transcript, &mut batch_collector)?;
-        batch_collector.verify()?;
-        Ok(())
+    /// Verify the ownership proof using a batch collector.
+    pub fn pre_verify(&self, public_key: &PublicKey, source_ciphertext: Ciphertext, transcript: &mut Transcript, batch_collector: &mut BatchCollector) -> Result<(), ProofVerificationError> {
+        let (commitment, balance_left) = self.verify_internal(public_key, source_ciphertext, transcript)?;
+        self.commitment_eq_proof.pre_verify(public_key, &balance_left, &commitment, TxVersion::V2, transcript, batch_collector)?;
+
+        self.range_proof.verify_single(&BP_GENS, &PC_GENS, transcript, &(commitment.as_point().clone(), self.commitment.as_point().clone()), BULLET_PROOF_SIZE)
+            .map_err(ProofVerificationError::from)
+    }
+
+    /// Verify the ownership proof.
+    pub fn verify(&self, public_key: &PublicKey, source_ciphertext: Ciphertext, transcript: &mut Transcript) -> Result<(), ProofVerificationError> {
+        let (commitment, balance_left) = self.verify_internal(public_key, source_ciphertext, transcript)?;
+        self.commitment_eq_proof.verify(public_key, &balance_left, &commitment, transcript)?;
+
+        self.range_proof.verify_single(&BP_GENS, &PC_GENS, transcript, &(commitment.as_point().clone(), self.commitment.as_point().clone()), BULLET_PROOF_SIZE)
+            .map_err(ProofVerificationError::from)
     }
 }
 
@@ -169,7 +192,7 @@ mod tests {
         let proof = OwnershipProof::new(&keypair, balance, amount, ct.clone()).unwrap();
 
         // Verify the proof
-        assert!(proof.verify(keypair.get_public_key(), ct).is_ok());
+        assert!(proof.verify(keypair.get_public_key(), ct, &mut Transcript::new(b"ownership_proof")).is_ok());
     }
 
     #[test]
@@ -185,7 +208,7 @@ mod tests {
 
         // Verify the proof with a different balance ct
         let ct = keypair.get_public_key().encrypt(balance);
-        assert!(proof.verify(keypair.get_public_key(), ct).is_err());
+        assert!(proof.verify(keypair.get_public_key(), ct, &mut Transcript::new(b"ownership_proof")).is_err());
     }
 
     #[test]
@@ -218,7 +241,7 @@ mod tests {
 
         proof.commitment = decompressed.compress();
 
-        assert!(proof.verify(keypair.get_public_key(), ct).is_err());
+        assert!(proof.verify(keypair.get_public_key(), ct, &mut Transcript::new(b"ownership_proof")).is_err());
     }
 
     #[test]
@@ -251,13 +274,12 @@ mod tests {
         transcript.append_ciphertext(b"source_ct", &balance_ct.compress());
 
         // Compute the balance left
-        let ct = keypair.get_public_key().encrypt_with_opening(amount + inflate, &OwnershipProof::OPENING);
-        let ct_left = balance_ct.clone() - ct;
+        let ct_left = balance_ct.clone() - Scalar::from(amount + inflate);
 
         // expected left balance + the inflated amount
         let left_scalar = Scalar::from(left) - Scalar::from(inflate);
 
-        let commitment_eq_proof = CommitmentEqProof::new_with_scalar(&keypair, &ct_left, &opening, left_scalar, &mut transcript);
+        let commitment_eq_proof = CommitmentEqProof::new(&keypair, &ct_left, &opening, left_scalar, TxVersion::V2, &mut transcript);
 
         // Range proof prevent such exploit by making sure our balance left commitment is >= 0
         let (range_proof, _) = RangeProof::prove_single(&BP_GENS, &PC_GENS, &mut transcript, left, &opening.as_scalar(), BULLET_PROOF_SIZE).unwrap();
@@ -270,6 +292,6 @@ mod tests {
             range_proof
         };
 
-        assert!(proof.verify(keypair.get_public_key(), balance_ct).is_err());
+        assert!(proof.verify(keypair.get_public_key(), balance_ct, &mut Transcript::new(b"ownership_proof")).is_err());
     }
 }

@@ -6,6 +6,7 @@ mod registrations;
 mod asset;
 mod cache;
 mod dag_order;
+mod asset_supply;
 
 use async_trait::async_trait;
 use log::debug;
@@ -20,6 +21,7 @@ pub use registrations::*;
 pub use asset::*;
 pub use cache::*;
 pub use dag_order::*;
+pub use asset_supply::*;
 
 // Every versioned key should start with the topoheight in order to be able to delete them easily
 #[async_trait]
@@ -29,10 +31,8 @@ pub trait VersionedProvider:
     + VersionedMultiSigProvider
     + VersionedContractProvider
     + VersionedRegistrationsProvider
-    + VersionedContractDataProvider
-    + VersionedContractBalanceProvider
     + VersionedAssetProvider
-    + VersionedAssetsSupplyProvider
+    + VersionedAssetsCirculatingSupplyProvider
     + VersionedCacheProvider
     + VersionedDagOrderProvider {
 
@@ -43,8 +43,12 @@ pub trait VersionedProvider:
         self.delete_versioned_nonces_at_topoheight(topoheight).await?;
         self.delete_versioned_multisigs_at_topoheight(topoheight).await?;
         self.delete_versioned_registrations_at_topoheight(topoheight).await?;
+
         self.delete_versioned_contracts_at_topoheight(topoheight).await?;
         self.delete_versioned_contract_data_at_topoheight(topoheight).await?;
+        self.delete_versioned_contract_balances_at_topoheight(topoheight).await?;
+        self.delete_scheduled_executions_at_topoheight(topoheight).await?;
+
         self.delete_versioned_assets_supply_at_topoheight(topoheight).await?;
 
         // Special case: because we inject it directly into the chain at startup
@@ -63,10 +67,12 @@ pub trait VersionedProvider:
         self.delete_versioned_balances_below_topoheight(topoheight, keep_last).await?;
         self.delete_versioned_nonces_below_topoheight(topoheight, keep_last).await?;
         self.delete_versioned_multisigs_below_topoheight(topoheight, keep_last).await?;
+        // no deletions of registrations below topoheight, we keep them marked
 
         self.delete_versioned_contracts_below_topoheight(topoheight, keep_last).await?;
         self.delete_versioned_contract_data_below_topoheight(topoheight, keep_last).await?;
         self.delete_versioned_contract_balances_below_topoheight(topoheight, keep_last).await?;
+        self.delete_scheduled_executions_below_topoheight(topoheight).await?;
 
         self.delete_versioned_assets_supply_below_topoheight(topoheight, keep_last).await?;
         self.delete_versioned_assets_below_topoheight(topoheight, keep_last).await?;
@@ -85,6 +91,7 @@ pub trait VersionedProvider:
         self.delete_versioned_contracts_above_topoheight(topoheight).await?;
         self.delete_versioned_contract_data_above_topoheight(topoheight).await?;
         self.delete_versioned_contract_balances_above_topoheight(topoheight).await?;
+        self.delete_scheduled_executions_above_topoheight(topoheight).await?;
 
         self.delete_versioned_assets_supply_above_topoheight(topoheight).await?;
         self.delete_versioned_assets_above_topoheight(topoheight).await?;

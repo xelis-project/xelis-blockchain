@@ -12,10 +12,7 @@ use xelis_common::{
 use crate::core::{
     error::BlockchainError,
     storage::{
-        rocksdb::{
-            BlockDifficulty,
-            Column,
-        },
+        rocksdb::Column,
         DifficultyProvider,
         RocksStorage
     }
@@ -47,14 +44,14 @@ impl DifficultyProvider for RocksStorage {
     // Get the difficulty for a block hash
     async fn get_difficulty_for_block_hash(&self, hash: &Hash) -> Result<Difficulty, BlockchainError> {
         trace!("get difficulty for block hash {}", hash);
-        self.load_block_difficulty(hash)
+        self.load_block_metadata(hash)
             .map(|block_difficulty| block_difficulty.difficulty)
     }
 
     // Get the cumulative difficulty for a block hash
     async fn get_cumulative_difficulty_for_block_hash(&self, hash: &Hash) -> Result<CumulativeDifficulty, BlockchainError> {
         trace!("get cumulative difficulty for block hash {}", hash);
-        self.load_block_difficulty(hash)
+        self.load_block_metadata(hash)
             .map(|block_difficulty| block_difficulty.cumulative_difficulty)
     }
 
@@ -74,14 +71,7 @@ impl DifficultyProvider for RocksStorage {
     // Retrieve the estimated covariance (P) for a block hash
     async fn get_estimated_covariance_for_block_hash(&self, hash: &Hash) -> Result<VarUint, BlockchainError> {
         trace!("get estimated covariance for block hash {}", hash);
-        self.load_block_difficulty(hash)
+        self.load_block_metadata(hash)
         .map(|block_difficulty| block_difficulty.covariance)
-    }
-}
-
-impl RocksStorage {
-    fn load_block_difficulty(&self, hash: &Hash) -> Result<BlockDifficulty, BlockchainError> {
-        trace!("load block difficulty {}", hash);
-        self.load_from_disk(Column::BlockDifficulty, hash)
     }
 }

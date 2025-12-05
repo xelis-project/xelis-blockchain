@@ -2,6 +2,8 @@ mod error;
 mod types;
 mod relayer;
 
+use std::borrow::Cow;
+
 use anyhow::Error;
 use async_trait::async_trait;
 use serde_json::{
@@ -16,6 +18,7 @@ use xelis_common::{
         InternalRpcError,
         RPCHandler,
         RpcRequest,
+        RpcResponse,
         RpcResponseError
     },
     tokio::sync::Semaphore
@@ -58,6 +61,12 @@ pub trait XSWDHandler {
 
     // When an application has disconnected
     async fn on_app_disconnect(&self, app_state: AppStateShared) -> Result<(), Error>;
+
+    // On grouped permissions request
+    // This is optional and can be ignored by default
+    async fn on_prefetch_permissions_request(&self, _: &AppStateShared, _: InternalPrefetchPermissions) -> Result<(), Error> {
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -167,6 +176,37 @@ where
         }))
     }
 
+    async fn on_internal_request(&self, app: &AppStateShared, mut request: RpcRequest) -> Result<OnRequestResult, RpcResponseError> {
+        let _permit = self.semaphore.acquire().await
+            .map_err(|_| RpcResponseError::new(request.id.clone(), InternalRpcError::InternalError("Permission handler semaphore error")))?;
+
+        match request.method.as_str() {
+            "prefetch_permissions" => {
+                let wallet = self.handler.get_data();
+                let params = request.params
+                    .ok_or_else(|| RpcResponseError::new(request.id.take(), InternalRpcError::ExpectedParams))?;
+                let params: InternalPrefetchPermissions = serde_json::from_value(params)
+                    .map_err(|e| RpcResponseError::new(request.id.take(), InternalRpcError::InvalidJSONParams(e)))?;
+
+                if params.permissions.is_empty() {
+                    return Err(RpcResponseError::new(request.id.take() , InternalRpcError::InvalidParams("Permissions list cannot be empty".into())))
+                }
+
+                app.set_requesting(true);
+                wallet.on_prefetch_permissions_request(app, params).await
+                    .map_err(|e| RpcResponseError::new(request.id.take(), e))?;
+                app.set_requesting(false);
+
+                Ok(OnRequestResult::Return(if request.id.is_some() {
+                    Some(json!(RpcResponse::new(Cow::Owned(request.id), Cow::Owned(Value::Bool(true)))))
+                } else {
+                    None
+                }))
+            },
+            _ => Err(RpcResponseError::new(request.id, InternalRpcError::MethodNotFound(request.method)))
+        }
+    }
+
     pub async fn on_request<P>(&self, provider: &P, app: &AppStateShared, message: &[u8]) -> Result<OnRequestResult, RpcResponseError>
     where
         P: XSWDProvider
@@ -177,6 +217,11 @@ where
             // Remove the 5 first chars (node.)
             request.method = request.method[5..].into();
             return self.handler.get_data().call_node_with(request).await.map(|v| OnRequestResult::Return(Some(v)))
+        }
+
+        if request.method.starts_with("xswd.") {
+            request.method = request.method[5..].into();
+            return self.on_internal_request(app, request).await
         }
 
         // Verify that the method start with "wallet."
@@ -261,7 +306,7 @@ where
             Some(Permission::Ask) => {
                 let result = self.handler.get_data()
                     .request_permission(app, PermissionRequest::Request(request)).await
-                    .map_err(|err| RpcResponseError::new(request.id.clone(), InternalRpcError::CustomAny(0, err)))?;
+                    .map_err(|err| RpcResponseError::new(request.id.clone(), InternalRpcError::AnyError(err)))?;
 
                 match result {
                     PermissionResult::Accept => Ok(()),

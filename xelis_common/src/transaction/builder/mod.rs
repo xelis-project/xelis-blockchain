@@ -6,6 +6,7 @@ mod fee;
 mod unsigned;
 mod payload;
 
+use schemars::JsonSchema;
 pub use state::AccountState;
 pub use fee::{FeeHelper, FeeBuilder};
 pub use unsigned::UnsignedTransaction;
@@ -17,8 +18,9 @@ use curve25519_dalek::Scalar;
 use serde::{Deserialize, Serialize};
 use xelis_vm::Module;
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashSet,
     iter,
+    sync::Arc,
 };
 use crate::{
     config::{BURN_PER_CONTRACT, MAX_GAS_USAGE_PER_TX, XELIS_ASSET},
@@ -47,7 +49,9 @@ use crate::{
         HASH_SIZE,
         SIGNATURE_SIZE
     },
+    contract::ContractModule,
     serializer::Serializer,
+    transaction::builder::fee::ExtraFeeMode,
     utils::calculate_tx_fee
 };
 use thiserror::Error;
@@ -60,6 +64,7 @@ use super::{
     },
     BurnPayload,
     ContractDeposit,
+    Deposits,
     DeployContractPayload,
     InvokeConstructorPayload,
     InvokeContractPayload,
@@ -116,9 +121,11 @@ pub enum GenerationError<T> {
     InvalidModule,
     #[error("Configured max gas is above the network limit")]
     MaxGasReached,
+    #[error("Fee max is lower than calculated fee")]
+    FeeMax,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum TransactionTypeBuilder {
     Transfers(Vec<TransferBuilder>),
@@ -263,6 +270,11 @@ impl TransactionBuilder {
             size += 1;
         }
 
+        if self.version >= TxVersion::V2 {
+            // Fee max u64
+            size += 8;
+        }
+
         if let Some(threshold) = self.required_thresholds {
             // 1 for Multisig participants count byte
             size += 1 + (threshold as usize * (SIGNATURE_SIZE + 1))
@@ -313,7 +325,7 @@ impl TransactionBuilder {
             TransactionTypeBuilder::InvokeContract(payload) => {
                 let payload_size = payload.contract.size()
                 + payload.max_gas.size()
-                + payload.chunk_id.size()
+                + payload.entry_id.size()
                 + 1 // byte for params len
                 // 4 is for the compressed constant len
                 + payload.parameters.iter().map(|param| 4 + param.size()).sum::<usize>();
@@ -323,11 +335,13 @@ impl TransactionBuilder {
                 let (commitments, deposits_size) = self.estimate_deposits_size(&payload.deposits);
                 commitments_count += commitments;
                 size += deposits_size;
+                size += payload.permission.size();
             },
             TransactionTypeBuilder::DeployContract(payload) => {
                 // Module is in hex format, so we need to divide by 2 for its bytes size
+                // + 1 for the contract version
                 // + 1 for the invoke option
-                size += payload.module.len() / 2 + 1;
+                size += 1 + payload.module.len() / 2 + 1;
                 if let Some(invoke) = payload.invoke.as_ref() {
                     let (commitments, deposits_size) = self.estimate_deposits_size(&invoke.deposits);
 
@@ -380,29 +394,51 @@ impl TransactionBuilder {
     pub fn estimate_fees<B: FeeHelper>(&self, state: &mut B) -> Result<u64, GenerationError<B::Error>> {
         let calculated_fee = match self.fee_builder {
             // If the value is set, use it
-            FeeBuilder::Value(value) => value,
+            FeeBuilder::Fixed(value) => value,
             _ => {
                 // Compute the size and transfers count
                 let size = self.estimate_size();
-                let (transfers, new_addresses) = if let TransactionTypeBuilder::Transfers(transfers) = &self.data {
-                    let mut new_addresses = 0;
-                    for transfer in transfers {
-                        if !state.account_exists(&transfer.destination.get_public_key()).map_err(GenerationError::State)? {
-                            new_addresses += 1;
+
+                // By default, one output (sender spending)
+                // this is compared to the source commitments out
+                // and the higher value between both is taken
+                let mut outputs = 1;
+                let mut new_addresses = 0;
+
+                match &self.data {
+                    TransactionTypeBuilder::Transfers(transfers) => {
+                        for transfer in transfers {
+                            if !state.account_exists(&transfer.destination.get_public_key()).map_err(GenerationError::State)? {
+                                new_addresses += 1;
+                            }
                         }
-                    }
 
-                    (transfers.len(), new_addresses)
-                } else {
-                    (0, 0)
-                };
-
-                let expected_fee = calculate_tx_fee(size, transfers, new_addresses, self.required_thresholds.unwrap_or(0) as usize);
-                match self.fee_builder {
-                    FeeBuilder::Multiplier(multiplier) => (expected_fee as f64 * multiplier) as u64,
-                    FeeBuilder::Boost(boost) => expected_fee + boost,
-                    _ => expected_fee,
+                        // outputs is transfers count
+                        outputs = transfers.len();
+                    },
+                    TransactionTypeBuilder::DeployContract(contract) => {
+                        if let Some(invoke) = contract.invoke.as_ref() {
+                            // 1 + deposits
+                            outputs += invoke.deposits.len();
+                        }
+                    },
+                    TransactionTypeBuilder::InvokeContract(invoke) => {
+                        // 1 + deposits
+                        outputs += invoke.deposits.len();
+                    },
+                    _ => {}
                 }
+
+                let mut expected_fee = calculate_tx_fee(state.get_base_fee(), size, outputs.max(self.data.used_assets().len()), new_addresses, self.required_thresholds.unwrap_or(0) as usize);
+                if let FeeBuilder::Extra(extra) = self.fee_builder {
+                    match extra {
+                        ExtraFeeMode::Multiplier(multiplier) => expected_fee = (expected_fee as f64 * multiplier) as u64,
+                        ExtraFeeMode::Tip(tip) => expected_fee += tip,
+                        ExtraFeeMode::None => {},
+                    }
+                }
+
+                expected_fee
             },
         };
 
@@ -413,14 +449,14 @@ impl TransactionBuilder {
     fn get_new_source_ct(
         &self,
         mut ct: Ciphertext,
-        fee: u64,
+        fee_limit: u64,
         asset: &Hash,
         transfers: &[TransferWithCommitment],
-        deposits: &HashMap<Hash, DepositWithCommitment>,
+        deposits: &IndexMap<Hash, DepositWithCommitment>,
     ) -> Ciphertext {
         if asset == &XELIS_ASSET {
             // Fees are applied to the native blockchain asset only.
-            ct -= Scalar::from(fee);
+            ct -= Scalar::from(fee_limit);
         }
 
         match &self.data {
@@ -479,12 +515,12 @@ impl TransactionBuilder {
     }
 
     /// Compute the full cost of the transaction
-    pub fn get_transaction_cost(&self, fee: u64, asset: &Hash) -> u64 {
+    pub fn get_transaction_cost(&self, fee_limit: u64, asset: &Hash) -> u64 {
         let mut cost = 0;
 
         if *asset == XELIS_ASSET {
             // Fees are applied to the native blockchain asset only.
-            cost += fee;
+            cost += fee_limit;
         }
 
         match &self.data {
@@ -511,6 +547,7 @@ impl TransactionBuilder {
                 }
             },
             TransactionTypeBuilder::DeployContract(payload) => {
+                // Count the burn cost for deploying a contract online
                 if *asset == XELIS_ASSET {
                     cost += BURN_PER_CONTRACT;
                 }
@@ -535,8 +572,8 @@ impl TransactionBuilder {
         deposits: &IndexMap<Hash, ContractDepositBuilder>,
         public_key: &PublicKey,
         contract_key: &Option<PublicKey>,
-    ) -> Result<HashMap<Hash, DepositWithCommitment>, GenerationError<E>> {
-        let mut deposits_commitments = HashMap::new();
+    ) -> Result<IndexMap<Hash, DepositWithCommitment>, GenerationError<E>> {
+        let mut deposits_commitments = IndexMap::new();
         for (asset, deposit) in deposits.iter() {
             if deposit.private {
                 let amount_opening = PedersenOpening::generate_new();
@@ -554,7 +591,6 @@ impl TransactionBuilder {
                     receiver_handle,
                     amount_opening,
                 });
-                todo!("support private deposits")
             } else {
                 if deposit.amount == 0 {
                     return Err(GenerationError::DepositZero);
@@ -572,10 +608,11 @@ impl TransactionBuilder {
         range_proof_values: &mut Vec<u64>,
         range_proof_openings: &mut Vec<Scalar>,
         payload_deposits: &mut IndexMap<Hash, ContractDepositBuilder>,
-        deposits_commitments: HashMap<Hash, DepositWithCommitment>,
+        deposits_commitments: IndexMap<Hash, DepositWithCommitment>,
         source_keypair: &KeyPair,
+        tx_version: TxVersion,
         contract_key: &Option<PublicKey>,
-    ) -> IndexMap<Hash, ContractDeposit> {
+    ) -> Deposits {
         range_proof_openings.reserve(deposits_commitments.len());
         range_proof_values.reserve(deposits_commitments.len());
 
@@ -595,9 +632,10 @@ impl TransactionBuilder {
 
                 let ct_validity_proof = CiphertextValidityProof::new(
                     contract_key.as_ref().expect("Contract key is required"),
-                    Some(source_keypair.get_public_key()),
+                    source_keypair.get_public_key(),
                     deposit.amount,
                     &deposit.amount_opening,
+                    tx_version,
                     transcript,
                 );
 
@@ -619,7 +657,7 @@ impl TransactionBuilder {
                 deposits.insert(asset, ContractDeposit::Public(deposit.amount));
             }
 
-            deposits
+            Deposits(deposits)
     }
 
     pub fn build<B: AccountState>(
@@ -638,6 +676,11 @@ impl TransactionBuilder {
     ) -> Result<UnsignedTransaction, GenerationError<B::Error>> {
         // Compute the fees
         let fee = self.estimate_fees(state)?;
+        // Use the configured max fee, otherwise fallback to estimated fee
+        let fee_limit = state.get_max_fee(fee);
+        if fee > fee_limit {
+            return Err(GenerationError::FeeMax);
+        }
 
         // Get the nonce
         let nonce = state.get_nonce().map_err(GenerationError::State)?;
@@ -647,7 +690,7 @@ impl TransactionBuilder {
 
         // Data is mutable only to extract extra data
         let mut transfers_commitments = Vec::new();
-        let mut deposits_commitments = HashMap::new();
+        let mut deposits_commitments = IndexMap::new();
         match &mut self.data {
             TransactionTypeBuilder::Transfers(transfers) => {
                 if transfers.len() == 0 {
@@ -756,7 +799,7 @@ impl TransactionBuilder {
         let mut range_proof_values: Vec<_> = used_assets
             .iter()
             .map(|asset| {
-                let cost = self.get_transaction_cost(fee, &asset);
+                let cost = self.get_transaction_cost(fee_limit, &asset);
                 let current_balance = state
                 .get_account_balance(asset)
                 .map_err(GenerationError::State)?;
@@ -773,7 +816,7 @@ impl TransactionBuilder {
             .collect::<Result<Vec<_>, GenerationError<B::Error>>>()?;
 
         // Prepare the transcript used for proofs
-        let mut transcript = Transaction::prepare_transcript(self.version, &self.source, fee, nonce);
+        let mut transcript = Transaction::prepare_transcript(self.version, &self.source, fee, fee_limit, nonce);
 
         let source_commitments = used_assets
             .into_iter()
@@ -795,7 +838,7 @@ impl TransactionBuilder {
                     .compress();
 
                 let new_source_ciphertext =
-                    self.get_new_source_ct(source_current_ciphertext, fee, &asset, &transfers_commitments, &deposits_commitments);
+                    self.get_new_source_ct(source_current_ciphertext, fee_limit, &asset, &transfers_commitments, &deposits_commitments);
 
                 // 1. Make the CommitmentEqProof
 
@@ -812,6 +855,7 @@ impl TransactionBuilder {
                     &new_source_ciphertext,
                     &new_source_opening,
                     source_new_balance,
+                    self.version,
                     &mut transcript,
                 );
 
@@ -824,8 +868,9 @@ impl TransactionBuilder {
             })
             .collect::<Result<Vec<_>, GenerationError<B::Error>>>()?;
 
+        let source_pubkey = source_keypair.get_public_key();
         let mut transfers = Vec::new();
-        let mut deposits = IndexMap::new();
+        let mut deposits = Deposits::default();
         match &mut self.data {
             TransactionTypeBuilder::Transfers(_) => {
                 range_proof_values.reserve(transfers_commitments.len());
@@ -845,17 +890,12 @@ impl TransactionBuilder {
                         transcript.append_handle(b"amount_sender_handle", &sender_handle);
                         transcript.append_handle(b"amount_receiver_handle", &receiver_handle);
     
-                        let source_pubkey = if self.version >= TxVersion::V1 {
-                            Some(source_keypair.get_public_key())
-                        } else {
-                            None
-                        };
-    
                         let ct_validity_proof = CiphertextValidityProof::new(
                             &transfer.destination,
                             source_pubkey,
                             transfer.inner.amount,
                             &transfer.amount_opening,
+                            self.version,
                             &mut transcript,
                         );
     
@@ -920,7 +960,8 @@ impl TransactionBuilder {
                     &mut payload.deposits,
                     deposits_commitments,
                     source_keypair,
-                    &None
+                    self.version,
+                    &None,
                 );
             },
             TransactionTypeBuilder::DeployContract(payload) => {
@@ -932,7 +973,8 @@ impl TransactionBuilder {
                         &mut invoke.deposits,
                         deposits_commitments,
                         source_keypair,
-                        &None
+                        self.version,
+                        &None,
                     );
                 }
             }
@@ -1008,9 +1050,10 @@ impl TransactionBuilder {
                 TransactionType::InvokeContract(InvokeContractPayload {
                     contract: payload.contract,
                     max_gas: payload.max_gas,
-                    chunk_id: payload.chunk_id,
+                    entry_id: payload.entry_id,
                     parameters: payload.parameters,
                     deposits,
+                    permission: payload.permission,
                 })
             },
             TransactionTypeBuilder::DeployContract(payload) => {
@@ -1024,7 +1067,10 @@ impl TransactionBuilder {
                 }
 
                 TransactionType::DeployContract(DeployContractPayload {
-                    module,
+                    contract: ContractModule {
+                        version: payload.contract_version,
+                        module: Arc::new(module),
+                    },
                     invoke: payload.invoke.map(|invoke| {
                         transcript.invoke_constructor_proof_domain_separator();
                         transcript.append_u64(b"max_gas", invoke.max_gas);
@@ -1055,6 +1101,7 @@ impl TransactionBuilder {
             self.source,
             data,
             fee,
+            fee_limit,
             nonce,
             source_commitments,
             reference,

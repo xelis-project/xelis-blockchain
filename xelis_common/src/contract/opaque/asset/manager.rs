@@ -5,12 +5,25 @@ use xelis_vm::{
     FnInstance,
     FnParams,
     FnReturnType,
-    Primitive
+    Primitive,
+    SysCallResult
 };
 use crate::{
-    asset::{AssetData, AssetOwner},
-    config::COST_PER_TOKEN,
-    contract::{from_context, get_optional_asset_from_cache, AssetChanges, ContractOutput, ContractProvider},
+    asset::{AssetData, AssetOwner, MaxSupplyMode},
+    config::{COST_PER_ASSET, XELIS_ASSET},
+    contract::{
+        from_context,
+        has_enough_balance_for_contract,
+        get_cache_for_contract,
+        record_balance_charge,
+        get_optional_asset_from_cache,
+        record_burned_asset,
+        AssetChanges,
+        ContractLog,
+        ContractProvider,
+        ContractMetadata,
+        ModuleMetadata,
+    },
     crypto::{Hash, HASH_SIZE},
     versioned_type::VersionedState
 };
@@ -43,19 +56,41 @@ fn is_valid_char_for_asset(c: char, whitespace: bool, uppercase_only: bool) -> b
 
 // Create a new asset
 // Return None if the asset already exists
-pub fn asset_create<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType {
-    let (provider, chain_state) = from_context::<P>(context)?;
+pub async fn asset_create<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut Context<'ty, 'r>) -> FnReturnType<ContractMetadata> {
+    let (provider, state) = from_context::<P>(context)?;
 
-    let max_supply = match params.remove(4).into_owned()?.take_as_optional()? {
-        Some(v) => Some(v.to_u64()?),
-        _ => None,
+    let (id, values) = params.remove(4).into_owned().to_enum()?;
+    let max_supply = match id {
+        0 => MaxSupplyMode::None,
+        1 => {
+            if values.len() != 1 {
+                return Err(EnvironmentError::InvalidType)
+            }
+            let max = values[0].as_ref().as_u64()?;
+            MaxSupplyMode::Fixed(max)
+        },
+        2 => {
+            if values.len() != 1 {
+                return Err(EnvironmentError::InvalidType)
+            }
+            let max = values[0].as_ref().as_u64()?;
+            MaxSupplyMode::Mintable(max)
+        },
+        _ => return Err(EnvironmentError::InvalidType)
     };
+
+    if let Some(max) = max_supply.get_max() {
+        if max == 0 {
+            return Err(EnvironmentError::Expect("Max supply cannot be zero".to_owned()).into());
+        }
+    }
+
     let decimals = params.remove(3)
-        .into_owned()?
+        .into_owned()
         .to_u8()?;
 
     let ticker = params.remove(2)
-        .into_owned()?
+        .into_owned()
         .into_string()?;
 
     if ticker.len() > TICKER_LEN {
@@ -69,7 +104,7 @@ pub fn asset_create<P: ContractProvider>(_: FnInstance, mut params: FnParams, co
     }
 
     let name = params.remove(1)
-        .into_owned()?
+        .into_owned()
         .into_string()?;
     if name.len() > u8::MAX as usize {
         return Err(EnvironmentError::Expect("Asset name is too long".to_owned()).into());
@@ -80,75 +115,96 @@ pub fn asset_create<P: ContractProvider>(_: FnInstance, mut params: FnParams, co
         return Err(EnvironmentError::Expect("Asset name must be ASCII only".to_owned()).into());
     }
 
+    // Check that we have enough XEL in the balance
+    if !has_enough_balance_for_contract(provider, state, metadata.metadata.contract_executor.clone(), XELIS_ASSET, COST_PER_ASSET).await? {
+        return Err(EnvironmentError::Expect("Insufficient XEL funds in contract balance for token creation".to_owned()).into());
+    }
+
+    // Now proceed to generate the asset hash
     let id = params.remove(0).as_u64()?;
 
     let mut buffer = [0u8; 40];
-    buffer[0..HASH_SIZE].copy_from_slice(chain_state.contract.as_bytes());
+    buffer[0..HASH_SIZE].copy_from_slice(metadata.metadata.contract_executor.as_bytes());
     buffer[HASH_SIZE..].copy_from_slice(&id.to_be_bytes());
 
     let asset_hash = Hash::new(hash(&buffer).into());
+
     // We must be sure that we don't have this asset already
-    if get_optional_asset_from_cache(provider, chain_state, asset_hash.clone())?.is_some() {
-        return Ok(Some(Primitive::Null.into()));
+    let asset_cache = get_optional_asset_from_cache(provider, state, asset_hash.clone()).await?;
+    if asset_cache.is_some() {
+        return Ok(SysCallResult::Return(Primitive::Null.into()));
     }
 
-    let data = AssetData::new(decimals, name, ticker, max_supply, Some(AssetOwner::new(chain_state.contract.clone(), id)));
-    chain_state.assets.insert(asset_hash.clone(), Some(AssetChanges {
+    let creator = AssetOwner::Creator {
+        contract: metadata.metadata.contract_executor.clone(),
+        id
+    };
+    let data = AssetData::new(decimals, name, ticker, max_supply, creator);
+    *asset_cache = Some(AssetChanges {
         data: (VersionedState::New, data.clone()),
-        supply: None
-    }));
+        circulating_supply: (VersionedState::New, match max_supply {
+            MaxSupplyMode::Fixed(max) => max,
+            _ => 0
+        }),
+    });
 
-    // If we have a max supply, we need to mint it to the contract
-    if let Some(max_supply) = max_supply {
-        // We don't bother to check if it already exists, because it shouldn't exist before we create it.
-        chain_state.cache.balances.insert(asset_hash.clone(), Some((VersionedState::New, max_supply)));
+    // Pay the fee by reducing the contract balance
+    // and record the burn in the circulating supply
+    {
+        record_balance_charge(provider, state, metadata.metadata.contract_executor.clone(), XELIS_ASSET, COST_PER_ASSET).await?;
+        record_burned_asset(provider, state, metadata.metadata.contract_executor.clone(), XELIS_ASSET, COST_PER_ASSET).await?;
     }
 
-    chain_state.outputs.push(ContractOutput::NewAsset { asset: asset_hash.clone() });
+    // If we have a fixed max supply, we need to mint it to the contract
+    if let MaxSupplyMode::Fixed(max_supply) = max_supply {
+        // We don't bother to check if it already exists, because it shouldn't exist before we create it.
+        get_cache_for_contract(&mut state.caches, state.global_caches, metadata.metadata.contract_executor.clone())
+            .balances
+            .insert(asset_hash.clone(), Some((VersionedState::New, max_supply)));
+    }
 
-    // Pay the cost for a new token
-    context.increase_gas_usage(COST_PER_TOKEN)?;
+    state.outputs.push(ContractLog::NewAsset { contract: metadata.metadata.contract_executor.clone(), asset: asset_hash.clone() });
 
     let asset = Asset {
         hash: asset_hash
     };
-    Ok(Some(Primitive::Opaque(asset.into()).into()))
+    Ok(SysCallResult::Return(Primitive::Opaque(asset.into()).into()))
 }
 
-pub fn asset_get_by_id<P: ContractProvider>(_: FnInstance, params: FnParams, context: &mut Context) -> FnReturnType {
+pub async fn asset_get_by_id<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut Context<'ty, 'r>) -> FnReturnType<ContractMetadata> {
     let id = params[0].as_u64()?;
     let (provider, chain_state) = from_context::<P>(context)?;
 
     let mut buffer = [0u8; 40];
-    buffer[0..HASH_SIZE].copy_from_slice(chain_state.contract.as_bytes());
+    buffer[0..HASH_SIZE].copy_from_slice(metadata.metadata.contract_executor.as_bytes());
     buffer[HASH_SIZE..].copy_from_slice(&id.to_be_bytes());
 
     let asset_hash = Hash::new(hash(&buffer).into());
-    if get_optional_asset_from_cache(provider, chain_state, asset_hash.clone())?.is_none() {
-        return Ok(Some(Primitive::Null.into()))
+    if get_optional_asset_from_cache(provider, chain_state, asset_hash.clone()).await?.is_none() {
+        return Ok(SysCallResult::Return(Primitive::Null.into()))
     }
 
     let asset = Asset {
         hash: asset_hash
     };
-    Ok(Some(Primitive::Opaque(asset.into()).into()))
+    Ok(SysCallResult::Return(Primitive::Opaque(asset.into()).into()))
 }
 
-pub fn asset_get_by_hash<P: ContractProvider>(_: FnInstance, mut params: FnParams, context: &mut Context) -> FnReturnType {
+pub async fn asset_get_by_hash<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: FnParams, _: &ModuleMetadata<'_>, context: &mut Context<'ty, 'r>) -> FnReturnType<ContractMetadata> {
     let hash: Hash = params.remove(0)
-        .into_owned()?
+        .into_owned()
         .into_opaque_type()?;
 
     let (provider, chain_state) = from_context::<P>(context)?;
 
-    if get_optional_asset_from_cache(provider, chain_state, hash.clone())?.is_none() {
-        return Ok(Some(Primitive::Null.into()))
+    if get_optional_asset_from_cache(provider, chain_state, hash.clone()).await?.is_none() {
+        return Ok(SysCallResult::Return(Primitive::Null.into()))
     }
 
     let asset = Asset {
         hash
     };
-    Ok(Some(Primitive::Opaque(asset.into()).into()))
+    Ok(SysCallResult::Return(Primitive::Opaque(asset.into()).into()))
 }
 
 #[cfg(test)]

@@ -1,7 +1,10 @@
-use crate::config::{
-    PEER_TIMEOUT_DISCONNECT,
-    PEER_TIMEOUT_INIT_CONNECTION,
-    PEER_SEND_BYTES_TIMEOUT
+use crate::{
+    config::{
+        PEER_SEND_BYTES_TIMEOUT,
+        PEER_TIMEOUT_DISCONNECT,
+        PEER_TIMEOUT_INIT_CONNECTION
+    },
+    p2p::compression::Compression
 };
 use super::{
     diffie_hellman,
@@ -81,7 +84,9 @@ pub struct Connection {
     // How many key rotation we sent
     rotate_key_out: AtomicUsize,
     // Encryption state used for packets
-    encryption: Encryption
+    encryption: Encryption,
+    // Compression state used for packets
+    compression: Compression,
 }
 
 // We are rotating every 1GB sent
@@ -104,48 +109,8 @@ impl Connection {
             rotate_key_in: AtomicUsize::new(0),
             rotate_key_out: AtomicUsize::new(0),
             encryption: Encryption::new(),
+            compression: Compression::new(),
         }
-    }
-
-    // Exchange keys in the old way for compatibility reasons
-    pub async fn exchange_keys_old(&mut self, buffer: &mut [u8]) -> P2pResult<()> {
-        trace!("Exchanging keys with {}", self.addr);
-
-        // Update our state
-        self.set_state(State::KeyExchange);
-
-        // Send our key if we initiated the connection
-        if self.is_out() {
-            trace!("Sending our key to {}", self.addr);
-            let mut packet = self.rotate_key_packet().await?;
-            self.send_bytes(&mut packet).await?;
-            self.encryption.mark_ready();
-        }
-
-        trace!("Waiting for key from {}", self.addr);
-        // Wait for the peer to receive its key
-        let Packet::KeyExchange(peer_key) = timeout(
-            Duration::from_millis(PEER_TIMEOUT_INIT_CONNECTION),
-            self.read_packet(buffer, 256)
-        ).await?? else {
-            error!("Expected KeyExchange packet");
-            return Err(P2pError::InvalidPacket);
-        };
-
-        // Now that we got the peer key, update our encryption state
-        self.rotate_peer_key(peer_key.into_owned()).await?;
-
-        // Send back our key if we are the server
-        if !self.is_out() {
-            trace!("Replying with our key to {}", self.addr);
-            let mut packet = self.rotate_key_packet().await?;
-            self.send_bytes(&mut packet).await?;
-            self.encryption.mark_ready();
-        }
-
-        trace!("Key exchange with {} successful", self.addr);
-
-        Ok(())
     }
 
     // Do a key exchange with the peer
@@ -246,6 +211,16 @@ impl Connection {
         self.out
     }
 
+    // Get the compression state
+    pub fn compression(&self) -> &Compression {
+        &self.compression
+    }
+
+    // Get the compression state mutable
+    pub fn compression_mut(&mut self) -> &mut Compression {
+        &mut self.compression
+    }
+
     // Generate a new key and rotate the current key
     async fn rotate_key_packet(&self) -> P2pResult<Vec<u8>> {
         trace!("rotating our encryption key for peer {}", self.get_address());
@@ -260,6 +235,7 @@ impl Connection {
         let mut packet = Packet::KeyExchange(Cow::Borrowed(&new_key)).to_bytes();
 
         if self.encryption.is_write_ready().await {
+            self.compression.compress(&mut packet).await?;
             // Encrypt with the our previous key our new key
             self.encryption.encrypt_packet(&mut packet).await?;
         }
@@ -331,6 +307,7 @@ impl Connection {
 
         // We check if the encryption is enabled to manage it ourself here
         if self.encryption.is_ready() {
+            self.compression.compress(packet).await?;
             self.encryption.encrypt_packet(packet).await?;
             // Send the bytes in encrypted format
             self.send_packet_bytes_internal(&mut stream, packet.as_ref()).await?;
@@ -377,7 +354,7 @@ impl Connection {
         let mut reader = Reader::new(&bytes);
         let packet = Packet::read(&mut reader)?;
         if reader.total_read() != bytes.len() {
-            debug!("read {:?} only {}/{} on bytes available from {}", packet, reader.total_read(), bytes.len(), self);
+            warn!("read {:?} only {}/{} on bytes available from {}", packet, reader.total_read(), bytes.len(), self);
             return Err(P2pError::InvalidPacketNotFullRead)
         }
 
@@ -437,6 +414,7 @@ impl Connection {
         // If encryption is supported, use it
         if self.encryption.is_read_ready().await {
             self.encryption.decrypt_packet(&mut bytes).await?;
+            self.compression.decompress(&mut bytes).await?;
         }
 
         Ok(bytes)

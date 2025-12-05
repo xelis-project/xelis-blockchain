@@ -5,9 +5,10 @@ use crate::{
     config::{
         COIN_DECIMALS,
         FEE_PER_ACCOUNT_CREATION,
-        FEE_PER_KB,
         FEE_PER_TRANSFER,
-        BYTES_PER_KB
+        FEE_PER_EXTRA_SIGNATURE,
+        BYTES_PER_KB,
+        FEE_PER_KB,
     },
     difficulty::Difficulty,
     varuint::VarUint
@@ -34,6 +35,12 @@ macro_rules! async_handler {
     ($func: expr) => {
         move |a, b| {
           Box::pin($func(a, b))
+        }
+    };
+    // Single param
+    ($func: expr, single) => {
+        move |a| {
+          Box::pin($func(a))
         }
     };
 }
@@ -97,10 +104,7 @@ pub fn detect_available_parallelism() -> usize {
 
 // return the fee for a transaction based on its size in bytes
 // the fee is calculated in atomic units for XEL
-// Sending to a newly created address will increase the fee
-// Each transfers output will also increase the fee
-// Each signature of a multisig add a small overhead due to the verfications
-pub fn calculate_tx_fee(tx_size: usize, output_count: usize, new_addresses: usize, multisig: usize) -> u64 {
+pub fn calculate_tx_fee_per_kb(base_fee: impl Into<Option<u64>>, tx_size: usize) -> u64 {
     let mut size_in_kb = tx_size as u64 / BYTES_PER_KB as u64;
 
     // we consume a full kb for fee
@@ -108,10 +112,27 @@ pub fn calculate_tx_fee(tx_size: usize, output_count: usize, new_addresses: usiz
         size_in_kb += 1;
     }
 
-    size_in_kb * FEE_PER_KB
-    + output_count as u64 * FEE_PER_TRANSFER
+    size_in_kb * base_fee.into()
+        .unwrap_or(FEE_PER_KB)
+}
+
+// Calculated the extra cost for a TX based on few variables
+// This is used to scale based on the computation weight and have a good
+// balance/ratio between computation/fee
+pub fn calculate_tx_fee_extra(outputs: usize, new_addresses: usize, multisig: usize) -> u64 {
+    outputs as u64 * FEE_PER_TRANSFER
     + new_addresses as u64 * FEE_PER_ACCOUNT_CREATION
-    + multisig as u64 * FEE_PER_TRANSFER
+    + multisig as u64 * FEE_PER_EXTRA_SIGNATURE
+}
+
+// Calculate TX fee and sum both TX fee per kb and extra fee in one
+// Sending to a newly created address will increase the fee
+// Each transfers output will also increase the fee
+// Each signature of a multisig add a small overhead due to the verfications
+// See `calculate_tx_fee_per_kb` and `calculate_tx_fee_extra`
+#[inline]
+pub fn calculate_tx_fee(base_fee: impl Into<Option<u64>>, tx_size: usize, outputs: usize, new_addresses: usize, multisig: usize) -> u64 {
+    calculate_tx_fee_per_kb(base_fee, tx_size) + calculate_tx_fee_extra(outputs, new_addresses, multisig)
 }
 
 const HASHRATE_FORMATS: [&str; 7] = ["H/s", "KH/s", "MH/s", "GH/s", "TH/s", "PH/s", "EH/s"];

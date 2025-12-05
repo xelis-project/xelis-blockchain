@@ -6,16 +6,19 @@ use std::{
     hash::Hasher,
     str::FromStr
 };
+use schemars::JsonSchema;
 use serde::de::Error as SerdeError;
 use serde::{Deserialize, Serialize};
 use blake3::hash as blake3_hash;
 
 pub use xelis_hash::Error as XelisHashError;
-use xelis_hash::{v1, v2};
+use xelis_hash::{v1, v2, v3};
 
 pub const HASH_SIZE: usize = 32; // 32 bytes / 256 bits
 
-#[derive(Eq, PartialEq, PartialOrd, Ord, Clone, Debug)]
+/// A cryptographic hash represented as a 32-byte array.
+#[derive(Eq, PartialEq, PartialOrd, Ord, Clone, Debug, JsonSchema)]
+#[schemars(with = "String")]
 pub struct Hash([u8; HASH_SIZE]);
 
 impl Hash {
@@ -61,6 +64,15 @@ pub fn hash(value: &[u8]) -> Hash {
     Hash(result)
 }
 
+pub fn hash_multiple(values: &[&[u8]]) -> Hash {
+    let mut hasher = blake3::Hasher::new();
+    for value in values {
+        hasher.update(value);
+    }
+    let result: [u8; HASH_SIZE] = hasher.finalize().into();
+    Hash(result)
+}
+
 // Perform a PoW hash using the given algorithm
 pub fn pow_hash(work: &[u8], algorithm: Algorithm) -> Result<Hash, XelisHashError> {
     match algorithm {
@@ -78,6 +90,10 @@ pub fn pow_hash(work: &[u8], algorithm: Algorithm) -> Result<Hash, XelisHashErro
             let mut scratchpad = v2::ScratchPad::default();
             v2::xelis_hash(work, &mut scratchpad)
         },
+        Algorithm::V3 => {
+            let mut scratchpad = v3::ScratchPad::default();
+            v3::xelis_hash(work, &mut scratchpad)
+        }
     }.map(Hash::new)
 }
 

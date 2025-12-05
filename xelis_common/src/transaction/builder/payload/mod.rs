@@ -1,8 +1,10 @@
 use indexmap::{IndexMap, IndexSet};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use xelis_vm::ValueCell;
 use crate::{
     api::DataElement,
+    contract::{ContractVersion, InterContractPermission},
     crypto::{Address, Hash}
 };
 
@@ -10,7 +12,7 @@ fn default_bool_true() -> bool {
     true
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, JsonSchema)]
 pub struct TransferBuilder {
     pub asset: Hash,
     pub amount: u64,
@@ -23,38 +25,42 @@ pub struct TransferBuilder {
     pub encrypt_extra_data: bool
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, JsonSchema)]
 pub struct MultiSigBuilder {
     pub participants: IndexSet<Address>,
     pub threshold: u8,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, JsonSchema)]
 pub struct ContractDepositBuilder {
     pub amount: u64,
     #[serde(default)]
     pub private: bool,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, JsonSchema)]
 pub struct InvokeContractBuilder {
     pub contract: Hash,
     pub max_gas: u64,
-    pub chunk_id: u16,
+    pub entry_id: u16,
     pub parameters: Vec<ValueCell>,
     #[serde(default)]
     pub deposits: IndexMap<Hash, ContractDepositBuilder>,
+    pub permission: InterContractPermission,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, JsonSchema)]
 pub struct DeployContractBuilder {
+    // Contract environment version
+    #[serde(default)]
+    pub contract_version: ContractVersion,
     // Module to deploy
     pub module: String,
     // Inner invoke during the deploy
     pub invoke: Option<DeployContractInvokeBuilder>
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, JsonSchema)]
 pub struct DeployContractInvokeBuilder {
     pub max_gas: u64,
     #[serde(default)]
@@ -75,14 +81,15 @@ mod tests {
         let builder = InvokeContractBuilder {
             contract: XELIS_ASSET,
             max_gas: 1000,
-            chunk_id: 0,
-            parameters: vec![ValueCell::Default(Primitive::U64(100))],
+            entry_id: 0,
+            parameters: vec![ValueCell::Primitive(Primitive::U64(100))],
             deposits: indexmap! {
                 XELIS_ASSET => ContractDepositBuilder {
                     amount: 100,
                     private: false,
                 }
             },
+            permission: InterContractPermission::All,
         };
 
         let data: InvokeContractBuilder = serde_json::from_value(json!(builder)).unwrap();
@@ -91,7 +98,7 @@ mod tests {
 
     #[test]
     fn test_serde_value_cell_str() {
-        let str_cell = ValueCell::Default(Primitive::String("Hello, World!".to_string()));
+        let str_cell = ValueCell::Primitive(Primitive::String("Hello, World!".to_string()));
 
         // JSON
         let str_data = serde_json::to_string_pretty(&str_cell).unwrap();

@@ -1,9 +1,10 @@
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::{crypto::Hash, serializer::*};
 
 // Burn is a public payload allowing to use it as a proof of burn
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, JsonSchema)]
 pub struct BurnPayload {
     pub asset: Hash,
     pub amount: u64

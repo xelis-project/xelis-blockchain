@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use schemars::JsonSchema;
 use serde::{Serialize, Deserialize};
 use thiserror::Error;
 
@@ -23,7 +24,7 @@ pub enum DataConversionError {
 }
 
 // All types availables
-#[derive(Debug, Serialize, Deserialize, Eq, PartialEq, Hash, Clone, Copy)]
+#[derive(Debug, Serialize, Deserialize, JsonSchema, Eq, PartialEq, Hash, Clone, Copy)]
 pub enum ValueType {
     Bool,
     String,
@@ -36,7 +37,7 @@ pub enum ValueType {
     Blob,
 }
 
-#[derive(Debug, Serialize, Deserialize, Eq, PartialEq, Hash, Clone)]
+#[derive(Debug, Serialize, Deserialize, JsonSchema, Eq, PartialEq, Hash, Clone)]
 pub enum ElementType {
     // Single value
     Value(ValueType),
@@ -96,7 +97,7 @@ impl Serializer for ValueType {
 }
 
 // This enum allows complex structures with multi depth if necessary
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, JsonSchema)]
 #[serde(untagged)]
 pub enum DataElement {
     Value(DataValue),
@@ -262,7 +263,7 @@ impl Serializer for DataElement {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Eq, PartialEq, Hash, Clone)]
+#[derive(Debug, Serialize, Deserialize, Eq, PartialEq, Hash, Clone, JsonSchema)]
 #[serde(untagged)]
 pub enum DataValue {
     Bool(bool),
@@ -456,13 +457,13 @@ impl DataValue {
                 writer.write_u16(*value);
             },
             Self::U32(value) => {
-                writer.write_u32(value);
+                value.write(writer);
             },
             Self::U64(value) => {
-                writer.write_u64(value);
+                value.write(writer);
             },
             Self::U128(value) => {
-                writer.write_u128(value);
+                value.write(writer);
             },
             Self::Hash(hash) => {
                 writer.write_hash(hash);

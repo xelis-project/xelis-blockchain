@@ -83,7 +83,7 @@ where
         stream::iter(sessions.iter())
             .for_each_concurrent(self.notify_concurrency, |(session, subscriptions)| {
                 let data = subscriptions.get(event)
-                    .map(|id| json!(RpcResponse::new(Cow::Borrowed(&id), Cow::Borrowed(&value))));
+                    .map(|id| json!(RpcResponse::new(Cow::Borrowed(id), Cow::Borrowed(&value))));
 
                 async move {
                     if let Some(data) = data {
@@ -170,13 +170,13 @@ where
         context.store(self.handler.get_data().clone());
 
         match request {
-            e @ Value::Object(_) => self.execute_method_internal(&context, e).await.map(|e| e.unwrap_or(Value::Null)),
+            e @ Value::Object(_) => self.execute_method_internal(&context, e).await.map(Option::unwrap_or_default),
             Value::Array(requests) => {
                 let mut responses = Vec::new();
                 for value in requests {
                     if value.is_object() {
                         let response = match self.execute_method_internal(&context, value).await {
-                            Ok(response) => json!(response),
+                            Ok(response) => response.unwrap_or_default(),
                             Err(e) => e.to_json()
                         };
                         responses.push(response);
@@ -184,7 +184,7 @@ where
                         responses.push(RpcResponseError::new(None, InternalRpcError::InvalidJSONRequest).to_json());
                     }
                 }
-                Ok(serde_json::to_value(responses).map_err(|err| RpcResponseError::new(None, InternalRpcError::SerializeResponse(err)))?)
+                Ok(Value::Array(responses))
             },
             _ => return Err(RpcResponseError::new(None, InternalRpcError::InvalidJSONRequest))
         }

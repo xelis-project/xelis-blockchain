@@ -118,8 +118,8 @@ impl Serializer for TransferOut {
 
     fn write(&self, writer: &mut Writer) {
         self.destination.write(writer);
-        writer.write_hash(&self.asset);
-        writer.write_u64(&self.amount);
+        self.asset.write(writer);
+        self.amount.write(writer);
 
         self.extra_data.write(writer);
     }
@@ -144,9 +144,8 @@ impl Serializer for TransferIn {
     }
 
     fn write(&self, writer: &mut Writer) {
-        writer.write_hash(&self.asset);
-        writer.write_u64(&self.amount);
-
+        self.asset.write(writer);
+        self.amount.write(writer);
         self.extra_data.write(writer);
     }
 
@@ -236,8 +235,10 @@ pub enum EntryData {
         contract: Hash,
         // Deposits made
         deposits: IndexMap<Hash, u64>,
-        // Chunk id invoked
-        chunk_id: u16,
+        // Any transfers received from the call
+        received: IndexMap<Hash, u64>,
+        // Entry id invoked
+        entry_id: u16,
         // Fee paid
         fee: u64,
         // max_gas gave
@@ -252,6 +253,10 @@ pub enum EntryData {
         nonce: u64,
         // Invoke if any
         invoke: Option<DeployInvoke>
+    },
+    IncomingContract {
+        // Transfers received from the contract
+        transfers: IndexMap<Hash, u64>,
     }
 }
 
@@ -311,10 +316,18 @@ impl Serializer for EntryData {
                     deposits.insert(asset, amount);
                 }
 
+                let received_size = reader.read_u16()? as usize;
+                let mut received = IndexMap::new();
+                for _ in 0..received_size {
+                    let asset = reader.read_hash()?;
+                    let amount = reader.read_u64()?;
+                    received.insert(asset, amount);
+                }
+
                 let fee = reader.read_u64()?;
                 let max_gas = reader.read_u64()?;
                 let nonce = reader.read_u64()?;
-                Self::InvokeContract { contract, deposits, chunk_id, fee, max_gas, nonce }
+                Self::InvokeContract { contract, deposits, received, entry_id: chunk_id, fee, max_gas, nonce }
             },
             6 => {
                 let fee = reader.read_u64()?;
@@ -322,22 +335,32 @@ impl Serializer for EntryData {
                 let invoke = Option::read(reader)?;
                 Self::DeployContract { fee, nonce, invoke }
             }
-            _ => return Err(ReaderError::InvalidValue)
-        }) 
+            7 => {
+                let transfers_size = reader.read_u16()? as usize;
+                let mut transfers = IndexMap::new();
+                for _ in 0..transfers_size {
+                    let asset = reader.read_hash()?;
+                    let amount = reader.read_u64()?;
+                    transfers.insert(asset, amount);
+                }
+                Self::IncomingContract { transfers }
+            }
+            _ => return Err(ReaderError::InvalidValue),
+        })
     }
 
     fn write(&self, writer: &mut Writer) {
         match &self {
             Self::Coinbase { reward } => {
                 writer.write_u8(0);
-                writer.write_u64(reward);
+                reward.write(writer);
             },
             Self::Burn { asset, amount, fee, nonce } => {
                 writer.write_u8(1);
-                writer.write_hash(asset);
-                writer.write_u64(amount);
-                writer.write_u64(fee);
-                writer.write_u64(nonce);
+                asset.write(writer);
+                amount.write(writer);
+                fee.write(writer);
+                nonce.write(writer);
             },
             Self::Incoming { from, transfers } => {
                 writer.write_u8(2);
@@ -355,8 +378,8 @@ impl Serializer for EntryData {
                 for transfer in transfers {
                     transfer.write(writer);
                 }
-                writer.write_u64(fee);
-                writer.write_u64(nonce);
+                fee.write(writer);
+                nonce.write(writer);
             },
             Self::MultiSig { participants: keys, threshold, fee, nonce } => {
                 writer.write_u8(4);
@@ -365,28 +388,42 @@ impl Serializer for EntryData {
                     key.write(writer);
                 }
                 writer.write_u8(*threshold);
-                writer.write_u64(fee);
-                writer.write_u64(nonce);
+                fee.write(writer);
+                nonce.write(writer);
             },
-            Self::InvokeContract { contract, deposits, chunk_id, fee, max_gas, nonce } => {
+            Self::InvokeContract { contract, deposits, received, entry_id: chunk_id, fee, max_gas, nonce } => {
                 writer.write_u8(5);
-                writer.write_hash(contract);
-                writer.write_u16(*chunk_id);
+                contract.write(writer);
+                chunk_id.write(writer);
                 writer.write_u8(deposits.len() as u8);
                 for (asset, amount) in deposits {
                     asset.write(writer);
                     amount.write(writer);
                 }
 
-                writer.write_u64(fee);
-                writer.write_u64(max_gas);
-                writer.write_u64(nonce);
+                writer.write_u16(received.len() as u16);
+                for (asset, amount) in received {
+                    asset.write(writer);
+                    amount.write(writer);
+                }
+
+                fee.write(writer);
+                max_gas.write(writer);
+                nonce.write(writer);
             },
             Self::DeployContract { fee, nonce, invoke } => {
                 writer.write_u8(6);
-                writer.write_u64(fee);
-                writer.write_u64(nonce);
+                fee.write(writer);
+                nonce.write(writer);
                 invoke.write(writer);
+            },
+            Self::IncomingContract { transfers } => {
+                writer.write_u8(7);
+                writer.write_u16(transfers.len() as u16);
+                for (asset, amount) in transfers {
+                    asset.write(writer);
+                    amount.write(writer);
+                }
             }
         }
     }
@@ -404,11 +441,24 @@ impl Serializer for EntryData {
             Self::MultiSig { participants, threshold, fee, nonce } => {
                 1 + participants.iter().map(|k| k.size()).sum::<usize>() + threshold.size() + fee.size() + nonce.size()
             },
-            Self::InvokeContract { contract, deposits, chunk_id, fee, max_gas, nonce } => {
-                contract.size() + 2 + deposits.iter().map(|(a, b)| a.size() + b.size()).sum::<usize>() + chunk_id.size() + fee.size() + max_gas.size() + nonce.size()
+            Self::InvokeContract { contract, deposits, received, entry_id: chunk_id, fee, max_gas, nonce } => {
+                contract.size()
+                + 1 + deposits.iter()
+                    .map(|(a, b)| a.size() + b.size())
+                    .sum::<usize>()
+                + 2 + received.iter()
+                    .map(|(a, b)| a.size() + b.size())
+                    .sum::<usize>()
+                + chunk_id.size()
+                + fee.size()
+                + max_gas.size()
+                + nonce.size()
             },
             Self::DeployContract { fee, nonce, invoke } => {
                 fee.size() + nonce.size() + invoke.size()
+            },
+            Self::IncomingContract { transfers } => {
+                2 + transfers.iter().map(|(a, b)| a.size() + b.size()).sum::<usize>()
             }
         }
     }
@@ -503,8 +553,8 @@ impl TransactionEntry {
                     let participants = participants.into_iter().map(|p| p.to_address(mainnet)).collect();
                     RPCEntryType::MultiSig { participants, threshold, fee, nonce }
                 },
-                EntryData::InvokeContract { contract, deposits, chunk_id, fee, max_gas, nonce } => {
-                    RPCEntryType::InvokeContract { contract, deposits, chunk_id, fee, max_gas, nonce }
+                EntryData::InvokeContract { contract, deposits, received, entry_id: chunk_id, fee, max_gas, nonce } => {
+                    RPCEntryType::InvokeContract { contract, deposits, received, chunk_id, fee, max_gas, nonce }
                 },
                 EntryData::DeployContract { fee, nonce, invoke } => {
                     let invoke = invoke.map(|v| RPCDeployInvoke {
@@ -512,6 +562,10 @@ impl TransactionEntry {
                         deposits: v.deposits.clone()
                     });
                     RPCEntryType::DeployContract { fee, nonce, invoke }
+                },
+                EntryData::IncomingContract { transfers } => {
+                    let transfers = transfers.into_iter().map(|(asset, amount)| (asset, amount)).collect();
+                    RPCEntryType::IncomingContract { transfers }
                 }
             }
         }
@@ -556,17 +610,48 @@ impl TransactionEntry {
                 }
                 str
             },
-            EntryData::InvokeContract { contract, deposits, chunk_id, fee, max_gas, nonce } => {
+            EntryData::InvokeContract { contract, deposits, received, entry_id: chunk_id, fee, max_gas, nonce } => {
                 let mut str = format!("Fee: {}, Nonce: {} ", format_xelis(*fee), nonce);
                 str.push_str(&format!("Invoke contract {} with chunk id {} (max gas: {})", contract, chunk_id, format_xelis(*max_gas)));
                 for (asset, amount) in deposits {
                     let data = storage.get_asset(&asset).await?;
                     str.push_str(&format!("Deposit {} {} ({}) to contract", format_coin(*amount, data.get_decimals()), data.get_name(), asset));
                 }
+
+                for (asset, amount) in received {
+                    let data = storage.get_asset(&asset).await?;
+                    str.push_str(&format!("Received {} {} ({}) from contract", format_coin(*amount, data.get_decimals()), data.get_name(), asset));
+                }
+
                 str
             },
             EntryData::DeployContract { fee, nonce, invoke } => {
-                format!("Fee: {}, Nonce: {} Deploy contract (constructor called: {})", format_xelis(*fee), nonce, invoke.is_some())
+                let invoke = match invoke {
+                    Some(invoke) => {
+                        let mut deposits = String::new();
+                        for (asset, amount) in &invoke.deposits {
+                            let data = storage.get_asset(&asset).await?;
+                            deposits.push_str(&format!(" {} {} ({}),", format_coin(*amount, data.get_decimals()), data.get_name(), asset));
+                        }
+
+                        if !deposits.is_empty() {
+                            deposits.pop(); // Remove last comma
+                        }
+
+                        format!(" with invoke (max gas: {}, deposits: [{}])", format_xelis(invoke.max_gas), deposits)
+                    },
+                    None => String::new()
+                };
+
+                format!("Fee: {}, Nonce: {} Deploy contract{}", format_xelis(*fee), nonce, invoke)
+            },
+            EntryData::IncomingContract { transfers } => {
+                let mut str = format!("Incoming from contract:");
+                for (asset, amount) in transfers {
+                    let data = storage.get_asset(&asset).await?;
+                    str.push_str(&format!("Received {} {} ({}) ", format_coin(*amount, data.get_decimals()), data.get_name(), asset));
+                }
+                str
             }
         };
 
@@ -590,14 +675,14 @@ impl Serializer for TransactionEntry {
     }
 
     fn write(&self, writer: &mut Writer) {
-        writer.write_hash(&self.hash);
-        writer.write_u64(&self.topoheight);
-        writer.write_u64(&self.timestamp);
+        self.hash.write(writer);
+        self.topoheight.write(writer);
+        self.timestamp.write(writer);
         self.entry.write(writer);
     }
 
     fn size(&self) -> usize {
-        self.hash.size() + self.topoheight.size() + self.entry.size()
+        self.hash.size() + self.topoheight.size() + self.timestamp.size() + self.entry.size()
     }
 }
 

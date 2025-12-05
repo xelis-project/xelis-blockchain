@@ -8,14 +8,12 @@ use xelis_common::{
 use crate::core::{
     error::BlockchainError,
     storage::{
-        rocksdb::{
-            Column,
-            TopoHeightMetadata
-        },
+        rocksdb::Column,
+        types::TopoHeightMetadata,
         BlockDagProvider,
         DagOrderProvider,
         DifficultyProvider,
-        RocksStorage,
+        RocksStorage
     }
 };
 
@@ -30,10 +28,10 @@ impl BlockDagProvider for RocksStorage {
     }
 
     // Get the block reward from using topoheight
-    fn get_block_reward_at_topo_height(&self, topoheight: TopoHeight) -> Result<u64, BlockchainError> {
+    async fn get_block_reward_at_topo_height(&self, topoheight: TopoHeight) -> Result<u64, BlockchainError> {
         trace!("get block reward at topoheight {}", topoheight);
         self.get_metadata_at_topoheight(topoheight)
-            .map(|metadata| metadata.rewards)
+            .map(|metadata| metadata.block_reward)
     }
 
     // Get the supply from topoheight
@@ -43,23 +41,16 @@ impl BlockDagProvider for RocksStorage {
             .map(|metadata| metadata.emitted_supply)
     }
 
-    // Get the burned supply from topoheight
-    async fn get_burned_supply_at_topo_height(&self, topoheight: TopoHeight) -> Result<u64, BlockchainError> {
-        trace!("get burned supply at topoheight {}", topoheight);
-        self.get_metadata_at_topoheight(topoheight)
-        .map(|metadata| metadata.burned_supply)
+    // Set the metadata for topoheight
+    async fn set_metadata_at_topoheight(&mut self, topoheight: TopoHeight, metadata: TopoHeightMetadata) -> Result<(), BlockchainError> {
+        trace!("set metadata at topoheight {}", topoheight);
+        self.insert_into_disk(Column::TopoHeightMetadata, &topoheight.to_be_bytes(), &metadata)
     }
 
     // Set the metadata for topoheight
-    fn set_topoheight_metadata(&mut self, topoheight: TopoHeight, rewards: u64, emitted_supply: u64, burned_supply: u64) -> Result<(), BlockchainError> {
-        trace!("set topoheight metadata {}", topoheight);
-        let metadata = TopoHeightMetadata {
-            rewards,
-            emitted_supply,
-            burned_supply
-        };
-
-        self.insert_into_disk(Column::TopoHeightMetadata, &topoheight.to_be_bytes(), &metadata)
+    async fn get_metadata_at_topoheight(&self, topoheight: TopoHeight) -> Result<TopoHeightMetadata, BlockchainError> {
+        trace!("get metadata at topoheight {}", topoheight);
+        self.load_from_disk(Column::TopoHeightMetadata, &topoheight.to_be_bytes())
     }
 }
 

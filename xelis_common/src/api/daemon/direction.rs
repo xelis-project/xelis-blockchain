@@ -1,3 +1,4 @@
+use schemars::JsonSchema;
 use serde::{Serialize, Deserialize};
 
 use crate::time::TimestampMillis;
@@ -38,7 +39,7 @@ impl Direction {
 }
 
 // Direction is used for cache to knows from which context it got added
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum TimedDirection {
     // We don't update it because it's In, we won't send back

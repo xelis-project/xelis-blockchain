@@ -4,8 +4,7 @@ use xelis_common::block::TopoHeight;
 use crate::core::{
     error::BlockchainError,
     storage::{
-        rocksdb::Column,
-        sled::PRUNED_TOPOHEIGHT,
+        rocksdb::{Column, PRUNED_TOPOHEIGHT},
         PrunedTopoheightProvider,
         RocksStorage,
     }

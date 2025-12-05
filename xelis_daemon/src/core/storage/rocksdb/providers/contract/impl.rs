@@ -10,14 +10,14 @@ use crate::core::{
         rocksdb::{Column, Contract, ContractId, IteratorMode},
         ContractProvider,
         RocksStorage,
-        VersionedContract
+        VersionedContractModule
     }
 };
 
 #[async_trait]
 impl ContractProvider for RocksStorage {
     // Deploy a contract
-    async fn set_last_contract_to<'a>(&mut self, hash: &Hash, topoheight: TopoHeight, version: &VersionedContract<'a>) -> Result<(), BlockchainError> {
+    async fn set_last_contract_to<'a>(&mut self, hash: &Hash, topoheight: TopoHeight, version: &VersionedContractModule<'a>) -> Result<(), BlockchainError> {
         trace!("set last contract {} to {}", hash, topoheight);
 
         let mut contract = self.get_or_create_contract_type(hash)?;
@@ -37,7 +37,7 @@ impl ContractProvider for RocksStorage {
     }
 
     // Retrieve a contract at a given topoheight
-    async fn get_contract_at_topoheight_for<'a>(&self, hash: &Hash, topoheight: TopoHeight) -> Result<VersionedContract<'a>, BlockchainError> {
+    async fn get_contract_at_topoheight_for<'a>(&self, hash: &Hash, topoheight: TopoHeight) -> Result<VersionedContractModule<'a>, BlockchainError> {
         trace!("get contract at topoheight {} for {}", topoheight, hash);
 
         let contract_id = self.get_contract_id(hash)?;
@@ -47,7 +47,7 @@ impl ContractProvider for RocksStorage {
     }
 
     // Retrieve a contract at maximum topoheight
-    async fn get_contract_at_maximum_topoheight_for<'a>(&self, hash: &Hash, maximum_topoheight: TopoHeight) -> Result<Option<(TopoHeight, VersionedContract<'a>)>, BlockchainError> {
+    async fn get_contract_at_maximum_topoheight_for<'a>(&self, hash: &Hash, maximum_topoheight: TopoHeight) -> Result<Option<(TopoHeight, VersionedContractModule<'a>)>, BlockchainError> {
         trace!("get contract at maximum topoheight {} for {}", maximum_topoheight, hash);
         let Some(contract) = self.get_optional_contract_type(hash)? else {
             return Ok(None)

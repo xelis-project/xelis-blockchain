@@ -6,7 +6,10 @@ use crate::{
     block::{BLOCK_WORK_SIZE, HEADER_WORK_SIZE, BlockVersion},
     config::TIPS_LIMIT,
     crypto::{
-        elgamal::CompressedPublicKey,
+        elgamal::{
+            CompressedPublicKey,
+            RISTRETTO_COMPRESSED_SIZE
+        },
         hash,
         pow_hash,
         Hash,
@@ -60,8 +63,9 @@ pub struct BlockHeader {
 }
 
 impl BlockHeader {
+    #[inline]
     pub fn new(version: BlockVersion, height: u64, timestamp: TimestampMillis, tips: impl Into<Immutable<IndexSet<Hash>>>, extra_nonce: [u8; EXTRA_NONCE_SIZE], miner: CompressedPublicKey, txs_hashes: IndexSet<Hash>) -> Self {
-        BlockHeader {
+        Self {
             version,
             height,
             timestamp,
@@ -74,39 +78,56 @@ impl BlockHeader {
     }
 
     // Apply a MinerWork to this block header to match the POW hash
-    pub fn apply_miner_work(&mut self, work: MinerWork) {
+    pub fn apply_miner_work(&mut self, work: MinerWork) -> bool {
         let (_, timestamp, nonce, miner, extra_nonce) = work.take();
-        self.miner = miner.unwrap().into_owned();
+        let Some(miner) = miner else {
+            return false
+        };
+
+        self.miner = miner.into_owned();
         self.timestamp = timestamp;
         self.nonce = nonce;
         self.extra_nonce = extra_nonce;
+
+        true
     }
 
+    #[inline]
     pub fn get_version(&self) -> BlockVersion {
         self.version
     }
 
+    #[inline]
     pub fn set_miner(&mut self, key: CompressedPublicKey) {
         self.miner = key;
     }
 
+    #[inline]
     pub fn set_extra_nonce(&mut self, values: [u8; EXTRA_NONCE_SIZE]) {
         self.extra_nonce = values;
     }
 
+    #[inline]
     pub fn get_height(&self) -> u64 {
         self.height
     }
 
+    #[inline]
     pub fn get_timestamp(&self) -> TimestampMillis {
         self.timestamp
     }
 
+    #[inline]
     pub fn get_tips(&self) -> &IndexSet<Hash> {
         &self.tips
     }
 
+    #[inline]
+    pub fn get_tips_count(&self) -> usize {
+        self.tips.len()
+    }
 
+    #[inline]
     pub fn get_immutable_tips(&self) -> &Immutable<IndexSet<Hash>> {
         &self.tips
     }
@@ -122,22 +143,27 @@ impl BlockHeader {
         hash(&bytes)
     }
 
+    #[inline]
     pub fn get_nonce(&self) -> u64 {
         self.nonce
     }
 
+    #[inline]
     pub fn get_miner(&self) -> &CompressedPublicKey {
         &self.miner
     }
 
+    #[inline]
     pub fn get_extra_nonce(&self) -> &[u8; EXTRA_NONCE_SIZE] {
         &self.extra_nonce
     }
 
+    #[inline]
     pub fn get_txs_hashes(&self) -> &IndexSet<Hash> {
         &self.txs_hashes
     }
 
+    #[inline]
     pub fn take_txs_hashes(self) -> IndexSet<Hash> {
         self.txs_hashes
     }
@@ -152,6 +178,7 @@ impl BlockHeader {
         hash(&bytes)
     }
 
+    #[inline]
     pub fn get_txs_count(&self) -> usize {
         self.txs_hashes.len()
     }
@@ -173,12 +200,13 @@ impl BlockHeader {
     }
 
     // compute the header work hash (immutable part in mining process)
+    #[inline]
     pub fn get_work_hash(&self) -> Hash {
         hash(&self.get_work())
     }
 
     // This is similar to MinerWork
-    fn get_serialized_header(&self) -> Vec<u8> {
+    pub fn get_pow_challenge(&self) -> Vec<u8> {
         let mut bytes = Vec::with_capacity(BLOCK_WORK_SIZE);
         bytes.extend(self.get_work_hash().to_bytes());
         bytes.extend(self.timestamp.to_be_bytes());
@@ -192,21 +220,41 @@ impl BlockHeader {
     }
 
     // compute the block POW hash
+    #[inline]
     pub fn get_pow_hash(&self, algorithm: Algorithm) -> Result<Hash, XelisHashError> {
-        pow_hash(&self.get_serialized_header(), algorithm)
+        pow_hash(&self.get_pow_challenge(), algorithm)
     }
 
+    #[inline]
     pub fn get_transactions(&self) -> &IndexSet<Hash> {
         &self.txs_hashes
+    }
+
+    pub fn estimate_size(tips_len: usize) -> usize {
+        // additional byte for tips count
+        let tips_size = 1 + tips_len * HASH_SIZE;
+        // 2 bytes for txs count (u16)
+        let txs_size = 2;
+        // Version is u8
+        let version_size = 1;
+
+        EXTRA_NONCE_SIZE
+        + tips_size
+        + txs_size
+        + version_size
+        + RISTRETTO_COMPRESSED_SIZE // miner key
+        + 8 // timestamp
+        + 8 // height
+        + 8 // nonce
     }
 }
 
 impl Serializer for BlockHeader {
     fn write(&self, writer: &mut Writer) {
         self.version.write(writer); // 1
-        writer.write_u64(&self.height); // 1 + 8 = 9
-        writer.write_u64(&self.timestamp); // 9 + 8 = 17
-        writer.write_u64(&self.nonce); // 17 + 8 = 25
+        self.height.write(writer); // 1 + 8 = 9
+        self.timestamp.write(writer); // 9 + 8 = 17
+        self.nonce.write(writer); // 17 + 8 = 25
         writer.write_bytes(&self.extra_nonce); // 25 + 32 = 57
         writer.write_u8(self.tips.len() as u8); // 57 + 1 = 58
         for tip in self.tips.iter() {
@@ -286,7 +334,7 @@ impl Hashable for BlockHeader {
     // this function has the same behavior as the get_pow_hash function
     // but we use a fast algorithm here
     fn hash(&self) -> Hash {
-        hash(&self.get_serialized_header())
+        hash(&self.get_pow_challenge())
     }
 }
 

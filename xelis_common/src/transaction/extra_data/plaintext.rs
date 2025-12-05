@@ -1,3 +1,4 @@
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -6,7 +7,7 @@ use crate::{
 };
 use super::SharedKey;
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum PlaintextFlag {
     // Extra data come from an encrypted payload
@@ -50,7 +51,7 @@ impl Serializer for PlaintextFlag {
 
 /// Extra data stored in plaintext
 /// We store its shared key next to the data for future usage
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct PlaintextExtraData {
     /// Shared key used to encrypt/decrypt the data
     shared_key: Option<SharedKey>,

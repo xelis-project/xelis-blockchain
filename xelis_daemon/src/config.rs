@@ -123,6 +123,8 @@ pub const CHAIN_SYNC_DEFAULT_RESPONSE_BLOCKS: usize = 4096;
 pub const CHAIN_SYNC_RESPONSE_MAX_BLOCKS: usize = u16::MAX as _;
 // send last 10 heights
 pub const CHAIN_SYNC_TOP_BLOCKS: usize = 10;
+// average block time is calculated on the last N topoheight
+pub const CHAIN_AVERAGE_BLOCK_TIME_N: u64 = 50;
 
 // P2p rules
 // time between each ping
@@ -194,7 +196,7 @@ pub const PEER_PACKET_CHANNEL_SIZE: usize = 1024;
 pub const PEER_SEND_BYTES_TIMEOUT: u64 = 3_000;
 
 // Hard Forks configured
-const HARD_FORKS: [HardFork; 3] = [
+const HARD_FORKS: [HardFork; 4] = [
     HardFork {
         height: 0,
         version: BlockVersion::V0,
@@ -214,6 +216,13 @@ const HARD_FORKS: [HardFork; 3] = [
         version: BlockVersion::V2,
         changelog: "MultiSig, P2P",
         version_requirement: Some(">=1.16.0")
+    },
+    HardFork {
+        // Expected date: 13/12/2025 5pm UTC
+        height: 3_282_150,
+        version: BlockVersion::V3,
+        changelog: "Smart Contracts",
+        version_requirement: Some(">=1.19.0")
     }
 ];
 
@@ -240,8 +249,8 @@ const OTHERS_NETWORK_HARD_FORKS: [HardFork; 4] = [
     HardFork {
         height: 15,
         version: BlockVersion::V3,
-        changelog: "Smart Contracts",
-        version_requirement: Some(">=1.16.0")
+        changelog: "Smart Contracts, xelis-hash v3, 5s block time",
+        version_requirement: Some(">=1.19.0")
     }
 ];
 
@@ -317,7 +326,7 @@ pub const fn get_seed_nodes(network: &Network) -> &[&str] {
 }
 
 // Get hard forks based on the network
-pub const fn get_hard_forks(network: &Network) -> &[HardFork] {
+pub const fn get_hard_forks(network: &Network) -> &'static [HardFork] {
     match network {
         Network::Mainnet => &HARD_FORKS,
         _ => &OTHERS_NETWORK_HARD_FORKS,

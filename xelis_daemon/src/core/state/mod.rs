@@ -5,7 +5,6 @@ pub use mempool_state::MempoolState;
 pub use chain_state::{
     ChainState,
     ApplicableChainState,
-    StorageReference
 };
 
 use log::{trace, debug};
@@ -24,19 +23,50 @@ use super::{
     storage::{AccountProvider, BalanceProvider, DagOrderProvider, PrunedTopoheightProvider}
 };
 
+// Verify the transaction fee and returns the leftover from fee max
+pub(super) async fn verify_fee<P: AccountProvider + BalanceProvider>(
+    provider: &P,
+    tx: &Transaction,
+    tx_size: usize,
+    topoheight: TopoHeight,
+    tx_base_fee: u64,
+    block_version: BlockVersion
+) -> Result<(u64, u64), BlockchainError> {
+    let required_fees = blockchain::estimate_required_tx_fees(provider, topoheight, tx, tx_size, tx_base_fee, block_version).await?;
+
+    // Check if we pay enough fee in this TX
+    let (fee_paid, refund) = if required_fees > tx.get_fee() {
+        // We don't, but maybe our fee max allows it
+        if required_fees > tx.get_fee_limit() {
+            debug!("Invalid fees: {} required, {} provided", format_xelis(required_fees), format_xelis(tx.get_fee()));
+            return Err(BlockchainError::InvalidTxFee(required_fees, tx.get_fee()));
+        }
+
+        // Calculate the left over from fee max against required fee
+        let refund = tx.get_fee_limit() - required_fees;
+        (required_fees, refund)
+    } else {
+        // We may pay above the required fee
+        // so we simply sub it from fee max
+        // It should be safe without the checked_sub
+        // because `pre_verify` check fee_limit >= fee
+        let refund = tx.get_fee_limit()
+            .checked_sub(tx.get_fee())
+            .ok_or(BlockchainError::InvalidTxFee(required_fees, tx.get_fee()))?;
+
+        (tx.get_fee(), refund)
+    };
+
+    Ok((fee_paid, refund))
+}
+
 // Verify a transaction before adding it to mempool/chain state
 // We only verify the reference and the required fees
-pub (super) async fn pre_verify_tx<P: AccountProvider + BalanceProvider>(provider: &P, tx: &Transaction, stable_topoheight: TopoHeight, topoheight: TopoHeight, block_version: BlockVersion) -> Result<(), BlockchainError> {
+pub(super) async fn pre_verify_tx(tx: &Transaction, stable_topoheight: TopoHeight, topoheight: TopoHeight, block_version: BlockVersion) -> Result<(), BlockchainError> {
     debug!("Pre-verify TX at topoheight {} and stable topoheight {}", topoheight, stable_topoheight);
     if !hard_fork::is_tx_version_allowed_in_block_version(tx.get_version(), block_version) {
         debug!("Invalid version {} in block {}", tx.get_version(), block_version);
         return Err(BlockchainError::InvalidTxVersion);
-    }
-
-    let required_fees = blockchain::estimate_required_tx_fees(provider, topoheight, tx, block_version).await?;
-    if required_fees > tx.get_fee() {
-        debug!("Invalid fees: {} required, {} provided", format_xelis(required_fees), format_xelis(tx.get_fee()));
-        return Err(BlockchainError::InvalidTxFee(required_fees, tx.get_fee()));
     }
 
     let reference = tx.get_reference();
@@ -117,6 +147,8 @@ pub (super) async fn search_versioned_balance_for_reference<S: DagOrderProvider 
 
     debug!("Search output balance in range {} to {}", min_topo, current_topoheight);
     let last_output = storage.get_output_balance_in_range(key, asset, min_topo, current_topoheight).await?;
+    debug!("output balance found: {}", last_output.is_some());
+
     // We have a output balance
     if let Some((topo, v)) = last_output {
         trace!("Found output balance at topoheight {}", topo);

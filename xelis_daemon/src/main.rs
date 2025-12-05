@@ -4,15 +4,18 @@ pub mod core;
 pub mod config;
 
 use config::{DEV_PUBLIC_KEY, STABLE_LIMIT};
+use futures::StreamExt;
 use human_bytes::human_bytes;
 use humantime::{format_duration, Duration as HumanDuration};
 use log::{debug, error, info, trace, warn};
 use rpc::rpc::get_block_response_for_hash;
 use serde::{Deserialize, Serialize};
+use tokio::pin;
 use xelis_common::{
     async_handler,
-    config::{init, VERSION, XELIS_ASSET},
+    config::{init, VERSION, XELIS_ASSET, FEE_PER_KB},
     context::Context,
+    contract::vm::HOOK_CONSTRUCTOR_ID,
     crypto::{
         Address,
         Hashable
@@ -48,13 +51,15 @@ use xelis_common::{
         format_xelis
     }
 };
+use xelis_vm::Access;
 use crate::config::MILLIS_PER_SECOND;
 use core::{
     state::ChainState,
     blockchain::{
         get_block_reward,
         Blockchain,
-        BroadcastOption
+        BroadcastOption,
+        PreVerifyBlock,
     },
     blockdag,
     config::{Config as InnerConfig, StorageBackend},
@@ -63,12 +68,15 @@ use core::{
         get_pow_algorithm_for_version,
         get_version_at_height
     },
-    storage::{
-        RocksStorage,
-        SledStorage,
-        Storage
-    }
+    storage::Storage
 };
+
+#[cfg(feature = "rocksdb")]
+use core::storage::rocksdb::RocksStorage;
+
+#[cfg(feature = "sled")]
+use core::storage::sled::SledStorage;
+
 use std::{
     fs::File,
     io::Write,
@@ -256,6 +264,7 @@ async fn main() -> Result<()> {
         .unwrap_or_default();
 
     match blockchain_config.use_db_backend {
+        #[cfg(feature = "sled")]
         StorageBackend::Sled => {
             let use_cache = if blockchain_config.sled.cache_size > 0 {
                 Some(blockchain_config.sled.cache_size)
@@ -266,6 +275,7 @@ async fn main() -> Result<()> {
             let storage = SledStorage::new(dir_path.to_owned(), use_cache, config.network, blockchain_config.sled.internal_cache_size, blockchain_config.sled.internal_db_mode)?;
             start_chain(prompt, storage, config).await
         },
+        #[cfg(feature = "rocksdb")]
         StorageBackend::RocksDB => {
             let storage = RocksStorage::new(&dir_path, config.network, &blockchain_config.rocksdb);
             start_chain(prompt, storage, config).await
@@ -299,6 +309,7 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
     command_manager.add_command(Command::with_optional_arguments("list_assets", "List all assets registered on chain", vec![Arg::new("page", ArgType::Number)], CommandHandler::Async(async_handler!(list_assets::<S>))))?;
     command_manager.add_command(Command::with_optional_arguments("show_peerlist", "Show the stored peerlist", vec![Arg::new("page", ArgType::Number)], CommandHandler::Async(async_handler!(show_stored_peerlist::<S>))))?;
     command_manager.add_command(Command::with_arguments("show_balance", "Show balance of an address", vec![], vec![Arg::new("history", ArgType::Number)], CommandHandler::Async(async_handler!(show_balance::<S>))))?;
+    command_manager.add_command(Command::with_arguments("show_multisig", "Show multisig history of an address", vec![], vec![], CommandHandler::Async(async_handler!(show_multisig::<S>))))?;
     command_manager.add_command(Command::with_required_arguments("print_block", "Print block in json format", vec![Arg::new("hash", ArgType::Hash)], CommandHandler::Async(async_handler!(print_block::<S>))))?;
     command_manager.add_command(Command::with_required_arguments("dump_tx", "Dump TX in hexadecimal format", vec![Arg::new("hash", ArgType::Hash)], CommandHandler::Async(async_handler!(dump_tx::<S>))))?;
     command_manager.add_command(Command::with_required_arguments("dump_block", "Dump block in hexadecimal format", vec![Arg::new("hash", ArgType::Hash)], CommandHandler::Async(async_handler!(dump_block::<S>))))?;
@@ -319,6 +330,8 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
     command_manager.add_command(Command::new("clear_p2p_connections", "Clear all P2P connections", CommandHandler::Async(async_handler!(clear_p2p_connections::<S>))))?;
     command_manager.add_command(Command::new("clear_p2p_peerlist", "Clear P2P peerlist", CommandHandler::Async(async_handler!(clear_p2p_peerlist::<S>))))?;
     command_manager.add_command(Command::with_optional_arguments("difficulty_dataset", "Create a dataset for difficulty from chain", vec![Arg::new("output", ArgType::String)], CommandHandler::Async(async_handler!(difficulty_dataset::<S>))))?;
+    command_manager.add_command(Command::with_optional_arguments("circulating_supply_dataset", "Create a dataset for circulating supply of specific asset from chain", vec![Arg::new("output", ArgType::String), Arg::new("asset", ArgType::Hash)], CommandHandler::Async(async_handler!(circulating_supply_dataset::<S>))))?;
+    command_manager.add_command(Command::with_optional_arguments("block_size_dataset", "Create a dataset for block size from chain", vec![Arg::new("output", ArgType::String)], CommandHandler::Async(async_handler!(block_size_dataset::<S>))))?;
     command_manager.add_command(Command::with_optional_arguments("mine_block", "Mine a block on testnet", vec![Arg::new("count", ArgType::Number)], CommandHandler::Async(async_handler!(mine_block::<S>))))?;
     command_manager.add_command(Command::with_required_arguments("add_peer", "Connect to a new peer using ip:port format", vec![Arg::new("address", ArgType::String)], CommandHandler::Async(async_handler!(add_peer::<S>))))?;
     command_manager.add_command(Command::new("list_unexecuted_transactions", "List all unexecuted transactions", CommandHandler::Async(async_handler!(list_unexecuted_transactions::<S>))))?;
@@ -330,6 +343,8 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
     command_manager.add_command(Command::with_optional_arguments("export_json_config", "Export the current config in JSON", vec![Arg::new("filename", ArgType::String)], CommandHandler::Async(async_handler!(export_json_config::<S>))))?;
     command_manager.add_command(Command::new("broadcast_txs", "Broadcast all TXs in mempool if not done", CommandHandler::Async(async_handler!(broadcast_txs::<S>))))?;
     command_manager.add_command(Command::new("snapshot_mode", "Force to be in snapshot mode (memory only)", CommandHandler::Async(async_handler!(snapshot_mode::<S>))))?;
+    command_manager.add_command(Command::with_optional_arguments("inspect_contract", "Inspect a smart contract by its hash", vec![Arg::new("contract", ArgType::Hash), Arg::new("show-storage", ArgType::Bool)], CommandHandler::Async(async_handler!(inspect_contract::<S>))))?;
+    command_manager.add_command(Command::new("show_mempool", "Show all transactions in mempool", CommandHandler::Async(async_handler!(show_mempool::<S>))))?;
 
     // Don't keep the lock for ever
     let p2p = {
@@ -343,7 +358,7 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
 
     let closure = |_: &_, _: _| async {
         trace!("Retrieving P2P peers and median topoheight");
-        let topoheight = blockchain.get_topo_height();
+        let topoheight = blockchain.get_topo_height().await;
         let (peers, median, syncing_rate) = match &p2p {
             Some(p2p) => {
                 let peer_list = p2p.get_peer_list();
@@ -353,7 +368,7 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
                     p2p.get_syncing_rate_bps(),
                 )
             },
-            None => (0, blockchain.get_topo_height(), None)
+            None => (0, topoheight, None)
         };
 
         trace!("Retrieving RPC connections count");
@@ -374,7 +389,7 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
         let mempool = blockchain.get_mempool_size().await;
 
         trace!("Retrieving network hashrate");
-        let version = get_version_at_height(blockchain.get_network(), blockchain.get_height());
+        let version = get_version_at_height(blockchain.get_network(), blockchain.get_height().await);
         let block_time_target = get_block_time_target_for_version(version);
         let network_hashrate: f64 = (blockchain.get_difficulty().await / (block_time_target / MILLIS_PER_SECOND)).into();
 
@@ -483,30 +498,29 @@ async fn verify_chain<S: Storage>(manager: &CommandManager, mut args: ArgumentMa
 
     let storage = blockchain.get_storage().read().await;
     let mut pruned_topoheight = storage.get_pruned_topoheight().await.context("Error on pruned topoheight")?.unwrap_or(0);
-    let (mut expected_supply, mut expected_burned_supply) = if pruned_topoheight > 0 {
+    let mut expected_supply = if pruned_topoheight > 0 {
         let supply = storage.get_supply_at_topo_height(pruned_topoheight).await
-            .context("Error while retrieving starting expected supply")?;
-        let burned_supply = storage.get_burned_supply_at_topo_height(pruned_topoheight).await
             .context("Error while retrieving starting expected supply")?;
         pruned_topoheight += 1;
 
-        (supply, burned_supply)
+        supply
     } else {
-        (0, 0)
+        0
     };
 
     let topoheight = if args.has_argument("topoheight") {
         args.get_value("topoheight")?.to_number()?
     } else {
-        blockchain.get_topo_height()
+        let chain_cache = storage.chain_cache().await;
+        chain_cache.topoheight
     };
 
     info!("Verifying chain supply from {} until topoheight {}", pruned_topoheight, topoheight);
     for topo in pruned_topoheight..=topoheight {
         let hash_at_topo = storage.get_hash_at_topo_height(topo).await.context("Error while retrieving hash at topo")?;
         let block_reward = if pruned_topoheight == 0 || topo - pruned_topoheight > STABLE_LIMIT {
-            let block_reward = blockchain.get_block_reward(&*storage, &hash_at_topo, expected_supply, topo).await.context("Error while calculating block reward")?;
-            let expected_block_reward = storage.get_block_reward_at_topo_height(topo).context("Error while retrieving block reward")?;
+            let block_reward = blockchain.get_block_reward(&*storage, &hash_at_topo, expected_supply, Some(topo), topo).await.context("Error while calculating block reward")?;
+            let expected_block_reward = storage.get_block_reward_at_topo_height(topo).await.context("Error while retrieving block reward")?;
             // Verify the saved block reward
             if block_reward != expected_block_reward {
                 manager.error(format!("Block reward saved is incorrect for {} at topoheight {}, got {} while expecting {}", hash_at_topo, topo, format_xelis(block_reward), format_xelis(expected_block_reward)));
@@ -516,7 +530,7 @@ async fn verify_chain<S: Storage>(manager: &CommandManager, mut args: ArgumentMa
         } else {
             // We are too near from the pruned topoheight, as we don't know previous blocks we can't verify if block was side block or not for rewards
             // Let's trust its stored reward
-            storage.get_block_reward_at_topo_height(topo).context("Error while retrieving block reward for pruned topo")?
+            storage.get_block_reward_at_topo_height(topo).await.context("Error while retrieving block reward for pruned topo")?
         };
 
         let supply = storage.get_supply_at_topo_height(topo).await
@@ -537,11 +551,10 @@ async fn verify_chain<S: Storage>(manager: &CommandManager, mut args: ArgumentMa
             return Ok(())
         }
 
-        let mut burned_sum = 0;
         let mut txs = Vec::new();
         let mut outputs = 0;
         for tx_hash in header.get_transactions() {
-            if storage.is_tx_executed_in_block(tx_hash, &hash_at_topo).context("Error while checking if tx is executed in block")? {
+            if storage.is_tx_executed_in_block(tx_hash, &hash_at_topo).await.context("Error while checking if tx is executed in block")? {
                 let transaction = storage.get_transaction(tx_hash).await
                     .context("Error while retrieving transaction")?;
 
@@ -557,11 +570,6 @@ async fn verify_chain<S: Storage>(manager: &CommandManager, mut args: ArgumentMa
                     }
                 }
 
-                // TODO: with upcoming smart contracts, this may be biased due to the gas fee
-                if let Some(burned) = transaction.get_burned_amount(&XELIS_ASSET) {
-                    burned_sum += burned;
-                }
-
                 outputs += transaction.get_outputs_count();
                 txs.push((transaction.into_arc(), tx_hash));
             }
@@ -570,22 +578,14 @@ async fn verify_chain<S: Storage>(manager: &CommandManager, mut args: ArgumentMa
         if !txs.is_empty() {
             info!("Verifying {} txs ({} outputs) at {}", txs.len(), outputs, topo);
             let start = Instant::now();
-            let mut state = ChainState::new(&*storage, blockchain.get_contract_environment(), 0, topo - 1, header.get_version());
+            let (required_base_fee, _) = blockchain.get_required_base_fee(&*storage, header.get_tips().iter()).await
+                .context("Error while calculating required base fee")?;
+
+            let mut state = ChainState::new(&*storage, blockchain.get_contract_environment(), 0, topo - 1, header.get_version(), required_base_fee);
             Transaction::verify_batch(txs.iter(), &mut state, &NoZKPCache::default()).await
                 .context("Error while verifying txs")?;
 
             info!("Verified in {}ms", start.elapsed().as_millis());
-        }
-
-        // Verify the burned supply
-        let burned_supply = storage.get_burned_supply_at_topo_height(topo).await
-            .with_context(|| format!("Error while retrieving burned supply at topoheight {topo}"))?;
-
-        expected_burned_supply += burned_sum;
-
-        if burned_supply != expected_burned_supply {
-            manager.error(format!("Error for block {} at topoheight {}, expected burned supply {} found {}", hash_at_topo, topo, format_xelis(expected_burned_supply), format_xelis(burned_supply)));
-            return Ok(())
         }
     }
     manager.message("Supply is valid");
@@ -602,11 +602,13 @@ async fn list_unexecuted_transactions<S: Storage>(manager: &CommandManager, _: A
         .context("Error while retrieving unexecuted transactions")?;
 
     let mut count = 0;
-    for res in unexecuted {
+    pin!(unexecuted);
+    while let Some(res) = unexecuted.next().await {
         count += 1;
         let tx = res.context("Error on unexecuted tx hash")?;
         manager.message(format!("- {}", tx));
     }
+
     manager.message(format!("{} TXs were not executed by the DAG", count));
 
     Ok(())
@@ -717,6 +719,19 @@ async fn export_json_config<S: Storage>(manager: &CommandManager, mut args: Argu
         .context("Error while flushing config file")?;
 
     manager.message(format!("Config exported to {}", path));
+
+    Ok(())
+}
+
+async fn show_mempool<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
+    let context = manager.get_context().lock()?;
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    let mempool = blockchain.get_mempool().read().await;
+
+    manager.message(format!("Mempool: {} transactions", mempool.get_txs().iter().len()));
+    for (hash, tx) in mempool.get_txs() {
+        manager.message(format!("- {}: {} XEL fee for {}", hash, format_xelis(tx.get_fee()), human_bytes(tx.get_size() as f64)));
+    }
 
     Ok(())
 }
@@ -1028,6 +1043,43 @@ async fn show_balance<S: Storage>(manager: &CommandManager, mut arguments: Argum
     Ok(())
 }
 
+async fn show_multisig<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
+    let prompt = manager.get_prompt();
+    // read address
+    let str_address = prompt.read_input(
+        prompt.colorize_string(Color::Green, "Address: "),
+        false
+    ).await.context("Error while reading address")?;
+    let address = Address::from_string(&str_address)
+        .context("Invalid address")?;
+
+    let context = manager.get_context().lock()?;
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    let storage = blockchain.get_storage().read().await;
+    let (topoheight, multisig) = storage.get_last_multisig(address.get_public_key()).await
+        .context("Error while retrieving multisig")?;
+
+    let mut version = Some(multisig);
+    while let Some(multisig) = version.take() {
+        manager.message(format!("Multisig at topoheight {}:", topoheight));
+        if let Some(multisig) = multisig.get() {
+            manager.message(format!("- Participants: {}", multisig.participants.len()));
+            for owner in multisig.participants.iter() {
+                manager.message(format!("  - {}", owner.as_address(blockchain.get_network().is_mainnet())));
+            }
+    
+            manager.message(format!("- Threshold: {}", multisig.threshold));
+        }
+
+        if let Some(previous) = multisig.get_previous_topoheight() {
+            version = Some(storage.get_multisig_at_topoheight_for(address.get_public_key(), previous).await
+                .context("Error while retrieving history multisig")?);
+        }
+    }
+
+    Ok(())
+}
+
 async fn print_block<S: Storage>(manager: &CommandManager, mut arguments: ArgumentManager) -> Result<(), CommandError> {
     let context = manager.get_context().lock()?;
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
@@ -1082,7 +1134,7 @@ async fn pop_blocks<S: Storage>(manager: &CommandManager, mut arguments: Argumen
     let amount = arguments.get_value("amount")?.to_number()?;
     let context = manager.get_context().lock()?;
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
-    if amount == 0 || amount >= blockchain.get_topo_height() {
+    if amount == 0 || amount >= blockchain.get_topo_height().await {
         return Err(anyhow::anyhow!("Invalid amount of blocks to pop").into());
     }
 
@@ -1104,14 +1156,185 @@ async fn clear_mempool<S: Storage>(manager: &CommandManager, _: ArgumentManager)
     Ok(())
 }
 
+async fn inspect_contract<S: Storage>(manager: &CommandManager, mut arguments: ArgumentManager) -> Result<(), CommandError> {
+    let context = manager.get_context().lock()?;
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    let storage = blockchain.get_storage().read().await;
+    let topoheight = storage.chain_cache().await.topoheight;
+
+    let contract = if arguments.has_argument("contract") {
+        arguments.get_value("contract")?.to_hash()?
+    } else {
+        manager.get_prompt()
+            .read_hash("Contract: ").await
+            .context("Error while reading contract address")?
+    };
+
+    let (topo, data) = storage.get_contract_at_maximum_topoheight_for(&contract, topoheight).await
+        .context("Error while retrieving contract")?
+        .context("No contract found")?;
+
+    let module = match data.take() {
+        Some(contract) => contract,
+        None => {
+            manager.message("Contract has been deleted");
+            return Ok(());
+        }
+    };
+
+    manager.message(format!("Contract {} deployed at topoheight {}", contract, topo));
+    manager.message(format!("- Module: {}", module.module.to_hex()));
+    manager.message(format!("- Bytecode size: {}", human_bytes(module.module.size() as f64)));
+    manager.message(format!("- Version: {}", module.version));
+    manager.message(format!("- Constructor: {}", module.module.hook_chunk_ids().contains_key(&HOOK_CONSTRUCTOR_ID)));
+
+    let entries = module.module.chunks()
+        .iter()
+        .enumerate()
+        .filter(|(_, chunk)| matches!(chunk.access, Access::Entry))
+        .map(|(index, _)| index)
+        .collect::<Vec<_>>();
+
+    manager.message(format!("- Callable functions (entry): {:?}", entries));
+    let show_storage = if arguments.has_argument("show-storage") {
+        true
+    } else {
+        manager.get_prompt()
+            .read_valid_str_value("Show contract storage? (Y/N): ".to_owned(), &["y", "n"]).await?
+            == "y"
+    };
+
+    if show_storage {
+        manager.message(format!("- Contract storage:"));
+    }
+
+    let stream = storage.get_contract_data_entries_at_maximum_topoheight(&contract, topoheight).await
+        .context("Error while retrieving contract data entries")?;
+
+    let mut total_size = 0;
+    let mut stream = stream.boxed();
+    while let Some(res) = stream.next().await {
+        let (key, value) = res.context("Error on contract data entry")?;
+        let key_size = key.size();
+        total_size += key_size;
+        let value_size = value.size();
+        total_size += value_size;
+
+        if show_storage {
+            manager.message(format!("  - {} ({}): {} ({})", key, human_bytes(key_size as f64), value, human_bytes(value_size as f64)));
+        }
+    }
+
+    manager.message(format!("Total storage size: {}", human_bytes(total_size as f64)));
+
+    Ok(())
+}
+
 async fn snapshot_mode<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
     let context = manager.get_context().lock()?;
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
-    manager.message("Starting snapshot mode...");
     let mut storage = blockchain.get_storage().write().await;
-    storage.start_commit_point().await
-        .context("Error on commit point")?;
-    manager.message("Snapshot mode enabled");
+    if storage.has_snapshot().await.context("checking has commit point")? {
+        manager.message("Snapshot mode is already enabled, do you want to apply it?");
+        let apply = manager.get_prompt()
+            .ask_confirmation().await?;
+
+        storage.end_snapshot(apply).await
+            .context("End commit point")?;
+    } else {
+        manager.message("Starting snapshot mode...");
+        storage.start_snapshot().await
+            .context("Error on commit point")?;
+        manager.message("Snapshot mode enabled");
+    }
+
+    Ok(())
+}
+
+async fn block_size_dataset<S: Storage>(manager: &CommandManager, mut arguments: ArgumentManager) -> Result<(), CommandError> {
+    let output_path: String = if arguments.has_argument("output") {
+        arguments.get_value("output")?.to_string_value()?
+    } else {
+        "block_size_dataset.csv".to_string()
+    };
+
+    manager.message(format!("Creating file {}...", output_path));
+    let mut file = File::create(&output_path).context("Error while creating file")?;
+    file.write(b"topoheight,block_size,block_size_ema,base_fee\n")
+        .context("Error while writing header to file")?;
+
+    let context = manager.get_context().lock()?;
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+
+    manager.message("Creating block size dataset...");
+    let storage = blockchain.get_storage().read().await;
+    let chain_cache = storage.chain_cache().await;
+
+    for topoheight in (0..=chain_cache.topoheight).rev() {
+        let hash_at_topo = storage.get_hash_at_topo_height(topoheight).await
+            .context("Fetching hash at topo")?;
+        let tips = storage.get_past_blocks_for_block_hash(&hash_at_topo).await
+            .context("Fetching past blocks")?;
+        let block_size = storage.get_block_size(&hash_at_topo).await
+            .context("Fetching block size")?;
+        let (base_fee, _) = blockchain.get_required_base_fee(&*storage, tips.iter()).await
+            .context("Calculating base fee")?;
+        let block_size_ema = storage.get_block_size_ema(&hash_at_topo).await
+            .context("Fetching new block size ema")?;
+
+        // Write to file
+        file.write(format!("{},{},{},{}\n", topoheight, block_size, block_size_ema, base_fee).as_bytes())
+            .context("Error while writing to file")?;
+    }
+
+    manager.message("Flushing file...");
+    file.flush().context("Error while flushing file")?;
+    manager.message(format!("Dataset written to {}", output_path));
+
+    Ok(())
+}
+
+async fn circulating_supply_dataset<S: Storage>(manager: &CommandManager, mut arguments: ArgumentManager) -> Result<(), CommandError> {
+    let output_path = if arguments.has_argument("output") {
+        arguments.get_value("output")?.to_string_value()?
+    } else {
+        "circulating_supply_dataset.csv".to_string()
+    };
+
+    let asset = if arguments.has_argument("asset") {
+        arguments.get_value("asset")?.to_hash()?
+    } else {
+        XELIS_ASSET
+    };
+
+    manager.message(format!("Creating file {}...", output_path));
+    let mut file = File::create(&output_path).context("Error while creating file")?;
+    file.write(b"topoheight,circulating_supply\n")
+        .context("Error while writing header to file")?;
+
+    let context = manager.get_context().lock()?;
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+
+    manager.message("Creating circulating supply dataset...");
+    let storage = blockchain.get_storage().read().await;
+    let chain_cache = storage.chain_cache().await;
+
+    let mut prev_topo = Some(chain_cache.topoheight);
+
+    while let Some(topo) = prev_topo.take() {
+        let version = storage.get_circulating_supply_for_asset_at_exact_topoheight(&asset, topo).await
+                .context("Error while retrieving circulating supply")?;
+
+        // Write to file
+        file.write(format!("{},{}\n", topo, version.get()).as_bytes())
+            .context("Error while writing to file")?;
+
+        prev_topo = version.get_previous_topoheight();
+    }
+
+    manager.message("Flushing file...");
+    file.flush().context("Error while flushing file")?;
+    manager.message(format!("Dataset written to {}", output_path));
 
     Ok(())
 }
@@ -1158,30 +1381,53 @@ async fn status<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Res
 
     debug!("Retrieving blockchain status");
 
-    let height = blockchain.get_height();
-    let topoheight = blockchain.get_topo_height();
-    let stableheight = blockchain.get_stable_height();
-    let stable_topoheight = blockchain.get_stable_topoheight();
-    let difficulty = blockchain.get_difficulty().await;
 
     debug!("Retrieving blockchain info from storage");
     let storage = blockchain.get_storage().read().await;
     debug!("storage read lock acquired");
+    let chain_cache = storage.chain_cache().await;
+
+    let height = chain_cache.height;
+    let topoheight = chain_cache.topoheight;
+    let stableheight = chain_cache.stable_height;
+    let stable_topoheight = chain_cache.stable_topoheight;
+    let difficulty = chain_cache.difficulty;
 
     let tips = storage.get_tips().await.context("Error while retrieving tips")?;
-    let top_block_hash = blockchain.get_top_block_hash_for_storage(&storage).await.context("Error while retrieving top block hash")?;
-    let avg_block_time = blockchain.get_average_block_time::<S>(&storage).await.context("Error while retrieving average block time")?;
-    let emitted_supply = storage.get_supply_at_topo_height(topoheight).await.context("Error while retrieving supply")?;
-    let burned_supply = storage.get_burned_supply_at_topo_height(topoheight).await.context("Error while retrieving burned supply")?;
-    let accounts_count = storage.count_accounts().await.context("Error while counting accounts")?;
-    let transactions_count = storage.count_transactions().await.context("Error while counting transactions")?;
-    let blocks_count = storage.count_blocks().await.context("Error while counting blocks")?;
-    let assets = storage.count_assets().await.context("Error while counting assets")?;
-    let contracts = storage.count_contracts().await.context("Error while counting contracts")?;
-    let pruned_topoheight = storage.get_pruned_topoheight().await.context("Error while retrieving pruned topoheight")?;
-    let snapshot = storage.has_commit_point().await.context("Error while checking snapshot")?;
+    let top_block_hash = blockchain.get_top_block_hash_for_storage(&storage).await
+        .context("Error while retrieving top block hash")?;
+    let avg_block_time = blockchain.get_average_block_time::<S>(&storage).await
+        .context("Error while retrieving average block time")?;
+    let avg_block_size = blockchain.get_average_block_size::<S>(&storage).await
+        .context("Error while retrieving average block size")?;
+    let (required_base_fee, ema_block_size) = blockchain.get_required_base_fee::<S>(&storage, tips.iter()).await
+        .context("Error while calculating required base fee")?;
+    let emitted_supply = storage.get_supply_at_topo_height(topoheight).await
+        .context("Error while retrieving supply")?;
+    let circulating_supply = storage.get_circulating_supply_for_asset_at_maximum_topoheight(&XELIS_ASSET, topoheight).await
+        .context("Error while retrieving burned supply")?
+        .map(|(_, v)| v.take())
+        .unwrap_or(0);
+    let accounts_count = storage.count_accounts().await
+        .context("Error while counting accounts")?;
+    let transactions_count = storage.count_transactions().await
+        .context("Error while counting transactions")?;
+    let blocks_count = storage.count_blocks().await
+        .context("Error while counting blocks")?;
+    let assets = storage.count_assets().await
+        .context("Error while counting assets")?;
+    let contracts = storage.count_contracts().await
+        .context("Error while counting contracts")?;
+    let pruned_topoheight = storage.get_pruned_topoheight().await
+        .context("Error while retrieving pruned topoheight")?;
+    let snapshot = storage.has_snapshot().await
+        .context("Error while checking snapshot")?;
     let version = get_version_at_height(blockchain.get_network(), height);
     let block_time_target = get_block_time_target_for_version(version);
+    let size_on_disk = storage.get_size_on_disk().await
+        .context("Error while retrieving size on disk")?;
+
+    let burned_supply = emitted_supply - circulating_supply;
 
     manager.message(format!("Height: {}", height));
     manager.message(format!("Stable Height: {}", stableheight));
@@ -1190,16 +1436,20 @@ async fn status<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Res
     manager.message(format!("Difficulty: {}", format_difficulty(difficulty)));
     manager.message(format!("Network Hashrate: {}", format_hashrate((difficulty / (block_time_target / MILLIS_PER_SECOND)).into())));
     manager.message(format!("Top block hash: {}", top_block_hash));
+    manager.message(format!("Block Size EMA: {}", human_bytes(ema_block_size as f64)));
+    manager.message(format!("Average Block Size: {}", human_bytes(avg_block_size as f64)));
     manager.message(format!("Average Block Time: {:.2}s", avg_block_time as f64 / MILLIS_PER_SECOND as f64));
     manager.message(format!("Target Block Time: {:.2}s", block_time_target as f64 / MILLIS_PER_SECOND as f64));
+    manager.message(format!("Required base fee: {} XELIS / min: {} XELIS", format_xelis(required_base_fee), format_xelis(FEE_PER_KB)));
     manager.message(format!("Emitted Supply: {} XELIS", format_xelis(emitted_supply)));
     manager.message(format!("Burned Supply: {} XELIS", format_xelis(burned_supply)));
-    manager.message(format!("Circulating Supply: {} XELIS", format_xelis(emitted_supply - burned_supply)));
+    manager.message(format!("Circulating Supply: {} XELIS", format_xelis(circulating_supply)));
     manager.message(format!("Current Block Reward: {} XELIS", format_xelis(get_block_reward(emitted_supply, block_time_target))));
     manager.message(format!("Accounts/Transactions/Blocks/Assets/Contracts: {}/{}/{}/{}/{}", accounts_count, transactions_count, blocks_count, assets, contracts));
     manager.message(format!("Block Version: {}", version));
     manager.message(format!("POW Algorithm: {}", get_pow_algorithm_for_version(version)));
     manager.message(format!("Snapshot: {}", snapshot));
+    manager.message(format!("Size on Disk: {}", human_bytes(size_on_disk as f64)));
 
     manager.message(format!("Tips ({}):", tips.len()));
     for hash in tips {
@@ -1297,7 +1547,7 @@ async fn clear_caches<S: Storage>(manager: &CommandManager, _: ArgumentManager) 
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let mut storage = blockchain.get_storage().write().await;
 
-    storage.clear_caches().await.context("Error while clearing caches")?;
+    storage.clear_objects_cache().await.context("Error while clearing caches")?;
     manager.message("Caches cleared");
     Ok(())
 }
@@ -1383,7 +1633,8 @@ async fn difficulty_dataset<S: Storage>(manager: &CommandManager, mut arguments:
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
 
     manager.message("Creating difficulty dataset...");
-    for topoheight in 0..=blockchain.get_topo_height() {
+    let topoheight = blockchain.get_topo_height().await;
+    for topoheight in 0..=topoheight {
         // Retrieve block hash and header
         let (solve_time, difficulty, version, timestamp) = {
             let storage = blockchain.get_storage().read().await;
@@ -1452,7 +1703,7 @@ async fn mine_block<S: Storage>(manager: &CommandManager, mut arguments: Argumen
         let block_hash = block.hash();
         manager.message(format!("Block mined: {}", block_hash));
 
-        blockchain.add_new_block(block, Some(Immutable::Owned(block_hash)), BroadcastOption::All, true).await
+        blockchain.add_new_block(block, PreVerifyBlock::Hash(Immutable::Owned(block_hash)), BroadcastOption::All, true).await
             .context("Error while adding block to chain")?;
     }
     Ok(())

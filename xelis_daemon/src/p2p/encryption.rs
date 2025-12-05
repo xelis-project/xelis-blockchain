@@ -1,6 +1,5 @@
 use chacha20poly1305::{
     aead::{
-        rand_core::OsError,
         AeadInOut,
         Buffer
     },
@@ -29,13 +28,16 @@ struct CipherState {
     nonce_buffer: [u8; 12],
 }
 
+// Encryption struct to handle encryption/decryption of packets
+// It uses ChaCha20-Poly1305 AEAD cipher for encryption/decryption
+// It also uses Snappy compression to compress/decompress packets if enabled
 pub struct Encryption {
     // Cipher using our key to encrypt packets
     our_cipher: Mutex<Option<CipherState>>,
     // Cipher using the peer key to decrypt packets
     peer_cipher: Mutex<Option<CipherState>>,
     // Is encryption mode ready
-    ready: bool
+    ready: bool,
 }
 
 pub enum CipherSide {
@@ -72,25 +74,28 @@ pub enum EncryptionError {
     DecryptError,
     #[error("Not supported")]
     NotSupported,
-    #[error(transparent)]
-    RngError(#[from] OsError)
+    #[error("Random generator error")]
+    Rng,
 }
 
 impl Encryption {
+    #[inline]
     pub fn new() -> Self {
         Self {
             our_cipher: Mutex::new(None),
             peer_cipher: Mutex::new(None),
-            ready: false
+            ready: false,
         }
     }
 
     // Enable encryption
+    #[inline]
     pub fn mark_ready(&mut self) {
         self.ready = true;
     }
 
     // Is encryption mode ready
+    #[inline]
     pub fn is_ready(&self) -> bool {
         self.ready
     }
@@ -109,15 +114,15 @@ impl Encryption {
     pub fn generate_key(&self) -> Result<EncryptionKey, EncryptionError> {
         ChaCha20Poly1305::generate_key()
             .map(Into::into)
-            .map_err(EncryptionError::from)
+            .map_err(|_| EncryptionError::Rng)
     }
 
     // Encrypt a packet using the shared symetric key
     pub async fn encrypt_packet(&self, input: &mut impl Buffer) -> Result<(), EncryptionError> {
-        trace!("Encrypting packet");
+        trace!("Encrypting packet with length {}", input.len());
         let mut lock = self.our_cipher.lock().await;
-
         trace!("our cipher locked");
+
         let cipher_state = lock.as_mut()
             .ok_or(EncryptionError::WriteNotReady)?;
 
@@ -136,10 +141,10 @@ impl Encryption {
 
     // Decrypt a packet using the shared symetric key
     pub async fn decrypt_packet(&self, buf: &mut impl Buffer) -> Result<(), EncryptionError> {
-        trace!("Decrypting packet");
+        trace!("Decrypting packet with length {}", buf.len());
         let mut lock = self.peer_cipher.lock().await;
-
         trace!("peer cipher locked");
+
         let cipher_state = lock.as_mut()
             .ok_or(EncryptionError::ReadNotReady)?;
 
@@ -153,11 +158,15 @@ impl Encryption {
         // Increment the nonce so we don't use the same nonce twice
         cipher_state.nonce += 1;
 
+        trace!("Packet decrypted with length {}", buf.len());
+
         Ok(())
     }
 
     fn create_or_update_state(state: &mut Option<CipherState>, key: EncryptionKey) -> Result<(), EncryptionError> {
-        let cipher = ChaCha20Poly1305::new_from_slice(&key).map_err(|_| EncryptionError::InvalidKey)?;
+        let cipher = ChaCha20Poly1305::new_from_slice(&key)
+            .map_err(|_| EncryptionError::InvalidKey)?;
+
         if let Some(cipher_state) = state.as_mut() {
             cipher_state.cipher = cipher;
             cipher_state.nonce = 0;
@@ -184,5 +193,47 @@ impl Encryption {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bytes::BytesMut;
+    use rand::RngCore;
+
+    #[tokio::test]
+    async fn test_encryption_decryption() {
+        let encryption = Encryption::new();
+
+        let key = encryption.generate_key().unwrap();
+        encryption.rotate_key(key, CipherSide::Both).await.unwrap();
+
+        let mut data = BytesMut::from(&b"Hello, world!"[..]);
+
+        encryption.encrypt_packet(&mut data).await.unwrap();
+        encryption.decrypt_packet(&mut data).await.unwrap();
+
+        assert_eq!(&data[..], b"Hello, world!");
+    }
+
+    #[tokio::test]
+    async fn test_encryption_decryption_large_data() {
+        let encryption = Encryption::new();
+
+        let key = encryption.generate_key().unwrap();
+        encryption.rotate_key(key, CipherSide::Both).await.unwrap();
+
+        // Create a large random data buffer
+        let mut rng = rand::thread_rng();
+        let mut original_data = vec![0u8; 10 * 1024]; // 10 KB of random data
+        rng.fill_bytes(&mut original_data);
+
+        let mut data = BytesMut::from(&original_data[..]);
+
+        encryption.encrypt_packet(&mut data).await.unwrap();
+        encryption.decrypt_packet(&mut data).await.unwrap();
+
+        assert_eq!(&data[..], &original_data[..]);
     }
 }

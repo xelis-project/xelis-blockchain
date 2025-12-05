@@ -385,7 +385,7 @@ impl Prompt {
     }
 
     // Read value from the user and check if it is a valid value (in lower case only)
-    pub async fn read_valid_str_value(&self, mut prompt: String, valid_values: Vec<&str>) -> Result<String, PromptError> {
+    pub async fn read_valid_str_value(&self, mut prompt: String, valid_values: &[&str]) -> Result<String, PromptError> {
         let original_prompt = prompt.clone();
         loop {
             let input = self.read_input(prompt, false).await?.to_lowercase();
@@ -397,10 +397,11 @@ impl Prompt {
         }
     }
 
+    // Ask the user for a confirmation (Y/N)
     pub async fn ask_confirmation(&self) -> Result<bool, PromptError> {
         let res = self.read_valid_str_value(
             self.colorize_string(Color::Green, "Confirm ? (Y/N): "),
-            vec!["y", "n"]
+            &["y", "n"]
         ).await?;
         Ok(res == "y")
     }

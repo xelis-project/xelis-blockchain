@@ -48,7 +48,12 @@ use xelis_common::{
 };
 use crate::{
     config::{DEV_PUBLIC_KEY, STABLE_LIMIT},
-    core::{blockchain::{Blockchain, BroadcastOption},
+    core::{
+        blockchain::{
+            Blockchain,
+            BroadcastOption,
+            PreVerifyBlock,
+        },
         hard_fork::get_pow_algorithm_for_version,
         storage::Storage
     }
@@ -224,7 +229,7 @@ impl<S: Storage> GetWorkServer<S> {
 
         // get the algorithm for the current version
         let algorithm = get_pow_algorithm_for_version(version);
-        let topoheight = self.blockchain.get_topo_height();
+        let topoheight = self.blockchain.get_topo_height().await;
 
         debug!("Sending job to new miner");
         session.send_json(Response::NewJob(GetMinerWorkResult { algorithm, miner_work: job.to_hex(), height, topoheight, difficulty })).await
@@ -262,7 +267,7 @@ impl<S: Storage> GetWorkServer<S> {
         self.last_notify.store(get_current_time_in_millis(), Ordering::SeqCst);
         self.is_job_dirty.store(false, Ordering::SeqCst);
         debug!("Notify all miners for a new job");
-        let (header, difficulty) = {
+        let (header, difficulty, topoheight) = {
             debug!("locking storage for new job");
             let storage = self.blockchain.get_storage().read().await;
             debug!("storage read acquired for new job");
@@ -271,7 +276,13 @@ impl<S: Storage> GetWorkServer<S> {
                 .context("Error while retrieving block template when notifying new job")?;
             let (difficulty, _) = self.blockchain.get_difficulty_at_tips(&*storage, header.get_tips().iter()).await
                 .context("Error while retrieving difficulty at tips when notifying new job")?;
-            (header, difficulty)
+
+            // Also send the node topoheight to miners
+            // This is for visual purposes only
+            let chain_cache = storage.chain_cache().await;
+            let topoheight = chain_cache.topoheight;
+
+            (header, difficulty, topoheight)
         };
 
         let job = MinerWork::new(header.get_work_hash(), header.timestamp);
@@ -280,9 +291,6 @@ impl<S: Storage> GetWorkServer<S> {
 
         // get the algorithm for the current version
         let algorithm = get_pow_algorithm_for_version(version);
-        // Also send the node topoheight to miners
-        // This is for visual purposes only
-        let topoheight = self.blockchain.get_topo_height();
 
         if is_event_tracked {
             debug!("Notifying RPC clients for new block template");
@@ -350,9 +358,6 @@ impl<S: Storage> GetWorkServer<S> {
     // when it's found, we merge the miner job inside the block header
     async fn accept_miner_job(&self, job: MinerWork<'_>) -> Result<BlockResult, InternalRpcError> {
         trace!("accept miner job");
-        if job.get_miner().is_none() {
-            return Err(InternalRpcError::InvalidJSONRequest);
-        }
 
         let mut miner_header;
         {
@@ -360,7 +365,9 @@ impl<S: Storage> GetWorkServer<S> {
             if let Some((header, _)) = mining_jobs.peek(job.get_header_work_hash()) {
                 // job is found in cache, clone it and put miner data inside
                 miner_header = header.clone();
-                miner_header.apply_miner_work(job);
+                if !miner_header.apply_miner_work(job) {
+                    return Err(InternalRpcError::InvalidJSONRequest);
+                }
             } else {
                 // really old job, or miner send invalid job
                 debug!("Job {} was not found in cache", job.get_header_work_hash());
@@ -368,10 +375,10 @@ impl<S: Storage> GetWorkServer<S> {
             };
         }
 
-        let block = self.blockchain.build_block_from_header(Immutable::Owned(miner_header)).await?;
+        let block = self.blockchain.build_block_from_header(miner_header).await?;
         let block_hash = Arc::new(block.hash());
 
-        Ok(match self.blockchain.add_new_block(block, Some(Immutable::Arc(block_hash.clone())), BroadcastOption::All, true).await {
+        Ok(match self.blockchain.add_new_block(block, PreVerifyBlock::Hash(Immutable::Arc(block_hash.clone())), BroadcastOption::All, true).await {
             Ok(_) => BlockResult::Accepted(block_hash),
             Err(e) => {
                 debug!("Error while accepting miner block: {}", e);

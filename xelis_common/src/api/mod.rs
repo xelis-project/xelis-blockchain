@@ -4,11 +4,13 @@ pub mod daemon;
 pub mod query;
 
 use std::borrow::Cow;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use bulletproofs::RangeProof;
 use crate::{
     account::Nonce,
+    contract::{ContractLog, ScheduledExecutionKindLog},
     crypto::{
         elgamal::{CompressedCommitment, CompressedHandle},
         proofs::CiphertextValidityProof,
@@ -16,14 +18,12 @@ use crate::{
         Hash,
         Signature
     },
-    serializer::Serializer,
-    contract::ContractOutput,
     transaction::{
         extra_data::UnknownExtraDataFormat,
         multisig::MultiSig,
         BurnPayload,
-        InvokeContractPayload,
         DeployContractPayload,
+        InvokeContractPayload,
         MultiSigPayload,
         Reference,
         SourceCommitment,
@@ -35,26 +35,26 @@ use crate::{
 };
 pub use data::*;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 pub struct SubscribeParams<'a, E: Clone> {
     pub notify: Cow<'a, E>
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 pub struct EventResult<'a, E: Clone> {
     pub event: Cow<'a, E>,
     #[serde(flatten)]
     pub value: Value
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 pub struct DataHash<'a, T: Clone> {
     pub hash: Cow<'a, Hash>,
     #[serde(flatten)]
     pub data: Cow<'a, T>
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct RPCTransferPayload<'a> {
     pub asset: Cow<'a, Hash>,
     pub destination: Address,
@@ -79,7 +79,7 @@ impl<'a> From<RPCTransferPayload<'a>> for TransferPayload {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum RPCTransactionType<'a> {
     Transfers(Vec<RPCTransferPayload<'a>>),
@@ -133,7 +133,7 @@ impl From<RPCTransactionType<'_>> for TransactionType {
 // We use this one for serde (de)serialization
 // So we have addresses displayed as strings and not Public Key as bytes
 // This is much more easier for developers relying on the API
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, JsonSchema)]
 pub struct RPCTransaction<'a> {
     pub hash: Cow<'a, Hash>,
     /// Version of the transaction
@@ -144,12 +144,15 @@ pub struct RPCTransaction<'a> {
     pub data: RPCTransactionType<'a>,
     /// Fees in XELIS
     pub fee: u64,
+    // Maximum fee allowed to be paid
+    pub fee_limit: u64,
     /// nonce must be equal to the one on chain account
     /// used to prevent replay attacks and have ordered transactions
     pub nonce: Nonce,
     /// We have one source commitment and equality proof per asset used in the tx.
     pub source_commitments: Cow<'a, Vec<SourceCommitment>>,
     /// The range proof is aggregated across all transfers and across all assets.
+    #[schemars(with = "Vec<u8>", description = "A representation of the range proof in bytes")]
     pub range_proof: Cow<'a, RangeProof>,
     /// Reference at which block the transaction was built
     pub reference: Cow<'a, Reference>,
@@ -162,20 +165,21 @@ pub struct RPCTransaction<'a> {
 }
 
 impl<'a> RPCTransaction<'a> {
-    pub fn from_tx(tx: &'a Transaction, hash: &'a Hash, mainnet: bool) -> Self {
+    pub fn from_tx(tx: &'a Transaction, hash: Cow<'a, Hash>, size: usize, mainnet: bool) -> Self {
         Self {
-            hash: Cow::Borrowed(hash),
+            hash,
             version: tx.get_version(),
             source: tx.get_source().as_address(mainnet),
             data: RPCTransactionType::from_type(tx.get_data(), mainnet),
             fee: tx.get_fee(),
+            fee_limit: tx.get_fee_limit(),
             nonce: tx.get_nonce(),
             source_commitments: Cow::Borrowed(tx.get_source_commitments()),
             range_proof: Cow::Borrowed(tx.get_range_proof()),
             reference: Cow::Borrowed(tx.get_reference()),
             multisig: Cow::Borrowed(tx.get_multisig()),
             signature: Cow::Borrowed(tx.get_signature()),
-            size: tx.size()
+            size
         }
     }
 }
@@ -187,6 +191,7 @@ impl<'a> From<RPCTransaction<'a>> for Transaction {
             tx.source.to_public_key(),
             tx.data.into(),
             tx.fee,
+            tx.fee_limit,
             tx.nonce,
             tx.source_commitments.into_owned(),
             tx.range_proof.into_owned(),
@@ -201,13 +206,13 @@ impl<'a> From<RPCTransaction<'a>> for Transaction {
 // and not have to specify the lifetime
 pub type TransactionResponse = RPCTransaction<'static>;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 pub struct SplitAddressParams {
     // address which must be in integrated form
     pub address: Address
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 pub struct SplitAddressResult {
     // Normal address
     pub address: Address,
@@ -217,80 +222,180 @@ pub struct SplitAddressResult {
     pub size: usize
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum RPCContractOutput<'a> {
+#[serde(tag = "type", content = "value")]
+pub enum RPCContractLog<'a> {
     RefundGas {
         amount: u64
     },
     Transfer {
+        contract: Cow<'a, Hash>,
         amount: u64,
         asset: Cow<'a, Hash>,
         destination: Cow<'a, Address>
     },
+    TransferContract {
+        // Contract from which the asset is transferred
+        contract: Cow<'a, Hash>,
+        amount: u64,
+        asset: Cow<'a, Hash>,
+        // Destination contract
+        destination: Cow<'a, Hash>
+    },
     Mint {
+        // Contract minter
+        contract: Cow<'a, Hash>,
         asset: Cow<'a, Hash>,
         amount: u64
     },
     Burn {
+        // Contract burner
+        contract: Cow<'a, Hash>,
         asset: Cow<'a, Hash>,
         amount: u64
     },
     NewAsset {
+        // Contract creator
+        contract: Cow<'a, Hash>,
         asset: Cow<'a, Hash>
     },
     ExitCode(Option<u64>),
-    RefundDeposits
+    RefundDeposits,
+    GasInjection {
+        // Contract from which gas is injected
+        contract: Cow<'a, Hash>,
+        amount: u64,
+    },
+    ScheduledExecution {
+        contract: Cow<'a, Hash>,
+        hash: Cow<'a, Hash>,
+        kind: Cow<'a, ScheduledExecutionKindLog>,
+    }
 }
 
-impl<'a> RPCContractOutput<'a> {
-    pub fn from_output(output: &'a ContractOutput, mainnet: bool) -> Self {
+impl<'a> RPCContractLog<'a> {
+    pub fn from_owned(output: ContractLog, mainnet: bool) -> Self {
         match output {
-            ContractOutput::RefundGas { amount } => RPCContractOutput::RefundGas { amount: *amount },
-            ContractOutput::Transfer { amount, asset, destination } => RPCContractOutput::Transfer {
+            ContractLog::RefundGas { amount } => RPCContractLog::RefundGas { amount: amount },
+            ContractLog::Transfer { contract, amount, asset, destination } => RPCContractLog::Transfer {
+                contract: Cow::Owned(contract),
+                amount,
+                asset: Cow::Owned(asset),
+                destination: Cow::Owned(destination.as_address(mainnet))
+            },
+            ContractLog::TransferContract { contract, amount, asset, destination } => RPCContractLog::TransferContract {
+                contract: Cow::Owned(contract),
+                amount,
+                asset: Cow::Owned(asset),
+                destination: Cow::Owned(destination)
+            },
+            ContractLog::Mint { contract, asset, amount } => RPCContractLog::Mint {
+                contract: Cow::Owned(contract),
+                asset: Cow::Owned(asset),
+                amount
+            },
+            ContractLog::Burn { contract, asset, amount } => RPCContractLog::Burn {
+                contract: Cow::Owned(contract),
+                asset: Cow::Owned(asset),
+                amount
+            },
+            ContractLog::NewAsset { contract, asset } => RPCContractLog::NewAsset {
+                contract: Cow::Owned(contract),
+                asset: Cow::Owned(asset)
+            },
+            ContractLog::ExitCode(code) => RPCContractLog::ExitCode(code.clone()),
+            ContractLog::RefundDeposits => RPCContractLog::RefundDeposits,
+            ContractLog::GasInjection { contract, amount } => RPCContractLog::GasInjection { contract: Cow::Owned(contract), amount },
+            ContractLog::ScheduledExecution { contract, hash, kind } => RPCContractLog::ScheduledExecution {
+                contract: Cow::Owned(contract),
+                hash: Cow::Owned(hash),
+                kind: Cow::Owned(kind),
+            },
+        }
+    }
+
+    pub fn from_log(output: &'a ContractLog, mainnet: bool) -> Self {
+        match output {
+            ContractLog::RefundGas { amount } => RPCContractLog::RefundGas { amount: *amount },
+            ContractLog::Transfer { contract, amount, asset, destination } => RPCContractLog::Transfer {
+                contract: Cow::Borrowed(contract),
                 amount: *amount,
                 asset: Cow::Borrowed(asset),
                 destination: Cow::Owned(destination.as_address(mainnet))
             },
-            ContractOutput::Mint { asset, amount } => RPCContractOutput::Mint {
+            ContractLog::TransferContract { contract, amount, asset, destination } => RPCContractLog::TransferContract {
+                contract: Cow::Borrowed(contract),
+                amount: *amount,
+                asset: Cow::Borrowed(asset),
+                destination: Cow::Borrowed(destination)
+            },
+            ContractLog::Mint { contract, asset, amount } => RPCContractLog::Mint {
+                contract: Cow::Borrowed(contract),
                 asset: Cow::Borrowed(asset),
                 amount: *amount
             },
-            ContractOutput::Burn { asset, amount } => RPCContractOutput::Burn {
+            ContractLog::Burn { contract, asset, amount } => RPCContractLog::Burn {
+                contract: Cow::Borrowed(contract),
                 asset: Cow::Borrowed(asset),
                 amount: *amount
             },
-            ContractOutput::NewAsset { asset } => RPCContractOutput::NewAsset {
+            ContractLog::NewAsset { contract, asset } => RPCContractLog::NewAsset {
+                contract: Cow::Borrowed(contract),
                 asset: Cow::Borrowed(asset)
             },
-            ContractOutput::ExitCode(code) => RPCContractOutput::ExitCode(code.clone()),
-            ContractOutput::RefundDeposits => RPCContractOutput::RefundDeposits,
+            ContractLog::ExitCode(code) => RPCContractLog::ExitCode(code.clone()),
+            ContractLog::RefundDeposits => RPCContractLog::RefundDeposits,
+            ContractLog::GasInjection { contract, amount } => RPCContractLog::GasInjection { contract: Cow::Borrowed(contract), amount: *amount },
+            ContractLog::ScheduledExecution { contract, hash, kind } => RPCContractLog::ScheduledExecution {
+                contract: Cow::Borrowed(contract),
+                hash: Cow::Borrowed(hash),
+                kind: Cow::Borrowed(kind)
+            },
         }
     }
 }
-
-impl<'a> From<RPCContractOutput<'a>> for ContractOutput {
-    fn from(output: RPCContractOutput<'a>) -> Self {
+impl<'a> From<RPCContractLog<'a>> for ContractLog {
+    fn from(output: RPCContractLog<'a>) -> Self {
         match output {
-            RPCContractOutput::RefundGas { amount } => ContractOutput::RefundGas { amount },
-            RPCContractOutput::Transfer { amount, asset, destination } => ContractOutput::Transfer {
+            RPCContractLog::RefundGas { amount } => ContractLog::RefundGas { amount },
+            RPCContractLog::Transfer { contract, amount, asset, destination } => ContractLog::Transfer {
+                contract: contract.into_owned(),
                 amount,
                 asset: asset.into_owned(),
                 destination: destination.into_owned().to_public_key()
             },
-            RPCContractOutput::Mint { asset, amount } => ContractOutput::Mint {
+            RPCContractLog::TransferContract { contract, amount, asset, destination } => ContractLog::TransferContract {
+                contract: contract.into_owned(),
+                amount,
+                asset: asset.into_owned(),
+                destination: destination.into_owned()
+            },
+            RPCContractLog::Mint { contract, asset, amount } => ContractLog::Mint {
+                contract: contract.into_owned(),
                 asset: asset.into_owned(),
                 amount
             },
-            RPCContractOutput::Burn { asset, amount } => ContractOutput::Burn {
+            RPCContractLog::Burn { contract, asset, amount } => ContractLog::Burn {
+                contract: contract.into_owned(),
                 asset: asset.into_owned(),
                 amount
             },
-            RPCContractOutput::NewAsset { asset } => ContractOutput::NewAsset {
+            RPCContractLog::NewAsset { contract, asset } => ContractLog::NewAsset {
+                contract: contract.into_owned(),
                 asset: asset.into_owned()
             },
-            RPCContractOutput::ExitCode(code) => ContractOutput::ExitCode(code),
-            RPCContractOutput::RefundDeposits => ContractOutput::RefundDeposits,
+            RPCContractLog::ExitCode(code) => ContractLog::ExitCode(code),
+            RPCContractLog::RefundDeposits => ContractLog::RefundDeposits,
+            RPCContractLog::GasInjection { contract, amount } => ContractLog::GasInjection {
+                contract: contract.into_owned(),
+                amount
+            },
+            RPCContractLog::ScheduledExecution { contract, hash, kind } => ContractLog::ScheduledExecution {
+                contract: contract.into_owned(),
+                hash: hash.into_owned(),
+                kind: kind.into_owned(),
+            }
         }
     }
 }

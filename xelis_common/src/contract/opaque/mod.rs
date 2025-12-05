@@ -6,18 +6,26 @@ mod storage;
 mod asset;
 mod crypto;
 mod memory_storage;
+mod contract;
 
 use bulletproofs::RangeProof;
+use curve25519_dalek::{ristretto::CompressedRistretto, Scalar};
 use log::debug;
 use xelis_types::{
     register_opaque_json,
     impl_opaque
 };
-use xelis_vm::{tid, traits::JSON_REGISTRY, OpaqueWrapper};
+use xelis_vm::{Opaque, OpaqueWrapper, ValueError, tid, traits::JSON_REGISTRY};
 use crate::{
     account::CiphertextCache,
     block::Block,
-    crypto::{proofs::CiphertextValidityProof, Address, Hash, Signature},
+    contract::OpaqueScheduledExecution,
+    crypto::{
+        proofs::*,
+        Address,
+        Hash,
+        Signature
+    },
     serializer::*,
     transaction::Transaction
 };
@@ -31,6 +39,7 @@ pub use address::*;
 pub use asset::*;
 pub use crypto::*;
 pub use memory_storage::*;
+pub use contract::*;
 
 // Unique IDs for opaque types serialization
 pub const HASH_OPAQUE_ID: u8 = 0;
@@ -38,7 +47,13 @@ pub const ADDRESS_OPAQUE_ID: u8 = 1;
 pub const SIGNATURE_OPAQUE_ID: u8 = 2;
 pub const CIPHERTEXT_OPAQUE_ID: u8 = 3;
 pub const CIPHERTEXT_VALIDITY_PROOF_OPAQUE_ID: u8 = 4;
-pub const RANGE_PROOF_OPAQUE_ID: u8 = 5;
+pub const COMMITMENT_EQUALITY_PROOF_OPAQUE_ID: u8 = 5;
+pub const RANGE_PROOF_OPAQUE_ID: u8 = 6;
+pub const ARBITRARY_RANGE_PROOF_OPAQUE_ID: u8 = 7;
+pub const OWNERSHIP_PROOF_OPAQUE_ID: u8 = 8;
+pub const BALANCE_PROOF_OPAQUE_ID: u8 = 9;
+pub const RISTRETTO_OPAQUE_ID: u8 = 10;
+pub const SCALAR_OPAQUE_ID: u8 = 11;
 
 impl_opaque!(
     "Hash",
@@ -49,7 +64,11 @@ impl_opaque!(
 impl_opaque!(
     "Address",
     Address,
-    display,
+    ty
+);
+impl_opaque!(
+    "Address",
+    Address,
     json
 );
 impl_opaque!(
@@ -77,9 +96,44 @@ impl_opaque!(
     OpaqueMemoryStorage
 );
 impl_opaque!(
+    "OpaqueBTreeStore",
+    OpaqueBTreeStore
+);
+impl_opaque!(
+    "OpaqueBTreeCursor",
+    OpaqueBTreeCursor
+);
+impl_opaque!(
     "Asset",
     Asset
 );
+impl_opaque!(
+    "Contract",
+    OpaqueContract
+);
+impl_opaque!(
+    "OpaqueScheduledExecution",
+    OpaqueScheduledExecution
+);
+
+impl Opaque for Address {
+    fn clone_box(&self) -> Box<dyn Opaque> {
+        Box::new(self.clone())
+    }
+
+    fn display(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Address({})", self)
+    }
+
+    fn validate(&self) -> Result<(), xelis_vm::ValueError> {
+        // Only allow normal addresses
+        if !self.is_normal() {
+            return Err(ValueError::InvalidOpaqueTypeMismatch);
+        }
+
+        Ok(())
+    }
+}
 
 // Injectable context data
 tid!(ChainState<'_>);
@@ -87,6 +141,7 @@ tid!(Hash);
 tid!(Transaction);
 tid!(Block);
 
+// Register opaques types compatible with JSON serialization
 pub fn register_opaque_types() {
     debug!("Registering opaque types");
     let mut registry = JSON_REGISTRY.write().expect("Failed to lock JSON_REGISTRY");
@@ -95,7 +150,10 @@ pub fn register_opaque_types() {
     register_opaque_json!(registry, "Signature", Signature);
     register_opaque_json!(registry, "Ciphertext", CiphertextCache);
     register_opaque_json!(registry, "CiphertextValidityProof", CiphertextValidityProof);
+    register_opaque_json!(registry, "CommitmentEqualityProof", CommitmentEqProof);
     register_opaque_json!(registry, "RangeProof", RangeProofWrapper);
+    register_opaque_json!(registry, "RistrettoPoint", OpaqueRistrettoPoint);
+    register_opaque_json!(registry, "Scalar", OpaqueScalar);
 }
 
 impl Serializer for OpaqueWrapper {
@@ -110,7 +168,13 @@ impl Serializer for OpaqueWrapper {
             SIGNATURE_OPAQUE_ID => OpaqueWrapper::new(Signature::read(reader)?),
             CIPHERTEXT_OPAQUE_ID => OpaqueWrapper::new(CiphertextCache::read(reader)?),
             CIPHERTEXT_VALIDITY_PROOF_OPAQUE_ID => OpaqueWrapper::new(CiphertextValidityProof::read(reader)?),
+            COMMITMENT_EQUALITY_PROOF_OPAQUE_ID => OpaqueWrapper::new(CommitmentEqProof::read(reader)?),
             RANGE_PROOF_OPAQUE_ID => OpaqueWrapper::new(RangeProofWrapper(RangeProof::read(reader)?)),
+            ARBITRARY_RANGE_PROOF_OPAQUE_ID => OpaqueWrapper::new(ArbitraryRangeProof::read(reader)?),
+            OWNERSHIP_PROOF_OPAQUE_ID => OpaqueWrapper::new(OwnershipProof::read(reader)?),
+            BALANCE_PROOF_OPAQUE_ID => OpaqueWrapper::new(BalanceProof::read(reader)?),
+            RISTRETTO_OPAQUE_ID => OpaqueWrapper::new(OpaqueRistrettoPoint::Compressed(CompressedRistretto::read(reader)?)),
+            SCALAR_OPAQUE_ID => OpaqueWrapper::new(OpaqueScalar(Scalar::read(reader)?)),
             _ => return Err(ReaderError::InvalidValue)
         })
     }
