@@ -8,7 +8,7 @@ mod payload;
 
 use schemars::JsonSchema;
 pub use state::AccountState;
-pub use fee::{FeeHelper, FeeBuilder};
+pub use fee::*;
 pub use unsigned::UnsignedTransaction;
 
 use indexmap::{IndexMap, IndexSet};
@@ -51,7 +51,6 @@ use crate::{
     },
     contract::ContractModule,
     serializer::Serializer,
-    transaction::builder::fee::ExtraFeeMode,
     utils::calculate_tx_fee
 };
 use thiserror::Error;
