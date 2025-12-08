@@ -30,6 +30,7 @@ use super::{InternalRpcError, ApiError};
 use futures::{stream, StreamExt, TryStreamExt};
 use itertools::Itertools;
 use xelis_common::{
+    account::{VersionedBalance, VersionedNonce},
     api::{
         daemon::*,
         *
@@ -43,8 +44,8 @@ use xelis_common::{
         TopoHeight
     },
     config::{
-        MAXIMUM_SUPPLY,
         MAX_TRANSACTION_SIZE,
+        MAXIMUM_SUPPLY,
         VERSION,
         XELIS_ASSET
     },
@@ -52,6 +53,7 @@ use xelis_common::{
     contract::{
         ContractLog,
         ScheduledExecution,
+        ScheduledExecutionKindLog,
     },
     crypto::{
         Address,
@@ -70,7 +72,6 @@ use xelis_common::{
         Transaction,
         TransactionType
     },
-    account::{VersionedBalance, VersionedNonce},
     utils::format_hashrate,
     versioned_type::Versioned
 };
@@ -1275,6 +1276,52 @@ async fn get_account_history<S: Storage>(context: &Context, params: GetAccountHi
                 continue;
             }
 
+            if storage.has_contract_logs_for_caller(tx_hash).await
+                .context("Error while checking if contract logs exists")? {
+                let logs =  storage.get_contract_logs_for_caller(tx_hash).await
+                    .context("Error while retrieving contract logs")?;
+
+                for log in logs {
+                    match log {
+                        ContractLog::Transfer { destination, contract, amount, asset } if destination == *params.address.get_public_key() => {
+                                history.push(AccountHistoryEntry {
+                                    topoheight: topo,
+                                    hash: tx_hash.clone(),
+                                    history_type: AccountHistoryType::FromContract {
+                                        asset,
+                                        contract,
+                                        amount
+                                    },
+                                    block_timestamp: block_header.get_timestamp()
+                                });
+                            },
+                        ContractLog::ScheduledExecution { hash, kind: ScheduledExecutionKindLog::BlockEnd { .. }, .. } => {
+                            let execution_logs = storage.get_contract_logs_for_caller(&hash).await
+                                .context("Error while retrieving scheduled execution logs")?;
+
+                            for execution_log in execution_logs {
+                                match execution_log {
+                                    ContractLog::Transfer { destination, contract, amount, asset } if destination == *params.address.get_public_key() => {
+                                        history.push(AccountHistoryEntry {
+                                            topoheight: topo,
+                                            hash: hash.clone(),
+                                            history_type: AccountHistoryType::FromContract {
+                                                asset,
+                                                contract,
+                                                amount,
+                                            },
+                                            block_timestamp: block_header.get_timestamp()
+                                        });
+                                    }
+                                    _ => {},
+                                }
+                            }
+                        },
+                        _ => {}
+                    }
+                }
+            }
+
             trace!("Searching tx {} in block {}", tx_hash, hash);
             let tx = storage.get_transaction(tx_hash).await
                 .context(format!("Error while retrieving transaction {tx_hash} from block {hash}"))?;
@@ -1316,7 +1363,10 @@ async fn get_account_history<S: Storage>(context: &Context, params: GetAccountHi
                             history.push(AccountHistoryEntry {
                                 topoheight: topo,
                                 hash: tx_hash.clone(),
-                                history_type: AccountHistoryType::Burn { amount: payload.amount },
+                                history_type: AccountHistoryType::Burn {
+                                    asset: payload.asset.clone(),
+                                    amount: payload.amount
+                                },
                                 block_timestamp: block_header.get_timestamp()
                             });
                         }
