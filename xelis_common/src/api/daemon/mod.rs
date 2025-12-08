@@ -533,7 +533,10 @@ pub struct GetAccountHistoryParams {
 pub enum AccountHistoryType {
     DevFee { reward: u64 },
     Mining { reward: u64 },
-    Burn { amount: u64 },
+    Burn {
+        asset: Hash,
+        amount: u64,
+    },
     Outgoing {
         asset: Hash,
         to: Address
@@ -556,6 +559,14 @@ pub enum AccountHistoryType {
     DeployContract {
         deposits: Option<IndexSet<Hash>>,
     },
+    FromContract {
+        // Contract that sent the funds
+        contract: Hash,
+        // All assets received from the contract
+        asset: Hash,
+        // Amount received from the contract
+        amount: u64,
+    }
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
