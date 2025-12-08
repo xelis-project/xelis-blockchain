@@ -1289,6 +1289,7 @@ async fn get_account_history<S: Storage>(context: &Context, params: GetAccountHi
                                     topoheight: topo,
                                     hash: tx_hash.clone(),
                                     history_type: AccountHistoryType::Incoming {
+                                        asset: transfer.get_asset().clone(),
                                         from: tx.get_source().as_address(is_mainnet)
                                     },
                                     block_timestamp: block_header.get_timestamp()
@@ -1300,6 +1301,7 @@ async fn get_account_history<S: Storage>(context: &Context, params: GetAccountHi
                                     topoheight: topo,
                                     hash: tx_hash.clone(),
                                     history_type: AccountHistoryType::Outgoing {
+                                        asset: transfer.get_asset().clone(),
                                         to: transfer.get_destination().as_address(is_mainnet)
                                     },
                                     block_timestamp: block_header.get_timestamp()
@@ -1341,17 +1343,20 @@ async fn get_account_history<S: Storage>(context: &Context, params: GetAccountHi
                             history_type: AccountHistoryType::InvokeContract {
                                 contract: payload.contract.clone(),
                                 entry_id: payload.entry_id,
+                                deposits: payload.deposits.keys().cloned().collect(),
                             },
                             block_timestamp: block_header.get_timestamp()
                         });
                     }
                 },
-                TransactionType::DeployContract(_) => {
+                TransactionType::DeployContract(payload) => {
                     if is_sender {
                         history.push(AccountHistoryEntry {
                             topoheight: topo,
                             hash: tx_hash.clone(),
-                            history_type: AccountHistoryType::DeployContract,
+                            history_type: AccountHistoryType::DeployContract {
+                                deposits: payload.invoke.as_ref().map(|inv| inv.deposits.keys().cloned().collect()),
+                            },
                             block_timestamp: block_header.get_timestamp()
                         });
                     }
