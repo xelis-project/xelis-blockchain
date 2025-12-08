@@ -534,8 +534,14 @@ pub enum AccountHistoryType {
     DevFee { reward: u64 },
     Mining { reward: u64 },
     Burn { amount: u64 },
-    Outgoing { to: Address },
-    Incoming { from: Address },
+    Outgoing {
+        asset: Hash,
+        to: Address
+    },
+    Incoming {
+        asset: Hash,
+        from: Address
+    },
     MultiSig {
         participants: Vec<Address>,
         threshold: u8,
@@ -543,10 +549,13 @@ pub enum AccountHistoryType {
     InvokeContract {
         contract: Hash,
         entry_id: u16,
+        deposits: IndexSet<Hash>,
     },
     // Contract hash is already stored
     // by the parent struct
-    DeployContract,
+    DeployContract {
+        deposits: Option<IndexSet<Hash>>,
+    },
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
