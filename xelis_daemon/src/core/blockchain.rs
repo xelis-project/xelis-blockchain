@@ -1418,6 +1418,7 @@ impl<S: Storage> Blockchain<S> {
             }
 
             while let Some(TxSelectorEntry { size, hash, tx, fee_per_kb, fee_limit_per_kb }) = tx_selector.next() {
+                debug!("Considering TX {} for inclusion in block template", hash);
                 if block_size + HASH_SIZE + total_txs_size + size >= MAX_BLOCK_SIZE || block.txs_hashes.len() >= u16::MAX as usize {
                     debug!("Stopping to include new TXs in this block, final size: {}, count: {}", human_bytes::human_bytes((block_size + total_txs_size) as f64), block.txs_hashes.len());
                     break;
