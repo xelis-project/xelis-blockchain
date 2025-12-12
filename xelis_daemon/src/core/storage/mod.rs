@@ -69,7 +69,17 @@ pub trait Storage:
             let hash = self.get_hash_at_topo_height(lowest_topo).await?;
             let block_height = self.get_height_for_block_hash(&hash).await?;
             let blocks_at_height = self.get_blocks_at_height(block_height).await?;
-            if blocks_at_height.len() == 1 {
+            let mut ordered_blocks = 0;
+            for block_hash in blocks_at_height.iter() {
+                if self.is_block_topological_ordered(block_hash).await? {
+                    ordered_blocks += 1;
+                    if ordered_blocks > 1 {
+                        break;
+                    }
+                }
+            }
+
+            if ordered_blocks == 1 {
                 debug!("Sync block found at topoheight {}", lowest_topo);
                 break;
             } else {
