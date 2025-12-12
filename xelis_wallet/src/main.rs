@@ -8,7 +8,7 @@ use std::{
 };
 use anyhow::{Result, Context};
 use indexmap::{IndexMap, IndexSet};
-use log::{error, info};
+use log::{error, debug, info};
 use clap::Parser;
 use xelis_common::{
     async_handler,
@@ -199,16 +199,19 @@ async fn main() -> Result<()> {
         register_default_commands(&command_manager).await?;
     }
 
+    debug!("Starting prompt loop");
     if let Err(e) = prompt.start(Duration::from_millis(1000), Box::new(async_handler!(prompt_message_builder)), Some(&command_manager)).await {
         error!("Error while running prompt: {:#}", e);
     }
 
+    debug!("Prompt loop ended, closing wallet if opened");
     if let Ok(context) = command_manager.get_context().lock() {
         if let Ok(wallet) = context.get::<Arc<Wallet>>() {
             wallet.close().await;
         }
     }
 
+    debug!("Wallet closed, exiting");
     Ok(())
 }
 
