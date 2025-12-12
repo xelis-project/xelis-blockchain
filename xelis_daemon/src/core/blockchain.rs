@@ -1410,6 +1410,7 @@ impl<S: Storage> Blockchain<S> {
                     let tx = storage.get_transaction(&hash).await?
                         .into_arc();
 
+                    debug!("Including orphaned TX {} from tips for source {}", hash, tx.get_source().as_address(self.network.is_mainnet()));
                     let source = tx.get_source();
                     grouped_orphaned_txs.entry(source.clone())
                         .or_insert_with(Vec::new)
@@ -1450,17 +1451,18 @@ impl<S: Storage> Blockchain<S> {
 
                 if !self.skip_block_template_txs_verification {
                     // Check if the TX is valid for this potential block
-                    trace!("Checking TX {} with nonce {}, {}", hash, tx.get_nonce(), tx.get_source().as_address(self.network.is_mainnet()));
+                    trace!("Checking TX {} with nonce {}, {}", hash, tx.get_nonce(), source.as_address(self.network.is_mainnet()));
 
                     // Verify the TX against the chain state
                     // if we have any orphaned TXs, verify them one time only
                     if let Some(orphaned_txs) = grouped_orphaned_txs.get(&source).filter(|_| processed_sources.insert(source)) {
+                        debug!("Verifying {} orphaned TXs for source {} before including TX {}", orphaned_txs.len(), source.as_address(self.network.is_mainnet()), hash);
                         if let Err(e) = Transaction::verify_batch(
                             orphaned_txs.iter(),
                             &mut chain_state,
                             &tx_cache,
                         ).await {
-                            warn!("Orphaned TXs for source {} are not valid anymore: {}", source.as_address(self.network.is_mainnet()), e);
+                            warn!("Orphaned TXs for source {} are not valid anymore: {}, in orphaned txs list: {}, processed: {}", source.as_address(self.network.is_mainnet()), e, grouped_orphaned_txs.contains_key(&source), processed_sources.contains(&source));
                             failed_sources.insert(source);
                             continue;
                         }
@@ -1488,6 +1490,7 @@ impl<S: Storage> Blockchain<S> {
 
         histogram!("xelis_block_header_template_txs_selection_ms").record(start.elapsed().as_millis() as f64);
         counter!("xelis_block_template").increment(1);
+        debug!("Block template generated with {} TXs, total size: {}", block.txs_hashes.len(), human_bytes::human_bytes((block_size + total_txs_size) as f64));
 
         Ok(block)
     }
