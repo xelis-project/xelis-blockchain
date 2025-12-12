@@ -593,9 +593,9 @@ checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 
 [[package]]
 name = "base64ct"
-version = "1.8.0"
+version = "1.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "55248b47b0caf0546f7988906588779981c43bb1bc9d0c44087278f80cdb44ba"
+checksum = "0e050f626429857a27ddccb31e0aca21356bfa709c04041aefddac081a8f068a"
 
 [[package]]
 name = "better_any"
@@ -820,9 +820,9 @@ checksum = "37b2a672a2cb129a2e41c10b1224bb368f9f37a2b16b612598138befd7b37eb5"
 
 [[package]]
 name = "cc"
-version = "1.2.48"
+version = "1.2.49"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c481bdbf0ed3b892f6f806287d72acd515b352a4ec27a208489b8c1bc839633a"
+checksum = "90583009037521a116abf44494efecd645ba48b6622457080f080b85544e2215"
 dependencies = [
  "find-msvc-tools",
  "jobserver",
@@ -2100,9 +2100,9 @@ checksum = "7aedcccd01fc5fe81e6b489c15b247b8b0690feb23304303a9e560f37efc560a"
 
 [[package]]
 name = "icu_properties"
-version = "2.1.1"
+version = "2.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e93fcd3157766c0c8da2f8cff6ce651a31f0810eaa1c51ec363ef790bbb5fb99"
+checksum = "020bfc02fe870ec3a66d93e677ccca0562506e5872c650f893269e08615d74ec"
 dependencies = [
  "icu_collections",
  "icu_locale_core",
@@ -2114,9 +2114,9 @@ dependencies = [
 
 [[package]]
 name = "icu_properties_data"
-version = "2.1.1"
+version = "2.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "02845b3647bb045f1100ecd6480ff52f34c35f82d9880e029d329c21d1054899"
+checksum = "616c294cf8d725c6afcd8f55abc17c56464ef6211f9ed59cccffe534129c77af"
 
 [[package]]
 name = "icu_provider"
@@ -3585,9 +3585,9 @@ dependencies = [
 
 [[package]]
 name = "simd-adler32"
-version = "0.3.7"
+version = "0.3.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d66dc143e6b11c1eddc06d5c423cfc97062865baf299914ab64caa38182078fe"
+checksum = "e320a6c5ad31d271ad523dcf3ad13e2767ad8b1cb8f047f75a8aeaf8da139da2"
 
 [[package]]
 name = "sketches-ddsketch"
@@ -4049,9 +4049,9 @@ dependencies = [
 
 [[package]]
 name = "toml_edit"
-version = "0.23.7"
+version = "0.23.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6485ef6d0d9b5d0ec17244ff7eb05310113c3f316f2d14200d4de56b3cb98f8d"
+checksum = "5d7cbc3b4b49633d57a0509303158ca50de80ae32c265093b24c414705807832"
 dependencies = [
  "indexmap 2.12.1",
  "toml_datetime",
@@ -4853,7 +4853,7 @@ dependencies = [
 [[package]]
 name = "xelis-ast"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#5f0fda7ea7062c1b7f29ec550b242eea19073633"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#fecf92565cbefe0c4e132883db39d89809e97302"
 dependencies = [
  "indexmap 2.12.1",
  "xelis-types",
@@ -4862,7 +4862,7 @@ dependencies = [
 [[package]]
 name = "xelis-builder"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#5f0fda7ea7062c1b7f29ec550b242eea19073633"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#fecf92565cbefe0c4e132883db39d89809e97302"
 dependencies = [
  "anyhow",
  "hex",
@@ -4877,7 +4877,7 @@ dependencies = [
 [[package]]
 name = "xelis-bytecode"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#5f0fda7ea7062c1b7f29ec550b242eea19073633"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#fecf92565cbefe0c4e132883db39d89809e97302"
 dependencies = [
  "hex",
  "indexmap 2.12.1",
@@ -4890,7 +4890,7 @@ dependencies = [
 [[package]]
 name = "xelis-compiler"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#5f0fda7ea7062c1b7f29ec550b242eea19073633"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#fecf92565cbefe0c4e132883db39d89809e97302"
 dependencies = [
  "log",
  "thiserror 2.0.17",
@@ -4903,7 +4903,7 @@ dependencies = [
 [[package]]
 name = "xelis-environment"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#5f0fda7ea7062c1b7f29ec550b242eea19073633"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#fecf92565cbefe0c4e132883db39d89809e97302"
 dependencies = [
  "anyhow",
  "better_any",
@@ -4918,7 +4918,7 @@ dependencies = [
 [[package]]
 name = "xelis-hash"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-hash?branch=master#f78e275b3d56283cc428e7a4ffc05c85e56e9047"
+source = "git+https://github.com/xelis-project/xelis-hash?branch=master#148d3e946075eb6a43c082bc9766699248f55f5a"
 dependencies = [
  "aes 0.8.4",
  "blake3",
@@ -4931,7 +4931,7 @@ dependencies = [
 [[package]]
 name = "xelis-lexer"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#5f0fda7ea7062c1b7f29ec550b242eea19073633"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#fecf92565cbefe0c4e132883db39d89809e97302"
 dependencies = [
  "log",
  "thiserror 2.0.17",
@@ -4942,7 +4942,7 @@ dependencies = [
 [[package]]
 name = "xelis-parser"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#5f0fda7ea7062c1b7f29ec550b242eea19073633"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#fecf92565cbefe0c4e132883db39d89809e97302"
 dependencies = [
  "anyhow",
  "indexmap 2.12.1",
@@ -4958,7 +4958,7 @@ dependencies = [
 [[package]]
 name = "xelis-types"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#5f0fda7ea7062c1b7f29ec550b242eea19073633"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#fecf92565cbefe0c4e132883db39d89809e97302"
 dependencies = [
  "anyhow",
  "hex",
@@ -4974,7 +4974,7 @@ dependencies = [
 [[package]]
 name = "xelis-vm"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#5f0fda7ea7062c1b7f29ec550b242eea19073633"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#fecf92565cbefe0c4e132883db39d89809e97302"
 dependencies = [
  "anyhow",
  "futures",
@@ -4988,7 +4988,7 @@ dependencies = [
 
 [[package]]
 name = "xelis_common"
-version = "1.19.0"
+version = "1.19.1"
 dependencies = [
  "actix-rt",
  "actix-web",
@@ -5049,7 +5049,7 @@ dependencies = [
 
 [[package]]
 name = "xelis_daemon"
-version = "1.19.0"
+version = "1.19.1"
 dependencies = [
  "actix-cors",
  "actix-web",
@@ -5091,7 +5091,7 @@ dependencies = [
 
 [[package]]
 name = "xelis_miner"
-version = "1.19.0"
+version = "1.19.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -5108,7 +5108,7 @@ dependencies = [
 
 [[package]]
 name = "xelis_wallet"
-version = "1.19.0"
+version = "1.19.1"
 dependencies = [
  "actix-web",
  "actix-web-httpauth",

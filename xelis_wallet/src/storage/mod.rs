@@ -1,6 +1,9 @@
 mod backend;
 mod types;
 
+#[cfg(test)]
+mod tests;
+
 use std::{
     cmp::Ordering,
     collections::{HashMap, HashSet, VecDeque},
@@ -1103,11 +1106,19 @@ impl EncryptedStorage {
                     }
                 }
                 Ordering::Less => {
+                    // mid_topo < topoheight, search right
                     left = mid + 1;
                 }
                 Ordering::Greater => {
                     // mid_topo > topoheight
-                    result = Some(mid);
+                    // This transaction has a higher topoheight than what we're searching for.
+                    // If no exact match exists, this could be the answer (first TX with topo >= search value).
+                    // Only update result if we don't have one yet, or if this is closer (smaller index).
+                    result = match result {
+                        None => Some(mid),
+                        Some(prev) if mid < prev => Some(mid),
+                        _ => result
+                    };
                     if mid == 0 {
                         break;
                     }
@@ -1466,9 +1477,9 @@ impl EncryptedStorage {
         txs_with_topoheight.sort_by_key(|(topoheight, _)| *topoheight);
 
         // Rewrite the transactions_indexes tree from start_id onward
-        // We write it in the reverse order to keep the latest topoheight at the end
+        // Write in ascending order by topoheight (lowest topoheight first)
         let len = txs_with_topoheight.len();
-        for (i, (_, tx_hash)) in txs_with_topoheight.into_iter().enumerate().rev() {
+        for (i, (_, tx_hash)) in txs_with_topoheight.into_iter().enumerate() {
             let new_index = start_id + i as u64;
             self.transactions_indexes.insert(new_index.to_be_bytes(), tx_hash)?;
         }

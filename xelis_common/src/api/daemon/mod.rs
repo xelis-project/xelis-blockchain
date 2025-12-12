@@ -533,9 +533,18 @@ pub struct GetAccountHistoryParams {
 pub enum AccountHistoryType {
     DevFee { reward: u64 },
     Mining { reward: u64 },
-    Burn { amount: u64 },
-    Outgoing { to: Address },
-    Incoming { from: Address },
+    Burn {
+        asset: Hash,
+        amount: u64,
+    },
+    Outgoing {
+        asset: Hash,
+        to: Address
+    },
+    Incoming {
+        asset: Hash,
+        from: Address
+    },
     MultiSig {
         participants: Vec<Address>,
         threshold: u8,
@@ -543,10 +552,21 @@ pub enum AccountHistoryType {
     InvokeContract {
         contract: Hash,
         entry_id: u16,
+        deposits: IndexSet<Hash>,
     },
     // Contract hash is already stored
     // by the parent struct
-    DeployContract,
+    DeployContract {
+        deposits: Option<IndexSet<Hash>>,
+    },
+    FromContract {
+        // Contract that sent the funds
+        contract: Hash,
+        // All assets received from the contract
+        asset: Hash,
+        // Amount received from the contract
+        amount: u64,
+    }
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]

@@ -6,6 +6,7 @@ use std::borrow::Cow;
 
 use anyhow::Error;
 use async_trait::async_trait;
+use indexmap::IndexMap;
 use serde_json::{
     Value,
     json
@@ -64,8 +65,8 @@ pub trait XSWDHandler {
 
     // On grouped permissions request
     // This is optional and can be ignored by default
-    async fn on_prefetch_permissions_request(&self, _: &AppStateShared, _: InternalPrefetchPermissions) -> Result<(), Error> {
-        Ok(())
+    async fn on_prefetch_permissions_request(&self, _: &AppStateShared, _: InternalPrefetchPermissions) -> Result<IndexMap<String, Permission>, Error> {
+        Ok(IndexMap::new())
     }
 }
 
@@ -193,8 +194,15 @@ where
                 }
 
                 app.set_requesting(true);
-                wallet.on_prefetch_permissions_request(app, params).await
+                let res = wallet.on_prefetch_permissions_request(app, params).await
                     .map_err(|e| RpcResponseError::new(request.id.take(), e))?;
+
+                if !res.is_empty() {
+                    let mut permissions = app.get_permissions().lock().await;
+                    for (method, perm) in res {
+                        permissions.insert(method, perm);
+                    }
+                }
                 app.set_requesting(false);
 
                 Ok(OnRequestResult::Return(if request.id.is_some() {

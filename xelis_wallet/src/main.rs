@@ -8,7 +8,7 @@ use std::{
 };
 use anyhow::{Result, Context};
 use indexmap::{IndexMap, IndexSet};
-use log::{error, info};
+use log::{error, debug, info};
 use clap::Parser;
 use xelis_common::{
     async_handler,
@@ -88,8 +88,8 @@ use {
         api::{
             AuthConfig,
             PermissionResult,
+            AppStateShared,
             Permission,
-            AppStateShared
         },
         wallet::XSWDEvent,
     },
@@ -199,16 +199,19 @@ async fn main() -> Result<()> {
         register_default_commands(&command_manager).await?;
     }
 
+    debug!("Starting prompt loop");
     if let Err(e) = prompt.start(Duration::from_millis(1000), Box::new(async_handler!(prompt_message_builder)), Some(&command_manager)).await {
         error!("Error while running prompt: {:#}", e);
     }
 
+    debug!("Prompt loop ended, closing wallet if opened");
     if let Ok(context) = command_manager.get_context().lock() {
         if let Ok(wallet) = context.get::<Arc<Wallet>>() {
             wallet.close().await;
         }
     }
 
+    debug!("Wallet closed, exiting");
     Ok(())
 }
 
@@ -275,14 +278,15 @@ async fn xswd_handler(mut receiver: UnboundedReceiver<XSWDEvent>, prompt: Sharea
                 message += "\r\n(Y/N): ";
 
                 let accepted = prompt.read_valid_str_value(prompt.colorize_string(Color::Blue, &message), &["y", "n"]).await.is_ok_and(|v| v == "y");
+
+                let mut results = IndexMap::new();
                 if accepted {
-                    let mut app_permissions = app_state.get_permissions().lock().await;
                     for permission in permissions.permissions {
-                        app_permissions.insert(permission, Permission::Allow);
+                        results.insert(permission, Permission::Allow);
                     }
                 }
 
-                if callback.send(Ok(())).is_err() {
+                if callback.send(Ok(results)).is_err() {
                     error!("Error while sending prefetch permissions response back to XSWD");
                 }
             }

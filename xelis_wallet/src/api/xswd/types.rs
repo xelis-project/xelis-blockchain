@@ -269,7 +269,7 @@ impl fmt::Display for Permission {
 // To request in one time the permissions
 // example: balance, tracked assets etc is grouped into one
 // modal that propose to the user to set them in "always allow"
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct InternalPrefetchPermissions {
     // Description to be shown to the user
     pub reason: Option<String>,
