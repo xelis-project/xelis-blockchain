@@ -6,8 +6,13 @@ To see the full history and exact changes, please refer to the commits history d
 
 ## v1.19.1
 
-Bug fixes in the transaction serialization that cause a panic when accessing a TX.
-Improve the changelog for upcoming network upgrade.
+- Bug fixes in the transaction serialization that cause a panic when accessing a TX.
+- Contract primitives (u64, u128, u256) are serialized as a string to prevent overflow on large numbers in JavaScript environments.
+- Wallet storage transactions indexes is fixed to prevent incorrect ordering of transactions when having many transactions in the wallet.
+- Improve the changelog for upcoming network upgrade.
+- Improve the account history variants to support contracts transfers and burns.
+- Update dependencies.
+- Logs improvements.
 
 ## v1.19.0
 Bug fixes, performance improvements & new features.
