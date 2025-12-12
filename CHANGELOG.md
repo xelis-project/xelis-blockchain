@@ -4,8 +4,12 @@ This file contains all the changelogs to ensure that changes can be tracked and 
 
 To see the full history and exact changes, please refer to the commits history directly.
 
-## v1.19.0
+## v1.19.1
 
+Bug fixes in the transaction serialization that cause a panic when accessing a TX.
+Improve the changelog for upcoming network upgrade.
+
+## v1.19.0
 Bug fixes, performance improvements & new features.
 
 **Common**:

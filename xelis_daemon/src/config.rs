@@ -221,7 +221,7 @@ const HARD_FORKS: [HardFork; 4] = [
         // Expected date: 13/12/2025 5pm UTC
         height: 3_282_150,
         version: BlockVersion::V3,
-        changelog: "Smart Contracts",
+        changelog: "Smart Contracts, xelis-hash v3, 5s block time",
         version_requirement: Some(">=1.19.0")
     }
 ];
