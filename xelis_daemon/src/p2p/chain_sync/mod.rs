@@ -343,18 +343,27 @@ impl<S: Storage> P2pServer<S> {
             return Ok(())
         };
 
-        let common_topoheight = common_point.get_topoheight();
+        let mut common_topoheight = common_point.get_topoheight();
         debug!("{} found a common point with block {} at topo {} for sync, received {} blocks", peer.get_outgoing_address(), common_point.get_hash(), common_topoheight, response_size);
         let (pop_count, our_previous_topoheight, our_previous_height, our_stable_topoheight) = {
             let storage = self.blockchain.get_storage().read().await;
             let expected_common_topoheight = storage.get_topo_height_for_hash(common_point.get_hash()).await?;
+
+            let chain_cache = storage.chain_cache().await;
             if expected_common_topoheight != common_topoheight {
-                error!("{} sent us a valid block hash, but at invalid topoheight (expected: {}, got: {})!", peer, expected_common_topoheight, common_topoheight);
-                return Err(P2pError::InvalidCommonPoint(common_topoheight).into())
+                let stable_topoheight = chain_cache.stable_topoheight;
+                warn!("{} sent us a valid block hash, but at a different topoheight (expected: {}, got: {}, stable topoheight: {})!", peer, expected_common_topoheight, common_topoheight, stable_topoheight);
+
+                if expected_common_topoheight <= stable_topoheight && !peer.is_priority() {
+                    return Err(P2pError::InvalidCommonPoint(common_topoheight).into())
+                }
+
+                // Still accept it by using the expected topoheight
+                // We may have some deviation with them and want to check it
+                common_topoheight = expected_common_topoheight;
             }
 
             let block_height = storage.get_height_for_block_hash(common_point.get_hash()).await?;
-            let chain_cache = storage.chain_cache().await;
             trace!("block height: {}, stable height: {}, topoheight: {}, hash: {}", block_height, chain_cache.stable_height, expected_common_topoheight, common_point.get_hash());
             // We are under the stable height, rewind is necessary
             let mut count = if skip_stable_height_check || peer.is_priority() || lowest_height <= chain_cache.stable_height {
