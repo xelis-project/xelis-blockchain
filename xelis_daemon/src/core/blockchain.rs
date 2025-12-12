@@ -1294,7 +1294,7 @@ impl<S: Storage> Blockchain<S> {
             let len = sorted_tips.len() - TIPS_LIMIT;
             let dropped_tips = sorted_tips.drain(TIPS_LIMIT..)
             .map(|h| h.to_string()).collect::<Vec<String>>().join(", ");
-            warn!("too many tips for block generation, using the {} heavier tips: {} available tips", TIPS_LIMIT, len);
+            warn!("too many tips for block generation, using the {} heavier tips: {} extra tips dropped", TIPS_LIMIT, len);
             trace!("dropped tips: {}", dropped_tips);
         }
 
