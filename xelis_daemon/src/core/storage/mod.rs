@@ -63,31 +63,6 @@ pub trait Storage:
 
         let pruned_topoheight = self.get_pruned_topoheight().await?.unwrap_or(0);
 
-        // we must check that we are stopping a sync block
-        // easy way for this: check the block at topo is currently alone at height
-        while lowest_topo > pruned_topoheight {
-            let hash = self.get_hash_at_topo_height(lowest_topo).await?;
-            let block_height = self.get_height_for_block_hash(&hash).await?;
-            let blocks_at_height = self.get_blocks_at_height(block_height).await?;
-            let mut ordered_blocks = 0;
-            for block_hash in blocks_at_height.iter() {
-                if self.is_block_topological_ordered(block_hash).await? {
-                    ordered_blocks += 1;
-                    if ordered_blocks > 1 {
-                        break;
-                    }
-                }
-            }
-
-            if ordered_blocks == 1 {
-                debug!("Sync block found at topoheight {}", lowest_topo);
-                break;
-            } else {
-                warn!("No sync block found at topoheight {} we must go lower if possible", lowest_topo);
-                lowest_topo -= 1;
-            }
-        }
-
         if pruned_topoheight != 0 {
             let safety_pruned_topoheight = pruned_topoheight + PRUNE_SAFETY_LIMIT;
             if lowest_topo <= safety_pruned_topoheight && until_topo_height != 0 {
