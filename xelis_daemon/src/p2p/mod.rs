@@ -2265,7 +2265,7 @@ impl<S: Storage> P2pServer<S> {
                 debug!("Received a notify inventory from {}: {} txs", peer, inventory.len());
                 if !peer.has_requested_inventory() {
                     warn!("Received a notify inventory from {} but we didn't request it", peer);
-                    return Err(P2pError::InvalidPacket)
+                    return Err(P2pError::UnrequestedPacket)
                 }
 
                 // we received the inventory
@@ -2776,6 +2776,11 @@ impl<S: Storage> P2pServer<S> {
     async fn request_inventory_of(&self, peer: &Arc<Peer>) -> Result<(), BlockchainError> {
         if self.disable_fetching_txs_propagated {
             debug!("skipping inventory request from {} due to fetching disabled", peer);                    
+            return Ok(())
+        }
+
+        if peer.has_requested_inventory() {
+            debug!("skipping inventory request from {} due to already requested", peer);                    
             return Ok(())
         }
 

@@ -338,7 +338,7 @@ impl<S: Storage> P2pServer<S> {
             warn!("No common block was found with {}", peer);
             if response.blocks_size() > 0 {
                 warn!("Peer have no common block but send us {} blocks!", response.blocks_size());
-                return Err(P2pError::InvalidPacket.into())
+                return Err(P2pError::MalformedPacket.into())
             }
             return Ok(())
         };
