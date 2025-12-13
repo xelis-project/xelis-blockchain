@@ -76,7 +76,7 @@ win32console = "0.1.5"
 # NOTE: You must set `RUSTFLAGS='--cfg getrandom_backend="wasm_js"'` when building
 getrandom_02 = { package = "getrandom", version = "0.2", features = ["js"] }
 getrandom_03 = { package = "getrandom", version = "0.3", features = ["wasm_js"] }
-tokio_with_wasm = { version = "0.8.6", features = ["macros", "sync", "time", "rt"], optional = true }
+tokio_with_wasm = { version = "0.8.7", features = ["macros", "sync", "time", "rt"], optional = true }
 
 # dependencies for non-WASM
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
