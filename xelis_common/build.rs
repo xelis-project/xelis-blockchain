@@ -5,7 +5,7 @@ use std::process::Command;
 
 fn main() {
     let commit_hash = if let Some(hash) = option_env!("XELIS_COMMIT_HASH") {
-        (&hash[0..7]).to_string()
+        (&hash[0..8]).to_string()
     } else {
         // Run git command to get the commit hash
         let output = Command::new("git")

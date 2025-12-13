@@ -29,6 +29,11 @@ rustup default stable
 echo "Deleting build folder"
 rm -rf build
 
+# store the commit hash used for this build
+commit_hash=$(git rev-parse HEAD)
+echo "Using commit hash: $commit_hash"
+export XELIS_COMMIT_HASH="$commit_hash"
+
 # compile all binaries for all targets
 echo "Compiling binaries for all targets"
 for target in "${targets[@]}"; do
@@ -54,10 +59,10 @@ for target in "${targets[@]}"; do
             echo "Docker image $IMAGE_NAME already present, skipping pull."
         fi
 
-        docker run --rm -it -v "$PWD:/work" -w /work "$IMAGE_NAME" cargo xwin build --target "$target" --profile release-with-lto 
+        XELIS_COMMIT_HASH="$commit_hash" docker run --rm -it -v "$PWD:/work" -w /work "$IMAGE_NAME" cargo xwin build --target "$target" --profile release-with-lto 
     else
         # ---- Non-Windows builds via cross ----
-        cross build --target "$target" --profile release-with-lto
+        XELIS_COMMIT_HASH="$commit_hash" cross build --target "$target" --profile release-with-lto
     fi
 
     mkdir -p "build/$target"
