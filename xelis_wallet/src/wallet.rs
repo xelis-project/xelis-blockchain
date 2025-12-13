@@ -255,8 +255,8 @@ struct InnerAccount {
 
 impl InnerAccount {
     // Decrypt a ciphertext
-    pub fn decrypt_ciphertext_internal(&self, ciphertext: &Ciphertext, max_supply: u64) -> Result<Option<u64>, WalletError> {
-        trace!("decrypt ciphertext with max supply {}", max_supply);
+    pub fn decrypt_ciphertext_internal(&self, ciphertext: &Ciphertext, max_supply: Option<u64>) -> Result<Option<u64>, WalletError> {
+        trace!("decrypt ciphertext with max supply {:?}", max_supply);
 
         let point = self.keypair.decrypt_to_point(&ciphertext);
         let lock = self.precomputed_tables.read()
@@ -264,7 +264,7 @@ impl InnerAccount {
 
         let view = lock.view();
         let result = self.keypair.get_private_key()
-            .decode_point_within_range(&view, point, 0, max_supply as _);
+            .decode_point_within_range(&view, point, 0, max_supply.map(|v| v as i64).unwrap_or(i64::MAX));
 
         Ok(result)
     }
@@ -293,11 +293,11 @@ impl Account {
 
     // Decrypt a ciphertext with max supply
     // This will use spawn_blocking to avoid blocking the async runtime
-    pub async fn decrypt_ciphertext(&self, ciphertext: Ciphertext, max_supply: u64) -> Result<Option<u64>, WalletError> {
+    pub async fn decrypt_ciphertext(&self, ciphertext: Ciphertext, max_supply: Option<u64>) -> Result<Option<u64>, WalletError> {
         let _permit = self.semaphore.acquire().await
             .context("Error while acquiring semaphore for decryption")?;
 
-        trace!("decrypt ciphertext with max supply {}", max_supply);
+        trace!("decrypt ciphertext with max supply {:?}", max_supply);
 
         let inner = Arc::clone(&self.inner);
         let res = tokio::task::spawn_blocking(move || inner.decrypt_ciphertext_internal(&ciphertext, max_supply))
@@ -774,13 +774,13 @@ impl Wallet {
     // to avoid blocking the async runtime
     pub async fn decrypt_ciphertext_with(&self, ciphertext: Ciphertext, max_supply: Option<u64>) -> Result<Option<u64>, WalletError> {
         trace!("decrypt ciphertext with max supply {:?}", max_supply);
-        self.account.decrypt_ciphertext(ciphertext, max_supply.unwrap_or(i64::MAX as _)).await
+        self.account.decrypt_ciphertext(ciphertext, max_supply).await
     }
 
     // Blocking version of decrypt ciphertext
     // this will not create any new thread
-    pub fn decrypt_ciphertext_blocking(&self, ciphertext: Ciphertext, max_supply: u64) -> Result<Option<u64>, WalletError> {
-        trace!("decrypt ciphertext sync with max supply {}", max_supply);
+    pub fn decrypt_ciphertext_blocking(&self, ciphertext: Ciphertext, max_supply: Option<u64>) -> Result<Option<u64>, WalletError> {
+        trace!("decrypt ciphertext blocking with max supply {:?}", max_supply);
         self.account.inner.decrypt_ciphertext_internal(&ciphertext, max_supply)
     }
 
