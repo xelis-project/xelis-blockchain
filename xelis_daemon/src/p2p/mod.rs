@@ -1940,7 +1940,7 @@ impl<S: Storage> P2pServer<S> {
                 let header = header.into_owned();
                 let block_hash = Arc::new(header.hash());
 
-                trace!("Received block {}", block_hash);
+                log!(self.block_propagation_log_level, "Received block {} from {}", block_hash, peer);
 
                 // verify that this block wasn't already sent by him
                 let direction = TimedDirection::In {
@@ -1950,8 +1950,14 @@ impl<S: Storage> P2pServer<S> {
                 {
                     let mut blocks_propagation = peer.get_blocks_propagation().lock().await;
                     if let Some((origin, is_common)) = blocks_propagation.get_mut(&block_hash) {
-                        if !origin.update(direction) && !*is_common {
-                            warn!("{} send us a block ({}) already tracked by him ({:?} {})", peer, block_hash, origin, is_common);
+                        let tmp = *is_common;
+
+                        if tmp {
+                            debug!("{} was marked as common for block {}, mark it as not common anymore", peer, block_hash);
+                            *is_common = false;
+                            *origin = direction;
+                        } else if !origin.update(direction) {
+                            warn!("{} send us a block ({}) already tracked by it ({:?}, common: {})", peer, block_hash, origin, tmp);
                             // Don't return an error because of the following edge case:
                             // We have peer B as a common peer with our peer A
                             // But the peer A isn't aware of it yet
@@ -1962,11 +1968,6 @@ impl<S: Storage> P2pServer<S> {
                             // to us.
                             // return Err(P2pError::AlreadyTrackedBlock(block_hash.as_ref().clone(), *origin))
                             return Ok(())
-                        }
-
-                        if *is_common {
-                            debug!("{} was marked as common for block {}", peer, block_hash);
-                            *is_common = false;
                         }
                     } else {
                         debug!("Saving {} in blocks propagation cache for {}", block_hash, peer);
@@ -1985,7 +1986,9 @@ impl<S: Storage> P2pServer<S> {
                             if !blocks_propagation.contains(block_hash) {
                                 debug!("Adding block {} to common {} cache", block_hash, common_peer);
                                 // Out allow to get "In" again, because it's a prediction, don't block it completely
-                                blocks_propagation.put(block_hash.clone(), (direction, true));
+                                blocks_propagation.put(block_hash.clone(), (TimedDirection::In {
+                                    received_at: 0,
+                                }, true));
                             }
                         }
                     }).await;
