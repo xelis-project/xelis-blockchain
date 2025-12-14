@@ -262,10 +262,8 @@ impl<S: Storage> P2pServer<S> {
                 biased;
                 Some(res) = blocks_executor.next() => {
                     if let Err(e) = res {
-                        if !peer.is_priority() {
-                            debug!("Mark {} as sync chain failed: {}", peer, e);
-                            peer.set_sync_chain_failed(true);
-                        }
+                        debug!("Mark {} as sync chain failed: {}", peer, e);
+                        peer.set_sync_chain_failed(true);
 
                         return Err(e)
                     }
@@ -308,15 +306,13 @@ impl<S: Storage> P2pServer<S> {
         let res = self.handle_blocks_from_chain_validator(peer, chain_validator, blocks).await;
 
         if let Err(BlockchainError::ErrorOnP2p(e)) = &res {
-            if !peer.is_priority() {
-                debug!("Mark {} as sync chain from validator failed: {}", peer, e);
-                peer.set_sync_chain_failed(true);
+            debug!("Mark {} as sync chain from validator failed: {}", peer, e);
+            peer.set_sync_chain_failed(true);
 
-                if let P2pError::Disconnected = e {
-                    // Peer disconnected while trying to reorg us, tempban it
-                    if let Err(e) = self.peer_list.temp_ban_address(&peer.get_connection().get_address().ip(), 60, false).await {
-                        debug!("Couldn't tempban {}: {}", peer, e);
-                    }
+            if let P2pError::Disconnected = e {
+                // Peer disconnected while trying to reorg us, tempban it
+                if let Err(e) = self.peer_list.temp_ban_address(&peer.get_connection().get_address().ip(), 60, false).await {
+                    debug!("Couldn't tempban {}: {}", peer, e);
                 }
             }
         }
@@ -410,7 +406,7 @@ impl<S: Storage> P2pServer<S> {
             && peer.get_height() >= our_previous_height
             && (skip_stable_height_check || common_topoheight < our_stable_topoheight)
             // then, verify if it's a priority node, otherwise, check if we are connected to a priority node so only him can rewind us
-            && (peer.is_priority() || !self.is_connected_to_a_synced_priority_node().await)
+            && (peer.is_priority() || (self.count_connected_to_a_synced_priority_node(None).await == 0))
         {
             // check that if we can trust him
             if peer.is_priority() {

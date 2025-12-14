@@ -838,6 +838,7 @@ impl<S: Storage> P2pServer<S> {
             (our_height, our_topoheight, our_cumulative_difficulty)
         };
 
+        let synced_priority = self.count_connected_to_a_synced_priority_node(Some(our_cumulative_difficulty)).await;
         debug!("cloning peer list for select random best peer");
 
         // search for peers which are greater than us
@@ -848,8 +849,17 @@ impl<S: Storage> P2pServer<S> {
         let mut peers = stream::iter(available_peers)
             .map(|p| async move {
                 // Don't select peers that are on a bad chain
-                if p.has_sync_chain_failed() {
+                // Special case for priority nodes: they are checked below again
+                let sync_failed = p.has_sync_chain_failed();
+                if sync_failed && !p.is_priority() {
                     debug!("{} has failed chain sync before, skipping...", p);
+                    return None;
+                }
+
+                // If we are connected to a priority node that is synced, only select priority nodes
+                // unless the peer had a sync failure before
+                if synced_priority > 1 && (!p.is_priority() || sync_failed) {
+                    debug!("{} is not a priority node while we are connected to a priority node, skipping...", p);
                     return None;
                 }
 
@@ -2474,19 +2484,28 @@ impl<S: Storage> P2pServer<S> {
     }
 
     // determine if we are connected to a priority node and that this node is equal / greater to our chain
-    async fn is_connected_to_a_synced_priority_node(&self) -> bool {
+    async fn count_connected_to_a_synced_priority_node(&self, cumulative_difficulty: Option<CumulativeDifficulty>) -> usize {
         let topoheight = self.blockchain.get_topo_height().await;
         trace!("locking peer list for checking if connected to a synced priority node");
 
+        let mut count = 0;
         for peer in self.peer_list.get_peers().read().await.values() {
             if peer.is_priority() {
+                if let Some(cumulative_difficulty) = &cumulative_difficulty {
+                    let peer_cumulative_difficulty = peer.get_cumulative_difficulty().lock().await;
+                    if *peer_cumulative_difficulty < *cumulative_difficulty {
+                        debug!("Skipping {} because its cumulative difficulty is lower than ours in is_connected_to_a_synced_priority_node", peer);
+                        continue
+                    }
+                }
                 let peer_topoheight = peer.get_topoheight();
                 if peer_topoheight >= topoheight || topoheight - peer_topoheight < STABLE_LIMIT {
-                    return true
+                    count += 1;
                 }
             }
         }
-        false
+
+        count
     }
 
     // Get the optional tag set 
