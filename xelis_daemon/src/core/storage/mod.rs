@@ -96,7 +96,7 @@ pub trait Storage:
             let (hash, block, block_txs) = self.delete_block_at_topoheight(topoheight).await?;
             // Instead of deleting one by one, we delete them all at once
             // at the end of the loop
-            // self.delete_versioned_data_at_topoheight(topoheight).await?;
+            self.delete_versioned_data_at_topoheight(topoheight).await?;
 
             debug!("Block {} at topoheight {} deleted", hash, topoheight);
             txs.extend(block_txs);
@@ -138,7 +138,7 @@ pub trait Storage:
         }
 
         debug!("removing versioned data above topoheight {}", topoheight);
-        self.delete_versioned_data_above_topoheight(topoheight).await?;
+        // self.delete_versioned_data_above_topoheight(topoheight).await?;
 
         warn!("Blocks rewinded: {}, new topoheight: {}, new height: {}", done, topoheight, height);
 

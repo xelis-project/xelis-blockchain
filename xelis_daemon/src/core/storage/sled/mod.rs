@@ -527,6 +527,7 @@ impl SledStorage {
     }
 
     // Insert a key into the DB
+    // Returns true if the key was already present
     pub(super) fn insert_into_disk<K: AsRef<[u8]>, V: Into<IVec>>(snapshot: Option<&mut Snapshot>, tree: &Tree, key: K, value: V) -> Result<bool, BlockchainError> {
         Self::insert_into_disk_read::<K, V, ()>(snapshot, tree, key, value)
             .map(|prev| prev.is_some())
