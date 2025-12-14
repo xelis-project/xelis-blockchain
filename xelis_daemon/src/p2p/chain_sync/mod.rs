@@ -13,7 +13,7 @@ use futures::{
 use indexmap::IndexSet;
 use log::{debug, error, info, trace, warn};
 use xelis_common::{
-    block::Block,
+    block::{Block, BlockVersion},
     crypto::Hash,
     immutable::Immutable,
     time::{get_current_time_in_millis, TimestampMillis},
@@ -30,6 +30,7 @@ use xelis_common::{
 use crate::{
     config::{CHAIN_SYNC_TOP_BLOCKS, MILLIS_PER_SECOND, PEER_OBJECTS_CONCURRENCY, STABLE_LIMIT},
     core::{
+        hard_fork,
         blockchain::{BroadcastOption, PreVerifyBlock},
         error::BlockchainError,
         storage::Storage,
@@ -150,10 +151,10 @@ impl<S: Storage> P2pServer<S> {
 
                 let mut swap = false;
                 if let Some(previous_hash) = response_blocks.last() {
-                    // let version = hard_fork::get_version_at_height(self.blockchain.get_network(), height);
+                    let version = hard_fork::get_version_at_height(self.blockchain.get_network(), height);
                     // Due to the TX being orphaned, some TXs may be in the wrong order in V1
                     // It has been sorted in V2 and should not happen anymore
-                    if /* version == BlockVersion::V0 && */ storage.has_block_position_in_order(&hash).await? && storage.has_block_position_in_order(&previous_hash).await? {
+                    if version == BlockVersion::V0 && storage.has_block_position_in_order(&hash).await? && storage.has_block_position_in_order(&previous_hash).await? {
                         if blockdag::is_side_block_internal(&*storage, &hash, Some(topoheight), top_topoheight).await? {
                             let position = storage.get_block_position_in_order(&hash).await?;
                             let previous_position = storage.get_block_position_in_order(&previous_hash).await?;
