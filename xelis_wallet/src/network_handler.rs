@@ -1331,13 +1331,6 @@ impl NetworkHandler {
                                     storage.delete_transactions_at_or_above_topoheight(topoheight)?;
                                 }
                             }
-
-                            if let Some(coinbase_topo) = storage.get_last_coinbase_topoheight() {
-                                if coinbase_topo == topoheight {
-                                    trace!("deleting last coinbase reward topoheight {} because of dag reorg", coinbase_topo);
-                                    storage.set_last_coinbase_topoheight(None)?;
-                                }
-                            }
                         } else {
                             debug!("No block hash found for topoheight {}, syncing block {}", topoheight, event.block_hash);
                         }

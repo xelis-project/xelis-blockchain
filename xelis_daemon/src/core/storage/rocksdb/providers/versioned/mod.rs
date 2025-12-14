@@ -31,17 +31,23 @@ impl RocksStorage {
         let prefix = topoheight.to_be_bytes();
         let snapshot = self.snapshot.clone();
         for res in Self::iter_raw_internal(&self.db, snapshot.as_ref(), IteratorMode::WithPrefix(&prefix, Direction::Forward), column_versioned)? {
-            let (key, prev_topo) = res?;
+            let (key, value) = res?;
 
+            // Delete this version from DB
+            // We read the previous topoheight to check if we need to update the pointer
             Self::remove_from_disk_internal(&self.db, self.snapshot.as_mut(), column_versioned, &key)?;
-            let pointer = self.load_optional_from_disk::<_, TopoHeight>(column_pointer, &key[8..])?;
+
+            // Key without the topoheight
+            let key_without_topo = &key[8..];
+            let pointer = self.load_optional_from_disk::<_, TopoHeight>(column_pointer, key_without_topo)?;
 
             if pointer.is_some_and(|pointer| pointer >= topoheight) {
-                let prev_topo = Option::<TopoHeight>::from_bytes(&prev_topo)?;
+                let prev_topo = Option::<TopoHeight>::from_bytes(&value)?;
                 if let Some(prev_topo) = prev_topo {
-                    Self::insert_into_disk_internal(&self.db, self.snapshot.as_mut(), column_pointer, &key[8..], &prev_topo.to_be_bytes())?;
+                    Self::insert_into_disk_internal(&self.db, self.snapshot.as_mut(), column_pointer, key_without_topo, &prev_topo.to_be_bytes())?;
                 } else {
-                    Self::remove_from_disk_internal(&self.db, self.snapshot.as_mut(), column_pointer, &key[8..])?;
+                    // No previous topoheight, we can delete the pointer
+                    Self::remove_from_disk_internal(&self.db, self.snapshot.as_mut(), column_pointer, key_without_topo)?;
                 }
             }
         }

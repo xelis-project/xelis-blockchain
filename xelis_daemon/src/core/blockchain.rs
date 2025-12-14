@@ -2515,11 +2515,15 @@ impl<S: Storage> Blockchain<S> {
 
             if chain_height_extended {
                 chain_cache.height = current_height;
+                gauge!("xelis_block_height").set(current_height as f64);
             }
 
             if chain_topoheight_extended {
                 chain_cache.topoheight = current_topoheight;
+                gauge!("xelis_block_topoheight").set(current_topoheight as f64);
             }
+
+            gauge!("xelis_block_difficulty").set(difficulty.as_u64().unwrap_or(0) as f64);
         }
 
         // Check if the event is tracked
@@ -2599,8 +2603,6 @@ impl<S: Storage> Blockchain<S> {
 
         // Record metrics
         histogram!("xelis_block_processing_ms").record(elapsed as f64);
-        gauge!("xelis_block_height").set(current_height as f64);
-        gauge!("xelis_block_topoheight").set(current_topoheight as f64);
 
         if let Some(p2p) = self.p2p.read().await.as_ref().filter(|_| broadcast.p2p()) {
             trace!("P2p locked, ping peers");

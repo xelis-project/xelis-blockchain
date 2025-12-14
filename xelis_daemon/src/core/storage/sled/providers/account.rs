@@ -17,7 +17,7 @@ use crate::core::{
 };
 
 fn prefixed_db_key(topoheight: TopoHeight, key: &PublicKey) -> [u8; 40] {
-        let mut buf = [0u8; 40];
+    let mut buf = [0u8; 40];
     buf[0..8].copy_from_slice(&topoheight.to_be_bytes());
     buf[8..40].copy_from_slice(key.as_bytes());
     buf
