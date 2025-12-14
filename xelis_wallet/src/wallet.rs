@@ -869,6 +869,7 @@ impl Wallet {
                         storage.get_last_coinbase_topoheight().is_some_and(|v| v > stable_topoheight)
                         && storage.get_tx_cache().is_none()
                     );
+                    debug!("Stable topoheight is {}, should use stable balance: {}, last coinbase: {:?}", stable_topoheight, should_use_stable_balance,  storage.get_last_coinbase_topoheight());
 
                     if should_use_stable_balance {
                         // Check if there is any unconfirmed balance or balance in unstable height
