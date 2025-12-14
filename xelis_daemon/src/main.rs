@@ -337,6 +337,7 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
     command_manager.add_command(Command::with_required_arguments("add_peer", "Connect to a new peer using ip:port format", vec![Arg::new("address", ArgType::String)], CommandHandler::Async(async_handler!(add_peer::<S>))))?;
     command_manager.add_command(Command::new("list_unexecuted_transactions", "List all unexecuted transactions", CommandHandler::Async(async_handler!(list_unexecuted_transactions::<S>))))?;
     command_manager.add_command(Command::new("swap_blocks_executions_positions", "Swap the position of two blocks executions", CommandHandler::Async(async_handler!(swap_blocks_executions_positions::<S>))))?;
+    command_manager.add_command(Command::new("show_block_execution_position", "Show the position of a block execution", CommandHandler::Async(async_handler!(show_block_execution_position::<S>))))?;
     command_manager.add_command(Command::new("print_balance", "Print the encrypted balance at a specific topoheight", CommandHandler::Async(async_handler!(print_balance::<S>))))?;
     command_manager.add_command(Command::new("estimate_db_size", "Estimate the database total size", CommandHandler::Async(async_handler!(estimate_db_size::<S>))))?;
     command_manager.add_command(Command::new("list_orphaned_blocks", "List all orphaned blocks we currently hold", CommandHandler::Async(async_handler!(list_orphaned_blocks::<S>))))?;
@@ -629,6 +630,23 @@ async fn swap_blocks_executions_positions<S: Storage>(manager: &CommandManager, 
 
     storage.swap_blocks_executions_positions(&left, &right).await
         .context("Swap blocks executions positions")?;
+
+    Ok(())
+}
+
+async fn show_block_execution_position<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
+    let context = manager.get_context().lock()?;
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    let prompt = manager.get_prompt();
+    let storage = blockchain.get_storage().read().await;
+
+    let hash = prompt.read_hash("Block hash: ").await
+        .context("Error while reading block hash")?;
+
+    let position = storage.get_block_position_in_order(&hash).await
+        .context("Error while retrieving block execution position")?;
+
+    manager.message(format!("Block {} is at execution position {}", hash, position));
 
     Ok(())
 }
