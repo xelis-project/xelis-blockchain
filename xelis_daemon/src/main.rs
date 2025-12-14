@@ -15,6 +15,7 @@ use xelis_common::{
     async_handler,
     config::{init, VERSION, XELIS_ASSET, FEE_PER_KB},
     context::Context,
+    block::Block,
     contract::vm::HOOK_CONSTRUCTOR_ID,
     crypto::{
         Address,
@@ -345,6 +346,7 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
     command_manager.add_command(Command::new("snapshot_mode", "Force to be in snapshot mode (memory only)", CommandHandler::Async(async_handler!(snapshot_mode::<S>))))?;
     command_manager.add_command(Command::with_optional_arguments("inspect_contract", "Inspect a smart contract by its hash", vec![Arg::new("contract", ArgType::Hash), Arg::new("show-storage", ArgType::Bool)], CommandHandler::Async(async_handler!(inspect_contract::<S>))))?;
     command_manager.add_command(Command::new("show_mempool", "Show all transactions in mempool", CommandHandler::Async(async_handler!(show_mempool::<S>))))?;
+    command_manager.add_command(Command::with_optional_arguments("import_block", "Import a block in hexadecimal format", vec![Arg::new("hex", ArgType::String)], CommandHandler::Async(async_handler!(import_block::<S>))))?;
 
     // Don't keep the lock for ever
     let p2p = {
@@ -732,6 +734,29 @@ async fn show_mempool<S: Storage>(manager: &CommandManager, _: ArgumentManager) 
     for (hash, tx) in mempool.get_txs() {
         manager.message(format!("- {}: {} XEL fee for {}", hash, format_xelis(tx.get_fee()), human_bytes(tx.get_size() as f64)));
     }
+
+    Ok(())
+}
+
+async fn import_block<S: Storage>(manager: &CommandManager, mut args: ArgumentManager) -> Result<(), CommandError> {
+    let context = manager.get_context().lock()?;
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    let prompt = manager.get_prompt();
+
+    let hex = if args.has_argument("hex") {
+        args.get_value("hex")?.to_string_value()?
+    } else {
+        prompt.read_input("Block hex: ", false).await
+            .context("Error while reading block hex")?
+    };
+
+    let block = Block::from_hex(&hex)
+        .context("Error on block")?;
+
+    blockchain.add_new_block(block, PreVerifyBlock::None, BroadcastOption::None, false).await
+        .context("Error while importing block")?;
+
+    manager.message("Block imported successfully");
 
     Ok(())
 }
