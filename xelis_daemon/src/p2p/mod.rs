@@ -191,6 +191,7 @@ pub struct P2pServer<S: Storage> {
     requests_cache: ExpirableCache,
     // Flags to use in handshake
     flags: Flags,
+    sync_from_priority_only: bool,
 }
 
 impl<S: Storage> P2pServer<S> {
@@ -220,6 +221,7 @@ impl<S: Storage> P2pServer<S> {
         enable_compression: bool,
         disable_fast_sync_support: bool,
         proxy: Option<(ProxyKind, SocketAddr, Option<(String, String)>)>,
+        sync_from_priority_only: bool,
     ) -> Result<Arc<Self>, P2pError> {
         if tag.as_ref().is_some_and(|tag| tag.len() == 0 || tag.len() > 16) {
             return Err(P2pError::InvalidTag);
@@ -312,6 +314,7 @@ impl<S: Storage> P2pServer<S> {
             proxy,
             requests_cache: ExpirableCache::new(),
             flags,
+            sync_from_priority_only
         };
 
         let arc = Arc::new(server);
@@ -847,6 +850,11 @@ impl<S: Storage> P2pServer<S> {
                 // Don't select peers that are on a bad chain
                 if p.has_sync_chain_failed() {
                     debug!("{} has failed chain sync before, skipping...", p);
+                    return None;
+                }
+
+                if self.sync_from_priority_only && !p.is_priority() {
+                    debug!("{} is not a priority node for syncing, skipping...", p);
                     return None;
                 }
 
