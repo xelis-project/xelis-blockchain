@@ -849,14 +849,22 @@ impl<S: Storage> P2pServer<S> {
 
         // TODO: no atomic
         let atomic_priority = &atomic_priority;
+        let peers_count = AtomicU64::new(available_peers.len() as u64);
+        let peers_count = &peers_count;
+
         let mut peers = stream::iter(available_peers)
             .map(|p| async move {
                 // Don't select peers that are on a bad chain
                 // Special case for priority nodes: they are checked below again
                 let sync_failed = p.has_sync_chain_failed();
                 if sync_failed && !p.is_priority() {
-                    debug!("{} has failed chain sync before, skipping...", p);
-                    return None;
+                    if peers_count.load(Ordering::SeqCst) == 0 {
+                        debug!("No more peers available for selection, keeping it {}", p);
+                    } else {
+                        peers_count.fetch_sub(1, Ordering::SeqCst);
+                        debug!("{} has failed chain sync before, skipping...", p);
+                        return None;
+                    }
                 }
 
                 // If we are connected to a priority node that is synced, only select priority nodes
