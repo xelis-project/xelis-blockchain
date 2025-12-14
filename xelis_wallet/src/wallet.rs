@@ -871,7 +871,7 @@ impl Wallet {
                     );
                     debug!("Stable topoheight is {}, should use stable balance: {}, last coinbase: {:?}", stable_topoheight, should_use_stable_balance,  storage.get_last_coinbase_topoheight());
 
-                    if should_use_stable_balance {
+                    if !force_stable_balance && should_use_stable_balance {
                         // Check if there is any unconfirmed balance or balance in unstable height
                         // to decide if we can use stable balance
                         for asset in used_assets.iter() {
@@ -887,7 +887,7 @@ impl Wallet {
 
                     // We also need to check if we have made an outgoing TX
                     // Because we need to keep the order of TX and use correct ciphertexts
-                    if should_use_stable_balance {
+                    if !force_stable_balance  && should_use_stable_balance {
                         if let Some(entry) = storage.get_last_outgoing_transaction()? {
                             if entry.get_topoheight() > stable_topoheight {
                                 warn!("Cannot use stable balance because we have an outgoing TX not confirmed in stable height yet");
