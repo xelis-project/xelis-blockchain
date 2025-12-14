@@ -1648,8 +1648,8 @@ impl<S: Storage> Blockchain<S> {
             debug!("Height by tips: {}, stable height: {}", block_height_by_tips, stable_height);
 
             if block_height_by_tips < stable_height {
-                debug!("Invalid block height by tips {} for this block ({}), its height is in stable height {}", block_height_by_tips, block_hash, stable_height);
-                return Err(BlockchainError::InvalidBlockHeightStableHeight)
+                warn!("block height by tips {} for this block ({}), its height is in stable height {}", block_height_by_tips, block_hash, stable_height);
+                // return Err(BlockchainError::InvalidBlockHeightStableHeight)
             }
         }
 
