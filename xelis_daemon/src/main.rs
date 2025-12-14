@@ -770,6 +770,25 @@ async fn import_block<S: Storage>(manager: &CommandManager, mut args: ArgumentMa
 
     let block = Block::from_hex(&hex)
         .context("Error on block")?;
+    let hash = block.hash();
+
+    if blockchain.has_block(&hash).await.context("Error while checking block existence")? {
+        let mut storage = blockchain.get_storage().write().await;
+        debug!("storage write acquired for block forced re-execution");
+    
+        storage.delete_block_by_hash(&hash).await.context("Error while deleting block")?;
+        let mut tips = storage.get_tips().await.context("Error while getting tips")?;
+        if tips.remove(&hash) {
+            debug!("Block {} was a tip, removing it from tips", hash);
+            storage.store_tips(&tips).await.context("Error while storing tips")?;
+        }
+    
+        let mut blocks = storage.get_blocks_at_height(block.get_height()).await.context("Error while getting blocks at height")?;
+        if blocks.shift_remove(&hash) {
+            debug!("Block {} was at height {}, removing it from blocks at height", hash, block);
+            storage.set_blocks_at_height(&blocks, block.get_height()).await.context("Error while setting blocks at height")?;
+        }
+    }
 
     blockchain.add_new_block(block, PreVerifyBlock::None, BroadcastOption::None, false).await
         .context("Error while importing block")?;
