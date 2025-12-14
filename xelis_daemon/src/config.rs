@@ -108,9 +108,10 @@ pub const DEV_ADDRESS: &str = "xel:vs3mfyywt0fjys0rgslue7mm4wr23xdgejsjk0ld7f2kx
 
 // Chain sync config
 // minimum X seconds between each chain sync request per peer
-pub const CHAIN_SYNC_DELAY: u64 = 5;
+pub const CHAIN_SYNC_DELAY: u64 = 1;
 // wait maximum between each chain sync request to peers
-pub const CHAIN_SYNC_TIMEOUT_SECS: u64 = CHAIN_SYNC_DELAY * 3;
+// 15s
+pub const CHAIN_SYNC_TIMEOUT_SECS: u64 = 15;
 // first 30 blocks are sent in linear way, then it's exponential
 pub const CHAIN_SYNC_REQUEST_EXPONENTIAL_INDEX_START: usize = 30;
 // allows up to X blocks id (hash + height) sent for request

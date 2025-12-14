@@ -673,13 +673,13 @@ impl<S: Storage> P2pServer<S> {
                                 trace!("TX {} ok", tx_hash);
                                 txs.push(tx);
                             }
-    
+
                             // link its TX to the block
                             let mut storage = self.blockchain.get_storage().write().await;
                             for tx_hash in header.get_txs_hashes() {
                                 storage.add_block_linked_to_tx_if_not_present(tx_hash, &hash).await?;
                             }
-    
+
                             // save metadata of this block
                             storage.set_metadata_at_topoheight(
                                 topoheight,

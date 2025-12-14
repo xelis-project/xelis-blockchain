@@ -901,7 +901,7 @@ impl<S: Storage> P2pServer<S> {
                 }
 
                 // check if this peer may have a block we don't have
-                if p.get_height() > our_height || peer_topoheight > our_topoheight {
+                if p.get_height() >= our_height || peer_topoheight >= our_topoheight {
                     debug!("{} is a candidate for chain sync, our topoheight: {}, our height: {}", p, our_topoheight, our_height);
                     Some(p)
                 } else {
@@ -2076,7 +2076,7 @@ impl<S: Storage> P2pServer<S> {
                 let time = get_current_time_in_seconds();
                 // Node is trying to ask too fast our chain
                 // Don't allow faster than 1/3 of the delay
-                if  last_request + (CHAIN_SYNC_DELAY * 2 / 3) > time {
+                if  (last_request * MILLIS_PER_SECOND)  + (CHAIN_SYNC_DELAY * MILLIS_PER_SECOND * 2 / 3) > time * MILLIS_PER_SECOND {
                     debug!("{} requested sync chain too fast!", peer);
                     return Err(P2pError::RequestSyncChainTooFast)
                 }
