@@ -96,7 +96,7 @@ impl<S: Storage> P2pServer<S> {
             StepRequest::Assets(min, max, page) => {
                 if min > max {
                     warn!("Invalid range for assets");
-                    return Err(P2pError::InvalidPacket.into())
+                    return Err(P2pError::MalformedPacket.into())
                 }
 
                 let start = Instant::now();
@@ -139,7 +139,7 @@ impl<S: Storage> P2pServer<S> {
             StepRequest::KeyBalances(key, min, max, page) => {
                 if min > max {
                     warn!("Invalid range for key assets");
-                    return Err(P2pError::InvalidPacket.into())
+                    return Err(P2pError::MalformedPacket.into())
                 }
 
                 let start = Instant::now();
@@ -174,7 +174,7 @@ impl<S: Storage> P2pServer<S> {
             StepRequest::SpendableBalances(key, asset, min, max) => {
                 if min > max {
                     warn!("Invalid range for spendable balances");
-                    return Err(P2pError::InvalidPacket.into())
+                    return Err(P2pError::MalformedPacket.into())
                 }
 
                 let chain_cache = storage.chain_cache().await;
@@ -199,7 +199,7 @@ impl<S: Storage> P2pServer<S> {
             StepRequest::Accounts(min, max, keys) => {
                 if min > max {
                     warn!("Invalid range for accounts");
-                    return Err(P2pError::InvalidPacket.into())
+                    return Err(P2pError::MalformedPacket.into())
                 }
 
                 // move references only
@@ -240,7 +240,7 @@ impl<S: Storage> P2pServer<S> {
             StepRequest::Keys(min, max, page) => {
                 if min > max {
                     warn!("Invalid range for keys");
-                    return Err(P2pError::InvalidPacket.into())
+                    return Err(P2pError::MalformedPacket.into())
                 }
 
                 let page = page.unwrap_or(0);
@@ -259,7 +259,7 @@ impl<S: Storage> P2pServer<S> {
             StepRequest::Contracts(min, max, page) => {
                 if min > max {
                     warn!("Invalid range for contracts");
-                    return Err(P2pError::InvalidPacket.into())
+                    return Err(P2pError::MalformedPacket.into())
                 }
 
                 let page = page.unwrap_or(0);
@@ -278,7 +278,7 @@ impl<S: Storage> P2pServer<S> {
             StepRequest::ContractModule(min, max, contract) => {
                 if min > max {
                     warn!("Invalid range for contract metadata");
-                    return Err(P2pError::InvalidPacket.into())
+                    return Err(P2pError::MalformedPacket.into())
                 }
 
                 let contract = storage.get_contract_at_maximum_topoheight_for(&contract, max).await?;
@@ -523,7 +523,7 @@ impl<S: Storage> P2pServer<S> {
                             let StepResponse::AssetsSupply(supply) = peer.request_boostrap_chain(StepRequest::AssetsSupply(stable_topoheight, Cow::Borrowed(&assets))).await? else {
                                 // shouldn't happen
                                 error!("Received an invalid StepResponse (how ?) while fetching local assets supply");
-                                return Err(P2pError::InvalidPacket.into())
+                                return Err(P2pError::MalformedPacket.into())
                             };
 
                             for (asset, supply) in assets.into_iter().zip(supply) {
@@ -546,7 +546,7 @@ impl<S: Storage> P2pServer<S> {
                         let StepResponse::AssetsSupply(supply) = peer.request_boostrap_chain(StepRequest::AssetsSupply(stable_topoheight, Cow::Owned(hashes))).await? else {
                             // shouldn't happen
                             error!("Received an invalid StepResponse (how ?) while fetching assets supply");
-                            return Err(P2pError::InvalidPacket.into())
+                            return Err(P2pError::MalformedPacket.into())
                         };
     
                         {
@@ -638,7 +638,7 @@ impl<S: Storage> P2pServer<S> {
                     // Last N blocks + stable block
                     if blocks.len() != PRUNE_SAFETY_LIMIT as usize + 1 {
                         error!("Received {} blocks metadata while expecting {}", blocks.len(), PRUNE_SAFETY_LIMIT + 1);
-                        return Err(P2pError::InvalidPacket.into())
+                        return Err(P2pError::MalformedPacket.into())
                     }
 
                     let lowest_topoheight = stable_topoheight - PRUNE_SAFETY_LIMIT;
@@ -728,7 +728,7 @@ impl<S: Storage> P2pServer<S> {
                 },
                 response => { // shouldn't happens
                     error!("Received bootstrap chain response {:?} but didn't asked for it", response);
-                    return Err(P2pError::InvalidPacket.into());
+                    return Err(P2pError::MalformedPacket.into());
                 }
             };
         }
@@ -752,7 +752,7 @@ impl<S: Storage> P2pServer<S> {
         let StepResponse::Accounts(nonces) = peer.request_boostrap_chain(StepRequest::Accounts(our_topoheight, stable_topoheight, Cow::Borrowed(&keys))).await? else {
             // shouldn't happen
             error!("Received an invalid StepResponse (how ?) while fetching nonces");
-            return Err(P2pError::InvalidPacket.into())
+            return Err(P2pError::MalformedPacket)
         };
 
         let mut storage = self.blockchain.get_storage().write().await;
@@ -818,7 +818,7 @@ impl<S: Storage> P2pServer<S> {
             let StepResponse::KeyBalances(balances, next_page) = response else {
                 // shouldn't happen
                 error!("Received an invalid StepResponse (how ?) while fetching key balances: {:?}", response);
-                return Err(P2pError::InvalidPacket.into())
+                return Err(P2pError::MalformedPacket.into())
             };
 
             page = next_page;
@@ -847,7 +847,7 @@ impl<S: Storage> P2pServer<S> {
                             let StepResponse::SpendableBalances(balances, max_next) = peer.request_boostrap_chain(StepRequest::SpendableBalances(Cow::Borrowed(&key), Cow::Borrowed(&asset), min_topo, max)).await? else {
                                 // shouldn't happen
                                 error!("Received an invalid StepResponse (how ?) while fetching balances");
-                                return Err(P2pError::InvalidPacket)
+                                return Err(P2pError::MalformedPacket)
                             };
 
                             total_versions += balances.len();
@@ -930,7 +930,7 @@ impl<S: Storage> P2pServer<S> {
         let StepResponse::ContractModule(metadata) = peer.request_boostrap_chain(StepRequest::ContractModule(our_topoheight, stable_topoheight, Cow::Borrowed(&contract))).await? else {
             // shouldn't happen
             error!("Received an invalid StepResponse (how ?) while fetching contract metadata");
-            return Err(P2pError::InvalidPacket.into())
+            return Err(P2pError::MalformedPacket.into())
         };
 
         let mut storage = self.blockchain.get_storage().write().await;
@@ -965,7 +965,7 @@ impl<S: Storage> P2pServer<S> {
             let StepResponse::ContractBalances(balances, page) = peer.request_boostrap_chain(StepRequest::ContractBalances(Cow::Borrowed(&contract), stable_topoheight, next_page)).await? else {
                 // shouldn't happen
                 error!("Received an invalid StepResponse (how ?) while fetching contract balances");
-                return Err(P2pError::InvalidPacket.into())
+                return Err(P2pError::MalformedPacket.into())
             };
 
             let mut storage = self.blockchain.get_storage().write().await;
@@ -989,7 +989,7 @@ impl<S: Storage> P2pServer<S> {
             let StepResponse::ContractStores(entries, next_skip) = peer.request_boostrap_chain(StepRequest::ContractStores(Cow::Borrowed(&contract), stable_topoheight, skip)).await? else {
                 // shouldn't happen
                 error!("Received an invalid StepResponse (how ?) while fetching contract stores");
-                return Err(P2pError::InvalidPacket.into())
+                return Err(P2pError::MalformedPacket.into())
             };
 
             let entries_count = entries.len();
@@ -1042,7 +1042,7 @@ impl<S: Storage> P2pServer<S> {
             let StepResponse::ContractsExecutions(executions, page) = peer.request_boostrap_chain(StepRequest::ContractsExecutions(our_topoheight, stable_topoheight, next_page)).await? else {
                 // shouldn't happen
                 error!("Received an invalid StepResponse (how ?) while fetching scheduled executions");
-                return Err(P2pError::InvalidPacket.into())
+                return Err(P2pError::MalformedPacket.into())
             };
 
             debug!("Storing {} scheduled executions for contracts", executions.len());

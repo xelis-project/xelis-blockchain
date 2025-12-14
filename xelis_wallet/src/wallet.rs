@@ -253,6 +253,23 @@ struct InnerAccount {
     keypair: KeyPair,
 }
 
+impl InnerAccount {
+    // Decrypt a ciphertext
+    pub fn decrypt_ciphertext_internal(&self, ciphertext: &Ciphertext, max_supply: Option<u64>) -> Result<Option<u64>, WalletError> {
+        trace!("decrypt ciphertext with max supply {:?}", max_supply);
+
+        let point = self.keypair.decrypt_to_point(&ciphertext);
+        let lock = self.precomputed_tables.read()
+            .map_err(|_| WalletError::PoisonError)?;
+
+        let view = lock.view();
+        let result = self.keypair.get_private_key()
+            .decode_point_within_range(&view, point, 0, max_supply.map(|v| v as i64).unwrap_or(i64::MAX));
+
+        Ok(result)
+    }
+}
+
 struct Account {
     inner: Arc<InnerAccount>,
     // Compressed public key
@@ -274,25 +291,18 @@ impl Account {
         }
     }
 
-    pub async fn decrypt_ciphertext(&self, ciphertext: Ciphertext, max_supply: u64) -> Result<Option<u64>, WalletError> {
+    // Decrypt a ciphertext with max supply
+    // This will use spawn_blocking to avoid blocking the async runtime
+    pub async fn decrypt_ciphertext(&self, ciphertext: Ciphertext, max_supply: Option<u64>) -> Result<Option<u64>, WalletError> {
         let _permit = self.semaphore.acquire().await
             .context("Error while acquiring semaphore for decryption")?;
 
-        trace!("decrypt ciphertext with max supply {}", max_supply);
+        trace!("decrypt ciphertext with max supply {:?}", max_supply);
 
         let inner = Arc::clone(&self.inner);
-        let res = tokio::task::spawn_blocking(move || {
-            let point = inner.keypair.decrypt_to_point(&ciphertext);
-            let lock = inner.precomputed_tables.read()
-                .map_err(|_| WalletError::PoisonError)?;
-
-            let view = lock.view();
-            let result = inner.keypair.get_private_key()
-                .decode_point_within_range(&view, point, 0, max_supply as _);
-
-            Ok::<_, WalletError>(result)
-        }).await
-        .context("Error while waiting on decrypt thread")??;
+        let res = tokio::task::spawn_blocking(move || inner.decrypt_ciphertext_internal(&ciphertext, max_supply))
+            .await
+            .context("Error while waiting on decrypt thread")??;
 
         Ok(res)
     }
@@ -760,9 +770,18 @@ impl Wallet {
         self.decrypt_ciphertext_with(ciphertext, max_supply.get_max()).await
     }
 
+    // Decrypt a ciphertext with an optional max supply in a dedicated thread
+    // to avoid blocking the async runtime
     pub async fn decrypt_ciphertext_with(&self, ciphertext: Ciphertext, max_supply: Option<u64>) -> Result<Option<u64>, WalletError> {
         trace!("decrypt ciphertext with max supply {:?}", max_supply);
-        self.account.decrypt_ciphertext(ciphertext, max_supply.unwrap_or(i64::MAX as _)).await
+        self.account.decrypt_ciphertext(ciphertext, max_supply).await
+    }
+
+    // Blocking version of decrypt ciphertext
+    // this will not create any new thread
+    pub fn decrypt_ciphertext_blocking(&self, ciphertext: Ciphertext, max_supply: Option<u64>) -> Result<Option<u64>, WalletError> {
+        trace!("decrypt ciphertext blocking with max supply {:?}", max_supply);
+        self.account.inner.decrypt_ciphertext_internal(&ciphertext, max_supply)
     }
 
     // Decrypt the extra data from a transfer

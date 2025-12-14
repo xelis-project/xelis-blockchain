@@ -141,6 +141,10 @@ pub enum P2pError {
     ParseAddressError(#[from] AddrParseError),
     #[error("Invalid packet ID")]
     InvalidPacket,
+    #[error("Malformed packet")]
+    MalformedPacket,
+    #[error("Received unrequested packet")]
+    UnrequestedPacket,
     #[error("Peer topoheight is higher than our")]
     InvalidRequestedTopoheight,
     #[error("Packet size exceed limit")]

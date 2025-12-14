@@ -191,6 +191,7 @@ pub struct P2pServer<S: Storage> {
     requests_cache: ExpirableCache,
     // Flags to use in handshake
     flags: Flags,
+    sync_from_priority_only: bool,
 }
 
 impl<S: Storage> P2pServer<S> {
@@ -220,6 +221,7 @@ impl<S: Storage> P2pServer<S> {
         enable_compression: bool,
         disable_fast_sync_support: bool,
         proxy: Option<(ProxyKind, SocketAddr, Option<(String, String)>)>,
+        sync_from_priority_only: bool,
     ) -> Result<Arc<Self>, P2pError> {
         if tag.as_ref().is_some_and(|tag| tag.len() == 0 || tag.len() > 16) {
             return Err(P2pError::InvalidTag);
@@ -312,6 +314,7 @@ impl<S: Storage> P2pServer<S> {
             proxy,
             requests_cache: ExpirableCache::new(),
             flags,
+            sync_from_priority_only
         };
 
         let arc = Arc::new(server);
@@ -847,6 +850,11 @@ impl<S: Storage> P2pServer<S> {
                 // Don't select peers that are on a bad chain
                 if p.has_sync_chain_failed() {
                     debug!("{} has failed chain sync before, skipping...", p);
+                    return None;
+                }
+
+                if self.sync_from_priority_only && !p.is_priority() {
+                    debug!("{} is not a priority node for syncing, skipping...", p);
                     return None;
                 }
 
@@ -1940,7 +1948,7 @@ impl<S: Storage> P2pServer<S> {
                 let header = header.into_owned();
                 let block_hash = Arc::new(header.hash());
 
-                trace!("Received block {}", block_hash);
+                log!(self.block_propagation_log_level, "Received block {} from {}", block_hash, peer);
 
                 // verify that this block wasn't already sent by him
                 let direction = TimedDirection::In {
@@ -1950,8 +1958,14 @@ impl<S: Storage> P2pServer<S> {
                 {
                     let mut blocks_propagation = peer.get_blocks_propagation().lock().await;
                     if let Some((origin, is_common)) = blocks_propagation.get_mut(&block_hash) {
-                        if !origin.update(direction) && !*is_common {
-                            warn!("{} send us a block ({}) already tracked by him ({:?} {})", peer, block_hash, origin, is_common);
+                        let tmp = *is_common;
+
+                        if tmp {
+                            debug!("{} was marked as common for block {}, mark it as not common anymore", peer, block_hash);
+                            *is_common = false;
+                            *origin = direction;
+                        } else if !origin.update(direction) {
+                            warn!("{} send us a block ({}) already tracked by it ({:?}, common: {})", peer, block_hash, origin, tmp);
                             // Don't return an error because of the following edge case:
                             // We have peer B as a common peer with our peer A
                             // But the peer A isn't aware of it yet
@@ -1962,11 +1976,6 @@ impl<S: Storage> P2pServer<S> {
                             // to us.
                             // return Err(P2pError::AlreadyTrackedBlock(block_hash.as_ref().clone(), *origin))
                             return Ok(())
-                        }
-
-                        if *is_common {
-                            debug!("{} was marked as common for block {}", peer, block_hash);
-                            *is_common = false;
                         }
                     } else {
                         debug!("Saving {} in blocks propagation cache for {}", block_hash, peer);
@@ -1985,7 +1994,9 @@ impl<S: Storage> P2pServer<S> {
                             if !blocks_propagation.contains(block_hash) {
                                 debug!("Adding block {} to common {} cache", block_hash, common_peer);
                                 // Out allow to get "In" again, because it's a prediction, don't block it completely
-                                blocks_propagation.put(block_hash.clone(), (direction, true));
+                                blocks_propagation.put(block_hash.clone(), (TimedDirection::In {
+                                    received_at: 0,
+                                }, true));
                             }
                         }
                     }).await;
@@ -2262,7 +2273,7 @@ impl<S: Storage> P2pServer<S> {
                 debug!("Received a notify inventory from {}: {} txs", peer, inventory.len());
                 if !peer.has_requested_inventory() {
                     warn!("Received a notify inventory from {} but we didn't request it", peer);
-                    return Err(P2pError::InvalidPacket)
+                    return Err(P2pError::UnrequestedPacket)
                 }
 
                 // we received the inventory
@@ -2773,6 +2784,11 @@ impl<S: Storage> P2pServer<S> {
     async fn request_inventory_of(&self, peer: &Arc<Peer>) -> Result<(), BlockchainError> {
         if self.disable_fetching_txs_propagated {
             debug!("skipping inventory request from {} due to fetching disabled", peer);                    
+            return Ok(())
+        }
+
+        if peer.has_requested_inventory() {
+            debug!("skipping inventory request from {} due to already requested", peer);                    
             return Ok(())
         }
 
