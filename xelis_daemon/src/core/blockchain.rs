@@ -1386,7 +1386,13 @@ impl<S: Storage> Blockchain<S> {
             FEE_PER_KB
         };
 
-        let (_, base_height) = blockdag::find_common_base(&*storage, block.get_tips(), block.get_version()).await?;
+        // Find the base height for this block
+        let base_height = if block.get_tips().is_empty() {
+            0
+        } else {
+            let (_, base_height) = blockdag::find_common_base(&*storage, block.get_tips(), block.get_version()).await?;
+            base_height
+        };
 
         let mut chain_state = ChainState::new(storage, &self.environment, stable_topoheight, topoheight, block.get_version(), base_fee, base_height);
 
