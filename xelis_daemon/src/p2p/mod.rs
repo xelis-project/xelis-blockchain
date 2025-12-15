@@ -841,8 +841,6 @@ impl<S: Storage> P2pServer<S> {
             (our_height, our_topoheight, our_cumulative_difficulty)
         };
 
-        let synced_priority = self.count_connected_to_a_synced_priority_node(Some(our_cumulative_difficulty)).await;
-        let atomic_priority = AtomicU64::new(synced_priority as u64);
         debug!("cloning peer list for select random best peer");
 
         // search for peers which are greater than us
@@ -850,33 +848,18 @@ impl<S: Storage> P2pServer<S> {
         let available_peers = self.peer_list.get_cloned_peers().await;
         debug!("{} peers available for selection", available_peers.len());
 
-        // TODO: no atomic
-        let atomic_priority = &atomic_priority;
-        let peers_count = AtomicU64::new(available_peers.len() as u64);
-        let peers_count = &peers_count;
-
         let mut peers = stream::iter(available_peers)
             .map(|p| async move {
                 // Don't select peers that are on a bad chain
                 // Special case for priority nodes: they are checked below again
                 let sync_failed = p.has_sync_chain_failed();
                 if sync_failed && !p.is_priority() {
-                    if peers_count.load(Ordering::SeqCst) == 0 {
-                        debug!("No more peers available for selection, keeping it {}", p);
-                    } else {
-                        peers_count.fetch_sub(1, Ordering::SeqCst);
-                        debug!("{} has failed chain sync before, skipping...", p);
-                        return None;
-                    }
+                    debug!("{} has failed chain sync before, skipping...", p);
+                    return None;
                 }
 
                 // If we are connected to a priority node that is synced, only select priority nodes
                 // unless the peer had a sync failure before
-                if atomic_priority.load(Ordering::SeqCst) > 1 && (!p.is_priority() || sync_failed) {
-                    atomic_priority.fetch_sub(1, Ordering::SeqCst);
-                    debug!("{} is not a priority node while we are connected to a priority node, skipping...", p);
-                    return None;
-                }
 
                 if self.sync_from_priority_only && !p.is_priority() {
                     debug!("{} is not a priority node for syncing, skipping...", p);
