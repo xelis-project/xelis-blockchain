@@ -888,11 +888,25 @@ impl Wallet {
 
                     // We also need to check if we have made an outgoing TX
                     // Because we need to keep the order of TX and use correct ciphertexts
-                    if !force_stable_balance  && should_use_stable_balance {
+                    if should_use_stable_balance {
                         if let Some(entry) = storage.get_last_outgoing_transaction()? {
-                            if entry.get_topoheight() > stable_topoheight {
+                            let output_topoheight = entry.get_topoheight();
+                            if output_topoheight > stable_topoheight {
                                 warn!("Cannot use stable balance because we have an outgoing TX not confirmed in stable height yet");
                                 should_use_stable_balance = false;
+                                let hash = if storage.has_block_hash_for_topoheight(output_topoheight)? {
+                                    storage.get_block_hash_for_topoheight(output_topoheight)?
+                                } else {
+                                    let res = network_handler.get_api()
+                                        .get_block_at_topoheight(output_topoheight).await?;
+
+                                    res.header.hash.into_owned()
+                                };
+
+                                state.set_reference(Reference {
+                                    topoheight: output_topoheight,
+                                    hash,
+                                });
                             }
                         }
                     }
