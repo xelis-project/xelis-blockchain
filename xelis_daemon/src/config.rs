@@ -65,7 +65,7 @@ pub const STABLE_LIMIT: u64 = 8;
 pub const fn get_stable_limit(version: BlockVersion) -> u64 {
     match version {
         BlockVersion::V0 | BlockVersion::V1 | BlockVersion::V2 => 8,
-        BlockVersion::V3 => 32,
+        BlockVersion::V3 => 24,
     }
 }
 
