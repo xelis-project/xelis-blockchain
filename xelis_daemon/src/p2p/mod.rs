@@ -1026,11 +1026,41 @@ impl<S: Storage> P2pServer<S> {
                 false
             };
 
-            let mut peer_selected = match self.select_random_best_peer(fast_sync, previous_peer).await {
-                Ok(peer) => peer,
-                Err(e) => {
-                    error!("Error while selecting random best peer for chain sync: {}", e);
-                    None
+            // Priority on priority nodes
+            let mut priority_nodes = Vec::new();
+            for peer in self.peer_list.get_cloned_peers().await {
+                let block_top_hash = { peer.get_top_block_hash().lock().await.clone() };
+                match self.blockchain.has_block(&block_top_hash).await {
+                    Ok(has_block) => {
+                        if !has_block && peer.is_priority() {
+                            debug!("{} is a priority node and has a block we don't have ({}), adding to priority nodes list", peer, block_top_hash);
+                            if fast_sync && !peer.fast_sync() {
+                                debug!("Skipping {} for priority nodes because we are in fast sync mode and it doesn't support it", peer);
+                                continue;
+                            }
+                            priority_nodes.push((peer, block_top_hash));
+                        }
+                    },
+                    Err(e) => {
+                        error!("Error while checking if we have block {} for {}: {}", block_top_hash, peer, e);
+                    }
+                };
+            }
+
+            // select one random from priority nodes if any
+            // if we have priority nodes that are synced, only try to sync from them
+            let mut peer_selected = if !priority_nodes.is_empty() {
+                let selected = rand::thread_rng().gen_range(0..priority_nodes.len());
+                let (peer, block_hash) = priority_nodes.swap_remove(selected);
+                info!("Selected priority node {} for chain sync (block we don't have: {})", peer, block_hash);
+                Some(peer)
+            } else {
+                match self.select_random_best_peer(fast_sync, previous_peer).await {
+                    Ok(peer) => peer,
+                    Err(e) => {
+                        error!("Error while selecting random best peer for chain sync: {}", e);
+                        None
+                    }
                 }
             };
 
