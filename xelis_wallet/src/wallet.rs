@@ -12,6 +12,7 @@ use indexmap::IndexMap;
 use rand::{rngs::OsRng, RngCore};
 use log::{
     debug,
+    info,
     error,
     trace
 };
@@ -946,6 +947,9 @@ impl Wallet {
                                 }
                             }
                         }
+
+                        let reference = state.get_reference();
+                        info!("Final reference used for TX creation is at topoheight {} with hash {}", reference.topoheight, reference.hash);
                     }
 
                     debug!("Setting stable topoheight to {} for state", stable_topoheight);
