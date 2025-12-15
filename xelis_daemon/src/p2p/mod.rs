@@ -192,6 +192,7 @@ pub struct P2pServer<S: Storage> {
     // Flags to use in handshake
     flags: Flags,
     sync_from_priority_only: bool,
+    reorg_from_priority_only: bool,
 }
 
 impl<S: Storage> P2pServer<S> {
@@ -222,6 +223,7 @@ impl<S: Storage> P2pServer<S> {
         disable_fast_sync_support: bool,
         proxy: Option<(ProxyKind, SocketAddr, Option<(String, String)>)>,
         sync_from_priority_only: bool,
+        reorg_from_priority_only: bool,
     ) -> Result<Arc<Self>, P2pError> {
         if tag.as_ref().is_some_and(|tag| tag.len() == 0 || tag.len() > 16) {
             return Err(P2pError::InvalidTag);
@@ -314,7 +316,8 @@ impl<S: Storage> P2pServer<S> {
             proxy,
             requests_cache: ExpirableCache::new(),
             flags,
-            sync_from_priority_only
+            sync_from_priority_only,
+            reorg_from_priority_only,
         };
 
         let arc = Arc::new(server);
@@ -848,10 +851,15 @@ impl<S: Storage> P2pServer<S> {
         let mut peers = stream::iter(available_peers)
             .map(|p| async move {
                 // Don't select peers that are on a bad chain
-                if p.has_sync_chain_failed() {
+                // Special case for priority nodes: they are checked below again
+                let sync_failed = p.has_sync_chain_failed();
+                if sync_failed && !p.is_priority() {
                     debug!("{} has failed chain sync before, skipping...", p);
                     return None;
                 }
+
+                // If we are connected to a priority node that is synced, only select priority nodes
+                // unless the peer had a sync failure before
 
                 if self.sync_from_priority_only && !p.is_priority() {
                     debug!("{} is not a priority node for syncing, skipping...", p);
@@ -1018,11 +1026,41 @@ impl<S: Storage> P2pServer<S> {
                 false
             };
 
-            let mut peer_selected = match self.select_random_best_peer(fast_sync, previous_peer).await {
-                Ok(peer) => peer,
-                Err(e) => {
-                    error!("Error while selecting random best peer for chain sync: {}", e);
-                    None
+            // Priority on priority nodes
+            let mut priority_nodes = Vec::new();
+            for peer in self.peer_list.get_cloned_peers().await {
+                let block_top_hash = { peer.get_top_block_hash().lock().await.clone() };
+                match self.blockchain.has_block(&block_top_hash).await {
+                    Ok(has_block) => {
+                        if !has_block && peer.is_priority() {
+                            debug!("{} is a priority node and has a block we don't have ({}), adding to priority nodes list", peer, block_top_hash);
+                            if fast_sync && !peer.fast_sync() {
+                                debug!("Skipping {} for priority nodes because we are in fast sync mode and it doesn't support it", peer);
+                                continue;
+                            }
+                            priority_nodes.push((peer, block_top_hash));
+                        }
+                    },
+                    Err(e) => {
+                        error!("Error while checking if we have block {} for {}: {}", block_top_hash, peer, e);
+                    }
+                };
+            }
+
+            // select one random from priority nodes if any
+            // if we have priority nodes that are synced, only try to sync from them
+            let mut peer_selected = if !priority_nodes.is_empty() {
+                let selected = rand::thread_rng().gen_range(0..priority_nodes.len());
+                let (peer, block_hash) = priority_nodes.swap_remove(selected);
+                info!("Selected priority node {} for chain sync (block we don't have: {})", peer, block_hash);
+                Some(peer)
+            } else {
+                match self.select_random_best_peer(fast_sync, previous_peer).await {
+                    Ok(peer) => peer,
+                    Err(e) => {
+                        error!("Error while selecting random best peer for chain sync: {}", e);
+                        None
+                    }
                 }
             };
 
@@ -2474,19 +2512,28 @@ impl<S: Storage> P2pServer<S> {
     }
 
     // determine if we are connected to a priority node and that this node is equal / greater to our chain
-    async fn is_connected_to_a_synced_priority_node(&self) -> bool {
+    async fn count_connected_to_a_synced_priority_node(&self, cumulative_difficulty: Option<CumulativeDifficulty>) -> usize {
         let topoheight = self.blockchain.get_topo_height().await;
         trace!("locking peer list for checking if connected to a synced priority node");
 
+        let mut count = 0;
         for peer in self.peer_list.get_peers().read().await.values() {
             if peer.is_priority() {
+                if let Some(cumulative_difficulty) = &cumulative_difficulty {
+                    let peer_cumulative_difficulty = peer.get_cumulative_difficulty().lock().await;
+                    if *peer_cumulative_difficulty < *cumulative_difficulty {
+                        debug!("Skipping {} because its cumulative difficulty is lower than ours in is_connected_to_a_synced_priority_node", peer);
+                        continue
+                    }
+                }
                 let peer_topoheight = peer.get_topoheight();
                 if peer_topoheight >= topoheight || topoheight - peer_topoheight < STABLE_LIMIT {
-                    return true
+                    count += 1;
                 }
             }
         }
-        false
+
+        count
     }
 
     // Get the optional tag set 
@@ -2664,6 +2711,8 @@ impl<S: Storage> P2pServer<S> {
         let packet_block_bytes = &packet_block_bytes;
         let packet_ping_bytes = &packet_ping_bytes;
 
+        let stable_limit = get_stable_limit(block.get_version());
+
         // Prepare all the futures to execute them in parallel
         stream::iter(self.peer_list.get_cloned_peers().await)
             .for_each_concurrent(self.stream_concurrency, |peer| async move {
@@ -2676,7 +2725,7 @@ impl<S: Storage> P2pServer<S> {
                 // (block height is always + 1 above the highest tip height, so we can just check that peer height is not above block height + 1, it's enough in 90% of time)
                 // chain can accept old blocks (up to STABLE_LIMIT) but new blocks only N+1
                 // Easier way: we could simply check that the block height is above peer stable height
-                if (peer_height >= block.get_height() && peer_height - block.get_height() <= STABLE_LIMIT) || (peer_height <= block.get_height() && block.get_height() - peer_height <= 1) {
+                if (peer_height >= block.get_height() && peer_height - block.get_height() <= stable_limit) || (peer_height <= block.get_height() && block.get_height() - peer_height <= 1) {
                     // Don't lock the blocks propagation while sending the packet
                     let send_block = {
                         trace!("locking blocks propagation for peer {}", peer);
@@ -2730,7 +2779,7 @@ impl<S: Storage> P2pServer<S> {
                             peer.set_last_ping_sent(get_current_time_in_seconds());
                         }
                     }
-                } else if send_ping && peer_height >= block.get_height().saturating_sub(STABLE_LIMIT) {
+                } else if send_ping && peer_height >= block.get_height().saturating_sub(stable_limit) {
                     // Peer is above us, send him a ping packet to inform him we got a block propagated
                     log!(self.block_propagation_log_level, "send ping (block {}) for propagation to {}", hash, peer);
                     if let Err(e) = peer.send_bytes(packet_ping_bytes.clone()).await {

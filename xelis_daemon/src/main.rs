@@ -3,7 +3,7 @@ pub mod p2p;
 pub mod core;
 pub mod config;
 
-use config::{DEV_PUBLIC_KEY, STABLE_LIMIT};
+use config::DEV_PUBLIC_KEY;
 use futures::StreamExt;
 use human_bytes::human_bytes;
 use humantime::{format_duration, Duration as HumanDuration};
@@ -15,6 +15,7 @@ use xelis_common::{
     async_handler,
     config::{init, VERSION, XELIS_ASSET, FEE_PER_KB},
     context::Context,
+    block::Block,
     contract::vm::HOOK_CONSTRUCTOR_ID,
     crypto::{
         Address,
@@ -52,7 +53,7 @@ use xelis_common::{
     }
 };
 use xelis_vm::Access;
-use crate::config::MILLIS_PER_SECOND;
+use crate::config::{MILLIS_PER_SECOND, get_stable_limit};
 use core::{
     state::ChainState,
     blockchain::{
@@ -336,6 +337,7 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
     command_manager.add_command(Command::with_required_arguments("add_peer", "Connect to a new peer using ip:port format", vec![Arg::new("address", ArgType::String)], CommandHandler::Async(async_handler!(add_peer::<S>))))?;
     command_manager.add_command(Command::new("list_unexecuted_transactions", "List all unexecuted transactions", CommandHandler::Async(async_handler!(list_unexecuted_transactions::<S>))))?;
     command_manager.add_command(Command::new("swap_blocks_executions_positions", "Swap the position of two blocks executions", CommandHandler::Async(async_handler!(swap_blocks_executions_positions::<S>))))?;
+    command_manager.add_command(Command::new("show_block_execution_position", "Show the position of a block execution", CommandHandler::Async(async_handler!(show_block_execution_position::<S>))))?;
     command_manager.add_command(Command::new("print_balance", "Print the encrypted balance at a specific topoheight", CommandHandler::Async(async_handler!(print_balance::<S>))))?;
     command_manager.add_command(Command::new("estimate_db_size", "Estimate the database total size", CommandHandler::Async(async_handler!(estimate_db_size::<S>))))?;
     command_manager.add_command(Command::new("list_orphaned_blocks", "List all orphaned blocks we currently hold", CommandHandler::Async(async_handler!(list_orphaned_blocks::<S>))))?;
@@ -345,6 +347,7 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
     command_manager.add_command(Command::new("snapshot_mode", "Force to be in snapshot mode (memory only)", CommandHandler::Async(async_handler!(snapshot_mode::<S>))))?;
     command_manager.add_command(Command::with_optional_arguments("inspect_contract", "Inspect a smart contract by its hash", vec![Arg::new("contract", ArgType::Hash), Arg::new("show-storage", ArgType::Bool)], CommandHandler::Async(async_handler!(inspect_contract::<S>))))?;
     command_manager.add_command(Command::new("show_mempool", "Show all transactions in mempool", CommandHandler::Async(async_handler!(show_mempool::<S>))))?;
+    command_manager.add_command(Command::with_optional_arguments("import_block", "Import a block in hexadecimal format", vec![Arg::new("hex", ArgType::String)], CommandHandler::Async(async_handler!(import_block::<S>))))?;
 
     // Don't keep the lock for ever
     let p2p = {
@@ -518,8 +521,13 @@ async fn verify_chain<S: Storage>(manager: &CommandManager, mut args: ArgumentMa
     info!("Verifying chain supply from {} until topoheight {}", pruned_topoheight, topoheight);
     for topo in pruned_topoheight..=topoheight {
         let hash_at_topo = storage.get_hash_at_topo_height(topo).await.context("Error while retrieving hash at topo")?;
-        let block_reward = if pruned_topoheight == 0 || topo - pruned_topoheight > STABLE_LIMIT {
-            let block_reward = blockchain.get_block_reward(&*storage, &hash_at_topo, expected_supply, Some(topo), topo).await.context("Error while calculating block reward")?;
+        // Verify that we have a balance for each account updated
+        let header = storage.get_block_header_by_hash(&hash_at_topo).await.context("Error while retrieving block header")?;
+
+        let stable_limit = get_stable_limit(header.get_version());
+        let block_reward = if pruned_topoheight == 0 || topo - pruned_topoheight > stable_limit {
+            let block_reward = blockchain.get_block_reward(&*storage, &hash_at_topo, expected_supply, Some(topo), topo, header.get_version()).await
+                .context("Error while calculating block reward")?;
             let expected_block_reward = storage.get_block_reward_at_topo_height(topo).await.context("Error while retrieving block reward")?;
             // Verify the saved block reward
             if block_reward != expected_block_reward {
@@ -544,8 +552,6 @@ async fn verify_chain<S: Storage>(manager: &CommandManager, mut args: ArgumentMa
             return Ok(())
         }
 
-        // Verify that we have a balance for each account updated
-        let header = storage.get_block_header_by_hash(&hash_at_topo).await.context("Error while retrieving block header")?;
         if !storage.has_balance_at_exact_topoheight(header.get_miner(), &XELIS_ASSET, topo).await.context("Error while checking the miner balance version")? {
             manager.error(format!("No balance version found for miner {} at topoheight {} for block {}", header.get_miner().as_address(blockchain.get_network().is_mainnet()), topo, hash_at_topo));
             return Ok(())
@@ -581,7 +587,10 @@ async fn verify_chain<S: Storage>(manager: &CommandManager, mut args: ArgumentMa
             let (required_base_fee, _) = blockchain.get_required_base_fee(&*storage, header.get_tips().iter()).await
                 .context("Error while calculating required base fee")?;
 
-            let mut state = ChainState::new(&*storage, blockchain.get_contract_environment(), 0, topo - 1, header.get_version(), required_base_fee);
+            let base_height = blockdag::find_common_base_height(&*storage, header.get_tips(), header.get_version()).await
+                .context("Error while finding common base for tx verification")?;
+
+            let mut state = ChainState::new(&*storage, blockchain.get_contract_environment(), 0, topo - 1, header.get_version(), required_base_fee, base_height);
             Transaction::verify_batch(txs.iter(), &mut state, &NoZKPCache::default()).await
                 .context("Error while verifying txs")?;
 
@@ -627,6 +636,23 @@ async fn swap_blocks_executions_positions<S: Storage>(manager: &CommandManager, 
 
     storage.swap_blocks_executions_positions(&left, &right).await
         .context("Swap blocks executions positions")?;
+
+    Ok(())
+}
+
+async fn show_block_execution_position<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
+    let context = manager.get_context().lock()?;
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    let prompt = manager.get_prompt();
+    let storage = blockchain.get_storage().read().await;
+
+    let hash = prompt.read_hash("Block hash: ").await
+        .context("Error while reading block hash")?;
+
+    let position = storage.get_block_position_in_order(&hash).await
+        .context("Error while retrieving block execution position")?;
+
+    manager.message(format!("Block {} is at execution position {}", hash, position));
 
     Ok(())
 }
@@ -732,6 +758,48 @@ async fn show_mempool<S: Storage>(manager: &CommandManager, _: ArgumentManager) 
     for (hash, tx) in mempool.get_txs() {
         manager.message(format!("- {}: {} XEL fee for {}", hash, format_xelis(tx.get_fee()), human_bytes(tx.get_size() as f64)));
     }
+
+    Ok(())
+}
+
+async fn import_block<S: Storage>(manager: &CommandManager, mut args: ArgumentManager) -> Result<(), CommandError> {
+    let context = manager.get_context().lock()?;
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    let prompt = manager.get_prompt();
+
+    let hex = if args.has_argument("hex") {
+        args.get_value("hex")?.to_string_value()?
+    } else {
+        prompt.read_input("Block hex: ", false).await
+            .context("Error while reading block hex")?
+    };
+
+    let block = Block::from_hex(&hex)
+        .context("Error on block")?;
+    let hash = block.hash();
+
+    if blockchain.has_block(&hash).await.context("Error while checking block existence")? {
+        let mut storage = blockchain.get_storage().write().await;
+        debug!("storage write acquired for block forced re-execution");
+    
+        storage.delete_block_by_hash(&hash).await.context("Error while deleting block")?;
+        let mut tips = storage.get_tips().await.context("Error while getting tips")?;
+        if tips.remove(&hash) {
+            debug!("Block {} was a tip, removing it from tips", hash);
+            storage.store_tips(&tips).await.context("Error while storing tips")?;
+        }
+    
+        let mut blocks = storage.get_blocks_at_height(block.get_height()).await.context("Error while getting blocks at height")?;
+        if blocks.shift_remove(&hash) {
+            debug!("Block {} was at height {}, removing it from blocks at height", hash, block);
+            storage.set_blocks_at_height(&blocks, block.get_height()).await.context("Error while setting blocks at height")?;
+        }
+    }
+
+    blockchain.add_new_block(block, PreVerifyBlock::None, BroadcastOption::None, false).await
+        .context("Error while importing block")?;
+
+    manager.message("Block imported successfully");
 
     Ok(())
 }

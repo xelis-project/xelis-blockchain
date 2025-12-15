@@ -1652,6 +1652,11 @@ impl EncryptedStorage {
         self.load_from_disk_with_encrypted_key(&self.changes_topoheight, &topoheight.to_be_bytes())
     }
 
+    pub fn has_block_hash_for_topoheight(&self, topoheight: u64) -> Result<bool> {
+        trace!("has block hash for topoheight {}", topoheight);
+        self.contains_with_encrypted_key(&self.changes_topoheight, &topoheight.to_be_bytes())
+    }
+
     // Check if the topoheight is present in the changes tree
     pub fn has_topoheight_in_changes(&self, topoheight: u64) -> Result<bool> {
         trace!("has topoheight {} in changes", topoheight);

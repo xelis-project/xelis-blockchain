@@ -40,7 +40,7 @@ pub const fn get_pow_algorithm_for_version(version: BlockVersion) -> Algorithm {
     match version {
         BlockVersion::V0 => Algorithm::V1,
         BlockVersion::V1 | BlockVersion::V2 => Algorithm::V2,
-        BlockVersion::V3 => Algorithm::V3,
+        BlockVersion::V3 | BlockVersion::V4 => Algorithm::V3,
     }
 }
 
@@ -53,7 +53,7 @@ pub const fn get_block_time_target_for_version(version: BlockVersion) -> u64 {
         BlockVersion::V0
         | BlockVersion::V1
         | BlockVersion::V2 => 15 * MILLIS_PER_SECOND,
-        BlockVersion::V3 => 5 * MILLIS_PER_SECOND,
+        BlockVersion::V3 | BlockVersion::V4 => 5 * MILLIS_PER_SECOND,
     }
 }
 
@@ -174,7 +174,8 @@ mod tests {
         assert_eq!(get_version_at_height(&Network::Testnet, 0), BlockVersion::V0);
         assert_eq!(get_version_at_height(&Network::Testnet, 6), BlockVersion::V1);
         assert_eq!(get_version_at_height(&Network::Testnet, 10), BlockVersion::V2);
-        assert_eq!(get_version_at_height(&Network::Testnet, 50), BlockVersion::V3);
+        assert_eq!(get_version_at_height(&Network::Testnet, 15), BlockVersion::V3);
+        assert_eq!(get_version_at_height(&Network::Testnet, 50), BlockVersion::V4);
     }
 
     #[test]

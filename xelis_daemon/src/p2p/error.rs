@@ -39,6 +39,8 @@ use super::{
 
 #[derive(Error, Debug)]
 pub enum P2pError {
+    #[error("Reorgs are only allowed from priority nodes")]
+    ReorgFromPriorityOnly,
     #[error("Invalid block metadata")]
     InvalidBlockMetadata,
     #[error("Invalid temporary ban time, it must be greater than 0")]

@@ -40,6 +40,7 @@ use xelis_common::{
     block::{
         Block,
         BlockHeader,
+        BlockVersion,
         MinerWork,
         TopoHeight
     },
@@ -107,19 +108,19 @@ const MAX_CONTRACTS: usize = 100;
 const MAX_CONTRACTS_ENTRIES: usize = 20;
 
 // Get the block type using the block hash and the blockchain current state
-pub async fn get_block_type_for_block<S: Storage, P: DifficultyProvider + DagOrderProvider + BlocksAtHeightProvider + PrunedTopoheightProvider + CacheProvider>(blockchain: &Blockchain<S>, provider: &P, hash: &Hash) -> Result<BlockType, InternalRpcError> {
+pub async fn get_block_type_for_block<S: Storage, P: DifficultyProvider + DagOrderProvider + BlocksAtHeightProvider + PrunedTopoheightProvider + CacheProvider>(blockchain: &Blockchain<S>, provider: &P, hash: &Hash, version: BlockVersion) -> Result<BlockType, InternalRpcError> {
     Ok(if blockchain.is_block_orphaned_for_storage(provider, hash).await? {
         BlockType::Orphaned
-    } else if blockchain.is_sync_block(provider, hash).await.context("Error while checking if block is sync")? {
+    } else if blockchain.is_sync_block(provider, hash, version).await.context("Error while checking if block is sync")? {
         BlockType::Sync
-    } else if blockchain.is_side_block(provider, hash).await.context("Error while checking if block is side")? {
+    } else if blockchain.is_side_block(provider, hash, version).await.context("Error while checking if block is side")? {
         BlockType::Side
     } else {
         BlockType::Normal
     })
 }
 
-async fn get_block_data<S: Storage, P>(blockchain: &Blockchain<S>, provider: &P, height: u64, hash: &Hash) -> Result<(Option<RPCTopoHeightMetadata>, BlockType, CumulativeDifficulty, Difficulty), InternalRpcError>
+async fn get_block_data<S: Storage, P>(blockchain: &Blockchain<S>, provider: &P, height: u64, hash: &Hash, version: BlockVersion) -> Result<(Option<RPCTopoHeightMetadata>, BlockType, CumulativeDifficulty, Difficulty), InternalRpcError>
 where
     P: DifficultyProvider
     + DagOrderProvider
@@ -147,7 +148,7 @@ where
         None
     };
 
-    let block_type = get_block_type_for_block(&blockchain, &*provider, hash).await?;
+    let block_type = get_block_type_for_block(&blockchain, &*provider, hash, version).await?;
     let cumulative_difficulty = provider.get_cumulative_difficulty_for_block_hash(hash).await.context("Error while retrieving cumulative difficulty")?;
     let difficulty = provider.get_difficulty_for_block_hash(&hash).await.context("Error while retrieving difficulty")?;
 
@@ -165,7 +166,7 @@ where
     + ClientProtocolProvider
     + CacheProvider
 {
-    let (metadata, block_type, cumulative_difficulty, difficulty) = get_block_data(blockchain, provider, block.get_height(), hash).await?;
+    let (metadata, block_type, cumulative_difficulty, difficulty) = get_block_data(blockchain, provider, block.get_height(), hash, block.get_version()).await?;
 
     let mainnet = blockchain.get_network().is_mainnet();
     let header = block.get_header();
@@ -222,7 +223,7 @@ pub async fn get_block_response_for_hash<S: Storage>(blockchain: &Blockchain<S>,
         let header = storage.get_block_header_by_hash(&hash).await
             .context("Error while retrieving full block")?;
 
-        let (metadata, block_type, cumulative_difficulty, difficulty) = get_block_data(blockchain, storage, header.get_height(), hash).await?;
+        let (metadata, block_type, cumulative_difficulty, difficulty) = get_block_data(blockchain, storage, header.get_height(), hash, header.get_version()).await?;
 
         // calculate total size in bytes
         let mut total_size_in_bytes = header.size();
@@ -342,6 +343,7 @@ pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>
     handler.register_method_with_params("get_stable_balance", async_handler!(get_stable_balance::<S>));
     handler.register_method_with_params("has_balance", async_handler!(has_balance::<S>));
     handler.register_method_with_params("get_balance_at_topoheight", async_handler!(get_balance_at_topoheight::<S>));
+    handler.register_method_with_params("get_balances_at_maximum_topoheight", async_handler!(get_balances_at_maximum_topoheight::<S>));
 
     handler.register_method_with_params("get_nonce", async_handler!(get_nonce::<S>));
     handler.register_method_with_params("has_nonce", async_handler!(has_nonce::<S>));
@@ -700,6 +702,37 @@ async fn get_balance_at_topoheight<S: Storage>(context: &Context, params: GetBal
 
     let balance = storage.get_balance_at_exact_topoheight(params.address.get_public_key(), &params.asset, params.topoheight).await.context("Error while retrieving balance at exact topo height")?;
     Ok(balance)
+}
+
+async fn get_balances_at_maximum_topoheight<S: Storage>(context: &Context, params: GetBalancesAtMaximumTopoHeightParams<'_>) -> Result<Vec<Option<RPCVersioned<VersionedBalance>>>, InternalRpcError> {
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+
+    if params.address.is_mainnet() != blockchain.get_network().is_mainnet() {
+        return Err(InternalRpcError::InvalidParamsAny(BlockchainError::InvalidNetwork.into()))
+    }
+
+    if params.assets.len() > MAX_ASSETS {
+        return Err(InternalRpcError::InvalidJSONRequest).context(format!("Maximum assets requested cannot be greater than {}", MAX_ASSETS))?
+    }
+
+    let mut versions = Vec::with_capacity(params.assets.len());
+    let storage = blockchain.get_storage().read().await;
+    let chain_cache = storage.chain_cache().await;
+    let topoheight = chain_cache.topoheight;
+
+    if params.maximum_topoheight > topoheight {
+        return Err(InternalRpcError::UnexpectedParams).context("Topoheight cannot be greater than current chain topoheight")?
+    }
+
+    for asset in params.assets {
+        let balance = storage.get_balance_at_maximum_topoheight(params.address.get_public_key(), &asset, params.maximum_topoheight).await
+            .context("Error while retrieving balance at exact topo height")?
+            .map(|(topoheight, version)| RPCVersioned { topoheight, version });
+
+        versions.push(balance);
+    }
+
+    Ok(versions)
 }
 
 async fn has_nonce<S: Storage>(context: &Context, params: HasNonceParams<'_>) -> Result<HasNonceResult, InternalRpcError> {
@@ -1655,7 +1688,7 @@ async fn get_block_summary_at_topoheight<S: Storage>(context: &Context, params: 
     let (hash, block_header) = storage.get_block_header_at_topoheight(params.topoheight).await
         .context("Error while retrieving block header at topoheight")?;
 
-    let (metadata, block_type, cumulative_difficulty, difficulty) = get_block_data(blockchain, &*storage, block_header.get_height(), &hash).await?;
+    let (metadata, block_type, cumulative_difficulty, difficulty) = get_block_data(blockchain, &*storage, block_header.get_height(), &hash, block_header.get_version()).await?;
 
     let storage = &storage;
     let transactions = stream::iter(block_header.get_transactions().iter())
@@ -1697,7 +1730,7 @@ async fn get_block_summary_by_hash<S: Storage>(context: &Context, params: GetBlo
     let block_header = storage.get_block_header_by_hash(&params.hash).await
         .context("Error while retrieving block header by hash")?;
 
-    let (metadata, block_type, cumulative_difficulty, difficulty) = get_block_data(blockchain, &*storage, block_header.get_height(), &params.hash).await?;
+    let (metadata, block_type, cumulative_difficulty, difficulty) = get_block_data(blockchain, &*storage, block_header.get_height(), &params.hash, block_header.get_version()).await?;
 
     let storage = &storage;
     let transactions = stream::iter(block_header.get_transactions().iter())

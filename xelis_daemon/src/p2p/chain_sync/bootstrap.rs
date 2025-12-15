@@ -17,6 +17,7 @@ use xelis_common::{
 use crate::{
     config::{DEV_PUBLIC_KEY, PRUNE_SAFETY_LIMIT, PEER_MAX_PACKET_SIZE},
     core::{
+        hard_fork,
         error::BlockchainError,
         storage::{
             Storage,
@@ -89,7 +90,10 @@ impl<S: Storage> P2pServer<S> {
             StepRequest::ChainInfo(blocks) => {
                 let common_point = self.find_common_point(&*storage, blocks).await?;
                 let tips = storage.get_tips().await?;
-                let (hash, height) = blockdag::find_common_base::<S, _>(&storage, &tips).await?;
+                let height_by_tips = blockdag::calculate_height_at_tips::<S, _>(&storage, tips.iter()).await?;
+                let version = hard_fork::get_version_at_height(self.blockchain.get_network(), height_by_tips);
+
+                let (hash, height) = blockdag::find_common_base::<S, _>(&storage, &tips, version).await?;
                 let stable_topo = storage.get_topo_height_for_hash(&hash).await?;
                 StepResponse::ChainInfo(common_point, stable_topo, height, hash)
             },

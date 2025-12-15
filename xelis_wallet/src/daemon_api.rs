@@ -6,6 +6,7 @@ use std::{
 };
 
 use anyhow::Result;
+use indexmap::IndexSet;
 use serde::Serialize;
 use serde_json::Value;
 use xelis_common::{
@@ -221,6 +222,16 @@ impl DaemonAPI {
             address: Cow::Borrowed(address)
         }).await?;
         Ok(balance)
+    }
+
+    pub async fn get_balances_at_maximum_topoheight<'a>(&self, address: &Address, assets: IndexSet<Cow<'a, Hash>>, maximum_topoheight: u64) -> Result<Vec<Option<RPCVersioned<VersionedBalance>>>> {
+        trace!("get_balances_at_maximum_topoheight");
+        let balances = self.client.call_with("get_balances_at_maximum_topoheight", &GetBalancesAtMaximumTopoHeightParams {
+            address: Cow::Borrowed(address),
+            assets,
+            maximum_topoheight,
+        }).await?;
+        Ok(balances)
     }
 
     pub async fn get_block_at_topoheight(&self, topoheight: u64) -> Result<BlockResponse> {

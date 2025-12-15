@@ -30,9 +30,9 @@ use xelis_common::{
 use crate::{
     config::{CHAIN_SYNC_TOP_BLOCKS, MILLIS_PER_SECOND, PEER_OBJECTS_CONCURRENCY, STABLE_LIMIT},
     core::{
+        hard_fork,
         blockchain::{BroadcastOption, PreVerifyBlock},
         error::BlockchainError,
-        hard_fork,
         storage::Storage,
         blockdag,
     },
@@ -154,8 +154,8 @@ impl<S: Storage> P2pServer<S> {
                     let version = hard_fork::get_version_at_height(self.blockchain.get_network(), height);
                     // Due to the TX being orphaned, some TXs may be in the wrong order in V1
                     // It has been sorted in V2 and should not happen anymore
-                    if version == BlockVersion::V0 && storage.has_block_position_in_order(&hash).await? && storage.has_block_position_in_order(&previous_hash).await? {
-                        if blockdag::is_side_block_internal(&*storage, &hash, Some(topoheight), top_topoheight).await? {
+                    if (version == BlockVersion::V0 || version == BlockVersion::V3) && storage.has_block_position_in_order(&hash).await? && storage.has_block_position_in_order(&previous_hash).await? {
+                        if blockdag::is_side_block_internal(&*storage, &hash, Some(topoheight), top_topoheight, version).await? {
                             let position = storage.get_block_position_in_order(&hash).await?;
                             let previous_position = storage.get_block_position_in_order(&previous_hash).await?;
                             // if the block is a side block, we need to check if it's in the right order
@@ -263,10 +263,8 @@ impl<S: Storage> P2pServer<S> {
                 biased;
                 Some(res) = blocks_executor.next() => {
                     if let Err(e) = res {
-                        if !peer.is_priority() {
-                            debug!("Mark {} as sync chain failed: {}", peer, e);
-                            peer.set_sync_chain_failed(true);
-                        }
+                        debug!("Mark {} as sync chain failed: {}", peer, e);
+                        peer.set_sync_chain_failed(true);
 
                         return Err(e)
                     }
@@ -309,15 +307,13 @@ impl<S: Storage> P2pServer<S> {
         let res = self.handle_blocks_from_chain_validator(peer, chain_validator, blocks).await;
 
         if let Err(BlockchainError::ErrorOnP2p(e)) = &res {
-            if !peer.is_priority() {
-                debug!("Mark {} as sync chain from validator failed: {}", peer, e);
-                peer.set_sync_chain_failed(true);
+            debug!("Mark {} as sync chain from validator failed: {}", peer, e);
+            peer.set_sync_chain_failed(true);
 
-                if let P2pError::Disconnected = e {
-                    // Peer disconnected while trying to reorg us, tempban it
-                    if let Err(e) = self.peer_list.temp_ban_address(&peer.get_connection().get_address().ip(), 60, false).await {
-                        debug!("Couldn't tempban {}: {}", peer, e);
-                    }
+            if let P2pError::Disconnected = e {
+                // Peer disconnected while trying to reorg us, tempban it
+                if let Err(e) = self.peer_list.temp_ban_address(&peer.get_connection().get_address().ip(), 60, false).await {
+                    debug!("Couldn't tempban {}: {}", peer, e);
                 }
             }
         }
@@ -411,13 +407,16 @@ impl<S: Storage> P2pServer<S> {
             && peer.get_height() >= our_previous_height
             && (skip_stable_height_check || common_topoheight < our_stable_topoheight)
             // then, verify if it's a priority node, otherwise, check if we are connected to a priority node so only him can rewind us
-            && (peer.is_priority() || !self.is_connected_to_a_synced_priority_node().await)
+            && (peer.is_priority() || (self.count_connected_to_a_synced_priority_node(None).await == 0))
         {
             // check that if we can trust him
             if peer.is_priority() {
                 warn!("Rewinding chain without checking because {} is a priority node (pop count: {})", peer, pop_count);
                 // User trust him as a priority node, rewind chain without checking, allow to go below stable height also
                 self.blockchain.rewind_chain(pop_count, false).await?;
+            } else if self.reorg_from_priority_only {
+                warn!("Ignoring reorg request from non-priority node {} because reorg_from_priority_only is enabled", peer);
+                return Err(P2pError::ReorgFromPriorityOnly.into());
             } else {
                 // Verify that someone isn't trying to trick us
                 // Fast check: because each block represent a topoheight, it should contains
@@ -649,7 +648,7 @@ impl<S: Storage> P2pServer<S> {
                                         }
                                     }
 
-                                    if let Err(e) = self.blockchain.add_new_block(block, pre_verify, BroadcastOption::Miners, false).await {
+                                    if let Err(e) = self.blockchain.add_new_block(block, pre_verify, BroadcastOption::All, false).await {
                                         return Err(e)
                                     }
 
@@ -759,6 +758,6 @@ impl<S: Storage> P2pServer<S> {
         };
 
         // Replicate same behavior as above branch
-        self.blockchain.add_new_block(block, PreVerifyBlock::Hash(hash), BroadcastOption::Miners, false).await
+        self.blockchain.add_new_block(block, PreVerifyBlock::Hash(hash), BroadcastOption::All, false).await
     }
 }

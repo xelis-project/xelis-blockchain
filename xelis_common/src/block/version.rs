@@ -18,6 +18,7 @@ pub enum BlockVersion {
     V2 = 2,
     // Smart Contracts
     V3 = 3,
+    V4 = 4,
 }
 
 impl BlockVersion {
@@ -26,7 +27,7 @@ impl BlockVersion {
         match self {
             BlockVersion::V0 | BlockVersion::V1 => matches!(tx_version, TxVersion::V0),
             BlockVersion::V2 => matches!(tx_version, TxVersion::V1),
-            BlockVersion::V3 => matches!(tx_version, TxVersion::V2),
+            BlockVersion::V3 | BlockVersion::V4 => matches!(tx_version, TxVersion::V2),
         }
     }
 
@@ -35,7 +36,7 @@ impl BlockVersion {
         match self {
             BlockVersion::V0 | BlockVersion::V1 => TxVersion::V0,
             BlockVersion::V2 => TxVersion::V1,
-            BlockVersion::V3 => TxVersion::V2,
+            BlockVersion::V3 | BlockVersion::V4 => TxVersion::V2,
         }
     }
 }
@@ -49,6 +50,7 @@ impl TryFrom<u8> for BlockVersion {
             1 => Ok(BlockVersion::V1),
             2 => Ok(BlockVersion::V2),
             3 => Ok(BlockVersion::V3),
+            4 => Ok(BlockVersion::V4),
             _ => Err(()),
         }
     }
@@ -61,6 +63,7 @@ impl Serializer for BlockVersion {
             BlockVersion::V1 => writer.write_u8(1),
             BlockVersion::V2 => writer.write_u8(2),
             BlockVersion::V3 => writer.write_u8(3),
+            BlockVersion::V4 => writer.write_u8(4),
         }
     }
 
@@ -82,6 +85,7 @@ impl fmt::Display for BlockVersion {
             BlockVersion::V1 => write!(f, "V1"),
             BlockVersion::V2 => write!(f, "V2"),
             BlockVersion::V3 => write!(f, "V3"),
+            BlockVersion::V4 => write!(f, "V4"),
         }
     }
 }

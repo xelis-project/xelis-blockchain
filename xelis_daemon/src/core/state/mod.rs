@@ -10,11 +10,14 @@ pub use chain_state::{
 use log::{trace, debug};
 use xelis_common::{
     account::VersionedBalance,
+    block::{BlockVersion, TopoHeight},
+    config::XELIS_ASSET,
     crypto::{Hash, PublicKey},
     transaction::{Reference, Transaction},
-    block::{TopoHeight, BlockVersion},
     utils::format_xelis
 };
+
+use crate::core::storage::Storage;
 
 use super::{
     hard_fork,
@@ -60,9 +63,49 @@ pub(super) async fn verify_fee<P: AccountProvider + BalanceProvider>(
     Ok((fee_paid, refund))
 }
 
+// Check if a miner is in the unstable height of a reference block
+async fn is_miner_until_base_height<S: Storage>(storage: &S, miner: &PublicKey, stable_height: u64, reference: &Hash) -> Result<bool, BlockchainError> {
+    let mut stack = Vec::new();
+    stack.push((reference.clone(), 0));
+
+    while let Some((current_hash, depth)) = stack.pop() {
+        let block_height = storage.get_height_for_block_hash(&current_hash).await?;
+        if block_height <= stable_height {
+            continue;
+        }
+
+        let block = storage.get_block_header_by_hash(&current_hash).await?;
+
+        // Check miner
+        if *block.get_miner() == *miner {
+            debug!("Miner {} found in unstable height at block {}", miner.as_address(storage.is_mainnet()), current_hash);
+            return Ok(true);
+        }
+
+        // Add parents to stack
+        for parent in block.get_tips() {
+            stack.push((parent.clone(), depth + 1));
+        }
+    }
+
+    Ok(false)
+}
+
+async fn is_referencing_previous_output<S: Storage>(storage: &S, tx: &Transaction, reference: &Reference, topoheight: TopoHeight) -> Result<bool, BlockchainError> {
+    let reference_block_topo = select_best_topoheight_for_reference(storage, reference, topoheight).await?;
+    if let Some((topo, _)) = storage.get_output_balance_in_range(tx.get_source(), &XELIS_ASSET, reference.topoheight, topoheight).await? {
+        if reference.topoheight <= topo || reference_block_topo <= topo {
+            debug!("Transaction is referencing a previous output at topoheight {}", topo);
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
+}
+
 // Verify a transaction before adding it to mempool/chain state
 // We only verify the reference and the required fees
-pub(super) async fn pre_verify_tx(tx: &Transaction, stable_topoheight: TopoHeight, topoheight: TopoHeight, block_version: BlockVersion) -> Result<(), BlockchainError> {
+pub(super) async fn pre_verify_tx<S: Storage>(storage: &S, tx: &Transaction, stable_topoheight: TopoHeight, base_height: u64, topoheight: TopoHeight, block_version: BlockVersion) -> Result<(), BlockchainError> {
     debug!("Pre-verify TX at topoheight {} and stable topoheight {}", topoheight, stable_topoheight);
     if !hard_fork::is_tx_version_allowed_in_block_version(tx.get_version(), block_version) {
         debug!("Invalid version {} in block {}", tx.get_version(), block_version);
@@ -76,7 +119,48 @@ pub(super) async fn pre_verify_tx(tx: &Transaction, stable_topoheight: TopoHeigh
         return Err(BlockchainError::InvalidReferenceTopoheight(reference.topoheight, topoheight));
     }
 
+    if block_version >= BlockVersion::V4 {
+        let block_height = storage.get_height_for_block_hash(&reference.hash).await?;
+        if base_height < block_height
+            && !is_referencing_previous_output(storage, tx, &reference, topoheight).await?
+            && is_miner_until_base_height(storage, tx.get_source(), base_height, &reference.hash).await?
+        {
+            // We are in the unstable height, we must ensure that we are not referencing an unstable block
+            debug!("Invalid reference: block height {} is higher than stable height {}", block_height, base_height);
+            return Err(BlockchainError::InvalidReferenceBlockHeight(block_height, base_height));
+        }
+    }
+
     Ok(())
+}
+
+async fn select_best_topoheight_for_reference<S: DagOrderProvider + PrunedTopoheightProvider>(storage: &S, reference: &Reference, current_topoheight: TopoHeight) -> Result<TopoHeight, BlockchainError> {
+    let pruned_topoheight = storage.get_pruned_topoheight().await?;
+
+    let reference_block_topo = if storage.is_block_topological_ordered(&reference.hash).await? {
+        let topo = storage.get_topo_height_for_hash(&reference.hash).await?;
+        if topo == reference.topoheight {
+            trace!("reference topoheight {} is equal to block topoheight {}", reference.topoheight, topo);
+            topo
+        } else if reference.topoheight < current_topoheight {
+            trace!("reference topoheight {} is lower than current topoheight {}, using current topoheight", reference.topoheight, current_topoheight);
+            reference.topoheight
+        } else {
+            trace!("reference topoheight {} is higher than current topoheight {}, using current topoheight", reference.topoheight, current_topoheight);
+            current_topoheight
+        }
+    } else if pruned_topoheight.filter(|v| *v > reference.topoheight).is_some() {
+        trace!("reference topoheight {} is below pruned point, using the reference topoheight", reference.topoheight);
+        reference.topoheight
+    } else if reference.topoheight < current_topoheight {
+        trace!("reference topoheight {} is below current topoheight {}, using reference topoheight", reference.topoheight, current_topoheight);
+        reference.topoheight
+    } else {
+        trace!("using current topoheight {} as reference", current_topoheight);
+        current_topoheight
+    };
+
+    Ok(reference_block_topo)
 }
 
 // Create a sender echange
@@ -112,30 +196,7 @@ pub (super) async fn search_versioned_balance_for_reference<S: DagOrderProvider 
     // We must use the output balance if available
 
     // Retrieve the block topoheight based on reference hash
-    let pruned_topoheight = storage.get_pruned_topoheight().await?;
-
-    let reference_block_topo = if storage.is_block_topological_ordered(&reference.hash).await? {
-        let topo = storage.get_topo_height_for_hash(&reference.hash).await?;
-        if topo == reference.topoheight {
-            trace!("reference topoheight {} is equal to block topoheight {}", reference.topoheight, topo);
-            topo
-        } else if reference.topoheight < current_topoheight {
-            trace!("reference topoheight {} is lower than current topoheight {}, using current topoheight", reference.topoheight, current_topoheight);
-            reference.topoheight
-        } else {
-            trace!("reference topoheight {} is higher than current topoheight {}, using current topoheight", reference.topoheight, current_topoheight);
-            current_topoheight
-        }
-    } else if pruned_topoheight.filter(|v| *v > reference.topoheight).is_some() {
-        trace!("reference topoheight {} is below pruned point, using the reference topoheight", reference.topoheight);
-        reference.topoheight
-    } else if reference.topoheight < current_topoheight {
-        trace!("reference topoheight {} is below current topoheight {}, using reference topoheight", reference.topoheight, current_topoheight);
-        reference.topoheight
-    } else {
-        trace!("using current topoheight {} as reference", current_topoheight);
-        current_topoheight
-    };
+    let reference_block_topo = select_best_topoheight_for_reference(storage, reference, current_topoheight).await?;
 
     let mut use_output_balance = false;
     let version;
@@ -164,10 +225,10 @@ pub (super) async fn search_versioned_balance_for_reference<S: DagOrderProvider 
             debug!("Scenario B: topo {} < reference {} or reference block topo {}", topo, reference.topoheight, reference_block_topo);
 
             version = storage.get_balance_at_maximum_topoheight(key, asset, topo.max(reference_block_topo)).await?
-            .map(|(topo, v)| {
-                trace!("Found balance at topoheight {}", topo);
-                v
-            });
+                .map(|(topo, v)| {
+                    trace!("Found balance at topoheight {}", topo);
+                    v
+                });
         } else {
             debug!("Scenario A (bis)");
             version = Some(v);

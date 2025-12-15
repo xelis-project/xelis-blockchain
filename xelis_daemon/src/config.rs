@@ -56,11 +56,18 @@ pub const TIMESTAMP_IN_FUTURE_LIMIT: TimestampSeconds = 2 * MILLIS_PER_SECOND;
 
 // keep at least last N blocks until top topoheight when pruning the chain
 // WARNING: This must be at least 50 blocks for difficulty adjustement
-pub const PRUNE_SAFETY_LIMIT: u64 = STABLE_LIMIT * 10;
+pub const PRUNE_SAFETY_LIMIT: u64 = 80;
 
 // BlockDAG rules
 // in how many height we consider the block stable
 pub const STABLE_LIMIT: u64 = 8;
+
+pub const fn get_stable_limit(version: BlockVersion) -> u64 {
+    match version {
+        BlockVersion::V0 | BlockVersion::V1 | BlockVersion::V2 => 8,
+        BlockVersion::V3 | BlockVersion::V4 => 24,
+    }
+}
 
 // Emission rules
 // 15% (6 months), 10% (6 months), 5% per block going to dev address
@@ -228,7 +235,7 @@ const HARD_FORKS: [HardFork; 4] = [
 ];
 
 // Testnet / Stagenet / Devnet hard forks
-const OTHERS_NETWORK_HARD_FORKS: [HardFork; 4] = [
+const OTHERS_NETWORK_HARD_FORKS: [HardFork; 5] = [
     HardFork {
         height: 0,
         version: BlockVersion::V0,
@@ -251,6 +258,12 @@ const OTHERS_NETWORK_HARD_FORKS: [HardFork; 4] = [
         height: 15,
         version: BlockVersion::V3,
         changelog: "Smart Contracts, xelis-hash v3, 5s block time",
+        version_requirement: Some(">=1.19.0")
+    },
+    HardFork {
+        height: 20,
+        version: BlockVersion::V4,
+        changelog: "Reference TX improvements",
         version_requirement: Some(">=1.19.0")
     }
 ];
