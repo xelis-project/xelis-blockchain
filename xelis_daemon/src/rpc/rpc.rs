@@ -1316,7 +1316,8 @@ async fn get_account_history<S: Storage>(context: &Context, params: GetAccountHi
 
                 for log in logs {
                     match log {
-                        ContractLog::Transfer { destination, contract, amount, asset } if destination == *params.address.get_public_key() && params.asset == asset  => {
+                        ContractLog::Transfer { destination, contract, amount, asset }
+                        if params.incoming_flow && destination == *params.address.get_public_key() && params.asset == asset  => {
                                 history.push(AccountHistoryEntry {
                                     topoheight: topo,
                                     hash: tx_hash.clone(),
@@ -1334,7 +1335,8 @@ async fn get_account_history<S: Storage>(context: &Context, params: GetAccountHi
 
                             for execution_log in execution_logs {
                                 match execution_log {
-                                    ContractLog::Transfer { destination, contract, amount, asset } if destination == *params.address.get_public_key() && params.asset == asset => {
+                                    ContractLog::Transfer { destination, contract, amount, asset }
+                                    if params.incoming_flow && destination == *params.address.get_public_key() && params.asset == asset => {
                                         history.push(AccountHistoryEntry {
                                             topoheight: topo,
                                             hash: hash.clone(),
@@ -1406,7 +1408,7 @@ async fn get_account_history<S: Storage>(context: &Context, params: GetAccountHi
                     }
                 },
                 TransactionType::MultiSig(payload) => {
-                    if is_sender {
+                    if is_sender && params.outgoing_flow {
                         history.push(AccountHistoryEntry {
                             topoheight: topo,
                             hash: tx_hash.clone(),
@@ -1419,7 +1421,7 @@ async fn get_account_history<S: Storage>(context: &Context, params: GetAccountHi
                     }
                 },
                 TransactionType::InvokeContract(payload) => {
-                    if is_sender {
+                    if is_sender && params.outgoing_flow {
                         history.push(AccountHistoryEntry {
                             topoheight: topo,
                             hash: tx_hash.clone(),
@@ -1433,7 +1435,7 @@ async fn get_account_history<S: Storage>(context: &Context, params: GetAccountHi
                     }
                 },
                 TransactionType::DeployContract(payload) => {
-                    if is_sender {
+                    if is_sender && params.outgoing_flow {
                         history.push(AccountHistoryEntry {
                             topoheight: topo,
                             hash: tx_hash.clone(),
