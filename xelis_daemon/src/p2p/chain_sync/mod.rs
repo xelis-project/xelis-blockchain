@@ -648,7 +648,7 @@ impl<S: Storage> P2pServer<S> {
                                         }
                                     }
 
-                                    if let Err(e) = self.blockchain.add_new_block(block, pre_verify, BroadcastOption::Miners, false).await {
+                                    if let Err(e) = self.blockchain.add_new_block(block, pre_verify, BroadcastOption::All, false).await {
                                         return Err(e)
                                     }
 
@@ -758,6 +758,6 @@ impl<S: Storage> P2pServer<S> {
         };
 
         // Replicate same behavior as above branch
-        self.blockchain.add_new_block(block, PreVerifyBlock::Hash(hash), BroadcastOption::Miners, false).await
+        self.blockchain.add_new_block(block, PreVerifyBlock::Hash(hash), BroadcastOption::All, false).await
     }
 }
