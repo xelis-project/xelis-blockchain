@@ -1387,12 +1387,7 @@ impl<S: Storage> Blockchain<S> {
         };
 
         // Find the base height for this block
-        let base_height = if block.get_tips().is_empty() {
-            0
-        } else {
-            let (_, base_height) = blockdag::find_common_base(&*storage, block.get_tips(), block.get_version()).await?;
-            base_height
-        };
+        let base_height = blockdag::find_common_base_height(&*storage, block.get_tips(), block.get_version()).await?;
 
         let mut chain_state = ChainState::new(storage, &self.environment, stable_topoheight, topoheight, block.get_version(), base_fee, base_height);
 
@@ -1745,7 +1740,25 @@ impl<S: Storage> Blockchain<S> {
         };
 
         // find the common base block from tips
-        let (base, base_height) = blockdag::find_common_base(&*storage, block.get_tips(), version).await?;
+        // Compute cumulative difficulty for block
+        // We retrieve it to pass it as a param below for p2p broadcast
+        let (cumulative_difficulty, base_height) = if tips_count == 0 {
+            (GENESIS_BLOCK_DIFFICULTY.into(), 0)
+        } else {
+            debug!("Computing cumulative difficulty for block {}", block_hash);
+            let (base, base_height) = blockdag::find_common_base(&*storage, block.get_tips(), version).await?;
+            debug!("Common base found: {}, height: {}, calculating cumulative difficulty", base, base_height);
+            let cumulative_difficulty = blockdag::find_tip_work_score(
+                &*storage,
+                &block_hash,
+                block.get_tips().iter(),
+                Some(difficulty),
+                &base,
+                base_height
+            ).await?.1;
+
+            (cumulative_difficulty, base_height)
+        };
 
         // Transaction verification
         // Here we are going to verify all TXs in the block
@@ -1932,22 +1945,6 @@ impl<S: Storage> Blockchain<S> {
             }
         }
 
-        // Compute cumulative difficulty for block
-        // We retrieve it to pass it as a param below for p2p broadcast
-        let cumulative_difficulty: CumulativeDifficulty = if tips_count == 0 {
-            GENESIS_BLOCK_DIFFICULTY.into()
-        } else {
-            debug!("Computing cumulative difficulty for block {}", block_hash);
-            debug!("Common base found: {}, height: {}, calculating cumulative difficulty", base, base_height);
-            blockdag::find_tip_work_score(
-                &*storage,
-                &block_hash,
-                block.get_tips().iter(),
-                Some(difficulty),
-                &base,
-                base_height
-            ).await?.1
-        };
         debug!("Cumulative difficulty for block {}: {}", block_hash, cumulative_difficulty);
 
         let (block, txs) = block.split();

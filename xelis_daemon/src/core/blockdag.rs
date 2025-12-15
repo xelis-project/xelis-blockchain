@@ -368,6 +368,19 @@ where
     Ok((base_hash, base_height))
 }
 
+pub async fn find_common_base_height<'a, P>(provider: &P, tips: &IndexSet<Hash>, block_version: BlockVersion) -> Result<u64, BlockchainError>
+where
+    P: DifficultyProvider + DagOrderProvider + BlocksAtHeightProvider + PrunedTopoheightProvider + CacheProvider,
+{
+    // Only genesis block can have 0 tips
+    if tips.len() == 0 {
+        return Ok(0)
+    }
+
+    let (_, base_height) = find_common_base(provider, tips, block_version).await?;
+    Ok(base_height)
+}
+
 // find the common base (block hash and block height) of all tips
 pub async fn find_common_base<'a, P, I>(provider: &P, tips: I, block_version: BlockVersion) -> Result<(Hash, u64), BlockchainError>
 where
