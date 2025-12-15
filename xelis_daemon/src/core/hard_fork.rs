@@ -174,7 +174,8 @@ mod tests {
         assert_eq!(get_version_at_height(&Network::Testnet, 0), BlockVersion::V0);
         assert_eq!(get_version_at_height(&Network::Testnet, 6), BlockVersion::V1);
         assert_eq!(get_version_at_height(&Network::Testnet, 10), BlockVersion::V2);
-        assert_eq!(get_version_at_height(&Network::Testnet, 50), BlockVersion::V3);
+        assert_eq!(get_version_at_height(&Network::Testnet, 15), BlockVersion::V3);
+        assert_eq!(get_version_at_height(&Network::Testnet, 50), BlockVersion::V4);
     }
 
     #[test]
