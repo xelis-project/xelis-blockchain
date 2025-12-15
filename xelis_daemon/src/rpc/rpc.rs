@@ -1316,7 +1316,7 @@ async fn get_account_history<S: Storage>(context: &Context, params: GetAccountHi
 
                 for log in logs {
                     match log {
-                        ContractLog::Transfer { destination, contract, amount, asset } if destination == *params.address.get_public_key() => {
+                        ContractLog::Transfer { destination, contract, amount, asset } if destination == *params.address.get_public_key() && params.asset == asset  => {
                                 history.push(AccountHistoryEntry {
                                     topoheight: topo,
                                     hash: tx_hash.clone(),
@@ -1334,7 +1334,7 @@ async fn get_account_history<S: Storage>(context: &Context, params: GetAccountHi
 
                             for execution_log in execution_logs {
                                 match execution_log {
-                                    ContractLog::Transfer { destination, contract, amount, asset } if destination == *params.address.get_public_key() => {
+                                    ContractLog::Transfer { destination, contract, amount, asset } if destination == *params.address.get_public_key() && params.asset == asset => {
                                         history.push(AccountHistoryEntry {
                                             topoheight: topo,
                                             hash: hash.clone(),
