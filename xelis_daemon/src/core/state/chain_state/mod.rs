@@ -346,7 +346,7 @@ impl<'s, 'b, S: Storage> BlockchainVerificationState<'b, BlockchainError> for Ch
         &'c mut self,
         tx: &Transaction,
     ) -> Result<(), BlockchainError> {
-        super::pre_verify_tx(self.storage, tx, self.stable_topoheight, self.topoheight, self.base_height, self.block_version).await
+        super::pre_verify_tx(self.storage, tx, self.stable_topoheight, self.base_height, self.topoheight, self.block_version).await
     }
 
     /// Get the balance ciphertext for a receiver account

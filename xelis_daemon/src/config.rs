@@ -56,11 +56,18 @@ pub const TIMESTAMP_IN_FUTURE_LIMIT: TimestampSeconds = 2 * MILLIS_PER_SECOND;
 
 // keep at least last N blocks until top topoheight when pruning the chain
 // WARNING: This must be at least 50 blocks for difficulty adjustement
-pub const PRUNE_SAFETY_LIMIT: u64 = STABLE_LIMIT * 10;
+pub const PRUNE_SAFETY_LIMIT: u64 = 80;
 
 // BlockDAG rules
 // in how many height we consider the block stable
 pub const STABLE_LIMIT: u64 = 8;
+
+pub const fn get_stable_limit(version: BlockVersion) -> u64 {
+    match version {
+        BlockVersion::V0 | BlockVersion::V1 | BlockVersion::V2 => 8,
+        BlockVersion::V3 => 32,
+    }
+}
 
 // Emission rules
 // 15% (6 months), 10% (6 months), 5% per block going to dev address

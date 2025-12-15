@@ -89,7 +89,7 @@ use crate::{
         get_genesis_block_hash, get_hex_genesis_block,
         DEV_FEES, DEV_PUBLIC_KEY, EMISSION_SPEED_FACTOR, GENESIS_BLOCK_DIFFICULTY,
         MILLIS_PER_SECOND, SIDE_BLOCK_REWARD_MAX_BLOCKS, PRUNE_SAFETY_LIMIT,
-        SIDE_BLOCK_REWARD_PERCENT, SIDE_BLOCK_REWARD_MIN_PERCENT, STABLE_LIMIT,
+        SIDE_BLOCK_REWARD_PERCENT, SIDE_BLOCK_REWARD_MIN_PERCENT,
         TIMESTAMP_IN_FUTURE_LIMIT, CHAIN_AVERAGE_BLOCK_TIME_N,
     },
     core::{
@@ -557,7 +557,7 @@ impl<S: Storage> Blockchain<S> {
                 FEE_PER_KB
             };
 
-            mempool.clean_up(&*storage, &self.environment, chain_cache.stable_topoheight, chain_cache.topoheight, block_version, tx_base_fee, true).await?;
+            mempool.clean_up(&*storage, &self.environment, chain_cache.stable_topoheight, chain_cache.topoheight, block_version, tx_base_fee, chain_cache.stable_height, true).await?;
         }
 
         Ok(())
@@ -571,13 +571,14 @@ impl<S: Storage> Blockchain<S> {
 
         // now compute the stable height
         debug!("Retrieving tips for computing current stable height");
-        let (stable_hash, stable_height) = blockdag::find_common_base::<S, _>(&storage, &tips).await?;
+        let height = storage.get_top_height().await?;
+        let version = get_version_at_height(&self.network, height);
+        let (stable_hash, stable_height) = blockdag::find_common_base::<S, _>(&storage, &tips, version).await?;
 
         // Search the stable topoheight
         let stable_topoheight = storage.get_topo_height_for_hash(&stable_hash).await?;
 
         let topoheight = storage.get_top_topoheight().await?;
-        let height = storage.get_top_height().await?;
 
         let chain_cache = storage.chain_cache_mut().await?;
 
@@ -758,9 +759,10 @@ impl<S: Storage> Blockchain<S> {
     where
         P: DifficultyProvider + DagOrderProvider + BlocksAtHeightProvider + PrunedTopoheightProvider
     {
+        let version = get_version_at_height(&self.network, current_height);
         while topoheight > 0 {
             let block_hash = provider.get_hash_at_topo_height(topoheight).await?;
-            if blockdag::is_sync_block_at_height(provider, &block_hash, current_height).await? {
+            if blockdag::is_sync_block_at_height(provider, &block_hash, current_height, version).await? {
                 let topoheight = provider.get_topo_height_for_hash(&block_hash).await?;
                 return Ok(topoheight)
             }
@@ -876,8 +878,9 @@ impl<S: Storage> Blockchain<S> {
     pub async fn is_sync_block<P: DifficultyProvider + DagOrderProvider + BlocksAtHeightProvider + PrunedTopoheightProvider + CacheProvider>(&self, provider: &P, hash: &Hash) -> Result<bool, BlockchainError> {
         let chain_cache = provider.chain_cache().await;
         let current_height = chain_cache.height;
+        let version = get_version_at_height(&self.network, current_height);
 
-        blockdag::is_sync_block_at_height(provider, hash, current_height).await
+        blockdag::is_sync_block_at_height(provider, hash, current_height, version).await
     }
 
     // Get difficulty at tips
@@ -1048,6 +1051,7 @@ impl<S: Storage> Blockchain<S> {
             let chain_cache = storage.chain_cache().await;
 
             let stable_topoheight = chain_cache.stable_topoheight;
+            let stable_height = chain_cache.stable_height;
             let current_topoheight = chain_cache.topoheight;
             let height = chain_cache.height;
 
@@ -1075,7 +1079,7 @@ impl<S: Storage> Blockchain<S> {
             let version = get_version_at_height(self.get_network(), height);
             // NOTE: we do not verify / clean against requested base fee
             // to ensure no TX is orphaned, but only delayed until the chain congestion reduce
-            mempool.add_tx(storage, &self.environment, stable_topoheight, current_topoheight, FEE_PER_KB, hash.clone(), tx.clone(), tx_size, version).await?;
+            mempool.add_tx(storage, &self.environment, stable_topoheight, current_topoheight, FEE_PER_KB, stable_height, hash.clone(), tx.clone(), tx_size, version).await?;
 
             debug!("TX {} has been added to the mempool", hash);
 
@@ -1382,7 +1386,7 @@ impl<S: Storage> Blockchain<S> {
             FEE_PER_KB
         };
 
-        let (_, base_height) = blockdag::find_common_base(&*storage, block.get_tips()).await?;
+        let (_, base_height) = blockdag::find_common_base(&*storage, block.get_tips(), block.get_version()).await?;
 
         let mut chain_state = ChainState::new(storage, &self.environment, stable_topoheight, topoheight, block.get_version(), base_fee, base_height);
 
@@ -1735,7 +1739,7 @@ impl<S: Storage> Blockchain<S> {
         };
 
         // find the common base block from tips
-        let (base, base_height) = blockdag::find_common_base(&*storage, block.get_tips()).await?;
+        let (base, base_height) = blockdag::find_common_base(&*storage, block.get_tips(), version).await?;
 
         // Transaction verification
         // Here we are going to verify all TXs in the block
@@ -2004,7 +2008,7 @@ impl<S: Storage> Blockchain<S> {
         }
         debug!("New tips: {}", tips.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(","));
 
-        let (base_hash, base_height) = blockdag::find_common_base(&*storage, &tips).await?;
+        let (base_hash, base_height) = blockdag::find_common_base(&*storage, &tips, version).await?;
         debug!("New base hash: {}, height: {}", base_hash, base_height);
         let best_tip = blockdag::find_best_tip(&*storage, &tips, &base_hash, base_height).await?;
         debug!("Best tip selected: {}", best_tip);
@@ -2170,6 +2174,7 @@ impl<S: Storage> Blockchain<S> {
                     &hash,
                     &block,
                     base_fee,
+                    base_height
                 );
 
                 // Increase the circulating supply with the block reward
@@ -2541,7 +2546,7 @@ impl<S: Storage> Blockchain<S> {
             let mut mempool = self.mempool.write().await;
 
             let start = Instant::now();
-            let orphaned = mempool.try_add_back_txs(&*storage, orphaned_transactions.into_iter(), &self.environment, base_topo_height, highest_topo, version, FEE_PER_KB).await?;
+            let orphaned = mempool.try_add_back_txs(&*storage, orphaned_transactions.into_iter(), &self.environment, base_topo_height, highest_topo, version, FEE_PER_KB, base_height).await?;
             if !orphan_event_tracked {
                 for (tx_hash, tx) in orphaned {
                     // We couldn't add it back to mempool, let's notify this event
@@ -2568,7 +2573,7 @@ impl<S: Storage> Blockchain<S> {
 
             let start = Instant::now();
             // NOTE: we don't remove any under-paid TX, they stay in mempool until fixed
-            let res = mempool.clean_up(&*storage, &self.environment, base_topo_height, highest_topo, version, FEE_PER_KB, dag_is_overwritten).await?;
+            let res = mempool.clean_up(&*storage, &self.environment, base_topo_height, highest_topo, version, FEE_PER_KB, base_height, dag_is_overwritten).await?;
             debug!("Took {:?} to clean mempool!", start.elapsed());
             histogram!("xelis_mempool_clean_up_ms").record(start.elapsed().as_millis() as f64);
 
@@ -2767,19 +2772,6 @@ impl<S: Storage> Blockchain<S> {
         blockdag::is_side_block_internal(provider, hash, None, topoheight).await
     }
 
-    // to have stable order: it must be ordered, and be under the stable height limit
-    pub async fn has_block_stable_order<P>(&self, provider: &P, hash: &Hash, topoheight: TopoHeight) -> Result<bool, BlockchainError>
-    where
-        P: DagOrderProvider
-    {
-        trace!("has block {} stable order at topoheight {}", hash, topoheight);
-        if provider.is_block_topological_ordered(hash).await? {
-            let block_topo_height = provider.get_topo_height_for_hash(hash).await?;
-            return Ok(block_topo_height + STABLE_LIMIT <= topoheight)
-        }
-        Ok(false)
-    }
-
     // Rewind the chain by removing N blocks from the top
     pub async fn rewind_chain(&self, count: u64, until_stable_height: bool) -> Result<(TopoHeight, Vec<(Hash, Immutable<Transaction>)>), BlockchainError> {
         debug!("rewind chain of {} blocks (stable height: {})", count, until_stable_height);
@@ -2857,10 +2849,12 @@ impl<S: Storage> Blockchain<S> {
         chain_cache.height = new_height;
         chain_cache.topoheight = new_topoheight;
 
+        let version = get_version_at_height(self.get_network(), new_height);
+
         // update stable height if it's allowed
         if !stop_at_stable_height {
             let tips = storage.get_tips().await?;
-            let (stable_hash, stable_height) = blockdag::find_common_base::<S, _>(&storage, &tips).await?;
+            let (stable_hash, stable_height) = blockdag::find_common_base::<S, _>(&storage, &tips, version).await?;
             let stable_topoheight = storage.get_topo_height_for_hash(&stable_hash).await?;
 
             // if we have a RPC server, propagate the StableHeightChanged if necessary

@@ -64,10 +64,11 @@ pub struct MempoolState<'a, S: Storage> {
     tx_base_fee: u64,
     // Block header version
     block_version: BlockVersion,
+    base_height: u64,
 }
 
 impl<'a, S: Storage> MempoolState<'a, S> {
-    pub fn new(mempool: &'a Mempool, storage: &'a S, environment: &'a Environment<ContractMetadata>, stable_topoheight: TopoHeight, topoheight: TopoHeight, block_version: BlockVersion, mainnet: bool, tx_base_fee: u64) -> Self {
+    pub fn new(mempool: &'a Mempool, storage: &'a S, environment: &'a Environment<ContractMetadata>, stable_topoheight: TopoHeight, topoheight: TopoHeight, block_version: BlockVersion, mainnet: bool, tx_base_fee: u64, base_height: u64) -> Self {
         Self {
             mainnet,
             mempool,
@@ -80,6 +81,7 @@ impl<'a, S: Storage> MempoolState<'a, S> {
             topoheight,
             tx_base_fee,
             block_version,
+            base_height,
         }
     }
 
@@ -220,7 +222,7 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for Mempoo
         &'b mut self,
         tx: &Transaction,
     ) -> Result<(), BlockchainError> {
-        super::pre_verify_tx(tx, self.stable_topoheight, self.topoheight, self.get_block_version()).await
+        super::pre_verify_tx(self.storage, tx, self.stable_topoheight,  self.base_height, self.topoheight, self.get_block_version()).await
     }
 
     /// Get the balance ciphertext for a receiver account

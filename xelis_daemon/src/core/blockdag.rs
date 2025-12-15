@@ -4,12 +4,9 @@ use indexmap::IndexSet;
 use itertools::Either;
 use log::{debug, error, trace};
 use xelis_common::{
-    block::{TopoHeight, get_combined_hash_for_tips},
-    difficulty::{CumulativeDifficulty, Difficulty},
-    crypto::Hash,
-    time::TimestampMillis
+    block::{BlockVersion, TopoHeight, get_combined_hash_for_tips}, crypto::Hash, difficulty::{CumulativeDifficulty, Difficulty}, time::TimestampMillis
 };
-use crate::{config::STABLE_LIMIT, core::storage::*};
+use crate::{config::{STABLE_LIMIT, get_stable_limit}, core::storage::*};
 
 use super::{    
     storage::{
@@ -165,7 +162,7 @@ where
 // Verify if the block is a sync block
 // A sync block is a block that is ordered and has the highest cumulative difficulty at its height
 // It is used to determine if the block is a stable block or not
-pub async fn is_sync_block_at_height<P>(provider: &P, hash: &Hash, height: u64) -> Result<bool, BlockchainError>
+pub async fn is_sync_block_at_height<P>(provider: &P, hash: &Hash, height: u64, block_version: BlockVersion) -> Result<bool, BlockchainError>
 where
     P: DifficultyProvider + DagOrderProvider + BlocksAtHeightProvider + PrunedTopoheightProvider
 {
@@ -177,7 +174,8 @@ where
     }
 
     // block must be ordered and in stable height
-    if block_height + STABLE_LIMIT > height || !provider.is_block_topological_ordered(hash).await? {
+    let stable_limit = get_stable_limit(block_version);
+    if block_height + stable_limit > height || !provider.is_block_topological_ordered(hash).await? {
         trace!("Block {} at height {} is not a sync block, it is not in stable height", hash, block_height);
         return Ok(false)
     }
@@ -277,7 +275,7 @@ where
     Ok(false)
 }
 
-pub async fn find_tip_base<P>(provider: &P, hash: &Hash, height: u64, pruned_topoheight: TopoHeight) -> Result<(Hash, u64), BlockchainError>
+pub async fn find_tip_base<P>(provider: &P, hash: &Hash, height: u64, pruned_topoheight: TopoHeight, block_version: BlockVersion) -> Result<(Hash, u64), BlockchainError>
 where
     P: DifficultyProvider + DagOrderProvider + BlocksAtHeightProvider + PrunedTopoheightProvider + CacheProvider
 {
@@ -337,7 +335,7 @@ where
             }
 
             // if block is sync, it is a tip base
-            if is_sync_block_at_height(provider, &tip_hash, height).await? {
+            if is_sync_block_at_height(provider, &tip_hash, height, block_version).await? {
                 let block_height = provider.get_height_for_block_hash(&tip_hash).await?;
                 // save in cache
                 cache.put((hash.clone(), height), (tip_hash.clone(), block_height));
@@ -371,7 +369,7 @@ where
 }
 
 // find the common base (block hash and block height) of all tips
-pub async fn find_common_base<'a, P, I>(provider: &P, tips: I) -> Result<(Hash, u64), BlockchainError>
+pub async fn find_common_base<'a, P, I>(provider: &P, tips: I, block_version: BlockVersion) -> Result<(Hash, u64), BlockchainError>
 where
     P: DifficultyProvider + DagOrderProvider + BlocksAtHeightProvider + PrunedTopoheightProvider + CacheProvider,
     I: IntoIterator<Item = &'a Hash> + Copy,
@@ -402,7 +400,7 @@ where
     let mut bases = Vec::new();
     for hash in tips.into_iter() {
         trace!("Searching tip base for {}", hash);
-        bases.push(find_tip_base(provider, hash, best_height, pruned_topoheight).await?);
+        bases.push(find_tip_base(provider, hash, best_height, pruned_topoheight, block_version).await?);
     }
 
     // check that we have at least one value

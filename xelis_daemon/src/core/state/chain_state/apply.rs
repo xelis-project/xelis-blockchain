@@ -762,6 +762,7 @@ impl<'s, 'b, S: Storage> ApplicableChainState<'s, 'b, S> {
         block_hash: &'b Hash,
         block: &'b Block,
         tx_base_fee: u64,
+        base_height: u64,
     ) -> Self {
         Self {
             inner: ChainState::with(
@@ -771,6 +772,7 @@ impl<'s, 'b, S: Storage> ApplicableChainState<'s, 'b, S> {
                 topoheight,
                 block_version,
                 tx_base_fee,
+                base_height,
             ),
             total_fees: 0,
             total_fees_burned: 0,

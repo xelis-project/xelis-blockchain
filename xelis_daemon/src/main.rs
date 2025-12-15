@@ -584,7 +584,10 @@ async fn verify_chain<S: Storage>(manager: &CommandManager, mut args: ArgumentMa
             let (required_base_fee, _) = blockchain.get_required_base_fee(&*storage, header.get_tips().iter()).await
                 .context("Error while calculating required base fee")?;
 
-            let mut state = ChainState::new(&*storage, blockchain.get_contract_environment(), 0, topo - 1, header.get_version(), required_base_fee);
+            let (_, base_height) = blockdag::find_common_base(&*storage, header.get_tips(), header.get_version()).await
+                .context("Error while finding common base for tx verification")?;
+
+            let mut state = ChainState::new(&*storage, blockchain.get_contract_environment(), 0, topo - 1, header.get_version(), required_base_fee, base_height);
             Transaction::verify_batch(txs.iter(), &mut state, &NoZKPCache::default()).await
                 .context("Error while verifying txs")?;
 
