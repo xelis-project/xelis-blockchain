@@ -40,7 +40,7 @@ pub const fn get_pow_algorithm_for_version(version: BlockVersion) -> Algorithm {
     match version {
         BlockVersion::V0 => Algorithm::V1,
         BlockVersion::V1 | BlockVersion::V2 => Algorithm::V2,
-        BlockVersion::V3 => Algorithm::V3,
+        BlockVersion::V3 | BlockVersion::V4 => Algorithm::V3,
     }
 }
 
@@ -53,7 +53,7 @@ pub const fn get_block_time_target_for_version(version: BlockVersion) -> u64 {
         BlockVersion::V0
         | BlockVersion::V1
         | BlockVersion::V2 => 15 * MILLIS_PER_SECOND,
-        BlockVersion::V3 => 5 * MILLIS_PER_SECOND,
+        BlockVersion::V3 | BlockVersion::V4 => 5 * MILLIS_PER_SECOND,
     }
 }
 

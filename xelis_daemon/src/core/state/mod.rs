@@ -119,7 +119,7 @@ pub(super) async fn pre_verify_tx<S: Storage>(storage: &S, tx: &Transaction, sta
         return Err(BlockchainError::InvalidReferenceTopoheight(reference.topoheight, topoheight));
     }
 
-    if block_version >= BlockVersion::V3 {
+    if block_version >= BlockVersion::V4 {
         let block_height = storage.get_height_for_block_hash(&reference.hash).await?;
         if base_height < block_height
             && !is_referencing_previous_output(storage, tx, &reference, topoheight).await?
