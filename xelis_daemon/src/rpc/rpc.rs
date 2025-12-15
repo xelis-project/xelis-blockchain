@@ -343,6 +343,7 @@ pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>
     handler.register_method_with_params("get_stable_balance", async_handler!(get_stable_balance::<S>));
     handler.register_method_with_params("has_balance", async_handler!(has_balance::<S>));
     handler.register_method_with_params("get_balance_at_topoheight", async_handler!(get_balance_at_topoheight::<S>));
+    handler.register_method_with_params("get_balances_at_maximum_topoheight", async_handler!(get_balances_at_maximum_topoheight::<S>));
 
     handler.register_method_with_params("get_nonce", async_handler!(get_nonce::<S>));
     handler.register_method_with_params("has_nonce", async_handler!(has_nonce::<S>));
@@ -701,6 +702,37 @@ async fn get_balance_at_topoheight<S: Storage>(context: &Context, params: GetBal
 
     let balance = storage.get_balance_at_exact_topoheight(params.address.get_public_key(), &params.asset, params.topoheight).await.context("Error while retrieving balance at exact topo height")?;
     Ok(balance)
+}
+
+async fn get_balances_at_maximum_topoheight<S: Storage>(context: &Context, params: GetBalancesAtMaximumTopoHeightParams<'_>) -> Result<Vec<Option<RPCVersioned<VersionedBalance>>>, InternalRpcError> {
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+
+    if params.address.is_mainnet() != blockchain.get_network().is_mainnet() {
+        return Err(InternalRpcError::InvalidParamsAny(BlockchainError::InvalidNetwork.into()))
+    }
+
+    if params.assets.len() > MAX_ASSETS {
+        return Err(InternalRpcError::InvalidJSONRequest).context(format!("Maximum assets requested cannot be greater than {}", MAX_ASSETS))?
+    }
+
+    let mut versions = Vec::with_capacity(params.assets.len());
+    let storage = blockchain.get_storage().read().await;
+    let chain_cache = storage.chain_cache().await;
+    let topoheight = chain_cache.topoheight;
+
+    if params.maximum_topoheight > topoheight {
+        return Err(InternalRpcError::UnexpectedParams).context("Topoheight cannot be greater than current chain topoheight")?
+    }
+
+    for asset in params.assets {
+        let balance = storage.get_balance_at_maximum_topoheight(params.address.get_public_key(), &asset, params.maximum_topoheight).await
+            .context("Error while retrieving balance at exact topo height")?
+            .map(|(topoheight, version)| RPCVersioned { topoheight, version });
+
+        versions.push(balance);
+    }
+
+    Ok(versions)
 }
 
 async fn has_nonce<S: Storage>(context: &Context, params: HasNonceParams<'_>) -> Result<HasNonceResult, InternalRpcError> {
