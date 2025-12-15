@@ -336,6 +336,13 @@ pub struct GetBalanceAtTopoHeightParams<'a> {
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
+pub struct GetBalancesAtMaximumTopoHeightParams<'a> {
+    pub address: Cow<'a, Address>,
+    pub assets: IndexSet<Cow<'a, Hash>>,
+    pub maximum_topoheight: TopoHeight
+}
+
+#[derive(Serialize, Deserialize, JsonSchema)]
 pub struct GetNonceParams<'a> {
     pub address: Cow<'a, Address>
 }
