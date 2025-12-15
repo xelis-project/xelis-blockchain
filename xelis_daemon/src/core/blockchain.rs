@@ -1077,9 +1077,11 @@ impl<S: Storage> Blockchain<S> {
 
             let start = Instant::now();
             let version = get_version_at_height(self.get_network(), height);
+            debug!("current version is {:?}, but using BlockVersion::V4 for more verifications", version);
+
             // NOTE: we do not verify / clean against requested base fee
             // to ensure no TX is orphaned, but only delayed until the chain congestion reduce
-            mempool.add_tx(storage, &self.environment, stable_topoheight, current_topoheight, FEE_PER_KB, stable_height, hash.clone(), tx.clone(), tx_size, version).await?;
+            mempool.add_tx(storage, &self.environment, stable_topoheight, current_topoheight, FEE_PER_KB, stable_height, hash.clone(), tx.clone(), tx_size, BlockVersion::V4).await?;
 
             debug!("TX {} has been added to the mempool", hash);
 
